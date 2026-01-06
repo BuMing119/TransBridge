@@ -1,0 +1,41 @@
+[project]
+name = "transbridge"
+version = "0.1.0"
+description = "TransBridge is a translation file conversion tool designed to seamlessly transfer translation files between Xtranslator, ESP-ESM Translator, and ParaTranz."
+readme = "README.md"
+authors = [
+    { name = "BuMing119", email = "bumingjueli119@gmail.com" }
+]
+requires-python = ">=3.12.12"
+dependencies = [
+    "sse-plugin-interface>=1.0.1",
+]
+
+[project.scripts]
+transbridge = "transbridge:main"
+
+[build-system]
+requires = ["uv_build>=0.9.13,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+preview = true
+target-version = "py312"
+extend-exclude = [".git", "__pycache__", "build", "dist", ".venv"]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**.py" = ["S101", "ARG", "PLR0913"]  # 允许 assert、忽略未使用参数、多参数
+"scripts/*.py" = ["T20", "E501"]            # 允许 print（脚本调试用）
+
+[tool.ruff.lint.isort]
+known-first-party = ["julianos"]
+combine-as-imports = true
+force-sort-within-sections = true
+
+[tool.ruff.format]
+preview = true
+quote-style = "double"

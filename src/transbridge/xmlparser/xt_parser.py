@@ -1,21 +1,23 @@
 # xmlparser/xt_parser.py
-import json
+from collections.abc import Callable, Iterator
 import csv
+from dataclasses import asdict, dataclass
+import json
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, asdict
-from typing import List, Dict, Callable, Optional, Iterator
+
 
 @dataclass(frozen=True)
 class XT_Entry:
     """对应 <Content><String>...</String> 的一条记录。"""
-    list_id: Optional[int]
+
+    list_id: int | None
     edid: str
     rec: str
     source: str
     dest: str
 
     @staticmethod
-    def _to_int(value: Optional[str]) -> Optional[int]:
+    def _to_int(value: str | None) -> int | None:
         if value is None:
             return None
         value = value.strip()
@@ -45,23 +47,23 @@ class XT_XmlParser:
     </SSTXMLRessources>
     """
 
-    def __init__(self, params: Dict[str, str], entries: List[XT_Entry]):
+    def __init__(self, params: dict[str, str], entries: list[XT_Entry]):
         self.params = params
         self.entries = entries
-        self._index_by_edid: Dict[str, List[XT_Entry]] = {}
+        self._index_by_edid: dict[str, list[XT_Entry]] = {}
         for e in entries:
             self._index_by_edid.setdefault(e.edid, []).append(e)
 
     # ---------- 工厂方法 ----------
     @classmethod
-    def from_file(cls, xml_path: str) -> "SSTXmlParser":
+    def from_file(cls, xml_path: str) -> "XT_XmlParser":
         params = cls._parse_params(xml_path)
         entries = list(cls._iter_entries(xml_path))
         return cls(params=params, entries=entries)
 
     # ---------- 解析 Params ----------
     @staticmethod
-    def _parse_params(xml_path: str) -> Dict[str, str]:
+    def _parse_params(xml_path: str) -> dict[str, str]:
         """
         小而稳定：直接 parse 一次拿 Params。
         如果你非常在意性能，也可以改成 iterparse 一次完成。
@@ -69,7 +71,7 @@ class XT_XmlParser:
         tree = ET.parse(xml_path)
         root = tree.getroot()
         params_node = root.find("Params")
-        params: Dict[str, str] = {}
+        params: dict[str, str] = {}
         if params_node is None:
             return params
         for child in list(params_node):
@@ -110,11 +112,11 @@ class XT_XmlParser:
             elem.clear()
 
     # ---------- 查询 ----------
-    def get_by_edid(self, edid: str) -> List[XT_Entry]:
+    def get_by_edid(self, edid: str) -> list[XT_Entry]:
         """按 EDID 精确匹配（可能有重复 EDID，因此返回 list）。"""
         return list(self._index_by_edid.get(edid, []))
 
-    def find(self, predicate: Callable[[XT_Entry], bool]) -> List[XT_Entry]:
+    def find(self, predicate: Callable[[XT_Entry], bool]) -> list[XT_Entry]:
         """按自定义条件过滤。"""
         return [e for e in self.entries if predicate(e)]
 
@@ -141,4 +143,3 @@ class XT_XmlParser:
             writer.writeheader()
             for e in self.entries:
                 writer.writerow(asdict(e))
-

@@ -1,0 +1,23 @@
+version = 1
+revision = 3
+requires-python = ">=3.12.12"
+
+[[package]]
+name = "sse-plugin-interface"
+version = "1.0.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/53/7d/358ab97f38a59184974fd61d2ca50e078908cc0cf3e5ff9541d63bece35d/sse_plugin_interface-1.0.1.tar.gz", hash = "sha256:e18540910ddb04ea73427b7ffb187edb417dc0dfcf10ce49b654ea1b82c760cf", size = 560802, upload-time = "2025-12-19T16:35:03.167Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d2/d5/1b0d62aae702f165ee2bc8e086d3ebe88b6c834cf8611be8ec215c8253b9/sse_plugin_interface-1.0.1-py3-none-any.whl", hash = "sha256:e3e01d603ef75609dc6738c1b6d651a20b17a06c50640c8bf13c600184922af3", size = 17715, upload-time = "2025-12-19T16:35:02.323Z" },
+]
+
+[[package]]
+name = "transbridge"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "sse-plugin-interface" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "sse-plugin-interface", specifier = ">=1.0.1" }]

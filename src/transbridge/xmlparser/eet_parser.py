@@ -1,10 +1,10 @@
-import xml.etree.ElementTree as ET
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
-from typing import Optional, List, Dict, Tuple, Union, Iterator, Iterable
 from pathlib import Path
+import xml.etree.ElementTree as ET
 
 
-def _text_or_empty(elem: Optional[ET.Element]) -> str:
+def _text_or_empty(elem: ET.Element | None) -> str:
     """取元素文本；若为空/自闭合则返回空串；保留换行等原样。"""
     if elem is None:
         return ""
@@ -12,7 +12,7 @@ def _text_or_empty(elem: Optional[ET.Element]) -> str:
     return elem.text if elem.text is not None else ""
 
 
-def _int_or_none(s: str) -> Optional[int]:
+def _int_or_none(s: str) -> int | None:
     s = s.strip()
     if s == "":
         return None
@@ -25,6 +25,7 @@ def _int_or_none(s: str) -> Optional[int]:
 @dataclass(frozen=True)
 class EET_Entry:
     """对应 <ESP> 节点的一条记录。"""
+
     grup: str
     id: str
     edid: str
@@ -32,20 +33,22 @@ class EET_Entry:
     original: str
     traduit: str
     perso: str
-    index: Optional[int]
-    status: Optional[int]
-    idstexte: Optional[int]
+    index: int | None
+    status: int | None
+    idstexte: int | None
     commentaire: str
-    icon: Optional[int]
+    icon: int | None
 
     @property
-    def key(self) -> Tuple[str, str, str, str]:
+    def key(self) -> tuple[str, str, str, str]:
         """常用的唯一键：GRUP + ID + EDID + CHAMP（可按需调整）。"""
         return (self.grup, self.id, self.edid, self.champ)
 
     @classmethod
     def from_xml(cls, esp_elem: ET.Element) -> "EET_Entry":
-        get = lambda tag: _text_or_empty(esp_elem.find(tag))
+        def get(tag: str) -> str:
+            return _text_or_empty(esp_elem.find(tag))
+
         return cls(
             grup=get("GRUP").strip(),
             id=get("ID").strip(),
@@ -71,14 +74,14 @@ class EET_XmlParser:
     </DocumentElement>
     """
 
-    def __init__(self, entries: List[EET_Entry]):
+    def __init__(self, entries: list[EET_Entry]):
         self.entries = entries
 
         # 建索引：便于快速按字段查
-        self._by_key: Dict[Tuple[str, str, str, str], List[EET_Entry]] = {}
-        self._by_grup: Dict[str, List[EET_Entry]] = {}
-        self._by_id: Dict[str, List[EET_Entry]] = {}
-        self._by_edid: Dict[str, List[EET_Entry]] = {}
+        self._by_key: dict[tuple[str, str, str, str], list[EET_Entry]] = {}
+        self._by_grup: dict[str, list[EET_Entry]] = {}
+        self._by_id: dict[str, list[EET_Entry]] = {}
+        self._by_edid: dict[str, list[EET_Entry]] = {}
 
         for e in entries:
             self._by_key.setdefault(e.key, []).append(e)
@@ -89,7 +92,7 @@ class EET_XmlParser:
 
     # ----------- 构造入口 -----------
     @classmethod
-    def from_file(cls, path: Union[str, Path], encoding: Optional[str] = None) -> "EET_XmlParser":
+    def from_file(cls, path: str | Path, encoding: str | None = None) -> "EET_XmlParser":
         """
         从文件解析。通常不需要传 encoding；ElementTree 会读 XML 头里的 encoding。
         """
@@ -116,16 +119,16 @@ class EET_XmlParser:
         return iter(self.entries)
 
     def find(
-            self,
-            *,
-            grup: Optional[str] = None,
-            id: Optional[str] = None,
-            edid: Optional[str] = None,
-            champ: Optional[str] = None,
-            original_contains: Optional[str] = None,
-            traduit_contains: Optional[str] = None,
-            status: Optional[int] = None,
-    ) -> List[EET_Entry]:
+        self,
+        *,
+        grup: str | None = None,
+        id: str | None = None,
+        edid: str | None = None,
+        champ: str | None = None,
+        original_contains: str | None = None,
+        traduit_contains: str | None = None,
+        status: int | None = None,
+    ) -> list[EET_Entry]:
         """
         通用过滤查询（简单好用，但不是最极致性能）。
         """
@@ -149,20 +152,20 @@ class EET_XmlParser:
 
         return list(res)
 
-    def get_by_key(self, grup: str, id: str, edid: str, champ: str) -> List[EET_Entry]:
+    def get_by_key(self, grup: str, id: str, edid: str, champ: str) -> list[EET_Entry]:
         return list(self._by_key.get((grup, id, edid, champ), []))
 
-    def get_by_grup(self, grup: str) -> List[EET_Entry]:
+    def get_by_grup(self, grup: str) -> list[EET_Entry]:
         return list(self._by_grup.get(grup, []))
 
-    def get_by_id(self, id: str) -> List[EET_Entry]:
+    def get_by_id(self, id: str) -> list[EET_Entry]:
         return list(self._by_id.get(id, []))
 
-    def get_by_edid(self, edid: str) -> List[EET_Entry]:
+    def get_by_edid(self, edid: str) -> list[EET_Entry]:
         return list(self._by_edid.get(edid, []))
 
     # ----------- 方便导出 -----------
-    def to_dicts(self) -> List[dict]:
+    def to_dicts(self) -> list[dict]:
         """转成 dict 列表（方便 json / pandas）。"""
         out = []
         for e in self.entries:

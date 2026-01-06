@@ -1,5 +1,8 @@
 from dataclasses import dataclass
 
+from xmlparser import EET_Entry
+
+
 @dataclass
 class TranslationEntry:
     id: int
@@ -10,7 +13,7 @@ class TranslationEntry:
     context: str
 
     @classmethod
-    def from_eet_entry(cls, eet_entry: 'EET_Entry') -> 'TranslationEntry':
+    def from_eet_entry(cls, eet_entry: "EET_Entry") -> "TranslationEntry":
         """
         从 EET_Entry 实例创建 TranslationEntry 实例
         :param eet_entry: EET_Entry 实例
@@ -25,5 +28,5 @@ class TranslationEntry:
             original=eet_entry.original,  # original 直接映射
             translation=eet_entry.traduit,  # traduit 直接映射
             stage=stage,  # 根据 status 确定 stage
-            context=None  # 默认 context 为 None
+            context=None,  # 默认 context 为 None
         )
