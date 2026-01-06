@@ -4,7 +4,7 @@ from pathlib import Path
 
 from sse_plugin_interface.plugin import SSEPlugin
 from sse_plugin_interface.plugin_string import PluginString
-from translation_entry import TranslationEntry
+from src.transbridge.converter.translation_entry import TranslationEntry
 
 
 class PluginParser:
@@ -44,7 +44,8 @@ class PluginParser:
             self.log.error(f"Failed to parse plugin {path}: {e}")
             return []
 
-        strings_with_context = self._plugin.extract_strings_with_context()
+        #strings_with_context = self._plugin.extract_strings_with_context()
+        strings_with_context = self._plugin.extract_strings()
         total = len(strings_with_context)
         self.log.info(f"Extracted {total} strings from plugin")
 
@@ -73,16 +74,18 @@ class PluginParser:
     def _create_item(self, ps: PluginString) -> TranslationEntry:
         """Convert PluginStringWithContext to TranslationEntry."""
         # Replace space with colon in type, e.g. "INFO NAM1" -> "INFO:NAM1"
-        key = ps.type.replace(" ", ":") if ps.type else "UNKNOWN"
-
-        return TranslationEntry(
-            id=ps.form_id,
-            key=key,
-            original=ps.string,
-            translation="",
-            stage=0,
-            context=None,
-        )
+        # key = ps.type.replace(" ", ":") if ps.type else "UNKNOWN"
+        #
+        # return TranslationEntry(
+        #     #id=ps.form_id,
+        #     id=f"{ps.editor_id}:{ps.form_id}",
+        #     key=key,
+        #     original=ps.string,
+        #     translation="",
+        #     stage=0,
+        #     context=None,
+        # )
+        return TranslationEntry.creat_from_plugin_entry(ps)
 
     def get_plugin(self) -> SSEPlugin | None:
         """Get the underlying plugin object."""

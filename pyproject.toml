@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.12.12"
 dependencies = [
+    "ruff>=0.14.10",
     "sse-plugin-interface>=1.0.1",
 ]
 

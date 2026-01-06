@@ -1,4 +1,4 @@
-# xmlparser/xt_parser.py
+# parser/xt_parser.py
 from collections.abc import Callable, Iterator
 import csv
 from dataclasses import asdict, dataclass
