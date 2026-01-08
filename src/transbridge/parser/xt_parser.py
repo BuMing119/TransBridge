@@ -56,10 +56,44 @@ class XT_XmlParser:
 
     # ---------- 工厂方法 ----------
     @classmethod
+    @classmethod
     def from_file(cls, xml_path: str) -> "XT_XmlParser":
-        params = cls._parse_params(xml_path)
-        entries = list(cls._iter_entries(xml_path))
-        return cls(params=params, entries=entries)
+        """
+        解析 XML 并保存 tree 供 writer 使用。
+        """
+        xml_path = Path(xml_path)
+        tree = ET.parse(xml_path)
+        root = tree.getroot()
+
+        params = {}
+        params_node = root.find("Params")
+        if params_node is not None:
+            for child in list(params_node):
+                params[child.tag] = (child.text or "").strip()
+
+        entries = []
+        for e in root.findall(".//Content/String"):
+            list_attr = e.attrib.get("List")
+            list_id = XT_Entry._to_int(list_attr)
+
+            def text_of(tag: str) -> str:
+                node = e.find(tag)
+                return (node.text or "").strip() if node is not None else ""
+
+            entries.append(
+                XT_Entry(
+                    list_id=list_id,
+                    edid=text_of("EDID"),
+                    rec=text_of("REC"),
+                    source=text_of("Source"),
+                    dest=text_of("Dest"),
+                )
+            )
+
+        parser = cls(params=params, entries=entries)
+        parser._xml_path = xml_path
+        parser._tree = tree
+        return parser
 
     # ---------- 解析 Params ----------
     @staticmethod

@@ -1,7 +1,13 @@
+from collections import defaultdict
 from collections.abc import Iterable, Iterator
-from typing import Optional
+from typing import Optional,Any
+from pathlib import Path
+import json
 
 from src.transbridge.converter.translation_entry import TranslationEntry
+from src.transbridge.parser.eet_parser import EET_XmlParser
+from src.transbridge.parser.plugin_parser import PluginParser
+from src.transbridge.parser.xt_parser import XT_Entry
 
 
 class TranslationEntryCollection:
@@ -78,6 +84,108 @@ class TranslationEntryCollection:
         for e in other:
             self.add(e, overwrite=overwrite)
 
+        @classmethod
+        def from_eet_xml(
+                cls,
+                path: str | Path,
+                *,
+                overwrite: bool = True,
+        ) -> TranslationEntryCollection:
+            """
+            从 EET XML 文件一次性导入。
+            """
+            parser = EET_XmlParser.from_file(path)
+
+            collection = TranslationEntryCollection()
+
+            for eet_entry in parser:
+                entry = TranslationEntry.from_eet_entry(eet_entry)
+                collection.add(entry, overwrite=overwrite)
+
+            return collection
+
+        # ---------- Plugin ----------
+
+        @classmethod
+        def from_plugin(
+                cls,
+                path: str | Path,
+                *,
+                skip_empty: bool = True,
+                overwrite: bool = True,
+        ) -> TranslationEntryCollection:
+            """
+            从 Plugin 文件一次性导入。
+            """
+            parser = PluginParser()
+            entries = parser.parse_plugin(
+                Path(path),
+                skip_empty=skip_empty,
+            )
+
+            return TranslationEntryCollection(entries=entries)
+
+        # ---------- 通用入口（可选） ----------
+
+        @classmethod
+        def from_entries(
+                cls,
+                entries: Iterable[TranslationEntry],
+        ) -> TranslationEntryCollection:
+            """
+            从已有 TranslationEntry 集合构建（通用入口）。
+            """
+            return TranslationEntryCollection(entries)
+
+    def apply_xt_entries(
+            self,
+            xt_entries: Iterable[XT_Entry],
+    ) -> int:
+        """
+        将 XT_Entry 批量应用到已有的 TranslationEntry 上。
+
+        规则：
+        - XT 不能创建新 TranslationEntry
+        - 只能更新已存在且匹配的 entry
+        - 是否更新由 TranslationEntry.try_update_from_xt 决定
+
+        :return: 实际发生更新的条目数量
+        """
+
+        # ---------- 1. 预先按 edid 分组 XT（加速匹配） ----------
+
+        xt_by_edid: dict[str, list[XT_Entry]] = defaultdict(list)
+        for xt in xt_entries:
+            xt_by_edid[xt.edid].append(xt)
+
+        updated_count = 0
+
+        # ---------- 2. 遍历已有 TranslationEntry ----------
+
+        for entry in list(self._entries.values()):
+            # TranslationEntry.id = "a:b"
+            left, _, right = entry.id.partition(":")
+
+            # list_id = 0 → edid = a
+            # list_id = 1 → edid = [b]
+            candidate_edids = (left, f"[{right}]")
+
+            # ---------- 3. 只尝试可能匹配的 XT ----------
+
+            for edid in candidate_edids:
+                for xt in xt_by_edid.get(edid, []):
+                    updated = TranslationEntry.try_update_from_xt(entry, xt)
+
+                    if updated is None:
+                        continue
+
+                    if updated is not entry:
+                        self._entries[entry.id] = updated
+                        entry = updated
+                        updated_count += 1
+
+        return updated_count
+
     # ---------- 查询 / 过滤（可扩展） ----------
 
     def filter(self, predicate) -> list[TranslationEntry]:
@@ -90,14 +198,45 @@ class TranslationEntryCollection:
 
     # ---------- 未来扩展（暂不实现） ----------
 
-    def to_dicts(self) -> list[dict]:
+    def to_dict(self) -> dict[str, Any]:
         """
-        预留：导出为 dict 列表（json / pandas / db）
+        将整个集合序列化为 dict（用于 JSON / DB）。
         """
-        raise NotImplementedError
+        return {
+            "version": 1,
+            "count": len(self._entries),
+            "entries": [e.to_dict() for e in self._entries.values()],
+        }
 
-    def to_json(self) -> str:
+    def to_json(
+        self,
+        *,
+        ensure_ascii: bool = False,
+        indent: int = 2,
+    ) -> str:
         """
-        预留：导出为 JSON
+        导出为 JSON 字符串。
         """
-        raise NotImplementedError
+        return json.dumps(
+            self.to_dict(),
+            ensure_ascii=ensure_ascii,
+            indent=indent,
+        )
+
+    def to_json_file(
+        self,
+        path: str | Path,
+        *,
+        ensure_ascii: bool = False,
+        indent: int = 2,
+    ) -> None:
+        """
+        保存为 JSON 文件。
+        """
+        path = Path(path)
+        path.write_text(
+            self.to_json(ensure_ascii=ensure_ascii, indent=indent),
+            encoding="utf-8",
+        )
+
+

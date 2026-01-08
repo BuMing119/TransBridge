@@ -92,16 +92,25 @@ class EET_XmlParser:
 
     # ----------- 构造入口 -----------
     @classmethod
+    @classmethod
     def from_file(cls, path: str | Path, encoding: str | None = None) -> "EET_XmlParser":
         """
-        从文件解析。通常不需要传 encoding；ElementTree 会读 XML 头里的 encoding。
+        从文件解析。允许附带 encoding。
+        保存 XML Tree 以支持写回。
         """
         path = Path(path)
         if encoding:
             text = path.read_text(encoding=encoding)
-            return cls.from_string(text)
+            parser = cls.from_string(text)
+            parser._xml_path = path
+            parser._tree = ET.ElementTree(ET.fromstring(text))
+            return parser
+
         tree = ET.parse(path)
-        return cls._from_root(tree.getroot())
+        parser = cls._from_root(tree.getroot())
+        parser._xml_path = path
+        parser._tree = tree
+        return parser
 
     @classmethod
     def from_string(cls, xml_text: str) -> "EET_XmlParser":
