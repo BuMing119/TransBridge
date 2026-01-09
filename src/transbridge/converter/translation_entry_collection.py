@@ -1,3 +1,4 @@
+from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable, Iterator
 from typing import Optional,Any
@@ -84,58 +85,58 @@ class TranslationEntryCollection:
         for e in other:
             self.add(e, overwrite=overwrite)
 
-        @classmethod
-        def from_eet_xml(
-                cls,
-                path: str | Path,
-                *,
-                overwrite: bool = True,
-        ) -> TranslationEntryCollection:
-            """
-            从 EET XML 文件一次性导入。
-            """
-            parser = EET_XmlParser.from_file(path)
+    @classmethod
+    def from_eet_xml(
+            cls,
+            path: str | Path,
+            *,
+            overwrite: bool = True,
+    ) -> TranslationEntryCollection:
+        """
+        从 EET XML 文件一次性导入。
+        """
+        parser = EET_XmlParser.from_file(path)
 
-            collection = TranslationEntryCollection()
+        collection = TranslationEntryCollection()
 
-            for eet_entry in parser:
-                entry = TranslationEntry.from_eet_entry(eet_entry)
-                collection.add(entry, overwrite=overwrite)
+        for eet_entry in parser:
+            entry = TranslationEntry.create_from_eet_entry(eet_entry)
+            collection.add(entry, overwrite=overwrite)
 
-            return collection
+        return collection
 
-        # ---------- Plugin ----------
+    # ---------- Plugin ----------
 
-        @classmethod
-        def from_plugin(
-                cls,
-                path: str | Path,
-                *,
-                skip_empty: bool = True,
-                overwrite: bool = True,
-        ) -> TranslationEntryCollection:
-            """
-            从 Plugin 文件一次性导入。
-            """
-            parser = PluginParser()
-            entries = parser.parse_plugin(
-                Path(path),
-                skip_empty=skip_empty,
-            )
+    @classmethod
+    def from_plugin(
+            cls,
+            path: str | Path,
+            *,
+            skip_empty: bool = True,
+            overwrite: bool = True,
+    ) -> TranslationEntryCollection:
+        """
+        从 Plugin 文件一次性导入。
+        """
+        parser = PluginParser()
+        entries = parser.parse_plugin(
+            Path(path),
+            skip_empty=skip_empty,
+        )
 
-            return TranslationEntryCollection(entries=entries)
+        return TranslationEntryCollection(entries=entries)
 
-        # ---------- 通用入口（可选） ----------
+    # ---------- 通用入口（可选） ----------
 
-        @classmethod
-        def from_entries(
-                cls,
-                entries: Iterable[TranslationEntry],
-        ) -> TranslationEntryCollection:
-            """
-            从已有 TranslationEntry 集合构建（通用入口）。
-            """
-            return TranslationEntryCollection(entries)
+    @classmethod
+    def from_entries(
+            cls,
+            entries: Iterable[TranslationEntry],
+    ) -> TranslationEntryCollection:
+        """
+        从已有 TranslationEntry 集合构建（通用入口）。
+        """
+        return TranslationEntryCollection(entries)
 
     def apply_xt_entries(
             self,

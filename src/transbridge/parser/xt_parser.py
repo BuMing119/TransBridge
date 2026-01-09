@@ -4,6 +4,7 @@ import csv
 from dataclasses import asdict, dataclass
 import json
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -55,7 +56,6 @@ class XT_XmlParser:
             self._index_by_edid.setdefault(e.edid, []).append(e)
 
     # ---------- 工厂方法 ----------
-    @classmethod
     @classmethod
     def from_file(cls, xml_path: str) -> "XT_XmlParser":
         """

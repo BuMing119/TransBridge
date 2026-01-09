@@ -92,7 +92,6 @@ class EET_XmlParser:
 
     # ----------- 构造入口 -----------
     @classmethod
-    @classmethod
     def from_file(cls, path: str | Path, encoding: str | None = None) -> "EET_XmlParser":
         """
         从文件解析。允许附带 encoding。

@@ -15,7 +15,7 @@ class TranslationEntry:
     context: str
 
     @classmethod
-    def creat_from_eet_entry(cls, eet_entry: "EET_Entry") -> "TranslationEntry":
+    def create_from_eet_entry(cls, eet_entry: "EET_Entry") -> "TranslationEntry":
         """
         从 EET_Entry 实例创建 TranslationEntry 实例
         :param eet_entry: EET_Entry 实例
