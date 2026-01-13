@@ -1,6 +1,6 @@
 from typing import Optional
 from datetime import datetime
-from .paratranz_client import ParatranzClient
+from src.transbridge.paratranz.paratranz_client import ParatranzClient
 
 class ParatranzContributionAPI(ParatranzClient):
 

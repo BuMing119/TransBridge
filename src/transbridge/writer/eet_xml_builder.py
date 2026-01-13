@@ -11,7 +11,8 @@ class EETBuilder:
         for entry in collection:
             esp = ET.SubElement(root, "ESP")
 
-            grup, champ = entry.key.split(":")
+            # 注意：现在原来的key值存储在context中
+            grup, champ = entry.context.split(":")
             editor, formid = entry.id.split(":")
 
             def add(tag, text):

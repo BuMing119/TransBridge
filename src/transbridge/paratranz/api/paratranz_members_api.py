@@ -1,5 +1,5 @@
 import json
-from .paratranz_client import ParatranzClient
+from src.transbridge.paratranz.paratranz_client import ParatranzClient
 
 
 class ParatranzMembersAPI(ParatranzClient):

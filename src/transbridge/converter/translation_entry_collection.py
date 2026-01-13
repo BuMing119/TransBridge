@@ -175,6 +175,7 @@ class TranslationEntryCollection:
 
             for edid in candidate_edids:
                 for xt in xt_by_edid.get(edid, []):
+                    # 注意：现在原来的key值存储在context中，所以try_update_from_xt会使用entry.context进行匹配
                     updated = TranslationEntry.try_update_from_xt(entry, xt)
 
                     if updated is None:
@@ -199,15 +200,12 @@ class TranslationEntryCollection:
 
     # ---------- 未来扩展（暂不实现） ----------
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> list[dict[str, Any]]:
         """
-        将整个集合序列化为 dict（用于 JSON / DB）。
+        将整个集合序列化为条目列表（用于 JSON）。
+        返回一个简单的条目数组，不包含任何嵌套结构。
         """
-        return {
-            "version": 1,
-            "count": len(self._entries),
-            "entries": [e.to_dict() for e in self._entries.values()],
-        }
+        return [e.to_dict() for e in self._entries.values()]
 
     def to_json(
         self,
@@ -239,5 +237,36 @@ class TranslationEntryCollection:
             self.to_json(ensure_ascii=ensure_ascii, indent=indent),
             encoding="utf-8",
         )
+
+    @classmethod
+    def from_json_file(
+        cls,
+        path: str | Path,
+        *,
+        overwrite: bool = True,
+    ) -> TranslationEntryCollection:
+        """
+        从 JSON 文件加载数据并创建 TranslationEntryCollection 实例。
+        JSON 格式应为简单的条目数组，不包含嵌套结构。
+        
+        :param path: JSON 文件路径
+        :param overwrite: 若 id 已存在，是否覆盖（默认 True）
+        :return: 新的 TranslationEntryCollection 实例
+        """
+        path = Path(path)
+        data = json.loads(path.read_text(encoding="utf-8"))
+        
+        collection = cls()
+        
+        # 验证格式 - 应该是一个条目数组
+        if not isinstance(data, list):
+            raise ValueError("无效的 JSON 格式：应该是一个条目数组")
+        
+        # 从字典创建 TranslationEntry 对象
+        for entry_data in data:
+            entry = TranslationEntry.from_dict(entry_data)
+            collection.add(entry, overwrite=overwrite)
+        
+        return collection
 
 

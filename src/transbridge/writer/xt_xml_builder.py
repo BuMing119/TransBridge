@@ -21,7 +21,8 @@ class XTBuilder:
 
         for entry in collection:
             id_left, _, id_right = entry.id.partition(":")
-            rec = entry.key
+            # 注意：现在原来的key值存储在context中
+            rec = entry.context
             src = entry.original
             dest = entry.translation
 

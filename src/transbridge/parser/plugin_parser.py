@@ -51,6 +51,7 @@ class PluginParser:
 
         items = []
         skipped_count = 0
+        last_editor_id = None  # 用于存储上一个有效的 editor_id
 
         for idx, ps in enumerate(strings_with_context):
             # Progress callback
@@ -62,6 +63,20 @@ class PluginParser:
                 skipped_count += 1
                 self.log.debug(f"Skipped empty string: {ps.editor_id} {ps.type}")
                 continue
+
+            # 修复 editor_id 为 None 的问题
+            # 如果当前 ps 的 editor_id 为 None，且 context 不为 "REFR:FULL"，则使用上一个有效的 editor_id
+            if ps.editor_id is None and ps.type and ps.type.replace(" ", ":") != "REFR:FULL":
+                # 创建一个新的 PluginString 对象，使用上一个有效的 editor_id
+                # 由于 PluginString 可能是不可变的，我们使用 setattr 来修改它
+                if last_editor_id is not None:
+                    setattr(ps, "editor_id", last_editor_id)
+                    self.log.debug(f"Fixed missing editor_id: set to {last_editor_id} for type {ps.type}")
+            elif ps.editor_id is not None:
+                # 如果当前 editor_id 有效，则更新 last_editor_id
+                last_editor_id = ps.editor_id
+
+            ps.index
 
             item = self._create_item(ps)
             items.append(item)

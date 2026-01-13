@@ -1,6 +1,6 @@
 import json
 from typing import List
-from .paratranz_client import ParatranzClient
+from src.transbridge.paratranz.paratranz_client import ParatranzClient
 
 
 class ParatranzTermsAPI(ParatranzClient):

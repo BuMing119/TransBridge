@@ -36,7 +36,8 @@ class PluginWriter:
 
             # 匹配 key（插件中 "x y" → entry中 "x:y"）
             key = ps.type.replace(" ", ":")
-            if key != entry.key:
+            # 注意：现在原来的key值存储在context中
+            if key != entry.context:
                 continue
 
             # 如果没有翻译内容则跳过

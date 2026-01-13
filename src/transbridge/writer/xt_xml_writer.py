@@ -31,7 +31,8 @@ class XTWriter:
 
                 if not (match1 or match2):
                     continue
-                if rec != entry.key:
+                # 注意：现在原来的key值存储在context中
+                if rec != entry.context:
                     continue
 
                 dest_node = string.find("Dest")

@@ -34,7 +34,8 @@ class EETWriter:
             entry = collection.get(entry_id)
             if not entry:
                 continue
-            if entry.key != entry_key:
+            # 注意：现在原来的key值存储在context中
+            if entry.context != entry_key:
                 continue
 
             # 更新 TRADUIT
