@@ -40,6 +40,7 @@ class ParatranzClient:
         Returns:
             API 响应的 JSON 数据
 
+
         Raises:
             RuntimeError: 当请求失败或 API 返回错误时
         """
