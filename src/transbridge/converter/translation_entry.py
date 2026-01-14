@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Any
 from src.transbridge.parser import EET_Entry
 from src.transbridge.parser.xt_parser import XT_Entry
+from src.transbridge.parser.plugin.plugin_string_with_context import PluginStringWithContext
 
 
 @dataclass
@@ -27,13 +28,13 @@ class TranslationEntry:
         # 根据edid是否为空来决定id和key的值
         if eet_entry.edid:
             # edid不为空，直接使用edid
-            id_value = f"{eet_entry.edid}:{eet_entry.id}"
-            key_value = f"{eet_entry.edid}:{eet_entry.id}"
+            id_value = f"{eet_entry.edid}:{eet_entry.id}|{eet_entry.index}"
+            key_value = f"{eet_entry.edid}:{eet_entry.id}|{eet_entry.index}"
         else:
             # edid为空，使用"None:formid"的格式
-            id_value = f"None:{eet_entry.id}"
-            key_value = f"None:{eet_entry.id}"
-        
+            id_value = f"None:{eet_entry.id}|{eet_entry.index}"
+            key_value = f"None:{eet_entry.id}|{eet_entry.index}"
+
         # 构建并返回 TranslationEntry
         return cls(
             id=id_value,  # edid 或 "None:formid"
@@ -48,10 +49,10 @@ class TranslationEntry:
 
 
     @classmethod
-    def creat_from_plugin_entry(cls, ps: "PluginString") -> "TranslationEntry":
+    def creat_from_plugin_entry(cls, ps: "PluginStringWithContext") -> "TranslationEntry":
         """
-        从 PluginString 实例创建 TranslationEntry 实例
-        :param ps: PluginString 实例（sse_plugin_interface.plugin_string.PluginString）
+        从 PluginStringWithContext 实例创建 TranslationEntry 实例
+        :param ps: PluginStringWithContext 实例
         :return: TranslationEntry 实例
         """
         # "INFO NAM1" -> "INFO:NAM1"
@@ -66,9 +67,14 @@ class TranslationEntry:
         if "|" in str(form_id):
             form_id = form_id.split("|")[0]
 
-        id_value = f"{editor_id}:{form_id}"
+        if ps.index is None:
+            ps.index = 1
 
-        index= getattr(ps, "index", "")
+        id_value = f"{editor_id}:{form_id}|{ps.index}"
+        if original_key.split(":")[0] == "INFO" or original_key.split(":")[0] == "DIAL":
+            original_key = f"{original_key}|{getattr(ps, 'quest_formid', '')}"
+
+
 
         return cls(
             id=id_value,
@@ -93,8 +99,9 @@ class TranslationEntry:
 
         # ---------- 1. 根据 list_id + edid 匹配 id ----------
 
-        # TranslationEntry.id 形如 "a:b"
-        id_left, _, id_right = entry.id.partition(":")
+        # TranslationEntry.id 形如 "a:b|index"
+        id_left, _, id_right_with_index = entry.id.partition(":")
+        id_right, _, id_index = id_right_with_index.partition("|")
 
         if xt.list_id == 0:
             # edid == id 前半部分
@@ -108,6 +115,12 @@ class TranslationEntry:
 
         else:
             # 未定义的 list_id，直接不匹配
+            return None
+
+        # ---------- 1.5 检查 index 是否匹配 ----------
+        # TranslationEntry.id 中的 index 必须与 XT_Entry.index 一致
+        entry_index = int(id_index) if id_index else None
+        if entry_index is not None and entry_index != xt.index:
             return None
 
         # ---------- 2. rec / source 的一致性校验（防误匹配） ----------

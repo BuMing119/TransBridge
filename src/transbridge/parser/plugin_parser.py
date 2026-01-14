@@ -5,16 +5,17 @@ from pathlib import Path
 from sse_plugin_interface.plugin import SSEPlugin
 from sse_plugin_interface.plugin_string import PluginString
 from src.transbridge.converter.translation_entry import TranslationEntry
+from src.transbridge.parser.plugin.plugin_with_context import SSEPluginWithContext
 
 
 class PluginParser:
     """
-    Bridges SSEPlugin and TranslationEntry model.
+    Bridges SSEPluginWithContext and TranslationEntry model.
     Converts raw plugin strings into structured translation entries.
     """
 
     def __init__(self):
-        self._plugin: SSEPlugin | None = None
+        self._plugin: SSEPluginWithContext | None = None
         self._source_path: Path | None = None
         self.log = logging.getLogger("PluginParser")
 
@@ -39,13 +40,13 @@ class PluginParser:
         self.log.info(f"Starting to parse plugin: {path}")
 
         try:
-            self._plugin = SSEPlugin.from_file(path)
+            self._plugin = SSEPluginWithContext.from_file(path)
         except Exception as e:
             self.log.error(f"Failed to parse plugin {path}: {e}")
             return []
 
-        #strings_with_context = self._plugin.extract_strings_with_context()
-        strings_with_context = self._plugin.extract_strings()
+        strings_with_context = self._plugin.extract_strings_with_context()
+        #strings_with_context = self._plugin.extract_strings()
         total = len(strings_with_context)
         self.log.info(f"Extracted {total} strings from plugin")
 
@@ -76,7 +77,6 @@ class PluginParser:
                 # 如果当前 editor_id 有效，则更新 last_editor_id
                 last_editor_id = ps.editor_id
 
-            ps.index
 
             item = self._create_item(ps)
             items.append(item)

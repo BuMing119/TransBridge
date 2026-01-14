@@ -16,6 +16,7 @@ class XT_Entry:
     rec: str
     source: str
     dest: str
+    index: int = 1
 
     @staticmethod
     def _to_int(value: str | None) -> int | None:
@@ -80,6 +81,12 @@ class XT_XmlParser:
                 node = e.find(tag)
                 return (node.text or "").strip() if node is not None else ""
 
+            # 获取REC节点的id属性
+            rec_node = e.find("REC")
+            rec_index = 1  # 默认值为1
+            if rec_node is not None and "id" in rec_node.attrib:
+                rec_index = XT_Entry._to_int(rec_node.attrib.get("id")) or 1
+
             entries.append(
                 XT_Entry(
                     list_id=list_id,
@@ -87,6 +94,7 @@ class XT_XmlParser:
                     rec=text_of("REC"),
                     source=text_of("Source"),
                     dest=text_of("Dest"),
+                    index=rec_index,
                 )
             )
 
@@ -132,12 +140,19 @@ class XT_XmlParser:
                 node = elem.find(tag)
                 return (node.text or "").strip() if node is not None else ""
 
+            # 获取REC节点的id属性
+            rec_node = elem.find("REC")
+            rec_index = 1  # 默认值为1
+            if rec_node is not None and "id" in rec_node.attrib:
+                rec_index = XT_Entry._to_int(rec_node.attrib.get("id") + 1) or 1
+
             entry = XT_Entry(
                 list_id=list_id,
                 edid=text_of("EDID"),
                 rec=text_of("REC"),
                 source=text_of("Source"),
                 dest=text_of("Dest"),
+                index=rec_index,
             )
 
             yield entry
@@ -171,7 +186,7 @@ class XT_XmlParser:
             f.write(self.to_json(ensure_ascii=ensure_ascii, indent=indent))
 
     def to_csv_file(self, path: str) -> None:
-        fieldnames = ["list_id", "edid", "rec", "source", "dest"]
+        fieldnames = ["list_id", "edid", "rec", "source", "dest", "index"]
         with open(path, "w", encoding="utf-8", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()

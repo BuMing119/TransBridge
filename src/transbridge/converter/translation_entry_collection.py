@@ -6,9 +6,10 @@ from pathlib import Path
 import json
 
 from src.transbridge.converter.translation_entry import TranslationEntry
-from src.transbridge.parser.eet_parser import EET_XmlParser
+from src.transbridge.parser.eet_parser import EET_XmlParser, EET_Entry
 from src.transbridge.parser.plugin_parser import PluginParser
 from src.transbridge.parser.xt_parser import XT_Entry
+import re
 
 
 class TranslationEntryCollection:
@@ -104,6 +105,66 @@ class TranslationEntryCollection:
             collection.add(entry, overwrite=overwrite)
 
         return collection
+
+    def update_from_eet_xml(
+            self,
+            path: str | Path,
+    ) -> int:
+        """
+        从 EET XML 文件中更新已存在的翻译项。
+
+        规则：
+        - 只更新已存在的 TranslationEntry
+        - 匹配条件：id 和 original 必须一致
+        - 只更新 translation 和 stage 字段，其他字段保持不变
+        - 如果 EET 中 traduit 为空，则不更新
+
+        :param path: EET XML 文件路径
+        :return: 实际发生更新的条目数量
+        """
+        parser = EET_XmlParser.from_file(path)
+        updated_count = 0
+
+        # 预先按 id 分组 EET 条目（加速匹配）
+        eet_by_id: dict[str, list[EET_Entry]] = defaultdict(list)
+        for eet_entry in parser:
+            # 构建 EET 条目的 id，与 TranslationEntry.id 格式一致
+            if eet_entry.edid:
+                eet_id = f"{eet_entry.edid}:{eet_entry.id}|{eet_entry.index}"
+            else:
+                eet_id = f"None:{eet_entry.id}|{eet_entry.index}"
+            eet_by_id[eet_id].append(eet_entry)
+
+        # 遍历已存在的 TranslationEntry
+        for entry in list(self._entries.values()):
+            # 查找匹配的 EET 条目
+            matching_eet_entries = eet_by_id.get(entry.id, [])
+
+            for eet_entry in matching_eet_entries:
+                # 检查 original 是否匹配
+                if eet_entry.original != entry.original:
+                    continue
+
+                # 检查 traduit 是否为空
+                if not eet_entry.traduit:
+                    continue
+
+                # 更新 translation 和 stage
+                updated_entry = TranslationEntry(
+                    id=entry.id,
+                    key=entry.key,
+                    original=entry.original,
+                    translation=eet_entry.traduit,
+                    stage=1 if eet_entry.status == 99 or eet_entry.traduit else 0,
+                    context=entry.context
+                )
+
+                self._entries[entry.id] = updated_entry
+                updated_count += 1
+                # 每个条目只更新一次
+                break
+
+        return updated_count
 
     # ---------- Plugin ----------
 
