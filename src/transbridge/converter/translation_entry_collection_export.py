@@ -22,7 +22,7 @@ def export_to_categorized_json_files(
 
     分类规则：
     - 书籍_书名.json: "BOOK:FULL"
-    - 书籍_内容.json: "BOOK:FULL"
+    - 书籍_内容.json: "BOOK:DESC"
     - 互动.json: "FLOR:RNAM", "FURN:FULL", "HAZD:FULL"
     - 人名.json: "NPC_:FULL", "NPC_:SHRT", "TACT:FULL"
     - 任务日志.json: "QUST:FULL", "QUST:NNAM"
@@ -41,7 +41,7 @@ def export_to_categorized_json_files(
     # 定义分类规则
     category_rules = {
         "书籍_书名.json": ["BOOK:FULL"],
-        "书籍_内容.json": ["BOOK:FULL"],
+        "书籍_内容.json": ["BOOK:DESC"],
         "互动.json": ["FLOR:RNAM", "FURN:FULL", "HAZD:FULL"],
         "人名.json": ["NPC_:FULL", "NPC_:SHRT", "TACT:FULL"],
         "任务日志.json": ["QUST:FULL", "QUST:NNAM"],
