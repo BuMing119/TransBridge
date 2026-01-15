@@ -1,7 +1,7 @@
 from __future__ import annotations
+
 from collections import defaultdict
 from pathlib import Path
-from typing import TYPE_CHECKING
 import re
 
 from src.transbridge.converter.translation_entry import TranslationEntry
@@ -9,7 +9,7 @@ from src.transbridge.converter.translation_entry_collection import TranslationEn
 
 
 def export_to_categorized_json_files(
-    collection: TranslationEntryCollection ,
+    collection: TranslationEntryCollection,
     output_dir: str | Path,
     *,
     ensure_ascii: bool = False,
@@ -22,13 +22,15 @@ def export_to_categorized_json_files(
 
     分类规则：
     - 书籍_书名.json: "BOOK:FULL"
-    - 书籍_内容.json: "BOOK:FULL"
+    - 书籍_内容.json: "BOOK:DESC"
     - 互动.json: "FLOR:RNAM", "FURN:FULL", "HAZD:FULL"
     - 人名.json: "NPC_:FULL", "NPC_:SHRT", "TACT:FULL"
     - 任务日志.json: "QUST:FULL", "QUST:NNAM"
     - 地名与门.json: "CELL:FULL", "DOOR:FULL", "LCTN:FULL", "REFR:FULL", "WRLD:FULL"
-    - 法术_龙吼_技能.json: "ENCH:FULL", "EXPL:FULL", "MESG:DESC", "MESG:FULL", "MESG:ITXT", "MGEF:DNAM", "MGEF:FULL", "PERK:FULL", "SHOU:FULL", "SPEL:DESC", "SPEL:FULL"
-    - 物品.json: "ACTI:FULL", "ACTI:RNAM", "ALCH:FULL", "AMMO:FULL", "ARMO:DESC", "ARMO:FULL", "CONT:FULL", "INGR:FULL", "KEYM:FULL", "MISC:FULL", "SLGM:FULL", "TREE:FULL", "WEAP:DESC", "WEAP:FULL"
+    - 法术_龙吼_技能.json: "ENCH:FULL", "EXPL:FULL", "MESG:DESC", "MESG:FULL", "MESG:ITXT", "MGEF:DNAM",
+                        "MGEF:FULL", "PERK:FULL", "SHOU:FULL", "SPEL:DESC", "SPEL:FULL"
+    - 物品.json: "ACTI:FULL", "ACTI:RNAM", "ALCH:FULL", "AMMO:FULL", "ARMO:DESC", "ARMO:FULL", "CONT:FULL",
+                "INGR:FULL", "KEYM:FULL", "MISC:FULL", "SLGM:FULL", "TREE:FULL", "WEAP:DESC", "WEAP:FULL"
 
     :param collection: TranslationEntryCollection 实例
     :param output_dir: 输出目录路径
@@ -41,19 +43,44 @@ def export_to_categorized_json_files(
     # 定义分类规则
     category_rules = {
         "书籍_书名.json": ["BOOK:FULL"],
-        "书籍_内容.json": ["BOOK:FULL"],
+        "书籍_内容.json": ["BOOK:DESC"],
         "互动.json": ["FLOR:RNAM", "FURN:FULL", "HAZD:FULL"],
         "人名.json": ["NPC_:FULL", "NPC_:SHRT", "TACT:FULL"],
         "任务日志.json": ["QUST:FULL", "QUST:NNAM"],
         "地名与门.json": ["CELL:FULL", "DOOR:FULL", "LCTN:FULL", "REFR:FULL", "WRLD:FULL"],
-        "法术_龙吼_技能.json": ["ENCH:FULL", "EXPL:FULL", "MESG:DESC", "MESG:FULL", "MESG:ITXT", "MGEF:DNAM", "MGEF:FULL", "PERK:FULL", "SHOU:FULL", "SPEL:DESC", "SPEL:FULL"],
-        "物品.json": ["ACTI:FULL", "ACTI:RNAM", "ALCH:FULL", "AMMO:FULL", "ARMO:DESC", "ARMO:FULL", "CONT:FULL", "INGR:FULL", "KEYM:FULL", "MISC:FULL", "SLGM:FULL", "TREE:FULL", "WEAP:DESC", "WEAP:FULL"]
+        "法术_龙吼_技能.json": [
+            "ENCH:FULL",
+            "EXPL:FULL",
+            "MESG:DESC",
+            "MESG:FULL",
+            "MESG:ITXT",
+            "MGEF:DNAM",
+            "MGEF:FULL",
+            "PERK:FULL",
+            "SHOU:FULL",
+            "SPEL:DESC",
+            "SPEL:FULL",
+        ],
+        "物品.json": [
+            "ACTI:FULL",
+            "ACTI:RNAM",
+            "ALCH:FULL",
+            "AMMO:FULL",
+            "ARMO:DESC",
+            "ARMO:FULL",
+            "CONT:FULL",
+            "INGR:FULL",
+            "KEYM:FULL",
+            "MISC:FULL",
+            "SLGM:FULL",
+            "TREE:FULL",
+            "WEAP:DESC",
+            "WEAP:FULL",
+        ],
     }
 
     # 用于存储按文件名分组的条目
-    categorized_entries: dict[str, list[TranslationEntry]] = {
-        filename: [] for filename in category_rules.keys()
-    }
+    categorized_entries: dict[str, list[TranslationEntry]] = {filename: [] for filename in category_rules.keys()}
 
     # 用于存储INFO和DIAL类型的条目，按quest_formid分组
     dial_entries: dict[str, list[TranslationEntry]] = defaultdict(list)
@@ -86,10 +113,10 @@ def export_to_categorized_json_files(
         quest_entry = None
         for entry in collection:
             # 检查 id 的后半部分是否匹配 quest_formid
-            id_parts = entry.id.split(':')  # 将 id 按照 ':' 分割
+            id_parts = entry.id.split(":")  # 将 id 按照 ':' 分割
             if len(id_parts) > 1:
                 form_id_and_index = id_parts[1]  # 获取 "form_id|index" 部分
-                form_id = form_id_and_index.split('|')[0]  # 获取 form_id
+                form_id = form_id_and_index.split("|")[0]  # 获取 form_id
 
                 # 如果 form_id 匹配 quest_formid，则认为找到对应的 TranslationEntry
                 if form_id == quest_formid:
@@ -100,7 +127,7 @@ def export_to_categorized_json_files(
         quest_original = quest_entry.original if quest_entry else quest_formid
 
         # 清理文件名中的非法字符
-        quest_original = re.sub(r'[<>:"/\|?*]', '_', quest_original)
+        quest_original = re.sub(r'[<>:"/\|?*]', "_", quest_original)
 
         filename = f"对话_[{quest_original}].json"
         file_path = output_dir / filename
