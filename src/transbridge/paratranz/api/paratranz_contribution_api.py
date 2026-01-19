@@ -18,7 +18,7 @@ class ParatranzContributionAPI(ParatranzClient):
         参数说明：
         user_id:    过滤某个用户
         since:      毫秒时间戳 (起始)
-        until:      毫秒时间戳 (结束)
+        utils:      毫秒时间戳 (结束)
         lang:       筛选语言
 
         返回: 列表结构
@@ -30,7 +30,7 @@ class ParatranzContributionAPI(ParatranzClient):
         if since:
             params["since"] = since
         if until:
-            params["until"] = until
+            params["utils"] = until
         if lang:
             params["lang"] = lang
 

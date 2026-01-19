@@ -88,7 +88,7 @@ class ContributionFilterDialog(QDialog):
         return {
             "user_id": user_id if user_id > 0 else None,
             "since": start_timestamp,
-            "until": end_timestamp,
+            "utils": end_timestamp,
             "lang": self.lang_input.currentText().strip() or None
         }
 
@@ -210,8 +210,8 @@ class ContributionUI(QWidget):
             since_date = QDateTime.fromMSecsSinceEpoch(self.filter_options['since']).toString(Qt.DateFormat.ISODate)
             info_parts.append(f"起始日期: {since_date}")
 
-        if self.filter_options.get("until"):
-            until_date = QDateTime.fromMSecsSinceEpoch(self.filter_options['until']).toString(Qt.DateFormat.ISODate)
+        if self.filter_options.get("utils"):
+            until_date = QDateTime.fromMSecsSinceEpoch(self.filter_options['utils']).toString(Qt.DateFormat.ISODate)
             info_parts.append(f"结束日期: {until_date}")
 
         if self.filter_options.get("lang"):
@@ -232,7 +232,7 @@ class ContributionUI(QWidget):
                 self.project_id,
                 user_id=self.filter_options.get("user_id"),
                 since=self.filter_options.get("since"),
-                until=self.filter_options.get("until"),
+                until=self.filter_options.get("utils"),
                 lang=self.filter_options.get("lang")
             )
 
