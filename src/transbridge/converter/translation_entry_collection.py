@@ -1,7 +1,7 @@
 from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable, Iterator
-from typing import Optional,Any
+from typing import Optional, Any
 from pathlib import Path
 import json
 
@@ -88,10 +88,10 @@ class TranslationEntryCollection:
 
     @classmethod
     def from_eet_xml(
-            cls,
-            path: str | Path,
-            *,
-            overwrite: bool = True,
+        cls,
+        path: str | Path,
+        *,
+        overwrite: bool = True,
     ) -> TranslationEntryCollection:
         """
         从 EET XML 文件一次性导入。
@@ -107,8 +107,8 @@ class TranslationEntryCollection:
         return collection
 
     def update_from_eet_xml(
-            self,
-            path: str | Path,
+        self,
+        path: str | Path,
     ) -> int:
         """
         从 EET XML 文件中更新已存在的翻译项。
@@ -156,7 +156,7 @@ class TranslationEntryCollection:
                     original=entry.original,
                     translation=eet_entry.traduit,
                     stage=1 if eet_entry.status == 99 or eet_entry.traduit else 0,
-                    context=entry.context
+                    context=entry.context,
                 )
 
                 self._entries[entry.id] = updated_entry
@@ -170,29 +170,30 @@ class TranslationEntryCollection:
 
     @classmethod
     def from_plugin(
-            cls,
-            path: str | Path,
-            *,
-            skip_empty: bool = True,
-            overwrite: bool = True,
+        cls,
+        path: str | Path,
+        *,
+        skip_empty: bool = True,
+        overwrite: bool = True,
     ) -> TranslationEntryCollection:
         """
         从 Plugin 文件一次性导入。
         """
         parser = PluginParser()
-        entries = parser.parse_plugin(
-            Path(path),
-            skip_empty=skip_empty,
-        )
 
-        return TranslationEntryCollection(entries=entries)
+        return TranslationEntryCollection(
+            entries=[
+                TranslationEntry.create_from_translation_item(item)
+                for item in parser.parse_plugin(Path(path), skip_empty=skip_empty)
+            ]
+        )
 
     # ---------- 通用入口（可选） ----------
 
     @classmethod
     def from_entries(
-            cls,
-            entries: Iterable[TranslationEntry],
+        cls,
+        entries: Iterable[TranslationEntry],
     ) -> TranslationEntryCollection:
         """
         从已有 TranslationEntry 集合构建（通用入口）。
@@ -200,8 +201,8 @@ class TranslationEntryCollection:
         return TranslationEntryCollection(entries)
 
     def apply_xt_entries(
-            self,
-            xt_entries: Iterable[XT_Entry],
+        self,
+        xt_entries: Iterable[XT_Entry],
     ) -> int:
         """
         将 XT_Entry 批量应用到已有的 TranslationEntry 上。
@@ -310,25 +311,23 @@ class TranslationEntryCollection:
         """
         从 JSON 文件加载数据并创建 TranslationEntryCollection 实例。
         JSON 格式应为简单的条目数组，不包含嵌套结构。
-        
+
         :param path: JSON 文件路径
         :param overwrite: 若 id 已存在，是否覆盖（默认 True）
         :return: 新的 TranslationEntryCollection 实例
         """
         path = Path(path)
         data = json.loads(path.read_text(encoding="utf-8"))
-        
+
         collection = cls()
-        
+
         # 验证格式 - 应该是一个条目数组
         if not isinstance(data, list):
             raise ValueError("无效的 JSON 格式：应该是一个条目数组")
-        
+
         # 从字典创建 TranslationEntry 对象
         for entry_data in data:
             entry = TranslationEntry.from_dict(entry_data)
             collection.add(entry, overwrite=overwrite)
-        
+
         return collection
-
-

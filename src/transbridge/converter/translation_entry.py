@@ -4,6 +4,7 @@ from typing import Any
 from src.transbridge.parser import EET_Entry
 from src.transbridge.parser.xt_parser import XT_Entry
 from src.transbridge.parser.plugin.plugin_string_with_context import PluginStringWithContext
+from src.transbridge.parser.plugin.item import TranslationItem, ContextUnion, InfoContext, DialContext
 
 
 @dataclass
@@ -14,6 +15,7 @@ class TranslationEntry:
     translation: str
     stage: int
     context: str  # 现在存储原来的key值
+    item_context: ContextUnion | None = None  # 存储完整的 TranslationItem 上下文
 
     @classmethod
     def create_from_eet_entry(cls, eet_entry: "EET_Entry") -> "TranslationEntry":
@@ -43,10 +45,8 @@ class TranslationEntry:
             translation=eet_entry.traduit,  # traduit 直接映射
             stage=stage,  # 根据 status 确定 stage
             context=f"{eet_entry.grup}:{eet_entry.champ}",  # 原来的key值移动到context
+            item_context=None,
         )
-
-
-
 
     @classmethod
     def creat_from_plugin_entry(cls, ps: "PluginStringWithContext") -> "TranslationEntry":
@@ -62,7 +62,6 @@ class TranslationEntry:
         editor_id = getattr(ps, "editor_id", "")
         form_id = getattr(ps, "form_id", "")
 
-
         # 从form_id中提取十六进制ID部分，移除插件文件名
         if "|" in str(form_id):
             form_id = form_id.split("|")[0]
@@ -75,10 +74,8 @@ class TranslationEntry:
             quest_formid_ori = getattr(ps, "quest_formid", "")
             quest_formid = quest_formid_ori.split("|")[0]
 
-            #original_key = f"{original_key}|{getattr(ps, 'quest_formid', '')}"
+            # original_key = f"{original_key}|{getattr(ps, 'quest_formid', '')}"
             original_key = f"{original_key}|{quest_formid}"
-
-
 
         return cls(
             id=id_value,
@@ -86,13 +83,58 @@ class TranslationEntry:
             original=getattr(ps, "string", "") or "",
             translation="",
             stage=0,
-            context=original_key  # 原来的key值移动到context
+            context=original_key,  # 原来的key值移动到context
+            item_context=ps.context if ps.context else None,
+        )
+
+    @classmethod
+    def create_from_translation_item(cls, item: TranslationItem) -> "TranslationEntry":
+        """
+        从 TranslationItem 实例创建 TranslationEntry 实例
+        :param item: TranslationItem 实例
+        :return: TranslationEntry 实例
+        """
+        # 1. 构造 context 字符串 (compat ID logic)
+        # 类似 "INFO:NAM1"
+        context_str = f"{item.record_type}:{item.field_name}"
+
+        # 特殊处理 INFO 和 DIAL 的 context 字符串，以支持旧版导出逻辑 (如果需要保持兼容性)
+        # 旧版逻辑在 create_from_plugin_entry 中处理了 quest_formid
+        # "INFO:NAM1|QuestID"
+        if item.record_type in ("INFO", "DIAL"):
+            # 尝试从 item.context 获取 quest info
+            quest_formid = ""
+            if isinstance(item.context, (InfoContext, DialContext)) and item.context.quest:
+                quest_formid = item.context.quest.split("|")[0]
+
+            # 如果存在 quest info，拼接到 context 字符串中 (保持与原逻辑一致)
+            if quest_formid:
+                context_str = f"{context_str}|{quest_formid}"
+
+        # 2. 构造 ID (compat ID logic)
+        # 原逻辑: f"{editor_id}:{form_id}|{index}~{context_str}"
+        # item.form_id 可能是完整 ID "xxxxxx|Plugin.esm"，原逻辑只取前半部分
+        form_id_short = item.form_id.split("|")[0]
+
+        # item.index 可能是 None
+        index_val = item.index if item.index is not None else 1
+
+        id_value = f"{item.editor_id}:{form_id_short}|{index_val}~{context_str}"
+
+        return cls(
+            id=id_value,
+            key=id_value,
+            original=item.original,
+            translation=item.translation or "",
+            stage=1 if item.translation else 0,  # 如果有翻译则已完成 ? 或者根据 item.state 判断
+            context=context_str,
+            item_context=item.context,
         )
 
     def try_update_from_xt(
-            cls,
-            entry: "TranslationEntry",
-            xt: XT_Entry,
+        cls,
+        entry: "TranslationEntry",
+        xt: XT_Entry,
     ) -> "TranslationEntry | None":
         """
         尝试用 XT_Entry 更新已有的 TranslationEntry。
@@ -139,11 +181,7 @@ class TranslationEntry:
 
         # ---------- 3. 判断是否满足“更新 translation 的条件” ----------
 
-        should_update = (
-                entry.stage == 0
-                and not entry.translation
-                and bool(xt.dest)
-        )
+        should_update = entry.stage == 0 and not entry.translation and bool(xt.dest)
 
         if not should_update:
             return entry
@@ -157,6 +195,7 @@ class TranslationEntry:
             translation=xt.dest,
             stage=1,
             context=entry.context,
+            item_context=entry.item_context,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -169,7 +208,7 @@ class TranslationEntry:
             "original": self.original,
             "translation": self.translation,
             "stage": self.stage,
-            "context": self.context
+            "context": self.context,
         }
 
     @classmethod
@@ -185,5 +224,3 @@ class TranslationEntry:
             stage=data.get("stage", 0),
             context=data.get("context"),
         )
-
-

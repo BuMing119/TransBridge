@@ -6,6 +6,7 @@ import re
 
 from src.transbridge.converter.translation_entry import TranslationEntry
 from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from src.transbridge.parser.plugin.item import InfoContext, DialContext
 
 
 def export_to_categorized_json_files(
@@ -88,11 +89,33 @@ def export_to_categorized_json_files(
     # 遍历所有条目进行分类
     for entry in collection._entries.values():
         # 处理INFO和DIAL类型
-        if "|" in entry.context:
-            # 提取context和quest_formid
-            context_part, quest_formid = entry.context.split("|", 1)
-            # 使用quest_formid作为文件名的一部分
-            dial_entries[quest_formid].append(entry)
+        # 优先使用 item_context 判断
+        is_dial_type = False
+        quest_formid_from_context = None
+
+        if entry.item_context:
+            if isinstance(entry.item_context, (InfoContext, DialContext)):
+                is_dial_type = True
+                if entry.item_context.quest:
+                    quest_formid_from_context = entry.item_context.quest.split("|")[0]
+        # 后备：检查 context 字符串中是否包含 "|" (旧逻辑)
+        elif "|" in entry.context:
+            is_dial_type = True
+            # 尝试从 context 字符串提取 quest_formid
+            # context 格式: "INFO:NAM1|QuestID"
+            parts = entry.context.split("|")
+            if len(parts) > 1:
+                quest_formid_from_context = parts[1]
+
+        if is_dial_type:
+            # 如果能获取到 quest_formid，则分组
+            if quest_formid_from_context:
+                dial_entries[quest_formid_from_context].append(entry)
+            else:
+                # 如果是对话类型但没有 Quest FormID，暂时归类到 "对话_未知任务.json" 或者做其他处理
+                # 这里暂时保持原行为，如果不满足条件可能被漏掉？
+                # 原逻辑：如果没有 "|"，会走进 else 分支
+                pass
         else:
             # 处理普通类型
             for filename, contexts in category_rules.items():
