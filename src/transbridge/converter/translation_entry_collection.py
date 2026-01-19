@@ -226,7 +226,8 @@ class TranslationEntryCollection:
 
         for entry in list(self._entries.values()):
             # TranslationEntry.id = "a:b"
-            left, _, right = entry.id.partition(":")
+            left, _, right_with_other = entry.id.partition(":")
+            right = right_with_other.split("|")[0]
 
             # list_id = 0 → edid = a
             # list_id = 1 → edid = [b]

@@ -28,12 +28,12 @@ class TranslationEntry:
         # 根据edid是否为空来决定id和key的值
         if eet_entry.edid:
             # edid不为空，直接使用edid
-            id_value = f"{eet_entry.edid}:{eet_entry.id}|{eet_entry.index}"
-            key_value = f"{eet_entry.edid}:{eet_entry.id}|{eet_entry.index}"
+            id_value = f"{eet_entry.edid}:{eet_entry.id}|{eet_entry.index}~{eet_entry.grup}:{eet_entry.champ}"
+            key_value = f"{eet_entry.edid}:{eet_entry.id}|{eet_entry.index}~{eet_entry.grup}:{eet_entry.champ}"
         else:
             # edid为空，使用"None:formid"的格式
-            id_value = f"None:{eet_entry.id}|{eet_entry.index}"
-            key_value = f"None:{eet_entry.id}|{eet_entry.index}"
+            id_value = f"None:{eet_entry.id}|{eet_entry.index}~{eet_entry.grup}:{eet_entry.champ}"
+            key_value = f"None:{eet_entry.id}|{eet_entry.index}~{eet_entry.grup}:{eet_entry.champ}"
 
         # 构建并返回 TranslationEntry
         return cls(
@@ -70,7 +70,7 @@ class TranslationEntry:
         if ps.index is None:
             ps.index = 1
 
-        id_value = f"{editor_id}:{form_id}|{ps.index}"
+        id_value = f"{editor_id}:{form_id}|{ps.index}~{original_key}"
         if original_key.split(":")[0] == "INFO" or original_key.split(":")[0] == "DIAL":
             original_key = f"{original_key}|{getattr(ps, 'quest_formid', '')}"
 
@@ -101,7 +101,8 @@ class TranslationEntry:
 
         # TranslationEntry.id 形如 "a:b|index"
         id_left, _, id_right_with_index = entry.id.partition(":")
-        id_right, _, id_index = id_right_with_index.partition("|")
+        id_right, _, id_index_with_type = id_right_with_index.partition("|")
+        id_index, _, id_type = id_index_with_type.partition("~")
 
         if xt.list_id == 0:
             # edid == id 前半部分
