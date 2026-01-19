@@ -150,24 +150,18 @@ class SSEPluginWithContext(SSEPlugin):
         return speaker_formid, emotion_type, response_note
 
     @staticmethod
-    def _extract_dial_context(record: Record) -> tuple[str | None, str | None, str | None]:
+    def _extract_dial_context(record: Record) -> tuple[str | None, str | None]:
         """
-        Extracts DIAL dialogue topic context (topic name, quest FormID, editor ID).
+        Extracts DIAL dialogue topic context (topic name, quest FormID).
 
         Args:
             record (Record): The DIAL record to extract context from.
 
         Returns:
-            tuple: (dialogue_topic, quest_formid, editor_id) - values or None if not found.
+            tuple: (dialogue_topic, quest_formid) - values or None if not found.
         """
         dialogue_topic: str | None = None
         quest_formid: str | None = None
-        editor_id: str | None = None
-
-        # Get EDID first
-        edid = SSEPlugin.get_record_edid(record)
-        if edid:
-            editor_id = str(edid)
 
         for subrecord in record.subrecords:
             # FULL - Topic name
@@ -181,7 +175,7 @@ class SSEPluginWithContext(SSEPlugin):
                 quest_formid_int = int.from_bytes(subrecord.data[:4], byteorder="little")
                 quest_formid = hex(quest_formid_int).removeprefix("0x").upper().zfill(8)
 
-        return dialogue_topic, quest_formid, editor_id
+        return dialogue_topic, quest_formid
 
     # Extraction methods
 
@@ -226,13 +220,12 @@ class SSEPluginWithContext(SSEPlugin):
                     dial_context_map[child.formid] = context
 
         # For TopicChildren groups, look up DIAL context using the group's label (DIAL FormID)
-        dial_formid_for_info: str | None = None
         if hasattr(group, "group_type") and group.group_type == Group.GroupType.TopicChildren:
             if dial_context_map and hasattr(group, "label"):
                 # The label of TopicChildren group is the DIAL FormID
-                dial_formid_for_info = group.label
-                if dial_formid_for_info in dial_context_map:
-                    dial_context = dial_context_map[dial_formid_for_info]
+                dial_formid = group.label
+                if dial_formid in dial_context_map:
+                    dial_context = dial_context_map[dial_formid]
 
         record: Record
         for record in SSEPlugin.extract_group_records(group, recursive=False):
@@ -260,7 +253,7 @@ class SSEPluginWithContext(SSEPlugin):
                 speaker_formid, emotion_type, response_note = self._extract_info_context(record)
                 # Apply DIAL context if available
                 if dial_context:
-                    dialogue_topic, quest_formid = dial_context[0], dial_context[1]
+                    dialogue_topic, quest_formid = dial_context
 
             for subrecord in record.subrecords:
                 if isinstance(subrecord, StringSubrecord):
@@ -281,7 +274,6 @@ class SSEPluginWithContext(SSEPlugin):
                             speaker_formid=speaker_formid,
                             emotion_type=emotion_type,
                             response_note=response_note,
-                            dial_formid=dial_formid_for_info if record.type == "INFO" else None,
                         )
 
                         strings[string_data] = subrecord
