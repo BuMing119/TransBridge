@@ -1,41 +1,41 @@
 from typing import Optional
-from datetime import datetime
 from src.transbridge.paratranz.paratranz_client import ParatranzClient
 
-class ParatranzContributionAPI(ParatranzClient):
 
-    def get_contributions(
+class ParatranzScoresAPI(ParatranzClient):
+
+    def get_scores(
         self,
         project_id: int,
-        user_id: Optional[int] = None,
-        since: Optional[int] = None,
-        until: Optional[int] = None,
-        lang: Optional[str] = None
+        page: int = 1,
+        page_size: int = 50,
+        uid: Optional[int] = None,
+        operation: Optional[str] = None,
+        start: Optional[str] = None,
+        end: Optional[str] = None
     ):
         """
-        获取成员贡献统计
+        获取成员贡献列表（分页）
 
-        参数说明：
-        user_id:    过滤某个用户
-        since:      毫秒时间戳 (起始)
-        utils:      毫秒时间戳 (结束)
-        lang:       筛选语言
+        Args:
+            project_id: 项目 ID
+            page: 页码
+            page_size: 每页数量
+            uid: 按用户 ID 筛选
+            operation: 按类型筛选："translate", "edit", "review"
+            start: 筛选开始时间（ISO 8601，如 "2024-01-01T00:00:00Z"）
+            end: 筛选结束时间（ISO 8601）
 
-        返回: 列表结构
+        Returns:
+            分页结果，每项为 Score 对象（含 id, createdAt, uid, project, base, multiplier, value）
         """
-        params = {}
-
-        if user_id:
-            params["userId"] = user_id
-        if since:
-            params["since"] = since
-        if until:
-            params["utils"] = until
-        if lang:
-            params["lang"] = lang
-
-        return self._request(
-            "GET",
-            f"/projects/{project_id}/contributions",
-            params=params if params else None
-        )
+        params = {"page": page, "pageSize": page_size}
+        if uid is not None:
+            params["uid"] = uid
+        if operation is not None:
+            params["operation"] = operation
+        if start is not None:
+            params["start"] = start
+        if end is not None:
+            params["end"] = end
+        return self._request("GET", f"/projects/{project_id}/scores", params=params)

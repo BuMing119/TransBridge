@@ -128,11 +128,9 @@ class TranslationEntryCollection:
         # 预先按 id 分组 EET 条目（加速匹配）
         eet_by_id: dict[str, list[EET_Entry]] = defaultdict(list)
         for eet_entry in parser:
-            # 构建 EET 条目的 id，与 TranslationEntry.id 格式一致
-            if eet_entry.edid:
-                eet_id = f"{eet_entry.edid}:{eet_entry.id}|{eet_entry.index}"
-            else:
-                eet_id = f"None:{eet_entry.id}|{eet_entry.index}"
+            eet_id = TranslationEntry._build_eet_id(
+                eet_entry.edid, eet_entry.id, eet_entry.index, eet_entry.grup, eet_entry.champ
+            )
             eet_by_id[eet_id].append(eet_entry)
 
         # 遍历已存在的 TranslationEntry

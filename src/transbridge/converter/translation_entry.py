@@ -15,6 +15,12 @@ class TranslationEntry:
     stage: int
     context: str  # 现在存储原来的key值
 
+    @staticmethod
+    def _build_eet_id(edid: str | None, form_id: str, index: int, grup: str, champ: str) -> str:
+        """构建 EET 来源条目的唯一 id，格式：{edid|None}:{form_id}|{index}~{grup}:{champ}"""
+        prefix = edid if edid else "None"
+        return f"{prefix}:{form_id}|{index}~{grup}:{champ}"
+
     @classmethod
     def create_from_eet_entry(cls, eet_entry: "EET_Entry") -> "TranslationEntry":
         """
@@ -22,34 +28,23 @@ class TranslationEntry:
         :param eet_entry: EET_Entry 实例
         :return: TranslationEntry 实例
         """
-        # 检查状态是否为99来决定stage的值
         stage = 1 if eet_entry.status == 99 or eet_entry.traduit else 0
+        id_value = cls._build_eet_id(eet_entry.edid, eet_entry.id, eet_entry.index, eet_entry.grup, eet_entry.champ)
 
-        # 根据edid是否为空来决定id和key的值
-        if eet_entry.edid:
-            # edid不为空，直接使用edid
-            id_value = f"{eet_entry.edid}:{eet_entry.id}|{eet_entry.index}~{eet_entry.grup}:{eet_entry.champ}"
-            key_value = f"{eet_entry.edid}:{eet_entry.id}|{eet_entry.index}~{eet_entry.grup}:{eet_entry.champ}"
-        else:
-            # edid为空，使用"None:formid"的格式
-            id_value = f"None:{eet_entry.id}|{eet_entry.index}~{eet_entry.grup}:{eet_entry.champ}"
-            key_value = f"None:{eet_entry.id}|{eet_entry.index}~{eet_entry.grup}:{eet_entry.champ}"
-
-        # 构建并返回 TranslationEntry
         return cls(
-            id=id_value,  # edid 或 "None:formid"
-            key=key_value,  # edid 或 "None:formid"
-            original=eet_entry.original,  # original 直接映射
-            translation=eet_entry.traduit,  # traduit 直接映射
-            stage=stage,  # 根据 status 确定 stage
-            context=f"{eet_entry.grup}:{eet_entry.champ}",  # 原来的key值移动到context
+            id=id_value,
+            key=id_value,
+            original=eet_entry.original,
+            translation=eet_entry.traduit,
+            stage=stage,
+            context=f"{eet_entry.grup}:{eet_entry.champ}",
         )
 
 
 
 
     @classmethod
-    def creat_from_plugin_entry(cls, ps: "PluginStringWithContext") -> "TranslationEntry":
+    def create_from_plugin_entry(cls, ps: "PluginStringWithContext") -> "TranslationEntry":
         """
         从 PluginStringWithContext 实例创建 TranslationEntry 实例
         :param ps: PluginStringWithContext 实例
@@ -72,7 +67,7 @@ class TranslationEntry:
 
         id_value = f"{editor_id}:{form_id}|{ps.index}~{original_key}"
         if original_key.split(":")[0] == "INFO" or original_key.split(":")[0] == "DIAL":
-            quest_formid_ori = getattr(ps, "quest_formid", "")
+            quest_formid_ori = getattr(ps.context, "quest", "")
             quest_formid = quest_formid_ori.split("|")[0]
 
             #original_key = f"{original_key}|{getattr(ps, 'quest_formid', '')}"
@@ -89,6 +84,7 @@ class TranslationEntry:
             context=original_key  # 原来的key值移动到context
         )
 
+    @classmethod
     def try_update_from_xt(
             cls,
             entry: "TranslationEntry",

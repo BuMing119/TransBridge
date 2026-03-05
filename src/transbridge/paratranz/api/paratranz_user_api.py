@@ -1,46 +1,36 @@
-import json
 from src.transbridge.paratranz.paratranz_client import ParatranzClient
+
 
 class ParatranzUserAPI(ParatranzClient):
 
     def get_user(self, user_id: int):
         """获取用户信息"""
-        return self._request(
-            "GET",
-            f"/users/{user_id}"
-        )
+        return self._request("GET", f"/users/{user_id}")
 
     def update_user(self, user_id: int, data: dict):
         """
-        更新用户信息
+        更新用户信息（仅支持修改自己的信息）
 
         data 示例:
         {
-            "name": "NewName",
-            "languages": ["zh-CN", "en"],
-            "email": "new@mail.com"
+            "nickname": "昵称",
+            "bio": "个人介绍，最长 140 字符",
+            "avatar": "https://example.com/avatar.png"
         }
         """
-        return self._request(
-            "PUT",
-            f"/users/{user_id}",
-            data=json.dumps(data)
-        )
+        return self._request("PUT", f"/users/{user_id}", json=data)
 
-    def get_user_history(self, user_id: int, page: int = 1):
+    def get_user_activities(self, user_id: int, page: int = 1, page_size: int = 50):
         """
-        获取用户近期词条相关历史记录（翻译 / 修改 / 审核）
+        获取用户近期词条相关历史记录
 
-        返回分页结构：
-        {
-          "docs": [...],
-          "page": 1,
-          "pages": 10,
-          "total": 200
-        }
+        注意：API 路径含官方拼写错误（/usres/ 而非 /users/），需原样使用。
+
+        Returns:
+            分页结果，每项为 UserActivity 对象（含 id, createdAt, projectId, stringId, historyId, history）
         """
         return self._request(
             "GET",
-            f"/users/{user_id}/history",
-            params={"page": page}
+            f"/usres/{user_id}/activities",
+            params={"page": page, "pageSize": page_size}
         )

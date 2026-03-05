@@ -1,44 +1,67 @@
 from typing import Optional
 from src.transbridge.paratranz.paratranz_client import ParatranzClient
 
+
 class ParatranzHistoryAPI(ParatranzClient):
 
-    def get_project_history(self, project_id: int, page: int = 1):
+    def get_project_history(
+        self,
+        project_id: int,
+        page: int = 1,
+        page_size: int = 50,
+        uid: Optional[int] = None,
+        tid: Optional[int] = None,
+        history_type: Optional[str] = None
+    ):
         """
-        获取项目历史记录（翻译变更，审核记录等）
+        获取项目历史记录
 
-        返回结构示例：
-        {
-          "docs": [...],
-          "page": 1,
-          "pages": 10,
-          "total": 100
-        }
+        Args:
+            project_id: 项目 ID
+            page: 页码
+            page_size: 每页数量
+            uid: 按用户 ID 筛选
+            tid: 按词条 ID 筛选（仅 history_type="text" 时有效，指定后分页失效）
+            history_type: 记录类型："text"（词条，默认）, "term"（术语）, "import"（导入）, "comment"（评论）
         """
-        return self._request(
-            "GET",
-            f"/projects/{project_id}/history",
-            params={"page": page}
-        )
+        params = {"page": page, "pageSize": page_size}
+        if uid is not None:
+            params["uid"] = uid
+        if tid is not None:
+            params["tid"] = tid
+        if history_type is not None:
+            params["type"] = history_type
+        return self._request("GET", f"/projects/{project_id}/history", params=params)
 
-    def get_file_history(self, project_id: int, file_id: int, page: int = 1):
+    def list_file_revisions(
+        self,
+        project_id: int,
+        page: int = 1,
+        page_size: int = 50,
+        file: Optional[int] = None,
+        revision_type: Optional[str] = None
+    ):
         """
-        获取某文件历史记录
-        包含文件级的变更，比如 key 或内容变更
-        """
-        return self._request(
-            "GET",
-            f"/projects/{project_id}/files/{file_id}/history",
-            params={"page": page}
-        )
+        获取文件上传历史（Revision 记录）
 
-    def get_term_history(self, project_id: int, term_id: int, page: int = 1):
+        Args:
+            project_id: 项目 ID
+            page: 页码
+            page_size: 每页数量
+            file: 按文件 ID 筛选
+            revision_type: 类型："create", "update", "import"
         """
-        获取术语历史记录（术语表变更）
-        术语 ID 可从 terms API 获取
-        """
+        params = {"page": page, "pageSize": page_size}
+        if file is not None:
+            params["file"] = file
+        if revision_type is not None:
+            params["type"] = revision_type
+        return self._request("GET", f"/projects/{project_id}/files/revisions", params=params)
+
+    def get_term_history(self, project_id: int, term_id: int, page: int = 1, page_size: int = 50):
+        """获取术语历史记录"""
         return self._request(
             "GET",
             f"/projects/{project_id}/terms/{term_id}/history",
-            params={"page": page}
+            params={"page": page, "pageSize": page_size}
         )

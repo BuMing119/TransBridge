@@ -28,17 +28,13 @@ class PluginWriter:
         updated_count = 0
 
         for ps in self.plugin.extract_strings():
-            # 构造 TranslationEntry.id = editor_id:form_id
-            entry_id = f"{ps.editor_id}:{ps.form_id}"
+            # 构造 TranslationEntry.id，与 create_from_plugin_entry 保持一致
+            key = ps.type.replace(" ", ":")
+            entry_id = f"{ps.editor_id}:{ps.form_id}|{ps.index}~{key}"
             entry = collection.get(entry_id)
             if not entry:
                 continue
-
-            # 匹配 key（插件中 "x y" → entry中 "x:y"）
-            key = ps.type.replace(" ", ":")
-            # 注意：现在原来的key值存储在context中
-            if key != entry.context:
-                continue
+            # id 本身已编码 rec_type，无需再做 context 二次校验
 
             # 如果没有翻译内容则跳过
             if not entry.translation:

@@ -1,4 +1,5 @@
+from .widget import ParaTranzWidget
+from .config_dialog import ConfigDialog
+from .project_panel import ProjectListPanel
 
-"""
-Paratranz UI module
-"""
+__all__ = ["ParaTranzWidget", "ConfigDialog", "ProjectListPanel"]

@@ -1,31 +1,41 @@
-import json
 from src.transbridge.paratranz.paratranz_client import ParatranzClient
-from src.transbridge.paratranz.config_manager import ParatranzConfig
+
 
 class ParatranzProjectAPI(ParatranzClient):
 
-    def list_projects(self):
-        """获取项目列表"""
-        return self._request("GET", "/projects")
+    def list_projects(self, page: int = 1, page_size: int = 50, uid: int = None):
+        """获取项目列表（分页）。uid 不为 None 时只返回该用户参与的项目。"""
+        params = {"page": page, "pageSize": page_size}
+        if uid is not None:
+            params["uid"] = uid
+        return self._request("GET", "/projects", params=params)
 
     def create_project(self, data: dict):
-        """创建项目
+        """
+        创建项目
+
         data 示例:
         {
-            "name": "Test Project",
-            "sourceLanguage": "en",
-            "description": "My translation project"
+            "name": "My Project",
+            "desc": "项目说明",
+            "source": "en",
+            "dest": "zh-CN",
+            "privacy": 0,
+            "download": 0,
+            "issueMode": 0,
+            "reviewMode": 1,
+            "joinMode": 1
         }
         """
-        return self._request("POST", "/projects", data=json.dumps(data))
+        return self._request("POST", "/projects", json=data)
 
     def get_project(self, project_id: int):
         """获取项目信息"""
         return self._request("GET", f"/projects/{project_id}")
 
     def update_project(self, project_id: int, data: dict):
-        """更新项目信息"""
-        return self._request("PUT", f"/projects/{project_id}", data=json.dumps(data))
+        """更新项目信息，字段同 create_project"""
+        return self._request("PUT", f"/projects/{project_id}", json=data)
 
     def delete_project(self, project_id: int):
         """删除项目"""

@@ -100,7 +100,7 @@ class PluginParser:
         #     stage=0,
         #     context=None,
         # )
-        return TranslationEntry.creat_from_plugin_entry(ps)
+        return TranslationEntry.create_from_plugin_entry(ps)
 
     def get_plugin(self) -> SSEPlugin | None:
         """Get the underlying plugin object."""

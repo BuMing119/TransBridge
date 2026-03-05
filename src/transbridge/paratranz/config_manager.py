@@ -41,8 +41,9 @@ class ParatranzConfig:
         data_dir = ParatranzConfig.get_data_dir()
         return os.path.join(data_dir, ParatranzConfig.DEFAULT_CONFIG_FILE)
 
-    def __init__(self, 
-                 token: str = None, 
+    def __init__(self,
+                 token: str = None,
+                 user_id: Optional[int] = None,
                  base_url: str = DEFAULT_BASE_URL,
                  timeout: int = DEFAULT_TIMEOUT,
                  extra_headers: Optional[Dict[str, str]] = None):
@@ -51,11 +52,13 @@ class ParatranzConfig:
 
         Args:
             token: API 认证令牌
+            user_id: 当前用户的 ParaTranz 数字 ID（需手动填写，ParaTranz 暂无自动获取接口）
             base_url: API 基础 URL，默认为官方 API 地址
             timeout: 请求超时时间（秒），默认为 10 秒
             extra_headers: 额外的 HTTP 请求头
         """
         self.token = token
+        self.user_id: Optional[int] = user_id
         self.base_url = base_url
         self.timeout = timeout
 
@@ -105,9 +108,10 @@ class ParatranzConfig:
         config.add_section('api')
         config.set('api', 'base_url', self.base_url)
         config.set('api', 'timeout', str(self.timeout))
-        # 保存 token（如果存在）
         if self.token:
             config.set('api', 'token', self.token)
+        if self.user_id is not None:
+            config.set('api', 'user_id', str(self.user_id))
 
         # 保存除 Authorization 外的所有请求头
         headers_section = 'headers'
@@ -158,18 +162,24 @@ class ParatranzConfig:
         if token is None:
             token = file_token
 
-        # 提取额外的请求头
+        # 从文件中读取 user_id
+        user_id_str = config.get('api', 'user_id', fallback=None)
+        user_id = int(user_id_str) if user_id_str and user_id_str.isdigit() else None
+
+        # 提取额外的请求头（跳过 content-type，由 _request 按需设置）
         extra_headers = {}
         if config.has_section('headers'):
             for key, value in config.items('headers'):
-                extra_headers[key] = value
+                if key.lower() != "content-type":
+                    extra_headers[key] = value
 
         # 创建配置对象
         config_obj = cls(
-            token=token,  # 使用提供的令牌或 None
+            token=token,
+            user_id=user_id,
             base_url=base_url,
             timeout=timeout,
-            extra_headers=extra_headers
+            extra_headers=extra_headers,
         )
 
         return config_obj

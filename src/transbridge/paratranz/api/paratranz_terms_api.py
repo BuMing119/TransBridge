@@ -1,16 +1,14 @@
-import json
-from typing import List
 from src.transbridge.paratranz.paratranz_client import ParatranzClient
 
 
 class ParatranzTermsAPI(ParatranzClient):
 
-    def list_terms(self, project_id: int, page: int = 1):
-        """术语列表"""
+    def list_terms(self, project_id: int, page: int = 1, page_size: int = 50):
+        """获取术语列表（分页）"""
         return self._request(
             "GET",
             f"/projects/{project_id}/terms",
-            params={"page": page}
+            params={"page": page, "pageSize": page_size}
         )
 
     def create_term(self, project_id: int, data: dict):
@@ -19,60 +17,55 @@ class ParatranzTermsAPI(ParatranzClient):
 
         data 示例:
         {
-            "key": "FPS",
-            "original": "First Person Shooter",
-            "translation": "第一人称射击",
-            "description": "游戏术语说明"
+            "term": "apple",
+            "translation": "苹果",
+            "pos": "noun",
+            "note": "水果",
+            "variants": ["apples"],
+            "caseSensitive": false
         }
         """
-        return self._request(
-            "POST",
-            f"/projects/{project_id}/terms",
-            data=json.dumps(data)
-        )
+        return self._request("POST", f"/projects/{project_id}/terms", json=data)
 
-    def batch_import_terms(self, project_id: int, terms: List[dict]):
+    def import_terms(self, project_id: int, filepath: str):
         """
-        批量导入术语
+        批量导入术语（上传 JSON 文件）
 
-        terms 示例:
+        Args:
+            project_id: 项目 ID
+            filepath: 本地 JSON 文件路径
+
+        JSON 文件格式:
         [
-            {"key": "NPC", "original": "Non-player character", "translation": "非玩家角色"},
-            {"key": "HP", "original": "Health Point", "translation": "生命值"}
+          {
+            "term": "apple",
+            "translation": "苹果",
+            "pos": "noun",
+            "note": "注释",
+            "variants": ["apples"]
+          }
         ]
+
+        Returns:
+            {"inserted": int, "updated": int, "deleted": int}
         """
-        return self._request(
-            "POST",
-            f"/projects/{project_id}/terms/batch",
-            data=json.dumps(terms)
-        )
+        with open(filepath, "rb") as f:
+            return self._request(
+                "PUT",
+                f"/projects/{project_id}/terms",
+                files={"file": f}
+            )
 
     def get_term(self, project_id: int, term_id: int):
         """获取术语信息"""
-        return self._request(
-            "GET",
-            f"/projects/{project_id}/terms/{term_id}"
-        )
+        return self._request("GET", f"/projects/{project_id}/terms/{term_id}")
 
     def update_term(self, project_id: int, term_id: int, data: dict):
         """
-        修改术语字段
-
-        data 示例:
-        {
-            "translation": "更新后的翻译",
-            "description": "新的描述"
-        }
+        修改术语，data 字段同 create_term
         """
-        return self._request(
-            "PUT",
-            f"/projects/{project_id}/terms/{term_id}",
-            data=json.dumps(data)
-        )
+        return self._request("PUT", f"/projects/{project_id}/terms/{term_id}", json=data)
 
     def delete_term(self, project_id: int, term_id: int):
-        """删除术语"""
-        return self._request(
-            "DELETE",
-            f"/projects/{project_id}/terms/{term_id}"
-        )
+        """删除术语（仅创建者及管理员可用）"""
+        return self._request("DELETE", f"/projects/{project_id}/terms/{term_id}")
