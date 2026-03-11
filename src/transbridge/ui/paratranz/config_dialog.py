@@ -42,7 +42,7 @@ class ConfigDialog(QDialog):
         self._user_id_spin.setSpecialValueText("未设置")  # 0 显示为"未设置"
         self._user_id_spin.setToolTip(
             "你的 ParaTranz 用户数字 ID。\n"
-            "获取方式：登录后访问个人主页，URL 中的数字即为 user_id。\n"
+            "获取方式：登录后访问个人主页，左侧头像下方的UID为你的用户id。\n"
             "（ParaTranz 暂无自动获取接口，需手动填写）"
         )
         form.addRow("用户 ID:", self._user_id_spin)

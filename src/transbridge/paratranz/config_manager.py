@@ -12,9 +12,7 @@ class ParatranzConfig:
     # 默认配置
     DEFAULT_BASE_URL = "https://paratranz.cn/api"
     DEFAULT_TIMEOUT = 10
-    DEFAULT_HEADERS = {
-        "Content-Type": "application/json;charset=UTF-8"
-    }
+    DEFAULT_HEADERS = {}
     # 默认配置文件名（INI格式）
     DEFAULT_CONFIG_FILE = "paratranz_config.ini"
 
@@ -166,7 +164,7 @@ class ParatranzConfig:
         user_id_str = config.get('api', 'user_id', fallback=None)
         user_id = int(user_id_str) if user_id_str and user_id_str.isdigit() else None
 
-        # 提取额外的请求头（跳过 content-type，由 _request 按需设置）
+        # 提取额外的请求头（跳过 content-type，兼容旧配置文件中可能残留的该字段）
         extra_headers = {}
         if config.has_section('headers'):
             for key, value in config.items('headers'):

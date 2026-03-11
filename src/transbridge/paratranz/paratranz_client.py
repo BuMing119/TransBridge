@@ -42,13 +42,6 @@ class ParatranzClient:
         """
         url = f"{self.config.base_url}{endpoint}"
         headers = self.config.get_headers().copy()
-        if "files" in kwargs:
-            # 文件上传时只保留 Authorization，让 requests 自动生成
-            # multipart/form-data boundary。不能用 pop 因为 headers dict
-            # 可能同时含有 "Content-Type" 和 "content-type" 两个键。
-            auth = headers.get("Authorization") or headers.get("authorization", "")
-            headers = {"Authorization": auth} if auth else {}
-
         max_retries = 3
         for attempt in range(max_retries + 1):
             try:
