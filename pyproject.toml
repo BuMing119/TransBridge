@@ -42,3 +42,8 @@ force-sort-within-sections = true
 [tool.ruff.format]
 preview = true
 quote-style = "double"
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.19.0",
+]

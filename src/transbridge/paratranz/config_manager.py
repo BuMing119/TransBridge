@@ -19,15 +19,18 @@ class ParatranzConfig:
     @staticmethod
     def get_data_dir():
         """获取数据目录路径"""
-        # 获取项目根目录
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        # 向上查找项目根目录（找到包含src的目录）
-        project_root = current_dir
-        while not os.path.exists(os.path.join(project_root, "src")) and project_root != os.path.dirname(project_root):
-            project_root = os.path.dirname(project_root)
+        import sys
+        if getattr(sys, "frozen", False):
+            # PyInstaller 打包环境：data 目录与 exe 同级
+            base_dir = os.path.dirname(sys.executable)
+        else:
+            # 开发环境：向上查找包含 src 的项目根目录
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            base_dir = current_dir
+            while not os.path.exists(os.path.join(base_dir, "src")) and base_dir != os.path.dirname(base_dir):
+                base_dir = os.path.dirname(base_dir)
 
-        # 创建data目录
-        data_dir = os.path.join(project_root, "data")
+        data_dir = os.path.join(base_dir, "data")
         if not os.path.exists(data_dir):
             os.makedirs(data_dir)
 

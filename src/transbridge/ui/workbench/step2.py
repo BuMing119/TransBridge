@@ -263,6 +263,12 @@ class Step2PreviewWidget(QWidget):
 
         # 存储全部词条并填充表格
         self._entries = list(collection)
+
+        hh = self._table.horizontalHeader()
+        # 批量填充期间切换到 Interactive 模式，避免每次 setItem 都触发全列宽度重算（O(n²)）
+        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        hh.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
+        self._table.setUpdatesEnabled(False)
         self._table.setRowCount(len(self._entries))
         for row, entry in enumerate(self._entries):
             key_item = QTableWidgetItem(entry.id[:60] if entry.id else "")
@@ -281,6 +287,12 @@ class Step2PreviewWidget(QWidget):
             self._table.setItem(row, 1, orig_item)
             self._table.setItem(row, 2, trans_item)
             self._table.setItem(row, 3, ctx_item)
+        self._table.setUpdatesEnabled(True)
+        # 填充完成后统一计算一次列宽，再恢复原模式
+        self._table.resizeColumnToContents(0)
+        self._table.resizeColumnToContents(3)
+        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
 
     def _on_double_clicked(self, item: QTableWidgetItem):
         row = item.row()
