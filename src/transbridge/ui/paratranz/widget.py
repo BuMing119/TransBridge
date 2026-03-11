@@ -66,3 +66,7 @@ class ParaTranzWidget(QWidget):
 
     def refresh_projects(self):
         self._project_panel.load_projects()
+
+    def switch_to_mine(self):
+        """切换项目列表到「我参与的」视图。"""
+        self._project_panel.switch_to_mine()

@@ -20,6 +20,7 @@ from src.transbridge.paratranz.workflow.uploader import ParaTranzUploader
 from src.transbridge.paratranz.workflow.downloader import ParaTranzDownloader
 from src.transbridge.writer.plugin_writer import PluginWriter
 from ..workers import ApiWorker
+from .project_prompt_overlay import ProjectPromptOverlay
 
 
 class _UploadModeDialog(QDialog):
@@ -256,9 +257,17 @@ class Step3OpsWidget(QWidget):
         super().__init__(parent)
         self._ctx = ctx
         self._workers: list[ApiWorker] = []
+        self._prev_project: dict | None = None
+        self._reverting: bool = False
         self._init_ui()
+
+        # overlay 在 _init_ui 之后创建，确保层叠在最上方
+        self._overlay = ProjectPromptOverlay(self)
+        self._overlay.go_to_pt.connect(lambda: ctx.navigate_to.emit(1))
+
         ctx.collection_changed.connect(self._on_collection_changed)
         ctx.project_selected.connect(self._on_project_changed)
+        self._update_button_states()
 
     def _init_ui(self):
         box = QGroupBox("步骤3：操作")
@@ -267,6 +276,39 @@ class Step3OpsWidget(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
 
         box_layout = QVBoxLayout(box)
+
+        # 操作目标指示条
+        indicator_row = QHBoxLayout()
+        self._project_indicator = QLabel("操作目标：未选择项目")
+        self._project_indicator.setStyleSheet("color: #888; font-size: 12px;")
+        indicator_row.addWidget(self._project_indicator)
+        indicator_row.addStretch()
+        box_layout.addLayout(indicator_row)
+
+        # 警告条（初始隐藏，手动关闭）
+        self._warning_widget = QWidget()
+        self._warning_widget.setStyleSheet(
+            "QWidget { background: #fff3cd; border: 1px solid #ffc107; border-radius: 3px; }"
+        )
+        warning_row = QHBoxLayout(self._warning_widget)
+        warning_row.setContentsMargins(8, 4, 4, 4)
+        warning_row.setSpacing(4)
+        self._warning_label = QLabel()
+        self._warning_label.setStyleSheet(
+            "color: #7d4e00; font-size: 12px; border: none; background: transparent;"
+        )
+        self._warning_label.setWordWrap(True)
+        warning_row.addWidget(self._warning_label, stretch=1)
+        close_btn = QPushButton("×")
+        close_btn.setFixedSize(20, 20)
+        close_btn.setStyleSheet(
+            "QPushButton { color: #7d4e00; border: none; background: transparent; font-size: 14px; }"
+            "QPushButton:hover { color: #000; }"
+        )
+        close_btn.clicked.connect(self._warning_widget.hide)
+        warning_row.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignTop)
+        self._warning_widget.hide()
+        box_layout.addWidget(self._warning_widget)
 
         row = QHBoxLayout()
         box_layout.addLayout(row)
@@ -304,31 +346,94 @@ class Step3OpsWidget(QWidget):
         box_layout.addWidget(self._progress_bar)
         box_layout.addWidget(self._progress_lbl)
 
-        self._update_button_states()
-
     # ── State management ──────────────────────────────────────
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._overlay.setGeometry(self.rect())
 
     def _on_collection_changed(self, _):
         self._update_button_states()
 
-    def _on_project_changed(self, _):
+    def _on_project_changed(self, new_project):
+        # 回滚分支：本次是因用户拒绝切换而触发的回滚信号，直接更新状态即可
+        if self._reverting:
+            self._reverting = False
+            self._prev_project = new_project
+            self._warning_widget.hide()
+            self._update_button_states()
+            self._update_project_indicator(new_project)
+            return
+
+        prev = self._prev_project
+        self._prev_project = new_project
         self._update_button_states()
+        self._update_project_indicator(new_project)
+        self._check_and_warn(prev, new_project)
+
+    def _update_project_indicator(self, project):
+        if project:
+            name = project.get("name", "未知项目")
+            self._project_indicator.setText(f"操作目标：{name}")
+            self._project_indicator.setStyleSheet(
+                "color: #1a5276; font-size: 12px; font-weight: bold;"
+            )
+        else:
+            self._project_indicator.setText("操作目标：未选择项目")
+            self._project_indicator.setStyleSheet("color: #888; font-size: 12px;")
+
+    def _check_and_warn(self, prev_project, new_project):
+        if new_project is None:
+            return
+
+        new_id = new_project.get("id")
+        new_name = new_project.get("name", "?")
+        prev_id = prev_project.get("id") if prev_project else None
+        is_switching = prev_project is not None and prev_id != new_id
+
+        # 集合已加载时切换项目 → 弹窗确认
+        if is_switching and self._ctx.collection is not None:
+            prev_name = prev_project.get("name", "?")
+            answer = QMessageBox.question(
+                self,
+                "切换工作台项目",
+                f"工作台当前关联的是「{prev_name}」，\n是否将操作目标切换到「{new_name}」？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer == QMessageBox.StandardButton.No:
+                self._reverting = True
+                self._ctx.current_project = prev_project
+                return
+
+        # 选中了非参与项目 → 显示警告（按钮已由 _update_button_states 禁用）
+        mine_ids = self._ctx.mine_project_ids
+        if bool(mine_ids) and new_id not in mine_ids:
+            self._show_warning(f"您可能不是「{new_name}」的成员，上传/下载操作已禁用")
+
+    def _show_warning(self, msg: str):
+        self._warning_label.setText(f"⚠  {msg}")
+        self._warning_widget.show()
 
     def _update_button_states(self):
         has_collection = self._ctx.collection is not None
-        has_project = self._ctx.current_project is not None
+        project = self._ctx.current_project
+        has_project = project is not None
 
-        self._card_upload.btn.setEnabled(has_collection and has_project)
-        self._card_download.btn.setEnabled(has_collection and has_project)
+        mine_ids = self._ctx.mine_project_ids
+        is_member = (
+            not bool(mine_ids)  # mine_ids 尚未加载，无法判断，不做限制
+            or (has_project and project.get("id") in mine_ids)
+        )
+
+        self._card_upload.btn.setEnabled(has_collection and has_project and is_member)
+        self._card_download.btn.setEnabled(has_collection and has_project and is_member)
         self._card_write.btn.setEnabled(has_collection)
 
-        if has_collection and not has_project:
-            tip = "需先在 ParaTranz 管理 中选中一个项目"
-            self._card_upload.btn.setToolTip(tip)
-            self._card_download.btn.setToolTip(tip)
-        else:
-            self._card_upload.btn.setToolTip("")
-            self._card_download.btn.setToolTip("")
+        show_overlay = has_collection and not has_project
+        self._overlay.setVisible(show_overlay)
+        if show_overlay:
+            self._overlay.raise_()
 
     # ── Operations ────────────────────────────────────────────
 

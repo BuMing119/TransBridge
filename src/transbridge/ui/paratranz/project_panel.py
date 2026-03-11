@@ -117,6 +117,7 @@ class ProjectListPanel(QWidget):
         self.setMaximumWidth(300)
         self._init_ui()
         ctx.config_changed.connect(self._on_config_changed)
+        ctx.project_list_changed.connect(self.load_projects)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -187,7 +188,7 @@ class ProjectListPanel(QWidget):
         def _on_done(projects):
             if self._gen != gen:
                 return
-            self._on_projects_loaded(projects)
+            self._on_projects_loaded(projects, is_mine=show_mine)
 
         w = ApiWorker(_fetch)
         w.result.connect(_on_done)
@@ -195,8 +196,10 @@ class ProjectListPanel(QWidget):
         w.start()
         self._workers.append(w)
 
-    def _on_projects_loaded(self, projects: list):
+    def _on_projects_loaded(self, projects: list, is_mine: bool = False):
         self._all_projects = projects
+        if is_mine:
+            self._ctx.mine_project_ids = {p["id"] for p in projects if p.get("id") is not None}
         self._apply_filter()
         self._status.setText(f"共 {len(projects)} 个项目")
 
@@ -232,14 +235,22 @@ class ProjectListPanel(QWidget):
             return api.create_project(data)
 
         def _on_done(p):
-            QMessageBox.information(self, "成功", f"项目「{p.get('name', '')}」已创建")
-            self.load_projects()
+            name = p.get('name', data.get('name', '')) if isinstance(p, dict) else data.get('name', '')
+            QMessageBox.information(self, "成功", f"项目「{name}」已创建")
+            self._ctx.project_list_changed.emit()
 
         w = ApiWorker(_create)
         w.result.connect(_on_done)
         w.error.connect(lambda e: QMessageBox.critical(self, "创建失败", e))
         w.start()
         self._workers.append(w)
+
+    def switch_to_mine(self):
+        """切换到「我参与的」视图并刷新列表。"""
+        if self._tab_bar.currentIndex() == 1:
+            self.load_projects()  # 已在该标签，currentChanged 不会触发，手动刷新
+        else:
+            self._tab_bar.setCurrentIndex(1)  # 触发 currentChanged -> load_projects
 
     def _on_config_changed(self, _):
         self.load_projects()

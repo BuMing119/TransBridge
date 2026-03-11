@@ -1,14 +1,66 @@
 from PyQt6.QtWidgets import (
     QMainWindow, QTabWidget, QStatusBar, QLabel, QMessageBox,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 
 from .context import AppContext
-from .workers import ApiWorker
+from .workers import ApiWorker, get_http_error_bus, get_api_status_bus
 from .workbench.widget import WorkbenchWidget
 from .paratranz.widget import ParaTranzWidget
 from .paratranz.config_dialog import ConfigDialog
 from src.transbridge.paratranz.api.paratranz_user_api import ParatranzUserAPI
+
+
+class _ApiStatusIndicator(QLabel):
+    """状态栏 API 状态指示器：绿点（正常）/ 转圈动画（请求中）/ 红点（异常）。"""
+
+    _SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._active = 0       # 当前进行中的请求数
+        self._last_ok = True   # 上一批请求是否全部成功
+        self._spin_idx = 0
+
+        self._timer = QTimer(self)
+        self._timer.setInterval(80)
+        self._timer.timeout.connect(self._tick)
+
+        self._refresh()
+
+    # ── 公共槽 ────────────────────────────────────────────────
+
+    def on_request_started(self):
+        if self._active == 0:
+            self._last_ok = True   # 新一批请求开始，乐观重置
+        self._active += 1
+        if not self._timer.isActive():
+            self._timer.start()
+        self._refresh()
+
+    def on_request_finished(self, success: bool):
+        self._active = max(0, self._active - 1)
+        if not success:
+            self._last_ok = False
+        if self._active == 0:
+            self._timer.stop()
+        self._refresh()
+
+    # ── 内部 ──────────────────────────────────────────────────
+
+    def _tick(self):
+        self._spin_idx = (self._spin_idx + 1) % len(self._SPINNER)
+        self._refresh()
+
+    def _refresh(self):
+        if self._active > 0:
+            self.setText(
+                f'<span style="color:#888">{self._SPINNER[self._spin_idx]} 请求中</span>'
+            )
+        elif self._last_ok:
+            self.setText('<span style="color:green">● 正常</span>')
+        else:
+            self.setText('<span style="color:red">● 异常</span>')
 
 
 class MainWindow(QMainWindow):
@@ -28,6 +80,9 @@ class MainWindow(QMainWindow):
         self._ctx.user_changed.connect(self._on_user_changed)
         self._ctx.project_selected.connect(self._on_project_selected)
         self._ctx.collection_changed.connect(self._on_collection_changed)
+        self._ctx.navigate_to.connect(self._on_navigate_to)
+
+        get_http_error_bus().http_error.connect(self._on_http_error)
 
         if self._ctx.config.token:
             self._load_current_user()
@@ -82,15 +137,36 @@ class MainWindow(QMainWindow):
 
         self._user_label = QLabel("未登录")
         self._project_label = QLabel("未选择项目")
+        self._api_indicator = _ApiStatusIndicator()
         self._msg_label = QLabel("就绪")
 
         sb.addPermanentWidget(self._user_label)
         sb.addPermanentWidget(QLabel(" | "))
         sb.addPermanentWidget(self._project_label)
         sb.addPermanentWidget(QLabel(" | "))
+        sb.addPermanentWidget(self._api_indicator)
+        sb.addPermanentWidget(QLabel(" | "))
         sb.addWidget(self._msg_label)
 
+        # 连接全局 API 状态总线
+        bus = get_api_status_bus()
+        bus.request_started.connect(self._api_indicator.on_request_started)
+        bus.request_finished.connect(self._api_indicator.on_request_finished)
+
     # ── Context signal handlers ───────────────────────────────
+
+    def _on_http_error(self, status: int, message: str):
+        """集中处理 401 / 403 HTTP 错误，替代各标签页各自弹 QMessageBox 的行为。"""
+        if status == 401:
+            self.show_message("Token 已失效，请重新配置")
+            self._show_config_dialog()
+        elif status == 403:
+            self.show_message("权限不足，无法执行此操作")
+
+    def _on_navigate_to(self, index: int):
+        self._mode_tabs.setCurrentIndex(index)
+        if index == 1:
+            self._pt_widget.switch_to_mine()
 
     def _on_user_changed(self, user):
         if user:

@@ -3,9 +3,62 @@ ApiWorker: 通用后台工作线程。
 所有 API 请求必须通过此类在后台线程执行，严禁在主线程直接调用 API。
 """
 
+import re
 from typing import Callable
-from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import QThread, QObject, pyqtSignal
 
+
+# ── 全局 HTTP 错误信号总线 ──────────────────────────────────────────────────
+
+class _HttpErrorBus(QObject):
+    """
+    模块级信号总线，用于将 401/403 HTTP 错误路由到 MainWindow 统一处理。
+
+    Qt 信号跨线程安全（AutoConnection 机制），无需额外加锁。
+    """
+    http_error = pyqtSignal(int, str)   # (status_code, error_message)
+
+
+_http_error_bus = _HttpErrorBus()
+
+
+def get_http_error_bus() -> _HttpErrorBus:
+    """返回全局 HTTP 错误信号总线单例，供 MainWindow 连接使用。"""
+    return _http_error_bus
+
+
+# ── 全局 API 状态信号总线 ──────────────────────────────────────────────────
+
+class _ApiStatusBus(QObject):
+    """
+    模块级信号总线，追踪所有 ApiWorker 的请求生命周期。
+    供 MainWindow 状态栏 API 状态指示器使用。
+
+    Qt 信号跨线程安全（AutoConnection 机制），无需额外加锁。
+    """
+    request_started = pyqtSignal()
+    request_finished = pyqtSignal(bool)  # True=成功, False=失败
+
+
+_api_status_bus = _ApiStatusBus()
+
+
+def get_api_status_bus() -> _ApiStatusBus:
+    """返回全局 API 状态信号总线单例，供 MainWindow 连接使用。"""
+    return _api_status_bus
+
+
+def _parse_http_status(error_str: str) -> int | None:
+    """从 'API Error 401: ...' 格式的错误字符串中提取 HTTP 状态码。"""
+    m = re.match(r"API Error (\d{3}):", error_str)
+    return int(m.group(1)) if m else None
+
+
+# 由信号总线集中处理的状态码；这些错误不再 emit error 信号（防止标签页重复弹窗）
+_GLOBAL_HANDLE_STATUSES = {401, 403}
+
+
+# ── ApiWorker ──────────────────────────────────────────────────────────────
 
 class ApiWorker(QThread):
     """
@@ -41,7 +94,16 @@ class ApiWorker(QThread):
         return _cb
 
     def run(self) -> None:
+        _api_status_bus.request_started.emit()
         try:
             self.result.emit(self._fn(*self._args, **self._kwargs))
+            _api_status_bus.request_finished.emit(True)
         except Exception as exc:
-            self.error.emit(str(exc))
+            err_str = str(exc)
+            status = _parse_http_status(err_str)
+            if status in _GLOBAL_HANDLE_STATUSES:
+                # 路由到全局信号总线，不再 emit error，防止标签页弹出重复 QMessageBox
+                _http_error_bus.http_error.emit(status, err_str)
+            else:
+                self.error.emit(err_str)
+            _api_status_bus.request_finished.emit(False)

@@ -13,6 +13,7 @@ from PyQt6.QtCore import pyqtSignal, Qt
 
 from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from src.transbridge.parser.plugin_parser import PluginParser
+from src.transbridge.parser.xt_parser import XT_XmlParser
 from ..workers import ApiWorker
 
 
@@ -75,6 +76,18 @@ class Step1SourceWidget(QWidget):
         xt_row.addWidget(xt_btn)
         form.addRow("XT XML", xt_row)
 
+        # 已翻译插件（可选）
+        tp_row = QHBoxLayout()
+        self._tp_input = QLineEdit()
+        self._tp_input.setPlaceholderText("可选，从已汉化插件提取译文")
+        self._tp_input.setReadOnly(True)
+        tp_btn = QPushButton("浏览")
+        tp_btn.setFixedWidth(60)
+        tp_btn.clicked.connect(self._browse_translated_plugin)
+        tp_row.addWidget(self._tp_input)
+        tp_row.addWidget(tp_btn)
+        form.addRow("已翻译插件", tp_row)
+
         # 跳过空串
         self._skip_empty = QComboBox()
         self._skip_empty.addItems(["是", "否"])
@@ -123,6 +136,13 @@ class Step1SourceWidget(QWidget):
         if path:
             self._xt_input.setText(path)
 
+    def _browse_translated_plugin(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择已翻译插件文件", "", "ESP/ESM 文件 (*.esp *.esm);;所有文件 (*)"
+        )
+        if path:
+            self._tp_input.setText(path)
+
     # ── Parse ─────────────────────────────────────────────────
 
     def _start_parse(self):
@@ -134,6 +154,7 @@ class Step1SourceWidget(QWidget):
         skip_empty = self._skip_empty.currentText() == "是"
         eet_path = self._eet_input.text().strip() or None
         xt_path = self._xt_input.text().strip() or None
+        tp_path = self._tp_input.text().strip() or None
 
         self._parse_btn.setEnabled(False)
         self._progress.show()
@@ -144,18 +165,24 @@ class Step1SourceWidget(QWidget):
             parser = PluginParser()
             entries = parser.parse_plugin(Path(esp_path), skip_empty=skip_empty)
             collection = TranslationEntryCollection(entries)
-            # EET/XT 合并（若提供了文件）
+            migrate_count = 0
             if eet_path:
                 try:
-                    collection.load_eet_translation(Path(eet_path))
+                    migrate_count += collection.update_from_eet_xml(Path(eet_path))
                 except Exception:
                     pass
             if xt_path:
                 try:
-                    collection.load_xt_translation(Path(xt_path))
+                    xt_parser = XT_XmlParser.from_file(xt_path)
+                    migrate_count += collection.apply_xt_entries(xt_parser.entries)
                 except Exception:
                     pass
-            return collection
+            if tp_path:
+                try:
+                    migrate_count += collection.update_from_translated_plugin(Path(tp_path))
+                except Exception:
+                    pass
+            return collection, migrate_count
 
         w = ApiWorker(_do_parse)
         w.result.connect(self._on_parse_done)
@@ -163,11 +190,13 @@ class Step1SourceWidget(QWidget):
         w.start()
         self._workers.append(w)
 
-    def _on_parse_done(self, collection: TranslationEntryCollection):
+    def _on_parse_done(self, result):
+        collection, migrate_count = result
         self._parse_btn.setEnabled(True)
         self._progress.hide()
         self._status_lbl.setText(f"解析完成，共 {len(collection)} 条词条")
         self._ctx.esp_path = self._esp_input.text().strip()
+        self._ctx.migrate_count = migrate_count
         self._ctx.collection = collection
         self.parse_finished.emit(collection)
 

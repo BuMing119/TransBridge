@@ -1,3 +1,5 @@
+import time
+
 import requests
 from .config_manager import ParatranzConfig
 
@@ -47,28 +49,47 @@ class ParatranzClient:
             auth = headers.get("Authorization") or headers.get("authorization", "")
             headers = {"Authorization": auth} if auth else {}
 
-        try:
-            response = requests.request(
-                method=method,
-                url=url,
-                headers=headers,
-                timeout=self.config.timeout,
-                **kwargs
-            )
-        except requests.exceptions.RequestException as e:
-            raise RuntimeError(f"HTTP request failed: {e}")
+        max_retries = 3
+        for attempt in range(max_retries + 1):
+            try:
+                response = requests.request(
+                    method=method,
+                    url=url,
+                    headers=headers,
+                    timeout=self.config.timeout,
+                    **kwargs
+                )
+            except requests.exceptions.RequestException as e:
+                raise RuntimeError(f"HTTP request failed: {e}")
 
-        if response.status_code == 204:  # No Content
-            return None
+            if response.status_code == 429:
+                if attempt < max_retries:
+                    wait = int(response.headers.get("Retry-After", "5"))
+                    time.sleep(wait)
+                    continue
+                else:
+                    raise RuntimeError(
+                        f"API Error 429: 请求过于频繁，已重试 {max_retries} 次"
+                    )
 
-        if not response.ok:
-            if response.status_code == 401:
-                print(f"认证失败，当前使用的token: {self.config.token}")
-            raise RuntimeError(
-                f"API Error {response.status_code}: {response.text}"
-            )
+            if response.status_code == 204:  # No Content
+                return None
 
-        return response.json()
+            if not response.ok:
+                if response.status_code == 401:
+                    print(f"认证失败，当前使用的token: {self.config.token}")
+                raise RuntimeError(
+                    f"API Error {response.status_code}: {response.text}"
+                )
+
+            if not response.content.strip():
+                return None
+
+            try:
+                return response.json()
+            except ValueError:
+                return None
+        return None  # 不可达，满足静态分析器
 
     def _request_multipart(self, method: str, endpoint: str, body: bytes, content_type: str):
         """
@@ -79,23 +100,43 @@ class ParatranzClient:
         base_headers = self.config.get_headers()
         auth = base_headers.get("Authorization") or base_headers.get("authorization", "")
         headers = {"Authorization": auth, "Content-Type": content_type}
-        try:
-            response = requests.request(
-                method=method,
-                url=url,
-                headers=headers,
-                data=body,
-                timeout=self.config.timeout,
-            )
-        except requests.exceptions.RequestException as e:
-            raise RuntimeError(f"HTTP request failed: {e}")
 
-        if response.status_code == 204:
-            return None
+        max_retries = 3
+        for attempt in range(max_retries + 1):
+            try:
+                response = requests.request(
+                    method=method,
+                    url=url,
+                    headers=headers,
+                    data=body,
+                    timeout=self.config.timeout,
+                )
+            except requests.exceptions.RequestException as e:
+                raise RuntimeError(f"HTTP request failed: {e}")
 
-        if not response.ok:
-            if response.status_code == 401:
-                print(f"认证失败，当前使用的token: {self.config.token}")
-            raise RuntimeError(f"API Error {response.status_code}: {response.text}")
+            if response.status_code == 429:
+                if attempt < max_retries:
+                    wait = int(response.headers.get("Retry-After", "5"))
+                    time.sleep(wait)
+                    continue
+                else:
+                    raise RuntimeError(
+                        f"API Error 429: 请求过于频繁，已重试 {max_retries} 次"
+                    )
 
-        return response.json()
+            if response.status_code == 204:
+                return None
+
+            if not response.ok:
+                if response.status_code == 401:
+                    print(f"认证失败，当前使用的token: {self.config.token}")
+                raise RuntimeError(f"API Error {response.status_code}: {response.text}")
+
+            if not response.content.strip():
+                return None
+
+            try:
+                return response.json()
+            except ValueError:
+                return None
+        return None  # 不可达，满足静态分析器

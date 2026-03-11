@@ -95,6 +95,7 @@ class StringDetailDialog(QDialog):
         self._pid = project_id
         self._file_id = file_id
         self._stage = stage
+        self._current_api_stage = stage  # 当前 API 请求使用的 stage（由 UI 筛选动态覆盖）
         self._page = page
         self._page_size = page_size
         self._workers: list[ApiWorker] = []
@@ -180,7 +181,7 @@ class StringDetailDialog(QDialog):
         for i, (val, name) in enumerate(stages):
             cb = QCheckBox(name)
             cb.setToolTip(name)
-            cb.stateChanged.connect(lambda _: self._apply_nav_filter())
+            cb.stateChanged.connect(lambda _: self._on_filter_changed())
             self._stage_checks[val] = cb
             (row1 if i < 4 else row2).addWidget(cb)
         row1.addStretch()
@@ -274,6 +275,17 @@ class StringDetailDialog(QDialog):
         self._filter_toggle.setText("▼ 筛选条件" if checked else "▶ 筛选条件")
         self._filter_panel.setVisible(checked)
 
+    def _on_filter_changed(self):
+        """stage 复选框变化时，更新 API stage 参数并从服务端第 1 页重新加载。"""
+        selected = {v for v, cb in self._stage_checks.items() if cb.isChecked()}
+        if len(selected) == 1:
+            self._current_api_stage = next(iter(selected))   # 单选 → 服务端过滤
+        elif len(selected) == 0:
+            self._current_api_stage = self._stage            # 无选 → 恢复主列表原始过滤
+        else:
+            self._current_api_stage = None                   # 多选 → 加载全部，前端再筛
+        self._load_page(1)
+
     def _clear_filter(self):
         for cb in self._stage_checks.values():
             cb.blockSignals(True)
@@ -282,7 +294,7 @@ class StringDetailDialog(QDialog):
         first_btn = self._modifier_group.button(0)
         if first_btn:
             first_btn.setChecked(True)
-        self._apply_nav_filter()
+        self._on_filter_changed()
 
     def _get_filtered_indices(self) -> list[int]:
         selected_stages = {v for v, cb in self._stage_checks.items() if cb.isChecked()}
@@ -408,7 +420,7 @@ class StringDetailDialog(QDialog):
             api = ParatranzStringsAPI(token=config.token, config=config)
             return _extract_list(api.list_strings(
                 self._pid, page=page, page_size=self._page_size,
-                file=self._file_id, stage=self._stage,
+                file=self._file_id, stage=self._current_api_stage,
             ))
 
         def _on_done(strings):

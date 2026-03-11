@@ -248,6 +248,48 @@ class TranslationEntryCollection:
 
         return updated_count
 
+    def update_from_translated_plugin(
+            self,
+            path: str | Path,
+            *,
+            overwrite: bool = False,
+    ) -> int:
+        """
+        从已翻译的 ESP/ESM 中提取译文并更新集合。
+
+        已翻译插件中，PluginParser 解析出的 entry.original 字段存储的是目标译文。
+        按 entry.id 精确匹配，仅将「译文 ≠ 原文」的条目视为有效译文。
+
+        :param path: 已翻译插件文件路径
+        :param overwrite: 是否覆盖已有译文，默认 False（跳过已有译文的条目）
+        :return: 实际发生更新的条目数量
+        """
+        translated_entries = PluginParser().parse_plugin(Path(path), skip_empty=True)
+
+        # 构建查找表：{entry.id: translated_text}
+        translated_lookup: dict[str, str] = {te.id: te.original for te in translated_entries}
+
+        updated_count = 0
+        for entry in list(self._entries.values()):
+            translated_text = translated_lookup.get(entry.id)
+            if translated_text is None:
+                continue
+            if translated_text == entry.original:
+                continue
+            if entry.translation and not overwrite:
+                continue
+            self._entries[entry.id] = TranslationEntry(
+                id=entry.id,
+                key=entry.key,
+                original=entry.original,
+                translation=translated_text,
+                stage=1,
+                context=entry.context,
+            )
+            updated_count += 1
+
+        return updated_count
+
     # ---------- 查询 / 过滤（可扩展） ----------
 
     def filter(self, predicate) -> list[TranslationEntry]:
