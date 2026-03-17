@@ -102,14 +102,34 @@ class ParaTranzDownloader:
                     continue
 
                 # 用 ParaTranz 的译文和状态更新本地词条
-                collection._entries[entry.id] = TranslationEntry(
-                    id=entry.id,
-                    key=entry.key,
-                    original=entry.original,
-                    translation=translation,
-                    stage=stage,
-                    context=entry.context,
+                # collection._entries[entry.id] = TranslationEntry(
+                #     id=entry.id,
+                #     key=entry.key,
+                #     original=entry.original,
+                #     translation=translation,
+                #     stage=stage,
+                #     context=entry.context,
+                # )
+                # print(f"Updated entry: {entry.id}, translation: {collection._entries[entry.id].translation}")
+                collection.add(
+                    TranslationEntry(
+                        id=entry.id,
+                        key=entry.key,
+                        original=entry.original,
+                        translation=translation,
+                        stage=stage,
+                        context=entry.context,
+                    ),
+                    overwrite=True  # 确保覆盖
                 )
+
+
+
+                if(entry.original == "I'll tear you to pieces!"):
+
+                    entry2 = collection.get_by_key(entry.key)
+                    print(entry2.original, entry2.translation, entry2.stage, entry2.context)
+
                 result.merged += 1
 
         if progress_callback:

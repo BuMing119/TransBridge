@@ -6,6 +6,7 @@ from sse_plugin_interface.plugin import SSEPlugin
 from sse_plugin_interface.plugin_string import PluginString
 from src.transbridge.converter.translation_entry import TranslationEntry
 from src.transbridge.parser.plugin.plugin_with_context import SSEPluginWithContext
+from src.transbridge.parser.strings_file import PluginStringsLookup
 
 
 class PluginParser:
@@ -17,6 +18,7 @@ class PluginParser:
     def __init__(self):
         self._plugin: SSEPluginWithContext | None = None
         self._source_path: Path | None = None
+        self._strings_lookup: PluginStringsLookup | None = None
         self.log = logging.getLogger("PluginParser")
 
     def parse_plugin(
@@ -24,6 +26,7 @@ class PluginParser:
         path: Path,
         progress_callback: Callable[[int, int, str], None] | None = None,
         skip_empty: bool = True,
+        language: str = "english",
     ) -> list[TranslationEntry]:
         """
         Parse a plugin file and return all translatable strings as TranslationItem objects.
@@ -32,6 +35,7 @@ class PluginParser:
             path: Path to .esp/.esm file.
             progress_callback: Optional callback(current, total, description) for progress updates.
             skip_empty: If True, skip strings with empty original text (default: True).
+            language: Language to look up for localized plugins (default: "english").
 
         Returns:
             List of TranslationEntry objects.
@@ -45,7 +49,13 @@ class PluginParser:
             self.log.error(f"Failed to parse plugin {path}: {e}")
             return []
 
-        strings_with_context = self._plugin.extract_strings_with_context()
+        # Try to load external strings files for localised plugins (e.g. Skyrim.esm)
+        strings_lookup = PluginStringsLookup.from_plugin(path, language=language)
+        self._strings_lookup = strings_lookup
+        if strings_lookup:
+            self.log.info(f"Loaded strings lookup with {len(strings_lookup)} entries for {path.name}")
+
+        strings_with_context = self._plugin.extract_strings_with_context(strings_lookup=strings_lookup)
         #strings_with_context = self._plugin.extract_strings()
         total = len(strings_with_context)
         self.log.info(f"Extracted {total} strings from plugin")
@@ -105,6 +115,15 @@ class PluginParser:
     def get_plugin(self) -> SSEPlugin | None:
         """Get the underlying plugin object."""
         return self._plugin
+
+    def get_strings_lookup(self) -> PluginStringsLookup | None:
+        """
+        Return the strings lookup loaded during the last parse_plugin() call.
+
+        Returns None if the plugin is not localised or parse_plugin() has not
+        been called yet.
+        """
+        return self._strings_lookup
 
     def get_source_path(self) -> Path | None:
         """Get the source file path."""

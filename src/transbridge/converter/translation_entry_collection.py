@@ -21,7 +21,8 @@ class TranslationEntryCollection:
     """
 
     def __init__(self, entries: Iterable[TranslationEntry] | None = None):
-        self._entries: dict[str, TranslationEntry] = {}
+        self._entries: dict[str, TranslationEntry] = {}  # 原来的 id 索引
+        self._key_index: dict[str, TranslationEntry] = {}  # 新增 key 索引
 
         if entries:
             for e in entries:
@@ -47,13 +48,29 @@ class TranslationEntryCollection:
         :param entry: TranslationEntry 实例
         :param overwrite: 若 id 已存在，是否覆盖（默认 True）
         """
+        # if not overwrite and entry.id in self._entries:
+        #     return
+        # self._entries[entry.id] = entry
+
+        # 按 id 添加
         if not overwrite and entry.id in self._entries:
             return
         self._entries[entry.id] = entry
+        self._key_index[entry.key] = entry
+
+
+        # 同步更新 key 索引
+        if not overwrite and entry.key in self._key_index:
+            return
+        self._key_index[entry.key] = entry
 
     def get(self, entry_id: str) -> Optional[TranslationEntry]:
         """按 id 获取 TranslationEntry；不存在返回 None"""
         return self._entries.get(entry_id)
+
+    def get_by_key(self, key: str) -> Optional[TranslationEntry]:
+        """按 key 获取 TranslationEntry；不存在返回 None"""
+        return self._key_index.get(key)
 
     def remove(self, entry_id: str) -> None:
         """按 id 删除一条记录；不存在则忽略"""
@@ -158,6 +175,7 @@ class TranslationEntryCollection:
                 )
 
                 self._entries[entry.id] = updated_entry
+                self._key_index[entry.key] = updated_entry
                 updated_count += 1
                 # 每个条目只更新一次
                 break
@@ -243,6 +261,8 @@ class TranslationEntryCollection:
 
                     if updated is not entry:
                         self._entries[entry.id] = updated
+                        self._key_index[entry.key] = updated
+
                         entry = updated
                         updated_count += 1
 
@@ -278,13 +298,24 @@ class TranslationEntryCollection:
                 continue
             if entry.translation and not overwrite:
                 continue
-            self._entries[entry.id] = TranslationEntry(
-                id=entry.id,
-                key=entry.key,
-                original=entry.original,
-                translation=translated_text,
-                stage=1,
-                context=entry.context,
+            # self._entries[entry.id] = TranslationEntry(
+            #     id=entry.id,
+            #     key=entry.key,
+            #     original=entry.original,
+            #     translation=translated_text,
+            #     stage=1,
+            #     context=entry.context,
+            # )
+            self.add(
+                TranslationEntry(
+                    id=entry.id,
+                    key=entry.key,
+                    original=entry.original,
+                    translation=translated_text,
+                    stage=1,
+                    context=entry.context,
+                ),
+                overwrite=True  # 确保覆盖
             )
             updated_count += 1
 

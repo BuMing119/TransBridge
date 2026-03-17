@@ -182,7 +182,7 @@ class Step1SourceWidget(QWidget):
                     migrate_count += collection.update_from_translated_plugin(Path(tp_path))
                 except Exception:
                     pass
-            return collection, migrate_count
+            return collection, migrate_count, parser.get_plugin(), parser.get_strings_lookup()
 
         w = ApiWorker(_do_parse)
         w.result.connect(self._on_parse_done)
@@ -191,13 +191,15 @@ class Step1SourceWidget(QWidget):
         self._workers.append(w)
 
     def _on_parse_done(self, result):
-        collection, migrate_count = result
+        collection, migrate_count, plugin, strings_lookup = result
         self._parse_btn.setEnabled(True)
         self._progress.hide()
         self._status_lbl.setText(f"解析完成，共 {len(collection)} 条词条")
         self._ctx.esp_path = self._esp_input.text().strip()
         self._ctx.migrate_count = migrate_count
         self._ctx.collection = collection
+        self._ctx.plugin = plugin
+        self._ctx.strings_lookup = strings_lookup
         self.parse_finished.emit(collection)
 
     def _on_parse_error(self, msg: str):

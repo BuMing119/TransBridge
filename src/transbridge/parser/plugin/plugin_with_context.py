@@ -21,6 +21,7 @@ from sse_plugin_interface.record import Record
 from sse_plugin_interface.subrecord import TRDT, StringSubrecord
 
 from .plugin_string_with_context import PluginStringWithContext
+from src.transbridge.parser.strings_file import PluginStringsLookup
 
 
 class SSEPluginWithContext(SSEPlugin):
@@ -281,6 +282,7 @@ class SSEPluginWithContext(SSEPlugin):
         dial_context: DialContext | None = None,
         dial_context_map: dict[str, DialContext] | None = None,
         dlbr_map: dict[str, tuple[str, str]] | None = None,
+        strings_lookup: PluginStringsLookup | None = None,
     ) -> dict[PluginStringWithContext, StringSubrecord]:
         """
         Extracts all strings from a group of records with full context.
@@ -376,35 +378,62 @@ class SSEPluginWithContext(SSEPlugin):
                 if isinstance(subrecord, StringSubrecord):
                     string: RawString | int = subrecord.string
 
-                    if isinstance(string, RawString) or extract_localized:
-                        string_data = PluginStringWithContext(
-                            editor_id=str(edid) if edid else None,
-                            form_id=formid,
-                            index=subrecord.index,
-                            type=f"{record.type} {subrecord.type}",
-                            string=str(string),
-                            context=context_data,
-                        )
+                    if isinstance(string, RawString):
+                        string_text = str(string)
+                    elif strings_lookup is not None:
+                        # Localized plugin: string is an integer index into external strings files
+                        resolved = strings_lookup.get(string)
+                        if resolved is None:
+                            self.log.debug(
+                                f"Unresolved string ID {string:#010x} "
+                                f"in {record.type} {subrecord.type} ({formid})"
+                            )
+                            continue
+                        string_text = resolved
+                    elif extract_localized:
+                        # No lookup available but caller wants raw indices
+                        string_text = str(string)
+                    else:
+                        continue
 
-                        strings[string_data] = subrecord
+                    string_data = PluginStringWithContext(
+                        editor_id=str(edid) if edid else None,
+                        form_id=formid,
+                        index=subrecord.index,
+                        type=f"{record.type} {subrecord.type}",
+                        string=string_text,
+                        context=context_data,
+                    )
+
+                    strings[string_data] = subrecord
 
         # Recursively process child groups with context propagation
         for child in group.children:
             if isinstance(child, Group):
                 child_strings = self.extract_group_strings_with_context(
-                    child, extract_localized, dial_context, dial_context_map, dlbr_map
+                    child, extract_localized, dial_context, dial_context_map, dlbr_map,
+                    strings_lookup,
                 )
                 strings.update(child_strings)
 
         return strings
 
-    def extract_strings_with_context(self, extract_localized: bool = False) -> list[PluginStringWithContext]:
+    def extract_strings_with_context(
+        self,
+        extract_localized: bool = False,
+        strings_lookup: PluginStringsLookup | None = None,
+    ) -> list[PluginStringWithContext]:
         """
         Extracts all strings from the plugin with NPC context.
 
         Args:
             extract_localized (bool, optional):
                 Whether to extract localized strings. Defaults to False.
+            strings_lookup (PluginStringsLookup, optional):
+                Lookup table for resolving localized string indices to actual
+                text. When provided, localised strings (stored as UInt32
+                indices) are resolved and included automatically regardless of
+                *extract_localized*.
 
         Returns:
             list[PluginStringWithContext]: A list of extracted strings with context.
@@ -414,7 +443,10 @@ class SSEPluginWithContext(SSEPlugin):
 
         for group in self._SSEPlugin__groups:
             current_group: list[PluginStringWithContext] = list(
-                self.extract_group_strings_with_context(group, extract_localized, dlbr_map=dlbr_map).keys()
+                self.extract_group_strings_with_context(
+                    group, extract_localized, dlbr_map=dlbr_map,
+                    strings_lookup=strings_lookup,
+                ).keys()
             )
             strings.extend(current_group)
 
