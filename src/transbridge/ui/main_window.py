@@ -3,6 +3,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer
 
+from transbridge import __version__
 from .context import AppContext
 from .workers import ApiWorker, get_http_error_bus, get_api_status_bus
 from .workbench.widget import WorkbenchWidget
@@ -236,5 +237,5 @@ class MainWindow(QMainWindow):
     def _show_about(self):
         QMessageBox.about(
             self, "关于 TransBridge",
-            "TransBridge\n\nESP 插件翻译辅助工具，对接 ParaTranz 平台。",
+            f"TransBridge v{__version__}\n\nESP 插件翻译辅助工具，对接 ParaTranz 平台。",
         )
