@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QGroupBox,
     QLineEdit, QSpinBox, QLabel, QPushButton, QHBoxLayout,
 )
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import pyqtSignal, Qt
 
 from src.transbridge.paratranz.config_manager import ParatranzConfig
 from src.transbridge.paratranz.api.paratranz_project_api import ParatranzProjectAPI
@@ -21,8 +21,10 @@ class ConfigDialog(QDialog):
     def __init__(self, ctx, parent=None):
         super().__init__(parent)
         self._ctx = ctx
+        # 设置为独立窗口，使其在任务栏显示
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.Window)
         self.setWindowTitle("API 配置")
-        self.setFixedSize(460, 220)
+        self.setFixedSize(460, 250)
         self._init_ui()
         self._load_current()
 
@@ -36,6 +38,11 @@ class ConfigDialog(QDialog):
         self._token_input.setEchoMode(QLineEdit.EchoMode.Password)
         self._token_input.setPlaceholderText("在 ParaTranz 个人设置页获取")
         form.addRow("API Token:", self._token_input)
+
+        # 添加帮助链接
+        help_link = QLabel('<a href="https://paratranz.cn/users/my">点击打开 ParaTranz 个人设置页获取 Token</a>')
+        help_link.setOpenExternalLinks(True)
+        form.addRow("", help_link)
 
         self._timeout_spin = QSpinBox()
         self._timeout_spin.setRange(5, 60)

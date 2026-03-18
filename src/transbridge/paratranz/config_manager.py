@@ -95,21 +95,27 @@ class ParatranzConfig:
 
     @staticmethod
     def get_data_dir():
-        """获取数据目录路径"""
+        """获取数据目录路径（用户可写目录）
+
+        打包环境：使用 %APPDATA%/TransBridge/data
+        开发环境：使用项目根目录下的 data
+        """
         import sys
         if getattr(sys, "frozen", False):
-            # PyInstaller 打包环境：data 目录与 exe 同级
-            base_dir = os.path.dirname(sys.executable)
+            # PyInstaller 打包环境：使用用户 AppData 目录
+            # %APPDATA% 通常为 C:/Users/<username>/AppData/Roaming
+            appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
+            data_dir = os.path.join(appdata, "TransBridge", "data")
         else:
             # 开发环境：向上查找包含 src 的项目根目录
             current_dir = os.path.dirname(os.path.abspath(__file__))
             base_dir = current_dir
             while not os.path.exists(os.path.join(base_dir, "src")) and base_dir != os.path.dirname(base_dir):
                 base_dir = os.path.dirname(base_dir)
+            data_dir = os.path.join(base_dir, "data")
 
-        data_dir = os.path.join(base_dir, "data")
         if not os.path.exists(data_dir):
-            os.makedirs(data_dir)
+            os.makedirs(data_dir, exist_ok=True)
 
         return data_dir
 
