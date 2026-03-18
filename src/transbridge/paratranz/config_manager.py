@@ -3,7 +3,84 @@
 """
 import os
 import configparser
+from dataclasses import dataclass, field
 from typing import Dict, Any, Optional
+
+
+# ─────────────────────────────── LLMConfig ───────────────────────────────────
+
+@dataclass
+class LLMConfig:
+    """LLM 翻译功能配置，独立于 ParatranzConfig，共享同一 INI 文件的 [llm] 节。"""
+
+    provider: str = "openai_compatible"        # openai_compatible | anthropic
+    api_key: str = ""
+    base_url: str = "https://api.openai.com/v1"
+    model: str = ""
+    max_concurrent: int = 3
+    max_tokens_per_batch: int = 2000   # 每批输入 token 估算上限（用于拆批）
+    max_output_tokens: int = 0         # 0 = 不限制（由模型默认），Anthropic fallback 到 8192
+    term_priority: list = field(default_factory=lambda: ["dynamic", "paratranz", "json", "excel"])
+    local_json_path: str = ""
+    local_excel_path: str = ""
+    excel_original_col: str = "A"
+    excel_translation_col: str = "B"
+    game_profile: str = "skyrim_se"   # data/prompts/games/{game_profile}.toml
+    target_lang: str = "zh_CN"        # data/prompts/langs/{target_lang}.toml
+
+    def save_to_file(self) -> None:
+        """将 [llm] 节写入共享 INI 文件（不覆盖其他节）。"""
+        config_path = ParatranzConfig.get_config_file_path()
+        config = configparser.ConfigParser()
+        if os.path.exists(config_path):
+            config.read(config_path, encoding="utf-8")
+        if not config.has_section("llm"):
+            config.add_section("llm")
+        config.set("llm", "provider", self.provider)
+        config.set("llm", "api_key", self.api_key)
+        config.set("llm", "base_url", self.base_url)
+        config.set("llm", "model", self.model)
+        config.set("llm", "max_concurrent", str(self.max_concurrent))
+        config.set("llm", "max_tokens_per_batch", str(self.max_tokens_per_batch))
+        config.set("llm", "max_output_tokens", str(self.max_output_tokens))
+        config.set("llm", "term_priority", ",".join(self.term_priority))
+        config.set("llm", "local_json_path", self.local_json_path)
+        config.set("llm", "local_excel_path", self.local_excel_path)
+        config.set("llm", "excel_original_col", self.excel_original_col)
+        config.set("llm", "excel_translation_col", self.excel_translation_col)
+        config.set("llm", "game_profile", self.game_profile)
+        config.set("llm", "target_lang", self.target_lang)
+        with open(config_path, "w", encoding="utf-8") as f:
+            config.write(f)
+
+    @classmethod
+    def load_from_file(cls) -> "LLMConfig":
+        """从共享 INI 文件加载 [llm] 节，文件不存在或缺少节时返回默认值。"""
+        config_path = ParatranzConfig.get_config_file_path()
+        obj = cls()
+        if not os.path.exists(config_path):
+            return obj
+        config = configparser.ConfigParser()
+        config.read(config_path, encoding="utf-8")
+        if not config.has_section("llm"):
+            return obj
+        obj.provider = config.get("llm", "provider", fallback=obj.provider)
+        obj.api_key = config.get("llm", "api_key", fallback=obj.api_key)
+        obj.base_url = config.get("llm", "base_url", fallback=obj.base_url)
+        obj.model = config.get("llm", "model", fallback=obj.model)
+        obj.max_concurrent = config.getint("llm", "max_concurrent", fallback=obj.max_concurrent)
+        obj.max_tokens_per_batch = config.getint("llm", "max_tokens_per_batch", fallback=obj.max_tokens_per_batch)
+        obj.max_output_tokens = config.getint("llm", "max_output_tokens", fallback=obj.max_output_tokens)
+        priority_str = config.get("llm", "term_priority", fallback="")
+        if priority_str:
+            obj.term_priority = [p.strip() for p in priority_str.split(",") if p.strip()]
+        obj.local_json_path = config.get("llm", "local_json_path", fallback=obj.local_json_path)
+        obj.local_excel_path = config.get("llm", "local_excel_path", fallback=obj.local_excel_path)
+        obj.excel_original_col = config.get("llm", "excel_original_col", fallback=obj.excel_original_col)
+        obj.excel_translation_col = config.get("llm", "excel_translation_col", fallback=obj.excel_translation_col)
+        obj.game_profile = config.get("llm", "game_profile", fallback=obj.game_profile)
+        obj.target_lang = config.get("llm", "target_lang", fallback=obj.target_lang)
+        return obj
 
 
 class ParatranzConfig:
@@ -53,7 +130,7 @@ class ParatranzConfig:
 
         Args:
             token: API 认证令牌
-            user_id: 当前用户的 ParaTranz 数字 ID（需手动填写，ParaTranz 暂无自动获取接口）
+            user_id: 当前用户的 ParaTranz 数字 ID（通过 GET /users/my 自动获取后缓存）
             base_url: API 基础 URL，默认为官方 API 地址
             timeout: 请求超时时间（秒），默认为 10 秒
             extra_headers: 额外的 HTTP 请求头

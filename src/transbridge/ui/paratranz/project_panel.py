@@ -169,11 +169,8 @@ class ProjectListPanel(QWidget):
 
         show_mine = self._tab_bar.currentIndex() == 1
         uid = config.user_id if show_mine else None
-
         if show_mine and uid is None:
-            self._status.setText("请先在 API 配置中填写用户 ID")
-            self._list.clear()
-            self._all_projects = []
+            self._status.setText("未获取到用户 ID，请重新验证 Token")
             return
 
         self._status.setText("加载中…")

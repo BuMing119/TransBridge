@@ -3,8 +3,8 @@ from src.transbridge.paratranz.paratranz_client import ParatranzClient
 
 class ParatranzProjectAPI(ParatranzClient):
 
-    def list_projects(self, page: int = 1, page_size: int = 50, uid: int = None):
-        """获取项目列表（分页）。uid 不为 None 时只返回该用户参与的项目。"""
+    def list_projects(self, page: int = 1, page_size: int = 50, uid=None):
+        """获取项目列表（分页）。uid 不为 None 时只返回该用户参与的项目（可传 "my" 表示当前用户）。"""
         params = {"page": page, "pageSize": page_size}
         if uid is not None:
             params["uid"] = uid

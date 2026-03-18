@@ -95,8 +95,9 @@ class MainWindow(QMainWindow):
     def _init_menu(self):
         mb = self.menuBar()
 
-        app_menu = mb.addMenu("TransBridge")
-        app_menu.addAction("关于…").triggered.connect(self._show_about)
+        tools_menu = mb.addMenu("小工具")
+        self._ai_translator_act = tools_menu.addAction("🤖 AI 自动翻译")
+        self._ai_translator_act.triggered.connect(self._open_ai_translator)
 
         file_menu = mb.addMenu("文件")
         refresh_act = file_menu.addAction("刷新项目列表")
@@ -192,21 +193,23 @@ class MainWindow(QMainWindow):
     # ── Actions ───────────────────────────────────────────────
 
     def _load_current_user(self):
-        """使用配置文件中的 user_id 加载当前用户信息。"""
+        """通过 GET /users/my 加载当前用户信息，同时缓存 user_id 到配置。"""
         config = self._ctx.config
-        if not config.user_id:
-            self._ctx.current_user = {"nickname": "已登录", "id": None}
-            self.show_message("提示：在「设置 / API 配置」中填写用户 ID 以显示完整用户信息")
-            return
-
-        uid = config.user_id
 
         def _fetch():
             api = ParatranzUserAPI(token=config.token, config=config)
-            return api.get_user(uid)
+            return api.get_my_user()
+
+        def _on_done(u):
+            self._ctx.current_user = u
+            # 自动缓存 uid（若配置中尚未记录）
+            uid = u.get("id") if isinstance(u, dict) else None
+            if uid and config.user_id != uid:
+                config.user_id = uid
+                config.save_to_file()
 
         w = ApiWorker(_fetch)
-        w.result.connect(lambda u: setattr(self._ctx, "current_user", u))
+        w.result.connect(_on_done)
         w.error.connect(lambda e: self.show_message(f"获取用户信息失败: {e}"))
         w.start()
         self._workers.append(w)
@@ -233,6 +236,9 @@ class MainWindow(QMainWindow):
             return
         from .paratranz.mails_dialog import MailsDialog
         MailsDialog(self._ctx, self).exec()
+
+    def _open_ai_translator(self):
+        self._workbench.open_tool("ai_translator")
 
     def _show_about(self):
         QMessageBox.about(

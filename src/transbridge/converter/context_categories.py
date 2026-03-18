@@ -1,0 +1,63 @@
+"""
+record type 分类常量（全项目共享）。
+
+定义 Skyrim ESP record type 的语义分类，供 AI 翻译批次规划、导出分文件等模块复用。
+若未来支持其他游戏，在此处扩展即可。
+"""
+
+# ── 第一轮：固定类别（专有名词，适合批量翻译并写入术语库）─────────────────────
+ROUND1_CATEGORIES: dict[str, set[str]] = {
+    "人名": {"NPC_:FULL", "NPC_:SHRT", "TACT:FULL"},
+    "地名": {"LCTN:FULL", "WRLD:FULL", "CELL:FULL", "DOOR:FULL", "REFR:FULL"},
+    "书名": {"BOOK:FULL"},
+    "物品": {
+        "ACTI:FULL", "ACTI:RNAM", "ALCH:FULL", "AMMO:FULL",
+        "ARMO:DESC", "ARMO:FULL", "CONT:FULL", "INGR:FULL",
+        "KEYM:FULL", "MISC:FULL", "SLGM:FULL", "TREE:FULL",
+        "WEAP:DESC", "WEAP:FULL",
+    },
+    "法术技能": {
+        "ENCH:FULL", "EXPL:FULL", "MESG:DESC", "MESG:FULL", "MESG:ITXT",
+        "MGEF:DNAM", "MGEF:FULL", "PERK:FULL", "SHOU:FULL",
+        "SPEL:DESC", "SPEL:FULL",
+    },
+    "任务名": {"QUST:FULL"},
+    "互动": {"FLOR:RNAM", "FURN:FULL", "HAZD:FULL"},
+}
+
+# ── 第二轮：对话类（INFO/DIAL），按 quest_formid 分组 ─────────────────────────
+ROUND2_PREFIXES: set[str] = {"INFO", "DIAL"}
+
+# ── 第三轮：长文本（书籍内容/任务日志等）────────────────────────────────────────
+ROUND3_CONTEXTS: set[str] = {
+    "BOOK:DESC", "QUST:NNAM", "QUST:CNAME",
+}
+
+# ── 翻译完成后自动写入动态术语库的 context 集合（第一轮里的专有名词类型）────────
+AUTO_TERM_CONTEXTS: set[str] = {
+    "NPC_:FULL", "NPC_:SHRT", "TACT:FULL",
+    "LCTN:FULL", "WRLD:FULL", "CELL:FULL", "DOOR:FULL", "REFR:FULL",
+    "BOOK:FULL",
+}
+
+# ── 导出分文件规则（文件名 → context 列表）───────────────────────────────────
+# 对话类（INFO/DIAL）由导出逻辑按 quest_formid 动态命名，不在此处定义。
+EXPORT_CATEGORIES: dict[str, list[str]] = {
+    "书籍_书名.json": ["BOOK:FULL"],
+    "书籍_内容.json": ["BOOK:DESC"],
+    "互动.json":     ["FLOR:RNAM", "FURN:FULL", "HAZD:FULL"],
+    "人名.json":     ["NPC_:FULL", "NPC_:SHRT", "TACT:FULL"],
+    "任务日志.json": ["QUST:FULL", "QUST:NNAM", "QUST:CNAME"],
+    "地名与门.json": ["CELL:FULL", "DOOR:FULL", "LCTN:FULL", "REFR:FULL", "WRLD:FULL"],
+    "法术_龙吼_技能.json": [
+        "ENCH:FULL", "EXPL:FULL", "MESG:DESC", "MESG:FULL", "MESG:ITXT",
+        "MGEF:DNAM", "MGEF:FULL", "PERK:FULL", "SHOU:FULL",
+        "SPEL:DESC", "SPEL:FULL",
+    ],
+    "物品.json": [
+        "ACTI:FULL", "ACTI:RNAM", "ALCH:FULL", "AMMO:FULL",
+        "ARMO:DESC", "ARMO:FULL", "CONT:FULL", "INGR:FULL",
+        "KEYM:FULL", "MISC:FULL", "SLGM:FULL", "TREE:FULL",
+        "WEAP:DESC", "WEAP:FULL",
+    ],
+}

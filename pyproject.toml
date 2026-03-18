@@ -12,6 +12,8 @@ dependencies = [
     "pandas>=2.3.3",
     "ruff>=0.14.10",
     "sse-plugin-interface>=1.0.1",
+    "openai>=1.0",
+    "anthropic>=0.20",
 ]
 
 [project.scripts]

@@ -3,6 +3,10 @@ from src.transbridge.paratranz.paratranz_client import ParatranzClient
 
 class ParatranzUserAPI(ParatranzClient):
 
+    def get_my_user(self):
+        """获取当前认证用户的信息（无需 user_id）。"""
+        return self._request("GET", "/users/my")
+
     def get_user(self, user_id: int):
         """获取用户信息"""
         return self._request("GET", f"/users/{user_id}")

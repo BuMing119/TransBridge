@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 import re
 
+from src.transbridge.converter.context_categories import EXPORT_CATEGORIES
 from src.transbridge.converter.translation_entry import TranslationEntry
 from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
@@ -39,16 +40,7 @@ def export_to_categorized_json_files(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # 定义分类规则
-    category_rules = {
-        "书籍_书名.json": ["BOOK:FULL"],
-        "书籍_内容.json": ["BOOK:DESC"],
-        "互动.json": ["FLOR:RNAM", "FURN:FULL", "HAZD:FULL"],
-        "人名.json": ["NPC_:FULL", "NPC_:SHRT", "TACT:FULL"],
-        "任务日志.json": ["QUST:FULL", "QUST:NNAM"],
-        "地名与门.json": ["CELL:FULL", "DOOR:FULL", "LCTN:FULL", "REFR:FULL", "WRLD:FULL"],
-        "法术_龙吼_技能.json": ["ENCH:FULL", "EXPL:FULL", "MESG:DESC", "MESG:FULL", "MESG:ITXT", "MGEF:DNAM", "MGEF:FULL", "PERK:FULL", "SHOU:FULL", "SPEL:DESC", "SPEL:FULL"],
-        "物品.json": ["ACTI:FULL", "ACTI:RNAM", "ALCH:FULL", "AMMO:FULL", "ARMO:DESC", "ARMO:FULL", "CONT:FULL", "INGR:FULL", "KEYM:FULL", "MISC:FULL", "SLGM:FULL", "TREE:FULL", "WEAP:DESC", "WEAP:FULL"]
-    }
+    category_rules = EXPORT_CATEGORIES
 
     # 用于存储按文件名分组的条目
     categorized_entries: dict[str, list[TranslationEntry]] = {
