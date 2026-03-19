@@ -218,7 +218,7 @@ class MainWindow(QMainWindow):
         self._pt_widget.refresh_projects()
 
     def _show_config_dialog(self):
-        dlg = ConfigDialog(self._ctx, self)
+        dlg = ConfigDialog(self._ctx, None)  # parent=None 让对话框独立显示在任务栏
         dlg.exec()
         if self._ctx.config.token and not self._ctx.current_user:
             self._load_current_user()

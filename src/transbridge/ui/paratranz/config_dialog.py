@@ -21,8 +21,12 @@ class ConfigDialog(QDialog):
     def __init__(self, ctx, parent=None):
         super().__init__(parent)
         self._ctx = ctx
-        # 设置为独立窗口，使其在任务栏显示
-        self.setWindowFlags(self.windowFlags() | Qt.WindowType.Window)
+        # 设置为独立窗口，使其在任务栏显示，并始终置顶
+        self.setWindowFlags(
+            Qt.WindowType.Window |
+            Qt.WindowType.WindowCloseButtonHint |
+            Qt.WindowType.WindowStaysOnTopHint
+        )
         self.setWindowTitle("API 配置")
         self.setFixedSize(460, 250)
         self._init_ui()

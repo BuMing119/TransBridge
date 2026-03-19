@@ -67,7 +67,7 @@ class TranslationEntry:
 
         id_value = f"{editor_id}:{form_id}|{ps.index}~{original_key}"
         if original_key.split(":")[0] == "INFO" or original_key.split(":")[0] == "DIAL":
-            quest_formid_ori = getattr(ps.context, "quest", "")
+            quest_formid_ori = getattr(ps.context, "quest", None) or ""
             quest_formid = quest_formid_ori.split("|")[0]
 
             #original_key = f"{original_key}|{getattr(ps, 'quest_formid', '')}"

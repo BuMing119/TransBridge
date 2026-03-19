@@ -755,6 +755,18 @@ class AITranslatorWindow(QWidget):
             QMessageBox.warning(self, "翻译", "找不到 ESP 路径，请重新加载集合。")
             return
 
+        # 检查是否无项目且术语库为空
+        if not self._ctx.current_project and self._check_all_terms_empty(cfg):
+            reply = QMessageBox.question(
+                self, "术语库为空",
+                "当前未选择 ParaTranz 项目，且所有术语来源均为空。\n\n"
+                "没有术语库辅助，翻译质量可能下降。是否继续？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
         # 确定翻译目标
         if self._scope_selected.isChecked():
             selected = self._step2.get_selected_entries()
@@ -795,6 +807,59 @@ class AITranslatorWindow(QWidget):
         progress_win.show()
         worker.start()
         self.close()
+
+    def _check_all_terms_empty(self, cfg) -> bool:
+        """检查所有术语来源是否均为空。"""
+        import os
+        # 检查动态术语库
+        from src.transbridge.ai_translator.term_database import DynamicTermDatabase
+        dynamic_db = DynamicTermDatabase(self._ctx.esp_path)
+        dynamic_db.load()
+        if dynamic_db.as_list():
+            return False
+
+        # 检查本地 JSON
+        if cfg.local_json_path and os.path.exists(cfg.local_json_path):
+            try:
+                import json
+                with open(cfg.local_json_path, encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, list) and data:
+                    return False
+                if isinstance(data, dict) and data:
+                    return False
+            except Exception:
+                pass
+
+        # 检查本地 Excel
+        if cfg.local_excel_path and os.path.exists(cfg.local_excel_path):
+            try:
+                import openpyxl
+                wb = openpyxl.load_workbook(cfg.local_excel_path, read_only=True, data_only=True)
+                ws = wb.active
+                col_orig = self._col_letter_to_index(cfg.excel_original_col or "A")
+                col_trans = self._col_letter_to_index(cfg.excel_translation_col or "B")
+                for row in ws.iter_rows(min_row=2, values_only=True):
+                    try:
+                        term = row[col_orig] if col_orig < len(row) else None
+                        trans = row[col_trans] if col_trans < len(row) else None
+                        if term and trans:
+                            return False
+                    except (IndexError, TypeError):
+                        continue
+            except Exception:
+                pass
+
+        return True
+
+    @staticmethod
+    def _col_letter_to_index(letter: str) -> int:
+        """将列字母（A/B/AA 等）转换为 0 起始的列索引。"""
+        letter = letter.upper().strip()
+        idx = 0
+        for ch in letter:
+            idx = idx * 26 + (ord(ch) - ord("A") + 1)
+        return idx - 1
 
     def _get_filtered_entry_ids(self) -> list[str] | None:
         from src.transbridge.ui.workbench.step2 import _COL_KEY
