@@ -1,7 +1,9 @@
+import uuid
 from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
 
+import requests
 from urllib3.fields import RequestField
 from urllib3.filepost import encode_multipart_formdata
 
@@ -100,10 +102,27 @@ class ParatranzFilesAPI(ParatranzClient):
             force: 是否强制覆盖，默认 False（仅覆盖未人工编辑过的词条）
         """
         p = Path(filepath)
-        fields: list[RequestField] = [_make_file_field("file", p.name, p.read_bytes())]
-        rf = RequestField(name="force", data=str(force).lower())
-        rf.make_multipart()
-        fields.append(rf)
-        body, ct = encode_multipart_formdata(fields)
-        return self._request_multipart(
-            "POST", f"/projects/{project_id}/files/{file_id}/translation", body, ct)
+        url = f"{self.config.base_url}/projects/{project_id}/files/{file_id}/translation"
+        headers = self.config.get_headers()
+
+        # 使用 requests 的标准 multipart 方式
+        with open(filepath, "rb") as f:
+            files = {"file": (p.name, f, "application/json")}
+            data = {"force": str(force).lower()}
+            response = requests.post(
+                url=url,
+                headers={"Authorization": headers.get("Authorization", "")},
+                files=files,
+                data=data,
+                timeout=self.config.timeout,
+            )
+
+        if not response.ok:
+            raise RuntimeError(f"API Error {response.status_code}: {response.text}")
+
+        if response.status_code == 204 or not response.content.strip():
+            return None
+        try:
+            return response.json()
+        except ValueError:
+            return None
