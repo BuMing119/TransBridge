@@ -30,7 +30,7 @@ ROUND2_PREFIXES: set[str] = {"INFO", "DIAL"}
 
 # ── 第三轮：长文本（书籍内容/任务日志等）────────────────────────────────────────
 ROUND3_CONTEXTS: set[str] = {
-    "BOOK:DESC", "QUST:NNAM", "QUST:CNAME",
+    "BOOK:DESC", "QUST:NNAM", "QUST:CNAM",
 }
 
 # ── 翻译完成后自动写入动态术语库的 context 集合（第一轮里的专有名词类型）────────
@@ -47,7 +47,7 @@ EXPORT_CATEGORIES: dict[str, list[str]] = {
     "书籍_内容.json": ["BOOK:DESC"],
     "互动.json":     ["FLOR:RNAM", "FURN:FULL", "HAZD:FULL"],
     "人名.json":     ["NPC_:FULL", "NPC_:SHRT", "TACT:FULL"],
-    "任务日志.json": ["QUST:FULL", "QUST:NNAM", "QUST:CNAME"],
+    "任务日志.json": ["QUST:FULL", "QUST:NNAM", "QUST:CNAM"],
     "地名与门.json": ["CELL:FULL", "DOOR:FULL", "LCTN:FULL", "REFR:FULL", "WRLD:FULL"],
     "法术_龙吼_技能.json": [
         "ENCH:FULL", "EXPL:FULL", "MESG:DESC", "MESG:FULL", "MESG:ITXT",

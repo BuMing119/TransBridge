@@ -44,7 +44,7 @@ class ConfigDialog(QDialog):
         form.addRow("API Token:", self._token_input)
 
         # 添加帮助链接
-        help_link = QLabel('<a href="https://paratranz.cn/users/my">点击打开 ParaTranz 个人设置页获取 Token</a>')
+        help_link = QLabel('<a href="https://paratranz.cn/users/my">点击打开 ParaTranz 个人设置页选择“设置”获取 Token</a>')
         help_link.setOpenExternalLinks(True)
         form.addRow("", help_link)
 
