@@ -17,7 +17,8 @@ from .base import OpCard
 class _WriteTargetDialog(QDialog):
     """写回目标选择对话框。"""
 
-    def __init__(self, eet_path: str | None, xt_path: str | None, parent=None):
+    def __init__(self, eet_path: str | None, xt_path: str | None,
+                 has_esp: bool = True, parent=None):
         super().__init__(parent)
         self.setWindowTitle("选择写回目标")
         self.setMinimumWidth(420)
@@ -29,8 +30,12 @@ class _WriteTargetDialog(QDialog):
 
         # ── ESP ───────────────────────────────────────────────
         self._rb_esp = QRadioButton("写回 ESP 插件")
-        self._rb_esp.setChecked(True)
-        esp_desc = QLabel("将译文写入插件副本，输出汉化版 ESP 文件。")
+        self._rb_esp.setChecked(has_esp)
+        self._rb_esp.setEnabled(has_esp)
+        if has_esp:
+            esp_desc = QLabel("将译文写入插件副本，输出汉化版 ESP 文件。")
+        else:
+            esp_desc = QLabel("当前集合由 EET XML 构建，无法写回 ESP 插件。")
         esp_desc.setStyleSheet("color: #555; margin-left: 20px;")
         group.addButton(self._rb_esp)
         layout.addWidget(self._rb_esp)
@@ -99,6 +104,11 @@ class _WriteTargetDialog(QDialog):
         self._rb_xt.toggled.connect(self._on_mode_changed)
         self._eet_input.textChanged.connect(self._update_ok)
         self._xt_input.textChanged.connect(self._update_ok)
+
+        # 无 ESP 时默认选中 EET
+        if not has_esp:
+            self._rb_eet.setChecked(True)
+            self._on_mode_changed()
 
     def _on_mode_changed(self):
         eet = self._rb_eet.isChecked()
@@ -172,6 +182,7 @@ class WriteCard(OpCard):
         dlg = _WriteTargetDialog(
             self._ctx.eet_path,
             self._ctx.xt_path,
+            has_esp=self._ctx.plugin is not None,
             parent=self,
         )
         if dlg.exec() != QDialog.DialogCode.Accepted:
