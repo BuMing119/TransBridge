@@ -4,14 +4,14 @@ ParaTranzUploader：将本地 TranslationEntryCollection 上传到 ParaTranz。
 工作流：
   1. 将集合导出为分类 JSON 文件（临时目录）
   2. 获取项目中已有文件列表
-  3. 对每个分类文件：同名已存在 → reupload_file（更新原文），不存在 → upload_file（新建）
-  4. 若 translation_mode 不为 "none"，对已存在文件追加调用 update_file_translation
-  5. 返回 UploadResult（新建数、更新数、跳过数、译文导入数）
+  3. 对每个分类文件按 translation_mode 处理
+  4. 返回 UploadResult（新建数、更新数、跳过数、译文导入数）
 
 translation_mode 取值：
-  "none"  — 仅更新原文，不碰译文（默认）
-  "safe"  — 更新原文后导入译文，不覆盖已人工编辑的词条（force=False）
-  "force" — 更新原文后强制覆盖所有译文（force=True）
+  "orig_only"   — 仅更新原文（默认）；新建文件正常创建，已有文件只更新原文，不碰译文
+  "trans_safe"  — 仅导入译文，不覆盖已人工编辑的词条；新建文件跳过（无 file_id）
+  "trans_force" — 仅导入译文，强制覆盖所有译文；新建文件跳过
+  "both"        — 更新原文并安全导入译文；新建文件创建后再导入译文
 """
 
 import json
@@ -46,7 +46,8 @@ class ParaTranzUploader:
         collection: TranslationEntryCollection,
         project_id: int,
         *,
-        translation_mode: str = "none",
+        file_filter: set[str] | None = None,
+        translation_mode: str = "orig_only",
         progress_callback: Callable[[int, int, str], None] | None = None,
     ) -> UploadResult:
         """
@@ -55,10 +56,12 @@ class ParaTranzUploader:
         Args:
             collection:         本地翻译集合
             project_id:         ParaTranz 项目 ID
-            translation_mode:   已存在文件的译文处理方式：
-                                  "none"  — 仅更新原文（默认）
-                                  "safe"  — 同时导入译文，不覆盖人工编辑
-                                  "force" — 同时导入译文，强制覆盖所有
+            file_filter:        若指定，则只上传文件名在此集合内的文件；None 表示全部上传
+            translation_mode:   处理方式：
+                                  "orig_only"   — 仅更新原文（默认）
+                                  "trans_safe"  — 仅导入译文，不覆盖人工编辑；新建文件跳过
+                                  "trans_force" — 仅导入译文，强制覆盖；新建文件跳过
+                                  "both"        — 更新原文并安全导入译文
             progress_callback:  进度回调 (current, total, filename)
 
         Returns:
@@ -66,10 +69,17 @@ class ParaTranzUploader:
         """
         result = UploadResult()
 
+        do_reupload = translation_mode in ("orig_only", "both")
+        do_trans = translation_mode in ("trans_safe", "trans_force", "both")
+        force_trans = translation_mode == "trans_force"
+
         with tempfile.TemporaryDirectory() as tmp_dir:
             # 1. 导出分类 JSON 到临时目录
             export_to_categorized_json_files(collection, tmp_dir)
             json_files = sorted(Path(tmp_dir).glob("*.json"))
+
+            if file_filter is not None:
+                json_files = [f for f in json_files if f.name in file_filter]
 
             if not json_files:
                 return result
@@ -84,7 +94,7 @@ class ParaTranzUploader:
 
             total = len(json_files)
 
-            # 3. 逐文件上传或更新
+            # 3. 逐文件处理
             for i, json_path in enumerate(json_files):
                 name = json_path.name
                 if progress_callback:
@@ -93,19 +103,32 @@ class ParaTranzUploader:
                 try:
                     if name in existing:
                         file_id = existing[name]
-                        self._api.reupload_file(project_id, file_id, str(json_path))
-                        result.updated += 1
-                        if translation_mode != "none":
-                            force = translation_mode == "force"
+                        if do_reupload:
+                            self._api.reupload_file(project_id, file_id, str(json_path))
+                            result.updated += 1
+                        if do_trans:
                             try:
-                                self._api.update_file_translation(project_id, file_id, str(json_path), force=force)
+                                self._api.update_file_translation(project_id, file_id, str(json_path), force=force_trans)
                                 result.translation_updated += 1
                             except RuntimeError:
-                                pass  # 译文导入失败不影响原文更新的计数
+                                if not do_reupload:
+                                    raise  # 纯译文模式下译文失败视为跳过
+                        result.files.append(name)
                     else:
-                        self._api.upload_file(project_id, str(json_path))
-                        result.created += 1
-                    result.files.append(name)
+                        if not do_reupload:
+                            pass  # 纯译文模式：新建文件跳过
+                        else:
+                            resp = self._api.upload_file(project_id, str(json_path))
+                            result.created += 1
+                            if do_trans and isinstance(resp, dict):
+                                new_file_id = resp.get("id")
+                                if new_file_id:
+                                    try:
+                                        self._api.update_file_translation(project_id, new_file_id, str(json_path), force=force_trans)
+                                        result.translation_updated += 1
+                                    except RuntimeError:
+                                        pass
+                            result.files.append(name)
                 except RuntimeError:
                     result.skipped += 1
 
@@ -120,7 +143,7 @@ class ParaTranzUploader:
         project_id: int,
         filename: str,
         *,
-        translation_mode: str = "none",
+        translation_mode: str = "orig_only",
         progress_callback: Callable[[int, int, str], None] | None = None,
     ) -> UploadResult:
         """
@@ -174,7 +197,7 @@ class ParaTranzUploader:
         tmp_dir: str,
         counter: list[int],
         *,
-        translation_mode: str = "none",
+        translation_mode: str = "orig_only",
     ) -> None:
         """
         递归上传词条列表。
@@ -182,6 +205,10 @@ class ParaTranzUploader:
         - 失败（文件过大）：对半拆分后递归，序号在两个子集之间连续递增
         - 单条词条仍过大：记为跳过并抛出警告
         """
+        do_reupload = translation_mode in ("orig_only", "both")
+        do_trans = translation_mode in ("trans_safe", "trans_force", "both")
+        force_trans = translation_mode == "trans_force"
+
         name = f"{stem}_{counter[0]}{ext}"
         json_path = Path(tmp_dir) / name
         json_path.write_text(
@@ -191,20 +218,34 @@ class ParaTranzUploader:
         try:
             if name in existing:
                 file_id = existing[name]
-                self._api.reupload_file(project_id, file_id, str(json_path))
-                result.updated += 1
-                if translation_mode != "none":
-                    force = translation_mode == "force"
+                if do_reupload:
+                    self._api.reupload_file(project_id, file_id, str(json_path))
+                    result.updated += 1
+                if do_trans:
                     try:
-                        self._api.update_file_translation(project_id, file_id, str(json_path), force=force)
+                        self._api.update_file_translation(project_id, file_id, str(json_path), force=force_trans)
                         result.translation_updated += 1
                     except RuntimeError:
-                        pass
+                        if not do_reupload:
+                            raise
+                result.files.append(name)
+                counter[0] += 1
             else:
-                self._api.upload_file(project_id, str(json_path))
-                result.created += 1
-            result.files.append(name)
-            counter[0] += 1
+                if not do_reupload:
+                    pass  # 纯译文模式：新建文件跳过
+                else:
+                    resp = self._api.upload_file(project_id, str(json_path))
+                    result.created += 1
+                    if do_trans and isinstance(resp, dict):
+                        new_file_id = resp.get("id")
+                        if new_file_id:
+                            try:
+                                self._api.update_file_translation(project_id, new_file_id, str(json_path), force=force_trans)
+                                result.translation_updated += 1
+                            except RuntimeError:
+                                pass
+                    result.files.append(name)
+                    counter[0] += 1
         except RuntimeError as e:
             err = str(e)
             if ("too large" in err.lower() or "413" in err) and len(entries) > 1:

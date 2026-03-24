@@ -1,13 +1,15 @@
 from pathlib import Path
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QDialog, QDialogButtonBox, QVBoxLayout, QHBoxLayout,
     QRadioButton, QLabel, QLineEdit, QCheckBox, QFileDialog, QMessageBox,
-    QButtonGroup, QFrame,
+    QButtonGroup, QFrame, QListWidget, QListWidgetItem, QPushButton,
 )
 
 from src.transbridge.converter.translation_entry_collection_export import (
     export_to_categorized_json_files,
+    get_categorized_file_names,
 )
 from src.transbridge.paratranz.workflow.uploader import ParaTranzUploader
 from .base import OpCard
@@ -19,7 +21,7 @@ class _UploadModeDialog(QDialog):
     def __init__(self, esp_path: str | None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("选择上传模式")
-        self.setMinimumWidth(380)
+        self.setMinimumWidth(400)
 
         layout = QVBoxLayout(self)
         layout.setSpacing(4)
@@ -64,16 +66,33 @@ class _UploadModeDialog(QDialog):
         section_label.setStyleSheet("color: #555; font-size: 12px;")
         layout.addWidget(section_label)
 
-        self._rb_trans_none = QRadioButton("仅更新原文（不改动 ParaTranz 上已有的译文）")
-        self._rb_trans_none.setChecked(True)
-        self._rb_trans_safe = QRadioButton("同时导入译文（不覆盖 ParaTranz 上已人工编辑的词条）")
-        self._rb_trans_force = QRadioButton("强制覆盖译文（覆盖 ParaTranz 上所有译文，包括已人工编辑的）")
+        # 主选项组
+        self._rb_orig_only = QRadioButton("仅更新原文（不改动 ParaTranz 上已有的译文）")
+        self._rb_orig_only.setChecked(True)
 
-        self._trans_group = QButtonGroup(self)
-        for rb in (self._rb_trans_none, self._rb_trans_safe, self._rb_trans_force):
+        self._rb_trans_only = QRadioButton("仅导入译文（不更新原文；新建文件将被跳过）")
+
+        # 仅译文的子选项
+        self._rb_trans_safe = QRadioButton("安全导入（不覆盖已人工编辑的词条）")
+        self._rb_trans_safe.setChecked(True)
+        self._rb_trans_force = QRadioButton("强制覆盖（覆盖所有译文，包括已人工编辑的）")
+        self._rb_trans_safe.setStyleSheet("margin-left: 32px;")
+        self._rb_trans_force.setStyleSheet("margin-left: 32px;")
+
+        self._rb_both = QRadioButton("更新原文并导入译文（安全模式，不覆盖已人工编辑的词条）")
+
+        self._main_mode_group = QButtonGroup(self)
+        for rb in (self._rb_orig_only, self._rb_trans_only, self._rb_both):
             rb.setStyleSheet("margin-left: 12px;")
-            self._trans_group.addButton(rb)
+            self._main_mode_group.addButton(rb)
             layout.addWidget(rb)
+            if rb is self._rb_trans_only:
+                layout.addWidget(self._rb_trans_safe)
+                layout.addWidget(self._rb_trans_force)
+
+        self._trans_sub_group = QButtonGroup(self)
+        self._trans_sub_group.addButton(self._rb_trans_safe)
+        self._trans_sub_group.addButton(self._rb_trans_force)
 
         layout.addSpacing(8)
 
@@ -87,13 +106,20 @@ class _UploadModeDialog(QDialog):
         btn_box.rejected.connect(self.reject)
         layout.addWidget(btn_box)
 
-        self._rb_plain.toggled.connect(self._on_mode_changed)
+        self._rb_plain.toggled.connect(self._on_upload_mode_changed)
+        self._rb_trans_only.toggled.connect(self._on_trans_only_toggled)
         self._fn_edit.textChanged.connect(self._update_ok)
 
-    def _on_mode_changed(self, plain_checked: bool):
+        self._on_trans_only_toggled(False)
+
+    def _on_upload_mode_changed(self, plain_checked: bool):
         self._fn_edit.setEnabled(plain_checked)
         self._chk_backup.setEnabled(not plain_checked)
         self._update_ok()
+
+    def _on_trans_only_toggled(self, checked: bool):
+        self._rb_trans_safe.setEnabled(checked)
+        self._rb_trans_force.setEnabled(checked)
 
     def _update_ok(self):
         if self._rb_plain.isChecked():
@@ -115,11 +141,88 @@ class _UploadModeDialog(QDialog):
 
     @property
     def translation_mode(self) -> str:
-        if self._rb_trans_force.isChecked():
-            return "force"
-        if self._rb_trans_safe.isChecked():
-            return "safe"
-        return "none"
+        if self._rb_trans_only.isChecked():
+            return "trans_force" if self._rb_trans_force.isChecked() else "trans_safe"
+        if self._rb_both.isChecked():
+            return "both"
+        return "orig_only"
+
+
+class _FileSelectionDialog(QDialog):
+    """分类上传时，让用户选择哪些文件参与上传（默认全选）。"""
+
+    def __init__(self, file_infos: list[tuple[str, int]], parent=None):
+        """
+        Args:
+            file_infos: list of (filename, entry_count)
+        """
+        super().__init__(parent)
+        self.setWindowTitle("选择要上传的文件")
+        self.setMinimumWidth(420)
+        self.setMinimumHeight(300)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(6)
+
+        hint = QLabel(f"共 {len(file_infos)} 个分类文件，请选择要上传的文件（默认全选）：")
+        hint.setStyleSheet("color: #555;")
+        layout.addWidget(hint)
+
+        # 全选 / 全不选 按钮行
+        btn_row = QHBoxLayout()
+        self._btn_all = QPushButton("全选")
+        self._btn_none = QPushButton("全不选")
+        btn_row.addWidget(self._btn_all)
+        btn_row.addWidget(self._btn_none)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        # 文件列表
+        self._list = QListWidget()
+        for filename, count in file_infos:
+            item = QListWidgetItem(f"{filename}  ({count} 条)")
+            item.setData(Qt.ItemDataRole.UserRole, filename)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked)
+            self._list.addItem(item)
+        layout.addWidget(self._list)
+
+        btn_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        self._ok_btn = btn_box.button(QDialogButtonBox.StandardButton.Ok)
+        self._ok_btn.setText("确认上传")
+        btn_box.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+        btn_box.accepted.connect(self.accept)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
+
+        self._btn_all.clicked.connect(self._select_all)
+        self._btn_none.clicked.connect(self._select_none)
+        self._list.itemChanged.connect(self._update_ok)
+        self._update_ok()
+
+    def _select_all(self):
+        for i in range(self._list.count()):
+            self._list.item(i).setCheckState(Qt.CheckState.Checked)
+
+    def _select_none(self):
+        for i in range(self._list.count()):
+            self._list.item(i).setCheckState(Qt.CheckState.Unchecked)
+
+    def _update_ok(self):
+        self._ok_btn.setEnabled(any(
+            self._list.item(i).checkState() == Qt.CheckState.Checked
+            for i in range(self._list.count())
+        ))
+
+    @property
+    def selected_files(self) -> set[str]:
+        return {
+            self._list.item(i).data(Qt.ItemDataRole.UserRole)
+            for i in range(self._list.count())
+            if self._list.item(i).checkState() == Qt.CheckState.Checked
+        }
 
 
 class UploadCard(OpCard):
@@ -159,12 +262,22 @@ class UploadCard(OpCard):
                 return
 
         if mode == "categorized":
+            # 预计算文件列表，让用户选择
+            file_infos = get_categorized_file_names(collection)
+            file_filter = None
+            if len(file_infos) > 1:
+                sel_dlg = _FileSelectionDialog(file_infos, parent=self)
+                if sel_dlg.exec() != QDialog.DialogCode.Accepted:
+                    return
+                file_filter = sel_dlg.selected_files
+
             def _upload_factory(progress_cb):
                 if backup_dir:
                     export_to_categorized_json_files(collection, backup_dir)
                 uploader = ParaTranzUploader(config)
                 return uploader.upload_collection(
                     collection, project_id=project_id,
+                    file_filter=file_filter,
                     translation_mode=translation_mode, progress_callback=progress_cb)
         else:
             def _upload_factory(progress_cb):
@@ -175,10 +288,10 @@ class UploadCard(OpCard):
                     progress_callback=progress_cb)
 
         def _on_done(result):
-            msg = f"新建：{result.created} 个\n更新：{result.updated} 个\n跳过：{result.skipped} 个"
-            if translation_mode != "none":
-                msg += f"\n导入译文：{result.translation_updated} 个"
-            QMessageBox.information(self, "上传完成", msg)
+            parts = [f"新建：{result.created} 个", f"更新原文：{result.updated} 个", f"跳过：{result.skipped} 个"]
+            if translation_mode != "orig_only":
+                parts.append(f"导入译文：{result.translation_updated} 个")
+            QMessageBox.information(self, "上传完成", "\n".join(parts))
 
         self._run_worker(
             fn_factory=_upload_factory,

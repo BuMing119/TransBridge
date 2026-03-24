@@ -74,27 +74,59 @@ def export_to_categorized_json_files(
 
     # 将INFO和DIAL类型的条目保存到单独的JSON文件
     for quest_formid, entries in dial_entries.items():
-        # 查找 quest_formid 对应的 TranslationEntry
-        quest_entry = None
-        for entry in collection:
-            # 检查 id 的后半部分是否匹配 quest_formid
-            id_parts = entry.id.split(':')  # 将 id 按照 ':' 分割
-            if len(id_parts) > 1:
-                form_id_and_index = id_parts[1]  # 获取 "form_id|index" 部分
-                form_id = form_id_and_index.split('|')[0]  # 获取 form_id
-
-                # 如果 form_id 匹配 quest_formid，则认为找到对应的 TranslationEntry
-                if form_id == quest_formid:
-                    quest_entry = entry
-                    break
-
-        # 使用 quest_entry 的 original 字段作为文件名，如果找不到则使用 quest_formid
-        quest_original = quest_entry.original if quest_entry else quest_formid
-
-        # 清理文件名中的非法字符
-        quest_original = re.sub(r'[<>:"/\|?*]', '_', quest_original)
-
-        filename = f"对话_[{quest_original}].json"
+        filename = _dial_filename(quest_formid, collection)
         file_path = output_dir / filename
         temp_collection = collection.__class__(entries)
         temp_collection.to_json_file(file_path, ensure_ascii=ensure_ascii, indent=indent)
+
+
+def _dial_filename(quest_formid: str, collection: TranslationEntryCollection) -> str:
+    """根据 quest_formid 查找任务名，生成对话文件名。"""
+    quest_entry = None
+    for entry in collection:
+        id_parts = entry.id.split(':')
+        if len(id_parts) > 1:
+            form_id = id_parts[1].split('|')[0]
+            if form_id == quest_formid:
+                quest_entry = entry
+                break
+    quest_original = quest_entry.original if quest_entry else quest_formid
+    quest_original = re.sub(r'[<>:"/\\|?*]', '_', quest_original)
+    return f"对话_[{quest_original}].json"
+
+
+def get_categorized_file_names(
+    collection: TranslationEntryCollection,
+) -> list[tuple[str, int]]:
+    """
+    预计算分类上传时会生成的文件列表及各文件的词条数，不写入磁盘。
+
+    Returns:
+        list of (filename, entry_count)，按文件名排序，只含非空分类。
+    """
+    category_rules = EXPORT_CATEGORIES
+
+    counts: dict[str, int] = {filename: 0 for filename in category_rules}
+    dial_counts: dict[str, int] = defaultdict(int)
+
+    for entry in collection._entries.values():
+        if "|" in entry.context:
+            _, quest_formid = entry.context.split("|", 1)
+            dial_counts[quest_formid] += 1
+        else:
+            for filename, contexts in category_rules.items():
+                if entry.context in contexts:
+                    counts[filename] += 1
+                    break
+
+    result: list[tuple[str, int]] = []
+    for filename, count in counts.items():
+        if count > 0:
+            result.append((filename, count))
+
+    for quest_formid, count in dial_counts.items():
+        filename = _dial_filename(quest_formid, collection)
+        result.append((filename, count))
+
+    result.sort(key=lambda x: x[0])
+    return result

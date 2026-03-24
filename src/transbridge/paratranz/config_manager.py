@@ -88,7 +88,7 @@ class ParatranzConfig:
 
     # 默认配置
     DEFAULT_BASE_URL = "https://paratranz.cn/api"
-    DEFAULT_TIMEOUT = 10
+    DEFAULT_TIMEOUT = 30
     DEFAULT_HEADERS = {}
     # 默认配置文件名（INI格式）
     DEFAULT_CONFIG_FILE = "paratranz_config.ini"
