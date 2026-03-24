@@ -19,31 +19,53 @@ class EETWriter:
     def apply_collection(self, collection: TranslationEntryCollection) -> int:
         """
         更新翻译文本（<TRADUIT>）与状态（<STATUS>）。
+
+        Phase 1：按完整 entry.id 精确查找（需要 EDID/ID/INDEX/GRUP/CHAMP）。
+        Phase 2：按 (original, grup:champ) 回退匹配。
+
         返回成功更新的条数。
         """
+        # --- 预构建 Phase 2 回退索引：(original, type_field_base) → entry ---
+        fallback_index: dict[tuple[str, str], TranslationEntry] = {}
+        for entry in collection:
+            if not entry.translation:
+                continue
+            ctx_base = entry.context.split("|")[0] if entry.context else ""
+            fb_key = (entry.original, ctx_base)
+            if fb_key not in fallback_index:
+                fallback_index[fb_key] = entry
+
         updated = 0
 
         for esp in self.root.findall(".//ESP"):
             edid = esp.findtext("EDID", "").strip()
             grup = esp.findtext("GRUP", "").strip()
             champ = esp.findtext("CHAMP", "").strip()
+            form_id = esp.findtext("ID", "").strip()
+            original = esp.findtext("ORIGINAL", "") or ""
 
-            entry_id = edid
-            entry_key = f"{grup}:{champ}"
+            index_text = esp.findtext("INDEX", "").strip()
+            try:
+                index = int(index_text) if index_text else None
+            except ValueError:
+                index = None
 
-            entry = collection.get(entry_id)
-            if not entry:
+            type_field = f"{grup}:{champ}"
+
+            # Phase 1：精确 id 匹配
+            full_id = TranslationEntry._build_eet_id(edid, form_id, index, grup, champ)
+            entry = collection.get(full_id)
+            if entry is None:
+                # Phase 2：(original, type_field) 回退
+                entry = fallback_index.get((original, type_field))
+
+            if entry is None or not entry.translation:
                 continue
-            # 注意：现在原来的key值存储在context中
-            if entry.context != entry_key:
-                continue
 
-            # 更新 TRADUIT
             trad_node = esp.find("TRADUIT")
             if trad_node is not None:
-                trad_node.text = entry.translation or ""
+                trad_node.text = entry.translation
 
-            # 更新 STATUS
             status_node = esp.find("STATUS")
             if status_node is not None:
                 status_node.text = "99" if entry.stage == 1 else "0"

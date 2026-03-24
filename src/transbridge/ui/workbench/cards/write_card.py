@@ -1,29 +1,193 @@
 from pathlib import Path
 
-from PyQt6.QtWidgets import QFileDialog, QMessageBox
+from PyQt6.QtWidgets import (
+    QDialog, QDialogButtonBox, QVBoxLayout, QHBoxLayout,
+    QRadioButton, QLabel, QLineEdit, QPushButton, QFileDialog, QMessageBox,
+    QButtonGroup,
+)
 
 from src.transbridge.writer.plugin_writer import PluginWriter
+from src.transbridge.writer.eet_xml_writer import EETWriter
+from src.transbridge.writer.xt_xml_writer import XTWriter
+from src.transbridge.parser.eet_parser import EET_XmlParser
+from src.transbridge.parser.xt_parser import XT_XmlParser
 from .base import OpCard
+
+
+class _WriteTargetDialog(QDialog):
+    """写回目标选择对话框。"""
+
+    def __init__(self, eet_path: str | None, xt_path: str | None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("选择写回目标")
+        self.setMinimumWidth(420)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(4)
+
+        group = QButtonGroup(self)
+
+        # ── ESP ───────────────────────────────────────────────
+        self._rb_esp = QRadioButton("写回 ESP 插件")
+        self._rb_esp.setChecked(True)
+        esp_desc = QLabel("将译文写入插件副本，输出汉化版 ESP 文件。")
+        esp_desc.setStyleSheet("color: #555; margin-left: 20px;")
+        group.addButton(self._rb_esp)
+        layout.addWidget(self._rb_esp)
+        layout.addWidget(esp_desc)
+        layout.addSpacing(6)
+
+        # ── EET XML ───────────────────────────────────────────
+        self._rb_eet = QRadioButton("写回 EET XML")
+        eet_desc = QLabel("将译文更新到 EET XML 文件中。")
+        eet_desc.setStyleSheet("color: #555; margin-left: 20px;")
+        eet_path_row = QHBoxLayout()
+        eet_path_lbl = QLabel("路径：")
+        eet_path_lbl.setStyleSheet("margin-left: 20px;")
+        eet_path_lbl.setFixedWidth(40)
+        self._eet_input = QLineEdit(eet_path or "")
+        self._eet_input.setPlaceholderText("选择 EET XML 文件…")
+        self._eet_input.setEnabled(False)
+        self._eet_browse = QPushButton("浏览")
+        self._eet_browse.setFixedWidth(50)
+        self._eet_browse.setEnabled(False)
+        self._eet_browse.clicked.connect(self._browse_eet)
+        eet_path_row.addWidget(eet_path_lbl)
+        eet_path_row.addWidget(self._eet_input)
+        eet_path_row.addWidget(self._eet_browse)
+        group.addButton(self._rb_eet)
+        layout.addWidget(self._rb_eet)
+        layout.addWidget(eet_desc)
+        layout.addLayout(eet_path_row)
+        layout.addSpacing(6)
+
+        # ── XT XML ────────────────────────────────────────────
+        self._rb_xt = QRadioButton("导出译文")
+        xt_desc = QLabel("将译文更新到 XT XML 文件中。")
+        xt_desc.setStyleSheet("color: #555; margin-left: 20px;")
+        xt_path_row = QHBoxLayout()
+        xt_path_lbl = QLabel("路径：")
+        xt_path_lbl.setStyleSheet("margin-left: 20px;")
+        xt_path_lbl.setFixedWidth(40)
+        self._xt_input = QLineEdit(xt_path or "")
+        self._xt_input.setPlaceholderText("选择 XT XML 文件…")
+        self._xt_input.setEnabled(False)
+        self._xt_browse = QPushButton("浏览")
+        self._xt_browse.setFixedWidth(50)
+        self._xt_browse.setEnabled(False)
+        self._xt_browse.clicked.connect(self._browse_xt)
+        xt_path_row.addWidget(xt_path_lbl)
+        xt_path_row.addWidget(self._xt_input)
+        xt_path_row.addWidget(self._xt_browse)
+        group.addButton(self._rb_xt)
+        layout.addWidget(self._rb_xt)
+        layout.addWidget(xt_desc)
+        layout.addLayout(xt_path_row)
+        layout.addSpacing(8)
+
+        btn_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        self._ok_btn = btn_box.button(QDialogButtonBox.StandardButton.Ok)
+        self._ok_btn.setText("确认写回")
+        btn_box.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+        btn_box.accepted.connect(self.accept)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
+
+        self._rb_eet.toggled.connect(self._on_mode_changed)
+        self._rb_xt.toggled.connect(self._on_mode_changed)
+        self._eet_input.textChanged.connect(self._update_ok)
+        self._xt_input.textChanged.connect(self._update_ok)
+
+    def _on_mode_changed(self):
+        eet = self._rb_eet.isChecked()
+        xt = self._rb_xt.isChecked()
+        self._eet_input.setEnabled(eet)
+        self._eet_browse.setEnabled(eet)
+        self._xt_input.setEnabled(xt)
+        self._xt_browse.setEnabled(xt)
+        self._update_ok()
+
+    def _update_ok(self):
+        if self._rb_eet.isChecked():
+            self._ok_btn.setEnabled(bool(self._eet_input.text().strip()))
+        elif self._rb_xt.isChecked():
+            self._ok_btn.setEnabled(bool(self._xt_input.text().strip()))
+        else:
+            self._ok_btn.setEnabled(True)
+
+    def _browse_eet(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择 EET XML 文件", self._eet_input.text(), "XML 文件 (*.xml);;所有文件 (*)"
+        )
+        if path:
+            self._eet_input.setText(path)
+
+    def _browse_xt(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择 XT XML 文件", self._xt_input.text(), "XML 文件 (*.xml);;所有文件 (*)"
+        )
+        if path:
+            self._xt_input.setText(path)
+
+    @property
+    def target(self) -> str:
+        if self._rb_eet.isChecked():
+            return "eet"
+        if self._rb_xt.isChecked():
+            return "xt"
+        return "esp"
+
+    @property
+    def eet_path(self) -> str:
+        return self._eet_input.text().strip()
+
+    @property
+    def xt_path(self) -> str:
+        return self._xt_input.text().strip()
 
 
 class WriteCard(OpCard):
 
     def __init__(self, ctx, run_worker, parent=None):
         super().__init__(
-            "写回 ESP 插件",
-            "将集合中的译文写入插件副本，输出汉化版 ESP 文件。",
-            "选择输出路径",
+            "写回插件/XML",
+            "将集合中的译文写回 ESP 插件或 EET/XT XML 文件。",
+            "写回",
             parent,
         )
         self._ctx = ctx
         self._run_worker = run_worker
-        self.btn.clicked.connect(self._do_write_esp)
+        self.btn.clicked.connect(self._do_write)
+        # eet_btn / xt_btn 作为 step3 按钮状态管理的占位符，与 self.btn 相同
+        self.eet_btn = self.btn
+        self.xt_btn = self.btn
 
-    def _do_write_esp(self):
+    def _do_write(self):
         collection = self._ctx.collection
         if not collection:
             return
 
+        dlg = _WriteTargetDialog(
+            self._ctx.eet_path,
+            self._ctx.xt_path,
+            parent=self,
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        target = dlg.target
+        if target == "esp":
+            self._write_esp(collection)
+        elif target == "eet":
+            self._write_eet(collection, dlg.eet_path)
+        else:
+            self._write_xt(collection, dlg.xt_path)
+
+    # ── Write ESP ─────────────────────────────────────────────
+
+    def _write_esp(self, collection):
         esp_path = self._ctx.esp_path
         if not esp_path:
             QMessageBox.warning(self, "未找到插件路径",
@@ -75,4 +239,68 @@ class WriteCard(OpCard):
             on_error=lambda e: QMessageBox.critical(self, "写回失败", e),
             progress_total=0,
             progress_msg="正在写回 ESP 插件…",
+        )
+
+    # ── Write EET XML ─────────────────────────────────────────
+
+    def _write_eet(self, collection, src_path: str):
+        save_path, _ = QFileDialog.getSaveFileName(
+            self, "保存 EET XML", src_path,
+            "XML 文件 (*.xml);;所有文件 (*)",
+        )
+        if not save_path:
+            return
+
+        def _write():
+            parser = EET_XmlParser.from_file(src_path)
+            writer = EETWriter(parser)
+            count = writer.apply_collection(collection)
+            writer.write(save_path)
+            return count, Path(save_path)
+
+        def _on_done(result):
+            count, out_path = result
+            QMessageBox.information(
+                self, "写回完成",
+                f"已更新 {count} 条译文，保存至：\n{out_path}",
+            )
+
+        self._run_worker(
+            _write,
+            on_result=_on_done,
+            on_error=lambda e: QMessageBox.critical(self, "EET 写回失败", e),
+            progress_total=0,
+            progress_msg="正在写回 EET XML…",
+        )
+
+    # ── Write XT XML ──────────────────────────────────────────
+
+    def _write_xt(self, collection, src_path: str):
+        save_path, _ = QFileDialog.getSaveFileName(
+            self, "保存 XT XML", src_path,
+            "XML 文件 (*.xml);;所有文件 (*)",
+        )
+        if not save_path:
+            return
+
+        def _write():
+            parser = XT_XmlParser.from_file(src_path)
+            writer = XTWriter(parser)
+            count = writer.apply_collection(collection)
+            writer.write(save_path)
+            return count, Path(save_path)
+
+        def _on_done(result):
+            count, out_path = result
+            QMessageBox.information(
+                self, "写回完成",
+                f"已更新 {count} 条译文，保存至：\n{out_path}",
+            )
+
+        self._run_worker(
+            _write,
+            on_result=_on_done,
+            on_error=lambda e: QMessageBox.critical(self, "XT 写回失败", e),
+            progress_total=0,
+            progress_msg="正在写回 XT XML…",
         )

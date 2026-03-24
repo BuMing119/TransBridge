@@ -43,7 +43,7 @@ class Step1SourceWidget(QWidget):
         # 插件文件
         esp_row = QHBoxLayout()
         self._esp_input = QLineEdit()
-        self._esp_input.setPlaceholderText("选择 .esp / .esm 文件…")
+        self._esp_input.setPlaceholderText("选择 .esp / .esm / .esl 文件…")
         self._esp_input.setReadOnly(True)
         esp_btn = QPushButton("浏览")
         esp_btn.setFixedWidth(60)
@@ -117,7 +117,7 @@ class Step1SourceWidget(QWidget):
 
     def _browse_esp(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "选择插件文件", "", "ESP/ESM 文件 (*.esp *.esm);;所有文件 (*)"
+            self, "选择插件文件", "", "ESP/ESM/ESL 文件 (*.esp *.esm *.esl);;所有文件 (*)"
         )
         if path:
             self._esp_input.setText(path)
@@ -138,7 +138,7 @@ class Step1SourceWidget(QWidget):
 
     def _browse_translated_plugin(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "选择已翻译插件文件", "", "ESP/ESM 文件 (*.esp *.esm);;所有文件 (*)"
+            self, "选择已翻译插件文件", "", "ESP/ESM/ESL 文件 (*.esp *.esm *.esl);;所有文件 (*)"
         )
         if path:
             self._tp_input.setText(path)
@@ -196,6 +196,8 @@ class Step1SourceWidget(QWidget):
         self._progress.hide()
         self._status_lbl.setText(f"解析完成，共 {len(collection)} 条词条")
         self._ctx.esp_path = self._esp_input.text().strip()
+        self._ctx.eet_path = self._eet_input.text().strip() or None
+        self._ctx.xt_path = self._xt_input.text().strip() or None
         self._ctx.migrate_count = migrate_count
         self._ctx.collection = collection
         self._ctx.plugin = plugin

@@ -24,6 +24,8 @@ class AppContext(QObject):
         self._current_project: dict | None = None
         self._collection: TranslationEntryCollection | None = None
         self.esp_path: str | None = None  # 最近一次解析的插件文件路径
+        self.eet_path: str | None = None  # 最近一次解析使用的 EET XML 文件路径
+        self.xt_path: str | None = None   # 最近一次解析使用的 XT XML 文件路径
         self.migrate_count: int = 0       # 最近一次解析的迁移（EET/XT/已翻译ESP）条数之和
         self.mine_project_ids: set = set()  # 「我参与的」视图最近一次加载的项目 ID 集合
 

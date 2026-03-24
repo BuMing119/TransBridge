@@ -123,6 +123,17 @@ class TranslationEntryCollection:
 
         return collection
 
+    @staticmethod
+    def _type_field_base(context: str) -> str:
+        """从 context 提取基础 TYPE:FIELD（去掉 INFO/DIAL 的 |quest_formid 后缀）。"""
+        return context.split("|")[0] if context else ""
+
+    @staticmethod
+    def _form_id_from_entry_id(entry_id: str) -> str:
+        """从 entry.id 提取 form_id（冒号与竖线之间的部分）。"""
+        _, _, rest = entry_id.partition(":")
+        return rest.partition("|")[0]
+
     def update_from_eet_xml(
             self,
             path: str | Path,
@@ -130,55 +141,70 @@ class TranslationEntryCollection:
         """
         从 EET XML 文件中更新已存在的翻译项。
 
-        规则：
-        - 只更新已存在的 TranslationEntry
-        - 匹配条件：id 和 original 必须一致
-        - 只更新 translation 和 stage 字段，其他字段保持不变
-        - 如果 EET 中 traduit 为空，则不更新
+        Phase 1：按完整 entry.id 精确匹配 + original 校验。
+        Phase 2：对未命中的条目，按 (original, type_field_base) 回退匹配。
 
         :param path: EET XML 文件路径
         :return: 实际发生更新的条目数量
         """
         parser = EET_XmlParser.from_file(path)
+        all_eet: list[EET_Entry] = list(parser)
         updated_count = 0
 
-        # 预先按 id 分组 EET 条目（加速匹配）
+        # --- Phase 1：按完整 id 精确匹配 ---
         eet_by_id: dict[str, list[EET_Entry]] = defaultdict(list)
-        for eet_entry in parser:
+        for eet_entry in all_eet:
             eet_id = TranslationEntry._build_eet_id(
                 eet_entry.edid, eet_entry.id, eet_entry.index, eet_entry.grup, eet_entry.champ
             )
             eet_by_id[eet_id].append(eet_entry)
 
-        # 遍历已存在的 TranslationEntry
+        unmatched: list[TranslationEntry] = []
+
         for entry in list(self._entries.values()):
-            # 查找匹配的 EET 条目
-            matching_eet_entries = eet_by_id.get(entry.id, [])
-
-            for eet_entry in matching_eet_entries:
-                # 检查 original 是否匹配
-                if eet_entry.original != entry.original:
+            matched = False
+            for eet_entry in eet_by_id.get(entry.id, []):
+                if eet_entry.original != entry.original or not eet_entry.traduit:
                     continue
-
-                # 检查 traduit 是否为空
-                if not eet_entry.traduit:
-                    continue
-
-                # 更新 translation 和 stage
                 updated_entry = TranslationEntry(
-                    id=entry.id,
-                    key=entry.key,
-                    original=entry.original,
+                    id=entry.id, key=entry.key, original=entry.original,
                     translation=eet_entry.traduit,
                     stage=1 if eet_entry.status == 99 or eet_entry.traduit else 0,
-                    context=entry.context
+                    context=entry.context,
                 )
-
                 self._entries[entry.id] = updated_entry
                 self._key_index[entry.key] = updated_entry
                 updated_count += 1
-                # 每个条目只更新一次
+                matched = True
                 break
+            if not matched:
+                unmatched.append(entry)
+
+        # --- Phase 2：按 (original, type_field_base) 回退 ---
+        if unmatched:
+            # key = (form_id, grup:champ, original)，优先有译文的条目
+            fallback_index: dict[tuple[str, str, str], EET_Entry] = {}
+            for eet_entry in all_eet:
+                if not eet_entry.traduit:
+                    continue
+                fb_key = (eet_entry.original, f"{eet_entry.grup}:{eet_entry.champ}")
+                if fb_key not in fallback_index:
+                    fallback_index[fb_key] = eet_entry
+
+            for entry in unmatched:
+                fb_key = (entry.original, self._type_field_base(entry.context))
+                eet_entry = fallback_index.get(fb_key)
+                if eet_entry is None:
+                    continue
+                updated_entry = TranslationEntry(
+                    id=entry.id, key=entry.key, original=entry.original,
+                    translation=eet_entry.traduit,
+                    stage=1 if eet_entry.status == 99 or eet_entry.traduit else 0,
+                    context=entry.context,
+                )
+                self._entries[entry.id] = updated_entry
+                self._key_index[entry.key] = updated_entry
+                updated_count += 1
 
         return updated_count
 
@@ -222,49 +248,69 @@ class TranslationEntryCollection:
         """
         将 XT_Entry 批量应用到已有的 TranslationEntry 上。
 
-        规则：
-        - XT 不能创建新 TranslationEntry
-        - 只能更新已存在且匹配的 entry
-        - 是否更新由 TranslationEntry.try_update_from_xt 决定
+        Phase 1：按 edid 桶查找（候选：editid / bare formid / [formid]）+ rec/source/index 校验。
+        Phase 2：对未命中的条目，按 (original, type_field_base) 回退匹配。
 
         :return: 实际发生更新的条目数量
         """
+        all_xt: list[XT_Entry] = list(xt_entries)
 
-        # ---------- 1. 预先按 edid 分组 XT（加速匹配） ----------
-
+        # --- Phase 1：按 edid 分组 ---
         xt_by_edid: dict[str, list[XT_Entry]] = defaultdict(list)
-        for xt in xt_entries:
+        for xt in all_xt:
             xt_by_edid[xt.edid].append(xt)
 
         updated_count = 0
-
-        # ---------- 2. 遍历已有 TranslationEntry ----------
+        unmatched: list[TranslationEntry] = []
 
         for entry in list(self._entries.values()):
-            # TranslationEntry.id = "a:b"
             left, _, right_with_other = entry.id.partition(":")
             right = right_with_other.split("|")[0]
 
-            # list_id = 0 → edid = a
-            # list_id = 1 → edid = [b]
-            candidate_edids = (left, f"[{right}]")
+            # 扩展候选：editid / bare formid / [formid]
+            candidate_edids = (left, right, f"[{right}]")
 
-            # ---------- 3. 只尝试可能匹配的 XT ----------
-
+            matched = False
             for edid in candidate_edids:
                 for xt in xt_by_edid.get(edid, []):
-                    # 注意：现在原来的key值存储在context中，所以try_update_from_xt会使用entry.context进行匹配
                     updated = TranslationEntry.try_update_from_xt(entry, xt)
-
                     if updated is None:
                         continue
-
                     if updated is not entry:
                         self._entries[entry.id] = updated
                         self._key_index[entry.key] = updated
-
                         entry = updated
                         updated_count += 1
+                    matched = True
+                    break
+                if matched:
+                    break
+
+            if not matched:
+                unmatched.append(entry)
+
+        # --- Phase 2：按 (original, type_field_base) 回退 ---
+        if unmatched:
+            fallback_index: dict[tuple[str, str], XT_Entry] = {}
+            for xt in all_xt:
+                if not xt.dest:
+                    continue
+                fb_key = (xt.source, xt.rec)
+                if fb_key not in fallback_index:
+                    fallback_index[fb_key] = xt
+
+            for entry in unmatched:
+                fb_key = (entry.original, self._type_field_base(entry.context))
+                xt = fallback_index.get(fb_key)
+                if xt is None or not xt.dest:
+                    continue
+                updated_entry = TranslationEntry(
+                    id=entry.id, key=entry.key, original=entry.original,
+                    translation=xt.dest, stage=1, context=entry.context,
+                )
+                self._entries[entry.id] = updated_entry
+                self._key_index[entry.key] = updated_entry
+                updated_count += 1
 
         return updated_count
 
@@ -277,47 +323,68 @@ class TranslationEntryCollection:
         """
         从已翻译的 ESP/ESM 中提取译文并更新集合。
 
-        已翻译插件中，PluginParser 解析出的 entry.original 字段存储的是目标译文。
-        按 entry.id 精确匹配，仅将「译文 ≠ 原文」的条目视为有效译文。
+        Phase 1：按 entry.id 精确匹配。
+        Phase 2：对未命中的条目，按 (original, type_field_base) 回退匹配。
 
         :param path: 已翻译插件文件路径
-        :param overwrite: 是否覆盖已有译文，默认 False（跳过已有译文的条目）
+        :param overwrite: 是否覆盖已有译文，默认 False
         :return: 实际发生更新的条目数量
         """
         translated_entries = PluginParser().parse_plugin(Path(path), skip_empty=True)
+        all_translated = list(translated_entries)
 
-        # 构建查找表：{entry.id: translated_text}
-        translated_lookup: dict[str, str] = {te.id: te.original for te in translated_entries}
+        # Phase 1：按 id 精确查找
+        translated_lookup: dict[str, str] = {te.id: te.original for te in all_translated}
 
         updated_count = 0
+        unmatched: list[TranslationEntry] = []
+
         for entry in list(self._entries.values()):
             translated_text = translated_lookup.get(entry.id)
             if translated_text is None:
+                unmatched.append(entry)
                 continue
             if translated_text == entry.original:
                 continue
             if entry.translation and not overwrite:
                 continue
-            # self._entries[entry.id] = TranslationEntry(
-            #     id=entry.id,
-            #     key=entry.key,
-            #     original=entry.original,
-            #     translation=translated_text,
-            #     stage=1,
-            #     context=entry.context,
-            # )
             self.add(
                 TranslationEntry(
-                    id=entry.id,
-                    key=entry.key,
-                    original=entry.original,
-                    translation=translated_text,
-                    stage=1,
-                    context=entry.context,
+                    id=entry.id, key=entry.key, original=entry.original,
+                    translation=translated_text, stage=1, context=entry.context,
                 ),
-                overwrite=True  # 确保覆盖
+                overwrite=True,
             )
             updated_count += 1
+
+        # Phase 2：按 (original, type_field_base) 回退
+        if unmatched:
+            fallback_index: dict[tuple[str, str], str] = {}
+            for te in all_translated:
+                if te.original == "":
+                    continue
+                _, _, rest = te.id.partition(":")
+                _, _, type_part = rest.partition("~")
+                fb_key = (te.original, type_part.split("|")[0])
+                # 只保留第一个命中（避免重名条目污染）
+                if fb_key not in fallback_index:
+                    fallback_index[fb_key] = te.original
+
+            for entry in unmatched:
+                if entry.translation and not overwrite:
+                    continue
+                fb_key = (entry.original, self._type_field_base(entry.context))
+                translated_text = fallback_index.get(fb_key)
+                if translated_text is None or translated_text == entry.original:
+                    continue
+                self.add(
+                    TranslationEntry(
+                        id=entry.id, key=entry.key, original=entry.original,
+                        translation=translated_text, stage=1, context=entry.context,
+                    ),
+                    overwrite=True,
+                )
+                updated_count += 1
 
         return updated_count
 

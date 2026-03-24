@@ -97,37 +97,31 @@ class TranslationEntry:
         - 匹配且满足条件则返回更新后的新 entry
         """
 
-        # ---------- 1. 根据 list_id + edid 匹配 id ----------
+        # ---------- 1. edid 匹配 ----------
 
-        # TranslationEntry.id 形如 "a:b|index"
+        # TranslationEntry.id 形如 "edid:form_id|index~TYPE:FIELD"
         id_left, _, id_right_with_index = entry.id.partition(":")
         id_right, _, id_index_with_type = id_right_with_index.partition("|")
         id_index, _, id_type = id_index_with_type.partition("~")
 
-        if xt.list_id == 0:
-            # edid == id 前半部分
-            if xt.edid != id_left:
-                return None
-
-        elif xt.list_id == 1:
-            # edid == [id 后半部分]
-            if xt.edid != f"[{id_right}]":
-                return None
-
-        else:
-            # 未定义的 list_id，直接不匹配
+        # XT 工具对缺 EditorID 的记录处理不固定：
+        # list_id=0 可能填 editid 也可能填 bare formid；list_id=1 同理。
+        # 不依赖 list_id 判断 edid 格式，改为检查三种合理候选形式。
+        valid_edids = {id_left, id_right, f"[{id_right}]"}
+        if xt.edid not in valid_edids:
             return None
 
         # ---------- 1.5 检查 index 是否匹配 ----------
-        # TranslationEntry.id 中的 index 必须与 XT_Entry.index 一致
         entry_index = int(id_index) if id_index else None
         if entry_index is not None and entry_index != xt.index:
             return None
 
         # ---------- 2. rec / source 的一致性校验（防误匹配） ----------
 
-        # 注意：现在原来的key值存储在context中
-        if xt.rec != entry.context:
+        # entry.context 对 INFO/DIAL 含 quest_formid 后缀（"INFO:NAM1|quest"）
+        # XT 的 rec 只含基础部分（"INFO:NAM1"），取 context 基础部分比较
+        context_base = entry.context.split("|")[0] if entry.context else ""
+        if xt.rec != context_base:
             return None
 
         if xt.source != entry.original:
