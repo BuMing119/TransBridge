@@ -1,7 +1,21 @@
+import ssl
 import time
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.ssl_ import create_urllib3_context
+
 from .config_manager import ParatranzConfig
+
+
+class _SSLAdapter(HTTPAdapter):
+    """自定义 SSL 适配器，忽略服务器异常关闭 TLS 连接的错误（UNEXPECTED_EOF_WHILE_READING）"""
+
+    def init_poolmanager(self, *args, **kwargs):
+        ctx = create_urllib3_context()
+        ctx.options |= ssl.OP_IGNORE_UNEXPECTED_EOF
+        kwargs['ssl_context'] = ctx
+        return super().init_poolmanager(*args, **kwargs)
 
 
 class ParatranzClient:
@@ -24,6 +38,8 @@ class ParatranzClient:
                 self.config.update_token(token)
             if timeout != 10:
                 self.config.update_timeout(timeout)
+        self._session = requests.Session()
+        self._session.mount("https://", _SSLAdapter())
 
     def _request(self, method: str, endpoint: str, **kwargs):
         """
@@ -45,7 +61,7 @@ class ParatranzClient:
         max_retries = 3
         for attempt in range(max_retries + 1):
             try:
-                response = requests.request(
+                response = self._session.request(
                     method=method,
                     url=url,
                     headers=headers,
@@ -97,7 +113,7 @@ class ParatranzClient:
         max_retries = 3
         for attempt in range(max_retries + 1):
             try:
-                response = requests.request(
+                response = self._session.request(
                     method=method,
                     url=url,
                     headers=headers,

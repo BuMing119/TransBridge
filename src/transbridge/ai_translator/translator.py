@@ -129,15 +129,21 @@ class AutoTranslator:
         max_tokens: int,
         pause_event: threading.Event | None,
         stop_event: threading.Event | None,
+        chunk_callback: Callable[[str], None] | None = None,
     ) -> str:
-        """运行 LLM 调用，期间每 50ms 检查 pause_event / stop_event；触发时立即取消请求。"""
+        """运行 LLM 调用，期间每 50ms 检查 pause_event / stop_event；触发时立即取消请求。
+        chunk_callback: 非 None 时启用流式调用，每收到一个文本块即回调。
+        """
         result_holder: list = [None]
         error_holder: list = [None]
         done = threading.Event()
 
         def _call():
             try:
-                result_holder[0] = self._llm.chat(messages, max_tokens)
+                if chunk_callback is not None:
+                    result_holder[0] = self._llm.chat_stream(messages, max_tokens, chunk_callback)
+                else:
+                    result_holder[0] = self._llm.chat(messages, max_tokens)
             except Exception as e:
                 error_holder[0] = e
             finally:
@@ -168,16 +174,19 @@ class AutoTranslator:
         stop_event: threading.Event,
         pause_event: threading.Event | None = None,
         checkpoint: "ProgressCheckpoint | None" = None,
-        log_callback: Callable[[str], None] | None = None,
+        log_callback: Callable[[int, str], None] | None = None,
+        stream_callback: Callable[[str], None] | None = None,
     ) -> TranslationResult:
         """
         progress_callback(current, total, message, success_count, failed_count, new_terms)
-        log_callback(line)  — 每条词条译文或 API 错误的详细文本，可为 None
+        log_callback(batch_idx, line)  — batch_idx=-1 为轮次级消息，>=0 为批次专属消息
+        stream_callback(chunk) — LLM 流式响应片段回调，可为 None
         pause_event: set=运行中，clear=暂停中（wait() 会阻塞直到 set）
         checkpoint: 传入则从断点继续，跳过已完成批次
         """
         result = TranslationResult()
         lock = threading.Lock()
+        t_total_start = time.perf_counter()
 
         # 从断点恢复累计统计
         completed_fps: set[frozenset] = set()
@@ -222,10 +231,17 @@ class AutoTranslator:
                     result.success_count, result.failed_count, result.new_dynamic_terms,
                 )
 
-        def _log(line: str):
+        def _log(line: str, idx: int = -1):
             if log_callback:
-                with lock:
-                    log_callback(line)
+                log_callback(idx, line)
+
+        # 主动加载术语库并记录各来源情况
+        self._term_mgr.load_all()
+        for source, count, err in self._term_mgr.get_load_log():
+            if err:
+                _log(f"⚠ 术语来源 [{source}] 加载失败: {err}")
+            else:
+                _log(f"  术语来源 [{source}]: {count} 条")
 
         def _save_checkpoint():
             with lock:
@@ -265,25 +281,62 @@ class AutoTranslator:
                 _save_checkpoint()
                 return
 
-            msg = f"{round_name} | {batch.batch_type}（第 {idx}/{total_batches} 批）"
+            msg = f"{round_name} | {batch.batch_type}（第 {idx}/{total_batches} 批，{len(batch.entries)} 条）"
             _emit(idx, msg)
 
+            # 批次专属 log 回调（携带 idx）
+            _batch_log_cb = (lambda line: log_callback(idx, line)) if log_callback else None
+
+            def _blog(line: str):
+                if _batch_log_cb:
+                    _batch_log_cb(line)
+
+            # 批次头
+            _blog(f"\n开始翻译：")
+            _blog(f"任务{idx}：{batch.batch_type}")
+            _blog(f"-----------------------")
+
+            t_batch = time.perf_counter()
+            _batch_timing: dict = {}
+            with lock:
+                _success_before = result.success_count
+                _terms_before = result.new_dynamic_terms
+
             try:
-                self._run_batch(batch, collection, result, lock, log_callback, pause_event, stop_event)
+                self._run_batch(batch, collection, result, lock, _batch_log_cb, pause_event, stop_event, stream_callback, _timing_out=_batch_timing)
             except _CancelledByStop:
-                _log("⏹ 批次已中断（停止）")
+                _blog("⏹ 批次已中断（停止）")
                 _save_checkpoint()
                 return
             except _CancelledByPause:
-                _log("⏸ 批次已中断（暂停）")
+                _blog("⏸ 批次已中断（暂停）")
                 if pause_event is not None:
                     pause_event.wait()   # 阻塞直到用户点击继续
                 if stop_event.is_set():
                     _save_checkpoint()
                     return
                 # 继续后重试本批次（不重新计数，沿用原 idx）
-                _emit(idx, f"{round_name} | {batch.batch_type}（第 {idx}/{total_batches} 批，重试）")
-                self._run_batch(batch, collection, result, lock, log_callback, pause_event, stop_event)
+                _emit(idx, f"{round_name} | {batch.batch_type}（第 {idx}/{total_batches} 批，{len(batch.entries)} 条，重试）")
+                _batch_timing.clear()
+                with lock:
+                    _success_before = result.success_count
+                    _terms_before = result.new_dynamic_terms
+                self._run_batch(batch, collection, result, lock, _batch_log_cb, pause_event, stop_event, stream_callback, _timing_out=_batch_timing)
+
+            t_batch_elapsed = time.perf_counter() - t_batch
+            with lock:
+                _success_delta = result.success_count - _success_before
+                _terms_delta = result.new_dynamic_terms - _terms_before
+
+            # 批次尾
+            _blog(f"-----------------------")
+            _blog(f"已完成：")
+            _blog(f"术语匹配时长:{_batch_timing.get('t_terms', 0):.2f} s")
+            _blog(f"LLM调用时长:{_batch_timing.get('t_llm', 0):.2f} s")
+            _blog(f"解析时长：{_batch_timing.get('t_parse', 0):.3f} s")
+            _blog(f"总时长：{t_batch_elapsed:.2f} s")
+            _blog(f"翻译词条数：{_success_delta}")
+            _blog(f"新增术语数：{_terms_delta}")
 
             with lock:
                 completed_fps.add(batch_fp)
@@ -294,6 +347,8 @@ class AutoTranslator:
 
         # ── 第一轮：所有批次并发 ──────────────────────────────────────────────
         if plan.round1 and not stop_event.is_set():
+            t_round = time.perf_counter()
+            _log(f"\n── 第一轮开始（{len(plan.round1)} 批，专有名词）──")
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = [
                     executor.submit(_run_one_batch, batch, "第一轮")
@@ -301,10 +356,13 @@ class AutoTranslator:
                 ]
                 for f in as_completed(futures):
                     f.result()   # 传播异常
+            _log(f"── 第一轮完成: {time.perf_counter() - t_round:.2f}s ──\n")
 
         # ── 第二轮：quest 间并发，quest 内串行 ───────────────────────────────
         if plan.round2 and not stop_event.is_set():
             quest_groups = plan.round2_by_quest()
+            t_round = time.perf_counter()
+            _log(f"\n── 第二轮开始（{len(plan.round2)} 批，对话）──")
 
             def _run_quest_group(quest_batches: list["Batch"]) -> None:
                 for batch in quest_batches:
@@ -319,9 +377,12 @@ class AutoTranslator:
                 ]
                 for f in as_completed(futures):
                     f.result()
+            _log(f"── 第二轮完成: {time.perf_counter() - t_round:.2f}s ──\n")
 
         # ── 第三轮：所有批次并发 ──────────────────────────────────────────────
         if plan.round3 and not stop_event.is_set():
+            t_round = time.perf_counter()
+            _log(f"\n── 第三轮开始（{len(plan.round3)} 批，长文本）──")
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = [
                     executor.submit(_run_one_batch, batch, "第三轮")
@@ -329,10 +390,13 @@ class AutoTranslator:
                 ]
                 for f in as_completed(futures):
                     f.result()
+            _log(f"── 第三轮完成: {time.perf_counter() - t_round:.2f}s ──\n")
 
         # 全部完成，删除断点文件
+        t_total = time.perf_counter() - t_total_start
         if not stop_event.is_set():
             ProgressCheckpoint(esp_stem, target_entry_ids, self._cfg.overwrite, [], {}).delete(self._cfg.esp_path)
+        _log(f"\n总耗时: {t_total:.2f}s")
         return result
 
     def _run_batch(
@@ -344,88 +408,141 @@ class AutoTranslator:
         log_callback: Callable[[str], None] | None = None,
         pause_event: threading.Event | None = None,
         stop_event: threading.Event | None = None,
+        stream_callback: Callable[[str], None] | None = None,
         _min_size: int = 1,
+        _timing_out: dict | None = None,
     ) -> int:
         from src.transbridge.converter.context_categories import AUTO_TERM_CONTEXTS
 
         def _log(line: str):
             if log_callback:
-                with lock:
-                    log_callback(line)
+                log_callback(line)
 
         entries = batch.entries
         if not entries:
             return 0
 
+        t0 = time.perf_counter()
         matched_terms = self._term_mgr.match_terms([e.original for e in entries])
-        messages = self._builder.build_translation_prompt(entries, matched_terms, batch.batch_type)
+        t_terms = time.perf_counter()
 
+        # ── 精确匹配：原文与术语完全相同的条目直接填充，无需发送给 LLM ──────
+        exact_orig_to_trans = self._term_mgr.exact_match([e.original for e in entries])
+        direct_fill: dict[str, str] = {}   # entry_id → translation
+        llm_entries = []
+        id_map_all = {e.id: e for e in entries}
+        for e in entries:
+            if e.original in exact_orig_to_trans:
+                direct_fill[e.id] = exact_orig_to_trans[e.original]
+            else:
+                llm_entries.append(e)
+
+        if direct_fill:
+            _log(f"  术语精确匹配: {len(direct_fill)} 条直接填充")
+            for eid, trans in direct_fill.items():
+                orig = id_map_all[eid].original
+                orig_disp = orig[:60] + "…" if len(orig) > 60 else orig
+                trans_disp = trans[:60] + "…" if len(trans) > 60 else trans
+                _log(f"{orig_disp} -> {trans_disp} [直填]")
+            self._update_collection(direct_fill, collection, result, lock)
+
+        if not llm_entries:
+            if _timing_out is not None:
+                _timing_out.update({'t_terms': t_terms - t0, 't_llm': 0.0, 't_parse': 0.0})
+            return len(direct_fill)
+
+        # ── LLM 翻译剩余条目 ──────────────────────────────────────────────────
+        messages = self._builder.build_translation_prompt(llm_entries, matched_terms, batch.batch_type)
+        _log(f"  LLM 响应中...")
+        t_llm_elapsed = 0.0
+        t_parse_elapsed = 0.0
+
+        def _chunk_cb(chunk: str):
+            if stream_callback:
+                stream_callback(chunk)
+
+        t_llm_start = time.perf_counter()
         try:
-            response = self._monitored_chat(messages, self._cfg.llm_config.max_output_tokens, pause_event, stop_event)
+            response = self._monitored_chat(
+                messages, self._cfg.llm_config.max_output_tokens, pause_event, stop_event,
+                chunk_callback=_chunk_cb,
+            )
         except Exception as exc:
             err_msg = str(exc)
-            _log(f"❌ API 调用失败（{len(entries)} 条）: {err_msg}")
+            _log(f"❌ API 调用失败（{len(llm_entries)} 条）: {err_msg}")
             with lock:
-                for e in entries:
+                for e in llm_entries:
                     result.failed_entries.append(f"{e.id}: {err_msg}")
-                result.failed_count += len(entries)
-            return 0
+                result.failed_count += len(llm_entries)
+            if _timing_out is not None:
+                _timing_out.update({'t_terms': t_terms - t0, 't_llm': time.perf_counter() - t_llm_start, 't_parse': 0.0})
+            return len(direct_fill)
 
-        expected_ids = {e.id for e in entries}
+        t_llm_elapsed = time.perf_counter() - t_llm_start
+
+        t_parse_start = time.perf_counter()
+        expected_ids = {e.id for e in llm_entries}
         id_to_translation = self._builder.parse_translation_response(response, expected_ids)
+        t_parse_elapsed = time.perf_counter() - t_parse_start
 
         # 记录每条原文→译文
-        id_to_entry = {e.id: e for e in entries}
+        id_to_entry = {e.id: e for e in llm_entries}
         for eid, trans in id_to_translation.items():
             orig = id_to_entry[eid].original if eid in id_to_entry else eid
             orig_disp = orig[:60] + "…" if len(orig) > 60 else orig
             trans_disp = trans[:60] + "…" if len(trans) > 60 else trans
-            _log(f"  ✓ {orig_disp}  →  {trans_disp}")
+            _log(f"{orig_disp} -> {trans_disp}")
 
         missing = expected_ids - id_to_translation.keys()
 
         # 有未获得译文且批次可继续拆分 → 对 missing 条目重试
-        if missing and len(entries) > _min_size:
-            missing_entries = [e for e in entries if e.id in missing]
-            if len(missing_entries) == len(entries):
-                mid = len(entries) // 2
-                halves = [entries[:mid], entries[mid:]]
-                _log(f"  ↩ {len(missing)}/{len(entries)} 条未获译文，对半拆分重试")
+        if missing and len(llm_entries) > _min_size:
+            missing_entries = [e for e in llm_entries if e.id in missing]
+            if len(missing_entries) == len(llm_entries):
+                mid = len(llm_entries) // 2
+                halves = [llm_entries[:mid], llm_entries[mid:]]
+                _log(f"  ↩ {len(missing)}/{len(llm_entries)} 条未获译文，对半拆分重试")
             else:
                 halves = [missing_entries]
                 _log(f"  ↩ {len(missing)} 条未获译文，单独重试")
             from src.transbridge.ai_translator.batch_planner import Batch as _Batch
             success = self._update_collection(id_to_translation, collection, result, lock)
             if id_to_translation:
-                if any(
-                    (e.context.split("|")[0] if "|" in (e.context or "") else e.context) in AUTO_TERM_CONTEXTS
-                    for e in entries
-                ):
-                    self._update_dynamic_terms(entries, id_to_translation, result, lock)
+                auto_term_entries = [
+                    e for e in llm_entries
+                    if (e.context.split("|")[0] if "|" in (e.context or "") else e.context) in AUTO_TERM_CONTEXTS
+                ]
+                if auto_term_entries:
+                    self._update_dynamic_terms(auto_term_entries, id_to_translation, result, lock)
                 if batch.batch_type == "对话":
-                    self._extract_dialogue_terms(entries, id_to_translation, result, lock)
+                    self._extract_dialogue_terms(llm_entries, id_to_translation, result, lock)
             for half in halves:
                 sub = _Batch(entries=half, batch_type=batch.batch_type, quest_formid=batch.quest_formid)
-                self._run_batch(sub, collection, result, lock, log_callback, pause_event, stop_event, _min_size)
-            return success
+                self._run_batch(sub, collection, result, lock, log_callback, pause_event, stop_event, stream_callback, _min_size)
+            if _timing_out is not None:
+                _timing_out.update({'t_terms': t_terms - t0, 't_llm': t_llm_elapsed, 't_parse': t_parse_elapsed})
+            return success + len(direct_fill)
 
         if missing:
             _log(f"  ⚠ {len(missing)} 条未获得译文（已缩至单条，无法继续拆分）")
 
         success = self._update_collection(id_to_translation, collection, result, lock)
 
-        # 自动写入动态术语库
-        if any(
-            (e.context.split("|")[0] if "|" in (e.context or "") else e.context) in AUTO_TERM_CONTEXTS
-            for e in entries
-        ):
-            self._update_dynamic_terms(entries, id_to_translation, result, lock)
+        # 自动写入动态术语库（仅 context 属于 AUTO_TERM_CONTEXTS 的条目，直接填充的来源已在术语库中）
+        auto_term_entries = [
+            e for e in llm_entries
+            if (e.context.split("|")[0] if "|" in (e.context or "") else e.context) in AUTO_TERM_CONTEXTS
+        ]
+        if auto_term_entries:
+            self._update_dynamic_terms(auto_term_entries, id_to_translation, result, lock)
 
         # 从对话批次抽取专有名词
         if batch.batch_type == "对话" and id_to_translation:
-            self._extract_dialogue_terms(entries, id_to_translation, result, lock)
+            self._extract_dialogue_terms(llm_entries, id_to_translation, result, lock)
 
-        return success
+        if _timing_out is not None:
+            _timing_out.update({'t_terms': t_terms - t0, 't_llm': t_llm_elapsed, 't_parse': t_parse_elapsed})
+        return success + len(direct_fill)
 
     def _update_collection(
         self,

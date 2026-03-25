@@ -517,6 +517,7 @@ class Step2PreviewWidget(QWidget):
         hh.setSectionResizeMode(_COL_KEY, QHeaderView.ResizeMode.Interactive)
         hh.setSectionResizeMode(_COL_CTX, QHeaderView.ResizeMode.Interactive)
         self._table.setUpdatesEnabled(False)
+        self._table.blockSignals(True)
 
         # 确定要显示的词条列表
         entries_to_show = self._filtered_entries if self._filtered_entries is not None else self._entries
@@ -565,13 +566,12 @@ class Step2PreviewWidget(QWidget):
             self._table.setItem(row, _COL_CTX,   ctx_item)
 
         self._table.setUpdatesEnabled(True)
+        self._table.blockSignals(False)
         self._table.resizeColumnToContents(_COL_KEY)
         self._table.resizeColumnToContents(_COL_CTX)
         hh.setSectionResizeMode(_COL_KEY, QHeaderView.ResizeMode.Interactive)
         hh.setSectionResizeMode(_COL_CTX, QHeaderView.ResizeMode.Interactive)
-
-        # 连接复选框变化信号（用 itemChanged）
-        self._table.itemChanged.connect(self._on_item_changed)
+        self._update_count_label()
 
     def _apply_filter_to_table(self, selected_entries: list[TranslationEntry] | None):
         """

@@ -23,6 +23,15 @@ class LLMClient(ABC):
     def chat(self, messages: list[dict], max_tokens: int = 0) -> str:
         """发送消息并返回模型回复文本。max_tokens=0 表示不限制（由模型默认）。"""
 
+    def chat_stream(self, messages: list[dict], max_tokens: int, chunk_callback) -> str:
+        """流式调用，每收到一个 chunk 即调用 chunk_callback(text)，最终返回完整文本。
+        默认实现：退化为普通 chat，一次性回调完整响应。子类可覆盖以实现真正的流式。
+        """
+        result = self.chat(messages, max_tokens)
+        if result:
+            chunk_callback(result)
+        return result
+
     def cancel(self) -> None:
         """中断当前进行中的请求（关闭 HTTP 连接），并重建客户端供后续使用。"""
 
@@ -64,6 +73,21 @@ class OpenAICompatibleClient(LLMClient):
             kwargs["max_tokens"] = max_tokens
         resp = client.chat.completions.create(**kwargs)
         return resp.choices[0].message.content or ""
+
+    def chat_stream(self, messages: list[dict], max_tokens: int, chunk_callback) -> str:
+        with self._lock:
+            client = self._client
+        kwargs: dict = dict(model=self._model, messages=messages, stream=True)
+        if max_tokens > 0:
+            kwargs["max_tokens"] = max_tokens
+        full_text = ""
+        with client.chat.completions.create(**kwargs) as stream:
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content or ""
+                if delta:
+                    full_text += delta
+                    chunk_callback(delta)
+        return full_text
 
 
 class AnthropicClient(LLMClient):
@@ -115,6 +139,32 @@ class AnthropicClient(LLMClient):
 
         resp = client.messages.create(**kwargs)
         return resp.content[0].text if resp.content else ""
+
+    def chat_stream(self, messages: list[dict], max_tokens: int, chunk_callback) -> str:
+        with self._lock:
+            client = self._client
+        system_content = ""
+        user_messages = []
+        for msg in messages:
+            if msg.get("role") == "system":
+                system_content = msg.get("content", "")
+            else:
+                user_messages.append(msg)
+
+        kwargs: dict = dict(
+            model=self._model,
+            max_tokens=max_tokens if max_tokens > 0 else 8192,
+            messages=user_messages,
+        )
+        if system_content:
+            kwargs["system"] = system_content
+
+        full_text = ""
+        with client.messages.stream(**kwargs) as stream:
+            for text in stream.text_stream:
+                full_text += text
+                chunk_callback(text)
+        return full_text
 
 
 def create_llm_client(config: "LLMConfig") -> LLMClient:

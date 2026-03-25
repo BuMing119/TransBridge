@@ -107,6 +107,7 @@ class TermDatabaseManager:
         self._dynamic_db = DynamicTermDatabase(esp_path)
         self._dynamic_db.load()
         self._merged_terms: list[TermEntry] = []  # 缓存合并后的术语列表
+        self._load_log: list[tuple[str, int, str | None]] = []  # (source, count, error)
 
     def get_dynamic_db(self) -> DynamicTermDatabase:
         return self._dynamic_db
@@ -130,11 +131,17 @@ class TermDatabaseManager:
             loader = loaders.get(source)
             if loader:
                 try:
-                    for entry in loader():
+                    entries = loader()
+                    for entry in entries:
                         term_map[entry.term] = entry
-                except Exception:
-                    pass
+                    self._load_log.append((source, len(entries), None))
+                except Exception as e:
+                    self._load_log.append((source, 0, str(e)))
         return list(term_map.values())
+
+    def get_load_log(self) -> list[tuple[str, int, str | None]]:
+        """返回各来源加载结果：[(source, count, error_or_None), ...]。"""
+        return list(self._load_log)
 
     def has_term(self, term: str) -> bool:
         """检查 term 是否已存在于任意来源（大小写不敏感）。"""
@@ -150,25 +157,50 @@ class TermDatabaseManager:
                 return True
         return False
 
-    def match_terms(self, text_batch: list[str]) -> dict[str, str]:
-        """在 text_batch 的原文中扫描匹配的术语，返回 {term: translation}。"""
+    def _effective_terms(self) -> list[TermEntry]:
+        """返回合并后的术语列表，并补充翻译过程中动态追加的新条目。"""
         if not self._merged_terms:
             self._merged_terms = self._load_all_with_metadata()
+        # 把 _dynamic_db 中在 _merged_terms 之后新增的条目追加进来
+        merged_terms_set = {e.term.lower() for e in self._merged_terms}
+        extra = [e for e in self._dynamic_db.as_list() if e.term.lower() not in merged_terms_set]
+        return self._merged_terms + extra
 
+    def match_terms(self, text_batch: list[str]) -> dict[str, str]:
+        """在 text_batch 的原文中扫描匹配的术语，返回 {term: translation}。"""
         combined_text = "\n".join(text_batch)
         matched: dict[str, str] = {}
 
-        for entry in self._merged_terms:
+        for entry in self._effective_terms():
             if entry.case_sensitive:
-                # 区分大小写匹配
                 if entry.term in combined_text:
                     matched[entry.term] = entry.translation
             else:
-                # 不区分大小写匹配
                 if entry.term.lower() in combined_text.lower():
                     matched[entry.term] = entry.translation
 
         return matched
+
+    def exact_match(self, originals: list[str]) -> dict[str, str]:
+        """对 originals 列表做精确全等匹配，返回 {original: translation}。
+        区分大小写的术语要求精确相等；不区分大小写的术语忽略大小写。
+        """
+        # 构建两张查找表（O(n) 预处理，O(1) 查询）
+        cs_map: dict[str, str] = {}   # 区分大小写: exact term → translation
+        ci_map: dict[str, str] = {}   # 不区分大小写: lower term → translation
+        for entry in self._effective_terms():
+            if entry.case_sensitive:
+                cs_map[entry.term] = entry.translation
+            else:
+                ci_map[entry.term.lower()] = entry.translation
+
+        result: dict[str, str] = {}
+        for original in originals:
+            if original in cs_map:
+                result[original] = cs_map[original]
+            elif original.lower() in ci_map:
+                result[original] = ci_map[original.lower()]
+        return result
 
     def _load_dynamic(self) -> list[TermEntry]:
         return self._dynamic_db.as_list()

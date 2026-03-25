@@ -1,370 +1,32 @@
 """
-AI 翻译浮窗（双窗口架构）。
+AI 翻译配置窗口。
 
-AITranslatorWindow      — 配置窗口，翻译开始前使用
-_TranslationProgressWindow — 进度窗口，翻译进行中使用
+AITranslatorWindow  — 配置窗口，翻译开始前使用
+进度窗口见 _translation_progress_window.py
 """
 
 from __future__ import annotations
 
-import threading
 from typing import TYPE_CHECKING
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
-    QLineEdit, QComboBox, QSpinBox, QPushButton, QProgressBar,
+    QLineEdit, QComboBox, QSpinBox, QPushButton,
     QRadioButton, QButtonGroup, QFileDialog, QMessageBox,
-    QCheckBox, QListWidget, QListWidgetItem, QDialog,
-    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
-    QTextEdit,
+    QCheckBox, QListWidget, QListWidgetItem,
+    QAbstractItemView,
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QFont, QColor, QBrush
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QBrush
+
+from src.transbridge.ui.tools.ai_translator._translation_worker import _TranslationWorker
+from src.transbridge.ui.tools.ai_translator._translation_progress_window import _TranslationProgressWindow
+from src.transbridge.ui.tools.ai_translator._term_editor_dialog import _TermEditorDialog
 
 if TYPE_CHECKING:
     from src.transbridge.ui.context import AppContext
     from src.transbridge.ui.workbench.step2 import Step2PreviewWidget
 
-
-# ─────────────────────────── TranslationWorker ───────────────────────────────
-
-class _TranslationWorker(QThread):
-    # current, total, message, success, failed, new_terms
-    progress = pyqtSignal(int, int, str, int, int, int)
-    log = pyqtSignal(str)       # 详细日志行（每条译文 / API 错误）
-    result = pyqtSignal(object)
-    error = pyqtSignal(str)
-
-    def __init__(self, translator, collection, target_entries, checkpoint=None):
-        super().__init__()
-        self._translator = translator
-        self._collection = collection
-        self._target_entries = target_entries
-        self._checkpoint = checkpoint
-        self._stop_event = threading.Event()
-        self._pause_event = threading.Event()
-        self._pause_event.set()   # 初始为运行状态
-
-    def stop(self):
-        self._stop_event.set()
-        self._pause_event.set()   # 确保 wait() 不阻塞
-
-    def pause(self):
-        self._pause_event.clear()
-
-    def resume(self):
-        self._pause_event.set()
-
-    @property
-    def is_paused(self) -> bool:
-        return not self._pause_event.is_set()
-
-    def run(self):
-        try:
-            result = self._translator.translate(
-                collection=self._collection,
-                target_entry_ids=self._target_entries,
-                progress_callback=lambda c, t, m, s, f, n: self.progress.emit(c, t, m, s, f, n),
-                stop_event=self._stop_event,
-                pause_event=self._pause_event,
-                checkpoint=self._checkpoint,
-                log_callback=lambda line: self.log.emit(line),
-            )
-            self.result.emit(result)
-        except Exception as exc:
-            self.error.emit(str(exc))
-
-
-# ─────────────────────────── 动态术语库编辑对话框 ─────────────────────────────
-
-class _TermEditorDialog(QDialog):
-    def __init__(self, dynamic_db, parent=None):
-        super().__init__(parent)
-        self._db = dynamic_db
-        self.setWindowTitle("编辑动态术语库")
-        self.resize(600, 400)
-        self._init_ui()
-        self._load_terms()
-
-    def _init_ui(self):
-        layout = QVBoxLayout(self)
-        self._table = QTableWidget(0, 4)
-        self._table.setHorizontalHeaderLabels(["原词", "译词", "来源", "上下文"])
-        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self._table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        layout.addWidget(self._table)
-
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        close_btn = QPushButton("关闭")
-        close_btn.clicked.connect(self.accept)
-        btn_row.addWidget(close_btn)
-        layout.addLayout(btn_row)
-
-    def _load_terms(self):
-        entries = self._db.as_list()
-        self._table.setRowCount(len(entries))
-        for row, e in enumerate(entries):
-            self._table.setItem(row, 0, QTableWidgetItem(e.term))
-            self._table.setItem(row, 1, QTableWidgetItem(e.translation))
-            self._table.setItem(row, 2, QTableWidgetItem(e.source))
-            self._table.setItem(row, 3, QTableWidgetItem(e.context))
-
-
-# ─────────────────────────── 进度窗口 ────────────────────────────────────────
-
-class _TranslationProgressWindow(QWidget):
-    """翻译进行中的进度窗口，支持暂停/继续/后台/停止。"""
-
-    translation_completed = pyqtSignal()
-
-    def __init__(self, worker: _TranslationWorker, ctx: "AppContext", parent=None):
-        super().__init__(parent, Qt.WindowType.Window)
-        self._worker = worker
-        self._ctx = ctx
-        self.setWindowTitle("AI 自动翻译 — 进行中")
-        self.resize(560, 480)
-        self._background_mode = False   # True = 用户选择后台继续
-        self._collection_synced = False  # 避免 result/error + finished 双重 emit
-        self._was_stopped = False        # 用户是否主动停止
-        self._init_ui()
-        self._connect_worker()
-
-    def _init_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setSpacing(8)
-
-        # 进度区
-        prog_box = QGroupBox("翻译进度")
-        prog_layout = QVBoxLayout(prog_box)
-
-        # 总进度条（词条数）
-        total_row = QHBoxLayout()
-        total_lbl = QLabel("总进度:")
-        total_lbl.setFixedWidth(52)
-        self._total_progress_bar = QProgressBar()
-        self._total_progress_bar.setRange(0, 100)
-        self._total_progress_bar.setValue(0)
-        self._total_progress_lbl = QLabel("0 / 0")
-        self._total_progress_lbl.setFixedWidth(80)
-        total_row.addWidget(total_lbl)
-        total_row.addWidget(self._total_progress_bar)
-        total_row.addWidget(self._total_progress_lbl)
-        prog_layout.addLayout(total_row)
-
-        self._progress_msg = QLabel("准备中…")
-        self._progress_msg.setStyleSheet("font-size: 11px; color: #555;")
-        prog_layout.addWidget(self._progress_msg)
-
-        stats_row = QHBoxLayout()
-        self._lbl_success = QLabel("成功: 0")
-        self._lbl_success.setStyleSheet("color: #4CAF50; font-weight: bold;")
-        self._lbl_failed = QLabel("失败: 0")
-        self._lbl_failed.setStyleSheet("color: #F44336; font-weight: bold;")
-        self._lbl_terms = QLabel("新增术语: 0")
-        self._lbl_terms.setStyleSheet("color: #2196F3; font-weight: bold;")
-        for lbl in (self._lbl_success, self._lbl_failed, self._lbl_terms):
-            stats_row.addWidget(lbl)
-        stats_row.addStretch()
-        prog_layout.addLayout(stats_row)
-
-        layout.addWidget(prog_box)
-
-        # 日志区
-        log_box = QGroupBox("详细日志")
-        log_layout = QVBoxLayout(log_box)
-        self._log = QTextEdit()
-        self._log.setReadOnly(True)
-        self._log.setFont(QFont("Consolas", 9))
-        self._log.setMinimumHeight(200)
-        log_layout.addWidget(self._log)
-        layout.addWidget(log_box)
-
-        # 按钮行
-        btn_row = QHBoxLayout()
-        self._pause_btn = QPushButton("⏸ 暂停")
-        self._pause_btn.clicked.connect(self._on_pause_resume)
-        self._stop_btn = QPushButton("⏹ 停止")
-        self._stop_btn.clicked.connect(self._on_stop)
-        btn_row.addWidget(self._pause_btn)
-        btn_row.addWidget(self._stop_btn)
-        btn_row.addStretch()
-        layout.addLayout(btn_row)
-
-    def _connect_worker(self):
-        self._worker.progress.connect(self._on_progress)
-        self._worker.log.connect(self._on_log)
-        self._worker.result.connect(self._on_result)
-        self._worker.error.connect(self._on_error)
-        self._worker.finished.connect(self._on_worker_finished)
-
-    # ── 槽 ────────────────────────────────────────────────────────────────────
-
-    def _on_progress(self, current: int, total: int, message: str,
-                     success: int, failed: int, new_terms: int):
-        if total > 0:
-            self._total_progress_bar.setMaximum(total)
-            self._total_progress_bar.setValue(current)
-            self._total_progress_lbl.setText(f"{current} / {total}")
-        self._progress_msg.setText(message)
-        self._lbl_success.setText(f"成功: {success}")
-        self._lbl_failed.setText(f"失败: {failed}")
-        self._lbl_terms.setText(f"新增术语: {new_terms}")
-        # 批次开始时（current 为批次序号，message 不含 [已跳过]）打印批次标题
-        if not message.endswith("]"):
-            self._log.append(f"\n▶ {message}")
-            self._log.verticalScrollBar().setValue(
-                self._log.verticalScrollBar().maximum()
-            )
-
-    def _on_log(self, line: str):
-        self._log.append(line)
-        self._log.verticalScrollBar().setValue(
-            self._log.verticalScrollBar().maximum()
-        )
-
-    def _on_result(self, result):
-        self._total_progress_bar.setMaximum(100)
-        self._total_progress_bar.setValue(100)
-        self._total_progress_lbl.setText("完成")
-
-        if self._was_stopped:
-            self._progress_msg.setText("已停止")
-            self._lbl_success.setText(f"成功: {result.success_count}")
-            self._lbl_failed.setText(f"失败: {result.failed_count}")
-            self._lbl_terms.setText(f"新增术语: {result.new_dynamic_terms}")
-            self._log.append(
-                f"\n⏹ 已停止 — 成功 {result.success_count} 条，"
-                f"失败 {result.failed_count} 条，新增术语 {result.new_dynamic_terms} 个"
-            )
-        else:
-            self._progress_msg.setText("翻译完成")
-            self._lbl_success.setText(f"成功: {result.success_count}")
-            self._lbl_failed.setText(f"失败: {result.failed_count}")
-            self._lbl_terms.setText(f"新增术语: {result.new_dynamic_terms}")
-            self._log.append(
-                f"\n✅ 完成 — 成功 {result.success_count} 条，"
-                f"失败 {result.failed_count} 条，新增术语 {result.new_dynamic_terms} 个"
-            )
-
-        self._pause_btn.setEnabled(False)
-        self._stop_btn.setEnabled(False)
-        self._collection_synced = True
-        self._ctx.collection_changed.emit(self._ctx.collection)
-        self.translation_completed.emit()
-
-        if self._was_stopped:
-            QMessageBox.information(
-                self, "翻译已停止",
-                f"成功：{result.success_count} 条\n"
-                f"失败：{result.failed_count} 条\n"
-                f"跳过：{result.skipped_count} 条\n"
-                f"新增术语：{result.new_dynamic_terms} 个\n\n"
-                f"已保存断点，可通过断点续传继续。",
-            )
-        else:
-            QMessageBox.information(
-                self, "翻译完成",
-                f"成功：{result.success_count} 条\n"
-                f"失败：{result.failed_count} 条\n"
-                f"跳过：{result.skipped_count} 条\n"
-                f"新增术语：{result.new_dynamic_terms} 个",
-            )
-
-    def _on_error(self, err: str):
-        self._progress_msg.setText(f"错误: {err}")
-        self._log.append(f"\n❌ 全局错误: {err}")
-        self._log.verticalScrollBar().setValue(self._log.verticalScrollBar().maximum())
-        self._collection_synced = True
-        self._ctx.collection_changed.emit(self._ctx.collection)
-        QMessageBox.critical(self, "翻译错误", err)
-
-    def _on_worker_finished(self):
-        self._pause_btn.setEnabled(False)
-        self._stop_btn.setEnabled(False)
-        # 若 result/error 未触发（例如用户停止），补发 collection_changed 以同步已完成的批次
-        if not self._collection_synced:
-            self._collection_synced = True
-            self._ctx.collection_changed.emit(self._ctx.collection)
-
-    def _on_pause_resume(self):
-        if self._worker.is_paused:
-            self._worker.resume()
-            self._pause_btn.setText("⏸ 暂停")
-            self._progress_msg.setText("已继续 - 等待下一批")
-            self._log.append("▶ 已继续")
-        else:
-            self._worker.pause()
-            self._pause_btn.setText("▶ 继续")
-            self._progress_msg.setText("⏸ 已暂停（当前 API 调用将立即中断）")
-            self._log.append("⏸ 已暂停")
-            # 暂停时立即同步已完成批次到 UI
-            self._ctx.collection_changed.emit(self._ctx.collection)
-
-    def _on_stop(self):
-        reply = QMessageBox.question(
-            self, "停止翻译",
-            "确定要停止翻译吗？\n已翻译的内容不会丢失，可通过断点续传继续。",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            self._was_stopped = True
-            self._progress_msg.setText("⏹ 正在停止（当前 API 调用将立即中断）")
-            self._log.append("⏹ 已请求停止")
-            self._worker.stop()
-            self._stop_btn.setEnabled(False)
-            self._pause_btn.setEnabled(False)
-
-    # ── 关闭事件 ──────────────────────────────────────────────────────────────
-
-    def is_running(self) -> bool:
-        return self._worker.isRunning()
-
-    def closeEvent(self, event):
-        if not self._worker.isRunning():
-            event.accept()
-            return
-
-        from PyQt6.QtWidgets import QDialog, QDialogButtonBox
-        dlg = QDialog(self)
-        dlg.setWindowTitle("翻译仍在进行中")
-        dlg_layout = QVBoxLayout(dlg)
-        dlg_layout.addWidget(QLabel("翻译仍在进行中，请选择操作："))
-
-        bg = QButtonGroup(dlg)
-        rb_stop = QRadioButton("停止翻译并关闭")
-        rb_bg = QRadioButton("后台继续，关闭窗口")
-        rb_stop.setChecked(True)
-        bg.addButton(rb_stop)
-        bg.addButton(rb_bg)
-        dlg_layout.addWidget(rb_stop)
-        dlg_layout.addWidget(rb_bg)
-
-        btns = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        btns.accepted.connect(dlg.accept)
-        btns.rejected.connect(dlg.reject)
-        dlg_layout.addWidget(btns)
-
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            event.ignore()
-            return
-
-        if rb_stop.isChecked():
-            self._worker.stop()
-            self._worker.wait(3000)
-            event.accept()
-        else:
-            # 后台继续
-            self._background_mode = True
-            event.accept()
-
-
-# ─────────────────────────── 配置窗口 ────────────────────────────────────────
 
 class AITranslatorWindow(QWidget):
     """AI 翻译配置窗口。点击「开始翻译」后关闭自身并弹出进度窗口。"""
@@ -380,6 +42,7 @@ class AITranslatorWindow(QWidget):
         self.resize(560, 680)
         self._init_ui()
         self._load_config()
+        self._connect_auto_save()
         self._check_checkpoint()
 
     # ── UI 构建 ───────────────────────────────────────────────────────────────
@@ -636,6 +299,21 @@ class AITranslatorWindow(QWidget):
         cfg.save_to_file()
         return cfg
 
+    def _connect_auto_save(self):
+        """在配置加载完成后连接所有控件的变更信号，实现自动保存。"""
+        self._provider_combo.currentIndexChanged.connect(self._save_config)
+        self._model_edit.textChanged.connect(self._save_config)
+        self._apikey_edit.textChanged.connect(self._save_config)
+        self._baseurl_edit.textChanged.connect(self._save_config)
+        self._concurrent_spin.valueChanged.connect(self._save_config)
+        self._tokens_spin.valueChanged.connect(self._save_config)
+        self._output_tokens_spin.valueChanged.connect(self._save_config)
+        self._json_path_edit.textChanged.connect(self._save_config)
+        self._excel_path_edit.textChanged.connect(self._save_config)
+        self._excel_orig_col_edit.textChanged.connect(self._save_config)
+        self._excel_trans_col_edit.textChanged.connect(self._save_config)
+        self._priority_list.model().rowsMoved.connect(self._save_config)
+
     def _build_llm_config(self):
         from src.transbridge.paratranz.config_manager import LLMConfig
         cfg = LLMConfig()
@@ -755,7 +433,6 @@ class AITranslatorWindow(QWidget):
             QMessageBox.warning(self, "翻译", "找不到 ESP 路径，请重新加载集合。")
             return
 
-        # 检查是否无项目且术语库为空
         if not self._ctx.current_project and self._check_all_terms_empty(cfg):
             reply = QMessageBox.question(
                 self, "术语库为空",
@@ -799,11 +476,9 @@ class AITranslatorWindow(QWidget):
         translator = AutoTranslator(translator_cfg, paratranz_client, project_id)
         worker = _TranslationWorker(translator, collection, target_ids, checkpoint)
 
-        # 创建进度窗口
         progress_win = _TranslationProgressWindow(worker, self._ctx)
         self.progress_window_created.emit(progress_win)
 
-        # 关闭配置窗口，显示进度窗口
         progress_win.show()
         worker.start()
         self.close()
@@ -811,14 +486,12 @@ class AITranslatorWindow(QWidget):
     def _check_all_terms_empty(self, cfg) -> bool:
         """检查所有术语来源是否均为空。"""
         import os
-        # 检查动态术语库
         from src.transbridge.ai_translator.term_database import DynamicTermDatabase
         dynamic_db = DynamicTermDatabase(self._ctx.esp_path)
         dynamic_db.load()
         if dynamic_db.as_list():
             return False
 
-        # 检查本地 JSON
         if cfg.local_json_path and os.path.exists(cfg.local_json_path):
             try:
                 import json
@@ -831,7 +504,6 @@ class AITranslatorWindow(QWidget):
             except Exception:
                 pass
 
-        # 检查本地 Excel
         if cfg.local_excel_path and os.path.exists(cfg.local_excel_path):
             try:
                 import openpyxl

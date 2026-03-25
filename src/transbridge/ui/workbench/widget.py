@@ -71,7 +71,7 @@ class WorkbenchWidget(QWidget):
             # 显示/创建配置窗口
             config_win = self._tool_windows.get("ai_translator")
             if config_win is None or not config_win.isVisible():
-                from src.transbridge.ui.tools.ai_translator_window import AITranslatorWindow
+                from src.transbridge.ui.tools.ai_translator.ai_translator_window import AITranslatorWindow
                 config_win = AITranslatorWindow(self._ctx, self._step2, parent=self)
                 config_win.progress_window_created.connect(self._on_progress_window_created)
                 self._tool_windows["ai_translator"] = config_win

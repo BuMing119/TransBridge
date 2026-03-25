@@ -68,6 +68,28 @@ def _load_toml(path: Path) -> dict:
         return {}
 
 
+# ── 截断 JSON 容错提取 ────────────────────────────────────────────────────────
+
+def _extract_partial_json_pairs(text: str) -> dict:
+    """从被截断的 JSON 对象中提取已完整输出的字符串键值对。
+
+    处理场景：LLM 因 max_tokens 耗尽，在 JSON 对象中途截断。
+    只匹配 key 和 value 均为完整 JSON 字符串的对，跳过末尾残缺部分。
+    """
+    result = {}
+    # 匹配完整的 "key": "value" 对，支持 JSON 转义序列（\n \t \" \\ 等）
+    pattern = re.compile(r'"((?:[^"\\]|\\.)*?)"\s*:\s*"((?:[^"\\]|\\.)*?)"')
+    for m in pattern.finditer(text):
+        try:
+            key = json.loads(f'"{m.group(1)}"')
+            value = json.loads(f'"{m.group(2)}"')
+        except Exception:
+            continue
+        if key and value:
+            result[key] = value
+    return result
+
+
 # ── PromptBuilder ────────────────────────────────────────────────────────────
 
 class PromptBuilder:
@@ -133,7 +155,9 @@ class PromptBuilder:
         ]
 
     def parse_translation_response(self, response: str, expected_ids: set[str]) -> dict[str, str]:
-        """解析 LLM 返回的 JSON，返回 {id: translation}，容错处理。"""
+        """解析 LLM 返回的 JSON，返回 {id: translation}，容错处理。
+        当 JSON 因上下文溢出被截断时，退化到逐对提取完整键值对，避免丢弃已翻译部分。
+        """
         text = response.strip()
         match = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
         if match:
@@ -142,10 +166,14 @@ class PromptBuilder:
         end = text.rfind("}")
         if start != -1 and end != -1:
             text = text[start:end + 1]
+        elif start != -1:
+            text = text[start:]   # 截断响应：有 { 但无 }
         try:
             data = json.loads(text)
         except Exception:
-            return {}
+            # JSON 不完整（典型原因：输出 token 耗尽导致截断）
+            # 用正则逐对提取已完成的键值对，只重试真正缺失的条目
+            data = _extract_partial_json_pairs(text)
         if not isinstance(data, dict):
             return {}
         return {k: str(v) for k, v in data.items() if k in expected_ids and v}
