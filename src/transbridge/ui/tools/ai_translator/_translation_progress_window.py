@@ -262,17 +262,19 @@ class _TranslationProgressWindow(QWidget):
         self._lbl_failed.setText(f"失败: {failed}")
         self._lbl_terms.setText(f"新增术语: {new_terms}")
         if not message.endswith("]"):
+            sb = self._round_log.verticalScrollBar()
+            at_bottom = sb.value() >= sb.maximum() - 4
             self._round_log.append(f"▶ {message}")
-            self._round_log.verticalScrollBar().setValue(
-                self._round_log.verticalScrollBar().maximum()
-            )
+            if at_bottom:
+                sb.setValue(sb.maximum())
 
     def _on_log(self, batch_idx: int, line: str):
         if batch_idx < 0:
+            sb = self._round_log.verticalScrollBar()
+            at_bottom = sb.value() >= sb.maximum() - 4
             self._round_log.append(line)
-            self._round_log.verticalScrollBar().setValue(
-                self._round_log.verticalScrollBar().maximum()
-            )
+            if at_bottom:
+                sb.setValue(sb.maximum())
             return
 
         # 获取或创建批次组件
@@ -284,12 +286,15 @@ class _TranslationProgressWindow(QWidget):
             self._batches_layout.insertWidget(count - 1, w)
 
         widget = self._batch_widgets[batch_idx]
+        sb = self._scroll.verticalScrollBar()
+        at_bottom = sb.value() >= sb.maximum() - 4
         widget.append_line(line)
 
-        # 延迟滚动到底部（等 layout 更新后再读 maximum）
-        QTimer.singleShot(0, lambda: self._scroll.verticalScrollBar().setValue(
-            self._scroll.verticalScrollBar().maximum()
-        ))
+        # 仅在用户已在底部时才跟随滚动（等 layout 更新后再读 maximum）
+        if at_bottom:
+            QTimer.singleShot(0, lambda: self._scroll.verticalScrollBar().setValue(
+                self._scroll.verticalScrollBar().maximum()
+            ))
 
     def _on_open_log_viewer(self):
         """打开/激活 LLM 流式日志查看窗口。"""

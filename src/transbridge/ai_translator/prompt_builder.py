@@ -178,6 +178,10 @@ class PromptBuilder:
             return {}
         return {k: str(v) for k, v in data.items() if k in expected_ids and v}
 
+    def extract_partial_pairs(self, buffer: str) -> dict[str, str]:
+        """从不完整的流式 buffer 中提取已完成的翻译对，供增量处理使用。"""
+        return _extract_partial_json_pairs(buffer)
+
     def parse_extraction_response(self, response: str) -> list[dict]:
         """解析专有名词抽取结果，返回 [{"term": ..., "translation": ...}]。"""
         text = response.strip()

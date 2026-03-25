@@ -305,8 +305,9 @@ class AutoTranslator:
                 _success_before = result.success_count
                 _terms_before = result.new_dynamic_terms
 
+            _progress_emit = lambda: _emit(idx, msg)
             try:
-                self._run_batch(batch, collection, result, lock, _batch_log_cb, pause_event, stop_event, _per_batch_stream, _timing_out=_batch_timing)
+                self._run_batch(batch, collection, result, lock, _batch_log_cb, pause_event, stop_event, _per_batch_stream, _timing_out=_batch_timing, progress_emit=_progress_emit)
             except _CancelledByStop:
                 _blog("⏹ 批次已中断（停止）")
                 _save_checkpoint()
@@ -324,7 +325,7 @@ class AutoTranslator:
                 with lock:
                     _success_before = result.success_count
                     _terms_before = result.new_dynamic_terms
-                self._run_batch(batch, collection, result, lock, _batch_log_cb, pause_event, stop_event, _per_batch_stream, _timing_out=_batch_timing)
+                self._run_batch(batch, collection, result, lock, _batch_log_cb, pause_event, stop_event, _per_batch_stream, _timing_out=_batch_timing, progress_emit=_progress_emit)
 
             t_batch_elapsed = time.perf_counter() - t_batch
             with lock:
@@ -414,6 +415,7 @@ class AutoTranslator:
         stream_callback: Callable[[str], None] | None = None,
         _min_size: int = 1,
         _timing_out: dict | None = None,
+        progress_emit: Callable[[], None] | None = None,
     ) -> int:
         from src.transbridge.converter.context_categories import AUTO_TERM_CONTEXTS
 
@@ -460,9 +462,27 @@ class AutoTranslator:
         t_llm_elapsed = 0.0
         t_parse_elapsed = 0.0
 
+        expected_ids = {e.id for e in llm_entries}
+        id_to_entry = {e.id: e for e in llm_entries}
+        _stream_buffer: list[str] = []
+        _stream_translations: dict[str, str] = {}  # 流式阶段已捕获并写回的翻译
+
         def _chunk_cb(chunk: str):
+            _stream_buffer.append(chunk)
             if stream_callback:
                 stream_callback(chunk)
+            # 增量解析：每收到一个 chunk 就尝试从 buffer 中提取新完成的翻译对并立即写回
+            partial = self._builder.extract_partial_pairs("".join(_stream_buffer))
+            for eid, trans in partial.items():
+                if eid not in _stream_translations and eid in expected_ids:
+                    _stream_translations[eid] = trans
+                    entry = id_to_entry[eid]
+                    orig_disp = entry.original[:60] + "…" if len(entry.original) > 60 else entry.original
+                    trans_disp = trans[:60] + "…" if len(trans) > 60 else trans
+                    _log(f"{orig_disp} -> {trans_disp}")
+                    self._update_collection({eid: trans}, collection, result, lock)
+                    if progress_emit:
+                        progress_emit()
 
         t_llm_start = time.perf_counter()
         try:
@@ -474,9 +494,11 @@ class AutoTranslator:
             err_msg = str(exc)
             _log(f"❌ API 调用失败（{len(llm_entries)} 条）: {err_msg}")
             with lock:
-                for e in llm_entries:
+                # 流式阶段已成功写回的条目不计入失败
+                truly_failed = [e for e in llm_entries if e.id not in _stream_translations]
+                for e in truly_failed:
                     result.failed_entries.append(f"{e.id}: {err_msg}")
-                result.failed_count += len(llm_entries)
+                result.failed_count += len(truly_failed)
             if _timing_out is not None:
                 _timing_out.update({'t_terms': t_terms - t0, 't_llm': time.perf_counter() - t_llm_start, 't_parse': 0.0})
             return len(direct_fill)
@@ -484,18 +506,20 @@ class AutoTranslator:
         t_llm_elapsed = time.perf_counter() - t_llm_start
 
         t_parse_start = time.perf_counter()
-        expected_ids = {e.id for e in llm_entries}
-        id_to_translation = self._builder.parse_translation_response(response, expected_ids)
+        # 兜底解析：仅处理流式阶段未捕获的剩余条目
+        remaining_ids = expected_ids - _stream_translations.keys()
+        fallback_translations = self._builder.parse_translation_response(response, remaining_ids)
         t_parse_elapsed = time.perf_counter() - t_parse_start
 
-        # 记录每条原文→译文
-        id_to_entry = {e.id: e for e in llm_entries}
-        for eid, trans in id_to_translation.items():
+        # 记录兜底阶段获取的条目日志（流式阶段的已在 _chunk_cb 中实时记录）
+        for eid, trans in fallback_translations.items():
             orig = id_to_entry[eid].original if eid in id_to_entry else eid
             orig_disp = orig[:60] + "…" if len(orig) > 60 else orig
             trans_disp = trans[:60] + "…" if len(trans) > 60 else trans
             _log(f"{orig_disp} -> {trans_disp}")
 
+        # 合并全量翻译结果（供后续 missing/动态术语/对话抽取逻辑使用）
+        id_to_translation = {**_stream_translations, **fallback_translations}
         missing = expected_ids - id_to_translation.keys()
 
         # 有未获得译文且批次可继续拆分 → 对 missing 条目重试
@@ -509,7 +533,8 @@ class AutoTranslator:
                 halves = [missing_entries]
                 _log(f"  ↩ {len(missing)} 条未获译文，单独重试")
             from src.transbridge.ai_translator.batch_planner import Batch as _Batch
-            success = self._update_collection(id_to_translation, collection, result, lock)
+            # 仅写回兜底阶段的结果（流式阶段已写回）
+            success = self._update_collection(fallback_translations, collection, result, lock)
             if id_to_translation:
                 auto_term_entries = [
                     e for e in llm_entries
@@ -521,7 +546,7 @@ class AutoTranslator:
                     self._extract_dialogue_terms(llm_entries, id_to_translation, result, lock)
             for half in halves:
                 sub = _Batch(entries=half, batch_type=batch.batch_type, quest_formid=batch.quest_formid)
-                self._run_batch(sub, collection, result, lock, log_callback, pause_event, stop_event, stream_callback, _min_size)
+                self._run_batch(sub, collection, result, lock, log_callback, pause_event, stop_event, stream_callback, _min_size, progress_emit=progress_emit)
             if _timing_out is not None:
                 _timing_out.update({'t_terms': t_terms - t0, 't_llm': t_llm_elapsed, 't_parse': t_parse_elapsed})
             return success + len(direct_fill)
@@ -529,7 +554,8 @@ class AutoTranslator:
         if missing:
             _log(f"  ⚠ {len(missing)} 条未获得译文（已缩至单条，无法继续拆分）")
 
-        success = self._update_collection(id_to_translation, collection, result, lock)
+        # 仅写回兜底阶段的结果（流式阶段已写回）
+        success = self._update_collection(fallback_translations, collection, result, lock)
 
         # 自动写入动态术语库（仅 context 属于 AUTO_TERM_CONTEXTS 的条目，直接填充的来源已在术语库中）
         auto_term_entries = [
