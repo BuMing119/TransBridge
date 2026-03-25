@@ -267,8 +267,9 @@ class PluginStringsLookup:
         return merged
 
     # Base-game plugins that store their strings in Skyrim - Interface.bsa
+    # Note: _ResourcePack.esl (AE) stores strings in its own _ResourcePack.bsa
     _BASE_GAME_PLUGINS: frozenset[str] = frozenset({
-        "_resourcepack", "skyrim", "update", "hearthfires", "dragonborn", "dawnguard",
+        "skyrim", "update", "hearthfires", "dragonborn", "dawnguard",
     })
 
     @classmethod

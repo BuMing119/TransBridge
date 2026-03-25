@@ -2,14 +2,17 @@
 步骤1：源文件选择与解析。
 支持多集合管理：可同时打开多个插件/EET集合，通过顶部选择栏切换。
 支持两种解析来源：ESP 插件（标准）或 EET XML（仅迁移旧译文）。
+支持批量选择ESP文件，一次解析多个插件。
+已加载集合可追加迁移源（每种仅限一次）。
 """
 
 from pathlib import Path
+from typing import List
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
     QLineEdit, QPushButton, QFileDialog, QComboBox, QProgressBar, QLabel,
-    QButtonGroup, QRadioButton, QMessageBox, QFrame,
+    QButtonGroup, QRadioButton, QMessageBox, QFrame, QCheckBox,
 )
 from PyQt6.QtCore import pyqtSignal, Qt
 
@@ -189,6 +192,11 @@ class Step1SourceWidget(QWidget):
         self._strings_lang.setFixedWidth(100)
         strings_row.addWidget(self._strings_lang)
 
+        # 应用到全部勾选框
+        self._strings_apply_all = QCheckBox("全部")
+        self._strings_apply_all.setToolTip("勾选后将Strings路径应用到所有已加载集合")
+        strings_row.addWidget(self._strings_apply_all)
+
         form.addRow("Strings 目录", self._strings_row_widget)
 
         # 跳过空串
@@ -208,9 +216,14 @@ class Step1SourceWidget(QWidget):
         self._status_lbl = QLabel("")
         layout.addWidget(self._status_lbl)
 
-        # 解析按钮
+        # 解析按钮 & 应用迁移源按钮
         btn_row = QHBoxLayout()
         btn_row.addStretch()
+        self._apply_migrate_btn = QPushButton("应用迁移源")
+        self._apply_migrate_btn.setFixedHeight(32)
+        self._apply_migrate_btn.setVisible(False)
+        self._apply_migrate_btn.clicked.connect(self._apply_migration_sources)
+        btn_row.addWidget(self._apply_migrate_btn)
         self._parse_btn = QPushButton("▶ 解析插件")
         self._parse_btn.setFixedHeight(32)
         self._parse_btn.clicked.connect(self._start_parse)
@@ -235,7 +248,37 @@ class Step1SourceWidget(QWidget):
         self._strings_clear_btn.setEnabled(enabled)
         self._strings_lang.setEnabled(enabled)
         self._skip_empty.setEnabled(enabled)
-        self._parse_btn.setEnabled(enabled)
+        self._parse_btn.setVisible(enabled)
+        self._apply_migrate_btn.setVisible(not enabled)
+
+    def _update_migration_buttons(self, slot: CollectionSlot | None):
+        """根据当前slot状态更新迁移源按钮的可用性（每种迁移源只能配置一次）。"""
+        if slot is None:
+            return
+
+        # ESP 路径永远锁定
+        self._esp_browse_btn.setEnabled(False)
+
+        # EET: 如果已有eet_path则禁用
+        eet_enabled = slot.eet_path is None
+        self._eet_browse_btn.setEnabled(eet_enabled)
+        self._eet_clear_btn.setEnabled(False)  # 已加载集合不允许清除
+
+        # XT: 如果已有xt_path则禁用
+        xt_enabled = slot.xt_path is None
+        self._xt_browse_btn.setEnabled(xt_enabled)
+        self._xt_clear_btn.setEnabled(False)
+
+
+        # Strings: 如果已有strings_path则禁用
+        strings_enabled = slot.strings_path is None
+        self._strings_browse_btn.setEnabled(strings_enabled)
+        self._strings_clear_btn.setEnabled(False)
+        self._strings_lang.setEnabled(strings_enabled)
+
+        # 检查是否有可配置的迁移源
+        has_available = eet_enabled or xt_enabled or strings_enabled
+        self._apply_migrate_btn.setEnabled(has_available)
 
     # ── 来源模式切换 ──────────────────────────────────────────
 
@@ -284,11 +327,15 @@ class Step1SourceWidget(QWidget):
             self._eet_input.setText(slot.eet_path or "")
             self._xt_input.setText(slot.xt_path or "")
             self._tp_input.setText("")
+            self._strings_input.setText(slot.strings_path or "")
+            self._strings_lang.setCurrentText(slot.strings_lang or "chinese")
             self._set_locked(True)
+            self._update_migration_buttons(slot)
 
     def _on_new_slot(self):
         """清空所有输入框，解锁表单，准备接受新一次解析。"""
         self._esp_input.clear()
+        self._esp_input.setToolTip("")
         self._eet_input.clear()
         self._xt_input.clear()
         self._tp_input.clear()
@@ -296,6 +343,8 @@ class Step1SourceWidget(QWidget):
         self._status_lbl.clear()
         self._rb_esp.setChecked(True)
         self._set_locked(False)
+        if hasattr(self, '_esp_paths'):
+            del self._esp_paths
 
     def _on_remove_slot(self):
         active = self._ctx.active_key
@@ -325,11 +374,16 @@ class Step1SourceWidget(QWidget):
     # ── File browser helpers ──────────────────────────────────
 
     def _browse_esp(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "选择插件文件", "", "ESP/ESM/ESL 文件 (*.esp *.esm *.esl);;所有文件 (*)"
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "选择插件文件（可多选）", "", "ESP/ESM/ESL 文件 (*.esp *.esm *.esl);;所有文件 (*)"
         )
-        if path:
-            self._esp_input.setText(path)
+        if paths:
+            self._esp_paths: List[str] = paths
+            if len(paths) == 1:
+                self._esp_input.setText(paths[0])
+            else:
+                self._esp_input.setText(f"已选择 {len(paths)} 个文件")
+            self._esp_input.setToolTip("\n".join(paths))
 
     def _browse_eet(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -382,17 +436,148 @@ class Step1SourceWidget(QWidget):
                 return
             self._run_parse_eet(eet_path)
         else:
-            esp_path = self._esp_input.text().strip()
-            if not esp_path:
-                self._status_lbl.setText("请先选择插件文件")
-                return
-            eet_path = self._eet_input.text().strip() or None
-            xt_path = self._xt_input.text().strip() or None
-            tp_path = self._tp_input.text().strip() or None
-            strings_dir = self._strings_input.text().strip() or None
-            strings_lang = self._strings_lang.currentText()
-            skip_empty = self._skip_empty.currentText() == "是"
-            self._run_parse_esp(esp_path, eet_path, xt_path, tp_path, strings_dir, strings_lang, skip_empty)
+            # 检查是否有批量选择的文件
+            esp_paths = getattr(self, '_esp_paths', None)
+            if esp_paths and len(esp_paths) > 1:
+                # 批量解析模式
+                eet_path = self._eet_input.text().strip() or None
+                xt_path = self._xt_input.text().strip() or None
+                tp_path = self._tp_input.text().strip() or None
+                strings_dir = self._strings_input.text().strip() or None
+                strings_lang = self._strings_lang.currentText()
+                skip_empty = self._skip_empty.currentText() == "是"
+                self._run_batch_parse_esp(esp_paths, eet_path, xt_path, tp_path, strings_dir, strings_lang, skip_empty)
+            else:
+                # 单文件模式
+                esp_path = self._esp_input.text().strip()
+                if not esp_path or esp_path.startswith("已选择"):
+                    # 尝试从 _esp_paths 获取
+                    if esp_paths and len(esp_paths) == 1:
+                        esp_path = esp_paths[0]
+                    else:
+                        self._status_lbl.setText("请先选择插件文件")
+                        return
+                eet_path = self._eet_input.text().strip() or None
+                xt_path = self._xt_input.text().strip() or None
+                tp_path = self._tp_input.text().strip() or None
+                strings_dir = self._strings_input.text().strip() or None
+                strings_lang = self._strings_lang.currentText()
+                skip_empty = self._skip_empty.currentText() == "是"
+                self._run_parse_esp(esp_path, eet_path, xt_path, tp_path, strings_dir, strings_lang, skip_empty)
+
+    def _run_batch_parse_esp(self, esp_paths: List[str], eet_path, xt_path, tp_path, strings_dir, strings_lang, skip_empty):
+        """批量解析多个ESP文件。"""
+        self._parse_btn.setEnabled(False)
+        self._progress.show()
+        self._status_lbl.setText(f"批量解析中 (0/{len(esp_paths)})…")
+        self.parse_started.emit()
+
+        self._batch_total = len(esp_paths)
+        self._batch_current = 0
+        self._batch_results = []
+        self._batch_paths = esp_paths
+        self._batch_eet_path = eet_path
+        self._batch_xt_path = xt_path
+        self._batch_tp_path = tp_path
+        self._batch_strings_dir = strings_dir
+        self._batch_strings_lang = strings_lang
+        self._batch_skip_empty = skip_empty
+
+        self._parse_next_in_batch()
+
+    def _parse_next_in_batch(self):
+        """解析批次中的下一个文件。"""
+        if self._batch_current >= self._batch_total:
+            # 批量解析完成
+            self._finish_batch_parse()
+            return
+
+        esp_path = self._batch_paths[self._batch_current]
+        self._status_lbl.setText(f"批量解析中 ({self._batch_current + 1}/{self._batch_total})…")
+
+        def _do():
+            parser = PluginParser()
+            entries = parser.parse_plugin(Path(esp_path), skip_empty=self._batch_skip_empty)
+            collection = TranslationEntryCollection(entries)
+            migrate_count = 0
+            # 批量模式不应用迁移源
+            return collection, 0, parser.get_plugin(), parser.get_strings_lookup()
+
+        def _on_done(result):
+            collection, migrate_count, plugin, strings_lookup = result
+            label = Path(esp_path).stem
+            slot = CollectionSlot(
+                label=label,
+                collection=collection,
+                esp_path=esp_path,
+                eet_path=None,  # 批量模式不预设迁移源
+                xt_path=None,
+                strings_path=None,
+                strings_lang=self._batch_strings_lang,
+                migrate_count=migrate_count,
+                plugin=plugin,
+                strings_lookup=strings_lookup,
+            )
+            self._batch_results.append((esp_path, slot, collection))
+            self._batch_current += 1
+            self._parse_next_in_batch()
+
+        def _on_error(msg: str):
+            # 记录错误但继续下一个
+            self._batch_results.append((self._batch_paths[self._batch_current], None, None))
+            self._batch_current += 1
+            self._parse_next_in_batch()
+
+        w = ApiWorker(_do)
+        w.result.connect(_on_done)
+        w.error.connect(_on_error)
+        w.start()
+        self._workers.append(w)
+
+    def _finish_batch_parse(self):
+        """完成批量解析，注册所有槽位。"""
+        self._parse_btn.setEnabled(True)
+        self._progress.hide()
+
+        success_count = sum(1 for _, slot, _ in self._batch_results if slot is not None)
+        fail_count = self._batch_total - success_count
+
+        # 注册所有成功的槽位
+        for esp_path, slot, collection in self._batch_results:
+            if slot:
+                # 如果key已存在，覆盖
+                self._ctx.add_slot(esp_path, slot)
+
+        # 激活最后一个成功的槽位
+        if self._batch_results:
+            for esp_path, slot, _ in reversed(self._batch_results):
+                if slot:
+                    self._ctx.activate_slot(esp_path)
+                    break
+
+        self._set_locked(True)
+        if self._ctx.active_slot:
+            self._update_migration_buttons(self._ctx.active_slot)
+
+        msg = f"批量解析完成：成功 {success_count} 个"
+        if fail_count > 0:
+            msg += f"，失败 {fail_count} 个"
+        self._status_lbl.setText(msg)
+        self.parse_finished.emit(self._ctx.collection)
+
+        # 清理批量状态
+        del self._batch_total
+        del self._batch_current
+        del self._batch_results
+        del self._batch_paths
+        del self._batch_eet_path
+        del self._batch_xt_path
+        del self._batch_tp_path
+        del self._batch_strings_dir
+        del self._batch_strings_lang
+        del self._batch_skip_empty
+        if hasattr(self, '_esp_paths'):
+            del self._esp_paths
 
     def _run_parse_esp(self, esp_path, eet_path, xt_path, tp_path, strings_dir, strings_lang, skip_empty):
         self._parse_btn.setEnabled(False)
@@ -525,3 +710,110 @@ class Step1SourceWidget(QWidget):
         self._progress.hide()
         self._status_lbl.setText(f"解析失败：{msg}")
         self.parse_finished.emit(None)
+
+    # ── 应用迁移源 ─────────────────────────────────────────────
+
+    def _apply_migration_sources(self):
+        """将当前输入的迁移源应用到已加载的集合。"""
+        slot = self._ctx.active_slot
+        if not slot:
+            return
+
+        eet_path = self._eet_input.text().strip() or None
+        xt_path = self._xt_input.text().strip() or None
+        tp_path = self._tp_input.text().strip() or None
+        strings_dir = self._strings_input.text().strip() or None
+        strings_lang = self._strings_lang.currentText()
+        apply_strings_to_all = self._strings_apply_all.isChecked() and strings_dir
+
+        if not any([eet_path, xt_path, tp_path, strings_dir]):
+            self._status_lbl.setText("请先选择迁移源文件")
+            return
+
+        self._apply_migrate_btn.setEnabled(False)
+        self._progress.show()
+        self._status_lbl.setText("应用迁移源中…")
+
+        def _do():
+            migrate_count = 0
+            updated_slots = []
+
+            # 确定要处理的slot列表
+            if apply_strings_to_all:
+                slots_to_process = list(self._ctx.slots.values())
+            else:
+                slots_to_process = [slot]
+
+            for s in slots_to_process:
+                collection = s.collection
+                slot_migrate = 0
+
+                # 仅对当前slot应用EET/XT/TP
+                if s is slot:
+                    if eet_path and s.eet_path is None:
+                        try:
+                            slot_migrate += collection.update_from_eet_xml(Path(eet_path))
+                        except Exception:
+                            pass
+                    if xt_path and s.xt_path is None:
+                        try:
+                            xp = XT_XmlParser.from_file(xt_path)
+                            slot_migrate += collection.apply_xt_entries(xp.entries)
+                        except Exception:
+                            pass
+                    if tp_path:
+                        try:
+                            slot_migrate += collection.update_from_translated_plugin(Path(tp_path))
+                        except Exception:
+                            pass
+
+                # Strings可以应用到所有slot
+                if strings_dir and s.strings_path is None:
+                    try:
+                        plugin_stem = Path(s.esp_path).stem if s.esp_path else ""
+                        strings_lookup = PluginStringsLookup.from_strings_dir(
+                            Path(strings_dir), plugin_stem, strings_lang
+                        )
+                        if strings_lookup:
+                            slot_migrate += collection.update_from_strings_lookup(strings_lookup)
+                            s.strings_lookup = strings_lookup
+                    except Exception:
+                        pass
+
+                if slot_migrate > 0:
+                    updated_slots.append((s, slot_migrate))
+                migrate_count += slot_migrate
+
+            return migrate_count, eet_path, xt_path, strings_dir, strings_lang, updated_slots
+
+        def _on_done(result):
+            migrate_count, new_eet, new_xt, new_strings, new_lang, updated_slots = result
+            # 更新各 slot 中的路径
+            for s, _ in updated_slots:
+                if s is slot:
+                    if new_eet and s.eet_path is None:
+                        s.eet_path = new_eet
+                    if new_xt and s.xt_path is None:
+                        s.xt_path = new_xt
+                if new_strings and s.strings_path is None:
+                    s.strings_path = new_strings
+                    s.strings_lang = new_lang
+
+            self._progress.hide()
+            if apply_strings_to_all and len(updated_slots) > 1:
+                self._status_lbl.setText(f"迁移完成，共 {len(updated_slots)} 个集合，新增 {migrate_count} 条译文")
+            else:
+                self._status_lbl.setText(f"迁移完成，新增 {migrate_count} 条译文")
+            self._ctx.collection_changed.emit(slot.collection)
+            self._update_migration_buttons(slot)
+
+        def _on_error(msg: str):
+            self._progress.hide()
+            self._status_lbl.setText(f"迁移失败：{msg}")
+            self._apply_migrate_btn.setEnabled(True)
+
+        w = ApiWorker(_do)
+        w.result.connect(_on_done)
+        w.error.connect(_on_error)
+        w.start()
+        self._workers.append(w)
