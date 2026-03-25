@@ -98,7 +98,15 @@ class Step3OpsWidget(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._overlay.setGeometry(self.rect())
+        self._update_overlay_geometry()
+
+    def _update_overlay_geometry(self):
+        from PyQt6.QtCore import QPoint
+        card_pos = self._card_upload.mapTo(self, QPoint(0, 0))
+        write_pos = self._card_write.mapTo(self, QPoint(0, 0))
+        overlay_y = card_pos.y() if card_pos.y() > 0 else 0
+        overlay_width = write_pos.x() if write_pos.x() > 0 else self.width() * 2 // 3
+        self._overlay.setGeometry(0, overlay_y, overlay_width, self.height() - overlay_y)
 
     def _on_collection_changed(self, _):
         self._update_button_states()
@@ -183,6 +191,7 @@ class Step3OpsWidget(QWidget):
         self._overlay.setVisible(show_overlay)
         if show_overlay:
             self._overlay.raise_()
+            self._update_overlay_geometry()
 
     # ── Progress helpers ───────────────────────────────────────
 

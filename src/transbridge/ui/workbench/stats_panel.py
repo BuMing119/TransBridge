@@ -12,27 +12,13 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 
 from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from src.transbridge.converter.context_categories import EXPORT_CATEGORIES, ROUND2_PREFIXES
 
-# 与 export_to_categorized_json_files 相同的分类映射
+# 从 EXPORT_CATEGORIES 派生：context → 分类名（去掉 .json 后缀）
 _CONTEXT_TO_CATEGORY: dict[str, str] = {
-    "BOOK:FULL": "书籍_书名",
-    "BOOK:DESC": "书籍_内容",
-    "FLOR:RNAM": "互动", "FURN:FULL": "互动", "HAZD:FULL": "互动",
-    "NPC_:FULL": "人名", "NPC_:SHRT": "人名", "TACT:FULL": "人名",
-    "QUST:FULL": "任务日志", "QUST:NNAM": "任务日志",
-    "CELL:FULL": "地名与门", "DOOR:FULL": "地名与门", "LCTN:FULL": "地名与门",
-    "REFR:FULL": "地名与门", "WRLD:FULL": "地名与门",
-    "ENCH:FULL": "法术_龙吼_技能", "EXPL:FULL": "法术_龙吼_技能",
-    "MESG:DESC": "法术_龙吼_技能", "MESG:FULL": "法术_龙吼_技能",
-    "MESG:ITXT": "法术_龙吼_技能", "MGEF:DNAM": "法术_龙吼_技能",
-    "MGEF:FULL": "法术_龙吼_技能", "PERK:FULL": "法术_龙吼_技能",
-    "SHOU:FULL": "法术_龙吼_技能", "SPEL:DESC": "法术_龙吼_技能",
-    "SPEL:FULL": "法术_龙吼_技能",
-    "ACTI:FULL": "物品", "ACTI:RNAM": "物品", "ALCH:FULL": "物品",
-    "AMMO:FULL": "物品", "ARMO:DESC": "物品", "ARMO:FULL": "物品",
-    "CONT:FULL": "物品", "INGR:FULL": "物品", "KEYM:FULL": "物品",
-    "MISC:FULL": "物品", "SLGM:FULL": "物品", "TREE:FULL": "物品",
-    "WEAP:DESC": "物品", "WEAP:FULL": "物品",
+    ctx: filename.removesuffix(".json")
+    for filename, contexts in EXPORT_CATEGORIES.items()
+    for ctx in contexts
 }
 
 
@@ -40,7 +26,7 @@ def _get_category(context: str) -> str:
     ctx = context.split("|")[0] if "|" in context else context
     if ctx in _CONTEXT_TO_CATEGORY:
         return _CONTEXT_TO_CATEGORY[ctx]
-    if ctx.startswith("INFO") or ctx.startswith("DIAL"):
+    if any(ctx.startswith(p) for p in ROUND2_PREFIXES):
         return "对话"
     return "其他"
 

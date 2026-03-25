@@ -444,6 +444,9 @@ class Step2PreviewWidget(QWidget):
 
         layout.addWidget(self._table, stretch=1)
 
+        # 复选框变化信号（只连接一次）
+        self._table.itemChanged.connect(self._on_item_changed)
+
         # 底部计数标签
         self._count_lbl = QLabel("已选 0 条 / 共 0 条")
         self._count_lbl.setStyleSheet("color: #888; font-size: 11px;")
@@ -564,8 +567,8 @@ class Step2PreviewWidget(QWidget):
         self._table.setUpdatesEnabled(True)
         self._table.resizeColumnToContents(_COL_KEY)
         self._table.resizeColumnToContents(_COL_CTX)
-        hh.setSectionResizeMode(_COL_KEY, QHeaderView.ResizeMode.ResizeToContents)
-        hh.setSectionResizeMode(_COL_CTX, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(_COL_KEY, QHeaderView.ResizeMode.Interactive)
+        hh.setSectionResizeMode(_COL_CTX, QHeaderView.ResizeMode.Interactive)
 
         # 连接复选框变化信号（用 itemChanged）
         self._table.itemChanged.connect(self._on_item_changed)
