@@ -443,6 +443,7 @@ class Step1SourceWidget(QWidget):
                 eet_path=eet_path,
                 xt_path=xt_path,
                 strings_path=strings_dir,
+                strings_lang=strings_lang,
                 migrate_count=migrate_count,
                 plugin=plugin,
                 strings_lookup=strings_lookup,

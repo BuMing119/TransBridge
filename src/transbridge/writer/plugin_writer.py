@@ -38,6 +38,7 @@ class PluginWriter:
         self.plugin = plugin
         self.strings_lookup = strings_lookup
         self._language = language
+        self._inline_count = 0  # 本地化模式下 inline 修改的数量
         self._localized_writer: PluginStringsWriter | None = (
             PluginStringsWriter() if strings_lookup is not None else None
         )
@@ -181,19 +182,32 @@ class PluginWriter:
             f"apply_collection (localised): collection_hits={collection_hits}, "
             f"localized={localized_count}, inline={inline_count}, updated={updated_count}"
         )
+        self._inline_count = inline_count
         return updated_count
 
     # ------------------------------------------------------------------
     # Write
     # ------------------------------------------------------------------
 
-    def write(self, output_path: str | Path) -> None:
+    def write(self, output_path: str | Path) -> dict:
         """
         将修改后的插件保存到文件。
-        本地化模式下同时在相同目录输出 Strings/ 子文件夹中的 strings 文件。
+        本地化模式下同时输出 Strings/ 子文件夹中的 strings 文件。
+
+        Returns:
+            dict: 包含写入统计信息
+                - esp_saved: bool, 是否保存了 ESP 文件
+                - strings_written: list[Path], 已写入的 strings 文件路径列表
         """
         output_path = Path(output_path)
-        self.plugin.save(output_path)
+        result = {"esp_saved": False, "strings_written": []}
+
+        # 非本地化模式：保存 ESP 文件
+        # 本地化模式：仅当有 inline 字符串被修改时才保存 ESP
+        need_save_esp = self.strings_lookup is None or self._inline_count > 0
+        if need_save_esp:
+            self.plugin.save(output_path)
+            result["esp_saved"] = True
 
         if self._localized_writer:
             written = self._localized_writer.write(
@@ -201,6 +215,9 @@ class PluginWriter:
                 output_path.stem,
                 self._language,
             )
+            result["strings_written"] = written
             if not written:
                 log.warning("Localised mode active but no strings were written (empty collection?)")
+
+        return result
 

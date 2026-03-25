@@ -21,6 +21,7 @@ class CollectionSlot:
     eet_path: str | None = None
     xt_path: str | None = None
     strings_path: str | None = None                 # Strings 目录路径（用于导入翻译）
+    strings_lang: str = "chinese"                   # strings 文件语言标签
     migrate_count: int = 0
     plugin: object = None                           # 解析出的 Plugin 实例
     strings_lookup: object = None                  # PluginStringsLookup 实例（本地化插件）
@@ -203,6 +204,17 @@ class AppContext(QObject):
         slot = self.active_slot
         if slot is not None:
             slot.strings_lookup = v
+
+    @property
+    def strings_lang(self) -> str:
+        slot = self.active_slot
+        return slot.strings_lang if slot else "chinese"
+
+    @strings_lang.setter
+    def strings_lang(self, v: str) -> None:
+        slot = self.active_slot
+        if slot is not None:
+            slot.strings_lang = v
 
     # ── helpers ───────────────────────────────────────────────
 

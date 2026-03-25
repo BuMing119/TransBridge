@@ -207,6 +207,7 @@ class WriteCard(OpCard):
 
         plugin = getattr(self._ctx, "plugin", None)
         strings_lookup = getattr(self._ctx, "strings_lookup", None)
+        strings_lang = getattr(self._ctx, "strings_lang", "chinese")
         is_localized = strings_lookup is not None
 
         if plugin is None:
@@ -215,29 +216,58 @@ class WriteCard(OpCard):
             return
 
         src = Path(esp_path)
-        default_name = src.stem + "_translated" + src.suffix
-        save_path, _ = QFileDialog.getSaveFileName(
-            self, "保存汉化插件", str(src.parent / default_name),
-            "ESP/ESM 文件 (*.esp *.esm);;所有文件 (*)",
-        )
-        if not save_path:
-            return
+
+        # 本地化插件：让用户选择 strings 输出目录
+        if is_localized:
+            output_dir = QFileDialog.getExistingDirectory(
+                self, "选择 Strings 文件输出目录",
+                str(src.parent),
+            )
+            if not output_dir:
+                return
+            # 使用原插件名作为 strings 文件前缀
+            esp_output_path = Path(output_dir) / src.name
+        else:
+            # 非本地化插件：让用户选择 ESP 保存路径
+            default_name = src.stem + "_translated" + src.suffix
+            esp_output_path_str, _ = QFileDialog.getSaveFileName(
+                self, "保存汉化插件", str(src.parent / default_name),
+                "ESP/ESM 文件 (*.esp *.esm);;所有文件 (*)",
+            )
+            if not esp_output_path_str:
+                return
+            esp_output_path = Path(esp_output_path_str)
 
         def _write():
-            writer = PluginWriter(plugin, strings_lookup=strings_lookup)
+            writer = PluginWriter(plugin, strings_lookup=strings_lookup, language=strings_lang)
             count = writer.apply_collection(collection)
-            writer.write(save_path)
-            return count, is_localized, Path(save_path)
+            write_result = writer.write(esp_output_path)
+            return count, is_localized, esp_output_path, write_result
 
         def _on_done(result):
-            count, localized, out_path = result
-            if localized:
-                strings_dir = out_path.parent / "Strings"
-                QMessageBox.information(
-                    self, "写回完成",
-                    f"已写入 {count} 条译文，保存至：\n{out_path}\n\n"
-                    f"本地化插件，Strings 文件已输出至：\n{strings_dir}",
-                )
+            count, localized, out_path, write_result = result
+            esp_saved = write_result.get("esp_saved", True)
+            strings_written = write_result.get("strings_written", [])
+
+            if localized and strings_written:
+                strings_dir = strings_written[0].parent
+                if esp_saved:
+                    # 混合模式：ESP + strings 文件
+                    QMessageBox.information(
+                        self, "写回完成",
+                        f"已写入 {count} 条译文。\n\n"
+                        f"ESP 文件：{out_path}\n\n"
+                        f"Strings 文件：{strings_dir}",
+                    )
+                else:
+                    # 纯本地化模式：只有 strings 文件
+                    strings_list = "\n".join(f"  • {p.name}" for p in strings_written)
+                    QMessageBox.information(
+                        self, "写回完成",
+                        f"已写入 {count} 条译文到 Strings 文件。\n\n"
+                        f"输出目录：{strings_dir}\n\n"
+                        f"生成的文件：\n{strings_list}",
+                    )
             else:
                 QMessageBox.information(
                     self, "写回完成",
