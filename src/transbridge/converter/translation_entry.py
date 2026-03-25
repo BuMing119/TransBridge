@@ -14,6 +14,7 @@ class TranslationEntry:
     translation: str
     stage: int
     context: str  # 现在存储原来的key值
+    string_id: int | None = None  # 本地化插件的字符串ID，用于精确匹配 strings 文件
 
     @staticmethod
     def _build_eet_id(edid: str | None, form_id: str, index: int, grup: str, champ: str) -> str:
@@ -81,7 +82,8 @@ class TranslationEntry:
             original=getattr(ps, "string", "") or "",
             translation="",
             stage=0,
-            context=original_key  # 原来的key值移动到context
+            context=original_key,  # 原来的key值移动到context
+            string_id=getattr(ps, "string_id", None),  # 传递 string_id
         )
 
     @classmethod
@@ -159,7 +161,8 @@ class TranslationEntry:
             "original": self.original,
             "translation": self.translation,
             "stage": self.stage,
-            "context": self.context
+            "context": self.context,
+            "string_id": self.string_id,
         }
 
     @classmethod
@@ -174,6 +177,7 @@ class TranslationEntry:
             translation=data.get("translation", ""),
             stage=data.get("stage", 0),
             context=data.get("context"),
+            string_id=data.get("string_id"),
         )
 
 

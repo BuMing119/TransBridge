@@ -175,6 +175,47 @@ class PluginStringsLookup:
         self._merged = merged
 
     @classmethod
+    def from_strings_dir(
+        cls,
+        strings_dir: Path,
+        plugin_stem: str,
+        language: str = "english",
+    ) -> "PluginStringsLookup | None":
+        """
+        从指定的 Strings 目录加载指定语言的 strings 文件，不依赖 plugin_path 推断目录。
+
+        寻找 <strings_dir>/<plugin_stem>_<Language>.{strings,dlstrings,ilstrings}
+
+        Args:
+            strings_dir: 包含 strings 文件的目录（通常叫 Strings/）。
+            plugin_stem: 插件名不含扩展名，如 "Skyrim" 或 "MyMod"。
+            language: 语言标签，如 "chinese"、"english"（默认 "english"）。
+
+        Returns:
+            PluginStringsLookup if at least one strings file was found, otherwise None.
+        """
+        prefix = f"{plugin_stem}_{language.capitalize()}"
+        merged: dict[int, str] = {}
+
+        for ext in (".strings", ".dlstrings", ".ilstrings"):
+            candidate = strings_dir / f"{prefix}{ext}"
+            if not candidate.exists():
+                continue
+            try:
+                sf = SkyrimStringsFile.from_file(candidate)
+                merged.update(sf._strings)
+                log.info(f"Loaded {len(sf)} strings from {candidate.name}")
+            except Exception as e:
+                log.warning(f"Failed to load {candidate}: {e}")
+
+        if not merged:
+            log.debug(f"No strings files found in {strings_dir} for {plugin_stem} (language={language})")
+            return None
+
+        log.info(f"PluginStringsLookup ready: {len(merged)} total strings from {strings_dir}")
+        return cls(merged)
+
+    @classmethod
     def from_plugin(
         cls,
         plugin_path: Path,

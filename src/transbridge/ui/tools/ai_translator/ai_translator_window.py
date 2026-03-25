@@ -83,8 +83,8 @@ class AITranslatorWindow(QWidget):
         llm_layout.addLayout(_row("Base URL:", self._baseurl_edit))
 
         self._concurrent_spin = QSpinBox()
-        self._concurrent_spin.setRange(1, 20)
-        self._concurrent_spin.setValue(3)
+        self._concurrent_spin.setRange(1, 50)
+        self._concurrent_spin.setValue(20)
         llm_layout.addLayout(_row("并发数:", self._concurrent_spin))
 
         self._tokens_spin = QSpinBox()

@@ -378,10 +378,14 @@ class SSEPluginWithContext(SSEPlugin):
                 if isinstance(subrecord, StringSubrecord):
                     string: RawString | int = subrecord.string
 
+                    # 提取 string_id（本地化插件为 int，否则为 None）
+                    raw_string_id: int | None = None
+
                     if isinstance(string, RawString):
                         string_text = str(string)
                     elif strings_lookup is not None:
                         # Localized plugin: string is an integer index into external strings files
+                        raw_string_id = string  # 保存 int ID
                         resolved = strings_lookup.get(string)
                         if resolved is None:
                             self.log.debug(
@@ -403,6 +407,7 @@ class SSEPluginWithContext(SSEPlugin):
                         type=f"{record.type} {subrecord.type}",
                         string=string_text,
                         context=context_data,
+                        string_id=raw_string_id,  # 传递 string_id
                     )
 
                     strings[string_data] = subrecord

@@ -129,8 +129,9 @@ class _BatchWidget(QFrame):
         self._header_label.setText(summary)
         self._text.hide()
         self.setStyleSheet(
-            "QFrame { border: 1px solid #c8e6c9; border-radius: 4px; "
-            "margin: 2px; background: #f1f8e9; }"
+            "QFrame { border: 1px solid #bdbdbd; border-radius: 4px; "
+            "margin: 2px; background: #f5f5f5; }"
+            "QLabel { color: #424242; }"
         )
 
     def force_collapse(self):

@@ -8,6 +8,7 @@ import json
 from src.transbridge.converter.translation_entry import TranslationEntry
 from src.transbridge.parser.eet_parser import EET_XmlParser, EET_Entry
 from src.transbridge.parser.plugin_parser import PluginParser
+from src.transbridge.parser.strings_file import PluginStringsLookup
 from src.transbridge.parser.xt_parser import XT_Entry
 import re
 
@@ -385,6 +386,57 @@ class TranslationEntryCollection:
                     overwrite=True,
                 )
                 updated_count += 1
+
+        return updated_count
+
+    def update_from_strings_lookup(
+            self,
+            strings_lookup: "PluginStringsLookup",
+            *,
+            overwrite: bool = False,
+    ) -> int:
+        """
+        从 PluginStringsLookup 批量更新译文（用于导入已翻译的 strings 文件）。
+
+        通过 entry.string_id 精确匹配 strings 文件中的翻译。
+
+        注意：此方法仅适用于本地化插件（有 string_id 的条目）。
+        strings 文件存储的是翻译文本，无法通过文本内容回退匹配。
+
+        :param strings_lookup: PluginStringsLookup 实例（加载了目标语言的 strings 文件）
+        :param overwrite: 是否覆盖已有译文，默认 False
+        :return: 实际发生更新的条目数量
+        """
+        updated_count = 0
+
+        for entry in list(self._entries.values()):
+            # 跳过已有译文（除非覆盖）
+            if entry.translation and not overwrite:
+                continue
+            # 跳过没有 string_id 的条目（非本地化插件）
+            if entry.string_id is None:
+                continue
+
+            translated_text = strings_lookup.get(entry.string_id)
+            if translated_text is None:
+                continue
+            # 跳过译文与原文相同的条目
+            if translated_text == entry.original:
+                continue
+
+            self.add(
+                TranslationEntry(
+                    id=entry.id,
+                    key=entry.key,
+                    original=entry.original,
+                    translation=translated_text,
+                    stage=1,
+                    context=entry.context,
+                    string_id=entry.string_id,
+                ),
+                overwrite=True,
+            )
+            updated_count += 1
 
         return updated_count
 

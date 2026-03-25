@@ -20,6 +20,7 @@ class CollectionSlot:
     esp_path: str | None = None
     eet_path: str | None = None
     xt_path: str | None = None
+    strings_path: str | None = None                 # Strings 目录路径（用于导入翻译）
     migrate_count: int = 0
     plugin: object = None                           # 解析出的 Plugin 实例
     strings_lookup: object = None                  # PluginStringsLookup 实例（本地化插件）

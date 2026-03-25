@@ -232,6 +232,8 @@ class _EntryDetailDialog(QDialog):
 
             matched.append(e)
 
+        # 阻断信号避免每次 setItem 触发 itemChanged 回调导致卡顿
+        self._table.blockSignals(True)
         self._table.setRowCount(len(matched))
         for row, entry in enumerate(matched):
             # 第0列：复选框
@@ -274,6 +276,9 @@ class _EntryDetailDialog(QDialog):
             self._table.setItem(row, 2, orig_item)
             self._table.setItem(row, 3, trans_item)
             self._table.setItem(row, 4, ctx_item)
+
+        # 恢复信号
+        self._table.blockSignals(False)
 
         # 重置表头复选框为未选中
         self._header_check.blockSignals(True)

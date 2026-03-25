@@ -17,6 +17,7 @@ from src.transbridge.converter.translation_entry_collection import TranslationEn
 from src.transbridge.parser.plugin_parser import PluginParser
 from src.transbridge.parser.eet_parser import EET_XmlParser
 from src.transbridge.parser.xt_parser import XT_XmlParser
+from src.transbridge.parser.strings_file import PluginStringsLookup
 from src.transbridge.ui.context import CollectionSlot
 from ..workers import ApiWorker
 
@@ -164,6 +165,32 @@ class Step1SourceWidget(QWidget):
         tp_row.addWidget(self._tp_clear_btn)
         form.addRow("已翻译插件", self._tp_row_widget)
 
+        # Strings 目录（可选，用于本地化插件导入翻译）
+        self._strings_row_widget = QWidget()
+        strings_row = QHBoxLayout(self._strings_row_widget)
+        strings_row.setContentsMargins(0, 0, 0, 0)
+        self._strings_input = QLineEdit()
+        self._strings_input.setPlaceholderText("可选，从 Strings 文件导入翻译（本地化插件）")
+        self._strings_input.setReadOnly(True)
+        self._strings_browse_btn = QPushButton("浏览")
+        self._strings_browse_btn.setFixedWidth(60)
+        self._strings_browse_btn.clicked.connect(self._browse_strings_dir)
+        self._strings_clear_btn = QPushButton("✕")
+        self._strings_clear_btn.setFixedWidth(28)
+        self._strings_clear_btn.setToolTip("清除")
+        self._strings_clear_btn.clicked.connect(lambda: self._strings_input.clear())
+        strings_row.addWidget(self._strings_input)
+        strings_row.addWidget(self._strings_browse_btn)
+        strings_row.addWidget(self._strings_clear_btn)
+
+        # 语言选择
+        self._strings_lang = QComboBox()
+        self._strings_lang.addItems(["chinese", "english", "german", "french", "spanish", "italian", "japanese", "polish", "russian"])
+        self._strings_lang.setFixedWidth(100)
+        strings_row.addWidget(self._strings_lang)
+
+        form.addRow("Strings 目录", self._strings_row_widget)
+
         # 跳过空串
         self._skip_empty = QComboBox()
         self._skip_empty.addItems(["是", "否"])
@@ -204,6 +231,9 @@ class Step1SourceWidget(QWidget):
         self._xt_clear_btn.setEnabled(enabled)
         self._tp_browse_btn.setEnabled(enabled)
         self._tp_clear_btn.setEnabled(enabled)
+        self._strings_browse_btn.setEnabled(enabled)
+        self._strings_clear_btn.setEnabled(enabled)
+        self._strings_lang.setEnabled(enabled)
         self._skip_empty.setEnabled(enabled)
         self._parse_btn.setEnabled(enabled)
 
@@ -262,6 +292,7 @@ class Step1SourceWidget(QWidget):
         self._eet_input.clear()
         self._xt_input.clear()
         self._tp_input.clear()
+        self._strings_input.clear()
         self._status_lbl.clear()
         self._rb_esp.setChecked(True)
         self._set_locked(False)
@@ -283,6 +314,7 @@ class Step1SourceWidget(QWidget):
             self._eet_input.clear()
             self._xt_input.clear()
             self._tp_input.clear()
+            self._strings_input.clear()
             self._status_lbl.clear()
             # 若切换到了其他集合则锁定，否则解锁等待新建
             if self._ctx.active_key:
@@ -320,6 +352,24 @@ class Step1SourceWidget(QWidget):
         if path:
             self._tp_input.setText(path)
 
+    def _browse_strings_dir(self):
+        """选择 Strings 目录或 strings 文件。"""
+        # 先尝试选择目录
+        dir_path = QFileDialog.getExistingDirectory(
+            self, "选择 Strings 目录", ""
+        )
+        if dir_path:
+            self._strings_input.setText(dir_path)
+            return
+        # 如果用户取消，尝试选择文件
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择 Strings 文件", "",
+            "Strings 文件 (*.strings *.dlstrings *.ilstrings);;所有文件 (*)"
+        )
+        if path:
+            # 提取目录路径
+            self._strings_input.setText(str(Path(path).parent))
+
     # ── Parse ─────────────────────────────────────────────────
 
     def _start_parse(self):
@@ -339,10 +389,12 @@ class Step1SourceWidget(QWidget):
             eet_path = self._eet_input.text().strip() or None
             xt_path = self._xt_input.text().strip() or None
             tp_path = self._tp_input.text().strip() or None
+            strings_dir = self._strings_input.text().strip() or None
+            strings_lang = self._strings_lang.currentText()
             skip_empty = self._skip_empty.currentText() == "是"
-            self._run_parse_esp(esp_path, eet_path, xt_path, tp_path, skip_empty)
+            self._run_parse_esp(esp_path, eet_path, xt_path, tp_path, strings_dir, strings_lang, skip_empty)
 
-    def _run_parse_esp(self, esp_path, eet_path, xt_path, tp_path, skip_empty):
+    def _run_parse_esp(self, esp_path, eet_path, xt_path, tp_path, strings_dir, strings_lang, skip_empty):
         self._parse_btn.setEnabled(False)
         self._progress.show()
         self._status_lbl.setText("解析中…")
@@ -369,6 +421,16 @@ class Step1SourceWidget(QWidget):
                     migrate_count += collection.update_from_translated_plugin(Path(tp_path))
                 except Exception:
                     pass
+            if strings_dir:
+                try:
+                    plugin_stem = Path(esp_path).stem
+                    strings_lookup = PluginStringsLookup.from_strings_dir(
+                        Path(strings_dir), plugin_stem, strings_lang
+                    )
+                    if strings_lookup:
+                        migrate_count += collection.update_from_strings_lookup(strings_lookup)
+                except Exception:
+                    pass
             return collection, migrate_count, parser.get_plugin(), parser.get_strings_lookup()
 
         def _on_done(result):
@@ -380,6 +442,7 @@ class Step1SourceWidget(QWidget):
                 esp_path=esp_path,
                 eet_path=eet_path,
                 xt_path=xt_path,
+                strings_path=strings_dir,
                 migrate_count=migrate_count,
                 plugin=plugin,
                 strings_lookup=strings_lookup,
