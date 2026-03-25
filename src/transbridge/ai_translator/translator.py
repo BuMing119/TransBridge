@@ -175,7 +175,7 @@ class AutoTranslator:
         pause_event: threading.Event | None = None,
         checkpoint: "ProgressCheckpoint | None" = None,
         log_callback: Callable[[int, str], None] | None = None,
-        stream_callback: Callable[[str], None] | None = None,
+        stream_callback: Callable[[int, str], None] | None = None,
     ) -> TranslationResult:
         """
         progress_callback(current, total, message, success_count, failed_count, new_terms)
@@ -291,6 +291,9 @@ class AutoTranslator:
                 if _batch_log_cb:
                     _batch_log_cb(line)
 
+            # 批次专属 stream 回调（将 idx 绑定到外层 stream_callback）
+            _per_batch_stream = (lambda chunk: stream_callback(idx, chunk)) if stream_callback else None
+
             # 批次头
             _blog(f"\n开始翻译：")
             _blog(f"任务{idx}：{batch.batch_type}")
@@ -303,7 +306,7 @@ class AutoTranslator:
                 _terms_before = result.new_dynamic_terms
 
             try:
-                self._run_batch(batch, collection, result, lock, _batch_log_cb, pause_event, stop_event, stream_callback, _timing_out=_batch_timing)
+                self._run_batch(batch, collection, result, lock, _batch_log_cb, pause_event, stop_event, _per_batch_stream, _timing_out=_batch_timing)
             except _CancelledByStop:
                 _blog("⏹ 批次已中断（停止）")
                 _save_checkpoint()
@@ -321,7 +324,7 @@ class AutoTranslator:
                 with lock:
                     _success_before = result.success_count
                     _terms_before = result.new_dynamic_terms
-                self._run_batch(batch, collection, result, lock, _batch_log_cb, pause_event, stop_event, stream_callback, _timing_out=_batch_timing)
+                self._run_batch(batch, collection, result, lock, _batch_log_cb, pause_event, stop_event, _per_batch_stream, _timing_out=_batch_timing)
 
             t_batch_elapsed = time.perf_counter() - t_batch
             with lock:

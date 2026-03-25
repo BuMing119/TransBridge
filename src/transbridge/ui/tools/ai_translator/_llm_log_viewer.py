@@ -1,4 +1,4 @@
-"""LLM 原始响应日志查看窗口。"""
+"""LLM 原始响应日志查看窗口（多并发批次，每批次独立 Tab）。"""
 
 from __future__ import annotations
 
@@ -6,27 +6,29 @@ import os
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QTextEdit, QLabel, QCheckBox,
+    QTextEdit, QLabel, QCheckBox, QTabWidget,
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont
 
 
 class _LLMLogViewer(QWidget):
-    """独立窗口，实时显示写入文件的 LLM 流式响应日志。"""
+    """独立窗口，实时显示各并发批次的 LLM 流式响应日志，每批次一个 Tab。"""
 
-    def __init__(self, log_path: str, parent=None):
+    def __init__(self, log_dir: str, parent=None):
         super().__init__(parent, Qt.WindowType.Window)
-        self._log_path = log_path
-        fname = os.path.basename(log_path)
-        self.setWindowTitle(f"LLM 原始日志 — {fname}")
-        self.resize(860, 640)
+        self._log_dir = log_dir
+        self._known_files: set[str] = set()
+        self._tab_paths: dict[int, str] = {}  # tab_index → file_path
+
+        self.setWindowTitle(f"LLM 原始日志 — {os.path.basename(log_dir)}")
+        self.resize(900, 640)
         self._init_ui()
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._on_timer)
         self._timer.start(800)
-        self._refresh()
+        self._scan_and_refresh()
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -34,7 +36,7 @@ class _LLMLogViewer(QWidget):
 
         # 工具栏
         toolbar = QHBoxLayout()
-        path_lbl = QLabel(self._log_path)
+        path_lbl = QLabel(self._log_dir)
         path_lbl.setStyleSheet("font-size: 10px; color: #888;")
         path_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         toolbar.addWidget(path_lbl, 1)
@@ -45,35 +47,65 @@ class _LLMLogViewer(QWidget):
 
         refresh_btn = QPushButton("刷新")
         refresh_btn.setFixedWidth(56)
-        refresh_btn.clicked.connect(self._refresh)
+        refresh_btn.clicked.connect(self._scan_and_refresh)
         toolbar.addWidget(refresh_btn)
         layout.addLayout(toolbar)
 
-        # 文本区
-        self._text = QTextEdit()
-        self._text.setReadOnly(True)
-        self._text.setFont(QFont("Consolas", 9))
-        layout.addWidget(self._text)
+        # Tab 区域（每批次一个 Tab）
+        self._tabs = QTabWidget()
+        layout.addWidget(self._tabs)
 
     def _on_timer(self):
         if self._auto_cb.isChecked():
-            self._refresh()
+            self._scan_and_refresh()
 
-    def _refresh(self):
-        if not os.path.exists(self._log_path):
+    def _scan_and_refresh(self):
+        if not os.path.isdir(self._log_dir):
+            return
+
+        try:
+            files = sorted(f for f in os.listdir(self._log_dir) if f.endswith(".log"))
+        except Exception:
+            return
+
+        # 为新出现的日志文件创建 Tab
+        for fname in files:
+            if fname not in self._known_files:
+                self._known_files.add(fname)
+                path = os.path.join(self._log_dir, fname)
+                text_edit = QTextEdit()
+                text_edit.setReadOnly(True)
+                text_edit.setFont(QFont("Consolas", 9))
+                # "batch_003.log" → "批次 3"
+                label = fname.replace("batch_", "").replace(".log", "").lstrip("0") or "1"
+                tab_idx = self._tabs.addTab(text_edit, f"批次 {label}")
+                self._tab_paths[tab_idx] = path
+                self._tabs.setCurrentIndex(tab_idx)
+
+        # 刷新所有 Tab 内容
+        for tab_idx in range(self._tabs.count()):
+            path = self._tab_paths.get(tab_idx)
+            if not path:
+                continue
+            widget = self._tabs.widget(tab_idx)
+            if isinstance(widget, QTextEdit):
+                self._refresh_tab(widget, path)
+
+    def _refresh_tab(self, text_edit: QTextEdit, path: str):
+        if not os.path.exists(path):
             return
         try:
-            with open(self._log_path, encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 content = f.read()
         except Exception:
             return
 
-        if content == self._text.toPlainText():
+        if content == text_edit.toPlainText():
             return
 
-        sb = self._text.verticalScrollBar()
+        sb = text_edit.verticalScrollBar()
         at_bottom = sb.value() >= sb.maximum() - 4
-        self._text.setPlainText(content)
+        text_edit.setPlainText(content)
         if at_bottom:
             sb.setValue(sb.maximum())
 
@@ -81,7 +113,7 @@ class _LLMLogViewer(QWidget):
         """翻译结束后调用，停止定时器并做最后一次刷新。"""
         self._timer.stop()
         self._auto_cb.setChecked(False)
-        self._refresh()
+        self._scan_and_refresh()
 
     def closeEvent(self, event):
         self._timer.stop()

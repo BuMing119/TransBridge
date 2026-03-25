@@ -294,7 +294,7 @@ class _TranslationProgressWindow(QWidget):
     def _on_open_log_viewer(self):
         """打开/激活 LLM 流式日志查看窗口。"""
         from src.transbridge.ui.tools.ai_translator._llm_log_viewer import _LLMLogViewer
-        path = self._worker.stream_log_path
+        path = self._worker.stream_log_dir
         if not path:
             return
         if self._log_viewer is None or not self._log_viewer.isVisible():

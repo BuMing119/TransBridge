@@ -26,20 +26,21 @@ class _TranslationWorker(QThread):
         self._stop_event = threading.Event()
         self._pause_event = threading.Event()
         self._pause_event.set()   # 初始为运行状态
-        self._stream_log_path: str | None = None
+        self._stream_log_dir: str | None = None
 
     @property
-    def stream_log_path(self) -> str | None:
-        """LLM 流式响应日志文件路径，run() 启动后可用。"""
-        return self._stream_log_path
+    def stream_log_dir(self) -> str | None:
+        """LLM 流式响应日志目录，run() 启动后可用。"""
+        return self._stream_log_dir
 
-    def _make_stream_log_path(self) -> str:
+    def _make_stream_log_dir(self) -> str:
         from src.transbridge.paratranz.config_manager import ParatranzConfig
-        log_dir = os.path.join(ParatranzConfig.get_data_dir(), "log")
-        os.makedirs(log_dir, exist_ok=True)
+        log_base = os.path.join(ParatranzConfig.get_data_dir(), "log")
         esp_stem = Path(self._translator._cfg.esp_path).stem
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        return os.path.join(log_dir, f"{esp_stem}_{timestamp}.log")
+        log_dir = os.path.join(log_base, f"{esp_stem}_{timestamp}")
+        os.makedirs(log_dir, exist_ok=True)
+        return log_dir
 
     def stop(self):
         self._stop_event.set()
@@ -56,23 +57,30 @@ class _TranslationWorker(QThread):
         return not self._pause_event.is_set()
 
     def run(self):
-        self._stream_log_path = self._make_stream_log_path()
+        self._stream_log_dir = self._make_stream_log_dir()
         try:
-            with open(self._stream_log_path, "w", encoding="utf-8") as log_f:
-                def _stream_cb(chunk: str):
-                    log_f.write(chunk)
-                    log_f.flush()
+            _file_handles: dict[int, object] = {}
 
-                result = self._translator.translate(
-                    collection=self._collection,
-                    target_entry_ids=self._target_entries,
-                    progress_callback=lambda c, t, m, s, fc, n: self.progress.emit(c, t, m, s, fc, n),
-                    stop_event=self._stop_event,
-                    pause_event=self._pause_event,
-                    checkpoint=self._checkpoint,
-                    log_callback=lambda idx, line: self.log.emit(idx, line),
-                    stream_callback=_stream_cb,
-                )
+            def _stream_cb(batch_idx: int, chunk: str):
+                if batch_idx not in _file_handles:
+                    path = os.path.join(self._stream_log_dir, f"batch_{batch_idx:03d}.log")
+                    _file_handles[batch_idx] = open(path, "w", encoding="utf-8")
+                fh = _file_handles[batch_idx]
+                fh.write(chunk)
+                fh.flush()
+
+            result = self._translator.translate(
+                collection=self._collection,
+                target_entry_ids=self._target_entries,
+                progress_callback=lambda c, t, m, s, fc, n: self.progress.emit(c, t, m, s, fc, n),
+                stop_event=self._stop_event,
+                pause_event=self._pause_event,
+                checkpoint=self._checkpoint,
+                log_callback=lambda idx, line: self.log.emit(idx, line),
+                stream_callback=_stream_cb,
+            )
+            for fh in _file_handles.values():
+                fh.close()
             self.result.emit(result)
         except Exception as exc:
             self.error.emit(str(exc))
