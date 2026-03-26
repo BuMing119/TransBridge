@@ -5,7 +5,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QDialog, QDialogButtonBox, QVBoxLayout, QHBoxLayout,
     QRadioButton, QLabel, QLineEdit, QPushButton, QFileDialog, QMessageBox,
-    QButtonGroup, QScrollArea, QWidget,
+    QButtonGroup, QScrollArea, QWidget, QCheckBox,
 )
 
 from src.transbridge.writer.plugin_writer import PluginWriter
@@ -23,6 +23,96 @@ class BatchWriteResult:
     failed_count: int = 0
     total_entries: int = 0
     details: list[str] = field(default_factory=list)
+
+
+class _SlotSelectDialog(QDialog):
+    """插件槽位选择对话框，用于批量操作时选择要操作的插件。"""
+
+    def __init__(self, title: str, slots: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumWidth(360)
+        self.setMinimumHeight(200)
+        self.setMaximumHeight(400)
+
+        layout = QVBoxLayout(self)
+
+        hint = QLabel("选择要操作的插件：")
+        hint.setStyleSheet("color: #555;")
+        layout.addWidget(hint)
+
+        # 全选/全不选 按钮
+        btn_row = QHBoxLayout()
+        self._btn_all = QPushButton("全选")
+        self._btn_none = QPushButton("全不选")
+        btn_row.addWidget(self._btn_all)
+        btn_row.addWidget(self._btn_none)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        # 滚动区域
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: 1px solid #ddd; border-radius: 3px; }")
+
+        container = QWidget()
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(8, 8, 8, 8)
+        container_layout.setSpacing(4)
+
+        self._checkboxes: dict[str, QCheckBox] = {}
+        for key, slot in slots.items():
+            label = slot.label or Path(key).stem
+            cb = QCheckBox(label)
+            cb.setChecked(True)
+            cb.setStyleSheet("QCheckBox { spacing: 4px; }")
+            cb._slot_key = key
+            container_layout.addWidget(cb)
+            self._checkboxes[key] = cb
+        container_layout.addStretch()
+
+        scroll.setWidget(container)
+        layout.addWidget(scroll)
+
+        # 状态标签
+        self._status_label = QLabel(f"已选 {len(slots)} 个插件")
+        self._status_label.setStyleSheet("color: #666; font-size: 12px;")
+        layout.addWidget(self._status_label)
+
+        # 按钮
+        btn_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        self._ok_btn = btn_box.button(QDialogButtonBox.StandardButton.Ok)
+        self._ok_btn.setText("确认")
+        btn_box.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+        btn_box.accepted.connect(self.accept)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
+
+        # 连接信号
+        self._btn_all.clicked.connect(self._select_all)
+        self._btn_none.clicked.connect(self._select_none)
+        for cb in self._checkboxes.values():
+            cb.stateChanged.connect(self._update_status)
+
+    def _select_all(self):
+        for cb in self._checkboxes.values():
+            cb.setChecked(True)
+
+    def _select_none(self):
+        for cb in self._checkboxes.values():
+            cb.setChecked(False)
+
+    def _update_status(self):
+        count = sum(1 for cb in self._checkboxes.values() if cb.isChecked())
+        self._status_label.setText(f"已选 {count} 个插件")
+        self._ok_btn.setEnabled(count > 0)
+
+    def selected_slots(self) -> list:
+        """返回选中的 slot key 列表。"""
+        return [cb._slot_key for cb in self._checkboxes.values() if cb.isChecked()]
 
 
 class _BatchConfirmDialog(QDialog):
@@ -283,9 +373,41 @@ class WriteCard(OpCard):
         self._ctx = ctx
         self._run_worker = run_worker
         self.btn.clicked.connect(self._do_write)
+        self.batch_btn.clicked.connect(self._do_batch_write)
         # eet_btn / xt_btn 作为 step3 按钮状态管理的占位符，与 self.btn 相同
         self.eet_btn = self.btn
         self.xt_btn = self.btn
+
+    def update_batch_visibility(self):
+        """更新批量按钮可见性（由 step3 调用）。"""
+        slots = self._ctx.slots
+        self.set_batch_visible(len(slots) > 1)
+
+    def _do_batch_write(self):
+        """批量写回入口。"""
+        slots = self._ctx.slots
+        if len(slots) <= 1:
+            return
+
+        # 弹出插件选择对话框
+        dlg = _SlotSelectDialog("批量写回 - 选择插件", slots, parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        selected_keys = dlg.selected_slots()
+        if not selected_keys:
+            QMessageBox.warning(self, "未选择插件", "请至少选择一个插件进行批量写回。")
+            return
+
+        selected_slots = [slots[k] for k in selected_keys]
+
+        # 过滤出有 plugin 实例的槽位
+        valid_slots = [s for s in selected_slots if s.plugin is not None]
+        if not valid_slots:
+            QMessageBox.warning(self, "无可写回插件", "所选插件均无 plugin 实例，无法写回。")
+            return
+
+        self.do_batch_write(valid_slots)
 
     def do_batch_write(self, selected_slots: list):
         """执行批量写回（由 step3 调用）。"""
