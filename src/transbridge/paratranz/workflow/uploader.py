@@ -198,18 +198,23 @@ class ParaTranzUploader:
         counter: list[int],
         *,
         translation_mode: str = "orig_only",
+        is_split: bool = False,
     ) -> None:
         """
         递归上传词条列表。
-        - 成功：使用当前序号命名，计数器 +1
-        - 失败（文件过大）：对半拆分后递归，序号在两个子集之间连续递增
+        - 首次上传：使用原始文件名（无后缀）
+        - 分割后上传：使用序号后缀命名（如 file_1.json、file_2.json）
         - 单条词条仍过大：记为跳过并抛出警告
         """
         do_reupload = translation_mode in ("orig_only", "both")
         do_trans = translation_mode in ("trans_safe", "trans_force", "both")
         force_trans = translation_mode == "trans_force"
 
-        name = f"{stem}_{counter[0]}{ext}"
+        # 首次上传用原始文件名，分割后才添加序号后缀
+        if is_split:
+            name = f"{stem}_{counter[0]}{ext}"
+        else:
+            name = f"{stem}{ext}"
         json_path = Path(tmp_dir) / name
         json_path.write_text(
             json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -229,7 +234,9 @@ class ParaTranzUploader:
                         if not do_reupload:
                             raise
                 result.files.append(name)
-                counter[0] += 1
+                # 分割模式下才递增计数器
+                if is_split:
+                    counter[0] += 1
             else:
                 if not do_reupload:
                     pass  # 纯译文模式：新建文件跳过
@@ -245,18 +252,23 @@ class ParaTranzUploader:
                             except RuntimeError:
                                 pass
                     result.files.append(name)
-                    counter[0] += 1
+                    # 分割模式下才递增计数器
+                    if is_split:
+                        counter[0] += 1
         except RuntimeError as e:
             err = str(e)
             if ("too large" in err.lower() or "413" in err) and len(entries) > 1:
                 mid = len(entries) // 2
+                # 分割后递归上传，启用序号后缀
                 self._upload_entries_recursive(
                     entries[:mid], stem, ext, project_id, existing, result, tmp_dir, counter,
                     translation_mode=translation_mode,
+                    is_split=True,
                 )
                 self._upload_entries_recursive(
                     entries[mid:], stem, ext, project_id, existing, result, tmp_dir, counter,
                     translation_mode=translation_mode,
+                    is_split=True,
                 )
             else:
                 result.skipped += 1

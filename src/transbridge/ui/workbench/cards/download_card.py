@@ -1,13 +1,128 @@
+from dataclasses import dataclass, field
+from pathlib import Path
+
 from PyQt6.QtWidgets import (
     QDialog, QDialogButtonBox, QVBoxLayout, QHBoxLayout,
     QWidget, QLabel, QPushButton, QListWidget, QListWidgetItem,
-    QStackedWidget, QMessageBox,
+    QStackedWidget, QMessageBox, QScrollArea,
 )
 from PyQt6.QtCore import Qt
 
 from src.transbridge.paratranz.workflow.downloader import ParaTranzDownloader
 from ...workers import ApiWorker
 from .base import OpCard
+
+
+@dataclass
+class BatchDownloadResult:
+    """批量下载结果汇总。"""
+    success_count: int = 0
+    skipped_count: int = 0  # 未找到同名文件
+    failed_count: int = 0
+    merged_total: int = 0
+    details: list[str] = field(default_factory=list)
+
+
+class _BatchResultDialog(QDialog):
+    """批量操作结果对话框，带滚动区域。"""
+
+    def __init__(self, title: str, header: str, items: list[str], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumWidth(400)
+        self.setMinimumHeight(200)
+        self.setMaximumHeight(400)
+
+        layout = QVBoxLayout(self)
+
+        # 标题说明
+        header_lbl = QLabel(header)
+        header_lbl.setWordWrap(True)
+        layout.addWidget(header_lbl)
+
+        # 滚动区域
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: 1px solid #ddd; border-radius: 3px; }")
+
+        container = QWidget()
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(8, 8, 8, 8)
+        container_layout.setSpacing(2)
+
+        for item in items:
+            lbl = QLabel(item)
+            lbl.setStyleSheet("color: #333;")
+            container_layout.addWidget(lbl)
+        container_layout.addStretch()
+
+        scroll.setWidget(container)
+        layout.addWidget(scroll)
+
+        # 提示信息
+        footer = QLabel(f"共 {len(items)} 个项目")
+        footer.setStyleSheet("color: #666; font-size: 12px;")
+        layout.addWidget(footer)
+
+        # 按钮
+        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        btn_box.button(QDialogButtonBox.StandardButton.Ok).setText("确定")
+        btn_box.accepted.connect(self.accept)
+        layout.addWidget(btn_box)
+
+
+class _BatchConfirmDialog(QDialog):
+    """批量操作确认对话框，带滚动区域。"""
+
+    def __init__(self, title: str, header: str, items: list[str], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumWidth(400)
+        self.setMinimumHeight(200)
+        self.setMaximumHeight(400)
+
+        layout = QVBoxLayout(self)
+
+        # 标题说明
+        header_lbl = QLabel(header)
+        header_lbl.setWordWrap(True)
+        layout.addWidget(header_lbl)
+
+        # 滚动区域
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: 1px solid #ddd; border-radius: 3px; }")
+
+        container = QWidget()
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(8, 8, 8, 8)
+        container_layout.setSpacing(2)
+
+        for item in items:
+            lbl = QLabel(item)
+            lbl.setStyleSheet("color: #333;")
+            container_layout.addWidget(lbl)
+        container_layout.addStretch()
+
+        scroll.setWidget(container)
+        layout.addWidget(scroll)
+
+        # 提示信息
+        footer = QLabel(f"共 {len(items)} 个项目")
+        footer.setStyleSheet("color: #666; font-size: 12px;")
+        layout.addWidget(footer)
+
+        # 按钮
+        btn_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Yes | QDialogButtonBox.StandardButton.No
+        )
+        btn_box.button(QDialogButtonBox.StandardButton.Yes).setText("确认")
+        btn_box.button(QDialogButtonBox.StandardButton.No).setText("取消")
+        btn_box.accepted.connect(self.accept)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
 
 
 class _FileSelectDialog(QDialog):
@@ -156,6 +271,87 @@ class DownloadCard(OpCard):
         self._ctx = ctx
         self._run_worker = run_worker
         self.btn.clicked.connect(self._do_download)
+
+    def do_batch_download(self, selected_slots: list, project: dict):
+        """执行批量下载（由 step3 调用）。"""
+        from src.transbridge.paratranz.api.paratranz_files_api import ParatranzFilesAPI
+
+        project_id = project.get("id")
+        project_name = project.get("name", "?")
+        config = self._ctx.config
+
+        # 确认对话框
+        slot_names = [s.label or Path(s.esp_path).stem for s in selected_slots]
+        items = [f"• {name}.json" for name in slot_names]
+        header = f"即将从项目「{project_name}」下载\n每个插件将从同名 JSON 文件下载译文并合并。\n未找到同名文件的插件将被跳过。"
+
+        dlg = _BatchConfirmDialog("确认批量下载", header, items, parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        def _batch_download_factory(progress_cb):
+            results = BatchDownloadResult()
+            downloader = ParaTranzDownloader(config)
+            api = ParatranzFilesAPI(token=config.token, config=config)
+
+            # 获取项目文件列表
+            try:
+                files = api.list_files(project_id) or []
+                file_map = {f["name"]: f["id"] for f in files}
+            except Exception as e:
+                raise RuntimeError(f"获取文件列表失败：{e}")
+
+            total = len(selected_slots)
+
+            for i, slot in enumerate(selected_slots):
+                slot_name = slot.label or Path(slot.esp_path).stem
+                json_name = slot_name + ".json"
+
+                if progress_cb:
+                    progress_cb(i, total, f"正在下载 {slot_name}…")
+
+                file_id = file_map.get(json_name)
+                if file_id is None:
+                    results.skipped_count += 1
+                    results.details.append(f"⊘ {json_name}: 未找到同名文件")
+                    continue
+
+                try:
+                    result = downloader.download_to_collection(
+                        project_id, slot.collection,
+                        file_ids=[file_id],
+                    )
+                    results.success_count += 1
+                    results.merged_total += result.merged
+                    results.details.append(f"✓ {json_name}: 合并 {result.merged} 条")
+                except Exception as e:
+                    results.failed_count += 1
+                    results.details.append(f"✗ {json_name}: {e}")
+
+            if progress_cb:
+                progress_cb(total, total, "下载完成")
+            return results
+
+        def _on_done(result: BatchDownloadResult):
+            # 触发 collection_changed 更新 UI
+            self._ctx.collection_changed.emit(self._ctx.collection)
+
+            header = (
+                f"成功：{result.success_count} 个\n"
+                f"跳过：{result.skipped_count} 个\n"
+                f"失败：{result.failed_count} 个\n"
+                f"合并词条：{result.merged_total} 条"
+            )
+            dlg = _BatchResultDialog("批量下载完成", header, result.details, parent=self)
+            dlg.exec()
+
+        self._run_worker(
+            fn_factory=_batch_download_factory,
+            on_result=_on_done,
+            on_error=lambda e: QMessageBox.critical(self, "批量下载失败", e),
+            progress_total=len(selected_slots),
+            progress_msg="正在批量下载…",
+        )
 
     def _do_download(self):
         collection = self._ctx.collection

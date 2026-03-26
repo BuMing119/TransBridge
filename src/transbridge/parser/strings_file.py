@@ -466,13 +466,15 @@ class PluginStringsWriter:
 
         written: list[Path] = []
         for ext, strings in self._by_ext.items():
-            if not strings:
-                continue
+            # 即使没有条目也写入空文件，保证三种strings文件都存在
             length_prefixed = ext != ".strings"
             data = SkyrimStringsWriter.to_bytes(strings, length_prefixed)
             path = strings_dir / f"{prefix}{ext}"
             path.write_bytes(data)
-            log.info(f"Wrote {len(strings)} strings to {path.name}")
+            if strings:
+                log.info(f"Wrote {len(strings)} strings to {path.name}")
+            else:
+                log.info(f"Wrote empty strings file: {path.name}")
             written.append(path)
 
         return written

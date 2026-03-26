@@ -1,9 +1,11 @@
 from pathlib import Path
+from dataclasses import dataclass, field
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QDialog, QDialogButtonBox, QVBoxLayout, QHBoxLayout,
     QRadioButton, QLabel, QLineEdit, QPushButton, QFileDialog, QMessageBox,
-    QButtonGroup,
+    QButtonGroup, QScrollArea, QWidget,
 )
 
 from src.transbridge.writer.plugin_writer import PluginWriter
@@ -12,6 +14,117 @@ from src.transbridge.writer.xt_xml_writer import XTWriter
 from src.transbridge.parser.eet_parser import EET_XmlParser
 from src.transbridge.parser.xt_parser import XT_XmlParser
 from .base import OpCard
+
+
+@dataclass
+class BatchWriteResult:
+    """批量写回结果汇总。"""
+    success_count: int = 0
+    failed_count: int = 0
+    total_entries: int = 0
+    details: list[str] = field(default_factory=list)
+
+
+class _BatchConfirmDialog(QDialog):
+    """批量操作确认对话框，带滚动区域。"""
+
+    def __init__(self, title: str, header: str, items: list[str], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumWidth(400)
+        self.setMinimumHeight(200)
+        self.setMaximumHeight(400)
+
+        layout = QVBoxLayout(self)
+
+        # 标题说明
+        header_lbl = QLabel(header)
+        header_lbl.setWordWrap(True)
+        layout.addWidget(header_lbl)
+
+        # 滚动区域
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: 1px solid #ddd; border-radius: 3px; }")
+
+        container = QWidget()
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(8, 8, 8, 8)
+        container_layout.setSpacing(2)
+
+        for item in items:
+            lbl = QLabel(item)
+            lbl.setStyleSheet("color: #333;")
+            container_layout.addWidget(lbl)
+        container_layout.addStretch()
+
+        scroll.setWidget(container)
+        layout.addWidget(scroll)
+
+        # 提示信息
+        footer = QLabel(f"共 {len(items)} 个项目")
+        footer.setStyleSheet("color: #666; font-size: 12px;")
+        layout.addWidget(footer)
+
+        # 按钮
+        btn_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Yes | QDialogButtonBox.StandardButton.No
+        )
+        btn_box.button(QDialogButtonBox.StandardButton.Yes).setText("确认")
+        btn_box.button(QDialogButtonBox.StandardButton.No).setText("取消")
+        btn_box.accepted.connect(self.accept)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
+
+
+class _BatchResultDialog(QDialog):
+    """批量操作结果对话框，带滚动区域。"""
+
+    def __init__(self, title: str, header: str, items: list[str], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumWidth(400)
+        self.setMinimumHeight(200)
+        self.setMaximumHeight(400)
+
+        layout = QVBoxLayout(self)
+
+        # 标题说明
+        header_lbl = QLabel(header)
+        header_lbl.setWordWrap(True)
+        layout.addWidget(header_lbl)
+
+        # 滚动区域
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: 1px solid #ddd; border-radius: 3px; }")
+
+        container = QWidget()
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(8, 8, 8, 8)
+        container_layout.setSpacing(2)
+
+        for item in items:
+            lbl = QLabel(item)
+            lbl.setStyleSheet("color: #333;")
+            container_layout.addWidget(lbl)
+        container_layout.addStretch()
+
+        scroll.setWidget(container)
+        layout.addWidget(scroll)
+
+        # 提示信息
+        footer = QLabel(f"共 {len(items)} 个项目")
+        footer.setStyleSheet("color: #666; font-size: 12px;")
+        layout.addWidget(footer)
+
+        # 按钮
+        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        btn_box.button(QDialogButtonBox.StandardButton.Ok).setText("确定")
+        btn_box.accepted.connect(self.accept)
+        layout.addWidget(btn_box)
 
 
 class _WriteTargetDialog(QDialog):
@@ -173,6 +286,86 @@ class WriteCard(OpCard):
         # eet_btn / xt_btn 作为 step3 按钮状态管理的占位符，与 self.btn 相同
         self.eet_btn = self.btn
         self.xt_btn = self.btn
+
+    def do_batch_write(self, selected_slots: list):
+        """执行批量写回（由 step3 调用）。"""
+        slot_names = [s.label or Path(s.esp_path).stem for s in selected_slots]
+
+        # 使用可滚动确认对话框
+        items = [f"• {name}" for name in slot_names]
+        header = f"即将写回 {len(selected_slots)} 个插件\n确认后将选择输出目录。"
+
+        dlg = _BatchConfirmDialog("确认批量写回", header, items, parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        # 选择输出目录
+        output_dir = QFileDialog.getExistingDirectory(
+            self, "选择批量写回输出目录"
+        )
+        if not output_dir:
+            return
+        output_dir = Path(output_dir)
+
+        def _batch_write():
+            results = BatchWriteResult()
+            total = len(selected_slots)
+
+            for i, slot in enumerate(selected_slots):
+                slot_name = slot.label or Path(slot.esp_path).stem
+
+                try:
+                    writer = PluginWriter(
+                        slot.plugin,
+                        strings_lookup=slot.strings_lookup,
+                        language=slot.strings_lang,
+                    )
+                    count = writer.apply_collection(slot.collection)
+
+                    # 确定输出路径
+                    if slot.esp_path:
+                        esp_output_path = output_dir / Path(slot.esp_path).name
+                    else:
+                        esp_output_path = output_dir / f"{slot_name}.esp"
+
+                    write_result = writer.write(esp_output_path)
+                    results.success_count += 1
+                    results.total_entries += count
+
+                    # 构建详情信息
+                    esp_saved = write_result.get("esp_saved", True)
+                    strings_written = write_result.get("strings_written", [])
+                    if strings_written:
+                        strings_info = f", strings: {len(strings_written)} 个文件"
+                    else:
+                        strings_info = ""
+                    results.details.append(f"✓ {slot_name}: {count} 条{strings_info}")
+
+                except Exception as e:
+                    results.failed_count += 1
+                    results.details.append(f"✗ {slot_name}: {e}")
+
+            return results
+
+        def _on_done(result: BatchWriteResult):
+            header = (
+                f"成功：{result.success_count} 个\n"
+                f"失败：{result.failed_count} 个\n"
+                f"写入词条总数：{result.total_entries} 条\n"
+                f"输出目录：{output_dir}"
+            )
+            dlg = _BatchResultDialog(
+                "批量写回完成", header, result.details, parent=self
+            )
+            dlg.exec()
+
+        self._run_worker(
+            _batch_write,
+            on_result=_on_done,
+            on_error=lambda e: QMessageBox.critical(self, "批量写回失败", e),
+            progress_total=0,
+            progress_msg="正在批量写回…",
+        )
 
     def _do_write(self):
         collection = self._ctx.collection
