@@ -51,7 +51,7 @@ class TranslationResult:
 
 @dataclass
 class ProgressCheckpoint:
-    """批次级断点，持久化到 data/{esp_stem}_progress.json。"""
+    """批次级断点，持久化到 data/ai_translator/{esp_stem}/{esp_stem}_progress.json。"""
     esp_stem: str
     target_entry_ids: list[str] | None
     overwrite: bool
@@ -60,9 +60,10 @@ class ProgressCheckpoint:
 
     @staticmethod
     def _get_path(esp_path: str) -> str:
-        from src.transbridge.paratranz.config_manager import ParatranzConfig
+        from src.transbridge.paratranz.config_manager import LLMConfig
         stem = Path(esp_path).stem
-        return os.path.join(ParatranzConfig.get_data_dir(), f"{stem}_progress.json")
+        ai_dir = LLMConfig.get_ai_translator_dir(stem)
+        return os.path.join(ai_dir, f"{stem}_progress.json")
 
     def save(self, esp_path: str) -> None:
         path = self._get_path(esp_path)
@@ -122,6 +123,11 @@ class AutoTranslator:
         )
         self._extractor = NounExtractor(self._llm, self._builder)
         self._planner = BatchPlanner(max_tokens_per_batch=config.llm_config.max_tokens_per_batch)
+
+        # In-flight 术语缓存：并发批次间实时共享的术语
+        # key: term (str), value: translation (str)
+        self._in_flight_terms: dict[str, str] = {}
+        self._in_flight_lock = threading.Lock()
 
     def _monitored_chat(
         self,
@@ -187,6 +193,10 @@ class AutoTranslator:
         result = TranslationResult()
         lock = threading.Lock()
         t_total_start = time.perf_counter()
+
+        # 清空 in-flight 缓存（新翻译会话）
+        with self._in_flight_lock:
+            self._in_flight_terms.clear()
 
         # 从断点恢复累计统计
         completed_fps: set[frozenset] = set()
@@ -428,7 +438,15 @@ class AutoTranslator:
             return 0
 
         t0 = time.perf_counter()
-        matched_terms = self._term_mgr.match_terms([e.original for e in entries])
+        # 使用增强版两阶段术语匹配（合并 in-flight 缓存）
+        with self._in_flight_lock:
+            in_flight_snapshot = dict(self._in_flight_terms)
+        matched_terms = self._term_mgr.match_terms_enhanced(
+            entries=entries,
+            enable_semantic=getattr(self._cfg.llm_config, 'enable_semantic_match', True),
+            max_terms=getattr(self._cfg.llm_config, 'max_terms_per_batch', 200),
+            in_flight_terms=in_flight_snapshot,
+        )
         t_terms = time.perf_counter()
 
         # ── 精确匹配：原文与术语完全相同的条目直接填充，无需发送给 LLM ──────
@@ -462,6 +480,47 @@ class AutoTranslator:
         t_llm_elapsed = 0.0
         t_parse_elapsed = 0.0
 
+        # 写入提示词到流式日志
+        if stream_callback:
+            # 先写入术语加载情况
+            load_log = self._term_mgr.get_load_log()
+            debug_info = (
+                f"\n{'='*60}\n"
+                f"[DEBUG] 术语库加载情况\n"
+                f"{'='*60}\n"
+                f"ParaTranz client: {self._paratranz_client is not None}\n"
+                f"project_id: {self._project_id}\n"
+            )
+            for source, count, err in load_log:
+                if err:
+                    debug_info += f"  [{source}] 加载失败: {err}\n"
+                else:
+                    debug_info += f"  [{source}]: {count} 条\n"
+            debug_info += f"合并后术语总数: {len(self._term_mgr._merged_terms)}\n"
+            debug_info += (
+                f"\n{'='*60}\n"
+                f"[DEBUG] 匹配到的术语 ({len(matched_terms)} 个)\n"
+                f"{'='*60}\n"
+            )
+            for term, trans in matched_terms.items():
+                debug_info += f"  {term} → {trans}\n"
+
+            # 再写入提示词
+            prompt_header = (
+                f"{debug_info}"
+                f"\n{'='*60}\n"
+                f"[REQUEST TO LLM]\n"
+                f"{'='*60}\n"
+                f"--- SYSTEM ---\n"
+                f"{messages[0]['content']}\n"
+                f"--- USER ---\n"
+                f"{messages[1]['content']}\n"
+                f"{'='*60}\n"
+                f"[RESPONSE FROM LLM]\n"
+                f"{'='*60}\n"
+            )
+            stream_callback(prompt_header)
+
         expected_ids = {e.id for e in llm_entries}
         id_to_entry = {e.id: e for e in llm_entries}
         _stream_buffer: list[str] = []
@@ -483,6 +542,11 @@ class AutoTranslator:
                     self._update_collection({eid: trans}, collection, result, lock)
                     if progress_emit:
                         progress_emit()
+                    # Round 1 术语即时写入 in-flight 缓存（供并发批次使用）
+                    ctx = entry.context.split("|")[0] if "|" in (entry.context or "") else entry.context
+                    if ctx in AUTO_TERM_CONTEXTS:
+                        with self._in_flight_lock:
+                            self._in_flight_terms[entry.original] = trans
 
         t_llm_start = time.perf_counter()
         try:

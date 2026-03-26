@@ -28,6 +28,12 @@ class LLMConfig:
     game_profile: str = "skyrim_se"   # data/prompts/games/{game_profile}.toml
     target_lang: str = "zh_CN"        # data/prompts/langs/{target_lang}.toml
 
+    # 向量检索配置
+    enable_semantic_match: bool = True      # 是否启用语义召回
+    semantic_similarity_threshold: float = 0.7  # 相似度阈值（高阈值减少噪声）
+    semantic_top_k: int = 5                 # 每条原文召回的候选数
+    max_terms_per_batch: int = 50           # 每批次术语表硬上限
+
     def save_to_file(self) -> None:
         """将 [llm] 节写入共享 INI 文件（不覆盖其他节）。"""
         config_path = ParatranzConfig.get_config_file_path()
@@ -50,6 +56,11 @@ class LLMConfig:
         config.set("llm", "excel_translation_col", self.excel_translation_col)
         config.set("llm", "game_profile", self.game_profile)
         config.set("llm", "target_lang", self.target_lang)
+        # 向量检索配置
+        config.set("llm", "enable_semantic_match", str(self.enable_semantic_match))
+        config.set("llm", "semantic_similarity_threshold", str(self.semantic_similarity_threshold))
+        config.set("llm", "semantic_top_k", str(self.semantic_top_k))
+        config.set("llm", "max_terms_per_batch", str(self.max_terms_per_batch))
         with open(config_path, "w", encoding="utf-8") as f:
             config.write(f)
 
@@ -80,7 +91,30 @@ class LLMConfig:
         obj.excel_translation_col = config.get("llm", "excel_translation_col", fallback=obj.excel_translation_col)
         obj.game_profile = config.get("llm", "game_profile", fallback=obj.game_profile)
         obj.target_lang = config.get("llm", "target_lang", fallback=obj.target_lang)
+        # 向量检索配置
+        obj.enable_semantic_match = config.getboolean("llm", "enable_semantic_match", fallback=obj.enable_semantic_match)
+        obj.semantic_similarity_threshold = config.getfloat("llm", "semantic_similarity_threshold", fallback=obj.semantic_similarity_threshold)
+        obj.semantic_top_k = config.getint("llm", "semantic_top_k", fallback=obj.semantic_top_k)
+        obj.max_terms_per_batch = config.getint("llm", "max_terms_per_batch", fallback=obj.max_terms_per_batch)
         return obj
+
+    @staticmethod
+    def get_ai_translator_dir(esp_stem: str) -> str:
+        """获取 AI 翻译数据目录：data/ai_translator/{esp_stem}/
+
+        自动创建目录（如不存在）。
+
+        Args:
+            esp_stem: ESP 文件的主文件名（不含扩展名），用作项目标识
+
+        Returns:
+            该项目的 AI 翻译数据目录绝对路径
+        """
+        base_dir = ParatranzConfig.get_data_dir()
+        ai_dir = os.path.join(base_dir, "ai_translator", esp_stem)
+        if not os.path.exists(ai_dir):
+            os.makedirs(ai_dir, exist_ok=True)
+        return ai_dir
 
 
 class ParatranzConfig:

@@ -2,14 +2,16 @@
 术语库管理模块。
 
 提供：
-- DynamicTermDatabase：按 ESP stem 绑定，持久化到 data/{stem}_terms.json
+- DynamicTermDatabase：按 ESP stem 绑定，持久化到 data/ai_translator/{stem}/{stem}_terms.json
 - TermDatabaseManager：加载四来源（dynamic/paratranz/json/excel），按优先级合并
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 import threading
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
@@ -17,6 +19,12 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.transbridge.paratranz.config_manager import LLMConfig
+    from src.transbridge.converter.translation_entry import TranslationEntry
+
+logger = logging.getLogger(__name__)
+
+# 匹配术语开头的英文冠词（The / A / An），用于冠词规范化匹配
+_ARTICLE_RE = re.compile(r'^(?:the|a|an)\s+', re.IGNORECASE)
 
 
 @dataclass
@@ -32,13 +40,13 @@ class TermEntry:
 # ─────────────────────────── DynamicTermDatabase ─────────────────────────────
 
 class DynamicTermDatabase:
-    """按 ESP stem 绑定，持久化到 data/{stem}_terms.json。"""
+    """按 ESP stem 绑定，持久化到 data/ai_translator/{stem}/{stem}_terms.json。"""
 
     def __init__(self, esp_path: str):
         stem = os.path.splitext(os.path.basename(esp_path))[0]
-        from src.transbridge.paratranz.config_manager import ParatranzConfig
-        data_dir = ParatranzConfig.get_data_dir()
-        self._path = os.path.join(data_dir, f"{stem}_terms.json")
+        from src.transbridge.paratranz.config_manager import LLMConfig
+        ai_dir = LLMConfig.get_ai_translator_dir(stem)
+        self._path = os.path.join(ai_dir, f"{stem}_terms.json")
         self._entries: list[TermEntry] = []
         self._lock = threading.Lock()
 
@@ -91,6 +99,11 @@ class TermDatabaseManager:
     """
     加载四来源术语，按 priority 顺序合并（后加载的优先级高的覆盖低的），
     返回统一术语列表。
+
+    支持向量语义检索：
+    - 首次加载时自动构建 FAISS 索引
+    - 术语库变化时可重建索引
+    - 通过 match_terms_enhanced 启用两阶段召回
     """
 
     def __init__(
@@ -108,6 +121,7 @@ class TermDatabaseManager:
         self._dynamic_db.load()
         self._merged_terms: list[TermEntry] = []  # 缓存合并后的术语列表
         self._load_log: list[tuple[str, int, str | None]] = []  # (source, count, error)
+        self._vector_index = None  # 延迟初始化
 
     def get_dynamic_db(self) -> DynamicTermDatabase:
         return self._dynamic_db
@@ -115,6 +129,10 @@ class TermDatabaseManager:
     def load_all(self) -> dict[str, str]:
         """按 term_priority 顺序加载并合并，优先级从低到高（后者覆盖前者）。返回 {term: translation}。"""
         self._merged_terms = self._load_all_with_metadata()
+
+        # 初始化向量索引
+        self._init_vector_index()
+
         return {e.term: e.translation for e in self._merged_terms}
 
     def _load_all_with_metadata(self) -> list[TermEntry]:
@@ -166,18 +184,208 @@ class TermDatabaseManager:
         extra = [e for e in self._dynamic_db.as_list() if e.term.lower() not in merged_terms_set]
         return self._merged_terms + extra
 
+    # ─────────────────────────── 向量索引 ─────────────────────────────
+
+    def _init_vector_index(self) -> None:
+        """初始化向量索引（延迟构建，失败时降级）。"""
+        try:
+            from .term_vector_index import TermVectorIndex
+
+            # 获取配置参数
+            threshold = getattr(self._config, 'semantic_similarity_threshold', 0.8)
+            top_k = getattr(self._config, 'semantic_top_k', 5)
+
+            self._vector_index = TermVectorIndex(
+                self._esp_path,
+                similarity_threshold=threshold,
+                top_k_per_entry=top_k,
+            )
+
+            success = self._vector_index.build_index(self._merged_terms)
+            if success:
+                self._load_log.append(("vector_index", len(self._merged_terms), None))
+            else:
+                self._load_log.append(("vector_index", 0, self._vector_index.init_error))
+                logger.warning(f"Vector index init failed: {self._vector_index.init_error}")
+
+        except ImportError as e:
+            self._load_log.append(("vector_index", 0, f"Missing dependency: {e}"))
+            self._vector_index = None
+            logger.info("Vector index disabled: sentence-transformers or faiss not installed")
+
+    def rebuild_vector_index(self) -> bool:
+        """手动重建向量索引（术语库更新后调用）。"""
+        if self._vector_index is None:
+            return False
+        return self._vector_index.build_index(self._effective_terms(), force=True)
+
+    def semantic_match(
+        self,
+        text_batch: list[str],
+        top_k: int = 5,
+    ) -> dict[str, str]:
+        """
+        语义召回术语。
+
+        对每条原文进行语义检索，返回相似度超过阈值的术语。
+        仅在向量索引可用时工作，否则返回空 dict。
+
+        Args:
+            text_batch: 原文列表
+            top_k: 每条原文召回的候选数
+
+        Returns:
+            {term: translation} 合并后的术语表
+        """
+        if self._vector_index is None or not self._vector_index.available:
+            return {}
+
+        # 批量检索
+        batch_results = self._vector_index.search_batch(text_batch, top_k=top_k)
+
+        # 合并去重
+        matched: dict[str, str] = {}
+        for results in batch_results.values():
+            for r in results:
+                if r.term not in matched:
+                    matched[r.term] = r.translation
+
+        return matched
+
+    def match_terms_enhanced(
+        self,
+        entries: list["TranslationEntry"],
+        enable_semantic: bool = True,
+        max_terms: int = 100,
+        in_flight_terms: dict[str, str] | None = None,
+    ) -> dict[str, str]:
+        """
+        增强版术语匹配：两阶段召回策略。
+
+        阶段1：子串扫描 - 找"明确出现"的术语
+        阶段2：语义召回 - 为未命中原文补充"语义相关"的术语
+
+        Args:
+            entries: 翻译条目列表（需要 original 字段）
+            enable_semantic: 是否启用语义召回
+            max_terms: 术语表硬上限（防止 token 爆炸）
+            in_flight_terms: 并发批次间实时共享的术语缓存（来自流式翻译）
+
+        Returns:
+            {term: translation} 合并后的术语表
+        """
+        originals = [e.original for e in entries]
+        originals_lower = [o.lower() for o in originals]
+
+        # 阶段1：精确匹配 + 子串扫描（分优先级）
+        exact_matched = self.exact_match(originals)
+        substring_matched = self.match_terms(originals)
+
+        # 按优先级分类：精确全等 > 正向子串 > 反向匹配 > in-flight > 语义
+        # 优先级分数：越小越优先
+        priority: dict[str, int] = {}
+        for term in exact_matched:
+            priority[term] = 0  # 最高优先级
+        for term in substring_matched:
+            if term not in priority:
+                tl = term.lower()
+                # 判断是正向子串还是反向匹配
+                is_forward = any(tl in o for o in originals_lower)
+                priority[term] = 1 if is_forward else 2
+
+        # 合并基础匹配
+        matched = {**exact_matched, **substring_matched}
+
+        # 合并 in-flight 术语（并发批次实时产生的术语）
+        if in_flight_terms:
+            for term, trans in in_flight_terms.items():
+                if term not in matched:
+                    matched[term] = trans
+                    priority[term] = 2  # 与反向匹配同级
+
+        # 阶段2：语义召回（仅对子串未命中的原文）
+        semantic_terms: set[str] = set()
+        if enable_semantic and self._vector_index and self._vector_index.available:
+            # 找出没有子串命中的原文
+            unmatched_entries = [
+                e for e in entries
+                if not any(
+                    term.lower() in e.original.lower()
+                    for term in substring_matched
+                )
+            ]
+
+            # 对未命中原文做语义检索，补充高置信术语
+            for entry in unmatched_entries[:10]:  # 最多处理 10 条
+                results = self._vector_index.search(entry.original, top_k=3)
+                for r in results:
+                    if r.term not in matched:
+                        matched[r.term] = r.translation
+                        semantic_terms.add(r.term)
+                        priority[r.term] = 3  # 语义召回优先级最低
+
+        # 硬上限保护：按优先级排序后截断
+        if len(matched) > max_terms:
+            # 按优先级升序，同优先级按术语长度升序（短词更基础）
+            sorted_terms = sorted(
+                matched.keys(),
+                key=lambda t: (priority.get(t, 99), len(t))
+            )
+            matched = {t: matched[t] for t in sorted_terms[:max_terms]}
+
+        return matched
+
     def match_terms(self, text_batch: list[str]) -> dict[str, str]:
-        """在 text_batch 的原文中扫描匹配的术语，返回 {term: translation}。"""
+        """在 text_batch 的原文中扫描匹配的术语，返回 {term: translation}。
+
+        匹配策略（按顺序，命中即止）：
+        1. 正向子串：术语是原文的子串（原有逻辑）
+        2. 冠词规范化：忽略术语开头的 The/A/An 后重试正向子串
+        3. 反向前缀：原文是术语的词边界前缀
+           例："Black Briar" → 术语 "Black Briar Lodge → 黑棘据点"
+        4. 反向后缀：原文是术语的词边界后缀
+           例："Meadery" → 术语 "Black Briar Meadery → 黑棘酿酒坊"
+        """
         combined_text = "\n".join(text_batch)
+        combined_lower = combined_text.lower()
+        # 反向匹配仅对长度 >= 4 的原文，避免过短词触发噪音
+        originals_lower = [t.lower() for t in text_batch if len(t) >= 4]
         matched: dict[str, str] = {}
 
         for entry in self._effective_terms():
-            if entry.case_sensitive:
-                if entry.term in combined_text:
-                    matched[entry.term] = entry.translation
+            term = entry.term
+            tl = term.lower()
+            cs = entry.case_sensitive
+
+            # 1. 正向子串
+            if cs:
+                if term in combined_text:
+                    matched[term] = entry.translation
+                    continue
             else:
-                if entry.term.lower() in combined_text.lower():
-                    matched[entry.term] = entry.translation
+                if tl in combined_lower:
+                    matched[term] = entry.translation
+                    continue
+
+            # 2. 冠词规范化：术语含冠词前缀，去掉后重试正向子串
+            tl_no_art = _ARTICLE_RE.sub('', tl)
+            if tl_no_art != tl and tl_no_art in combined_lower:
+                matched[term] = entry.translation
+                continue
+
+            # 3. 反向前缀：original 是 term 的词边界前缀
+            for orig in originals_lower:
+                if tl.startswith(orig) and (len(tl) == len(orig) or tl[len(orig)] == ' '):
+                    matched[term] = entry.translation
+                    break
+            if term in matched:
+                continue
+
+            # 4. 反向后缀：original 是 term 的词边界后缀
+            for orig in originals_lower:
+                if tl.endswith(orig) and (len(tl) == len(orig) or tl[-(len(orig) + 1)] == ' '):
+                    matched[term] = entry.translation
+                    break
 
         return matched
 

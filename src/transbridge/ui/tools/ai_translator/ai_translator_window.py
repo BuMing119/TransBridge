@@ -90,7 +90,7 @@ class AITranslatorWindow(QWidget):
         self._tokens_spin = QSpinBox()
         self._tokens_spin.setRange(200, 32000)
         self._tokens_spin.setSingleStep(200)
-        self._tokens_spin.setValue(2000)
+        self._tokens_spin.setValue(2500)
         llm_layout.addLayout(_row("拆批 Token:", self._tokens_spin))
 
         self._output_tokens_spin = QSpinBox()
@@ -99,6 +99,12 @@ class AITranslatorWindow(QWidget):
         self._output_tokens_spin.setValue(0)
         self._output_tokens_spin.setSpecialValueText("不限制（模型默认）")
         llm_layout.addLayout(_row("输出 Token:", self._output_tokens_spin))
+
+        self._max_terms_spin = QSpinBox()
+        self._max_terms_spin.setRange(10, 500)
+        self._max_terms_spin.setValue(50)
+        self._max_terms_spin.setToolTip("每批次发送给 LLM 的术语表上限，防止 token 超限")
+        llm_layout.addLayout(_row("术语上限:", self._max_terms_spin))
 
         test_btn = QPushButton("测试连接")
         test_btn.setFixedWidth(100)
@@ -238,6 +244,7 @@ class AITranslatorWindow(QWidget):
         self._concurrent_spin.setValue(cfg.max_concurrent)
         self._tokens_spin.setValue(cfg.max_tokens_per_batch)
         self._output_tokens_spin.setValue(cfg.max_output_tokens)
+        self._max_terms_spin.setValue(cfg.max_terms_per_batch)
         self._json_path_edit.setText(cfg.local_json_path)
         self._excel_path_edit.setText(cfg.local_excel_path)
         self._excel_orig_col_edit.setText(cfg.excel_original_col)
@@ -281,6 +288,7 @@ class AITranslatorWindow(QWidget):
         cfg.max_concurrent = self._concurrent_spin.value()
         cfg.max_tokens_per_batch = self._tokens_spin.value()
         cfg.max_output_tokens = self._output_tokens_spin.value()
+        cfg.max_terms_per_batch = self._max_terms_spin.value()
         cfg.local_json_path = self._json_path_edit.text().strip()
         cfg.local_excel_path = self._excel_path_edit.text().strip()
         cfg.excel_original_col = self._excel_orig_col_edit.text().strip() or "A"
@@ -308,6 +316,7 @@ class AITranslatorWindow(QWidget):
         self._concurrent_spin.valueChanged.connect(self._save_config)
         self._tokens_spin.valueChanged.connect(self._save_config)
         self._output_tokens_spin.valueChanged.connect(self._save_config)
+        self._max_terms_spin.valueChanged.connect(self._save_config)
         self._json_path_edit.textChanged.connect(self._save_config)
         self._excel_path_edit.textChanged.connect(self._save_config)
         self._excel_orig_col_edit.textChanged.connect(self._save_config)
@@ -324,6 +333,7 @@ class AITranslatorWindow(QWidget):
         cfg.max_concurrent = self._concurrent_spin.value()
         cfg.max_tokens_per_batch = self._tokens_spin.value()
         cfg.max_output_tokens = self._output_tokens_spin.value()
+        cfg.max_terms_per_batch = self._max_terms_spin.value()
         cfg.local_json_path = self._json_path_edit.text().strip()
         cfg.local_excel_path = self._excel_path_edit.text().strip()
         cfg.excel_original_col = self._excel_orig_col_edit.text().strip() or "A"
