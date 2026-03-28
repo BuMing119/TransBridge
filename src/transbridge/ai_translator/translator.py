@@ -102,7 +102,14 @@ class ProgressCheckpoint:
 
 
 class AutoTranslator:
-    def __init__(self, config: TranslatorConfig, paratranz_client=None, project_id: int | None = None):
+    def __init__(
+        self,
+        config: TranslatorConfig,
+        paratranz_client=None,
+        project_id: int | None = None,
+        shared_in_flight_terms: dict | None = None,
+        shared_in_flight_lock: threading.Lock | None = None,
+    ):
         self._cfg = config
         self._paratranz_client = paratranz_client
         self._project_id = project_id
@@ -126,8 +133,15 @@ class AutoTranslator:
 
         # In-flight 术语缓存：并发批次间实时共享的术语
         # key: term (str), value: translation (str)
-        self._in_flight_terms: dict[str, str] = {}
-        self._in_flight_lock = threading.Lock()
+        # 支持外部注入以实现多插件间共享
+        if shared_in_flight_terms is not None and shared_in_flight_lock is not None:
+            self._in_flight_terms = shared_in_flight_terms
+            self._in_flight_lock = shared_in_flight_lock
+            self._owns_in_flight_cache = False
+        else:
+            self._in_flight_terms: dict[str, str] = {}
+            self._in_flight_lock = threading.Lock()
+            self._owns_in_flight_cache = True
 
     def _monitored_chat(
         self,
@@ -195,8 +209,10 @@ class AutoTranslator:
         t_total_start = time.perf_counter()
 
         # 清空 in-flight 缓存（新翻译会话）
-        with self._in_flight_lock:
-            self._in_flight_terms.clear()
+        # 仅当缓存是本实例拥有时才清空，批量翻译时使用共享缓存不应清空
+        if self._owns_in_flight_cache:
+            with self._in_flight_lock:
+                self._in_flight_terms.clear()
 
         # 从断点恢复累计统计
         completed_fps: set[frozenset] = set()

@@ -68,16 +68,20 @@ class WorkbenchWidget(QWidget):
                 progress_win.activateWindow()
                 return
 
-            # 显示/创建配置窗口
-            config_win = self._tool_windows.get("ai_translator")
-            if config_win is None or not config_win.isVisible():
-                from src.transbridge.ui.tools.ai_translator.ai_translator_window import AITranslatorWindow
-                config_win = AITranslatorWindow(self._ctx, self._step2, parent=self)
-                config_win.progress_window_created.connect(self._on_progress_window_created)
-                self._tool_windows["ai_translator"] = config_win
-            config_win.show()
-            config_win.raise_()
-            config_win.activateWindow()
+            # 打开翻译入口（先选择目标，再进入相应流程）
+            from src.transbridge.ui.tools.ai_translator.ai_translator_window import AITranslatorWindow
+            win = AITranslatorWindow.open_for_translation(self._ctx, self._step2, parent=self)
+            if win is None:
+                return  # 用户取消
+
+            # 判断返回的是配置窗口还是进度窗口
+            if isinstance(win, AITranslatorWindow):
+                # 单插件模式：连接进度窗口信号
+                win.progress_window_created.connect(self._on_progress_window_created)
+                self._tool_windows["ai_translator"] = win
+            else:
+                # 批量模式：直接是进度窗口
+                self._tool_windows["ai_translator_progress"] = win
             return
 
         if tool_id in self._tool_windows:

@@ -455,6 +455,8 @@ class SSEPluginWithContext(SSEPlugin):
             )
             strings.extend(current_group)
 
+        # 按 form_id 排序确保顺序稳定可复现
+        strings.sort(key=lambda x: x.form_id or "")
         return strings
 
     def find_string_subrecord(self, form_id: str, type: str, string: str, index: int | None) -> StringSubrecord | None:

@@ -40,7 +40,7 @@ ROUND3_CONTEXTS: set[str] = {
 AUTO_TERM_CONTEXTS: set[str] = {
     "NPC_:FULL", "NPC_:SHRT", "TACT:FULL",
     "LCTN:FULL", "WRLD:FULL", "CELL:FULL", "DOOR:FULL", "REFR:FULL",
-    "BOOK:FULL", "RACE:FULL","RACE:DESC"
+    "BOOK:FULL", "RACE:FULL"
 }
 
 # ── 导出分文件规则（文件名 → context 列表）───────────────────────────────────

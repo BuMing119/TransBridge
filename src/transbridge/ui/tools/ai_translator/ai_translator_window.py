@@ -45,6 +45,148 @@ class AITranslatorWindow(QWidget):
         self._connect_auto_save()
         self._check_checkpoint()
 
+    @classmethod
+    def open_for_translation(
+        cls,
+        ctx: "AppContext",
+        step2: "Step2PreviewWidget",
+        parent=None,
+    ) -> QWidget | None:
+        """打开翻译入口：先选择目标，再进入相应流程。
+
+        Returns:
+            打开的窗口实例，或 None（用户取消）
+        """
+        # 检查是否有已加载的插件
+        if not ctx.slots:
+            QMessageBox.warning(parent, "AI 翻译", "请先加载插件。")
+            return None
+
+        # 延迟导入批量翻译相关模块
+        from src.transbridge.ui.tools.ai_translator._translation_target_dialog import _TranslationTargetDialog
+
+        # 弹出目标选择对话框
+        target_dlg = _TranslationTargetDialog(ctx, parent)
+        if target_dlg.exec() != target_dlg.DialogCode.Accepted:
+            return None
+
+        if target_dlg.is_batch_mode():
+            # 批量翻译模式
+            return cls._open_batch_mode(ctx, parent)
+        else:
+            # 单插件模式
+            window = cls(ctx, step2, parent)
+            window.show()
+            return window
+
+    @classmethod
+    def _open_batch_mode(cls, ctx: "AppContext", parent=None) -> QWidget | None:
+        """打开批量翻译流程。"""
+        # 延迟导入批量翻译相关模块
+        from src.transbridge.ui.tools.ai_translator._batch_translation_dialog import _BatchTranslationDialog
+        from src.transbridge.ui.tools.ai_translator._batch_translation_worker import _BatchTranslationWorker
+        from src.transbridge.ui.tools.ai_translator._batch_translation_progress_window import _BatchTranslationProgressWindow
+
+        # 弹出批量翻译对话框（包含配置编辑）
+        batch_dlg = _BatchTranslationDialog(ctx, parent)
+        if batch_dlg.exec() != batch_dlg.DialogCode.Accepted:
+            return None
+
+        selected_slots = batch_dlg.get_selected_slots()
+        if not selected_slots:
+            QMessageBox.warning(parent, "批量翻译", "请至少选择一个插件。")
+            return None
+
+        overwrite = batch_dlg.is_overwrite()
+        llm_config = batch_dlg.get_llm_config()
+
+        if not llm_config or not llm_config.api_key:
+            QMessageBox.warning(parent, "批量翻译", "请先配置 API Key。")
+            return None
+        if not llm_config.model:
+            QMessageBox.warning(parent, "批量翻译", "请先配置模型名。")
+            return None
+
+        # 检查术语库（可选警告）
+        if not ctx.current_project and cls._check_all_terms_empty_batch(llm_config, selected_slots):
+            reply = QMessageBox.question(
+                parent, "术语库为空",
+                "当前未选择 ParaTranz 项目，且所有术语来源均为空。\n\n"
+                "没有术语库辅助，翻译质量可能下降。是否继续？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return None
+
+        # 创建 ParaTranz 客户端（如果选择了项目）
+        paratranz_client = None
+        project_id = None
+        if ctx.current_project:
+            project_id = ctx.current_project.get("id")
+            from src.transbridge.paratranz.api.paratranz_terms_api import ParatranzTermsAPI
+            paratranz_client = ParatranzTermsAPI(ctx.config)
+
+        # 创建 Worker 和进度窗口
+        worker = _BatchTranslationWorker(
+            slots=selected_slots,
+            llm_config=llm_config,
+            overwrite=overwrite,
+            paratranz_client=paratranz_client,
+            project_id=project_id,
+        )
+        progress_win = _BatchTranslationProgressWindow(worker, ctx)
+
+        progress_win.show()
+        worker.start()
+
+        return progress_win
+
+    @classmethod
+    def _check_all_terms_empty_batch(cls, cfg, slots: list) -> bool:
+        """检查所有术语来源是否均为空。"""
+        import os
+        from src.transbridge.ai_translator.term_database import DynamicTermDatabase
+
+        # 检查第一个插件的动态术语库
+        if slots:
+            esp_path = slots[0].esp_path
+            if esp_path:
+                dynamic_db = DynamicTermDatabase(esp_path)
+                dynamic_db.load()
+                if dynamic_db.as_list():
+                    return False
+
+        if cfg.local_json_path and os.path.exists(cfg.local_json_path):
+            try:
+                import json
+                with open(cfg.local_json_path, encoding="utf-8") as f:
+                    data = json.load(f)
+                if data:
+                    return False
+            except Exception:
+                pass
+
+        if cfg.local_excel_path and os.path.exists(cfg.local_excel_path):
+            try:
+                import openpyxl
+                wb = openpyxl.load_workbook(cfg.local_excel_path, read_only=True, data_only=True)
+                ws = wb.active
+                col_orig = cls._col_letter_to_index(cfg.excel_original_col or "A")
+                col_trans = cls._col_letter_to_index(cfg.excel_translation_col or "B")
+                for row in ws.iter_rows(min_row=2, values_only=True):
+                    try:
+                        term = row[col_orig] if col_orig < len(row) else None
+                        trans = row[col_trans] if col_trans < len(row) else None
+                        if term and trans:
+                            return False
+                    except (IndexError, TypeError):
+                        continue
+            except Exception:
+                pass
+
+        return True
+
     # ── UI 构建 ───────────────────────────────────────────────────────────────
 
     def _init_ui(self):
