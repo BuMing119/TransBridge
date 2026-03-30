@@ -84,9 +84,9 @@ def _dial_filename(quest_formid: str, collection: TranslationEntryCollection) ->
     """根据 quest_formid 查找任务名，生成对话文件名。"""
     quest_entry = None
     for entry in collection:
-        id_parts = entry.id.split(':')
-        if len(id_parts) > 1:
-            form_id = id_parts[1].split('|')[0]
+        key_parts = entry.key.split(':')
+        if len(key_parts) > 1:
+            form_id = key_parts[1].split('|')[0]
             if form_id == quest_formid:
                 quest_entry = entry
                 break

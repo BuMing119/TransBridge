@@ -4,8 +4,12 @@ ApiWorker: 通用后台工作线程。
 """
 
 import re
+import logging
+import traceback
 from typing import Callable
 from PyQt6.QtCore import QThread, QObject, pyqtSignal
+
+_logger = logging.getLogger(__name__)
 
 
 # ── 全局 HTTP 错误信号总线 ──────────────────────────────────────────────────
@@ -100,6 +104,8 @@ class ApiWorker(QThread):
             _api_status_bus.request_finished.emit(True)
         except Exception as exc:
             err_str = str(exc)
+            # 记录完整错误到日志
+            _logger.error("ApiWorker 捕获异常:\n%s", traceback.format_exc())
             status = _parse_http_status(err_str)
             if status in _GLOBAL_HANDLE_STATUSES:
                 # 路由到全局信号总线，不再 emit error，防止标签页弹出重复 QMessageBox

@@ -18,6 +18,12 @@ dependencies = [
     # Vector search for semantic term matching
     "sentence-transformers>=2.2",
     "faiss-cpu>=1.7",
+    "requests>=2.33.0",
+    "sse-bsa>=1.1.0",
+    # Fixed torch version to avoid conflict with PyQt6
+    "torch==2.8.0",
+    "torchvision==0.23.0",
+    "torchaudio==2.8.0",
 ]
 
 [project.scripts]

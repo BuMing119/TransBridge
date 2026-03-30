@@ -7,14 +7,18 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
+import traceback
 from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QThread, pyqtSignal
+
+_logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from src.transbridge.ui.context import CollectionSlot
@@ -170,6 +174,7 @@ class _BatchTranslationWorker(QThread):
             self.all_finished.emit(summary)
 
         except Exception as exc:
+            _logger.error("批量翻译Worker异常:\n%s", traceback.format_exc())
             self.error.emit(str(exc))
 
     def _translate_single_slot(

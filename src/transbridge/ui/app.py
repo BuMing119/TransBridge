@@ -1,5 +1,6 @@
 import sys
 import logging
+import traceback
 from datetime import datetime
 from pathlib import Path
 from PyQt6.QtWidgets import QApplication
@@ -7,6 +8,8 @@ from .main_window import MainWindow
 from ..paratranz.config_manager import ParatranzConfig
 
 _LOG_FORMAT = "%(asctime)s [%(name)s] %(levelname)s: %(message)s"
+
+_logger = logging.getLogger(__name__)
 
 
 def _setup_logging() -> None:
@@ -22,8 +25,19 @@ def _setup_logging() -> None:
     logging.basicConfig(level=logging.DEBUG, format=_LOG_FORMAT, handlers=[handler])
 
 
+def _global_exception_hook(exc_type, exc_value, exc_tb):
+    """全局异常捕获器，将未捕获的异常记录到日志"""
+    _logger.critical(
+        "未捕获的异常:\n%s",
+        "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+    )
+    # 调用默认异常处理器（保持原有行为）
+    sys.__excepthook__(exc_type, exc_value, exc_tb)
+
+
 def main():
     _setup_logging()
+    sys.excepthook = _global_exception_hook
     app = QApplication(sys.argv)
     app.setApplicationName("TransBridge")
     app.setOrganizationName("TransBridge")

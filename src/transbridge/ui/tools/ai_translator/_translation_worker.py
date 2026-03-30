@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
+import traceback
 from datetime import datetime
 from pathlib import Path
 
 from PyQt6.QtCore import QThread, pyqtSignal
+
+_logger = logging.getLogger(__name__)
 
 
 class _TranslationWorker(QThread):
@@ -83,4 +87,5 @@ class _TranslationWorker(QThread):
                 fh.close()
             self.result.emit(result)
         except Exception as exc:
+            _logger.error("翻译Worker异常:\n%s", traceback.format_exc())
             self.error.emit(str(exc))

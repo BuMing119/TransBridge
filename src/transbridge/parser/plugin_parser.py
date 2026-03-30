@@ -56,18 +56,29 @@ class PluginParser:
             self.log.info(f"Loaded strings lookup with {len(strings_lookup)} entries for {path.name}")
 
         strings_with_context = self._plugin.extract_strings_with_context(strings_lookup=strings_lookup)
-        #strings_with_context = self._plugin.extract_strings()
         total = len(strings_with_context)
         self.log.info(f"Extracted {total} strings from plugin")
 
+        # 第一遍：建立 DIAL_form_id -> DIAL_editor_id 的映射
+        # 同一个 DIAL 下的 INFO 用该 DIAL 的 editor_id 填充
+        dial_formid_to_edid: dict[str, str] = {}
+        for ps in strings_with_context:
+            if ps.type and ps.type.startswith("DIAL ") and ps.editor_id:
+                # ps.form_id 格式为 "hex|plugin"，取 hex 部分作为 key
+                dial_hex = ps.form_id.split("|")[0]
+                dial_formid_to_edid[dial_hex] = ps.editor_id
+                self.log.debug(f"Mapped DIAL {dial_hex} -> editor_id {ps.editor_id}")
+
+        self.log.info(f"Built DIAL form_id->editor_id map with {len(dial_formid_to_edid)} entries")
+
         items = []
         skipped_count = 0
-        last_editor_id = None  # 用于存储上一个有效的 editor_id
 
         for idx, ps in enumerate(strings_with_context):
             # Progress callback
+            editor_id_display = ps.editor_id or "<None>"
             if progress_callback:
-                progress_callback(idx + 1, total, f"{ps.editor_id}_{ps.type}")
+                progress_callback(idx + 1, total, f"{editor_id_display}_{ps.type}")
 
             # Skip empty strings if requested
             if skip_empty and not ps.string.strip():
@@ -75,18 +86,16 @@ class PluginParser:
                 self.log.debug(f"Skipped empty string: {ps.editor_id} {ps.type}")
                 continue
 
-            # 修复 editor_id 为 None 的问题
-            # 如果当前 ps 的 editor_id 为 None，且 context 不为 "REFR:FULL"，则使用上一个有效的 editor_id
-            if ps.editor_id is None and ps.type and ps.type.replace(" ", ":") != "REFR:FULL":
-                # 创建一个新的 PluginString 对象，使用上一个有效的 editor_id
-                # 由于 PluginString 可能是不可变的，我们使用 setattr 来修改它
-                if last_editor_id is not None:
-                    setattr(ps, "editor_id", last_editor_id)
-                    self.log.debug(f"Fixed missing editor_id: set to {last_editor_id} for type {ps.type}")
-            elif ps.editor_id is not None:
-                # 如果当前 editor_id 有效，则更新 last_editor_id
-                last_editor_id = ps.editor_id
-
+            # EET 风格的 editor_id 填充：
+            # 对于 INFO 记录，如果没有 editor_id，用其所属 DIAL 的 editor_id 填充
+            if ps.editor_id is None and ps.type and ps.type.startswith("INFO "):
+                if ps.context and hasattr(ps.context, "dialogue_topic") and ps.context.dialogue_topic:
+                    # dialogue_topic 格式为 "hex|plugin"，取 hex 部分
+                    dial_hex = ps.context.dialogue_topic.split("|")[0]
+                    if dial_hex in dial_formid_to_edid:
+                        dial_edid = dial_formid_to_edid[dial_hex]
+                        setattr(ps, "editor_id", dial_edid)
+                        self.log.debug(f"Filled INFO editor_id with DIAL '{dial_edid}'")
 
             item = self._create_item(ps)
             items.append(item)

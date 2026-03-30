@@ -61,6 +61,11 @@ class Step1SourceWidget(QWidget):
         self._new_btn.clicked.connect(self._on_new_slot)
         slot_row.addWidget(self._new_btn)
 
+        self._import_json_btn = QPushButton("导入 JSON")
+        self._import_json_btn.setFixedWidth(80)
+        self._import_json_btn.clicked.connect(self._on_import_json)
+        slot_row.addWidget(self._import_json_btn)
+
         self._remove_btn = QPushButton("✕ 移除")
         self._remove_btn.setFixedWidth(64)
         self._remove_btn.setEnabled(False)
@@ -321,8 +326,9 @@ class Step1SourceWidget(QWidget):
         # 同步输入框并锁定（无论是否切换，只要指向已存在的 slot 就锁定）
         slot = self._ctx.slots.get(key) if key else None
         if slot:
-            self._rb_esp.setChecked(slot.esp_path is not None)
-            self._rb_eet_only.setChecked(slot.esp_path is None)
+            is_eet_only = slot.esp_path is None and slot.eet_path is not None
+            self._rb_esp.setChecked(not is_eet_only)
+            self._rb_eet_only.setChecked(is_eet_only)
             self._esp_input.setText(slot.esp_path or "")
             self._eet_input.setText(slot.eet_path or "")
             self._xt_input.setText(slot.xt_path or "")
@@ -423,6 +429,53 @@ class Step1SourceWidget(QWidget):
         if path:
             # 提取目录路径
             self._strings_input.setText(str(Path(path).parent))
+
+    # ── JSON Import ───────────────────────────────────────────
+
+    def _on_import_json(self):
+        """从 JSON 文件直接加载集合，无需解析插件。"""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "导入 JSON 文件", "", "JSON 文件 (*.json);;所有文件 (*)"
+        )
+        if not path:
+            return
+
+        self._status_lbl.setText("加载 JSON 中…")
+        self._progress.show()
+
+        def _do():
+            return TranslationEntryCollection.from_json_file(path)
+
+        def _on_done(collection):
+            self._progress.hide()
+            label = Path(path).stem
+            slot = CollectionSlot(label=label, collection=collection)
+            if path in self._ctx.slots:
+                ret = QMessageBox.question(
+                    self, "集合已存在",
+                    f"集合「{label}」已存在，是否覆盖？\n选择「否」将保留原有集合。",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                )
+                if ret != QMessageBox.StandardButton.Yes:
+                    self._status_lbl.setText("已取消，保留原有集合")
+                    self.parse_finished.emit(None)
+                    return
+            self._ctx.add_slot(path, slot)
+            self._ctx.activate_slot(path)
+            self._set_locked(True)
+            self._update_migration_buttons(slot)
+            self._status_lbl.setText(f"加载完成，共 {len(collection)} 条词条")
+            self.parse_finished.emit(collection)
+
+        def _on_error(msg: str):
+            self._progress.hide()
+            self._status_lbl.setText(f"加载失败：{msg}")
+
+        w = ApiWorker(_do)
+        w.result.connect(_on_done)
+        w.error.connect(_on_error)
+        w.start()
+        self._workers.append(w)
 
     # ── Parse ─────────────────────────────────────────────────
 

@@ -541,7 +541,7 @@ class Step2PreviewWidget(QWidget):
             self._table.setItem(row, _COL_CHECK, check_item)
 
             # Col 1: Key
-            key_item = QTableWidgetItem(entry.id[:60] if entry.id else "")
+            key_item = QTableWidgetItem(entry.key or "")
             key_item.setData(Qt.ItemDataRole.UserRole, entry)
             key_item.setFlags(key_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
