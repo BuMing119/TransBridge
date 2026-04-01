@@ -5,7 +5,7 @@ from typing import Optional,Any
 from pathlib import Path
 import json
 
-from src.transbridge.converter.translation_entry import TranslationEntry
+from src.transbridge.converter.translation_entry import TranslationEntry, _normalize_text
 from src.transbridge.parser.eet_parser import EET_XmlParser, EET_Entry
 from src.transbridge.parser.plugin_parser import PluginParser
 from src.transbridge.parser.strings_file import PluginStringsLookup
@@ -298,12 +298,12 @@ class TranslationEntryCollection:
             for xt in all_xt:
                 if not xt.dest:
                     continue
-                fb_key = (xt.source, xt.rec)
+                fb_key = (_normalize_text(xt.source), xt.rec)
                 if fb_key not in fallback_index:
                     fallback_index[fb_key] = xt
 
             for entry in unmatched:
-                fb_key = (entry.original, self._type_field_base(entry.context))
+                fb_key = (_normalize_text(entry.original), self._type_field_base(entry.context))
                 xt = fallback_index.get(fb_key)
                 if xt is None or not xt.dest:
                     continue

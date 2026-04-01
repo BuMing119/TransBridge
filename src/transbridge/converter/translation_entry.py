@@ -6,6 +6,11 @@ from src.transbridge.parser.xt_parser import XT_Entry
 from src.transbridge.parser.plugin.plugin_string_with_context import PluginStringWithContext
 
 
+def _normalize_text(s: str) -> str:
+    """规范化文本空白：统一换行符为 \\n，去除首尾空白。"""
+    return s.replace('\r\n', '\n').replace('\r', '\n').strip()
+
+
 @dataclass
 class TranslationEntry:
     id: str
@@ -141,7 +146,7 @@ class TranslationEntry:
         if xt.rec != context_base:
             return None
 
-        if xt.source != entry.original:
+        if _normalize_text(xt.source) != _normalize_text(entry.original):
             return None
 
         # ---------- 3. 判断是否满足“更新 translation 的条件” ----------
