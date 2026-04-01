@@ -172,6 +172,7 @@ class TranslationEntryCollection:
                     translation=eet_entry.traduit,
                     stage=1 if eet_entry.status == 99 or eet_entry.traduit else 0,
                     context=entry.context,
+                    form_id_with_plugin=entry.form_id_with_plugin,
                 )
                 self._entries[entry.id] = updated_entry
                 self._key_index[entry.key] = updated_entry
@@ -202,6 +203,7 @@ class TranslationEntryCollection:
                     translation=eet_entry.traduit,
                     stage=1 if eet_entry.status == 99 or eet_entry.traduit else 0,
                     context=entry.context,
+                    form_id_with_plugin=entry.form_id_with_plugin,
                 )
                 self._entries[entry.id] = updated_entry
                 self._key_index[entry.key] = updated_entry
@@ -308,6 +310,7 @@ class TranslationEntryCollection:
                 updated_entry = TranslationEntry(
                     id=entry.id, key=entry.key, original=entry.original,
                     translation=xt.dest, stage=1, context=entry.context,
+                    form_id_with_plugin=entry.form_id_with_plugin,
                 )
                 self._entries[entry.id] = updated_entry
                 self._key_index[entry.key] = updated_entry
@@ -353,6 +356,7 @@ class TranslationEntryCollection:
                 TranslationEntry(
                     id=entry.id, key=entry.key, original=entry.original,
                     translation=translated_text, stage=1, context=entry.context,
+                    form_id_with_plugin=entry.form_id_with_plugin,
                 ),
                 overwrite=True,
             )
@@ -433,6 +437,7 @@ class TranslationEntryCollection:
                     stage=1,
                     context=entry.context,
                     string_id=entry.string_id,
+                    form_id_with_plugin=entry.form_id_with_plugin,
                 ),
                 overwrite=True,
             )
@@ -459,6 +464,20 @@ class TranslationEntryCollection:
         """
         return [e.to_dict() for e in self._entries.values()]
 
+    def to_export_dict(self) -> list[dict[str, Any]]:
+        """
+        导出为 DSD 格式的条目列表，用于外部工具兼容。
+        格式：[{"form_id": "...", "type": "...", "string": "..."}, ...]
+        只包含有译文的条目。
+        """
+        result = []
+        for e in self._entries.values():
+            if e.translation:
+                dsd_dict = e.to_dsd_dict()
+                if dsd_dict:  # to_dsd_dict() 返回空字典表示无译文
+                    result.append(dsd_dict)
+        return result
+
     def to_json(
         self,
         *,
@@ -470,6 +489,21 @@ class TranslationEntryCollection:
         """
         return json.dumps(
             self.to_dict(),
+            ensure_ascii=ensure_ascii,
+            indent=indent,
+        )
+
+    def to_export_json(
+        self,
+        *,
+        ensure_ascii: bool = False,
+        indent: int = 2,
+    ) -> str:
+        """
+        导出为简化格式的 JSON 字符串，用于外部工具兼容。
+        """
+        return json.dumps(
+            self.to_export_dict(),
             ensure_ascii=ensure_ascii,
             indent=indent,
         )
@@ -487,6 +521,22 @@ class TranslationEntryCollection:
         path = Path(path)
         path.write_text(
             self.to_json(ensure_ascii=ensure_ascii, indent=indent),
+            encoding="utf-8",
+        )
+
+    def to_export_json_file(
+        self,
+        path: str | Path,
+        *,
+        ensure_ascii: bool = False,
+        indent: int = 2,
+    ) -> None:
+        """
+        保存为简化格式的 JSON 文件，用于外部工具兼容。
+        """
+        path = Path(path)
+        path.write_text(
+            self.to_export_json(ensure_ascii=ensure_ascii, indent=indent),
             encoding="utf-8",
         )
 
@@ -518,7 +568,80 @@ class TranslationEntryCollection:
         for entry_data in data:
             entry = TranslationEntry.from_dict(entry_data)
             collection.add(entry, overwrite=overwrite)
-        
+
+        return collection
+
+    # ==================== DSD 格式导入/导出 ====================
+
+    def to_dsd_json(
+        self,
+        *,
+        ensure_ascii: bool = False,
+        indent: int = 2,
+    ) -> str:
+        """
+        导出为 DSD 格式的 JSON 字符串。
+        只包含有译文的条目。
+        """
+        return json.dumps(
+            self.to_export_dict(),
+            ensure_ascii=ensure_ascii,
+            indent=indent,
+        )
+
+    def to_dsd_json_file(
+        self,
+        path: str | Path,
+        *,
+        ensure_ascii: bool = False,
+        indent: int = 2,
+    ) -> None:
+        """
+        导出为 DSD 格式的 JSON 文件，用于 xEdit 脚本等外部工具。
+
+        :param path: 输出文件路径
+        :param ensure_ascii: 是否转义非 ASCII 字符
+        :param indent: JSON 缩进空格数
+        """
+        path = Path(path)
+        path.write_text(
+            self.to_dsd_json(ensure_ascii=ensure_ascii, indent=indent),
+            encoding="utf-8",
+        )
+
+    @classmethod
+    def from_dsd_json_file(
+        cls,
+        path: str | Path,
+        *,
+        overwrite: bool = True,
+    ) -> "TranslationEntryCollection":
+        """
+        从 DSD 格式的 JSON 文件导入翻译条目。
+
+        DSD 格式支持三种变体：
+        1. 基础格式：form_id, type, string
+        2. QUST CNAM：form_id, type, original, string
+        3. 索引格式：form_id, type, index, string
+
+        :param path: DSD 格式 JSON 文件路径
+        :param overwrite: 若 id 已存在，是否覆盖（默认 True）
+        :return: 新的 TranslationEntryCollection 实例
+        """
+        path = Path(path)
+        data = json.loads(path.read_text(encoding="utf-8"))
+
+        collection = cls()
+
+        # 验证格式
+        if not isinstance(data, list):
+            raise ValueError("无效的 DSD JSON 格式：应该是一个条目数组")
+
+        # 从 DSD 字典创建 TranslationEntry 对象
+        for entry_data in data:
+            entry = TranslationEntry.from_dsd_dict(entry_data)
+            collection.add(entry, overwrite=overwrite)
+
         return collection
 
 

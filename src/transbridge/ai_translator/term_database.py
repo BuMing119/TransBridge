@@ -190,13 +190,24 @@ class TermDatabaseManager:
         """初始化向量索引（延迟构建，失败时降级）。"""
         try:
             from .term_vector_index import TermVectorIndex
+            from .embedding_client import create_embedding_client
 
             # 获取配置参数
             threshold = getattr(self._config, 'semantic_similarity_threshold', 0.8)
             top_k = getattr(self._config, 'semantic_top_k', 5)
 
+            # 创建 EmbeddingClient
+            embedding_client = create_embedding_client(self._config)
+
+            if not embedding_client.available:
+                self._load_log.append(("vector_index", 0, embedding_client.error_message))
+                self._vector_index = None
+                logger.warning(f"Vector index disabled: {embedding_client.error_message}")
+                return
+
             self._vector_index = TermVectorIndex(
                 self._esp_path,
+                embedding_client=embedding_client,
                 similarity_threshold=threshold,
                 top_k_per_entry=top_k,
             )
@@ -211,7 +222,7 @@ class TermDatabaseManager:
         except ImportError as e:
             self._load_log.append(("vector_index", 0, f"Missing dependency: {e}"))
             self._vector_index = None
-            logger.info("Vector index disabled: sentence-transformers or faiss not installed")
+            logger.info("Vector index disabled: faiss not installed")
 
     def rebuild_vector_index(self) -> bool:
         """手动重建向量索引（术语库更新后调用）。"""

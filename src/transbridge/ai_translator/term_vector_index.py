@@ -5,6 +5,8 @@
 - 离线索引构建与持久化
 - 在线语义召回
 - 增量更新
+
+Embedding 编码通过 EmbeddingClient 实现，支持本地模型和 API 服务。
 """
 
 from __future__ import annotations
@@ -18,6 +20,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from .embedding_client import EmbeddingClient
+
 if TYPE_CHECKING:
     from .term_database import TermEntry
 
@@ -25,7 +29,6 @@ logger = logging.getLogger(__name__)
 
 # 延迟导入，避免未安装时崩溃
 _faiss = None
-_sentence_transformers = None
 
 
 def _get_faiss():
@@ -41,23 +44,7 @@ def _get_faiss():
     return _faiss
 
 
-def _get_sentence_transformers():
-    """延迟导入 SentenceTransformer。"""
-    global _sentence_transformers
-    if _sentence_transformers is None:
-        try:
-            from sentence_transformers import SentenceTransformer
-            _sentence_transformers = SentenceTransformer
-        except ImportError:
-            logger.warning("sentence-transformers not installed, semantic matching disabled")
-            return None
-    return _sentence_transformers
-
-
-# 默认模型名称
-DEFAULT_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
-
-# 语义召回相似度阈值 (内积，归一化后 0~1)
+# 默认语义召回相似度阈值 (内积，归一化后 0~1)
 # 低于此阈值的候选将被过滤
 DEFAULT_SIMILARITY_THRESHOLD = 0.8
 
@@ -80,7 +67,7 @@ class TermVectorIndex:
     """
     术语向量索引。
 
-    使用 SentenceTransformer 编码术语，FAISS 构建索引，
+    使用 EmbeddingClient 编码术语，FAISS 构建索引，
     支持语义相似度检索。
 
     持久化文件：
@@ -91,17 +78,16 @@ class TermVectorIndex:
     def __init__(
         self,
         esp_path: str,
-        model_name: str = DEFAULT_MODEL,
+        embedding_client: EmbeddingClient,
         similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
         top_k_per_entry: int = DEFAULT_TOP_K_PER_ENTRY,
     ):
         self._esp_path = esp_path
-        self._model_name = model_name
+        self._embedding_client = embedding_client
         self._similarity_threshold = similarity_threshold
         self._top_k_per_entry = top_k_per_entry
 
-        # 延迟初始化的资源
-        self._model = None
+        # FAISS 索引和元数据
         self._index = None
         self._term_meta: list[dict] = []  # [{term, translation}, ...]
         self._term_hash: str = ""  # 术语库内容 hash，用于判断是否需要重建
@@ -127,37 +113,6 @@ class TermVectorIndex:
         """初始化失败时的错误信息。"""
         return self._init_error
 
-    def _resolve_model_path(self) -> str:
-        """优先使用打包内的本地模型，回退到 HuggingFace 在线下载。"""
-        import sys
-        if getattr(sys, "frozen", False):
-            # PyInstaller onedir：_MEIPASS 指向 EXE 所在目录
-            base = sys._MEIPASS
-        else:
-            # 开发模式：相对于项目根目录
-            base = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
-        local_path = os.path.join(base, "data", "models", self._model_name)
-        return local_path if os.path.isdir(local_path) else self._model_name
-
-    def _load_model(self) -> bool:
-        """延迟加载 embedding 模型。"""
-        if self._model is not None:
-            return True
-
-        ST = _get_sentence_transformers()
-        if ST is None:
-            self._init_error = "sentence-transformers not installed"
-            return False
-
-        model_path = self._resolve_model_path()
-        try:
-            self._model = ST(model_path)
-            return True
-        except Exception as e:
-            self._init_error = f"Failed to load embedding model '{model_path}': {e}"
-            logger.error(self._init_error)
-            return False
-
     def _compute_term_hash(self, terms: list[TermEntry]) -> str:
         """计算术语列表的内容 hash。"""
         content = json.dumps(
@@ -182,6 +137,12 @@ class TermVectorIndex:
             self._available = False
             return False
 
+        # 检查 embedding client 是否可用
+        if not self._embedding_client.available:
+            self._init_error = f"Embedding client not available: {self._embedding_client.error_message}"
+            logger.warning(self._init_error)
+            return False
+
         # 检查是否需要重建
         new_hash = self._compute_term_hash(terms)
         if not force and self._try_load_index(new_hash):
@@ -189,26 +150,18 @@ class TermVectorIndex:
             logger.info(f"Loaded existing vector index with {len(self._term_meta)} terms")
             return True
 
-        # 需要构建，先加载模型
-        if not self._load_model():
-            return False
-
+        # 需要构建
         faiss = _get_faiss()
         if faiss is None:
             self._init_error = "faiss not installed"
             return False
 
         try:
-            # 编码所有术语
+            # 使用 EmbeddingClient 编码所有术语
             term_texts = [e.term for e in terms]
             logger.info(f"Encoding {len(term_texts)} terms for vector index...")
 
-            embeddings = self._model.encode(
-                term_texts,
-                normalize_embeddings=True,  # 归一化后可用内积近似余弦
-                show_progress_bar=False,
-            )
-            embeddings = np.array(embeddings).astype("float32")
+            embeddings = self._embedding_client.encode(term_texts)
 
             # 构建 FAISS 索引 (IndexFlatIP = 内积索引)
             dimension = embeddings.shape[1]
@@ -280,7 +233,7 @@ class TermVectorIndex:
         # 保存元数据
         meta = {
             "hash": self._term_hash,
-            "model": self._model_name,
+            "dimension": self._embedding_client.dimension,
             "terms": self._term_meta,
         }
         with open(self._meta_path, "w", encoding="utf-8") as f:
@@ -307,17 +260,12 @@ class TermVectorIndex:
         if not self._available or self._index is None:
             return []
 
-        if not self._load_model():
+        if not self._embedding_client.available:
             return []
 
         try:
-            # 编码查询
-            query_embedding = self._model.encode(
-                [query],
-                normalize_embeddings=True,
-                show_progress_bar=False,
-            )
-            query_embedding = np.array(query_embedding).astype("float32")
+            # 使用 EmbeddingClient 编码查询
+            query_embedding = self._embedding_client.encode([query])
 
             # 检索
             similarities, indices = self._index.search(query_embedding, top_k)
@@ -362,20 +310,15 @@ class TermVectorIndex:
         if not self._available or self._index is None:
             return {q: [] for q in queries}
 
-        if not self._load_model():
+        if not self._embedding_client.available:
             return {q: [] for q in queries}
 
         if not queries:
             return {}
 
         try:
-            # 批量编码
-            query_embeddings = self._model.encode(
-                queries,
-                normalize_embeddings=True,
-                show_progress_bar=False,
-            )
-            query_embeddings = np.array(query_embeddings).astype("float32")
+            # 使用 EmbeddingClient 批量编码
+            query_embeddings = self._embedding_client.encode(queries)
 
             # 批量检索
             similarities, indices = self._index.search(query_embeddings, top_k)

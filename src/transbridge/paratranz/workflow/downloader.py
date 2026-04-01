@@ -119,6 +119,7 @@ class ParaTranzDownloader:
                         translation=translation,
                         stage=stage,
                         context=entry.context,
+                        form_id_with_plugin=entry.form_id_with_plugin,
                     ),
                     overwrite=True  # 确保覆盖
                 )

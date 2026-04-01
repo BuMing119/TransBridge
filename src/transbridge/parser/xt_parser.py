@@ -81,11 +81,11 @@ class XT_XmlParser:
                 node = e.find(tag)
                 return (node.text or "").strip() if node is not None else ""
 
-            # 获取REC节点的id属性
+            # 获取REC节点的id属性（XT XML 中 index 从 0 开始，内部统一从 1 开始）
             rec_node = e.find("REC")
             rec_index = 1  # 默认值为1
             if rec_node is not None and "id" in rec_node.attrib:
-                rec_index = XT_Entry._to_int(rec_node.attrib.get("id")) or 1
+                rec_index = (XT_Entry._to_int(rec_node.attrib.get("id")) or 0) + 1
 
             entries.append(
                 XT_Entry(
@@ -140,11 +140,11 @@ class XT_XmlParser:
                 node = elem.find(tag)
                 return (node.text or "").strip() if node is not None else ""
 
-            # 获取REC节点的id属性
+            # 获取REC节点的id属性（XT XML 中 index 从 0 开始，内部统一从 1 开始）
             rec_node = elem.find("REC")
             rec_index = 1  # 默认值为1
             if rec_node is not None and "id" in rec_node.attrib:
-                rec_index = XT_Entry._to_int(rec_node.attrib.get("id") + 1) or 1
+                rec_index = (XT_Entry._to_int(rec_node.attrib.get("id")) or 0) + 1
 
             entry = XT_Entry(
                 list_id=list_id,

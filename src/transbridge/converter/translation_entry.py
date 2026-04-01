@@ -15,6 +15,12 @@ class TranslationEntry:
     stage: int
     context: str  # 现在存储原来的key值
     string_id: int | None = None  # 本地化插件的字符串ID，用于精确匹配 strings 文件
+    form_id_with_plugin: str | None = None  # 完整的 FormID|BaseRecordPlugin 格式，用于导出新JSON格式
+
+    # DSD 兼容字段（解析时直接保存，用于 DSD 格式双向转换）
+    dsd_type: str = ""           # DSD 类型格式："NPC_ FULL" / "INFO NAM1"（空格分隔）
+    dsd_index: int = 1           # 原始索引
+    editor_id: str = ""          # 原始 editor_id
 
     @staticmethod
     def _build_eet_id(edid: str | None, form_id: str, index: int, grup: str, champ: str) -> str:
@@ -56,12 +62,16 @@ class TranslationEntry:
 
         # 参考 PluginParser._create_item：使用 editor_id + form_id 组成唯一 id
         editor_id = getattr(ps, "editor_id", "")
-        form_id = getattr(ps, "form_id", "")
+        form_id_raw = getattr(ps, "form_id", "")
 
+        # 保存完整的 form_id（包含插件名）
+        full_form_id = form_id_raw if "|" in str(form_id_raw) else None
 
         # 从form_id中提取十六进制ID部分，移除插件文件名
-        if "|" in str(form_id):
-            form_id = form_id.split("|")[0]
+        if "|" in str(form_id_raw):
+            form_id = form_id_raw.split("|")[0]
+        else:
+            form_id = form_id_raw
 
         if ps.index is None:
             ps.index = 1
@@ -84,6 +94,11 @@ class TranslationEntry:
             stage=0,
             context=original_key,  # 原来的key值移动到context
             string_id=getattr(ps, "string_id", None),  # 传递 string_id
+            form_id_with_plugin=full_form_id,  # 保存完整的 form_id
+            # DSD 兼容字段
+            dsd_type=getattr(ps, "type", "") or "",  # "NPC_ FULL" 格式
+            dsd_index=getattr(ps, "index", 1) or 1,  # 原始索引，默认为 1
+            editor_id=getattr(ps, "editor_id", "") or "",  # 原始 editor_id
         )
 
     @classmethod
@@ -149,6 +164,7 @@ class TranslationEntry:
             translation=xt.dest,
             stage=1,
             context=entry.context,
+            form_id_with_plugin=entry.form_id_with_plugin,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -163,6 +179,11 @@ class TranslationEntry:
             "stage": self.stage,
             "context": self.context,
             "string_id": self.string_id,
+            "full_form_id": self.form_id_with_plugin,
+            # DSD 兼容字段
+            "dsd_type": self.dsd_type,
+            "dsd_index": self.dsd_index,
+            "dsd_editor_id": self.editor_id,
         }
 
     @classmethod
@@ -178,6 +199,90 @@ class TranslationEntry:
             stage=data.get("stage", 0),
             context=data.get("context"),
             string_id=data.get("string_id"),
+            form_id_with_plugin=data.get("full_form_id"),
+            # DSD 兼容字段（向后兼容：旧 JSON 无这些字段时使用默认值）
+            dsd_type=data.get("dsd_type", ""),
+            dsd_index=data.get("dsd_index", 1),
+            editor_id=data.get("dsd_editor_id", ""),
+        )
+
+    # ==================== DSD 格式转换 ====================
+
+    # DSD 索引类型集合（需要 index 字段的类型）
+    DSD_INDEX_TYPES = frozenset({
+        "INFO NAM1", "QUST NNAM", "MESG ITXT", "PERK EPF2", "PERK EPFD"
+    })
+
+    def to_dsd_dict(self) -> dict[str, Any]:
+        """
+        导出为 DSD 格式字典。
+
+        DSD 格式有三种变体：
+        1. 基础格式：form_id, type, string（大多数类型）
+        2. QUST CNAM：form_id, type, original, string
+        3. 索引格式：form_id, type, index, string（INFO NAM1 等）
+        4. GMST DATA：form_id, editor_id, type, string
+        """
+        form_id = self.form_id_with_plugin or ""
+        type_str = self.dsd_type  # 已是 "NPC_ FULL" 格式
+
+        # 没有译文时不导出
+        if not self.translation:
+            return {}
+
+        base = {"form_id": form_id, "type": type_str}
+
+        # GMST DATA: 需要 editor_id
+        if type_str == "GMST DATA":
+            return {**base, "editor_id": self.editor_id, "string": self.translation}
+
+        # QUST CNAM: 需要 original 字段
+        if type_str == "QUST CNAM":
+            return {**base, "original": self.original, "string": self.translation}
+
+        # 索引类型: INFO NAM1, QUST NNAM, MESG ITXT, PERK EPF2, PERK EPFD
+        if type_str in self.DSD_INDEX_TYPES:
+            return {**base, "index": self.dsd_index, "string": self.translation}
+
+        # 基础类型
+        return {**base, "string": self.translation}
+
+    @classmethod
+    def from_dsd_dict(cls, data: dict[str, Any]) -> "TranslationEntry":
+        """
+        从 DSD 格式字典创建 TranslationEntry。
+
+        :param data: DSD 格式字典，包含 form_id, type, string 等字段
+        :return: TranslationEntry 实例
+        """
+        form_id = data["form_id"]
+        type_str = data["type"]
+        string = data.get("string", "")
+
+        # 提取 form_id 部分（去掉 |Plugin 后缀）
+        form_id_hex = form_id.split("|")[0]
+
+        # 获取可选字段
+        editor_id = data.get("editor_id", "")
+        index = data.get("index", 1)
+
+        # 构建 context（冒号格式："NPC_:FULL"）
+        type_colon = type_str.replace(" ", ":")
+
+        # 构建 id
+        id_value = f"{editor_id}:{form_id_hex}|{index}~{type_colon}"
+
+        return cls(
+            id=id_value,
+            key=id_value,
+            original=data.get("original", ""),  # QUST CNAM 可能有
+            translation=string,
+            stage=1 if string else 0,
+            context=type_colon,
+            form_id_with_plugin=form_id,
+            dsd_type=type_str,
+            dsd_index=index,
+            editor_id=editor_id,
         )
 
 

@@ -34,6 +34,13 @@ class LLMConfig:
     semantic_top_k: int = 5                 # 每条原文召回的候选数
     max_terms_per_batch: int = 50           # 每批次术语表硬上限
 
+    # Embedding 配置
+    embedding_provider: str = "local"       # local | openai | custom
+    embedding_model: str = "text-embedding-3-small"  # API 模型名
+    embedding_api_key: str = ""             # 留空则复用 api_key
+    embedding_base_url: str = ""            # 留空则复用 base_url
+    embedding_local_model: str = "paraphrase-multilingual-MiniLM-L12-v2"  # 本地模型名
+
     def save_to_file(self) -> None:
         """将 [llm] 节写入共享 INI 文件（不覆盖其他节）。"""
         config_path = ParatranzConfig.get_config_file_path()
@@ -61,6 +68,12 @@ class LLMConfig:
         config.set("llm", "semantic_similarity_threshold", str(self.semantic_similarity_threshold))
         config.set("llm", "semantic_top_k", str(self.semantic_top_k))
         config.set("llm", "max_terms_per_batch", str(self.max_terms_per_batch))
+        # Embedding 配置
+        config.set("llm", "embedding_provider", self.embedding_provider)
+        config.set("llm", "embedding_model", self.embedding_model)
+        config.set("llm", "embedding_api_key", self.embedding_api_key)
+        config.set("llm", "embedding_base_url", self.embedding_base_url)
+        config.set("llm", "embedding_local_model", self.embedding_local_model)
         with open(config_path, "w", encoding="utf-8") as f:
             config.write(f)
 
@@ -96,6 +109,12 @@ class LLMConfig:
         obj.semantic_similarity_threshold = config.getfloat("llm", "semantic_similarity_threshold", fallback=obj.semantic_similarity_threshold)
         obj.semantic_top_k = config.getint("llm", "semantic_top_k", fallback=obj.semantic_top_k)
         obj.max_terms_per_batch = config.getint("llm", "max_terms_per_batch", fallback=obj.max_terms_per_batch)
+        # Embedding 配置
+        obj.embedding_provider = config.get("llm", "embedding_provider", fallback=obj.embedding_provider)
+        obj.embedding_model = config.get("llm", "embedding_model", fallback=obj.embedding_model)
+        obj.embedding_api_key = config.get("llm", "embedding_api_key", fallback=obj.embedding_api_key)
+        obj.embedding_base_url = config.get("llm", "embedding_base_url", fallback=obj.embedding_base_url)
+        obj.embedding_local_model = config.get("llm", "embedding_local_model", fallback=obj.embedding_local_model)
         return obj
 
     @staticmethod

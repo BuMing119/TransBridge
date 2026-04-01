@@ -258,6 +258,63 @@ class AITranslatorWindow(QWidget):
 
         main_layout.addWidget(llm_box)
 
+        # ── Embedding 配置区 ──────────────────────────────────────────────────
+        embed_box = QGroupBox("语义检索配置（Embedding）")
+        embed_layout = QVBoxLayout(embed_box)
+        embed_layout.setSpacing(4)
+
+        self._embed_provider_combo = QComboBox()
+        self._embed_provider_combo.addItems(["本地模型（sentence-transformers）", "API 服务（OpenAI 兼容）"])
+        self._embed_provider_combo.setToolTip(
+            "本地模型：使用 sentence-transformers，无需网络，需要安装依赖\n"
+            "API 服务：使用 OpenAI/DeepSeek/阿里云等兼容 embedding 接口"
+        )
+        self._embed_provider_combo.currentIndexChanged.connect(self._on_embed_provider_changed)
+        embed_layout.addLayout(_row("模式:", self._embed_provider_combo))
+
+        # 本地模型配置
+        self._embed_local_model_label = QLabel("模型名:")
+        self._embed_local_model_label.setFixedWidth(90)
+        self._embed_local_model_edit = QLineEdit()
+        self._embed_local_model_edit.setPlaceholderText("paraphrase-multilingual-MiniLM-L12-v2")
+        self._embed_local_model_edit.setToolTip("本地模型名称，首次使用会从 HuggingFace 下载")
+        local_row = QHBoxLayout()
+        local_row.addWidget(self._embed_local_model_label)
+        local_row.addWidget(self._embed_local_model_edit)
+        embed_layout.addLayout(local_row)
+
+        # API 配置（OpenAI 兼容）
+        self._embed_model_label = QLabel("API 模型:")
+        self._embed_model_label.setFixedWidth(90)
+        self._embed_model_edit = QLineEdit()
+        self._embed_model_edit.setPlaceholderText("text-embedding-3-small")
+        self._embed_model_edit.setToolTip("API embedding 模型名称")
+        model_row = QHBoxLayout()
+        model_row.addWidget(self._embed_model_label)
+        model_row.addWidget(self._embed_model_edit)
+        embed_layout.addLayout(model_row)
+
+        self._embed_apikey_label = QLabel("API Key:")
+        self._embed_apikey_label.setFixedWidth(90)
+        self._embed_apikey_edit = QLineEdit()
+        self._embed_apikey_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._embed_apikey_edit.setPlaceholderText("留空则复用上方 LLM 的 API Key")
+        apikey_row = QHBoxLayout()
+        apikey_row.addWidget(self._embed_apikey_label)
+        apikey_row.addWidget(self._embed_apikey_edit)
+        embed_layout.addLayout(apikey_row)
+
+        self._embed_baseurl_label = QLabel("Base URL:")
+        self._embed_baseurl_label.setFixedWidth(90)
+        self._embed_baseurl_edit = QLineEdit()
+        self._embed_baseurl_edit.setPlaceholderText("留空则复用上方 LLM 的 Base URL")
+        baseurl_row = QHBoxLayout()
+        baseurl_row.addWidget(self._embed_baseurl_label)
+        baseurl_row.addWidget(self._embed_baseurl_edit)
+        embed_layout.addLayout(baseurl_row)
+
+        main_layout.addWidget(embed_box)
+
         # ── 术语库配置区 ──────────────────────────────────────────────────────
         term_box = QGroupBox("术语库来源（上方优先级更高）")
         term_layout = QVBoxLayout(term_box)
@@ -391,6 +448,12 @@ class AITranslatorWindow(QWidget):
         self._excel_path_edit.setText(cfg.local_excel_path)
         self._excel_orig_col_edit.setText(cfg.excel_original_col)
         self._excel_trans_col_edit.setText(cfg.excel_translation_col)
+        # Embedding 配置
+        self._embed_provider_combo.setCurrentIndex(0 if cfg.embedding_provider == "local" else 1)
+        self._embed_local_model_edit.setText(cfg.embedding_local_model)
+        self._embed_model_edit.setText(cfg.embedding_model)
+        self._embed_apikey_edit.setText(cfg.embedding_api_key)
+        self._embed_baseurl_edit.setText(cfg.embedding_base_url)
         priority_map = {
             "dynamic": "dynamic（动态词库）",
             "paratranz": "paratranz（ParaTranz 术语）",
@@ -403,6 +466,7 @@ class AITranslatorWindow(QWidget):
                 if p in priority_map:
                     self._priority_list.addItem(QListWidgetItem(priority_map[p]))
         self._on_provider_changed()
+        self._on_embed_provider_changed()
         self._update_estimate()
         self._update_paratranz_item_style()
 
@@ -435,6 +499,12 @@ class AITranslatorWindow(QWidget):
         cfg.local_excel_path = self._excel_path_edit.text().strip()
         cfg.excel_original_col = self._excel_orig_col_edit.text().strip() or "A"
         cfg.excel_translation_col = self._excel_trans_col_edit.text().strip() or "B"
+        # Embedding 配置
+        cfg.embedding_provider = "local" if self._embed_provider_combo.currentIndex() == 0 else "openai"
+        cfg.embedding_local_model = self._embed_local_model_edit.text().strip()
+        cfg.embedding_model = self._embed_model_edit.text().strip()
+        cfg.embedding_api_key = self._embed_apikey_edit.text().strip()
+        cfg.embedding_base_url = self._embed_baseurl_edit.text().strip()
         key_map = {
             "dynamic（动态词库）": "dynamic",
             "paratranz（ParaTranz 术语）": "paratranz",
@@ -464,6 +534,12 @@ class AITranslatorWindow(QWidget):
         self._excel_orig_col_edit.textChanged.connect(self._save_config)
         self._excel_trans_col_edit.textChanged.connect(self._save_config)
         self._priority_list.model().rowsMoved.connect(self._save_config)
+        # Embedding 配置自动保存
+        self._embed_provider_combo.currentIndexChanged.connect(self._save_config)
+        self._embed_local_model_edit.textChanged.connect(self._save_config)
+        self._embed_model_edit.textChanged.connect(self._save_config)
+        self._embed_apikey_edit.textChanged.connect(self._save_config)
+        self._embed_baseurl_edit.textChanged.connect(self._save_config)
 
     def _build_llm_config(self):
         from src.transbridge.paratranz.config_manager import LLMConfig
@@ -480,6 +556,12 @@ class AITranslatorWindow(QWidget):
         cfg.local_excel_path = self._excel_path_edit.text().strip()
         cfg.excel_original_col = self._excel_orig_col_edit.text().strip() or "A"
         cfg.excel_translation_col = self._excel_trans_col_edit.text().strip() or "B"
+        # Embedding 配置
+        cfg.embedding_provider = "local" if self._embed_provider_combo.currentIndex() == 0 else "openai"
+        cfg.embedding_local_model = self._embed_local_model_edit.text().strip()
+        cfg.embedding_model = self._embed_model_edit.text().strip()
+        cfg.embedding_api_key = self._embed_apikey_edit.text().strip()
+        cfg.embedding_base_url = self._embed_baseurl_edit.text().strip()
         key_map = {
             "dynamic（动态词库）": "dynamic",
             "paratranz（ParaTranz 术语）": "paratranz",
@@ -498,6 +580,23 @@ class AITranslatorWindow(QWidget):
     def _on_provider_changed(self):
         is_openai = self._provider_combo.currentIndex() == 0
         self._baseurl_edit.setEnabled(is_openai)
+
+    def _on_embed_provider_changed(self):
+        """Embedding provider 切换时更新控件可见性。"""
+        is_local = self._embed_provider_combo.currentIndex() == 0
+
+        # 本地模型配置可见性
+        self._embed_local_model_label.setVisible(is_local)
+        self._embed_local_model_edit.setVisible(is_local)
+
+        # API 配置可见性
+        api_visible = not is_local
+        self._embed_model_label.setVisible(api_visible)
+        self._embed_model_edit.setVisible(api_visible)
+        self._embed_apikey_label.setVisible(api_visible)
+        self._embed_apikey_edit.setVisible(api_visible)
+        self._embed_baseurl_label.setVisible(api_visible)
+        self._embed_baseurl_edit.setVisible(api_visible)
 
     def _update_estimate(self):
         collection = self._ctx.collection

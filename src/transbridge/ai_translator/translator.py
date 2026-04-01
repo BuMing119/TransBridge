@@ -673,6 +673,7 @@ class AutoTranslator:
                 translation=translation,
                 stage=1,
                 context=entry.context,
+                form_id_with_plugin=entry.form_id_with_plugin,
             ))
         with lock:
             for updated in updates:

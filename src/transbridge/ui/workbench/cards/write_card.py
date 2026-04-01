@@ -270,7 +270,7 @@ class _WriteTargetDialog(QDialog):
         layout.addSpacing(6)
 
         # ── XT XML ────────────────────────────────────────────
-        self._rb_xt = QRadioButton("导出译文")
+        self._rb_xt = QRadioButton("导出 XT XML")
         xt_desc = QLabel("将译文更新到 XT XML 文件中。")
         xt_desc.setStyleSheet("color: #555; margin-left: 20px;")
         xt_path_row = QHBoxLayout()
@@ -291,6 +291,15 @@ class _WriteTargetDialog(QDialog):
         layout.addWidget(self._rb_xt)
         layout.addWidget(xt_desc)
         layout.addLayout(xt_path_row)
+        layout.addSpacing(6)
+
+        # ── DSD JSON ──────────────────────────────────────────
+        self._rb_dsd = QRadioButton("导出 DSD JSON")
+        dsd_desc = QLabel("导出为 DSD 格式 JSON，用于 xEdit 脚本等外部工具。")
+        dsd_desc.setStyleSheet("color: #555; margin-left: 20px;")
+        group.addButton(self._rb_dsd)
+        layout.addWidget(self._rb_dsd)
+        layout.addWidget(dsd_desc)
         layout.addSpacing(8)
 
         btn_box = QDialogButtonBox(
@@ -350,6 +359,8 @@ class _WriteTargetDialog(QDialog):
             return "eet"
         if self._rb_xt.isChecked():
             return "xt"
+        if self._rb_dsd.isChecked():
+            return "dsd"
         return "esp"
 
     @property
@@ -508,8 +519,10 @@ class WriteCard(OpCard):
             self._write_esp(collection)
         elif target == "eet":
             self._write_eet(collection, dlg.eet_path)
-        else:
+        elif target == "xt":
             self._write_xt(collection, dlg.xt_path)
+        else:
+            self._write_dsd(collection)
 
     # ── Write ESP ─────────────────────────────────────────────
 
@@ -659,4 +672,51 @@ class WriteCard(OpCard):
             on_error=lambda e: QMessageBox.critical(self, "XT 写回失败", e),
             progress_total=0,
             progress_msg="正在写回 XT XML…",
+        )
+
+    # ── Write DSD JSON ────────────────────────────────────────
+
+    def _write_dsd(self, collection):
+        """导出为 DSD 格式 JSON 文件。"""
+        esp_path = self._ctx.esp_path
+        if esp_path:
+            default_name = Path(esp_path).stem + "_dsd.json"
+            default_dir = str(Path(esp_path).parent)
+        else:
+            default_name = "export_dsd.json"
+            default_dir = ""
+
+        save_path, _ = QFileDialog.getSaveFileName(
+            self, "导出 DSD JSON",
+            str(Path(default_dir) / default_name) if default_dir else default_name,
+            "JSON 文件 (*.json);;所有文件 (*)",
+        )
+        if not save_path:
+            return
+
+        def _write():
+            # 统计有译文的条目数
+            count = sum(1 for e in collection if e.translation)
+            collection.to_dsd_json_file(save_path)
+            return count, Path(save_path)
+
+        def _on_done(result):
+            count, out_path = result
+            if count == 0:
+                QMessageBox.warning(
+                    self, "导出完成",
+                    f"没有已翻译的条目，导出文件为空。\n\n保存至：{out_path}",
+                )
+            else:
+                QMessageBox.information(
+                    self, "导出完成",
+                    f"已导出 {count} 条译文到 DSD JSON。\n\n保存至：{out_path}",
+                )
+
+        self._run_worker(
+            _write,
+            on_result=_on_done,
+            on_error=lambda e: QMessageBox.critical(self, "DSD 导出失败", e),
+            progress_total=0,
+            progress_msg="正在导出 DSD JSON…",
         )
