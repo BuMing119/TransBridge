@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QProgressBar,
     QDialog, QPushButton, QLineEdit, QComboBox, QCheckBox,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor
 
 from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
@@ -100,6 +100,10 @@ class _EntryDetailDialog(QDialog):
         self._current_selected_ids = {e.id for e in initial_selected if e.id} if initial_selected else set()
         self.setWindowTitle(f"词条预览（共 {len(entries)} 条）")
         self.resize(1100, 680)
+        self._filter_timer = QTimer(self)
+        self._filter_timer.setSingleShot(True)
+        self._filter_timer.setInterval(150)
+        self._filter_timer.timeout.connect(self._apply_filter)
         self._init_ui()
         self._apply_filter()
         self._scroll_to_entry(current_index)
@@ -114,21 +118,21 @@ class _EntryDetailDialog(QDialog):
         self._filter_key = QLineEdit()
         self._filter_key.setPlaceholderText("按 Key 筛选…")
         self._filter_key.setClearButtonEnabled(True)
-        self._filter_key.textChanged.connect(self._apply_filter)
+        self._filter_key.textChanged.connect(self._filter_timer.start)
         filter_row.addWidget(self._filter_key)
 
         filter_row.addWidget(QLabel("原文:"))
         self._filter_orig = QLineEdit()
         self._filter_orig.setPlaceholderText("按原文筛选…")
         self._filter_orig.setClearButtonEnabled(True)
-        self._filter_orig.textChanged.connect(self._apply_filter)
+        self._filter_orig.textChanged.connect(self._filter_timer.start)
         filter_row.addWidget(self._filter_orig)
 
         filter_row.addWidget(QLabel("译文:"))
         self._filter_trans = QLineEdit()
         self._filter_trans.setPlaceholderText("按译文筛选…")
         self._filter_trans.setClearButtonEnabled(True)
-        self._filter_trans.textChanged.connect(self._apply_filter)
+        self._filter_trans.textChanged.connect(self._filter_timer.start)
         filter_row.addWidget(self._filter_trans)
 
         clear_btn = QPushButton("清除")
@@ -223,7 +227,7 @@ class _EntryDetailDialog(QDialog):
                 continue
 
             # 关键词筛选
-            if key_kw and key_kw not in (e.id or "").lower():
+            if key_kw and key_kw not in (e.key or "").lower():
                 continue
             if orig_kw and orig_kw not in (e.original or "").lower():
                 continue
@@ -247,7 +251,7 @@ class _EntryDetailDialog(QDialog):
             check_item.setData(Qt.ItemDataRole.UserRole, entry)
 
             # 第1列：Key
-            key_item = QTableWidgetItem(entry.id or "")
+            key_item = QTableWidgetItem(entry.key or "")
             key_item.setData(Qt.ItemDataRole.UserRole, entry)
             key_item.setFlags(key_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
 

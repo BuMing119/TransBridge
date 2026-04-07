@@ -16,6 +16,7 @@ translation_mode 取值：
 
 import json
 import tempfile
+from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -27,6 +28,21 @@ from src.transbridge.paratranz.config_manager import ParatranzConfig
 
 
 @dataclass
+class ConflictInfo:
+    """单个文件名冲突的信息"""
+    local_name: str           # 本地文件名（如 "人名.json"）
+    candidates: list[dict]    # ParaTranz 上所有同名文件，每个包含 id, name, folder 字段
+
+
+@dataclass
+class FileMaps:
+    """文件列表的三种映射（避免重复 API 调用）"""
+    existing: dict[str, int]              # name → file_id
+    path_based: dict[str, int]            # full_path → file_id
+    name_to_files: dict[str, list[dict]]  # name → [file_info_list]
+
+
+@dataclass
 class UploadResult:
     """上传操作的结果摘要"""
     created: int = 0              # 新建文件数
@@ -34,12 +50,88 @@ class UploadResult:
     skipped: int = 0              # 因错误跳过的文件数
     translation_updated: int = 0  # 成功导入译文的文件数
     files: list[str] = field(default_factory=list)  # 成功处理的文件名列表
+    name_conflicts: dict[str, list[dict]] = field(default_factory=dict)  # 同名文件冲突信息
 
 
 class ParaTranzUploader:
 
     def __init__(self, config: ParatranzConfig):
         self._api = ParatranzFilesAPI(token=config.token, config=config)
+
+    def _fetch_file_maps(self, project_id: int) -> tuple[dict[str, int], dict[str, int], dict[str, list[dict]]]:
+        """
+        获取项目文件列表，返回三个映射：
+          - existing:          文件名 → file_id（同名取最后一个）
+          - path_based:        完整路径 → file_id
+          - name_to_files:     文件名 → [文件信息列表]（用于冲突检测）
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        file_list = self._api.list_files(project_id) or []
+        logger.info(f"[ParaTranzUploader] 从项目 {project_id} 获取到 {len(file_list)} 个文件")
+
+        existing: dict[str, int] = {}
+        path_based: dict[str, int] = {}
+        name_to_files: dict[str, list[dict]] = defaultdict(list)
+
+        for f in file_list:
+            full_name = f["name"]
+            folder = f.get("folder", "")
+
+            if "/" in full_name:
+                parts = full_name.rsplit("/", 1)
+                actual_folder = parts[0]
+                actual_name = parts[1]
+                f = dict(f, folder=actual_folder, name=actual_name)  # 不修改原始 dict
+            else:
+                actual_name = full_name
+                actual_folder = folder
+
+            name_to_files[actual_name].append(f)
+            existing[actual_name] = f["id"]
+            full_path = f"{actual_folder}/{actual_name}" if actual_folder else actual_name
+            path_based[full_path] = f["id"]
+
+        return existing, path_based, name_to_files
+
+    def detect_conflicts(
+        self,
+        project_id: int,
+        file_names: set[str],
+        progress_callback: Callable[[int, int, str], None] | None = None,
+    ) -> tuple[list[ConflictInfo], FileMaps]:
+        """
+        上传前检测冲突：查找本地文件名在 ParaTranz 中有多个同名文件的情况。
+
+        Args:
+            project_id:  ParaTranz 项目 ID
+            file_names:  本次要上传的本地文件名集合
+            progress_callback:  进度回调 (current, total, filename)
+
+        Returns:
+            (conflicts, file_maps) 元组：
+            - conflicts: list[ConflictInfo]，只包含有冲突（多个候选）的文件
+            - file_maps: FileMaps，已获取的文件映射，供后续 upload_collection 使用以避免重复 API 调用
+        """
+        if progress_callback:
+            progress_callback(0, 1, "正在获取 ParaTranz 文件列表...")
+
+        existing, path_based, name_to_files = self._fetch_file_maps(project_id)
+        conflicts = []
+
+        if progress_callback:
+            progress_callback(1, 1, "正在分析文件冲突...")
+
+        for name in file_names:
+            candidates = name_to_files.get(name, [])
+            if len(candidates) > 1:
+                conflicts.append(ConflictInfo(local_name=name, candidates=candidates))
+
+        if progress_callback:
+            progress_callback(1, 1, f"检测到 {len(conflicts)} 个冲突")
+
+        return conflicts, FileMaps(existing, path_based, name_to_files)
 
     def upload_collection(
         self,
@@ -49,6 +141,9 @@ class ParaTranzUploader:
         file_filter: set[str] | None = None,
         translation_mode: str = "orig_only",
         progress_callback: Callable[[int, int, str], None] | None = None,
+        path_mapping: dict[str, str] | None = None,
+        file_id_override: dict[str, int] | None = None,
+        prefetched_maps: FileMaps | None = None,
     ) -> UploadResult:
         """
         将 TranslationEntryCollection 按分类上传到 ParaTranz 项目。
@@ -63,9 +158,14 @@ class ParaTranzUploader:
                                   "trans_force" — 仅导入译文，强制覆盖；新建文件跳过
                                   "both"        — 更新原文并安全导入译文
             progress_callback:  进度回调 (current, total, filename)
+            path_mapping:       文件名到完整路径的映射，用于ParaTranz中文件被移动后的场景。
+                                例如：{"人名.json": "上古卷轴5/人物/人名.json"}
+            file_id_override:   文件名到 file_id 的直接映射，优先级最高（用于用户手动解决同名冲突）。
+                                例如：{"人名.json": 12345}
+            prefetched_maps:    预获取的文件映射（来自 detect_conflicts），避免重复 API 调用。
 
         Returns:
-            UploadResult
+            UploadResult（包含 name_conflicts 字段，用于检测同名文件冲突）
         """
         result = UploadResult()
 
@@ -84,13 +184,24 @@ class ParaTranzUploader:
             if not json_files:
                 return result
 
-            # 2. 获取项目中已有文件，建立 name -> id 映射
-            existing: dict[str, int] = {}
-            try:
-                file_list = self._api.list_files(project_id) or []
-                existing = {f["name"]: f["id"] for f in file_list}
-            except RuntimeError as e:
-                raise RuntimeError(f"获取项目文件列表失败：{e}") from e
+            # 2. 获取项目中已有文件，建立映射
+            if prefetched_maps is not None:
+                existing = prefetched_maps.existing
+                path_based_existing = prefetched_maps.path_based
+                name_to_files = prefetched_maps.name_to_files
+            else:
+                try:
+                    existing, path_based_existing, name_to_files = self._fetch_file_maps(project_id)
+                except RuntimeError as e:
+                    raise RuntimeError(f"获取项目文件列表失败：{e}") from e
+
+            # 检测同名文件冲突（同名但不同路径）
+            conflicts: dict[str, list[dict]] = {
+                name: files for name, files in name_to_files.items()
+                if len(files) > 1 or (len(files) == 1 and bool(files[0].get("folder", "")))
+            }
+            if conflicts:
+                result.name_conflicts = conflicts
 
             total = len(json_files)
 
@@ -101,8 +212,17 @@ class ParaTranzUploader:
                     progress_callback(i, total, name)
 
                 try:
-                    if name in existing:
-                        file_id = existing[name]
+                    # 优先使用用户指定的 file_id（冲突解决结果）
+                    file_id = None
+                    if file_id_override and name in file_id_override:
+                        file_id = file_id_override[name]
+                    elif path_mapping and name in path_mapping:
+                        full_path = path_mapping[name]
+                        file_id = path_based_existing.get(full_path)
+                    if file_id is None:
+                        file_id = existing.get(name)
+
+                    if file_id is not None:
                         if do_reupload:
                             self._api.reupload_file(project_id, file_id, str(json_path))
                             result.updated += 1
@@ -167,10 +287,17 @@ class ParaTranzUploader:
             entries = collection.to_dict()
 
             try:
-                file_list = self._api.list_files(project_id) or []
-                existing = {f["name"]: f["id"] for f in file_list}
+                existing, _, name_to_files = self._fetch_file_maps(project_id)
             except RuntimeError as e:
                 raise RuntimeError(f"获取项目文件列表失败：{e}") from e
+
+            # 检测同名文件冲突
+            conflicts: dict[str, list[dict]] = {
+                name: files for name, files in name_to_files.items()
+                if len(files) > 1 or (len(files) == 1 and bool(files[0].get("folder", "")))
+            }
+            if conflicts:
+                result.name_conflicts = conflicts
 
             stem = Path(filename).stem
             ext = Path(filename).suffix or ".json"

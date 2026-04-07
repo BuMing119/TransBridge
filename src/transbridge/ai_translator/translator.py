@@ -4,7 +4,7 @@
 AutoTranslator.translate() 驱动整个翻译流程：
   1. 批次规划
   2. 按轮次依序执行批次翻译（轮次间刷新术语库）
-  3. 将结果写回集合（stage=1）
+  3. 将结果写回集合（stage=2，表示AI翻译待审核）
   4. 专有名词批次完成后自动写入动态术语库
 """
 
@@ -671,7 +671,7 @@ class AutoTranslator:
                 key=entry.key,
                 original=entry.original,
                 translation=translation,
-                stage=1,
+                stage=2,
                 context=entry.context,
                 form_id_with_plugin=entry.form_id_with_plugin,
             ))

@@ -3,11 +3,12 @@
 
 提供：
 - DynamicTermDatabase：按 ESP stem 绑定，持久化到 data/ai_translator/{stem}/{stem}_terms.json
-- TermDatabaseManager：加载四来源（dynamic/paratranz/json/excel），按优先级合并
+- TermDatabaseManager：加载四来源（dynamic/paratranz/json/excel），按优先级合并，支持缓存
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -25,6 +26,14 @@ logger = logging.getLogger(__name__)
 
 # 匹配术语开头的英文冠词（The / A / An），用于冠词规范化匹配
 _ARTICLE_RE = re.compile(r'^(?:the|a|an)\s+', re.IGNORECASE)
+
+# 缓存文件名
+CACHE_FILES = {
+    "paratranz": "paratranz_terms.json",
+    "json": "json_terms.json",
+    "excel": "excel_terms.json",
+    "merged": "merged_terms.json",
+}
 
 
 @dataclass
@@ -123,6 +132,12 @@ class TermDatabaseManager:
         self._load_log: list[tuple[str, int, str | None]] = []  # (source, count, error)
         self._vector_index = None  # 延迟初始化
 
+        # 缓存目录：data/ai_translator/{stem}/cache/
+        from src.transbridge.paratranz.config_manager import LLMConfig
+        stem = os.path.splitext(os.path.basename(esp_path))[0]
+        self._cache_dir = os.path.join(LLMConfig.get_ai_translator_dir(stem), "cache")
+        os.makedirs(self._cache_dir, exist_ok=True)
+
     def get_dynamic_db(self) -> DynamicTermDatabase:
         return self._dynamic_db
 
@@ -134,6 +149,87 @@ class TermDatabaseManager:
         self._init_vector_index()
 
         return {e.term: e.translation for e in self._merged_terms}
+
+    def _get_cache_path(self, source: str) -> str:
+        """获取指定来源的缓存文件路径。"""
+        filename = CACHE_FILES.get(source, f"{source}_terms.json")
+        return os.path.join(self._cache_dir, filename)
+
+    def _save_source_cache(self, source: str, entries: list[TermEntry]) -> None:
+        """保存单个来源的术语缓存。"""
+        cache_path = self._get_cache_path(source)
+        data = {
+            "cached_at": datetime.now().isoformat(),
+            "count": len(entries),
+            "entries": [asdict(e) for e in entries],
+        }
+        try:
+            with open(cache_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning(f"保存 {source} 术语缓存失败: {e}")
+
+    def _load_source_cache(self, source: str) -> list[TermEntry] | None:
+        """从缓存加载单个来源的术语，如果缓存不存在或无效返回 None。"""
+        cache_path = self._get_cache_path(source)
+        if not os.path.exists(cache_path):
+            return None
+        try:
+            with open(cache_path, encoding="utf-8") as f:
+                data = json.load(f)
+            entries = [TermEntry(**item) for item in data.get("entries", [])]
+            logger.debug(f"从缓存加载 {source} 术语: {len(entries)} 条")
+            return entries
+        except Exception as e:
+            logger.warning(f"加载 {source} 术语缓存失败: {e}")
+            return None
+
+    def save_merged_cache(self, entries: list[TermEntry]) -> None:
+        """保存合并后的术语缓存，供外部工具（如 ConsistencyChecker）直接读取。"""
+        cache_path = self._get_cache_path("merged")
+        data = {
+            "cached_at": datetime.now().isoformat(),
+            "count": len(entries),
+            "sources": self._config.term_priority if self._config else [],
+            "entries": [asdict(e) for e in entries],
+        }
+        try:
+            with open(cache_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            logger.info(f"合并术语库已缓存: {cache_path} ({len(entries)} 条)")
+        except Exception as e:
+            logger.warning(f"保存合并术语缓存失败: {e}")
+
+    @staticmethod
+    def load_merged_cache(esp_path: str) -> list[TermEntry]:
+        """
+        从硬盘直接加载合并后的术语缓存，无需创建 TermDatabaseManager 实例。
+
+        供 ConsistencyChecker 等后处理工具使用。
+
+        Args:
+            esp_path: ESP 文件路径，用于定位缓存目录
+
+        Returns:
+            TermEntry 列表，缓存不存在或无效时返回空列表
+        """
+        from src.transbridge.paratranz.config_manager import LLMConfig
+        stem = os.path.splitext(os.path.basename(esp_path))[0]
+        cache_path = os.path.join(LLMConfig.get_ai_translator_dir(stem), "cache", CACHE_FILES["merged"])
+
+        if not os.path.exists(cache_path):
+            logger.debug(f"合并术语缓存不存在: {cache_path}")
+            return []
+
+        try:
+            with open(cache_path, encoding="utf-8") as f:
+                data = json.load(f)
+            entries = [TermEntry(**item) for item in data.get("entries", [])]
+            logger.info(f"从缓存加载合并术语库: {len(entries)} 条")
+            return entries
+        except Exception as e:
+            logger.warning(f"加载合并术语缓存失败: {e}")
+            return []
 
     def _load_all_with_metadata(self) -> list[TermEntry]:
         """加载并合并术语，保留 case_sensitive 等元数据。"""
@@ -149,13 +245,27 @@ class TermDatabaseManager:
             loader = loaders.get(source)
             if loader:
                 try:
+                    # 先从源加载
                     entries = loader()
+                    # 保存该来源的缓存
+                    self._save_source_cache(source, entries)
                     for entry in entries:
                         term_map[entry.term] = entry
                     self._load_log.append((source, len(entries), None))
                 except Exception as e:
-                    self._load_log.append((source, 0, str(e)))
-        return list(term_map.values())
+                    # 源加载失败时尝试从缓存恢复
+                    cached = self._load_source_cache(source)
+                    if cached is not None:
+                        for entry in cached:
+                            term_map[entry.term] = entry
+                        self._load_log.append((source, len(cached), f"from cache (source failed: {e})"))
+                    else:
+                        self._load_log.append((source, 0, str(e)))
+
+        merged = list(term_map.values())
+        # 保存合并后的缓存
+        self.save_merged_cache(merged)
+        return merged
 
     def get_load_log(self) -> list[tuple[str, int, str | None]]:
         """返回各来源加载结果：[(source, count, error_or_None), ...]。"""
