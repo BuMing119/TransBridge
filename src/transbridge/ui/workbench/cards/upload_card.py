@@ -6,14 +6,14 @@ from PyQt6.QtWidgets import (
     QDialog, QDialogButtonBox, QVBoxLayout, QHBoxLayout,
     QRadioButton, QLabel, QLineEdit, QCheckBox, QFileDialog, QMessageBox,
     QButtonGroup, QFrame, QListWidget, QListWidgetItem, QPushButton,
-    QScrollArea, QWidget, QCheckBox as QtCheckBox,
+    QScrollArea, QWidget, QCheckBox as QtCheckBox, QComboBox,
 )
 
 from src.transbridge.converter.translation_entry_collection_export import (
     export_to_categorized_json_files,
     get_categorized_file_names,
 )
-from src.transbridge.paratranz.workflow.uploader import ParaTranzUploader
+from src.transbridge.paratranz.workflow.uploader import ParaTranzUploader, ConflictInfo, FileMaps, FileMaps
 from .base import OpCard
 
 
@@ -219,6 +219,85 @@ class _BatchResultDialog(QDialog):
         btn_box.button(QDialogButtonBox.StandardButton.Ok).setText("确定")
         btn_box.accepted.connect(self.accept)
         layout.addWidget(btn_box)
+
+
+class _ConflictResolveDialog(QDialog):
+    """
+    上传前冲突解决对话框。
+    每个冲突文件显示一个下拉框，让用户选择要更新 ParaTranz 中哪个同名文件。
+    """
+
+    def __init__(self, conflicts: list[ConflictInfo], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("检测到同名文件冲突")
+        self.setMinimumWidth(520)
+        self.setMinimumHeight(200)
+        self.setMaximumHeight(500)
+
+        layout = QVBoxLayout(self)
+
+        hint = QLabel(
+            f"检测到 {len(conflicts)} 个文件在 ParaTranz 中存在多个同名副本。\n"
+            "请为每个文件选择要更新的目标文件："
+        )
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: #ccc;")
+        layout.addWidget(sep)
+
+        # 滚动区域
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: none; }")
+
+        container = QWidget()
+        container_layout = QVBoxLayout(container)
+        container_layout.setSpacing(8)
+        container_layout.setContentsMargins(4, 4, 4, 4)
+
+        self._combos: dict[str, QComboBox] = {}  # local_name -> QComboBox
+
+        for conflict in conflicts:
+            row = QHBoxLayout()
+            name_lbl = QLabel(conflict.local_name)
+            name_lbl.setMinimumWidth(180)
+            name_lbl.setStyleSheet("font-weight: bold;")
+            row.addWidget(name_lbl)
+
+            combo = QComboBox()
+            for f in conflict.candidates:
+                folder = f.get("folder", "") or "根目录"
+                label = f"{folder}  (id={f['id']})"
+                combo.addItem(label, userData=f["id"])
+            row.addWidget(combo, stretch=1)
+
+            container_layout.addLayout(row)
+            self._combos[conflict.local_name] = combo
+
+        container_layout.addStretch()
+        scroll.setWidget(container)
+        layout.addWidget(scroll)
+
+        btn_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btn_box.button(QDialogButtonBox.StandardButton.Ok).setText("继续上传")
+        btn_box.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+        btn_box.accepted.connect(self.accept)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
+
+    def resolved_path_mapping(self, conflicts: list[ConflictInfo]) -> dict[str, int]:
+        """返回用户选择的 {local_name: file_id} 映射。"""
+        result = {}
+        for conflict in conflicts:
+            combo = self._combos[conflict.local_name]
+            result[conflict.local_name] = combo.currentData()
+        return result
 
 
 class _UploadModeDialog(QDialog):
@@ -614,6 +693,20 @@ class UploadCard(OpCard):
                 f"成功：{result.success_count} 个\n"
                 f"失败：{result.failed_count} 个"
             )
+
+            # 检查是否有冲突警告
+            has_conflicts = any(
+                hasattr(r, 'name_conflicts') and r.name_conflicts
+                for r in getattr(result, 'individual_results', [])
+            )
+            if has_conflicts:
+                QMessageBox.warning(
+                    self,
+                    "文件名冲突警告",
+                    "部分插件检测到文件名冲突。\n"
+                    "请在 ParaTranz 中检查文件是否被移动或存在重复。"
+                )
+
             dlg = _BatchResultDialog(
                 "批量上传完成", header, result.details, parent=self
             )
@@ -650,6 +743,12 @@ class UploadCard(OpCard):
             if not backup_dir:
                 return
 
+        def _on_done(result):
+            parts = [f"新建：{result.created} 个", f"更新原文：{result.updated} 个", f"跳过：{result.skipped} 个"]
+            if translation_mode != "orig_only":
+                parts.append(f"导入译文：{result.translation_updated} 个")
+            QMessageBox.information(self, "上传完成", "\n".join(parts))
+
         if mode == "categorized":
             # 预计算文件列表，让用户选择
             file_infos = get_categorized_file_names(collection)
@@ -660,14 +759,52 @@ class UploadCard(OpCard):
                     return
                 file_filter = sel_dlg.selected_files
 
-            def _upload_factory(progress_cb):
-                if backup_dir:
-                    export_to_categorized_json_files(collection, backup_dir)
+            local_names = file_filter if file_filter is not None else {name for name, _ in file_infos}
+
+            # Phase 1: 预检冲突（后台查询 ParaTranz 文件列表）
+            def _detect_factory(progress_cb):
                 uploader = ParaTranzUploader(config)
-                return uploader.upload_collection(
-                    collection, project_id=project_id,
-                    file_filter=file_filter,
-                    translation_mode=translation_mode, progress_callback=progress_cb)
+                return uploader.detect_conflicts(project_id, local_names, progress_callback=progress_cb)
+
+            def _on_conflicts_detected(result: tuple):
+                conflicts, file_maps = result  # 解构：冲突列表 + 已获取的文件映射
+                file_id_override: dict[str, int] = {}
+
+                if conflicts:
+                    dlg = _ConflictResolveDialog(conflicts, parent=self)
+                    if dlg.exec() != QDialog.DialogCode.Accepted:
+                        return  # 用户取消
+                    file_id_override = dlg.resolved_path_mapping(conflicts)
+
+                # Phase 2: 实际上传，传入 prefetched_maps 避免重复 API 调用
+                def _upload_factory(progress_cb):
+                    if backup_dir:
+                        export_to_categorized_json_files(collection, backup_dir)
+                    uploader = ParaTranzUploader(config)
+                    return uploader.upload_collection(
+                        collection, project_id=project_id,
+                        file_filter=file_filter,
+                        translation_mode=translation_mode,
+                        file_id_override=file_id_override or None,
+                        prefetched_maps=file_maps,
+                        progress_callback=progress_cb,
+                    )
+
+                self._run_worker(
+                    fn_factory=_upload_factory,
+                    on_result=_on_done,
+                    on_error=lambda e: QMessageBox.critical(self, "上传失败", str(e)),
+                    progress_total=len(local_names),
+                    progress_msg="正在上传到 ParaTranz…",
+                )
+
+            self._run_worker(
+                fn_factory=_detect_factory,
+                on_result=_on_conflicts_detected,
+                on_error=lambda e: QMessageBox.critical(self, "冲突检测失败", str(e)),
+                progress_total=0,
+                progress_msg="正在检测文件冲突…",
+            )
         else:
             def _upload_factory(progress_cb):
                 uploader = ParaTranzUploader(config)
@@ -676,16 +813,10 @@ class UploadCard(OpCard):
                     filename=filename, translation_mode=translation_mode,
                     progress_callback=progress_cb)
 
-        def _on_done(result):
-            parts = [f"新建：{result.created} 个", f"更新原文：{result.updated} 个", f"跳过：{result.skipped} 个"]
-            if translation_mode != "orig_only":
-                parts.append(f"导入译文：{result.translation_updated} 个")
-            QMessageBox.information(self, "上传完成", "\n".join(parts))
-
-        self._run_worker(
-            fn_factory=_upload_factory,
-            on_result=_on_done,
-            on_error=lambda e: QMessageBox.critical(self, "上传失败", e),
-            progress_total=0,
-            progress_msg="正在上传到 ParaTranz…",
-        )
+            self._run_worker(
+                fn_factory=_upload_factory,
+                on_result=_on_done,
+                on_error=lambda e: QMessageBox.critical(self, "上传失败", str(e)),
+                progress_total=0,
+                progress_msg="正在上传到 ParaTranz…",
+            )

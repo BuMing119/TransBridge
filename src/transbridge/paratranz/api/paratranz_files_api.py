@@ -35,6 +35,70 @@ class ParatranzFilesAPI(ParatranzClient):
         """获取文件列表"""
         return self._request("GET", f"/projects/{project_id}/files")
 
+    def list_files_with_path(self, project_id: int) -> dict[str, int]:
+        """
+        获取文件列表，返回 完整路径 -> file_id 映射。
+
+        注意：ParaTranz API 返回的 name 可能包含路径（如 "path/to/filename.csv"）
+        也可能分开为 name 和 folder 字段。
+
+        完整路径格式：folder/name 或 name
+        例如："上古卷轴5/人物/人名.json" 或 "人名.json"
+
+        Returns:
+            dict[full_path, file_id]
+        """
+        file_list = self._request("GET", f"/projects/{project_id}/files") or []
+        result = {}
+        for f in file_list:
+            full_name = f.get("name", "")
+            folder = f.get("folder", "")
+            file_id = f.get("id")
+
+            if file_id is not None:
+                # 如果 name 包含路径，直接使用
+                if "/" in full_name:
+                    full_path = full_name
+                else:
+                    # 否则拼接 folder 和 name
+                    full_path = f"{folder}/{full_name}" if folder else full_name
+                result[full_path] = file_id
+        return result
+
+    def find_file_by_name(self, project_id: int, filename: str) -> list[dict]:
+        """
+        根据文件名查找项目中的所有匹配文件（支持同名文件在不同路径）。
+
+        注意：ParaTranz API 返回的 name 可能包含路径（如 "path/to/filename.csv"）
+        也可能分开为 name 和 folder 字段。
+
+        Args:
+            project_id: 项目 ID
+            filename: 文件名（不含路径）
+
+        Returns:
+            list of file info dict，每个包含 id, name, folder 等字段
+        """
+        file_list = self._request("GET", f"/projects/{project_id}/files") or []
+        result = []
+        for f in file_list:
+            full_name = f.get("name", "")
+
+            # 如果 name 包含路径，分离出文件名
+            if "/" in full_name:
+                parts = full_name.rsplit("/", 1)
+                actual_name = parts[1] if len(parts) > 1 else full_name
+                actual_folder = parts[0] if len(parts) > 1 else ""
+                # 更新文件记录以便返回一致的格式
+                f["name"] = actual_name
+                f["folder"] = actual_folder
+            else:
+                actual_name = full_name
+
+            if actual_name == filename:
+                result.append(f)
+        return result
+
     def upload_file(self, project_id: int, filepath: str, path: Optional[str] = None):
         """
         上传文件（创建新文件）

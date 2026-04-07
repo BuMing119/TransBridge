@@ -392,6 +392,29 @@ class DownloadCard(OpCard):
         selected_slots = [slots[k] for k in selected_keys]
         self.do_batch_download(selected_slots, project)
 
+    def _find_split_files(self, file_map: dict, slot_name: str) -> list[tuple[str, int]]:
+        """
+        查找插件对应的所有分割文件。
+        返回 [(文件名, file_id), ...] 列表，按原始文件、_1、_2...排序。
+        """
+        result = []
+        # 先找原始文件 Plugin.json
+        main_name = slot_name + ".json"
+        if main_name in file_map:
+            result.append((main_name, file_map[main_name]))
+
+        # 再找分割文件 Plugin_1.json, Plugin_2.json...
+        suffix = 1
+        while True:
+            split_name = f"{slot_name}_{suffix}.json"
+            if split_name in file_map:
+                result.append((split_name, file_map[split_name]))
+                suffix += 1
+            else:
+                break
+
+        return result
+
     def do_batch_download(self, selected_slots: list, project: dict):
         """执行批量下载（由 step3 调用）。"""
         from src.transbridge.paratranz.api.paratranz_files_api import ParatranzFilesAPI
@@ -402,8 +425,8 @@ class DownloadCard(OpCard):
 
         # 确认对话框
         slot_names = [s.label or Path(s.esp_path).stem for s in selected_slots]
-        items = [f"• {name}.json" for name in slot_names]
-        header = f"即将从项目「{project_name}」下载\n每个插件将从同名 JSON 文件下载译文并合并。\n未找到同名文件的插件将被跳过。"
+        items = [f"• {name}.json (含分割文件)" for name in slot_names]
+        header = f"即将从项目「{project_name}」下载\n每个插件将下载同名 JSON 文件及其分割文件（如 _1, _2）并合并。\n未找到同名文件的插件将被跳过。"
 
         dlg = _BatchConfirmDialog("确认批量下载", header, items, parent=self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
@@ -425,28 +448,32 @@ class DownloadCard(OpCard):
 
             for i, slot in enumerate(selected_slots):
                 slot_name = slot.label or Path(slot.esp_path).stem
-                json_name = slot_name + ".json"
 
                 if progress_cb:
                     progress_cb(i, total, f"正在下载 {slot_name}…")
 
-                file_id = file_map.get(json_name)
-                if file_id is None:
+                # 查找所有分割文件
+                split_files = self._find_split_files(file_map, slot_name)
+                if not split_files:
                     results.skipped_count += 1
-                    results.details.append(f"⊘ {json_name}: 未找到同名文件")
+                    results.details.append(f"⊘ {slot_name}.json: 未找到同名文件")
                     continue
+
+                # 收集所有 file_id
+                file_ids = [fid for _, fid in split_files]
+                file_names_str = ", ".join([name for name, _ in split_files])
 
                 try:
                     result = downloader.download_to_collection(
                         project_id, slot.collection,
-                        file_ids=[file_id],
+                        file_ids=file_ids,
                     )
                     results.success_count += 1
                     results.merged_total += result.merged
-                    results.details.append(f"✓ {json_name}: 合并 {result.merged} 条")
+                    results.details.append(f"✓ {slot_name}: 合并 {result.merged} 条 ({file_names_str})")
                 except Exception as e:
                     results.failed_count += 1
-                    results.details.append(f"✗ {json_name}: {e}")
+                    results.details.append(f"✗ {slot_name}: {e}")
 
             if progress_cb:
                 progress_cb(total, total, "下载完成")
@@ -506,6 +533,6 @@ class DownloadCard(OpCard):
             fn_factory=_download_factory,
             on_result=_on_done,
             on_error=lambda e: QMessageBox.critical(self, "下载失败", e),
-            progress_total=0,
+            progress_total=len(file_ids),
             progress_msg="正在从 ParaTranz 下载合并…",
         )

@@ -4,7 +4,7 @@
 AutoTranslator.translate() 驱动整个翻译流程：
   1. 批次规划
   2. 按轮次依序执行批次翻译（轮次间刷新术语库）
-  3. 将结果写回集合（stage=1）
+  3. 将结果写回集合（stage=2，表示AI翻译待审核）
   4. 专有名词批次完成后自动写入动态术语库
 """
 
@@ -236,11 +236,18 @@ class AutoTranslator:
         if not candidates:
             return result
 
-        # 规划批次
-        plan = self._planner.plan(candidates)
+        max_workers = self._cfg.llm_config.max_concurrent
+
+        # 规划批次（传入 max_workers 以启用自适应批次大小）
+        plan = self._planner.plan(candidates, max_workers=max_workers)
         all_batches = plan.all_batches()
         total_batches = len(all_batches)
         total_entries = sum(len(b.entries) for b in all_batches)
+
+        # 断点续传：将已完成的词条数加到总计中，避免 current 超过 total
+        if checkpoint:
+            completed_from_checkpoint = checkpoint.result_so_far.get("success_count", 0) + checkpoint.result_so_far.get("failed_count", 0)
+            total_entries += completed_from_checkpoint
 
         if total_batches == 0:
             return result
@@ -249,11 +256,13 @@ class AutoTranslator:
         # 全局批次计数器（并发时需加锁）
         batch_counter = [0]
 
-        def _emit(batch_idx: int, msg: str):
+        def _emit(msg: str):
             with lock:
                 done_entries = result.success_count + result.failed_count
+                pct = done_entries * 100 // total_entries if total_entries > 0 else 0
+                full_msg = f"[{pct:3d}%] {done_entries}/{total_entries} | {msg}"
                 progress_callback(
-                    done_entries, total_entries, msg,
+                    done_entries, total_entries, full_msg,
                     result.success_count, result.failed_count, result.new_dynamic_terms,
                 )
 
@@ -295,8 +304,8 @@ class AutoTranslator:
             with lock:
                 already_done = batch_fp in completed_fps
             if already_done:
-                msg = f"{round_name} | {batch.batch_type}（第 {idx}/{total_batches} 批）[已跳过]"
-                _emit(idx, msg)
+                msg = f"{round_name} | {batch.batch_type} [已跳过]"
+                _emit(msg)
                 return
 
             # 暂停检查
@@ -307,8 +316,8 @@ class AutoTranslator:
                 _save_checkpoint()
                 return
 
-            msg = f"{round_name} | {batch.batch_type}（第 {idx}/{total_batches} 批，{len(batch.entries)} 条）"
-            _emit(idx, msg)
+            msg = f"{round_name} | {batch.batch_type}（{len(batch.entries)} 条）"
+            _emit(msg)
 
             # 批次专属 log 回调（携带 idx）
             _batch_log_cb = (lambda line: log_callback(idx, line)) if log_callback else None
@@ -331,7 +340,7 @@ class AutoTranslator:
                 _success_before = result.success_count
                 _terms_before = result.new_dynamic_terms
 
-            _progress_emit = lambda: _emit(idx, msg)
+            _progress_emit = lambda: _emit(msg)
             try:
                 self._run_batch(batch, collection, result, lock, _batch_log_cb, pause_event, stop_event, _per_batch_stream, _timing_out=_batch_timing, progress_emit=_progress_emit)
             except _CancelledByStop:
@@ -346,7 +355,7 @@ class AutoTranslator:
                     _save_checkpoint()
                     return
                 # 继续后重试本批次（不重新计数，沿用原 idx）
-                _emit(idx, f"{round_name} | {batch.batch_type}（第 {idx}/{total_batches} 批，{len(batch.entries)} 条，重试）")
+                _emit(f"{round_name} | {batch.batch_type}（{len(batch.entries)} 条，重试）")
                 _batch_timing.clear()
                 with lock:
                     _success_before = result.success_count
@@ -371,9 +380,7 @@ class AutoTranslator:
             with lock:
                 completed_fps.add(batch_fp)
             _save_checkpoint()
-            _emit(idx, msg)
-
-        max_workers = self._cfg.llm_config.max_concurrent
+            _emit(msg)
 
         # ── 第一轮：所有批次并发 ──────────────────────────────────────────────
         if plan.round1 and not stop_event.is_set():
@@ -671,9 +678,13 @@ class AutoTranslator:
                 key=entry.key,
                 original=entry.original,
                 translation=translation,
-                stage=1,
+                stage=2,
                 context=entry.context,
                 form_id_with_plugin=entry.form_id_with_plugin,
+                string_id=entry.string_id,
+                dsd_type=entry.dsd_type,
+                dsd_index=entry.dsd_index,
+                editor_id=entry.editor_id,
             ))
         with lock:
             for updated in updates:

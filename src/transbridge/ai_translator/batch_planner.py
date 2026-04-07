@@ -54,7 +54,7 @@ class BatchPlanner:
     def __init__(self, max_tokens_per_batch: int = 2000):
         self._max_tokens = max_tokens_per_batch
 
-    def plan(self, entries: list["TranslationEntry"]) -> BatchPlan:
+    def plan(self, entries: list["TranslationEntry"], max_workers: int = 0) -> BatchPlan:
         plan = BatchPlan()
 
         # 建立 context 到 round1 类别的快查表
@@ -81,36 +81,75 @@ class BatchPlanner:
                 round3_entries.append(entry)
             # 其他未分类的跳过（可视需求放入 round3）
 
+        # 计算自适应字符限制（用于确保足够的批次数以提高并发效率）
+        adaptive_char_limit = self._compute_adaptive_char_limit(entries, max_workers)
+
         # 第一轮：按类别分批
         for category, bucket in round1_buckets.items():
             if bucket:
-                for sub_batch in self._split_by_tokens(bucket):
+                for sub_batch in self._split_by_tokens(bucket, adaptive_char_limit):
                     plan.round1.append(Batch(entries=sub_batch, batch_type=category))
 
         # 第二轮：按 quest_formid 分批
         for quest_formid, bucket in round2_buckets.items():
-            for sub_batch in self._split_by_tokens(bucket):
-                plan.round2.append(Batch(
-                    entries=sub_batch,
-                    batch_type="对话",
-                    quest_formid=quest_formid,
-                ))
+            if bucket:
+                # 对每quest组也应用自适应限制
+                effective_limit = self._compute_adaptive_char_limit(bucket, max_workers)
+                for sub_batch in self._split_by_tokens(bucket, effective_limit):
+                    plan.round2.append(Batch(
+                        entries=sub_batch,
+                        batch_type="对话",
+                        quest_formid=quest_formid,
+                    ))
 
         # 第三轮：统一分批
-        for sub_batch in self._split_by_tokens(round3_entries):
+        for sub_batch in self._split_by_tokens(round3_entries, adaptive_char_limit):
             plan.round3.append(Batch(entries=sub_batch, batch_type="长文本"))
 
         return plan
 
-    def _split_by_tokens(self, entries: list["TranslationEntry"]) -> list[list["TranslationEntry"]]:
+    def _compute_adaptive_char_limit(self, entries: list, max_workers: int) -> int:
+        """计算自适应字符限制，确保批次数 >= max_workers * 2。
+
+        当总条目数较少时，缩小批次大小以增加批次数，提高并发效率。
+        限制范围：[600, self._max_tokens * 3]
+        """
+        entry_count = len(entries)
+        if max_workers <= 0 or entry_count <= 0:
+            return self._max_tokens * 3
+
+        # 目标：批次数 >= max_workers * 2
+        target_batches = max_workers * 2
+
+        # 如果条目数本身就很少，无需调整
+        if entry_count <= target_batches:
+            return self._max_tokens * 3
+
+        # 计算实际总字符数
+        total_chars = sum(len(e.original or "") + len(e.id or "") for e in entries)
+
+        # 目标：每批字符数 = 总字符数 / 目标批次数
+        # 留10%余量确保达到目标批次数
+        adaptive_limit = int((total_chars / target_batches) * 0.9)
+
+        # 限制在合理范围 [600, _max_tokens * 3]
+        # 最小600字符约等于10-15条短文本，既保证并发又不会创建过多小批次
+        max_char_limit = self._max_tokens * 3
+        effective_limit = max(600, min(max_char_limit, adaptive_limit))
+
+        return effective_limit
+
+    def _split_by_tokens(self, entries: list["TranslationEntry"], char_limit: int | None = None) -> list[list["TranslationEntry"]]:
         """简单按字符数估算 token 数，超过阈值则切分。"""
         if not entries:
             return []
+        if char_limit is None:
+            # 约 1 token ≈ 4 chars（英文）；留余量乘 1.5 安全系数
+            char_limit = self._max_tokens * 3
+
         batches: list[list["TranslationEntry"]] = []
         current: list["TranslationEntry"] = []
         current_chars = 0
-        # 约 1 token ≈ 4 chars（英文）；留余量乘 1.5 安全系数
-        char_limit = self._max_tokens * 3
 
         for entry in entries:
             entry_chars = len(entry.original or "") + len(entry.id or "")

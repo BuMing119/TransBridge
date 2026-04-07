@@ -173,6 +173,10 @@ class TranslationEntryCollection:
                     stage=1 if eet_entry.status == 99 or eet_entry.traduit else 0,
                     context=entry.context,
                     form_id_with_plugin=entry.form_id_with_plugin,
+                    string_id=entry.string_id,
+                    dsd_type=entry.dsd_type,
+                    dsd_index=entry.dsd_index,
+                    editor_id=entry.editor_id,
                 )
                 self._entries[entry.id] = updated_entry
                 self._key_index[entry.key] = updated_entry
@@ -204,6 +208,10 @@ class TranslationEntryCollection:
                     stage=1 if eet_entry.status == 99 or eet_entry.traduit else 0,
                     context=entry.context,
                     form_id_with_plugin=entry.form_id_with_plugin,
+                    string_id=entry.string_id,
+                    dsd_type=entry.dsd_type,
+                    dsd_index=entry.dsd_index,
+                    editor_id=entry.editor_id,
                 )
                 self._entries[entry.id] = updated_entry
                 self._key_index[entry.key] = updated_entry
@@ -311,6 +319,10 @@ class TranslationEntryCollection:
                     id=entry.id, key=entry.key, original=entry.original,
                     translation=xt.dest, stage=1, context=entry.context,
                     form_id_with_plugin=entry.form_id_with_plugin,
+                    string_id=entry.string_id,
+                    dsd_type=entry.dsd_type,
+                    dsd_index=entry.dsd_index,
+                    editor_id=entry.editor_id,
                 )
                 self._entries[entry.id] = updated_entry
                 self._key_index[entry.key] = updated_entry
@@ -357,6 +369,10 @@ class TranslationEntryCollection:
                     id=entry.id, key=entry.key, original=entry.original,
                     translation=translated_text, stage=1, context=entry.context,
                     form_id_with_plugin=entry.form_id_with_plugin,
+                    string_id=entry.string_id,
+                    dsd_type=entry.dsd_type,
+                    dsd_index=entry.dsd_index,
+                    editor_id=entry.editor_id,
                 ),
                 overwrite=True,
             )
@@ -386,6 +402,11 @@ class TranslationEntryCollection:
                     TranslationEntry(
                         id=entry.id, key=entry.key, original=entry.original,
                         translation=translated_text, stage=1, context=entry.context,
+                        form_id_with_plugin=entry.form_id_with_plugin,
+                        string_id=entry.string_id,
+                        dsd_type=entry.dsd_type,
+                        dsd_index=entry.dsd_index,
+                        editor_id=entry.editor_id,
                     ),
                     overwrite=True,
                 )
@@ -438,6 +459,9 @@ class TranslationEntryCollection:
                     context=entry.context,
                     string_id=entry.string_id,
                     form_id_with_plugin=entry.form_id_with_plugin,
+                    dsd_type=entry.dsd_type,
+                    dsd_index=entry.dsd_index,
+                    editor_id=entry.editor_id,
                 ),
                 overwrite=True,
             )

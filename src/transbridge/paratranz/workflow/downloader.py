@@ -120,6 +120,11 @@ class ParaTranzDownloader:
                         stage=stage,
                         context=entry.context,
                         form_id_with_plugin=entry.form_id_with_plugin,
+                        string_id=entry.string_id,
+                        # 保留 DSD 字段
+                        dsd_type=entry.dsd_type,
+                        dsd_index=entry.dsd_index,
+                        editor_id=entry.editor_id,
                     ),
                     overwrite=True  # 确保覆盖
                 )
