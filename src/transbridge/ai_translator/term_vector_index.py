@@ -58,9 +58,10 @@ DEFAULT_MAX_TERMS_PER_BATCH = 50
 @dataclass
 class VectorSearchResult:
     """语义检索结果。"""
-    term: str
-    translation: str
+    term: str          # 匹配到的主术语
+    translation: str   # 主术语的译文
     similarity: float  # 相似度分数 (0~1)
+    matched_variant: str | None = None  # 实际匹配的变体（如果有）
 
 
 class TermVectorIndex:
@@ -114,9 +115,10 @@ class TermVectorIndex:
         return self._init_error
 
     def _compute_term_hash(self, terms: list[TermEntry]) -> str:
-        """计算术语列表的内容 hash。"""
+        """计算术语列表的内容 hash，包含变体。"""
         content = json.dumps(
-            [{"t": e.term, "tr": e.translation} for e in sorted(terms, key=lambda x: x.term)],
+            [{"t": e.term, "tr": e.translation, "v": sorted(e.variants)}
+             for e in sorted(terms, key=lambda x: x.term)],
             ensure_ascii=False,
             sort_keys=True,
         )
@@ -157,26 +159,47 @@ class TermVectorIndex:
             return False
 
         try:
-            # 使用 EmbeddingClient 编码所有术语
-            term_texts = [e.term for e in terms]
-            logger.info(f"Encoding {len(term_texts)} terms for vector index...")
+            # 构建索引条目列表：(文本, 主术语, 译文)
+            index_entries: list[tuple[str, str, str]] = []
+            for e in terms:
+                # 主术语
+                index_entries.append((e.term, e.term, e.translation))
+                # 变体 - 映射到主术语的译文
+                for variant in e.variants:
+                    if variant:
+                        index_entries.append((variant, e.term, e.translation))
 
-            embeddings = self._embedding_client.encode(term_texts)
+            # 去重（基于文本）
+            seen_texts = set()
+            unique_entries = []
+            for text, main_term, trans in index_entries:
+                if text not in seen_texts:
+                    seen_texts.add(text)
+                    unique_entries.append((text, main_term, trans))
+
+            # 使用 EmbeddingClient 编码所有文本
+            texts_to_encode = [e[0] for e in unique_entries]
+            logger.info(f"Encoding {len(texts_to_encode)} terms (including variants) for vector index...")
+
+            embeddings = self._embedding_client.encode(texts_to_encode)
 
             # 构建 FAISS 索引 (IndexFlatIP = 内积索引)
             dimension = embeddings.shape[1]
             self._index = faiss.IndexFlatIP(dimension)
             self._index.add(embeddings)
 
-            # 保存元数据
-            self._term_meta = [{"term": e.term, "translation": e.translation} for e in terms]
+            # 保存元数据 - 记录文本到主术语的映射
+            self._term_meta = [
+                {"text": text, "term": main_term, "translation": trans}
+                for text, main_term, trans in unique_entries
+            ]
             self._term_hash = new_hash
 
             # 持久化
             self._save_index()
 
             self._available = True
-            logger.info(f"Built vector index with {len(self._term_meta)} terms (dim={dimension})")
+            logger.info(f"Built vector index with {len(self._term_meta)} entries ({len(terms)} main + variants, dim={dimension})")
             return True
 
         except Exception as e:
@@ -252,7 +275,7 @@ class TermVectorIndex:
             top_k: 返回候选数量，默认使用实例配置
 
         Returns:
-            按相似度降序排列的候选列表
+            按相似度降序排列的候选列表（按主术语去重）
         """
         if top_k is None:
             top_k = self._top_k_per_entry
@@ -271,16 +294,31 @@ class TermVectorIndex:
             similarities, indices = self._index.search(query_embedding, top_k)
 
             results = []
+            seen_main_terms = set()  # 去重：同一主术语只返回一次
+
             for sim, idx in zip(similarities[0], indices[0]):
                 if idx < 0 or idx >= len(self._term_meta):
                     continue
                 if sim < self._similarity_threshold:
                     continue
+
                 meta = self._term_meta[idx]
+                main_term = meta["term"]
+
+                # 跳过已返回的主术语
+                if main_term in seen_main_terms:
+                    continue
+                seen_main_terms.add(main_term)
+
+                # 判断是否匹配到变体
+                matched_text = meta["text"]
+                matched_variant = matched_text if matched_text != main_term else None
+
                 results.append(VectorSearchResult(
-                    term=meta["term"],
+                    term=main_term,
                     translation=meta["translation"],
                     similarity=float(sim),
+                    matched_variant=matched_variant,
                 ))
 
             return results
@@ -326,16 +364,30 @@ class TermVectorIndex:
             results = {}
             for i, query in enumerate(queries):
                 query_results = []
+                seen_main_terms = set()  # 去重：同一主术语只返回一次
                 for sim, idx in zip(similarities[i], indices[i]):
                     if idx < 0 or idx >= len(self._term_meta):
                         continue
                     if sim < self._similarity_threshold:
                         continue
+
                     meta = self._term_meta[idx]
+                    main_term = meta["term"]
+
+                    # 跳过已返回的主术语
+                    if main_term in seen_main_terms:
+                        continue
+                    seen_main_terms.add(main_term)
+
+                    # 判断是否匹配到变体
+                    matched_text = meta["text"]
+                    matched_variant = matched_text if matched_text != main_term else None
+
                     query_results.append(VectorSearchResult(
-                        term=meta["term"],
+                        term=main_term,
                         translation=meta["translation"],
                         similarity=float(sim),
+                        matched_variant=matched_variant,
                     ))
                 results[query] = query_results
 

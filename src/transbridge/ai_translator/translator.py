@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
     from src.transbridge.paratranz.config_manager import LLMConfig
     from src.transbridge.ai_translator.batch_planner import Batch
+    from src.transbridge.ai_translator.post_processor import PostProcessResult
 
 
 @dataclass
@@ -47,6 +48,7 @@ class TranslationResult:
     skipped_count: int = 0
     new_dynamic_terms: int = 0
     failed_entries: list[str] = field(default_factory=list)
+    post_process_result: "PostProcessResult | None" = None  # 后处理结果
 
 
 @dataclass
@@ -433,6 +435,61 @@ class AutoTranslator:
         t_total = time.perf_counter() - t_total_start
         if not stop_event.is_set():
             ProgressCheckpoint(esp_stem, target_entry_ids, self._cfg.overwrite, [], {}).delete(self._cfg.esp_path)
+
+        # ── 后处理：质量检查 ─────────────────────────────────────────────────────
+        if not stop_event.is_set() and result.success_count > 0 and getattr(self._cfg.llm_config, 'enable_post_process', True):
+            _log(f"\n── 开始质量检查 ──")
+            from .post_processor import PostProcessor, PostProcessorConfig
+
+            pp_config = PostProcessorConfig(
+                enable_consistency_check=True,
+                enable_format_validation=True,
+                enable_quality_gate=bool(self._llm),  # 有LLM才启用质量关卡
+                auto_fix=False,  # 暂不自动修复，仅报告
+                reset_stage_on_error=False,  # 不把stage重置为0，仅标记
+            )
+            post_processor = PostProcessor(pp_config)
+            post_processor.register_default_checkers(
+                term_manager=self._term_mgr,
+                llm_client=self._llm,
+            )
+
+            # 只对成功翻译的条目进行后处理
+            # 收集本次翻译成功的条目
+            from ..converter.translation_entry import TranslationEntry
+            all_entries = list(collection.entries.values())
+            # 筛选出本次处理的条目（如果target_entry_ids不为空）
+            if target_entry_ids:
+                target_set = set(target_entry_ids)
+                entries_to_check = [e for e in all_entries if e.id in target_set and e.translation]
+            else:
+                entries_to_check = [e for e in all_entries if e.translation]
+
+            if entries_to_check:
+                pp_result = post_processor.process_entries(entries_to_check)
+
+                # 输出后处理摘要
+                _log(f"质量检查完成：检查 {pp_result.total_checked} 条")
+                error_count = sum(1 for i in pp_result.issues if i.severity == "error")
+                warning_count = sum(1 for i in pp_result.issues if i.severity == "warning")
+                _log(f"  发现问题：{error_count} 个错误，{warning_count} 个警告")
+                if pp_result.needs_review:
+                    _log(f"  需审核条目：{len(pp_result.needs_review)} 条")
+
+                # 更新stage（根据检查结果）
+                stage_stats = post_processor.update_entry_stages(collection, pp_result)
+                if stage_stats.get("reset_to_untranslated", 0) > 0:
+                    _log(f"  重置为未翻译：{stage_stats['reset_to_untranslated']} 条")
+                if stage_stats.get("kept_for_review", 0) > 0:
+                    _log(f"  保持待审核：{stage_stats['kept_for_review']} 条")
+
+                # 将后处理结果附加到TranslationResult
+                result.post_process_result = pp_result
+            else:
+                _log(f"无可检查的条目")
+        elif not stop_event.is_set() and result.success_count > 0:
+            _log(f"\n── 质量检查已跳过（用户设置）──")
+
         _log(f"\n总耗时: {t_total:.2f}s")
         return result
 

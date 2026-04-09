@@ -790,13 +790,18 @@ class UploadCard(OpCard):
                         progress_callback=progress_cb,
                     )
 
-                self._run_worker(
-                    fn_factory=_upload_factory,
-                    on_result=_on_done,
-                    on_error=lambda e: QMessageBox.critical(self, "上传失败", str(e)),
-                    progress_total=len(local_names),
-                    progress_msg="正在上传到 ParaTranz…",
-                )
+                # 延迟启动第二个 worker，确保第一个 worker 的 finished 信号先处理
+                # 避免 _restore() 把第二个 worker 的进度条隐藏掉
+                from PyQt6.QtCore import QTimer
+                def _start_upload():
+                    self._run_worker(
+                        fn_factory=_upload_factory,
+                        on_result=_on_done,
+                        on_error=lambda e: QMessageBox.critical(self, "上传失败", str(e)),
+                        progress_total=len(local_names),
+                        progress_msg="正在上传到 ParaTranz…",
+                    )
+                QTimer.singleShot(0, _start_upload)
 
             self._run_worker(
                 fn_factory=_detect_factory,

@@ -1,0 +1,684 @@
+"""
+LLM裁决者。
+
+对"模棱两可"的问题做最终判定，决定条目是接受、打回还是待审。
+"""
+
+import json
+import re
+import tomllib
+import warnings
+from dataclasses import dataclass, field
+from pathlib import Path
+from string import Template
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from ...converter.translation_entry import TranslationEntry
+    from ..llm_client import LLMClient
+    from .base import PostProcessIssue
+    from .llm_refiner import RefineResult
+    from .polisher import PolishResult
+
+
+@dataclass
+class ArbiterDecision:
+    """裁决结果。"""
+
+    entry_id: str
+    verdict: Literal["pass", "reject", "pending"]  # 最终裁决
+    reason: str  # 裁决理由
+    confidence: float  # 裁决信心度 (0-1)
+    suggested_action: str  # 建议动作
+    alternatives: list[str] = field(default_factory=list)  # 替代方案
+
+
+@dataclass
+class ArbitrationContext:
+    """裁决上下文。"""
+
+    entry: "TranslationEntry"
+    original_issues: list["PostProcessIssue"] = field(default_factory=list)
+    refine_result: "RefineResult | None" = None
+    polish_result: "PolishResult | None" = None  # 新增：润色结果
+    quality_gate_verdict: str | None = None  # 原质量关卡判定
+
+
+# ── 内置默认提示词 ─────────────────────────────────────────────────────────
+
+_DEFAULT_SYSTEM = """你是游戏本地化质量裁决官。
+
+你的职责：对翻译条目的最终质量进行裁决。
+
+裁决标准：
+
+1. "pass": 译文质量合格，可以发布
+   - 修复有效，原问题已解决
+   - 译文流畅自然，符合游戏语境
+   - 无明显错误或风险
+   - 术语使用正确
+
+2. "reject": 译文存在严重问题，必须打回重翻
+   - 语义错误、漏翻、错翻
+   - 术语严重不一致且未修复
+   - 格式损坏无法修复
+   - 风格严重不符游戏语境
+   - 修复尝试失败或产生新问题
+
+3. "pending": 质量存疑，建议人工审核
+   - 修复效果不确定
+   - 存在争议或歧义
+   - 涉及创意性判断（如角色性格体现）
+   - 不确定是否准确传达原文语境
+   - 修复改动较大，需要确认
+
+裁决原则：
+- 宁可pending也不接受有风险的译文
+- 明确reject的情况必须给出具体理由
+- pending时需说明需要审核的具体要点
+- 考虑修复者的信心度，低信心度倾向pending
+
+输出格式（必须严格遵循JSON）：
+{
+    "verdict": "pass" | "reject" | "pending",
+    "reason": "详细裁决理由，说明为什么做这个决定",
+    "confidence": 0.9,
+    "suggested_action": "具体建议动作",
+    "alternatives": ["如有reject，提供备选建议或问题描述"]
+}
+
+注意：
+- confidence > 0.9 表示裁决很有把握
+- confidence < 0.7 时建议设为pending
+- alternatives 在reject时特别有用，可以告诉用户具体问题"""
+
+_DEFAULT_USER = """【原文】
+$original
+
+【初始译文】
+$initial_translation
+
+【修复后译文】
+$refined_translation
+
+【润色后译文】
+$polished_translation
+
+【上下文】
+$context
+
+【检测到的问题】
+$original_issues
+
+【修复详情】
+$fix_details
+
+【润色详情】
+$polish_details
+
+【修复者信心度】
+$refiner_confidence
+
+【润色者信心度】
+$polisher_confidence
+
+【原质量关卡判定】
+$quality_gate_verdict
+
+请作为最终裁决官，对该条目进行裁决。
+
+请仔细分析：
+1. 原问题是否已被有效修复？
+2. 润色是否提升了译文质量？
+3. 是否存在新的问题？
+4. 是否适合直接发布，还是需要人工审核？
+
+注意：
+- 润色后译文（如有）是最终版本
+- 修复和润色可能同时存在，请综合评估最终译文质量
+
+按指定JSON格式输出你的裁决结果。"""
+
+_DEFAULT_BATCH_SYSTEM = """你是游戏本地化质量裁决官。
+
+你的职责：批量裁决多个翻译条目的最终质量。
+
+裁决标准：
+- "pass": 质量合格，可以发布
+- "reject": 严重问题，必须打回重翻
+- "pending": 质量存疑，建议人工审核
+
+裁决原则：宁可pending也不接受有风险的译文。
+
+输出格式（必须严格遵循JSON数组）：
+[
+    {
+        "entry_id": "条目ID",
+        "verdict": "pass" | "reject" | "pending",
+        "reason": "详细裁决理由",
+        "confidence": 0.9,
+        "suggested_action": "建议动作",
+        "alternatives": []
+    },
+    ...
+]
+
+注意：
+- 必须包含所有条目的裁决结果
+- confidence > 0.9 表示很有把握
+- confidence < 0.7 时建议设为pending"""
+
+
+def _get_prompts_dir() -> Path:
+    """定位 data/prompts/ 目录。"""
+    from ...paratranz.config_manager import ParatranzConfig
+
+    return Path(ParatranzConfig.get_data_dir()) / "prompts"
+
+
+def _load_toml(path: Path) -> dict:
+    """加载 TOML 文件，失败时返回空字典。"""
+    try:
+        with open(path, "rb") as f:
+            return tomllib.load(f)
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        warnings.warn(f"加载 {path.name} 失败，使用内置默认提示词：{e}")
+        return {}
+
+
+class LLMArbiter:
+    """
+    LLM裁决者。
+
+    职责：
+    1. 对"模棱两可"的问题做最终判定
+    2. 评估修复结果是否有效
+    3. 决定条目是接受、打回还是待审
+
+    裁决策略：
+    - 明确的问题（如格式错误已修复）-> 直接判定
+    - 质量存疑（uncertain）-> 深度分析后裁决
+    - 高置信度修复 -> 接受
+    - 低置信度或重大改动 -> 建议人工审核
+    """
+
+    def __init__(
+        self,
+        llm_client: "LLMClient",
+        game_profile: str = "skyrim_se",
+        target_lang: str = "zh_CN",
+        strict_mode: bool = False,  # 严格模式：uncertain->reject
+    ):
+        """
+        初始化裁决者。
+
+        Args:
+            llm_client: LLM客户端
+            game_profile: 游戏配置文件名
+            target_lang: 目标语言配置文件名
+            strict_mode: 严格模式，uncertain时倾向reject而非pending
+        """
+        self._llm = llm_client
+        self._strict_mode = strict_mode
+        self._prompts = self._load_prompts(game_profile, target_lang)
+
+    def _load_prompts(self, game_profile: str, target_lang: str) -> dict:
+        """从 TOML 文件加载提示词配置。"""
+        prompts_dir = _get_prompts_dir()
+
+        # 加载游戏和语言配置
+        game_data = _load_toml(prompts_dir / "games" / f"{game_profile}.toml")
+        lang_data = _load_toml(prompts_dir / "langs" / f"{target_lang}.toml")
+
+        # 加载裁决专用配置
+        arb_path = prompts_dir / "arbitration" / f"{target_lang}.toml"
+        arb_data = _load_toml(arb_path)
+
+        # 构建变量上下文
+        game = game_data.get("game", {})
+        lang = lang_data.get("lang", {})
+
+        ctx = {
+            "game_name": game.get("name", "上古卷轴5：天际特别版（SSE）"),
+            "source_lang": lang.get("source", "英文"),
+            "target_lang": lang.get("target", "中文"),
+        }
+
+        arb_cfg = arb_data.get("arbitration", {})
+
+        return {
+            "ctx": ctx,
+            "system": arb_cfg.get("system", _DEFAULT_SYSTEM).strip(),
+            "user": arb_cfg.get("user", _DEFAULT_USER).strip(),
+            "batch_system": arb_cfg.get("batch_system", _DEFAULT_BATCH_SYSTEM).strip(),
+        }
+
+    def _render(self, template: str, **extra) -> str:
+        """将 $var 占位符替换为实际值。"""
+        return Template(template).safe_substitute({**self._prompts["ctx"], **extra})
+
+    def arbitrate(
+        self,
+        ctx: ArbitrationContext,
+    ) -> ArbiterDecision:
+        """
+        对单个条目进行裁决。
+
+        Args:
+            ctx: 裁决上下文
+
+        Returns:
+            裁决结果
+        """
+        # 首先尝试快速判定（无需LLM）
+        quick_decision = self._quick_decide(ctx)
+        if quick_decision:
+            return quick_decision
+
+        # 复杂情况使用LLM裁决
+        try:
+            messages = self._build_arbitration_prompt(ctx)
+            response = self._llm.chat(messages=messages, max_tokens=1000)
+            return self._parse_arbitration_response(ctx.entry.id, response)
+        except Exception as e:
+            # LLM调用失败，基于规则做保守判定
+            return self._fallback_decision(ctx, str(e))
+
+    def arbitrate_batch(
+        self,
+        contexts: list[ArbitrationContext],
+    ) -> dict[str, ArbiterDecision]:
+        """
+        批量裁决条目。
+
+        Args:
+            contexts: 裁决上下文列表
+
+        Returns:
+            entry_id -> 裁决结果的映射
+        """
+        if not contexts:
+            return {}
+
+        # 尝试快速判定
+        decisions = {}
+        needs_llm = []
+
+        for ctx in contexts:
+            quick = self._quick_decide(ctx)
+            if quick:
+                decisions[ctx.entry.id] = quick
+            else:
+                needs_llm.append(ctx)
+
+        # 对需要LLM的条目进行批量裁决
+        if needs_llm:
+            try:
+                messages = self._build_batch_arbitration_prompt(needs_llm)
+                response = self._llm.chat(messages=messages, max_tokens=3000)
+                batch_decisions = self._parse_batch_arbitration_response(needs_llm, response)
+                decisions.update(batch_decisions)
+            except Exception as e:
+                # 批量失败，逐个使用fallback
+                for ctx in needs_llm:
+                    decisions[ctx.entry.id] = self._fallback_decision(ctx, str(e))
+
+        return decisions
+
+    def _quick_decide(self, ctx: ArbitrationContext) -> ArbiterDecision | None:
+        """
+        快速判定：基于规则直接裁决，无需LLM。
+
+        返回 None 表示需要LLM裁决。
+        """
+        entry = ctx.entry
+        issues = ctx.original_issues
+        refine = ctx.refine_result
+        polish = ctx.polish_result
+
+        # 情况1：无问题且无修复/润色 -> 直接通过
+        if not issues and not refine and not polish:
+            return ArbiterDecision(
+                entry_id=entry.id,
+                verdict="pass",
+                reason="无检测到的问题，无需修复或润色",
+                confidence=1.0,
+                suggested_action="无需操作",
+            )
+
+        # 情况2：修复失败（confidence=0）-> 根据严格模式决定
+        if refine and refine.confidence == 0 and refine.note.startswith("LLM修复失败"):
+            if self._strict_mode:
+                return ArbiterDecision(
+                    entry_id=entry.id,
+                    verdict="reject",
+                    reason=f"修复失败: {refine.note}",
+                    confidence=0.9,
+                    suggested_action="打回重翻",
+                )
+            else:
+                return ArbiterDecision(
+                    entry_id=entry.id,
+                    verdict="pending",
+                    reason=f"修复失败: {refine.note}，需人工处理",
+                    confidence=0.8,
+                    suggested_action="人工审核",
+                )
+
+        # 情况3：修复信心度很高（>0.9）且无error级别问题 -> 快速通过
+        error_issues = [i for i in issues if i.severity == "error"]
+        if refine and refine.confidence > 0.9 and not error_issues:
+            # 检查是否修复了所有问题
+            fixed_types = {f.issue_type for f in refine.fixes_applied}
+            remaining_issues = [i for i in issues if i.issue_type not in fixed_types]
+            if not remaining_issues:
+                return ArbiterDecision(
+                    entry_id=entry.id,
+                    verdict="pass",
+                    reason=f"修复信心度高({refine.confidence:.2f})，所有问题已修复",
+                    confidence=refine.confidence,
+                    suggested_action="接受修复后译文",
+                )
+
+        # 情况4：修复信心度很低（<0.5）-> pending或reject
+        if refine and refine.confidence < 0.5:
+            if self._strict_mode:
+                return ArbiterDecision(
+                    entry_id=entry.id,
+                    verdict="reject",
+                    reason=f"修复信心度过低({refine.confidence:.2f})，存在风险",
+                    confidence=0.8,
+                    suggested_action="打回重翻",
+                )
+            else:
+                return ArbiterDecision(
+                    entry_id=entry.id,
+                    verdict="pending",
+                    reason=f"修复信心度低({refine.confidence:.2f})，需要人工确认",
+                    confidence=0.7,
+                    suggested_action="人工审核",
+                )
+
+        # 情况5：有严重error且未修复 -> 根据严格模式
+        if error_issues:
+            if self._strict_mode:
+                return ArbiterDecision(
+                    entry_id=entry.id,
+                    verdict="reject",
+                    reason=f"存在未修复的严重问题: {error_issues[0].message}",
+                    confidence=0.85,
+                    suggested_action="打回重翻",
+                )
+            # 非严格模式需要LLM判断是否可以接受
+
+        # 需要LLM进行复杂判定
+        return None
+
+    def _fallback_decision(
+        self,
+        ctx: ArbitrationContext,
+        error_msg: str,
+    ) -> ArbiterDecision:
+        """LLM失败时的降级裁决。"""
+        # 保守策略：有问题就pending
+        has_errors = any(i.severity == "error" for i in ctx.original_issues)
+
+        if has_errors:
+            verdict = "reject" if self._strict_mode else "pending"
+        else:
+            verdict = "pending"
+
+        return ArbiterDecision(
+            entry_id=ctx.entry.id,
+            verdict=verdict,
+            reason=f"LLM裁决失败: {error_msg}，使用保守策略",
+            confidence=0.5,
+            suggested_action="人工审核" if verdict == "pending" else "打回重翻",
+        )
+
+    def _build_arbitration_prompt(
+        self,
+        ctx: ArbitrationContext,
+    ) -> list[dict]:
+        """构建裁决Prompt。"""
+        entry = ctx.entry
+        refine = ctx.refine_result
+        polish = ctx.polish_result
+
+        # 格式化原问题
+        issues_text = self._format_issues(ctx.original_issues)
+
+        # 格式化修复和润色详情
+        fix_details = self._format_fix_details(refine)
+        polish_details = self._format_polish_details(polish)
+
+        # 确定最终译文展示
+        # 优先级：润色 > 修复 > 原文
+        if polish and polish.polished_translation:
+            final_translation = polish.polished_translation
+        elif refine and refine.refined_translation:
+            final_translation = refine.refined_translation
+        else:
+            final_translation = entry.translation or ""
+
+        # 渲染用户Prompt
+        user_content = self._render(
+            self._prompts["user"],
+            original=entry.original or "",
+            initial_translation=entry.translation or "",
+            refined_translation=refine.refined_translation if refine else entry.translation or "",
+            polished_translation=polish.polished_translation if polish else final_translation,
+            context=entry.context or "未知",
+            original_issues=issues_text,
+            fix_details=fix_details,
+            polish_details=polish_details,
+            refiner_confidence=f"{refine.confidence:.2f}" if refine else "N/A",
+            polisher_confidence=f"{polish.confidence:.2f}" if polish else "N/A",
+            quality_gate_verdict=ctx.quality_gate_verdict or "N/A",
+        )
+
+        return [
+            {"role": "system", "content": self._prompts["system"]},
+            {"role": "user", "content": user_content},
+        ]
+
+    def _build_batch_arbitration_prompt(
+        self,
+        contexts: list[ArbitrationContext],
+    ) -> list[dict]:
+        """构建批量裁决Prompt。"""
+        lines = ["请批量裁决以下翻译条目的最终质量。\n"]
+
+        for ctx in contexts:
+            entry = ctx.entry
+            refine = ctx.refine_result
+            polish = ctx.polish_result
+
+            # 确定最终译文（优先级：润色 > 修复 > 原文）
+            if polish and polish.polished_translation:
+                final_translation = polish.polished_translation
+            elif refine and refine.refined_translation:
+                final_translation = refine.refined_translation
+            else:
+                final_translation = entry.translation or ""
+
+            lines.append(f"\n{'='*60}")
+            lines.append(f"【ENTRY_ID: {entry.id}】")
+            lines.append(f"原文：{entry.original or ''}")
+            lines.append(f"初始译文：{entry.translation or ''}")
+            lines.append(f"修复后译文：{refine.refined_translation if refine else 'N/A'}")
+            lines.append(f"润色后译文：{polish.polished_translation if polish else 'N/A'}")
+            lines.append(f"最终译文：{final_translation}")
+            lines.append(f"上下文：{entry.context or '未知'}")
+
+            if ctx.original_issues:
+                lines.append("检测到的问题：")
+                for issue in ctx.original_issues:
+                    lines.append(f"  - [{issue.severity}] {issue.issue_type}: {issue.message}")
+
+            if refine:
+                lines.append(f"修复信心度：{refine.confidence:.2f}")
+                if refine.fixes_applied:
+                    lines.append("应用的修复：")
+                    for fix in refine.fixes_applied:
+                        lines.append(f"  - {fix.issue_type}: {fix.fix_description}")
+
+            if polish:
+                lines.append(f"润色信心度：{polish.confidence:.2f}")
+                if polish.changes:
+                    lines.append("润色改动：")
+                    for change in polish.changes[:3]:  # 最多显示3个改动
+                        aspect = change.get("aspect", "未知")
+                        lines.append(f"  - [{aspect}] {change.get('before', '')} -> {change.get('after', '')}")
+
+            lines.append(f"原质量关卡判定：{ctx.quality_gate_verdict or 'N/A'}")
+
+        lines.append(f"\n{'='*60}")
+
+        return [
+            {"role": "system", "content": self._prompts["batch_system"]},
+            {"role": "user", "content": "\n".join(lines)},
+        ]
+
+    def _format_issues(self, issues: list["PostProcessIssue"]) -> str:
+        """格式化问题列表。"""
+        if not issues:
+            return "无"
+
+        lines = []
+        for issue in issues:
+            lines.append(f"[{issue.severity}] {issue.issue_type}: {issue.message}")
+        return "\n".join(lines)
+
+    def _format_fix_details(self, refine: "RefineResult | None") -> str:
+        """格式化修复详情。"""
+        if not refine:
+            return "无修复"
+
+        lines = []
+        lines.append(f"修复后译文: {refine.refined_translation}")
+        lines.append(f"修复信心度: {refine.confidence:.2f}")
+
+        if refine.fixes_applied:
+            lines.append("应用的修复:")
+            for fix in refine.fixes_applied:
+                lines.append(f"  - {fix.issue_type}: {fix.fix_description}")
+
+        if refine.note:
+            lines.append(f"备注: {refine.note}")
+
+        return "\n".join(lines)
+
+    def _format_polish_details(self, polish: "PolishResult | None") -> str:
+        """格式化润色详情。"""
+        if not polish:
+            return "无润色"
+
+        lines = []
+        lines.append(f"润色后译文: {polish.polished_translation}")
+        lines.append(f"润色信心度: {polish.confidence:.2f}")
+
+        if polish.changes:
+            lines.append("润色改动:")
+            for change in polish.changes:
+                aspect = change.get("aspect", "未知")
+                before = change.get("before", "")
+                after = change.get("after", "")
+                reason = change.get("reason", "")
+                lines.append(f"  - [{aspect}] {before} -> {after}")
+                if reason:
+                    lines.append(f"    理由: {reason}")
+
+        if polish.note:
+            lines.append(f"备注: {polish.note}")
+
+        return "\n".join(lines)
+
+    def _parse_arbitration_response(
+        self,
+        entry_id: str,
+        response: str,
+    ) -> ArbiterDecision:
+        """解析裁决响应。"""
+        try:
+            # 提取JSON
+            json_match = re.search(r"\{[\s\S]*\}", response)
+            if json_match:
+                data = json.loads(json_match.group())
+            else:
+                data = json.loads(response)
+
+            verdict = data.get("verdict", "pending").lower()
+            if verdict not in ("pass", "reject", "pending"):
+                verdict = "pending"
+
+            return ArbiterDecision(
+                entry_id=entry_id,
+                verdict=verdict,
+                reason=data.get("reason", ""),
+                confidence=data.get("confidence", 0.5),
+                suggested_action=data.get("suggested_action", ""),
+                alternatives=data.get("alternatives", []),
+            )
+
+        except json.JSONDecodeError:
+            # JSON解析失败，尝试从文本判断
+            text_lower = response.lower()
+            if "pass" in text_lower or "通过" in text_lower:
+                verdict = "pass"
+            elif "reject" in text_lower or "打回" in text_lower or "失败" in text_lower:
+                verdict = "reject"
+            else:
+                verdict = "pending"
+
+            return ArbiterDecision(
+                entry_id=entry_id,
+                verdict=verdict,
+                reason=f"响应解析异常，从文本推断: {response[:200]}",
+                confidence=0.5,
+                suggested_action="建议人工确认",
+            )
+
+    def _parse_batch_arbitration_response(
+        self,
+        contexts: list[ArbitrationContext],
+        response: str,
+    ) -> dict[str, ArbiterDecision]:
+        """解析批量裁决响应。"""
+        entry_map = {ctx.entry.id: ctx.entry for ctx in contexts}
+        decisions = {}
+
+        try:
+            # 提取JSON数组
+            json_match = re.search(r"\[[\s\S]*\]", response)
+            if json_match:
+                data = json.loads(json_match.group())
+            else:
+                data = json.loads(response)
+
+            for item in data:
+                entry_id = item.get("entry_id", "")
+                if entry_id not in entry_map:
+                    continue
+
+                verdict = item.get("verdict", "pending").lower()
+                if verdict not in ("pass", "reject", "pending"):
+                    verdict = "pending"
+
+                decisions[entry_id] = ArbiterDecision(
+                    entry_id=entry_id,
+                    verdict=verdict,
+                    reason=item.get("reason", ""),
+                    confidence=item.get("confidence", 0.5),
+                    suggested_action=item.get("suggested_action", ""),
+                    alternatives=item.get("alternatives", []),
+                )
+
+        except json.JSONDecodeError:
+            # JSON解析失败，所有条目使用fallback
+            for ctx in contexts:
+                decisions[ctx.entry.id] = self._fallback_decision(ctx, "批量响应解析失败")
+
+        return decisions

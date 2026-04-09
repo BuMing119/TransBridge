@@ -197,10 +197,19 @@ class _BatchTranslationProgressWindow(QWidget):
             w.force_collapse()
 
         if result:
-            self._round_log.append(
-                f"✅ {plugin_name} 完成 — 成功 {result.success_count} 条，"
-                f"失败 {result.failed_count} 条"
-            )
+            # 构建后处理摘要（如果有）
+            pp_info = ""
+            if hasattr(result, 'post_process_result') and result.post_process_result:
+                pp = result.post_process_result
+                error_count = sum(1 for i in pp.issues if i.severity == "error")
+                warning_count = sum(1 for i in pp.issues if i.severity == "warning")
+                if error_count > 0 or warning_count > 0:
+                    pp_info = f"（质量检查：{error_count} 错误，{warning_count} 警告）"
+
+            log_msg = f"✅ {plugin_name} 完成 — 成功 {result.success_count} 条，失败 {result.failed_count} 条"
+            if pp_info:
+                log_msg += f" {pp_info}"
+            self._round_log.append(log_msg)
         else:
             self._round_log.append(f"⚠ {plugin_name} 翻译失败或被中断")
 

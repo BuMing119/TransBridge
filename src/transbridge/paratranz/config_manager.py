@@ -41,6 +41,9 @@ class LLMConfig:
     embedding_base_url: str = ""            # 留空则复用 base_url
     embedding_local_model: str = "paraphrase-multilingual-MiniLM-L12-v2"  # 本地模型名
 
+    # 后处理配置
+    enable_post_process: bool = True        # 翻译完成后是否进行质量检查
+
     def save_to_file(self) -> None:
         """将 [llm] 节写入共享 INI 文件（不覆盖其他节）。"""
         config_path = ParatranzConfig.get_config_file_path()
@@ -74,6 +77,8 @@ class LLMConfig:
         config.set("llm", "embedding_api_key", self.embedding_api_key)
         config.set("llm", "embedding_base_url", self.embedding_base_url)
         config.set("llm", "embedding_local_model", self.embedding_local_model)
+        # 后处理配置
+        config.set("llm", "enable_post_process", str(self.enable_post_process))
         with open(config_path, "w", encoding="utf-8") as f:
             config.write(f)
 
@@ -115,6 +120,8 @@ class LLMConfig:
         obj.embedding_api_key = config.get("llm", "embedding_api_key", fallback=obj.embedding_api_key)
         obj.embedding_base_url = config.get("llm", "embedding_base_url", fallback=obj.embedding_base_url)
         obj.embedding_local_model = config.get("llm", "embedding_local_model", fallback=obj.embedding_local_model)
+        # 后处理配置
+        obj.enable_post_process = config.getboolean("llm", "enable_post_process", fallback=obj.enable_post_process)
         return obj
 
     @staticmethod

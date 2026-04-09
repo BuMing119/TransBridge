@@ -91,7 +91,11 @@ def _dial_filename(quest_formid: str, collection: TranslationEntryCollection) ->
                 quest_entry = entry
                 break
     quest_original = quest_entry.original if quest_entry else quest_formid
+    # 清理非法字符并截断长度（避免 Windows 路径过长）
     quest_original = re.sub(r'[<>:"/\\|?*]', '_', quest_original)
+    max_len = 80  # 限制任务名长度
+    if len(quest_original) > max_len:
+        quest_original = quest_original[:max_len] + "..."
     return f"对话_[{quest_original}].json"
 
 

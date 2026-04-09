@@ -211,6 +211,11 @@ class AITranslatorWindow(QWidget):
         self._provider_combo.currentIndexChanged.connect(self._on_provider_changed)
         llm_layout.addLayout(_row("供应商:", self._provider_combo))
 
+        self._target_lang_combo = QComboBox()
+        self._target_lang_combo.addItems(["zh_CN"])
+        self._target_lang_combo.setToolTip("目标语言配置，对应 data/prompts/langs/{lang}.toml")
+        llm_layout.addLayout(_row("目标语言:", self._target_lang_combo))
+
         self._model_edit = QLineEdit()
         self._model_edit.setPlaceholderText("如 gpt-4o / deepseek-chat")
         llm_layout.addLayout(_row("模型名:", self._model_edit))
@@ -384,6 +389,11 @@ class AITranslatorWindow(QWidget):
         self._overwrite_check = QCheckBox("覆盖已有译文（重新翻译）")
         scope_layout.addWidget(self._overwrite_check)
 
+        self._post_process_check = QCheckBox("翻译后进行质量检查（需要额外LLM调用）")
+        self._post_process_check.setChecked(True)
+        self._post_process_check.setToolTip("启用后会进行术语一致性、格式验证和LLM质量检测，可能增加额外耗时和API调用")
+        scope_layout.addWidget(self._post_process_check)
+
         self._estimate_lbl = QLabel("预计：— 条")
         self._estimate_lbl.setStyleSheet("color: #888; font-size: 11px;")
         scope_layout.addWidget(self._estimate_lbl)
@@ -437,6 +447,7 @@ class AITranslatorWindow(QWidget):
         from src.transbridge.paratranz.config_manager import LLMConfig
         cfg = LLMConfig.load_from_file()
         self._provider_combo.setCurrentIndex(0 if cfg.provider != "anthropic" else 1)
+        self._target_lang_combo.setCurrentText(cfg.target_lang)
         self._model_edit.setText(cfg.model)
         self._apikey_edit.setText(cfg.api_key)
         self._baseurl_edit.setText(cfg.base_url)
@@ -448,6 +459,7 @@ class AITranslatorWindow(QWidget):
         self._excel_path_edit.setText(cfg.local_excel_path)
         self._excel_orig_col_edit.setText(cfg.excel_original_col)
         self._excel_trans_col_edit.setText(cfg.excel_translation_col)
+        self._post_process_check.setChecked(cfg.enable_post_process)
         # Embedding 配置
         self._embed_provider_combo.setCurrentIndex(0 if cfg.embedding_provider == "local" else 1)
         self._embed_local_model_edit.setText(cfg.embedding_local_model)
@@ -488,6 +500,7 @@ class AITranslatorWindow(QWidget):
         from src.transbridge.paratranz.config_manager import LLMConfig
         cfg = LLMConfig.load_from_file()
         cfg.provider = "anthropic" if self._provider_combo.currentIndex() == 1 else "openai_compatible"
+        cfg.target_lang = self._target_lang_combo.currentText()
         cfg.model = self._model_edit.text().strip()
         cfg.api_key = self._apikey_edit.text().strip()
         cfg.base_url = self._baseurl_edit.text().strip()
@@ -499,6 +512,7 @@ class AITranslatorWindow(QWidget):
         cfg.local_excel_path = self._excel_path_edit.text().strip()
         cfg.excel_original_col = self._excel_orig_col_edit.text().strip() or "A"
         cfg.excel_translation_col = self._excel_trans_col_edit.text().strip() or "B"
+        cfg.enable_post_process = self._post_process_check.isChecked()
         # Embedding 配置
         cfg.embedding_provider = "local" if self._embed_provider_combo.currentIndex() == 0 else "openai"
         cfg.embedding_local_model = self._embed_local_model_edit.text().strip()
@@ -522,6 +536,7 @@ class AITranslatorWindow(QWidget):
     def _connect_auto_save(self):
         """在配置加载完成后连接所有控件的变更信号，实现自动保存。"""
         self._provider_combo.currentIndexChanged.connect(self._save_config)
+        self._target_lang_combo.currentIndexChanged.connect(self._save_config)
         self._model_edit.textChanged.connect(self._save_config)
         self._apikey_edit.textChanged.connect(self._save_config)
         self._baseurl_edit.textChanged.connect(self._save_config)
@@ -534,6 +549,7 @@ class AITranslatorWindow(QWidget):
         self._excel_orig_col_edit.textChanged.connect(self._save_config)
         self._excel_trans_col_edit.textChanged.connect(self._save_config)
         self._priority_list.model().rowsMoved.connect(self._save_config)
+        self._post_process_check.toggled.connect(self._save_config)
         # Embedding 配置自动保存
         self._embed_provider_combo.currentIndexChanged.connect(self._save_config)
         self._embed_local_model_edit.textChanged.connect(self._save_config)
@@ -545,6 +561,7 @@ class AITranslatorWindow(QWidget):
         from src.transbridge.paratranz.config_manager import LLMConfig
         cfg = LLMConfig()
         cfg.provider = "anthropic" if self._provider_combo.currentIndex() == 1 else "openai_compatible"
+        cfg.target_lang = self._target_lang_combo.currentText()
         cfg.model = self._model_edit.text().strip()
         cfg.api_key = self._apikey_edit.text().strip()
         cfg.base_url = self._baseurl_edit.text().strip() or "https://api.openai.com/v1"

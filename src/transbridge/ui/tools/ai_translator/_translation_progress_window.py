@@ -317,6 +317,18 @@ class _TranslationProgressWindow(QWidget):
         for w in self._batch_widgets.values():
             w.force_collapse()
 
+        # 构建后处理摘要（如果有）
+        pp_summary = ""
+        if hasattr(result, 'post_process_result') and result.post_process_result:
+            pp = result.post_process_result
+            error_count = sum(1 for i in pp.issues if i.severity == "error")
+            warning_count = sum(1 for i in pp.issues if i.severity == "warning")
+            pp_summary = f"\n\n质量检查：{pp.total_checked} 条"
+            if error_count > 0 or warning_count > 0:
+                pp_summary += f"（{error_count} 错误，{warning_count} 警告）"
+            if pp.needs_review:
+                pp_summary += f"\n需审核：{len(pp.needs_review)} 条"
+
         if self._was_stopped:
             self._progress_msg.setText("已停止")
             self._lbl_success.setText(f"成功: {result.success_count}")
@@ -335,6 +347,8 @@ class _TranslationProgressWindow(QWidget):
                 f"\n✅ 完成 — 成功 {result.success_count} 条，"
                 f"失败 {result.failed_count} 条，新增术语 {result.new_dynamic_terms} 个"
             )
+            if pp_summary:
+                self._round_log.append(pp_summary.strip())
 
         self._pause_btn.setEnabled(False)
         self._stop_btn.setEnabled(False)
@@ -354,13 +368,15 @@ class _TranslationProgressWindow(QWidget):
                 f"已保存断点，可通过断点续传继续。",
             )
         else:
-            QMessageBox.information(
-                self, "翻译完成",
+            msg = (
                 f"成功：{result.success_count} 条\n"
                 f"失败：{result.failed_count} 条\n"
                 f"跳过：{result.skipped_count} 条\n"
-                f"新增术语：{result.new_dynamic_terms} 个",
+                f"新增术语：{result.new_dynamic_terms} 个"
             )
+            if pp_summary:
+                msg += pp_summary
+            QMessageBox.information(self, "翻译完成", msg)
 
     def _on_error(self, err: str):
         for w in self._batch_widgets.values():

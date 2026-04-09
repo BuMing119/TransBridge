@@ -44,6 +44,7 @@ class TermEntry:
     context: str = ""
     created_at: str = ""
     case_sensitive: bool = False  # 仅 paratranz 来源可能为 True
+    variants: list[str] = field(default_factory=list)  # 术语变体列表（单复数、缩写等）
 
 
 # ─────────────────────────── DynamicTermDatabase ─────────────────────────────
@@ -294,6 +295,23 @@ class TermDatabaseManager:
         extra = [e for e in self._dynamic_db.as_list() if e.term.lower() not in merged_terms_set]
         return self._merged_terms + extra
 
+    def _get_term_matcher_map(self) -> dict[str, tuple[str, str, bool]]:
+        """
+        构建术语匹配映射表。
+
+        返回: {匹配键: (主术语, 译文, case_sensitive)}
+        匹配键包括：主术语本身 + 所有变体
+        """
+        matcher_map: dict[str, tuple[str, str, bool]] = {}
+        for entry in self._effective_terms():
+            # 主术语
+            matcher_map[entry.term] = (entry.term, entry.translation, entry.case_sensitive)
+            # 变体映射到主术语的译文
+            for variant in entry.variants:
+                if variant and variant not in matcher_map:
+                    matcher_map[variant] = (entry.term, entry.translation, entry.case_sensitive)
+        return matcher_map
+
     # ─────────────────────────── 向量索引 ─────────────────────────────
 
     def _init_vector_index(self) -> None:
@@ -460,12 +478,14 @@ class TermDatabaseManager:
         """在 text_batch 的原文中扫描匹配的术语，返回 {term: translation}。
 
         匹配策略（按顺序，命中即止）：
-        1. 正向子串：术语是原文的子串（原有逻辑）
+        1. 正向子串：术语或其变体是原文的子串（原有逻辑）
         2. 冠词规范化：忽略术语开头的 The/A/An 后重试正向子串
-        3. 反向前缀：原文是术语的词边界前缀
+        3. 反向前缀：原文是术语/变体的词边界前缀
            例："Black Briar" → 术语 "Black Briar Lodge → 黑棘据点"
-        4. 反向后缀：原文是术语的词边界后缀
+        4. 反向后缀：原文是术语/变体的词边界后缀
            例："Meadery" → 术语 "Black Briar Meadery → 黑棘酿酒坊"
+
+        匹配到变体时，返回主术语的译文。
         """
         combined_text = "\n".join(text_batch)
         combined_lower = combined_text.lower()
@@ -473,39 +493,43 @@ class TermDatabaseManager:
         originals_lower = [t.lower() for t in text_batch if len(t) >= 4]
         matched: dict[str, str] = {}
 
-        for entry in self._effective_terms():
-            term = entry.term
-            tl = term.lower()
-            cs = entry.case_sensitive
+        matcher_map = self._get_term_matcher_map()
+
+        for match_key, (main_term, translation, case_sensitive) in matcher_map.items():
+            # 如果主术语已匹配，跳过变体检查
+            if main_term in matched:
+                continue
+
+            mk_lower = match_key.lower()
 
             # 1. 正向子串
-            if cs:
-                if term in combined_text:
-                    matched[term] = entry.translation
+            if case_sensitive:
+                if match_key in combined_text:
+                    matched[main_term] = translation
                     continue
             else:
-                if tl in combined_lower:
-                    matched[term] = entry.translation
+                if mk_lower in combined_lower:
+                    matched[main_term] = translation
                     continue
 
             # 2. 冠词规范化：术语含冠词前缀，去掉后重试正向子串
-            tl_no_art = _ARTICLE_RE.sub('', tl)
-            if tl_no_art != tl and tl_no_art in combined_lower:
-                matched[term] = entry.translation
+            mk_no_art = _ARTICLE_RE.sub('', mk_lower)
+            if mk_no_art != mk_lower and mk_no_art in combined_lower:
+                matched[main_term] = translation
                 continue
 
-            # 3. 反向前缀：original 是 term 的词边界前缀
+            # 3. 反向前缀：original 是 match_key 的词边界前缀
             for orig in originals_lower:
-                if tl.startswith(orig) and (len(tl) == len(orig) or tl[len(orig)] == ' '):
-                    matched[term] = entry.translation
+                if mk_lower.startswith(orig) and (len(mk_lower) == len(orig) or mk_lower[len(orig)] == ' '):
+                    matched[main_term] = translation
                     break
-            if term in matched:
+            if main_term in matched:
                 continue
 
-            # 4. 反向后缀：original 是 term 的词边界后缀
+            # 4. 反向后缀：original 是 match_key 的词边界后缀
             for orig in originals_lower:
-                if tl.endswith(orig) and (len(tl) == len(orig) or tl[-(len(orig) + 1)] == ' '):
-                    matched[term] = entry.translation
+                if mk_lower.endswith(orig) and (len(mk_lower) == len(orig) or mk_lower[-(len(orig) + 1)] == ' '):
+                    matched[main_term] = translation
                     break
 
         return matched
@@ -513,22 +537,34 @@ class TermDatabaseManager:
     def exact_match(self, originals: list[str]) -> dict[str, str]:
         """对 originals 列表做精确全等匹配，返回 {original: translation}。
         区分大小写的术语要求精确相等；不区分大小写的术语忽略大小写。
+        支持变体：如果原文精确匹配某个变体，返回主术语的译文。
         """
         # 构建两张查找表（O(n) 预处理，O(1) 查询）
-        cs_map: dict[str, str] = {}   # 区分大小写: exact term → translation
-        ci_map: dict[str, str] = {}   # 不区分大小写: lower term → translation
+        cs_map: dict[str, tuple[str, str]] = {}   # 区分大小写: exact term → (main_term, translation)
+        ci_map: dict[str, tuple[str, str]] = {}   # 不区分大小写: lower term → (main_term, translation)
         for entry in self._effective_terms():
+            # 主术语
             if entry.case_sensitive:
-                cs_map[entry.term] = entry.translation
+                cs_map[entry.term] = (entry.term, entry.translation)
             else:
-                ci_map[entry.term.lower()] = entry.translation
+                ci_map[entry.term.lower()] = (entry.term, entry.translation)
+            # 变体
+            for variant in entry.variants:
+                if not variant:
+                    continue
+                if entry.case_sensitive:
+                    cs_map[variant] = (entry.term, entry.translation)
+                else:
+                    ci_map[variant.lower()] = (entry.term, entry.translation)
 
         result: dict[str, str] = {}
         for original in originals:
             if original in cs_map:
-                result[original] = cs_map[original]
+                main_term, trans = cs_map[original]
+                result[main_term] = trans
             elif original.lower() in ci_map:
-                result[original] = ci_map[original.lower()]
+                main_term, trans = ci_map[original.lower()]
+                result[main_term] = trans
         return result
 
     def _load_dynamic(self) -> list[TermEntry]:
@@ -553,6 +589,7 @@ class TermDatabaseManager:
                         translation=translation,
                         source="paratranz",
                         case_sensitive=bool(item.get("caseSensitive", False)),
+                        variants=item.get("variants") or [],
                     ))
             if len(items) < 100:
                 break
@@ -571,7 +608,12 @@ class TermDatabaseManager:
                 term = item.get("term", "") or item.get("original", "")
                 translation = item.get("translation", "")
                 if term and translation:
-                    results.append(TermEntry(term=term, translation=translation, source="json"))
+                    results.append(TermEntry(
+                        term=term,
+                        translation=translation,
+                        source="json",
+                        variants=item.get("variants") or [],
+                    ))
         elif isinstance(raw, dict):
             for term, translation in raw.items():
                 if term and translation:
