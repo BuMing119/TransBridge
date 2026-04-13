@@ -44,6 +44,27 @@ class LLMConfig:
     # 后处理配置
     enable_post_process: bool = True        # 翻译完成后是否进行质量检查
 
+    # 阶段1: 检测
+    pp_enable_consistency_check: bool = True
+    pp_enable_format_validation: bool = True
+    pp_enable_quality_gate: bool = True
+    pp_quality_gate_batch_size: int = 10
+
+    # 阶段2a: 修复
+    pp_enable_refinement: bool = True
+    pp_refinement_batch_size: int = 5
+
+    # 阶段2b: 润色
+    pp_enable_polish: bool = False
+    pp_polish_scope: str = "all"  # all | passed | has_issues
+    pp_polish_level: str = "moderate"  # light | moderate | aggressive
+    pp_polish_batch_size: int = 5
+
+    # 阶段3: 裁决
+    pp_enable_arbitration: bool = True
+    pp_strict_arbitration: bool = False
+    pp_arbitration_batch_size: int = 10
+
     def save_to_file(self) -> None:
         """将 [llm] 节写入共享 INI 文件（不覆盖其他节）。"""
         config_path = ParatranzConfig.get_config_file_path()
@@ -79,6 +100,22 @@ class LLMConfig:
         config.set("llm", "embedding_local_model", self.embedding_local_model)
         # 后处理配置
         config.set("llm", "enable_post_process", str(self.enable_post_process))
+        # 阶段1: 检测
+        config.set("llm", "pp_enable_consistency_check", str(self.pp_enable_consistency_check))
+        config.set("llm", "pp_enable_format_validation", str(self.pp_enable_format_validation))
+        config.set("llm", "pp_enable_quality_gate", str(self.pp_enable_quality_gate))
+        config.set("llm", "pp_quality_gate_batch_size", str(self.pp_quality_gate_batch_size))
+        # 阶段2: 修复与润色
+        config.set("llm", "pp_enable_refinement", str(self.pp_enable_refinement))
+        config.set("llm", "pp_refinement_batch_size", str(self.pp_refinement_batch_size))
+        config.set("llm", "pp_enable_polish", str(self.pp_enable_polish))
+        config.set("llm", "pp_polish_scope", self.pp_polish_scope)
+        config.set("llm", "pp_polish_level", self.pp_polish_level)
+        config.set("llm", "pp_polish_batch_size", str(self.pp_polish_batch_size))
+        # 阶段3: 裁决
+        config.set("llm", "pp_enable_arbitration", str(self.pp_enable_arbitration))
+        config.set("llm", "pp_strict_arbitration", str(self.pp_strict_arbitration))
+        config.set("llm", "pp_arbitration_batch_size", str(self.pp_arbitration_batch_size))
         with open(config_path, "w", encoding="utf-8") as f:
             config.write(f)
 
@@ -122,6 +159,22 @@ class LLMConfig:
         obj.embedding_local_model = config.get("llm", "embedding_local_model", fallback=obj.embedding_local_model)
         # 后处理配置
         obj.enable_post_process = config.getboolean("llm", "enable_post_process", fallback=obj.enable_post_process)
+        # 阶段1: 检测
+        obj.pp_enable_consistency_check = config.getboolean("llm", "pp_enable_consistency_check", fallback=obj.pp_enable_consistency_check)
+        obj.pp_enable_format_validation = config.getboolean("llm", "pp_enable_format_validation", fallback=obj.pp_enable_format_validation)
+        obj.pp_enable_quality_gate = config.getboolean("llm", "pp_enable_quality_gate", fallback=obj.pp_enable_quality_gate)
+        obj.pp_quality_gate_batch_size = config.getint("llm", "pp_quality_gate_batch_size", fallback=obj.pp_quality_gate_batch_size)
+        # 阶段2: 修复与润色
+        obj.pp_enable_refinement = config.getboolean("llm", "pp_enable_refinement", fallback=obj.pp_enable_refinement)
+        obj.pp_refinement_batch_size = config.getint("llm", "pp_refinement_batch_size", fallback=obj.pp_refinement_batch_size)
+        obj.pp_enable_polish = config.getboolean("llm", "pp_enable_polish", fallback=obj.pp_enable_polish)
+        obj.pp_polish_scope = config.get("llm", "pp_polish_scope", fallback=obj.pp_polish_scope)
+        obj.pp_polish_level = config.get("llm", "pp_polish_level", fallback=obj.pp_polish_level)
+        obj.pp_polish_batch_size = config.getint("llm", "pp_polish_batch_size", fallback=obj.pp_polish_batch_size)
+        # 阶段3: 裁决
+        obj.pp_enable_arbitration = config.getboolean("llm", "pp_enable_arbitration", fallback=obj.pp_enable_arbitration)
+        obj.pp_strict_arbitration = config.getboolean("llm", "pp_strict_arbitration", fallback=obj.pp_strict_arbitration)
+        obj.pp_arbitration_batch_size = config.getint("llm", "pp_arbitration_batch_size", fallback=obj.pp_arbitration_batch_size)
         return obj
 
     @staticmethod

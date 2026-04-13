@@ -62,14 +62,36 @@ class PostProcessorConfig:
     reset_stage_on_error: bool = False
 
     @classmethod
-    def from_llm_config(cls) -> "PostProcessorConfig":
-        """从 LLMConfig 加载配置创建 PostProcessorConfig。"""
+    def from_llm_config(cls, llm_config=None) -> "PostProcessorConfig":
+        """从 LLMConfig 加载配置创建 PostProcessorConfig。
+
+        Args:
+            llm_config: LLMConfig实例，为None时从文件加载
+        """
         from ...paratranz.config_manager import LLMConfig
 
-        llm_config = LLMConfig.load_from_file()
+        if llm_config is None:
+            llm_config = LLMConfig.load_from_file()
         return cls(
             game_profile=llm_config.game_profile,
             target_lang=llm_config.target_lang,
+            # 阶段1: 检测
+            enable_consistency_check=llm_config.pp_enable_consistency_check,
+            enable_format_validation=llm_config.pp_enable_format_validation,
+            enable_quality_gate=llm_config.pp_enable_quality_gate,
+            quality_gate_batch_size=llm_config.pp_quality_gate_batch_size,
+            # 阶段2a: 修复
+            enable_refinement=llm_config.pp_enable_refinement,
+            refinement_batch_size=llm_config.pp_refinement_batch_size,
+            # 阶段2b: 润色
+            enable_polish=llm_config.pp_enable_polish,
+            polish_scope=llm_config.pp_polish_scope,
+            polish_level=llm_config.pp_polish_level,
+            polish_batch_size=llm_config.pp_polish_batch_size,
+            # 阶段3: 裁决
+            enable_llm_arbitration=llm_config.pp_enable_arbitration,
+            strict_arbitration=llm_config.pp_strict_arbitration,
+            arbitration_batch_size=llm_config.pp_arbitration_batch_size,
         )
 
 

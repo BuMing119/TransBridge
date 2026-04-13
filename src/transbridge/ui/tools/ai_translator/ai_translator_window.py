@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QLineEdit, QComboBox, QSpinBox, QPushButton,
     QRadioButton, QButtonGroup, QFileDialog, QMessageBox,
     QCheckBox, QListWidget, QListWidgetItem,
-    QAbstractItemView,
+    QAbstractItemView, QFrame, QTabWidget,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QBrush
@@ -39,7 +39,7 @@ class AITranslatorWindow(QWidget):
         self._ctx = ctx
         self._step2 = step2
         self.setWindowTitle("AI 自动翻译")
-        self.resize(560, 680)
+        self.resize(560, 520)
         self._init_ui()
         self._load_config()
         self._connect_auto_save()
@@ -261,7 +261,14 @@ class AITranslatorWindow(QWidget):
         test_row.addWidget(test_btn)
         llm_layout.addLayout(test_row)
 
-        main_layout.addWidget(llm_box)
+        # 创建标签页
+        self._tabs = QTabWidget()
+
+        # Tab 1: LLM 与模型
+        tab_llm = QWidget()
+        tab_llm_layout = QVBoxLayout(tab_llm)
+        tab_llm_layout.setSpacing(6)
+        tab_llm_layout.addWidget(llm_box)
 
         # ── Embedding 配置区 ──────────────────────────────────────────────────
         embed_box = QGroupBox("语义检索配置（Embedding）")
@@ -318,7 +325,9 @@ class AITranslatorWindow(QWidget):
         baseurl_row.addWidget(self._embed_baseurl_edit)
         embed_layout.addLayout(baseurl_row)
 
-        main_layout.addWidget(embed_box)
+        tab_llm_layout.addWidget(embed_box)
+        tab_llm_layout.addStretch()
+        self._tabs.addTab(tab_llm, "LLM 与模型")
 
         # ── 术语库配置区 ──────────────────────────────────────────────────────
         term_box = QGroupBox("术语库来源（上方优先级更高）")
@@ -370,7 +379,13 @@ class AITranslatorWindow(QWidget):
         view_terms_btn.clicked.connect(self._on_view_terms)
         term_layout.addWidget(view_terms_btn)
 
-        main_layout.addWidget(term_box)
+        # Tab 2: 术语库
+        tab_terms = QWidget()
+        tab_terms_layout = QVBoxLayout(tab_terms)
+        tab_terms_layout.setSpacing(6)
+        tab_terms_layout.addWidget(term_box)
+        tab_terms_layout.addStretch()
+        self._tabs.addTab(tab_terms, "术语库")
 
         # ── 翻译范围区 ────────────────────────────────────────────────────────
         scope_box = QGroupBox("翻译范围")
@@ -389,16 +404,122 @@ class AITranslatorWindow(QWidget):
         self._overwrite_check = QCheckBox("覆盖已有译文（重新翻译）")
         scope_layout.addWidget(self._overwrite_check)
 
-        self._post_process_check = QCheckBox("翻译后进行质量检查（需要额外LLM调用）")
-        self._post_process_check.setChecked(True)
-        self._post_process_check.setToolTip("启用后会进行术语一致性、格式验证和LLM质量检测，可能增加额外耗时和API调用")
-        scope_layout.addWidget(self._post_process_check)
-
         self._estimate_lbl = QLabel("预计：— 条")
         self._estimate_lbl.setStyleSheet("color: #888; font-size: 11px;")
         scope_layout.addWidget(self._estimate_lbl)
 
         main_layout.addWidget(scope_box)
+
+        # ── 后处理配置区 ───────────────────────────────────────────────────────
+        self._pp_box = QGroupBox("后处理配置")
+        pp_layout = QVBoxLayout(self._pp_box)
+        pp_layout.setSpacing(6)
+
+        # 总开关
+        self._pp_enable_check = QCheckBox("启用翻译后质量检查与优化")
+        self._pp_enable_check.setChecked(True)
+        self._pp_enable_check.setToolTip("启用后将对翻译结果进行质量检查、修复和润色，可能增加额外耗时和API调用")
+        pp_layout.addWidget(self._pp_enable_check)
+
+        # 分隔线
+        line1 = QFrame()
+        line1.setFrameShape(QFrame.Shape.HLine)
+        line1.setStyleSheet("color: #ccc;")
+        pp_layout.addWidget(line1)
+
+        # 阶段1: 检测
+        detect_label = QLabel("<b>阶段1: 质量检测</b>")
+        pp_layout.addWidget(detect_label)
+
+        self._pp_consistency_check = QCheckBox("术语一致性检查")
+        self._pp_consistency_check.setChecked(True)
+        self._pp_consistency_check.setToolTip("检查译文是否使用了术语表中的标准译法")
+        pp_layout.addWidget(self._pp_consistency_check)
+
+        self._pp_format_check = QCheckBox("格式验证（占位符、标签、引号等）")
+        self._pp_format_check.setChecked(True)
+        self._pp_format_check.setToolTip("检查译文是否保留了原文的占位符、格式标记和引号闭合")
+        pp_layout.addWidget(self._pp_format_check)
+
+        self._pp_quality_gate_check = QCheckBox("LLM质量检测")
+        self._pp_quality_gate_check.setChecked(True)
+        self._pp_quality_gate_check.setToolTip("使用LLM评估译文质量，识别漏翻、错翻等问题")
+        pp_layout.addWidget(self._pp_quality_gate_check)
+
+        # 分隔线
+        line2 = QFrame()
+        line2.setFrameShape(QFrame.Shape.HLine)
+        line2.setStyleSheet("color: #ccc;")
+        pp_layout.addWidget(line2)
+
+        # 阶段2: 修复与润色
+        refine_label = QLabel("<b>阶段2: 修复与润色</b>")
+        pp_layout.addWidget(refine_label)
+
+        self._pp_refinement_check = QCheckBox("启用LLM自动修复")
+        self._pp_refinement_check.setChecked(True)
+        self._pp_refinement_check.setToolTip("对检测出的问题使用LLM进行自动修复")
+        pp_layout.addWidget(self._pp_refinement_check)
+
+        self._pp_polish_check = QCheckBox("启用润色优化（需要额外LLM调用）")
+        self._pp_polish_check.setChecked(False)
+        self._pp_polish_check.setToolTip("对译文进行流畅度和风格优化，显著提升翻译质量但消耗更多API调用")
+        pp_layout.addWidget(self._pp_polish_check)
+
+        # 润色选项子布局
+        polish_options = QHBoxLayout()
+        polish_options.addSpacing(20)
+
+        polish_options.addWidget(QLabel("润色范围:"))
+        self._pp_polish_scope_combo = QComboBox()
+        self._pp_polish_scope_combo.addItems(["全部条目", "仅通过检测的条目", "仅有问题需修复的条目"])
+        self._pp_polish_scope_combo.setToolTip("全部: 润色所有译文\n仅通过: 只润色没有问题的译文\n仅问题: 只润色修复后的译文")
+        polish_options.addWidget(self._pp_polish_scope_combo)
+
+        polish_options.addSpacing(10)
+        polish_options.addWidget(QLabel("润色强度:"))
+        self._pp_polish_level_combo = QComboBox()
+        self._pp_polish_level_combo.addItems(["轻微（仅修正明显错误）", "适中（平衡优化）", "深度（追求最佳表达）"])
+        self._pp_polish_level_combo.setToolTip("轻微: 保守润色\n适中: 适度优化\n深度: 深度改写追求最佳表达")
+        polish_options.addWidget(self._pp_polish_level_combo)
+
+        polish_options.addStretch()
+        pp_layout.addLayout(polish_options)
+
+        # 分隔线
+        line3 = QFrame()
+        line3.setFrameShape(QFrame.Shape.HLine)
+        line3.setStyleSheet("color: #ccc;")
+        pp_layout.addWidget(line3)
+
+        # 阶段3: 裁决
+        arbitrate_label = QLabel("<b>阶段3: 质量裁决</b>")
+        pp_layout.addWidget(arbitrate_label)
+
+        self._pp_arbitration_check = QCheckBox("启用LLM质量裁决")
+        self._pp_arbitration_check.setChecked(True)
+        self._pp_arbitration_check.setToolTip("对修复/润色后的译文进行最终质量裁决（通过/打回/待审）")
+        pp_layout.addWidget(self._pp_arbitration_check)
+
+        self._pp_strict_mode_check = QCheckBox("严格模式（质量存疑时直接打回而非标记待审）")
+        self._pp_strict_mode_check.setChecked(False)
+        self._pp_strict_mode_check.setToolTip("严格模式下，不确定质量的译文会被打回重翻而非保留待审")
+        pp_layout.addWidget(self._pp_strict_mode_check)
+
+        # 备注说明
+        pp_note = QLabel("<i>提示：润色会在修复后执行，最终译文优先采用润色结果</i>")
+        pp_note.setStyleSheet("color: #888; font-size: 11px;")
+        pp_layout.addWidget(pp_note)
+
+        # Tab 3: 后处理
+        tab_pp = QWidget()
+        tab_pp_layout = QVBoxLayout(tab_pp)
+        tab_pp_layout.setSpacing(6)
+        tab_pp_layout.addWidget(self._pp_box)
+        tab_pp_layout.addStretch()
+        self._tabs.addTab(tab_pp, "后处理")
+
+        main_layout.addWidget(self._tabs)
 
         # ── 底部按钮 ──────────────────────────────────────────────────────────
         btn_row = QHBoxLayout()
@@ -459,7 +580,23 @@ class AITranslatorWindow(QWidget):
         self._excel_path_edit.setText(cfg.local_excel_path)
         self._excel_orig_col_edit.setText(cfg.excel_original_col)
         self._excel_trans_col_edit.setText(cfg.excel_translation_col)
-        self._post_process_check.setChecked(cfg.enable_post_process)
+        # 后处理配置
+        self._pp_enable_check.setChecked(cfg.enable_post_process)
+        self._pp_consistency_check.setChecked(cfg.pp_enable_consistency_check)
+        self._pp_format_check.setChecked(cfg.pp_enable_format_validation)
+        self._pp_quality_gate_check.setChecked(cfg.pp_enable_quality_gate)
+        self._pp_refinement_check.setChecked(cfg.pp_enable_refinement)
+        self._pp_polish_check.setChecked(cfg.pp_enable_polish)
+        # 润色范围映射
+        scope_map = {"all": 0, "passed": 1, "has_issues": 2}
+        self._pp_polish_scope_combo.setCurrentIndex(scope_map.get(cfg.pp_polish_scope, 0))
+        # 润色强度映射
+        level_map = {"light": 0, "moderate": 1, "aggressive": 2}
+        self._pp_polish_level_combo.setCurrentIndex(level_map.get(cfg.pp_polish_level, 1))
+        self._pp_arbitration_check.setChecked(cfg.pp_enable_arbitration)
+        self._pp_strict_mode_check.setChecked(cfg.pp_strict_arbitration)
+        # 更新控件状态
+        self._on_pp_enable_changed()
         # Embedding 配置
         self._embed_provider_combo.setCurrentIndex(0 if cfg.embedding_provider == "local" else 1)
         self._embed_local_model_edit.setText(cfg.embedding_local_model)
@@ -512,7 +649,19 @@ class AITranslatorWindow(QWidget):
         cfg.local_excel_path = self._excel_path_edit.text().strip()
         cfg.excel_original_col = self._excel_orig_col_edit.text().strip() or "A"
         cfg.excel_translation_col = self._excel_trans_col_edit.text().strip() or "B"
-        cfg.enable_post_process = self._post_process_check.isChecked()
+        # 后处理配置
+        cfg.enable_post_process = self._pp_enable_check.isChecked()
+        cfg.pp_enable_consistency_check = self._pp_consistency_check.isChecked()
+        cfg.pp_enable_format_validation = self._pp_format_check.isChecked()
+        cfg.pp_enable_quality_gate = self._pp_quality_gate_check.isChecked()
+        cfg.pp_enable_refinement = self._pp_refinement_check.isChecked()
+        cfg.pp_enable_polish = self._pp_polish_check.isChecked()
+        scope_map = {0: "all", 1: "passed", 2: "has_issues"}
+        cfg.pp_polish_scope = scope_map.get(self._pp_polish_scope_combo.currentIndex(), "all")
+        level_map = {0: "light", 1: "moderate", 2: "aggressive"}
+        cfg.pp_polish_level = level_map.get(self._pp_polish_level_combo.currentIndex(), "moderate")
+        cfg.pp_enable_arbitration = self._pp_arbitration_check.isChecked()
+        cfg.pp_strict_arbitration = self._pp_strict_mode_check.isChecked()
         # Embedding 配置
         cfg.embedding_provider = "local" if self._embed_provider_combo.currentIndex() == 0 else "openai"
         cfg.embedding_local_model = self._embed_local_model_edit.text().strip()
@@ -549,7 +698,20 @@ class AITranslatorWindow(QWidget):
         self._excel_orig_col_edit.textChanged.connect(self._save_config)
         self._excel_trans_col_edit.textChanged.connect(self._save_config)
         self._priority_list.model().rowsMoved.connect(self._save_config)
-        self._post_process_check.toggled.connect(self._save_config)
+        # 后处理配置自动保存
+        self._pp_enable_check.toggled.connect(self._save_config)
+        self._pp_consistency_check.toggled.connect(self._save_config)
+        self._pp_format_check.toggled.connect(self._save_config)
+        self._pp_quality_gate_check.toggled.connect(self._save_config)
+        self._pp_refinement_check.toggled.connect(self._save_config)
+        self._pp_polish_check.toggled.connect(self._save_config)
+        self._pp_polish_scope_combo.currentIndexChanged.connect(self._save_config)
+        self._pp_polish_level_combo.currentIndexChanged.connect(self._save_config)
+        self._pp_arbitration_check.toggled.connect(self._save_config)
+        self._pp_strict_mode_check.toggled.connect(self._save_config)
+        # 后处理控件联动
+        self._pp_enable_check.toggled.connect(self._on_pp_enable_changed)
+        self._pp_polish_check.toggled.connect(self._on_polish_changed)
         # Embedding 配置自动保存
         self._embed_provider_combo.currentIndexChanged.connect(self._save_config)
         self._embed_local_model_edit.textChanged.connect(self._save_config)
@@ -614,6 +776,29 @@ class AITranslatorWindow(QWidget):
         self._embed_apikey_edit.setVisible(api_visible)
         self._embed_baseurl_label.setVisible(api_visible)
         self._embed_baseurl_edit.setVisible(api_visible)
+
+    def _on_pp_enable_changed(self):
+        """后处理总开关切换时更新所有子控件的启用状态。"""
+        enabled = self._pp_enable_check.isChecked()
+        # 阶段1: 检测
+        self._pp_consistency_check.setEnabled(enabled)
+        self._pp_format_check.setEnabled(enabled)
+        self._pp_quality_gate_check.setEnabled(enabled)
+        # 阶段2: 修复
+        self._pp_refinement_check.setEnabled(enabled)
+        # 阶段3: 裁决（依赖于总开关）
+        self._pp_arbitration_check.setEnabled(enabled)
+        # 润色及其子选项（依赖于总开关和润色开关）
+        self._pp_polish_check.setEnabled(enabled)
+        self._on_polish_changed()
+        # 严格模式（依赖于总开关和裁决开关）
+        self._pp_strict_mode_check.setEnabled(enabled and self._pp_arbitration_check.isChecked())
+
+    def _on_polish_changed(self):
+        """润色开关切换时更新润色选项的启用状态。"""
+        enabled = self._pp_enable_check.isChecked() and self._pp_polish_check.isChecked()
+        self._pp_polish_scope_combo.setEnabled(enabled)
+        self._pp_polish_level_combo.setEnabled(enabled)
 
     def _update_estimate(self):
         collection = self._ctx.collection

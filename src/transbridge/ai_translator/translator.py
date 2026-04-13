@@ -441,13 +441,11 @@ class AutoTranslator:
             _log(f"\n── 开始质量检查 ──")
             from .post_processor import PostProcessor, PostProcessorConfig
 
-            pp_config = PostProcessorConfig(
-                enable_consistency_check=True,
-                enable_format_validation=True,
-                enable_quality_gate=bool(self._llm),  # 有LLM才启用质量关卡
-                auto_fix=False,  # 暂不自动修复，仅报告
-                reset_stage_on_error=False,  # 不把stage重置为0，仅标记
-            )
+            # 从LLMConfig加载后处理配置
+            pp_config = PostProcessorConfig.from_llm_config(self._cfg.llm_config)
+            # 根据LLM可用性调整质量关卡
+            if not bool(self._llm):
+                pp_config.enable_quality_gate = False
             post_processor = PostProcessor(pp_config)
             post_processor.register_default_checkers(
                 term_manager=self._term_mgr,
