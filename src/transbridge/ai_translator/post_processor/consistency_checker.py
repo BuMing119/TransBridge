@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ...converter.translation_entry import TranslationEntry
-    from ..term_database import TermEntry
+    from ..term_database import TermDatabaseManager, TermEntry
 
 
 class ConsistencyChecker(BaseChecker):
@@ -27,14 +27,19 @@ class ConsistencyChecker(BaseChecker):
     def name(self) -> str:
         return "consistency_checker"
 
-    def __init__(self, esp_path: str | None = None):
+    def __init__(self, esp_path_or_manager: "str | TermDatabaseManager | None" = None):
         """
         初始化。
 
         Args:
-            esp_path: ESP 文件路径，用于定位术语缓存目录
+            esp_path_or_manager: ESP 文件路径或 TermDatabaseManager 实例，
+                                 用于定位术语缓存目录
         """
-        self._esp_path = esp_path
+        # 支持传入 TermDatabaseManager 或直接的路径字符串
+        if hasattr(esp_path_or_manager, "_esp_path"):
+            self._esp_path = esp_path_or_manager._esp_path
+        else:
+            self._esp_path = esp_path_or_manager
         # 缓存加载后的术语列表
         self._terms_cache: list["TermEntry"] = []
         self._terms_loaded = False

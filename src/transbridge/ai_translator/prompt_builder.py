@@ -31,7 +31,9 @@ _DEFAULT_TRANSLATION_SYSTEM = (
     "2. 人名、地名、专有名词请严格遵循术语表中的对照翻译。\n"
     "3. 保留原文中的特殊标记，如 <br>、[pagebreak]、\\n 换行符、%s 等格式占位符。\n"
     "4. 不要添加任何解释或注释，只输出 JSON。\n"
-    '5. 输出必须是严格的 JSON 对象，格式：{"id1": "译文1", "id2": "译文2", ...}'
+    '5. 输出必须是严格的 JSON 对象，格式：{"id1": "译文1", "id2": "译文2", ...}\n'
+    "6. 严禁将原文原封不动地作为译文输出。\n"
+    "7. 严禁生成重复字符或重复短语的无限循环内容（如连续重复同一个字超过十次）。"
 )
 _DEFAULT_TRANSLATION_USER = (
     "请将以下【$batch_type】类型的词条从英文翻译成中文。\n"
@@ -199,3 +201,53 @@ class PromptBuilder:
         if not isinstance(data, list):
             return []
         return [item for item in data if isinstance(item, dict) and "term" in item and "translation" in item]
+
+    def parse_hybrid_response(self, response: str) -> dict:
+        """解析 LLM 混合模式响应（ReAct + Plan 双模式）。
+
+        Returns: {"mode": "plan"|"react", "thought": str, "steps": [{"id", "tool", "args", "depends_on"}]}
+        """
+        text = response.strip()
+        json_match = re.search(r"```json\s*([\s\S]*?)\s*```", text)
+        raw = json_match.group(1) if json_match else text
+
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            data = self._try_fix_truncated_json(raw)
+            if data is None:
+                return {"mode": "react", "thought": response, "steps": []}
+
+        if not isinstance(data, dict):
+            return {"mode": "react", "thought": response, "steps": []}
+
+        mode = data.get("mode", "react")
+        thought = data.get("thought", "")
+        steps = data.get("steps") or []
+        tool_calls = data.get("tool_calls") or []
+
+        if tool_calls and not steps:
+            steps = [
+                {
+                    "id": i + 1,
+                    "tool": tc.get("tool", ""),
+                    "args": tc.get("args", {}),
+                    "depends_on": tc.get("depends_on", []),
+                }
+                for i, tc in enumerate(tool_calls)
+            ]
+
+        return {"mode": mode, "thought": thought, "steps": steps}
+
+    def _try_fix_truncated_json(self, text: str) -> dict | None:
+        """尝试修复因 max_tokens 截断的 JSON。"""
+        text = text.strip()
+        if not text.startswith("{"):
+            return None
+        for suffix in ("}", '"]}', '"}', "}]}"):
+            candidate = text.rstrip(",").rstrip() + suffix
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+        return None

@@ -1,17 +1,22 @@
 """
 后处理主控器，协调各检查器执行。
 
-四阶段流程：
+五阶段流程：
 1. 检测（Checker）- 发现问题
-2. 修复（LLMRefiner）- 修复问题并润色
-3. 裁决（LLMArbiter）- 判定pass/reject/pending
-4. 执行（Action）- 更新条目stage
+2. 修复（LLMRefiner）- 修复问题
+3. 润色（LLMPolisher）- 润色优化
+4. 裁决（LLMArbiter）- 判定pass/reject/pending
+5. 执行（Action）- 更新条目stage
 """
 
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from .base import BaseChecker, PostProcessResult, PostProcessIssue
+from .checkpoint import PostProcessCheckpoint
 from .consistency_checker import ConsistencyChecker
 from .format_validator import FormatValidator
 from .quality_gate import QualityGateChecker
@@ -129,6 +134,7 @@ class PostProcessor:
         self._refiner = None
         self._polisher = None
         self._arbiter = None
+        self._llm_client: "LLMClient | None" = None
 
     def register_checker(self, checker: BaseChecker) -> None:
         """
@@ -151,6 +157,7 @@ class PostProcessor:
             term_manager: TermDatabaseManager 实例
             llm_client: LLMClient 实例（修复和裁决需要）
         """
+        self._llm_client = llm_client
         # ── 阶段1: 检测器 ─────────────────────────────────────────────────
         if self._config.enable_consistency_check:
             self.register_checker(ConsistencyChecker(term_manager))
@@ -213,13 +220,19 @@ class PostProcessor:
         Returns:
             后处理结果
         """
-        entries = list(collection.entries.values())
+        entries = list(collection)
         return self.process_entries(entries)
 
     def process_entries(
         self,
         entries: list["TranslationEntry"],
         progress_callback=None,
+        stop_event: threading.Event | None = None,
+        pause_event: threading.Event | None = None,
+        checkpoint: PostProcessCheckpoint | None = None,
+        max_workers: int = 1,
+        log_callback: Callable[[str], None] | None = None,
+        esp_path: str | None = None,
     ) -> PostProcessResult:
         """
         对指定条目执行后处理（五阶段流程）。
@@ -227,6 +240,12 @@ class PostProcessor:
         Args:
             entries: 待处理的条目列表
             progress_callback: 进度回调函数 (phase, current, total, message)
+            stop_event: 停止事件
+            pause_event: 暂停事件（clear=暂停，set=运行）
+            checkpoint: 后处理断点
+            max_workers: 并发线程数
+            log_callback: 日志回调
+            esp_path: ESP 路径（用于 checkpoint 持久化）
 
         Returns:
             后处理结果
@@ -237,120 +256,348 @@ class PostProcessor:
             if progress_callback:
                 progress_callback(phase, current, total, message)
 
-        # ── 阶段1: 检测 ────────────────────────────────────────────────────
-        _progress("detect", 0, len(entries), "开始检测...")
+        def _log(line: str):
+            if log_callback:
+                log_callback(line)
 
-        for checker in self._checkers:
-            if isinstance(checker, ConsistencyChecker):
-                issues = checker.check_batch(entries)
-            else:
-                issues = []
-                for entry in entries:
-                    issues.extend(checker.check(entry))
+        def _should_stop() -> bool:
+            return stop_event is not None and stop_event.is_set()
 
-            for issue in issues:
-                result.add_issue(issue)
+        def _wait_if_paused() -> bool:
+            """等待暂停恢复，返回 True 表示需要停止。"""
+            if pause_event is not None and not pause_event.is_set():
+                _log("⏸ 后处理已暂停")
+                pause_event.wait()
+                _log("▶ 后处理已恢复")
+            return _should_stop()
 
-        # 按 entry_id 分组问题
-        issues_by_entry = self._group_issues_by_entry(result.issues)
+        def _persist_checkpoint() -> None:
+            if checkpoint and esp_path:
+                checkpoint.save(esp_path)
 
-        _progress("detect", len(entries), len(entries), f"检测完成，发现 {len(result.issues)} 个问题")
+        # 启动 LLM 监控线程（在 LLM 调用期间实时响应暂停/停止）
+        monitor_done: threading.Event | None = None
+        if self._llm_client and (stop_event is not None or pause_event is not None):
+            monitor_done = threading.Event()
 
-        # ── 阶段2a: 修复 ────────────────────────────────────────────────────
-        refine_results: dict[str, "RefineResult"] = {}
+            def _monitor():
+                while not monitor_done.is_set():
+                    if stop_event and stop_event.is_set():
+                        self._llm_client.cancel()
+                    if pause_event and not pause_event.is_set():
+                        self._llm_client.cancel()
+                    time.sleep(0.05)
 
-        if self._refiner and issues_by_entry:
-            entries_to_refine = [e for e in entries if e.id in issues_by_entry]
-            total = len(entries_to_refine)
+            t = threading.Thread(target=_monitor, daemon=True)
+            t.start()
 
-            _progress("refine", 0, total, f"开始修复 {total} 个条目...")
+        try:
+            # ── 阶段1: 检测 ────────────────────────────────────────────────────
+            _progress("detect", 0, len(entries), "开始检测...")
 
-            # 使用批量修复
-            for i in range(0, total, self._config.refinement_batch_size):
-                batch = entries_to_refine[i : i + self._config.refinement_batch_size]
-                batch_issues = {e.id: issues_by_entry.get(e.id, []) for e in batch}
+            # 从 checkpoint 恢复已有 issues
+            issues_by_entry: dict[str, list[PostProcessIssue]] = {}
+            if checkpoint and checkpoint.issues:
+                for issue_dict in checkpoint.issues:
+                    issue = PostProcessCheckpoint.issue_from_dict(issue_dict)
+                    result.add_issue(issue)
+                issues_by_entry = self._group_issues_by_entry(result.issues)
 
-                batch_results = self._refiner.refine_batch(batch, batch_issues)
-                refine_results.update(batch_results)
+            # 先执行本地检查器（ConsistencyChecker、FormatValidator 等）
+            for checker in self._checkers:
+                if isinstance(checker, QualityGateChecker):
+                    continue  # QualityGate 稍后并发执行
+                if isinstance(checker, ConsistencyChecker):
+                    issues = checker.check_batch(entries)
+                else:
+                    issues = []
+                    for entry in entries:
+                        if _should_stop():
+                            break
+                        issues.extend(checker.check(entry))
+                    if _wait_if_paused():
+                        break
 
-                _progress("refine", min(i + len(batch), total), total, f"已修复 {min(i + len(batch), total)}/{total}")
+                for issue in issues:
+                    result.add_issue(issue)
 
-        # ── 阶段2b: 润色 ────────────────────────────────────────────────────
-        polish_results: dict[str, "PolishResult"] = {}
+            issues_by_entry = self._group_issues_by_entry(result.issues)
 
-        if self._polisher and self._config.enable_polish:
-            entries_to_polish = self._select_entries_for_polish(
-                entries, issues_by_entry, refine_results
-            )
-            total = len(entries_to_polish)
+            # QualityGate 并发执行
+            qg_checker = None
+            for checker in self._checkers:
+                if isinstance(checker, QualityGateChecker):
+                    qg_checker = checker
+                    break
 
-            if total > 0:
-                _progress("polish", 0, total, f"开始润色 {total} 个条目...")
+            if qg_checker and not _should_stop():
+                qg_batch_size = self._config.quality_gate_batch_size
+                qg_batches = [entries[i : i + qg_batch_size] for i in range(0, len(entries), qg_batch_size)]
+                qg_completed = 0
+                issue_lock = threading.Lock()
 
-                # 使用批量润色
-                for i in range(0, total, self._config.polish_batch_size):
-                    batch = entries_to_polish[i : i + self._config.polish_batch_size]
+                def _qg_worker(batch):
+                    return qg_checker.check_batch(batch)
 
-                    batch_results = self._polisher.polish_batch(batch)
-                    polish_results.update(batch_results)
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {executor.submit(_qg_worker, b): b for b in qg_batches}
+                    for future in as_completed(futures):
+                        if _should_stop() or _wait_if_paused():
+                            for f in futures:
+                                if not f.done():
+                                    f.cancel()
+                            break
 
-                    _progress("polish", min(i + len(batch), total), total, f"已润色 {min(i + len(batch), total)}/{total}")
+                        batch = futures[future]
+                        fp = sorted(e.id for e in batch)
 
-        # ── 阶段3: 裁决 ────────────────────────────────────────────────────
-        decisions: dict[str, "ArbiterDecision"] = {}
+                        if checkpoint and checkpoint.is_batch_completed("detect_quality_gate", fp):
+                            qg_completed += len(batch)
+                            continue
 
-        if self._arbiter:
-            from .llm_arbiter import ArbitrationContext
+                        if future.cancelled():
+                            continue
 
-            total = len(entries)
-            _progress("arbitrate", 0, total, "开始裁决...")
+                        try:
+                            batch_issues = future.result()
+                            with issue_lock:
+                                for issue in batch_issues:
+                                    result.add_issue(issue)
+                                qg_completed += len(batch)
+                                if checkpoint:
+                                    checkpoint.mark_batch_completed("detect_quality_gate", fp)
+                                    checkpoint.issues = [PostProcessCheckpoint.issue_to_dict(i) for i in result.issues]
+                                    _persist_checkpoint()
+                            _progress("detect", qg_completed, len(entries), f"质量检测 {qg_completed}/{len(entries)}")
+                        except Exception as e:
+                            _log(f"⚠ QualityGate 批次异常: {e}")
 
-            contexts = []
-            for entry in entries:
-                ctx = ArbitrationContext(
-                    entry=entry,
-                    original_issues=issues_by_entry.get(entry.id, []),
-                    refine_result=refine_results.get(entry.id),
-                    polish_result=polish_results.get(entry.id),
-                    quality_gate_verdict=self._get_quality_gate_verdict(
-                        entry.id, result.issues
-                    ),
+                issues_by_entry = self._group_issues_by_entry(result.issues)
+
+            _progress("detect", len(entries), len(entries), f"检测完成，发现 {len(result.issues)} 个问题")
+
+            if _should_stop():
+                return result
+
+            # ── 阶段2a: 修复 ────────────────────────────────────────────────────
+            refine_results: dict[str, "RefineResult"] = {}
+
+            if checkpoint and checkpoint.refine_results:
+                for eid, rdict in checkpoint.refine_results.items():
+                    refine_results[eid] = PostProcessCheckpoint.refine_result_from_dict(rdict)
+
+            if self._refiner and issues_by_entry and not _should_stop():
+                entries_to_refine = [e for e in entries if e.id in issues_by_entry]
+                total = len(entries_to_refine)
+
+                if total > 0:
+                    _progress("refine", 0, total, f"开始修复 {total} 个条目...")
+                    batch_size = self._config.refinement_batch_size
+                    batches = [entries_to_refine[i : i + batch_size] for i in range(0, total, batch_size)]
+                    refined_count = 0
+                    result_lock = threading.Lock()
+
+                    def _refine_worker(batch):
+                        batch_issues = {e.id: issues_by_entry.get(e.id, []) for e in batch}
+                        return self._refiner.refine_batch(batch, batch_issues)
+
+                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                        futures = {executor.submit(_refine_worker, b): b for b in batches}
+                        for future in as_completed(futures):
+                            if _should_stop() or _wait_if_paused():
+                                for f in futures:
+                                    if not f.done():
+                                        f.cancel()
+                                break
+
+                            batch = futures[future]
+                            fp = sorted(e.id for e in batch)
+
+                            if checkpoint and checkpoint.is_batch_completed("refine", fp):
+                                refined_count += len(batch)
+                                continue
+
+                            if future.cancelled():
+                                continue
+
+                            try:
+                                batch_results = future.result()
+                                with result_lock:
+                                    refine_results.update(batch_results)
+                                    refined_count += len(batch)
+                                    if checkpoint:
+                                        checkpoint.mark_batch_completed("refine", fp)
+                                        checkpoint.refine_results = {
+                                            eid: PostProcessCheckpoint.refine_result_to_dict(r)
+                                            for eid, r in refine_results.items()
+                                        }
+                                        _persist_checkpoint()
+                                _progress("refine", refined_count, total, f"已修复 {refined_count}/{total}")
+                            except Exception as e:
+                                _log(f"⚠ Refine 批次异常: {e}")
+
+            if _should_stop():
+                return result
+
+            # ── 阶段2b: 润色 ────────────────────────────────────────────────────
+            polish_results: dict[str, "PolishResult"] = {}
+
+            if checkpoint and checkpoint.polish_results:
+                for eid, pdict in checkpoint.polish_results.items():
+                    polish_results[eid] = PostProcessCheckpoint.polish_result_from_dict(pdict)
+
+            if self._polisher and self._config.enable_polish and not _should_stop():
+                entries_to_polish = self._select_entries_for_polish(
+                    entries, issues_by_entry, refine_results
                 )
-                contexts.append(ctx)
+                total = len(entries_to_polish)
 
-            # 使用批量裁决
-            for i in range(0, len(contexts), self._config.arbitration_batch_size):
-                batch = contexts[i : i + self._config.arbitration_batch_size]
-                batch_decisions = self._arbiter.arbitrate_batch(batch)
-                decisions.update(batch_decisions)
+                if total > 0:
+                    _progress("polish", 0, total, f"开始润色 {total} 个条目...")
+                    batch_size = self._config.polish_batch_size
+                    batches = [entries_to_polish[i : i + batch_size] for i in range(0, total, batch_size)]
+                    polished_count = 0
+                    result_lock = threading.Lock()
 
-                processed = min(i + len(batch), len(contexts))
-                _progress("arbitrate", processed, total, f"已裁决 {processed}/{total}")
+                    def _polish_worker(batch):
+                        return self._polisher.polish_batch(batch)
 
-        else:
-            # 无裁决者：基于规则简单判定
-            decisions = self._rule_based_decide(
-                entries, issues_by_entry, refine_results, polish_results
+                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                        futures = {executor.submit(_polish_worker, b): b for b in batches}
+                        for future in as_completed(futures):
+                            if _should_stop() or _wait_if_paused():
+                                for f in futures:
+                                    if not f.done():
+                                        f.cancel()
+                                break
+
+                            batch = futures[future]
+                            fp = sorted(e.id for e in batch)
+
+                            if checkpoint and checkpoint.is_batch_completed("polish", fp):
+                                polished_count += len(batch)
+                                continue
+
+                            if future.cancelled():
+                                continue
+
+                            try:
+                                batch_results = future.result()
+                                with result_lock:
+                                    polish_results.update(batch_results)
+                                    polished_count += len(batch)
+                                    if checkpoint:
+                                        checkpoint.mark_batch_completed("polish", fp)
+                                        checkpoint.polish_results = {
+                                            eid: PostProcessCheckpoint.polish_result_to_dict(p)
+                                            for eid, p in polish_results.items()
+                                        }
+                                        _persist_checkpoint()
+                                _progress("polish", polished_count, total, f"已润色 {polished_count}/{total}")
+                            except Exception as e:
+                                _log(f"⚠ Polish 批次异常: {e}")
+
+            if _should_stop():
+                return result
+
+            # ── 阶段3: 裁决 ────────────────────────────────────────────────────
+            decisions: dict[str, "ArbiterDecision"] = {}
+
+            if checkpoint and checkpoint.decisions:
+                for eid, ddict in checkpoint.decisions.items():
+                    decisions[eid] = PostProcessCheckpoint.decision_from_dict(ddict)
+
+            if self._arbiter and not _should_stop():
+                from .llm_arbiter import ArbitrationContext
+
+                total = len(entries)
+                _progress("arbitrate", 0, total, "开始裁决...")
+
+                contexts = []
+                for entry in entries:
+                    ctx = ArbitrationContext(
+                        entry=entry,
+                        original_issues=issues_by_entry.get(entry.id, []),
+                        refine_result=refine_results.get(entry.id),
+                        polish_result=polish_results.get(entry.id),
+                        quality_gate_verdict=self._get_quality_gate_verdict(
+                            entry.id, result.issues
+                        ),
+                    )
+                    contexts.append(ctx)
+
+                batch_size = self._config.arbitration_batch_size
+                batches = [contexts[i : i + batch_size] for i in range(0, len(contexts), batch_size)]
+                arbitrate_count = 0
+                result_lock = threading.Lock()
+
+                def _arbitrate_worker(batch):
+                    return self._arbiter.arbitrate_batch(batch)
+
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {executor.submit(_arbitrate_worker, b): b for b in batches}
+                    for future in as_completed(futures):
+                        if _should_stop() or _wait_if_paused():
+                            for f in futures:
+                                if not f.done():
+                                    f.cancel()
+                            break
+
+                        batch = futures[future]
+                        fp = sorted(c.entry.id for c in batch)
+
+                        if checkpoint and checkpoint.is_batch_completed("arbitrate", fp):
+                            arbitrate_count += len(batch)
+                            continue
+
+                        if future.cancelled():
+                            continue
+
+                        try:
+                            batch_decisions = future.result()
+                            with result_lock:
+                                decisions.update(batch_decisions)
+                                arbitrate_count += len(batch)
+                                if checkpoint:
+                                    checkpoint.mark_batch_completed("arbitrate", fp)
+                                    checkpoint.decisions = {
+                                        eid: PostProcessCheckpoint.decision_to_dict(d)
+                                        for eid, d in decisions.items()
+                                    }
+                                    _persist_checkpoint()
+                            _progress("arbitrate", arbitrate_count, total, f"已裁决 {arbitrate_count}/{total}")
+                        except Exception as e:
+                            _log(f"⚠ Arbitrate 批次异常: {e}")
+
+            else:
+                decisions = self._rule_based_decide(
+                    entries, issues_by_entry, refine_results, polish_results
+                )
+
+            if _should_stop():
+                return result
+
+            # ── 阶段4: 执行 ────────────────────────────────────────────────────
+            _progress("execute", 0, len(entries), "执行裁决结果...")
+
+            execution_result = self._execute_decisions(
+                entries, refine_results, polish_results, decisions, result
             )
 
-        # ── 阶段4: 执行 ────────────────────────────────────────────────────
-        _progress("execute", 0, len(entries), "执行裁决结果...")
+            _progress(
+                "execute",
+                len(entries),
+                len(entries),
+                f"执行完成：通过 {execution_result.passed}，打回 {execution_result.rejected}，待审 {execution_result.pending}",
+            )
 
-        execution_result = self._execute_decisions(
-            entries, refine_results, polish_results, decisions, result
-        )
+            result.execution_result = execution_result
 
-        _progress(
-            "execute",
-            len(entries),
-            len(entries),
-            f"执行完成：通过 {execution_result.passed}，打回 {execution_result.rejected}，待审 {execution_result.pending}",
-        )
+            return result
 
-        # 保存执行统计
-        result.execution_result = execution_result
-
-        return result
+        finally:
+            if monitor_done is not None:
+                monitor_done.set()
 
     def _group_issues_by_entry(
         self, issues: list[PostProcessIssue]

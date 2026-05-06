@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -26,6 +27,13 @@ class _CancelledByPause(BaseException):
 
 class _CancelledByStop(BaseException):
     """停止时中断当前 API 调用所用的控制流异常。"""
+
+
+class _RepetitionDetected(Exception):
+    """流式阶段检测到极端重复输出时中断请求。"""
+
+    def __init__(self, entry_id: str | None = None):
+        self.entry_id = entry_id
 
 if TYPE_CHECKING:
     from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
@@ -187,6 +195,131 @@ class AutoTranslator:
         if error_holder[0] is not None:
             raise error_holder[0]
         return result_holder[0]
+
+    @staticmethod
+    def _max_consecutive_repeat(text: str) -> int:
+        """计算文本中最大连续重复次数。"""
+        if not text:
+            return 0
+        return max(
+            (len(m.group(0)) for m in re.finditer(r'(.|.{2}|.{3})\1*', text)),
+            default=0,
+        )
+
+    @staticmethod
+    def _is_translation_abnormal(original: str, translation: str) -> bool:
+        """
+        检测单个译文是否异常（重复/回显）。
+        先检测译文重复数，超过阈值后再与原文比对，避免误伤原文本身就带重复的正常内容。
+        """
+        if not translation or not original:
+            return False
+
+        # 1. 先检测译文最大连续重复数
+        trans_repeat = AutoTranslator._max_consecutive_repeat(translation)
+
+        # 2. 译文重复数未超过阈值，不介入
+        if trans_repeat <= 10:
+            return False
+
+        # 3. 译文超过阈值，检测原文重复数
+        orig_repeat = AutoTranslator._max_consecutive_repeat(original)
+
+        # 4. 译文重复超过原文即判定异常
+        if trans_repeat > orig_repeat:
+            return True
+
+        return False
+
+    @staticmethod
+    def _detect_stream_repetition(buffer: str, max_orig_repeat: int = 0) -> tuple[bool, int]:
+        """
+        对整个流式 buffer 做重复检测，支持自适应阈值。
+        阈值与原文最大重复长度挂钩，避免误伤原文本身就带重复的正常翻译。
+        返回 (是否异常, 截断位置)。
+        """
+        text = "".join(buffer) if isinstance(buffer, list) else buffer
+        buffer_repeat = AutoTranslator._max_consecutive_repeat(text)
+        adaptive_threshold = max(80, max_orig_repeat * 2 + 20)
+        if buffer_repeat > adaptive_threshold:
+            for m in re.finditer(r'(.|.{2}|.{3})\1*', text):
+                if len(m.group(0)) == buffer_repeat:
+                    return True, m.start()
+        # 额外兜底：4-10 字符短语的极端重复
+        for length, min_count in [(4, 20), (5, 15), (6, 12), (7, 10), (8, 10), (9, 8), (10, 8)]:
+            m = re.search(r'(.{' + str(length) + r'})\1{' + str(min_count - 1) + r',}', text)
+            if m:
+                repeat_total = len(m.group(0))
+                if repeat_total > 200 and repeat_total > max_orig_repeat * 1.5 + 20:
+                    return True, m.start()
+        return False, -1
+
+    def _salvage_from_repetition_buffer(self, buffer: str, expected_ids: set[str], max_orig_repeat: int = 0) -> dict[str, str]:
+        """当流式输出出现重复时，截断重复部分并尝试修复 JSON， salvaging 已完成的翻译对。"""
+        from src.transbridge.ai_translator.prompt_builder import _extract_partial_json_pairs
+        text = "".join(buffer) if isinstance(buffer, list) else buffer
+        is_abnormal, truncate_pos = self._detect_stream_repetition(text, max_orig_repeat=max_orig_repeat)
+        if not is_abnormal:
+            return {}
+        truncated = text[:truncate_pos]
+        last_pair_match = None
+        for m in re.finditer(r'"((?:[^"\\]|\\.)*?)"\s*:\s*"((?:[^"\\]|\\.)*?)"', truncated):
+            last_pair_match = m
+        if last_pair_match:
+            repaired = truncated[:last_pair_match.end()] + "}"
+        else:
+            brace_idx = truncated.find("{")
+            repaired = truncated[:brace_idx + 1] + "}" if brace_idx != -1 else "{}"
+        try:
+            data = json.loads(repaired)
+            if isinstance(data, dict):
+                return {k: str(v) for k, v in data.items() if k in expected_ids and v}
+        except Exception:
+            pass
+        return _extract_partial_json_pairs(repaired)
+
+    @staticmethod
+    def _split_last_batch_to_fill_workers(
+        batches: list["Batch"],
+        max_workers: int
+    ) -> list["Batch"]:
+        """拆分最后一批以填满并发。
+
+        当批次数 < max_workers 时，将最后一批拆分成多份。
+        返回拆分后的批次列表。
+        """
+        from src.transbridge.ai_translator.batch_planner import Batch
+
+        if len(batches) >= max_workers or len(batches) == 0:
+            return batches
+
+        # 计算需要拆分成多少份
+        needed = max_workers - (len(batches) - 1)  # 填满所需份数
+        last_batch = batches[-1]
+
+        if len(last_batch.entries) < needed:
+            # 条目数不足以拆分，直接返回
+            return batches
+
+        # 拆分最后一批
+        entries = last_batch.entries
+        chunk_size = max(1, len(entries) // needed)
+        split_batches = []
+
+        for i in range(needed):
+            start = i * chunk_size
+            if i == needed - 1:
+                chunk = entries[start:]  # 最后一份包含剩余所有
+            else:
+                chunk = entries[start:start + chunk_size]
+            if chunk:
+                split_batches.append(Batch(
+                    entries=chunk,
+                    batch_type=last_batch.batch_type,
+                    quest_formid=last_batch.quest_formid,
+                ))
+
+        return batches[:-1] + split_batches
 
     def translate(
         self,
@@ -388,10 +521,16 @@ class AutoTranslator:
         if plan.round1 and not stop_event.is_set():
             t_round = time.perf_counter()
             _log(f"\n── 第一轮开始（{len(plan.round1)} 批，专有名词）──")
+
+            # 动态拆分最后一批填满并发
+            batches_to_run = self._split_last_batch_to_fill_workers(plan.round1, max_workers)
+            if len(batches_to_run) > len(plan.round1):
+                _log(f"  最后一批拆分为 {len(batches_to_run) - len(plan.round1) + 1} 份以填满并发")
+
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = [
                     executor.submit(_run_one_batch, batch, "第一轮")
-                    for batch in plan.round1
+                    for batch in batches_to_run
                 ]
                 for f in as_completed(futures):
                     f.result()   # 传播异常
@@ -399,7 +538,6 @@ class AutoTranslator:
 
         # ── 第二轮：quest 间并发，quest 内串行 ───────────────────────────────
         if plan.round2 and not stop_event.is_set():
-            quest_groups = plan.round2_by_quest()
             t_round = time.perf_counter()
             _log(f"\n── 第二轮开始（{len(plan.round2)} 批，对话）──")
 
@@ -409,37 +547,74 @@ class AutoTranslator:
                         break
                     _run_one_batch(batch, "第二轮")
 
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = [
-                    executor.submit(_run_quest_group, batches)
-                    for batches in quest_groups.values()
-                ]
-                for f in as_completed(futures):
-                    f.result()
-            _log(f"── 第二轮完成: {time.perf_counter() - t_round:.2f}s ──\n")
+            # 过滤已完成批次，基于剩余批次决定并发策略
+            pending_round2 = [
+                b for b in plan.round2
+                if frozenset(e.id for e in b.entries) not in completed_fps
+            ]
+
+            if not pending_round2:
+                _log(f"── 第二轮无待处理批次 ──\n")
+            else:
+                # 按 quest 分组
+                pending_quest_groups: dict[str, list["Batch"]] = {}
+                for batch in pending_round2:
+                    pending_quest_groups.setdefault(batch.quest_formid or "", []).append(batch)
+
+                # 决定并发策略
+                if len(pending_quest_groups) <= max_workers:
+                    # quest 数不足以填满线程池 → 批次级并发（拆分最后一批）
+                    batches_to_run = self._split_last_batch_to_fill_workers(pending_round2, max_workers)
+                    strategy = "批次级（含拆分）" if len(batches_to_run) > len(pending_round2) else "批次级"
+                    _log(f"  活跃 quest 数={len(pending_quest_groups)}, max_workers={max_workers}, 未完成任务数={len(pending_round2)}, 并发策略={strategy}")
+
+                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                        futures = [
+                            executor.submit(_run_one_batch, batch, "第二轮")
+                            for batch in batches_to_run
+                        ]
+                        for f in as_completed(futures):
+                            f.result()
+                else:
+                    # quest 组级并发（quest 内串行，不拆分）
+                    quest_groups = plan.round2_by_quest()
+                    _log(f"  活跃 quest 数={len(pending_quest_groups)}, max_workers={max_workers}, 未完成任务数={len(pending_round2)}, 并发策略=quest组级")
+
+                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                        futures = [
+                            executor.submit(_run_quest_group, batches)
+                            for batches in quest_groups.values()
+                        ]
+                        for f in as_completed(futures):
+                            f.result()
+                _log(f"── 第二轮完成: {time.perf_counter() - t_round:.2f}s ──\n")
 
         # ── 第三轮：所有批次并发 ──────────────────────────────────────────────
         if plan.round3 and not stop_event.is_set():
             t_round = time.perf_counter()
             _log(f"\n── 第三轮开始（{len(plan.round3)} 批，长文本）──")
+
+            # 动态拆分最后一批填满并发
+            batches_to_run = self._split_last_batch_to_fill_workers(plan.round3, max_workers)
+            if len(batches_to_run) > len(plan.round3):
+                _log(f"  最后一批拆分为 {len(batches_to_run) - len(plan.round3) + 1} 份以填满并发")
+
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = [
                     executor.submit(_run_one_batch, batch, "第三轮")
-                    for batch in plan.round3
+                    for batch in batches_to_run
                 ]
                 for f in as_completed(futures):
                     f.result()
             _log(f"── 第三轮完成: {time.perf_counter() - t_round:.2f}s ──\n")
 
-        # 全部完成，删除断点文件
         t_total = time.perf_counter() - t_total_start
-        if not stop_event.is_set():
-            ProgressCheckpoint(esp_stem, target_entry_ids, self._cfg.overwrite, [], {}).delete(self._cfg.esp_path)
 
         # ── 后处理：质量检查 ─────────────────────────────────────────────────────
         if not stop_event.is_set() and result.success_count > 0 and getattr(self._cfg.llm_config, 'enable_post_process', True):
             _log(f"\n── 开始质量检查 ──")
             from .post_processor import PostProcessor, PostProcessorConfig
+            from .post_processor.checkpoint import PostProcessCheckpoint
 
             # 从LLMConfig加载后处理配置
             pp_config = PostProcessorConfig.from_llm_config(self._cfg.llm_config)
@@ -455,7 +630,7 @@ class AutoTranslator:
             # 只对成功翻译的条目进行后处理
             # 收集本次翻译成功的条目
             from ..converter.translation_entry import TranslationEntry
-            all_entries = list(collection.entries.values())
+            all_entries = list(collection)
             # 筛选出本次处理的条目（如果target_entry_ids不为空）
             if target_entry_ids:
                 target_set = set(target_entry_ids)
@@ -464,7 +639,23 @@ class AutoTranslator:
                 entries_to_check = [e for e in all_entries if e.translation]
 
             if entries_to_check:
-                pp_result = post_processor.process_entries(entries_to_check)
+                # 加载或创建后处理断点
+                pp_checkpoint = PostProcessCheckpoint.load(self._cfg.esp_path) or PostProcessCheckpoint(esp_stem=esp_stem)
+
+                def _pp_log(line: str):
+                    if log_callback:
+                        log_callback(-1, line)
+
+                pp_result = post_processor.process_entries(
+                    entries_to_check,
+                    progress_callback=lambda phase, c, t, m: _emit(f"后处理[{phase}] {m}"),
+                    stop_event=stop_event,
+                    pause_event=pause_event,
+                    checkpoint=pp_checkpoint,
+                    max_workers=max_workers,
+                    log_callback=_pp_log,
+                    esp_path=self._cfg.esp_path,
+                )
 
                 # 输出后处理摘要
                 _log(f"质量检查完成：检查 {pp_result.total_checked} 条")
@@ -483,10 +674,22 @@ class AutoTranslator:
 
                 # 将后处理结果附加到TranslationResult
                 result.post_process_result = pp_result
+
+                if not stop_event.is_set():
+                    # 后处理正常完成，删除后处理断点
+                    pp_checkpoint.delete(self._cfg.esp_path)
             else:
                 _log(f"无可检查的条目")
+
         elif not stop_event.is_set() and result.success_count > 0:
             _log(f"\n── 质量检查已跳过（用户设置）──")
+
+        if not stop_event.is_set():
+            # 翻译与后处理均完成，删除翻译断点
+            ProgressCheckpoint(esp_stem, target_entry_ids, self._cfg.overwrite, [], {}).delete(self._cfg.esp_path)
+        elif stop_event.is_set():
+            # 被中断时保存翻译断点（若后处理被中断，翻译断点也保留）
+            _save_checkpoint()
 
         _log(f"\n总耗时: {t_total:.2f}s")
         return result
@@ -601,6 +804,7 @@ class AutoTranslator:
 
         expected_ids = {e.id for e in llm_entries}
         id_to_entry = {e.id: e for e in llm_entries}
+        max_orig_repeat = max((self._max_consecutive_repeat(e.original) for e in llm_entries), default=0)
         _stream_buffer: list[str] = []
         _stream_translations: dict[str, str] = {}  # 流式阶段已捕获并写回的翻译
 
@@ -614,6 +818,9 @@ class AutoTranslator:
                 if eid not in _stream_translations and eid in expected_ids:
                     _stream_translations[eid] = trans
                     entry = id_to_entry[eid]
+                    # 流式阶段实时检测异常重复/回显
+                    if self._is_translation_abnormal(entry.original, trans):
+                        raise _RepetitionDetected(entry_id=eid)
                     orig_disp = entry.original[:60] + "…" if len(entry.original) > 60 else entry.original
                     trans_disp = trans[:60] + "…" if len(trans) > 60 else trans
                     _log(f"{orig_disp} -> {trans_disp}")
@@ -625,6 +832,10 @@ class AutoTranslator:
                     if ctx in AUTO_TERM_CONTEXTS:
                         with self._in_flight_lock:
                             self._in_flight_terms[entry.original] = trans
+            # 对整个 buffer 做兜底检测（应对 JSON 尚未闭合但已明显失控的情况）
+            is_abnormal, _ = self._detect_stream_repetition(_stream_buffer, max_orig_repeat=max_orig_repeat)
+            if is_abnormal:
+                raise _RepetitionDetected()
 
         t_llm_start = time.perf_counter()
         try:
@@ -632,6 +843,42 @@ class AutoTranslator:
                 messages, self._cfg.llm_config.max_output_tokens, pause_event, stop_event,
                 chunk_callback=_chunk_cb,
             )
+        except _RepetitionDetected as exc:
+            _log(f"⚠ 检测到重复输出（entry: {exc.entry_id or 'unknown'}），尝试截断修复并拆分重试")
+            # 尝试从截断的 buffer 中 salvaging 翻译
+            if exc.entry_id is None and _stream_buffer:
+                salvaged = self._salvage_from_repetition_buffer(_stream_buffer, expected_ids, max_orig_repeat=max_orig_repeat)
+                for eid, trans in salvaged.items():
+                    if eid not in _stream_translations and eid in expected_ids:
+                        _stream_translations[eid] = trans
+                        entry = id_to_entry[eid]
+                        _log(f"  [修复] {entry.original[:60]} -> {trans[:60]}")
+                        self._update_collection({eid: trans}, collection, result, lock)
+                        if progress_emit:
+                            progress_emit()
+                        ctx = entry.context.split("|")[0] if "|" in (entry.context or "") else entry.context
+                        if ctx in AUTO_TERM_CONTEXTS:
+                            with self._in_flight_lock:
+                                self._in_flight_terms[entry.original] = trans
+            remaining = [e for e in llm_entries if e.id not in _stream_translations]
+            if remaining:
+                if len(remaining) > _min_size:
+                    mid = len(remaining) // 2
+                    halves = [remaining[:mid], remaining[mid:]]
+                    _log(f"  ↩ {len(remaining)} 条拆分重试")
+                    from src.transbridge.ai_translator.batch_planner import Batch as _Batch
+                    for half in halves:
+                        sub = _Batch(entries=half, batch_type=batch.batch_type, quest_formid=batch.quest_formid)
+                        self._run_batch(sub, collection, result, lock, log_callback, pause_event, stop_event, stream_callback, _min_size, progress_emit=progress_emit)
+                else:
+                    _log(f"  ⚠ {len(remaining)} 条因重复输出无法翻译（已缩至最小）")
+                    with lock:
+                        for e in remaining:
+                            result.failed_entries.append(f"{e.id}: 模型重复输出")
+                        result.failed_count += len(remaining)
+            if _timing_out is not None:
+                _timing_out.update({'t_terms': t_terms - t0, 't_llm': time.perf_counter() - t_llm_start, 't_parse': 0.0})
+            return len(direct_fill) + len(_stream_translations)
         except Exception as exc:
             err_msg = str(exc)
             _log(f"❌ API 调用失败（{len(llm_entries)} 条）: {err_msg}")

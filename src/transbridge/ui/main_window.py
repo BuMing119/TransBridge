@@ -1,7 +1,8 @@
 from PyQt6.QtWidgets import (
     QMainWindow, QTabWidget, QStatusBar, QLabel, QMessageBox,
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QSettings
+from PyQt6.QtGui import QShortcut, QKeySequence
 
 from transbridge import __version__
 from .context import AppContext
@@ -73,8 +74,10 @@ class MainWindow(QMainWindow):
 
         self._ctx = AppContext(self)
         self._workers: list[ApiWorker] = []
+        self._assistant_panel = None  # 延迟初始化
 
         self._init_menu()
+        self._init_shortcuts()
         self._init_central()
         self._init_status_bar()
 
@@ -90,6 +93,29 @@ class MainWindow(QMainWindow):
         else:
             self._show_config_dialog()
 
+        self._restore_state()
+
+    def closeEvent(self, event):
+        # ChatWorker 清理
+        if self._assistant_panel and self._assistant_panel.chat._worker:
+            w = self._assistant_panel.chat._worker
+            if w.isRunning():
+                w.cancel()
+                w.wait(3000)
+
+        # QSettings 持久化
+        settings = QSettings("TransBridge", "MainWindow")
+        settings.setValue("geometry", self.saveGeometry())
+        settings.setValue("state", self.saveState())
+        super().closeEvent(event)
+
+    def _restore_state(self):
+        settings = QSettings("TransBridge", "MainWindow")
+        if settings.contains("geometry"):
+            self.restoreGeometry(settings.value("geometry"))
+        if settings.contains("state"):
+            self.restoreState(settings.value("state"))
+
     # ── Menu ──────────────────────────────────────────────────
 
     def _init_menu(self):
@@ -98,6 +124,16 @@ class MainWindow(QMainWindow):
         tools_menu = mb.addMenu("小工具")
         self._ai_translator_act = tools_menu.addAction("🤖 AI 自动翻译")
         self._ai_translator_act.triggered.connect(self._open_ai_translator)
+        tools_menu.addSeparator()
+        self._smart_assistant_act = tools_menu.addAction("💬 智能助手")
+        self._smart_assistant_act.setCheckable(True)
+        self._smart_assistant_act.setShortcut("Ctrl+Shift+I")
+        self._smart_assistant_act.triggered.connect(self._toggle_smart_assistant)
+
+        view_menu = mb.addMenu("视图")
+        self._view_assistant_act = view_menu.addAction("智能助手面板")
+        self._view_assistant_act.setCheckable(True)
+        self._view_assistant_act.triggered.connect(self._toggle_smart_assistant)
 
         file_menu = mb.addMenu("文件")
         refresh_act = file_menu.addAction("刷新项目列表")
@@ -239,6 +275,37 @@ class MainWindow(QMainWindow):
 
     def _open_ai_translator(self):
         self._workbench.open_tool("ai_translator")
+
+    # ── Smart Assistant ───────────────────────────────────────
+
+    def _init_shortcuts(self):
+        self._shortcut_ctrl_k = QShortcut(QKeySequence("Ctrl+K"), self)
+        self._shortcut_ctrl_k.activated.connect(self._toggle_smart_assistant)
+
+    def _get_assistant_panel(self):
+        if self._assistant_panel is None:
+            from src.transbridge.ui.tools.smart_assistant import SmartAssistantPanel
+            self._assistant_panel = SmartAssistantPanel(self._ctx, self)
+            self._assistant_panel.visibility_changed.connect(
+                self._on_assistant_visibility_changed
+            )
+            self.addDockWidget(
+                Qt.DockWidgetArea.BottomDockWidgetArea, self._assistant_panel
+            )
+            self._assistant_panel.hide()
+        return self._assistant_panel
+
+    def _toggle_smart_assistant(self):
+        panel = self._get_assistant_panel()
+        if panel.isVisible():
+            panel.hide()
+        else:
+            panel.show()
+            panel.raise_()
+
+    def _on_assistant_visibility_changed(self, visible: bool):
+        self._smart_assistant_act.setChecked(visible)
+        self._view_assistant_act.setChecked(visible)
 
     def _show_about(self):
         QMessageBox.about(
