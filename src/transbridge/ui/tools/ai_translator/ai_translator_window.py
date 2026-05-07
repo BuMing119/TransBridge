@@ -193,6 +193,20 @@ class AITranslatorWindow(QWidget):
         main_layout = QVBoxLayout(self)
         main_layout.setSpacing(8)
 
+        # ── 模式切换 ────────────────────────────────────────────────────────────
+        mode_box = QHBoxLayout()
+        mode_box.addWidget(QLabel("模式:"))
+        self._mode_group = QButtonGroup(self)
+        self._mode_translate = QRadioButton("翻译")
+        self._mode_polish = QRadioButton("润色")
+        self._mode_group.addButton(self._mode_translate)
+        self._mode_group.addButton(self._mode_polish)
+        self._mode_translate.setChecked(True)
+        mode_box.addWidget(self._mode_translate)
+        mode_box.addWidget(self._mode_polish)
+        mode_box.addStretch()
+        main_layout.addLayout(mode_box)
+
         # ── LLM 配置区 ────────────────────────────────────────────────────────
         llm_box = QGroupBox("LLM 配置")
         llm_layout = QVBoxLayout(llm_box)
@@ -486,6 +500,12 @@ class AITranslatorWindow(QWidget):
         polish_options.addStretch()
         pp_layout.addLayout(polish_options)
 
+        # 润色预览确认
+        self._polish_preview_check = QCheckBox("润色后预览确认（逐条对比接受/拒绝）")
+        self._polish_preview_check.setChecked(False)
+        self._polish_preview_check.setToolTip("勾选后，独立润色完成后弹出预览窗口，可逐条对比并选择接受或拒绝润色结果")
+        pp_layout.addWidget(self._polish_preview_check)
+
         # 分隔线
         line3 = QFrame()
         line3.setFrameShape(QFrame.Shape.HLine)
@@ -535,6 +555,8 @@ class AITranslatorWindow(QWidget):
         btn_row.addWidget(self._start_btn)
         main_layout.addLayout(btn_row)
 
+        self._mode_translate.toggled.connect(self._on_mode_changed)
+        self._mode_polish.toggled.connect(self._on_mode_changed)
         self._scope_selected.toggled.connect(self._update_estimate)
         self._scope_all.toggled.connect(self._update_estimate)
         self._scope_filtered.toggled.connect(self._update_estimate)
@@ -595,6 +617,7 @@ class AITranslatorWindow(QWidget):
         self._pp_polish_level_combo.setCurrentIndex(level_map.get(cfg.pp_polish_level, 1))
         self._pp_arbitration_check.setChecked(cfg.pp_enable_arbitration)
         self._pp_strict_mode_check.setChecked(cfg.pp_strict_arbitration)
+        self._polish_preview_check.setChecked(cfg.polish_preview_enabled)
         # 更新控件状态
         self._on_pp_enable_changed()
         # Embedding 配置
@@ -662,6 +685,7 @@ class AITranslatorWindow(QWidget):
         cfg.pp_polish_level = level_map.get(self._pp_polish_level_combo.currentIndex(), "moderate")
         cfg.pp_enable_arbitration = self._pp_arbitration_check.isChecked()
         cfg.pp_strict_arbitration = self._pp_strict_mode_check.isChecked()
+        cfg.polish_preview_enabled = self._polish_preview_check.isChecked()
         # Embedding 配置
         cfg.embedding_provider = "local" if self._embed_provider_combo.currentIndex() == 0 else "openai"
         cfg.embedding_local_model = self._embed_local_model_edit.text().strip()
@@ -709,6 +733,7 @@ class AITranslatorWindow(QWidget):
         self._pp_polish_level_combo.currentIndexChanged.connect(self._save_config)
         self._pp_arbitration_check.toggled.connect(self._save_config)
         self._pp_strict_mode_check.toggled.connect(self._save_config)
+        self._polish_preview_check.toggled.connect(self._save_config)
         # 后处理控件联动
         self._pp_enable_check.toggled.connect(self._on_pp_enable_changed)
         self._pp_polish_check.toggled.connect(self._on_polish_changed)
@@ -759,6 +784,24 @@ class AITranslatorWindow(QWidget):
     def _on_provider_changed(self):
         is_openai = self._provider_combo.currentIndex() == 0
         self._baseurl_edit.setEnabled(is_openai)
+
+    def _on_mode_changed(self):
+        """翻译/润色模式切换时更新UI。"""
+        is_polish = self._mode_polish.isChecked()
+        # 翻译范围选项
+        self._scope_all.setVisible(not is_polish)
+        self._scope_filtered.setVisible(not is_polish)
+        self._scope_selected.setVisible(not is_polish)
+        self._overwrite_check.setVisible(not is_polish)
+        self._estimate_lbl.setVisible(not is_polish)
+        # 按钮文案
+        if is_polish:
+            self._start_btn.setText("▶ 开始润色")
+            self._estimate_lbl.setText("润色范围：选中的已翻译词条")
+            self._estimate_lbl.setVisible(True)
+        else:
+            self._start_btn.setText("▶ 开始翻译")
+        self._update_estimate()
 
     def _on_embed_provider_changed(self):
         """Embedding provider 切换时更新控件可见性。"""
@@ -869,6 +912,10 @@ class AITranslatorWindow(QWidget):
         dlg.exec()
 
     def _on_start(self):
+        if self._mode_polish.isChecked():
+            self._on_polish_start()
+            return
+
         collection = self._ctx.collection
         if not collection:
             QMessageBox.warning(self, "翻译", "请先加载词条集合。")
@@ -934,6 +981,169 @@ class AITranslatorWindow(QWidget):
 
         progress_win.show()
         worker.start()
+        self.close()
+
+    def _on_polish_start(self):
+        """润色模式：选中已翻译词条 → LLMPolisher → 可选预览 → 写入。"""
+        collection = self._ctx.collection
+        if not collection:
+            QMessageBox.warning(self, "润色", "请先加载词条集合。")
+            return
+
+        cfg = self._save_config()
+
+        if not cfg.api_key:
+            QMessageBox.warning(self, "润色", "请先填写 API Key。")
+            return
+        if not cfg.model:
+            QMessageBox.warning(self, "润色", "请先填写模型名。")
+            return
+
+        # 获取选中且有译文的条目
+        selected = self._step2.get_selected_entries()
+        entries_with_translation = [e for e in selected if e.translation]
+        if not entries_with_translation:
+            QMessageBox.warning(self, "润色", "所选条目均无译文，无法润色。")
+            return
+
+        # 创建 LLM 客户端
+        from src.transbridge.ai_translator.llm_client import create_llm_client
+        llm_client = create_llm_client(cfg)
+
+        # 创建术语管理器（可选）
+        term_manager = None
+        if self._ctx.esp_path:
+            from src.transbridge.ai_translator.term_database import DynamicTermDatabase, TermDatabaseManager
+            dynamic_db = DynamicTermDatabase(self._ctx.esp_path)
+            dynamic_db.load()
+            term_manager = TermDatabaseManager([dynamic_db.as_list()])
+
+        # 创建润色器
+        from src.transbridge.ai_translator.post_processor.polisher import LLMPolisher
+        polish_level = cfg.pp_polish_level or "moderate"
+        polisher = LLMPolisher(
+            llm_client=llm_client,
+            term_manager=term_manager,
+            game_profile=cfg.game_profile,
+            target_lang=cfg.target_lang,
+            polish_level=polish_level,
+        )
+
+        # 创建 Worker
+        from src.transbridge.ui.tools.ai_translator._polish_worker import _PolishWorker
+        worker = _PolishWorker(polisher, entries_with_translation)
+
+        # 进度窗口（复用翻译进度窗口模式 — 简单弹窗）
+        preview_enabled = self._polish_preview_check.isChecked()
+
+        if preview_enabled:
+            # 预览模式：先收集结果，再弹预览
+            self._polish_with_preview(worker, entries_with_translation, collection)
+        else:
+            # 直接写入模式
+            self._polish_direct(worker, entries_with_translation, collection)
+
+    def _polish_direct(self, worker, entries, collection):
+        """润色直接写入模式。"""
+        progress_dlg = QDialog(self)
+        progress_dlg.setWindowTitle("AI 润色 — 进行中")
+        progress_dlg.resize(400, 100)
+        progress_layout = QVBoxLayout(progress_dlg)
+        progress_bar = QProgressBar()
+        progress_bar.setRange(0, len(entries))
+        progress_layout.addWidget(progress_bar)
+        status_lbl = QLabel("准备中…")
+        progress_layout.addWidget(status_lbl)
+
+        worker.progress.connect(lambda c, t, m: (
+            progress_bar.setValue(c),
+            progress_bar.setMaximum(t),
+            status_lbl.setText(m),
+        ))
+
+        worker.finished_all.connect(lambda results: self._on_polish_finished_direct(
+            results, entries, collection, progress_dlg
+        ))
+        worker.error.connect(lambda err: (
+            progress_dlg.close(),
+            QMessageBox.critical(self, "润色错误", err),
+        ))
+
+        worker.start()
+        progress_dlg.exec()
+
+    def _polish_with_preview(self, worker, entries, collection):
+        """润色预览模式。"""
+        progress_dlg = QDialog(self)
+        progress_dlg.setWindowTitle("AI 润色 — 进行中")
+        progress_dlg.resize(400, 100)
+        progress_layout = QVBoxLayout(progress_dlg)
+        progress_bar = QProgressBar()
+        progress_bar.setRange(0, len(entries))
+        progress_layout.addWidget(progress_bar)
+        status_lbl = QLabel("准备中…")
+        progress_layout.addWidget(status_lbl)
+
+        worker.progress.connect(lambda c, t, m: (
+            progress_bar.setValue(c),
+            progress_bar.setMaximum(t),
+            status_lbl.setText(m),
+        ))
+
+        def _on_done(results):
+            progress_dlg.close()
+            from src.transbridge.ui.tools.ai_translator._polish_preview_dialog import _PolishPreviewDialog
+            preview = _PolishPreviewDialog(entries, results, parent=self)
+            if preview.exec() == QDialog.DialogCode.Accepted:
+                self._apply_polish_results(entries, preview.get_results(), collection)
+            worker.deleteLater()
+
+        worker.finished_all.connect(_on_done)
+        worker.error.connect(lambda err: (
+            progress_dlg.close(),
+            QMessageBox.critical(self, "润色错误", err),
+        ))
+
+        worker.start()
+        progress_dlg.exec()
+
+    def _on_polish_finished_direct(self, results, entries, collection, progress_dlg):
+        """直接写入模式完成回调。"""
+        progress_dlg.close()
+        applied = 0
+        for entry in entries:
+            result = results.get(entry.id)
+            if result and result.polished_translation:
+                updated = type(entry)(
+                    id=entry.id, key=entry.key, original=entry.original,
+                    translation=result.polished_translation, stage=entry.stage,
+                    context=entry.context, form_id_with_plugin=entry.form_id_with_plugin,
+                    string_id=entry.string_id, dsd_type=entry.dsd_type,
+                    dsd_index=entry.dsd_index, editor_id=entry.editor_id,
+                )
+                collection.add(updated, overwrite=True)
+                applied += 1
+        self._ctx.collection_changed.emit(collection)
+        QMessageBox.information(self, "润色完成", f"已润色 {applied} 条。")
+        self.close()
+
+    def _apply_polish_results(self, entries, polish_decisions, collection):
+        """应用润色预览结果到集合。"""
+        applied = 0
+        for entry in entries:
+            decision = polish_decisions.get(entry.id)
+            if decision is not None:  # accepted polish
+                updated = type(entry)(
+                    id=entry.id, key=entry.key, original=entry.original,
+                    translation=decision, stage=entry.stage,
+                    context=entry.context, form_id_with_plugin=entry.form_id_with_plugin,
+                    string_id=entry.string_id, dsd_type=entry.dsd_type,
+                    dsd_index=entry.dsd_index, editor_id=entry.editor_id,
+                )
+                collection.add(updated, overwrite=True)
+                applied += 1
+        self._ctx.collection_changed.emit(collection)
+        QMessageBox.information(self, "润色完成", f"已应用 {applied} 条润色结果。")
         self.close()
 
     def _check_all_terms_empty(self, cfg) -> bool:

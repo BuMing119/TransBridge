@@ -1,13 +1,13 @@
 """
 步骤2：解析结果预览。
 显示解析进度、四格统计卡以及全部词条预览表格。
-双击词条可查看详情。支持多选列和筛选栏。
+支持多选标签筛选、文本搜索、行内编辑、Ctrl/Shift行选。
 """
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView, QProgressBar,
-    QDialog, QPushButton, QLineEdit, QComboBox, QCheckBox,
+    QPushButton, QLineEdit,
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor
@@ -87,297 +87,9 @@ class _StatCard(QWidget):
         self._lbl_value.setText(str(v))
 
 
-# ────────────────────────────── 词条详情对话框 ──────────────────────────────
-
-class _EntryDetailDialog(QDialog):
-    """放大版词条表格对话框：支持按 Key / 原文 / 译文 实时筛选。"""
-
-    def __init__(self, entries: list[TranslationEntry], current_index: int,
-                 initial_selected: list[TranslationEntry] | None = None, parent=None):
-        super().__init__(parent)
-        self._entries = entries
-        self._selected_entries = []  # 用户确定的选中词条
-        self._current_selected_ids = {e.id for e in initial_selected if e.id} if initial_selected else set()
-        self.setWindowTitle(f"词条预览（共 {len(entries)} 条）")
-        self.resize(1100, 680)
-        self._filter_timer = QTimer(self)
-        self._filter_timer.setSingleShot(True)
-        self._filter_timer.setInterval(150)
-        self._filter_timer.timeout.connect(self._apply_filter)
-        self._init_ui()
-        self._apply_filter()
-        self._scroll_to_entry(current_index)
-
-    def _init_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(6)
-
-        filter_row = QHBoxLayout()
-        filter_row.addWidget(QLabel("Key:"))
-        self._filter_key = QLineEdit()
-        self._filter_key.setPlaceholderText("按 Key 筛选…")
-        self._filter_key.setClearButtonEnabled(True)
-        self._filter_key.textChanged.connect(self._filter_timer.start)
-        filter_row.addWidget(self._filter_key)
-
-        filter_row.addWidget(QLabel("原文:"))
-        self._filter_orig = QLineEdit()
-        self._filter_orig.setPlaceholderText("按原文筛选…")
-        self._filter_orig.setClearButtonEnabled(True)
-        self._filter_orig.textChanged.connect(self._filter_timer.start)
-        filter_row.addWidget(self._filter_orig)
-
-        filter_row.addWidget(QLabel("译文:"))
-        self._filter_trans = QLineEdit()
-        self._filter_trans.setPlaceholderText("按译文筛选…")
-        self._filter_trans.setClearButtonEnabled(True)
-        self._filter_trans.textChanged.connect(self._filter_timer.start)
-        filter_row.addWidget(self._filter_trans)
-
-        clear_btn = QPushButton("清除")
-        clear_btn.setFixedWidth(52)
-        clear_btn.clicked.connect(self._clear_filter)
-        filter_row.addWidget(clear_btn)
-        layout.addLayout(filter_row)
-
-        # 全选复选框：全选/全不选（仅当前筛选行）
-        self._header_check = QCheckBox()
-        self._header_check.setToolTip("全选/全不选（仅筛选后可见行）")
-        self._header_check.stateChanged.connect(self._on_header_check_changed)
-
-        # 第二行筛选栏：翻译状态 + 类型 + 全选
-        filter_row2 = QHBoxLayout()
-        filter_row2.setSpacing(6)
-        filter_row2.addWidget(QLabel("翻译状态:"))
-        self._filter_stage = QComboBox()
-        self._filter_stage.addItems(["全部", "未翻译", "已翻译", "仅机翻"])
-        self._filter_stage.setFixedWidth(90)
-        self._filter_stage.currentIndexChanged.connect(self._apply_filter)
-        filter_row2.addWidget(self._filter_stage)
-
-        filter_row2.addWidget(QLabel("类型:"))
-        self._filter_category = QComboBox()
-        self._filter_category.addItem("全部类型")
-        for cat in _ALL_CATEGORIES:
-            self._filter_category.addItem(cat)
-        self._filter_category.setFixedWidth(100)
-        self._filter_category.currentIndexChanged.connect(self._apply_filter)
-        filter_row2.addWidget(self._filter_category)
-
-        filter_row2.addStretch()
-        filter_row2.addWidget(QLabel("全选:"))
-        filter_row2.addWidget(self._header_check)
-        layout.addLayout(filter_row2)
-
-        self._count_lbl = QLabel()
-        self._count_lbl.setStyleSheet("color: #888; font-size: 11px;")
-        layout.addWidget(self._count_lbl)
-
-        self._table = QTableWidget(0, 5)
-        self._table.setHorizontalHeaderLabels(["", "Key", "原文", "译文", "上下文"])
-        hh = self._table.horizontalHeader()
-        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        self._table.setColumnWidth(0, 30)
-        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        hh.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        hh.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self._table.verticalHeader().setVisible(False)
-
-        layout.addWidget(self._table, stretch=1)
-
-        # 连接复选框变化信号
-        self._table.itemChanged.connect(self._on_item_changed)
-
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        ok_btn = QPushButton("确定")
-        ok_btn.setFixedWidth(80)
-        ok_btn.clicked.connect(self._on_ok_clicked)
-        cancel_btn = QPushButton("取消")
-        cancel_btn.setFixedWidth(80)
-        cancel_btn.clicked.connect(self.reject)
-        btn_row.addWidget(ok_btn)
-        btn_row.addWidget(cancel_btn)
-        layout.addLayout(btn_row)
-
-    def _apply_filter(self):
-        key_kw = self._filter_key.text().lower()
-        orig_kw = self._filter_orig.text().lower()
-        trans_kw = self._filter_trans.text().lower()
-        stage_idx = self._filter_stage.currentIndex()   # 0=全部 1=未翻译 2=已翻译 3=仅机翻
-        cat_text = self._filter_category.currentText()
-        filter_cat = None if cat_text == "全部类型" else cat_text
-
-        matched = []
-        for e in self._entries:
-            # 翻译状态筛选
-            if stage_idx == 1 and (e.translation or e.stage >= 1):
-                continue
-            elif stage_idx == 2 and (not e.translation or e.stage < 1):
-                continue
-            elif stage_idx == 3 and e.stage != 1:
-                continue
-
-            # 类型筛选
-            if filter_cat and _entry_category(e) != filter_cat:
-                continue
-
-            # 关键词筛选
-            if key_kw and key_kw not in (e.key or "").lower():
-                continue
-            if orig_kw and orig_kw not in (e.original or "").lower():
-                continue
-            if trans_kw and trans_kw not in (e.translation or "").lower():
-                continue
-
-            matched.append(e)
-
-        # 阻断信号避免每次 setItem 触发 itemChanged 回调导致卡顿
-        self._table.blockSignals(True)
-        self._table.setRowCount(len(matched))
-        for row, entry in enumerate(matched):
-            # 第0列：复选框
-            check_item = QTableWidgetItem()
-            check_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
-            # 根据当前选中ID集合设置复选框状态
-            if entry.id and entry.id in self._current_selected_ids:
-                check_item.setCheckState(Qt.CheckState.Checked)
-            else:
-                check_item.setCheckState(Qt.CheckState.Unchecked)
-            check_item.setData(Qt.ItemDataRole.UserRole, entry)
-
-            # 第1列：Key
-            key_item = QTableWidgetItem(entry.key or "")
-            key_item.setData(Qt.ItemDataRole.UserRole, entry)
-            key_item.setFlags(key_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-
-            # 第2列：原文
-            orig_item = QTableWidgetItem(entry.original or "")
-            orig_item.setData(Qt.ItemDataRole.UserRole, entry)
-            orig_item.setFlags(orig_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-
-            # 第3列：译文
-            trans_text = entry.translation or ""
-            trans_item = QTableWidgetItem(trans_text if trans_text else "（无译文）")
-            trans_item.setData(Qt.ItemDataRole.UserRole, entry)
-            trans_item.setFlags(trans_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            if trans_text:
-                trans_item.setForeground(QColor("#4CAF50"))
-            else:
-                trans_item.setForeground(QColor("#9E9E9E"))
-
-            # 第4列：上下文
-            ctx_item = QTableWidgetItem(entry.context or "")
-            ctx_item.setData(Qt.ItemDataRole.UserRole, entry)
-            ctx_item.setFlags(ctx_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-
-            self._table.setItem(row, 0, check_item)
-            self._table.setItem(row, 1, key_item)
-            self._table.setItem(row, 2, orig_item)
-            self._table.setItem(row, 3, trans_item)
-            self._table.setItem(row, 4, ctx_item)
-
-        # 恢复信号
-        self._table.blockSignals(False)
-
-        # 重置表头复选框为未选中
-        self._header_check.blockSignals(True)
-        self._header_check.setChecked(False)
-        self._header_check.blockSignals(False)
-
-        # 更新计数标签
-        self._update_selection_count()
-
-    def _clear_filter(self):
-        self._filter_key.clear()
-        self._filter_orig.clear()
-        self._filter_trans.clear()
-        self._filter_stage.setCurrentIndex(0)
-        self._filter_category.setCurrentIndex(0)
-
-    def _scroll_to_entry(self, original_index: int):
-        if not self._entries or original_index >= len(self._entries):
-            return
-        target = self._entries[original_index]
-        for row in range(self._table.rowCount()):
-            item = self._table.item(row, 1)  # 第1列是Key列
-            if item and item.data(Qt.ItemDataRole.UserRole) is target:
-                self._table.selectRow(row)
-                self._table.scrollToItem(item)
-                break
-
-    # ── 多选功能 ──────────────────────────────────────────────────────────────
-
-    def get_selected_entries(self) -> list[TranslationEntry]:
-        """返回当前勾选的词条列表。"""
-        # 基于当前选中ID集合返回所有选中的词条，不仅仅是当前显示的
-        result = []
-        id_to_entry = {e.id: e for e in self._entries if e.id}
-        for entry_id in self._current_selected_ids:
-            if entry_id in id_to_entry:
-                result.append(id_to_entry[entry_id])
-        return result
-
-    def _on_item_changed(self, item: QTableWidgetItem):
-        if item.column() == 0:  # 复选框列
-            entry = item.data(Qt.ItemDataRole.UserRole)
-            if isinstance(entry, TranslationEntry) and entry.id:
-                if item.checkState() == Qt.CheckState.Checked:
-                    self._current_selected_ids.add(entry.id)
-                else:
-                    self._current_selected_ids.discard(entry.id)
-            self._update_selection_count()
-
-    def _on_header_check_changed(self, state: int):
-        checked = state == Qt.CheckState.Checked.value
-        # 临时断开信号避免递归
-        self._table.itemChanged.disconnect(self._on_item_changed)
-        for row in range(self._table.rowCount()):
-            item = self._table.item(row, 0)
-            if item:
-                item.setCheckState(
-                    Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
-                )
-                # 同时更新当前选中ID集合
-                entry = item.data(Qt.ItemDataRole.UserRole)
-                if isinstance(entry, TranslationEntry) and entry.id:
-                    if checked:
-                        self._current_selected_ids.add(entry.id)
-                    else:
-                        self._current_selected_ids.discard(entry.id)
-        self._table.itemChanged.connect(self._on_item_changed)
-        self._update_selection_count()
-
-    def _update_selection_count(self):
-        """更新计数标签，显示筛选数量和选中数量。"""
-        total = len(self._entries)
-        shown = self._table.rowCount()  # 当前显示的行数（筛选后）
-        selected = len(self.get_selected_entries())
-
-        if shown == total:
-            text = f"共 {total} 条 | 已选 {selected} 条"
-        else:
-            text = f"显示 {shown} / {total} 条 | 已选 {selected} 条"
-
-        self._count_lbl.setText(text)
-
-    def _on_ok_clicked(self):
-        """确定按钮点击：保存当前选中词条并关闭对话框。"""
-        self._selected_entries = self.get_selected_entries()
-        self.accept()
-
-    def get_confirmed_selection(self) -> list[TranslationEntry]:
-        """返回用户确定的选中词条列表（点击确定后）。"""
-        return self._selected_entries
-
-
 # ────────────────────────────── 步骤2 主 Widget ──────────────────────────────
 
-# 表格列常量（含复选框列）
+# 表格列常量（复选框作为选中标记列）
 _COL_CHECK = 0
 _COL_KEY   = 1
 _COL_ORIG  = 2
@@ -393,27 +105,31 @@ class Step2PreviewWidget(QWidget):
         super().__init__(parent)
         self._ctx = ctx
         self._entries: list[TranslationEntry] = []  # 全部词条
-        self._filtered_entries: list[TranslationEntry] | None = None  # None=显示全部，否则显示过滤后的
+        self._category_filters: set[str] = set()  # 多选分类标签
+        self._stage_filters: set[int] = set()  # 多选翻译状态标签（0=未翻译,1=有疑问,2=已翻译）
         self._selected_entry_ids: set[str] = set()  # 选中的词条ID集合
+        self._last_clicked_row: int | None = None  # Shift 范围选择锚点
+        self._tag_buttons: dict[str | int | None, QPushButton] = {}  # 标签按钮
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(150)
+        self._search_timer.timeout.connect(self._populate_table)
         self._init_ui()
         ctx.collection_changed.connect(self.refresh)
 
     # ── 初始化 UI ────────────────────────────────────────────────────────────
 
     def _init_ui(self):
-        box = QGroupBox("步骤2：解析结果预览")
         outer = QVBoxLayout(self)
-        outer.addWidget(box)
         outer.setContentsMargins(0, 0, 0, 0)
-
-        layout = QVBoxLayout(box)
+        outer.setSpacing(4)
 
         # 进度条
         self._progress = QProgressBar()
         self._progress.setRange(0, 100)
         self._progress.setValue(0)
         self._progress.setFixedHeight(8)
-        layout.addWidget(self._progress)
+        outer.addWidget(self._progress)
 
         # 四格统计卡
         cards_row = QHBoxLayout()
@@ -423,50 +139,127 @@ class Step2PreviewWidget(QWidget):
         self._card_untranslated = _StatCard("未翻译", "#F44336")
         for c in (self._card_total, self._card_done, self._card_migrate, self._card_untranslated):
             cards_row.addWidget(c)
-        layout.addLayout(cards_row)
+        outer.addLayout(cards_row)
 
+        # 分类筛选标签行
+        self._tags_widget = QWidget()
+        tags_layout = QHBoxLayout(self._tags_widget)
+        tags_layout.setContentsMargins(0, 0, 0, 0)
+        tags_layout.setSpacing(4)
+        tags_layout.addWidget(QLabel("分类："))
+        self._tags_container = QHBoxLayout()
+        self._tags_container.setSpacing(3)
+        tags_layout.addLayout(self._tags_container)
+        tags_layout.addStretch()
+        self._tags_widget.hide()
+        outer.addWidget(self._tags_widget)
 
-        # 提示标签
-        hint = QLabel("双击词条可查看详情")
-        hint.setStyleSheet("color: #888; font-size: 11px;")
-        layout.addWidget(hint)
+        # 翻译状态筛选标签行
+        self._stage_tags_widget = QWidget()
+        stage_tags_layout = QHBoxLayout(self._stage_tags_widget)
+        stage_tags_layout.setContentsMargins(0, 0, 0, 0)
+        stage_tags_layout.setSpacing(4)
+        stage_tags_layout.addWidget(QLabel("状态："))
+        self._stage_tags_container = QHBoxLayout()
+        self._stage_tags_container.setSpacing(3)
+        stage_tags_layout.addLayout(self._stage_tags_container)
+        stage_tags_layout.addStretch()
+        self._stage_tags_widget.hide()
+        outer.addWidget(self._stage_tags_widget)
 
-        # 词条表格（含复选框列）
+        # 文本搜索栏
+        self._search_widget = QWidget()
+        search_layout = QHBoxLayout(self._search_widget)
+        search_layout.setContentsMargins(0, 0, 0, 0)
+        search_layout.setSpacing(6)
+        search_layout.addWidget(QLabel("Key:"))
+        self._search_key = QLineEdit()
+        self._search_key.setPlaceholderText("按 Key 筛选…")
+        self._search_key.setClearButtonEnabled(True)
+        self._search_key.textChanged.connect(self._search_timer.start)
+        search_layout.addWidget(self._search_key)
+        search_layout.addWidget(QLabel("原文:"))
+        self._search_orig = QLineEdit()
+        self._search_orig.setPlaceholderText("按原文筛选…")
+        self._search_orig.setClearButtonEnabled(True)
+        self._search_orig.textChanged.connect(self._search_timer.start)
+        search_layout.addWidget(self._search_orig)
+        search_layout.addWidget(QLabel("译文:"))
+        self._search_trans = QLineEdit()
+        self._search_trans.setPlaceholderText("按译文筛选…")
+        self._search_trans.setClearButtonEnabled(True)
+        self._search_trans.textChanged.connect(self._search_timer.start)
+        search_layout.addWidget(self._search_trans)
+        clear_search_btn = QPushButton("清除")
+        clear_search_btn.setFixedWidth(52)
+        clear_search_btn.clicked.connect(self._clear_search)
+        search_layout.addWidget(clear_search_btn)
+        self._search_widget.hide()
+        outer.addWidget(self._search_widget)
+
+        # 词条表格（复选框标记选中 + 点击行任意位置切换）
         self._table = QTableWidget(0, _NUM_COLS)
         self._table.setHorizontalHeaderLabels(["", "Key", "原文", "译文", "类型"])
         hh = self._table.horizontalHeader()
         hh.setSectionResizeMode(_COL_CHECK, QHeaderView.ResizeMode.Fixed)
-        self._table.setColumnWidth(_COL_CHECK, 30)
+        self._table.setColumnWidth(_COL_CHECK, 28)
         hh.setSectionResizeMode(_COL_KEY,   QHeaderView.ResizeMode.ResizeToContents)
         hh.setSectionResizeMode(_COL_ORIG,  QHeaderView.ResizeMode.Stretch)
         hh.setSectionResizeMode(_COL_TRANS, QHeaderView.ResizeMode.Stretch)
         hh.setSectionResizeMode(_COL_CTX,   QHeaderView.ResizeMode.ResizeToContents)
-        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.DoubleClicked)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self._table.itemDoubleClicked.connect(self._on_double_clicked)
-
-        # 表头复选框：全选/全不选
-        self._header_check = QCheckBox()
-        self._header_check.setToolTip("全选/全不选（仅筛选后可见行）")
-        self._header_check.stateChanged.connect(self._on_header_check_changed)
-        self._table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignLeft)
-
-        layout.addWidget(self._table, stretch=1)
-
-        # 复选框变化信号（只连接一次）
         self._table.itemChanged.connect(self._on_item_changed)
+        self._table.cellClicked.connect(self._on_cell_clicked)
+
+        outer.addWidget(self._table, stretch=1)
 
         # 底部计数标签
         self._count_lbl = QLabel("已选 0 条 / 共 0 条")
         self._count_lbl.setStyleSheet("color: #888; font-size: 11px;")
-        layout.addWidget(self._count_lbl)
+        outer.addWidget(self._count_lbl)
+
+        # 操作进度区域（解析/上传/下载/写回共用）
+        self._op_progress = QProgressBar()
+        self._op_progress.setFixedHeight(14)
+        self._op_progress.hide()
+        outer.addWidget(self._op_progress)
+        self._op_progress_lbl = QLabel("")
+        self._op_progress_lbl.setStyleSheet("color: #555; font-size: 12px;")
+        self._op_progress_lbl.hide()
+        outer.addWidget(self._op_progress_lbl)
+
+    # ── 操作进度接口 ──────────────────────────────────────────────────────────
+
+    def show_progress(self, total: int, msg: str = ""):
+        if total > 0:
+            self._op_progress.setRange(0, total)
+            self._op_progress.setValue(0)
+        else:
+            self._op_progress.setRange(0, 0)
+        self._op_progress_lbl.setText(msg)
+        self._op_progress.show()
+        self._op_progress_lbl.show()
+
+    def update_progress(self, current: int, total: int, msg: str):
+        if total > 0:
+            self._op_progress.setRange(0, total)
+            self._op_progress.setValue(current)
+        self._op_progress_lbl.setText(msg)
+
+    def hide_progress(self):
+        self._op_progress.hide()
+        self._op_progress_lbl.hide()
+        self._op_progress.setValue(0)
+        self._op_progress_lbl.setText("")
 
     # ── 公共接口 ──────────────────────────────────────────────────────────────
 
     def get_selected_entries(self) -> list[TranslationEntry]:
-        """返回当前勾选的词条列表，供 AI 翻译浮窗使用。"""
+        """返回当前选中的词条列表（持久化在 _selected_entry_ids 中）。"""
         result = []
-        # 通过选中ID集合查找对应的词条对象
         id_to_entry = {e.id: e for e in self._entries if e.id}
         for entry_id in self._selected_entry_ids:
             if entry_id in id_to_entry:
@@ -494,8 +287,13 @@ class Step2PreviewWidget(QWidget):
             self._card_migrate.set_value("—")
             self._card_untranslated.set_value("—")
             self._entries = []
-            self._filtered_entries = None  # 重置过滤状态
-            self._selected_entry_ids.clear()  # 清除选中状态
+            self._category_filters.clear()
+            self._stage_filters.clear()
+            self._selected_entry_ids.clear()
+            self._last_clicked_row = None
+            self._tags_widget.hide()
+            self._stage_tags_widget.hide()
+            self._search_widget.hide()
             self._table.setRowCount(0)
             self._update_count_label()
             return
@@ -511,12 +309,136 @@ class Step2PreviewWidget(QWidget):
         self._card_untranslated.set_value(untranslated)
 
         self._entries = list(collection)
-        self._filtered_entries = None  # 重置过滤状态
+        self._category_filters.clear()
+        self._stage_filters.clear()
 
-        # 过滤选中集合，只保留仍然存在的词条ID
         existing_ids = {e.id for e in collection if e.id}
         self._selected_entry_ids = {eid for eid in self._selected_entry_ids if eid in existing_ids}
+        self._last_clicked_row = None
 
+        self._build_category_tags()
+        self._build_stage_tags()
+        self._search_widget.show()
+        self._populate_table()
+
+    # ── 表格填充 ──────────────────────────────────────────────────────────────
+
+    # ── 标签样式 ────────────────────────────────────────────────────────────
+
+    _TAG_NORMAL = (
+        "QPushButton { background: #f0f0f0; border: 1px solid #ccc; border-radius: 8px; "
+        "padding: 2px 10px; font-size: 12px; color: #333; }"
+        "QPushButton:hover { background: #e0e0e0; }"
+    )
+    _TAG_ACTIVE = (
+        "QPushButton { background: #2196F3; border: 1px solid #1976D2; border-radius: 8px; "
+        "padding: 2px 10px; font-size: 12px; color: white; font-weight: bold; }"
+    )
+
+    # ── 分类筛选标签 ────────────────────────────────────────────────────────
+
+    def _build_category_tags(self):
+        from collections import Counter
+        while self._tags_container.count():
+            item = self._tags_container.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        if not self._entries:
+            self._tags_widget.hide()
+            return
+
+        counter = Counter()
+        for e in self._entries:
+            counter[_entry_category(e)] += 1
+        total = len(self._entries)
+
+        # 「全部」标签 — 点击清除所有分类筛选
+        all_btn = QPushButton(f"全部 {total}")
+        all_btn.setStyleSheet(self._TAG_ACTIVE if not self._category_filters else self._TAG_NORMAL)
+        all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        all_btn.clicked.connect(lambda: self._on_category_tag_clicked(None))
+        self._tags_container.addWidget(all_btn)
+
+        for cat in _ALL_CATEGORIES:
+            global_count = counter.get(cat, 0)
+            if global_count == 0:
+                continue
+            label = f"{cat} {global_count}"
+            btn = QPushButton(label)
+            btn.setStyleSheet(self._TAG_ACTIVE if cat in self._category_filters else self._TAG_NORMAL)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(lambda checked, c=cat: self._on_category_tag_clicked(c))
+            self._tags_container.addWidget(btn)
+            self._tag_buttons[cat] = btn
+
+        self._tags_widget.show()
+
+    def _on_category_tag_clicked(self, category: str | None):
+        if category is None:
+            self._category_filters.clear()
+        elif category in self._category_filters:
+            self._category_filters.discard(category)
+        else:
+            self._category_filters.add(category)
+        self._build_category_tags()
+        self._populate_table()
+
+    # ── 翻译状态标签 ────────────────────────────────────────────────────────
+
+    _STAGE_LABELS = {0: "未翻译", 1: "有疑问", 2: "已翻译"}
+
+    def _build_stage_tags(self):
+        from collections import Counter
+        while self._stage_tags_container.count():
+            item = self._stage_tags_container.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        if not self._entries:
+            self._stage_tags_widget.hide()
+            return
+
+        counter = Counter()
+        for e in self._entries:
+            if e.stage == 0 and not e.translation:
+                counter[0] += 1  # 未翻译
+            elif e.stage == 1:
+                counter[1] += 1  # 机翻
+            elif e.stage >= 2 or e.translation:
+                counter[2] += 1  # 已翻译
+
+        total = len(self._entries)
+
+        # 「全部」标签
+        all_btn = QPushButton(f"全部 {total}")
+        all_btn.setStyleSheet(self._TAG_ACTIVE if not self._stage_filters else self._TAG_NORMAL)
+        all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        all_btn.clicked.connect(lambda: self._on_stage_tag_clicked(None))
+        self._stage_tags_container.addWidget(all_btn)
+
+        for stage_val in [0, 1, 2]:
+            count = counter.get(stage_val, 0)
+            if count == 0:
+                continue
+            label = f"{self._STAGE_LABELS[stage_val]} {count}"
+            btn = QPushButton(label)
+            btn.setStyleSheet(self._TAG_ACTIVE if stage_val in self._stage_filters else self._TAG_NORMAL)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(lambda checked, s=stage_val: self._on_stage_tag_clicked(s))
+            self._stage_tags_container.addWidget(btn)
+            self._tag_buttons[stage_val] = btn
+
+        self._stage_tags_widget.show()
+
+    def _on_stage_tag_clicked(self, stage: int | None):
+        if stage is None:
+            self._stage_filters.clear()
+        elif stage in self._stage_filters:
+            self._stage_filters.discard(stage)
+        else:
+            self._stage_filters.add(stage)
+        self._build_stage_tags()
         self._populate_table()
 
     # ── 表格填充 ──────────────────────────────────────────────────────────────
@@ -528,15 +450,13 @@ class Step2PreviewWidget(QWidget):
         self._table.setUpdatesEnabled(False)
         self._table.blockSignals(True)
 
-        # 确定要显示的词条列表
-        entries_to_show = self._filtered_entries if self._filtered_entries is not None else self._entries
+        entries_to_show = self._apply_all_filters()
         self._table.setRowCount(len(entries_to_show))
 
         for row, entry in enumerate(entries_to_show):
-            # Col 0: 复选框
+            # Col 0: 复选框（选中标记）
             check_item = QTableWidgetItem()
             check_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
-            # 根据选中集合设置复选框状态
             if entry.id and entry.id in self._selected_entry_ids:
                 check_item.setCheckState(Qt.CheckState.Checked)
             else:
@@ -554,11 +474,10 @@ class Step2PreviewWidget(QWidget):
             orig_item.setData(Qt.ItemDataRole.UserRole, entry)
             orig_item.setFlags(orig_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
-            # Col 3: 译文
+            # Col 3: 译文（可编辑）
             trans_text = entry.translation or ""
             trans_item = QTableWidgetItem(trans_text[:80] if trans_text else "（无译文）")
             trans_item.setData(Qt.ItemDataRole.UserRole, entry)
-            trans_item.setFlags(trans_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             if trans_text:
                 trans_item.setForeground(QColor("#4CAF50"))
             else:
@@ -582,75 +501,149 @@ class Step2PreviewWidget(QWidget):
         hh.setSectionResizeMode(_COL_CTX, QHeaderView.ResizeMode.Interactive)
         self._update_count_label()
 
-    def _apply_filter_to_table(self, selected_entries: list[TranslationEntry] | None):
-        """
-        应用过滤到表格。
-        - selected_entries: None 表示显示全部词条，否则只显示选中的词条
-        """
-        self._filtered_entries = selected_entries
+    def _apply_all_filters(self) -> list[TranslationEntry]:
+        """叠加所有筛选条件（分类 + 状态 + 搜索），返回过滤后的词条列表。"""
+        result = list(self._entries)
 
-        # 更新选中词条ID集合
-        if selected_entries is None:
-            # 显示全部词条，清除所有选中状态
-            self._selected_entry_ids.clear()
-        else:
-            # 使用选中的词条更新选中集合
-            new_selected_ids = {e.id for e in selected_entries if e.id}
-            self._selected_entry_ids = new_selected_ids
+        # 分类筛选（多选 AND）
+        if self._category_filters:
+            result = [e for e in result if _entry_category(e) in self._category_filters]
 
+        # 翻译状态筛选（多选 AND）
+        if self._stage_filters:
+            filtered = []
+            for e in result:
+                if 0 in self._stage_filters and e.stage == 0 and not e.translation:
+                    filtered.append(e)
+                elif 1 in self._stage_filters and e.stage == 1:
+                    filtered.append(e)
+                elif 2 in self._stage_filters and (e.stage >= 2 or (e.stage >= 1 and e.translation)):
+                    filtered.append(e)
+            result = filtered
+
+        # 文本搜索（AND 叠加）
+        key_kw = self._search_key.text().lower()
+        orig_kw = self._search_orig.text().lower()
+        trans_kw = self._search_trans.text().lower()
+        if key_kw:
+            result = [e for e in result if key_kw in (e.key or "").lower()]
+        if orig_kw:
+            result = [e for e in result if orig_kw in (e.original or "").lower()]
+        if trans_kw:
+            result = [e for e in result if trans_kw in (e.translation or "").lower()]
+
+        return result
+
+    def _clear_search(self):
+        self._search_key.clear()
+        self._search_orig.clear()
+        self._search_trans.clear()
         self._populate_table()
-        self._update_count_label()
 
 
     # ── 事件处理 ──────────────────────────────────────────────────────────────
 
-    def _on_item_changed(self, item: QTableWidgetItem):
-        if item.column() == _COL_CHECK:
-            entry = item.data(Qt.ItemDataRole.UserRole)
-            if isinstance(entry, TranslationEntry) and entry.id:
-                if item.checkState() == Qt.CheckState.Checked:
-                    self._selected_entry_ids.add(entry.id)
-                else:
-                    self._selected_entry_ids.discard(entry.id)
-            self._update_count_label()
-
-    def _on_header_check_changed(self, state: int):
-        checked = state == Qt.CheckState.Checked.value
-        self._table.itemChanged.disconnect(self._on_item_changed)
-        for row in range(self._table.rowCount()):
-            item = self._table.item(row, _COL_CHECK)
-            if item:
-                item.setCheckState(
-                    Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
-                )
-                # 同时更新选中集合
-                entry = item.data(Qt.ItemDataRole.UserRole)
-                if isinstance(entry, TranslationEntry) and entry.id:
-                    if checked:
-                        self._selected_entry_ids.add(entry.id)
-                    else:
-                        self._selected_entry_ids.discard(entry.id)
-        self._table.itemChanged.connect(self._on_item_changed)
-        self._update_count_label()
-
     def _on_double_clicked(self, item: QTableWidgetItem):
-        row = item.row()
-        if not self._entries or row >= len(self._entries):
+        """双击进入编辑模式：只有译文列可编辑。"""
+        if item.column() == _COL_TRANS:
+            self._table.editItem(item)
+
+    def _on_item_changed(self, item: QTableWidgetItem):
+        """复选框变化或译文编辑后更新状态。"""
+        entry = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(entry, TranslationEntry) or not entry.id:
             return
-        # 获取当前选中的词条传递给对话框
-        current_selected = self.get_selected_entries()
-        dlg = _EntryDetailDialog(self._entries, row, initial_selected=current_selected, parent=self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            selected = dlg.get_confirmed_selection()
-            if selected:  # 有选中的词条，只显示这些
-                self._apply_filter_to_table(selected)
-            else:  # 没有选中的词条，显示全部
-                self._apply_filter_to_table(None)
+
+        if item.column() == _COL_CHECK:
+            # 复选框点击：切换选中状态
+            if item.checkState() == Qt.CheckState.Checked:
+                self._selected_entry_ids.add(entry.id)
+            else:
+                self._selected_entry_ids.discard(entry.id)
+            self._update_count_label()
+        elif item.column() == _COL_TRANS:
+            # 译文编辑完成
+            new_text = item.text().strip()
+            if new_text == "（无译文）":
+                new_text = ""
+            entry.translation = new_text if new_text else ""
+            if entry.translation and entry.stage < 2:
+                entry.stage = 2
+            self._table.blockSignals(True)
+            if entry.translation:
+                item.setForeground(QColor("#4CAF50"))
+                item.setText(entry.translation[:80] if len(entry.translation) > 80 else entry.translation)
+            else:
+                item.setForeground(QColor("#9E9E9E"))
+                item.setText("（无译文）")
+            self._table.blockSignals(False)
+
+    def _on_cell_clicked(self, row: int, col: int):
+        """点击行任意单元格切换该行复选框（Ctrl追加，Shift范围）。"""
+        if col == _COL_TRANS:
+            return  # 译文列留给双击编辑
+        item = self._table.item(row, _COL_CHECK)
+        if not item:
+            return
+        entry = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(entry, TranslationEntry) or not entry.id:
+            return
+
+        modifiers = Qt.KeyboardModifier.NoModifier
+        try:
+            from PyQt6.QtWidgets import QApplication
+            modifiers = QApplication.keyboardModifiers()
+        except Exception:
+            pass
+
+        ctrl = bool(modifiers & Qt.KeyboardModifier.ControlModifier)
+        shift = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
+
+        if shift and self._last_clicked_row is not None:
+            # Shift：范围选择
+            start = min(self._last_clicked_row, row)
+            end = max(self._last_clicked_row, row)
+            for r in range(start, end + 1):
+                ri = self._table.item(r, _COL_CHECK)
+                if ri:
+                    re = ri.data(Qt.ItemDataRole.UserRole)
+                    if isinstance(re, TranslationEntry) and re.id:
+                        ri.setCheckState(Qt.CheckState.Checked)
+                        self._selected_entry_ids.add(re.id)
+        elif ctrl:
+            # Ctrl：切换当前行
+            current = item.checkState() == Qt.CheckState.Checked
+            item.setCheckState(Qt.CheckState.Unchecked if current else Qt.CheckState.Checked)
+            if current:
+                self._selected_entry_ids.discard(entry.id)
+            else:
+                self._selected_entry_ids.add(entry.id)
+        else:
+            # 普通点击：单选切换
+            current = item.checkState() == Qt.CheckState.Checked
+            self._table.blockSignals(True)
+            for r in range(self._table.rowCount()):
+                ri = self._table.item(r, _COL_CHECK)
+                if ri:
+                    re = ri.data(Qt.ItemDataRole.UserRole)
+                    if isinstance(re, TranslationEntry) and re.id:
+                        ri.setCheckState(Qt.CheckState.Unchecked)
+                        self._selected_entry_ids.discard(re.id)
+            self._table.blockSignals(False)
+            if not current:
+                item.setCheckState(Qt.CheckState.Checked)
+                self._selected_entry_ids.add(entry.id)
+            else:
+                item.setCheckState(Qt.CheckState.Unchecked)
+                self._selected_entry_ids.discard(entry.id)
+
+        self._last_clicked_row = row
+        self._update_count_label()
 
     def _update_count_label(self):
         selected = len(self.get_selected_entries())
         total = len(self._entries)
-        shown = self._table.rowCount()  # 当前显示的行数（过滤后）
+        shown = self._table.rowCount()
 
         if shown == total:
             self._count_lbl.setText(f"已选 {selected} 条 / 共 {total} 条")

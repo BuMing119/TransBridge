@@ -60,6 +60,9 @@ class LLMConfig:
     pp_polish_level: str = "moderate"  # light | moderate | aggressive
     pp_polish_batch_size: int = 5
 
+    # 阶段2c: 独立润色
+    polish_preview_enabled: bool = False  # 润色后预览确认
+
     # 阶段3: 裁决
     pp_enable_arbitration: bool = True
     pp_strict_arbitration: bool = False
@@ -112,6 +115,8 @@ class LLMConfig:
         config.set("llm", "pp_polish_scope", self.pp_polish_scope)
         config.set("llm", "pp_polish_level", self.pp_polish_level)
         config.set("llm", "pp_polish_batch_size", str(self.pp_polish_batch_size))
+        # 阶段2c: 独立润色
+        config.set("llm", "polish_preview_enabled", str(self.polish_preview_enabled))
         # 阶段3: 裁决
         config.set("llm", "pp_enable_arbitration", str(self.pp_enable_arbitration))
         config.set("llm", "pp_strict_arbitration", str(self.pp_strict_arbitration))
@@ -171,6 +176,8 @@ class LLMConfig:
         obj.pp_polish_scope = config.get("llm", "pp_polish_scope", fallback=obj.pp_polish_scope)
         obj.pp_polish_level = config.get("llm", "pp_polish_level", fallback=obj.pp_polish_level)
         obj.pp_polish_batch_size = config.getint("llm", "pp_polish_batch_size", fallback=obj.pp_polish_batch_size)
+        # 阶段2c: 独立润色
+        obj.polish_preview_enabled = config.getboolean("llm", "polish_preview_enabled", fallback=obj.polish_preview_enabled)
         # 阶段3: 裁决
         obj.pp_enable_arbitration = config.getboolean("llm", "pp_enable_arbitration", fallback=obj.pp_enable_arbitration)
         obj.pp_strict_arbitration = config.getboolean("llm", "pp_strict_arbitration", fallback=obj.pp_strict_arbitration)
