@@ -1,29 +1,23 @@
 """
 步骤2：解析结果预览。
 显示解析进度、四格统计卡以及全部词条预览表格。
-支持多选标签筛选、文本搜索、行内编辑、Ctrl/Shift行选。
+支持多选标签筛选、文本搜索、行内编辑、三态标记（★/?/✓）。
 """
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView, QProgressBar,
-    QPushButton, QLineEdit,
+    QPushButton, QLineEdit, QDialog, QListWidget, QListWidgetItem,
 )
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QActionGroup
 
 from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from src.transbridge.converter.translation_entry import TranslationEntry
-
-_STAGE_COLORS = {
-    0: "#9E9E9E",
-    1: "#2196F3",
-    2: "#FF9800",
-    3: "#00BCD4",
-    5: "#4CAF50",
-    9: "#B71C1C",
-    -1: "#616161",
-}
+from src.transbridge.converter.translation_entry import (
+    TranslationEntry,
+    STAGE_LABELS, STAGE_COLORS,
+    STAGE_LOCKED, STAGE_HIDDEN, STAGE_TRANSLATED,
+)
 
 # context → 显示类别名称的映射（复用 export 中的分类逻辑）
 _CONTEXT_TO_CATEGORY: dict[str, str] = {}
@@ -87,15 +81,137 @@ class _StatCard(QWidget):
         self._lbl_value.setText(str(v))
 
 
+# ────────────────────────────── 标签管理对话框 ──────────────────────────────
+
+class _LabelManagerDialog(QDialog):
+    """标签管理对话框：创建/编辑/删除标签，设置名称和颜色。"""
+
+    def __init__(self, label_library: dict, parent=None):
+        super().__init__(parent)
+        self._labels = {lid: dict(info) for lid, info in label_library.items()}
+        self._selected_id: str | None = None
+        self._selected_color: str = _PRESET_COLORS[0]
+        self.setWindowTitle("管理标签")
+        self.resize(420, 320)
+        self._init_ui()
+        self._refresh_list()
+
+    def _init_ui(self):
+        layout = QHBoxLayout(self)
+        # 左侧列表
+        self._list = QListWidget()
+        self._list.setFixedWidth(180)
+        self._list.currentRowChanged.connect(self._on_select)
+        layout.addWidget(self._list)
+        # 右侧编辑
+        right = QVBoxLayout()
+        right.setSpacing(8)
+        right.addWidget(QLabel("标签名称:"))
+        self._name_edit = QLineEdit()
+        self._name_edit.setPlaceholderText("输入标签名称")
+        right.addWidget(self._name_edit)
+        right.addWidget(QLabel("颜色:"))
+        color_row = QHBoxLayout()
+        color_row.setSpacing(4)
+        for c in _PRESET_COLORS:
+            btn = QPushButton()
+            btn.setFixedSize(24, 24)
+            btn.setStyleSheet(
+                f"background: {c}; border-radius: 12px; border: 2px solid "
+                f"{'#333' if c == self._selected_color else 'transparent'};"
+            )
+            btn.clicked.connect(lambda checked, col=c: self._on_color_pick(col))
+            color_row.addWidget(btn)
+        right.addLayout(color_row)
+        btn_row = QHBoxLayout()
+        add_btn = QPushButton("添加")
+        add_btn.clicked.connect(self._on_add)
+        btn_row.addWidget(add_btn)
+        self._delete_btn = QPushButton("删除")
+        self._delete_btn.clicked.connect(self._on_delete)
+        self._delete_btn.setEnabled(False)
+        btn_row.addWidget(self._delete_btn)
+        right.addLayout(btn_row)
+        right.addStretch()
+        # 确认/取消
+        bottom = QHBoxLayout()
+        ok_btn = QPushButton("确定")
+        ok_btn.clicked.connect(self.accept)
+        cancel_btn = QPushButton("取消")
+        cancel_btn.clicked.connect(self.reject)
+        bottom.addStretch()
+        bottom.addWidget(ok_btn)
+        bottom.addWidget(cancel_btn)
+        right.addLayout(bottom)
+        layout.addLayout(right)
+
+    def _refresh_list(self):
+        self._list.clear()
+        for lid, info in self._labels.items():
+            item = QListWidgetItem(f"● {info['name']}")
+            item.setData(Qt.ItemDataRole.UserRole, lid)
+            item.setForeground(QColor(info["color"]))
+            self._list.addItem(item)
+
+    def _on_select(self, row: int):
+        if row < 0:
+            self._selected_id = None
+            self._name_edit.clear()
+            self._delete_btn.setEnabled(False)
+            return
+        item = self._list.item(row)
+        lid = item.data(Qt.ItemDataRole.UserRole)
+        self._selected_id = lid
+        info = self._labels[lid]
+        self._name_edit.setText(info["name"])
+        self._selected_color = info["color"]
+        self._delete_btn.setEnabled(True)
+
+    def _on_color_pick(self, color: str):
+        self._selected_color = color
+        if self._selected_id:
+            self._labels[self._selected_id]["color"] = color
+            self._refresh_list()
+
+    def _on_add(self):
+        import uuid
+        name = self._name_edit.text().strip()
+        if not name:
+            return
+        lid = uuid.uuid4().hex[:8]
+        self._labels[lid] = {"name": name, "color": self._selected_color}
+        self._name_edit.clear()
+        self._refresh_list()
+
+    def _on_delete(self):
+        if not self._selected_id:
+            return
+        del self._labels[self._selected_id]
+        self._selected_id = None
+        self._name_edit.clear()
+        self._delete_btn.setEnabled(False)
+        self._refresh_list()
+
+    def get_label_library(self) -> dict:
+        return self._labels
+
+
 # ────────────────────────────── 步骤2 主 Widget ──────────────────────────────
 
-# 表格列常量（复选框作为选中标记列）
-_COL_CHECK = 0
+# 表格列常量（标记列替代复选框列）
+_COL_MARK  = 0
 _COL_KEY   = 1
 _COL_ORIG  = 2
 _COL_TRANS = 3
 _COL_CTX   = 4
+_COL_CHECK = _COL_MARK  # 向后兼容别名
 _NUM_COLS  = 5
+
+# 标签预设颜色
+_PRESET_COLORS = ["#2196F3", "#FF9800", "#4CAF50", "#F44336", "#9C27B0", "#00BCD4", "#795548", "#607D8B"]
+
+# 行背景色
+_ROW_BG_GREEN  = QColor("#E8F5E9")   # 已翻译
 
 
 
@@ -107,8 +223,10 @@ class Step2PreviewWidget(QWidget):
         self._entries: list[TranslationEntry] = []  # 全部词条
         self._category_filters: set[str] = set()  # 多选分类标签
         self._stage_filters: set[int] = set()  # 多选翻译状态标签（0=未翻译,1=有疑问,2=已翻译）
-        self._selected_entry_ids: set[str] = set()  # 选中的词条ID集合
-        self._last_clicked_row: int | None = None  # Shift 范围选择锚点
+        self._label_library: dict[str, dict] = {}  # label_id → {name, color}
+        self._entry_labels: dict[str, set[str]] = {}  # entry_id → set[label_id]
+        self._label_filters: set[str] = set()  # 标签筛选
+        self._focus_labeled: bool = False  # 只看有标签条目
         self._tag_buttons: dict[str | int | None, QPushButton] = {}  # 标签按钮
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
@@ -197,12 +315,38 @@ class Step2PreviewWidget(QWidget):
         self._search_widget.hide()
         outer.addWidget(self._search_widget)
 
-        # 词条表格（复选框标记选中 + 点击行任意位置切换）
+        # 标签筛选行
+        self._mark_tags_widget = QWidget()
+        mark_tags_layout = QHBoxLayout(self._mark_tags_widget)
+        mark_tags_layout.setContentsMargins(0, 0, 0, 0)
+        mark_tags_layout.setSpacing(4)
+        mark_tags_layout.addWidget(QLabel("标签："))
+        self._mark_tags_container = QHBoxLayout()
+        self._mark_tags_container.setSpacing(3)
+        mark_tags_layout.addLayout(self._mark_tags_container)
+        # 管理标签按钮
+        manage_btn = QPushButton("管理标签")
+        manage_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        manage_btn.clicked.connect(self._on_manage_labels)
+        mark_tags_layout.addWidget(manage_btn)
+        # 聚焦按钮
+        self._focus_btn = QPushButton("[已标记]")
+        self._focus_btn.setToolTip("只看有标签的条目")
+        self._focus_btn.setStyleSheet(self._TAG_NORMAL)
+        self._focus_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._focus_btn.clicked.connect(self._on_focus_toggle)
+        self._focus_btn.setEnabled(False)
+        mark_tags_layout.addWidget(self._focus_btn)
+        mark_tags_layout.addStretch()
+        self._mark_tags_widget.hide()
+        outer.addWidget(self._mark_tags_widget)
+
+        # 词条表格（标记列 + 行背景色）
         self._table = QTableWidget(0, _NUM_COLS)
         self._table.setHorizontalHeaderLabels(["", "Key", "原文", "译文", "类型"])
         hh = self._table.horizontalHeader()
-        hh.setSectionResizeMode(_COL_CHECK, QHeaderView.ResizeMode.Fixed)
-        self._table.setColumnWidth(_COL_CHECK, 28)
+        hh.setSectionResizeMode(_COL_MARK, QHeaderView.ResizeMode.Fixed)
+        self._table.setColumnWidth(_COL_MARK, 32)
         hh.setSectionResizeMode(_COL_KEY,   QHeaderView.ResizeMode.ResizeToContents)
         hh.setSectionResizeMode(_COL_ORIG,  QHeaderView.ResizeMode.Stretch)
         hh.setSectionResizeMode(_COL_TRANS, QHeaderView.ResizeMode.Stretch)
@@ -213,6 +357,8 @@ class Step2PreviewWidget(QWidget):
         self._table.itemDoubleClicked.connect(self._on_double_clicked)
         self._table.itemChanged.connect(self._on_item_changed)
         self._table.cellClicked.connect(self._on_cell_clicked)
+        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._table.customContextMenuRequested.connect(self._on_context_menu)
 
         outer.addWidget(self._table, stretch=1)
 
@@ -258,11 +404,11 @@ class Step2PreviewWidget(QWidget):
     # ── 公共接口 ──────────────────────────────────────────────────────────────
 
     def get_selected_entries(self) -> list[TranslationEntry]:
-        """返回当前选中的词条列表（持久化在 _selected_entry_ids 中）。"""
+        """返回所有有标签的条目，供 AI 翻译浮窗使用。"""
         result = []
         id_to_entry = {e.id: e for e in self._entries if e.id}
-        for entry_id in self._selected_entry_ids:
-            if entry_id in id_to_entry:
+        for entry_id in self._entry_labels:
+            if entry_id in id_to_entry and self._entry_labels[entry_id]:
                 result.append(id_to_entry[entry_id])
         return result
 
@@ -289,10 +435,14 @@ class Step2PreviewWidget(QWidget):
             self._entries = []
             self._category_filters.clear()
             self._stage_filters.clear()
-            self._selected_entry_ids.clear()
-            self._last_clicked_row = None
+            self._entry_labels.clear()
+            self._label_filters.clear()
+            self._focus_labeled = False
+            self._focus_btn.setStyleSheet(self._TAG_NORMAL)
+            self._focus_btn.setEnabled(False)
             self._tags_widget.hide()
             self._stage_tags_widget.hide()
+            self._mark_tags_widget.hide()
             self._search_widget.hide()
             self._table.setRowCount(0)
             self._update_count_label()
@@ -313,11 +463,12 @@ class Step2PreviewWidget(QWidget):
         self._stage_filters.clear()
 
         existing_ids = {e.id for e in collection if e.id}
-        self._selected_entry_ids = {eid for eid in self._selected_entry_ids if eid in existing_ids}
-        self._last_clicked_row = None
+        self._entry_labels = {eid: ls for eid, ls in self._entry_labels.items() if eid in existing_ids}
+        self._label_filters.clear()
 
         self._build_category_tags()
         self._build_stage_tags()
+        self._build_label_tags()
         self._search_widget.show()
         self._populate_table()
 
@@ -386,7 +537,7 @@ class Step2PreviewWidget(QWidget):
 
     # ── 翻译状态标签 ────────────────────────────────────────────────────────
 
-    _STAGE_LABELS = {0: "未翻译", 1: "有疑问", 2: "已翻译"}
+    # STAGE_LABELS 从 translation_entry 导入，不再本地定义
 
     def _build_stage_tags(self):
         from collections import Counter
@@ -401,12 +552,7 @@ class Step2PreviewWidget(QWidget):
 
         counter = Counter()
         for e in self._entries:
-            if e.stage == 0 and not e.translation:
-                counter[0] += 1  # 未翻译
-            elif e.stage == 1:
-                counter[1] += 1  # 机翻
-            elif e.stage >= 2 or e.translation:
-                counter[2] += 1  # 已翻译
+            counter[e.stage] += 1
 
         total = len(self._entries)
 
@@ -417,11 +563,11 @@ class Step2PreviewWidget(QWidget):
         all_btn.clicked.connect(lambda: self._on_stage_tag_clicked(None))
         self._stage_tags_container.addWidget(all_btn)
 
-        for stage_val in [0, 1, 2]:
+        for stage_val, label_name in STAGE_LABELS.items():
             count = counter.get(stage_val, 0)
-            if count == 0:
+            if count == 0 and stage_val not in self._stage_filters:
                 continue
-            label = f"{self._STAGE_LABELS[stage_val]} {count}"
+            label = f"{label_name} {count}"
             btn = QPushButton(label)
             btn.setStyleSheet(self._TAG_ACTIVE if stage_val in self._stage_filters else self._TAG_NORMAL)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -441,6 +587,95 @@ class Step2PreviewWidget(QWidget):
         self._build_stage_tags()
         self._populate_table()
 
+    # ── 标签筛选与管理 ─────────────────────────────────────────────────────
+
+    def _ensure_default_labels(self):
+        import uuid
+        if not self._label_library:
+            defaults = [
+                ("待处理", "#2196F3"),
+                ("有疑问", "#FF9800"),
+                ("已确认", "#4CAF50"),
+            ]
+            for name, color in defaults:
+                lid = uuid.uuid4().hex[:8]
+                self._label_library[lid] = {"name": name, "color": color}
+
+    def _on_manage_labels(self):
+        dlg = _LabelManagerDialog(self._label_library, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            new_library = dlg.get_label_library()
+            removed = set(self._label_library) - set(new_library)
+            for labels in self._entry_labels.values():
+                labels.difference_update(removed)
+            self._label_library = new_library
+            self._build_label_tags()
+            self._populate_table()
+
+    def _build_label_tags(self):
+        from collections import Counter
+        while self._mark_tags_container.count():
+            item = self._mark_tags_container.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        if not self._label_library:
+            self._mark_tags_widget.hide()
+            self._focus_btn.setEnabled(False)
+            return
+
+        counter = Counter()
+        for labels in self._entry_labels.values():
+            for lid in labels:
+                counter[lid] += 1
+
+        all_btn = QPushButton(f"全部 {sum(1 for ls in self._entry_labels.values() if ls)}")
+        all_btn.setStyleSheet(self._TAG_ACTIVE if not self._label_filters else self._TAG_NORMAL)
+        all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        all_btn.clicked.connect(lambda: self._on_label_tag_clicked(None))
+        self._mark_tags_container.addWidget(all_btn)
+
+        for lid, info in self._label_library.items():
+            count = counter.get(lid, 0)
+            if count == 0 and lid not in self._label_filters:
+                continue
+            btn = QPushButton(f"● {info['name']} {count}")
+            btn.setStyleSheet(
+                (self._TAG_ACTIVE if lid in self._label_filters else self._TAG_NORMAL) +
+                f" color: {info['color']};"
+            )
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(lambda checked, l=lid: self._on_label_tag_clicked(l))
+            self._mark_tags_container.addWidget(btn)
+
+        has_labels = any(ls for ls in self._entry_labels.values())
+        self._focus_btn.setEnabled(has_labels)
+        if not has_labels and self._focus_labeled:
+            self._focus_labeled = False
+            self._focus_btn.setStyleSheet(self._TAG_NORMAL)
+
+        if not self._entries:
+            self._mark_tags_widget.hide()
+        else:
+            self._mark_tags_widget.show()
+
+    def _on_label_tag_clicked(self, lid: str | None):
+        if lid is None:
+            self._label_filters.clear()
+        elif lid in self._label_filters:
+            self._label_filters.discard(lid)
+        else:
+            self._label_filters.add(lid)
+        self._build_label_tags()
+        self._populate_table()
+
+    def _on_focus_toggle(self):
+        self._focus_labeled = not self._focus_labeled
+        self._focus_btn.setStyleSheet(
+            self._TAG_ACTIVE if self._focus_labeled else self._TAG_NORMAL
+        )
+        self._populate_table()
+
     # ── 表格填充 ──────────────────────────────────────────────────────────────
 
     def _populate_table(self):
@@ -454,25 +689,57 @@ class Step2PreviewWidget(QWidget):
         self._table.setRowCount(len(entries_to_show))
 
         for row, entry in enumerate(entries_to_show):
-            # Col 0: 复选框（选中标记）
-            check_item = QTableWidgetItem()
-            check_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
-            if entry.id and entry.id in self._selected_entry_ids:
-                check_item.setCheckState(Qt.CheckState.Checked)
+            # 行背景色（按 ParaTranz stage）
+            if entry.stage == STAGE_HIDDEN:
+                row_bg = QColor("#F5F5F5")  # 已隐藏 → 浅灰
+            elif entry.stage == STAGE_LOCKED:
+                row_bg = QColor("#FFEBEE")  # 已锁定 → 浅红
+            elif entry.stage >= STAGE_TRANSLATED:
+                row_bg = _ROW_BG_GREEN       # 有译文 → 浅绿
             else:
-                check_item.setCheckState(Qt.CheckState.Unchecked)
-            check_item.setData(Qt.ItemDataRole.UserRole, entry)
-            self._table.setItem(row, _COL_CHECK, check_item)
+                row_bg = None                # 未翻译 → 白色
 
-            # Col 1: Key
+            # Key 列文字颜色使用 Stage 色
+            stage_color = QColor(STAGE_COLORS.get(entry.stage, "#000000"))
+
+            # Col 0: 标签列（首个标签色圆点 + 数量）
+            labels = self._entry_labels.get(entry.id, set()) if entry.id else set()
+            if labels:
+                first_lid = next(iter(labels))
+                first_info = self._label_library.get(first_lid, {})
+                count = len(labels)
+                dot_text = f"● {count}" if count > 1 else "●"
+                mark_item = QTableWidgetItem(dot_text)
+                mark_item.setForeground(QColor(first_info.get("color", "#999")))
+                tooltip_names = []
+                for lid in labels:
+                    info = self._label_library.get(lid)
+                    if info:
+                        tooltip_names.append(info['name'])
+                mark_item.setToolTip("\n".join(tooltip_names))
+            else:
+                mark_item = QTableWidgetItem("")
+            mark_item.setData(Qt.ItemDataRole.UserRole, entry)
+            mark_item.setFlags(mark_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            mark_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            if row_bg:
+                mark_item.setBackground(row_bg)
+            self._table.setItem(row, _COL_MARK, mark_item)
+
+            # Col 1: Key（文字颜色=Stage 色）
             key_item = QTableWidgetItem(entry.key or "")
             key_item.setData(Qt.ItemDataRole.UserRole, entry)
             key_item.setFlags(key_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            key_item.setForeground(stage_color)
+            if row_bg:
+                key_item.setBackground(row_bg)
 
             # Col 2: 原文
             orig_item = QTableWidgetItem(entry.original[:80] if entry.original else "")
             orig_item.setData(Qt.ItemDataRole.UserRole, entry)
             orig_item.setFlags(orig_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            if row_bg:
+                orig_item.setBackground(row_bg)
 
             # Col 3: 译文（可编辑）
             trans_text = entry.translation or ""
@@ -482,11 +749,15 @@ class Step2PreviewWidget(QWidget):
                 trans_item.setForeground(QColor("#4CAF50"))
             else:
                 trans_item.setForeground(QColor("#9E9E9E"))
+            if row_bg:
+                trans_item.setBackground(row_bg)
 
             # Col 4: 类型
             ctx_item = QTableWidgetItem(_entry_category(entry))
             ctx_item.setData(Qt.ItemDataRole.UserRole, entry)
             ctx_item.setFlags(ctx_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            if row_bg:
+                ctx_item.setBackground(row_bg)
 
             self._table.setItem(row, _COL_KEY,   key_item)
             self._table.setItem(row, _COL_ORIG,  orig_item)
@@ -502,24 +773,16 @@ class Step2PreviewWidget(QWidget):
         self._update_count_label()
 
     def _apply_all_filters(self) -> list[TranslationEntry]:
-        """叠加所有筛选条件（分类 + 状态 + 搜索），返回过滤后的词条列表。"""
+        """叠加所有筛选条件（分类 + 状态 + 搜索 + 标记 + 聚焦），返回过滤后的词条列表。"""
         result = list(self._entries)
 
         # 分类筛选（多选 AND）
         if self._category_filters:
             result = [e for e in result if _entry_category(e) in self._category_filters]
 
-        # 翻译状态筛选（多选 AND）
+        # Stage 筛选（精确匹配 ParaTranz stage 值）
         if self._stage_filters:
-            filtered = []
-            for e in result:
-                if 0 in self._stage_filters and e.stage == 0 and not e.translation:
-                    filtered.append(e)
-                elif 1 in self._stage_filters and e.stage == 1:
-                    filtered.append(e)
-                elif 2 in self._stage_filters and (e.stage >= 2 or (e.stage >= 1 and e.translation)):
-                    filtered.append(e)
-            result = filtered
+            result = [e for e in result if e.stage in self._stage_filters]
 
         # 文本搜索（AND 叠加）
         key_kw = self._search_key.text().lower()
@@ -532,6 +795,16 @@ class Step2PreviewWidget(QWidget):
         if trans_kw:
             result = [e for e in result if trans_kw in (e.translation or "").lower()]
 
+        # 标签筛选（多选 AND）
+        if self._label_filters:
+            result = [e for e in result
+                      if e.id and self._entry_labels.get(e.id, set()) & self._label_filters]
+
+        # 聚焦：只看有标签
+        if self._focus_labeled:
+            result = [e for e in result
+                      if e.id and e.id in self._entry_labels and self._entry_labels[e.id]]
+
         return result
 
     def _clear_search(self):
@@ -540,6 +813,35 @@ class Step2PreviewWidget(QWidget):
         self._search_trans.clear()
         self._populate_table()
 
+    def get_filter_state(self) -> dict:
+        """返回当前筛选状态，用于持久化。"""
+        return {
+            "category": list(self._category_filters),
+            "stage": list(self._stage_filters),
+            "label": list(self._label_filters),
+            "search_key": self._search_key.text(),
+            "search_orig": self._search_orig.text(),
+            "search_trans": self._search_trans.text(),
+        }
+
+    def apply_filter_state(self, state: dict) -> None:
+        """从持久化状态恢复筛选条件。"""
+        if not state:
+            return
+        self._category_filters = set(state.get("category", []))
+        self._stage_filters = set(state.get("stage", []))
+        self._label_filters = set(state.get("label", []))
+        self._search_key.setText(state.get("search_key", ""))
+        self._search_orig.setText(state.get("search_orig", ""))
+        self._search_trans.setText(state.get("search_trans", ""))
+        self._build_category_tags()
+        self._build_stage_tags()
+        self._build_label_tags()
+        self._populate_table()
+
+    def collect_labels(self) -> tuple[dict[str, set[str]], dict[str, dict]]:
+        """返回 (_entry_labels, _label_library) 副本，供持久化保存。"""
+        return (dict(self._entry_labels), dict(self._label_library))
 
     # ── 事件处理 ──────────────────────────────────────────────────────────────
 
@@ -549,103 +851,139 @@ class Step2PreviewWidget(QWidget):
             self._table.editItem(item)
 
     def _on_item_changed(self, item: QTableWidgetItem):
-        """复选框变化或译文编辑后更新状态。"""
+        """译文编辑后更新 entry 和行背景色。"""
+        if item.column() != _COL_TRANS:
+            return
         entry = item.data(Qt.ItemDataRole.UserRole)
         if not isinstance(entry, TranslationEntry) or not entry.id:
             return
-
-        if item.column() == _COL_CHECK:
-            # 复选框点击：切换选中状态
-            if item.checkState() == Qt.CheckState.Checked:
-                self._selected_entry_ids.add(entry.id)
-            else:
-                self._selected_entry_ids.discard(entry.id)
-            self._update_count_label()
-        elif item.column() == _COL_TRANS:
-            # 译文编辑完成
-            new_text = item.text().strip()
-            if new_text == "（无译文）":
-                new_text = ""
-            entry.translation = new_text if new_text else ""
-            if entry.translation and entry.stage < 2:
-                entry.stage = 2
-            self._table.blockSignals(True)
-            if entry.translation:
-                item.setForeground(QColor("#4CAF50"))
-                item.setText(entry.translation[:80] if len(entry.translation) > 80 else entry.translation)
-            else:
-                item.setForeground(QColor("#9E9E9E"))
-                item.setText("（无译文）")
-            self._table.blockSignals(False)
+        new_text = item.text().strip()
+        if new_text == "（无译文）":
+            new_text = ""
+        entry.translation = new_text if new_text else ""
+        if entry.translation and entry.stage < 2:
+            entry.stage = 2
+        # 刷新该行显示（颜色 + 文本）
+        row = item.row()
+        if entry.stage == STAGE_HIDDEN:
+            row_bg = QColor("#F5F5F5")
+        elif entry.stage == STAGE_LOCKED:
+            row_bg = QColor("#FFEBEE")
+        elif entry.translation:
+            row_bg = _ROW_BG_GREEN
+        else:
+            row_bg = None
+        self._table.blockSignals(True)
+        if entry.translation:
+            item.setForeground(QColor("#4CAF50"))
+            item.setText(entry.translation[:80] if len(entry.translation) > 80 else entry.translation)
+        else:
+            item.setForeground(QColor("#9E9E9E"))
+            item.setText("（无译文）")
+        # 刷新该行所有列的背景色
+        for c in range(_NUM_COLS):
+            ci = self._table.item(row, c)
+            if ci:
+                if row_bg:
+                    ci.setBackground(row_bg)
+                else:
+                    ci.setData(Qt.ItemDataRole.BackgroundRole, None)
+        self._table.blockSignals(False)
 
     def _on_cell_clicked(self, row: int, col: int):
-        """点击行任意单元格切换该行复选框（Ctrl追加，Shift范围）。"""
-        if col == _COL_TRANS:
-            return  # 译文列留给双击编辑
-        item = self._table.item(row, _COL_CHECK)
-        if not item:
+        """占位：标签分配由右键菜单处理。"""
+        pass
+
+    # ── 右键菜单 ────────────────────────────────────────────────────────
+
+    def _on_context_menu(self, pos):
+        row = self._table.rowAt(pos.y())
+        if row < 0:
             return
-        entry = item.data(Qt.ItemDataRole.UserRole)
+        menu = self._build_context_menu(row)
+        menu.exec(self._table.viewport().mapToGlobal(pos))
+
+    def _build_context_menu(self, row: int):
+        item = self._table.item(row, _COL_KEY)
+        entry = item.data(Qt.ItemDataRole.UserRole) if item else None
         if not isinstance(entry, TranslationEntry) or not entry.id:
-            return
+            return QMenu(self)
 
-        modifiers = Qt.KeyboardModifier.NoModifier
-        try:
-            from PyQt6.QtWidgets import QApplication
-            modifiers = QApplication.keyboardModifiers()
-        except Exception:
-            pass
+        from PyQt6.QtWidgets import QMenu, QInputDialog
 
-        ctrl = bool(modifiers & Qt.KeyboardModifier.ControlModifier)
-        shift = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
+        menu = QMenu(self)
+        labels = self._entry_labels.get(entry.id, set())
 
-        if shift and self._last_clicked_row is not None:
-            # Shift：范围选择
-            start = min(self._last_clicked_row, row)
-            end = max(self._last_clicked_row, row)
-            for r in range(start, end + 1):
-                ri = self._table.item(r, _COL_CHECK)
-                if ri:
-                    re = ri.data(Qt.ItemDataRole.UserRole)
-                    if isinstance(re, TranslationEntry) and re.id:
-                        ri.setCheckState(Qt.CheckState.Checked)
-                        self._selected_entry_ids.add(re.id)
-        elif ctrl:
-            # Ctrl：切换当前行
-            current = item.checkState() == Qt.CheckState.Checked
-            item.setCheckState(Qt.CheckState.Unchecked if current else Qt.CheckState.Checked)
-            if current:
-                self._selected_entry_ids.discard(entry.id)
-            else:
-                self._selected_entry_ids.add(entry.id)
+        # 标签部分
+        label_menu = menu.addMenu("标签")
+        if not self._label_library:
+            no_label = label_menu.addAction("暂无标签，请先创建")
+            no_label.setEnabled(False)
         else:
-            # 普通点击：单选切换
-            current = item.checkState() == Qt.CheckState.Checked
-            self._table.blockSignals(True)
-            for r in range(self._table.rowCount()):
-                ri = self._table.item(r, _COL_CHECK)
-                if ri:
-                    re = ri.data(Qt.ItemDataRole.UserRole)
-                    if isinstance(re, TranslationEntry) and re.id:
-                        ri.setCheckState(Qt.CheckState.Unchecked)
-                        self._selected_entry_ids.discard(re.id)
-            self._table.blockSignals(False)
-            if not current:
-                item.setCheckState(Qt.CheckState.Checked)
-                self._selected_entry_ids.add(entry.id)
-            else:
-                item.setCheckState(Qt.CheckState.Unchecked)
-                self._selected_entry_ids.discard(entry.id)
+            for lid, info in self._label_library.items():
+                action = label_menu.addAction(f"● {info['name']}")
+                action.setCheckable(True)
+                action.setChecked(lid in labels)
+                action.toggled.connect(
+                    lambda checked, eid=entry.id, l=lid: self._on_label_toggle(eid, l, checked)
+                )
+        label_menu.addSeparator()
+        label_menu.addAction("管理标签…", self._on_manage_labels)
+        label_menu.addAction("+ 新建标签…", lambda: self._on_quick_create_label(entry))
 
-        self._last_clicked_row = row
-        self._update_count_label()
+        # Stage 部分
+        stage_menu = menu.addMenu("翻译状态")
+        current_stage = entry.stage
+        stage_group = QActionGroup(stage_menu)
+        stage_group.setExclusive(True)
+        for stage_val, stage_name in sorted(STAGE_LABELS.items()):
+            action = stage_menu.addAction(stage_name)
+            action.setCheckable(True)
+            action.setChecked(stage_val == current_stage)
+            stage_group.addAction(action)
+            action.toggled.connect(
+                lambda checked, e=entry, sv=stage_val: self._on_stage_change(e, sv) if checked else None
+            )
+
+        return menu
+
+    def _on_label_toggle(self, entry_id: str, lid: str, checked: bool):
+        if entry_id not in self._entry_labels:
+            self._entry_labels[entry_id] = set()
+        if checked:
+            self._entry_labels[entry_id].add(lid)
+        else:
+            self._entry_labels[entry_id].discard(lid)
+        self._build_label_tags()
+        self._populate_table()
+
+    def _on_stage_change(self, entry: TranslationEntry, stage_val: int):
+        entry.stage = stage_val
+        self._build_stage_tags()
+        self._populate_table()
+
+    def _on_quick_create_label(self, entry):
+        from PyQt6.QtWidgets import QInputDialog
+        import uuid, random
+        name, ok = QInputDialog.getText(self, "新建标签", "标签名称：")
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+        color = random.choice(_PRESET_COLORS)
+        lid = uuid.uuid4().hex[:8]
+        self._label_library[lid] = {"name": name, "color": color}
+        if entry.id not in self._entry_labels:
+            self._entry_labels[entry.id] = set()
+        self._entry_labels[entry.id].add(lid)
+        self._build_label_tags()
+        self._populate_table()
 
     def _update_count_label(self):
-        selected = len(self.get_selected_entries())
-        total = len(self._entries)
+        labeled = sum(1 for ls in self._entry_labels.values() if ls)
         shown = self._table.rowCount()
+        total = len(self._entries)
 
         if shown == total:
-            self._count_lbl.setText(f"已选 {selected} 条 / 共 {total} 条")
+            self._count_lbl.setText(f"有标签 {labeled} 条 | 共 {total} 条")
         else:
-            self._count_lbl.setText(f"已选 {selected} 条 / 显示 {shown} 条（共 {total} 条）")
+            self._count_lbl.setText(f"有标签 {labeled} 条 | 显示 {shown} 条（共 {total} 条）")

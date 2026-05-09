@@ -19,7 +19,7 @@ from PyQt6.QtCore import pyqtSignal, Qt
 from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from src.transbridge.parser.plugin_parser import PluginParser
 from src.transbridge.parser.eet_parser import EET_XmlParser
-from src.transbridge.parser.xt_parser import XT_XmlParser
+from src.transbridge.parser.xt import XT_XmlParser
 from src.transbridge.parser.strings_file import PluginStringsLookup
 from src.transbridge.ui.context import CollectionSlot
 from ..workers import ApiWorker

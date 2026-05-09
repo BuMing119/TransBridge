@@ -5,11 +5,17 @@ AppContext: 全局应用上下文，持有配置、当前用户、当前项目�
 
 from __future__ import annotations
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from src.transbridge.paratranz.config_manager import ParatranzConfig
 from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
+
+if TYPE_CHECKING:
+    from src.transbridge.persistence.workspace import WorkspaceState
+    from src.transbridge.persistence.project import ProjectHandle
+    from src.transbridge.persistence.variant_store import VariantStore
 
 
 @dataclass
@@ -34,7 +40,10 @@ class AppContext(QObject):
     collection_changed = pyqtSignal(object)   # TranslationEntryCollection | None
     collection_list_changed = pyqtSignal()    # 集合列表有增删
     navigate_to = pyqtSignal(int)             # 请求切换主 tab（0=工作台, 1=ParaTranz 管理）
-    project_list_changed = pyqtSignal()       # 请求刷新项目列表
+    project_list_changed = pyqtSignal()       # 请求刷新项目列表（ParaTranz）
+    workspace_changed = pyqtSignal()          # 持久化项目列表变动
+    variant_changed = pyqtSignal(str)         # 翻译版本切换（variant_name）
+    dirty_changed = pyqtSignal()              # 版本数据被修改（触发自动保存防抖）
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -47,6 +56,13 @@ class AppContext(QObject):
         self._active_key: str | None = None
 
         self.mine_project_ids: set = set()  # 「我参与的」视图最近一次加载的项目 ID 集合
+
+        # 持久化相关（ADR-006）
+        self._workspace: WorkspaceState | None = None
+        self._active_project: ProjectHandle | None = None
+        self._active_variant: str | None = None
+        self._variant_store: VariantStore | None = None
+        self.collection_changed.connect(lambda _: self.mark_dirty())
 
     # ── config ────────────────────────────────────────────────
 
@@ -215,6 +231,50 @@ class AppContext(QObject):
         slot = self.active_slot
         if slot is not None:
             slot.strings_lang = v
+
+    # ── 持久化相关属性（ADR-006） ────────────────────────────────
+
+    @property
+    def workspace(self) -> WorkspaceState | None:
+        return self._workspace
+
+    @workspace.setter
+    def workspace(self, v: WorkspaceState | None) -> None:
+        self._workspace = v
+
+    @property
+    def active_project(self) -> ProjectHandle | None:
+        return self._active_project
+
+    @active_project.setter
+    def active_project(self, v: ProjectHandle | None) -> None:
+        self._active_project = v
+        self.workspace_changed.emit()
+
+    @property
+    def active_variant(self) -> str | None:
+        return self._active_variant
+
+    @active_variant.setter
+    def active_variant(self, name: str | None) -> None:
+        old = self._active_variant
+        self._active_variant = name
+        if old != name and name is not None:
+            self.variant_changed.emit(name)
+
+    @property
+    def variant_store(self) -> VariantStore | None:
+        return self._variant_store
+
+    @variant_store.setter
+    def variant_store(self, v: VariantStore | None) -> None:
+        self._variant_store = v
+
+    def mark_dirty(self) -> None:
+        """标记当前版本数据已修改，触发自动保存防抖。"""
+        if self._variant_store is not None:
+            self._variant_store.dirty = True
+            self.dirty_changed.emit()
 
     # ── helpers ───────────────────────────────────────────────
 

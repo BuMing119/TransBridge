@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .step2 import Step2PreviewWidget
+from ._project_bar import ProjectBar
 
 
 class WorkbenchWidget(QWidget):
@@ -26,6 +27,10 @@ class WorkbenchWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
+
+        # ── 项目工具栏 ─────────────────────────────────────
+        self._project_bar = ProjectBar(self._ctx)
+        layout.addWidget(self._project_bar)
 
         # ── 集合管理工具栏 ─────────────────────────────────
         self._collection_bar = self._build_collection_bar()

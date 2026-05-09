@@ -12,7 +12,7 @@ from src.transbridge.writer.plugin_writer import PluginWriter
 from src.transbridge.writer.eet_xml_writer import EETWriter
 from src.transbridge.writer.xt_xml_writer import XTWriter
 from src.transbridge.parser.eet_parser import EET_XmlParser
-from src.transbridge.parser.xt_parser import XT_XmlParser
+from src.transbridge.parser.xt import XT_XmlParser
 from .base import OpCard
 
 
@@ -381,6 +381,7 @@ class WriteCard(OpCard):
             "写回",
             parent,
         )
+        self._output_dir_override: Path | None = None  # S08: 全版本写回时覆盖输出目录
         self._ctx = ctx
         self._run_worker = run_worker
         self.btn.clicked.connect(self._do_write)
@@ -514,7 +515,29 @@ class WriteCard(OpCard):
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
 
-        target = dlg.target
+        # 检查是否有多个版本需要分版本写回
+        proj = self._ctx.active_project
+        variants = proj.variants if proj else []
+        if len(variants) > 1:
+            ret = QMessageBox.question(
+                self, "写回模式",
+                f"当前项目有 {len(variants)} 个版本。\n\n"
+                "「是」——分别写回所有版本到独立子目录\n"
+                "「否」——仅写回当前版本「{self._ctx.active_variant}」",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            write_all = (ret == QMessageBox.StandardButton.Yes)
+        else:
+            write_all = False
+
+        if write_all:
+            self._write_all_variants(dlg.target, dlg)
+        else:
+            self._write_single(dlg.target, dlg, collection)
+
+    def _write_single(self, target, dlg, collection):
+        """写回单个版本（原有逻辑）。"""
         if target == "esp":
             self._write_esp(collection)
         elif target == "eet":
@@ -523,6 +546,63 @@ class WriteCard(OpCard):
             self._write_xt(collection, dlg.xt_path)
         else:
             self._write_dsd(collection)
+
+    def _write_all_variants(self, target, dlg):
+        """遍历所有版本，分别写回到 {output_dir}/{variant_name}/。"""
+        from PyQt6.QtWidgets import QFileDialog
+
+        base_dir = QFileDialog.getExistingDirectory(
+            self, "选择输出根目录（每个版本将写入独立子目录）"
+        )
+        if not base_dir:
+            return
+
+        proj = self._ctx.active_project
+        variants = proj.variants
+        current_variant = self._ctx.active_variant
+        current_vs = self._ctx.variant_store
+        collection = self._ctx.collection
+
+        results = []
+        for v in variants:
+            vname = v["name"]
+            out_dir = Path(base_dir) / vname
+            out_dir.mkdir(parents=True, exist_ok=True)
+
+            # 切换到目标版本的译文
+            if vname != current_variant:
+                vs_path = proj.variant_dir(vname) / "current.json"
+                from src.transbridge.persistence import VariantStore
+                vs = VariantStore.load(vs_path)
+                vs.apply_to(list(collection))
+            else:
+                vs = current_vs
+
+            # 写回到子目录
+            try:
+                self._output_dir_override = out_dir
+                if target == "esp":
+                    self._write_esp(collection)
+                elif target == "eet":
+                    self._write_eet(collection, dlg.eet_path)
+                elif target == "xt":
+                    self._write_xt(collection, dlg.xt_path)
+                else:
+                    self._write_dsd(collection)
+                results.append(f"✅ {vname}")
+            except Exception as e:
+                results.append(f"❌ {vname}: {e}")
+            finally:
+                self._output_dir_override = None
+
+        # 恢复原始版本
+        if current_vs:
+            current_vs.apply_to(list(collection))
+
+        QMessageBox.information(
+            self, "批量写回完成",
+            "\n".join(results)
+        )
 
     # ── Write ESP ─────────────────────────────────────────────
 
@@ -547,24 +627,30 @@ class WriteCard(OpCard):
 
         # 本地化插件：让用户选择 strings 输出目录
         if is_localized:
-            output_dir = QFileDialog.getExistingDirectory(
-                self, "选择 Strings 文件输出目录",
-                str(src.parent),
-            )
+            if self._output_dir_override:
+                output_dir = str(self._output_dir_override)
+            else:
+                output_dir = QFileDialog.getExistingDirectory(
+                    self, "选择 Strings 文件输出目录",
+                    str(src.parent),
+                )
             if not output_dir:
                 return
             # 使用原插件名作为 strings 文件前缀
             esp_output_path = Path(output_dir) / src.name
         else:
             # 非本地化插件：让用户选择 ESP 保存路径
-            default_name = src.stem + "_translated" + src.suffix
-            esp_output_path_str, _ = QFileDialog.getSaveFileName(
-                self, "保存汉化插件", str(src.parent / default_name),
-                "ESP/ESM 文件 (*.esp *.esm);;所有文件 (*)",
-            )
-            if not esp_output_path_str:
-                return
-            esp_output_path = Path(esp_output_path_str)
+            if self._output_dir_override:
+                esp_output_path = self._output_dir_override / src.name
+            else:
+                default_name = src.stem + "_translated" + src.suffix
+                esp_output_path_str, _ = QFileDialog.getSaveFileName(
+                    self, "保存汉化插件", str(src.parent / default_name),
+                    "ESP/ESM 文件 (*.esp *.esm);;所有文件 (*)",
+                )
+                if not esp_output_path_str:
+                    return
+                esp_output_path = Path(esp_output_path_str)
 
         def _write():
             writer = PluginWriter(plugin, strings_lookup=strings_lookup, language=strings_lang)
@@ -613,8 +699,11 @@ class WriteCard(OpCard):
     # ── Write EET XML ─────────────────────────────────────────
 
     def _write_eet(self, collection, src_path: str):
-        save_path, _ = QFileDialog.getSaveFileName(
-            self, "保存 EET XML", src_path,
+        if self._output_dir_override:
+            save_path = str(self._output_dir_override / Path(src_path).name)
+        else:
+            save_path, _ = QFileDialog.getSaveFileName(
+                self, "保存 EET XML", src_path,
             "XML 文件 (*.xml);;所有文件 (*)",
         )
         if not save_path:
@@ -645,10 +734,13 @@ class WriteCard(OpCard):
     # ── Write XT XML ──────────────────────────────────────────
 
     def _write_xt(self, collection, src_path: str):
-        save_path, _ = QFileDialog.getSaveFileName(
-            self, "保存 XT XML", src_path,
-            "XML 文件 (*.xml);;所有文件 (*)",
-        )
+        if self._output_dir_override:
+            save_path = str(self._output_dir_override / Path(src_path).name)
+        else:
+            save_path, _ = QFileDialog.getSaveFileName(
+                self, "保存 XT XML", src_path,
+                "XML 文件 (*.xml);;所有文件 (*)",
+            )
         if not save_path:
             return
 
