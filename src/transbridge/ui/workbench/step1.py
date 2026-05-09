@@ -173,6 +173,25 @@ class Step1SourceWidget(QWidget):
         tp_row.addWidget(self._tp_clear_btn)
         form.addRow("已翻译插件", self._tp_row_widget)
 
+        # SST 二进制文件（可选，用于从 xTranslator SST 导入译文）
+        self._sst_row_widget = QWidget()
+        sst_row = QHBoxLayout(self._sst_row_widget)
+        sst_row.setContentsMargins(0, 0, 0, 0)
+        self._sst_input = QLineEdit()
+        self._sst_input.setPlaceholderText("可选，从 SST 文件导入译文")
+        self._sst_input.setReadOnly(True)
+        self._sst_browse_btn = QPushButton("浏览")
+        self._sst_browse_btn.setFixedWidth(60)
+        self._sst_browse_btn.clicked.connect(self._browse_sst)
+        self._sst_clear_btn = QPushButton("✕")
+        self._sst_clear_btn.setFixedWidth(28)
+        self._sst_clear_btn.setToolTip("清除")
+        self._sst_clear_btn.clicked.connect(lambda: self._sst_input.clear())
+        sst_row.addWidget(self._sst_input)
+        sst_row.addWidget(self._sst_browse_btn)
+        sst_row.addWidget(self._sst_clear_btn)
+        form.addRow("SST 文件", self._sst_row_widget)
+
         # Strings 目录（可选，用于本地化插件导入翻译）
         self._strings_row_widget = QWidget()
         strings_row = QHBoxLayout(self._strings_row_widget)
@@ -249,6 +268,8 @@ class Step1SourceWidget(QWidget):
         self._xt_clear_btn.setEnabled(enabled)
         self._tp_browse_btn.setEnabled(enabled)
         self._tp_clear_btn.setEnabled(enabled)
+        self._sst_browse_btn.setEnabled(enabled)
+        self._sst_clear_btn.setEnabled(enabled)
         self._strings_browse_btn.setEnabled(enabled)
         self._strings_clear_btn.setEnabled(enabled)
         self._strings_lang.setEnabled(enabled)
@@ -274,6 +295,10 @@ class Step1SourceWidget(QWidget):
         self._xt_browse_btn.setEnabled(xt_enabled)
         self._xt_clear_btn.setEnabled(False)
 
+        # SST: 如果已有sst_path则禁用
+        sst_enabled = getattr(slot, 'sst_path', None) is None
+        self._sst_browse_btn.setEnabled(sst_enabled)
+        self._sst_clear_btn.setEnabled(False)
 
         # Strings: 如果已有strings_path则禁用
         strings_enabled = slot.strings_path is None
@@ -282,7 +307,7 @@ class Step1SourceWidget(QWidget):
         self._strings_lang.setEnabled(strings_enabled)
 
         # 检查是否有可配置的迁移源
-        has_available = eet_enabled or xt_enabled or strings_enabled
+        has_available = eet_enabled or xt_enabled or sst_enabled or strings_enabled
         self._apply_migrate_btn.setEnabled(has_available)
 
     # ── 来源模式切换 ──────────────────────────────────────────
@@ -333,6 +358,7 @@ class Step1SourceWidget(QWidget):
             self._eet_input.setText(slot.eet_path or "")
             self._xt_input.setText(slot.xt_path or "")
             self._tp_input.setText("")
+            self._sst_input.setText(getattr(slot, 'sst_path', '') or "")
             self._strings_input.setText(slot.strings_path or "")
             self._strings_lang.setCurrentText(slot.strings_lang or "chinese")
             self._set_locked(True)
@@ -345,6 +371,7 @@ class Step1SourceWidget(QWidget):
         self._eet_input.clear()
         self._xt_input.clear()
         self._tp_input.clear()
+        self._sst_input.clear()
         self._strings_input.clear()
         self._status_lbl.clear()
         self._rb_esp.setChecked(True)
@@ -411,6 +438,14 @@ class Step1SourceWidget(QWidget):
         )
         if path:
             self._tp_input.setText(path)
+
+    def _browse_sst(self):
+        """选择 SST 二进制文件。"""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择 SST 文件", "", "SST 文件 (*.sst);;所有文件 (*)"
+        )
+        if path:
+            self._sst_input.setText(path)
 
     def _browse_strings_dir(self):
         """选择 Strings 目录或 strings 文件。"""
@@ -495,11 +530,12 @@ class Step1SourceWidget(QWidget):
                 # 批量解析模式
                 eet_path = self._eet_input.text().strip() or None
                 xt_path = self._xt_input.text().strip() or None
+                sst_path = self._sst_input.text().strip() or None
                 tp_path = self._tp_input.text().strip() or None
                 strings_dir = self._strings_input.text().strip() or None
                 strings_lang = self._strings_lang.currentText()
                 skip_empty = self._skip_empty.currentText() == "是"
-                self._run_batch_parse_esp(esp_paths, eet_path, xt_path, tp_path, strings_dir, strings_lang, skip_empty)
+                self._run_batch_parse_esp(esp_paths, eet_path, xt_path, sst_path, tp_path, strings_dir, strings_lang, skip_empty)
             else:
                 # 单文件模式
                 esp_path = self._esp_input.text().strip()
@@ -512,13 +548,14 @@ class Step1SourceWidget(QWidget):
                         return
                 eet_path = self._eet_input.text().strip() or None
                 xt_path = self._xt_input.text().strip() or None
+                sst_path = self._sst_input.text().strip() or None
                 tp_path = self._tp_input.text().strip() or None
                 strings_dir = self._strings_input.text().strip() or None
                 strings_lang = self._strings_lang.currentText()
                 skip_empty = self._skip_empty.currentText() == "是"
-                self._run_parse_esp(esp_path, eet_path, xt_path, tp_path, strings_dir, strings_lang, skip_empty)
+                self._run_parse_esp(esp_path, eet_path, xt_path, sst_path, tp_path, strings_dir, strings_lang, skip_empty)
 
-    def _run_batch_parse_esp(self, esp_paths: List[str], eet_path, xt_path, tp_path, strings_dir, strings_lang, skip_empty):
+    def _run_batch_parse_esp(self, esp_paths: List[str], eet_path, xt_path, sst_path, tp_path, strings_dir, strings_lang, skip_empty):
         """批量解析多个ESP文件。"""
         self._parse_btn.setEnabled(False)
         self._progress.show()
@@ -531,6 +568,7 @@ class Step1SourceWidget(QWidget):
         self._batch_paths = esp_paths
         self._batch_eet_path = eet_path
         self._batch_xt_path = xt_path
+        self._batch_sst_path = sst_path
         self._batch_tp_path = tp_path
         self._batch_strings_dir = strings_dir
         self._batch_strings_lang = strings_lang
@@ -625,6 +663,7 @@ class Step1SourceWidget(QWidget):
         del self._batch_paths
         del self._batch_eet_path
         del self._batch_xt_path
+        del self._batch_sst_path
         del self._batch_tp_path
         del self._batch_strings_dir
         del self._batch_strings_lang
@@ -632,7 +671,7 @@ class Step1SourceWidget(QWidget):
         if hasattr(self, '_esp_paths'):
             del self._esp_paths
 
-    def _run_parse_esp(self, esp_path, eet_path, xt_path, tp_path, strings_dir, strings_lang, skip_empty):
+    def _run_parse_esp(self, esp_path, eet_path, xt_path, sst_path, tp_path, strings_dir, strings_lang, skip_empty):
         self._parse_btn.setEnabled(False)
         self._progress.show()
         self._status_lbl.setText("解析中…")
@@ -652,6 +691,14 @@ class Step1SourceWidget(QWidget):
                 try:
                     xp = XT_XmlParser.from_file(xt_path)
                     migrate_count += collection.apply_xt_entries(xp.entries)
+                except Exception:
+                    pass
+            if sst_path:
+                try:
+                    from src.transbridge.parser.xt.sst_parser import SST_Parser
+                    sp = SST_Parser.from_file(sst_path)
+                    result = collection.apply_sst_entries(sp.entries)
+                    migrate_count += result["updated"]
                 except Exception:
                     pass
             if tp_path:
@@ -680,6 +727,7 @@ class Step1SourceWidget(QWidget):
                 esp_path=esp_path,
                 eet_path=eet_path,
                 xt_path=xt_path,
+                sst_path=sst_path,
                 strings_path=strings_dir,
                 strings_lang=strings_lang,
                 migrate_count=migrate_count,
@@ -775,11 +823,12 @@ class Step1SourceWidget(QWidget):
         eet_path = self._eet_input.text().strip() or None
         xt_path = self._xt_input.text().strip() or None
         tp_path = self._tp_input.text().strip() or None
+        sst_path = self._sst_input.text().strip() or None
         strings_dir = self._strings_input.text().strip() or None
         strings_lang = self._strings_lang.currentText()
         apply_strings_to_all = self._strings_apply_all.isChecked() and strings_dir
 
-        if not any([eet_path, xt_path, tp_path, strings_dir]):
+        if not any([eet_path, xt_path, tp_path, sst_path, strings_dir]):
             self._status_lbl.setText("请先选择迁移源文件")
             return
 
@@ -814,6 +863,14 @@ class Step1SourceWidget(QWidget):
                             slot_migrate += collection.apply_xt_entries(xp.entries)
                         except Exception:
                             pass
+                    if sst_path and getattr(s, 'sst_path', None) is None:
+                        try:
+                            from src.transbridge.parser.xt.sst_parser import SST_Parser
+                            sp = SST_Parser.from_file(sst_path)
+                            result = collection.apply_sst_entries(sp.entries)
+                            slot_migrate += result["updated"]
+                        except Exception:
+                            pass
                     if tp_path:
                         try:
                             slot_migrate += collection.update_from_translated_plugin(Path(tp_path))
@@ -837,10 +894,10 @@ class Step1SourceWidget(QWidget):
                     updated_slots.append((s, slot_migrate))
                 migrate_count += slot_migrate
 
-            return migrate_count, eet_path, xt_path, strings_dir, strings_lang, updated_slots
+            return migrate_count, eet_path, xt_path, sst_path, strings_dir, strings_lang, updated_slots
 
         def _on_done(result):
-            migrate_count, new_eet, new_xt, new_strings, new_lang, updated_slots = result
+            migrate_count, new_eet, new_xt, new_sst, new_strings, new_lang, updated_slots = result
             # 更新各 slot 中的路径
             for s, _ in updated_slots:
                 if s is slot:
@@ -848,6 +905,8 @@ class Step1SourceWidget(QWidget):
                         s.eet_path = new_eet
                     if new_xt and s.xt_path is None:
                         s.xt_path = new_xt
+                    if new_sst and getattr(s, 'sst_path', None) is None:
+                        s.sst_path = new_sst
                 if new_strings and s.strings_path is None:
                     s.strings_path = new_strings
                     s.strings_lang = new_lang

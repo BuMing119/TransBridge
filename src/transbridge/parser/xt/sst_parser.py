@@ -30,18 +30,41 @@ class SST_Subrecord:
 
 @dataclass(frozen=True)
 class SST_Entry:
-    """SST binary file single record (SSU8 or SSU9)."""
+    """SST binary file single record (SSU8 or SSU9).
+
+    SSU9 记录结构 (26B 固定头 + 可变尾):
+      [form_id 4B LE][edid 8B ASCII][unk12 4B LE][f2 4B LE]
+      [str_idx 2B LE][str_len 2B LE][pad 2B 0x0000]
+      [eng_text N*2B UTF-16LE]
+      [chn_len 4B LE][chn_text M*2B UTF-16LE]
+      [extra/subrecords ...]
+
+    SSU9 Header 结构:
+      [SSU9 4B][type 2B 0x0600][? 2B 0x0000][name_len 2B big][? 2B 0x0000]
+      [name_utf16le name_len B]
+      [master_list: 对每个 master: [len 2B big][0x0000 2B][name len B UTF-16LE]]
+      [0x0000 0x0000 终止符][? 8B metadata]
+
+    SSU8 记录结构:
+      [type 2B][edid 8B][field_a 4B][form_id 4B][str_len 4B LE][str N B UTF-16LE]
+      [trail_len 4B LE][trail M B UTF-16LE][? 1B][global_seq 4B LE][extra 2B LE]
+    """
 
     rec: str  # record type, 8-char concatenated (e.g. INFONAM1 → INFO:NAM1), \0 stripped
     form_id: int  # in-game string ID (FormID)
     text: str  # primary string (UTF-16LE decoded)
-    index: int = 0  # per-EDID index (SSU8: (field_a & 0xFF) + 1), 1-based
+    index: int = 0  # per-EDID index (SSU8: (field_a & 0xFF) + 1, SSU9: unk12 lo16+1), 1-based
+    group_index: int = 0  # parent group index (SSU9: unk12 hi16), DIAL topic# for INFO, quest stage# for QUST, 0 for others
     trail_hash: bytes = field(default_factory=bytes)  # SSU8 translated text raw bytes (UTF-16LE)
     extra: int = 0  # extra ID (SSU8 only)
     global_seq: int = 0  # global sequence number from sID (SSU8 only)
-    f2: int = 0  # secondary field (SSU9)
+    f2: int = 0  # xTranslator internal record ID — form_id 完美一对一映射，非标准哈希算法，疑似 xTranslator 内部数据库主键
     translated_text: str = ""  # translated string (SSU8 decoded from trail, SSU9 from tail)
     subrecords: tuple[SST_Subrecord, ...] = ()  # SSU9 extra subrecords
+
+    # 序列化用原始二进制 — 保留解析器未完全解码的字段 (unk12/str_idx/pad/extra) 供 SST_Serializer 原样重建
+    _raw: bytes = field(default_factory=bytes, repr=False)  # SSU9: 26B head + eng_text
+    _tail: bytes = field(default_factory=bytes, repr=False)  # SSU9: chn_len + chn_text + extra
 
 
 class SST_Parser:
@@ -51,8 +74,13 @@ class SST_Parser:
     Supports both SSU8 and SSU9 formats.  Interface style matches XT_XmlParser.
     """
 
-    def __init__(self, entries: list[SST_Entry]) -> None:
+    def __init__(self, entries: list[SST_Entry],
+                 raw_header: bytes = b"", magic: bytes = b"",
+                 trailing: bytes = b"") -> None:
         self.entries = entries
+        self._raw_header = raw_header
+        self._magic = magic
+        self._trailing = trailing  # 文件末尾未解析的残余字节（截断记录等），序列化时原样追加
 
     def __len__(self) -> int:
         return len(self.entries)
@@ -79,12 +107,33 @@ class SST_Parser:
 
     @classmethod
     def _parse_ssu8(cls, data: bytes, path: str) -> "SST_Parser":
+        """SSU8 record: rec_type(2B) + edid(8B) + field_a(4B) + form_id(4B)
+           + sep1(2B) + str_len(4B LE) + eng_text(N B UTF-16LE)
+           + trail_len(4B LE) + trail_data(M B UTF-16LE, Chinese)
+           + sep2(1B) + global_seq(4B LE) + extra(2B LE)
+
+        SSU8 Header (16B, 跨16文件验证):
+          [0-3] magic SSU8
+          [4-5] 0x0000 — 常量 (16/16)
+          [6-9] 0x00000000 — 常量 (16/16)
+          [10-11] xTranslator 主版本号 (0x0001=标准, 0x0000/0x0002/0x00BB/0x00C1=其他版本)
+          [12-15] 高16位=导出批次ID, 低16位始终0x0000
+
+        记录字段:
+          rec_type — 多数文件为0x0500(标准), 其他值按文件而异(wraithguard=0x0AB0等)
+          sep1 — 0x0100=可翻译文本(绝大多数), 0x0000=音效/拟声词(如\"(squeal)\")
+          sep2 — 0=标准(115), 1/2=特殊类型(ARMO/BOOK/CELL/MESG/QUST/INFO)
+          global_seq — xTranslator 全局序号, 导出子集时有缺口
+          extra — xTranslator 内部记录ID, 非form_id哈希(同form_id可有不同extra)"""
         pos = 16
         entries: list[SST_Entry] = []
 
         while pos < len(data):
+            iter_start = pos  # for trailing capture on break
             if pos + 24 > len(data):
                 break
+
+            rec_start = pos  # for _raw capture
 
             _rec_type = struct.unpack_from("<H", data, pos)[0]
             pos += 2
@@ -116,6 +165,10 @@ class SST_Parser:
                 logger.warning("UTF-16LE decode failed at offset %d, skipping entry", pos - str_len)
                 continue
 
+            # _raw = head (24B) + eng_text (str_len B), for serializer template
+            head_len = 24  # rec_type(2) + edid(8) + field_a(4) + form_id(4) + sep(2) + str_len(4)
+            raw_bytes = data[rec_start : rec_start + head_len + str_len]
+
             if pos + 4 > len(data):
                 logger.warning("Truncated entry: missing trailing length at offset %d", pos)
                 break
@@ -126,6 +179,7 @@ class SST_Parser:
                 logger.warning("Truncated entry: bad trailing length %d at offset %d", trail_len, pos - 4)
                 break
 
+            trail_start = pos
             trail_data = data[pos : pos + trail_len]
             pos += trail_len
 
@@ -145,24 +199,36 @@ class SST_Parser:
             extra = struct.unpack_from("<H", data, pos)[0]
             pos += 2
 
-            # Per-EDID index from field_a (low byte = REC id, 0-based; +1 = 1-based)
+            # _tail = trail_len(4B) + trail_data + sep(1B) + global_seq(4B) + extra(2B)
+            tail_bytes = data[trail_start - 4 : pos]  # include trail_len header
+
+            # Per-EDID index from field_a (low byte, 0-based; +1 = 1-based)
             per_edid_index = (field_a & 0xFF) + 1
+            # group_index from field_a upper bytes (analogous to SSU9 unk12 hi16)
+            group_idx = field_a >> 8
 
             entries.append(SST_Entry(
                 rec=edid, form_id=form_id, text=text,
-                index=per_edid_index, global_seq=global_seq,
-                trail_hash=trail_data, extra=extra,
+                index=per_edid_index, group_index=group_idx,
+                global_seq=global_seq, trail_hash=trail_data, extra=extra,
                 translated_text=ssu8_translated,
+                _raw=raw_bytes, _tail=tail_bytes,
             ))
 
-        return cls(entries=entries)
+        trailing = data[iter_start:] if iter_start < len(data) else b""
+        return cls(entries=entries, raw_header=data[:16], magic=b"SSU8", trailing=trailing)
 
     # ── SSU9 parser ──
 
     @classmethod
     def _parse_ssu9(cls, data: bytes, path: str) -> "SST_Parser":
+        # Header: [SSU9 4B][type 2B 0x0600][? 2B][name_len 2B big][? 2B]
+        #          [name UTF-16LE name_len B]
+        #          [master list: len 2B big + 0x0000 2B + name UTF-16LE ...][0x0000 0x0000 终止]
+        #          [? 8B metadata]
+        # start 仅用首个 name_len 估算，实际 header 边界见下文 record_starts[0][0]
         name_len = int.from_bytes(data[8:10], "big")
-        start = 12 + name_len + 2 + 8  # header + plugin name + null + metadata
+        start = 12 + name_len + 2 + 8
 
         # Phase 1: scan for record starts by pattern matching
         record_starts: list[tuple[int, str, int, int, int]] = []
@@ -180,8 +246,10 @@ class SST_Parser:
 
             str_idx = struct.unpack_from("<H", data, pos + 20)[0]
             str_len = struct.unpack_from("<H", data, pos + 22)[0]
-            # str_idx 0x4000 (16384) has ~39% false-positive rate (Chinese text
-            # at English offset), skip to avoid garbled entries
+            # str_idx 字段（7种值，疑似 bitfield 标记）:
+            #   0x0100=标准记录 0x0400=变体 0x0200=稀有变体 0x0000=简单响应
+            #   0x4100/0x4400/0x4200 = bit14(0x4000)标记 + 上述值
+            # bit14(0x4000) 有 ~39% 误匹配率（中文文本恰好落在 English 偏移），跳过
             if str_idx == 0x4000 or str_len == 0 or str_len > 100000:
                 pos += 1
                 continue
@@ -216,7 +284,7 @@ class SST_Parser:
             chn_text = ""
             if len(tail) >= 4:
                 chn_len = struct.unpack_from("<I", tail, 0)[0]
-                if 0 < chn_len < len(tail) - 4:
+                if 0 < chn_len <= len(tail) - 4:
                     try:
                         chn_text = tail[4 : 4 + chn_len].decode("utf-16-le")
                     except UnicodeDecodeError:
@@ -230,11 +298,16 @@ class SST_Parser:
 
             entries.append(SST_Entry(
                 rec=edid, form_id=form_id, text=eng_text,
-                index=per_edid_index, f2=f2, translated_text=chn_text,
+                index=per_edid_index, group_index=unk12 >> 16,
+                f2=f2, translated_text=chn_text,
                 subrecords=subrecords,
+                _raw=data[off : off + 26 + eng_len],
+                _tail=tail,
             ))
 
-        return cls(entries=entries)
+        # 用实际第一条记录位置确定 header 边界（start 可能因多 master 名而不准）
+        header_end = record_starts[0][0] if record_starts else start
+        return cls(entries=entries, raw_header=data[:header_end], magic=b"SSU9")
 
     _EXTRA_MARKERS = (b"\x02\x00\x00\x00\x00", b"\x00\x00\x00\x00\x00", b"\x01\x00\x00\x00\x00")
 

@@ -28,6 +28,7 @@ class CollectionSlot:
     xt_path: str | None = None
     strings_path: str | None = None                 # Strings 目录路径（用于导入翻译）
     strings_lang: str = "chinese"                   # strings 文件语言标签
+    sst_path: str | None = None                     # SST 二进制文件路径（用于迁移译文）
     migrate_count: int = 0
     plugin: object = None                           # 解析出的 Plugin 实例
     strings_lookup: object = None                  # PluginStringsLookup 实例（本地化插件）

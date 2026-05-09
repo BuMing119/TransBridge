@@ -333,6 +333,51 @@ class TranslationEntryCollection:
 
         return updated_count
 
+    def apply_sst_entries(
+            self,
+            sst_entries: Iterable["SST_Entry"],
+    ) -> dict:
+        """将 SST_Entry 批量应用到已有的 TranslationEntry 上。
+
+        按 form_id + index 匹配。返回统计 dict: {matched, updated, skipped}。
+        """
+        from src.transbridge.parser.xt.sst_parser import SST_Entry
+
+        all_sst: list[SST_Entry] = list(sst_entries)
+        # 按 (form_id, index) 构建查找表
+        sst_by_key: dict[tuple[int, int], SST_Entry] = {}
+        for sst in all_sst:
+            key = (sst.form_id, sst.index)
+            if key not in sst_by_key:
+                sst_by_key[key] = sst
+
+        matched = 0
+        updated = 0
+
+        for entry in list(self._entries.values()):
+            # 从 entry.id 提取 form_id + index
+            after_colon = entry.id.split(":", 1)[1] if ":" in entry.id else entry.id
+            form_id_hex, _, rest = after_colon.partition("|")
+            index_str = rest.split("~")[0] if "~" in rest else rest
+            try:
+                entry_form_id = int(form_id_hex, 16)
+                entry_index = int(index_str) if index_str else 0
+            except (ValueError, TypeError):
+                continue
+
+            sst = sst_by_key.get((entry_form_id, entry_index))
+            if sst is None:
+                continue
+            matched += 1
+            result = TranslationEntry.try_update_from_sst(entry, sst)
+            if result is not None and result is not entry:
+                self._entries[entry.id] = result
+                self._key_index[entry.key] = result
+                updated += 1
+
+        skipped = matched - updated
+        return {"matched": matched, "updated": updated, "skipped": skipped}
+
     def update_from_translated_plugin(
             self,
             path: str | Path,
