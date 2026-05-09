@@ -404,16 +404,63 @@ class AITranslatorWindow(QWidget):
         # ── 翻译范围区 ────────────────────────────────────────────────────────
         scope_box = QGroupBox("翻译范围")
         scope_layout = QVBoxLayout(scope_box)
+        scope_layout.setSpacing(4)
 
-        self._scope_group = QButtonGroup(self)
-        self._scope_all = QRadioButton("翻译集合中所有未翻译词条")
-        self._scope_filtered = QRadioButton("翻译当前筛选可见词条（仅未翻译）")
-        self._scope_selected = QRadioButton("翻译选中词条（0 条）")
-        self._scope_all.setChecked(True)
+        # 作用域状态
+        self._scope_stage_filters: set[int] = set()
+        self._scope_label_filters: set[str] = set()
+        self._scope_category_filters: set[str] = set()
+        self._scope_preset: str | None = None
 
-        for rb in (self._scope_all, self._scope_filtered, self._scope_selected):
-            self._scope_group.addButton(rb)
-            scope_layout.addWidget(rb)
+        # 快捷预设按钮
+        preset_row = QHBoxLayout()
+        preset_row.addWidget(QLabel("快捷："))
+        self._preset_untranslated = QPushButton("全部未翻译")
+        self._preset_untranslated.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._preset_untranslated.clicked.connect(lambda: self._on_preset("untranslated"))
+        preset_row.addWidget(self._preset_untranslated)
+        self._preset_table_view = QPushButton("当前主表视图")
+        self._preset_table_view.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._preset_table_view.clicked.connect(lambda: self._on_preset("table_view"))
+        preset_row.addWidget(self._preset_table_view)
+        preset_row.addStretch()
+        scope_layout.addLayout(preset_row)
+
+        # 翻译状态维度标签
+        stage_row = QHBoxLayout()
+        stage_row.setSpacing(3)
+        stage_row.addWidget(QLabel("状态："))
+        self._scope_stage_all_btn = QPushButton("不限")
+        self._scope_stage_all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._scope_stage_all_btn.clicked.connect(lambda: self._on_scope_stage_clicked(None))
+        stage_row.addWidget(self._scope_stage_all_btn)
+        self._scope_stage_btns: dict[int, QPushButton] = {}
+        stage_row.addStretch()
+        scope_layout.addLayout(stage_row)
+
+        # 标记维度标签
+        mark_row = QHBoxLayout()
+        mark_row.setSpacing(3)
+        mark_row.addWidget(QLabel("标记："))
+        self._scope_label_all_btn = QPushButton("不限")
+        self._scope_label_all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._scope_label_all_btn.clicked.connect(lambda: self._on_scope_label_clicked(None))
+        mark_row.addWidget(self._scope_label_all_btn)
+        self._scope_label_btns: dict[str, QPushButton] = {}
+        mark_row.addStretch()
+        scope_layout.addLayout(mark_row)
+
+        # 分类维度标签
+        cat_row = QHBoxLayout()
+        cat_row.setSpacing(3)
+        cat_row.addWidget(QLabel("分类："))
+        self._scope_cat_all_btn = QPushButton("不限")
+        self._scope_cat_all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._scope_cat_all_btn.clicked.connect(lambda: self._on_scope_category_clicked(None))
+        cat_row.addWidget(self._scope_cat_all_btn)
+        self._scope_cat_btns: dict[str, QPushButton] = {}
+        cat_row.addStretch()
+        scope_layout.addLayout(cat_row)
 
         self._overwrite_check = QCheckBox("覆盖已有译文（重新翻译）")
         scope_layout.addWidget(self._overwrite_check)
@@ -557,9 +604,6 @@ class AITranslatorWindow(QWidget):
 
         self._mode_translate.toggled.connect(self._on_mode_changed)
         self._mode_polish.toggled.connect(self._on_mode_changed)
-        self._scope_selected.toggled.connect(self._update_estimate)
-        self._scope_all.toggled.connect(self._update_estimate)
-        self._scope_filtered.toggled.connect(self._update_estimate)
         self._overwrite_check.toggled.connect(self._update_estimate)
 
     # ── 断点检测 ──────────────────────────────────────────────────────────────
@@ -786,22 +830,191 @@ class AITranslatorWindow(QWidget):
         self._baseurl_edit.setEnabled(is_openai)
 
     def _on_mode_changed(self):
-        """翻译/润色模式切换时更新UI。"""
+        """翻译/润色模式切换时重置作用域默认值。"""
         is_polish = self._mode_polish.isChecked()
-        # 翻译范围选项
-        self._scope_all.setVisible(not is_polish)
-        self._scope_filtered.setVisible(not is_polish)
-        self._scope_selected.setVisible(not is_polish)
         self._overwrite_check.setVisible(not is_polish)
-        self._estimate_lbl.setVisible(not is_polish)
-        # 按钮文案
+        self._reset_scope_to_default(is_polish)
         if is_polish:
             self._start_btn.setText("▶ 开始润色")
-            self._estimate_lbl.setText("润色范围：选中的已翻译词条")
-            self._estimate_lbl.setVisible(True)
         else:
             self._start_btn.setText("▶ 开始翻译")
         self._update_estimate()
+
+    # ── 作用域方法 ─────────────────────────────────────────────────────────
+
+    def _reset_scope_to_default(self, is_polish: bool):
+        self._scope_stage_filters.clear()
+        self._scope_label_filters.clear()
+        self._scope_category_filters.clear()
+        self._scope_preset = None
+        if is_polish:
+            self._scope_stage_filters = {1, 2, 3, 5}
+        else:
+            self._scope_stage_filters = {0}
+        self._rebuild_scope_tags()
+
+    def _on_preset(self, preset: str):
+        self._scope_stage_filters.clear()
+        self._scope_label_filters.clear()
+        self._scope_category_filters.clear()
+        if preset == "untranslated":
+            self._scope_stage_filters = {0}
+            self._scope_preset = None
+        elif preset == "table_view":
+            self._scope_preset = "table_view"
+        self._rebuild_scope_tags()
+        self._update_estimate()
+
+    def _on_scope_stage_clicked(self, stage: int | None):
+        if stage is None:
+            self._scope_stage_filters.clear()
+        elif stage in self._scope_stage_filters:
+            self._scope_stage_filters.discard(stage)
+        else:
+            self._scope_stage_filters.add(stage)
+        self._scope_preset = None
+        self._rebuild_scope_tags()
+        self._update_estimate()
+
+    def _on_scope_label_clicked(self, mark: str | None):
+        if mark is None:
+            self._scope_label_filters.clear()
+        elif mark in self._scope_label_filters:
+            self._scope_label_filters.discard(mark)
+        else:
+            self._scope_label_filters.add(mark)
+        self._scope_preset = None
+        self._rebuild_scope_tags()
+        self._update_estimate()
+
+    def _on_scope_category_clicked(self, cat: str | None):
+        if cat is None:
+            self._scope_category_filters.clear()
+        elif cat in self._scope_category_filters:
+            self._scope_category_filters.discard(cat)
+        else:
+            self._scope_category_filters.add(cat)
+        self._scope_preset = None
+        self._rebuild_scope_tags()
+        self._update_estimate()
+
+    def _rebuild_scope_tags(self):
+        from collections import Counter
+        from src.transbridge.converter.translation_entry import STAGE_LABELS
+        from src.transbridge.ui.workbench.step2 import _ALL_CATEGORIES
+
+        collection = self._ctx.collection
+        entries = list(collection) if collection else []
+
+        # Stage 标签
+        counter = Counter()
+        for e in entries:
+            counter[e.stage] += 1
+        for stage_val, label in STAGE_LABELS.items():
+            if stage_val in self._scope_stage_btns:
+                continue  # 已存在，更新样式
+            btn = QPushButton(f"{label} {counter.get(stage_val, 0)}")
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(lambda checked, s=stage_val: self._on_scope_stage_clicked(s))
+            self._scope_stage_btns[stage_val] = btn
+            # 找到 stage_row 并插入
+            row_layout = self._scope_stage_all_btn.parent().layout()
+            if row_layout:
+                row_layout.insertWidget(row_layout.count() - 1, btn)  # stretch 之前
+        for stage_val, btn in self._scope_stage_btns.items():
+            count = counter.get(stage_val, 0)
+            label = STAGE_LABELS.get(stage_val, "?")
+            btn.setText(f"{label} {count}")
+            active = stage_val in self._scope_stage_filters
+            btn.setStyleSheet(
+                "QPushButton { background: #2196F3; color: white; font-weight: bold; padding: 2px 8px; border-radius: 6px; }"
+                if active else
+                "QPushButton { background: #f0f0f0; border: 1px solid #ccc; padding: 2px 8px; border-radius: 6px; }"
+            )
+
+        # 标签维度（从主表标签库读取）
+        label_library = self._step2._label_library if hasattr(self._step2, '_label_library') else {}
+        entry_labels = self._step2._entry_labels if hasattr(self._step2, '_entry_labels') else {}
+        label_counter = Counter()
+        for labels in entry_labels.values():
+            for lid in labels:
+                label_counter[lid] += 1
+        for lid, info in label_library.items():
+            if lid in self._scope_label_btns:
+                continue
+            btn = QPushButton(f"● {info['name']} {label_counter.get(lid, 0)}")
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(lambda checked, l=lid: self._on_scope_label_clicked(l))
+            self._scope_label_btns[lid] = btn
+            row_layout = self._scope_label_all_btn.parent().layout()
+            if row_layout:
+                row_layout.insertWidget(row_layout.count() - 1, btn)
+        for lid, btn in self._scope_label_btns.items():
+            count = label_counter.get(lid, 0)
+            info = label_library.get(lid, {})
+            label_name = info.get('name', '?')
+            btn.setText(f"● {label_name} {count}")
+            active = lid in self._scope_label_filters
+            btn.setStyleSheet(
+                "QPushButton { background: #2196F3; color: white; font-weight: bold; padding: 2px 8px; border-radius: 6px; }"
+                if active else
+                "QPushButton { background: #f0f0f0; border: 1px solid #ccc; padding: 2px 8px; border-radius: 6px; }"
+            )
+
+        # Category 标签
+        cat_counter = Counter()
+        from src.transbridge.ui.workbench.step2 import _entry_category
+        for e in entries:
+            cat_counter[_entry_category(e)] += 1
+        for cat in _ALL_CATEGORIES:
+            if cat in self._scope_cat_btns:
+                continue
+            btn = QPushButton(f"{cat} {cat_counter.get(cat, 0)}")
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(lambda checked, c=cat: self._on_scope_category_clicked(c))
+            self._scope_cat_btns[cat] = btn
+            row_layout = self._scope_cat_all_btn.parent().layout()
+            if row_layout:
+                row_layout.insertWidget(row_layout.count() - 1, btn)
+        for cat, btn in self._scope_cat_btns.items():
+            count = cat_counter.get(cat, 0)
+            btn.setText(f"{cat} {count}")
+            active = cat in self._scope_category_filters
+            btn.setStyleSheet(
+                "QPushButton { background: #2196F3; color: white; font-weight: bold; padding: 2px 8px; border-radius: 6px; }"
+                if active else
+                "QPushButton { background: #f0f0f0; border: 1px solid #ccc; padding: 2px 8px; border-radius: 6px; }"
+            )
+
+    def _build_scope_candidates(self) -> list:
+        """按三维度筛选候选条目，与主表完全解耦。"""
+        from src.transbridge.converter.translation_entry import STAGE_LOCKED, STAGE_HIDDEN
+        from src.transbridge.ui.workbench.step2 import _entry_category
+
+        collection = self._ctx.collection
+        if collection is None:
+            return []
+
+        if self._scope_preset == "table_view":
+            return self._step2._apply_all_filters()
+
+        candidates = list(collection)
+
+        if self._scope_stage_filters:
+            candidates = [e for e in candidates if e.stage in self._scope_stage_filters]
+
+        if self._scope_label_filters:
+            entry_labels = self._step2._entry_labels if hasattr(self._step2, '_entry_labels') else {}
+            candidates = [e for e in candidates
+                          if e.id and entry_labels.get(e.id, set()) & self._scope_label_filters]
+
+        if self._scope_category_filters:
+            candidates = [e for e in candidates if _entry_category(e) in self._scope_category_filters]
+
+        # 始终排除已锁定和已隐藏
+        candidates = [e for e in candidates if e.stage not in (STAGE_LOCKED, STAGE_HIDDEN)]
+
+        return candidates
 
     def _on_embed_provider_changed(self):
         """Embedding provider 切换时更新控件可见性。"""
@@ -846,28 +1059,25 @@ class AITranslatorWindow(QWidget):
     def _update_estimate(self):
         collection = self._ctx.collection
         if collection is None:
-            self._scope_selected.setText("翻译选中词条（0 条）")
             self._estimate_lbl.setText("预计：— 条（需先加载集合）")
             return
 
-        selected_count = len(self._step2.get_selected_entries())
-        self._scope_selected.setText(f"翻译选中词条（{selected_count} 条）")
-
-        overwrite = self._overwrite_check.isChecked()
-
-        if self._scope_all.isChecked():
-            candidates = list(collection) if overwrite else [
-                e for e in collection if not e.translation or e.stage == 0
-            ]
-        elif self._scope_filtered.isChecked():
+        is_polish = self._mode_polish.isChecked()
+        if is_polish:
+            candidates = self._build_scope_candidates()
             self._estimate_lbl.setText(
-                f"预计：约 {self._step2.get_filtered_count()} 条（筛选可见）"
+                f"润色范围：{len(candidates)} 条已翻译词条"
             )
             return
-        else:
-            candidates = self._step2.get_selected_entries()
-            if not overwrite:
-                candidates = [e for e in candidates if not e.translation or e.stage == 0]
+
+        candidates = self._build_scope_candidates()
+        overwrite = self._overwrite_check.isChecked()
+        if not overwrite:
+            candidates = [e for e in candidates if not e.translation or e.stage == 0]
+
+        if not candidates:
+            self._estimate_lbl.setText("预计：0 条（无匹配条目，请调整作用域）")
+            return
 
         from src.transbridge.ai_translator.batch_planner import BatchPlanner
         planner = BatchPlanner(max_tokens_per_batch=self._tokens_spin.value())
@@ -945,16 +1155,11 @@ class AITranslatorWindow(QWidget):
                 return
 
         # 确定翻译目标
-        if self._scope_selected.isChecked():
-            selected = self._step2.get_selected_entries()
-            if not selected:
-                QMessageBox.warning(self, "翻译", "未勾选任何词条。")
-                return
-            target_ids = [e.id for e in selected]
-        elif self._scope_filtered.isChecked():
-            target_ids = self._get_filtered_entry_ids()
-        else:
-            target_ids = None
+        candidates = self._build_scope_candidates()
+        if not candidates:
+            QMessageBox.warning(self, "翻译", "当前作用域无匹配词条。")
+            return
+        target_ids = [e.id for e in candidates]
 
         # 加载断点（如有）
         from src.transbridge.ai_translator.translator import AutoTranslator, TranslatorConfig, ProgressCheckpoint
@@ -999,11 +1204,11 @@ class AITranslatorWindow(QWidget):
             QMessageBox.warning(self, "润色", "请先填写模型名。")
             return
 
-        # 获取选中且有译文的条目
-        selected = self._step2.get_selected_entries()
-        entries_with_translation = [e for e in selected if e.translation]
+        # 按作用域获取有译文的条目
+        candidates = self._build_scope_candidates()
+        entries_with_translation = [e for e in candidates if e.translation]
         if not entries_with_translation:
-            QMessageBox.warning(self, "润色", "所选条目均无译文，无法润色。")
+            QMessageBox.warning(self, "润色", "作用域内条目均无译文，无法润色。")
             return
 
         # 创建 LLM 客户端

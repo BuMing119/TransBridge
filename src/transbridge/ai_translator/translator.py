@@ -368,6 +368,10 @@ class AutoTranslator:
         if not self._cfg.overwrite:
             candidates = [e for e in candidates if not e.translation or e.stage == 0]
 
+        # 排除已锁定（强制译文）和已隐藏（强制原文）的条目
+        from ..converter.translation_entry import STAGE_LOCKED, STAGE_HIDDEN
+        candidates = [e for e in candidates if e.stage not in (STAGE_LOCKED, STAGE_HIDDEN)]
+
         if not candidates:
             return result
 
