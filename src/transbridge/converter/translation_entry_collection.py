@@ -5,11 +5,14 @@ from typing import Optional,Any
 from pathlib import Path
 import json
 
-from src.transbridge.converter.translation_entry import TranslationEntry, _normalize_text
+from src.transbridge.converter.translation_entry import (
+    TranslationEntry, _normalize_text,
+    STAGE_TRANSLATED, STAGE_UNTRANSLATED,
+)
 from src.transbridge.parser.eet_parser import EET_XmlParser, EET_Entry
 from src.transbridge.parser.plugin_parser import PluginParser
 from src.transbridge.parser.strings_file import PluginStringsLookup
-from src.transbridge.parser.xt_parser import XT_Entry
+from src.transbridge.parser.xt import XT_Entry
 import re
 
 
@@ -170,7 +173,7 @@ class TranslationEntryCollection:
                 updated_entry = TranslationEntry(
                     id=entry.id, key=entry.key, original=entry.original,
                     translation=eet_entry.traduit,
-                    stage=1 if eet_entry.status == 99 or eet_entry.traduit else 0,
+                    stage=STAGE_TRANSLATED if eet_entry.status == 99 or eet_entry.traduit else STAGE_UNTRANSLATED,
                     context=entry.context,
                     form_id_with_plugin=entry.form_id_with_plugin,
                     string_id=entry.string_id,
@@ -205,7 +208,7 @@ class TranslationEntryCollection:
                 updated_entry = TranslationEntry(
                     id=entry.id, key=entry.key, original=entry.original,
                     translation=eet_entry.traduit,
-                    stage=1 if eet_entry.status == 99 or eet_entry.traduit else 0,
+                    stage=STAGE_TRANSLATED if eet_entry.status == 99 or eet_entry.traduit else STAGE_UNTRANSLATED,
                     context=entry.context,
                     form_id_with_plugin=entry.form_id_with_plugin,
                     string_id=entry.string_id,
@@ -317,7 +320,7 @@ class TranslationEntryCollection:
                     continue
                 updated_entry = TranslationEntry(
                     id=entry.id, key=entry.key, original=entry.original,
-                    translation=xt.dest, stage=1, context=entry.context,
+                    translation=xt.dest, stage=STAGE_TRANSLATED, context=entry.context,
                     form_id_with_plugin=entry.form_id_with_plugin,
                     string_id=entry.string_id,
                     dsd_type=entry.dsd_type,
@@ -367,7 +370,7 @@ class TranslationEntryCollection:
             self.add(
                 TranslationEntry(
                     id=entry.id, key=entry.key, original=entry.original,
-                    translation=translated_text, stage=1, context=entry.context,
+                    translation=translated_text, stage=STAGE_TRANSLATED, context=entry.context,
                     form_id_with_plugin=entry.form_id_with_plugin,
                     string_id=entry.string_id,
                     dsd_type=entry.dsd_type,
@@ -401,7 +404,7 @@ class TranslationEntryCollection:
                 self.add(
                     TranslationEntry(
                         id=entry.id, key=entry.key, original=entry.original,
-                        translation=translated_text, stage=1, context=entry.context,
+                        translation=translated_text, stage=STAGE_TRANSLATED, context=entry.context,
                         form_id_with_plugin=entry.form_id_with_plugin,
                         string_id=entry.string_id,
                         dsd_type=entry.dsd_type,
@@ -455,7 +458,7 @@ class TranslationEntryCollection:
                     key=entry.key,
                     original=entry.original,
                     translation=translated_text,
-                    stage=1,
+                    stage=STAGE_TRANSLATED,
                     context=entry.context,
                     string_id=entry.string_id,
                     form_id_with_plugin=entry.form_id_with_plugin,

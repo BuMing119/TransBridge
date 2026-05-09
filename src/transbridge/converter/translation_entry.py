@@ -2,13 +2,44 @@ from dataclasses import dataclass
 
 from typing import Any
 from src.transbridge.parser import EET_Entry
-from src.transbridge.parser.xt_parser import XT_Entry
+from src.transbridge.parser.xt import SST_Entry
+from src.transbridge.parser.xt import XT_Entry
 from src.transbridge.parser.plugin.plugin_string_with_context import PluginStringWithContext
 
 
 def _normalize_text(s: str) -> str:
     """规范化文本空白：统一换行符为 \\n，去除首尾空白。"""
     return s.replace('\r\n', '\n').replace('\r', '\n').strip()
+
+
+# Stage constants — aligned with ParaTranz platform
+STAGE_UNTRANSLATED = 0    # 未翻译
+STAGE_TRANSLATED = 1      # 已翻译
+STAGE_QUESTIONABLE = 2    # 有疑问
+STAGE_CHECKED = 3         # 已检查
+STAGE_REVIEWED = 5        # 已审核（未开启二次校对的项目审核词条时直接设为此状态）
+STAGE_LOCKED = 9          # 已锁定（仅管理员可解锁，词条强制按译文导出）
+STAGE_HIDDEN = -1         # 已隐藏（词条强制按原文导出）
+
+STAGE_LABELS: dict[int, str] = {
+    0: "未翻译",
+    1: "已翻译",
+    2: "有疑问",
+    3: "已检查",
+    5: "已审核",
+    9: "已锁定",
+    -1: "已隐藏",
+}
+
+STAGE_COLORS: dict[int, str] = {
+    0: "#9E9E9E",
+    1: "#2196F3",
+    2: "#FF9800",
+    3: "#00BCD4",
+    5: "#4CAF50",
+    9: "#B71C1C",
+    -1: "#616161",
+}
 
 
 @dataclass
@@ -40,7 +71,7 @@ class TranslationEntry:
         :param eet_entry: EET_Entry 实例
         :return: TranslationEntry 实例
         """
-        stage = 1 if eet_entry.status == 99 or eet_entry.traduit else 0
+        stage = STAGE_TRANSLATED if eet_entry.status == 99 or eet_entry.traduit else STAGE_UNTRANSLATED
         id_value = cls._build_eet_id(eet_entry.edid, eet_entry.id, eet_entry.index, eet_entry.grup, eet_entry.champ)
 
         return cls(
@@ -52,8 +83,42 @@ class TranslationEntry:
             context=f"{eet_entry.grup}:{eet_entry.champ}",
         )
 
+    # REC 后缀均为 4 字符（FULL/NAM1/DESC/DNAM/ITXT/NNAM/RNAM/SHRT 等）
+    _REC_SUFFIXES = (
+        "FULL", "NAM1", "NAM2", "DATA", "DESC", "NAME", "GOLD", "SNAM",
+        "QNAM", "CNAM", "EDID", "MODL", "MODT", "DNAM", "ITXT", "NNAM",
+        "RNAM", "SHRT",
+    )
 
+    @staticmethod
+    def _rec_display(rec: str) -> str:
+        """将拼接 REC 还原为冒号格式：QUSTNNAM → QUST:NNAM"""
+        suffix = rec[-4:]
+        if suffix in TranslationEntry._REC_SUFFIXES:
+            return f"{rec[:-4]}:{suffix}"
+        return rec  # fallback: 无法识别则保持原样
 
+    @classmethod
+    def create_from_sst_entry(cls, sst_entry: "SST_Entry") -> "TranslationEntry":
+        """
+        从 SST_Entry 实例创建 TranslationEntry 实例
+        :param sst_entry: SST_Entry 实例
+        :return: TranslationEntry 实例
+        """
+        id_value = f"{sst_entry.rec}:{sst_entry.form_id:08X}|{sst_entry.index}"
+        rec = cls._rec_display(sst_entry.rec)
+        translation = sst_entry.translated_text if sst_entry.translated_text else ""
+        stage = STAGE_TRANSLATED if translation else STAGE_UNTRANSLATED
+        return cls(
+            id=id_value,
+            key=id_value,
+            original=sst_entry.text,
+            translation=translation,
+            stage=stage,
+            context=rec,
+            # f2 = FNV-1a(editor_id) for named entries; grouping key for bare-FormID entries
+            editor_id=f"0x{sst_entry.f2:08X}" if sst_entry.f2 else "",
+        )
 
     @classmethod
     def create_from_plugin_entry(cls, ps: "PluginStringWithContext") -> "TranslationEntry":
@@ -96,7 +161,7 @@ class TranslationEntry:
             key=id_value,  # 将原来的id值复制到key
             original=getattr(ps, "string", "") or "",
             translation="",
-            stage=0,
+            stage=STAGE_UNTRANSLATED,
             context=original_key,  # 原来的key值移动到context
             string_id=getattr(ps, "string_id", None),  # 传递 string_id
             form_id_with_plugin=full_form_id,  # 保存完整的 form_id
@@ -167,11 +232,71 @@ class TranslationEntry:
             key=entry.key,
             original=entry.original,
             translation=xt.dest,
-            stage=1,
+            stage=STAGE_TRANSLATED,
             context=entry.context,
             form_id_with_plugin=entry.form_id_with_plugin,
             string_id=entry.string_id,
             # 保留 DSD 字段
+            dsd_type=entry.dsd_type,
+            dsd_index=entry.dsd_index,
+            editor_id=entry.editor_id,
+        )
+
+    @classmethod
+    def try_update_from_sst(
+        cls,
+        entry: "TranslationEntry",
+        sst: "SST_Entry",
+    ) -> "TranslationEntry | None":
+        """尝试用 SST_Entry 更新已有的 TranslationEntry。
+
+        匹配策略: form_id + index（SST 有 form_id，比 XT 的 edid+index 更精确）。
+        - 不匹配则返回 None
+        - 匹配但不满足更新条件则返回原 entry
+        - 匹配且满足条件则返回更新后的新 entry
+        """
+
+        # ---------- 1. 从 ESP ID 解析 form_id 和 index ----------
+
+        # TranslationEntry.id 形如 "edid:form_id|index~TYPE:FIELD"
+        # 或不含 ~ 后缀（如 SST 自身创建的条目）
+        after_colon = entry.id.split(":", 1)[1]  # "form_id|index~TYPE"
+        form_id_hex, _, rest = after_colon.partition("|")  # form_id, "|", "index~TYPE"
+        index_str = rest.split("~")[0]
+        entry_index = int(index_str) if index_str else None
+
+        # ---------- 2. form_id 匹配 ----------
+
+        if f"{sst.form_id:08X}" != form_id_hex.upper():
+            return None
+
+        # ---------- 3. index 匹配 ----------
+
+        if entry_index is not None and entry_index != sst.index:
+            return None
+
+        # ---------- 4. 判断是否满足更新条件 ----------
+
+        should_update = (
+            entry.stage == STAGE_UNTRANSLATED
+            and not entry.translation
+            and bool(sst.translated_text)
+        )
+
+        if not should_update:
+            return entry
+
+        # ---------- 5. 返回更新后的新实例 ----------
+
+        return cls(
+            id=entry.id,
+            key=entry.key,
+            original=entry.original,
+            translation=sst.translated_text,
+            stage=STAGE_TRANSLATED,
+            context=entry.context,
+            form_id_with_plugin=entry.form_id_with_plugin,
+            string_id=entry.string_id,
             dsd_type=entry.dsd_type,
             dsd_index=entry.dsd_index,
             editor_id=entry.editor_id,
@@ -287,7 +412,7 @@ class TranslationEntry:
             key=id_value,
             original=data.get("original", ""),  # QUST CNAM 可能有
             translation=string,
-            stage=1 if string else 0,
+            stage=STAGE_TRANSLATED if string else STAGE_UNTRANSLATED,
             context=type_colon,
             form_id_with_plugin=form_id,
             dsd_type=type_str,

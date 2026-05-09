@@ -3,7 +3,7 @@ import xml.etree.ElementTree as ET
 
 from src.transbridge.converter.translation_entry import TranslationEntry
 from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from src.transbridge.parser.xt_parser import XT_XmlParser
+from src.transbridge.parser.xt import XT_XmlParser
 
 
 class XTWriter:

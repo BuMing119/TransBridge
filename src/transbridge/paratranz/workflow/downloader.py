@@ -87,7 +87,7 @@ class ParaTranzDownloader:
                 result.total_strings += 1
 
                 key         = item.get("key", "")
-                stage       = item.get("stage", 0)
+                stage       = item.get("stage", 0)  # ParaTranz API stage 值直接透传（0/1/2/3/5/9/-1）
                 translation = item.get("translation", "")
 
                 # 跳过未达到最低状态或译文为空的词条
@@ -117,7 +117,7 @@ class ParaTranzDownloader:
                         key=entry.key,
                         original=entry.original,
                         translation=translation,
-                        stage=stage,
+                        stage=stage,  # 直接透传 ParaTranz stage，对齐 STAGE_* 常量语义
                         context=entry.context,
                         form_id_with_plugin=entry.form_id_with_plugin,
                         string_id=entry.string_id,

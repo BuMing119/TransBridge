@@ -1,7 +1,10 @@
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
-from src.transbridge.converter.translation_entry import TranslationEntry
+from src.transbridge.converter.translation_entry import (
+    TranslationEntry,
+    STAGE_TRANSLATED, STAGE_LOCKED, STAGE_HIDDEN,
+)
 from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from src.transbridge.parser.eet_parser import EET_XmlParser
 
@@ -62,13 +65,32 @@ class EETWriter:
             if entry is None or not entry.translation:
                 continue
 
-            trad_node = esp.find("TRADUIT")
-            if trad_node is not None:
-                trad_node.text = entry.translation
+            # 确定写回策略
+            if entry.stage == STAGE_HIDDEN:
+                # 已隐藏：强制原文，不写译文
+                should_translate = False
+                status = "0"
+            elif entry.stage == STAGE_LOCKED:
+                # 已锁定：强制译文
+                should_translate = True
+                status = "99"
+            elif entry.stage >= STAGE_TRANSLATED and entry.translation:
+                # 正常有译文
+                should_translate = True
+                status = "99"
+            else:
+                # 未翻译或无译文
+                should_translate = False
+                status = "0"
+
+            if should_translate:
+                trad_node = esp.find("TRADUIT")
+                if trad_node is not None:
+                    trad_node.text = entry.translation
 
             status_node = esp.find("STATUS")
             if status_node is not None:
-                status_node.text = "99" if entry.stage == 1 else "0"
+                status_node.text = status
 
             updated += 1
 
