@@ -286,27 +286,77 @@ class _BatchTranslationProgressWindow(QWidget):
 
         self.translation_completed.emit()
 
-        # 显示结果对话框
-        details_lines = []
+        # ── 为每个插件生成独立报告 ──
+        plugin_results = []
         for d in summary.details:
+            esp_stem = d.plugin_name
+            report_path = None
+            needs_review = 0
             if d.success and d.result:
-                details_lines.append(
-                    f"✅ {d.plugin_name}: 成功 {d.result.success_count} 条"
-                )
-            else:
-                details_lines.append(f"⚠ {d.plugin_name}: 失败或中断")
+                try:
+                    from src.transbridge.ai_translator.post_processor.report_generator import ReportGenerator
+                    gen = ReportGenerator(esp_stem)
+                    report_path = gen.generate_translate_report(
+                        d.result,
+                        refine_results=getattr(d.result, 'refine_results', None),
+                        polish_results=getattr(d.result, 'polish_results', None),
+                        decisions=getattr(d.result, 'decisions', None),
+                    )
+                    d.result.report_path = report_path
+                except Exception:
+                    pass
+                needs_review = len(d.result.post_process_result.needs_review) if (
+                    d.result.post_process_result and d.result.post_process_result.needs_review
+                ) else 0
 
-        details_text = "\n".join(details_lines[:10])
-        if len(details_lines) > 10:
-            details_text += f"\n... 共 {len(details_lines)} 个插件"
+            status = "success" if d.success else "failed"
+            plugin_results.append({
+                "esp_stem": esp_stem,
+                "status": status,
+                "success": d.result.success_count if d.result else 0,
+                "failed": d.result.failed_count if d.result else 0,
+                "skipped": d.result.skipped_count if d.result else 0,
+                "needs_review": needs_review,
+                "report_path": report_path,
+                "result": d.result,
+            })
 
-        QMessageBox.information(
-            self,
-            "批量翻译" + ("已停止" if self._was_stopped else "完成"),
-            f"插件: {summary.success_plugins}/{summary.total_plugins} 成功\n"
-            f"总词条: {summary.total_success_entries} 成功, {summary.total_failed_entries} 失败\n\n"
-            f"详情:\n{details_text}",
+        # ── 弹出批量汇总对话框（替代 QMessageBox）──
+        if not self._background_mode and plugin_results:
+            from ._batch_report_summary_dialog import _BatchReportSummaryDialog
+            summary_dialog = _BatchReportSummaryDialog(plugin_results, parent=self)
+            summary_dialog.open_plugin_report.connect(
+                lambda idx: self._show_plugin_report(plugin_results[idx])
+            )
+            summary_dialog.show()
+
+    def _show_plugin_report(self, plugin_info: dict):
+        """从批量汇总中打开单个插件的报告对话框。"""
+        result = plugin_info.get("result")
+        report_path = plugin_info.get("report_path")
+        if not result:
+            return
+        from ._translation_report_dialog import _TranslationReportDialog
+        dialog = _TranslationReportDialog(
+            translate_result=result,
+            refine_results=getattr(result, 'refine_results', None),
+            polish_results=getattr(result, 'polish_results', None),
+            decisions=getattr(result, 'decisions', None),
+            report_path=report_path,
         )
+        main_win = self._find_main_window()
+        if main_win and hasattr(main_win, '_on_report_entry_activated'):
+            dialog.entry_activated.connect(main_win._on_report_entry_activated)
+        dialog.show()
+
+    @staticmethod
+    def _find_main_window():
+        """向上查找 MainWindow。"""
+        from src.transbridge.ui.main_window import MainWindow
+        for widget in QWidget.topLevelWidgets():
+            if isinstance(widget, MainWindow):
+                return widget
+        return None
 
     def _on_error(self, err: str):
         for w in self._batch_widgets.values():

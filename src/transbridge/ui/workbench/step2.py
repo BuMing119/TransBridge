@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView, QProgressBar,
     QPushButton, QLineEdit, QDialog, QListWidget, QListWidgetItem,
+    QAbstractItemView,
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QActionGroup
@@ -987,3 +988,37 @@ class Step2PreviewWidget(QWidget):
             self._count_lbl.setText(f"有标签 {labeled} 条 | 共 {total} 条")
         else:
             self._count_lbl.setText(f"有标签 {labeled} 条 | 显示 {shown} 条（共 {total} 条）")
+
+    def locate_entry(self, entry_id: str):
+        """在表格中定位到指定条目（清除筛选，滚动到行并选中）。"""
+        # 清除所有筛选以便目标行可见
+        self._category_filters.clear()
+        self._stage_filters.clear()
+        self._search_key.clear()
+        self._search_original.clear()
+        self._search_translation.clear()
+        if hasattr(self, '_label_filters'):
+            self._label_filters.clear()
+        if hasattr(self, '_focus_mode'):
+            self._focus_mode = False
+            if hasattr(self, '_focus_btn'):
+                self._focus_btn.setChecked(False)
+
+        # 更新标签UI
+        self._build_category_tags()
+        self._build_stage_tags()
+        if hasattr(self, '_build_label_tags'):
+            self._build_label_tags()
+
+        # 刷新表格
+        self._populate_table()
+
+        # 查找目标行：遍历表格，匹配 entry_id
+        for row in range(self._table.rowCount()):
+            key_item = self._table.item(row, _COL_KEY)
+            if key_item:
+                entry = key_item.data(Qt.ItemDataRole.UserRole)
+                if entry and entry.id == entry_id:
+                    self._table.selectRow(row)
+                    self._table.scrollToItem(key_item, QAbstractItemView.ScrollHint.PositionAtCenter)
+                    return

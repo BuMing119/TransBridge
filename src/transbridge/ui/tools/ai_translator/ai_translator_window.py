@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
     QLineEdit, QComboBox, QSpinBox, QPushButton,
     QRadioButton, QButtonGroup, QFileDialog, QMessageBox,
+    QStackedWidget,
     QCheckBox, QListWidget, QListWidgetItem,
     QAbstractItemView, QFrame, QTabWidget,
 )
@@ -22,6 +23,7 @@ from PyQt6.QtGui import QColor, QBrush
 from src.transbridge.ui.tools.ai_translator._translation_worker import _TranslationWorker
 from src.transbridge.ui.tools.ai_translator._translation_progress_window import _TranslationProgressWindow
 from src.transbridge.ui.tools.ai_translator._term_editor_dialog import _TermEditorDialog
+from src.transbridge.paratranz.config_manager import apply_rules
 
 if TYPE_CHECKING:
     from src.transbridge.ui.context import AppContext
@@ -199,11 +201,14 @@ class AITranslatorWindow(QWidget):
         self._mode_group = QButtonGroup(self)
         self._mode_translate = QRadioButton("翻译")
         self._mode_polish = QRadioButton("润色")
+        self._mode_mixed = QRadioButton("混合")
         self._mode_group.addButton(self._mode_translate)
         self._mode_group.addButton(self._mode_polish)
+        self._mode_group.addButton(self._mode_mixed)
         self._mode_translate.setChecked(True)
         mode_box.addWidget(self._mode_translate)
         mode_box.addWidget(self._mode_polish)
+        mode_box.addWidget(self._mode_mixed)
         mode_box.addStretch()
         main_layout.addLayout(mode_box)
 
@@ -469,7 +474,29 @@ class AITranslatorWindow(QWidget):
         self._estimate_lbl.setStyleSheet("color: #888; font-size: 11px;")
         scope_layout.addWidget(self._estimate_lbl)
 
-        main_layout.addWidget(scope_box)
+        # ── 混合模式面板 ──────────────────────────────────────────────────────
+        mixed_panel = QWidget()
+        mixed_layout = QVBoxLayout(mixed_panel)
+        mixed_layout.setContentsMargins(0, 0, 0, 0)
+        from ._rule_editor_widget import _RuleEditorWidget
+        self._rule_editor = _RuleEditorWidget()
+        mixed_layout.addWidget(self._rule_editor)
+        order_row = QHBoxLayout()
+        order_row.addWidget(QLabel("执行顺序:"))
+        self._order_combo = QComboBox()
+        self._order_combo.addItems(["串行（先翻译后润色）", "并行"])
+        order_row.addWidget(self._order_combo)
+        order_row.addStretch()
+        mixed_layout.addLayout(order_row)
+        mixed_estimate = QLabel("预计：— 条")
+        mixed_estimate.setStyleSheet("color: #888; font-size: 11px;")
+        self._mixed_estimate_lbl = mixed_estimate
+        mixed_layout.addWidget(mixed_estimate)
+
+        self._scope_stack = QStackedWidget()
+        self._scope_stack.addWidget(scope_box)
+        self._scope_stack.addWidget(mixed_panel)
+        main_layout.addWidget(self._scope_stack)
 
         # ── 后处理配置区 ───────────────────────────────────────────────────────
         self._pp_box = QGroupBox("后处理配置")
@@ -590,6 +617,9 @@ class AITranslatorWindow(QWidget):
 
         # ── 底部按钮 ──────────────────────────────────────────────────────────
         btn_row = QHBoxLayout()
+        self._history_btn = QPushButton("历史报告")
+        self._history_btn.clicked.connect(self._on_open_history)
+        btn_row.addWidget(self._history_btn)
         btn_row.addStretch()
         self._start_btn = QPushButton("▶ 开始翻译")
         self._start_btn.setStyleSheet(
@@ -604,6 +634,7 @@ class AITranslatorWindow(QWidget):
 
         self._mode_translate.toggled.connect(self._on_mode_changed)
         self._mode_polish.toggled.connect(self._on_mode_changed)
+        self._mode_mixed.toggled.connect(self._on_mode_changed)
         self._overwrite_check.toggled.connect(self._update_estimate)
 
     # ── 断点检测 ──────────────────────────────────────────────────────────────
@@ -830,14 +861,21 @@ class AITranslatorWindow(QWidget):
         self._baseurl_edit.setEnabled(is_openai)
 
     def _on_mode_changed(self):
-        """翻译/润色模式切换时重置作用域默认值。"""
+        """模式切换时调整UI。"""
         is_polish = self._mode_polish.isChecked()
-        self._overwrite_check.setVisible(not is_polish)
-        self._reset_scope_to_default(is_polish)
-        if is_polish:
-            self._start_btn.setText("▶ 开始润色")
+        is_mixed = self._mode_mixed.isChecked()
+        # 显示/隐藏覆盖策略和面板
+        self._overwrite_check.setVisible(not is_polish and not is_mixed)
+        if is_mixed:
+            self._scope_stack.setCurrentIndex(1)  # 混合面板
+            self._start_btn.setText("▶ 开始执行")
         else:
-            self._start_btn.setText("▶ 开始翻译")
+            self._scope_stack.setCurrentIndex(0)  # 标准作用域面板
+            self._reset_scope_to_default(is_polish)
+            if is_polish:
+                self._start_btn.setText("▶ 开始润色")
+            else:
+                self._start_btn.setText("▶ 开始翻译")
         self._update_estimate()
 
     # ── 作用域方法 ─────────────────────────────────────────────────────────
@@ -1060,6 +1098,21 @@ class AITranslatorWindow(QWidget):
         collection = self._ctx.collection
         if collection is None:
             self._estimate_lbl.setText("预计：— 条（需先加载集合）")
+            if hasattr(self, '_mixed_estimate_lbl'):
+                self._mixed_estimate_lbl.setText("预计：— 条（需先加载集合）")
+            return
+
+        is_mixed = self._mode_mixed.isChecked()
+        if is_mixed:
+            rules = self._rule_editor.get_rules()
+            entries = list(collection)
+            actions = apply_rules(rules, entries)
+            t_count = sum(1 for a in actions.values() if a == "translate")
+            p_count = sum(1 for a in actions.values() if a == "polish")
+            self._mixed_estimate_lbl.setText(
+                f"预计：翻译 {t_count} 条 + 润色 {p_count} 条"
+                + ("（两者均为0，请调整规则）" if t_count == 0 and p_count == 0 else "")
+            )
             return
 
         is_polish = self._mode_polish.isChecked()
@@ -1098,7 +1151,7 @@ class AITranslatorWindow(QWidget):
             QMessageBox.warning(self, "测试连接", "请先填写模型名。")
             return
         try:
-            from src.transbridge.ai_translator.llm_client import create_llm_client
+            from src.transbridge.infra.llm_client import create_llm_client
             client = create_llm_client(cfg)
             reply = client.chat([{"role": "user", "content": "Say 'OK' in one word."}], max_tokens=10)
             QMessageBox.information(self, "测试连接", f"连接成功！模型回复：{reply}")
@@ -1122,6 +1175,9 @@ class AITranslatorWindow(QWidget):
         dlg.exec()
 
     def _on_start(self):
+        if self._mode_mixed.isChecked():
+            self._on_mixed_start()
+            return
         if self._mode_polish.isChecked():
             self._on_polish_start()
             return
@@ -1188,6 +1244,65 @@ class AITranslatorWindow(QWidget):
         worker.start()
         self.close()
 
+    def _on_mixed_start(self):
+        """混合模式：规则匹配 → 拆分为翻译/润色条目 → MixedWorker（占位，S12实现）。"""
+        collection = self._ctx.collection
+        if not collection:
+            QMessageBox.warning(self, "混合模式", "请先加载词条集合。")
+            return
+
+        rules = self._rule_editor.get_rules()
+        entries = list(collection)
+        actions = apply_rules(rules, entries)
+        translate_entries = [e for e in entries if actions.get(e.id) == "translate"]
+        polish_entries = [e for e in entries if actions.get(e.id) == "polish"]
+
+        if not translate_entries and not polish_entries:
+            QMessageBox.warning(self, "混合模式", "当前筛选条件下无匹配条目，请调整规则。")
+            return
+
+        cfg = self._save_config()
+        # 保存执行顺序
+        cfg.mixed_execution_order = "serial" if self._order_combo.currentIndex() == 0 else "parallel"
+        # 保存规则
+        cfg.action_rules = rules
+
+        # 创建 _MixedWorker 并启动
+        from ._mixed_worker import _MixedWorker
+        self._mixed_worker = _MixedWorker(
+            cfg=cfg,
+            translate_entries=translate_entries,
+            polish_entries=polish_entries,
+            execution_order=cfg.mixed_execution_order,
+            ctx=self._ctx,
+        )
+        self._mixed_worker.finished.connect(self._on_mixed_finished)
+        self._mixed_worker.error.connect(lambda msg: QMessageBox.warning(self, "混合模式错误", msg))
+        self._mixed_worker.start()
+        QMessageBox.information(
+            self, "混合模式",
+            f"规则匹配完成：\n翻译 {len(translate_entries)} 条\n润色 {len(polish_entries)} 条\n\n"
+            f"执行顺序：{'串行' if cfg.mixed_execution_order == 'serial' else '并行'}\n\n"
+            f"混合执行已启动，完成后将弹出报告。",
+        )
+
+    def _on_mixed_finished(self, result: dict):
+        """混合执行完成回调：汇总并弹出报告。"""
+        t = result.get("translate")
+        p = result.get("polish")
+        lines = ["混合执行完成:"]
+        if t:
+            lines.append(f"翻译: 成功 {t.success_count}, 失败 {t.failed_count}")
+        if p:
+            lines.append(f"润色: 成功 {p.success_count}, 失败 {p.failed_count}")
+            if hasattr(p, 'details') and p.details:
+                failed = [d for d in p.details if not d['success']]
+                if failed:
+                    lines.append(f"润色失败条目 ({len(failed)}):")
+                    for d in failed[:5]:
+                        lines.append(f"  - {d['key']}: {d.get('error', '未知错误')[:50]}")
+        QMessageBox.information(self, "混合模式", "\n".join(lines))
+
     def _on_polish_start(self):
         """润色模式：选中已翻译词条 → LLMPolisher → 可选预览 → 写入。"""
         collection = self._ctx.collection
@@ -1212,7 +1327,7 @@ class AITranslatorWindow(QWidget):
             return
 
         # 创建 LLM 客户端
-        from src.transbridge.ai_translator.llm_client import create_llm_client
+        from src.transbridge.infra.llm_client import create_llm_client
         llm_client = create_llm_client(cfg)
 
         # 创建术语管理器（可选）
@@ -1297,6 +1412,7 @@ class AITranslatorWindow(QWidget):
 
         def _on_done(results):
             progress_dlg.close()
+            self._last_polish_results = results
             from src.transbridge.ui.tools.ai_translator._polish_preview_dialog import _PolishPreviewDialog
             preview = _PolishPreviewDialog(entries, results, parent=self)
             if preview.exec() == QDialog.DialogCode.Accepted:
@@ -1316,9 +1432,10 @@ class AITranslatorWindow(QWidget):
         """直接写入模式完成回调。"""
         progress_dlg.close()
         applied = 0
+        failed = 0
         for entry in entries:
             result = results.get(entry.id)
-            if result and result.polished_translation:
+            if result and result.polished_translation and result.confidence > 0:
                 updated = type(entry)(
                     id=entry.id, key=entry.key, original=entry.original,
                     translation=result.polished_translation, stage=entry.stage,
@@ -1328,13 +1445,16 @@ class AITranslatorWindow(QWidget):
                 )
                 collection.add(updated, overwrite=True)
                 applied += 1
+            else:
+                failed += 1
         self._ctx.collection_changed.emit(collection)
-        QMessageBox.information(self, "润色完成", f"已润色 {applied} 条。")
+        self._show_polish_report(results, entries, applied, 0, failed)
         self.close()
 
     def _apply_polish_results(self, entries, polish_decisions, collection):
         """应用润色预览结果到集合。"""
         applied = 0
+        rejected = 0
         for entry in entries:
             decision = polish_decisions.get(entry.id)
             if decision is not None:  # accepted polish
@@ -1347,9 +1467,69 @@ class AITranslatorWindow(QWidget):
                 )
                 collection.add(updated, overwrite=True)
                 applied += 1
+            elif decision is None and entry.id in polish_decisions:
+                rejected += 1
         self._ctx.collection_changed.emit(collection)
-        QMessageBox.information(self, "润色完成", f"已应用 {applied} 条润色结果。")
+        self._show_polish_report(
+            self._last_polish_results if hasattr(self, '_last_polish_results') else {},
+            entries, applied, rejected, 0,
+        )
         self.close()
+
+    def _show_polish_report(self, results, entries, accepted, rejected, failed):
+        """生成润色报告并弹出报告对话框。"""
+        # 计算失败数（置信度为0的结果）
+        if not failed:
+            failed = sum(1 for r in results.values() if r.confidence == 0.0)
+        avg_conf = (sum(r.confidence for r in results.values()) / len(results)) if results else 0
+        stats = {
+            "total": len(results),
+            "accepted": accepted,
+            "rejected": rejected,
+            "failed": failed,
+            "polish_level": getattr(self, '_cfg', None) and getattr(self._cfg, 'polish_level', 'moderate') or 'moderate',
+            "avg_confidence": avg_conf,
+        }
+
+        esp_stem = "unknown"
+        if self._ctx.esp_path:
+            from pathlib import Path
+            esp_stem = Path(self._ctx.esp_path).stem
+
+        report_path = None
+        try:
+            from src.transbridge.ai_translator.post_processor.report_generator import ReportGenerator
+            gen = ReportGenerator(esp_stem)
+            report_path = gen.generate_polish_report(results, entries, stats)
+        except Exception:
+            pass
+
+        from ._translation_report_dialog import _TranslationReportDialog
+        dialog = _TranslationReportDialog(
+            polish_entries=entries,
+            polish_results_dict=results,
+            polish_stats=stats,
+            report_path=report_path,
+        )
+        main_win = self._find_main_window()
+        if main_win and hasattr(main_win, '_on_report_entry_activated'):
+            dialog.entry_activated.connect(main_win._on_report_entry_activated)
+        dialog.show()
+
+    def _on_open_history(self):
+        """打开历史报告查看对话框。"""
+        from ._report_history_dialog import _ReportHistoryDialog
+        dialog = _ReportHistoryDialog(parent=self)
+        dialog.show()
+
+    @staticmethod
+    def _find_main_window():
+        from src.transbridge.ui.main_window import MainWindow
+        from PyQt6.QtWidgets import QWidget as QW
+        for widget in QW.topLevelWidgets():
+            if isinstance(widget, MainWindow):
+                return widget
+        return None
 
     def _check_all_terms_empty(self, cfg) -> bool:
         """检查所有术语来源是否均为空。"""

@@ -358,25 +358,28 @@ class _TranslationProgressWindow(QWidget):
         self._ctx.collection_changed.emit(self._ctx.collection)
         self.translation_completed.emit()
 
-        if self._was_stopped:
-            QMessageBox.information(
-                self, "翻译已停止",
-                f"成功：{result.success_count} 条\n"
-                f"失败：{result.failed_count} 条\n"
-                f"跳过：{result.skipped_count} 条\n"
-                f"新增术语：{result.new_dynamic_terms} 个\n\n"
-                f"已保存断点，可通过断点续传继续。",
+        # ── 生成报告 ──
+        esp_stem = self._get_esp_stem()
+        report_path = None
+        try:
+            from src.transbridge.ai_translator.post_processor.report_generator import ReportGenerator
+            gen = ReportGenerator(esp_stem)
+            report_path = gen.generate_translate_report(
+                result,
+                refine_results=getattr(result, 'refine_results', None),
+                polish_results=getattr(result, 'polish_results', None),
+                decisions=getattr(result, 'decisions', None),
             )
-        else:
-            msg = (
-                f"成功：{result.success_count} 条\n"
-                f"失败：{result.failed_count} 条\n"
-                f"跳过：{result.skipped_count} 条\n"
-                f"新增术语：{result.new_dynamic_terms} 个"
-            )
-            if pp_summary:
-                msg += pp_summary
-            QMessageBox.information(self, "翻译完成", msg)
+            result.report_path = report_path
+        except Exception:
+            pass  # 报告生成失败不阻塞流程
+
+        # ── 弹出报告对话框（替代 QMessageBox）──
+        if not self._background_mode and not self._was_stopped:
+            self._show_report_dialog(result, report_path)
+        elif self._was_stopped and not self._background_mode:
+            # 停止时仍显示报告（基于已完成条目）
+            self._show_report_dialog(result, report_path)
 
     def _on_error(self, err: str):
         for w in self._batch_widgets.values():
@@ -467,3 +470,36 @@ class _TranslationProgressWindow(QWidget):
         else:
             self._background_mode = True
             event.accept()
+
+    def _get_esp_stem(self) -> str:
+        """获取当前翻译的 ESP stem（用于报告目录）。"""
+        try:
+            from pathlib import Path
+            return Path(self._worker._translator._cfg.esp_path).stem
+        except Exception:
+            return "unknown"
+
+    def _show_report_dialog(self, result, report_path: str | None):
+        """弹出翻译报告对话框。"""
+        from ._translation_report_dialog import _TranslationReportDialog
+        dialog = _TranslationReportDialog(
+            translate_result=result,
+            refine_results=getattr(result, 'refine_results', None),
+            polish_results=getattr(result, 'polish_results', None),
+            decisions=getattr(result, 'decisions', None),
+            report_path=report_path,
+        )
+        main_win = self._find_main_window()
+        if main_win and hasattr(main_win, '_on_report_entry_activated'):
+            dialog.entry_activated.connect(main_win._on_report_entry_activated)
+        dialog.show()
+
+    @staticmethod
+    def _find_main_window():
+        """向上查找 MainWindow 父窗口。"""
+        from src.transbridge.ui.main_window import MainWindow
+        import sys
+        for widget in QWidget.topLevelWidgets():
+            if isinstance(widget, MainWindow):
+                return widget
+        return None

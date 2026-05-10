@@ -116,7 +116,7 @@ class _BatchConfigDialog(QDialog):
             QMessageBox.warning(self, "测试连接", "请先填写模型名。")
             return
         try:
-            from src.transbridge.ai_translator.llm_client import create_llm_client
+            from src.transbridge.infra.llm_client import create_llm_client
             client = create_llm_client(cfg)
             reply = client.chat([{"role": "user", "content": "Say 'OK' in one word."}], max_tokens=10)
             QMessageBox.information(self, "测试连接", f"连接成功！模型回复：{reply}")
