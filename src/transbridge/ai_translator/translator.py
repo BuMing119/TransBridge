@@ -57,6 +57,10 @@ class TranslationResult:
     new_dynamic_terms: int = 0
     failed_entries: list[str] = field(default_factory=list)
     post_process_result: "PostProcessResult | None" = None  # 后处理结果
+    refine_results: dict | None = None     # {entry_id: RefineResult}，后处理修复中间数据
+    polish_results: dict | None = None     # {entry_id: PolishResult}，后处理润色中间数据
+    decisions: dict | None = None          # {entry_id: ArbiterDecision}，后处理裁决中间数据
+    report_path: str | None = None         # 生成的 Excel 报告路径
 
 
 @dataclass
@@ -124,7 +128,7 @@ class AutoTranslator:
         self._paratranz_client = paratranz_client
         self._project_id = project_id
 
-        from src.transbridge.ai_translator.llm_client import create_llm_client
+        from src.transbridge.infra.llm_client import create_llm_client
         from src.transbridge.ai_translator.prompt_builder import PromptBuilder
         from src.transbridge.ai_translator.term_database import TermDatabaseManager
         from src.transbridge.ai_translator.noun_extractor import NounExtractor

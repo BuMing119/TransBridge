@@ -593,6 +593,11 @@ class PostProcessor:
 
             result.execution_result = execution_result
 
+            # ── 保存中间数据到 result，供报告生成使用 ──
+            result.refine_results = refine_results if refine_results else None
+            result.polish_results = polish_results if polish_results else None
+            result.decisions = decisions if decisions else None
+
             return result
 
         finally:

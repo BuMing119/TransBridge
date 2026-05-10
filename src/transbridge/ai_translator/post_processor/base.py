@@ -42,6 +42,11 @@ class PostProcessResult:
     auto_fixed: int = 0
     needs_review: list[str] = field(default_factory=list)
 
+    # ── 中间数据（用于报告生成）──
+    refine_results: dict | None = None     # {entry_id: RefineResult}
+    polish_results: dict | None = None     # {entry_id: PolishResult}
+    decisions: dict | None = None          # {entry_id: ArbiterDecision}
+
     def add_issue(self, issue: PostProcessIssue) -> None:
         """添加问题。"""
         self.issues.append(issue)
