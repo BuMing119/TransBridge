@@ -1,11 +1,12 @@
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QPushButton
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QPushButton, QMenu
 from PyQt6.QtCore import pyqtSignal
 
 
 class QuickActionsPanel(QWidget):
-    """顶部快捷指令面板，提供常用操作的快捷入口。"""
+    """顶部快捷指令面板，提供常用操作和 Skill 的快捷入口。"""
 
     action_clicked = pyqtSignal(str)
+    skill_triggered = pyqtSignal(str)  # skill name
 
     _ACTIONS = [
         ("翻译选中", "请翻译当前选中的词条"),
@@ -29,4 +30,26 @@ class QuickActionsPanel(QWidget):
             btn.clicked.connect(lambda checked, p=prompt: self.action_clicked.emit(p))
             layout.addWidget(btn)
 
+        # Skill 下拉按钮
+        self._skill_btn = QPushButton("Skill")
+        self._skill_btn.setToolTip("选择并执行自定义 Skill")
+        self._skill_btn.setMinimumHeight(36)
+        self._skill_btn.clicked.connect(self._show_skill_menu)
+        layout.addWidget(self._skill_btn)
+
         layout.addStretch()
+
+    def _show_skill_menu(self) -> None:
+        from src.transbridge.smart_assistant.skills import SkillRegistry
+        skills = SkillRegistry.list_all()
+        menu = QMenu(self)
+        if not skills:
+            menu.addAction("(无可用 Skill)").setEnabled(False)
+        else:
+            for spec in skills:
+                action = menu.addAction(f"{spec.display_name}")
+                action.setToolTip(spec.description)
+                action.triggered.connect(
+                    lambda checked, s=spec: self.skill_triggered.emit(s.name)
+                )
+        menu.exec(self._skill_btn.mapToGlobal(self._skill_btn.rect().bottomLeft()))

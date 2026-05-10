@@ -35,6 +35,11 @@ class SmartAssistantPanel(QDockWidget):
         self._quick_actions = QuickActionsPanel()
         layout.addWidget(self._quick_actions)
 
+        # 加载 Skills
+        from pathlib import Path
+        from src.transbridge.smart_assistant.skills import SkillRegistry, SkillLoader
+        SkillRegistry.reload(Path("data/skills"))
+
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
         layout.addWidget(line)
@@ -44,6 +49,7 @@ class SmartAssistantPanel(QDockWidget):
 
         # 快捷指令 → 填入输入框
         self._quick_actions.action_clicked.connect(self._chat.set_input)
+        self._quick_actions.skill_triggered.connect(self._chat._on_skill)
 
         self.setWidget(container)
 

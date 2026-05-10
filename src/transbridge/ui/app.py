@@ -41,6 +41,24 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("TransBridge")
     app.setOrganizationName("TransBridge")
+    # 初始化 Phase 2 Agent 系统
+    from src.transbridge.smart_assistant.agents import AgentRegistry
+    AgentRegistry.init_presets()
+    # 条件启动 MCP Server
+    from src.transbridge.paratranz.config_manager import LLMConfig
+    llm_cfg = LLMConfig.load_from_file()
+    if llm_cfg.mcp_enabled:
+        from src.transbridge.smart_assistant.mcp import MCPAdapter, MCPServer
+        from src.transbridge.smart_assistant.tool_registry import ToolRegistry
+        import threading
+        mcp_config = {
+            "admin_tool_whitelist": llm_cfg.mcp_admin_tool_whitelist,
+            "write_tool_policy": llm_cfg.mcp_write_tool_policy,
+        }
+        adapter = MCPAdapter(ToolRegistry, mcp_config)
+        server = MCPServer(ToolRegistry, adapter)
+        t = threading.Thread(target=server.run_stdio, daemon=True)
+        t.start()
     window = MainWindow()
     window.show()
     sys.exit(app.exec())

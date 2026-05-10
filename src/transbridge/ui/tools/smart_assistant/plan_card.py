@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import pyqtSignal
 
-from .execution_engine import StepResult
+from src.transbridge.smart_assistant.execution_engine import StepResult
 
 
 class PlanCard(QWidget):

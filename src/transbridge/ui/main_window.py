@@ -589,6 +589,7 @@ class MainWindow(QMainWindow):
             for esp_path, slot, collection in results:
                 if slot:
                     self._ctx.add_slot(esp_path, slot)
+                    self._save_source_to_project(slot)
             if results:
                 for esp_path, slot, _ in reversed(results):
                     if slot:
@@ -660,7 +661,23 @@ class MainWindow(QMainWindow):
                 self.show_message("已取消，保留原有集合")
                 return
         self._ctx.add_slot(key, slot)
+        self._save_source_to_project(slot)
         self.show_message(f"解析完成，共 {len(collection)} 条词条")
+
+    def _save_source_to_project(self, slot: CollectionSlot) -> None:
+        """将解析的源文件路径保存到 project.json（下次启动自动恢复集合）。"""
+        proj = self._ctx.active_project
+        if proj is None:
+            return
+        if slot.esp_path and not any(s.get("key") == slot.esp_path for s in proj.sources):
+            proj.add_source(slot.esp_path, "esp", slot.esp_path)
+        if slot.eet_path and not any(s.get("key") == slot.eet_path for s in proj.sources):
+            proj.add_source(slot.eet_path, "eet", slot.eet_path)
+        if slot.xt_path and not any(s.get("key") == slot.xt_path for s in proj.sources):
+            proj.add_source(slot.xt_path, "xt", slot.xt_path)
+        if slot.sst_path and not any(s.get("key") == slot.sst_path for s in proj.sources):
+            proj.add_source(slot.sst_path, "sst", slot.sst_path)
+        proj.save()
 
     # ── Migration implementation ───────────────────────────────
 
@@ -1080,15 +1097,15 @@ class MainWindow(QMainWindow):
         def _on_done(result):
             collection, plugin = result
             self._workbench.hide_step2_progress()
+            # 应用已缓存的翻译数据（必须在 add_slot 之前，否则 collection_changed 触发时表格仍为空）
+            if self._ctx.variant_store:
+                self._ctx.variant_store.apply_to(list(collection))
             label = PathLib(esp_path).stem
             slot = CollectionSlot(
                 label=label, collection=collection,
                 esp_path=esp_path, plugin=plugin,
             )
             self._ctx.add_slot(esp_path, slot)
-            # 应用已缓存的翻译数据
-            if self._ctx.variant_store:
-                self._ctx.variant_store.apply_to(list(collection))
 
         def _on_error(msg: str):
             self._workbench.hide_step2_progress()
@@ -1445,3 +1462,19 @@ class MainWindow(QMainWindow):
             self, "关于 TransBridge",
             f"TransBridge v{__version__}\n\nESP 插件翻译辅助工具，对接 ParaTranz 平台。",
         )
+
+    def _on_report_entry_activated(self, entry_id: str):
+        """报告对话框中双击条目后跳转到Step2定位。"""
+        if not self._ctx.collection:
+            self.statusBar().showMessage("请先加载翻译集合", 5000)
+            return
+        entry = self._ctx.collection.get(entry_id)
+        if entry is None:
+            self.statusBar().showMessage(f"条目不存在或已被删除: {entry_id}", 5000)
+            return
+        # 切换到工作台 tab
+        self._mode_tabs.setCurrentIndex(0)  # 工作台在 index 0
+        # 通知 Step2 定位
+        step2 = getattr(self._workbench, '_step2', None)
+        if step2 and hasattr(step2, 'locate_entry'):
+            step2.locate_entry(entry_id)
