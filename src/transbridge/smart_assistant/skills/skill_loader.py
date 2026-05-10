@@ -1,0 +1,74 @@
+"""Skill 定义加载器：TOML 文件 → SkillSpec。"""
+
+import tomllib
+from dataclasses import dataclass, field
+from pathlib import Path
+
+
+@dataclass
+class SkillSpec:
+    """用户自定义 Skill 的运行时表示。"""
+    name: str
+    display_name: str
+    description: str = ""
+    version: str = "1.0"
+    enabled: bool = True
+    trigger_keywords: list[str] = field(default_factory=list)
+    required_tools: list[str] = field(default_factory=list)
+    prompt_template: str = ""
+    allowed_tools: list[str] = field(default_factory=list)
+    source_path: Path | None = None
+
+    @property
+    def slug(self) -> str:
+        return self.name.replace(" ", "_").lower()
+
+
+class SkillLoader:
+    """从 TOML 文件加载 Skill 定义。"""
+
+    @staticmethod
+    def load(path: Path) -> SkillSpec | None:
+        """解析单个 TOML 文件 → SkillSpec，失败返回 None。"""
+        try:
+            with open(path, "rb") as f:
+                data = tomllib.load(f)
+        except (tomllib.TOMLDecodeError, OSError) as exc:
+            import logging
+            logging.getLogger("SkillLoader").warning(f"解析 Skill 文件失败: {path} — {exc}")
+            return None
+
+        try:
+            meta = data.get("meta", {})
+            trigger = data.get("trigger", {})
+            prompt = data.get("prompt", {})
+            tools = data.get("tools", {})
+
+            return SkillSpec(
+                name=meta.get("name", path.stem),
+                display_name=meta.get("display_name", path.stem),
+                description=meta.get("description", ""),
+                version=meta.get("version", "1.0"),
+                enabled=meta.get("enabled", True),
+                trigger_keywords=trigger.get("keywords", []),
+                required_tools=trigger.get("requires_tools", []),
+                prompt_template=prompt.get("template", ""),
+                allowed_tools=tools.get("allowed", []),
+                source_path=path,
+            )
+        except Exception as exc:
+            import logging
+            logging.getLogger("SkillLoader").warning(f"Skill 定义不完整: {path} — {exc}")
+            return None
+
+    @staticmethod
+    def load_all(directory: Path) -> list[SkillSpec]:
+        """扫描目录，加载所有 .toml 文件。"""
+        skills = []
+        if not directory.exists():
+            return skills
+        for f in sorted(directory.glob("*.toml")):
+            spec = SkillLoader.load(f)
+            if spec is not None and spec.enabled:
+                skills.append(spec)
+        return skills

@@ -40,9 +40,17 @@ class ContextBuilder:
             for cat, cnt in sorted(cat_counter.items(), key=lambda x: -x[1])
         )
 
+        # 已上传参考文件
+        docs_lines = ""
+        if hasattr(ctx, "_uploaded_docs") and ctx._uploaded_docs:
+            docs_lines = "已上传参考文件:\n"
+            for name, doc in ctx._uploaded_docs.items():
+                docs_lines += f"  - {name} ({doc.format}): {doc.raw_text[:200]}…\n" if len(doc.raw_text) > 200 else f"  - {name} ({doc.format}): {doc.raw_text}\n"
+
         return (
             f"当前工作环境:\n"
             f"- 插件: {esp_name}\n"
             f"- 集合概况: 总计 {total} 条, 已翻译 {translated} 条, 待翻译 {untranslated} 条\n"
             f"- 分类分布:\n{cat_lines}"
+            + (f"\n{docs_lines}" if docs_lines else "")
         )
