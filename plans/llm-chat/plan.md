@@ -3,7 +3,7 @@
 **对应需求**: FR7 (用户界面) — 新增 AI 智能助手入口
 **技术模块**: `src/transbridge/ui/tools/smart_assistant/` (新建)
 **业务域**: AI 辅助翻译
-**状态**: ✅ 已确认
+**状态**: ✅ 已确认（Story-01~05 已实现，Story-06~07 待编码）
 **创建日期**: 2026-03
 **确认日期**: 2026-05-06
 
@@ -145,20 +145,23 @@
 ## 新建文件清单
 
 ```
+src/transbridge/smart_assistant/     # Story-06 (NEW: 后端业务逻辑包)
+├── __init__.py                     # 公开 API 导出
+├── conversation_manager.py         # Story-02 (搬迁自 ui/tools/)
+├── chat_worker.py                  # Story-02 (搬迁自 ui/tools/)
+├── execution_engine.py             # Story-02 (搬迁自 ui/tools/)
+├── tool_registry.py                # Story-04 (搬迁自 ui/tools/)
+├── context_builder.py              # Story-05 (搬迁自 ui/tools/)
+└── prompts.py                      # Story-04 (搬迁自 ui/tools/)
+
 src/transbridge/ui/tools/smart_assistant/
 ├── __init__.py
 ├── panel.py                       # Story-01
-├── chat_widget.py                 # Story-01, 03, 05
+├── chat_widget.py                 # Story-01, 03, 05, 07
 ├── message_bubble.py              # Story-01
 ├── quick_actions.py               # Story-01
-├── conversation_manager.py        # Story-02
-├── chat_worker.py                 # Story-02
-├── execution_engine.py            # Story-02
-├── tool_registry.py               # Story-04
 ├── tool_card.py                   # Story-03
-├── plan_card.py                   # Story-03
-├── context_builder.py             # Story-05
-└── prompts.py                     # Story-04 (System Prompt 模板)
+└── plan_card.py                   # Story-03, 07
 ```
 
 ## 需修改的现有文件
@@ -168,10 +171,70 @@ src/transbridge/ui/tools/smart_assistant/
 | `src/transbridge/ui/main_window.py` | Story-01, 05 | 集成 DockWidget + 菜单/快捷键 + QSettings 持久化 |
 | `src/transbridge/ai_translator/prompt_builder.py` | Story-02 | 新增 parse_hybrid_response() |
 
+## Story-06/07 文件变更
+
+### 搬迁（Story-06）
+
+| 源路径 | 目标路径 |
+|--------|---------|
+| `ui/tools/smart_assistant/conversation_manager.py` | `smart_assistant/conversation_manager.py` |
+| `ui/tools/smart_assistant/chat_worker.py` | `smart_assistant/chat_worker.py` |
+| `ui/tools/smart_assistant/execution_engine.py` | `smart_assistant/execution_engine.py` |
+| `ui/tools/smart_assistant/tool_registry.py` | `smart_assistant/tool_registry.py` |
+| `ui/tools/smart_assistant/context_builder.py` | `smart_assistant/context_builder.py` |
+| `ui/tools/smart_assistant/prompts.py` | `smart_assistant/prompts.py` |
+
+### 修改（Story-07）
+
+| 文件 | 修改内容 |
+|------|---------|
+| `ui/tools/smart_assistant/chat_widget.py` | 4 处 import 改为 `from src.transbridge.smart_assistant.xxx` |
+| `ui/tools/smart_assistant/plan_card.py` | 1 处 import 改为 `from src.transbridge.smart_assistant.execution_engine import StepResult` |
+| `smart_assistant/prompts.py` | 1 处 import 改为包内相对导入 `.tool_registry` |
+
 ## 架构依赖
 
 - [ADR-004: QThread + 信号总线异步模式](../../docs/adr/004-qthread-async-pattern.md) — ChatWorker 采用 QThread 模式，信号/槽线程通信，BaseException 取消控制
 - [ADR-005: TOML Prompt 模板，不使用 LangChain](../../docs/adr/005-toml-prompt-no-langchain.md) — 不引入 LangChain/LangGraph，PromptBuilder 自建扩展，复用现有 LLMClient
+
+### Story-06: 新建后端包 + 文件搬迁
+
+**Phase**: 6 | **预估**: 2h | **状态**: 📝
+**对应需求**: FR7.12 | **架构引用**: ADR-008
+**详细文档**: `plans/llm-chat/stories/story-06-layering-backend.md`
+
+**验收标准**:
+- [ ] `src/transbridge/smart_assistant/` 包存在且含 `__init__.py`
+- [ ] `__init__.py` 导出 7 个公开符号（ConversationManager, ChatWorker, ExecutionEngine, StepResult, ToolRegistry, ToolSpec, ContextBuilder, build_system_prompt）
+- [ ] 6 个后端文件从 UI 目录搬迁到新包，原位置文件删除
+- [ ] `prompts.py` 中 `from .tool_registry import ToolRegistry` 包内相对导入正确
+- [ ] `from src.transbridge.smart_assistant import ConversationManager` 可成功执行
+
+**实现步骤**:
+1. 创建 `src/transbridge/smart_assistant/__init__.py`（公开 API 导出） → `smart_assistant/__init__.py` (新建)
+2. 搬迁 6 个后端文件到新包，删除 UI 目录下原文件 → `conversation_manager.py`, `chat_worker.py`, `execution_engine.py`, `tool_registry.py`, `context_builder.py`, `prompts.py`
+3. 更新 `prompts.py` 包内 import：`from .tool_registry import ToolRegistry` → `prompts.py`
+
+### Story-07: UI 层 import 更新 + 验证
+
+**Phase**: 7 | **预估**: 1.5h | **状态**: 📝
+**对应需求**: FR7.12 | **架构引用**: ADR-008
+**详细文档**: `plans/llm-chat/stories/story-07-layering-ui.md`
+
+**验收标准**:
+- [ ] `chat_widget.py` 4 处跨包导入改为绝对导入（指向 `src.transbridge.smart_assistant`）
+- [ ] `plan_card.py` 1 处跨包导入改为绝对导入（`ExecutionEngine.StepResult`）
+- [ ] `main_window.py` 导入路径保持不变
+- [ ] 启动应用无 ImportError
+- [ ] 智能助手面板可正常打开和关闭
+- [ ] LLM 对话功能正常（发送消息 → 收到回复）
+- [ ] 6 个工具均可正常执行
+- [ ] PlanCard 和 ToolCard 显示和交互正常
+
+**实现步骤**:
+1. 更新 `chat_widget.py` 的 4 处 import（conversation_manager, chat_worker, execution_engine → 改为 `from src.transbridge.smart_assistant.xxx import ...`） → `chat_widget.py`
+2. 更新 `plan_card.py` 的 1 处 import（execution_engine.StepResult → 改为绝对导入） → `plan_card.py`
+3. 启动应用验证：面板可见、对话可用、工具可执行 → 手动验证
 
 ## 风险与回退方案
 

@@ -56,3 +56,40 @@ class PromptBuilder:
 - **LangChain ChatPromptTemplate**: 见上表，核心问题是 `{var}` 语法与 JSON 输出格式冲突
 - **f-string / format()**: 拒绝：不支持从外部文件加载模板
 - **Jinja2**: 可选方案，但引入额外依赖，TOML 当前足够
+
+### 更新: 2026-05-10 - Skill 定义文件采用 TOML 格式
+
+**决策**: Skill 系统（FR7.13.1）的定义文件采用 TOML 格式，与 Prompt 模板保持技术栈一致。
+
+**Skill 定义文件格式** (`data/skills/<skill_name>.toml`):
+
+```toml
+[meta]
+name = "translate_with_terms"
+display_name = "术语辅助翻译"
+description = "先查询术语库，再使用术语翻译选中词条"
+version = "1.0"
+enabled = true
+
+[trigger]
+keywords = ["翻译", "术语", "标准化"]
+requires_tools = ["lookup_terms", "translate_entries"]
+
+[prompt]
+template = """
+你是一个翻译专家。在执行翻译之前：
+1. 使用 lookup_terms 查询以下术语的标准译名：{keywords}
+2. 使用 translate_entries 翻译词条，必须使用查询到的术语译名
+3. 翻译完成后使用 check_quality 验证术语一致性
+"""
+
+[tools]
+allowed = ["lookup_terms", "translate_entries", "check_quality"]
+```
+
+**原因**: TOML 是项目已有的 Prompt 模板格式（ADR-005），用户可编辑，支持注释，不需要新依赖。Skill 本质是「带触发条件的 Prompt 模板 + 工具组合」，与 ADR-005 的 TOML 技术路线天然一致。
+
+**影响**:
+- 新增依赖: `tomli` (Python 3.11 已内置 `tomllib`，无需新增)
+- 目录变更: `data/skills/` 目录存放用户自定义 skill 文件，系统预置 skill 放在 `src/transbridge/smart_assistant/skills/presets/`
+- Skill 文件热加载: `skill_loader.py` 监控 `data/skills/` 目录变化（watchdog 或轮询）

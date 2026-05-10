@@ -120,7 +120,7 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
   - **FR5.10.5 条目数量预估**: 选择作用域后 SHALL 实时显示匹配条目数量和预计批次信息。
   - **FR5.10.6 与主表解耦**: 作用域选择 SHALL 不读取 `Step2PreviewWidget.get_selected_entries()`，不依赖主表标记或筛选状态（「当前主表视图」快捷预设除外）。
 
-**FR5.11 AI翻译混合模式** — *2026-05-09 | 状态: 已方案 | 优先级: P1*: 系统 SHALL 在 AI 翻译窗口中提供「混合模式」，允许用户在一次任务中同时执行翻译和润色两种操作，突破当前全局翻译/润色二选一的限制。混合模式下，用户在作用域选择器中通过新增的「动作」维度为条目分配翻译或润色动作。
+**FR5.11 AI翻译混合模式** — *2026-05-09 | 状态: 已实现 | 优先级: P1*: 系统 SHALL 在 AI 翻译窗口中提供「混合模式」，允许用户在一次任务中同时执行翻译和润色两种操作，突破当前全局翻译/润色二选一的限制。混合模式下，用户在作用域选择器中通过新增的「动作」维度为条目分配翻译或润色动作。
 
   - **FR5.11.1 三模式制**: AI 翻译窗口顶部 SHALL 提供三个 RadioButton：翻译 / 润色 / 混合。选「翻译」或「润色」时保持现有行为不变（全局单一动作）。选「混合」时作用域选择器新增「动作」维度标签行（翻译 / 润色 / 跳过），允许用户为当前筛选范围指定动作。翻译模式和润色模式完全向后兼容。
   - **FR5.11.2 动作维度**: 混合模式下的「动作」维度 SHALL 提供三个标签：翻译（走 AutoTranslator 三轮翻译 + 可选后处理）、润色（走 LLMPolisher）、跳过（不做任何操作）。「动作」维度与现有的翻译状态/标记/分类三维度 AND 叠加，用户可自由组合（例如：分类=对话 + 动作=润色，标记=待处理 + 动作=翻译）。
@@ -211,6 +211,83 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
   - **FR7.10.4 聚焦开关**: SHALL 提供「只看已标记」切换按钮（👁 图标），一键过滤出所有有标记的条目（无论标记类型）。无标记条目时按钮禁用。
   - **FR7.10.5 标记计数**: 底部状态栏 SHALL 显示各标记类型的计数（"★ N / ? N / ✓ N | 显示 M 条（共 K 条）"）。
   - **FR7.10.6 与 AI 翻译解耦**: `get_selected_entries()` SHALL 保持返回 ★ 标记条目（向后兼容）。AI 翻译窗口的作用域选择（翻译/润色哪些条目）由 AI 翻译面板自行处理，不耦合到标记系统。
+
+**FR7.13 Agent 框架全面升级** — *2026-05-10 | 状态: 已方案（Phase 1 已实现，Phase 2 待方案）| 优先级: P1*: 系统 SHALL 将 smart_assistant 从带工具的 LLM 对话面板升级为完整的翻译 Agent 框架，分两阶段实施。Phase 1（已实现，5 Story，QA 通过）覆盖 Skill 系统、文件上传、长期记忆、Reflexion 自纠错。Phase 2（待方案，分三批实施）覆盖多 Agent 协作、安全护栏、Graph 编排、可观测性、MCP Server 五个能力。
+
+  **Phase 1（已实现 — 2026-05-10 QA 通过）**:
+
+  - **FR7.13.1 Skill 系统**: 系统 SHALL 提供用户可自定义的能力模块（Skill）管理功能。每个 Skill 包含名称、描述、触发条件、Prompt 模板、关联工具列表。用户可创建/编辑/启用/禁用 Skill，agent 在推理过程中按需匹配和调用。Skill 模型参考 bm-* 系列：声明式定义，热加载，可组合。
+  - **FR7.13.2 文件上传与知识注入**: 系统 SHALL 支持用户上传外部文件作为 agent 的参考知识源。支持格式：文本类（Excel .xlsx、CSV、Markdown .md、纯文本 .txt、JSON）、二进制类（PDF、Word .docx）、ParaTranz 导出格式。上传后系统解析文件内容，构建可被 agent 在翻译/校对/术语查询时引用的知识索引。典型场景：用户上传纠错表 → agent 翻译时自动对照修正；上传风格指南 → agent 润色时参考规范。
+  - **FR7.13.3 长期记忆**: 系统 SHALL 提供跨会话持久化的长期记忆能力，包含两个维度：(a) 翻译上下文记忆 — 用户偏好、术语决策、纠错历史、翻译风格选择等，下次翻译时自动加载相关记忆；(b) 全量对话历史 — 完整的对话记录可回溯。记忆存储基于向量嵌入（复用已有 FAISS 基础设施），支持语义检索 + 精确匹配两阶段召回。记忆数据存储在项目目录下，随项目切换。
+  - **FR7.13.4 Reflexion 自纠错**: 系统 SHALL 在工具执行失败时自动触发自纠错机制。LLM 分析失败原因（错误消息/异常类型），调整参数或换策略，自动重试（最多 N 次，默认 3 次）。重试耗尽仍失败则反馈用户并继续 ReAct 循环。自纠错仅作用于工具调用层，不改变正常 LLM 响应流程。纠错过程对用户透明（显示"正在重试…"状态）。
+
+  **Phase 2（待方案 — 分三批实施）**:
+
+  **第一批（P0 — 核心能力）**:
+
+  - **FR7.13.6 多 Agent 协作**: 系统 SHALL 支持多个专业 Agent 并行协作，由编排 Agent（Orchestrator Agent）分配任务和汇总结果。Agent 类型包括但不限于翻译 Agent、校对 Agent、术语 Agent——系统 SHALL 支持用户自定义 Agent 类型及其关联的工具集和 Skill。同一类型的 Agent SHALL 支持多实例并行（如同时翻译多个项目），实例间资源隔离（各自独立的工具命名空间和执行上下文）。编排 Agent SHALL 负责任务分解、Agent 调度、结果汇总和冲突裁决。
+    - **FR7.13.6.1 Agent 定义与注册**: 系统 SHALL 提供 Agent 定义格式（名称、角色、关联工具集、关联 Skill、System Prompt）。Agent 注册到 AgentRegistry，支持运行时启用/禁用。预置翻译 Agent（关联翻译/术语查询工具）、校对 Agent（关联校对/一致性检查工具）、编排 Agent（关联任务分解/结果汇总工具）。
+    - **FR7.13.6.2 任务分解与调度**: 编排 Agent SHALL 将用户请求分解为子任务（如"翻译 Dragonborn 插件 + 校对 + 润色"分解为 3 个子任务），按依赖关系调度到对应 Agent 执行。无依赖的子任务 SHALL 并行执行（利用 ExecutionEngine 的层级并行能力），有依赖的子任务 SHALL 在前置任务完成后串行执行。
+    - **FR7.13.6.3 Agent 间通信**: Agent 间 SHALL 通过编排 Agent 间接通信，不直接点对点通信。子 Agent 的输出经编排 Agent 汇总后作为下游 Agent 的输入。编排 Agent SHALL 负责格式转换和数据映射。
+    - **FR7.13.6.4 ToolRegistry 命名空间**: ToolRegistry SHALL 支持 namespace 机制（如 `register(spec, namespace="translator")`），编排 Agent 可查看全部工具，执行 Agent 仅可见其命名空间内的工具。防止工具误用（如校对 Agent 不应直接修改译文）。
+    - **FR7.13.6.5 多项目并行**: 同一类型 Agent SHALL 支持创建多个实例，每个实例绑定到不同项目上下文（项目路径、术语库、记忆存储）。实例间通过独立的 ThreadPoolExecutor worker 运行，共享 max_workers 配额。
+    - **FR7.13.6.6 异常隔离**: 单个 Agent 执行失败 SHALL NOT 阻断其他 Agent。编排 Agent 在汇总时 SHALL 标记失败子任务及其错误信息，并决定是否重试、跳过或终止整个任务。
+
+  - **FR7.13.8 安全护栏**: 系统 SHALL 实现三层安全机制——工具调用权限分级、敏感操作确认、输入输出内容校验。护栏在 ExecutionEngine 的工具执行路径上以中间件模式注入（复用 Phase 1 RetryHandler 的注入模式），不改变工具本身的实现逻辑。
+    - **FR7.13.8.1 权限分级**: 所有工具 SHALL 声明权限级别——只读（read，如术语查询/知识检索/状态查看）、读写（write，如翻译条目修改/标签编辑/记忆写入）、管理（admin，如写回 ESP/EET/XT、Skill 删除、记忆清除）。ToolSpec SHALL 增加 `permission: str` 字段。
+    - **FR7.13.8.2 敏感操作确认**: 管理级（admin）工具调用 SHALL 在 ExecutionEngine 执行前暂停，通过 `step_requires_confirmation` 信号弹窗要求用户确认。用户确认后继续执行，拒绝后跳过该步骤并向 LLM 反馈被拒原因。写入级（write）工具可通过配置选择是否需要确认（默认不需要）。只读级（read）工具不需要确认。
+    - **FR7.13.8.3 输入校验**: 工具调用前 SHALL 校验输入参数——参数类型检查、字符串长度限制、注入攻击模式检测（SQL/XSS/命令注入特征）。校验失败 SHALL 拒绝执行并返回错误给 LLM，不进入工具执行体。
+    - **FR7.13.8.4 输出校验**: 工具执行后 SHALL 校验输出——返回值类型检查、数据大小限制（防止返回超大结果撑爆上下文窗口）、敏感信息检测（防止 API key 等泄露到工具输出中）。
+    - **FR7.13.8.5 护栏配置**: 护栏行为 SHALL 可配置——是否启用敏感操作确认（默认启用）、输入输出大小限制（默认 100KB）、权限违规时的处理策略（拒绝 + 告知 LLM / 仅警告 / 静默跳过）。
+    - **FR7.13.8.6 护栏日志**: 所有权限拒绝和校验失败 SHALL 记录到护栏日志，包含时间、工具名、触发规则、输入摘要。护栏日志在可观测性面板中展示。
+
+  **第二批（P1 — 基础设施增强）**:
+
+  - **FR7.13.7 Graph 编排**: 推理流程 SHALL 从当前的 DAG 拓扑排序执行升级为有状态图编排，支持条件分支、循环、人机协同节点。Graph 引擎基于现有 ExecutionEngine 扩展实现（自研轻量方案，零新依赖），ExecutionEngine 从 DAG 执行器演进为有状态图执行器。定义 `GraphExecutor` 抽象基类，当前实现为 `StatefulDAGExecutor`，预留未来替换接口。
+    - **FR7.13.7.1 图模型**: 图 SHALL 由节点（Node）和边（Edge）组成。节点类型——ActionNode（工具调用，现有 step 模型）、ConditionNode（条件分支，基于上一步结果决定下一节点）、LoopNode（循环，包含子图 + max_iterations + 退出条件）、HumanConfirmNode（人机协同确认，暂停等待用户决策）。边类型——固定边（always）、条件边（基于 NodeResult 的条件表达式）、回边（loop 内部回到循环起点）。
+    - **FR7.13.7.2 条件分支**: ConditionNode SHALL 评估条件表达式（如 `result.data["quality_score"] < 0.7`），根据 true/false 路由到不同下游节点。条件表达式支持访问上一步的 StepResult 字段（success/message/data）。
+    - **FR7.13.7.3 循环控制**: LoopNode SHALL 包含子图（sub_nodes）和 loop_config（max_iterations、exit_condition）。每轮迭代后检查退出条件（如 `result.data.get("all_passed") == True`），满足则跳出循环。max_iterations 硬上限防止死循环（默认 10）。循环内支持嵌套条件分支，不支持嵌套循环（Phase 2 限制）。
+    - **FR7.13.7.4 人机协同**: HumanConfirmNode SHALL 在到达时暂停图执行，通过 `step_requires_decision` 信号向 UI 发送确认请求（含提示文本和选项列表），等待用户通过 `provide_decision(step_id, choice)` 响应后继续。暂停 SHALL NOT 阻塞 UI 线程（执行线程通过 QEventLoop local loop 等待）。支持可配置超时（默认 300 秒），超时采用默认策略（配置为 continue/skip/abort）。
+    - **FR7.13.7.5 状态持久化**: 图执行状态 SHALL 支持序列化与恢复。Checkpoint 包含——当前节点位置（node_id）、已完成节点的 StepResult 列表、图状态字典（可 JSON 序列化）。Checkpoint 在每层执行后自动保存，异常中断后可从最近 checkpoint 恢复（跳过已完成节点）。Checkpoint 数据约束：`data` 字段仅允许 dict/list/str/int/float/bool/None 类型。
+    - **FR7.13.7.6 与现有系统的兼容**: `execute(steps)` 接口 SHALL 保持向后兼容（steps 为简单 dict 列表时视为线性 DAG）。新图模型通过 `execute_graph(graph: GraphSpec)` 接口暴露。现有 ChatWidget 和 PlanCard 的调用方式不变。
+
+  - **FR7.13.9 可观测性**: 系统 SHALL 提供对话追踪、工具调用链记录和 token 消耗统计三个观测维度。观测数据通过现有 ExecutionEngine 的 pyqtSignal 管道收集，在智能助手面板中以可交互形式展示。
+    - **FR7.13.9.1 ReAct 步骤追踪**: 每轮 ReAct 循环（LLM 推理 → 工具调用 → 结果反馈 → LLM 推理）SHALL 记录——轮次编号、LLM 输入 token 数、LLM 输出内容摘要、本轮调用的工具列表及各自耗时和结果状态。追踪数据在对话结束后可导出为结构化文件。
+    - **FR7.13.9.2 工具调用链**: 每个工具调用 SHALL 记录——调用时间戳、工具名称、输入参数（截断至 500 字符）、输出结果摘要（截断至 500 字符）、执行耗时（ms）、成功/失败状态、重试次数（如触发 Reflexion）。调用链数据在 single conversation 内聚合，支持按时间线展开/折叠。
+    - **FR7.13.9.3 Token 消耗统计**: 系统 SHALL 在对话级别和会话级别分别统计 token 消耗——输入 token 总数、输出 token 总数、按模型分组统计。对话结束时在消息区域底部显示本轮 token 消耗摘要。会话级别统计在智能助手面板状态栏持久显示。
+    - **FR7.13.9.4 观测数据存储**: 观测数据 SHALL 存储在项目目录下（`data/projects/{project}/{variant}/observability/`）。对话追踪和调用链以对话 ID 为文件名存储为 JSON。Token 统计以会话 ID 聚合。历史数据保留最近 30 天，过期自动清理。
+    - **FR7.13.9.5 观测面板 UI**: 智能助手面板 SHALL 提供「观测」Tab 或侧栏——Token 使用仪表盘（今日/本周/本月）、最近工具调用列表（可展开查看详情）、对话轮次时间线。观测面板为只读展示，不影响对话流程。
+
+  **第三批（P2 — 可选扩展）**:
+
+  - **FR7.13.5 MCP Server 协议**: 系统 SHALL 将 ToolRegistry 中注册的工具暴露为 MCP (Model Context Protocol) 兼容的 Server 端点，支持外部 MCP Client 通过标准协议发现和调用 TransBridge 工具。MCP Server 作为本地 JSON-RPC 服务运行，默认仅监听 localhost。
+    - **FR7.13.5.1 工具发现**: MCP Server SHALL 实现 `tools/list` 方法，返回 ToolRegistry 中所有已注册工具的列表（名称、描述、参数 schema）。参数 schema SHALL 从 ToolSpec 的 args 定义自动生成 JSON Schema。
+    - **FR7.13.5.2 工具调用**: MCP Server SHALL 实现 `tools/call` 方法，接收工具名称和参数，通过 ToolSpec.execute() 执行并返回结果。执行上下文（ctx）SHALL 使用 MCP 会话关联的 AppContext。
+    - **FR7.13.5.3 传输协议**: MCP Server SHALL 支持 stdio 传输（标准输入输出流，供本地 MCP Client 通过子进程方式接入）。HTTP/SSE 传输作为可选扩展（P3）。
+    - **FR7.13.5.4 安全约束**: MCP 暴露的工具 SHALL 遵循 FR7.13.8 安全护栏的权限分级。管理级（admin）工具在 MCP 通道中默认不暴露，需显式配置白名单。写入级（write）工具在 MCP 通道中可配置需确认或静默拒绝。
+    - **FR7.13.5.5 MCP 配置**: MCP Server 的启用/禁用、监听端口（HTTP 模式）、暴露工具白名单 SHALL 通过 LLMConfig INI 文件的 `[mcp]` section 配置。
+
+  **Phase 1 异常场景**:
+  - Skill 定义文件格式错误 → 跳过该 Skill 并提示用户，不影响其他 Skill 加载
+  - 上传文件无法解析（损坏/加密/格式不支持）→ 提示用户转换格式或手动处理
+  - 向量索引损坏 → 自动重建，重建期间降级为精确匹配
+  - 自纠错重试全部失败 → 反馈用户原始错误信息，不阻塞后续 ReAct 循环
+
+  **Phase 2 异常场景**:
+  - Agent 执行失败 → 编排 Agent 标记失败，其他 Agent 继续，汇总时提示用户
+  - 人机协同节点超时（默认 300s）→ 按配置采用默认策略（继续/跳过/终止）
+  - 权限不足调用被拒 → 护栏返回拒绝原因，LLM 可调整策略或向用户说明
+  - Checkpoint 序列化失败（data 含不可序列化对象）→ 跳过该 data 字段，写入警告日志，不阻断执行
+  - 观测数据写入失败 → 不影响核心对话功能，静默降级（仅内存保留）
+  - MCP 连接断开 → 自动清理会话，不影响本地工具和对话
+  - Token 统计因 API 响应不完整而缺失 → 标记为估算值，不阻断对话
+
+**FR7.12 SmartAssistant 代码分层** — *2026-05-10 | 状态: 已实现 | 优先级: P2*: 系统 SHALL 将智能助手（SmartAssistant）的后端业务逻辑与 UI 界面代码分离到独立的包中。当前所有组件（13 个文件）全部位于 `src/transbridge/ui/tools/smart_assistant/` 目录下，业务逻辑与 UI 混在一起。重构后，后端组件迁移至新建的 `src/transbridge/smart_assistant/` 包，UI 组件保留在原目录，跨包 import 同步更新。
+
+  - **FR7.12.1 后端包建立**: SHALL 新建 `src/transbridge/smart_assistant/` 包（含 `__init__.py`），容纳 6 个后端组件：`conversation_manager.py`（对话管理）、`chat_worker.py`（LLM 调用线程）、`execution_engine.py`（DAG 执行引擎，含 `StepResult` 数据类）、`tool_registry.py`（工具注册表 + 6 个 v1 工具实现）、`context_builder.py`（上下文构建器）、`prompts.py`（System Prompt 模板）。后端组件 SHALL NOT 依赖 UI 组件。
+  - **FR7.12.2 UI 包精简**: `src/transbridge/ui/tools/smart_assistant/` SHALL 仅保留 6 个界面组件：`panel.py`（DockWidget 面板）、`chat_widget.py`（聊天区域 + 双模式循环控制）、`message_bubble.py`（消息气泡）、`quick_actions.py`（快捷指令面板）、`tool_card.py`（ToolCard + BatchToolCard）、`plan_card.py`（计划确认卡片）。`__init__.py` SHALL 保持 `SmartAssistantPanel` 导出不变。
+  - **FR7.12.3 跨包导入更新**: 搬迁后 `chat_widget.py` 的 4 处后端 import（`conversation_manager`/`chat_worker`/`execution_engine`/`tool_card`→后两者为 UI 保持不动）和 `plan_card.py` 的 1 处后端 import（`execution_engine.StepResult`）SHALL 更新为 `from src.transbridge.smart_assistant.xxx import ...` 的绝对导入。`prompts.py` 对 `tool_registry` 的 import SHALL 更新为包内相对导入。`main_window.py` 的 import 路径 SHALL 保持不变。
+  - **FR7.12.4 异常处理**: 搬迁后 import 错误 → 启动时 ImportError，需逐文件验证；循环导入 → 依赖方向为 UI→后端（单向），不应出现循环。
 
 **FR7.11 自定义标签系统** — *2026-05-07 | 状态: 已实现 | 优先级: P1*: 系统 SHALL 用用户自定义的多标签系统替代 FR7.10 的固定三态标记（★/?/✓）。用户可创建任意数量和名称的标签（带颜色），每个条目可打上多个标签，通过右键菜单分配。本需求替代 FR7.10。
 
@@ -324,3 +401,6 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
 | 2026-05-08 | 新增 FR1.9 XT SST 二进制解析与迁移源（SSU8 解析器 + FormID 提取 + 迁移源集成） | /bm-analyze |
 | 2026-05-09 | 新增 FR6.10 AI翻译/润色结果报告系统（应用内多Tab对话框 + Excel自动生成 + 历史报告查看） | /bm-analyze |
 | 2026-05-09 | 新增 FR5.11 AI翻译混合模式（三模式制+动作维度+统一进度+合并报告） | /bm-analyze |
+| 2026-05-10 | 新增 FR7.12 SmartAssistant 代码分层（后端6组件搬迁+跨包导入更新） | /bm-analyze |
+| 2026-05-10 | 新增 FR7.13 Agent 框架全面升级（Phase1: Skill+文件+记忆+自纠错; Phase2: MCP+多Agent+Graph+护栏+可观测） | /bm-analyze |
+| 2026-05-10 | 展开 FR7.13 Phase 2 子需求细节：分三批实施（P0 多Agent协作+安全护栏 / P1 Graph编排+可观测性 / P2 MCP Server），Graph 引擎确定为自研轻量方案（零新依赖），每个子需求扩展为详细验收标准+边界条件+异常场景 | /bm-analyze (via /bm-orchestrator --auto) |

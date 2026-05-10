@@ -14,7 +14,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 
 | 文档 | 说明 | 状态 |
 |------|------|------|
-| [requirements.md](requirements.md) | 项目需求概述：功能需求、非功能需求、系统边界。FR1.9/FR8 已方案 | 📋 编写中 |
+| [requirements.md](requirements.md) | 项目需求概述：功能需求、非功能需求、系统边界。FR7.13 Phase 1 已实现，Phase 2 需求已展开（待架构+方案） | 📋 编写中 |
 
 ---
 
@@ -26,9 +26,14 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [ADR-002](adr/002-collection-central-data-hub.md) | Collection 数据中枢与双索引设计 | ✅ 已接受 |
 | [ADR-003](adr/003-three-round-translation-strategy.md) | 三轮 AI 翻译策略 | ✅ 已接受 |
 | [ADR-004](adr/004-qthread-async-pattern.md) | QThread + 信号总线异步模式 | ✅ 已接受 |
-| [ADR-005](adr/005-toml-prompt-no-langchain.md) | TOML Prompt 模板，不使用 LangChain | ✅ 已接受 |
+| [ADR-005](adr/005-toml-prompt-no-langchain.md) | TOML Prompt 模板 + Skill 定义格式 | ✅ 已接受（更新: 2026-05-10） |
 | [ADR-006](adr/006-project-persistence-variant-management.md) | 项目持久化与翻译版本管理 | ✅ 已接受 |
 | [ADR-007](adr/007-mixed-translation-polish-mode.md) | AI翻译混合模式（三模式制+规则映射表+MixedWorker） | ✅ 已接受 |
+| [ADR-008](adr/008-smart-assistant-code-layering.md) | SmartAssistant 代码分层（UI与业务逻辑分离 + Agent框架4子包） | ✅ 已接受（更新: 2026-05-10²） |
+| [ADR-009](adr/009-agent-file-memory-reflexion.md) | Agent 文件解析、长期记忆与 Reflexion 自纠错（三模式降级） | ✅ 已接受（更新: 2026-05-10²） |
+| [ADR-010](adr/010-infra-extraction.md) | 共享基础设施提取 — infra/ 包（Embedding三模式可选） | ✅ 已接受（更新: 2026-05-10） |
+| [ADR-011](adr/011-graph-orchestration-engine.md) | 自研有状态图编排引擎（StatefulDAGExecutor，零新依赖） | ✅ 已接受 |
+| [ADR-012](adr/012-safety-observability-mcp.md) | 安全护栏（中间件链）+ 可观测性（pyqtSignal遥测）+ MCP Server（stdio） | ✅ 已接受 |
 
 > 详细架构文档见 [dev/ARCHITECTURE.md](dev/ARCHITECTURE.md)（模块依赖、数据流、全局状态管理、设计决策）。
 
@@ -44,12 +49,13 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [file-parsing](../plans/file-parsing/plan.md) | ✔️ 已实现 | 11 |
 | [file-writing](../plans/file-writing/plan.md) | ✔️ 已实现 | 7 |
 | [paratranz-integration](../plans/paratranz-integration/plan.md) | ✔️ 已实现 | 8 |
-| [ai-translation](../plans/ai-translation/plan.md) | 🚧 扩展中 | 14 |
+| [ai-translation](../plans/ai-translation/plan.md) | ✔️ 已实现 | 14 |
 | [ai-post-process](../plans/ai-post-process/plan.md) | ✔️ 已实现 | 13 |
 | [ui-workbench](../plans/ui-workbench/plan.md) | ✔️ 已实现 | 19 |
 | [batch-operations](../plans/batch-operations/plan.md) | ✔️ 已实现 | 7 |
 | [vector-term-retrieval](../plans/vector-term-retrieval/plan.md) | ✔️ 已实现 | — |
-| [llm-chat](../plans/llm-chat/plan.md) | ✔️ 已实现 | 5 |
+| [agent-upgrade](../plans/agent-upgrade/plan.md) | ✅ Phase 1 + Phase 2 全部完成 | 12 |
+| [llm-chat](../plans/llm-chat/plan.md) | ✔️ 已实现 | 7 |
 
 ---
 
@@ -89,6 +95,10 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | ui-workbench | [S16: 解析配置对话框提取](changelogs/ui-workbench/story-16-parse-config-dialog/2026-05-08-002-解析配置对话框独立提取.md) | 2026-05-08 |
 | llm-chat | [S01-S03 面板+后端+循环控制](changelogs/llm-chat/) | 2026-05-06 |
 | llm-chat | [S05: ContextBuilder与错误处理完善](changelogs/llm-chat/story-05-experience-optimization/2026-05-08-001-ContextBuilder与错误处理完善.md) | 2026-05-08 |
+| llm-chat | [S06: 需求分析+架构+方案+Story展开](changelogs/llm-chat/story-06-layering-backend/2026-05-10-001-需求分析架构方案Story展开.md) | 2026-05-10 |
+| llm-chat | [S06: 后端包创建与文件搬迁](changelogs/llm-chat/story-06-layering-backend/2026-05-10-002-后端包创建与文件搬迁.md) | 2026-05-10 |
+| llm-chat | [S07: Story详细展开](changelogs/llm-chat/story-07-layering-ui/2026-05-10-001-Story07详细展开.md) | 2026-05-10 |
+| llm-chat | [S07: UI层Import更新](changelogs/llm-chat/story-07-layering-ui/2026-05-10-002-UI层Import更新.md) | 2026-05-10 |
 | stage-unification | [S01: FR2.5 需求+方案+3Story](changelogs/stage-unification/story-01-data-layer-stage/2026-05-07-001-需求分析和方案和3个Story展开.md) | 2026-05-07 |
 | label-system | [S01: FR7.11 需求+方案+4Story](changelogs/label-system/story-01-label-model/2026-05-07-001-FR7.11需求分析+方案+4Story展开.md) | 2026-05-07 |
 | stage-unification | [S01: Story-01 编码](changelogs/stage-unification/story-01-data-layer-stage/2026-05-07-002-Story01编码Stage常量定义.md) | 2026-05-07 |
@@ -113,6 +123,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | 时间 | 范围 | 结果 |
 |------|------|------|
 | 2026-05-09 | ai-post-process Story-10~13 (报告系统) | ✅ 通过 — 19项覆盖，0 Blocker |
+| 2026-05-10 | agent-upgrade Phase 2 (Agent框架升级) | ✅ 通过 — 15项覆盖，0 Blocker，安全加固完成（AST沙箱+路径防御） |
 
 ---
 
@@ -141,4 +152,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | 2026-05-09 | file-parsing Story-10 编码完成：apply_sst_entries() 批量合并 + Step1 SST 加载 UI，3 文件修改 → changelog s10-004 | — |
 | 2026-05-09 | file-parsing Story-11 编码完成：SST_Serializer 完整实现（from_parser/to_bytes/save/update），3 文件修改，往返测试通过 → changelog s11-003 | — |
 | 2026-05-09 | file-parsing Story-09 QA 修复：group_index 字段 + header/chn_len 边界修复 + SSU9 格式注释 + SST 全模块测试报告 → changelog s09-007 | — |
-| 2026-05-09 | file-parsing Story-09/11 SSU8 完整逆向：_raw/_tail/_trailing + 序列化器支持 + 18 文件跨验证字节级一致 → changelog s09-008 | — |
+| 2026-05-10 | 新增 FR7.13 Agent 框架全面升级需求（Phase1: Skill+文件+记忆+自纠错; Phase2: MCP+多Agent+Graph+护栏+可观测）→ changelog agent-upgrade-fr713-001 | — |
+| 2026-05-10 | FR7.13 Phase 2 需求展开：5子需求→22详细条目，分三批实施（P0多Agent+护栏 / P1 Graph+可观测 / P2 MCP），Graph确定为自研方案 | /bm-orchestrator --auto |
+| 2026-05-10 | FR7.13 Phase 2 架构决策：ADR-008更新(agents/子包) + ADR-011(自研Graph引擎) + ADR-012(护栏+可观测+MCP) | /bm-orchestrator --auto |
+| 2026-05-10 | FR7.13 Phase 2 全部 7 Story 编码实现：新建 18 文件（agents/guardrails/graph/observability/mcp 5子包），修改 3 文件（tool_registry/execution_engine/__init__），零新依赖，全链路通过 | /bm-dev |
