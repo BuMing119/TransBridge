@@ -1,6 +1,14 @@
-/.claude/
+/.claude/*
+!/.claude/skills/
 /tests/
 /out/
 /data/
 /.venv/
 /installer/
+
+# 构建产物 & IDE
+__pycache__/
+.idea/
+/build/
+/dist/
+*.spec
