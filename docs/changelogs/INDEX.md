@@ -1,0 +1,43 @@
+# 变更日志索引
+
+> 本目录按 Epic→Story 分层记录开发增量。每次编码修改由 `/bm-chronicle` 输出独立文件到此目录。
+>
+> 历史发布记录见 [../更新日志.md](../更新日志.md)（2026-01 至 2026-03）。
+
+## 日志结构
+
+```
+docs/changelogs/
+├── INDEX.md                    # 本文件
+└── <epic>/
+    └── <story>/
+        └── YYYY-MM-DD-NNN-简述.md   # 增量记录文件
+```
+
+## 关联 Epic
+
+| Epic | Plan | 状态 | Story 数 | 最新日志 |
+|------|------|------|---------|---------|
+| core-data-model | [plan](../../plans/core-data-model/plan.md) | ✔️ 已实现 | 5 | — |
+| file-parsing | [plan](../../plans/file-parsing/plan.md) | ✔️ 已实现 | 11 | [s09:①](file-parsing/story-09-sst-parser/2026-05-08-001-SST解析器编码实现.md) · [②](file-parsing/story-09-sst-parser/2026-05-08-002-SSU9格式支持与文档更新.md) · [③](file-parsing/story-09-sst-parser/2026-05-08-003-SSU8-index修正perEDID.md) · [④](file-parsing/story-09-sst-parser/2026-05-08-004-SSU9解析修复与文档同步.md) · [⑤](file-parsing/story-09-sst-parser/2026-05-08-005-XT解析器归入parser-xt子包.md) · [⑥](file-parsing/story-09-sst-parser/2026-05-09-006-SSU9-extra子记录解析.md) · [⑦](file-parsing/story-09-sst-parser/2026-05-09-007-group_index与边界修复与格式注释.md) · [⑧](file-parsing/story-09-sst-parser/2026-05-09-008-SSU8完整逆向与序列化支持.md) · [s10:①](file-parsing/story-10-sst-migration-source/2026-05-08-001-Story10方案策划.md) · [②](file-parsing/story-10-sst-migration-source/2026-05-08-002-Story10详细展开.md) · [③](file-parsing/story-10-sst-migration-source/2026-05-08-003-try_update_from_sst实现.md) · [④](file-parsing/story-10-sst-migration-source/2026-05-09-004-apply_sst_entries与Step1SST加载UI.md) · [s11:①](file-parsing/story-11-sst-serializer/2026-05-09-001-Story11方案策划SST序列化器.md) · [②](file-parsing/story-11-sst-serializer/2026-05-09-002-Story11详细方案展开SST序列化器.md) · [③](file-parsing/story-11-sst-serializer/2026-05-09-003-SST序列化器编码实现.md) |
+| file-writing | [plan](../../plans/file-writing/plan.md) | ✔️ 已实现 | 7 | — |
+| paratranz-integration | [plan](../../plans/paratranz-integration/plan.md) | ✔️ 已实现 | 8 | — |
+| ai-translation | [plan](../../plans/ai-translation/plan.md) | 🚧 扩展中 | 9 | [s09:①](ai-translation/story-09-scope-selector/2026-05-07-001-方案和Story展开FR5.10作用域选择器.md) · [②](ai-translation/story-09-scope-selector/2026-05-07-002-Story09编码作用域选择器.md) · [③](ai-translation/story-09-scope-selector/2026-05-08-003-三维度作用域选择器重构.md) · [FR5.11:①](ai-translation/fr5.11-mixed-mode/2026-05-09-001-需求分析FR5.11混合模式.md) |
+| ai-post-process | [plan](../../plans/ai-post-process/plan.md) | ✔️ 已实现 | 13 | [s09:①方案](ai-post-process/story-09-standalone-polish/2026-05-07-001-独立润色方案.md) · [②实现](ai-post-process/story-09-standalone-polish/2026-05-07-002-编码实现与Story文档.md) · [s10-13:①](ai-post-process/story-10-report-backend/2026-05-09-001-需求分析与方案策划FR6.10结果报告系统.md) · [②](ai-post-process/story-10-report-backend/2026-05-09-002-Story10编码报告生成后端与Excel导出.md) · [s11:①](ai-post-process/story-11-report-dialog/2026-05-09-001-Story11编码报告对话框.md) · [s12:①](ai-post-process/story-12-integration/2026-05-09-001-Story12编码完成流程集成.md) · [s13:①](ai-post-process/story-13-history-viewer/2026-05-09-001-Story13编码历史报告查看.md) |
+| ui-workbench | [plan](../../plans/ui-workbench/plan.md) | ✔️ 已实现 | 22 | [s15](ui-workbench/story-15-collection-menu/2026-05-06-001-文件菜单集合管理.md) · [s16:①](ui-workbench/story-16-parse-config-dialog/2026-05-06-001-解析配置对话框与解析执行.md) · [②](ui-workbench/story-16-parse-config-dialog/2026-05-08-002-解析配置对话框独立提取.md) · [s17](ui-workbench/story-17-operation-menu/2026-05-06-001-文件菜单操作项.md) · [s18:①](ui-workbench/story-18-layout-simplify/2026-05-06-001-工作台布局简化.md) · [②](ui-workbench/story-18-layout-simplify/2026-05-07-002-集合工具栏回归工作台.md) · [s19](ui-workbench/story-19-category-filter-tags/2026-05-06-001-分类筛选标签组与面板精简.md) · [s20:①](ui-workbench/story-20-ux-unification/2026-05-07-001-需求分析FR79交互统一化.md) · [②](ui-workbench/story-20-ux-unification/2026-05-07-002-方案策划Story20-21.md) · [③](ui-workbench/story-20-ux-unification/2026-05-07-003-Story20编码筛选系统统一化.md) · [④](ui-workbench/story-20-ux-unification/2026-05-07-004-Story21编码表格交互升级.md) · [s22:①](ui-workbench/story-22-mark-and-visual/2026-05-07-001-需求分析和方案和Story展开.md) · [②](ui-workbench/story-22-mark-and-visual/2026-05-07-002-Story22编码标记系统实现.md) · [③](ui-workbench/story-22-mark-and-visual/2026-05-07-003-聚焦按钮修复和去除emoji.md) |
+| batch-operations | [plan](../../plans/batch-operations/plan.md) | ✔️ 已实现 | 7 | — |
+| vector-term-retrieval | [plan](../../plans/vector-term-retrieval/plan.md) | ✔️ 已实现 | — | — |
+| llm-chat | [plan](../../plans/llm-chat/plan.md) | ✔️ 已实现 | 5 | [s01:①](llm-chat/story-01-panel-framework/2026-05-06-001-创建面板骨架.md) · [②底停](llm-chat/story-01-panel-framework/2026-05-06-002-底部停靠重构.md) · [s02](llm-chat/story-02-core-backend/2026-05-06-001-核心后端三组件.md) · [s03](llm-chat/story-03-loop-control-cards/2026-05-06-001-循环控制与UI卡片.md) · [s04](llm-chat/story-04-tool-system/2026-05-07-001-工具系统编码实现与API修复.md) · [s05](llm-chat/story-05-experience-optimization/2026-05-08-001-ContextBuilder与错误处理完善.md) |
+| stage-unification | [plan](../../plans/stage-unification/plan.md) | ✔️ 已实现 | 3 | [s01:①](stage-unification/story-01-data-layer-stage/2026-05-07-001-需求分析和方案和3个Story展开.md) · [②](stage-unification/story-01-data-layer-stage/2026-05-07-002-Story01编码Stage常量定义.md) · [③](stage-unification/story-01-data-layer-stage/2026-05-08-003-常量统一与写回锁定隐藏逻辑.md) · [s02:①](stage-unification/story-02-writer-stage-fix/2026-05-07-001-Story02编码写回修正.md) · [s03:①](stage-unification/story-03-ui-stage-visual/2026-05-07-001-Story03编码UI7级Stage可视化.md) |
+| label-system | [plan](../../plans/label-system/plan.md) | ✔️ 已实现 | 4 | [001](label-system/story-01-label-model/2026-05-07-001-FR7.11需求分析+方案+4Story展开.md) · [002](label-system/story-01-label-model/2026-05-07-002-Story01编码标签库模型.md) · [003](label-system/story-01-label-model/2026-05-07-003-Story02编码右键菜单.md) · [004](label-system/story-01-label-model/2026-05-07-004-Story03-04编码完成.md) · [005](label-system/story-01-label-model/2026-05-08-005-标签库UI集成与右键菜单.md) |
+| project-persistence | [plan](../../plans/project-persistence/plan.md) | ✔️ 已实现 | 8 | [s01-06](project-persistence/story-01-persistence-data-model/2026-05-08-001-S01至S06编码持久化基础设施与项目管理.md) · [s07-08](project-persistence/story-01-persistence-data-model/2026-05-08-002-S07S08编码完成transbridge归档与版本写回.md) · [QA修复](project-persistence/story-01-persistence-data-model/2026-05-08-003-QA审查修复5个问题.md) · [UX补全](project-persistence/story-01-persistence-data-model/2026-05-08-004-UX补全版本切换保存按钮与自动保存触发.md) · [路径+UI增强](project-persistence/story-01-persistence-data-model/2026-05-08-005-路径修正项目管理UI与保存反馈.md) |
+| project-init | — | — | — | [001-初始化](project-init/docs-bootstrap/2026-05-06-001-文档体系初始化.md), [002-Story展开](project-init/docs-bootstrap/2026-05-06-002-回顾性Story展开.md), [003-文件菜单](project-init/docs-bootstrap/2026-05-06-003-文件菜单统一入口需求.md), [004-方案扩展](project-init/docs-bootstrap/2026-05-06-004-工作台UI重构方案扩展.md), [005-FR78需求](project-init/docs-bootstrap/2026-05-06-005-新增FR78分类筛选需求.md), [006-S19方案](project-init/docs-bootstrap/2026-05-06-006-新增Story19分类筛选方案.md), [007-独立润色](project-init/docs-bootstrap/2026-05-06-007-独立润色入口需求.md), [008-FR8扩展](project-init/docs-bootstrap/2026-05-08-001-FR8需求扩展翻译版本管理.md), [009-ADR006](project-init/docs-bootstrap/2026-05-08-002-ADR006项目持久化与版本管理架构.md), [010-方案+8Story](project-init/docs-bootstrap/2026-05-08-003-方案策划与8Story展开.md), [011-FR19](project-init/docs-bootstrap/2026-05-08-004-FR19需求XT-SST二进制解析.md), [012-FR19扩展](project-init/docs-bootstrap/2026-05-09-005-FR19需求扩展SSU9补充与SST序列化写回.md) |
+
+> 注：已实现 Epic 的增量日志为回顾性记录（代码在文档体系建立前已完成），后续新开发将由 bm-chronicle 自动填充。
+
+## 日志编号规则
+
+- 三级序号：各 Epic 下独立编号 `YYYY-MM-DD-NNN-简述.md`
+- NNN: 三位数字，从 001 开始递增，同天内文件序号递增
+- 简述: 中文简短描述，用于快速识别
+- 示例: `docs/changelogs/llm-chat/story-01/2026-05-06-001-创建面板骨架.md`
