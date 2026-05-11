@@ -37,7 +37,11 @@ class ExecutionEngine(QObject):
         self._ctx = ctx
         self._cancelled = threading.Event()
         self._retry_handler = None
-        self._middlewares: list = list(middlewares) if middlewares else []
+        # B1: 使用 _build_guard_chain 统一构建护栏链，消除双路径分歧
+        from src.transbridge.smart_assistant.tools.base import _build_guard_chain
+        self._guards = _build_guard_chain()
+        if self._guards is None:
+            self._guards = []
         self._pending_decisions: dict[str, str] = {}
 
     def cancel(self) -> None:
@@ -70,8 +74,12 @@ class ExecutionEngine(QObject):
             )
 
         # Before 中间件链
-        exec_ctx = agent_instance.ctx if agent_instance is not None else self._ctx
-        for mw in self._middlewares:
+        # M7: 统一包装为 ExecutionContext，确保所有路径都能访问 TaskManager
+        from src.transbridge.smart_assistant.tools.base import ExecutionContext
+        from src.transbridge.smart_assistant.tools.task_manager import TaskManager
+        raw_ctx = agent_instance.ctx if agent_instance is not None else self._ctx
+        exec_ctx = ExecutionContext(app_context=raw_ctx, task_manager=TaskManager())
+        for mw in self._guards:
             guard_result = mw.before_execute(step, exec_ctx)
             if not guard_result.allowed:
                 if guard_result.reason in ("admin_confirm_required", "write_confirm_required"):
@@ -155,7 +163,7 @@ class ExecutionEngine(QObject):
         )
 
         # After 中间件链（逆序）
-        for mw in reversed(self._middlewares):
+        for mw in reversed(self._guards):
             guard_result = mw.after_execute(step, final_result, exec_ctx)
             if not guard_result.allowed:
                 final_result.success = False

@@ -81,9 +81,9 @@ class Orchestrator:
                 project_path=getattr(ctx, 'project_path', None),
                 ctx=ctx,
             )
-            tool_name = ""
-            if agent_spec.tools:
-                tool_name = agent_spec.tools[0]
+            tool_name = getattr(st, 'action', '') or getattr(st, 'tool_name', '')
+            if not tool_name and agent_spec.tools:
+                tool_name = agent_spec.tools[0]  # E4: fallback to first tool
             step = {
                 "id": st.task_id,
                 "tool": tool_name,
