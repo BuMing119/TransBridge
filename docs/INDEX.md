@@ -14,7 +14,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 
 | 文档 | 说明 | 状态 |
 |------|------|------|
-| [requirements.md](requirements.md) | 项目需求概述：功能需求、非功能需求、系统边界。FR7.13 Phase 1 已实现，Phase 2 需求已展开（待架构+方案） | 📋 编写中 |
+| [requirements.md](requirements.md) | 项目需求概述：功能需求、非功能需求、系统边界。FR7.13 Phase 1+2 已实现，FR9 Agent工具扩展已编码完成（14/14 Story, 60工具, 7 Agent） | ✅ 编码完成 |
 
 ---
 
@@ -54,6 +54,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [ui-workbench](../plans/ui-workbench/plan.md) | ✔️ 已实现 | 19 |
 | [batch-operations](../plans/batch-operations/plan.md) | ✔️ 已实现 | 7 |
 | [vector-term-retrieval](../plans/vector-term-retrieval/plan.md) | ✔️ 已实现 | — |
+| [agent-tool-expansion](../plans/agent-tool-expansion/plan.md) | ✅ 编码完成 (60工具, 7 namespaces, 7 Agent) | 14 |
 | [agent-upgrade](../plans/agent-upgrade/plan.md) | ✅ Phase 1 + Phase 2 全部完成 | 12 |
 | [llm-chat](../plans/llm-chat/plan.md) | ✔️ 已实现 | 7 |
 
@@ -111,6 +112,26 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | project-persistence | [S01-S06 编码](changelogs/project-persistence/story-01-persistence-data-model/2026-05-08-001-S01至S06编码持久化基础设施与项目管理.md) | 2026-05-08 |
 | project-persistence | [S07-S08 编码完成](changelogs/project-persistence/story-01-persistence-data-model/2026-05-08-002-S07S08编码完成transbridge归档与版本写回.md) | 2026-05-08 |
 | project-init | [011-FR1.9 XT SST 解析需求](changelogs/project-init/docs-bootstrap/2026-05-08-004-FR19需求XT-SST二进制解析.md) | 2026-05-08 |
+| agent-upgrade | [S01-S05: Phase 1 编码 + QA](changelogs/agent-upgrade/story-01-infra-extraction/) | 2026-05-10 |
+| agent-upgrade | [S06-S12: Phase 2 编码实现 — Agent/护栏/Graph/可观测/MCP](changelogs/agent-upgrade/) | 2026-05-10 |
+| agent-tool-expansion | [评审: FR9 方案分组评审](changelogs/agent-tool-expansion/council-review-fr9/2026-05-11-001-分组评审FR9方案.md) | 2026-05-11 |
+| agent-tool-expansion | [确认: 修改确认书 38 项逐项确认](changelogs/agent-tool-expansion/council-review-fr9/2026-05-11-002-修改确认书逐项确认38项.md) | 2026-05-11 |
+| agent-tool-expansion | [方案: plan.md v2 按确认书更新](changelogs/agent-tool-expansion/council-review-fr9/2026-05-11-003-plan-v2按确认书更新.md) | 2026-05-11 |
+| agent-tool-expansion | [Story: 14个Story文档批量v2更新](changelogs/agent-tool-expansion/council-review-fr9/2026-05-11-004-Story文档批量v2更新.md) | 2026-05-11 |
+| agent-tool-expansion | [S01: Story 01 编码实现 — 核心基础设施](changelogs/agent-tool-expansion/story-01-infra-tools-package/2026-05-11-001-Story01编码实现.md) | 2026-05-11 |
+| agent-tool-expansion | [S02: Story 02 TaskManager 编码实现](changelogs/agent-tool-expansion/story-02-task-manager/2026-05-11-001-Story02编码实现.md) | 2026-05-11 |
+| agent-tool-expansion | [S03: Story 03 AppContext ViewModel 编码实现](changelogs/agent-tool-expansion/story-03-appcontext-viewmodel/2026-05-11-001-Story03编码实现.md) | 2026-05-11 |
+| agent-tool-expansion | [S04: Story 04 P0 筛选编辑工具编码实现](changelogs/agent-tool-expansion/story-04-p0-filter-search-tools/2026-05-11-001-Story04编码实现.md) | 2026-05-11 |
+| agent-tool-expansion | [S06: Story 06 P0 翻译执行控制编码实现](changelogs/agent-tool-expansion/story-06-p0-translation-control/2026-05-11-001-Story06编码实现.md) | 2026-05-11 |
+| agent-tool-expansion | [S07: Story 07 P0 状态查询编码实现](changelogs/agent-tool-expansion/story-07-p0-state-query-proofread/2026-05-11-001-Story07编码实现.md) | 2026-05-11 |
+| agent-tool-expansion | [S08: Story 08 P1 标签工具编码实现](changelogs/agent-tool-expansion/story-08-p1-label-tools/2026-05-11-001-Story08编码实现.md) | 2026-05-11 |
+| agent-tool-expansion | [S09: Story 09 P1 翻译配置编码实现](changelogs/agent-tool-expansion/story-09-p1-translation-config/2026-05-11-001-Story09编码实现.md) | 2026-05-11 |
+| agent-tool-expansion | [S10: Story 10 P1 后处理工具编码实现](changelogs/agent-tool-expansion/story-10-p1-postprocess-tools/2026-05-11-001-Story10编码实现.md) | 2026-05-11 |
+| agent-tool-expansion | [S11: Story 11 P1 ParaTranz 工具编码实现](changelogs/agent-tool-expansion/story-11-p1-paratranz-tools/2026-05-11-001-Story11编码实现.md) | 2026-05-11 |
+| agent-tool-expansion | [S12: Story 12 P2 解析写回项目编码实现](changelogs/agent-tool-expansion/story-12-p2-parser-writer-project/2026-05-11-001-Story12编码实现.md) | 2026-05-11 |
+| agent-tool-expansion | [S13: Story 13 Agent 集成编码实现](changelogs/agent-tool-expansion/story-13-agent-integration/2026-05-11-001-Story13编码实现.md) | 2026-05-11 |
+| agent-tool-expansion | [S14: Story 14 集成测试编码实现](changelogs/agent-tool-expansion/story-14-integration-tests/2026-05-11-001-Story14集成测试编码.md) | 2026-05-11 |
+| agent-tool-expansion | [QA修复: 28项安全/质量修复](changelogs/agent-tool-expansion/qa-fix/2026-05-11-001-QA审查28项修复.md) | 2026-05-11 |
 
 历史发布记录见 [更新日志.md](更新日志.md)（2026-01 至 2026-03）。
 
@@ -124,6 +145,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 |------|------|------|
 | 2026-05-09 | ai-post-process Story-10~13 (报告系统) | ✅ 通过 — 19项覆盖，0 Blocker |
 | 2026-05-10 | agent-upgrade Phase 2 (Agent框架升级) | ✅ 通过 — 15项覆盖，0 Blocker，安全加固完成（AST沙箱+路径防御） |
+| 2026-05-11 | agent-tool-expansion QA 审查 (Agent工具扩展) | ⚠ 需修复 — 89测试通过，发现28项问题(2B+6C+8M+12m)，已全部修复 |
 
 ---
 
@@ -156,3 +178,8 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | 2026-05-10 | FR7.13 Phase 2 需求展开：5子需求→22详细条目，分三批实施（P0多Agent+护栏 / P1 Graph+可观测 / P2 MCP），Graph确定为自研方案 | /bm-orchestrator --auto |
 | 2026-05-10 | FR7.13 Phase 2 架构决策：ADR-008更新(agents/子包) + ADR-011(自研Graph引擎) + ADR-012(护栏+可观测+MCP) | /bm-orchestrator --auto |
 | 2026-05-10 | FR7.13 Phase 2 全部 7 Story 编码实现：新建 18 文件（agents/guardrails/graph/observability/mcp 5子包），修改 3 文件（tool_registry/execution_engine/__init__），零新依赖，全链路通过 | /bm-dev |
+| 2026-05-11 | FR9 Agent 工具系统全面扩展分组评审完成：9 位评审员（3组×3人）+ 3轮讨论，产出 38 条建议（6阻塞+9高优+12增强+11优化），评审纪要写入 docs/council-review-fr9-tool-allocation.md | /bm-council |
+| 2026-05-11 | FR9 修改确认书完成：38 项逐项确认（35 确认 / 3 跳过 / 4 用户修改方案），确认书写入 plans/agent-tool-expansion/modification-confirmation.md | /bm-orchestrator --auto |
+| 2026-05-11 | FR9 plan.md v2 更新完成：按确认书重写全部 14 个 Story（05 废弃/14 新增），新增独立 PR + P2 迭代章节，方案状态 → 已确认 | /bm-plan |
+| 2026-05-11 | FR9 14 个 Story 文档批量 v2 更新：Story 01-04/09 完整重写验收标准与实现步骤，Story 05 标记废弃，Story 14 新建，Story 06-08/10-13 头部标注 v2 状态 | /bm-story-batch |
+| 2026-05-11 | FR9 Story 14 集成测试编码完成：tests/test_agent_tool_integration.py (~1060行, 89测试用例, 12测试类)，覆盖全链路/标签/安全/配置/ParaTranz/解析写回/Agent注册 | /bm-dev |

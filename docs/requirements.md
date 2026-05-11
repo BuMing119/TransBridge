@@ -383,6 +383,256 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
 - macOS / Linux 支持
 - 移动端
 
+### FR9: Agent 工具系统全面扩展
+
+**FR9 概述** — *2026-05-10 | 状态: 待方案 | 优先级: P1*: 系统 SHALL 将 Agent 可用工具从当前的 6 个翻译专用工具扩展至覆盖 6 大功能域（文件解析、表格交互/标签管理、AI翻译全流程、ParaTranz平台、文件写回、UI状态查询）的完整工具矩阵，按功能域新增专业 Agent 角色，使 AI 助手能通过 function calling 操作软件的绝大部分功能。
+
+**分批发版策略**（评审委员会共识）:
+
+| 批次 | 优先级 | 功能域 | 预估工具数 | 说明 |
+|------|--------|--------|-----------|------|
+| P0 第一批 | 核心翻译闭环 | editor(筛选/搜索)+translator(执行)+default(状态) | ~18 | 最高频"筛选→翻译→检查→标记"工作流 |
+| P1 第二批 | 增强工作流 | 标签管理+翻译配置+后处理+ParaTranz同步+统计 | ~20 | 在核心闭环基础上扩展 |
+| P2 第三批 | 低频/高风险 | parser(解析)+writer(写回)+项目管理查询 | ~12+ | 解析为一次性操作，写回为 admin 级需确认 |
+
+**架构决策**（评审委员会共识 + 用户裁决）:
+- **代码组织**: 50+ 工具 SHALL 拆分为 `smart_assistant/tools/` 子包，按 namespace 分文件（`tool_parser.py` / `tool_editor.py` / `tool_translator.py` / `tool_proofreader.py` / `tool_paratranz.py` / `tool_writer.py` / `tool_default.py`），`tool_registry.py` 仅保留 ToolSpec 数据类 + ToolRegistry 类 + 各模块注册入口
+- **UI 交互契约**（架构师路线）: 工具 SHALL 为纯数据操作——操作 `AppContext.collection` 中的 `TranslationEntry` 对象数据（stage/label/translation 字段），UI 通过订阅 `AppContext` 信号（`collection_changed` / `filter_changed` 等）自动刷新。工具 SHALL NOT 直接引用或操作 QWidget。`AppContext` 需扩展为 ViewModel（新增 `filter_state`、`search_query` 等属性与对应 pyqtSignal）
+- **执行上下文**: 工具函数签名为 `Callable[[dict, ExecutionContext], ToolResult]`，ExecutionContext 包含 `app_context` + `task_manager` + 工具元数据，不含 UI 组件引用
+- **ToolResult 类型**: 所有工具 SHALL 返回 `ToolResult` 数据类——`success: Literal[True, False, "partial"]` + `message: str` + `data: dict | None` + `failed_items: list | None` + `truncated: bool`，替代当前 `{"success": bool, "message": str}` 的自由字典格式
+- **TaskManager**: 系统 SHALL 新增 `TaskManager` 单例组件，管理 long_running 工具的任务生命周期（register/cancel/get_status），解决 threading.Event 在函数返回后销毁的问题
+- **工具前置检查**: 系统 SHALL 提供 `@require_collection` 装饰器，自动注入并校验集合有效性，25+ 工具复用
+- **参数校验**: 系统 SHALL 提供 `@validate_params` 装饰器，统一类型检查 + 异常捕获 + 格式化 ToolResult 错误响应
+- **权限审查**: `run_llm_arbitration` 权限从 `read` 改为 `write`（产生 LLM API 费用）；所有产生 API 费用或修改数据的工具 SHALL 至少为 `write` 级
+- **Orchestrator 可见性**: Orchestrator 不直接暴露全部 50+ 工具 schema，SHALL 通过 7 个功能域"元工具"描述或子 Agent 间接调度
+- **已裁剪工具**: `navigate_to`（Agent 替用户导航是反模式）、`get_write_status`（信息 UI 已可见）、`get_parse_config` / `set_parse_config`（一次性配置，Agent 介入价值极低）从本需求中移除
+
+---
+
+#### FR9.0 基础设施变更
+
+在扩展工具之前，需对现有基础设施做以下变更：
+
+- **FR9.0.1 代码拆分**: 将当前 `tool_registry.py` 中的 6 个 v1 工具实现函数迁移至 `smart_assistant/tools/tool_v1.py`。创建 `smart_assistant/tools/` 子包（含 `__init__.py`），`tool_registry.py` 仅保留 `ToolSpec` 数据类 + `ToolRegistry` 类 + v1 工具注册调用。新增各功能域工具模块文件。
+- **FR9.0.2 ToolResult 数据类**: 在 `smart_assistant/tools/base.py` 中定义 `ToolResult` 数据类，字段：`success: Literal[True, False, "partial"]`、`message: str`、`data: dict | None = None`、`failed_items: list | None = None`、`truncated: bool = False`。所有工具（含 6 个 v1 工具）SHALL 返回此类型。
+- **FR9.0.3 TaskManager**: 在 `smart_assistant/tools/task_manager.py` 中实现 `TaskManager` 单例类，提供 `register(task_id: str, stop_event: threading.Event, metadata: dict) -> str`、`cancel(task_id: str) -> bool`、`get_status(task_id: str) -> dict`、`list_active() -> list[str]`、`cleanup(task_id: str)` 接口。`TaskManager` 内部维护 `_tasks: dict[str, TaskHandle]`，TaskHandle 包含 stop_event、created_at、status、metadata。
+- **FR9.0.4 @require_collection 装饰器**: 在 `smart_assistant/tools/base.py` 中实现，自动从 ctx 提取 collection 并检查非空，失败时返回 `ToolResult(success=False, message="当前没有加载翻译集合")`。装饰后的函数签名为 `(args: dict, ctx: ExecutionContext, collection: TranslationEntryCollection) -> ToolResult`。
+- **FR9.0.5 @validate_params 装饰器**: 在 `smart_assistant/tools/base.py` 中实现，接收参数 schema（与 ToolSpec.parameters 格式一致），执行前做类型检查+转换，失败时返回 `ToolResult(success=False, message="参数校验失败: ...")`。内部捕获所有异常并转为 ToolResult，不抛出原生 Python 异常。
+
+---
+
+#### FR9.1 文件解析工具 (namespace: `parser`, **P2 批次**)
+
+Agent SHALL 可触发所有 Step1 文件解析操作，解析结果自动加载到 AppContext。
+
+- **FR9.1.1 parse_esp** (`write`): 解析 ESP/ESM/ESL 插件。参数：`file_paths: list[str]`（支持多选）、`extract_strings: bool`（是否提取 strings 文件）、`language: str`（strings 语言，默认 "english"）。返回：解析结果摘要（插件名/条目数/上下文分类统计）。
+- **FR9.1.2 parse_eet** (`write`): 解析 EET XML 文件。参数：`file_path: str`、`as_migration_source: bool`（是否作为迁移源追加到当前集合）。返回：解析结果摘要。
+- **FR9.1.3 parse_xt** (`write`): 解析 XT XML 文件。参数：`file_path: str`、`as_migration_source: bool`。返回：解析结果摘要。
+- **FR9.1.4 parse_sst** (`write`): 解析 XT SST 二进制文件（SSU8/SSU9）。参数：`file_path: str`、`as_migration_source: bool`。返回：格式类型/记录数/EDID 列表。
+- **FR9.1.5 import_json** (`write`): 从 JSON 文件导入翻译条目。参数：`file_path: str`。返回：导入条目数。
+- **FR9.1.6 import_strings** (`write`): 从 .strings 文件导入翻译条目。参数：`directory: str`、`language: str`。返回：导入条目数/匹配率。
+
+**关联 Agent**: `parser` Agent（新增）— 拥有以上 6 个工具，负责所有文件解析操作。
+
+**注意**: `get_parse_config` / `set_parse_config` 已裁剪（一次性配置，Agent 介入价值极低）。`path` 参数可选——不传时通过 HITL 机制请求用户选择文件。
+
+**异常场景**:
+- 文件不存在 → 返回错误信息，不崩溃
+- 解析失败（格式损坏）→ 跳过异常条目，返回部分结果 + 警告信息
+- 多文件解析中断 → 已完成的部分正常加载，报告失败文件列表
+
+---
+
+#### FR9.2 表格交互与标签管理工具 (namespace: `editor`)
+
+Agent SHALL 可操控 Step2 词条预览表格的筛选、搜索、排序、选择、编辑操作，以及标签库管理。
+
+**表格操作**:
+
+- **FR9.2.1 filter_by_stage** (`read`): 按翻译阶段筛选表格。参数：`stages: list[int]`（ParaTranz 7 级 stage 值）。返回：筛选后条目数。
+- **FR9.2.2 filter_by_category** (`read`): 按分类筛选表格。参数：`categories: list[str]`（如 ["NPC_", "INFO", "BOOK"]，为空表示全部）。返回：筛选后条目数。
+- **FR9.2.3 filter_by_label** (`read`): 按标签筛选表格。参数：`label_names: list[str]`。返回：筛选后条目数。
+- **FR9.2.4 search_entries** (`read`): 全文搜索表格。参数：`query: str`、`field: str`（"key"/"original"/"translation"/"all"，默认"all"）。返回：匹配条目数。
+- **FR9.2.5 clear_all_filters** (`write`): 清除所有筛选条件，恢复全部条目显示。返回：总条目数。
+- **FR9.2.6 select_entries** (`write`): 选中/取消条目（通过标签系统）。参数：`entry_ids: list[str]`、`action: str`（"select"/"deselect"）。返回：操作后选中数。
+- **FR9.2.7 edit_translation** (`write`): 修改指定条目的译文。参数：`entry_id: str`、`new_translation: str`。返回：确认信息。
+- **FR9.2.8 get_visible_entries** (`read`): 获取当前筛选条件下可见的条目摘要列表。参数：`limit: int`（默认 50，最大 200）、`offset: int`（默认 0）。返回：条目列表（id/key/original/translation/stage/labels）。
+
+**标签管理**:
+
+- **FR9.2.9 list_labels** (`read`): 列出所有已创建的标签。返回：标签列表（name/color/count）。
+- **FR9.2.10 create_label** (`write`): 创建新标签。参数：`name: str`、`color: str`（如 "#FF5722"）。返回：新标签信息。
+- **FR9.2.11 assign_label** (`write`): 为条目分配标签。参数：`entry_ids: list[str]`、`label_name: str`。返回：操作后该标签的条目数。
+- **FR9.2.12 remove_label** (`write`): 移除条目的标签。参数：`entry_ids: list[str]`、`label_name: str`。返回：操作后该标签的条目数。
+- **FR9.2.13 batch_assign_label** (`write`): 批量为当前筛选范围内所有条目分配标签。参数：`label_name: str`。返回：分配的条目数。**需确认**（操作影响范围可能很大）。
+
+**关联 Agent**: `editor` Agent（新增）— 拥有以上全部 13 个工具，负责表格操控和标签管理。
+
+**异常场景**:
+- entry_id 不存在 → 返回错误，不影响其他有效 ID
+- 筛选后 0 结果 → 正常返回 0，不报错
+- 批量操作影响大（> 500 条）→ write 级工具在护栏层记录日志，不强制确认
+
+---
+
+#### FR9.3 AI 翻译配置与执行控制工具 (namespace: `translator`)
+
+扩展现有 translator namespace，新增翻译配置和进度控制工具（保留现有 lookup_terms / translate_entries）。
+
+**配置工具**:
+
+- **FR9.3.1 get_translation_config** (`read`): 获取当前 AI 翻译配置。返回：LLM 模型/provider/参数、术语库设置、后处理阶段开关、作用域选择。
+- **FR9.3.2 set_translation_config** (`write`): 设置 AI 翻译配置。参数：`config: dict`（可设置项：model/ provider/ temperature/ max_tokens/ term_db/ post_process_stages/ scope）。返回：确认信息。
+- **FR9.3.3 set_scope** (`write`): 设置翻译作用域。参数：`stages: list[int]`、`labels: list[str]`（可选）、`categories: list[str]`（可选）、`action: str`（"translate"/"polish"/"skip"，混合模式用）。返回：匹配条目数/预估批次数。
+- **FR9.3.4 get_scope_preview** (`read`): 预览当前作用域下将影响的条目统计。返回：按动作分组的条目数。
+
+**执行控制工具**:
+
+- **FR9.3.5 start_translation** (`write`, `is_long_running`): 启动 AI 翻译（翻译/润色/混合模式）。参数：`mode: str`（"translate"/"polish"/"mixed"）、`entry_ids: list[str]`（可选，不传则使用作用域）。返回：task_id。执行过程中通过 progress 信号推送进度。
+- **FR9.3.6 start_polish** (`write`, `is_long_running`): 启动独立润色。参数：`entry_ids: list[str]`、`intensity: str`（"light"/"moderate"/"aggressive"）。返回：task_id。
+- **FR9.3.7 pause_task** (`write`): 暂停当前翻译/润色任务。参数：`task_id: str`（可选，不传则暂停全部）。返回：确认信息。
+- **FR9.3.8 stop_task** (`admin`): 停止当前翻译/润色任务。参数：`task_id: str`（可选）。返回：确认信息。**需用户确认**。
+- **FR9.3.9 get_task_status** (`read`): 获取任务进度。参数：`task_id: str`（可选）。返回：当前进度（完成数/总数/成功/失败/跳过/耗时/状态）。
+
+**关联 Agent**: `translator` Agent（扩展现有）— 原有 3 个工具 + 新增 9 个工具 = 共 12 个。
+
+**异常场景**:
+- 翻译启动时无集合加载 → 返回错误提示
+- 作用域匹配 0 条目 → 返回提示，不启动任务
+- 停止已在运行的任务 → 正常停止并保存进度
+- LLM API 调用失败 → 已有 Reflexion 重试机制处理
+
+---
+
+#### FR9.4 后处理独立操作工具 (namespace: `proofreader`)
+
+扩展现有 proofreader namespace，新增独立的后处理操作（保留现有 check_quality）。
+
+- **FR9.4.1 run_consistency_check** (`read`): 对当前集合执行术语一致性检查。参数：`entry_ids: list[str]`（可选）。返回：检查结果摘要（检查数/问题数/详情列表）。
+- **FR9.4.2 run_format_validation** (`read`): 对当前集合执行格式校验。参数：`entry_ids: list[str]`（可选）。返回：校验结果（通过数/失败数/失败详情）。
+- **FR9.4.3 run_llm_refinement** (`write`, `is_long_running`): 对指定条目执行 LLM 修复。参数：`entry_ids: list[str]`、`issue_types: list[str]`（可选，按问题类型过滤）。返回：task_id。
+- **FR9.4.4 run_llm_polish** (`write`, `is_long_running`): 对指定条目执行 LLM 润色。参数：`entry_ids: list[str]`、`intensity: str`（"light"/"moderate"/"aggressive"）、`scope: str`（"all"/"passed"/"issues"）。返回：task_id。
+- **FR9.4.5 run_llm_arbitration** (`write`, `is_long_running`): 执行 LLM 裁决。参数：`entry_ids: list[str]`、`strict_mode: bool`（默认 false）。返回：task_id 和裁决结果摘要（pass/reject/pending 计数）。**权限修正**: 因产生 LLM API 费用，从 read 改为 write。
+- **FR9.4.6 get_quality_report** (`read`): 获取最近一次质量检查/后处理的报告摘要。参数：`task_id: str`（可选）。返回：报告结构（含问题分布/统计）。
+
+**关联 Agent**: `proofreader` Agent（扩展现有）— 原有 2 个工具 + 新增 6 个工具 = 共 8 个。
+
+**异常场景**:
+- 未启用后处理阶段直接调用 → 提示后处理未配置
+- LLM 调用失败 → 受 Reflexion 保护，最多重试 3 次
+
+---
+
+#### FR9.5 ParaTranz 平台操作工具 (namespace: `paratranz`)
+
+Agent SHALL 可操作 ParaTranz 平台的完整工作流。
+
+- **FR9.5.1 list_projects** (`read`): 列出 ParaTranz 项目列表。参数：`filter: str`（"all"/"mine"，默认"mine"）。返回：项目列表（id/name/成员数/文件数）。
+- **FR9.5.2 get_project_info** (`read`): 获取项目详细信息。参数：`project_id: int`（可选，不传则用当前配置的项目）。返回：项目详情（名称/描述/成员/文件列表/术语数）。
+- **FR9.5.3 upload_entries** (`write`, `is_long_running`): 上传条目到 ParaTranz。参数：`project_id: int`（可选）、`mode: str`（"update_original"/"import_safe"/"force_overwrite"）、`categories: list[str]`（可选，按分类筛选上传）。返回：task_id 和上传结果摘要（成功/跳过/冲突数）。
+- **FR9.5.4 download_entries** (`write`, `is_long_running`): 从 ParaTranz 下载条目。参数：`project_id: int`（可选）。在下载前 SHALL 返回对比摘要（本地条目数 vs 远程条目数、有差异的条目数），由 LLM 决定是否继续或由用户确认（`require_confirmation: true`）。返回：task_id 和合并结果（新增/更新/未变更数）。
+- **FR9.5.5 sync_terms** (`write`): 从 ParaTranz 同步术语库到本地。参数：`project_id: int`（可选）。返回：同步的术语数。
+- **FR9.5.6 compare_with_remote** (`read`): 对比本地集合与 ParaTranz 远程条目的差异。参数：`project_id: int`（可选）。返回：对比摘要（本地总数/远程总数/新增数/修改数/冲突数）+ 前 20 条差异详情（entry_key / 本地译文 / 远程译文 / 冲突类型）。供 download_entries 前做 informed decision。
+- **FR9.5.7 export_artifact** (`write`, `is_long_running`): 触发 ParaTranz 导出并下载。参数：`project_id: int`（可选）。返回：task_id 和下载的 zip 路径。
+- **FR9.5.8 get_upload_history** (`read`): 获取上传历史记录。参数：`project_id: int`（可选）、`limit: int`（默认 20）。返回：历史记录列表。
+
+**关联 Agent**: `paratranz` Agent（新增）— 拥有以上 8 个工具。
+
+**安全设计**:
+- `download_entries` SHALL 设置 `require_confirmation: true`，下载前展示对比摘要，避免意外覆盖本地译文
+- `upload_entries` 的 force_overwrite 模式 SHALL 设置 `require_confirmation: true`
+
+**异常场景**:
+- API 401/403 → 返回认证失败错误（复用 FR7.6 全局错误处理）
+- 网络超时 → 重试 1 次，仍失败则返回错误
+- 下载时本地有未保存修改 → 提示先保存
+
+---
+
+#### FR9.6 文件写回独立工具 (namespace: `writer`)
+
+将现有单一 `write_back` 工具拆分为 4 个独立工具，每个对应一种写回目标格式。保留 `admin` 权限级别。
+
+- **FR9.6.1 write_to_esp** (`admin`): 写回译文到 ESP/ESM 插件。参数：`mode: str`（"inline"/"localised"）、`output_dir: str`（localised 模式下的输出目录，可选）。返回：写回结果（模式/写入条目数/输出路径）。
+- **FR9.6.2 write_to_eet** (`admin`): 写回/新建 EET XML 文件。参数：`output_path: str`（可选，不传则更新源文件）、`create_new: bool`（默认 false）。返回：写回结果。
+- **FR9.6.3 write_to_xt** (`admin`): 写回/新建 XT XML 文件。参数：`output_path: str`（可选）、`create_new: bool`（默认 false）。返回：写回结果。
+- **FR9.6.4 write_to_strings** (`admin`): 输出纯本地化 strings 文件。参数：`output_dir: str`、`language: str`（可选）。返回：输出的文件列表。
+
+**关联 Agent**: `writer` Agent（新增）— 拥有以上 4 个工具，所有 admin 级工具需用户确认。
+
+**注意**: `get_write_status` 已裁剪（信息在 UI 中已可见）。
+
+**向后兼容**: 保留现有 `write_back` 工具标记为 `deprecated`，内部转发到对应的新工具。
+
+**异常场景**:
+- 无已解析的 ESP/EET/XT 源文件时调用对应写回 → 返回错误提示
+- 输出路径不存在 → 自动创建父目录
+- ESP 写回时格式损坏 → 不修改原文件，返回错误
+
+---
+
+#### FR9.7 UI 导航与全局状态工具 (namespace: `default`)
+
+Agent SHALL 可查询软件全局状态和执行 UI 导航。
+
+- **FR9.7.1 get_app_state** (`read`): 获取全局应用状态摘要。返回：当前 step、已加载集合列表（名称/条目数/翻译率）、活跃项目/版本、当前筛选条件、当前标签库、API 连接状态。
+- **FR9.7.2 list_collections** (`read`): 列出所有已加载的翻译集合。返回：集合摘要列表（名称/来源类型/条目数/翻译率/槽位索引）。
+- **FR9.7.3 switch_collection** (`write`): 切换当前活跃集合。参数：`collection_name: str` 或 `slot_index: int`。返回：确认信息。
+- **FR9.7.4 get_current_filters** (`read`): 获取当前 Step2 的筛选状态。返回：活跃的 stage/label/category 筛选、搜索关键词。
+- **FR9.7.5 get_statistics** (`read`): 获取当前集合的详细统计。返回：条目总数/翻译率/stage分布/分类分布/标签分布。
+
+**关联 Agent**: 并入 `orchestrator` Agent（扩展现有）— 新增 5 个工具。
+
+**注意**: `navigate_to` 已裁剪（Agent 替用户导航 UI 是反模式）。
+
+#### FR9.8 项目管理查询工具 (namespace: `default`, **P2 批次**)
+
+补充 FR9 范围决策中被排除的项目管理查询能力（评审委员会共识：至少提供 read 级查询，避免 Agent 回答"我无法操作"）。
+
+- **FR9.8.1 list_local_projects** (`read`): 列出本地所有项目。返回：项目列表（名称/路径/版本数/最后打开时间）。
+- **FR9.8.2 get_current_project** (`read`): 获取当前活跃项目的详细信息。返回：项目名称/路径/活跃版本/版本列表/源文件列表/集合摘要。
+
+**关联 Agent**: 并入 `orchestrator` Agent — 新增 2 个工具。
+
+**异常场景**:
+- 集合不存在 → 返回错误提示
+- navigate_to 不存在的 step → 返回错误
+
+---
+
+#### FR9.9 Agent 扩展与权限体系
+
+**FR9.9.1 新增 Agent**: 系统 SHALL 新增 4 个专业 Agent（`parser`/`editor`/`paratranz`/`writer`），扩展现有 3 个 Agent（`translator` 增 9 工具、`proofreader` 增 6 工具、`orchestrator` 增 5+2=7 工具）。
+
+**FR9.9.2 命名空间隔离**: 各 Agent 的工具集 SHALL 通过 namespace 机制隔离——parser(6工具)、editor(13工具)、translator(12工具)、proofreader(8工具)、paratranz(8工具)、writer(4工具)、orchestrator(可访问全部工具但通过元工具描述摘要而非完整 schema)。
+
+**FR9.9.3 权限分级**: 所有新工具 SHALL 声明 permission 级别——只读查询类 → `read`（约 18 个）、数据修改类 → `write`（约 22 个）、破坏性操作类 → `admin`（约 8 个）。产生 LLM API 费用的工具 SHALL 至少为 `write`。权限分级复用现有 FR7.13.8 安全护栏机制。
+
+**FR9.9.4 工具 schema 格式**: 所有新工具 SHALL 使用现有 `ToolSpec` 数据类定义，通过 `ToolRegistry.register()` 注册到对应 namespace。参数定义 SHALL 使用 `{"name": {"type": "str", "description": "..."}}` 格式。工具执行函数 SHALL 返回 `ToolResult` 数据类。
+
+**FR9.9.5 向后兼容**: 现有 6 个 v1 工具 SHALL 保留不变（迁移至 `tool_v1.py` 模块，返回格式升级为 ToolResult，行为不变）。`write_back` 工具标记 deprecated 但仍可用。现有 Skill（translate_with_terms）和 MCP 适配器不受影响。V1 兼容性 SHALL 通过 snapshot 测试验证。
+
+**FR9.9.6 工具描述规范**: 每个工具的 description SHALL 清晰描述功能、参数含义和返回值结构，供 LLM 在 function calling 时准确匹配意图。涉及副作用（修改数据/文件/产生费用）的工具 SHALL 在 description 中明确标注。
+
+#### FR9.10 异常与边界
+
+**全局异常处理**:
+- 所有工具执行失败 SHALL 返回 `{"success": false, "message": "错误描述"}` 格式，不抛出未捕获异常
+- `is_long_running` 工具 SHALL 支持暂停/停止（通过 threading.Event 信号）
+- 工具执行上下文（ctx）缺失时 SHALL 返回明确错误，不静默失败
+
+**边界约束**:
+- get_visible_entries 单次返回上限 200 条，防止撑爆 LLM 上下文窗口
+- 搜索/筛选结果上限 200 条，超出时提示"结果过多，请缩小范围"
+- 工具输出内容上限 100KB（复用护栏输出校验）
+- 项目管理和集合创建操作暂不纳入工具范围（用户通过 UI 手动操作）
+
+**关联需求**:
+- FR7.13（Agent 框架）— 本需求基于 FR7.13 的 Agent 框架（ToolRegistry/AgentRegistry/Skill/MCP）
+- FR7.13.8（安全护栏）— 新工具的权限分级复用护栏中间件
+- FR7.11（自定义标签系统）— 标签管理工具依赖 FR7.11 的标签库模型
+- FR5.11（混合模式）— AI 翻译执行工具兼容混合模式
+
 ## 6. 需求变更历史
 
 | 日期 | 变更内容 | 来源 |
@@ -404,3 +654,5 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
 | 2026-05-10 | 新增 FR7.12 SmartAssistant 代码分层（后端6组件搬迁+跨包导入更新） | /bm-analyze |
 | 2026-05-10 | 新增 FR7.13 Agent 框架全面升级（Phase1: Skill+文件+记忆+自纠错; Phase2: MCP+多Agent+Graph+护栏+可观测） | /bm-analyze |
 | 2026-05-10 | 展开 FR7.13 Phase 2 子需求细节：分三批实施（P0 多Agent协作+安全护栏 / P1 Graph编排+可观测性 / P2 MCP Server），Graph 引擎确定为自研轻量方案（零新依赖），每个子需求扩展为详细验收标准+边界条件+异常场景 | /bm-analyze (via /bm-orchestrator --auto) |
+| 2026-05-10 | 新增 FR9 Agent 工具系统全面扩展：6大功能域、新增4个Agent（parser/editor/paratranz/writer）、分P0/P1/P2三批发版 | /bm-analyze → /bm-council 评审修正 |
+| 2026-05-10 | FR9 评审委员会修正：架构师路线（纯数据操作）、拆分为 tools/ 子包、新增 FR9.0 基础设施（ToolResult/TaskManager/@require_collection/@validate_params）、权限修正（arbitration→write）、裁剪 navigate_to/get_write_status/get|set_parse_config、新增 compare_with_remote + list_local_projects + get_current_project | /bm-council |
