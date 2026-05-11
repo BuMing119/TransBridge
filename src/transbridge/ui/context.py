@@ -45,6 +45,9 @@ class AppContext(QObject):
     workspace_changed = pyqtSignal()          # 持久化项目列表变动
     variant_changed = pyqtSignal(str)         # 翻译版本切换（variant_name）
     dirty_changed = pyqtSignal()              # 版本数据被修改（触发自动保存防抖）
+    # Story 03: ViewModel 扩展
+    filter_changed = pyqtSignal(dict)         # 筛选状态变更
+    label_data_changed = pyqtSignal()         # 标签数据变更
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -63,7 +66,111 @@ class AppContext(QObject):
         self._active_project: ProjectHandle | None = None
         self._active_variant: str | None = None
         self._variant_store: VariantStore | None = None
+
+        # Story 03: ViewModel 扩展
+        self._filter_state: dict = dict(self.DEFAULT_FILTER_STATE)
+        self._label_library: dict[str, dict] = {}        # B1: 标签库 {label_id: {name, color}}
+        self._entry_labels: dict[str, set[str]] = {}     # B1: 条目标签 {entry_id: {label_id, ...}}
+        self._translation_scope: dict = {                # E8: 翻译作用域
+            "stages": [], "labels": [], "categories": [], "action": "include",
+        }
+        self._selected_ids: set[str] = set()            # H2: Agent 选择集合（独立于标签系统）
+
         self.collection_changed.connect(lambda _: self.mark_dirty())
+
+    # ── Story 03: 筛选/标签/作用域 ViewModel ─────────────────────
+
+    DEFAULT_FILTER_STATE = {
+        "stage": [],
+        "category": [],
+        "label": [],
+        "search_query": "",
+        "search_field": "text",  # "id" | "key" | "text" (E6: Agent 统一搜索字段)
+    }
+
+    @property
+    def filter_state(self) -> dict:
+        """获取当前筛选状态（只读副本）。"""
+        return dict(self._filter_state)
+
+    @filter_state.setter
+    def filter_state(self, v: dict) -> None:
+        self._filter_state = dict(v)
+        self.filter_changed.emit(dict(self._filter_state))
+
+    def set_filter(self, **kwargs) -> None:
+        """合并更新筛选状态并发射 filter_changed 信号。"""
+        changed = False
+        for k, v in kwargs.items():
+            if k in self._filter_state and self._filter_state[k] != v:
+                self._filter_state[k] = v
+                changed = True
+        if changed:
+            self.filter_changed.emit(dict(self._filter_state))
+
+    def clear_filters(self) -> None:
+        """重置所有筛选条件为默认值。"""
+        self._filter_state = dict(self.DEFAULT_FILTER_STATE)
+        self.filter_changed.emit(dict(self._filter_state))
+
+    # B1: 标签数据
+    @property
+    def label_library(self) -> dict[str, dict]:
+        return self._label_library
+
+    @label_library.setter
+    def label_library(self, v: dict[str, dict]) -> None:
+        self._label_library = v
+        self.label_data_changed.emit()
+
+    @property
+    def entry_labels(self) -> dict[str, set[str]]:
+        return self._entry_labels
+
+    @entry_labels.setter
+    def entry_labels(self, v: dict[str, set[str]]) -> None:
+        self._entry_labels = v
+        self.label_data_changed.emit()
+
+    # E8: 翻译作用域（带类型校验的正式属性）
+    @property
+    def translation_scope(self) -> dict:
+        return dict(self._translation_scope)
+
+    @translation_scope.setter
+    def translation_scope(self, v: dict) -> None:
+        stages = v.get("stages", [])
+        if not isinstance(stages, list) or not all(isinstance(s, int) for s in stages):
+            raise TypeError("translation_scope.stages 必须为 list[int]")
+        valid_actions = {"include", "exclude", "only"}
+        action = v.get("action", "include")
+        if action not in valid_actions:
+            raise ValueError(f"translation_scope.action 必须为 {valid_actions}")
+        self._translation_scope = {
+            "stages": list(stages),
+            "labels": list(v.get("labels", [])),
+            "categories": list(v.get("categories", [])),
+            "action": action,
+        }
+
+    # H2: Agent 选择集合（独立于用户标签系统）
+    @property
+    def selected_ids(self) -> set[str]:
+        return self._selected_ids
+
+    @selected_ids.setter
+    def selected_ids(self, v: set[str]) -> None:
+        self._selected_ids = v
+
+    def select_entries(self, entry_ids: list[str], action: str = "select") -> int:
+        """Agent 条目选择操作。action: select/deselect/clear。返回当前选中数。"""
+        if action == "clear":
+            self._selected_ids.clear()
+        elif action == "select":
+            self._selected_ids.update(entry_ids)
+        elif action == "deselect":
+            self._selected_ids.difference_update(entry_ids)
+        return len(self._selected_ids)
 
     # ── config ────────────────────────────────────────────────
 

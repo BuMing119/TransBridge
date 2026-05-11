@@ -32,16 +32,16 @@ class ChatWidget(QWidget):
         self._uploaded_docs: dict[str, object] = {}  # filename → ParsedDocument
 
         # 长期记忆
-        from pathlib import Path
+        from src.transbridge.config.paths import get_data_dir
         from src.transbridge.smart_assistant.memory import MemoryStore, MemoryRetriever
         self._memory_store = MemoryStore(
-            Path("data/memory"), embedding_mode="disabled"
+            Path(get_data_dir()) / "memory", embedding_mode="disabled"
         )
         self._memory_retriever = MemoryRetriever(self._memory_store)
 
         # 可观测性收集器 (S11)
         from src.transbridge.smart_assistant.observability import ObservabilityCollector
-        self._obs_collector = ObservabilityCollector(storage_dir=Path("data/observability"))
+        self._obs_collector = ObservabilityCollector(storage_dir=Path(get_data_dir()) / "observability")
         self._obs_collector.token_stats_updated.connect(self._on_token_stats_updated)
 
         layout = QVBoxLayout(self)

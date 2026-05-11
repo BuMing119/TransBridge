@@ -10,6 +10,8 @@ from .graph_executor import GraphExecutor
 from .guardrails import GuardMiddleware, GuardResult, PermissionGuard, InputValidationGuard, OutputValidationGuard
 from .observability import ObservabilityCollector, ConversationTrace, TokenStats
 from .mcp import MCPServer, MCPAdapter
+from .tools import ToolResult, ExecutionContext, HITLRequest, HITLResponse, HITLType
+from .tools import execute_with_guardrails, _filter_entries
 
 __all__ = [
     "ConversationManager",
@@ -39,4 +41,11 @@ __all__ = [
     "TokenStats",
     "MCPServer",
     "MCPAdapter",
+    "ToolResult",
+    "ExecutionContext",
+    "HITLRequest",
+    "HITLResponse",
+    "HITLType",
+    "execute_with_guardrails",
+    "_filter_entries",
 ]

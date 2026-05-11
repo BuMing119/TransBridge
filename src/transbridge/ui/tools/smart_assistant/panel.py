@@ -36,9 +36,10 @@ class SmartAssistantPanel(QDockWidget):
         layout.addWidget(self._quick_actions)
 
         # 加载 Skills
+        from src.transbridge.config.paths import get_data_dir
         from pathlib import Path
         from src.transbridge.smart_assistant.skills import SkillRegistry, SkillLoader
-        SkillRegistry.reload(Path("data/skills"))
+        SkillRegistry.reload(Path(get_data_dir()) / "skills")
 
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
