@@ -5,7 +5,7 @@ Story 12: 4个writer工具，permission=admin, require_confirmation=true。
 from __future__ import annotations
 
 import os
-from .base import ToolResult
+from .base import ToolResult, require_collection
 
 
 def _validate_output_path(path: str) -> ToolResult | None:
@@ -19,11 +19,9 @@ def _validate_output_path(path: str) -> ToolResult | None:
     return None
 
 
-def _tool_write_to_esp(args: dict, ctx) -> ToolResult:
+@require_collection
+def _tool_write_to_esp(args: dict, ctx, collection) -> ToolResult:
     """写回译文到 ESP/ESM 文件。"""
-    collection = ctx.collection
-    if not collection or len(collection) == 0:
-        return ToolResult.fail("当前没有可写回的集合")
     slot = ctx.active_slot
     if slot is None:
         return ToolResult.fail("没有活跃的集合槽位")
@@ -45,11 +43,9 @@ def _tool_write_to_esp(args: dict, ctx) -> ToolResult:
         return ToolResult.fail(f"ESP 写回失败: {exc}")
 
 
-def _tool_write_to_eet(args: dict, ctx) -> ToolResult:
+@require_collection
+def _tool_write_to_eet(args: dict, ctx, collection) -> ToolResult:
     """写回译文到 EET XML 文件。M8: 独立 EET 写回路径。"""
-    collection = ctx.collection
-    if not collection or len(collection) == 0:
-        return ToolResult.fail("当前没有可写回的集合")
     path = args.get("path") or getattr(ctx, 'eet_path', None)
     if not path:
         return ToolResult.fail("请提供 EET 输出路径或先解析 EET 源文件")
@@ -64,11 +60,9 @@ def _tool_write_to_eet(args: dict, ctx) -> ToolResult:
         return ToolResult.fail(f"EET 写回失败: {exc}")
 
 
-def _tool_write_to_xt(args: dict, ctx) -> ToolResult:
+@require_collection
+def _tool_write_to_xt(args: dict, ctx, collection) -> ToolResult:
     """写回译文到 XT XML 文件。M8: 独立 XT 写回路径。"""
-    collection = ctx.collection
-    if not collection or len(collection) == 0:
-        return ToolResult.fail("当前没有可写回的集合")
     path = args.get("path") or getattr(ctx, 'xt_path', None)
     if not path:
         return ToolResult.fail("请提供 XT 输出路径或先解析 XT 源文件")
@@ -83,11 +77,9 @@ def _tool_write_to_xt(args: dict, ctx) -> ToolResult:
         return ToolResult.fail(f"XT 写回失败: {exc}")
 
 
-def _tool_write_to_strings(args: dict, ctx) -> ToolResult:
+@require_collection
+def _tool_write_to_strings(args: dict, ctx, collection) -> ToolResult:
     """写回译文到 .strings 文件。"""
-    collection = ctx.collection
-    if not collection or len(collection) == 0:
-        return ToolResult.fail("当前没有可写回的集合")
     slot = ctx.active_slot
     if slot is None:
         return ToolResult.fail("没有活跃的集合槽位")

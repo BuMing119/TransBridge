@@ -27,6 +27,8 @@ class ObservabilityCollector(QObject):
         if self._active is not None:
             self.end_conversation()
         self._active = ConversationTrace(conv_id=conv_id)
+        # m12: 新会话重置 session 级 token 统计
+        self._session_tokens = TokenStats()
 
     def on_step_started(self, step_id: int, tool_name: str) -> None:
         self._pending_tool = (step_id, tool_name, datetime.now())
@@ -63,6 +65,8 @@ class ObservabilityCollector(QObject):
         if self._active is None:
             return None
         self._active.finished_at = datetime.now().isoformat()
+        # m15: 对话结束时重置活跃追踪
+        self._active.tools_called.clear()
         trace = self._active
         self._active = None
         if self._storage_dir:

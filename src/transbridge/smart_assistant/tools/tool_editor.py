@@ -1,11 +1,11 @@
 """P0 编辑器工具 — 筛选 + 搜索 + 编辑 + 选择 + 批量标记 (editor namespace)。
 
 Story 04 v2: 合并原 Story 04（筛选搜索）和 Story 05（编辑选择），
-新增 set_stage(H3) + _selected_ids(H2) + new_stage参数(H4) + _filter_entries复用(H8)。
+新增 set_stage(H3) + _selected_ids(H2) + new_stage参数(H4) + filter_entries复用(H8)。
 """
 from __future__ import annotations
 
-from .base import ToolResult, _filter_entries, require_collection, validate_params
+from .base import ToolResult, filter_entries, require_collection, validate_params
 
 _VALID_STAGES = {0, 1, 2, 3, 5, 9, -1}
 
@@ -112,13 +112,13 @@ def _tool_clear_all_filters(args: dict, ctx) -> ToolResult:
 @require_collection
 @validate_params(_PARAM_SCHEMAS["get_visible_entries"])
 def _tool_get_visible_entries(args: dict, ctx, collection) -> ToolResult:
-    """获取当前筛选条件下可见的条目列表（分页）。H8: 复用 _filter_entries。"""
+    """获取当前筛选条件下可见的条目列表（分页）。H8: 复用 filter_entries。"""
     limit = min(args.get("limit", 50), 200)
     offset = max(args.get("offset", 0), 0)
 
     filter_state = ctx.filter_state
     entry_labels = getattr(ctx, 'entry_labels', None)  # M1 联动: 传入 entry_labels
-    results = _filter_entries(collection, filter_state, entry_labels=entry_labels)
+    results = filter_entries(collection, filter_state, entry_labels=entry_labels)
     total = len(results)
 
     page = results[offset:offset + limit]
@@ -323,7 +323,7 @@ def _tool_remove_label(args: dict, ctx, collection) -> ToolResult:
 @require_collection
 @validate_params(_PARAM_SCHEMAS["batch_assign_label"])
 def _tool_batch_assign_label(args: dict, ctx, collection) -> ToolResult:
-    """批量分配标签——对当前筛选范围内所有条目分配标签。H8: 复用 _filter_entries。"""
+    """批量分配标签——对当前筛选范围内所有条目分配标签。H8: 复用 filter_entries。"""
     label_name = args["label_name"]
     lid = None
     label_lib = getattr(ctx, 'label_library', None) or {}
@@ -336,7 +336,7 @@ def _tool_batch_assign_label(args: dict, ctx, collection) -> ToolResult:
 
     filter_state = ctx.filter_state
     entry_labels = getattr(ctx, 'entry_labels', None) or {}  # M1 联动
-    entries = _filter_entries(collection, filter_state, entry_labels=entry_labels)
+    entries = filter_entries(collection, filter_state, entry_labels=entry_labels)
     if not hasattr(ctx, 'entry_labels') or ctx.entry_labels is None:
         ctx.entry_labels = {}
     assigned = 0
@@ -364,7 +364,7 @@ def _register_editor_tools():
         ("filter_by_category", "按分类筛选", "按分类名筛选条目（如 NPC_、INFO）", _tool_filter_by_category, "read"),
         ("filter_by_label", "按标签筛选", "按标签名筛选条目", _tool_filter_by_label, "read"),
         ("search_entries", "搜索条目", "按关键词在指定字段中搜索条目", _tool_search_entries, "read"),
-        ("clear_all_filters", "清除筛选", "清除所有筛选条件，恢复显示全部条目", _tool_clear_all_filters, "write"),
+        ("clear_all_filters", "清除筛选", "清除所有筛选条件，恢复显示全部条目", _tool_clear_all_filters, "read"),
         ("get_visible_entries", "获取可见条目", "获取当前筛选条件下可见的条目列表（分页，上限200）", _tool_get_visible_entries, "read"),
         ("select_entries", "选择条目", "选择/取消选择条目（使用独立选择集合，不影响标签系统）", _tool_select_entries, "write"),
         ("edit_translation", "编辑翻译", "编辑单条条目的翻译文本，可同时设置翻译阶段", _tool_edit_translation, "write"),

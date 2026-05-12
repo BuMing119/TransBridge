@@ -121,25 +121,47 @@ def _tool_import_strings(args: dict, ctx) -> ToolResult:
 
 # ── 注册 ──────────────────────────────────────────────────────
 
+_PARAM_SCHEMAS = {
+    "parse_esp": {
+        "path": {"type": "str", "required": True, "description": "ESP/ESM 文件路径"},
+    },
+    "parse_eet": {
+        "path": {"type": "str", "required": True, "description": "EET XML 文件路径"},
+    },
+    "parse_xt": {
+        "path": {"type": "str", "required": True, "description": "XT XML 文件路径"},
+    },
+    "parse_sst": {
+        "path": {"type": "str", "required": True, "description": "SST 二进制文件路径"},
+    },
+    "import_json": {
+        "path": {"type": "str", "required": True, "description": "JSON 文件路径"},
+    },
+    "import_strings": {
+        "path": {"type": "str", "required": True, "description": ".strings 文件路径"},
+    },
+}
+
+
 def _register_parser_tools():
     from src.transbridge.smart_assistant.tool_registry import ToolRegistry, ToolSpec
 
+    # m5: 统一 5 元组格式 (name, display_name, description, execute, permission)
     tools = [
-        ("parse_esp", _tool_parse_esp, "解析 ESP/ESM 插件文件，提取翻译条目"),
-        ("parse_eet", _tool_parse_eet, "解析 EET XML 翻译文件"),
-        ("parse_xt", _tool_parse_xt, "解析 XT XML 翻译文件"),
-        ("parse_sst", _tool_parse_sst, "解析 SST 二进制翻译文件"),
-        ("import_json", _tool_import_json, "从 JSON 文件导入翻译集合"),
-        ("import_strings", _tool_import_strings, "从 .strings 文件导入翻译"),
+        ("parse_esp", "解析ESP", "解析 ESP/ESM 插件文件，提取翻译条目", _tool_parse_esp, "read"),
+        ("parse_eet", "解析EET", "解析 EET XML 翻译文件", _tool_parse_eet, "read"),
+        ("parse_xt", "解析XT", "解析 XT XML 翻译文件", _tool_parse_xt, "read"),
+        ("parse_sst", "解析SST", "解析 SST 二进制翻译文件", _tool_parse_sst, "read"),
+        ("import_json", "导入JSON", "从 JSON 文件导入翻译集合", _tool_import_json, "read"),
+        ("import_strings", "导入Strings", "从 .strings 文件导入翻译", _tool_import_strings, "read"),
     ]
 
-    for name, execute_fn, description in tools:
+    for name, display_name, description, execute, permission in tools:
         ToolRegistry.register(ToolSpec(
-            name=name, display_name=description[:20],
+            name=name, display_name=display_name,
             description=description,
-            parameters={"path": {"type": "str", "required": False, "description": "文件路径（不传则触发HITL文件选择）"}},
-            execute=execute_fn,
-            permission="read",  # H6: parser工具write→read
+            parameters=_PARAM_SCHEMAS.get(name, {}),
+            execute=execute, permission=permission,
         ), namespace="parser")
 
 

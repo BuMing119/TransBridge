@@ -11,7 +11,7 @@ from .guardrails import GuardMiddleware, GuardResult, PermissionGuard, InputVali
 from .observability import ObservabilityCollector, ConversationTrace, TokenStats
 from .mcp import MCPServer, MCPAdapter
 from .tools import ToolResult, ExecutionContext, HITLRequest, HITLResponse, HITLType
-from .tools import execute_with_guardrails, _filter_entries
+from .tools import execute_with_guardrails, filter_entries
 
 __all__ = [
     "ConversationManager",
@@ -47,5 +47,5 @@ __all__ = [
     "HITLResponse",
     "HITLType",
     "execute_with_guardrails",
-    "_filter_entries",
+    "filter_entries",
 ]

@@ -2,6 +2,7 @@ from .llm_client import LLMClient, create_llm_client
 from .embedding_client import EmbeddingClient
 from .config import LLMConfig
 from .vector_store import VectorStore
+from .markdown_renderer import MarkdownRenderer
 
 __all__ = [
     "LLMClient",
@@ -9,4 +10,5 @@ __all__ = [
     "EmbeddingClient",
     "LLMConfig",
     "VectorStore",
+    "MarkdownRenderer",
 ]

@@ -1,7 +1,7 @@
 """P1 ParaTranz 平台工具 (paratranz namespace)。Story 11。"""
 from __future__ import annotations
 
-from .base import ToolResult
+from .base import ToolResult, require_collection
 
 
 def _tool_list_projects(args: dict, ctx) -> ToolResult:
@@ -36,11 +36,9 @@ def _tool_get_project_info(args: dict, ctx) -> ToolResult:
         return ToolResult.fail(f"获取项目信息失败: {exc}")
 
 
-def _tool_compare_with_remote(args: dict, ctx) -> ToolResult:
+@require_collection
+def _tool_compare_with_remote(args: dict, ctx, collection) -> ToolResult:
     """对比本地与远程差异。"""
-    collection = ctx.collection
-    if not collection or len(collection) == 0:
-        return ToolResult.fail("当前无翻译集合")
     try:
         from src.transbridge.paratranz.api_client import ParatranzClient
         client = ParatranzClient(ctx.config)
@@ -70,11 +68,9 @@ def _tool_compare_with_remote(args: dict, ctx) -> ToolResult:
         return ToolResult.fail(f"对比失败: {exc}")
 
 
-def _tool_upload_entries(args: dict, ctx) -> ToolResult:
+@require_collection
+def _tool_upload_entries(args: dict, ctx, collection) -> ToolResult:
     """上传条目到 ParaTranz。"""
-    collection = ctx.collection
-    if not collection or len(collection) == 0:
-        return ToolResult.fail("当前无可上传集合")
     try:
         from src.transbridge.paratranz.api_client import ParatranzClient
         client = ParatranzClient(ctx.config)

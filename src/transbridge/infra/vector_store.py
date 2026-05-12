@@ -18,6 +18,7 @@ class VectorStore:
             raise ImportError("faiss-cpu 未安装，请执行: pip install faiss-cpu")
         self._dimension = dimension
         self._id_map: dict[int, str] = {}  # faiss_internal_id → external_id
+        self._dirty = False  # m14: 软删除标记
         if index_path:
             self._index = faiss.read_index(index_path)
         else:
@@ -56,15 +57,45 @@ class VectorStore:
     def remove(self, ids: list[str]) -> None:
         """软删除（从 id_map 移除，FAISS 不支持直接删除）。
 
-        注意：被删除的向量仍占用 FAISS 索引空间，频繁删除后建议 save→load 重建。
+        被删除的向量仍占用 FAISS 索引空间。调用 remove() 后自动标记 dirty=True，
+        下次 save() 前自动调用 rebuild_index() 物理移除已删除向量。(m14)
         """
         to_remove = set(ids)
         self._id_map = {k: v for k, v in self._id_map.items() if v not in to_remove}
+        self._dirty = True
+
+    def rebuild_index(self) -> None:
+        """m14: 从当前 id_map 重建 FAISS 索引，物理移除已软删除的向量。"""
+        if not self._dirty or self._index.ntotal == 0:
+            return
+        kept_ids = set(self._id_map.values())
+        kept_vectors = []
+        new_id_map = {}
+        new_idx = 0
+        for faiss_id in range(self._index.ntotal):
+            ext_id = self._id_map.get(faiss_id)
+            if ext_id in kept_ids:
+                vec = self._index.reconstruct(faiss_id)
+                kept_vectors.append(vec)
+                new_id_map[new_idx] = ext_id
+                new_idx += 1
+        if kept_vectors:
+            import numpy as np
+            new_index = faiss.IndexFlatIP(self._dimension)
+            new_index.add(np.array(kept_vectors, dtype=np.float32))
+            self._index = new_index
+            self._id_map = new_id_map
+        else:
+            self._index = faiss.IndexFlatIP(self._dimension)
+            self._id_map = {}
+        self._dirty = False
 
     # ── 持久化 ────────────────────────────────────────────
 
     def save(self, path: str) -> None:
-        """保存 FAISS 索引到文件。"""
+        """保存 FAISS 索引到文件。m14: 保存前自动重建以移除软删除向量。"""
+        if self._dirty:
+            self.rebuild_index()
         faiss.write_index(self._index, path)
 
     @staticmethod

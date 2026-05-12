@@ -43,6 +43,11 @@ class ToolResult:
     failed_items: list[dict[str, Any]] | None = None
     truncated: bool = False
     partial: bool = False
+    # C10: 错误分类字段
+    error_category: str | None = None    # "network" | "auth" | "input" | "permission" | "config" | "internal"
+    error_code: str | None = None        # e.g. "API_KEY_MISSING", "TIMEOUT"
+    recovery_action: str | None = None   # 建议的恢复操作
+    warnings: list[str] | None = None    # 非致命警告
 
     def to_dict(self) -> dict[str, Any]:
         """转为字典。success 保持为 bool，向后兼容。"""
@@ -55,9 +60,17 @@ class ToolResult:
             result["failed_items"] = self.failed_items
         if self.truncated:
             result["truncated"] = self.truncated
+        if self.error_category:
+            result["error_category"] = self.error_category
+        if self.error_code:
+            result["error_code"] = self.error_code
+        if self.recovery_action:
+            result["recovery_action"] = self.recovery_action
+        if self.warnings:
+            result["warnings"] = self.warnings
         return result
 
-    # B2: 字典兼容方法 — 兼容 execution_engine.py 的 raw_result.get("success", True) 模式
+    # B2: 字典兼容方法
     def get(self, key: str, default: Any = None) -> Any:
         if key == "success":
             return self.success
@@ -71,6 +84,14 @@ class ToolResult:
             return self.failed_items
         if key == "truncated":
             return self.truncated
+        if key == "error_category":
+            return self.error_category
+        if key == "error_code":
+            return self.error_code
+        if key == "recovery_action":
+            return self.recovery_action
+        if key == "warnings":
+            return self.warnings
         return default
 
     def __getitem__(self, key: str) -> Any:
@@ -78,12 +99,18 @@ class ToolResult:
         return d[key]
 
     @classmethod
-    def ok(cls, message: str = "操作成功", data: dict | None = None) -> "ToolResult":
-        return cls(success=True, message=message, data=data)
+    def ok(cls, message: str = "操作成功", data: dict | None = None,
+           warnings: list[str] | None = None) -> "ToolResult":
+        return cls(success=True, message=message, data=data, warnings=warnings)
 
     @classmethod
-    def fail(cls, message: str, failed_items: list | None = None) -> "ToolResult":
-        return cls(success=False, message=message, failed_items=failed_items)
+    def fail(cls, message: str, failed_items: list | None = None, *,
+             error_category: str | None = None,
+             error_code: str | None = None,
+             recovery_action: str | None = None) -> "ToolResult":
+        return cls(success=False, message=message, failed_items=failed_items,
+                   error_category=error_category, error_code=error_code,
+                   recovery_action=recovery_action)
 
     @classmethod
     def partial_ok(cls, message: str, data: dict | None = None,
@@ -157,44 +184,43 @@ def _build_guard_chain() -> list | None:
         return None
 
 
-def execute_with_guardrails(spec, args: dict, ctx: ExecutionContext) -> ToolResult:
+def execute_with_guardrails(spec, args: dict, ctx: ExecutionContext,
+                            middlewares: list | None = None) -> ToolResult:
     """统一工具执行入口，GUI 和 MCP 共享同一条中间件链。
 
     链: PermissionGuard → InputValidationGuard → 工具执行 → OutputValidationGuard
-    B6: 消除 GUI/MCP 安全分叉。
+    B6+B1: 消除 GUI/MCP 安全分叉，支持自定义护栏链。
+    middlewares=None 时使用默认链；传入 [] 则跳过所有护栏。
     """
-    guards = _build_guard_chain()
+    guards = middlewares if middlewares is not None else _build_guard_chain()
     if guards is None:
         logger.critical("护栏模块导入失败，拒绝执行工具: %s", spec.name)
         return ToolResult.fail("安全护栏不可用，工具执行被拒绝")
 
-    perm_guard, input_guard, output_guard = guards
-
     step = {"tool": spec.name, "args": args}
 
-    # 1. 权限检查
-    perm_result = perm_guard.before_execute(step, ctx)
-    if not perm_result.allowed:
-        return ToolResult.fail(f"权限不足: {perm_result.reason}")
+    # 1. Before 中间件链
+    for mw in guards:
+        guard_result = mw.before_execute(step, ctx)
+        if not guard_result.allowed:
+            return ToolResult.fail(f"护栏拒绝: {guard_result.reason}")
+        if guard_result.modified_args is not None:
+            step["args"] = guard_result.modified_args
 
-    # 2. 输入校验
-    input_result = input_guard.before_execute(step, ctx)
-    if not input_result.allowed:
-        return ToolResult.fail(f"输入校验失败: {input_result.reason}")
+    # 2. 执行
+    raw_result = spec.execute(step.get("args", args), ctx)
 
-    # 3. 执行
-    raw_result = spec.execute(args, ctx)
-
-    # 4. 输出校验 — 适配 ToolResult 和 dict 两种返回格式
+    # 3. After 中间件链（逆序 — 洋葱模型）
     if isinstance(raw_result, ToolResult):
         from src.transbridge.smart_assistant.execution_engine import StepResult
-        temp_step = StepResult(
+        temp_result = StepResult(
             step_id="", tool=spec.name, success=raw_result.success,
             message=raw_result.message, data=raw_result.data, duration_ms=0,
         )
-        output_result = output_guard.after_execute(step, temp_step, ctx)
-        if not output_result.allowed:
-            return ToolResult.fail(f"输出校验拒绝: {output_result.reason}")
+        for mw in reversed(guards):
+            guard_result = mw.after_execute(step, temp_result, ctx)
+            if not guard_result.allowed:
+                return ToolResult.fail(f"输出校验拒绝: {guard_result.reason}")
         return raw_result
     elif isinstance(raw_result, dict):
         return ToolResult(
@@ -205,9 +231,27 @@ def execute_with_guardrails(spec, args: dict, ctx: ExecutionContext) -> ToolResu
     return raw_result
 
 
-# ── _filter_entries (H8) ───────────────────────────────────────
+# ── 装饰器 ──────────────────────────────────────────────────────
 
-def _filter_entries(collection: "TranslationEntryCollection",
+def require_collection(func):
+    """M3: 集合前置检查装饰器。统一替换 6 个文件中的手动检查。"""
+    import functools
+
+    @functools.wraps(func)
+    def wrapper(args: dict, ctx, *a, **kw) -> ToolResult:
+        collection = getattr(ctx, 'collection', None)
+        if collection is None:
+            return ToolResult.fail(
+                "当前没有加载翻译集合",
+                error_category="input", error_code="COLLECTION_NOT_LOADED",
+            )
+        return func(args, ctx, *a, **kw)
+    return wrapper
+
+
+# ── filter_entries (H8) ────────────────────────────────────────
+
+def filter_entries(collection: "TranslationEntryCollection",
                     filter_state: dict,
                     entry_labels: dict[str, set[str]] | None = None) -> list["TranslationEntry"]:
     """公共筛选函数。根据 filter_state 从 collection 中筛选条目。
@@ -264,7 +308,8 @@ def require_collection(func: Callable) -> Callable:
         slot = getattr(ctx, 'active_slot', None)
         collection = getattr(slot, 'collection', None) if slot else getattr(ctx, 'collection', None)
         if not collection or len(collection) == 0:
-            return ToolResult.fail("当前没有加载翻译集合")
+            return ToolResult.fail("当前没有加载翻译集合",
+                error_category="input", error_code="COLLECTION_NOT_LOADED")
         return func(args, ctx, collection)
     return wrapper
 
