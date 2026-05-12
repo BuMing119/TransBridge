@@ -56,7 +56,8 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [vector-term-retrieval](../plans/vector-term-retrieval/plan.md) | ✔️ 已实现 | — |
 | [agent-tool-expansion](../plans/agent-tool-expansion/plan.md) | ✅ 编码完成 (60工具, 7 namespaces, 7 Agent) | 14 |
 | [agent-upgrade](../plans/agent-upgrade/plan.md) | ✅ Phase 1 + Phase 2 全部完成 | 12 |
-| [llm-chat](../plans/llm-chat/plan.md) | ✔️ 已实现 | 7 |
+| [llm-chat](../plans/llm-chat/plan.md) | ✅ 全部编码完成 (S01-S08) | 8 |
+| [smart-assistant-qa-fix](../plans/smart-assistant-qa-fix/plan.md) | ✅ 已完成 — 46/50 修复，评分 51/60，测试 ~165 用例 | 7 |
 
 ---
 
@@ -87,6 +88,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | Epic | 最新增量 | 日期 |
 |------|---------|------|
 | ai-post-process | [S09: 编码实现与Story文档](changelogs/ai-post-process/story-09-standalone-polish/2026-05-07-002-编码实现与Story文档.md) | 2026-05-07 |
+| ai-post-process | [修复: _replace 崩溃](changelogs/ai-post-process/fix/2026-05-11-001-修复check_quality的_replace调用错误.md) | 2026-05-11 |
 | ui-workbench | [S15-S19 文件菜单重构系列](changelogs/ui-workbench/) | 2026-05-06 |
 | ui-workbench | [S20: FR7.9 需求分析](changelogs/ui-workbench/story-20-ux-unification/2026-05-07-001-需求分析FR79交互统一化.md) | 2026-05-07 |
 | ui-workbench | [S20: FR7.9 方案策划](changelogs/ui-workbench/story-20-ux-unification/2026-05-07-002-方案策划Story20-21.md) | 2026-05-07 |
@@ -96,6 +98,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | ui-workbench | [S16: 解析配置对话框提取](changelogs/ui-workbench/story-16-parse-config-dialog/2026-05-08-002-解析配置对话框独立提取.md) | 2026-05-08 |
 | llm-chat | [S01-S03 面板+后端+循环控制](changelogs/llm-chat/) | 2026-05-06 |
 | llm-chat | [S05: ContextBuilder与错误处理完善](changelogs/llm-chat/story-05-experience-optimization/2026-05-08-001-ContextBuilder与错误处理完善.md) | 2026-05-08 |
+| llm-chat | [S05: 系统提示词更新自我认知与能力描述](changelogs/llm-chat/story-05-experience-optimization/2026-05-11-002-系统提示词更新自我认知与能力描述.md) | 2026-05-11 |
 | llm-chat | [S06: 需求分析+架构+方案+Story展开](changelogs/llm-chat/story-06-layering-backend/2026-05-10-001-需求分析架构方案Story展开.md) | 2026-05-10 |
 | llm-chat | [S06: 后端包创建与文件搬迁](changelogs/llm-chat/story-06-layering-backend/2026-05-10-002-后端包创建与文件搬迁.md) | 2026-05-10 |
 | llm-chat | [S07: Story详细展开](changelogs/llm-chat/story-07-layering-ui/2026-05-10-001-Story07详细展开.md) | 2026-05-10 |
@@ -105,6 +108,8 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | stage-unification | [S01: Story-01 编码](changelogs/stage-unification/story-01-data-layer-stage/2026-05-07-002-Story01编码Stage常量定义.md) | 2026-05-07 |
 | stage-unification | [S01: 常量统一与写回锁定隐藏](changelogs/stage-unification/story-01-data-layer-stage/2026-05-08-003-常量统一与写回锁定隐藏逻辑.md) | 2026-05-08 |
 | ai-translation | [S09: 三维度作用域选择器重构](changelogs/ai-translation/story-09-scope-selector/2026-05-08-003-三维度作用域选择器重构.md) | 2026-05-08 |
+| ai-translation | [修复: EmbeddingConfig属性访问与默认模型名](changelogs/ai-translation/fix/2026-05-11-001-修复EmbeddingConfig属性访问与默认模型名.md) | 2026-05-11 |
+| ai-translation | [修复: 配置窗口滚动区域与宽度调整](changelogs/ai-translation/fix/2026-05-11-002-配置窗口滚动区域与宽度调整.md) | 2026-05-11 |
 | label-system | [S01: 标签库UI集成与右键菜单](changelogs/label-system/story-01-label-model/2026-05-08-005-标签库UI集成与右键菜单.md) | 2026-05-08 |
 | project-init | [001-007 文档体系初始化](changelogs/project-init/docs-bootstrap/) | 2026-05-06 |
 | project-init | [008-FR8 需求扩展](changelogs/project-init/docs-bootstrap/2026-05-08-001-FR8需求扩展翻译版本管理.md) | 2026-05-08 |
@@ -146,6 +151,8 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | 2026-05-09 | ai-post-process Story-10~13 (报告系统) | ✅ 通过 — 19项覆盖，0 Blocker |
 | 2026-05-10 | agent-upgrade Phase 2 (Agent框架升级) | ✅ 通过 — 15项覆盖，0 Blocker，安全加固完成（AST沙箱+路径防御） |
 | 2026-05-11 | agent-tool-expansion QA 审查 (Agent工具扩展) | ⚠ 需修复 — 89测试通过，发现28项问题(2B+6C+8M+12m)，已全部修复 |
+| 2026-05-11 | smart-assistant 全面审查 (Smart Assistant AI助手) | ⚠ 需修复 — 4维度并行审查，发现3B+10C+16M+21m，综合评分32/60 |
+| 2026-05-12 | smart-assistant-qa-fix 修复验证 (FR7.15 QA修复) | ✅ 通过 — 46/50 修复，综合评分 32→51/60，测试覆盖 ~165 用例，仅余 4 Minor 已知限制 |
 
 ---
 
@@ -183,3 +190,21 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | 2026-05-11 | FR9 plan.md v2 更新完成：按确认书重写全部 14 个 Story（05 废弃/14 新增），新增独立 PR + P2 迭代章节，方案状态 → 已确认 | /bm-plan |
 | 2026-05-11 | FR9 14 个 Story 文档批量 v2 更新：Story 01-04/09 完整重写验收标准与实现步骤，Story 05 标记废弃，Story 14 新建，Story 06-08/10-13 头部标注 v2 状态 | /bm-story-batch |
 | 2026-05-11 | FR9 Story 14 集成测试编码完成：tests/test_agent_tool_integration.py (~1060行, 89测试用例, 12测试类)，覆盖全链路/标签/安全/配置/ParaTranz/解析写回/Agent注册 | /bm-dev |
+| 2026-05-11 | AI 翻译器修复：EmbeddingConfig 属性访问回归修正（cfg.embedding_provider → cfg.embedding.provider 等5项）+ 默认模型名修正（gpt-4o → deepseek-v4-pro） | — |
+| 2026-05-11 | AI 翻译器 UI 修复：内容区包裹 QScrollArea 防止窗口超出屏幕 + 默认宽度 560→680 | — |
+| 2026-05-11 | Smart AI 系统提示词更新：身份重定位为 TransBridge 操作助手 + 多 Agent/Skill/文件/记忆能力感知 + 回复风格约束 | — |
+| 2026-05-11 | Smart Assistant QA 全面审查：4维度并行（功能/安全/性能/代码质量），发现 3B+10C+16M+21m，综合评分 32/60，报告写入 docs/test-reports/smart-assistant.md | — |
+| 2026-05-11 | AI 后处理修复：check_quality 工具 _execute_decisions 调用不存在的 entry._replace() 崩溃 → 改为直接修改 dataclass 字段 | — |
+| 2026-05-11 | 新增 FR7.14 智能助手页面体验全面翻新需求（布局重组+对话增强+交互简化+视觉现代化，Markdown渲染器作为 infra/ 共享基础设施）→ changelog s08-001 | /bm-analyze |
+| 2026-05-11 | FR7.14 方案策划：llm-chat plan.md 追加 Story-08（4子Story：Markdown渲染器/视觉翻新/布局重组/交互优化），plans/INDEX.md 同步更新 Story 数 7→8 → changelog s08-001 | /bm-plan |
+| 2026-05-11 | Story-08-1 编码完成：新建 infra/markdown_renderer.py (~270行, MarkdownRenderer 类)，支持标题/代码块/列表/表格/链接/水平线，零外部依赖，12/12 验证通过 → changelog s08-002 | /bm-dev |
+| 2026-05-11 | Story-08-2 视觉翻新与去Emoji：message_bubble 重写(MarkdownRenderer渲染)，chat_widget/tool_card/plan_card 样式现代化(圆角/配色/字体)，全局去除所有代码中emoji → changelog s08-003 | /bm-dev |
+| 2026-05-11 | Story-08-3 布局重组与滚动优化：quick_actions 重写为 QuickActionsChips(chips标签行)，panel 精简布局，chat_widget 删除Agent指示器+合并工具栏+回到底部浮动按钮 → changelog s08-004 | /bm-dev |
+| 2026-05-11 | Story-08-4 流式打字机与自动模式：chat_widget 实现流式渲染(50ms节流+MarkdownRenderer增量刷新)、自动模式开关(QSettings持久化)、admin级工具安全护栏、流式中断清理 → changelog s08-005 | /bm-dev |
+| 2026-05-12 | 新增 FR7.15 Smart Assistant QA 全面修复需求 + 方案策划 + 7 Story 展开：基于 2026-05-11 QA 审查报告（3B+10C+16M+21m，评分 32/60），新建统一修复 Epic `smart-assistant-qa-fix`，7 Story 全部已确认，预估 22h → changelog planning-001 | /bm-plan + /bm-story-batch |
+| 2026-05-12 | FR7.15 S01-S06 编码完成：13 文件修改，覆盖 2B+9C+10M — ReAct护栏接入/异步通知/MCP认证/路径校验/前置条件/ToolResult扩展/线程清理/ADR-008修复/RetryHandler实例化 → changelog s01~06-001 | /bm-dev |
+| 2026-05-12 | FR7.15 S06 补充：v1 工具 @deprecated 标记 + ReAct retry 循环 + progress 锁修复 + TaskManager.reset() + clear_all_filters 权限修正 + list_local_projects 路径脱敏 → changelog s06-002 | /bm-dev |
+| 2026-05-12 | FR7.15 S07 部分测试：新建 3 个测试文件（ConversationManager 10 用例 / ContextBuilder 7 用例 / MarkdownRenderer 14 用例），31 测试全部通过 → changelog s07-001 | /bm-dev |
+| 2026-05-12 | FR7.15 S06 Minor 收尾：修复 17 项（m1/m2/m5/m6/m7/m8/m9/m11/m12/m14/m15/m19 + M2 深度去重 + M6 RetryHandler 集成），11 文件修改，5 个 v1 工具标记 deprecated，filter_entries 重命名，忙等轮询改 Condition.wait，ThreadPoolExecutor 复用，FAISS rebuild_index → changelog s06-003 | /bm-dev |
+| 2026-05-12 | FR7.15 S05 补完 + S06 批量装饰器：MemoryStore 异步写入(MemoryWriterThread QThread) + LRU 淘汰(max_entries) + close()；ConversationManager _trim 重写为按轮次裁剪 + add_observation/plan_result 2000 字截断；build_system_prompt namespace 参数；panel closeEvent memory_store.close()；@require_collection 批量替换 8 函数(3 文件) + 装饰器补全 error_category/code → changelog s05-002 + s06-004 | /bm-dev |
+| 2026-05-12 | FR7.15 S07 测试补完：5 个新测试文件（MemoryStore 10/MCP 10/ChatWorker 6/Observability 9/ExecutionEngine 10），45/49 通过(4 skip)，测试报告更新评分 51/60 + 审查结论 ✅ 通过 → changelog s07-002 | /bm-qa |

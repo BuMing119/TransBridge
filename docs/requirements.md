@@ -298,6 +298,49 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
   - **FR7.11.5 动态标签筛选**: 标签筛选行 SHALL 动态显示标签库中的标签按钮（非固定三态），点击筛选对应标签条目。计数为 0 的标签隐藏。与分类/状态/搜索 AND 叠加。
   - **FR7.11.6 聚焦开关**: SHALL 保留「只看已标记」聚焦按钮，改为过滤出所有有标签的条目（`_entry_labels` 非空）。无标签条目时按钮禁用。
 
+**FR7.14 智能助手页面体验全面翻新** — *2026-05-11 | 状态: 待方案 | 优先级: P1*: 系统 SHALL 对 SmartAssistant 面板的 UI 层（6 个文件）进行四个维度的全面体验升级——布局重组（观测面板折叠+Agent 指示器移除）、对话增强（流式打字机+Markdown 渲染）、交互简化（自动模式开关）、视觉现代化（现代聊天应用风格）。后端 `smart_assistant/` 包不动，所有现有功能（ReAct 循环/Plan 模式/工具执行/文件上传/观测数据采集）保持正常。Markdown 渲染器 SHALL 提取为 `infra/` 共享基础设施组件，供消息气泡、后处理报告、Agent 输出等全局复用。
+
+  - **FR7.14.1 Markdown 渲染器（基础设施）**: 系统 SHALL 在 `src/transbridge/infra/markdown_renderer.py` 中实现共享 Markdown 渲染组件。支持标题（H1-H6）、粗体/斜体/行内代码、代码块（带语言标注）、无序/有序列表、表格、链接、水平线。渲染输出为 QWidget（非 QLabel），支持文本选择和链接点击。不规范的 LLM 输出（混搭格式/未闭合标签）SHALL 降级为纯文本渲染，不崩溃。渲染器 SHALL 无 PyQt 之外的第三方依赖。
+
+  - **FR7.14.2 流式打字机效果**: ChatWidget SHALL 支持 LLM 响应的流式逐字/逐句渲染。ChatWorker 已有 `chunk` 信号（当前为空实现），聊天区 SHALL 在收到每个 chunk 时追加到当前 AI 气泡中，产生打字机效果。流式输出过程中用户发送新消息或取消时 SHALL 正确中断旧 worker 并清理残留气泡。打字速度可通过配置调整（默认无延迟，跟随 API 返回速率）。
+
+  - **FR7.14.3 布局重组**: 观测面板（Token/工具调用/轮次 Tab）SHALL 默认折叠，仅显示可点击的标题栏（如「📊 观测面板 ▸」），点击展开。Agent 状态指示器 SHALL 从主界面移除，状态信息合并到观测面板的轮次 Tab 中。上传栏 SHALL 移入输入框上方的工具栏行（与快捷指令按钮同行或可折叠）。消息滚动区 SHALL 获得释放的垂直空间。
+
+  - **FR7.14.4 自动模式开关**: PlanCard/ToolCard SHALL 新增「自动模式」开关（默认关闭）。开关关闭时保持当前手动确认流程（显示卡片→用户点击执行/忽略→反馈结果）。开关打开时 LLM 返回的工具调用/计划 SHALL 自动执行，不显示确认卡片，仅显示执行结果摘要。自动模式开关状态 SHALL 在会话内持久化（QSettings）。管理员级（admin）工具在自动模式下 SHALL 仍然弹窗确认（安全护栏优先级高于自动模式）。
+
+  - **FR7.14.5 视觉风格现代化**: 消息气泡 SHALL 采用现代聊天应用风格——圆角（12-16px）、柔和阴影、用户气泡右对齐（品牌色背景）、AI 气泡左对齐（白色/浅灰背景+细边框）、系统消息居中（更小字号+灰色）。输入框 SHALL 采用圆角多行文本编辑区，发送按钮突出显示。快捷指令按钮 SHALL 改为小圆角标签样式。整体配色以中性灰白为主调，辅以品牌色点缀。字体大小和间距适度增大（正文 13-14px，行距 1.5-1.6）。
+
+  - **FR7.14.6 消息区滚动优化**: 消息区 SHALL 支持平滑滚动（QScrollBar 动画）。新消息到达时自动滚到底部，但用户手动上滚查看历史时 SHALL 不强制拉回底部（显示「↓ 回到底部」浮动按钮）。消息加载 SHALL 支持虚拟列表或懒加载，避免大量消息时卡顿（当前会话上限 20 轮，历史会话不限）。
+
+  - **FR7.14.7 快捷指令面板重构**: 快捷指令按钮 SHALL 从独立的 `QuickActionsPanel`（固定高度 48px）改为嵌入输入框上方的标签式工具栏。按钮样式从 QPushButton 改为小型圆角标签（类似聊天应用的「建议操作」chips）。Skill 下拉按钮保留。工具栏可折叠或自动隐藏。
+
+  **关联需求**:
+  - FR7.12（SmartAssistant 代码分层）— 本次仅改 UI 层，后端不动
+  - FR7.13.9（可观测性）— 观测面板折叠但数据采集不停
+  - ADR-010（infra/ 共享基础设施提取）— Markdown 渲染器归入 infra/
+  - FR5.10/FR6.10（AI 翻译/后处理报告）— Markdown 渲染器可复用于报告展示
+
+  **异常场景**:
+  - Markdown 渲染器遇到不规范 LLM 输出（混搭格式/未闭合标签）→ 降级为纯文本，不崩溃
+  - 流式输出中用户发送新消息 → 正确中断旧 worker，清理残留气泡，开始新对话轮次
+  - 自动模式下工具执行失败 → 错误信息追加到对话，不阻塞后续自动步骤
+  - 观测面板折叠状态下新工具调用/轮次数据 → 后台正常记录，展开后面板刷新显示
+  - 窗口宽度 < 300px → 消息气泡和输入框采用弹性布局，不溢出
+  - 自动模式下 admin 级工具触发 → 仍然弹窗确认，安全护栏不受自动模式影响
+
+**FR7.15 Smart Assistant QA 全面修复** — *2026-05-12 | 状态: 已方案 | 优先级: P0*: 系统 SHALL 基于 QA 审查报告（`docs/test-reports/smart-assistant.md`）修复 Smart Assistant 的全部 50 项问题（3 Blocker + 10 Critical + 16 Major + 21 Minor），覆盖 llm-chat / agent-upgrade / agent-tool-expansion 三个 Epic 的安全、功能、性能、代码质量四个维度。
+
+  - **FR7.15.1 安全护栏修复**: ReAct 模式 SHALL 通过 `execute_with_guardrails()` 执行工具，而非绕过中间件链直接调用 `spec.execute()`。ExecutionEngine SHALL 使用传入的 `middlewares` 参数构建护栏链，而非忽略用户配置。用户上传文件内容 SHALL NOT 直接拼接到系统提示词中。
+  - **FR7.15.2 异步通知**: TaskManager SHALL 添加 `task_completed` / `task_failed` pyqtSignal，异步翻译/润色任务完成后自动通知 LLM 结果。
+  - **FR7.15.3 安全加固**: MCP stdio 通道 SHALL 支持可选 token 认证。v1 工具 SHALL 添加路径校验。输入校验正则 SHALL 放宽以允许游戏标记语言中的合法 HTML 标签。
+  - **FR7.15.4 配置完整性**: `get_translation_config` SHALL 返回真实的后处理/术语配置。`start_translation` SHALL 检查 API Key/术语数据库等前置条件。`ToolResult.fail()` SHALL 支持 `error_category`/`error_code`/`recovery_action` 字段。
+  - **FR7.15.5 线程与资源**: 记忆持久化 SHALL 从 UI 线程移出。面板关闭时 SHALL 清理运行中的 worker/engine。MemoryStore SHALL 添加 LRU 淘汰策略。ConversationManager SHALL 正确裁剪工具调用消息。系统 SHALL 实现 Token 预算和截断机制。
+  - **FR7.15.6 代码清理**: `context_builder.py` SHALL NOT 直接 import UI 模块（修复 ADR-008 违规）。死代码 SHALL 移除或正确实例化。collection-is-None 检查 SHALL 统一使用 `@require_collection` 装饰器。
+  - **FR7.15.7 测试补充**: 系统 SHALL 为 ChatWorker / ConversationManager / ExecutionEngine / MemoryStore / ContextBuilder / MarkdownRenderer / MCP 模块补充测试覆盖。
+
+  **关联需求**: FR7.12（代码分层）、FR7.13（Agent 框架）、FR7.14（UX 翻新）、FR9（工具扩展）
+  **对应方案**: `plans/smart-assistant-qa-fix/plan.md`（7 Story，预估 22h）
+
 ### FR8: 项目持久化与翻译版本管理
 
 **FR8.1 项目模型** — *2026-05-08 | 状态: 已实现 | 优先级: P1*: 系统 SHALL 引入「项目」作为翻译工程的顶层管理单元。一个项目代表一个 Mod 的完整翻译工作（如"Dragonborn Translation"），可包含多个源文件集合（ESP/EET/XT/Strings），以及多个翻译版本（Variant）。当项目包含多种格式源文件时，SHALL 以 ESP 插件的 key 格式为主格式。数据模型为三层结构：项目(Project) → 版本(Variant) → 源文件翻译数据。
@@ -656,3 +699,4 @@ Agent SHALL 可查询软件全局状态和执行 UI 导航。
 | 2026-05-10 | 展开 FR7.13 Phase 2 子需求细节：分三批实施（P0 多Agent协作+安全护栏 / P1 Graph编排+可观测性 / P2 MCP Server），Graph 引擎确定为自研轻量方案（零新依赖），每个子需求扩展为详细验收标准+边界条件+异常场景 | /bm-analyze (via /bm-orchestrator --auto) |
 | 2026-05-10 | 新增 FR9 Agent 工具系统全面扩展：6大功能域、新增4个Agent（parser/editor/paratranz/writer）、分P0/P1/P2三批发版 | /bm-analyze → /bm-council 评审修正 |
 | 2026-05-10 | FR9 评审委员会修正：架构师路线（纯数据操作）、拆分为 tools/ 子包、新增 FR9.0 基础设施（ToolResult/TaskManager/@require_collection/@validate_params）、权限修正（arbitration→write）、裁剪 navigate_to/get_write_status/get|set_parse_config、新增 compare_with_remote + list_local_projects + get_current_project | /bm-council |
+| 2026-05-11 | 新增 FR7.14 智能助手页面体验全面翻新（布局重组+对话增强+交互简化+视觉现代化，Markdown渲染器作为 infra/ 共享基础设施） | /bm-analyze |
