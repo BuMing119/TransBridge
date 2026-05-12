@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
 )
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 
 
 class ToolCard(QWidget):
@@ -15,16 +15,17 @@ class ToolCard(QWidget):
         self._step = step
         self.setObjectName("ToolCard")
         self.setStyleSheet(
-            "#ToolCard { background-color: #FFF8E1; border-radius: 8px; padding: 8px; }"
+            "#ToolCard { background-color: #FFF8E1; border: 1px solid #FFE082;"
+            " border-radius: 12px; }"
         )
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setContentsMargins(14, 10, 14, 10)
         layout.setSpacing(6)
 
         tool_name = step.get("tool", "?")
-        title = QLabel(f"🔧 {tool_name}")
-        title.setStyleSheet("font-weight: bold; font-size: 13px;")
+        title = QLabel(f"[Tool] {tool_name}")
+        title.setStyleSheet("font-weight: bold; font-size: 13px; color: #333;")
         layout.addWidget(title)
 
         # 参数展示
@@ -32,15 +33,31 @@ class ToolCard(QWidget):
         if args:
             args_text = ", ".join(f"{k}={v}" for k, v in args.items())
             args_label = QLabel(f"参数: {args_text}")
-            args_label.setStyleSheet("color: #666; font-size: 11px;")
+            args_label.setStyleSheet("color: #888; font-size: 11px;")
             args_label.setWordWrap(True)
             layout.addWidget(args_label)
 
         # 按钮行
         btn_row = QHBoxLayout()
         self._exec_btn = QPushButton("执行")
+        self._exec_btn.setStyleSheet(
+            "QPushButton {"
+            "  background-color: #4CAF50; color: white; border: none;"
+            "  border-radius: 6px; padding: 4px 14px; font-size: 12px;"
+            "}"
+            "QPushButton:hover { background-color: #43A047; }"
+        )
+        self._exec_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._exec_btn.clicked.connect(self._on_execute)
         self._ignore_btn = QPushButton("忽略")
+        self._ignore_btn.setStyleSheet(
+            "QPushButton {"
+            "  background-color: #f5f5f5; border: 1px solid #ddd;"
+            "  border-radius: 6px; padding: 4px 14px; font-size: 12px; color: #666;"
+            "}"
+            "QPushButton:hover { background-color: #e8e8e8; }"
+        )
+        self._ignore_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._ignore_btn.clicked.connect(self._on_ignore)
         btn_row.addStretch()
         btn_row.addWidget(self._exec_btn)
@@ -53,7 +70,7 @@ class ToolCard(QWidget):
         layout.addWidget(self._result_label)
 
     def set_result(self, success: bool, message: str) -> None:
-        icon = "✅" if success else "❌"
+        icon = "[OK]" if success else "[FAIL]"
         self._result_label.setText(f"{icon} {message}")
         self._result_label.setVisible(True)
         self._exec_btn.setEnabled(False)
@@ -81,22 +98,33 @@ class BatchToolCard(QWidget):
         self._steps = steps
         self.setObjectName("BatchToolCard")
         self.setStyleSheet(
-            "#BatchToolCard { background-color: #FFF8E1; border-radius: 8px; padding: 8px; }"
+            "#BatchToolCard { background-color: #FFF8E1; border: 1px solid #FFE082;"
+            " border-radius: 12px; }"
         )
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setContentsMargins(14, 10, 14, 10)
         layout.setSpacing(4)
 
-        title = QLabel(f"🔧 批量执行（共 {len(steps)} 步）")
-        title.setStyleSheet("font-weight: bold; font-size: 13px;")
+        title = QLabel(f"[Tool] 批量执行（共 {len(steps)} 步）")
+        title.setStyleSheet("font-weight: bold; font-size: 13px; color: #333;")
         layout.addWidget(title)
 
         for s in steps:
             name = s.get("tool", "?")
-            layout.addWidget(QLabel(f"  · {name}"))
+            item = QLabel(f"  · {name}")
+            item.setStyleSheet("color: #555; font-size: 12px;")
+            layout.addWidget(item)
 
         self._exec_btn = QPushButton("全部执行")
+        self._exec_btn.setStyleSheet(
+            "QPushButton {"
+            "  background-color: #4CAF50; color: white; border: none;"
+            "  border-radius: 6px; padding: 4px 14px; font-size: 12px; font-weight: bold;"
+            "}"
+            "QPushButton:hover { background-color: #43A047; }"
+        )
+        self._exec_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._exec_btn.clicked.connect(self._on_execute)
         layout.addWidget(self._exec_btn)
 

@@ -2,11 +2,13 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
     QTextEdit, QPushButton, QFileDialog, QLabel,
     QMessageBox, QTabWidget, QTableWidget, QTableWidgetItem,
-    QListWidget, QListWidgetItem, QHeaderView,
+    QListWidget, QListWidgetItem, QHeaderView, QCheckBox,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QEvent, QTimer
+from PyQt6.QtCore import Qt, pyqtSignal, QEvent, QTimer, QSettings
+from pathlib import Path
 
 from .message_bubble import MessageBubble
+from .quick_actions import QuickActionsChips
 from src.transbridge.smart_assistant.conversation_manager import ConversationManager
 from src.transbridge.smart_assistant.chat_worker import ChatWorker
 from src.transbridge.smart_assistant.execution_engine import ExecutionEngine, StepResult
@@ -23,6 +25,12 @@ class ChatWidget(QWidget):
         super().__init__(parent)
         self._ctx = ctx
 
+        # 全局字体
+        from PyQt6.QtGui import QFont
+        font = QFont("Microsoft YaHei", 10)
+        font.setStyleHint(QFont.StyleHint.SansSerif)
+        self.setFont(font)
+
         self._conversation = ConversationManager(max_turns=20)
         self._worker: ChatWorker | None = None
         self._engine: ExecutionEngine | None = None
@@ -30,6 +38,23 @@ class ChatWidget(QWidget):
         self._prompt_builder = None
         self._consecutive_errors = 0
         self._uploaded_docs: dict[str, object] = {}  # filename → ParsedDocument
+        self._middlewares: list | None = None  # B1: 延迟构建护栏链
+
+        # 流式打字机状态
+        self._streaming_text = ""
+        self._streaming_bubble: MessageBubble | None = None
+        self._streaming_dirty = False
+        self._streaming_timer = QTimer(self)
+        self._streaming_timer.setInterval(50)
+        self._streaming_timer.timeout.connect(self._flush_streaming)
+
+        # 自动模式 (QSettings 持久化)
+        self._auto_mode = False
+        try:
+            qs = QSettings("TransBridge", "SmartAssistant")
+            self._auto_mode = qs.value("auto_mode", False, type=bool)
+        except Exception:
+            pass
 
         # 长期记忆
         from src.transbridge.config.paths import get_data_dir
@@ -43,6 +68,12 @@ class ChatWidget(QWidget):
         from src.transbridge.smart_assistant.observability import ObservabilityCollector
         self._obs_collector = ObservabilityCollector(storage_dir=Path(get_data_dir()) / "observability")
         self._obs_collector.token_stats_updated.connect(self._on_token_stats_updated)
+
+        # B2: 异步任务完成通知
+        from src.transbridge.smart_assistant.tools.task_manager import TaskManager
+        tm = TaskManager()
+        tm.task_completed.connect(self._on_task_completed)
+        tm.task_failed.connect(self._on_task_failed)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -62,33 +93,62 @@ class ChatWidget(QWidget):
 
         layout.addWidget(self._scroll, stretch=1)
 
-        # ── 文件上传栏 ──
-        upload_row = QHBoxLayout()
+        # ── 回到底部浮动按钮 ──
+        self._back_to_bottom_btn = QPushButton("[v] 回到底部", self._scroll)
+        self._back_to_bottom_btn.setStyleSheet(
+            "QPushButton {"
+            "  background: rgba(0,0,0,0.55); color: white; border: none;"
+            "  border-radius: 14px; padding: 5px 12px; font-size: 11px;"
+            "}"
+            "QPushButton:hover { background: rgba(0,0,0,0.7); }"
+        )
+        self._back_to_bottom_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._back_to_bottom_btn.clicked.connect(self._on_back_to_bottom)
+        self._back_to_bottom_btn.setVisible(False)
+        self._back_to_bottom_btn.raise_()
+
+        # 监听滚动
+        vsb = self._scroll.verticalScrollBar()
+        if vsb:
+            vsb.valueChanged.connect(self._on_scroll_changed)
+
+        # ── 工具栏：chips 快捷指令 + 上传 ──
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(6)
+        self._chips = QuickActionsChips()
+        self._chips.action_clicked.connect(self.set_input)
+        self._chips.skill_triggered.connect(self._on_skill)
+        toolbar.addWidget(self._chips, stretch=1)
         self._upload_label = QLabel("")
-        self._upload_label.setStyleSheet("color: #666; font-size: 11px;")
-        upload_btn = QPushButton("上传参考文件")
+        self._upload_label.setStyleSheet("color: #888; font-size: 11px;")
+        upload_btn = QPushButton("上传")
         upload_btn.setToolTip("上传纠错表/术语参考/风格指南（Excel/CSV/Markdown/TXT/JSON/PDF/Word）")
+        upload_btn.setStyleSheet(
+            "QPushButton {"
+            "  background-color: #f5f5f5; border: 1px solid #ddd; border-radius: 12px;"
+            "  padding: 3px 10px; font-size: 11px; color: #666;"
+            "}"
+            "QPushButton:hover { background-color: #e8e8e8; }"
+        )
+        upload_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         upload_btn.clicked.connect(self._on_upload_file)
-        upload_row.addWidget(upload_btn)
-        upload_row.addWidget(self._upload_label, stretch=1)
-        layout.addLayout(upload_row)
+        toolbar.addWidget(upload_btn)
+        toolbar.addWidget(self._upload_label)
+        layout.addLayout(toolbar)
 
-        # ── Agent 状态指示器 (S07) ──
-        agent_row = QHBoxLayout()
-        agent_row.setSpacing(8)
-        agent_label = QLabel("Agent:")
-        agent_label.setStyleSheet("color: #888; font-size: 10px;")
-        agent_row.addWidget(agent_label)
-        self._agent_indicators: dict[str, QLabel] = {}
-        for agent_id, label_text in [("translator", "翻译"), ("proofreader", "校对"), ("orchestrator", "编排")]:
-            lbl = QLabel(f"○ {label_text}")
-            lbl.setStyleSheet("color: #999; font-size: 10px; padding: 1px 4px;")
-            agent_row.addWidget(lbl)
-            self._agent_indicators[agent_id] = lbl
-        agent_row.addStretch()
-        layout.addLayout(agent_row)
+        # ── 观测面板 Tab (S11) — 默认折叠 ──
+        self._obs_header = QPushButton("[>] 观测面板")
+        self._obs_header.setStyleSheet(
+            "QPushButton {"
+            "  text-align: left; background: #fafafa; border: 1px solid #e0e0e0;"
+            "  border-radius: 6px; padding: 4px 10px; font-size: 11px; color: #888;"
+            "}"
+            "QPushButton:hover { background: #f0f0f0; }"
+        )
+        self._obs_header.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._obs_header.clicked.connect(self._toggle_obs_panel)
+        layout.addWidget(self._obs_header)
 
-        # ── 观测面板 Tab (S11) ──
         self._obs_tabs = QTabWidget()
         self._obs_tabs.setMaximumHeight(160)
         self._obs_tabs.setStyleSheet("font-size: 10px;")
@@ -112,21 +172,59 @@ class ChatWidget(QWidget):
         self._obs_round_list = QListWidget()
         self._obs_tabs.addTab(self._obs_round_list, "轮次")
         layout.addWidget(self._obs_tabs)
+        self._obs_tabs.setVisible(False)  # 默认折叠
 
         # ── 输入框 ──
         self._input = QTextEdit()
         self._input.setMaximumHeight(100)
+        self._input.setMinimumHeight(60)
         self._input.setPlaceholderText("输入消息，Ctrl+Enter 发送")
+        self._input.setStyleSheet(
+            "QTextEdit {"
+            "  border: 1px solid #ddd; border-radius: 12px;"
+            "  padding: 8px 12px; font-size: 13px;"
+            "  background: #fff;"
+            "}"
+            "QTextEdit:focus { border-color: #4CAF50; }"
+        )
         self._input.installEventFilter(self)
         layout.addWidget(self._input)
 
         # ── 按钮行 ──
         btn_row = QHBoxLayout()
         clear_btn = QPushButton("清空对话")
+        clear_btn.setStyleSheet(
+            "QPushButton {"
+            "  background-color: #f5f5f5; border: 1px solid #ddd; border-radius: 8px;"
+            "  padding: 6px 14px; font-size: 12px; color: #666;"
+            "}"
+            "QPushButton:hover { background-color: #e8e8e8; }"
+        )
+        clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         clear_btn.clicked.connect(self._clear_conversation)
         send_btn = QPushButton("发送")
+        send_btn.setStyleSheet(
+            "QPushButton {"
+            "  background-color: #4CAF50; color: white; border: none;"
+            "  border-radius: 8px; padding: 6px 20px;"
+            "  font-size: 13px; font-weight: bold;"
+            "}"
+            "QPushButton:hover { background-color: #43A047; }"
+            "QPushButton:pressed { background-color: #388E3C; }"
+        )
+        send_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         send_btn.clicked.connect(self._on_send)
         btn_row.addWidget(clear_btn)
+        # 自动模式开关
+        self._auto_cb = QCheckBox("Auto")
+        self._auto_cb.setToolTip("自动模式：LLM返回工具/计划时直接执行，不显示确认卡片（admin级工具始终确认）")
+        self._auto_cb.setChecked(self._auto_mode)
+        self._auto_cb.toggled.connect(self._on_auto_mode_toggled)
+        self._auto_cb.setStyleSheet(
+            "QCheckBox { font-size: 11px; color: #888; spacing: 4px; }"
+            "QCheckBox:hover { color: #555; }"
+        )
+        btn_row.addWidget(self._auto_cb)
         btn_row.addStretch()
         btn_row.addWidget(send_btn)
         layout.addLayout(btn_row)
@@ -198,6 +296,11 @@ class ChatWidget(QWidget):
             sys_prompt = build_system_prompt(context)
             self._conversation.add_system(sys_prompt)
 
+        # 插入占位气泡用于流式渲染
+        self._streaming_text = ""
+        self._streaming_bubble = MessageBubble("...", "assistant")
+        self._add_bubble(self._streaming_bubble)
+
         self._react_depth += 1
         messages = self._conversation.get_messages()
         self._worker = ChatWorker(client, messages, max_tokens=2048)
@@ -207,15 +310,45 @@ class ChatWidget(QWidget):
         self._worker.start()
 
     def _on_llm_chunk(self, chunk: str) -> None:
-        pass  # 流式打字机效果预留给 Story-05
+        self._streaming_text += chunk
+        self._streaming_dirty = True
+        if not self._streaming_timer.isActive():
+            self._streaming_timer.start()
+
+    def _flush_streaming(self) -> None:
+        """节流渲染：每 50ms 将累积文本刷新到气泡中。"""
+        if not self._streaming_dirty or self._streaming_bubble is None:
+            self._streaming_timer.stop()
+            return
+        self._streaming_dirty = False
+        # 替换旧气泡
+        old = self._streaming_bubble
+        idx = self._msg_layout.indexOf(old)
+        if idx >= 0:
+            self._msg_layout.removeWidget(old)
+            old.deleteLater()
+        self._streaming_bubble = MessageBubble(self._streaming_text, "assistant")
+        if idx >= 0:
+            self._msg_layout.insertWidget(idx, self._streaming_bubble)
+        else:
+            self._add_bubble(self._streaming_bubble)
+        self._scroll_to_bottom()
 
     def _on_llm_finished(self, response: str) -> None:
+        # 停止流式 timer，最终刷新
+        self._streaming_timer.stop()
+        if self._streaming_bubble:
+            self._flush_streaming()
+            self._streaming_bubble = None
+        self._streaming_text = ""
+
         self._consecutive_errors = 0  # 成功响应，重置错误计数
         pb = self._get_prompt_builder()
         parsed = pb.parse_hybrid_response(response)
 
         thought = parsed.get("thought", "")
-        if thought:
+        # 流式渲染已包含 thought，仅无流式气泡时才单独显示
+        if thought and not self._streaming_bubble:
             self.add_assistant_bubble(thought)
 
         self._conversation.add_assistant(response)
@@ -223,7 +356,9 @@ class ChatWidget(QWidget):
         steps = parsed.get("steps", [])
         mode = parsed.get("mode", "react")
 
-        if mode == "plan" and steps:
+        if self._auto_mode and steps:
+            self._auto_execute_steps(steps, mode)
+        elif mode == "plan" and steps:
             self.add_plan_card(steps)
         elif len(steps) == 1:
             self.add_tool_card(steps[0])
@@ -247,6 +382,9 @@ class ChatWidget(QWidget):
             pass  # 记忆记录失败不影响对话流程
 
     def _on_llm_error(self, msg: str) -> None:
+        self._streaming_timer.stop()
+        self._streaming_text = ""
+        self._streaming_dirty = False
         self._react_depth = 0
         self._consecutive_errors += 1
 
@@ -256,42 +394,30 @@ class ChatWidget(QWidget):
         is_auth = "401" in msg or "403" in msg or "unauthorized" in msg.lower()
 
         if is_auth:
-            self.add_system_message("🔑 API 认证失败，请检查 LLM API Key 配置是否正确。")
+            self.add_system_message("API 认证失败，请检查 LLM API Key 配置是否正确。")
             self._consecutive_errors = 0
         elif is_network:
             if self._consecutive_errors >= 3:
                 self.add_system_message(
-                    f"⚠ 连续 {self._consecutive_errors} 次网络错误，请检查网络连接或 VPN 状态后重试。"
+                    f"连续 {self._consecutive_errors} 次网络错误，请检查网络连接或 VPN 状态后重试。"
                 )
             else:
-                self.add_system_message(f"🌐 网络请求失败: {msg}")
+                self.add_system_message(f"网络请求失败: {msg}")
                 # 添加重试按钮
-                retry_btn = QPushButton("🔄 重试")
+                retry_btn = QPushButton("重试")
                 retry_btn.setCursor(Qt.CursorShape.PointingHandCursor)
                 retry_btn.clicked.connect(self._on_retry)
                 self._add_widget(retry_btn)
         else:
-            self.add_system_message(f"❌ 请求失败: {msg}")
+            self.add_system_message(f"请求失败: {msg}")
 
     # ── 计划模式 ─────────────────────────────────────────────
 
     def _on_plan_confirmed(self, steps: list) -> None:
         from src.transbridge.smart_assistant.tool_registry import ToolRegistry
-        from src.transbridge.smart_assistant.guardrails import PermissionGuard, InputValidationGuard, OutputValidationGuard
-        from src.transbridge.paratranz.config_manager import LLMConfig
         import threading
 
-        cfg = LLMConfig.load_from_file()
-        middlewares = []
-        if cfg.guardrails_enable_input_validation:
-            middlewares.append(InputValidationGuard(cfg.guardrails_max_input_size))
-        middlewares.append(PermissionGuard(
-            enable_admin_confirm=cfg.guardrails_enable_admin_confirm,
-            write_require_confirm=cfg.guardrails_write_require_confirm,
-        ))
-        if cfg.guardrails_enable_output_validation:
-            middlewares.append(OutputValidationGuard())
-
+        middlewares = self._ensure_middlewares()
         self._engine = ExecutionEngine(ToolRegistry, self._ctx, middlewares=middlewares)
         self._engine.all_finished.connect(self._on_plan_all_finished)
         self._engine.step_requires_confirmation.connect(self._on_confirm_required)
@@ -300,8 +426,6 @@ class ChatWidget(QWidget):
         self._engine.step_started.connect(self._obs_collector.on_step_started)
         self._engine.step_finished.connect(self._obs_collector.on_step_finished)
         self._engine.step_retrying.connect(self._obs_collector.on_step_retrying)
-        # Agent 状态指示器
-        self._update_agent_indicators({"translator": "exec", "orchestrator": "exec"})
         t = threading.Thread(target=self._engine.execute, args=(steps,), daemon=True)
         t.start()
 
@@ -313,32 +437,16 @@ class ChatWidget(QWidget):
     def _on_plan_all_finished(self, results: list) -> None:
         lines = []
         for r in results:
-            icon = "✅" if r.success else "❌"
+            icon = "[OK]" if r.success else "[FAIL]"
             lines.append(f"{icon} 步骤 {r.step_id} ({r.tool}): {r.message}")
         summary = "\n".join(lines)
         self.add_system_message(f"【计划执行完成】\n{summary}")
         self._conversation.add_plan_result(summary)
-        # 观测结束 + Agent 状态重置
         self._obs_collector.end_conversation()
-        self._update_agent_indicators({k: "idle" for k in self._agent_indicators})
         self._react_depth = 0
         self._run_llm_round()
 
-    # ── Agent 状态与确认 (S07/S08/S10) ──────────────────────
-
-    def _update_agent_indicators(self, states: dict[str, str]) -> None:
-        """states: {"translator": "exec"|"done"|"fail"|"idle", ...}"""
-        color_map = {"idle": "#999", "exec": "#2196F3", "done": "#4CAF50", "fail": "#F44336"}
-        icon_map = {"idle": "○", "exec": "◉", "done": "●", "fail": "✕"}
-        for agent_id, state in states.items():
-            if agent_id in self._agent_indicators:
-                c = color_map.get(state, "#999")
-                i = icon_map.get(state, "○")
-                base = self._agent_indicators[agent_id].text().split()[-1] if self._agent_indicators[agent_id].text() else ""
-                self._agent_indicators[agent_id].setText(f"{i} {base}")
-                self._agent_indicators[agent_id].setStyleSheet(
-                    f"color: {c}; font-size: 10px; padding: 1px 4px;"
-                )
+    # ── 确认 (S08) ──────────────────────────────────────────
 
     def _on_confirm_required(self, node_id: str, prompt: str, choices: list) -> None:
         reply = QMessageBox.question(self, "操作确认", prompt,
@@ -347,11 +455,69 @@ class ChatWidget(QWidget):
         if self._engine:
             self._engine.provide_decision(node_id, choice)
 
+    # ── 异步任务通知 (B2) ──────────────────────────────────
+
+    def _on_task_completed(self, task_id: str, result: dict) -> None:
+        """后台翻译/润色任务完成回调。"""
+        succ = result.get("success_count", 0)
+        fail = result.get("failed_count", 0)
+        skip = result.get("skipped_count", 0)
+        entry_count = result.get("entry_count", succ + fail + skip)
+        parts = []
+        if entry_count:
+            parts.append(f"共 {entry_count} 条")
+        if succ:
+            parts.append(f"成功 {succ}")
+        if fail:
+            parts.append(f"失败 {fail}")
+        if skip:
+            parts.append(f"跳过 {skip}")
+        msg = f"任务 {task_id} 完成: {', '.join(parts)}" if parts else f"任务 {task_id} 完成"
+        self._conversation.add_observation("start_translation", msg)
+        self.add_system_message(f"[OK] {msg}")
+        if self._check_react_depth():
+            self._run_llm_round()
+
+    def _on_task_failed(self, task_id: str, error: str) -> None:
+        """后台任务失败回调。"""
+        msg = f"任务 {task_id} 失败: {error}"
+        self._conversation.add_observation("start_translation", msg)
+        self.add_system_message(f"[FAIL] {msg}")
+        if self._check_react_depth():
+            self._run_llm_round()
+
     def _on_token_stats_updated(self, stats) -> None:
         """更新观测面板 Token 统计 (S11)。"""
         today = self._obs_token_labels.get("今日")
         if today:
             today.setText(f"今日\n输入: {stats.input_tokens}\n输出: {stats.output_tokens}")
+
+    # ── 护栏 ────────────────────────────────────────────────
+
+    def _ensure_middlewares(self) -> list:
+        """B1: 延迟构建护栏中间件链，遵循用户配置。"""
+        if self._middlewares is not None:
+            return self._middlewares
+        try:
+            from src.transbridge.paratranz.config_manager import LLMConfig
+            cfg = LLMConfig.load_from_file()
+        except Exception:
+            from src.transbridge.smart_assistant.tools.base import _build_guard_chain
+            self._middlewares = _build_guard_chain() or []
+            return self._middlewares
+
+        from src.transbridge.smart_assistant.guardrails import PermissionGuard, InputValidationGuard, OutputValidationGuard
+        middlewares = []
+        if getattr(cfg, 'guardrails_enable_input_validation', True):
+            middlewares.append(InputValidationGuard(getattr(cfg, 'guardrails_max_input_size', 102400)))
+        middlewares.append(PermissionGuard(
+            enable_admin_confirm=getattr(cfg, 'guardrails_enable_admin_confirm', True),
+            write_require_confirm=getattr(cfg, 'guardrails_write_require_confirm', False),
+        ))
+        if getattr(cfg, 'guardrails_enable_output_validation', True):
+            middlewares.append(OutputValidationGuard())
+        self._middlewares = middlewares
+        return middlewares
 
     # ── ReAct 模式 ───────────────────────────────────────────
 
@@ -360,12 +526,38 @@ class ChatWidget(QWidget):
         from src.transbridge.smart_assistant.tool_registry import ToolRegistry
         spec = ToolRegistry.get(tool_name)
         if spec and spec.execute:
+            from src.transbridge.smart_assistant.tools.base import execute_with_guardrails, ExecutionContext, ToolResult
+            from src.transbridge.smart_assistant.tools.task_manager import TaskManager
+            exec_ctx = ExecutionContext(app_context=self._ctx, task_manager=TaskManager())
+            # M6: ReAct 模式重试循环，集成 RetryHandler
             try:
-                result = spec.execute(step.get("args", {}), self._ctx)
-            except Exception as exc:
-                result = {"success": False, "message": str(exc), "error_type": type(exc).__name__}
+                from src.transbridge.smart_assistant.reflexion.retry_handler import RetryHandler
+                retry_handler = RetryHandler()
+            except ImportError:
+                retry_handler = None
+            max_attempts = retry_handler.MAX_RETRIES + 1 if retry_handler else 3
+            current_step = dict(step)
+            for attempt in range(max_attempts):
+                try:
+                    result = execute_with_guardrails(
+                        spec, current_step.get("args", {}), exec_ctx,
+                        middlewares=self._ensure_middlewares(),
+                    )
+                except Exception as exc:
+                    result = ToolResult.fail(str(exc))
+                if getattr(result, 'success', False) or attempt == max_attempts - 1:
+                    break
+                err_msg = getattr(result, 'message', '')
+                if retry_handler and retry_handler.should_retry(err_msg):
+                    adjusted = retry_handler.analyze_and_adjust(current_step, err_msg, attempt)
+                    if adjusted:
+                        current_step = adjusted
+                        self.add_system_message(f"[重试 {attempt+2}/{max_attempts}] {spec.name}: {err_msg}")
+                        continue
+                break
         else:
-            result = {"success": False, "message": f"未知工具: {tool_name}"}
+            from src.transbridge.smart_assistant.tools.base import ToolResult
+            result = ToolResult.fail(f"未知工具: {tool_name}")
         self._handle_tool_result(step, result)
 
     def _on_tool_ignored(self, step: dict) -> None:
@@ -379,24 +571,31 @@ class ChatWidget(QWidget):
         results = []
         for s in steps:
             t = s.get("tool", "?")
-            results.append(f"✅ {t}: 执行完成")
+            results.append(f"[OK] {t}: 执行完成")
         summary = "\n".join(results)
         self.add_system_message(f"【批量执行完成】\n{summary}")
         self._conversation.add_observation("batch", summary)
         if self._check_react_depth():
             self._run_llm_round()
 
-    def _handle_tool_result(self, step: dict, result: dict) -> None:
+    def _handle_tool_result(self, step: dict, result) -> None:
+        """统一处理工具执行结果，接受 ToolResult 或 dict。"""
         tool_name = step.get("tool", "?")
-        if result.get("success"):
-            msg = f"✅ {tool_name}: {result.get('message', '完成')}"
+        from src.transbridge.smart_assistant.tools.base import ToolResult
+        if isinstance(result, ToolResult):
+            success = result.success
+            message = result.message
+        elif isinstance(result, dict):
+            success = result.get("success")
+            message = result.get("message", result.get("error", ""))
         else:
-            err_msg = result.get('message', result.get('error', '失败'))
-            err_type = result.get('error_type', '')
-            if err_type:
-                msg = f"❌ {tool_name}: {err_msg}\n  (类型: {err_type})"
-            else:
-                msg = f"❌ {tool_name}: {err_msg}"
+            success = False
+            message = str(result)
+
+        if success:
+            msg = f"[OK] {tool_name}: {message or '完成'}"
+        else:
+            msg = f"[FAIL] {tool_name}: {message or '失败'}"
         self.add_system_message(msg)
         self._conversation.add_observation(tool_name, msg)
         if self._check_react_depth():
@@ -404,16 +603,55 @@ class ChatWidget(QWidget):
 
     def _check_react_depth(self) -> bool:
         if self._react_depth >= self._MAX_REACT_DEPTH:
-            self.add_system_message("⚠ 已达最大推理深度，对话终止。")
+            self.add_system_message("已达最大推理深度，对话终止。")
             self._react_depth = 0
             return False
         return True
+
+    def _auto_execute_steps(self, steps: list, mode: str) -> None:
+        """自动模式下直接执行工具/计划，跳过确认卡片。admin 级工具始终需确认。"""
+        from src.transbridge.smart_assistant.tool_registry import ToolRegistry
+
+        def _is_admin(step: dict) -> bool:
+            spec = ToolRegistry.get(step.get("tool", ""))
+            return spec is not None and getattr(spec, "permission", "") == "admin"
+
+        if any(_is_admin(s) for s in steps):
+            # 有 admin 级工具 → 回退到手动确认卡片
+            self.add_system_message("(自动模式：检测到敏感操作，切换为手动确认)")
+            if mode == "plan":
+                self.add_plan_card(steps)
+            elif len(steps) == 1:
+                self.add_tool_card(steps[0])
+            else:
+                self.add_batch_tool_card(steps)
+            return
+
+        self.add_system_message(f"(自动模式：直接执行 {len(steps)} 步)")
+        if mode == "plan":
+            self._on_plan_confirmed(steps)
+        else:
+            for s in steps:
+                self._on_tool_executed(s)
+
+    def _on_auto_mode_toggled(self, checked: bool) -> None:
+        self._auto_mode = checked
+        try:
+            QSettings("TransBridge", "SmartAssistant").setValue("auto_mode", checked)
+        except Exception:
+            pass
 
     def _on_retry(self) -> None:
         """网络错误后重试：清理旧 worker，重新发送上一条消息。"""
         if self._worker and self._worker.isRunning():
             self._worker.cancel()
-            self._worker.wait(3000)
+            # m19: 3s 超时添加错误处理
+            try:
+                finished = self._worker.wait(3000)
+                if not finished:
+                    self.add_system_message("[警告] 上一轮 worker 未在 3s 内终止，已强制继续")
+            except Exception:
+                pass
         self._worker = None
         self.add_system_message("正在重试…")
         self._run_llm_round()
@@ -424,6 +662,21 @@ class ChatWidget(QWidget):
         text = self._input.toPlainText().strip()
         if not text:
             return
+
+        # 中断正在进行的流式输出
+        self._streaming_timer.stop()
+        if self._worker and self._worker.isRunning():
+            self._worker.cancel()
+            self._worker.wait(3000)
+        self._worker = None
+        if self._streaming_bubble:
+            idx = self._msg_layout.indexOf(self._streaming_bubble)
+            if idx >= 0:
+                self._msg_layout.removeWidget(self._streaming_bubble)
+                self._streaming_bubble.deleteLater()
+            self._streaming_bubble = None
+        self._streaming_text = ""
+        self._streaming_dirty = False
 
         # 检索相关历史记忆并注入上下文
         if self._memory_store.count > 0:
@@ -474,11 +727,28 @@ class ChatWidget(QWidget):
         self._upload_label.setText(f"已上传: {names}" if names else "")
 
     def _clear_conversation(self) -> None:
+        # M14: 检查并取消运行中的 worker/engine
+        if self._worker and self._worker.isRunning():
+            self._worker.cancel()
+            self._worker.wait(2000)
+            self._worker = None
+        if self._engine:
+            self._engine.cancel()
+            self._engine = None
+        self._react_depth = 0
+        self._consecutive_errors = 0
+
+        self._streaming_timer.stop()
+        self._streaming_bubble = None
+        self._streaming_text = ""
+        self._streaming_dirty = False
         while self._msg_layout.count() > 1:
             item = self._msg_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
         self._conversation.clear()
+        # M13联动: 释放上传文件引用
+        self._uploaded_docs.clear()
 
     def _add_bubble(self, bubble: MessageBubble) -> None:
         self._msg_layout.insertWidget(self._msg_layout.count() - 1, bubble)
@@ -488,10 +758,48 @@ class ChatWidget(QWidget):
         self._msg_layout.insertWidget(self._msg_layout.count() - 1, widget)
         self._scroll_to_bottom()
 
+    def _toggle_obs_panel(self) -> None:
+        """展开/折叠观测面板。"""
+        visible = not self._obs_tabs.isVisible()
+        self._obs_tabs.setVisible(visible)
+        self._obs_header.setText("[v] 观测面板" if visible else "[>] 观测面板")
+
     def _scroll_to_bottom(self) -> None:
         vsb = self._scroll.verticalScrollBar()
         if vsb:
             vsb.setValue(vsb.maximum())
+        self._back_to_bottom_btn.setVisible(False)
+
+    def _on_scroll_changed(self, value: int) -> None:
+        vsb = self._scroll.verticalScrollBar()
+        if not vsb:
+            return
+        max_val = vsb.maximum()
+        # 用户手动上滚超过一屏 → 显示回到底部按钮
+        if max_val > 0 and value < max_val - 50:
+            self._back_to_bottom_btn.setVisible(True)
+            # 定位到右下角
+            sa = self._scroll
+            btn = self._back_to_bottom_btn
+            btn.move(
+                sa.width() - btn.width() - 12,
+                sa.height() - btn.height() - 12,
+            )
+        else:
+            self._back_to_bottom_btn.setVisible(False)
+
+    def _on_back_to_bottom(self) -> None:
+        self._scroll_to_bottom()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if self._back_to_bottom_btn.isVisible():
+            sa = self._scroll
+            btn = self._back_to_bottom_btn
+            btn.move(
+                sa.width() - btn.width() - 12,
+                sa.height() - btn.height() - 12,
+            )
 
     def eventFilter(self, obj, event):
         if obj == self._input and event.type() == QEvent.Type.KeyPress:

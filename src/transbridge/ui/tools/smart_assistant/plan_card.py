@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QListWidget, QListWidgetItem,
 )
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 
 from src.transbridge.smart_assistant.execution_engine import StepResult
 
@@ -17,20 +17,24 @@ class PlanCard(QWidget):
         self._steps = steps
         self.setObjectName("PlanCard")
         self.setStyleSheet(
-            "#PlanCard { background-color: #E3F2FD; border-radius: 8px; padding: 8px; }"
+            "#PlanCard { background-color: #E3F2FD; border: 1px solid #90CAF9;"
+            " border-radius: 12px; }"
         )
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setContentsMargins(14, 10, 14, 10)
         layout.setSpacing(6)
 
         total = len(steps)
-        title = QLabel(f"📋 执行计划（共 {total} 步）")
-        title.setStyleSheet("font-weight: bold; font-size: 13px;")
+        title = QLabel(f"[Plan] 执行计划（共 {total} 步）")
+        title.setStyleSheet("font-weight: bold; font-size: 13px; color: #333;")
         layout.addWidget(title)
 
         # 步骤列表
         self._step_list = QListWidget()
+        self._step_list.setStyleSheet(
+            "QListWidget { border: none; background: transparent; font-size: 12px; }"
+        )
         for s in steps:
             deps = s.get("depends_on", [])
             dep_str = f"  (依赖步骤: {deps})" if deps else ""
@@ -41,17 +45,31 @@ class PlanCard(QWidget):
 
         # 进度
         self._progress_label = QLabel(f"就绪 (0/{total})")
-        self._progress_label.setStyleSheet("font-size: 11px; color: #666;")
+        self._progress_label.setStyleSheet("font-size: 11px; color: #888;")
         layout.addWidget(self._progress_label)
 
         # 按钮
         btn_row = QHBoxLayout()
         self._exec_btn = QPushButton("执行计划")
         self._exec_btn.setStyleSheet(
-            "background-color: #4CAF50; color: white; font-weight: bold;"
+            "QPushButton {"
+            "  background-color: #4CAF50; color: white; border: none;"
+            "  border-radius: 6px; padding: 4px 16px;"
+            "  font-size: 12px; font-weight: bold;"
+            "}"
+            "QPushButton:hover { background-color: #43A047; }"
         )
+        self._exec_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._exec_btn.clicked.connect(self._on_confirm)
         self._cancel_btn = QPushButton("取消")
+        self._cancel_btn.setStyleSheet(
+            "QPushButton {"
+            "  background-color: #f5f5f5; border: 1px solid #ddd;"
+            "  border-radius: 6px; padding: 4px 16px; font-size: 12px; color: #666;"
+            "}"
+            "QPushButton:hover { background-color: #e8e8e8; }"
+        )
+        self._cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._cancel_btn.clicked.connect(self._on_cancel)
         btn_row.addStretch()
         btn_row.addWidget(self._exec_btn)
@@ -74,11 +92,11 @@ class PlanCard(QWidget):
             item = self._step_list.item(i)
             s = self._steps[i]
             if s["id"] == step_id:
-                item.setText(f"⏳ 步骤 {step_id}: {tool_name} - 执行中...")
+                item.setText(f"[..] 步骤 {step_id}: {tool_name} - 执行中...")
                 break
 
     def on_step_finished(self, result: StepResult) -> None:
-        icon = "✅" if result.success else "❌"
+        icon = "[OK]" if result.success else "[FAIL]"
         for i in range(self._step_list.count()):
             item = self._step_list.item(i)
             s = self._steps[i]

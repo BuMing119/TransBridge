@@ -1,12 +1,11 @@
 from PyQt6.QtWidgets import QDockWidget, QWidget, QVBoxLayout, QFrame
 from PyQt6.QtCore import Qt, pyqtSignal
 
-from .quick_actions import QuickActionsPanel
 from .chat_widget import ChatWidget
 
 
 class SmartAssistantPanel(QDockWidget):
-    """智能助手底部面板，停靠在 MainWindow 底部（类似 IDE 终端）。"""
+    """智能助手面板，停靠在 MainWindow 底部/侧边（类似 IDE 终端）。"""
 
     visibility_changed = pyqtSignal(bool)
 
@@ -26,31 +25,20 @@ class SmartAssistantPanel(QDockWidget):
         )
         self.setMinimumHeight(200)
 
-        # ── 主容器 ──
+        # 加载 Skills
+        from src.transbridge.config.paths import get_data_dir
+        from pathlib import Path
+        from src.transbridge.smart_assistant.skills import SkillRegistry
+        SkillRegistry.reload(Path(get_data_dir()) / "skills")
+
+        # ── 主容器：ChatWidget 独立，chips 在其内部 ──
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        self._quick_actions = QuickActionsPanel()
-        layout.addWidget(self._quick_actions)
-
-        # 加载 Skills
-        from src.transbridge.config.paths import get_data_dir
-        from pathlib import Path
-        from src.transbridge.smart_assistant.skills import SkillRegistry, SkillLoader
-        SkillRegistry.reload(Path(get_data_dir()) / "skills")
-
-        line = QFrame()
-        line.setFrameShape(QFrame.Shape.HLine)
-        layout.addWidget(line)
-
         self._chat = ChatWidget(ctx)
         layout.addWidget(self._chat, stretch=1)
-
-        # 快捷指令 → 填入输入框
-        self._quick_actions.action_clicked.connect(self._chat.set_input)
-        self._quick_actions.skill_triggered.connect(self._chat._on_skill)
 
         self.setWidget(container)
 
@@ -63,6 +51,17 @@ class SmartAssistantPanel(QDockWidget):
     def hideEvent(self, event):
         self.visibility_changed.emit(False)
         super().hideEvent(event)
+
+    def closeEvent(self, event):
+        """M13: 关闭面板时清理运行中的 worker/engine 和 memory_store。"""
+        if self._chat._worker and self._chat._worker.isRunning():
+            self._chat._worker.cancel()
+            self._chat._worker.wait(3000)
+        if self._chat._engine:
+            self._chat._engine.cancel()
+        if self._chat._memory_store:
+            self._chat._memory_store.close()
+        super().closeEvent(event)
 
     # ── 公共访问 ──────────────────────────────────────────────
 
