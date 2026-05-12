@@ -1,14 +1,20 @@
 from pathlib import Path
 from collections import Counter
 
-from src.transbridge.ui.context import AppContext
-
 
 class ContextBuilder:
-    """构建追加到 system prompt 的当前工作环境上下文信息。"""
+    """构建追加到 system prompt 的当前工作环境上下文信息。
 
-    @staticmethod
-    def build(ctx: AppContext) -> str:
+    C1: 移除对 ui/ 的直接依赖。调用方通过构造函数或 build() 参数传入 AppContext。
+    """
+
+    def __init__(self, ctx=None):
+        self._ctx = ctx
+
+    def build(self, ctx=None) -> str:
+        ctx = ctx or self._ctx
+        if ctx is None:
+            return "(未初始化 — 请先加载翻译集合)\n"
         collection = ctx.collection
 
         if collection is None:
@@ -40,12 +46,13 @@ class ContextBuilder:
             for cat, cnt in sorted(cat_counter.items(), key=lambda x: -x[1])
         )
 
-        # 已上传参考文件
+        # 已上传参考文件 — C6: 仅注入摘要信息，不注入原始内容
         docs_lines = ""
         if hasattr(ctx, "_uploaded_docs") and ctx._uploaded_docs:
             docs_lines = "已上传参考文件:\n"
             for name, doc in ctx._uploaded_docs.items():
-                docs_lines += f"  - {name} ({doc.format}): {doc.raw_text[:200]}…\n" if len(doc.raw_text) > 200 else f"  - {name} ({doc.format}): {doc.raw_text}\n"
+                char_count = len(doc.raw_text) if hasattr(doc, 'raw_text') else 0
+                docs_lines += f"  - {name} ({doc.format}, {char_count}字符) — 使用 search_memory 工具检索内容\n"
 
         return (
             f"当前工作环境:\n"

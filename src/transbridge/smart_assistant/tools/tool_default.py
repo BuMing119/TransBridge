@@ -23,6 +23,15 @@ def _tool_get_app_state(args: dict, ctx) -> ToolResult:
         project_name = getattr(ctx.active_project, 'name', None)
         if project_name is None and isinstance(ctx.active_project, dict):
             project_name = ctx.active_project.get('name')
+    # C5: ParaTranz 配置状态
+    pt_configured = False
+    try:
+        from src.transbridge.paratranz.config_manager import ParatranzConfig
+        pt_cfg = ParatranzConfig.load_from_file()
+        pt_configured = bool(getattr(pt_cfg, 'token', None))
+    except Exception:
+        pass
+
     return ToolResult.ok(data={
         "active_collection": slot.label if slot else None,
         "esp_file": os.path.basename(ctx.esp_path) if ctx.esp_path else None,
@@ -33,6 +42,7 @@ def _tool_get_app_state(args: dict, ctx) -> ToolResult:
         "filters": ctx.filter_state,
         "collection_count": len(ctx.slots),
         "has_active_collection": slot is not None and slot.collection is not None,
+        "paratranz_configured": pt_configured,
     })
 
 
@@ -128,7 +138,8 @@ def _tool_list_local_projects(args: dict, ctx) -> ToolResult:
         workspace = ctx.workspace
         if workspace and hasattr(workspace, 'projects'):
             for p in workspace.projects:
-                projects.append({"name": getattr(p, 'name', ''), "path": getattr(p, 'path', '')})
+                # m21: 仅返回项目名，不暴露绝对路径
+                projects.append({"name": getattr(p, 'name', '')})
     except Exception:
         pass
     return ToolResult.ok(f"共 {len(projects)} 个本地项目", data={"projects": projects})

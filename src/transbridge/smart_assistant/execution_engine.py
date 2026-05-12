@@ -36,19 +36,33 @@ class ExecutionEngine(QObject):
         self._registry = tool_registry
         self._ctx = ctx
         self._cancelled = threading.Event()
-        self._retry_handler = None
-        # B1: 使用 _build_guard_chain 统一构建护栏链，消除双路径分歧
-        from src.transbridge.smart_assistant.tools.base import _build_guard_chain
-        self._guards = _build_guard_chain()
-        if self._guards is None:
-            self._guards = []
+        # M1: 实例化 RetryHandler 而非 None
+        try:
+            from src.transbridge.smart_assistant.reflexion.retry_handler import RetryHandler
+            self._retry_handler = RetryHandler()
+        except ImportError:
+            self._retry_handler = None
+        # B3 FIX: 优先使用传入的 middlewares，无传参时 fallback 到默认链
+        if middlewares:
+            self._guards = list(middlewares)
+        else:
+            from src.transbridge.smart_assistant.tools.base import _build_guard_chain
+            self._guards = _build_guard_chain() or []
         self._pending_decisions: dict[str, str] = {}
+        # m9: Condition 替代忙等轮询
+        self._decision_cv = threading.Condition()
+        # M8: _paused 改为实例级属性，不同会话独立暂停
+        self._paused = threading.Event()
+        # m11: 复用 ThreadPoolExecutor
+        self._executor = ThreadPoolExecutor(max_workers=self._MAX_WORKERS)
 
     def cancel(self) -> None:
         self._cancelled.set()
 
     def provide_decision(self, node_id: str, choice: str) -> None:
         self._pending_decisions[node_id] = choice
+        with self._decision_cv:
+            self._decision_cv.notify_all()
 
     def _run_single(self, step: dict) -> StepResult:
         """执行单个步骤。支持 Agent namespace 路由。"""
@@ -90,11 +104,12 @@ class ExecutionEngine(QObject):
                         f"工具 '{tool_name}' 需要{perm_label}权限确认。是否继续？",
                         ["继续", "跳过"],
                     )
-                    import time as _time
-                    waited = 0
-                    timeout = 300
+                    # m9: Condition.wait 替代忙等轮询
+                    waited = 0.0
+                    timeout = 300.0
                     while node_id not in self._pending_decisions and waited < timeout:
-                        _time.sleep(0.5)
+                        with self._decision_cv:
+                            self._decision_cv.wait(timeout=0.5)
                         waited += 0.5
                         if self._cancelled.is_set():
                             return StepResult(
@@ -176,8 +191,6 @@ class ExecutionEngine(QObject):
 
     # ── Graph 编排扩展 (S09/S10) ──────────────────────────────
 
-    _paused: threading.Event = threading.Event()
-
     def execute_graph(self, graph) -> list[StepResult]:
         """执行有状态图：BFS 遍历 + 条件路由 + 循环 + HITL + checkpoint。"""
         self._cancelled.clear()
@@ -231,12 +244,13 @@ class ExecutionEngine(QObject):
                 return last_result
             elif isinstance(node, HumanConfirmNode):
                 self.step_requires_confirmation.emit(node.node_id, node.prompt, node.choices)
-                import time as _t
+                # m9: Condition.wait 替代忙等轮询
                 waited = 0.0
                 while node.node_id not in self._pending_decisions and waited < node.timeout_seconds:
                     if self._cancelled.is_set():
                         return None
-                    _t.sleep(0.5)
+                    with self._decision_cv:
+                        self._decision_cv.wait(timeout=0.5)
                     waited += 0.5
                 decision = self._pending_decisions.pop(node.node_id, node.default_choice)
                 return StepResult(
@@ -263,10 +277,9 @@ class ExecutionEngine(QObject):
             if not level_nodes:
                 break
 
-            workers = min(len(level_nodes), self._MAX_WORKERS)
-            with ThreadPoolExecutor(max_workers=max(workers, 1)) as pool:
-                futures = {pool.submit(_dispatch, node): node for node in level_nodes}
-                for future in as_completed(futures):
+            # m11: 复用 self._executor 而非每层级创建
+            futures = {self._executor.submit(_dispatch, node): node for node in level_nodes}
+            for future in as_completed(futures):
                     if self._cancelled.is_set():
                         break
                     node = futures[future]

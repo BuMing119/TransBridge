@@ -6,21 +6,27 @@ from .base import GuardMiddleware, GuardResult
 
 logger = logging.getLogger(__name__)
 
+# M16: 放宽注入检测 — 移除常见翻译文本中的误伤模式，保留真正危险的模式
+_SAFE_HTML_TAGS = {
+    "font", "b", "i", "u", "br", "p", "h1", "h2", "h3", "h4", "h5", "h6",
+    "div", "span", "img", "a", "table", "tr", "td", "th", "ul", "ol", "li",
+    "em", "strong", "s", "sub", "sup", "hr", "pre", "code", "blockquote",
+}
+
 _INJECTION_PATTERNS = [
-    # SQL注入 — C5 扩展
-    (re.compile(r"'\s*;\s*(DROP|DELETE|INSERT|UPDATE|SELECT|ALTER|CREATE|EXEC|UNION|TRUNCATE)\b", re.IGNORECASE), "SQL注入"),
+    # SQL注入 — M16: 仅保留明显的注入模式
+    (re.compile(r"'\s*;\s*(DROP|ALTER|EXEC|UNION|TRUNCATE)\b", re.IGNORECASE), "SQL注入"),
     (re.compile(r"(\"|')\s+OR\s+(\"|'|\d)", re.IGNORECASE), "SQL OR注入"),
     (re.compile(r"(\"|')\s*--"), "SQL注释注入"),
     (re.compile(r"\bWAITFOR\s+DELAY\b", re.IGNORECASE), "SQL延时注入"),
-    (re.compile(r"\bSELECT\b.*\bFROM\b", re.IGNORECASE), "SQL SELECT注入"),
-    # XSS — C5 扩展
+    # XSS — 仅检测危险标签和事件处理器
     (re.compile(r"<script[\s>]", re.IGNORECASE), "XSS script标签"),
     (re.compile(r"<iframe[\s>]", re.IGNORECASE), "XSS iframe"),
     (re.compile(r"<embed[\s>]", re.IGNORECASE), "XSS embed"),
     (re.compile(r"<object[\s>]", re.IGNORECASE), "XSS object"),
     (re.compile(r"\bon(?:error|load|focus|click|mouseover|mouseout|submit|change|keydown|keyup)=\s*", re.IGNORECASE), "XSS事件处理器"),
     (re.compile(r"javascript\s*:", re.IGNORECASE), "XSS javascript协议"),
-    # 命令注入 — C5 扩展
+    # 命令注入
     (re.compile(r"(?:;|\||&&|`)\s*(?:python|perl|ruby|php|node|nc|ncat|ssh|scp|wget|curl|telnet|socat|powershell|cmd|bash|sh|wmic|cscript|mshta|regsvr32|bitsadmin)\b", re.IGNORECASE), "命令注入"),
     (re.compile(r"(?:Invoke-Expression|iex|Start-Process|EncodedCommand|IEX|Invoke-WebRequest)", re.IGNORECASE), "PowerShell注入"),
     (re.compile(r"`[^`]*`"), "反引号命令注入"),

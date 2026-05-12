@@ -1,4 +1,4 @@
-"""TaskManager — 长运行任务生命周期管理器（单例）。"""
+"""TaskManager — 长运行任务生命周期管理器（单例 + pyqtSignal 通知）。"""
 from __future__ import annotations
 
 import copy
@@ -6,6 +6,8 @@ import threading
 import time
 from dataclasses import dataclass, field
 from uuid import uuid4
+
+from PyQt6.QtCore import QObject, pyqtSignal
 
 
 @dataclass
@@ -20,21 +22,29 @@ class TaskHandle:
     _thread: threading.Thread | None = None  # O9: 线程引用跟踪
 
 
-class TaskManager:
-    """长运行任务生命周期管理器（单例）。
+class TaskManager(QObject):
+    """长运行任务生命周期管理器（单例 + pyqtSignal 通知）。
+
+    信号:
+        task_completed(task_id, result_dict)  — 任务成功完成
+        task_failed(task_id, error_message)   — 任务失败/取消
 
     线程安全：所有公开方法持有 _lock。模块级 _instance_lock 双重检查。(E3)
     """
 
+    # B2: 异步任务完成通知信号
+    task_completed = pyqtSignal(str, dict)
+    task_failed = pyqtSignal(str, str)
+
     _instance: "TaskManager | None" = None
-    _instance_lock: threading.Lock = threading.Lock()  # E3: 单例锁
+    _instance_lock: threading.Lock = threading.Lock()
 
     def __new__(cls) -> "TaskManager":
-        # E3: 双重检查锁防竞态
         if cls._instance is None:
             with cls._instance_lock:
                 if cls._instance is None:
                     instance = super().__new__(cls)
+                    # QObject.__init__ 由 super().__new__ 触发
                     instance._lock = threading.Lock()
                     instance._tasks: dict[str, TaskHandle] = {}
                     cls._instance = instance
@@ -83,11 +93,11 @@ class TaskManager:
         }
 
     def update_progress(self, task_id: str, progress: dict) -> None:
-        """更新任务进度信息。"""
+        """更新任务进度信息。m10: progress 修改在锁内。"""
         with self._lock:
             handle = self._tasks.get(task_id)
-        if handle is not None:
-            handle.progress.update(progress)
+            if handle is not None:
+                handle.progress.update(progress)
 
     def list_active(self) -> list[str]:
         """列出所有状态为 running 的任务 ID。(E7联动: 不再有 paused 状态)"""
@@ -113,6 +123,15 @@ class TaskManager:
         with self._lock:
             return self._tasks.get(task_id)
 
+    # B2: 异步通知方法（线程安全，可在任何线程调用）
+    def notify_completed(self, task_id: str, result: dict) -> None:
+        """通知任务成功完成。pyqtSignal 跨线程安全。"""
+        self.task_completed.emit(task_id, result)
+
+    def notify_failed(self, task_id: str, error: str) -> None:
+        """通知任务失败/取消。pyqtSignal 跨线程安全。"""
+        self.task_failed.emit(task_id, error)
+
     def cleanup(self, task_id: str) -> None:
         """移除已完成/已取消的任务句柄。确保线程 join。(O9)"""
         with self._lock:
@@ -133,3 +152,16 @@ class TaskManager:
                 if handle._thread is not None and handle._thread.is_alive():
                     handle._thread.join(timeout=2)
             return len(inactive)
+
+    @classmethod
+    def reset(cls) -> None:
+        """m18: 会话切换时重置单例状态。清理所有任务和线程。"""
+        with cls._instance_lock:
+            if cls._instance is not None:
+                with cls._instance._lock:
+                    for tid in list(cls._instance._tasks.keys()):
+                        handle = cls._instance._tasks.pop(tid)
+                        handle.stop_event.set()
+                        if handle._thread is not None:
+                            handle._thread.join(timeout=2)
+                cls._instance = None

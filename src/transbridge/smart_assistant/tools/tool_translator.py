@@ -8,7 +8,7 @@ import os
 import threading
 import logging
 
-from .base import ToolResult
+from .base import ToolResult, require_collection
 from .task_manager import TaskManager
 
 logger = logging.getLogger(__name__)
@@ -16,15 +16,24 @@ logger = logging.getLogger(__name__)
 
 # ── 启动翻译 ──────────────────────────────────────────────────
 
-def _tool_start_translation(args: dict, ctx) -> ToolResult:
+@require_collection
+def _tool_start_translation(args: dict, ctx, collection) -> ToolResult:
     """启动 AI 翻译任务（后台线程 + TaskManager 管理）。"""
     mode = args.get("mode", "translate")
     if mode not in ("translate", "polish", "mixed"):
         return ToolResult.fail(f"无效模式: {mode}，可选: translate, polish, mixed")
 
-    collection = ctx.collection
-    if not collection or len(collection) == 0:
-        return ToolResult.fail("当前没有加载翻译集合")
+    # C3: 前置条件检查
+    try:
+        from src.transbridge.paratranz.config_manager import LLMConfig
+        llm_cfg = LLMConfig.load_from_file()
+        if not llm_cfg.api_key:
+            return ToolResult.fail("API Key 未配置",
+                error_category="config", error_code="API_KEY_MISSING",
+                recovery_action="请在 AI 翻译设置中配置 API Key")
+    except Exception:
+        return ToolResult.fail("无法读取 LLM 配置，请检查设置",
+            error_category="config", error_code="CONFIG_LOAD_FAILED")
 
     entry_ids = args.get("entry_ids")
     # C3: 空选择时默认全部未翻译条目，执行前由 C2 确认机制弹窗
@@ -67,12 +76,21 @@ def _tool_start_translation(args: dict, ctx) -> ToolResult:
                 "skipped_count": result.skipped_count,
             })
             tm.set_status(task_id, "completed")
+            # B2: 通知完成
+            tm.notify_completed(task_id, {
+                "status": "completed",
+                "success_count": result.success_count,
+                "failed_count": result.failed_count,
+                "skipped_count": result.skipped_count,
+            })
         except InterruptedError:
             tm.set_status(task_id, "cancelled")
+            tm.notify_failed(task_id, "任务已被用户停止")
         except Exception as exc:
             logger.exception("翻译任务异常: %s", exc)
             tm.set_status(task_id, "failed")
             tm.update_progress(task_id, {"error": str(exc)})
+            tm.notify_failed(task_id, str(exc))
 
     thread = threading.Thread(target=_run, daemon=True)
     handle = tm.get_handle(task_id)
@@ -86,14 +104,11 @@ def _tool_start_translation(args: dict, ctx) -> ToolResult:
     )
 
 
-def _tool_start_polish(args: dict, ctx) -> ToolResult:
+@require_collection
+def _tool_start_polish(args: dict, ctx, collection) -> ToolResult:
     """启动 AI 润色任务（后台线程 + TaskManager 管理）。"""
     entry_ids = args.get("entry_ids", [])
     intensity = args.get("intensity", "medium")
-
-    collection = ctx.collection
-    if not collection or len(collection) == 0:
-        return ToolResult.fail("当前没有加载翻译集合")
 
     if not entry_ids:
         return ToolResult.fail("请指定要润色的 entry_ids")
@@ -119,11 +134,18 @@ def _tool_start_polish(args: dict, ctx) -> ToolResult:
                 tm.update_progress(task_id, {"current": i + 1, "total": total})
 
             tm.set_status(task_id, "completed")
+            # B2: 通知完成
+            tm.notify_completed(task_id, {
+                "status": "completed",
+                "entry_count": len(entry_ids),
+            })
         except InterruptedError:
             tm.set_status(task_id, "cancelled")
+            tm.notify_failed(task_id, "任务已被用户停止")
         except Exception as exc:
             logger.exception("润色任务异常: %s", exc)
             tm.set_status(task_id, "failed")
+            tm.notify_failed(task_id, str(exc))
 
     thread = threading.Thread(target=_run, daemon=True)
     handle = tm.get_handle(task_id)
@@ -208,23 +230,67 @@ def _get_profiles() -> dict[str, str]:
 
 
 def _tool_get_translation_config(args: dict, ctx) -> ToolResult:
-    """返回当前 LLM 翻译配置。"""
+    """返回当前 LLM 翻译配置，含后处理、术语、ParaTranz 状态。"""
     from src.transbridge.config.llm import LLMConfig
     try:
         llm = LLMConfig.load_from_file()
     except Exception:
         llm = LLMConfig()
     profiles = _get_profiles()
+
+    # C4: 真实的后处理配置
+    post_process = {
+        "enabled": getattr(llm, 'enable_post_process', True),
+        "consistency_check": getattr(llm, 'pp_enable_consistency_check', True),
+        "format_validation": getattr(llm, 'pp_enable_format_validation', True),
+        "quality_gate": getattr(llm, 'pp_enable_quality_gate', True),
+        "refinement": getattr(llm, 'pp_enable_refinement', True),
+        "polish": getattr(llm, 'pp_enable_polish', False),
+        "arbitration": getattr(llm, 'pp_enable_arbitration', True),
+    }
+
+    # C4: 术语数据库信息
+    term_db_info = {"path": None, "entry_count": 0}
+    try:
+        from pathlib import Path
+        esp_stem = Path(ctx.esp_path).stem if ctx.esp_path else None
+        if esp_stem:
+            term_db_path = Path("data") / f"{esp_stem}_terms.json"
+            if term_db_path.exists():
+                import json
+                with open(term_db_path, "r", encoding="utf-8") as f:
+                    terms = json.load(f)
+                term_db_info = {
+                    "path": str(term_db_path),
+                    "entry_count": len(terms) if isinstance(terms, dict) else 0,
+                }
+    except Exception:
+        pass
+
+    # C5: ParaTranz 配置状态
+    pt_config = {"token_configured": False, "api_url": None}
+    try:
+        from src.transbridge.paratranz.config_manager import ParatranzConfig
+        pt_cfg = ParatranzConfig.load_from_file()
+        pt_config = {
+            "token_configured": bool(pt_cfg.token),
+            "api_url": pt_cfg.api_url,
+        }
+    except Exception:
+        pass
+
     return ToolResult.ok(data={
         "provider": llm.provider,
         "model": llm.model,
+        "api_key_configured": bool(llm.api_key),
         "temperature": getattr(llm, 'temperature', None),
         "max_tokens": getattr(llm, 'max_tokens', None),
         "target_lang": llm.target_lang,
         "game_profile": llm.game_profile,
         "term_priority": llm.term_priority,
-        "post_process_stages": getattr(llm, 'post_process_stages', None),  # m6
-        "term_database": getattr(llm, 'term_database', None),  # m6
+        "post_process": post_process,
+        "term_database": term_db_info,
+        "paratranz": pt_config,
         "available_profiles": list(profiles.keys()) if profiles else None,
         "base_url_host": llm.base_url.split("://")[-1].split("/")[0] if llm.base_url else None,
     })

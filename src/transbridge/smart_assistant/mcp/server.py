@@ -8,12 +8,13 @@ logger = logging.getLogger(__name__)
 
 
 class MCPServer:
-    def __init__(self, registry, adapter: MCPAdapter | None = None, ctx=None):
+    def __init__(self, registry, adapter: MCPAdapter | None = None, ctx=None, config: dict | None = None):
         self._registry = registry
         self._adapter = adapter or MCPAdapter(registry)
         self._ctx = ctx
         if ctx:
             self._adapter.set_context(ctx)
+        self._config = config or {}
         self._running = False
 
     def run_stdio(self) -> None:
@@ -27,6 +28,14 @@ class MCPServer:
                 continue
             try:
                 request = json.loads(line)
+                # C7: 认证检查
+                if not self._authenticate(request):
+                    sys.stdout.write(json.dumps({
+                        "jsonrpc": "2.0", "id": request.get("id"),
+                        "error": {"code": -32001, "message": "Unauthorized"},
+                    }, ensure_ascii=False) + "\n")
+                    sys.stdout.flush()
+                    continue
                 response = self._handle_request(request)
                 sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
                 sys.stdout.flush()
@@ -39,6 +48,16 @@ class MCPServer:
 
     def stop(self) -> None:
         self._running = False
+
+    def _authenticate(self, request: dict) -> bool:
+        """C7: 验证 MCP 请求的 auth_token。未配置时放行。"""
+        auth_token = self._config.get("auth_token", "").strip()
+        if not auth_token:
+            return True
+        params = request.get("params", {})
+        meta = params.get("_meta", {}) if isinstance(params, dict) else {}
+        req_token = meta.get("authorization", "")
+        return req_token == auth_token
 
     def _handle_request(self, request: dict) -> dict:
         method = request.get("method", "")

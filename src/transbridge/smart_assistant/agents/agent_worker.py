@@ -32,6 +32,11 @@ class AgentWorker(QThread):
             self.error.emit(f"工具不存在或无权访问: {tool_name} (namespace={namespace})")
             return
 
+        # M7: 在工具执行前检查取消标志
+        if self._cancelled:
+            self.error.emit("任务已取消")
+            return
+
         start = datetime.now()
         try:
             self.progress.emit(f"{self._instance.agent_spec.name} 正在执行 {tool_name}...")
