@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
+    QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, QScrollArea,
     QLineEdit, QComboBox, QSpinBox, QPushButton,
     QRadioButton, QButtonGroup, QFileDialog, QMessageBox,
     QStackedWidget,
@@ -41,7 +41,7 @@ class AITranslatorWindow(QWidget):
         self._ctx = ctx
         self._step2 = step2
         self.setWindowTitle("AI 自动翻译")
-        self.resize(560, 520)
+        self.resize(680, 520)
         self._init_ui()
         self._load_config()
         self._connect_auto_save()
@@ -496,7 +496,6 @@ class AITranslatorWindow(QWidget):
         self._scope_stack = QStackedWidget()
         self._scope_stack.addWidget(scope_box)
         self._scope_stack.addWidget(mixed_panel)
-        main_layout.addWidget(self._scope_stack)
 
         # ── 后处理配置区 ───────────────────────────────────────────────────────
         self._pp_box = QGroupBox("后处理配置")
@@ -613,7 +612,19 @@ class AITranslatorWindow(QWidget):
         tab_pp_layout.addStretch()
         self._tabs.addTab(tab_pp, "后处理")
 
-        main_layout.addWidget(self._tabs)
+        # ── 可滚动内容区 ──────────────────────────────────────────────────────
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_layout.setSpacing(6)
+        scroll_layout.addWidget(self._scope_stack)
+        scroll_layout.addWidget(self._tabs)
+        scroll.setWidget(scroll_content)
+        main_layout.addWidget(scroll, stretch=1)
 
         # ── 底部按钮 ──────────────────────────────────────────────────────────
         btn_row = QHBoxLayout()
@@ -696,11 +707,11 @@ class AITranslatorWindow(QWidget):
         # 更新控件状态
         self._on_pp_enable_changed()
         # Embedding 配置
-        self._embed_provider_combo.setCurrentIndex(0 if cfg.embedding_provider == "local" else 1)
-        self._embed_local_model_edit.setText(cfg.embedding_local_model)
-        self._embed_model_edit.setText(cfg.embedding_model)
-        self._embed_apikey_edit.setText(cfg.embedding_api_key)
-        self._embed_baseurl_edit.setText(cfg.embedding_base_url)
+        self._embed_provider_combo.setCurrentIndex(0 if cfg.embedding.provider == "local" else 1)
+        self._embed_local_model_edit.setText(cfg.embedding.local_model_path)
+        self._embed_model_edit.setText(cfg.embedding.model)
+        self._embed_apikey_edit.setText(cfg.embedding.api_key)
+        self._embed_baseurl_edit.setText(cfg.embedding.base_url)
         priority_map = {
             "dynamic": "dynamic（动态词库）",
             "paratranz": "paratranz（ParaTranz 术语）",
@@ -762,11 +773,11 @@ class AITranslatorWindow(QWidget):
         cfg.pp_strict_arbitration = self._pp_strict_mode_check.isChecked()
         cfg.polish_preview_enabled = self._polish_preview_check.isChecked()
         # Embedding 配置
-        cfg.embedding_provider = "local" if self._embed_provider_combo.currentIndex() == 0 else "openai"
-        cfg.embedding_local_model = self._embed_local_model_edit.text().strip()
-        cfg.embedding_model = self._embed_model_edit.text().strip()
-        cfg.embedding_api_key = self._embed_apikey_edit.text().strip()
-        cfg.embedding_base_url = self._embed_baseurl_edit.text().strip()
+        cfg.embedding.provider = "local" if self._embed_provider_combo.currentIndex() == 0 else "openai"
+        cfg.embedding.local_model_path = self._embed_local_model_edit.text().strip()
+        cfg.embedding.model = self._embed_model_edit.text().strip()
+        cfg.embedding.api_key = self._embed_apikey_edit.text().strip()
+        cfg.embedding.base_url = self._embed_baseurl_edit.text().strip()
         key_map = {
             "dynamic（动态词库）": "dynamic",
             "paratranz（ParaTranz 术语）": "paratranz",
@@ -836,11 +847,11 @@ class AITranslatorWindow(QWidget):
         cfg.excel_original_col = self._excel_orig_col_edit.text().strip() or "A"
         cfg.excel_translation_col = self._excel_trans_col_edit.text().strip() or "B"
         # Embedding 配置
-        cfg.embedding_provider = "local" if self._embed_provider_combo.currentIndex() == 0 else "openai"
-        cfg.embedding_local_model = self._embed_local_model_edit.text().strip()
-        cfg.embedding_model = self._embed_model_edit.text().strip()
-        cfg.embedding_api_key = self._embed_apikey_edit.text().strip()
-        cfg.embedding_base_url = self._embed_baseurl_edit.text().strip()
+        cfg.embedding.provider = "local" if self._embed_provider_combo.currentIndex() == 0 else "openai"
+        cfg.embedding.local_model_path = self._embed_local_model_edit.text().strip()
+        cfg.embedding.model = self._embed_model_edit.text().strip()
+        cfg.embedding.api_key = self._embed_apikey_edit.text().strip()
+        cfg.embedding.base_url = self._embed_baseurl_edit.text().strip()
         key_map = {
             "dynamic（动态词库）": "dynamic",
             "paratranz（ParaTranz 术语）": "paratranz",

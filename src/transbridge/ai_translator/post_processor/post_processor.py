@@ -754,8 +754,6 @@ class PostProcessor:
         verdict=reject  -> stage=0 (打回重翻) + 记录原因
         verdict=pending -> stage=2 (待人工审核) + 记录最终版本和裁决信息
         """
-        from ...converter.translation_entry import TranslationEntry
-
         exec_result = PostProcessExecutionResult()
 
         for entry in entries:
@@ -776,38 +774,13 @@ class PostProcessor:
 
             if decision.verdict == "pass":
                 # 接受最终译文
-                updated = TranslationEntry(
-                    id=entry.id,
-                    key=entry.key,
-                    original=entry.original,
-                    translation=translation_to_use,
-                    stage=1,  # 检查通过
-                    context=entry.context,
-                    form_id_with_plugin=entry.form_id_with_plugin,
-                    string_id=entry.string_id,
-                    dsd_type=entry.dsd_type,
-                    dsd_index=entry.dsd_index,
-                    editor_id=entry.editor_id,
-                )
-                entry._replace(updated)
+                entry.translation = translation_to_use
+                entry.stage = 1  # 检查通过
                 exec_result.passed += 1
 
             elif decision.verdict == "reject":
                 # 打回重翻
-                updated = TranslationEntry(
-                    id=entry.id,
-                    key=entry.key,
-                    original=entry.original,
-                    translation=entry.translation,
-                    stage=0,  # 未翻译
-                    context=entry.context,
-                    form_id_with_plugin=entry.form_id_with_plugin,
-                    string_id=entry.string_id,
-                    dsd_type=entry.dsd_type,
-                    dsd_index=entry.dsd_index,
-                    editor_id=entry.editor_id,
-                )
-                entry._replace(updated)
+                entry.stage = 0  # 未翻译
                 exec_result.rejected += 1
 
             elif decision.verdict == "pending":
