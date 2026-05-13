@@ -1,22 +1,31 @@
 import json
 import logging
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
-
-from PyQt6.QtCore import QObject, pyqtSignal
+from typing import Callable
 
 from .models import ConversationTrace, ReActRound, ToolCallRecord, TokenStats
 from ..execution_engine import StepResult
 
 logger = logging.getLogger(__name__)
 
+# m9/m11: 单次清理最多扫描的文件数上限
+_MAX_CLEANUP_FILES = 500
 
-class ObservabilityCollector(QObject):
-    token_stats_updated = pyqtSignal(object)
 
-    def __init__(self, storage_dir: Path | None = None, parent=None):
-        super().__init__(parent)
+class ObservabilityCollector:
+    """可观测性收集器 — 追踪对话轮次、工具调用、Token 统计。
+
+    Phase 2: 移除 QObject/pyqtSignal 继承，token_stats_updated 改为回调注入。
+    调用方通过 on_token_stats_updated 参数注册回调，跨线程安全由调用方保证。
+    """
+    _MAX_TRACE_AGE_DAYS = 30
+
+    def __init__(self, storage_dir: Path | None = None, *,
+                 on_token_stats_updated: Callable | None = None):
         self._storage_dir = storage_dir
+        self._on_token_stats_updated = on_token_stats_updated
         self._active: ConversationTrace | None = None
         self._session_tokens = TokenStats()
         self._current_round: ReActRound | None = None
@@ -59,22 +68,26 @@ class ObservabilityCollector(QObject):
             if self._current_round:
                 self._current_round.llm_input_tokens += input_tokens
         self._session_tokens.add(model, input_tokens, output_tokens)
-        self.token_stats_updated.emit(self._session_tokens)
+        if self._on_token_stats_updated:
+            self._on_token_stats_updated(self._session_tokens)
 
     def end_conversation(self) -> ConversationTrace | None:
         if self._active is None:
             return None
         self._active.finished_at = datetime.now().isoformat()
-        # m15: 对话结束时重置活跃追踪
-        self._active.tools_called.clear()
         trace = self._active
         self._active = None
         if self._storage_dir:
             try:
-                self._save_trace(trace)
+                # M16: 将同步文件 I/O 包装在后台线程中异步执行
+                threading.Thread(
+                    target=self._save_trace, args=(trace,), daemon=True
+                ).start()
                 self._cleanup_old()
             except Exception as exc:
                 logger.warning("观测数据保存失败: %s", exc)
+        # m15: 保存后清理活跃追踪（避免数据丢失）
+        trace.tools_called.clear()
         return trace
 
     def _save_trace(self, trace: ConversationTrace) -> None:
@@ -82,14 +95,23 @@ class ObservabilityCollector(QObject):
         path = self._storage_dir / f"{trace.conv_id}.json"
         path.write_text(json.dumps(trace.to_dict(), ensure_ascii=False, indent=2))
 
-    def _cleanup_old(self, max_age_days: int = 30) -> None:
+    def _cleanup_old(self, max_age_days: int | None = None) -> None:
+        if max_age_days is None:
+            max_age_days = self._MAX_TRACE_AGE_DAYS
         if not self._storage_dir or not self._storage_dir.exists():
             return
         cutoff = datetime.now() - timedelta(days=max_age_days)
+        # m9/m11: 限制单次扫描文件数，防止大量文件累积时 IO 阻塞
+        scanned = 0
         for f in self._storage_dir.glob("*.json"):
+            if scanned >= _MAX_CLEANUP_FILES:
+                logger.debug("ObservabilityCollector: 清理文件扫描数达到上限 (%d)，跳过剩余",
+                             _MAX_CLEANUP_FILES)
+                break
+            scanned += 1
             try:
                 mtime = datetime.fromtimestamp(f.stat().st_mtime)
                 if mtime < cutoff:
                     f.unlink()
-            except Exception:
-                pass
+            except OSError:
+                pass  # 清理旧追踪文件失败不影响主流程

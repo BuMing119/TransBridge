@@ -1,13 +1,21 @@
-"""TaskManager — 长运行任务生命周期管理器（单例 + pyqtSignal 通知）。"""
+"""TaskManager — 长运行任务生命周期管理器（单例 + 回调通知）。
+
+跨线程安全: notify_completed / notify_failed 通过 QMetaObject.invokeMethod
+将回调投递到主线程执行，保证 Qt GUI 操作安全。此机制等价于原 pyqtSignal 的
+自动排队行为，但无需 TaskManager 自身继承 QObject。
+"""
 from __future__ import annotations
 
 import copy
+import logging
 import threading
 import time
 from dataclasses import dataclass, field
 from uuid import uuid4
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QMetaObject, Qt, QCoreApplication
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -22,19 +30,19 @@ class TaskHandle:
     _thread: threading.Thread | None = None  # O9: 线程引用跟踪
 
 
-class TaskManager(QObject):
-    """长运行任务生命周期管理器（单例 + pyqtSignal 通知）。
+class TaskManager:
+    """长运行任务生命周期管理器（单例 + 回调通知）。
 
-    信号:
-        task_completed(task_id, result_dict)  — 任务成功完成
-        task_failed(task_id, error_message)   — 任务失败/取消
+    回调:
+        on_completed(callback)  — 注册任务完成回调: fn(task_id, result_dict)
+        on_failed(callback)     — 注册任务失败回调: fn(task_id, error_message)
+        remove_listener(callback) — 移除已注册的回调
 
     线程安全：所有公开方法持有 _lock。模块级 _instance_lock 双重检查。(E3)
-    """
 
-    # B2: 异步任务完成通知信号
-    task_completed = pyqtSignal(str, dict)
-    task_failed = pyqtSignal(str, str)
+    Phase 1 解耦: 移除 QObject/pyqtSignal 继承，改用纯 Python 回调列表，
+    消除 C++ 元对象系统的栈空间占用。
+    """
 
     _instance: "TaskManager | None" = None
     _instance_lock: threading.Lock = threading.Lock()
@@ -43,12 +51,30 @@ class TaskManager(QObject):
         if cls._instance is None:
             with cls._instance_lock:
                 if cls._instance is None:
-                    instance = super().__new__(cls)
-                    # QObject.__init__ 由 super().__new__ 触发
+                    instance = object.__new__(cls)
                     instance._lock = threading.Lock()
                     instance._tasks: dict[str, TaskHandle] = {}
+                    instance._listeners: dict[str, list] = {"completed": [], "failed": []}
                     cls._instance = instance
         return cls._instance
+
+    # ── 回调注册 (Phase 1: 替代 pyqtSignal) ──────────────────────
+
+    def on_completed(self, callback) -> None:
+        """注册任务完成回调: callback(task_id, result_dict)。"""
+        self._listeners["completed"].append(callback)
+
+    def on_failed(self, callback) -> None:
+        """注册任务失败回调: callback(task_id, error_message)。"""
+        self._listeners["failed"].append(callback)
+
+    def remove_listener(self, callback) -> None:
+        """移除已注册的回调（从 completed 和 failed 列表中都尝试移除）。"""
+        for key in ("completed", "failed"):
+            try:
+                self._listeners[key].remove(callback)
+            except ValueError:
+                pass
 
     # ── 公开 API ──────────────────────────────────────────────
 
@@ -125,12 +151,39 @@ class TaskManager(QObject):
 
     # B2: 异步通知方法（线程安全，可在任何线程调用）
     def notify_completed(self, task_id: str, result: dict) -> None:
-        """通知任务成功完成。pyqtSignal 跨线程安全。"""
-        self.task_completed.emit(task_id, result)
+        """通知任务成功完成。通过 QMetaObject.invokeMethod 投递到主线程执行回调，
+        保证 Qt GUI 操作安全（等价于原 pyqtSignal 的跨线程自动排队行为）。"""
+        app = QCoreApplication.instance()
+        if app is None:
+            logger.warning("QCoreApplication 不存在，跳过 completed 通知: %s", task_id)
+            return
+        for cb in self._listeners.get("completed", []):
+            QMetaObject.invokeMethod(
+                app,
+                lambda c=cb, t=task_id, r=result: self._safe_callback(c, t, r),
+                Qt.ConnectionType.QueuedConnection,
+            )
 
     def notify_failed(self, task_id: str, error: str) -> None:
-        """通知任务失败/取消。pyqtSignal 跨线程安全。"""
-        self.task_failed.emit(task_id, error)
+        """通知任务失败/取消。通过 QMetaObject.invokeMethod 投递到主线程执行回调。"""
+        app = QCoreApplication.instance()
+        if app is None:
+            logger.warning("QCoreApplication 不存在，跳过 failed 通知: %s", task_id)
+            return
+        for cb in self._listeners.get("failed", []):
+            QMetaObject.invokeMethod(
+                app,
+                lambda c=cb, t=task_id, e=error: self._safe_callback(c, t, e),
+                Qt.ConnectionType.QueuedConnection,
+            )
+
+    @staticmethod
+    def _safe_callback(cb, *args) -> None:
+        """在回调外层包装 try/except，隔离单回调异常。"""
+        try:
+            cb(*args)
+        except Exception as exc:
+            logger.warning("TaskManager 回调异常: %s", exc)
 
     def cleanup(self, task_id: str) -> None:
         """移除已完成/已取消的任务句柄。确保线程 join。(O9)"""
@@ -155,7 +208,7 @@ class TaskManager(QObject):
 
     @classmethod
     def reset(cls) -> None:
-        """m18: 会话切换时重置单例状态。清理所有任务和线程。"""
+        """m18: 会话切换时重置单例状态。清理所有任务、线程和回调。"""
         with cls._instance_lock:
             if cls._instance is not None:
                 with cls._instance._lock:
@@ -164,4 +217,7 @@ class TaskManager(QObject):
                         handle.stop_event.set()
                         if handle._thread is not None:
                             handle._thread.join(timeout=2)
+                # Phase 1: 清理回调列表，防止悬空引用
+                cls._instance._listeners["completed"].clear()
+                cls._instance._listeners["failed"].clear()
                 cls._instance = None

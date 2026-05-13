@@ -2,7 +2,6 @@
 from .base import ToolResult, ExecutionContext, HITLRequest, HITLResponse, HITLType
 from .base import execute_with_guardrails, filter_entries
 from .base import require_collection, validate_params
-from .task_manager import TaskManager
 
 __all__ = [
     "ToolResult",
@@ -14,5 +13,4 @@ __all__ = [
     "filter_entries",
     "require_collection",
     "validate_params",
-    "TaskManager",
 ]

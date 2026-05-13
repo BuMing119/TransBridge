@@ -1,46 +1,60 @@
 from datetime import datetime
 
-from PyQt6.QtCore import QThread, pyqtSignal
-
+from src.transbridge.smart_assistant.workers.async_worker import AsyncWorker
 from ..execution_engine import StepResult
 from ..tool_registry import ToolRegistry
 
 
-class AgentWorker(QThread):
-    progress = pyqtSignal(str)
-    finished = pyqtSignal(StepResult)
-    error = pyqtSignal(str)
+class AgentWorker(AsyncWorker):
+    """Agent 工具执行后台线程。
 
-    def __init__(self, step: dict, instance, parent=None):
-        super().__init__(parent)
+    Phase 2: 从 QThread+pyqtSignal 迁移到 AsyncWorker(threading.Thread)+回调。
+    调用方通过 on_progress/on_finished/on_error 属性注册回调，
+    需自行保证跨线程 Qt GUI 安全。
+    """
+
+    def __init__(self, step: dict, instance):
+        super().__init__(daemon=True)
         self._step = step
         self._instance = instance
-        self._cancelled = False
+        self.on_progress: callable | None = None
+        self.on_finished: callable | None = None
+        self.on_error: callable | None = None
 
     def run(self):
         if self._instance is None or self._instance.agent_spec is None:
-            self.error.emit("AgentInstance 未正确设置")
+            if self.on_error:
+                self.on_error("AgentInstance 未正确设置")
             return
         if self._instance.ctx is None:
-            self.error.emit("AgentInstance.ctx 未设置")
+            if self.on_error:
+                self.on_error("AgentInstance.ctx 未设置")
             return
 
         tool_name = self._step.get("tool", "")
         namespace = self._instance.agent_spec.namespace
         tool = ToolRegistry.get(tool_name, namespace=namespace)
         if tool is None:
-            self.error.emit(f"工具不存在或无权访问: {tool_name} (namespace={namespace})")
+            if self.on_error:
+                self.on_error(f"工具不存在或无权访问: {tool_name} (namespace={namespace})")
             return
 
         # M7: 在工具执行前检查取消标志
-        if self._cancelled:
-            self.error.emit("任务已取消")
+        if self.is_cancelled():
+            if self.on_error:
+                self.on_error("任务已取消")
             return
 
         start = datetime.now()
         try:
-            self.progress.emit(f"{self._instance.agent_spec.name} 正在执行 {tool_name}...")
-            result = tool.execute(self._step.get("args", {}), self._instance.ctx)
+            if self.on_progress:
+                self.on_progress(f"{self._instance.agent_spec.name} 正在执行 {tool_name}...")
+            from src.transbridge.smart_assistant.tools.base import (
+                ExecutionContext, execute_with_guardrails,
+            )
+            from src.transbridge.smart_assistant.tools.task_manager import TaskManager
+            exec_ctx = ExecutionContext(app_context=self._instance.ctx, task_manager=TaskManager())
+            result = execute_with_guardrails(tool, self._step.get("args", {}), exec_ctx)
             duration_ms = int((datetime.now() - start).total_seconds() * 1000)
             sr = StepResult(
                 step_id=self._step["id"],
@@ -50,9 +64,8 @@ class AgentWorker(QThread):
                 data=result.get("data"),
                 duration_ms=duration_ms,
             )
-            self.finished.emit(sr)
+            if self.on_finished:
+                self.on_finished(sr)
         except Exception as exc:
-            self.error.emit(str(exc))
-
-    def cancel(self):
-        self._cancelled = True
+            if self.on_error:
+                self.on_error(str(exc))
