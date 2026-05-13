@@ -9,7 +9,12 @@ from .base import ToolResult, require_collection
 
 
 def _validate_output_path(path: str) -> ToolResult | None:
-    """C6: 写回路径安全校验 — 拒绝遍历路径和绝对路径。"""
+    """C6: 写回路径安全校验 — 拒绝遍历路径和绝对路径。
+
+    NOTE(m34): 此校验逻辑与 tool_parser._validate_path 存在重叠（路径遍历检测、
+    绝对路径拒绝）。两个函数职责不同（writer 校验输出路径 / parser 校验输入路径），
+    且 parser 额外包含扩展名白名单和文件存在性检查，暂不做合并重构。
+    """
     if not path:
         return ToolResult.fail("输出路径为空")
     if ".." in path.replace("\\", "/").split("/"):
@@ -84,9 +89,10 @@ def _tool_write_to_strings(args: dict, ctx, collection) -> ToolResult:
     if slot is None:
         return ToolResult.fail("没有活跃的集合槽位")
     path = args.get("path") or args.get("output_dir")
-    if path:
-        err = _validate_output_path(path)
-        if err: return err
+    if not path:
+        return ToolResult.fail("请提供输出路径 (path 或 output_dir)")
+    err = _validate_output_path(path)
+    if err: return err
     try:
         from src.transbridge.writer.plugin_writer import PluginWriter
         plugin = slot.plugin
@@ -94,7 +100,7 @@ def _tool_write_to_strings(args: dict, ctx, collection) -> ToolResult:
             return ToolResult.fail("当前槽位无已解析的插件")
         writer = PluginWriter(plugin, strings_lookup=slot.strings_lookup, language=slot.strings_lang or "english")
         count = writer.apply_collection(collection)
-        result = writer.write(None)
+        result = writer.write(path)  # MA6: 传入校验后的 path
         strings_written = result.get("strings_written", []) if isinstance(result, dict) else []
         return ToolResult.ok(
             f"已写回 {count} 条译文到 {len(strings_written)} 个 strings 文件",

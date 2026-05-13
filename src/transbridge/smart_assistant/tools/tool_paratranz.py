@@ -70,7 +70,12 @@ def _tool_compare_with_remote(args: dict, ctx, collection) -> ToolResult:
 
 @require_collection
 def _tool_upload_entries(args: dict, ctx, collection) -> ToolResult:
-    """上传条目到 ParaTranz。"""
+    """上传条目到 ParaTranz。
+
+    NOTE(M10): 当前全量同步上传采用逐条上传方式，无批处理机制。
+    对于大批量条目（>100条），逐个 API 调用可能导致耗时较长且易触发限流。
+    已知限制，后续可优化为批量上传接口。
+    """
     try:
         from src.transbridge.paratranz.api_client import ParatranzClient
         client = ParatranzClient(ctx.config)
@@ -81,14 +86,21 @@ def _tool_upload_entries(args: dict, ctx, collection) -> ToolResult:
         entry_ids = args.get("entry_ids")
         entries = [collection.get(eid) for eid in entry_ids] if entry_ids else list(collection)
         uploaded = 0
+        failed_items = []
         for e in entries:
             try:
                 client.upsert_entry(pid, {"key": e.key, "original": e.original, "translation": e.translation or "",
                                           "context": e.context or "", "stage": e.stage}, force_overwrite=force)
                 uploaded += 1
-            except Exception:
-                pass
-        return ToolResult.ok(f"已上传 {uploaded}/{len(entries)} 条", data={"uploaded": uploaded, "total": len(entries)})
+            except Exception as exc:
+                failed_items.append({
+                    "key": e.key if hasattr(e, 'key') else str(e),
+                    "error": str(exc),
+                })
+        return ToolResult.ok(
+            f"已上传 {uploaded}/{len(entries)} 条" + (f"，失败 {len(failed_items)} 条" if failed_items else ""),
+            data={"uploaded": uploaded, "total": len(entries), "failed_items": failed_items},
+        )
     except Exception as exc:
         return ToolResult.fail(f"上传失败: {exc}")
 

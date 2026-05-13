@@ -75,6 +75,9 @@ class ToolCard(QWidget):
         self._result_label.setVisible(True)
         self._exec_btn.setEnabled(False)
         self._ignore_btn.setEnabled(False)
+        # NOTE: 按钮禁用后不额外触发消息气泡更新。
+        # 调用方（ChatWidget._on_tool_executed -> _handle_tool_result）负责
+        # 通过 add_system_message / add_observation 追加结果消息到对话流。
 
     def _on_execute(self):
         self._exec_btn.setEnabled(False)

@@ -202,7 +202,12 @@ def _tool_edit_translation(args: dict, ctx, collection) -> ToolResult:
 @require_collection
 @validate_params(_PARAM_SCHEMAS["set_stage"])
 def _tool_set_stage(args: dict, ctx, collection) -> ToolResult:
-    """批量设置条目翻译阶段。H3: 填补批量标记缺口。"""
+    """批量设置条目翻译阶段。H3: 填补批量标记缺口。
+
+    NOTE(M9): 当前实现逐条遍历 entry_ids 设置 stage，无批处理优化。
+    对于大批量条目（>1000条），逐条循环可能有性能影响。
+    已知限制，后续可优化为批量 update。
+    """
     entry_ids = args["entry_ids"]
     stage = args["stage"]
 
@@ -238,10 +243,12 @@ def _tool_set_stage(args: dict, ctx, collection) -> ToolResult:
 
 def _tool_list_labels(args: dict, ctx) -> ToolResult:
     """列出所有已定义的标签。"""
-    # m8: 判空保护 — label_library 可能尚未初始化
-    label_lib = getattr(ctx, 'label_library', None)
-    if label_lib is None:
-        return ToolResult.ok("标签库为空", data={"labels": []})
+    # m28: 区分"未初始化"和"空标签库"两种情况
+    if not hasattr(ctx, 'label_library') or ctx.label_library is None:
+        return ToolResult.ok("标签库未初始化，请先创建标签", data={"labels": []})
+    label_lib = ctx.label_library
+    if not label_lib:
+        return ToolResult.ok("标签库为空，请先创建标签", data={"labels": []})
     entry_labels = getattr(ctx, 'entry_labels', {})
     labels = []
     for lid, info in label_lib.items():

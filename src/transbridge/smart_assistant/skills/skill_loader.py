@@ -4,6 +4,9 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# m39: prompt_template 最大长度限制，防止恶意 TOML 注入超长 prompt
+MAX_PROMPT_TEMPLATE_LENGTH = 4096
+
 
 @dataclass
 class SkillSpec:
@@ -44,6 +47,17 @@ class SkillLoader:
             prompt = data.get("prompt", {})
             tools = data.get("tools", {})
 
+            # m39: 限制 prompt_template 长度，防止恶意 TOML 注入超长 prompt
+            prompt_template = prompt.get("template", "")
+            if len(prompt_template) > MAX_PROMPT_TEMPLATE_LENGTH:
+                import logging
+                logging.getLogger("SkillLoader").warning(
+                    "Skill '%s' prompt_template 过长 (%d 字符)，已截断至 %d",
+                    meta.get('name', path.stem), len(prompt_template),
+                    MAX_PROMPT_TEMPLATE_LENGTH,
+                )
+                prompt_template = prompt_template[:MAX_PROMPT_TEMPLATE_LENGTH]
+
             return SkillSpec(
                 name=meta.get("name", path.stem),
                 display_name=meta.get("display_name", path.stem),
@@ -52,7 +66,7 @@ class SkillLoader:
                 enabled=meta.get("enabled", True),
                 trigger_keywords=trigger.get("keywords", []),
                 required_tools=trigger.get("requires_tools", []),
-                prompt_template=prompt.get("template", ""),
+                prompt_template=prompt_template,
                 allowed_tools=tools.get("allowed", []),
                 source_path=path,
             )

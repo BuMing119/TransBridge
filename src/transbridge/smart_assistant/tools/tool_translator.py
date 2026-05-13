@@ -31,6 +31,24 @@ def _tool_start_translation(args: dict, ctx, collection) -> ToolResult:
             return ToolResult.fail("API Key 未配置",
                 error_category="config", error_code="API_KEY_MISSING",
                 recovery_action="请在 AI 翻译设置中配置 API Key")
+        # MA11: 术语数据库来源检查
+        term_sources = [s for s in llm_cfg.term_priority if s != "dynamic"]
+        has_term_source = bool(term_sources)
+        for src in term_sources:
+            if src == "paratranz":
+                from src.transbridge.paratranz.config_manager import ParatranzConfig
+                pc = ParatranzConfig.load_from_file()
+                if pc.token:
+                    has_term_source = True
+                    break
+            elif src in ("json", "excel"):
+                path = llm_cfg.local_json_path if src == "json" else llm_cfg.local_excel_path
+                import os as _os
+                if path and _os.path.exists(path):
+                    has_term_source = True
+                    break
+        if not has_term_source:
+            logger.warning("start_translation: 未检测到术语数据库来源，翻译质量可能受影响")
     except Exception:
         return ToolResult.fail("无法读取 LLM 配置，请检查设置",
             error_category="config", error_code="CONFIG_LOAD_FAILED")
@@ -45,6 +63,10 @@ def _tool_start_translation(args: dict, ctx, collection) -> ToolResult:
 
     tm = TaskManager()
     task_id = tm.register(stop_event=stop_event, metadata={"mode": mode, "type": "translation"})
+
+    # M4: 浅拷贝闭包捕获的可变引用，防止集合切换时读到错误数据
+    _collection = collection
+    _entry_ids = list(entry_ids) if entry_ids else None
 
     def _run():
         try:
@@ -64,8 +86,8 @@ def _tool_start_translation(args: dict, ctx, collection) -> ToolResult:
                     raise InterruptedError("任务已被用户停止")
 
             result = translator.translate(
-                collection=collection,
-                target_entry_ids=entry_ids,
+                collection=_collection,
+                target_entry_ids=_entry_ids,
                 progress_callback=_progress,
                 stop_event=stop_event,
             )
@@ -129,8 +151,8 @@ def _tool_start_polish(args: dict, ctx, collection) -> ToolResult:
                     raise InterruptedError("任务已被用户停止")
                 try:
                     polisher.polish(entry)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("润色条目 %s 失败: %s", getattr(entry, 'id', '?'), exc)
                 tm.update_progress(task_id, {"current": i + 1, "total": total})
 
             tm.set_status(task_id, "completed")
@@ -229,17 +251,9 @@ def _get_profiles() -> dict[str, str]:
     return profiles
 
 
-def _tool_get_translation_config(args: dict, ctx) -> ToolResult:
-    """返回当前 LLM 翻译配置，含后处理、术语、ParaTranz 状态。"""
-    from src.transbridge.config.llm import LLMConfig
-    try:
-        llm = LLMConfig.load_from_file()
-    except Exception:
-        llm = LLMConfig()
-    profiles = _get_profiles()
-
-    # C4: 真实的后处理配置
-    post_process = {
+def _get_post_process_config(llm) -> dict:
+    """M27: 从 LLMConfig 提取后处理开关配置。"""
+    return {
         "enabled": getattr(llm, 'enable_post_process', True),
         "consistency_check": getattr(llm, 'pp_enable_consistency_check', True),
         "format_validation": getattr(llm, 'pp_enable_format_validation', True),
@@ -249,7 +263,9 @@ def _tool_get_translation_config(args: dict, ctx) -> ToolResult:
         "arbitration": getattr(llm, 'pp_enable_arbitration', True),
     }
 
-    # C4: 术语数据库信息
+
+def _get_term_db_info(ctx) -> dict:
+    """M27: 读取当前 ESP 对应的术语数据库信息。"""
     term_db_info = {"path": None, "entry_count": 0}
     try:
         from pathlib import Path
@@ -264,8 +280,25 @@ def _tool_get_translation_config(args: dict, ctx) -> ToolResult:
                     "path": str(term_db_path),
                     "entry_count": len(terms) if isinstance(terms, dict) else 0,
                 }
+    except Exception as exc:
+        logger.warning("术语数据库信息读取失败: %s", exc)
+    return term_db_info
+
+
+def _tool_get_translation_config(args: dict, ctx) -> ToolResult:
+    """返回当前 LLM 翻译配置，含后处理、术语、ParaTranz 状态。"""
+    from src.transbridge.config.llm import LLMConfig
+    try:
+        llm = LLMConfig.load_from_file()
     except Exception:
-        pass
+        llm = LLMConfig()
+    profiles = _get_profiles()
+
+    # C4: 真实的后处理配置
+    post_process = _get_post_process_config(llm)
+
+    # C4: 术语数据库信息
+    term_db_info = _get_term_db_info(ctx)
 
     # C5: ParaTranz 配置状态
     pt_config = {"token_configured": False, "api_url": None}
@@ -276,8 +309,8 @@ def _tool_get_translation_config(args: dict, ctx) -> ToolResult:
             "token_configured": bool(pt_cfg.token),
             "api_url": pt_cfg.api_url,
         }
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("ParaTranz 配置读取失败: %s", exc)
 
     return ToolResult.ok(data={
         "provider": llm.provider,
@@ -358,20 +391,21 @@ def _tool_set_scope(args: dict, ctx) -> ToolResult:
 
 
 def _tool_get_scope_preview(args: dict, ctx) -> ToolResult:
-    """预览当前作用域下匹配的条目数。"""
+    """预览当前作用域下匹配的条目数。m25: 复用 filter_entries 统一筛选逻辑。"""
+    from .base import filter_entries
     collection = ctx.collection
     if not collection or len(collection) == 0:
         return ToolResult.ok("当前无翻译集合", data={"matched": 0, "total": 0})
     scope = ctx.translation_scope
-    matched = 0
-    for e in collection:
-        stages_ok = not scope["stages"] or e.stage in scope["stages"]
-        cat_ok = not scope["categories"] or (
-            e.context and any(e.context.startswith(c + ":") or e.context.startswith(c + "_") for c in scope["categories"])
-        )
-        if stages_ok and cat_ok:
-            matched += 1
-
+    # m25: 将 translation_scope 转为 filter_state 格式后调用 filter_entries
+    filter_state = {
+        "stage": scope.get("stages"),
+        "category": scope.get("categories"),
+        "labels": scope.get("labels"),
+    }
+    entry_labels = getattr(ctx, 'entry_labels', None)
+    results = filter_entries(collection, filter_state, entry_labels=entry_labels)
+    matched = len(results)
     total = len(collection)
     return ToolResult.ok(
         f"作用域匹配: {matched}/{total} 条",

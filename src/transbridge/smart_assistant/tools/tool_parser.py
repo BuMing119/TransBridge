@@ -11,7 +11,12 @@ _VALID_EXTENSIONS = {".esp", ".esm", ".esl", ".xml", ".json", ".strings", ".sst"
 
 
 def _validate_path(path: str) -> ToolResult | None:
-    """E1: 校验文件路径（扩展名白名单 + 基础安全检查）。"""
+    """E1: 校验文件路径（扩展名白名单 + 基础安全检查）。
+
+    NOTE(m34): 此校验逻辑与 tool_writer._validate_output_path 存在重叠
+    （路径遍历检测、绝对路径拒绝）。parser 额外包含扩展名白名单和文件存在性检查，
+    writer 额外拒绝绝对路径。两个函数职责不同，暂不做合并重构。
+    """
     if not path:
         return ToolResult.fail("文件路径为空")
     if not os.path.exists(path):

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import threading
 import logging
+from types import SimpleNamespace
 
 from .base import ToolResult
 from .task_manager import TaskManager
@@ -28,7 +29,7 @@ def _run_postprocess_phase(processor_class, config_overrides: dict,
 
     def _run():
         try:
-            cfg = processor_class.get_default_config() if hasattr(processor_class, 'get_default_config') else type('Cfg', (), {})()
+            cfg = processor_class.get_default_config() if hasattr(processor_class, 'get_default_config') else SimpleNamespace()
             for k, v in config_overrides.items():
                 setattr(cfg, k, v)
             processor = processor_class(cfg) if config_overrides else processor_class()

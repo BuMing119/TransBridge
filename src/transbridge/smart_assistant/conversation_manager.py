@@ -1,95 +1,124 @@
+from __future__ import annotations
+
+from typing import Any
+
+
 class ConversationManager:
     """维护多轮对话历史，封装 message list 操作。
 
-    M10: _trim 按轮次裁剪，每轮包含 user → assistant → [observation*] → [plan_result]
-    M12: add_observation 结果超过 2000 字符自动截断
+    M10: _trim 按轮次裁剪，每轮包含 user -> assistant -> [observation*] -> [plan_result]
+    M12: add_observation 结果超过 _MAX_OBSERVATION_CHARS 字符自动截断
+    M3: turn_starts 预记录轮次起始位置，_trim 基于记录裁剪，不依赖遍历扫描消息顺序
+    m5: _messages_cache 缓存 get_messages() 返回值，仅在消息变更时重建
     """
 
     _OBSERVATION_PREFIX = "【工具执行结果 - "
     _PLAN_RESULT_PREFIX = "【计划执行完成】"
+    _MAX_OBSERVATION_CHARS = 2000
 
-    def __init__(self, max_turns: int = 20):
-        self._messages: list[dict] = []
-        self._max_turns = max_turns
+    def __init__(self, max_turns: int = 20) -> None:
+        self._messages: list[dict[str, Any]] = []
+        self._max_turns: int = max_turns
+        # M3: 预记录每轮起始位置 (user 消息在 _messages 中的索引)
+        self._turn_starts: list[int] = []
+        # m5: 消息缓存 -- 仅在消息变更时重建副本
+        self._messages_dirty: bool = True
+        self._messages_cache: list[dict[str, Any]] = []
 
     def add_system(self, content: str) -> None:
         """system 消息始终在列表最前（索引 0），替换已有 system 消息。"""
+        had_system = any(m["role"] == "system" for m in self._messages)
         self._messages = [m for m in self._messages if m["role"] != "system"]
         self._messages.insert(0, {"role": "system", "content": content})
+        self._messages_dirty = True
+        # M3: 新增 system 消息会改变索引 0，所有 turn_starts 后移 1 位
+        if not had_system:
+            self._turn_starts = [s + 1 for s in self._turn_starts]
 
     def add_user(self, content: str) -> None:
+        # M3: 记录此轮起始位置
+        self._turn_starts.append(len(self._messages))
         self._messages.append({"role": "user", "content": content})
+        self._messages_dirty = True
         self._trim()
 
     def add_assistant(self, content: str) -> None:
         self._messages.append({"role": "assistant", "content": content})
+        self._messages_dirty = True
 
     def add_observation(self, tool_name: str, result: str) -> None:
-        """追加工具执行结果作为 user 消息。M12: 超过 2000 字符自动截断。"""
-        if len(result) > 2000:
-            result = result[:2000] + f"...(已截断，共 {len(result)} 字符)"
+        """追加工具执行结果作为 user 消息。超过 _MAX_OBSERVATION_CHARS 字符自动截断。"""
+        if len(result) > self._MAX_OBSERVATION_CHARS:
+            result = result[:self._MAX_OBSERVATION_CHARS] + f"...(已截断，共 {len(result)} 字符)"
         self._messages.append({
             "role": "user",
             "content": f"{self._OBSERVATION_PREFIX}{tool_name}】\n{result}",
         })
+        self._messages_dirty = True
 
     def add_plan_result(self, summary: str) -> None:
-        """追加计划执行聚合结果作为 user 消息。M12: 超过 2000 字符自动截断。"""
-        if len(summary) > 2000:
-            summary = summary[:2000] + f"...(已截断，共 {len(summary)} 字符)"
+        """追加计划执行聚合结果作为 user 消息。超过 _MAX_OBSERVATION_CHARS 字符自动截断。"""
+        if len(summary) > self._MAX_OBSERVATION_CHARS:
+            summary = summary[:self._MAX_OBSERVATION_CHARS] + f"...(已截断，共 {len(summary)} 字符)"
         self._messages.append({
             "role": "user",
             "content": f"{self._PLAN_RESULT_PREFIX}\n{summary}",
         })
+        self._messages_dirty = True
 
-    def get_messages(self) -> list[dict]:
-        return self._messages.copy()
+    def get_messages(self) -> list[dict[str, Any]]:
+        """返回消息列表副本。
+
+        m5: 缓存机制 — 仅在 _messages 变更时重建副本，后续调用返回缓存的副本。
+        """
+        if self._messages_dirty:
+            self._messages_cache = self._messages.copy()
+            self._messages_dirty = False
+        return self._messages_cache.copy()
 
     def clear(self) -> None:
         self._messages.clear()
-
-    def _is_observation(self, msg: dict) -> bool:
-        return (msg["role"] == "user"
-                and isinstance(msg.get("content", ""), str)
-                and msg["content"].startswith(self._OBSERVATION_PREFIX))
-
-    def _is_plan_result(self, msg: dict) -> bool:
-        return (msg["role"] == "user"
-                and isinstance(msg.get("content", ""), str)
-                and msg["content"].startswith(self._PLAN_RESULT_PREFIX))
+        self._turn_starts.clear()
+        self._messages_dirty = True
+        self._messages_cache.clear()
 
     def _trim(self) -> None:
-        """M10: 按轮次裁剪，保留最后 max_turns 轮。
+        """M3/M10: 基于预记录的 turn_starts 裁剪，保留最后 max_turns 轮。
 
-        一轮 = user(非observation/plan_result) + assistant + 后续 observation*/plan_result*
+        一轮 = 从 turn_starts[i] 到 turn_starts[i+1] (或末尾) 的所有消息。
         裁剪时整轮移除（含该轮关联的所有 observation 和 plan_result 消息）。
+
+        M3: 使用 add_user() 时预记录的 _turn_starts，不再依赖遍历扫描消息顺序。
+        m6: 使用列表切片重建 messages，避免逐个 del 的 O(n*k) 开销。
         """
         if self._max_turns <= 0:
             return
 
-        # 找到所有"真正"的 user 消息（排除 observation 和 plan_result）
-        turns: list[list[int]] = []  # 每轮: user_idx, assistant_idx, [extra_idx...]
-        current_turn: list[int] = []
+        while len(self._turn_starts) > self._max_turns:
+            # 最旧一轮的起始位置
+            oldest_start = self._turn_starts.pop(0)
+            # 该轮结束位置 = 下一轮起始 (或消息末尾)
+            if self._turn_starts:
+                oldest_end = self._turn_starts[0]
+            else:
+                oldest_end = len(self._messages)
 
-        for i, m in enumerate(self._messages):
-            if m["role"] == "user" and not self._is_observation(m) and not self._is_plan_result(m):
-                # 新轮开始：结算上一轮
-                if current_turn:
-                    turns.append(current_turn)
-                current_turn = [i]
-            elif m["role"] == "assistant" and current_turn and len(current_turn) == 1:
-                current_turn.append(i)
-            elif (self._is_observation(m) or self._is_plan_result(m)) and current_turn:
-                current_turn.append(i)
-            # system 消息跳过，不属于任何轮
+            removed_count = oldest_end - oldest_start
+            # 调整剩余 turn_starts 的偏移
+            for i in range(len(self._turn_starts)):
+                self._turn_starts[i] -= removed_count
 
-        if current_turn:
-            turns.append(current_turn)
+            # 保存 system 消息 (索引 0)，切片可能将其移除
+            system_msg = None
+            if self._messages and self._messages[0]["role"] == "system":
+                system_msg = self._messages[0]
 
-        # 保留最后 max_turns 轮
-        while len(turns) > self._max_turns:
-            removed_indices = turns.pop(0)
-            # 从后往前删，避免索引偏移
-            for idx in sorted(removed_indices, reverse=True):
-                if idx < len(self._messages):
-                    del self._messages[idx]
+            # m6: 使用切片重建，O(n) 单次操作替代 O(n*k) 逐个 del
+            self._messages = self._messages[oldest_end:]
+            self._messages_dirty = True
+
+            # 若 system 消息被切片移除则恢复
+            if system_msg is not None and oldest_end > 0:
+                self._messages.insert(0, system_msg)
+                for i in range(len(self._turn_starts)):
+                    self._turn_starts[i] += 1

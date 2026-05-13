@@ -18,7 +18,11 @@ class ToolSpec:
 
 
 class _ToolRegistry:
-    """工具注册表（类级别单例）。支持 namespace 隔离。"""
+    """工具注册表（类级别单例）。支持 namespace 隔离。
+
+    NOTE: 类名以下划线开头表示模块内部实现细节，但通过 ToolRegistry = _ToolRegistry
+    别名对外暴露为公共接口。保留 _ 前缀以维持历史向后兼容。
+    """
 
     _namespaced_tools: dict[str, dict[str, ToolSpec]] = {"default": {}}
 
@@ -40,15 +44,16 @@ class _ToolRegistry:
         return None
 
     @classmethod
-    def list_all(cls) -> list[ToolSpec]:
-        """列出所有 namespace 中的工具（去重）。"""
+    def list_all(cls, include_deprecated: bool = False) -> list[ToolSpec]:
+        """列出所有 namespace 中的工具（去重）。M2: include_deprecated 默认 False，排除已废弃工具。"""
         seen: set[str] = set()
         result = []
         for ns_tools in cls._namespaced_tools.values():
             for name, spec in ns_tools.items():
                 if name not in seen:
                     seen.add(name)
-                    result.append(spec)
+                    if include_deprecated or not spec.deprecated:
+                        result.append(spec)
         return result
 
     @classmethod

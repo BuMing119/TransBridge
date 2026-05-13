@@ -34,13 +34,15 @@ class ParatranzParser(FileParser):
     def _parse_zip(self, path: Path) -> ParsedDocument:
         import zipfile
         raw_parts = []
+        namelist = []
         with zipfile.ZipFile(path, "r") as zf:
-            for name in zf.namelist():
+            namelist = zf.namelist()
+            for name in namelist:
                 if name.endswith(".json"):
                     content = zf.read(name).decode("utf-8", errors="replace")
                     raw_parts.append(f"--- {name} ---\n{content}")
         return ParsedDocument(
             source_path=path, format="paratranz", title=path.stem,
             raw_text="\n".join(raw_parts),
-            metadata={"files": [n for n in zipfile.ZipFile(path, "r").namelist()]},
+            metadata={"files": namelist},
         )

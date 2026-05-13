@@ -1,3 +1,4 @@
+import hmac
 import json
 import logging
 import sys
@@ -5,6 +6,9 @@ import sys
 from .adapter import MCPAdapter
 
 logger = logging.getLogger(__name__)
+
+# m3: stdin 单行最大长度限制 10MB，防止超大消息导致 OOM
+_MAX_LINE_LENGTH = 10 * 1024 * 1024
 
 
 class MCPServer:
@@ -18,10 +22,19 @@ class MCPServer:
         self._running = False
 
     def run_stdio(self) -> None:
+        # CR4: 无认证令牌时发出安全警告
+        auth_token = self._config.get("auth_token", "").strip()
+        if not auth_token:
+            logger.warning("MCP Server 未配置认证令牌 (auth_token)，任何人均可调用工具。"
+                           "请在配置中设置 mcp_auth_token 以启用访问控制。")
         logger.info("MCP Server 已启动 (stdio)")
         self._running = True
         for line in sys.stdin:
             if not self._running:
+                break
+            # m3: 限制单行消息最大长度，防止超大消息导致 OOM
+            if len(line) > _MAX_LINE_LENGTH:
+                logger.warning("MCP: 单行消息超过大小限制 (%d bytes)，断开连接", _MAX_LINE_LENGTH)
                 break
             line = line.strip()
             if not line:
@@ -57,7 +70,8 @@ class MCPServer:
         params = request.get("params", {})
         meta = params.get("_meta", {}) if isinstance(params, dict) else {}
         req_token = meta.get("authorization", "")
-        return req_token == auth_token
+        # m36: 使用恒定时间比较防止时序攻击
+        return hmac.compare_digest(req_token, auth_token)
 
     def _handle_request(self, request: dict) -> dict:
         method = request.get("method", "")

@@ -56,7 +56,6 @@ class TestExecutionEngine(unittest.TestCase):
 
     # ── 图执行 ──────────────────────────────────────────────────
 
-    @unittest.skip("execute_graph 需要完整的 Qt + ToolRegistry 运行时环境")
     def test_execute_linear_graph(self):
         nodes = [
             ActionNode(node_id="step_A", node_type="action", tool="tool_a"),
@@ -74,7 +73,6 @@ class TestExecutionEngine(unittest.TestCase):
         for r in results:
             self.assertTrue(r.success, f"Step {r.step_id} ({r.tool}) 应成功: {r.message}")
 
-    @unittest.skip("execute_graph 需要完整的 Qt + ToolRegistry 运行时环境")
     def test_execute_single_node(self):
         nodes = [ActionNode(node_id="only_node", node_type="action", tool="solo_tool")]
         graph = GraphSpec(graph_id="single_test", nodes=nodes, edges=[], entry_node="only_node")
@@ -83,7 +81,6 @@ class TestExecutionEngine(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertTrue(results[0].success)
 
-    @unittest.skip("execute_graph 需要完整的 Qt + ToolRegistry 运行时环境")
     def test_execute_results_order(self):
         nodes = [
             ActionNode(node_id="first", node_type="action", tool="tool1"),
@@ -98,7 +95,6 @@ class TestExecutionEngine(unittest.TestCase):
 
     # ── 取消 ─────────────────────────────────────────────────────
 
-    @unittest.skip("Qt 事件循环在 unittest 中无法可靠测试异步取消")
     def test_cancel_stops_execution(self):
         nodes = [ActionNode(node_id=f"node_{i}", node_type="action", tool=f"tool_{i}") for i in range(10)]
         edges = [EdgeSpec(from_node=f"node_{i}", to_node=f"node_{i+1}") for i in range(9)]

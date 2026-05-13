@@ -30,8 +30,9 @@ class OutputValidationGuard(GuardMiddleware):
         return GuardResult(True)
 
     def after_execute(self, step, result, ctx) -> GuardResult:
-        if not isinstance(result.data, dict) and result.data is not None:
-            return GuardResult(False, f"输出类型错误: 期望 dict，实际 {type(result.data).__name__}")
+        # M13: 放宽类型检查 — 允许 dict | list | None
+        if not isinstance(result.data, (dict, list)) and result.data is not None:
+            return GuardResult(False, f"输出类型错误: 期望 dict/list，实际 {type(result.data).__name__}")
         message = result.message or ""
         if len(message) > _MAX_MESSAGE_LEN:
             result.message = message[:_MAX_MESSAGE_LEN] + "...(截断)"
@@ -46,6 +47,8 @@ class OutputValidationGuard(GuardMiddleware):
         result.message = self._redact_sensitive(result.message)
         if result.data and isinstance(result.data, dict):
             result.data = self._redact_dict(result.data)
+        elif result.data and isinstance(result.data, list):
+            result.data = self._redact_list(result.data)
         return GuardResult(True)
 
     def _redact_sensitive(self, text: str) -> str:
@@ -56,37 +59,39 @@ class OutputValidationGuard(GuardMiddleware):
         return text
 
     def _redact_dict(self, data: dict) -> dict:
-        result = {}
+        """M19: 就地变异（mutate in place），避免递归深拷贝。
+        对简单值直接修改原对象，对嵌套结构递归进入后原地修改。"""
         for k, v in data.items():
             if isinstance(v, str):
                 for pattern, _label in _SENSITIVE_PATTERNS:
                     v = pattern.sub("***REDACTED***", v)
-                result[k] = v
+                data[k] = v
             elif isinstance(v, dict):
-                result[k] = self._redact_dict(v)
+                self._redact_dict(v)
             elif isinstance(v, list):
                 # E12: 递归处理 list 内的字符串和字典
-                result[k] = self._redact_list(v)
+                self._redact_list(v)
             elif isinstance(v, tuple):  # m3: 递归处理 tuple
-                result[k] = tuple(self._redact_list(list(v)))
-            else:
-                result[k] = v
-        return result
+                lst = list(v)
+                self._redact_list(lst)
+                data[k] = tuple(lst)
+            # 非字符串简单值无需修改
+        return data
 
     def _redact_list(self, data: list) -> list:
-        """E12: 递归处理 list 中的敏感信息。"""
-        result = []
-        for item in data:
+        """E12: 就地变异 list 中的敏感信息（M19: 避免全量复制）。"""
+        for i, item in enumerate(data):
             if isinstance(item, str):
                 for pattern, _label in _SENSITIVE_PATTERNS:
                     item = pattern.sub("***REDACTED***", item)
-                result.append(item)
+                data[i] = item
             elif isinstance(item, dict):
-                result.append(self._redact_dict(item))
+                self._redact_dict(item)
             elif isinstance(item, list):
-                result.append(self._redact_list(item))
+                self._redact_list(item)
             elif isinstance(item, tuple):  # m3: 递归处理 tuple
-                result.append(tuple(self._redact_list(list(item))))
-            else:
-                result.append(item)
-        return result
+                lst = list(item)
+                self._redact_list(lst)
+                data[i] = tuple(lst)
+            # 非字符串简单值无需修改
+        return data

@@ -45,10 +45,24 @@ def _apply_inline(text: str) -> str:
     text = _BOLD_RE.sub(r"<b>\1\2</b>", text)
     # Italic (after bold to avoid `**` being partially matched)
     text = _ITALIC_RE.sub(r"<i>\1\2</i>", text)
-    # Links
-    text = _LINK_RE.sub(r'<a href="\2">\1</a>', text)
+    # Links — M9: 校验 URL 协议，仅允许 http/https 和内部锚点
+    text = _LINK_RE.sub(_sanitize_link_url, text)
 
     return text
+
+
+def _sanitize_link_url(match: re.Match) -> str:
+    """M9: 校验 Markdown 链接 URL 协议。仅允许 http:/https:/#，其余替换为 about:blank。"""
+    url = match.group(2)
+    url_lower = url.lower()
+    # 允许安全协议和内部锚点
+    if url_lower.startswith(("http:", "https:", "#")):
+        pass
+    # 拦截危险协议（含 :// 的显式协议或已知危险前缀）
+    elif "://" in url_lower or url_lower.startswith(("javascript:", "data:", "vbscript:", "file:")):
+        url = "about:blank"
+    # 无协议相对路径放行
+    return f'<a href="{url}">{match.group(1)}</a>'
 
 
 def _make_label(

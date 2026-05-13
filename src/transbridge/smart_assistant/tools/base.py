@@ -223,30 +223,23 @@ def execute_with_guardrails(spec, args: dict, ctx: ExecutionContext,
                 return ToolResult.fail(f"输出校验拒绝: {guard_result.reason}")
         return raw_result
     elif isinstance(raw_result, dict):
-        return ToolResult(
+        result = ToolResult(
             success=raw_result.get("success", True),
             message=raw_result.get("message", ""),
             data=raw_result.get("data"),
         )
+        # M1: dict 分支也需要走 after 中间件链（脱敏/截断）
+        from src.transbridge.smart_assistant.execution_engine import StepResult
+        temp_result = StepResult(
+            step_id="", tool=spec.name, success=result.success,
+            message=result.message, data=result.data, duration_ms=0,
+        )
+        for mw in reversed(guards):
+            guard_result = mw.after_execute(step, temp_result, ctx)
+            if not guard_result.allowed:
+                return ToolResult.fail(f"输出校验拒绝: {guard_result.reason}")
+        return result
     return raw_result
-
-
-# ── 装饰器 ──────────────────────────────────────────────────────
-
-def require_collection(func):
-    """M3: 集合前置检查装饰器。统一替换 6 个文件中的手动检查。"""
-    import functools
-
-    @functools.wraps(func)
-    def wrapper(args: dict, ctx, *a, **kw) -> ToolResult:
-        collection = getattr(ctx, 'collection', None)
-        if collection is None:
-            return ToolResult.fail(
-                "当前没有加载翻译集合",
-                error_category="input", error_code="COLLECTION_NOT_LOADED",
-            )
-        return func(args, ctx, *a, **kw)
-    return wrapper
 
 
 # ── filter_entries (H8) ────────────────────────────────────────

@@ -1,6 +1,7 @@
 import json
 import logging
 from dataclasses import dataclass, field
+from typing import Any
 
 from ..execution_engine import StepResult
 
@@ -24,7 +25,7 @@ class Orchestrator:
         self._tools = tool_registry
         self._llm = llm_client
 
-    def decompose_task(self, user_request: str, ctx) -> list[Subtask]:
+    def decompose_task(self, user_request: str, ctx: Any) -> list[Subtask]:
         agents_desc = []
         for a in self._agents.list_enabled():
             agents_desc.append(f"- {a.agent_id}: {a.role}")
@@ -69,7 +70,11 @@ class Orchestrator:
             ))
         return subtasks
 
-    def map_to_steps(self, subtasks: list[Subtask], ctx) -> list[dict]:
+    def map_to_steps(self, subtasks: list[Subtask], ctx: Any) -> list[dict[str, Any]]:
+        # CR2 / TODO: LLM prompt 中 "action" 字段是人类可读描述（如"翻译DLC1条目"），
+        # 而非有效工具名。当前回退到 agent_spec.tools[0] 作为兜底方案。
+        # 长期修复应在 LLM prompt 中增加 "tool_name" 字段要求，
+        # 并在 decompose_task() 的 JSON 输出 schema 中同步添加。
         steps = []
         for st in subtasks:
             agent_spec = self._agents.get(st.agent_type)
@@ -81,7 +86,7 @@ class Orchestrator:
                 project_path=getattr(ctx, 'project_path', None),
                 ctx=ctx,
             )
-            tool_name = getattr(st, 'action', '') or getattr(st, 'tool_name', '')
+            tool_name = getattr(st, 'action', '')  # m33: 'tool_name' not a SubTask attr, removed dead getattr
             if not tool_name and agent_spec.tools:
                 tool_name = agent_spec.tools[0]  # E4: fallback to first tool
             step = {

@@ -105,6 +105,11 @@ def _tool_export_json(args: dict, ctx) -> ToolResult:
                 return err
         else:
             path = data_dir / f"{stem}_export.json"
+            # m31: 对默认路径也进行安全校验，防止 stem 含路径遍历字符
+            from src.transbridge.smart_assistant.tools.tool_writer import _validate_output_path
+            err = _validate_output_path(str(path))
+            if err:
+                return err
         collection.to_json_file(str(path))
         return ToolResult.ok(f"已导出到 {path}", data={"path": str(path)})
     except Exception as exc:

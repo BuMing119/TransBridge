@@ -50,6 +50,17 @@ class MCPAdapter:
             return {"content": [{"type": "text", "text": f"执行异常: {exc}"}], "isError": True}
 
     def _is_exposed(self, spec) -> bool:
+        """检查工具是否对 MCP 通道暴露。
+
+        M11 TODO: MCP 通道不支持 HITL 确认。即使 admin 工具在
+        admin_tool_whitelist 中且通过 _is_exposed 可见性检查，
+        PermissionGuard (guardrails/permission.py) 在
+        execute_with_guardrails 中仍会因 admin_confirm_required
+        阻断执行（因为 MCP 无法弹出 UI 确认框）。
+        需要架构层面解决：MCP 通道中白名单内工具应跳过 PermissionGuard
+        的 admin 阻断，或明确文档化 MCP 不支持 admin 工具。
+        当前 _is_exposed 仅控制工具列表可见性，不绕过权限检查。
+        """
         perm = getattr(spec, 'permission', 'read')
         if perm == "admin":
             return spec.name in self._admin_whitelist

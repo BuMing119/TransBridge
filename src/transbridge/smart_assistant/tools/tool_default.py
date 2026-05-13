@@ -4,9 +4,12 @@ Story 07: get_collection_summary deprecated(O8)，功能合并到 get_statistics
 """
 from __future__ import annotations
 
+import logging
 from collections import Counter
 
 from .base import ToolResult
+
+logger = logging.getLogger(__name__)
 
 
 _STAGE_LABELS = {0: "未翻译", 1: "已翻译", 2: "有疑问", 3: "已检查", 5: "已审核", 9: "已锁定", -1: "已隐藏"}
@@ -29,8 +32,8 @@ def _tool_get_app_state(args: dict, ctx) -> ToolResult:
         from src.transbridge.paratranz.config_manager import ParatranzConfig
         pt_cfg = ParatranzConfig.load_from_file()
         pt_configured = bool(getattr(pt_cfg, 'token', None))
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("操作失败: %s", exc)
 
     return ToolResult.ok(data={
         "active_collection": slot.label if slot else None,
@@ -54,7 +57,7 @@ def _tool_list_collections(args: dict, ctx) -> ToolResult:
         collections.append({
             "key": key,
             "label": slot.label,
-            "esp_path": slot.esp_path,
+            "esp_name": os.path.basename(slot.esp_path) if slot.esp_path else None,
             "entry_count": len(col) if col else 0,
             "is_active": key == ctx.active_key,
         })
@@ -138,10 +141,10 @@ def _tool_list_local_projects(args: dict, ctx) -> ToolResult:
         workspace = ctx.workspace
         if workspace and hasattr(workspace, 'projects'):
             for p in workspace.projects:
-                # m21: 仅返回项目名，不暴露绝对路径
+                # m10/m21: 仅返回项目名(basename)，不暴露绝对路径
                 projects.append({"name": getattr(p, 'name', '')})
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("操作失败: %s", exc)
     return ToolResult.ok(f"共 {len(projects)} 个本地项目", data={"projects": projects})
 
 

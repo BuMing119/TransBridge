@@ -62,12 +62,18 @@ class InputValidationGuard(GuardMiddleware):
         return GuardResult(True)
 
     def _detect_path_traversal(self, args: dict) -> GuardResult:
-        """E1: 检测路径参数中的路径遍历攻击和绝对路径注入。"""
-        path_keys = ["path", "esp_path", "eet_path", "xt_path", "file_path",
-                     "input_path", "output_path", "source_path", "target_path"]
-        for key in path_keys:
-            value = args.get(key)
+        """E1: 检测路径参数中的路径遍历攻击和绝对路径注入。
+
+        M10: 使用启发式检测替代硬编码白名单。任何参数名含 path/file/dir/
+        output/dest/save 子串（不区分大小写）均触发路径遍历检查。
+        """
+        _PATH_KEY_SUBSTRINGS = ("path", "file", "dir", "output", "dest", "save")
+        for key, value in args.items():
             if not isinstance(value, str):
+                continue
+            # M10: 启发式检测 — 参数名含路径相关子串即检查
+            key_lower = key.lower()
+            if not any(sub in key_lower for sub in _PATH_KEY_SUBSTRINGS):
                 continue
             # 检测 ../ 和 ..\\
             for pattern, label in _PATH_TRAVERSAL_PATTERNS:

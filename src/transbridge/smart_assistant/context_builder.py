@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 from pathlib import Path
 from collections import Counter
+from typing import Any
 
 
 class ContextBuilder:
@@ -8,7 +11,7 @@ class ContextBuilder:
     C1: 移除对 ui/ 的直接依赖。调用方通过构造函数或 build() 参数传入 AppContext。
     """
 
-    def __init__(self, ctx=None):
+    def __init__(self, ctx: Any | None = None):
         self._ctx = ctx
 
     def build(self, ctx=None) -> str:
@@ -27,12 +30,12 @@ class ContextBuilder:
         esp_name = Path(ctx.esp_path).stem if ctx.esp_path else "未选择插件"
         total = len(collection)
 
-        translated = sum(1 for e in collection if e.translation)
-        untranslated = total - translated
-
-        # 按 context 分类计数
+        # M21: 单次遍历 — 合并 translated 计数与分类分布统计
+        translated = 0
         cat_counter: Counter[str] = Counter()
         for entry in collection:
+            if entry.translation:
+                translated += 1
             ctx_str = entry.context or ""
             base = ctx_str.split("|")[0] if "|" in ctx_str else ctx_str
             rec = base.split(":")[0]
@@ -40,6 +43,7 @@ class ContextBuilder:
                 cat_counter["对话"] += 1
             else:
                 cat_counter[base] += 1
+        untranslated = total - translated
 
         cat_lines = "\n".join(
             f"  - {cat}: {cnt} 条"
@@ -52,7 +56,7 @@ class ContextBuilder:
             docs_lines = "已上传参考文件:\n"
             for name, doc in ctx._uploaded_docs.items():
                 char_count = len(doc.raw_text) if hasattr(doc, 'raw_text') else 0
-                docs_lines += f"  - {name} ({doc.format}, {char_count}字符) — 使用 search_memory 工具检索内容\n"
+                docs_lines += f"  - {name} ({doc.format}, {char_count}字符) — 可通过对话上下文引用\n"
 
         return (
             f"当前工作环境:\n"
