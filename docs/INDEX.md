@@ -57,7 +57,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [agent-tool-expansion](../plans/agent-tool-expansion/plan.md) | ✅ 编码完成 (60工具, 7 namespaces, 7 Agent) | 14 |
 | [agent-upgrade](../plans/agent-upgrade/plan.md) | ✅ Phase 1 + Phase 2 全部完成 | 12 |
 | [llm-chat](../plans/llm-chat/plan.md) | ✅ 全部编码完成 (S01-S08) | 8 |
-| [smart-assistant-qa-fix](../plans/smart-assistant-qa-fix/plan.md) | ✅ 已完成 — 46/50 修复，评分 51/60，测试 ~165 用例 | 7 |
+| [smart-assistant-qa-fix](../plans/smart-assistant-qa-fix/plan.md) | ✅ 第四轮全量修复完成 (87/87) | 7 |
 
 ---
 
@@ -152,7 +152,11 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | 2026-05-10 | agent-upgrade Phase 2 (Agent框架升级) | ✅ 通过 — 15项覆盖，0 Blocker，安全加固完成（AST沙箱+路径防御） |
 | 2026-05-11 | agent-tool-expansion QA 审查 (Agent工具扩展) | ⚠ 需修复 — 89测试通过，发现28项问题(2B+6C+8M+12m)，已全部修复 |
 | 2026-05-11 | smart-assistant 全面审查 (Smart Assistant AI助手) | ⚠ 需修复 — 4维度并行审查，发现3B+10C+16M+21m，综合评分32/60 |
-| 2026-05-12 | smart-assistant-qa-fix 修复验证 (FR7.15 QA修复) | ✅ 通过 — 46/50 修复，综合评分 32→51/60，测试覆盖 ~165 用例，仅余 4 Minor 已知限制 |
+| 2026-05-12 | smart-assistant-qa-fix 修复验证 (FR7.15 QA修复) | ⚠ 部分回退 — 46/50 修复，综合评分 32→51/60，测试覆盖 ~165 用例，仅余 4 Minor 已知限制 |
+| 2026-05-13 | smart-assistant 第三轮全面审查 (4维度并行) | ⚠ 需修复 — 发现 3B+6C+11M+12m (32项)，综合评分 36/60，5项原修复存在缺陷 |
+| 2026-05-13 | smart-assistant 第四轮全面审查 (4维度并行) | ⚠ 需修复 — 发现 4B+15C+28M+40m (87项)，综合评分 36/60，全新独立审查 |
+| 2026-05-13 | smart-assistant Stack Overflow 评审委员会 (4角色: 架构师/开发者/QA/安全) | ⚠ 需修复 — 发现后端 6 类 QObject 耦合为 C 栈溢出根因，输出 7 条共识建议 + Phase 1-3 分阶段解耦计划，[纪要](council-review-stack-overflow-decoupling.md) |
+| 2026-05-13 | smart-assistant Phase 1 QObject 解耦 QA 审查 (4维度并行) | ✅ 条件通过 — 15/15 功能测试通过，2 Blocker 已修复 (跨线程回调投递)，4 Major + 8 Minor 已知限制，[报告](test-reports/smart-assistant-phase1-decoupling.md) |
 
 ---
 
@@ -208,3 +212,8 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | 2026-05-12 | FR7.15 S06 Minor 收尾：修复 17 项（m1/m2/m5/m6/m7/m8/m9/m11/m12/m14/m15/m19 + M2 深度去重 + M6 RetryHandler 集成），11 文件修改，5 个 v1 工具标记 deprecated，filter_entries 重命名，忙等轮询改 Condition.wait，ThreadPoolExecutor 复用，FAISS rebuild_index → changelog s06-003 | /bm-dev |
 | 2026-05-12 | FR7.15 S05 补完 + S06 批量装饰器：MemoryStore 异步写入(MemoryWriterThread QThread) + LRU 淘汰(max_entries) + close()；ConversationManager _trim 重写为按轮次裁剪 + add_observation/plan_result 2000 字截断；build_system_prompt namespace 参数；panel closeEvent memory_store.close()；@require_collection 批量替换 8 函数(3 文件) + 装饰器补全 error_category/code → changelog s05-002 + s06-004 | /bm-dev |
 | 2026-05-12 | FR7.15 S07 测试补完：5 个新测试文件（MemoryStore 10/MCP 10/ChatWorker 6/Observability 9/ExecutionEngine 10），45/49 通过(4 skip)，测试报告更新评分 51/60 + 审查结论 ✅ 通过 → changelog s07-002 | /bm-qa |
+| 2026-05-13 | smart-assistant Stack Overflow 修复 (0xC00000FD)：`__init__.py` 模块级导入全部改为惰性 `__getattr__`（根因），`chat_widget.py` TaskManager 信号连接延迟初始化（次级防御）→ changelog s02-002 |
+| 2026-05-13 | smart-assistant Stack Overflow Phase 1 解耦：MemoryWriterThread 改 threading.Thread + TaskManager 去 QObject/pyqtSignal 改回调 + except:pass 全量日志审计 (11处) + _run_llm_round 微阶段拆分 (3-stage QTimer) + 评审委员会纪要 → changelog s02-003 |
+| 2026-05-13 | smart-assistant QA 审查 Blocker 修复：TaskManager.notify_* 使用 QMetaObject.invokeMethod(Qt.QueuedConnection) 跨线程投递回调 + _safe_callback 异常隔离 + 4维度并行测试报告 → changelog s02-004 |
+| 2026-05-13 | smart-assistant Phase 2 QObject 解耦：ObservabilityCollector 去 QObject(回调注入) + ChatWorker/AgentWorker 去 QThread(AsyncWorker基类) + 7文件回调+QTimer桥接适配。后端 QObject 类从 6 → 1(仅剩ExecutionEngine) → changelog s02-005 |
+| 2026-05-13 | smart-assistant Phase 2 修复：_SignalBridge(QObject+pyqtSignal)统一跨线程桥接替代QTimer/QMetaObject.invokeMethod + main_window遗漏isRunning→is_alive适配 → changelog s02-006 | — |

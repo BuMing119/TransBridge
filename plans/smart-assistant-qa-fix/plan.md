@@ -3,9 +3,12 @@
 **对应需求**: FR7.15 — Smart Assistant QA 审查修复
 **技术模块**: `smart_assistant/`、`ui/tools/smart_assistant/`、`infra/`
 **业务域**: AI 辅助翻译 — 安全/质量/性能修复
-**状态**: 已确认
+**状态**: ✅ 第四轮全量修复 + Phase 1-2 QObject 解耦 (后端 QObject 类 6→1)
 **创建日期**: 2026-05-12
-**输入文档**: `docs/test-reports/smart-assistant.md`（2026-05-11 QA全面审查报告）
+**更新日期**: 2026-05-13 (第四轮修复 + Phase 1 后端 QObject 解耦与栈溢出根治)
+**输入文档**: 
+- `docs/test-reports/smart-assistant.md`（2026-05-11 QA全面审查报告，评分 32/60）
+- `docs/test-reports/smart-assistant-qa-round3.md`（2026-05-13 第三轮审查报告，评分 36/60）
 
 ## 功能边界
 
