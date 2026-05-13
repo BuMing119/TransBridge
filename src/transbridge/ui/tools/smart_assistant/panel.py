@@ -25,13 +25,20 @@ class SmartAssistantPanel(QDockWidget):
         )
         self.setMinimumHeight(200)
 
-        # 加载 Skills
+        self._init_skills()
+        self._init_ui(ctx)
+
+    # ── 初始化 ──────────────────────────────────────────────────
+
+    def _init_skills(self):
+        """加载 Skills 注册表。"""
         from src.transbridge.config.paths import get_data_dir
         from pathlib import Path
         from src.transbridge.smart_assistant.skills import SkillRegistry
         SkillRegistry.reload(Path(get_data_dir()) / "skills")
 
-        # ── 主容器：ChatWidget 独立，chips 在其内部 ──
+    def _init_ui(self, ctx):
+        """初始化主 UI 容器和 ChatWidget。"""
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -53,14 +60,41 @@ class SmartAssistantPanel(QDockWidget):
         super().hideEvent(event)
 
     def closeEvent(self, event):
-        """M13: 关闭面板时清理运行中的 worker/engine 和 memory_store。"""
-        if self._chat._worker and self._chat._worker.isRunning():
+        """M13+M4+m3: 关闭面板时清理 worker/engine/memory_store/TaskManager。"""
+        # m3: 确保活跃观测追踪被正确关闭（防止 trace 数据丢失）
+        if hasattr(self._chat, '_obs_collector') and self._chat._obs_collector:
+            try:
+                self._chat._obs_collector.end_conversation()
+            except Exception:
+                pass
+
+        # CR9: 清理 ObservabilityCollector 回调，解除引用
+        try:
+            if hasattr(self._chat, '_obs_collector') and self._chat._obs_collector:
+                self._chat._obs_collector._on_token_stats_updated = None
+        except Exception:
+            pass
+        try:
+            from src.transbridge.smart_assistant.tools.task_manager import TaskManager
+            tm = TaskManager()
+            tm.remove_listener(self._chat._on_task_completed)
+            tm.remove_listener(self._chat._on_task_failed)
+        except Exception:
+            pass
+
+        if self._chat._worker and self._chat._worker.is_alive():
             self._chat._worker.cancel()
-            self._chat._worker.wait(3000)
+            self._chat._worker.join(timeout=3)
         if self._chat._engine:
             self._chat._engine.cancel()
         if self._chat._memory_store:
             self._chat._memory_store.close()
+        # MA4: 重置 TaskManager 单例，防止会话间泄漏
+        try:
+            from src.transbridge.smart_assistant.tools.task_manager import TaskManager
+            TaskManager.reset()
+        except Exception:
+            pass
         super().closeEvent(event)
 
     # ── 公共访问 ──────────────────────────────────────────────

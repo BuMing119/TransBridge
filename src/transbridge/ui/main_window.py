@@ -171,9 +171,9 @@ class MainWindow(QMainWindow):
 
         if self._assistant_panel and self._assistant_panel.chat._worker:
             w = self._assistant_panel.chat._worker
-            if w.isRunning():
+            if w.is_alive():
                 w.cancel()
-                w.wait(3000)
+                w.join(timeout=3)
 
         settings = QSettings("TransBridge", "MainWindow")
         settings.setValue("geometry", self.saveGeometry())
