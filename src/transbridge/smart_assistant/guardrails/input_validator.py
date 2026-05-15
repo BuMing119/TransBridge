@@ -38,11 +38,13 @@ _PATH_TRAVERSAL_PATTERNS = [
 ]
 
 _MAX_INPUT_SIZE = 102400  # 100KB
+_MAX_RECURSION_DEPTH = 10  # M18: 限制嵌套递归深度，防止RecursionError
 
 
 class InputValidationGuard(GuardMiddleware):
-    def __init__(self, max_input_size: int = _MAX_INPUT_SIZE):
+    def __init__(self, max_input_size: int = _MAX_INPUT_SIZE, max_depth: int = _MAX_RECURSION_DEPTH):
         self._max_size = max_input_size
+        self._max_depth = max_depth  # M18: 递归深度上限
 
     def before_execute(self, step, ctx) -> GuardResult:
         args = step.get("args", {})
@@ -87,7 +89,11 @@ class InputValidationGuard(GuardMiddleware):
 
         return GuardResult(True)
 
-    def _check_value(self, key: str, value) -> GuardResult:
+    def _check_value(self, key: str, value, depth: int = 0) -> GuardResult:
+        # M18: 限制嵌套递归深度，防止深层嵌套导致RecursionError
+        if depth > self._max_depth:
+            logger.warning("InputValidation: 参数 '%s' 嵌套深度 (%d) 超过上限 (%d)", key, depth, self._max_depth)
+            return GuardResult(False, f"参数嵌套深度超过上限 ({self._max_depth})")
         if isinstance(value, str):
             if len(value.encode('utf-8', errors='replace')) > self._max_size:
                 return GuardResult(False, f"参数 '{key}' 超过大小限制 ({self._max_size} bytes)")
@@ -97,12 +103,12 @@ class InputValidationGuard(GuardMiddleware):
                     return GuardResult(False, f"检测到{label}模式")
         elif isinstance(value, dict):
             for k, v in value.items():
-                result = self._check_value(f"{key}.{k}", v)
+                result = self._check_value(f"{key}.{k}", v, depth + 1)
                 if not result.allowed:
                     return result
         elif isinstance(value, list):
             for i, item in enumerate(value):
-                result = self._check_value(f"{key}[{i}]", item)
+                result = self._check_value(f"{key}[{i}]", item, depth + 1)
                 if not result.allowed:
                     return result
         return GuardResult(True)

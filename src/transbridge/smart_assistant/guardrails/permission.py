@@ -23,17 +23,15 @@ class PermissionGuard(GuardMiddleware):
         if perm == "read":
             return GuardResult(True)
         # M8: PermissionGuard 在 execute_with_guardrails 中仅返回状态文本
-        # ("write_confirm_required" / "admin_confirm_required")，不触发 UI 弹窗。
-        # 实际弹窗/确认逻辑由上层调用方（chat_widget.py 的 ReAct/Auto 模式
-        # 或 ExecutionEngine 的 HITL 循环）检测 GuardResult 后通过信号机制触发，
-        # 此文件不负责 UI 交互。MCP 通道无 HITL 支持（见 mcp/adapter.py M11）。
+        # 上级调用方通过 GuardResult.requires_confirmation 字段判断
+        # 是否需要弹窗确认，不再依赖 reason 中的 magic string。
         if perm == "write":
             if self._write_require_confirm or getattr(spec, 'require_confirmation', False):
-                return GuardResult(False, "write_confirm_required")
+                return GuardResult(False, "需要写入权限确认", requires_confirmation="write")
             return GuardResult(True)
         if perm == "admin":
             if self._enable_admin_confirm:
-                return GuardResult(False, "admin_confirm_required")
+                return GuardResult(False, "需要管理级权限确认", requires_confirmation="admin")
             return GuardResult(True)
         return GuardResult(True)
 

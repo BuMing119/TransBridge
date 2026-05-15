@@ -10,20 +10,26 @@ from .base import ToolResult
 _VALID_EXTENSIONS = {".esp", ".esm", ".esl", ".xml", ".json", ".strings", ".sst"}  # E1 + C4
 
 
-def _validate_path(path: str) -> ToolResult | None:
-    """E1: 校验文件路径（扩展名白名单 + 基础安全检查）。
+def _sanitize_error(msg: str, path: str) -> str:
+    """M17: 将错误信息中的完整路径替换为文件名，避免泄露路径信息。"""
+    return msg.replace(path, os.path.basename(path)) if path and path in msg else msg
 
-    NOTE(m34): 此校验逻辑与 tool_writer._validate_output_path 存在重叠
-    （路径遍历检测、绝对路径拒绝）。parser 额外包含扩展名白名单和文件存在性检查，
-    writer 额外拒绝绝对路径。两个函数职责不同，暂不做合并重构。
+
+def _validate_path(path: str, *, check_exists: bool = True, check_extension: bool = True) -> ToolResult | None:
+    """E1/M29: 校验文件路径（扩展名白名单 + 基础安全检查）。
+
+    共享校验逻辑，供 parser 和 writer 复用。
+    check_exists=False 用于输出路径（文件可能尚不存在）。
+    check_extension=False 用于写回工具（不限制输出扩展名）。
     """
     if not path:
         return ToolResult.fail("文件路径为空")
-    if not os.path.exists(path):
-        return ToolResult.fail(f"文件不存在: {path}")
-    ext = os.path.splitext(path)[1].lower()
-    if ext not in _VALID_EXTENSIONS:
-        return ToolResult.fail(f"不支持的文件类型: {ext}，允许: {sorted(_VALID_EXTENSIONS)}")
+    if check_exists and not os.path.exists(path):
+        return ToolResult.fail(f"文件不存在: {os.path.basename(path)}")  # M17: 仅显示文件名
+    if check_extension:
+        ext = os.path.splitext(path)[1].lower()
+        if ext not in _VALID_EXTENSIONS:
+            return ToolResult.fail(f"不支持的文件类型: {ext}，允许: {sorted(_VALID_EXTENSIONS)}")
     # 拒绝路径遍历
     if ".." in path.replace("\\", "/").split("/"):
         return ToolResult.fail("拒绝路径遍历攻击")
@@ -44,10 +50,10 @@ def _tool_parse_esp(args: dict, ctx) -> ToolResult:
         from src.transbridge.parser.plugin_parser import PluginParser
         parser = PluginParser()
         plugin = parser.parse(path)
-        # 将解析结果加载到 ctx（通过新的 slot）
-        return ToolResult.ok(f"已解析 ESP: {path}", data={"entry_count": len(plugin.entries) if hasattr(plugin, 'entries') else 0})
+
+        return ToolResult.ok(f"已解析 ESP: {os.path.basename(path)}", data={"entry_count": len(plugin.entries) if hasattr(plugin, 'entries') else 0})  # M17: 仅显示文件名
     except Exception as exc:
-        return ToolResult.fail(f"解析 ESP 失败: {exc}")
+        return ToolResult.fail(f"解析 ESP 失败: {_sanitize_error(str(exc), path)}")  # M17: 清理错误信息中的路径
 
 
 def _tool_parse_eet(args: dict, ctx) -> ToolResult:
@@ -60,9 +66,9 @@ def _tool_parse_eet(args: dict, ctx) -> ToolResult:
         from src.transbridge.parser.eet_xml_parser import EET_XmlParser
         parser = EET_XmlParser()
         result = parser.parse(path)
-        return ToolResult.ok(f"已解析 EET: {path}", data={"entry_count": len(result) if result else 0})
+        return ToolResult.ok(f"已解析 EET: {os.path.basename(path)}", data={"entry_count": len(result) if result else 0})  # M17: 仅显示文件名
     except Exception as exc:
-        return ToolResult.fail(f"解析 EET 失败: {exc}")
+        return ToolResult.fail(f"解析 EET 失败: {_sanitize_error(str(exc), path)}")  # M17: 清理错误信息中的路径
 
 
 def _tool_parse_xt(args: dict, ctx) -> ToolResult:
@@ -75,9 +81,9 @@ def _tool_parse_xt(args: dict, ctx) -> ToolResult:
         from src.transbridge.parser.xt_xml_parser import XT_XmlParser
         parser = XT_XmlParser()
         result = parser.parse(path)
-        return ToolResult.ok(f"已解析 XT: {path}", data={"entry_count": len(result) if result else 0})
+        return ToolResult.ok(f"已解析 XT: {os.path.basename(path)}", data={"entry_count": len(result) if result else 0})  # M17: 仅显示文件名
     except Exception as exc:
-        return ToolResult.fail(f"解析 XT 失败: {exc}")
+        return ToolResult.fail(f"解析 XT 失败: {_sanitize_error(str(exc), path)}")  # M17: 清理错误信息中的路径
 
 
 def _tool_parse_sst(args: dict, ctx) -> ToolResult:
@@ -90,9 +96,9 @@ def _tool_parse_sst(args: dict, ctx) -> ToolResult:
         from src.transbridge.parser.sst_parser import SST_Parser
         parser = SST_Parser()
         result = parser.parse(path)
-        return ToolResult.ok(f"已解析 SST: {path}", data={"entry_count": len(result) if result else 0})
+        return ToolResult.ok(f"已解析 SST: {os.path.basename(path)}", data={"entry_count": len(result) if result else 0})  # M17: 仅显示文件名
     except Exception as exc:
-        return ToolResult.fail(f"解析 SST 失败: {exc}")
+        return ToolResult.fail(f"解析 SST 失败: {_sanitize_error(str(exc), path)}")  # M17: 清理错误信息中的路径
 
 
 def _tool_import_json(args: dict, ctx) -> ToolResult:
@@ -106,7 +112,7 @@ def _tool_import_json(args: dict, ctx) -> ToolResult:
         col = TranslationEntryCollection.from_json_file(path)
         return ToolResult.ok(f"已从 JSON 导入 {len(col)} 条条目", data={"entry_count": len(col)})
     except Exception as exc:
-        return ToolResult.fail(f"导入 JSON 失败: {exc}")
+        return ToolResult.fail(f"导入 JSON 失败: {_sanitize_error(str(exc), path)}")  # M17: 清理错误信息中的路径
 
 
 def _tool_import_strings(args: dict, ctx) -> ToolResult:
@@ -121,7 +127,7 @@ def _tool_import_strings(args: dict, ctx) -> ToolResult:
         result = importer.import_file(path)
         return ToolResult.ok(f"已从 strings 导入 {len(result) if result else 0} 条", data={"entry_count": len(result) if result else 0})
     except Exception as exc:
-        return ToolResult.fail(f"导入 strings 失败: {exc}")
+        return ToolResult.fail(f"导入 strings 失败: {_sanitize_error(str(exc), path)}")  # M17: 清理错误信息中的路径
 
 
 # ── 注册 ──────────────────────────────────────────────────────

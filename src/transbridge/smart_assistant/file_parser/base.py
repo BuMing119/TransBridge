@@ -28,6 +28,9 @@ class FileParser(ABC):
     """文件解析器抽象基类。"""
     supported_extensions: list[str] = []
 
+    # 显式注册表：作为 cls.__subclasses__() 的补充，避免导入顺序问题
+    _registry: dict[str, type["FileParser"]] = {}
+
     @abstractmethod
     def parse(self, path: Path) -> ParsedDocument: ...
 
@@ -35,8 +38,22 @@ class FileParser(ABC):
         return path.suffix.lower() in self.supported_extensions
 
     @classmethod
+    def register_parser(cls, parser_cls: type["FileParser"]) -> None:
+        """显式注册解析器子类，作为 __subclasses__() 的补充。
+
+        在子类模块导入后调用，避免依赖 cls.__subclasses__() 的导入顺序。
+        """
+        cls._registry[parser_cls.__name__] = parser_cls
+
+    @classmethod
     def get_parser(cls, path: Path) -> "FileParser | None":
+        # 优先使用 __subclasses__()（自动发现已导入的子类）
         for sub in cls.__subclasses__():
+            instance = sub()
+            if instance.can_handle(path):
+                return instance
+        # 回退到显式注册表（处理导入顺序问题）
+        for sub in cls._registry.values():
             instance = sub()
             if instance.can_handle(path):
                 return instance

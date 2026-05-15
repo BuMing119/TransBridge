@@ -5,6 +5,7 @@ Story 07: get_collection_summary deprecated(O8)，功能合并到 get_statistics
 from __future__ import annotations
 
 import logging
+import os
 from collections import Counter
 
 from .base import ToolResult
@@ -17,7 +18,6 @@ _STAGE_LABELS = {0: "未翻译", 1: "已翻译", 2: "有疑问", 3: "已检查",
 
 def _tool_get_app_state(args: dict, ctx) -> ToolResult:
     """返回当前应用状态摘要。"""
-    import os
     slot = ctx.active_slot
     # m4: 只暴露文件名，不泄露绝对路径
     # m7: 安全访问 active_project，兼容多种类型

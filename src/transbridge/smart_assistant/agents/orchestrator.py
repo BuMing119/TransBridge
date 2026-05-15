@@ -53,7 +53,7 @@ class Orchestrator:
             tasks_data = json.loads(text)
             if not isinstance(tasks_data, list):
                 tasks_data = [tasks_data]
-        except (json.JSONDecodeError, Exception) as exc:
+        except Exception as exc:
             logger.warning("任务分解失败，使用单任务兜底: %s", exc)
             tasks_data = [{
                 "task_id": 1, "agent_type": "orchestrator",
@@ -71,8 +71,8 @@ class Orchestrator:
         return subtasks
 
     def map_to_steps(self, subtasks: list[Subtask], ctx: Any) -> list[dict[str, Any]]:
-        # CR2 / TODO: LLM prompt 中 "action" 字段是人类可读描述（如"翻译DLC1条目"），
-        # 而非有效工具名。当前回退到 agent_spec.tools[0] 作为兜底方案。
+        # M6: LLM prompt 中 "action" 字段是人类可读描述（如"翻译DLC1条目"），
+        # 而非有效工具名。当 action 为空时跳过该步骤而非回退到agent的第一个工具。
         # 长期修复应在 LLM prompt 中增加 "tool_name" 字段要求，
         # 并在 decompose_task() 的 JSON 输出 schema 中同步添加。
         steps = []
@@ -86,9 +86,10 @@ class Orchestrator:
                 project_path=getattr(ctx, 'project_path', None),
                 ctx=ctx,
             )
-            tool_name = getattr(st, 'action', '')  # m33: 'tool_name' not a SubTask attr, removed dead getattr
-            if not tool_name and agent_spec.tools:
-                tool_name = agent_spec.tools[0]  # E4: fallback to first tool
+            tool_name = st.action
+            if not tool_name:
+                logger.warning("Subtask %s 的 action 为空，缺少工具名，跳过该步骤", st.task_id)
+                continue
             step = {
                 "id": st.task_id,
                 "tool": tool_name,

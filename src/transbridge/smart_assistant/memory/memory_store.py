@@ -14,6 +14,9 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
+
+from src.transbridge.smart_assistant.guardrails.output_validator import sanitize_for_storage
+
 logger = logging.getLogger(__name__)
 
 
@@ -70,19 +73,25 @@ class MemoryWriterThread(threading.Thread):
         self._get_metadata = get_metadata_cb
         self._get_vector_store = get_vector_store_cb
         self._running = True
-        # M17: dirty flag — 仅在有数据变更时才执行刷盘
-        self._dirty: bool = False
+        # M17: dirty generation counter — 仅在有数据变更时才执行刷盘。
+        # 使用计数器而非布尔值，消除 _flush() 与 enqueue() 之间的 TOCTOU 竞态：
+        # enqueue() 递增计数器，_flush() 在锁内捕获当前值并归零，IO 完成后
+        # 不写回，并发 enqueue() 的递增不会被覆盖。
+        self._dirty_gen: int = 0
 
     def enqueue(self) -> None:
-        """通知 writer 有数据待刷盘。设置 dirty flag 保证下次唤醒执行 flush。"""
+        """通知 writer 有数据待刷盘。递增 dirty 计数器保证下次唤醒执行 flush。"""
         with self._cv:
-            self._dirty = True
+            self._dirty_gen += 1
             self._cv.notify()
 
     def run(self) -> None:
         while self._running:
             with self._cv:
-                self._cv.wait(timeout=0.5)
+                # M53: 空闲时使用更长超时 (5s)，有脏数据时用短超时 (0.5s) 以批量聚合。
+                # C11 已引入 _dirty_gen 计数器避免无效刷盘，此处进一步减少空闲唤醒频率。
+                timeout = 5.0 if self._dirty_gen == 0 else 0.5
+                self._cv.wait(timeout=timeout)
             if not self._running:
                 break
             try:
@@ -93,32 +102,56 @@ class MemoryWriterThread(threading.Thread):
     def _flush(self) -> None:
         """批量将元数据和向量索引写入磁盘。
 
-        M17: 检查 dirty flag，无变更时跳过以节省 I/O。
-        m35: 写入失败时清理临时文件 (tmp_meta) 避免残留。
+        M17: 在 CV 锁内检查 dirty_gen 计数器，无变更时跳过以节省 I/O。
+        捕获当前代次后立即归零 — 并发 enqueue() 的递增不会被覆盖，
+        从而消除 TOCTOU 竞态。
+        M36: 写入失败时清理临时文件 (tmp_meta) 避免残留，
+        并将捕获的代次加回计数器以触发重试。
         """
-        if not self._dirty:
-            return
-        metadata = self._get_metadata()
-        data = {}
-        for mid, entry in metadata.items():
-            data[mid] = entry.to_dict()
-        tmp_meta = str(self._metadata_path) + ".tmp"
-        try:
-            with open(tmp_meta, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            os.replace(tmp_meta, str(self._metadata_path))
-        except Exception:
-            # m35: 清理写入失败后残留的临时文件
-            try:
-                os.unlink(tmp_meta)
-            except OSError:
-                pass
-            raise
+        with self._cv:
+            if self._dirty_gen == 0:
+                return
+            gen = self._dirty_gen
+            self._dirty_gen = 0
 
-        vector_store = self._get_vector_store()
-        if vector_store is not None:
-            vector_store.save(str(self._index_path))
-        self._dirty = False
+        try:
+            metadata = self._get_metadata()
+            data = {}
+            for mid, entry in metadata.items():
+                data[mid] = entry.to_dict()
+            # C5: 持久化前脱敏 — 移除 API 密钥/Token/文件路径等敏感信息
+            data = sanitize_for_storage(data)
+            tmp_meta = str(self._metadata_path) + ".tmp"
+            try:
+                with open(tmp_meta, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                os.replace(tmp_meta, str(self._metadata_path))
+            except Exception:
+                # M36: 清理写入失败后残留的临时文件
+                try:
+                    os.unlink(tmp_meta)
+                except OSError:
+                    pass
+                raise
+
+            vector_store = self._get_vector_store()
+            if vector_store is not None:
+                # M36: 向量索引也使用临时文件 + 原子 rename，避免崩溃时残留损坏文件
+                tmp_index = str(self._index_path) + ".tmp"
+                try:
+                    vector_store.save(tmp_index)
+                    os.replace(tmp_index, str(self._index_path))
+                except Exception:
+                    try:
+                        os.unlink(tmp_index)
+                    except OSError:
+                        pass
+                    raise
+        except Exception:
+            # 写入失败：将捕获的代次加回计数器，确保重试
+            with self._cv:
+                self._dirty_gen += gen
+            raise
 
     def stop(self) -> None:
         self._running = False
@@ -135,13 +168,17 @@ class MemoryStore:
     根据 embedding_mode 运行在不同模式：
     - api/local: FAISS 语义检索 + JSON 精确匹配
     - disabled: 仅 JSON 精确匹配
+
+    persist_to_disk: 若为 False，记忆仅保留在内存中，不读写磁盘。
     """
 
     MAX_ENTRIES_DEFAULT = 1000
 
     def __init__(self, storage_dir: Path, dimension: int = 1536,
-                 embedding_mode: str = "disabled", max_entries: int = MAX_ENTRIES_DEFAULT):
+                 embedding_mode: str = "disabled", max_entries: int = MAX_ENTRIES_DEFAULT,
+                 persist_to_disk: bool = False):
         self._mode = embedding_mode
+        self._persist_to_disk = persist_to_disk
         self._dir = Path(storage_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
         self._metadata_path = self._dir / "memory_metadata.json"
@@ -151,7 +188,8 @@ class MemoryStore:
         # M9: LRU 淘汰 — 使用 OrderedDict 实现 O(1) 访问和淘汰
         self._max_entries = max_entries
         self._access_order: OrderedDict[str, None] = OrderedDict()  # key=memory_id, 最新在末尾
-        self._load_metadata()
+        if self._persist_to_disk:
+            self._load_metadata()
         self._vector_store = None
         if self._mode != "disabled":
             from src.transbridge.infra.vector_store import VectorStore
@@ -161,13 +199,16 @@ class MemoryStore:
                     self._vector_store = VectorStore.load(str(self._index_path), dimension)
                 except Exception:
                     self._vector_store = VectorStore(dimension=dimension)
-        # M9: 后台写入线程
-        self._writer = MemoryWriterThread(
-            self._dir, self._metadata_path, self._index_path,
-            lambda: self._metadata,
-            lambda: self._vector_store,
-        )
-        self._writer.start()
+        # M9: 后台写入线程 — 仅在启用持久化时创建
+        if self._persist_to_disk:
+            self._writer = MemoryWriterThread(
+                self._dir, self._metadata_path, self._index_path,
+                lambda: self._metadata,
+                lambda: self._vector_store,
+            )
+            self._writer.start()
+        else:
+            self._writer = None
 
     # ── CRUD ──────────────────────────────────────────────
 
@@ -180,10 +221,13 @@ class MemoryStore:
             self._update_lru(entry.memory_id)
             if len(self._metadata) > self._max_entries:
                 self._evict_lru()
-        if self._vector_store and entry.embedding:
-            emb = np.array(entry.embedding, dtype=np.float32)
-            self._vector_store.add(emb.reshape(1, -1), [entry.memory_id])
-        self._writer.enqueue()
+            # M35: vector_store.add 必须在锁内执行，与 _evict_lru / delete 中的
+            # vector_store.remove 互斥，避免 FAISS 内部状态竞态。
+            if self._vector_store and entry.embedding:
+                emb = np.array(entry.embedding, dtype=np.float32)
+                self._vector_store.add(emb.reshape(1, -1), [entry.memory_id])
+        if self._writer:
+            self._writer.enqueue()
         return entry.memory_id
 
     def search(self, query_vector: np.ndarray | None = None, top_k: int = 5,
@@ -207,7 +251,8 @@ class MemoryStore:
                 self._access_order.pop(memory_id, None)  # O(1)
                 if self._vector_store:
                     self._vector_store.remove([memory_id])
-                self._writer.enqueue()
+                if self._writer:
+                    self._writer.enqueue()
                 return True
         return False
 
@@ -221,7 +266,8 @@ class MemoryStore:
 
     def close(self) -> None:
         """M9: 停止 writer 线程并最终刷盘。"""
-        self._writer.stop()
+        if self._writer:
+            self._writer.stop()
 
     # ── LRU ───────────────────────────────────────────────
 
@@ -244,7 +290,7 @@ class MemoryStore:
 
     # ── 内部 ──────────────────────────────────────────────
 
-    def _exact_search(self, type_filter=None, keywords=None) -> list[MemoryEntry]:
+    def _exact_search(self, type_filter=None, keywords=None, limit: int = 20) -> list[MemoryEntry]:
         with self._lock:
             entries = list(self._metadata.values())
         results = []
@@ -256,7 +302,7 @@ class MemoryStore:
                 if kw not in e.summary.lower() and kw not in e.content.lower():
                     continue
             results.append(e)
-        return results[-20:]  # 最近 20 条
+        return results[-limit:]  # 最近 limit 条
 
     def _hybrid_search(self, query_vector, top_k, type_filter, keywords) -> list[MemoryEntry]:
         vec_results = self._vector_store.search(query_vector, top_k)

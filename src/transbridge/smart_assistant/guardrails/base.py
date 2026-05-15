@@ -12,6 +12,11 @@ class GuardResult:
     reason: str = ""
     modified_args: dict | None = None
     modified_result: dict | None = None
+    requires_confirmation: str = ""
+    # C28: dedicated field to distinguish hard blocks from confirmation-pending.
+    # "" = no confirmation needed (hard block if allowed=False).
+    # "write" = write-level confirmation pending.
+    # "admin" = admin-level confirmation pending.
 
 
 class GuardMiddleware(ABC):

@@ -1,6 +1,8 @@
 import hmac
 import json
 import logging
+import secrets
+import select
 import sys
 
 from .adapter import MCPAdapter
@@ -22,15 +24,32 @@ class MCPServer:
         self._running = False
 
     def run_stdio(self) -> None:
-        # CR4: 无认证令牌时发出安全警告
+        # CR4: 无认证令牌时自动生成随机令牌并输出到 stderr，防止零认证启动
         auth_token = self._config.get("auth_token", "").strip()
         if not auth_token:
-            logger.warning("MCP Server 未配置认证令牌 (auth_token)，任何人均可调用工具。"
-                           "请在配置中设置 mcp_auth_token 以启用访问控制。")
+            auth_token = secrets.token_hex(32)
+            self._config["auth_token"] = auth_token
+            print(
+                f"[MCP] 未配置认证令牌，已自动生成: {auth_token}\n"
+                f"[MCP] 请在 MCP 客户端配置中设置此令牌，或通过 mcp_auth_token 配置项指定。",
+                file=sys.stderr, flush=True,
+            )
+            logger.warning(
+                "MCP Server 未配置认证令牌 (auth_token)，已自动生成随机令牌。"
+                "请将令牌配置到 MCP 客户端以启用访问控制。"
+            )
         logger.info("MCP Server 已启动 (stdio)")
         self._running = True
-        for line in sys.stdin:
-            if not self._running:
+        # C29: 使用 select.select() 替代阻塞的 for line in sys.stdin，
+        # 使 stop() 能在超时时间内检测到 _running = False 并退出循环。
+        while self._running:
+            # 等待 stdin 可读，超时 0.5s，确保 stop() 调用后能及时退出
+            ready, _, _ = select.select([sys.stdin], [], [], 0.5)
+            if not ready:
+                continue
+            line = sys.stdin.readline()
+            if not line:
+                # EOF — stdin 已关闭
                 break
             # m3: 限制单行消息最大长度，防止超大消息导致 OOM
             if len(line) > _MAX_LINE_LENGTH:
@@ -43,30 +62,35 @@ class MCPServer:
                 request = json.loads(line)
                 # C7: 认证检查
                 if not self._authenticate(request):
-                    sys.stdout.write(json.dumps({
+                    self._write_json({
                         "jsonrpc": "2.0", "id": request.get("id"),
                         "error": {"code": -32001, "message": "Unauthorized"},
-                    }, ensure_ascii=False) + "\n")
-                    sys.stdout.flush()
+                    })
                     continue
                 response = self._handle_request(request)
-                sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
-                sys.stdout.flush()
+                self._write_json(response)
             except json.JSONDecodeError:
-                sys.stdout.write(json.dumps({
+                self._write_json({
                     "jsonrpc": "2.0", "id": None,
                     "error": {"code": -32700, "message": "Parse error"},
-                }) + "\n")
-                sys.stdout.flush()
+                })
+
+    @staticmethod
+    def _write_json(data: dict) -> None:
+        """将 JSON 序列化后写入 stdout 并立即 flush。"""
+        sys.stdout.write(json.dumps(data, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
 
     def stop(self) -> None:
         self._running = False
 
     def _authenticate(self, request: dict) -> bool:
-        """C7: 验证 MCP 请求的 auth_token。未配置时放行。"""
+        """C7: 验证 MCP 请求的 auth_token。令牌始终必需（启动时自动生成或由配置提供）。"""
         auth_token = self._config.get("auth_token", "").strip()
         if not auth_token:
-            return True
+            # 防御性检查：正常情况下 run_stdio 已确保令牌存在
+            logger.error("MCP 认证令牌缺失，拒绝所有请求。")
+            return False
         params = request.get("params", {})
         meta = params.get("_meta", {}) if isinstance(params, dict) else {}
         req_token = meta.get("authorization", "")

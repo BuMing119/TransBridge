@@ -6,10 +6,11 @@ Phase 2: 替代 QThread 继承。通过回调属性实现信号功能，
 from __future__ import annotations
 
 import threading
+from abc import ABC, abstractmethod
 from typing import Callable
 
 
-class AsyncWorker(threading.Thread):
+class AsyncWorker(threading.Thread, ABC):
     """纯 Python 后台工作线程基类。
 
     回调属性（由调用方赋值）:
@@ -25,10 +26,14 @@ class AsyncWorker(threading.Thread):
     def __init__(self, daemon: bool = True):
         super().__init__(daemon=daemon)
         self._cancelled = threading.Event()
-        self.on_chunk: Callable | None = None
-        self.on_finished: Callable | None = None
-        self.on_error: Callable | None = None
-        self.on_token_usage: Callable | None = None
+        self.on_chunk: Callable[[str], None] | None = None
+        self.on_finished: Callable[[str], None] | None = None
+        self.on_error: Callable[[str], None] | None = None
+        self.on_token_usage: Callable[[str, int, int], None] | None = None
+
+    @abstractmethod
+    def run(self) -> None:
+        """子类必须实现：在此执行后台任务，并调用 on_chunk/on_finished/on_error 回调。"""
 
     def cancel(self) -> None:
         self._cancelled.set()

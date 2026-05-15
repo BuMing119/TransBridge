@@ -12,7 +12,7 @@ class ConversationManager:
     m5: _messages_cache 缓存 get_messages() 返回值，仅在消息变更时重建
     """
 
-    _OBSERVATION_PREFIX = "【工具执行结果 - "
+    _OBSERVATION_PREFIX = "【工具执行结果 - {name}】\n"
     _PLAN_RESULT_PREFIX = "【计划执行完成】"
     _MAX_OBSERVATION_CHARS = 2000
 
@@ -47,12 +47,27 @@ class ConversationManager:
         self._messages_dirty = True
 
     def add_observation(self, tool_name: str, result: str) -> None:
-        """追加工具执行结果作为 user 消息。超过 _MAX_OBSERVATION_CHARS 字符自动截断。"""
-        if len(result) > self._MAX_OBSERVATION_CHARS:
-            result = result[:self._MAX_OBSERVATION_CHARS] + f"...(已截断，共 {len(result)} 字符)"
+        """追加工具执行结果作为 user 消息。超过 _MAX_OBSERVATION_CHARS 字符时换行感知截断。
+
+        result 字符串预期由 ToolResult.to_observation() 预格式化，此处的截断为兜底安全网。
+        """
+        # M8: 前缀也计入总长度，截断限制需剔除前缀开销
+        full_prefix = self._OBSERVATION_PREFIX.format(name=tool_name)
+        prefix_len = len(full_prefix)
+        max_result_chars = self._MAX_OBSERVATION_CHARS - prefix_len
+        if max_result_chars < 100:
+            max_result_chars = 100  # 保底：前缀再长也保留至少 100 字符的结果
+
+        if len(result) > max_result_chars:
+            cut_pos = max_result_chars - 30
+            last_nl = result.rfind("\n", 0, cut_pos)
+            if last_nl > cut_pos // 2:
+                result = result[:last_nl] + "\n  ...(truncated)"
+            else:
+                result = result[:cut_pos] + "...(truncated)"
         self._messages.append({
             "role": "user",
-            "content": f"{self._OBSERVATION_PREFIX}{tool_name}】\n{result}",
+            "content": f"{full_prefix}{result}",
         })
         self._messages_dirty = True
 
@@ -103,22 +118,29 @@ class ConversationManager:
             else:
                 oldest_end = len(self._messages)
 
+            # 计算本轮将被移除的消息数量
             removed_count = oldest_end - oldest_start
-            # 调整剩余 turn_starts 的偏移
+            # 调整剩余 turn_starts 的偏移量：
+            # 所有后续轮次的起始索引前移 removed_count 位，
+            # 以匹配切片后新列表的索引
             for i in range(len(self._turn_starts)):
                 self._turn_starts[i] -= removed_count
 
-            # 保存 system 消息 (索引 0)，切片可能将其移除
+            # 保存 system 消息 (始终位于索引 0)，切片 [oldest_end:]
+            # 会将其一并移除，因此需要先备份
             system_msg = None
             if self._messages and self._messages[0]["role"] == "system":
                 system_msg = self._messages[0]
 
-            # m6: 使用切片重建，O(n) 单次操作替代 O(n*k) 逐个 del
+            # m6: 使用切片重建消息列表，O(n) 单次操作替代逐个 del 的 O(n*k)
+            # 切片保留从 oldest_end 开始的所有剩余轮次
             self._messages = self._messages[oldest_end:]
             self._messages_dirty = True
 
             # 若 system 消息被切片移除则恢复
+            # M2: 防御性检查 — 若 sliced messages 已含 system 消息则不再插入
             if system_msg is not None and oldest_end > 0:
-                self._messages.insert(0, system_msg)
-                for i in range(len(self._turn_starts)):
-                    self._turn_starts[i] += 1
+                if not (self._messages and self._messages[0]["role"] == "system"):
+                    self._messages.insert(0, system_msg)
+                    for i in range(len(self._turn_starts)):
+                        self._turn_starts[i] += 1

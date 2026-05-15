@@ -5,6 +5,9 @@
 """
 
 import importlib
+import logging
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "ConversationManager",
@@ -40,6 +43,7 @@ __all__ = [
     "HITLType",
     "execute_with_guardrails",
     "filter_entries",
+    "ConversationOrchestrator",
 ]
 
 # 符号 → 子模块映射表（供 __getattr__ 惰性加载用）
@@ -77,11 +81,18 @@ _SYMBOL_MODULES: dict[str, str] = {
     "HITLType": ".tools",
     "execute_with_guardrails": ".tools",
     "filter_entries": ".tools",
+    "ConversationOrchestrator": ".conversation_orchestrator",
 }
 
 
 def __getattr__(name: str):
     if name in _SYMBOL_MODULES:
-        mod = importlib.import_module(_SYMBOL_MODULES[name], __package__)
-        return getattr(mod, name)
+        try:
+            mod = importlib.import_module(_SYMBOL_MODULES[name], __package__)
+            return getattr(mod, name)
+        except ImportError:
+            logger.warning("惰性加载模块失败: %s (符号=%s)", _SYMBOL_MODULES[name], name)
+            raise AttributeError(
+                f"module {__name__!r} has no attribute {name!r}"
+            ) from None
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

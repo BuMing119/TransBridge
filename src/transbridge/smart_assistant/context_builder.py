@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 from collections import Counter
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from src.transbridge.ui.context import AppContext
 
 
 class ContextBuilder:
@@ -11,7 +14,7 @@ class ContextBuilder:
     C1: 移除对 ui/ 的直接依赖。调用方通过构造函数或 build() 参数传入 AppContext。
     """
 
-    def __init__(self, ctx: Any | None = None):
+    def __init__(self, ctx: "AppContext | None" = None):
         self._ctx = ctx
 
     def build(self, ctx=None) -> str:

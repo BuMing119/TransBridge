@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Callable
 
 from src.transbridge.smart_assistant.workers.async_worker import AsyncWorker
 from ..execution_engine import StepResult
@@ -17,11 +18,11 @@ class AgentWorker(AsyncWorker):
         super().__init__(daemon=True)
         self._step = step
         self._instance = instance
-        self.on_progress: callable | None = None
-        self.on_finished: callable | None = None
-        self.on_error: callable | None = None
+        self.on_progress: Callable[[str], None] | None = None
+        self.on_finished: Callable[[object], None] | None = None
+        self.on_error: Callable[[str], None] | None = None
 
-    def run(self):
+    def run(self) -> None:
         if self._instance is None or self._instance.agent_spec is None:
             if self.on_error:
                 self.on_error("AgentInstance 未正确设置")
@@ -50,7 +51,7 @@ class AgentWorker(AsyncWorker):
             if self.on_progress:
                 self.on_progress(f"{self._instance.agent_spec.name} 正在执行 {tool_name}...")
             from src.transbridge.smart_assistant.tools.base import (
-                ExecutionContext, execute_with_guardrails,
+                ExecutionContext, ToolResult, execute_with_guardrails,
             )
             from src.transbridge.smart_assistant.tools.task_manager import TaskManager
             exec_ctx = ExecutionContext(app_context=self._instance.ctx, task_manager=TaskManager())
@@ -59,9 +60,9 @@ class AgentWorker(AsyncWorker):
             sr = StepResult(
                 step_id=self._step["id"],
                 tool=tool_name,
-                success=result.get("success", True),
-                message=result.get("message", ""),
-                data=result.get("data"),
+                success=result.success if isinstance(result, ToolResult) else result.get("success", True),
+                message=result.message if isinstance(result, ToolResult) else result.get("message", ""),
+                data=result.data if isinstance(result, ToolResult) else result.get("data"),
                 duration_ms=duration_ms,
             )
             if self.on_finished:

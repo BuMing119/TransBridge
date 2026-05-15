@@ -1,10 +1,31 @@
 """v1 工具函数 — 从 tool_registry.py 迁移，返回格式升级为 ToolResult。"""
+import os
 import threading
 import logging
 
 from .base import ToolResult
 
 logger = logging.getLogger(__name__)
+
+
+def _try_validate_output_path(path: str) -> ToolResult | None:
+    """C8: 路径安全校验的本地包装器。
+
+    优先从 tool_writer 导入正式的校验函数；若导入失败则使用内联回退逻辑，
+    消除跨模块依赖的脆弱性。
+    """
+    try:
+        from src.transbridge.smart_assistant.tools.tool_writer import _validate_output_path
+        return _validate_output_path(path)
+    except ImportError:
+        logger.warning("无法导入 _validate_output_path，使用内联回退校验")
+        if not path:
+            return ToolResult.fail("输出路径为空")
+        if ".." in path.replace("\\", "/").split("/"):
+            return ToolResult.fail("拒绝路径遍历攻击")
+        if os.path.isabs(path):
+            return ToolResult.fail("拒绝绝对路径，请使用相对路径")
+        return None
 
 
 def _tool_lookup_terms(args: dict, ctx) -> ToolResult:
@@ -99,15 +120,13 @@ def _tool_export_json(args: dict, ctx) -> ToolResult:
         if out_path:
             path = Path(out_path)
             # C8: 路径安全校验
-            from src.transbridge.smart_assistant.tools.tool_writer import _validate_output_path
-            err = _validate_output_path(str(path))
+            err = _try_validate_output_path(str(path))
             if err:
                 return err
         else:
             path = data_dir / f"{stem}_export.json"
             # m31: 对默认路径也进行安全校验，防止 stem 含路径遍历字符
-            from src.transbridge.smart_assistant.tools.tool_writer import _validate_output_path
-            err = _validate_output_path(str(path))
+            err = _try_validate_output_path(str(path))
             if err:
                 return err
         collection.to_json_file(str(path))
@@ -132,8 +151,7 @@ def _tool_write_back(args: dict, ctx) -> ToolResult:
         # C8: 路径安全校验
         target = args.get("target_path") or ctx.esp_path
         if target:
-            from src.transbridge.smart_assistant.tools.tool_writer import _validate_output_path
-            err = _validate_output_path(str(target))
+            err = _try_validate_output_path(str(target))
             if err:
                 return err
             allowed = {".esp", ".esm", ".esl", ".xml", ".strings"}

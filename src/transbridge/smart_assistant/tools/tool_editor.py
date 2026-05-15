@@ -22,7 +22,7 @@ _PARAM_SCHEMAS = {
     },
     "search_entries": {
         "query": {"type": "str", "required": True, "description": "搜索关键词"},
-        "field": {"type": "str", "required": False, "description": "搜索字段: id/key/text/all，默认 text"},
+        "field": {"type": "str", "required": False, "description": "搜索字段: id/key/original/translation/context/all，默认 original"},
     },
     "get_visible_entries": {
         "limit": {"type": "int", "required": False, "description": "返回条数上限，默认 50，最大 200"},
@@ -71,7 +71,9 @@ def _tool_filter_by_stage(args: dict, ctx) -> ToolResult:
     if invalid:
         return ToolResult.fail(f"无效的 stage 值: {invalid}，合法值: {sorted(_VALID_STAGES)}")
     ctx.set_filter(stage=list(stages))
-    return ToolResult.ok(f"已按阶段筛选: {stages}")
+    result = ToolResult.ok(f"已按阶段筛选: {stages}", data={"stages": stages})
+    result.tool_suggestions = ["get_visible_entries", "get_statistics"]
+    return result
 
 
 @validate_params(_PARAM_SCHEMAS["filter_by_category"])
@@ -79,7 +81,9 @@ def _tool_filter_by_category(args: dict, ctx) -> ToolResult:
     """按分类筛选（如 NPC_、INFO、BOOK 等）。"""
     categories = args["categories"]
     ctx.set_filter(category=list(categories))
-    return ToolResult.ok(f"已按分类筛选: {categories}")
+    result = ToolResult.ok(f"已按分类筛选: {categories}", data={"categories": categories})
+    result.tool_suggestions = ["get_visible_entries", "get_statistics"]
+    return result
 
 
 @validate_params(_PARAM_SCHEMAS["filter_by_label"])
@@ -87,24 +91,36 @@ def _tool_filter_by_label(args: dict, ctx) -> ToolResult:
     """按标签名筛选。"""
     label_names = args["label_names"]
     ctx.set_filter(label=list(label_names))
-    return ToolResult.ok(f"已按标签筛选: {label_names}")
+    result = ToolResult.ok(f"已按标签筛选: {label_names}", data={"labels": label_names})
+    result.tool_suggestions = ["get_visible_entries", "get_statistics"]
+    return result
 
 
 @validate_params(_PARAM_SCHEMAS["search_entries"])
 def _tool_search_entries(args: dict, ctx) -> ToolResult:
-    """按关键词搜索条目。field: id/key/text，默认 text。"""
+    """按关键词搜索条目。field: id/key/original/translation/context/all，默认 original。"""
     query = args["query"]
-    field = args.get("field", "text")
-    if field not in ("id", "key", "text", "all"):
-        return ToolResult.fail(f"无效的搜索字段: {field}，可选: id, key, text, all")
+    field = args.get("field", "original")
+    # "text" 向后兼容，映射到 "original"
+    if field == "text":
+        field = "original"
+    VALID_FIELDS = ("id", "key", "original", "translation", "context", "all")
+    if field not in VALID_FIELDS:
+        return ToolResult.fail(
+            f"无效的搜索字段: {field}，可选: {', '.join(VALID_FIELDS)}"
+        )
     ctx.set_filter(search_query=query, search_field=field)
-    return ToolResult.ok(f"已搜索: '{query}' (字段: {field})")
+    result = ToolResult.ok(f"已搜索: '{query}' (字段: {field})", data={"query": query, "field": field})
+    result.tool_suggestions = ["get_visible_entries"]
+    return result
 
 
 def _tool_clear_all_filters(args: dict, ctx) -> ToolResult:
     """清除所有筛选条件。"""
     ctx.clear_filters()
-    return ToolResult.ok("已清除所有筛选条件")
+    result = ToolResult.ok("已清除所有筛选条件", data={"filters_cleared": True})
+    result.tool_suggestions = ["get_visible_entries", "get_statistics", "filter_by_stage"]
+    return result
 
 
 # ── 数据查询 ──────────────────────────────────────────────────
@@ -143,6 +159,17 @@ def _tool_get_visible_entries(args: dict, ctx, collection) -> ToolResult:
         data={"entries": entries, "total_count": total, "truncated": truncated},
     )
     result.truncated = truncated
+    result.pagination = {
+        "page": (offset // limit) + 1 if limit > 0 else 1,
+        "page_size": limit,
+        "total_count": total,
+        "returned_count": len(entries),
+        "has_more": truncated,
+    }
+    if entries and not truncated:
+        result.tool_suggestions = ["select_entries", "edit_translation", "set_stage"]
+    elif truncated:
+        result.tool_suggestions = ["get_visible_entries", "search_entries"]
     return result
 
 
@@ -185,6 +212,9 @@ def _tool_edit_translation(args: dict, ctx, collection) -> ToolResult:
             return ToolResult.fail(f"无效的 stage 值: {new_stage}，合法值: {sorted(_VALID_STAGES)}")
         entry.stage = int(new_stage)
 
+    # C10: 通知 UI 条目已修改（信号在主线程发射）
+    ctx.safe_mutate(lambda: ctx.notify_collection_modified())
+
     return ToolResult.ok(
         f"已更新 {entry_id}",
         data={
@@ -226,6 +256,10 @@ def _tool_set_stage(args: dict, ctx, collection) -> ToolResult:
         entry.stage = int(stage)
         updated += 1
 
+    # C10: 通知 UI 条目已修改（信号在主线程发射）
+    if updated > 0:
+        ctx.safe_mutate(lambda: ctx.notify_collection_modified())
+
     failed = [{"entry_id": eid, "reason": "条目不存在"} for eid in not_found] if not_found else None
     if failed:
         return ToolResult.partial_ok(
@@ -240,6 +274,18 @@ def _tool_set_stage(args: dict, ctx, collection) -> ToolResult:
 
 
 # ── 标签管理 (Story 08) ───────────────────────────────────────
+
+def _resolve_label_id(label_name: str, ctx) -> str | None:
+    """根据标签名查找标签 ID。返回 lid 或 None（标签不存在时）。
+
+    M51: 先构建 name→id 查找字典，O(n) 一次建表后 O(1) 查询。
+    M27: 消除 assign/remove/batch 三处重复查找循环。
+    """
+    label_lib = getattr(ctx, 'label_library', None) or {}
+    # M51: 构建 name→id 字典避免每次线性扫描
+    name_to_id: dict[str, str] = {v.get("name", ""): k for k, v in label_lib.items() if v.get("name")}
+    return name_to_id.get(label_name)
+
 
 def _tool_list_labels(args: dict, ctx) -> ToolResult:
     """列出所有已定义的标签。"""
@@ -266,12 +312,16 @@ def _tool_create_label(args: dict, ctx) -> ToolResult:
         return ToolResult.fail("标签名不能为空")
     import uuid
     lid = uuid.uuid4().hex[:8]
-    label_lib = getattr(ctx, 'label_library', None)
-    if label_lib is None:
-        ctx.label_library = {}
-    ctx.label_library[lid] = {"name": name, "color": color}
-    if hasattr(ctx, 'label_data_changed'):
-        ctx.label_data_changed.emit()
+
+    # C10: 将 shared state 写入调度到主线程
+    def _mutate():
+        if not hasattr(ctx, 'label_library') or ctx.label_library is None:
+            ctx.label_library = {}
+        ctx.label_library[lid] = {"name": name, "color": color}
+        if hasattr(ctx, 'label_data_changed'):
+            ctx.label_data_changed.emit()
+    ctx.safe_mutate(_mutate)
+
     return ToolResult.ok(f"已创建标签: {name}", data={"label_id": lid, "name": name, "color": color})
 
 
@@ -281,24 +331,24 @@ def _tool_assign_label(args: dict, ctx, collection) -> ToolResult:
     """为指定条目分配标签。"""
     entry_ids = args["entry_ids"]
     label_name = args["label_name"]
-    lid = None
-    label_lib = getattr(ctx, 'label_library', None) or {}
-    for k, v in label_lib.items():
-        if v.get("name") == label_name:
-            lid = k
-            break
+    lid = _resolve_label_id(label_name, ctx)
     if lid is None:
         return ToolResult.fail(f"标签不存在: {label_name}")
-    if not hasattr(ctx, 'entry_labels') or ctx.entry_labels is None:
-        ctx.entry_labels = {}
-    assigned = 0
-    for eid in entry_ids:
-        if eid not in ctx.entry_labels:
-            ctx.entry_labels[eid] = set()
-        ctx.entry_labels[eid].add(lid)
-        assigned += 1
-    if hasattr(ctx, 'label_data_changed'):
-        ctx.label_data_changed.emit()
+
+    assigned = len(entry_ids)
+
+    # C10: 将 shared state 写入调度到主线程
+    def _mutate():
+        if not hasattr(ctx, 'entry_labels') or ctx.entry_labels is None:
+            ctx.entry_labels = {}
+        for eid in entry_ids:
+            if eid not in ctx.entry_labels:
+                ctx.entry_labels[eid] = set()
+            ctx.entry_labels[eid].add(lid)
+        if hasattr(ctx, 'label_data_changed'):
+            ctx.label_data_changed.emit()
+    ctx.safe_mutate(_mutate)
+
     return ToolResult.ok(f"已为 {assigned} 条条目分配标签 '{label_name}'", data={"assigned_count": assigned})
 
 
@@ -308,22 +358,24 @@ def _tool_remove_label(args: dict, ctx, collection) -> ToolResult:
     """移除条目的标签。"""
     entry_ids = args["entry_ids"]
     label_name = args["label_name"]
-    lid = None
-    label_lib = getattr(ctx, 'label_library', None) or {}
-    for k, v in label_lib.items():
-        if v.get("name") == label_name:
-            lid = k
-            break
+    lid = _resolve_label_id(label_name, ctx)
     if lid is None:
         return ToolResult.fail(f"标签不存在: {label_name}")
+
+    # 从当前状态计算移除数量（只读，用于返回值）
     entry_labels = getattr(ctx, 'entry_labels', None) or {}
-    removed = 0
-    for eid in entry_ids:
-        if eid in entry_labels and lid in entry_labels[eid]:
-            entry_labels[eid].discard(lid)
-            removed += 1
-    if hasattr(ctx, 'label_data_changed'):
-        ctx.label_data_changed.emit()
+    removed = sum(1 for eid in entry_ids if eid in entry_labels and lid in entry_labels[eid])
+
+    # C10: 将 shared state 写入调度到主线程
+    def _mutate():
+        el = getattr(ctx, 'entry_labels', None) or {}
+        for eid in entry_ids:
+            if eid in el and lid in el[eid]:
+                el[eid].discard(lid)
+        if hasattr(ctx, 'label_data_changed'):
+            ctx.label_data_changed.emit()
+    ctx.safe_mutate(_mutate)
+
     return ToolResult.ok(f"已从 {removed} 条条目移除标签 '{label_name}'", data={"removed_count": removed})
 
 
@@ -332,28 +384,28 @@ def _tool_remove_label(args: dict, ctx, collection) -> ToolResult:
 def _tool_batch_assign_label(args: dict, ctx, collection) -> ToolResult:
     """批量分配标签——对当前筛选范围内所有条目分配标签。H8: 复用 filter_entries。"""
     label_name = args["label_name"]
-    lid = None
-    label_lib = getattr(ctx, 'label_library', None) or {}
-    for k, v in label_lib.items():
-        if v.get("name") == label_name:
-            lid = k
-            break
+    lid = _resolve_label_id(label_name, ctx)
     if lid is None:
         return ToolResult.fail(f"标签不存在: {label_name}")
 
     filter_state = ctx.filter_state
-    entry_labels = getattr(ctx, 'entry_labels', None) or {}  # M1 联动
-    entries = filter_entries(collection, filter_state, entry_labels=entry_labels)
-    if not hasattr(ctx, 'entry_labels') or ctx.entry_labels is None:
-        ctx.entry_labels = {}
-    assigned = 0
-    for e in entries:
-        if e.id not in ctx.entry_labels:
-            ctx.entry_labels[e.id] = set()
-        ctx.entry_labels[e.id].add(lid)
-        assigned += 1
-    if hasattr(ctx, 'label_data_changed'):
-        ctx.label_data_changed.emit()
+    entry_labels_read = getattr(ctx, 'entry_labels', None) or {}  # M1 联动
+    entries = filter_entries(collection, filter_state, entry_labels=entry_labels_read)
+    assigned = len(entries)
+
+    # C10: 将 shared state 写入调度到主线程
+    _filtered_ids = [e.id for e in entries]
+    def _mutate():
+        if not hasattr(ctx, 'entry_labels') or ctx.entry_labels is None:
+            ctx.entry_labels = {}
+        for eid in _filtered_ids:
+            if eid not in ctx.entry_labels:
+                ctx.entry_labels[eid] = set()
+            ctx.entry_labels[eid].add(lid)
+        if hasattr(ctx, 'label_data_changed'):
+            ctx.label_data_changed.emit()
+    ctx.safe_mutate(_mutate)
+
     return ToolResult.ok(
         f"已为筛选范围内 {assigned} 条条目批量分配标签 '{label_name}'",
         data={"assigned_count": assigned, "filter_total": len(entries)},

@@ -1,8 +1,8 @@
 """TaskManager — 长运行任务生命周期管理器（单例 + 回调通知）。
 
-跨线程安全: notify_completed / notify_failed 通过 QMetaObject.invokeMethod
-将回调投递到主线程执行，保证 Qt GUI 操作安全。此机制等价于原 pyqtSignal 的
-自动排队行为，但无需 TaskManager 自身继承 QObject。
+跨线程安全: notify_completed / notify_failed 通过可注入的主线程调度器
+将回调投递到主线程执行。默认使用直接调用（非 GUI 上下文），UI 层可注入
+Qt 队列调度器以安全地在主线程操作 GUI（符合 ADR-008 后端去 PyQt6 要求）。
 """
 from __future__ import annotations
 
@@ -10,12 +10,21 @@ import copy
 import logging
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from uuid import uuid4
 
-from PyQt6.QtCore import QMetaObject, Qt, QCoreApplication
-
 logger = logging.getLogger(__name__)
+
+# ── 主线程调度器协议 ─────────────────────────────────────────
+# 调度器签名: dispatcher(fn: Callable[[], None]) -> None
+# - 默认实现直接调用 fn()（适用于非 GUI / 测试上下文）
+# - UI 层通过 set_main_thread_dispatcher() 注入 Qt 队列调度器
+
+
+def _default_dispatcher(fn: Callable[[], None]) -> None:
+    """默认调度器：直接调用（非 GUI 上下文 / 测试用）。"""
+    fn()
 
 
 @dataclass
@@ -47,6 +56,9 @@ class TaskManager:
     _instance: "TaskManager | None" = None
     _instance_lock: threading.Lock = threading.Lock()
 
+    # 主线程调度器：由 UI 层注入（符合 ADR-008 后端去 PyQt6 要求）
+    _dispatcher: Callable[[Callable[[], None]], None] = _default_dispatcher
+
     def __new__(cls) -> "TaskManager":
         if cls._instance is None:
             with cls._instance_lock:
@@ -57,6 +69,30 @@ class TaskManager:
                     instance._listeners: dict[str, list] = {"completed": [], "failed": []}
                     cls._instance = instance
         return cls._instance
+
+    # ── 调度器注入 (ADR-008: 消除 PyQt6 耦合) ────────────────
+
+    @classmethod
+    def set_main_thread_dispatcher(cls,
+                                   dispatcher: Callable[[Callable[[], None]], None],
+                                   ) -> None:
+        """注入主线程调度器。UI 层应在初始化时调用此方法。
+
+        调度器签名: dispatcher(fn: Callable[[], None]) -> None
+        fn 是零参数可调用对象，调度器负责将其投递到主线程执行。
+
+        示例（Qt UI 层）:
+            from PyQt6.QtCore import QMetaObject, Qt, QCoreApplication
+            app = QCoreApplication.instance()
+            TaskManager.set_main_thread_dispatcher(
+                lambda fn: QMetaObject.invokeMethod(app, fn, Qt.QueuedConnection))
+        """
+        TaskManager._dispatcher = dispatcher
+
+    @classmethod
+    def reset_dispatcher(cls) -> None:
+        """重置为默认调度器（直接调用，用于测试或 TUI 上下文）。"""
+        TaskManager._dispatcher = _default_dispatcher
 
     # ── 回调注册 (Phase 1: 替代 pyqtSignal) ──────────────────────
 
@@ -105,18 +141,21 @@ class TaskManager:
         return True
 
     def get_status(self, task_id: str) -> dict:
-        """获取任务状态快照。progress 深拷贝防止并发 RuntimeError。(E3)"""
+        """获取任务状态快照。progress 深拷贝防止并发 RuntimeError。(E3)
+
+        QA-001: deepcopy/属性读取全部在锁内进行，防止并发修改。
+        """
         with self._lock:
             handle = self._tasks.get(task_id)
-        if handle is None:
-            return {"error": "任务不存在", "task_id": task_id}
-        return {
-            "task_id": task_id,
-            "status": handle.status,
-            "progress": copy.deepcopy(handle.progress),  # E3: 深拷贝
-            "created_at": handle.created_at,
-            "metadata": dict(handle.metadata),
-        }
+            if handle is None:
+                return {"error": "任务不存在", "task_id": task_id}
+            return {
+                "task_id": task_id,
+                "status": handle.status,
+                "progress": copy.deepcopy(handle.progress),  # E3: 深拷贝
+                "created_at": handle.created_at,
+                "metadata": dict(handle.metadata),
+            }
 
     def update_progress(self, task_id: str, progress: dict) -> None:
         """更新任务进度信息。m10: progress 修改在锁内。"""
@@ -151,31 +190,20 @@ class TaskManager:
 
     # B2: 异步通知方法（线程安全，可在任何线程调用）
     def notify_completed(self, task_id: str, result: dict) -> None:
-        """通知任务成功完成。通过 QMetaObject.invokeMethod 投递到主线程执行回调，
-        保证 Qt GUI 操作安全（等价于原 pyqtSignal 的跨线程自动排队行为）。"""
-        app = QCoreApplication.instance()
-        if app is None:
-            logger.warning("QCoreApplication 不存在，跳过 completed 通知: %s", task_id)
-            return
+        """通知任务成功完成。通过注入的调度器投递回调到主线程执行。
+
+        调度器默认为直接调用（非 GUI 上下文），UI 层应通过
+        set_main_thread_dispatcher() 注入 Qt 队列调度器以保证 GUI 操作安全。
+        """
+        dispatch = TaskManager._dispatcher
         for cb in self._listeners.get("completed", []):
-            QMetaObject.invokeMethod(
-                app,
-                lambda c=cb, t=task_id, r=result: self._safe_callback(c, t, r),
-                Qt.ConnectionType.QueuedConnection,
-            )
+            dispatch(lambda c=cb, t=task_id, r=result: self._safe_callback(c, t, r))
 
     def notify_failed(self, task_id: str, error: str) -> None:
-        """通知任务失败/取消。通过 QMetaObject.invokeMethod 投递到主线程执行回调。"""
-        app = QCoreApplication.instance()
-        if app is None:
-            logger.warning("QCoreApplication 不存在，跳过 failed 通知: %s", task_id)
-            return
+        """通知任务失败/取消。通过注入的调度器投递回调到主线程执行。"""
+        dispatch = TaskManager._dispatcher
         for cb in self._listeners.get("failed", []):
-            QMetaObject.invokeMethod(
-                app,
-                lambda c=cb, t=task_id, e=error: self._safe_callback(c, t, e),
-                Qt.ConnectionType.QueuedConnection,
-            )
+            dispatch(lambda c=cb, t=task_id, e=error: self._safe_callback(c, t, e))
 
     @staticmethod
     def _safe_callback(cb, *args) -> None:
@@ -196,10 +224,13 @@ class TaskManager:
             handle._thread.join(timeout=5)
 
     def cleanup_all(self) -> int:
-        """清理所有非活跃任务，返回清理数量。"""
+        """清理所有非活跃任务，返回清理数量。
+
+        QA-002: 使用 list(self._tasks.keys()) 避免迭代过程中修改 dict。
+        """
         with self._lock:
-            inactive = [tid for tid, h in self._tasks.items()
-                        if h.status in ("completed", "failed", "cancelled")]
+            inactive = [tid for tid in list(self._tasks.keys())
+                        if self._tasks[tid].status in ("completed", "failed", "cancelled")]
             for tid in inactive:
                 handle = self._tasks.pop(tid)
                 if handle._thread is not None and handle._thread.is_alive():
@@ -220,4 +251,6 @@ class TaskManager:
                 # Phase 1: 清理回调列表，防止悬空引用
                 cls._instance._listeners["completed"].clear()
                 cls._instance._listeners["failed"].clear()
+                # ADR-008: 重置调度器为默认直接调用（非 GUI 上下文）
+                TaskManager._dispatcher = _default_dispatcher
                 cls._instance = None

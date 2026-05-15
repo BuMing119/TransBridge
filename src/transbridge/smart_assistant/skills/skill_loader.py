@@ -1,8 +1,11 @@
 """Skill 定义加载器：TOML 文件 → SkillSpec。"""
 
+import logging
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # m39: prompt_template 最大长度限制，防止恶意 TOML 注入超长 prompt
 MAX_PROMPT_TEMPLATE_LENGTH = 4096
@@ -37,8 +40,7 @@ class SkillLoader:
             with open(path, "rb") as f:
                 data = tomllib.load(f)
         except (tomllib.TOMLDecodeError, OSError) as exc:
-            import logging
-            logging.getLogger("SkillLoader").warning(f"解析 Skill 文件失败: {path} — {exc}")
+            logger.warning(f"解析 Skill 文件失败: {path} — {exc}")
             return None
 
         try:
@@ -50,8 +52,7 @@ class SkillLoader:
             # m39: 限制 prompt_template 长度，防止恶意 TOML 注入超长 prompt
             prompt_template = prompt.get("template", "")
             if len(prompt_template) > MAX_PROMPT_TEMPLATE_LENGTH:
-                import logging
-                logging.getLogger("SkillLoader").warning(
+                logger.warning(
                     "Skill '%s' prompt_template 过长 (%d 字符)，已截断至 %d",
                     meta.get('name', path.stem), len(prompt_template),
                     MAX_PROMPT_TEMPLATE_LENGTH,
@@ -71,8 +72,7 @@ class SkillLoader:
                 source_path=path,
             )
         except Exception as exc:
-            import logging
-            logging.getLogger("SkillLoader").warning(f"Skill 定义不完整: {path} — {exc}")
+            logger.warning(f"Skill 定义不完整: {path} — {exc}")
             return None
 
     @staticmethod

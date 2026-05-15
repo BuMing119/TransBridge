@@ -3,6 +3,7 @@
 import csv
 import io
 import json
+import re
 from pathlib import Path
 
 from .base import FileParser, ParsedDocument
@@ -29,24 +30,27 @@ class TextFileParser(FileParser):
     def _parse_xlsx(self, path: Path) -> ParsedDocument:
         import openpyxl
         wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-        sections = []
-        raw_parts = []
-        for sheet_name in wb.sheetnames:
-            ws = wb[sheet_name]
-            rows = []
-            for row in ws.iter_rows(values_only=True):
-                if any(c is not None for c in row):
-                    row_vals = [str(c) if c is not None else "" for c in row]
-                    rows.append(row_vals)
-                    raw_parts.append("\t".join(row_vals))
-            if rows:
-                sections.append({"heading": sheet_name, "rows": rows})
-        wb.close()
-        return ParsedDocument(
-            source_path=path, format="excel", title=path.stem,
-            sections=sections, raw_text="\n".join(raw_parts),
-            metadata={"sheets": wb.sheetnames},
-        )
+        try:
+            sections = []
+            raw_parts = []
+            for sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+                rows = []
+                for row in ws.iter_rows(values_only=True):
+                    if any(c is not None for c in row):
+                        row_vals = [str(c) if c is not None else "" for c in row]
+                        rows.append(row_vals)
+                        raw_parts.append("\t".join(row_vals))
+                if rows:
+                    sections.append({"heading": sheet_name, "rows": rows})
+            sheet_names = list(wb.sheetnames)
+            return ParsedDocument(
+                source_path=path, format="excel", title=path.stem,
+                sections=sections, raw_text="\n".join(raw_parts),
+                metadata={"sheets": sheet_names},
+            )
+        finally:
+            wb.close()
 
     def _parse_csv(self, path: Path) -> ParsedDocument:
         rows = []
@@ -65,16 +69,19 @@ class TextFileParser(FileParser):
             raw_text="\n".join(raw_parts),
         )
 
+    _MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)")
+
     def _parse_markdown(self, path: Path) -> ParsedDocument:
         text = path.read_text(encoding="utf-8", errors="replace")
         sections = []
         current_heading = ""
         current_content: list[str] = []
         for line in text.split("\n"):
-            if line.startswith("## "):
+            m = self._MD_HEADING_RE.match(line)
+            if m:
                 if current_heading or current_content:
                     sections.append({"heading": current_heading, "content": "\n".join(current_content)})
-                current_heading = line[3:].strip()
+                current_heading = m.group(2).strip()
                 current_content = []
             else:
                 current_content.append(line)

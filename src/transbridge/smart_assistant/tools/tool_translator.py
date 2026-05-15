@@ -13,6 +13,16 @@ from .task_manager import TaskManager
 
 logger = logging.getLogger(__name__)
 
+from src.transbridge.config.llm import LLMConfig as _LLMConfig
+
+
+def _load_llm_config() -> _LLMConfig:
+    """加载 LLMConfig，失败时返回默认实例。M28: 消除 get/set 配置工具中重复的 try/except 模式。"""
+    try:
+        return _LLMConfig.load_from_file()
+    except Exception:
+        return _LLMConfig()
+
 
 # ── 启动翻译 ──────────────────────────────────────────────────
 
@@ -43,8 +53,7 @@ def _tool_start_translation(args: dict, ctx, collection) -> ToolResult:
                     break
             elif src in ("json", "excel"):
                 path = llm_cfg.local_json_path if src == "json" else llm_cfg.local_excel_path
-                import os as _os
-                if path and _os.path.exists(path):
+                if path and os.path.exists(path):
                     has_term_source = True
                     break
         if not has_term_source:
@@ -192,8 +201,8 @@ def _tool_stop_task(args: dict, ctx) -> ToolResult:
     tm = TaskManager()
     success = tm.cancel(task_id)
     if success:
-        return ToolResult.ok(f"任务 {task_id} 已发送停止信号")
-    return ToolResult.fail(f"任务不存在或已完成: {task_id}")
+        return ToolResult.ok(f"任务 {task_id} 已发送停止信号", data={"task_id": task_id, "stopped": True})
+    return ToolResult.fail(f"任务不存在或已完成: {task_id}", data={"task_id": task_id, "stopped": False})
 
 
 def _tool_stop_all_tasks(args: dict, ctx) -> ToolResult:
@@ -287,11 +296,7 @@ def _get_term_db_info(ctx) -> dict:
 
 def _tool_get_translation_config(args: dict, ctx) -> ToolResult:
     """返回当前 LLM 翻译配置，含后处理、术语、ParaTranz 状态。"""
-    from src.transbridge.config.llm import LLMConfig
-    try:
-        llm = LLMConfig.load_from_file()
-    except Exception:
-        llm = LLMConfig()
+    llm = _load_llm_config()
     profiles = _get_profiles()
 
     # C4: 真实的后处理配置
@@ -333,7 +338,6 @@ def _tool_set_translation_config(args: dict, ctx) -> ToolResult:
     """更新 LLM 翻译配置。H7: profile 预设方案切换替代 base_url 自由输入。"""
     import configparser
     from src.transbridge.config.paths import get_config_file_path
-    from src.transbridge.config.llm import LLMConfig
 
     profile = args.get("profile")
     if profile:
@@ -346,10 +350,7 @@ def _tool_set_translation_config(args: dict, ctx) -> ToolResult:
         args = dict(args)
         args["base_url"] = profiles[profile]
 
-    try:
-        llm = LLMConfig.load_from_file()
-    except Exception:
-        llm = LLMConfig()
+    llm = _load_llm_config()
 
     changed = []
     # C1: base_url 仅通过 profile 预设方案间接设置，不允许直接修改

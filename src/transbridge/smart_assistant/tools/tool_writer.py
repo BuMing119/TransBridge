@@ -4,24 +4,25 @@ Story 12: 4个writer工具，permission=admin, require_confirmation=true。
 """
 from __future__ import annotations
 
-import os
 from .base import ToolResult, require_collection
+from .tool_parser import _validate_path  # M29: 复用共享路径校验器
 
 
-def _validate_output_path(path: str) -> ToolResult | None:
-    """C6: 写回路径安全校验 — 拒绝遍历路径和绝对路径。
+def _create_plugin_writer(slot):
+    """共享工厂：从槽位创建 PluginWriter 实例。
 
-    NOTE(m34): 此校验逻辑与 tool_parser._validate_path 存在重叠（路径遍历检测、
-    绝对路径拒绝）。两个函数职责不同（writer 校验输出路径 / parser 校验输入路径），
-    且 parser 额外包含扩展名白名单和文件存在性检查，暂不做合并重构。
+    返回 (writer, None) 或 (None, ToolResult) 表示失败。
     """
-    if not path:
-        return ToolResult.fail("输出路径为空")
-    if ".." in path.replace("\\", "/").split("/"):
-        return ToolResult.fail("拒绝路径遍历攻击")
-    if os.path.isabs(path):
-        return ToolResult.fail("拒绝绝对路径，请使用相对路径")
-    return None
+    from src.transbridge.writer.plugin_writer import PluginWriter
+    plugin = slot.plugin
+    if plugin is None:
+        return None, ToolResult.fail("当前槽位无已解析的插件")
+    writer = PluginWriter(
+        plugin,
+        strings_lookup=slot.strings_lookup,
+        language=slot.strings_lang or "english",
+    )
+    return writer, None
 
 
 @require_collection
@@ -32,14 +33,11 @@ def _tool_write_to_esp(args: dict, ctx, collection) -> ToolResult:
         return ToolResult.fail("没有活跃的集合槽位")
     path = args.get("path") or ctx.esp_path
     if path:
-        err = _validate_output_path(path)
+        err = _validate_path(path, check_exists=False, check_extension=False)
         if err: return err
     try:
-        from src.transbridge.writer.plugin_writer import PluginWriter
-        plugin = slot.plugin
-        if plugin is None:
-            return ToolResult.fail("当前槽位无已解析的插件")
-        writer = PluginWriter(plugin, strings_lookup=slot.strings_lookup, language=slot.strings_lang or "english")
+        writer, err = _create_plugin_writer(slot)
+        if err: return err
         count = writer.apply_collection(collection)
         if path:
             writer.write(path)
@@ -54,7 +52,7 @@ def _tool_write_to_eet(args: dict, ctx, collection) -> ToolResult:
     path = args.get("path") or getattr(ctx, 'eet_path', None)
     if not path:
         return ToolResult.fail("请提供 EET 输出路径或先解析 EET 源文件")
-    err = _validate_output_path(path)
+    err = _validate_path(path, check_exists=False, check_extension=False)
     if err: return err
     try:
         from src.transbridge.writer.eet_xml_writer import EETWriter
@@ -71,7 +69,7 @@ def _tool_write_to_xt(args: dict, ctx, collection) -> ToolResult:
     path = args.get("path") or getattr(ctx, 'xt_path', None)
     if not path:
         return ToolResult.fail("请提供 XT 输出路径或先解析 XT 源文件")
-    err = _validate_output_path(path)
+    err = _validate_path(path, check_exists=False, check_extension=False)
     if err: return err
     try:
         from src.transbridge.writer.xt_xml_writer import XTWriter
@@ -91,14 +89,11 @@ def _tool_write_to_strings(args: dict, ctx, collection) -> ToolResult:
     path = args.get("path") or args.get("output_dir")
     if not path:
         return ToolResult.fail("请提供输出路径 (path 或 output_dir)")
-    err = _validate_output_path(path)
+    err = _validate_path(path, check_exists=False, check_extension=False)
     if err: return err
     try:
-        from src.transbridge.writer.plugin_writer import PluginWriter
-        plugin = slot.plugin
-        if plugin is None:
-            return ToolResult.fail("当前槽位无已解析的插件")
-        writer = PluginWriter(plugin, strings_lookup=slot.strings_lookup, language=slot.strings_lang or "english")
+        writer, err = _create_plugin_writer(slot)
+        if err: return err
         count = writer.apply_collection(collection)
         result = writer.write(path)  # MA6: 传入校验后的 path
         strings_written = result.get("strings_written", []) if isinstance(result, dict) else []
@@ -109,6 +104,23 @@ def _tool_write_to_strings(args: dict, ctx, collection) -> ToolResult:
     except Exception as exc:
         return ToolResult.fail(f"strings 写回失败: {exc}")
 
+
+# ── 参数 Schema ────────────────────────────────────────────────
+
+_PARAM_SCHEMAS = {
+    "write_to_esp": {
+        "path": {"type": "str", "required": False, "description": "输出路径（不传则使用当前 ESP 路径就地写回）"},
+    },
+    "write_to_eet": {
+        "path": {"type": "str", "required": False, "description": "EET XML 输出路径（不传则使用已解析的 EET 源路径）"},
+    },
+    "write_to_xt": {
+        "path": {"type": "str", "required": False, "description": "XT XML 输出路径（不传则使用已解析的 XT 源路径）"},
+    },
+    "write_to_strings": {
+        "path": {"type": "str", "required": False, "description": "strings 输出目录路径（别名 output_dir）"},
+    },
+}
 
 # ── 注册 ──────────────────────────────────────────────────────
 
@@ -126,7 +138,7 @@ def _register_writer_tools():
     for name, display_name, description, execute, permission in tools:
         ToolRegistry.register(ToolSpec(
             name=name, display_name=display_name, description=description,
-            parameters={}, execute=execute, permission=permission,
+            parameters=_PARAM_SCHEMAS.get(name, {}), execute=execute, permission=permission,
             require_confirmation=True,  # admin 级操作必须确认
             is_long_running=True,
         ), namespace="writer")

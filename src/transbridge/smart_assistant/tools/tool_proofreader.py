@@ -6,12 +6,17 @@ from __future__ import annotations
 
 import threading
 import logging
+import time
 from types import SimpleNamespace
 
 from .base import ToolResult
 from .task_manager import TaskManager
 
 logger = logging.getLogger(__name__)
+
+# Module-level cache for the last post-processing report result.
+# Populated by _run_postprocess_phase on completion, consumed by _tool_get_quality_report.
+_last_report: dict | None = None
 
 
 # ── E9: PostProcessor 工厂函数 ────────────────────────────────
@@ -28,18 +33,47 @@ def _run_postprocess_phase(processor_class, config_overrides: dict,
     task_id = tm.register(stop_event=stop_event, metadata={"phase": phase_name})
 
     def _run():
+        global _last_report
         try:
             cfg = processor_class.get_default_config() if hasattr(processor_class, 'get_default_config') else SimpleNamespace()
             for k, v in config_overrides.items():
                 setattr(cfg, k, v)
             processor = processor_class(cfg) if config_overrides else processor_class()
             result = processor.process(collection)
+
+            # C17: Cache the post-processing report so _tool_get_quality_report can return real data
+            _last_report = {
+                "phase": phase_name,
+                "total_checked": result.total_checked,
+                "issue_count": result.issue_count,
+                "auto_fixed": result.auto_fixed,
+                "needs_review": list(result.needs_review),
+                "issues": [
+                    {
+                        "entry_id": iss.entry_id,
+                        "issue_type": iss.issue_type,
+                        "severity": iss.severity,
+                        "message": iss.message,
+                    }
+                    for iss in result.issues[:50]  # Cap to avoid oversized payloads
+                ],
+                "timestamp": time.time(),
+            }
+
             tm.update_progress(task_id, {"status": "completed", "summary": str(result)})
             tm.set_status(task_id, "completed")
+            tm.notify_completed(task_id, {
+                "status": "completed",
+                "phase": phase_name,
+                "total_checked": result.total_checked,
+                "issue_count": result.issue_count,
+                "auto_fixed": result.auto_fixed,
+            })
         except Exception as exc:
             logger.exception("%s异常: %s", phase_name, exc)
             tm.set_status(task_id, "failed")
             tm.update_progress(task_id, {"error": str(exc)})
+            tm.notify_failed(task_id, str(exc))
 
     thread = threading.Thread(target=_run, daemon=True)
     handle = tm.get_handle(task_id)
@@ -99,7 +133,18 @@ def _tool_run_llm_arbitration(args: dict, ctx) -> ToolResult:
 
 def _tool_get_quality_report(args: dict, ctx) -> ToolResult:
     """获取最近的质量报告摘要。"""
-    return ToolResult.ok("暂无质量报告", data={"reports": []})
+    global _last_report
+    if _last_report is None:
+        return ToolResult.ok("暂无质量报告", data={"reports": []})
+
+    report = _last_report
+    return ToolResult.ok(
+        f"最近报告({report['phase']}): "
+        f"检查{report['total_checked']}条, "
+        f"发现问题{report['issue_count']}个, "
+        f"自动修复{report['auto_fixed']}个",
+        data={"reports": [report]},
+    )
 
 
 # ── 注册 ──────────────────────────────────────────────────────

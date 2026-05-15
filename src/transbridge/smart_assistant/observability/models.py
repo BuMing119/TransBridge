@@ -56,8 +56,8 @@ class ConversationTrace:
     def to_dict(self) -> dict:
         return {
             "conv_id": self.conv_id,
-            "rounds": [r.__dict__ if hasattr(r, '__dict__') else r for r in self.rounds],
-            "tools_called": [t.__dict__ if hasattr(t, '__dict__') else t for t in self.tools_called],
+            "rounds": [r.__dict__ for r in self.rounds],
+            "tools_called": [t.__dict__ for t in self.tools_called],
             "token_stats": self.token_stats.to_dict(),
             "started_at": self.started_at,
             "finished_at": self.finished_at,
