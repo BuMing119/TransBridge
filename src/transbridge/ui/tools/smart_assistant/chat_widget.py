@@ -1,17 +1,56 @@
+from __future__ import annotations
+
+# TODO: i18n — 所有用户可见字符串均为硬编码中文，待国际化改造
+"""
+ChatWidget 颜色面板 (无主题系统 — 所有值硬编码在各控件 StyleSheet 中):
+
+  语义色:
+    主色/成功:        #4CAF50  (绿色, 发送按钮/AI头像/聚焦边框)
+    主色深色(hover):   #43A047
+    主色更深(pressed): #388E3C
+    主色浅色(disabled):#A5D6A7
+    危险/失败:         #D32F2F  (红色左边框, 系统消息)
+    危险背景:          #FFEBEE
+    成功背景:          #E8F5E9
+
+  中性色:
+    文字主色:          #333     (消息内容, 系统消息文字)
+    文字次级:          #666     (上传按钮文字, 清空按钮文字)
+    文字三级:          #888     (上传状态标签, Auto复选框)
+    文字悬停:          #555     (Auto复选框悬停)
+    输入框背景:        #fff     (白色)
+    用户气泡背景:      #f7f7f7  (淡灰)
+    系统消息默认背景:  #F5F5F5
+    系统消息默认边框:  #757575
+    按钮默认背景:      #f5f5f5  (清空/上传按钮)
+    按钮默认边框:      #ddd
+    按钮悬停背景:      #e8e8e8
+
+  覆盖色:
+    回到底部按钮背景:  rgba(0,0,0,0.55)
+    回到底部按钮悬停:  rgba(0,0,0,0.7)
+    回到底部按钮文字:  white
+    发送按钮文字:      white
+"""
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
-    QTextEdit, QPushButton, QFileDialog, QLabel,
-    QMessageBox, QTabWidget, QTableWidget, QTableWidgetItem,
-    QListWidget, QListWidgetItem, QHeaderView, QCheckBox,
+    QTextEdit, QPushButton, QFileDialog, QLabel, QFrame,
+    QMessageBox, QCheckBox,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QEvent, QTimer, QSettings, QObject
+from PyQt6.QtCore import Qt, QEvent, QTimer, QSettings
+from PyQt6.QtGui import QShortcut, QKeySequence
 import logging
+import os
+import re
 from pathlib import Path
 
 from .message_bubble import MessageBubble
 from .quick_actions import QuickActionsChips
+from .thinking_indicator import ThinkingIndicator
+from src.transbridge.smart_assistant.tool_execution_handler import ToolExecutionHandler
+from src.transbridge.smart_assistant.conversation_orchestrator import ConversationOrchestrator
 from src.transbridge.smart_assistant.conversation_manager import ConversationManager
-from src.transbridge.smart_assistant.chat_worker import ChatWorker
 from src.transbridge.smart_assistant.execution_engine import ExecutionEngine, StepResult
 from .tool_card import ToolCard, BatchToolCard
 from .plan_card import PlanCard
@@ -19,20 +58,12 @@ from .plan_card import PlanCard
 logger = logging.getLogger(__name__)
 
 
-class _SignalBridge(QObject):
-    """Worker→主线程回调桥接器。
-
-    在 worker 线程中调用 _dispatch.emit(callback)，Qt 自动排队到主线程执行。
-    1 个 QObject + 1 个 pyqtSignal，C 栈开销可忽略。
-    """
-    _dispatch = pyqtSignal(object)
-
-
 class ChatWidget(QWidget):
     """聊天区域：消息滚动列表 + 输入框 + 发送/清空按钮 + 双模式循环控制。"""
 
     _MAX_REACT_DEPTH = 10
-    _STREAMING_FLUSH_MS = 50
+    MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
+    MAX_VISIBLE_WIDGETS = 100  # M52: 消息区最大控件数，超出时从头部移除最旧控件
 
     def __init__(self, ctx, parent=None):
         super().__init__(parent)
@@ -45,37 +76,15 @@ class ChatWidget(QWidget):
         self.setFont(font)
 
         self._conversation = ConversationManager(max_turns=20)
-        self._worker: ChatWorker | None = None
         self._engine: ExecutionEngine | None = None
-        self._react_depth = 0
-        self._prompt_builder = None
-        self._consecutive_errors = 0
         self._uploaded_docs: dict[str, object] = {}  # filename → ParsedDocument
-        self._middlewares: list | None = None  # B1: 延迟构建护栏链
         self._pending_memory_context = ""      # BR2: 待注入的记忆上下文
-
-        # CR7: LLM 客户端缓存 — 配置不变时复用，避免重复创建 HTTP 连接池
-        self._llm_client = None
-        self._llm_client_config_hash = None
 
         # m2: 重试按钮引用，防止多次错误叠加多个重试按钮
         self._retry_btn: QPushButton | None = None
 
         # B2: TaskManager 信号延迟到首次 LLM 轮次时连接，避免 UI 构建期 C 栈溢出
         self._task_manager_connected = False
-
-        # Worker→主线程回调桥接器
-        self._cb_bridge = _SignalBridge()
-        self._cb_bridge._dispatch.connect(lambda cb: cb())
-
-        # Micro-stage 拆分: Stage A → B → C 之间的临时状态传递
-        self._round_messages: list = []
-        self._round_max_tokens: int = 2048
-
-        # 流式打字机状态
-        self._streaming_text = ""
-        self._streaming_bubble: MessageBubble | None = None
-        self._streaming_dirty = False
 
         # 自动模式 (QSettings 持久化)
         self._auto_mode = False
@@ -95,6 +104,7 @@ class ChatWidget(QWidget):
         self._back_to_bottom_btn: QPushButton | None = None
         self._scroll: QScrollArea | None = None
         self._input: QTextEdit | None = None
+        self._thinking_indicator: ThinkingIndicator | None = None
 
         # 延后 UI 构建：__init__ 累积的 Python→C++ 调用在 Windows 1MB C 栈
         # 上可能溢出 (0xC00000FD)。通过 QTimer.singleShot 将 QObject 密集的
@@ -111,215 +121,361 @@ class ChatWidget(QWidget):
 
     def _init_ui_stage1(self) -> None:
         """Stage 1/4: QTimers + 长期记忆 + 可观测性收集器。"""
-        from src.transbridge.config.paths import get_data_dir
-
-        # ── QTimers ──
-        self._pending_scroll_value = 0
-        self._scroll_throttle_timer = QTimer(self)
-        self._scroll_throttle_timer.setInterval(100)
-        self._scroll_throttle_timer.setSingleShot(True)
-        self._scroll_throttle_timer.timeout.connect(self._update_scroll_button)
-
-        self._streaming_timer = QTimer(self)
-        self._streaming_timer.setInterval(self._STREAMING_FLUSH_MS)
-        self._streaming_timer.timeout.connect(self._flush_streaming)
-
-        # ── 长期记忆 ──
-        from src.transbridge.smart_assistant.memory import MemoryStore, MemoryRetriever
-        self._memory_store = MemoryStore(
-            Path(get_data_dir()) / "memory", embedding_mode="disabled"
-        )
-        _emb_client = None
         try:
-            from src.transbridge.paratranz.config_manager import LLMConfig as _LLMCfg
-            _cfg = _LLMCfg.load_from_file()
-            if _cfg.embedding.mode != "disabled" and _cfg.embedding.api_key:
-                from src.transbridge.infra import create_llm_client
-                _emb_client = create_llm_client(_cfg.embedding.api_key, _cfg.embedding.base_url)
-        except Exception as e:
-            logger.info("Embedding 客户端创建失败，语义检索降级: %s", e)
-        self._memory_retriever = MemoryRetriever(self._memory_store, embedding_client=_emb_client)
+            from src.transbridge.config.paths import get_data_dir
 
-        # ── 可观测性收集器 ──
-        from src.transbridge.smart_assistant.observability import ObservabilityCollector
-        self._obs_collector = ObservabilityCollector(
-            storage_dir=Path(get_data_dir()) / "observability",
-            on_token_stats_updated=lambda stats: self._on_token_stats_updated(stats),
-        )
+            # ── QTimers ──
+            self._pending_scroll_value = 0
+            self._scroll_throttle_timer = QTimer(self)
+            self._scroll_throttle_timer.setInterval(100)
+            self._scroll_throttle_timer.setSingleShot(True)
+            self._scroll_throttle_timer.timeout.connect(self._update_scroll_button)
+
+            # ── 长期记忆 ──
+            from src.transbridge.smart_assistant.memory import MemoryStore, MemoryRetriever
+            self._memory_store = MemoryStore(
+                Path(get_data_dir()) / "memory", embedding_mode="disabled",
+                persist_to_disk=False,
+            )
+            _emb_client = None
+            try:
+                from src.transbridge.paratranz.config_manager import LLMConfig as _LLMCfg
+                _cfg = _LLMCfg.load_from_file()
+                if _cfg.embedding.mode != "disabled" and _cfg.embedding.api_key:
+                    from src.transbridge.infra import create_llm_client
+                    _emb_client = create_llm_client(_cfg.embedding.api_key, _cfg.embedding.base_url)
+            except Exception as e:
+                logger.info("Embedding 客户端创建失败，语义检索降级: %s", e)
+            self._memory_retriever = MemoryRetriever(self._memory_store, embedding_client=_emb_client)
+
+            # ── 可观测性收集器 ──
+            from src.transbridge.smart_assistant.observability import ObservabilityCollector
+            self._obs_collector = ObservabilityCollector(
+                storage_dir=Path(get_data_dir()) / "observability",
+                on_token_stats_updated=lambda stats: self._on_token_stats_updated(stats),
+            )
+
+            # ── 工具执行处理器（Story-09-1）──
+            self._tool_handler = ToolExecutionHandler(
+                ctx=self._ctx,
+                conversation_manager=self._conversation,
+                on_system_message=lambda msg: self.add_system_message(msg),
+                on_plan_card=lambda steps: self.add_plan_card(steps),
+                on_tool_card=lambda step: self.add_tool_card(step),
+                on_batch_tool_card=lambda steps: self.add_batch_tool_card(steps),
+                on_plan_confirmed=lambda steps: self._on_plan_confirmed(steps),
+                on_react_continue=lambda: self._check_react_continue(),
+                on_confirm_permission=lambda title, msg: (
+                    QMessageBox.question(self, title, msg,
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                    ) == QMessageBox.StandardButton.Yes
+                ),
+            )
+
+            # ── 对话编排器（Story-09-2）──
+            self._orchestrator = ConversationOrchestrator(
+                ctx=self._ctx,
+                conversation_manager=self._conversation,
+                tool_execution_handler=self._tool_handler,
+                obs_collector=self._obs_collector,
+                memory_store=self._memory_store,
+                on_system_message=lambda msg: self.add_system_message(msg),
+                on_streaming_bubble_factory=lambda: MessageBubble("...", "assistant"),
+                on_streaming_flush=lambda text, bubble, dirty: self._do_streaming_flush(text, bubble),
+                on_add_bubble=lambda b: self._add_bubble(b),
+                on_scroll_to_bottom=lambda: self._scroll_to_bottom(),
+                on_thinking_indicator_show=lambda t: self._show_thinking_indicator(t),
+                on_thinking_indicator_hide=lambda: self._hide_thinking_indicator(),
+                on_auto_execute_steps=lambda s, m: self._auto_execute_steps(s, m),
+                on_plan_card=lambda steps: self.add_plan_card(steps),
+                on_tool_card=lambda step: self.add_tool_card(step),
+                on_batch_tool_card=lambda steps: self.add_batch_tool_card(steps),
+                on_end_conversation=lambda: self._obs_collector.end_conversation(),
+                on_remove_widget=lambda w: self._remove_widget_safely(w),
+                on_retry_offer=lambda msg: self._offer_retry_button(),
+                on_log_memory=lambda msgs, resp: self._log_conversation_memory(msgs, resp),
+                on_get_uploaded_docs=lambda: self._uploaded_docs,
+                on_get_pending_memory=lambda: self._pending_memory_context,
+                on_clear_pending_memory=lambda: setattr(self, '_pending_memory_context', ''),
+                on_react_depth_check=lambda: self._check_react_depth(),
+            )
+            # 同步 auto_mode
+            self._orchestrator.auto_mode = self._auto_mode
+        except Exception as e:
+            logger.error("UI初始化 Stage 1/4 失败: %s", e)
 
         QTimer.singleShot(0, self._init_ui_stage2)
 
     def _init_ui_stage2(self) -> None:
         """Stage 2/4: 布局 + 消息滚动区 + 回到底部按钮。"""
-        # ── 主布局 ──
-        self._main_layout = QVBoxLayout(self)
-        self._main_layout.setContentsMargins(0, 0, 0, 0)
-        self._main_layout.setSpacing(4)
+        try:
+            # ── 主布局 ──
+            self._main_layout = QVBoxLayout(self)
+            self._main_layout.setContentsMargins(0, 0, 0, 0)
+            self._main_layout.setSpacing(4)
 
-        # ── 消息滚动区 ──
-        self._scroll = QScrollArea()
-        self._scroll.setWidgetResizable(True)
-        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            # ── 消息滚动区 ──
+            self._scroll = QScrollArea()
+            self._scroll.setAccessibleName("消息滚动区域")
+            self._scroll.setWidgetResizable(True)
+            self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
-        self._msg_container = QWidget()
-        self._msg_layout = QVBoxLayout(self._msg_container)
-        self._msg_layout.setContentsMargins(4, 4, 4, 4)
-        self._msg_layout.setSpacing(4)
-        self._msg_layout.addStretch()
-        self._scroll.setWidget(self._msg_container)
+            self._msg_container = QWidget()
+            self._msg_layout = QVBoxLayout(self._msg_container)
+            self._msg_layout.setContentsMargins(4, 4, 4, 4)
+            self._msg_layout.setSpacing(4)
+            self._msg_layout.addStretch()
+            self._scroll.setWidget(self._msg_container)
 
-        self._main_layout.addWidget(self._scroll, stretch=1)
+            self._main_layout.addWidget(self._scroll, stretch=1)
 
-        # ── 回到底部浮动按钮 ──
-        self._back_to_bottom_btn = QPushButton("[v] 回到底部", self._scroll)
-        self._back_to_bottom_btn.setStyleSheet(
-            "QPushButton {"
-            "  background: rgba(0,0,0,0.55); color: white; border: none;"
-            "  border-radius: 14px; padding: 5px 12px; font-size: 11px;"
-            "}"
-            "QPushButton:hover { background: rgba(0,0,0,0.7); }"
-        )
-        self._back_to_bottom_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._back_to_bottom_btn.clicked.connect(self._on_back_to_bottom)
-        self._back_to_bottom_btn.setVisible(False)
-        self._back_to_bottom_btn.raise_()
+            # ── 回到底部浮动按钮 ──
+            self._back_to_bottom_btn = QPushButton("[v] 回到底部", self._scroll)
+            self._back_to_bottom_btn.setStyleSheet(
+                "QPushButton {"
+                "  background: rgba(0,0,0,0.55); color: white; border: none;"
+                "  border-radius: 14px; padding: 5px 12px; font-size: 11px;"
+                "}"
+                "QPushButton:hover { background: rgba(0,0,0,0.7); }"
+            )
+            self._back_to_bottom_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            self._back_to_bottom_btn.clicked.connect(self._on_back_to_bottom)
+            self._back_to_bottom_btn.setVisible(False)
+            self._back_to_bottom_btn.raise_()
 
-        vsb = self._scroll.verticalScrollBar()
-        if vsb:
-            vsb.valueChanged.connect(self._on_scroll_changed)
+            vsb = self._scroll.verticalScrollBar()
+            if vsb:
+                vsb.valueChanged.connect(self._on_scroll_changed)
+        except Exception as e:
+            logger.error("UI初始化 Stage 2/4 失败: %s", e)
 
         QTimer.singleShot(0, self._init_ui_stage3)
 
     def _init_ui_stage3(self) -> None:
         """Stage 3/4: 工具栏(chips+上传) + 观测面板(QTabWidget/QTableWidget)。"""
-        assert self._main_layout is not None
+        try:
+            assert self._main_layout is not None
 
-        # ── 工具栏：chips 快捷指令 + 上传 ──
-        toolbar = QHBoxLayout()
-        toolbar.setSpacing(6)
-        self._chips = QuickActionsChips()
-        self._chips.action_clicked.connect(self.set_input)
-        self._chips.skill_triggered.connect(self._on_skill)
-        toolbar.addWidget(self._chips, stretch=1)
-        self._upload_label = QLabel("")
-        self._upload_label.setStyleSheet("color: #888; font-size: 11px;")
-        upload_btn = QPushButton("上传")
-        upload_btn.setToolTip("上传纠错表/术语参考/风格指南（Excel/CSV/Markdown/TXT/JSON/PDF/Word）")
-        upload_btn.setStyleSheet(
-            "QPushButton {"
-            "  background-color: #f5f5f5; border: 1px solid #ddd; border-radius: 12px;"
-            "  padding: 3px 10px; font-size: 11px; color: #666;"
-            "}"
-            "QPushButton:hover { background-color: #e8e8e8; }"
-        )
-        upload_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        upload_btn.clicked.connect(self._on_upload_file)
-        toolbar.addWidget(upload_btn)
-        toolbar.addWidget(self._upload_label)
-        self._main_layout.addLayout(toolbar)
+            # ── 工具栏：chips 快捷指令 + 上传 ──
+            toolbar = QHBoxLayout()
+            toolbar.setSpacing(6)
+            toolbar.setContentsMargins(4, 2, 4, 2)
+            self._chips = QuickActionsChips()
+            self._chips.action_clicked.connect(self.set_input)
+            self._chips.skill_triggered.connect(self._on_skill)
+            toolbar.addWidget(self._chips)
+            self._upload_label = QLabel("")
+            self._upload_label.setStyleSheet("color: #888; font-size: 11px;")
+            upload_btn = QPushButton("上传")
+            upload_btn.setToolTip("上传纠错表/术语参考/风格指南（Excel/CSV/Markdown/TXT/JSON/PDF/Word）")
+            upload_btn.setStyleSheet(
+                "QPushButton {"
+                "  background-color: #f5f5f5; border: 1px solid #ddd; border-radius: 12px;"
+                "  padding: 3px 10px; font-size: 11px; color: #666;"
+                "}"
+                "QPushButton:hover { background-color: #e8e8e8; }"
+            )
+            upload_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            upload_btn.clicked.connect(self._on_upload_file)
+            toolbar.addWidget(upload_btn)
+            toolbar.addWidget(self._upload_label)
+            self._main_layout.addLayout(toolbar)
 
-        # ── 观测面板 Tab (S11) — 默认折叠 ──
-        self._obs_header = QPushButton("[>] 观测面板")
-        self._obs_header.setStyleSheet(
-            "QPushButton {"
-            "  text-align: left; background: #fafafa; border: 1px solid #e0e0e0;"
-            "  border-radius: 6px; padding: 4px 10px; font-size: 11px; color: #888;"
-            "}"
-            "QPushButton:hover { background: #f0f0f0; }"
-        )
-        self._obs_header.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._obs_header.clicked.connect(self._toggle_obs_panel)
-        self._main_layout.addWidget(self._obs_header)
-
-        self._obs_tabs = QTabWidget()
-        self._obs_tabs.setMaximumHeight(160)
-        self._obs_tabs.setStyleSheet("font-size: 10px;")
-        self._obs_token_widget = QWidget()
-        token_layout = QHBoxLayout(self._obs_token_widget)
-        self._obs_token_labels: dict[str, QLabel] = {}
-        for period in ["今日", "本周", "本月"]:
-            lbl = QLabel(f"{period}\n输入: 0\n输出: 0")
-            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setStyleSheet("background: #f5f5f5; border-radius: 4px; padding: 4px;")
-            token_layout.addWidget(lbl)
-            self._obs_token_labels[period] = lbl
-        self._obs_tabs.addTab(self._obs_token_widget, "Token")
-        self._obs_tool_table = QTableWidget(0, 4)
-        self._obs_tool_table.setHorizontalHeaderLabels(["时间", "工具", "耗时", "状态"])
-        self._obs_tool_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self._obs_tabs.addTab(self._obs_tool_table, "工具调用")
-        self._obs_round_list = QListWidget()
-        self._obs_tabs.addTab(self._obs_round_list, "轮次")
-        self._main_layout.addWidget(self._obs_tabs)
-        self._obs_tabs.setVisible(False)
+            # ── 观测数据内联显示（替代 QTabWidget）──
+            self._obs_inline_visible = False
+            self._obs_token_labels: dict[str, QLabel] = {}
+        except Exception as e:
+            logger.error("UI初始化 Stage 3/4 失败: %s", e)
 
         QTimer.singleShot(0, self._init_ui_stage4)
 
     def _init_ui_stage4(self) -> None:
         """Stage 4/4: 输入框 + 按钮行 + 异步通知调度。"""
-        assert self._main_layout is not None
+        try:
+            assert self._main_layout is not None
 
-        # ── 输入框 ──
-        self._input = QTextEdit()
-        self._input.setMaximumHeight(100)
-        self._input.setMinimumHeight(60)
-        self._input.setPlaceholderText("输入消息，Ctrl+Enter 发送")
-        self._input.setStyleSheet(
-            "QTextEdit {"
-            "  border: 1px solid #ddd; border-radius: 12px;"
-            "  padding: 8px 12px; font-size: 13px;"
-            "  background: #fff;"
-            "}"
-            "QTextEdit:focus { border-color: #4CAF50; }"
-        )
-        self._input.installEventFilter(self)
-        self._main_layout.addWidget(self._input)
+            # ── 输入框 ──
+            self._input = QTextEdit()
+            self._input.setAccessibleName("消息输入框")
+            self._input.setMaximumHeight(100)
+            self._input.setMinimumHeight(40)
+            self._input.document().setMaximumBlockCount(500)  # M21: 限制输入最大块数，防大段粘贴撑爆内存
+            self._input.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            self._input.setPlaceholderText("输入消息，Ctrl+Enter 发送  |  输入 /obs 切换观测信息显示")
+            self._input.setStyleSheet(
+                "QTextEdit {"
+                "  border: 1px solid #ddd; border-radius: 8px;"
+                "  padding: 6px 10px; font-size: 13px;"
+                "  background: #fff; margin: 0 4px;"
+                "}"
+                "QTextEdit:focus { border-color: #4CAF50; }"
+            )
+            self._input.installEventFilter(self)
+            self._main_layout.addWidget(self._input)
 
-        # ── 按钮行 ──
-        btn_row = QHBoxLayout()
-        clear_btn = QPushButton("清空对话")
-        clear_btn.setStyleSheet(
-            "QPushButton {"
-            "  background-color: #f5f5f5; border: 1px solid #ddd; border-radius: 8px;"
-            "  padding: 6px 14px; font-size: 12px; color: #666;"
-            "}"
-            "QPushButton:hover { background-color: #e8e8e8; }"
-        )
-        clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        clear_btn.clicked.connect(self._clear_conversation)
-        send_btn = QPushButton("发送")
-        send_btn.setStyleSheet(
-            "QPushButton {"
-            "  background-color: #4CAF50; color: white; border: none;"
-            "  border-radius: 8px; padding: 6px 20px;"
-            "  font-size: 13px; font-weight: bold;"
-            "}"
-            "QPushButton:hover { background-color: #43A047; }"
-            "QPushButton:pressed { background-color: #388E3C; }"
-        )
-        send_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        send_btn.clicked.connect(self._on_send)
-        btn_row.addWidget(clear_btn)
-        self._auto_cb = QCheckBox("Auto")
-        self._auto_cb.setToolTip(
-            "自动模式：LLM返回工具/计划时直接执行，不显示确认卡片（admin级工具始终确认）"
-        )
-        self._auto_cb.setChecked(self._auto_mode)
-        self._auto_cb.toggled.connect(self._on_auto_mode_toggled)
-        self._auto_cb.setStyleSheet(
-            "QCheckBox { font-size: 11px; color: #888; spacing: 4px; }"
-            "QCheckBox:hover { color: #555; }"
-        )
-        btn_row.addWidget(self._auto_cb)
-        btn_row.addStretch()
-        btn_row.addWidget(send_btn)
-        self._main_layout.addLayout(btn_row)
+            # ── 按钮行 ──
+            btn_row = QHBoxLayout()
+            btn_row.setContentsMargins(4, 0, 4, 2)
+            btn_row.setSpacing(8)
+            clear_btn = QPushButton("清空对话")
+            clear_btn.setStyleSheet(
+                "QPushButton {"
+                "  background-color: #f5f5f5; border: 1px solid #ddd; border-radius: 8px;"
+                "  padding: 5px 12px; font-size: 12px; color: #666;"
+                "}"
+                "QPushButton:hover { background-color: #e8e8e8; }"
+            )
+            clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            clear_btn.clicked.connect(self._clear_conversation)
+            self._send_btn = QPushButton("发送")
+            self._send_btn.setAccessibleName("发送消息按钮")
+            self._send_btn.setStyleSheet(
+                "QPushButton {"
+                "  background-color: #4CAF50; color: white; border: none;"
+                "  border-radius: 8px; padding: 5px 18px;"
+                "  font-size: 13px; font-weight: bold;"
+                "}"
+                "QPushButton:hover { background-color: #43A047; }"
+                "QPushButton:pressed { background-color: #388E3C; }"
+                "QPushButton:disabled { background-color: #A5D6A7; }"
+            )
+            self._send_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            self._send_btn.clicked.connect(self._on_send)
+            self._send_btn.setEnabled(False)  # M9: 初始输入为空，禁用发送按钮
+            # M9: 输入内容变化时自动切换发送按钮启用/禁用状态
+            self._input.textChanged.connect(
+                lambda: self._send_btn.setEnabled(
+                    bool(self._input.toPlainText().strip())
+                )
+            )
+            btn_row.addWidget(clear_btn)
+            self._auto_cb = QCheckBox("Auto")
+            self._auto_cb.setToolTip(
+                "自动模式：LLM返回工具/计划时直接执行，不显示确认卡片（admin级工具始终确认）"
+            )
+            self._auto_cb.setChecked(self._auto_mode)
+            self._auto_cb.toggled.connect(self._on_auto_mode_toggled)
+            self._auto_cb.setStyleSheet(
+                "QCheckBox { font-size: 11px; color: #888; spacing: 4px; }"
+                "QCheckBox:hover { color: #555; }"
+            )
+            btn_row.addWidget(self._auto_cb)
+            btn_row.addStretch()
+            btn_row.addWidget(self._send_btn)
+            self._main_layout.addLayout(btn_row)
+
+            # ── Ctrl+O 快捷键：展开/折叠思考过程 ──
+            self._shortcut_ctrl_o = QShortcut(QKeySequence("Ctrl+O"), self)
+            self._shortcut_ctrl_o.activated.connect(self._toggle_thought_expand)
+        except Exception as e:
+            logger.error("UI初始化 Stage 4/4 失败: %s", e)
 
     # ── 公共方法 ──────────────────────────────────────────────
+
+    def shutdown(self) -> None:
+        """关闭 ChatWidget 时清理所有资源（B8: panel.closeEvent 只需调用此方法）。
+
+        所有清理操作各自 try/except，确保单个失败不影响后续清理。
+        """
+        # 1/ 停止定时器
+        try:
+            if hasattr(self, '_streaming_timer') and self._streaming_timer is not None:
+                self._streaming_timer.stop()
+        except Exception:
+            logger.debug("shutdown: 停止 streaming_timer 失败", exc_info=True)
+        try:
+            if hasattr(self, '_scroll_throttle_timer') and self._scroll_throttle_timer is not None:
+                self._scroll_throttle_timer.stop()
+        except Exception:
+            logger.debug("shutdown: 停止 scroll_throttle_timer 失败", exc_info=True)
+
+        # 2/ 结束可观测性活跃追踪（防止 trace 数据丢失）
+        try:
+            if hasattr(self, '_obs_collector') and self._obs_collector is not None:
+                self._obs_collector.end_conversation()
+        except Exception:
+            logger.debug("shutdown: 结束 obs_collector 会话失败", exc_info=True)
+
+        # 3/ 清理 ObservabilityCollector 回调，解除引用
+        try:
+            if hasattr(self, '_obs_collector') and self._obs_collector is not None:
+                self._obs_collector._on_token_stats_updated = None
+        except Exception:
+            logger.debug("shutdown: 清理 obs_collector 回调失败", exc_info=True)
+
+        # 4/ 移除 TaskManager 监听器
+        try:
+            from src.transbridge.smart_assistant.tools.task_manager import TaskManager
+            tm = TaskManager()
+            tm.remove_listener(self._on_task_completed)
+            tm.remove_listener(self._on_task_failed)
+        except Exception:
+            logger.debug("shutdown: 移除 TaskManager 监听器失败", exc_info=True)
+
+        # 5/ 取消并等待 worker 线程
+        try:
+            if hasattr(self, '_worker') and self._worker is not None and self._worker.is_alive():
+                self._worker.cancel()
+                self._worker.join(timeout=3)
+        except Exception:
+            logger.debug("shutdown: 取消 worker 线程失败", exc_info=True)
+
+        # 6/ 取消并关闭执行引擎
+        try:
+            if hasattr(self, '_engine') and self._engine is not None:
+                self._engine.cancel()
+                self._engine.shutdown()
+        except Exception:
+            logger.debug("shutdown: 关闭执行引擎失败", exc_info=True)
+
+        # 7/ 关闭长期记忆存储（停止 writer 线程并最终刷盘）
+        try:
+            if hasattr(self, '_memory_store') and self._memory_store is not None:
+                self._memory_store.close()
+        except Exception:
+            logger.debug("shutdown: 关闭 memory_store 失败", exc_info=True)
+
+        # 8/ 清理 orchestrator 的 Qt 子对象
+        try:
+            if hasattr(self, '_orchestrator') and self._orchestrator is not None:
+                self._orchestrator.shutdown()
+        except Exception:
+            logger.debug("shutdown: 关闭 orchestrator 失败", exc_info=True)
+
+        # 9/ 重置 TaskManager 单例，防止会话间泄漏
+        try:
+            from src.transbridge.smart_assistant.tools.task_manager import TaskManager
+            TaskManager.reset()
+        except Exception:
+            logger.debug("shutdown: 重置 TaskManager 失败", exc_info=True)
 
     def set_input(self, text: str) -> None:
         self._input.setPlainText(text)
         self._input.setFocus()
+
+    def add_system_prompt(self, text: str) -> None:
+        """注入 System Prompt 到对话历史（供 SkillExecutor 等外部调用者使用）。
+
+        将文本作为 system 角色消息插入 conversation，替换已有 system 消息。
+        注意：此方法仅操作数据层 (_conversation)，不产生 UI 渲染。
+        """
+        self._conversation.add_system(text)
+
+    def send_user_message(self, text: str) -> None:
+        """以编程方式发送用户消息并触发 LLM 推理（供 SkillExecutor 等外部调用者使用）。
+
+        封装了完整发送流程：添加用户气泡 → 写入对话历史 → 触发 LLM 轮次。
+        与 _on_send() 不同，此方法直接接受文本参数，不依赖 _input 控件状态。
+        """
+        text = text.strip()
+        if not text:
+            return
+        self._orchestrator.cancel_current_round()
+        self.add_user_bubble(text)
+        self._conversation.add_user(text)
+        self._react_depth = 0
+        # m22: LLM 推理在后台 QThread 中异步执行，本方法立即返回
+        QTimer.singleShot(0, lambda: self._do_send_retrieve_and_run(text))
 
     def add_user_bubble(self, text: str) -> None:
         self._add_bubble(MessageBubble(text, "user"))
@@ -328,10 +484,43 @@ class ChatWidget(QWidget):
         self._add_bubble(MessageBubble(text, "assistant"))
 
     def add_system_message(self, text: str) -> None:
-        self._add_bubble(MessageBubble(text, "system"))
+        """FR7.16: 融入式系统消息 — 轻量横条标签替代居中灰色文本。"""
+        is_ok = text.startswith("[OK]")
+        is_fail = text.startswith("[FAIL]")
+        if is_ok:
+            color, bg = "#388E3C", "#E8F5E9"
+        elif is_fail:
+            color, bg = "#D32F2F", "#FFEBEE"
+        else:
+            color, bg = "#757575", "#F5F5F5"
+        frame = QFrame()
+        frame.setStyleSheet(
+            f"QFrame {{"
+            f"  border-left: 3px solid {color};"
+            f"  background-color: {bg};"
+            f"  border-radius: 4px; padding: 4px 10px;"
+            f"  margin: 2px 0;"
+            f"}}"
+        )
+        fl = QHBoxLayout(frame)
+        fl.setContentsMargins(8, 4, 8, 4)
+        lbl = QLabel(text)
+        lbl.setStyleSheet(f"color: #333; font-size: 11px; border: none; background: transparent;")
+        lbl.setWordWrap(True)
+        fl.addWidget(lbl)
+        self._add_widget(frame)
 
     def add_tool_card(self, step: dict) -> ToolCard:
         card = ToolCard(step)
+        # M34: 断开后再连接，防止重复连接导致信号重复触发
+        try:
+            card.executed.disconnect(self._on_tool_executed)
+        except TypeError:
+            pass
+        try:
+            card.ignored.disconnect(self._on_tool_ignored)
+        except TypeError:
+            pass
         card.executed.connect(self._on_tool_executed)
         card.ignored.connect(self._on_tool_ignored)
         self._add_widget(card)
@@ -339,6 +528,15 @@ class ChatWidget(QWidget):
 
     def add_plan_card(self, steps: list) -> PlanCard:
         card = PlanCard(steps)
+        # M34: 断开后再连接，防止重复连接导致信号重复触发
+        try:
+            card.confirmed.disconnect(self._on_plan_confirmed)
+        except TypeError:
+            pass
+        try:
+            card.cancelled.disconnect(self._on_plan_cancelled)
+        except TypeError:
+            pass
         card.confirmed.connect(self._on_plan_confirmed)
         card.cancelled.connect(self._on_plan_cancelled)
         self._add_widget(card)
@@ -346,185 +544,83 @@ class ChatWidget(QWidget):
 
     def add_batch_tool_card(self, steps: list) -> BatchToolCard:
         card = BatchToolCard(steps)
+        # M34: 断开后再连接，防止重复连接导致信号重复触发
+        try:
+            card.all_executed.disconnect(self._on_batch_executed)
+        except TypeError:
+            pass
+        try:
+            card.all_ignored.disconnect(self._on_batch_ignored)
+        except TypeError:
+            pass
         card.all_executed.connect(self._on_batch_executed)
+        card.all_ignored.connect(self._on_batch_ignored)
         self._add_widget(card)
         return card
 
     # ── LLM 循环控制 ─────────────────────────────────────────
 
+    @property
+    def _react_depth(self) -> int:
+        return self._orchestrator.react_depth
+
+    @_react_depth.setter
+    def _react_depth(self, value: int) -> None:
+        self._orchestrator.react_depth = value
+
     def _get_prompt_builder(self):
-        if self._prompt_builder is None:
-            from src.transbridge.ai_translator.prompt_builder import PromptBuilder
-            self._prompt_builder = PromptBuilder()
-        return self._prompt_builder
+        return self._orchestrator._get_prompt_builder()
 
     def _get_llm_client(self):
-        """CR7: 缓存 LLM 客户端，仅配置变更时重建。"""
-        from src.transbridge.paratranz.config_manager import LLMConfig
-        from src.transbridge.infra.llm_client import create_llm_client
-        cfg = LLMConfig.load_from_file()
-        if not cfg.api_key:
-            return None
-        current_hash = hash((cfg.api_key, cfg.provider, cfg.base_url, cfg.model))
-        if self._llm_client is not None and self._llm_client_config_hash == current_hash:
-            return self._llm_client
-        self._llm_client = create_llm_client(cfg)
-        self._llm_client_config_hash = current_hash
-        return self._llm_client
+        return self._orchestrator._get_llm_client()
 
     def _run_llm_round(self) -> None:
-        """Stage A: 纯 Python 准备工作（无 QObject 创建）。
-
-        将 QObject 密集的 MessageBubble (Stage B) 和 ChatWorker (Stage C)
-        分别延迟到后续事件循环帧，避免单帧内累积 3+ QObject 创建导致
-        Windows 1MB C 栈溢出 (0xC00000FD)。
-        """
-        # B2: 懒连接 TaskManager，首次 LLM 轮次时才触发
         self._ensure_task_manager()
+        self._orchestrator.start_round()
 
-        client = self._get_llm_client()
-        if client is None:
-            self.add_system_message("请先在设置中配置 LLM API Key")
-            return
+    # ── 流式刷新辅助（回调，操作 MessageBubble 内部 Widget）──
 
-        # 确保 system prompt 已设置
-        if not any(m["role"] == "system" for m in self._conversation.get_messages()):
-            from src.transbridge.smart_assistant.context_builder import ContextBuilder
-            from src.transbridge.smart_assistant.prompts import build_system_prompt
-            self._ctx._uploaded_docs = self._uploaded_docs
-            context = ContextBuilder(self._ctx).build()
-            sys_prompt = build_system_prompt(context)
-            if self._pending_memory_context:
-                sys_prompt = sys_prompt + "\n\n" + self._pending_memory_context
-                self._pending_memory_context = ""
-            self._conversation.add_system(sys_prompt)
-
-        self._react_depth += 1
-        self._round_messages = self._conversation.get_messages()
-        # m12: 从 LLMConfig 读取 max_tokens 配置
-        try:
-            from src.transbridge.paratranz.config_manager import LLMConfig as _LLMCfg
-            _cfg = _LLMCfg.load_from_file()
-            self._round_max_tokens = getattr(_cfg, 'max_output_tokens', 0) or 2048
-        except Exception as e:
-            logger.debug("LLMConfig max_output_tokens 读取失败，使用默认值 2048: %s", e)
-            self._round_max_tokens = 2048
-
-        QTimer.singleShot(0, self._run_llm_round_stage_b)
-
-    def _run_llm_round_stage_b(self) -> None:
-        """Stage B: 创建 MessageBubble (QWidget)，插入布局后调度 Stage C。"""
-        self._streaming_text = ""
-        self._streaming_bubble = MessageBubble("...", "assistant")
-        self._add_bubble(self._streaming_bubble)
-        QTimer.singleShot(0, self._run_llm_round_stage_c)
-
-    def _run_llm_round_stage_c(self) -> None:
-        """Stage C: 创建 ChatWorker (threading.Thread)，赋值回调，启动后台线程。
-
-        Phase 2: ChatWorker 从 QThread+pyqtSignal 迁移到 AsyncWorker+回调。
-        回调在 worker 线程中调用，通过 _SignalBridge._dispatch.emit() 排队到主线程。
-        pyqtSignal.emit() 在非主线程调用时自动使用 QueuedConnection，等价于原行为。
-        """
-        client = self._get_llm_client()
-        messages = self._round_messages
-        _max = self._round_max_tokens
-        # 清理临时状态引用
-        del self._round_messages
-        del self._round_max_tokens
-
-        _bridge = self._cb_bridge
-
-        self._worker = ChatWorker(client, messages, max_tokens=_max)
-        self._worker.on_chunk = lambda c: _bridge._dispatch.emit(
-            lambda: self._on_llm_chunk(c))
-        self._worker.on_finished = lambda t: _bridge._dispatch.emit(
-            lambda: self._on_llm_finished(t))
-        self._worker.on_error = lambda m: _bridge._dispatch.emit(
-            lambda: self._on_llm_error(m))
-        self._worker.on_token_usage = lambda model, i, o: _bridge._dispatch.emit(
-            lambda: self._obs_collector.on_llm_tokens(model, i, o))
-        self._worker.start()
-
-    def _on_llm_chunk(self, chunk: str) -> None:
-        self._streaming_text += chunk
-        self._streaming_dirty = True
-        if not self._streaming_timer.isActive():
-            self._streaming_timer.start()
-
-    def _flush_streaming(self) -> None:
-        """节流渲染：每 _STREAMING_FLUSH_MS ms 将累积文本刷新到气泡中。
-
-        M14: 流式模式下跳过 markdown 渲染，直接用 QLabel 纯文本更新，
-        避免每次刷新重建 MarkdownRenderer widget 树。流式结束后由
-        _on_llm_finished 调用 set_text() 完成最终 markdown 渲染。
-        """
-        if not self._streaming_dirty or self._streaming_bubble is None:
-            self._streaming_timer.stop()
-            return
-        self._streaming_dirty = False
-        # M14: 流式模式下直接更新纯文本，避免 MarkdownRenderer 重建 widget 树
-        bubble = self._streaming_bubble
-        if bubble._role != "system" and bubble._inner is not None:
-            inner_layout = bubble._inner.layout()
-            if inner_layout is not None:
+    def _do_streaming_flush(self, text: str, bubble: MessageBubble) -> None:
+        """流式文本刷新：直接更新 MessageBubble 内部 QLabel 纯文本。"""
+        wrapper = bubble._content_wrapper
+        if wrapper is not None:
+            wrapper_layout = wrapper.layout()
+            if wrapper_layout is not None:
                 if bubble._content is not None and not isinstance(bubble._content, QLabel):
-                    # 首次流式刷新：将 markdown content 替换为 QLabel
-                    inner_layout.removeWidget(bubble._content)
+                    wrapper_layout.removeWidget(bubble._content)
                     bubble._content.deleteLater()
                     bubble._content = None
                 if bubble._content is None:
-                    bubble._content = QLabel(self._streaming_text)
+                    bubble._content = QLabel(text)
                     bubble._content.setWordWrap(True)
                     bubble._content.setTextFormat(Qt.TextFormat.PlainText)
-                    inner_layout.addWidget(bubble._content)
+                    wrapper_layout.addWidget(bubble._content)
                 else:
-                    bubble._content.setText(self._streaming_text)
-        else:
-            bubble.set_text(self._streaming_text)
-        self._scroll_to_bottom()
+                    bubble._content.setText(text)
 
-    def _on_llm_finished(self, response: str) -> None:
-        # 停止流式 timer，最终刷新
-        self._streaming_timer.stop()
-        if self._streaming_bubble:
-            self._flush_streaming()
-            # M14: 流式结束后用 markdown 渲染最终结果，替换流式期间的纯文本 QLabel
-            if self._streaming_bubble._role != "system":
-                self._streaming_bubble.set_text(self._streaming_text)
-            self._streaming_bubble = None
-        self._streaming_text = ""
+    def _remove_widget_safely(self, widget) -> None:
+        """安全移除 widget：从布局移除并标记删除。"""
+        idx = self._msg_layout.indexOf(widget)
+        if idx >= 0:
+            self._msg_layout.removeWidget(widget)
+            widget.deleteLater()
 
-        self._consecutive_errors = 0  # 成功响应，重置错误计数
-        pb = self._get_prompt_builder()
-        parsed = pb.parse_hybrid_response(response)
+    def _offer_retry_button(self) -> None:
+        """创建重试按钮并添加到消息区。"""
+        if self._retry_btn is not None:
+            self._remove_widget_safely(self._retry_btn)
+            self._retry_btn = None
+        retry_btn = QPushButton("重试")
+        retry_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        retry_btn.clicked.connect(self._on_retry)
+        self._add_widget(retry_btn)
+        self._retry_btn = retry_btn
 
-        thought = parsed.get("thought", "")
-        # 流式渲染已包含 thought，仅无流式气泡时才单独显示
-        if thought and not self._streaming_bubble:
-            self.add_assistant_bubble(thought)
-
-        self._conversation.add_assistant(response)
-
-        steps = parsed.get("steps", [])
-        mode = parsed.get("mode", "react")
-
-        if self._auto_mode and steps:
-            self._auto_execute_steps(steps, mode)
-        elif mode == "plan" and steps:
-            self.add_plan_card(steps)
-        elif len(steps) == 1:
-            self.add_tool_card(steps[0])
-        elif len(steps) > 1:
-            self.add_batch_tool_card(steps)
-        # steps 为空 → 纯文本回复，任务结束
-        if not steps:
-            self._obs_collector.end_conversation()
-
-        # 自动记录本轮对话记忆
+    def _log_conversation_memory(self, messages: list, response: str) -> None:
+        """记录本轮对话到长期记忆。"""
         try:
             from src.transbridge.smart_assistant.memory import MemoryEntry
-            user_msgs = [m["content"] for m in self._conversation.get_messages() if m["role"] == "user"]
+            user_msgs = [m["content"] for m in messages if m.get("role") == "user"]
             last_user = user_msgs[-1][:100] if user_msgs else ""
             entry = MemoryEntry(
                 type="conversation",
@@ -536,87 +632,35 @@ class ChatWidget(QWidget):
         except Exception as e:
             logger.warning("记忆记录失败: %s", e)
 
-        # CR8: 清理 worker，清除回调并释放线程
-        if self._worker:
-            self._worker.on_chunk = None
-            self._worker.on_finished = None
-            self._worker.on_error = None
-            self._worker.on_token_usage = None
-            self._worker = None
-
-    def _on_llm_error(self, msg: str) -> None:
-        self._streaming_timer.stop()
-        self._streaming_text = ""
-        self._streaming_dirty = False
-        self._react_depth = 0
-        self._consecutive_errors += 1
-
-        # m1: 错误路径清理流式气泡，防止 UI 残留
-        if self._streaming_bubble:
-            idx = self._msg_layout.indexOf(self._streaming_bubble)
-            if idx >= 0:
-                self._msg_layout.removeWidget(self._streaming_bubble)
-                self._streaming_bubble.deleteLater()
-            self._streaming_bubble = None
-
-        is_network = any(kw in msg.lower() for kw in (
-            "timeout", "connection", "refused", "network", "reset", "unreachable"
-        ))
-        is_auth = "401" in msg or "403" in msg or "unauthorized" in msg.lower()
-
-        if is_auth:
-            self.add_system_message("API 认证失败，请检查 LLM API Key 配置是否正确。")
-            self._consecutive_errors = 0
-        elif is_network:
-            if self._consecutive_errors >= 3:
-                self.add_system_message(
-                    f"连续 {self._consecutive_errors} 次网络错误，请检查网络连接或 VPN 状态后重试。"
-                )
-            else:
-                self.add_system_message(f"网络请求失败: {msg}")
-                # m2: 移除旧的重试按钮，防止叠加
-                if self._retry_btn is not None:
-                    idx = self._msg_layout.indexOf(self._retry_btn)
-                    if idx >= 0:
-                        self._msg_layout.removeWidget(self._retry_btn)
-                        self._retry_btn.deleteLater()
-                    self._retry_btn = None
-                retry_btn = QPushButton("重试")
-                retry_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-                retry_btn.clicked.connect(self._on_retry)
-                self._add_widget(retry_btn)
-                self._retry_btn = retry_btn
-        else:
-            self.add_system_message(f"请求失败: {msg}")
-
-        # CR8: 清理 worker，清除回调并释放线程
-        if self._worker:
-            self._worker.on_chunk = None
-            self._worker.on_finished = None
-            self._worker.on_error = None
-            self._worker.on_token_usage = None
-            self._worker = None
-
     # ── 计划模式 ─────────────────────────────────────────────
 
     def _on_plan_confirmed(self, steps: list) -> None:
         from src.transbridge.smart_assistant.tool_registry import ToolRegistry
 
+        # M61: 工具/计划开始执行时隐藏思考指示器
+        self._hide_thinking_indicator()
+
+        # B4: 关闭上一个引擎的线程池，防止 ThreadPoolExecutor 泄漏
+        if self._engine:
+            self._engine.cancel()
+            self._engine.shutdown()
+
         middlewares = self._ensure_middlewares()
         self._engine = ExecutionEngine(ToolRegistry, self._ctx, middlewares=middlewares)
-        self._engine.all_finished.connect(self._on_plan_all_finished)
-        self._engine.step_requires_confirmation.connect(self._on_confirm_required)
+        self._engine.on_all_finished(self._on_plan_all_finished)
+        self._engine.on_step_requires_confirmation(self._on_confirm_required)
         # Observability
         self._obs_collector.start_conversation(f"conv_{id(steps)}")
-        self._engine.step_started.connect(self._obs_collector.on_step_started)
-        self._engine.step_finished.connect(self._obs_collector.on_step_finished)
-        self._engine.step_retrying.connect(self._obs_collector.on_step_retrying)
+        self._engine.on_step_started(self._obs_collector.on_step_started)
+        self._engine.on_step_finished(self._obs_collector.on_step_finished)
+        self._engine.on_step_retrying(self._obs_collector.on_step_retrying)
         # CR15: 复用引擎内置的 ThreadPoolExecutor 替代冗余 daemon 线程
         self._engine._executor.submit(self._engine.execute, steps)
 
     def _on_plan_cancelled(self) -> None:
         if self._engine:
             self._engine.cancel()
+        self._hide_thinking_indicator()
         self.add_system_message("计划已取消")
 
     def _on_plan_all_finished(self, results: list) -> None:
@@ -651,12 +695,24 @@ class ChatWidget(QWidget):
         不在 UI 构建期执行，而是延迟到首次 _run_llm_round 调用时。
         此时 C 栈已完全展开。Phase 1: TaskManager 去 QObject 化后改用回调列表替代 pyqtSignal，
         消除 QObject.__new__ 的 C++ 元对象栈开销。
+
+        ADR-008 (B10): 注入 Qt 主线程调度器，使 TaskManager 后端层保持 PyQt6-free，
+        同时保证回调在 GUI 主线程安全执行。
         """
         if self._task_manager_connected:
             return
         self._task_manager_connected = True
         try:
+            from PyQt6.QtCore import QMetaObject, Qt, QCoreApplication
             from src.transbridge.smart_assistant.tools.task_manager import TaskManager
+
+            # ADR-008/B10: 注入 Qt 队列调度器，桥接后端→主线程回调
+            app = QCoreApplication.instance()
+            if app is not None:
+                TaskManager.set_main_thread_dispatcher(
+                    lambda fn: QMetaObject.invokeMethod(
+                        app, fn, Qt.ConnectionType.QueuedConnection))
+
             tm = TaskManager()
             tm.on_completed(self._on_task_completed)
             tm.on_failed(self._on_task_failed)
@@ -687,107 +743,33 @@ class ChatWidget(QWidget):
 
     def _on_task_failed(self, task_id: str, error: str) -> None:
         """后台任务失败回调。"""
-        msg = f"任务 {task_id} 失败: {error}"
+        safe_error = self._sanitize_error_message(error)
+        msg = f"任务 {task_id} 失败: {safe_error}"
         self._conversation.add_observation("start_translation", msg)
         self.add_system_message(f"[FAIL] {msg}")
         if self._check_react_depth():
             self._run_llm_round()
 
     def _on_token_stats_updated(self, stats) -> None:
-        """更新观测面板 Token 统计 (S11)。"""
-        today = self._obs_token_labels.get("今日")
-        if today:
-            today.setText(f"今日\n输入: {stats.input_tokens}\n输出: {stats.output_tokens}")
+        """FR7.16: 观测数据后台采集，内联可见时插入对话流。"""
+        if self._obs_inline_visible and hasattr(stats, 'input_tokens'):
+            self.add_system_message(
+                f"Token: 输入 {stats.input_tokens} / 输出 {stats.output_tokens}"
+            )
 
     # ── 护栏 ────────────────────────────────────────────────
 
     def _ensure_middlewares(self) -> list:
-        """B1: 延迟构建护栏中间件链，遵循用户配置。"""
-        if self._middlewares is not None:
-            return self._middlewares
-        try:
-            from src.transbridge.paratranz.config_manager import LLMConfig
-            cfg = LLMConfig.load_from_file()
-        except Exception as e:
-            logger.warning("护栏配置加载失败，使用默认护栏链: %s", e)
-            from src.transbridge.smart_assistant.tools.base import _build_guard_chain
-            self._middlewares = _build_guard_chain() or []
-            return self._middlewares
-
-        from src.transbridge.smart_assistant.guardrails import PermissionGuard, InputValidationGuard, OutputValidationGuard
-        middlewares = []
-        if getattr(cfg, 'guardrails_enable_input_validation', True):
-            middlewares.append(InputValidationGuard(getattr(cfg, 'guardrails_max_input_size', 102400)))
-        middlewares.append(PermissionGuard(
-            enable_admin_confirm=getattr(cfg, 'guardrails_enable_admin_confirm', True),
-            write_require_confirm=getattr(cfg, 'guardrails_write_require_confirm', False),
-        ))
-        if getattr(cfg, 'guardrails_enable_output_validation', True):
-            middlewares.append(OutputValidationGuard())
-        self._middlewares = middlewares
-        return middlewares
+        """B1: 延迟构建护栏中间件链（委托给 ToolExecutionHandler）。"""
+        return self._tool_handler._ensure_middlewares()
 
     # ── ReAct 模式 ───────────────────────────────────────────
 
     def _on_tool_executed(self, step: dict) -> None:
-        tool_name = step.get("tool", "?")
-        from src.transbridge.smart_assistant.tool_registry import ToolRegistry
-        spec = ToolRegistry.get(tool_name)
-        if spec and spec.execute:
-            from src.transbridge.smart_assistant.tools.base import execute_with_guardrails, ExecutionContext, ToolResult
-            from src.transbridge.smart_assistant.tools.task_manager import TaskManager
-            exec_ctx = ExecutionContext(app_context=self._ctx, task_manager=TaskManager())
-
-            # CR3: ReAct 模式权限预检查 — 将确认需求改为用户交互而非直接拒绝
-            middlewares = self._ensure_middlewares()
-            from src.transbridge.smart_assistant.guardrails.permission import PermissionGuard
-            perm_guard = next((mw for mw in middlewares if isinstance(mw, PermissionGuard)), None)
-            if perm_guard is not None:
-                perm_result = perm_guard.before_execute(step, exec_ctx)
-                if not perm_result.allowed and perm_result.reason in ("admin_confirm_required", "write_confirm_required"):
-                    perm_label = "管理级" if "admin" in perm_result.reason else "写入级"
-                    reply = QMessageBox.question(
-                        self, "操作确认",
-                        f"工具 '{tool_name}' 需要{perm_label}权限确认。是否继续？",
-                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    )
-                    if reply != QMessageBox.StandardButton.Yes:
-                        result = ToolResult.fail(f"用户拒绝{perm_label}操作: {tool_name}")
-                        self._handle_tool_result(step, result)
-                        return
-                    # 用户确认后，从护栏链中移除 PermissionGuard 以避免二次拦截
-                    middlewares = [mw for mw in middlewares if not isinstance(mw, PermissionGuard)]
-
-            # M6: ReAct 模式重试循环，集成 RetryHandler
-            try:
-                from src.transbridge.smart_assistant.reflexion.retry_handler import RetryHandler
-                retry_handler = RetryHandler()
-            except ImportError:
-                retry_handler = None
-            max_attempts = retry_handler.MAX_RETRIES + 1 if retry_handler else 3
-            current_step = dict(step)
-            for attempt in range(max_attempts):
-                try:
-                    result = execute_with_guardrails(
-                        spec, current_step.get("args", {}), exec_ctx,
-                        middlewares=middlewares,
-                    )
-                except Exception as exc:
-                    result = ToolResult.fail(str(exc))
-                if getattr(result, 'success', False) or attempt == max_attempts - 1:
-                    break
-                err_msg = getattr(result, 'message', '')
-                if retry_handler and retry_handler.should_retry(err_msg):
-                    adjusted = retry_handler.analyze_and_adjust(current_step, err_msg, attempt)
-                    if adjusted:
-                        current_step = adjusted
-                        self.add_system_message(f"[重试 {attempt+2}/{max_attempts}] {spec.name}: {err_msg}")
-                        continue
-                break
-        else:
-            from src.transbridge.smart_assistant.tools.base import ToolResult
-            result = ToolResult.fail(f"未知工具: {tool_name}")
-        self._handle_tool_result(step, result)
+        """执行单个工具步骤（委托给 ToolExecutionHandler）。"""
+        # M61: 工具开始执行时隐藏思考指示器
+        self._hide_thinking_indicator()
+        self._tool_handler.execute_step(step)
 
     def _on_tool_ignored(self, step: dict) -> None:
         tool_name = step.get("tool", "?")
@@ -797,61 +779,58 @@ class ChatWidget(QWidget):
             self._run_llm_round()
 
     def _on_batch_executed(self, steps: list) -> None:
-        results = []
+        """批量执行确认后的工具步骤。
+
+        逐个实际调用 execute_step，但跳过每步的 ReAct 继续触发，
+        所有步骤完成后统一触发一次 LLM 回合。
+        """
+        # M61: 批量工具开始执行时隐藏思考指示器
+        self._hide_thinking_indicator()
         for s in steps:
-            t = s.get("tool", "?")
-            results.append(f"[OK] {t}: 执行完成")
-        summary = "\n".join(results)
-        self.add_system_message(f"【批量执行完成】\n{summary}")
-        self._conversation.add_observation("batch", summary)
+            self._tool_handler.execute_step(s, skip_react_continue=True)
         if self._check_react_depth():
             self._run_llm_round()
 
-    def _handle_tool_result(self, step: dict, result) -> None:
-        """统一处理工具执行结果，接受 ToolResult 或 dict。"""
-        tool_name = step.get("tool", "?")
-        from src.transbridge.smart_assistant.tools.base import ToolResult
-        if isinstance(result, ToolResult):
-            success = result.success
-            message = result.message
-        elif isinstance(result, dict):
-            success = result.get("success")
-            message = result.get("message", result.get("error", ""))
-        else:
-            success = False
-            message = str(result)
-
-        if success:
-            msg = f"[OK] {tool_name}: {message or '完成'}"
-        else:
-            msg = f"[FAIL] {tool_name}: {message or '失败'}"
-        self.add_system_message(msg)
-        self._conversation.add_observation(tool_name, msg)
+    def _on_batch_ignored(self, steps: list) -> None:
+        """批量跳过：用户点击跳过按钮，不执行任何步骤。"""
+        tool_names = [s.get("tool", "?") for s in steps]
+        self.add_system_message("已跳过: " + ", ".join(tool_names))
+        for name in tool_names:
+            self._conversation.add_observation(name, "用户选择跳过此批量操作。")
         if self._check_react_depth():
             self._run_llm_round()
 
     def _check_react_depth(self) -> bool:
-        if self._react_depth >= self._MAX_REACT_DEPTH:
+        if self._react_depth > self._MAX_REACT_DEPTH:
             self._obs_collector.end_conversation()
             self.add_system_message("已达最大推理深度，对话终止。")
             self._react_depth = 0
             return False
         return True
 
+    def _check_react_continue(self) -> None:
+        """ReAct 继续检查：深度未达上限则进入下一轮 LLM。"""
+        if self._check_react_depth():
+            self._run_llm_round()
+
     def _auto_execute_steps(self, steps: list, mode: str) -> None:
-        """自动模式下直接执行工具/计划，跳过确认卡片。admin 级工具始终需确认。"""
-        from src.transbridge.smart_assistant.tool_registry import ToolRegistry
+        """自动模式批量执行：统一使用手动确认路径，消除双重分发。
 
-        def _needs_confirm(step: dict) -> bool:
-            spec = ToolRegistry.get(step.get("tool", ""))
-            if spec is None:
-                return False
-            # MA1: admin 级工具 + require_confirmation 工具均需确认
-            return (getattr(spec, "permission", "") == "admin"
-                    or getattr(spec, "require_confirmation", False))
+        M62: 旧代码通过 ToolExecutionHandler.auto_execute_steps 分叉出独立的
+        执行路径（内嵌 needs_confirm 回退 + 二次 plan/tool/batch 分发），与
+        orchestrator 的手动分发路径重复且脆弱。新代码统一路由：
+        - 需确认 → 走 add_plan_card / add_tool_card / add_batch_tool_card
+          （与 orchestrator._on_finished 手动路径完全一致）
+        - 无需确认 → plan 模式走 _on_plan_confirmed，react 模式直接执行
+        """
+        # M61: 自动执行开始时隐藏思考指示器
+        self._hide_thinking_indicator()
 
-        if any(_needs_confirm(s) for s in steps):
-            # 有需确认的工具 → 回退到手动确认卡片
+        needs_confirm = any(
+            self._tool_handler._needs_confirm(s) for s in steps
+        )
+
+        if needs_confirm:
             self.add_system_message("(自动模式：检测到需确认的操作，切换为手动确认)")
             if mode == "plan":
                 self.add_plan_card(steps)
@@ -865,53 +844,61 @@ class ChatWidget(QWidget):
         if mode == "plan":
             self._on_plan_confirmed(steps)
         else:
+            # M10: 自动模式 ReAct 逐步执行，失败时暂停询问用户
             for s in steps:
-                self._on_tool_executed(s)
+                result = self._tool_handler.execute_step(s, mode=mode)
+                if result is not None and not result.success:
+                    reply = QMessageBox.question(
+                        self, "工具执行失败",
+                        f"工具 '{s.get('tool', '?')}' 执行失败: {result.message}\n"
+                        f"是否继续执行剩余步骤？",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    )
+                    if reply != QMessageBox.StandardButton.Yes:
+                        self.add_system_message("(自动模式：用户中止执行)")
+                        break
 
     def _on_auto_mode_toggled(self, checked: bool) -> None:
         self._auto_mode = checked
+        self._orchestrator.auto_mode = checked
         try:
             QSettings("TransBridge", "SmartAssistant").setValue("auto_mode", checked)
         except Exception as e:
             logger.info("QSettings auto_mode 保存失败: %s", e)
 
     def _on_retry(self) -> None:
-        """网络错误后重试：清理旧 worker，重新发送上一条消息。"""
-        if self._worker and self._worker.is_alive():
-            self._worker.cancel()
-            # m19: 3s 超时添加错误处理
-            try:
-                self._worker.join(timeout=3)
-                finished = not self._worker.is_alive()
-                if not finished:
-                    self.add_system_message("[警告] 上一轮 worker 未在 3s 内终止，已强制继续")
-            except Exception as e:
-                logger.warning("Worker 终止等待异常: %s", e)
-        self._worker = None
-        self.add_system_message("正在重试…")
-        self._run_llm_round()
+        """网络错误后重试（委托给编排器）。"""
+        self._orchestrator.retry()
 
     # ── 内部方法 ──────────────────────────────────────────────
+
+    @staticmethod
+    def _sanitize_error_message(msg: str) -> str:
+        """M68: 脱敏错误消息，移除文件路径和 API 密钥等敏感信息。"""
+        if not msg:
+            return msg
+        # 移除 Windows 绝对路径 (e.g. D:\path\to\file.py:123)
+        msg = re.sub(r'[A-Za-z]:[\\/][^\s,;:"]+', '[path]', msg)
+        # 移除 Unix 绝对路径 (e.g. /home/user/project/file.py)
+        msg = re.sub(r'/(?:home|Users|usr|tmp|var|etc|opt|root|mnt)/[^\s,;:"]+', '[path]', msg)
+        # 移除常见 API 密钥前缀 (OpenAI sk-, Anthropic sk-ant-, 等)
+        msg = re.sub(r'\b(sk-[A-Za-z0-9_-]{20,})\b', '[api_key]', msg)
+        msg = re.sub(r'\b(sk-ant-[A-Za-z0-9_-]{20,})\b', '[api_key]', msg)
+        return msg
 
     def _on_send(self) -> None:
         text = self._input.toPlainText().strip()
         if not text:
             return
 
+        # FR7.16: /obs 命令切换观测信息显示
+        if text == "/obs":
+            self._input.clear()
+            self._toggle_obs_inline()
+            return
+
         # 中断正在进行的流式输出
-        self._streaming_timer.stop()
-        if self._worker and self._worker.is_alive():
-            self._worker.cancel()
-            self._worker.join(timeout=3)
-        self._worker = None
-        if self._streaming_bubble:
-            idx = self._msg_layout.indexOf(self._streaming_bubble)
-            if idx >= 0:
-                self._msg_layout.removeWidget(self._streaming_bubble)
-                self._streaming_bubble.deleteLater()
-            self._streaming_bubble = None
-        self._streaming_text = ""
-        self._streaming_dirty = False
+        self._orchestrator.cancel_current_round()
 
         self.add_user_bubble(text)
         self._input.clear()
@@ -961,6 +948,15 @@ class ChatWidget(QWidget):
             if parser is None:
                 self.add_system_message(f"不支持的文件格式: {fpath.name}")
                 continue
+            # Critical C6: 拒绝超大文件，防止内存耗尽崩溃
+            file_size = os.path.getsize(str(fpath))
+            if file_size > ChatWidget.MAX_UPLOAD_BYTES:
+                size_mb = file_size / (1024 * 1024)
+                limit_mb = ChatWidget.MAX_UPLOAD_BYTES / (1024 * 1024)
+                self.add_system_message(
+                    f"文件过大 ({size_mb:.1f} MB)，已超过 {limit_mb:.0f} MB 上限: {fpath.name}"
+                )
+                continue
             try:
                 doc = parser.parse(fpath)
                 self._uploaded_docs[fpath.name] = doc
@@ -976,21 +972,14 @@ class ChatWidget(QWidget):
         self._upload_label.setText(f"已上传: {names}" if names else "")
 
     def _clear_conversation(self) -> None:
-        # M14: 检查并取消运行中的 worker/engine
-        if self._worker and self._worker.is_alive():
-            self._worker.cancel()
-            self._worker.join(timeout=2)
-            self._worker = None
+        self._orchestrator.cancel_current_round()
         if self._engine:
             self._engine.cancel()
+            self._engine.shutdown()
             self._engine = None
         self._react_depth = 0
-        self._consecutive_errors = 0
-
-        self._streaming_timer.stop()
-        self._streaming_bubble = None
-        self._streaming_text = ""
-        self._streaming_dirty = False
+        self._orchestrator.reset_state()
+        self._hide_thinking_indicator()
         # M15: 从末尾向前移除 widget，避免每次 takeAt(0) 导致 O(n²) 内部移位
         # 布局最后一项是 stretch，从 count-2 开始移除实际 widget
         count = self._msg_layout.count()
@@ -1008,16 +997,56 @@ class ChatWidget(QWidget):
     def _add_bubble(self, bubble: MessageBubble) -> None:
         self._msg_layout.insertWidget(self._msg_layout.count() - 1, bubble)
         self._scroll_to_bottom()
+        self._enforce_widget_limit()
 
     def _add_widget(self, widget: QWidget) -> None:
         self._msg_layout.insertWidget(self._msg_layout.count() - 1, widget)
         self._scroll_to_bottom()
+        self._enforce_widget_limit()
 
-    def _toggle_obs_panel(self) -> None:
-        """展开/折叠观测面板。"""
-        visible = not self._obs_tabs.isVisible()
-        self._obs_tabs.setVisible(visible)
-        self._obs_header.setText("[v] 观测面板" if visible else "[>] 观测面板")
+    def _enforce_widget_limit(self) -> None:
+        """M52: 限制消息区最大控件数，超出时从头部移除最旧控件。
+
+        布局最后一项是 stretch，实际控件数为 count-1。
+        超过 MAX_VISIBLE_WIDGETS 时从索引 0 开始逐出最旧控件。
+        """
+        # 布局最后一项是 stretch，所以实际控件数为 count - 1
+        while self._msg_layout.count() - 1 > self.MAX_VISIBLE_WIDGETS:
+            item = self._msg_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+    def _toggle_obs_inline(self) -> None:
+        """FR7.16: 切换内联观测信息显示。"""
+        self._obs_inline_visible = not self._obs_inline_visible
+        if self._obs_inline_visible:
+            self.add_system_message("[观测] Token 统计和工具调用记录已开启。输入 /obs 关闭。")
+        else:
+            self.add_system_message("[观测] 观测信息已关闭。输入 /obs 重新开启。")
+
+    # ── 思考指示器 (FR7.16 / Story-08-5) ─────────────────────
+
+    def _show_thinking_indicator(self, thought: str) -> None:
+        """在消息流中插入 ThinkingIndicator。"""
+        self._hide_thinking_indicator()
+        self._thinking_indicator = ThinkingIndicator()
+        self._thinking_indicator.set_thought(thought)
+        self._add_widget(self._thinking_indicator)
+
+    def _hide_thinking_indicator(self) -> None:
+        """移除当前 ThinkingIndicator。"""
+        if self._thinking_indicator:
+            self._thinking_indicator.stop_animation()
+            idx = self._msg_layout.indexOf(self._thinking_indicator)
+            if idx >= 0:
+                self._msg_layout.removeWidget(self._thinking_indicator)
+                self._thinking_indicator.deleteLater()
+            self._thinking_indicator = None
+
+    def _toggle_thought_expand(self) -> None:
+        """Ctrl+O: 展开/折叠当前思考内容。"""
+        if self._thinking_indicator and self._thinking_indicator.isVisible():
+            self._thinking_indicator.toggle_expand()
 
     def _scroll_to_bottom(self) -> None:
         vsb = self._scroll.verticalScrollBar()
@@ -1040,10 +1069,9 @@ class ChatWidget(QWidget):
         max_val = vsb.maximum()
         value = self._pending_scroll_value
         if max_val > 0 and value < max_val - 50:
+            # M60/M66: 先移动再显示，避免按钮在旧位置闪现
+            self._reposition_back_to_bottom_btn()
             self._back_to_bottom_btn.setVisible(True)
-            # m3-fix: 延迟 btn.move() 到下一事件循环，切断 QScrollArea 内部
-            # 布局反馈循环 (0xC00000FD stack overflow)。
-            QTimer.singleShot(0, self._reposition_back_to_bottom_btn)
         else:
             self._back_to_bottom_btn.setVisible(False)
 
@@ -1051,15 +1079,14 @@ class ChatWidget(QWidget):
         self._scroll_to_bottom()
 
     def _reposition_back_to_bottom_btn(self) -> None:
-        """m3-fix: 延迟定位「回到底部」按钮，切断 Qt 布局反馈循环。"""
+        """定位「回到底部」按钮到滚动区域右下角。"""
         try:
             btn = self._back_to_bottom_btn
-            if btn.isVisible():
-                sa = self._scroll
-                btn.move(
-                    sa.width() - btn.width() - 12,
-                    sa.height() - btn.height() - 12,
-                )
+            sa = self._scroll
+            btn.move(
+                sa.width() - btn.width() - 12,
+                sa.height() - btn.height() - 12,
+            )
         except RuntimeError:
             pass  # 控件已被销毁
 

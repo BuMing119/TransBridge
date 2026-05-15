@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QListWidget, QListWidgetItem,
 )
@@ -17,8 +19,8 @@ class PlanCard(QWidget):
         self._steps = steps
         self.setObjectName("PlanCard")
         self.setStyleSheet(
-            "#PlanCard { background-color: #E3F2FD; border: 1px solid #90CAF9;"
-            " border-radius: 12px; }"
+            "#PlanCard { background-color: #E3F2FD; border: 1px solid #C8D8E8;"
+            " border-radius: 10px; }"
         )
 
         layout = QVBoxLayout(self)
@@ -35,11 +37,13 @@ class PlanCard(QWidget):
         self._step_list.setStyleSheet(
             "QListWidget { border: none; background: transparent; font-size: 12px; }"
         )
+        self._step_items: dict[int, QListWidgetItem] = {}  # M59: O(1) step lookup
         for s in steps:
             deps = s.get("depends_on", [])
             dep_str = f"  (依赖步骤: {deps})" if deps else ""
             item_text = f"步骤 {s['id']}: {s.get('tool', '?')}{dep_str}"
             item = QListWidgetItem(item_text)
+            self._step_items[s["id"]] = item
             self._step_list.addItem(item)
         layout.addWidget(self._step_list)
 
@@ -88,23 +92,17 @@ class PlanCard(QWidget):
         self.cancelled.emit()
 
     def on_step_started(self, step_id: int, tool_name: str) -> None:
-        for i in range(self._step_list.count()):
-            item = self._step_list.item(i)
-            s = self._steps[i]
-            if s["id"] == step_id:
-                item.setText(f"[..] 步骤 {step_id}: {tool_name} - 执行中...")
-                break
+        item = self._step_items.get(step_id)
+        if item is not None:
+            item.setText(f"[..] 步骤 {step_id}: {tool_name} - 执行中...")
 
     def on_step_finished(self, result: StepResult) -> None:
         icon = "[OK]" if result.success else "[FAIL]"
-        for i in range(self._step_list.count()):
-            item = self._step_list.item(i)
-            s = self._steps[i]
-            if s["id"] == result.step_id:
-                item.setText(
-                    f"{icon} 步骤 {result.step_id}: {result.tool} - {result.message}"
-                )
-                break
+        item = self._step_items.get(result.step_id)
+        if item is not None:
+            item.setText(
+                f"{icon} 步骤 {result.step_id}: {result.tool} - {result.message}"
+            )
 
     def on_progress(self, completed: int, total: int) -> None:
         self._progress_label.setText(f"进行中 ({completed}/{total})")

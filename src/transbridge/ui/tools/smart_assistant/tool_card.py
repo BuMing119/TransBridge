@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
 )
@@ -15,8 +17,8 @@ class ToolCard(QWidget):
         self._step = step
         self.setObjectName("ToolCard")
         self.setStyleSheet(
-            "#ToolCard { background-color: #FFF8E1; border: 1px solid #FFE082;"
-            " border-radius: 12px; }"
+            "#ToolCard { background-color: #FFF8E1; border: 1px solid #E8DCC8;"
+            " border-radius: 10px; }"
         )
 
         layout = QVBoxLayout(self)
@@ -25,6 +27,7 @@ class ToolCard(QWidget):
 
         tool_name = step.get("tool", "?")
         title = QLabel(f"[Tool] {tool_name}")
+        title.setTextFormat(Qt.TextFormat.PlainText)
         title.setStyleSheet("font-weight: bold; font-size: 13px; color: #333;")
         layout.addWidget(title)
 
@@ -33,6 +36,7 @@ class ToolCard(QWidget):
         if args:
             args_text = ", ".join(f"{k}={v}" for k, v in args.items())
             args_label = QLabel(f"参数: {args_text}")
+            args_label.setTextFormat(Qt.TextFormat.PlainText)
             args_label.setStyleSheet("color: #888; font-size: 11px;")
             args_label.setWordWrap(True)
             layout.addWidget(args_label)
@@ -65,6 +69,7 @@ class ToolCard(QWidget):
         layout.addLayout(btn_row)
 
         self._result_label = QLabel("")
+        self._result_label.setTextFormat(Qt.TextFormat.PlainText)
         self._result_label.setStyleSheet("font-size: 11px;")
         self._result_label.setVisible(False)
         layout.addWidget(self._result_label)
@@ -95,14 +100,15 @@ class BatchToolCard(QWidget):
     """多步工具确认卡片：黄色背景，步骤概览。"""
 
     all_executed = pyqtSignal(list)
+    all_ignored = pyqtSignal(list)
 
     def __init__(self, steps: list, parent=None):
         super().__init__(parent)
         self._steps = steps
         self.setObjectName("BatchToolCard")
         self.setStyleSheet(
-            "#BatchToolCard { background-color: #FFF8E1; border: 1px solid #FFE082;"
-            " border-radius: 12px; }"
+            "#BatchToolCard { background-color: #FFF8E1; border: 1px solid #E8DCC8;"
+            " border-radius: 10px; }"
         )
 
         layout = QVBoxLayout(self)
@@ -116,9 +122,12 @@ class BatchToolCard(QWidget):
         for s in steps:
             name = s.get("tool", "?")
             item = QLabel(f"  · {name}")
+            item.setTextFormat(Qt.TextFormat.PlainText)
             item.setStyleSheet("color: #555; font-size: 12px;")
             layout.addWidget(item)
 
+        # 按钮行
+        btn_row = QHBoxLayout()
         self._exec_btn = QPushButton("全部执行")
         self._exec_btn.setStyleSheet(
             "QPushButton {"
@@ -129,9 +138,28 @@ class BatchToolCard(QWidget):
         )
         self._exec_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._exec_btn.clicked.connect(self._on_execute)
-        layout.addWidget(self._exec_btn)
+        self._skip_btn = QPushButton("跳过")
+        self._skip_btn.setStyleSheet(
+            "QPushButton {"
+            "  background-color: #f5f5f5; border: 1px solid #ddd;"
+            "  border-radius: 6px; padding: 4px 14px; font-size: 12px; color: #666;"
+            "}"
+            "QPushButton:hover { background-color: #e8e8e8; }"
+        )
+        self._skip_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._skip_btn.clicked.connect(self._on_ignore)
+        btn_row.addStretch()
+        btn_row.addWidget(self._exec_btn)
+        btn_row.addWidget(self._skip_btn)
+        layout.addLayout(btn_row)
 
     def _on_execute(self):
         self._exec_btn.setEnabled(False)
+        self._skip_btn.setEnabled(False)
         self._exec_btn.setText("执行中...")
         self.all_executed.emit(self._steps)
+
+    def _on_ignore(self):
+        self._exec_btn.setEnabled(False)
+        self._skip_btn.setEnabled(False)
+        self.all_ignored.emit(self._steps)

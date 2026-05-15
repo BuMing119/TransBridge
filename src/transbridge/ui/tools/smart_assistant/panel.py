@@ -1,3 +1,12 @@
+# TODO: i18n — 窗口标题"智能助手"为硬编码中文，待国际化改造
+"""
+SmartAssistantPanel 颜色面板:
+  本文件无硬编码颜色值。所有视觉样式委托给 ChatWidget 和 MessageBubble。
+  背景/边框由 QDockWidget 系统主题控制。
+"""
+
+from __future__ import annotations
+
 from PyQt6.QtWidgets import QDockWidget, QWidget, QVBoxLayout, QFrame
 from PyQt6.QtCore import Qt, pyqtSignal
 
@@ -23,7 +32,8 @@ class SmartAssistantPanel(QDockWidget):
             QDockWidget.DockWidgetFeature.DockWidgetMovable |
             QDockWidget.DockWidgetFeature.DockWidgetFloatable
         )
-        self.setMinimumHeight(200)
+        self.setMinimumWidth(400)
+        self.setMinimumHeight(300)
 
         self._init_skills()
         self._init_ui(ctx)
@@ -60,41 +70,8 @@ class SmartAssistantPanel(QDockWidget):
         super().hideEvent(event)
 
     def closeEvent(self, event):
-        """M13+M4+m3: 关闭面板时清理 worker/engine/memory_store/TaskManager。"""
-        # m3: 确保活跃观测追踪被正确关闭（防止 trace 数据丢失）
-        if hasattr(self._chat, '_obs_collector') and self._chat._obs_collector:
-            try:
-                self._chat._obs_collector.end_conversation()
-            except Exception:
-                pass
-
-        # CR9: 清理 ObservabilityCollector 回调，解除引用
-        try:
-            if hasattr(self._chat, '_obs_collector') and self._chat._obs_collector:
-                self._chat._obs_collector._on_token_stats_updated = None
-        except Exception:
-            pass
-        try:
-            from src.transbridge.smart_assistant.tools.task_manager import TaskManager
-            tm = TaskManager()
-            tm.remove_listener(self._chat._on_task_completed)
-            tm.remove_listener(self._chat._on_task_failed)
-        except Exception:
-            pass
-
-        if self._chat._worker and self._chat._worker.is_alive():
-            self._chat._worker.cancel()
-            self._chat._worker.join(timeout=3)
-        if self._chat._engine:
-            self._chat._engine.cancel()
-        if self._chat._memory_store:
-            self._chat._memory_store.close()
-        # MA4: 重置 TaskManager 单例，防止会话间泄漏
-        try:
-            from src.transbridge.smart_assistant.tools.task_manager import TaskManager
-            TaskManager.reset()
-        except Exception:
-            pass
+        """关闭面板时清理所有资源（B8: 委托给 ChatWidget.shutdown）。"""
+        self._chat.shutdown()
         super().closeEvent(event)
 
     # ── 公共访问 ──────────────────────────────────────────────

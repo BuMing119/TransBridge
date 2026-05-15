@@ -7,7 +7,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QObject, pyqtSignal
+import threading
+from collections import deque
+
+from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot, Qt
 
 from src.transbridge.paratranz.config_manager import ParatranzConfig
 from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
@@ -75,8 +78,11 @@ class AppContext(QObject):
             "stages": [], "labels": [], "categories": [], "action": "include",
         }
         self._selected_ids: set[str] = set()            # H2: Agent 选择集合（独立于标签系统）
+        self.paratranz_project_id: int | None = None     # Story 15: 当前选中的 ParaTranz 项目 ID（会话内有效）
 
         self.collection_changed.connect(lambda _: self.mark_dirty())
+
+        self.__init_safe_mutate()
 
     # ── Story 03: 筛选/标签/作用域 ViewModel ─────────────────────
 
@@ -383,6 +389,36 @@ class AppContext(QObject):
         if self._variant_store is not None:
             self._variant_store.dirty = True
             self.dirty_changed.emit()
+
+    # ── C10: 跨线程安全状态变更 ─────────────────────────────────
+
+    mutation_requested = pyqtSignal(object)  # 携带 callable，由主线程执行
+
+    def __init_safe_mutate(self) -> None:
+        """初始化安全变更机制。延迟调用以兼容 QObject.__init__ 顺序。"""
+        self._mutation_lock = threading.Lock()
+        self._mutation_pending: deque = deque()
+        self.mutation_requested.connect(self._on_mutation, Qt.ConnectionType.QueuedConnection)
+
+    @pyqtSlot(object)
+    def _on_mutation(self, callback) -> None:
+        """在主线程执行通过 safe_mutate 排队的变更回调。(C10)"""
+        try:
+            callback()
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception(
+                "[AppContext] safe_mutate 回调执行异常"
+            )
+
+    def safe_mutate(self, callback) -> None:
+        """将回调调度到主线程执行，确保对共享状态（TranslationEntry、entry_labels 等）
+        的写入不会与 UI 读取竞态。(C10)
+
+        设计: 使用 mutation_requested 信号 + QueuedConnection，
+        当从 ThreadPoolExecutor 工作线程调用时，回调自动排队到主线程事件循环。
+        """
+        self.mutation_requested.emit(callback)
 
     # ── helpers ───────────────────────────────────────────────
 

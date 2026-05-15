@@ -169,7 +169,7 @@ class MainWindow(QMainWindow):
             import traceback
             traceback.print_exc()
 
-        if self._assistant_panel and self._assistant_panel.chat._worker:
+        if self._assistant_panel and hasattr(self._assistant_panel.chat, '_worker') and self._assistant_panel.chat._worker:
             w = self._assistant_panel.chat._worker
             if w.is_alive():
                 w.cancel()
