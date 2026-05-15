@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .embedding_client import EmbeddingClient
+from ..infra.embedding_client import EmbeddingClient
 
 if TYPE_CHECKING:
     from .term_database import TermEntry

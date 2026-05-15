@@ -28,6 +28,7 @@ class LLMConfig:
     base_url: str = "https://api.openai.com/v1"
     model: str = ""
     max_concurrent: int = 3
+    llm_max_retries: int = 2
     max_tokens_per_batch: int = 2000
     max_output_tokens: int = 0
     term_priority: list = field(default_factory=lambda: ["dynamic", "paratranz", "json", "excel"])
@@ -93,6 +94,7 @@ class LLMConfig:
         ("llm", "base_url", "base_url", "get"),
         ("llm", "model", "model", "get"),
         ("llm", "max_concurrent", "max_concurrent", "getint"),
+        ("llm", "llm_max_retries", "llm_max_retries", "getint"),
         ("llm", "max_tokens_per_batch", "max_tokens_per_batch", "getint"),
         ("llm", "max_output_tokens", "max_output_tokens", "getint"),
         ("llm", "local_json_path", "local_json_path", "get"),

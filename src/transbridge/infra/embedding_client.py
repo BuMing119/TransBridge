@@ -61,8 +61,10 @@ class LocalSentenceTransformerClient(EmbeddingClient):
     可选依赖：sentence-transformers。未安装时 available=False。
     """
 
-    def __init__(self, model_name: str = "paraphrase-multilingual-MiniLM-L12-v2"):
+    def __init__(self, model_name: str = "paraphrase-multilingual-MiniLM-L12-v2",
+                 models_dir: str | None = None):
         self._model_name = model_name
+        self._models_dir = models_dir  # 自定义本地模型目录，None 时使用默认路径
         self._model = None
         self._dimension = 0
         self._available = False
@@ -70,15 +72,24 @@ class LocalSentenceTransformerClient(EmbeddingClient):
         self._load_model()
 
     def _resolve_model_path(self) -> str:
-        """优先使用打包内的本地模型，回退到 HuggingFace 在线下载。"""
+        """解析本地模型路径，优先使用打包模型或自定义目录，回退到 HuggingFace 在线下载。
+
+        优先级：
+        1. 自定义 models_dir（通过 __init__ 参数传入）
+        2. PyInstaller 打包环境：sys._MEIPASS
+        3. 开发模式：项目根目录下的 data/models/
+        4. 以上路径均不存在时，返回模型名称由 HuggingFace 在线下载
+        """
         import sys
-        if getattr(sys, "frozen", False):
+        if self._models_dir:
+            base = self._models_dir
+        elif getattr(sys, "frozen", False):
             # PyInstaller onedir：_MEIPASS 指向 EXE 所在目录
             base = sys._MEIPASS
         else:
             # 开发模式：相对于项目根目录
             base = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
-        local_path = os.path.join(base, "data", "models", self._model_name)
+        local_path = os.path.join(base, self._model_name) if self._models_dir else os.path.join(base, "data", "models", self._model_name)
         return local_path if os.path.isdir(local_path) else self._model_name
 
     def _load_model(self) -> None:
@@ -216,11 +227,6 @@ class OpenAIEmbeddingClient(EmbeddingClient):
             norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
             norms = np.where(norms == 0, 1, norms)  # 避免除零
             embeddings = embeddings / norms
-
-            # 更新实际维度
-            if embeddings.shape[1] != self._dimension:
-                self._dimension = embeddings.shape[1]
-                logger.debug(f"Updated embedding dimension to {self._dimension}")
 
             return embeddings
 

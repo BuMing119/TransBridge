@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import html
 import re
 from typing import Sequence
+from urllib.parse import urlparse
 
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QDesktopServices, QFont
@@ -12,6 +14,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMessageBox,
     QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
@@ -23,10 +26,10 @@ from PyQt6.QtWidgets import (
 # ── Inline patterns (ordered: code first to protect backticks inside other patterns) ──
 _INLINE_CODE_RE = re.compile(r"`([^`]+)`")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*|__(.+?)__")
-_ITALIC_RE = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)|(?<!_)_(?!_)(.+?)(?<!_)_(?!_)")
+_ITALIC_RE = re.compile(r"(?<!\*)\*(?!\*)(?=\S)(.+?)(?<=\S)(?<!\*)\*(?!\*)|(?<!_)_(?!_)(?=\S)(.+?)(?<=\S)(?<!_)_(?!_)")
 _LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 _HR_RE = re.compile(r"^(?:---|\*\*\*|___)\s*$")
-_TABLE_SEP_RE = re.compile(r"^\|?[\s:]*-{3,}[\s:]*(?:\|[\s:]*-{3,}[\s:]*)*\|?\s*$")
+_TABLE_SEP_RE = re.compile(r"^\|?[\s:]*-{3,20}[\s:]*(?:\|[\s:]*-{3,20}[\s:]*)*\|?\s*$")
 _ORDERED_LIST_RE = re.compile(r"^(\d+)\.\s+(.*)")
 
 
@@ -54,15 +57,33 @@ def _apply_inline(text: str) -> str:
 def _sanitize_link_url(match: re.Match) -> str:
     """M9: 校验 Markdown 链接 URL 协议。仅允许 http:/https:/#，其余替换为 about:blank。"""
     url = match.group(2)
-    url_lower = url.lower()
+    # M42: 去除所有空白符后再做协议检查，防止 "javascript :alert(1)" 绕过黑名单
+    url_normalized = re.sub(r"\s+", "", url.strip())
+    url_lower = url_normalized.lower()
     # 允许安全协议和内部锚点
     if url_lower.startswith(("http:", "https:", "#")):
         pass
     # 拦截危险协议（含 :// 的显式协议或已知危险前缀）
     elif "://" in url_lower or url_lower.startswith(("javascript:", "data:", "vbscript:", "file:")):
-        url = "about:blank"
+        url_normalized = "about:blank"
     # 无协议相对路径放行
-    return f'<a href="{url}">{match.group(1)}</a>'
+    return f'<a href="{html.escape(url_normalized, quote=True)}">{match.group(1)}</a>'
+
+
+def _safe_open_url(url: str) -> None:
+    """Open external URLs with user confirmation to prevent accidental navigation."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return
+    reply = QMessageBox.question(
+        None,
+        "打开外部链接",
+        f"即将在系统浏览器中打开：\n\n{url}\n\n是否继续？",
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        QMessageBox.StandardButton.No,
+    )
+    if reply == QMessageBox.StandardButton.Yes:
+        QDesktopServices.openUrl(QUrl(url))
 
 
 def _make_label(
@@ -97,7 +118,7 @@ def _make_label(
         | Qt.TextInteractionFlag.LinksAccessibleByMouse
     )
     label.setOpenExternalLinks(False)
-    label.linkActivated.connect(lambda url: QDesktopServices.openUrl(QUrl(url)))
+    label.linkActivated.connect(_safe_open_url)
 
     if max_width:
         label.setMaximumWidth(max_width)
@@ -126,7 +147,8 @@ def _make_code_block(lines: Sequence[str], language: str = "") -> QTextEdit:
     # Auto-height: fit to content
     widget.document().setDocumentMargin(4)
     doc_height = int(widget.document().size().height()) + 12
-    widget.setMinimumHeight(min(doc_height, 400))
+    # M43: doc_height may be 0 before layout completes — set a 20px floor
+    widget.setMinimumHeight(max(min(doc_height, 400), 20))
     widget.setMaximumHeight(500)
     return widget
 
@@ -359,15 +381,32 @@ def _is_special_line(line: str) -> bool:
 
 # ── Renderer ────────────────────────────────────────────────────
 
+# C30: Input size limit to avoid O(n) full-text regex scanning + massive
+# QWidget creation (QLabel/QTextEdit/QTableWidget) for very large responses.
+# Above this threshold, fall back to a plain-text QLabel instantly.
+_MAX_INPUT_LENGTH = 50000
+# M20: Even within the char limit, many short blocks can still create excessive
+# QWidgets. Guard with a maximum block count, degrading to plain text above it.
+_MAX_BLOCK_COUNT = 300
+
+
 class MarkdownRenderer:
     """Render Markdown text to a QWidget using only PyQt6 components."""
 
     def render(self, text: str) -> QWidget:
         """Parse *text* and return a QWidget with the rendered content."""
+        # C30: Skip expensive tokenization + widget creation for huge inputs
+        if len(text) > _MAX_INPUT_LENGTH:
+            return self._fallback(text)
+
         try:
             blocks = _tokenize(text)
         except Exception:
             # Fallback: plain text label
+            return self._fallback(text)
+
+        # M20: Guard against excessive QWidget creation from many small blocks
+        if len(blocks) > _MAX_BLOCK_COUNT:
             return self._fallback(text)
 
         if not blocks:
