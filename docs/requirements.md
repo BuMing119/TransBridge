@@ -341,6 +341,47 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
   **关联需求**: FR7.12（代码分层）、FR7.13（Agent 框架）、FR7.14（UX 翻新）、FR9（工具扩展）
   **对应方案**: `plans/smart-assistant-qa-fix/plan.md`（7 Story，预估 22h）
 
+**FR7.16 对话 UI 文档流重构** — *2026-05-14 | 状态: 已方案 | 优先级: P1*: 系统 SHALL 将 Smart Assistant 对话界面从当前微信风格（左右气泡对齐、颜色区分角色）重构为现代 AI 网页文档流风格，提升对话沉浸感和专业度。
+
+  - **FR7.16.1 纯文档流布局**: 所有消息 SHALL 统一左对齐排列，取消左右气泡对齐模式。消息内容区 SHALL 居中显示，最大宽度约 720px，左右留白。消息间 SHALL 使用间距（非气泡边框）区分。
+  - **FR7.16.2 文字头像**: 每条消息 SHALL 显示简洁文字头像（用户="U"、AI="A"），圆形背景，放置在消息内容左侧。头像 SHALL 替代当前气泡颜色作为主要角色区分方式。
+  - **FR7.16.3 大面积居中输入框**: 输入框 SHALL 采用大面积居中设计，最小高度 60px 且可随内容自动增长。输入框 SHALL 有丰富的 placeholder 提示文本。发送按钮和其他操作按钮 SHALL 放置在输入框下方或右侧。
+  - **FR7.16.4 内联工具卡片**: ToolCard 和 PlanCard SHALL 保持卡片形式但融入文档流（统一左对齐），不破坏阅读连续性。颜色区分保留（黄=工具/蓝=计划），但样式需与文档流协调。
+  - **FR7.16.5 融入式系统消息**: 系统消息（工具执行结果、错误提示、状态通知）SHALL 融入文档流中，以轻量标签/横条形式展示，不再使用居中灰色文本样式。
+  - **FR7.16.6 可折叠思考指示器**: LLM 思考过程 SHALL 默认折叠为 "正在思考中..." 动画条（非气泡形式），用户按 Ctrl+O 可展开查看详细思考内容（遵循 Story-08-5 设计）。
+  - **FR7.16.7 观测数据融入对话**: Token 统计和工具调用记录 SHALL 融入对话流或以命令开关控制显示/隐藏，不再以独立 QTabWidget 面板形式常驻。
+  - **FR7.16.8 面板最小尺寸放宽**: SmartAssistantPanel (QDockWidget) 的最小宽度/高度限制 SHALL 适当放宽，确保文档流布局在拖拽缩小时不会过度挤压内容。
+  - **FR7.16.9 保留元素**: 快捷指令 chips 行 SHALL 保留在输入框上方。上传文件按钮和已上传文件标签 SHALL 保留。自动模式开关 SHALL 保留。清空对话按钮 SHALL 保留。
+
+  **范围外**:
+  - 不改变后端 LLM 调用、ReAct 循环、工具执行逻辑
+  - 不改变 QDockWidget 的停靠/浮动机制
+  - 不添加 Markdown 渲染器（已由 Story-08-1 实现）
+  - 对话内容不持久化
+
+  **关联需求**: FR7.14（UX 翻新）、FR7.15（QA 修复）、Story-08-5（思考过程折叠显示）
+  **对应 Epic**: llm-chat（追加到 Story-08-2/08-3）
+
+**FR7.17 ToolResult 结构化数据传递增强** — *2026-05-14 | 状态: 已方案 | 优先级: P0*
+
+系统 SHALL 确保工具执行结果中的结构化数据（`ToolResult.data`）正确序列化到 LLM 观察消息中，使大模型能够基于工具返回的具体数据（而非仅人读摘要）进行后续推理。
+
+  - **FR7.17.1 观察消息序列化**: `ToolResult` SHALL 新增 `to_observation()` 方法，将 `data` 序列化为 LLM 可解析的紧凑 JSON 格式。小数据（<300 字符）直接输出完整 JSON，大数据自动摘要（列表替换为条目计数 + 前 2 条样本，长字符串截断到 80 字符）。`message` 保持人读摘要，`data` 紧随其后作为结构化补充行。观察消息总长度不超 2000 字符，超出时逐级裁剪（完整列表 → 长字段 → 失败详情 → 工具建议 → 执行元数据 → data 区 → 状态行永不被裁）。
+  - **FR7.17.2 扩展字段**: `ToolResult` SHALL 新增三个可选扩展字段——`pagination`（分页信息：`page`/`total_pages`/`has_more`/`total_count`）、`execution_meta`（执行元数据：`duration_ms`/`attempt`/`retry_count`）、`tool_suggestions`（后续工具建议列表）。扩展字段仅在非空时输出到观察消息。
+  - **FR7.17.3 处理管线更新**: `ToolExecutionHandler._handle_result()` SHALL 调用 `to_observation()` 生成富文本观察消息，替代当前仅使用 `message` 字符串的行为。用户可见的 UI 状态行保持简洁不变。
+  - **FR7.17.4 截断安全网**: `ConversationManager.add_observation()` SHALL 采用换行感知截断逻辑，避免在多字节字符或 JSON 中间截断，作为 `to_observation()` 的兜底安全网。
+  - **FR7.17.5 工具 data 补全**: 以下 6 个当前未填充 `data` 的工具 SHALL 补充 `data` 字段——`filter_by_stage`（返回 `stages` 列表）、`filter_by_category`（返回 `categories` 列表）、`filter_by_label`（返回 `labels` 列表）、`search_entries`（返回 `query` 和 `field`）、`clear_all_filters`（返回 `filters_cleared: true`）、`stop_task`（返回 `task_id` 和 `stopped: true`）。
+  - **FR7.17.6 分页与建议示范**: `get_visible_entries` 工具 SHALL 首次使用 `pagination` 字段。筛选工具（`filter_by_stage/category/label`、`search_entries`、`clear_all_filters`）SHALL 首次使用 `tool_suggestions` 字段引导 LLM 合理下一步操作。
+
+  **范围外**:
+  - 不改变 MCP Server 路径的工具结果格式（独立需求）
+  - 不改变 Plan 模式的 `add_plan_result()` 聚合格式（独立需求）
+  - 不将观察消息角色从 `role: "user"` 改为 `role: "tool"`（API 格式变更，独立需求）
+  - 不改变 `ToolResult.to_dict()` 对外契约
+
+  **关联需求**: FR7.13（Agent 框架升级/工具注册/ExecutionEngine）、FR7.14（UX 翻新/ToolCard）、FR7.16（文档流 UI/观察消息融入）
+  **对应 Epic**: llm-chat（在现有 plan 中追加 Story-10）
+
 ### FR8: 项目持久化与翻译版本管理
 
 **FR8.1 项目模型** — *2026-05-08 | 状态: 已实现 | 优先级: P1*: 系统 SHALL 引入「项目」作为翻译工程的顶层管理单元。一个项目代表一个 Mod 的完整翻译工作（如"Dragonborn Translation"），可包含多个源文件集合（ESP/EET/XT/Strings），以及多个翻译版本（Variant）。当项目包含多种格式源文件时，SHALL 以 ESP 插件的 key 格式为主格式。数据模型为三层结构：项目(Project) → 版本(Variant) → 源文件翻译数据。
@@ -676,6 +717,55 @@ Agent SHALL 可查询软件全局状态和执行 UI 导航。
 - FR7.11（自定义标签系统）— 标签管理工具依赖 FR7.11 的标签库模型
 - FR5.11（混合模式）— AI 翻译执行工具兼容混合模式
 
+#### FR9.11 工具补完 — 搜索维度扩展与 ParaTranz 项目选择 — *2026-05-15 | 状态: 已方案 | 优先级: P1*
+
+对 FR9.2 和 FR9.5 已编码工具的缺陷补完与能力追加。
+
+**FR9.11.1 search_entries 搜索维度扩展** (`read`): `search_entries` 工具的 `field` 参数 SHALL 从当前 4 个值（`id`/`key`/`text`/`all`）扩展为 6 个值——`id`、`key`、`original`（原文）、`translation`（译文）、`context`（上下文）、`all`（全部）。`text` 字段 SHALL 废弃（但保留向后兼容，映射到 `original`）。
+
+- `id`: 在 entry.id 中搜索
+- `key`: 在 entry.key 中搜索
+- `original`: 在 entry.original（原文）中搜索
+- `translation`: 在 entry.translation（译文）中搜索
+- `context`: 在 entry.context（上下文，如 "NPC_:FULL"）中搜索
+- `all`: 同时在 key + original + translation + context 四个字段中 OR 匹配搜索
+
+底层 `filter_entries()` SHALL 补全以下搜索分支：
+- `translation`: 匹配 `e.translation`
+- `context`: 匹配 `e.context`
+- `all`: 对 key/original/translation/context 四个字段执行 OR 匹配（任一匹配即命中）
+- `text`: 保留兼容，等同于 `original`
+- `id`、`key`、`original`: 保持现有行为不变
+
+工具参数校验 SHALL 更新为接受新的 6 个字段名（`text` 保留兼容但不在 description 中推荐），传入无效 field 值时返回 `ToolResult.fail`。
+
+**FR9.11.2 ParaTranz 项目查询与切换** (`read` / `write`, namespace: `paratranz`): 系统 SHALL 新增两个工具——
+
+`get_paratranz_project` (`read`):
+- 返回当前选中的 ParaTranz 项目信息（id/name/visibility）
+- 若尚未选择任何项目，返回 `ToolResult.ok` 提示"未选择 ParaTranz 项目"
+- 数据来源为 AppContext 的 `paratranz_project_id` 属性
+
+`switch_paratranz_project` (`write`):
+- 参数：`project_id: int`（必填，目标项目 ID）
+- 将 `project_id` 存入 AppContext 的 `paratranz_project_id` 属性
+- 若传入的 project_id 无效（API 查询失败），返回错误提示
+- 切换成功后，其他 ParaTranz 工具（如 `get_project_info`、`upload_entries`、`download_entries` 等）的 `project_id` 参数 SHALL 自动使用当前选中的项目（若未显式传入）
+
+**边界与约束**:
+- 项目选中状态仅会话内有效（存入 AppContext，不持久化到 INI），关闭程序后重置
+- 不新建 plan 文件，追加到已有 `plans/agent-tool-expansion/plan.md`
+- `filter_entries()` 的 `all` 搜索逻辑仅为内存过滤，不引入全文搜索引擎
+- `text` 字段保留 30 天过渡期，之后移除
+
+**异常场景**:
+- 未连接 Paratranz 配置时调用 `get_paratranz_project` → 返回"未选择 PT 项目"
+- `switch_paratranz_project` 传入无效 `project_id` → API 查询失败，返回错误提示
+- `search_entries` 传入无效 `field` 值 → 返回参数校验失败，并列出有效字段
+- `filter_entries` 中 `all` 搜索匹配大量条目（> 200）→ 按 limit 截断，与 `get_visible_entries` 行为一致
+
+**关联需求**: FR9.2.4（search_entries 原始定义）、FR9.5.2（get_project_info 的 project_id 可选语义）
+
 ## 6. 需求变更历史
 
 | 日期 | 变更内容 | 来源 |
@@ -700,3 +790,4 @@ Agent SHALL 可查询软件全局状态和执行 UI 导航。
 | 2026-05-10 | 新增 FR9 Agent 工具系统全面扩展：6大功能域、新增4个Agent（parser/editor/paratranz/writer）、分P0/P1/P2三批发版 | /bm-analyze → /bm-council 评审修正 |
 | 2026-05-10 | FR9 评审委员会修正：架构师路线（纯数据操作）、拆分为 tools/ 子包、新增 FR9.0 基础设施（ToolResult/TaskManager/@require_collection/@validate_params）、权限修正（arbitration→write）、裁剪 navigate_to/get_write_status/get|set_parse_config、新增 compare_with_remote + list_local_projects + get_current_project | /bm-council |
 | 2026-05-11 | 新增 FR7.14 智能助手页面体验全面翻新（布局重组+对话增强+交互简化+视觉现代化，Markdown渲染器作为 infra/ 共享基础设施） | /bm-analyze |
+| 2026-05-15 | 新增 FR9.11 工具补完 — 搜索维度扩展（6字段：id/key/original/translation/context/all）+ ParaTranz 项目查询与切换（get_paratranz_project / switch_paratranz_project，会话内有效） | /bm-analyze |

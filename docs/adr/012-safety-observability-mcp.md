@@ -722,3 +722,67 @@ MCP Server 作为完全独立的 Python 进程（独立于 TransBridge GUI），
   - PermissionGuard 阻塞等待确认可能导致 ThreadPoolExecutor 线程耗尽（4 worker），若用户长期不响应确认弹窗 → 缓解：设置 60s 超时，超时自动拒绝
   - 敏感信息检测（OutputValidationGuard）基于正则模式，可能误杀合法输出 → 缓解：仅脱敏不拒绝，记录日志供用户审查
   - MCP stdio 模式下 stdout 被 JSON-RPC 占用，所有日志必须输出到 stderr 或文件 → 约定：MCP 模式下 `logging.getLogger` 全部输出到 stderr
+
+---
+
+### 更新: 2026-05-14 - ToolResult 观察消息序列化格式约定
+
+**对应需求**: FR7.17 | **对应 Epic**: llm-chat（Story-10）
+
+#### 背景
+
+当前 `OutputValidationGuard.after_execute()` 已对 `ToolResult.data` 做大小检查和脱敏，但工具执行结果到 LLM 观察消息的序列化没有统一约定。`ToolExecutionHandler._handle_result()` 仅提取 `message` 字符串，`data` 被完全丢弃。需要定义从 `ToolResult` 到 LLM 可解析文本的序列化管线格式。
+
+#### 决策
+
+**1. 序列化逻辑归属 ToolResult**
+
+`to_observation(tool_name, max_chars=2000) -> str` 方法直接定义在 `ToolResult` 数据类上，遵循已有 `to_dict()` 的先例。不创建独立的序列化器类 —— 序列化逻辑与数据结构紧耦合（需感知常见列表键名以触发智能摘要），外部化只会增加不必要的参数传递。
+
+**2. 扩展字段为正式 dataclass 字段**
+
+新增三个可选字段作为 `ToolResult` 的正式 dataclass 字段（而非 `data` 字典的约定键名）：
+
+```python
+pagination: dict | None = None       # {"page": 1, "total_pages": 5, "has_more": true, "total_count": 200}
+execution_meta: dict | None = None   # {"duration_ms": 850, "attempt": 2}
+tool_suggestions: list[str] | None   # ["get_visible_entries", "edit_translation"]
+```
+
+理由：IDE 类型检查支持、`to_observation()` 可特化处理（pagination 独立行、suggestions 紧凑逗号分隔格式）、避免字符串键拼写错误。
+
+**3. 三级截断管线**
+
+```
+Layer 1: ToolResult._serialize_data(max_chars) → 大数据智能摘要（列表→count+sample）
+Layer 2: ToolResult.to_observation(max_chars=2000) → 总长度控制，换行边界裁剪
+Layer 3: ConversationManager.add_observation() → 兜底安全网
+```
+
+与 OutputValidationGuard 的关系：OutputValidationGuard 在 `after_execute` 中检查 `data` 的字节大小并脱敏 → `to_observation()` 在其之后运行，对已验证的数据进行格式化序列化。
+
+**4. 观察消息格式**
+
+```
+[OK] tool_name: 人读摘要
+  data: {"key": "value", ...}
+  pagination: {...}
+  meta: {...}
+  suggest: tool1, tool2
+```
+
+采用 `key: value` 行格式，每行一个维度，LLM 天然可解析。`data` 行使用紧凑 JSON（`separators=(",", ":")`）。
+
+#### 备选方案
+
+| 方案 | 优点 | 缺点 |
+|------|------|------|
+| A. 独立观察序列化器类 | 职责单一，易于单独测试 | 需要传递 ToolResult 内部结构知识，增加一层间接性 |
+| B. 新字段通过 data 约定键名 | 不改 ToolResult 签名 | 无类型检查，拼写错误静默失败，无法特化格式化 |
+| C. 在 ConversationManager 中集中序列化 | 集中管理所有消息格式 | ConversationManager 需要了解 ToolResult 内部结构，违反单一职责 |
+
+#### 影响
+
+- **接口变更**: `ToolResult` 新增 3 个可选字段（`pagination`/`execution_meta`/`tool_suggestions`）+ 2 个方法（`to_observation()`/`_serialize_data()`）。`ToolExecutionHandler._handle_result()` 改为调用 `to_observation()` 生成观察文本。`ConversationManager.add_observation()` 截断逻辑优化为换行感知。
+- **向后兼容**: 完全兼容 — 所有新字段默认 None，不传 `data` 的 ToolResult 输出与之前相同的状态行格式。
+- **依赖变更**: 零新依赖（仅 `import json`）。

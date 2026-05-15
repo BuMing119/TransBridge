@@ -3,7 +3,7 @@
 **对应需求**: FR7 (用户界面) — 新增 AI 智能助手入口
 **技术模块**: `src/transbridge/ui/tools/smart_assistant/` (新建)
 **业务域**: AI 辅助翻译
-**状态**: ✅ 已确认（Story-01~05 已实现，Story-06~07 已实现，Story-08 待编码）
+**状态**: ✅ 已实现（Story-01~09 全部完成，含 ChatWidget 拆分重构）
 **创建日期**: 2026-03
 **确认日期**: 2026-05-06
 
@@ -144,7 +144,7 @@
 
 ### Story-08: AI助手页面体验全面翻新
 
-**Phase**: 8 | **预估**: 13h（4 子 Story） | **状态**: 📝
+**Phase**: 8 | **预估**: 15.5h（5 子 Story） | **状态**: 📝
 **对应需求**: FR7.14 | **架构引用**: ADR-010, ADR-008
 **详细展开**: 见下方 [Story-08 详细节](#story-08-ai助手页面体验全面翻新-2)
 
@@ -153,6 +153,7 @@
 - Story-08-2: 视觉风格现代化（4h, 4 文件: message_bubble/tool_card/plan_card/chat_widget）
 - Story-08-3: 布局重组与滚动优化（3h, 3 文件: panel/chat_widget/quick_actions）
 - Story-08-4: 流式打字机与自动模式（3h, 3 文件: chat_widget/tool_card/plan_card）
+- Story-08-5: 思考过程折叠显示（2.5h, 2 文件: thinking_indicator.py 新 + chat_widget）
 
 ## 新建文件清单
 
@@ -254,106 +255,18 @@ src/transbridge/infra/
 
 ### Story-08: AI助手页面体验全面翻新
 
-**Phase**: 8 | **预估**: 13h（4 个子 Story） | **状态**: 📝
-**对应需求**: FR7.14 | **架构引用**: ADR-010, ADR-008
-**详细文档**: 各子 Story 独立展开（Story-08-1 ~ Story-08-4）
+**Phase**: 8 | **预估**: 18h（5 子 Story） | **状态**: 📝
+**对应需求**: FR7.14, FR7.16 | **架构引用**: ADR-010, ADR-008
+**详细文档**: `stories/story-08-experience-overhaul.md`
 
-**概述**: 对 SmartAssistant 面板 UI 层 6 个文件进行全面体验升级，覆盖视觉风格、布局结构、交互流程三大维度，同时新增 Markdown 渲染器作为 infra/ 共享基础设施。
+**概述**: 对 SmartAssistant 面板 UI 层进行全面体验升级，从微信气泡风格重构为现代 AI 网页文档流风格（FR7.16）。覆盖视觉风格、布局结构、交互流程三大维度，同时新增 Markdown 渲染器作为 infra/ 共享基础设施。共 5 个子 Story（08-1 ~ 08-5）。Story-08-2/08-3 已于 2026-05-14 按 FR7.16 重写。
 
-#### Story-08-1: Markdown 渲染器基础设施
-
-**Phase**: 8.1 | **预估**: 3h | **状态**: 📝
-
-**验收标准**:
-- [ ] `src/transbridge/infra/markdown_renderer.py` 存在，实现 `MarkdownRenderer` 类
-- [ ] `render(text: str) -> QWidget` 方法返回渲染后的 QWidget
-- [ ] 支持标题（H1-H6）、粗体/斜体/行内代码、代码块（带语言标注）、无序/有序列表、表格、链接、水平线
-- [ ] 代码块使用等宽字体+深色背景，表格使用 QTableWidget 渲染
-- [ ] 链接可点击（QDesktopServices.openUrl）
-- [ ] 文本可选择和复制
-- [ ] 不规范 Markdown（未闭合标签/混搭格式）降级为纯文本 QLabel，不抛异常
-- [ ] 零 PyQt 外第三方依赖（纯正则+字符串解析，不使用 markdown/mistune 等库）
-- [ ] `infra/__init__.py` 导出 `MarkdownRenderer`
-
-**实现步骤**:
-1. 实现 `MarkdownRenderer` 类：逐行解析 → tokenize → 映射到 QWidget 组件 → `markdown_renderer.py` (新建)
-2. 实现代码块渲染：深色背景 QTextEdit（只读、等宽字体） → `markdown_renderer.py`
-3. 实现表格渲染：QTableWidget（只读、自适应列宽） → `markdown_renderer.py`
-4. 容错处理：最外层 try/except + 解析失败降级为 QLabel 纯文本 → `markdown_renderer.py`
-5. 更新 `infra/__init__.py` 公开导出 `MarkdownRenderer` → `__init__.py`
-
-#### Story-08-2: 视觉风格现代化
-
-**Phase**: 8.2 | **预估**: 4h | **状态**: 📝
-**依赖**: Story-08-1（气泡使用 MarkdownRenderer 渲染消息内容）
-
-**验收标准**:
-- [ ] 用户气泡：品牌色背景（#DCF8C6 或更现代的蓝/绿色系）、圆角 14px、右对齐、max-width 70%
-- [ ] AI 气泡：白色背景 + 细边框（#E0E0E0）、圆角 14px、左对齐、max-width 70%
-- [ ] 系统消息：居中、小字号（11px）、灰色文字（#999）、无背景
-- [ ] 气泡内容使用 `MarkdownRenderer` 渲染（替代当前 QLabel 纯文本）
-- [ ] ToolCard/BatchToolCard：更柔和的黄色（#FFF8E1 保持或微调）、圆角 12px、内边距优化
-- [ ] PlanCard：更柔和的蓝色（#E3F2FD 保持或微调）、圆角 12px
-- [ ] 输入框：圆角 12px、min-height 60px、浅灰边框
-- [ ] 发送按钮：品牌色背景+白色文字、圆角 8px、font-weight bold
-- [ ] 清空对话/上传参考文件按钮：次要样式（浅灰背景）
-- [ ] 全局字体：正文 13px，行距 1.5，中文优先使用微软雅黑
-
-**实现步骤**:
-1. 重写 `message_bubble.py`：使用 MarkdownRenderer 渲染内容，新气泡样式 QSS → `message_bubble.py`
-2. 更新 `chat_widget.py` 输入区和按钮样式：圆角、配色、字体 → `chat_widget.py`
-3. 更新 `tool_card.py` 卡片样式：圆角、间距、按钮样式统一 → `tool_card.py`
-4. 更新 `plan_card.py` 卡片样式：圆角、步骤列表样式 → `plan_card.py`
-5. 全局字体设置：在 `panel.py` 或 `chat_widget.py` 中设置默认字体 → `panel.py` 或 `chat_widget.py`
-
-#### Story-08-3: 布局重组与滚动优化
-
-**Phase**: 8.3 | **预估**: 3h | **状态**: 📝
-**依赖**: Story-08-2（在已翻新的视觉基础上调整布局）
-
-**验收标准**:
-- [ ] 观测面板默认折叠：仅显示可点击标题栏「📊 观测面板 ▸」，点击展开/折叠（▸/▾）
-- [ ] 观测面板折叠时 Token/工具/轮次数据继续后台采集，展开后刷新显示
-- [ ] Agent 状态指示器从主界面移除
-- [ ] 上传栏从独立行移入输入框上方工具栏（与快捷指令同行或可折叠）
-- [ ] 快捷指令从 `QuickActionsPanel`（固定 48px）改为标签式 chips 嵌入输入框上方
-- [ ] Skill 下拉按钮保留在工具栏中
-- [ ] 消息区平滑滚动：新消息自动滚到底部
-- [ ] 用户手动上滚查看历史时显示「↓ 回到底部」浮动按钮（半透明、右下角）
-- [ ] 点击浮动按钮平滑滚回底部，按钮隐藏
-- [ ] 窗口宽度 < 300px 时气泡和输入框不溢出（弹性布局）
-
-**实现步骤**:
-1. 观测面板折叠改造：标题栏 + `_obs_tabs` 显示/隐藏切换 → `chat_widget.py`
-2. 移除 Agent 指示器：删除 `_agent_indicators` 相关代码 → `chat_widget.py`
-3. 上传栏重定位：从独立 row 移入输入框上方工具栏 → `chat_widget.py`
-4. 快捷指令重构：`QuickActionsPanel` 改为标签式 chips → `quick_actions.py` + `panel.py`
-5. 滚动优化：实现平滑滚动 + 检测用户上滚 + 「回到底部」浮动按钮 → `chat_widget.py`
-
-#### Story-08-4: 流式打字机与自动模式
-
-**Phase**: 8.4 | **预估**: 3h | **状态**: 📝
-**依赖**: Story-08-3（布局重组完成后才能正确测试交互流程）
-
-**验收标准**:
-- [ ] ChatWorker.chunk 信号连接 `_on_llm_chunk` 实现逐字追加到当前 AI 气泡
-- [ ] 流式渲染使用 MarkdownRenderer，每次 chunk 到达时重新渲染完整内容
-- [ ] 流式输出过程中用户发送新消息 → 正确 cancel 旧 worker → 清理残留气泡 → 开始新对话
-- [ ] ChatWidget 新增「自动模式」开关（QCheckBox 或 Toggle 按钮），默认关闭
-- [ ] 自动模式关闭时：PlanCard/ToolCard 正常显示确认按钮（当前行为）
-- [ ] 自动模式开启时：LLM 返回工具调用 → 不显示确认卡片 → 直接执行 → 显示结果摘要（✅/❌）
-- [ ] 自动模式开启时：LLM 返回计划 → 不显示 PlanCard → 直接执行 → 显示步骤结果汇总
-- [ ] admin 级工具（write_to_esp/eet/xt/strings）在自动模式下仍然弹窗确认（安全护栏优先）
-- [ ] 自动模式开关状态持久化到 QSettings
-- [ ] 网络错误重试逻辑保持当前行为不变
-
-**实现步骤**:
-1. 流式打字机：`_on_llm_chunk` 追加到当前 AI 气泡（使用 MarkdownRenderer 增量渲染） → `chat_widget.py`
-2. 中断安全：发送新消息时检测旧 worker → cancel + wait + 清理 → `chat_widget.py`
-3. 自动模式开关 UI：Toggle 按钮 + QSettings 持久化 → `chat_widget.py`
-4. 自动模式逻辑：`_on_llm_finished` 检测开关状态 → 直接执行或显示卡片 → `chat_widget.py`
-5. 安全护栏优先：admin 级工具跳过自动模式，始终弹窗确认 → `chat_widget.py`
-6. 更新 ToolCard/PlanCard 支持自动执行回调（或在 chat_widget 中绕过卡片直接调用） → `chat_widget.py`, `tool_card.py`, `plan_card.py`
+**子 Story 速览**:
+- Story-08-1: Markdown 渲染器基础设施（3h）— 已编码
+- Story-08-2: 文档流视觉风格（4h）— 已重写 [FR7.16]
+- Story-08-3: 文档流布局重组（3.5h）— 已重写 [FR7.16]
+- Story-08-4: 流式打字机与自动模式（3h）— 已编码
+- Story-08-5: 思考过程折叠显示（2.5h）— 待编码
 
 ### Story-08 文件变更清单
 
@@ -362,7 +275,8 @@ src/transbridge/infra/
 | `src/transbridge/infra/markdown_renderer.py` | 08-1 | **新建** | MarkdownRenderer 类（纯正则解析，零外部依赖） |
 | `src/transbridge/infra/__init__.py` | 08-1 | 修改 | 导出 MarkdownRenderer |
 | `ui/tools/smart_assistant/message_bubble.py` | 08-2 | **重写** | MarkdownRenderer 渲染 + 新气泡样式（圆角/阴影/配色） |
-| `ui/tools/smart_assistant/chat_widget.py` | 08-2, 08-3, 08-4 | 修改 | 视觉样式 + 观测折叠 + 移除Agent指示器 + 上传栏移位 + 滚动优化 + 流式打字机 + 自动模式 |
+| `ui/tools/smart_assistant/chat_widget.py` | 08-2, 08-3, 08-4, 08-5 | 修改 | 视觉样式 + 观测折叠 + 移除Agent指示器 + 上传栏移位 + 滚动优化 + 流式打字机 + 自动模式 + thought展示改造 + Ctrl+O快捷键 |
+| `ui/tools/smart_assistant/thinking_indicator.py` | 08-5 | **新建** | ThinkingIndicator 组件（动画 + 折叠/展开 + 样式） |
 | `ui/tools/smart_assistant/tool_card.py` | 08-2, 08-4 | 修改 | 卡片样式翻新 + 自动模式支持 |
 | `ui/tools/smart_assistant/plan_card.py` | 08-2, 08-4 | 修改 | 卡片样式翻新 + 自动模式支持 |
 | `ui/tools/smart_assistant/quick_actions.py` | 08-3 | **重写** | 从固定 Panel 改为 chips 标签式工具栏 |
@@ -377,6 +291,60 @@ src/transbridge/infra/
 | 流式渲染中 MarkdownRenderer 频繁重建 QWidget 导致性能问题 | 长消息卡顿 | 节流渲染（每 50ms 或每 5 chunk 合并渲染一次）；超长消息（>5000字）降级纯文本 |
 | 自动模式下工具执行失败无用户干预 | 错误级联 | 工具失败后追加错误信息到对话并暂停自动模式，等待用户决策 |
 | 布局重组后观测面板折叠状态与用户预期不符 | 用户找不到观测数据 | 首次启动默认折叠但显示 tooltip 提示「点击展开观测面板」 |
+| ThinkingIndicator 动画与流式渲染时序冲突 | 动画残留或闪烁 | `_on_llm_finished` 中先停止动画再替换；widget 销毁前调用 `stop_animation()` |
+
+### Story-09: ChatWidget 拆分重构
+
+**Phase**: 9 | **预估**: 6.5h（3 子 Story） | **状态**: 📝
+**对应问题**: QA 报告 C1（ChatWidget 1120行超重，违反 ADR-008） | **架构引用**: ADR-008
+**详细文档**: `stories/story-09-chatwidget-refactor.md`
+
+**概述**: ChatWidget 当前 1120 行/48 方法，混合 UI 渲染与 LLM 编排/工具执行等 10+ 职责。按 ADR-008 拆分为 3 个类：ChatWidget（纯 UI ~400行）、ConversationOrchestrator（LLM编排 ~300行）、ToolExecutionHandler（工具执行 ~200行）。
+
+**子 Story**:
+- Story-09-1: 提取 ToolExecutionHandler（2h, 2 文件: tool_execution_handler.py 新建 + chat_widget.py 改）
+- Story-09-2: 提取 ConversationOrchestrator（3h, 2 文件: conversation_orchestrator.py 新建 + chat_widget.py 改）
+- Story-09-3: 精简 ChatWidget 为纯 UI（1.5h, 3 文件: chat_widget.py 改 + panel.py 改 + __init__.py）
+
+### Story-09 文件变更清单
+
+| 文件 | Story | 操作 | 说明 |
+|------|-------|------|------|
+| `ui/tools/smart_assistant/tool_execution_handler.py` | 09-1 | **新建** | ToolExecutionHandler 类（工具权限/执行/重试/护栏） |
+| `ui/tools/smart_assistant/conversation_orchestrator.py` | 09-2 | **新建** | ConversationOrchestrator 类（LLM轮次/模式分发/流式/Worker） |
+| `ui/tools/smart_assistant/chat_widget.py` | 09-1/2/3 | 修改 | 搬迁后精简，1120→~400行 |
+| `ui/tools/smart_assistant/panel.py` | 09-3 | 修改 | 适配新接口 |
+
+### Story-10: ToolResult 观察消息序列化增强
+
+**Phase**: 10 | **预估**: 3h | **状态**: ✅ 已完成
+**对应需求**: FR7.17 | **架构引用**: ADR-012（更新 2026-05-14）
+**详细文档**: `stories/story-10-toolresult-observation.md`
+
+**概述**: ToolResult.data 当前被 _handle_result() 丢弃，LLM 看不到工具返回的结构化数据。新增 to_observation() 序列化方法将 data 格式化为 LLM 可解析文本，新增 pagination/execution_meta/tool_suggestions 三个扩展字段，修复 6 个缺失 data 的工具。
+
+**验收标准**:
+- [ ] ToolResult.to_observation() 正确序列化 data/pagination/meta/suggestions
+- [ ] 大数据（50+ 条目）自动摘要为 count + sample，不超 2000 字符
+- [ ] 向后兼容：data=None 时输出格式不变
+- [ ] 6 个工具补充 data 参数
+- [ ] get_visible_entries 首次使用 pagination，筛选工具首次使用 tool_suggestions
+
+**实现步骤**:
+1. 扩展 ToolResult 类（新增 3 字段 + to_observation + _serialize_data） → `smart_assistant/tools/base.py`
+2. 更新 _handle_result() 调用 to_observation() → `ui/tools/smart_assistant/tool_execution_handler.py`
+3. 优化 add_observation() 换行感知截断 → `smart_assistant/conversation_manager.py`
+4. 修复 6 工具补充 data + 示例性 pagination/suggestions → `smart_assistant/tools/tool_editor.py` + `smart_assistant/tools/tool_translator.py`
+
+### Story-10 文件变更清单
+
+| 文件 | 操作 | 说明 |
+|------|------|------|
+| `smart_assistant/tools/base.py` | 修改 | 新增 3 字段 + to_observation() + _serialize_data() |
+| `ui/tools/smart_assistant/tool_execution_handler.py` | 修改 | _handle_result() 改用 to_observation() |
+| `smart_assistant/conversation_manager.py` | 修改 | add_observation() 换行感知截断 |
+| `smart_assistant/tools/tool_editor.py` | 修改 | 5 工具补 data + pagination/suggestions |
+| `smart_assistant/tools/tool_translator.py` | 修改 | 1 工具补 data |
 
 ## 风险与回退方案
 

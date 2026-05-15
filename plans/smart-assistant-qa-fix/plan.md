@@ -30,6 +30,16 @@
 - 架构重构（仅修复违规项，不改架构方向）
 - 第三方依赖引入
 
+### 已知限制（待独立 Epic）
+
+以下 3 项为架构级改进，不适合作为 bug 修复混入本轮，记录于 Project Memory `deferred-ui-architecture-upgrades`：
+
+| ID | 问题 | 说明 |
+|----|------|------|
+| M69 | i18n 国际化框架 | 8 文件硬编码中文，需引入 gettext |
+| M70 | 无障碍属性 | 仅 3 个 setAccessibleName，需全量补全 |
+| M71 | 主题/颜色系统 | 颜色值散布 setStyleSheet，需提取 Palette |
+
 ---
 
 ## Story 清单

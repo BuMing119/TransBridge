@@ -14,7 +14,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 
 | 文档 | 说明 | 状态 |
 |------|------|------|
-| [requirements.md](requirements.md) | 项目需求概述：功能需求、非功能需求、系统边界。FR7.13 Phase 1+2 已实现，FR9 Agent工具扩展已编码完成（14/14 Story, 60工具, 7 Agent） | ✅ 编码完成 |
+| [requirements.md](requirements.md) | 项目需求概述：功能需求、非功能需求、系统边界。FR7.13 Phase 1+2 已实现，FR9 Agent工具扩展已编码完成（14/14 Story, 60工具, 7 Agent），FR7.17 已方案 | ✅ 编码中 |
 
 ---
 
@@ -29,11 +29,11 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [ADR-005](adr/005-toml-prompt-no-langchain.md) | TOML Prompt 模板 + Skill 定义格式 | ✅ 已接受（更新: 2026-05-10） |
 | [ADR-006](adr/006-project-persistence-variant-management.md) | 项目持久化与翻译版本管理 | ✅ 已接受 |
 | [ADR-007](adr/007-mixed-translation-polish-mode.md) | AI翻译混合模式（三模式制+规则映射表+MixedWorker） | ✅ 已接受 |
-| [ADR-008](adr/008-smart-assistant-code-layering.md) | SmartAssistant 代码分层（UI与业务逻辑分离 + Agent框架4子包） | ✅ 已接受（更新: 2026-05-10²） |
+| [ADR-008](adr/008-smart-assistant-code-layering.md) | SmartAssistant 代码分层（UI与业务逻辑分离 + Agent框架4子包） | ✅ 已接受（更新: 2026-05-10³） |
 | [ADR-009](adr/009-agent-file-memory-reflexion.md) | Agent 文件解析、长期记忆与 Reflexion 自纠错（三模式降级） | ✅ 已接受（更新: 2026-05-10²） |
 | [ADR-010](adr/010-infra-extraction.md) | 共享基础设施提取 — infra/ 包（Embedding三模式可选） | ✅ 已接受（更新: 2026-05-10） |
 | [ADR-011](adr/011-graph-orchestration-engine.md) | 自研有状态图编排引擎（StatefulDAGExecutor，零新依赖） | ✅ 已接受 |
-| [ADR-012](adr/012-safety-observability-mcp.md) | 安全护栏（中间件链）+ 可观测性（pyqtSignal遥测）+ MCP Server（stdio） | ✅ 已接受 |
+| [ADR-012](adr/012-safety-observability-mcp.md) | 安全护栏（中间件链）+ 可观测性（pyqtSignal遥测）+ MCP Server（stdio） | ✅ 已接受（更新: 2026-05-14） |
 
 > 详细架构文档见 [dev/ARCHITECTURE.md](dev/ARCHITECTURE.md)（模块依赖、数据流、全局状态管理、设计决策）。
 
@@ -54,10 +54,10 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [ui-workbench](../plans/ui-workbench/plan.md) | ✔️ 已实现 | 19 |
 | [batch-operations](../plans/batch-operations/plan.md) | ✔️ 已实现 | 7 |
 | [vector-term-retrieval](../plans/vector-term-retrieval/plan.md) | ✔️ 已实现 | — |
-| [agent-tool-expansion](../plans/agent-tool-expansion/plan.md) | ✅ 编码完成 (60工具, 7 namespaces, 7 Agent) | 14 |
+| [agent-tool-expansion](../plans/agent-tool-expansion/plan.md) | ✅ 全部完成 (S01-15, 45工具, 7 Agent) | 15 |
 | [agent-upgrade](../plans/agent-upgrade/plan.md) | ✅ Phase 1 + Phase 2 全部完成 | 12 |
-| [llm-chat](../plans/llm-chat/plan.md) | ✅ 全部编码完成 (S01-S08) | 8 |
-| [smart-assistant-qa-fix](../plans/smart-assistant-qa-fix/plan.md) | ✅ 第四轮全量修复完成 (87/87) | 7 |
+| [llm-chat](../plans/llm-chat/plan.md) | ✅ 全部完成 (S01-09，含 ChatWidget拆分) | 9 |
+| [smart-assistant-qa-fix](../plans/smart-assistant-qa-fix/plan.md) | ✅ 第五轮全量修复编码完成 (107/111, 60文件) | 7 |
 
 ---
 
@@ -137,6 +137,8 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | agent-tool-expansion | [S13: Story 13 Agent 集成编码实现](changelogs/agent-tool-expansion/story-13-agent-integration/2026-05-11-001-Story13编码实现.md) | 2026-05-11 |
 | agent-tool-expansion | [S14: Story 14 集成测试编码实现](changelogs/agent-tool-expansion/story-14-integration-tests/2026-05-11-001-Story14集成测试编码.md) | 2026-05-11 |
 | agent-tool-expansion | [QA修复: 28项安全/质量修复](changelogs/agent-tool-expansion/qa-fix/2026-05-11-001-QA审查28项修复.md) | 2026-05-11 |
+| smart-assistant-qa-fix | [S05-④: checkpoint数据目录路径修复](changelogs/smart-assistant-qa-fix/story-05-thread-resource/2026-05-14-004-checkpoint数据目录路径修复.md) | 2026-05-14 |
+| smart-assistant-qa-fix | [QA5修复: 第五轮全量修复155项](changelogs/smart-assistant-qa-fix/qa-round5-fix/2026-05-15-001-第五轮全量QA修复编码155项.md) | 2026-05-15 |
 
 历史发布记录见 [更新日志.md](更新日志.md)（2026-01 至 2026-03）。
 
@@ -156,7 +158,12 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | 2026-05-13 | smart-assistant 第三轮全面审查 (4维度并行) | ⚠ 需修复 — 发现 3B+6C+11M+12m (32项)，综合评分 36/60，5项原修复存在缺陷 |
 | 2026-05-13 | smart-assistant 第四轮全面审查 (4维度并行) | ⚠ 需修复 — 发现 4B+15C+28M+40m (87项)，综合评分 36/60，全新独立审查 |
 | 2026-05-13 | smart-assistant Stack Overflow 评审委员会 (4角色: 架构师/开发者/QA/安全) | ⚠ 需修复 — 发现后端 6 类 QObject 耦合为 C 栈溢出根因，输出 7 条共识建议 + Phase 1-3 分阶段解耦计划，[纪要](council-review-stack-overflow-decoupling.md) |
+| 2026-05-14 | smart-assistant 第五轮审查 — Story-08 前端 QA | ✅ 复验通过 — 修复 5B+2C，综合评分 38→51/60，[报告](test-reports/llm-chat-story-08-frontend-qa.md) |
+| 2026-05-14 | smart-assistant 第五轮全量审查 (8维度并行) | ⚠ 需修复 → 2026-05-15 已修复 111/111 项 (9B+27C+68M+~48m)，[报告](test-reports/smart-assistant-full-qa-2026-05-14.md) |
 | 2026-05-13 | smart-assistant Phase 1 QObject 解耦 QA 审查 (4维度并行) | ✅ 条件通过 — 15/15 功能测试通过，2 Blocker 已修复 (跨线程回调投递)，4 Major + 8 Minor 已知限制，[报告](test-reports/smart-assistant-phase1-decoupling.md) |
+| 2026-05-14 | llm-chat Story-10 ToolResult 观察消息序列化增强 QA 审查 | ✅ 通过 — 25/25 功能测试通过，0 Blocker/Critical/Major/Minor，性能/安全/代码质量全绿，[报告](test-reports/llm-chat-story-10-toolresult-observation.md) |
+| 2026-05-15 | smart-assistant 第五轮全量修复编码 (30+ Agent 并行) | ✅ 全部完成 — 修复 166/166 项 + 4 运行时错误，60文件 +2826/-1606行，[增量①](changelogs/smart-assistant-qa-fix/qa-round5-fix/2026-05-15-001-第五轮全量QA修复编码155项.md) · [②](changelogs/smart-assistant-qa-fix/qa-round5-fix/2026-05-15-002-第五轮收尾C18C19M4与Minor修复.md) · [③](changelogs/smart-assistant-qa-fix/qa-round5-fix/2026-05-15-003-第五轮Minor收尾类型注册竞态修复.md) · [④](changelogs/smart-assistant-qa-fix/qa-round5-fix/2026-05-15-004-运行时错误修复循环导入sip与setMaxLength.md) |
+| 2026-05-15 | agent-tool-expansion Story-15 工具补完 (search_entries 6字段 + PT项目切换) | ✅ 通过 — 12/12 验收标准通过，0 Blocker/Critical/Major/Minor，[报告](test-reports/agent-tool-expansion-story-15-tool-completion.md) |
 
 ---
 
@@ -217,3 +224,11 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | 2026-05-13 | smart-assistant QA 审查 Blocker 修复：TaskManager.notify_* 使用 QMetaObject.invokeMethod(Qt.QueuedConnection) 跨线程投递回调 + _safe_callback 异常隔离 + 4维度并行测试报告 → changelog s02-004 |
 | 2026-05-13 | smart-assistant Phase 2 QObject 解耦：ObservabilityCollector 去 QObject(回调注入) + ChatWorker/AgentWorker 去 QThread(AsyncWorker基类) + 7文件回调+QTimer桥接适配。后端 QObject 类从 6 → 1(仅剩ExecutionEngine) → changelog s02-005 |
 | 2026-05-13 | smart-assistant Phase 2 修复：_SignalBridge(QObject+pyqtSignal)统一跨线程桥接替代QTimer/QMetaObject.invokeMethod + main_window遗漏isRunning→is_alive适配 → changelog s02-006 | — |
+| 2026-05-14 | smart-assistant checkpoint 路径修复：execution_engine._checkpoint_path() fallback 从相对路径 `Path("data")` 改为 `ParatranzConfig.get_data_dir()`，消除 `src/transbridge/data/` 误创建 → changelog s05-004 | — |
+| 2026-05-14 | llm-chat Story-08 方案补充：新增 Story-08-5（思考过程折叠显示）+ 全部 5 子 Story 提取到独立文件 `stories/story-08-experience-overhaul.md` → changelog s08-006 | — |
+| 2026-05-14 | 新增 FR7.16 对话 UI 文档流重构需求：9 项子需求（纯文档流/文字头像/居中输入框/内联卡片/融入式系统消息/思考折叠/观测融入/面板放宽/保留元素）→ changelog s08-007 | — |
+| 2026-05-14 | FR7.16 编码实现（Story-08-2/08-3/08-5）：message_bubble 重写为文档流 + thinking_indicator 新建 + chat_widget 输入框/系统消息/观测流化 + panel 放宽 + 卡片内联样式 → changelog s08-009 | — |
+| 2026-05-14 | 新增 FR7.17 ToolResult 结构化数据传递增强：P0 数据序列化到 LLM 观察消息 + P1 6 工具补 data + P2 扩展字段（pagination/execution_meta/tool_suggestions） | /bm-analyze |
+| 2026-05-14 | Smart Assistant 第五轮全量 QA 报告独立复核与修正：13 Agent 并行逐项验证 40 项 Blocker+Critical，推翻 1 项误报(B6)，修正 10 项描述偏差，问题识别率 97.5% | /bm-chronicle |
+| 2026-05-15 | Smart Assistant 第五轮 QA 收尾②：4 Agent 并行修复 C18(Orchestrator迁移)/C19(Handler迁移)/M4(AST扩展)/Minor(冗余异常/常量/annotations) | /bm-orchestrator --auto |
+| 2026-05-15 | Smart Assistant 运行时修复：循环导入/sip/setMaxLength/_worker守卫 + 全部组件移除 maxWidth 撑满面板 | — |

@@ -3,9 +3,9 @@
 **对应需求**: [FR9](../docs/requirements.md) — Agent 工具系统全面扩展
 **技术模块**: backend (smart_assistant)
 **业务域**: Agent 工具系统
-**状态**: 已确认（v2 — 按修改确认书更新）
+**状态**: 已确认（v2 — 按修改确认书更新，2026-05-15 追加 Story 15）
 **创建日期**: 2026-05-10
-**更新日期**: 2026-05-11（按评审委员会 38 项建议逐项确认后更新）
+**更新日期**: 2026-05-15（追加 Story 15: FR9.11 工具补完）
 
 ## 功能边界
 
@@ -405,6 +405,19 @@
 
 **涉及文件**: 新建测试文件 `tests/test_agent_tool_integration.py`（或类似路径）
 **详细文档**: `plans/agent-tool-expansion/stories/story-14-integration-tests.md`
+
+---
+
+### Story 15: FR9.11 工具补完 — 搜索维度扩展 + ParaTranz 项目查询与切换
+
+**优先级**: P1 | **新增工具**: 2 | **增强工具**: 1 | **涉及文件**: 4
+
+对 FR9.2 和 FR9.5 已编码工具的补完：
+- `search_entries` 的 field 从 4 值扩展至 6 值（id/key/original/translation/context/all），底层 `filter_entries()` 补全 translation/context/all 搜索分支
+- 新增 `get_paratranz_project`（read）和 `switch_paratranz_project`（write）两个工具，项目选中状态存 `AppContext.paratranz_project_id`（会话内有效），切换后自动关联已有 PT 工具的 `project_id` 默认值
+
+**涉及文件**: `tools/tool_editor.py`, `tools/base.py`, `tools/tool_paratranz.py`, `ui/context.py`
+**详细文档**: `plans/agent-tool-expansion/stories/story-15-tool-completion.md`
 
 ---
 
