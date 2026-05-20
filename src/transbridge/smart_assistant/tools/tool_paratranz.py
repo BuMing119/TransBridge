@@ -10,7 +10,7 @@ def _get_paratranz_client(ctx, project_id=None):
     Returns:
         (client, pid): client 实例和解析后的 project_id（可能为 None）。
     """
-    from src.transbridge.paratranz.api_client import ParatranzClient
+    from src.transbridge.paratranz import ParatranzClient
     client = ParatranzClient(ctx.config)
     # 优先显式传入的 project_id，其次 ctx.paratranz_project_id（Story 15），最后 ctx.current_project
     pid = project_id or getattr(ctx, 'paratranz_project_id', None) or (ctx.current_project.get("id") if ctx.current_project else None)
@@ -21,7 +21,7 @@ def _tool_list_projects(args: dict, ctx) -> ToolResult:
     """列出 ParaTranz 项目（all/mine）。"""
     view = args.get("view", "mine")
     try:
-        from src.transbridge.paratranz.api_client import ParatranzClient
+        from src.transbridge.paratranz import ParatranzClient
         client = ParatranzClient(ctx.config)
         projects = client.list_projects(view=view)
         summary = [{"id": p.get("id"), "name": p.get("name"), "visibility": p.get("visibility")}
@@ -144,18 +144,6 @@ def _tool_download_entries(args: dict, ctx) -> ToolResult:
         return ToolResult.fail(f"下载失败: {exc}")
 
 
-def _tool_sync_terms(args: dict, ctx) -> ToolResult:
-    """同步术语库。"""
-    client, pid = _get_paratranz_client(ctx, args.get("project_id"))
-    if not pid:
-        return ToolResult.fail("请指定 project_id")
-    try:
-        terms = client.get_terms(pid)
-        return ToolResult.ok(f"已获取 {len(terms) if terms else 0} 个术语", data={"term_count": len(terms) if terms else 0})
-    except Exception as exc:
-        return ToolResult.fail(f"术语同步失败: {exc}")
-
-
 def _tool_export_artifact(args: dict, ctx) -> ToolResult:
     """导出 ParaTranz 工件。"""
     client, pid = _get_paratranz_client(ctx, args.get("project_id"))
@@ -189,7 +177,7 @@ def _tool_get_paratranz_project(args: dict, ctx) -> ToolResult:
     if not pid:
         return ToolResult.ok("未选择 ParaTranz 项目", data={"selected_project": None})
     try:
-        from src.transbridge.paratranz.api_client import ParatranzClient
+        from src.transbridge.paratranz import ParatranzClient
         client = ParatranzClient(ctx.config)
         info = client.get_project(pid)
         return ToolResult.ok(
@@ -204,7 +192,7 @@ def _tool_switch_paratranz_project(args: dict, ctx) -> ToolResult:
     """切换当前选中的 ParaTranz 项目。"""
     project_id = args["project_id"]
     try:
-        from src.transbridge.paratranz.api_client import ParatranzClient
+        from src.transbridge.paratranz import ParatranzClient
         client = ParatranzClient(ctx.config)
         info = client.get_project(project_id)  # 验证有效性
         ctx.paratranz_project_id = project_id
@@ -236,9 +224,6 @@ _PARAM_SCHEMAS = {
     "download_entries": {
         "project_id": {"type": "str", "required": False, "description": "项目ID（不传则使用当前选中项目）"},
     },
-    "sync_terms": {
-        "project_id": {"type": "str", "required": False, "description": "项目ID（不传则使用当前选中项目）"},
-    },
     "export_artifact": {
         "project_id": {"type": "str", "required": False, "description": "项目ID（不传则使用当前选中项目）"},
     },
@@ -254,30 +239,37 @@ _PARAM_SCHEMAS = {
 # ── 注册 ──────────────────────────────────────────────────────
 
 def _register_paratranz_tools():
-    from src.transbridge.smart_assistant.tool_registry import ToolRegistry, ToolSpec
-
-    tools = [
-        ("list_projects", "列出项目", "列出ParaTranz项目(all/mine)", _tool_list_projects, "read"),
-        ("get_project_info", "项目信息", "获取项目详细信息", _tool_get_project_info, "read"),
-        ("compare_with_remote", "对比远程", "对比本地与远程差异(前20条详情)", _tool_compare_with_remote, "read"),
-        ("upload_entries", "上传条目", "上传条目到ParaTranz(long_running)", _tool_upload_entries, "write"),
-        ("download_entries", "下载条目", "下载条目(单阶段,自动附加对比摘要,O7)", _tool_download_entries, "write"),
-        ("sync_terms", "同步术语", "同步术语库", _tool_sync_terms, "write"),
-        ("export_artifact", "导出工件", "导出ParaTranz工件", _tool_export_artifact, "write"),
-        ("get_upload_history", "上传历史", "获取上传历史", _tool_get_upload_history, "read"),
+    from src.transbridge.smart_assistant.tool_registry import ToolRegistry
+    ToolRegistry.register_tools("paratranz", [
+        {"name": "list_projects", "display_name": "列出项目", "description": "列出ParaTranz项目(all/mine)",
+         "execute": _tool_list_projects, "permission": "read",
+         "parameters": _PARAM_SCHEMAS.get("list_projects", {})},
+        {"name": "get_project_info", "display_name": "项目信息", "description": "获取项目详细信息",
+         "execute": _tool_get_project_info, "permission": "read",
+         "parameters": _PARAM_SCHEMAS.get("get_project_info", {})},
+        {"name": "compare_with_remote", "display_name": "对比远程", "description": "对比本地与远程差异(前20条详情)",
+         "execute": _tool_compare_with_remote, "permission": "read",
+         "parameters": _PARAM_SCHEMAS.get("compare_with_remote", {})},
+        {"name": "upload_entries", "display_name": "上传条目", "description": "上传条目到ParaTranz(long_running)",
+         "execute": _tool_upload_entries, "permission": "write", "is_long_running": True,
+         "require_confirmation": True, "parameters": _PARAM_SCHEMAS.get("upload_entries", {})},
+        {"name": "download_entries", "display_name": "下载条目", "description": "下载条目(单阶段,自动附加对比摘要,O7)",
+         "execute": _tool_download_entries, "permission": "write", "is_long_running": True,
+         "require_confirmation": True, "parameters": _PARAM_SCHEMAS.get("download_entries", {})},
+        {"name": "export_artifact", "display_name": "导出工件", "description": "导出ParaTranz工件",
+         "execute": _tool_export_artifact, "permission": "write", "is_long_running": True,
+         "parameters": _PARAM_SCHEMAS.get("export_artifact", {})},
+        {"name": "get_upload_history", "display_name": "上传历史", "description": "获取上传历史",
+         "execute": _tool_get_upload_history, "permission": "read",
+         "parameters": _PARAM_SCHEMAS.get("get_upload_history", {})},
         # Story 15: 项目查询与切换
-        ("get_paratranz_project", "PT当前项目", "获取当前选中的 ParaTranz 项目", _tool_get_paratranz_project, "read"),
-        ("switch_paratranz_project", "切换PT项目", "切换到指定的 ParaTranz 项目（project_id 必填）", _tool_switch_paratranz_project, "write"),
-    ]
-
-    for name, display_name, description, execute, permission in tools:
-        is_long = name in ("upload_entries", "download_entries", "export_artifact")
-        ToolRegistry.register(ToolSpec(
-            name=name, display_name=display_name, description=description,
-            parameters=_PARAM_SCHEMAS.get(name, {}), execute=execute, permission=permission,
-            is_long_running=is_long,
-            require_confirmation=(name in ("upload_entries", "download_entries")),  # C2: 上传也需确认
-        ), namespace="paratranz")
+        {"name": "get_paratranz_project", "display_name": "PT当前项目", "description": "获取当前选中的 ParaTranz 项目",
+         "execute": _tool_get_paratranz_project, "permission": "read",
+         "parameters": _PARAM_SCHEMAS.get("get_paratranz_project", {})},
+        {"name": "switch_paratranz_project", "display_name": "切换PT项目", "description": "切换到指定的 ParaTranz 项目（project_id 必填）",
+         "execute": _tool_switch_paratranz_project, "permission": "write",
+         "parameters": _PARAM_SCHEMAS.get("switch_paratranz_project", {})},
+    ])
 
 
 _register_paratranz_tools()

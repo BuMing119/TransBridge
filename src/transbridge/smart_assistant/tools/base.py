@@ -475,7 +475,7 @@ def filter_entries(collection: "TranslationEntryCollection",
     labels = filter_state.get("labels") or filter_state.get("label")  # M1: 兼容两种 key 名
     if labels and entry_labels:
         results = [e for e in results if any(
-            lbl in entry_labels.get(e.id, set()) for lbl in labels
+            lbl in entry_labels.get(e.key, set()) for lbl in labels
         )]
 
     search_query = filter_state.get("search_query")

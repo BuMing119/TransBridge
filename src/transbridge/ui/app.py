@@ -44,9 +44,6 @@ def main():
     # 初始化 Phase 2 Agent 系统
     from src.transbridge.smart_assistant.agents import AgentRegistry
     AgentRegistry.init_presets()
-    # 注册 v1 废弃工具（向后兼容，需在工具使用前调用）
-    from src.transbridge.smart_assistant.tool_registry import ToolRegistry
-    ToolRegistry.init_defaults()
     # 显式注册所有内置工具（替代模块级导入副作用，消除循环导入风险）
     from src.transbridge.smart_assistant.tools import register_all as register_all_tools
     register_all_tools()

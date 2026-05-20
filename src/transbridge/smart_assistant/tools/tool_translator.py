@@ -1,6 +1,7 @@
 """P0 翻译执行控制工具 — 启动/停止/查询翻译任务 (translator namespace)。
 
 Story 06 v2: 移除 pause_task(B5)，stop_task 必传 task_id(E7)，新增 stop_all_tasks(E7)。
+Story 18: stop_task 合并 2→1，task_id 改为可选（None/""=停止全部）。
 """
 from __future__ import annotations
 
@@ -63,10 +64,29 @@ def _tool_start_translation(args: dict, ctx, collection) -> ToolResult:
             error_category="config", error_code="CONFIG_LOAD_FAILED")
 
     entry_ids = args.get("entry_ids")
-    # C3: 空选择时默认全部未翻译条目，执行前由 C2 确认机制弹窗
-    if not entry_ids and not getattr(ctx, 'translation_scope', None):
-        ctx.translation_scope = {"stages": [0], "labels": [], "categories": [], "action": "include"}
-        logger.info("start_translation: 未指定条目，默认作用域=全部未翻译(stage=0)")
+    # Story 24-fix: 从 translation_scope 解析条目范围
+    if not entry_ids:
+        scope = getattr(ctx, 'translation_scope', None)
+        if scope and any(scope.get(k) for k in ('stages', 'labels', 'categories')):
+            from .base import filter_entries
+            filter_state = {
+                "stage": scope.get("stages"),
+                "category": scope.get("categories"),
+                "labels": scope.get("labels"),
+            }
+            entry_labels = getattr(ctx, 'entry_labels', None)
+            scoped = filter_entries(collection, filter_state, entry_labels=entry_labels)
+            entry_ids = [e.key for e in scoped]
+            logger.info("start_translation: 从 translation_scope 解析出 %d 条条目 (stages=%s labels=%s categories=%s)",
+                        len(entry_ids), scope.get("stages"), scope.get("labels"), scope.get("categories"))
+        else:
+            # 无 entry_ids 且无 scope → 默认全部未翻译
+            ctx.translation_scope = {"stages": [0], "labels": [], "categories": [], "action": "include"}
+            from .base import filter_entries
+            filter_state = {"stage": [0]}
+            scoped = filter_entries(collection, filter_state)
+            entry_ids = [e.key for e in scoped]
+            logger.info("start_translation: 未指定条目，默认作用域=全部未翻译(stage=0)，共 %d 条", len(entry_ids))
 
     stop_event = threading.Event()
 
@@ -84,7 +104,19 @@ def _tool_start_translation(args: dict, ctx, collection) -> ToolResult:
 
             llm_cfg = LLMConfig.load_from_file()
             cfg = TranslatorConfig(llm_config=llm_cfg, esp_path=ctx.esp_path, overwrite=False)
-            translator = AutoTranslator(cfg)
+
+            # Story 24: 传入 paratranz_client 和 project_id，使 PT 术语来源生效
+            paratranz_client = None
+            project_id = None
+            if hasattr(ctx, 'config') and ctx.config and getattr(ctx.config, 'token', None):
+                from src.transbridge.paratranz import ParatranzClient
+                paratranz_client = ParatranzClient(ctx.config)
+                project_id = getattr(ctx, 'paratranz_project_id', None)
+                if not project_id:
+                    current = getattr(ctx, 'current_project', {}) or {}
+                    project_id = current.get("id")
+
+            translator = AutoTranslator(cfg, paratranz_client, project_id)
 
             def _progress(current, total, msg, succ, fail, new_terms):
                 tm.update_progress(task_id, {
@@ -150,8 +182,20 @@ def _tool_start_polish(args: dict, ctx, collection) -> ToolResult:
 
     def _run():
         try:
-            from src.transbridge.ai_translator.post_processor.llm_polisher import LLMPolisher
-            polisher = LLMPolisher(intensity=intensity)
+            from src.transbridge.ai_translator.post_processor.polisher import LLMPolisher
+            from src.transbridge.infra.llm_client import create_llm_client
+            from src.transbridge.paratranz.config_manager import LLMConfig as _LLMCfg
+
+            # B5: 创建 LLMClient
+            llm_cfg = _LLMCfg.load_from_file()
+            llm_client = create_llm_client(llm_cfg)
+
+            # C6: 值映射 light/medium/heavy → light/moderate/aggressive
+            _level_map = {"light": "light", "medium": "moderate", "heavy": "aggressive"}
+            polish_level = _level_map.get(intensity, "moderate")
+
+            # B3: 传入必填参数 llm_client，参数名 polish_level
+            polisher = LLMPolisher(llm_client=llm_client, polish_level=polish_level)
 
             targets = [collection.get(eid) for eid in entry_ids if collection.get(eid)]
             total = len(targets)
@@ -161,10 +205,22 @@ def _tool_start_polish(args: dict, ctx, collection) -> ToolResult:
                 try:
                     polisher.polish(entry)
                 except Exception as exc:
-                    logger.warning("润色条目 %s 失败: %s", getattr(entry, 'id', '?'), exc)
+                    logger.warning("润色条目 %s 失败: %s", getattr(entry, 'key', '?'), exc)
                 tm.update_progress(task_id, {"current": i + 1, "total": total})
 
             tm.set_status(task_id, "completed")
+
+            # C5: 写入 _last_report 供 get_quality_report 查询
+            import time
+            from src.transbridge.smart_assistant.tools import tool_proofreader
+            tool_proofreader._last_report = {
+                "phase": "polish",
+                "entry_count": len(entry_ids),
+                "polish_level": polish_level,
+                "total": total,
+                "timestamp": time.time(),
+            }
+
             # B2: 通知完成
             tm.notify_completed(task_id, {
                 "status": "completed",
@@ -193,27 +249,33 @@ def _tool_start_polish(args: dict, ctx, collection) -> ToolResult:
 # ── 停止翻译 ──────────────────────────────────────────────────
 
 def _tool_stop_task(args: dict, ctx) -> ToolResult:
-    """停止指定翻译任务。E7: task_id 为必传参数（不再隐式停止所有）。"""
-    task_id = args.get("task_id", "")
-    if not task_id:
-        return ToolResult.fail("请指定要停止的 task_id（使用 stop_all_tasks 停止所有任务）")
-
+    """Story 18: 合并 2→1。停止指定任务或所有活跃任务。task_id 可选，None/""=停止全部。"""
+    task_id = args.get("task_id")
     tm = TaskManager()
+
+    if not task_id:
+        active = tm.list_active()
+        if not active:
+            return ToolResult.ok("当前无运行中的任务", data={"stopped_task_ids": []})
+        stopped, failed = [], []
+        for tid in active:
+            if tm.cancel(tid):
+                stopped.append(tid)
+            else:
+                failed.append(tid)
+        data = {"stopped_task_ids": stopped}
+        if failed:
+            data["failed_task_ids"] = failed
+            return ToolResult.ok(f"已停止 {len(stopped)} 个任务，{len(failed)} 失败",
+                                data=data, partial=True)
+        return ToolResult.ok(f"已停止全部 {len(stopped)} 个任务", data=data)
+
     success = tm.cancel(task_id)
     if success:
-        return ToolResult.ok(f"任务 {task_id} 已发送停止信号", data={"task_id": task_id, "stopped": True})
-    return ToolResult.fail(f"任务不存在或已完成: {task_id}", data={"task_id": task_id, "stopped": False})
-
-
-def _tool_stop_all_tasks(args: dict, ctx) -> ToolResult:
-    """停止所有运行中的翻译/润色任务。E7: 显式独立工具。"""
-    tm = TaskManager()
-    active = tm.list_active()
-    stopped = 0
-    for tid in active:
-        if tm.cancel(tid):
-            stopped += 1
-    return ToolResult.ok(f"已停止 {stopped} 个任务", data={"stopped_count": stopped})
+        return ToolResult.ok(f"任务 {task_id} 已发送停止信号",
+                            data={"task_id": task_id, "stopped": True})
+    return ToolResult.fail(f"任务不存在或已结束: {task_id}",
+                           data={"task_id": task_id, "stopped": False})
 
 
 # ── 查询状态 ──────────────────────────────────────────────────
@@ -326,6 +388,8 @@ def _tool_get_translation_config(args: dict, ctx) -> ToolResult:
         "target_lang": llm.target_lang,
         "game_profile": llm.game_profile,
         "term_priority": llm.term_priority,
+        "local_json_path": llm.local_json_path or None,
+        "local_excel_path": llm.local_excel_path or None,
         "post_process": post_process,
         "term_database": term_db_info,
         "paratranz": pt_config,
@@ -374,6 +438,38 @@ def _tool_set_translation_config(args: dict, ctx) -> ToolResult:
         f"已更新配置: {', '.join(changed)}" + (f" (profile={profile})" if profile else ""),
         data={"changed_fields": changed, "profile": profile},
     )
+
+
+def _tool_set_term_config(args: dict, ctx) -> ToolResult:
+    """设置术语数据库配置"""
+    term_sources = args.get("term_sources")
+    json_path = args.get("json_path")
+    excel_path = args.get("excel_path")
+
+    llm = _load_llm_config()
+    changed = []
+
+    if term_sources is not None:
+        valid = ["dynamic", "paratranz", "json", "excel"]
+        invalid = [s for s in term_sources if s not in valid]
+        if invalid:
+            return ToolResult.fail(f"无效的术语来源: {invalid}。可选: {valid}")
+        llm.term_priority = list(term_sources)
+        changed.append(f"term_sources={term_sources}")
+
+    if json_path is not None:
+        llm.local_json_path = json_path
+        changed.append(f"json_path={json_path}")
+
+    if excel_path is not None:
+        llm.local_excel_path = excel_path
+        changed.append(f"excel_path={excel_path}")
+
+    if not changed:
+        return ToolResult.ok("未修改任何术语配置", data={"unchanged": True})
+
+    llm.save_to_file()
+    return ToolResult.ok(f"已更新术语配置: {', '.join(changed)}", data={"changed": changed})
 
 
 def _tool_set_scope(args: dict, ctx) -> ToolResult:
@@ -426,7 +522,7 @@ _PARAM_SCHEMAS = {
         "intensity": {"type": "str", "required": False, "description": "润色强度: light/medium/heavy，默认 medium"},
     },
     "stop_task": {
-        "task_id": {"type": "str", "required": True, "description": "要停止的任务ID"},
+        "task_id": {"type": "str", "required": False, "description": "要停止的任务ID（不传则停止所有运行中任务）"},
     },
     "get_task_status": {
         "task_id": {"type": "str", "required": False, "description": "任务ID（不传则返回所有任务摘要）"},
@@ -448,33 +544,49 @@ _PARAM_SCHEMAS = {
         "action": {"type": "str", "required": False, "description": "作用域动作: include/exclude/only，默认 include"},
     },
     "get_scope_preview": {},
+    # Story 24: 术语配置
+    "set_term_config": {
+        "term_sources": {"type": "list", "required": False,
+            "description": "术语来源优先级列表。可选: dynamic/paratranz/json/excel"},
+        "json_path": {"type": "str", "required": False, "description": "本地 JSON 术语库文件路径"},
+        "excel_path": {"type": "str", "required": False, "description": "本地 Excel 术语库文件路径"},
+    },
 }
 
 
 def _register_translator_tools():
-    from src.transbridge.smart_assistant.tool_registry import ToolRegistry, ToolSpec
-
-    tools = [
-        ("start_translation", "启动翻译", "启动AI翻译任务（后台运行），返回task_id用于查询进度和停止", _tool_start_translation, "write", True),
-        ("start_polish", "启动润色", "启动AI润色任务（后台运行），返回task_id", _tool_start_polish, "write", True),
-        ("stop_task", "停止任务", "停止指定翻译/润色任务（E7：task_id必传）", _tool_stop_task, "write", False),
-        ("stop_all_tasks", "停止所有任务", "停止所有运行中的翻译/润色任务（E7：显式独立工具）", _tool_stop_all_tasks, "write", False),
-        ("get_task_status", "查询任务状态", "查询指定任务或所有任务的进度状态", _tool_get_task_status, "read", False),
+    from src.transbridge.smart_assistant.tool_registry import ToolRegistry
+    ToolRegistry.register_tools("translator", [
+        {"name": "start_translation", "display_name": "启动翻译", "description": "启动AI翻译任务（后台运行），返回task_id用于查询进度和停止",
+         "execute": _tool_start_translation, "permission": "write", "is_long_running": True,
+         "require_confirmation": True, "parameters": _PARAM_SCHEMAS.get("start_translation", {})},
+        {"name": "start_polish", "display_name": "启动润色", "description": "启动AI润色任务（后台运行），返回task_id",
+         "execute": _tool_start_polish, "permission": "write", "is_long_running": True,
+         "require_confirmation": True, "parameters": _PARAM_SCHEMAS.get("start_polish", {})},
+        {"name": "stop_task", "display_name": "停止任务", "description": "①需要停止正在运行的翻译/润色任务时用我（替代已废弃的 stop_all_tasks）。②task_id 可选：不传或传空串则停止所有活跃任务，传具体 task_id 则只停止指定任务。③示例: stop_task task_id=\"abc123\" 停止指定任务 / stop_task 停止所有活跃任务",
+         "execute": _tool_stop_task, "permission": "write", "require_confirmation": True,
+         "parameters": _PARAM_SCHEMAS.get("stop_task", {})},
+        {"name": "get_task_status", "display_name": "查询任务状态", "description": "查询指定任务或所有任务的进度状态",
+         "execute": _tool_get_task_status, "permission": "read",
+         "parameters": _PARAM_SCHEMAS.get("get_task_status", {})},
         # Story 09: 翻译配置
-        ("get_translation_config", "翻译配置", "返回当前LLM翻译配置（provider/model/profile等）", _tool_get_translation_config, "read", False),
-        ("set_translation_config", "设置翻译配置", "更新LLM翻译参数。H7: profile切换预设端点方案（非自由输入URL）", _tool_set_translation_config, "write", False),
-        ("set_scope", "设置作用域", "设置翻译作用域（stages/labels/categories/action）", _tool_set_scope, "write", False),
-        ("get_scope_preview", "作用域预览", "预览当前作用域下匹配的条目统计", _tool_get_scope_preview, "read", False),
-    ]
+        {"name": "get_translation_config", "display_name": "翻译配置", "description": "返回当前LLM翻译配置（provider/model/profile等）",
+         "execute": _tool_get_translation_config, "permission": "read",
+         "parameters": _PARAM_SCHEMAS.get("get_translation_config", {})},
+        {"name": "set_translation_config", "display_name": "设置翻译配置", "description": "更新LLM翻译参数。H7: profile切换预设端点方案（非自由输入URL）",
+         "execute": _tool_set_translation_config, "permission": "write",
+         "parameters": _PARAM_SCHEMAS.get("set_translation_config", {})},
+        {"name": "set_scope", "display_name": "设置作用域", "description": "设置翻译作用域（stages/labels/categories/action）",
+         "execute": _tool_set_scope, "permission": "write",
+         "parameters": _PARAM_SCHEMAS.get("set_scope", {})},
+        {"name": "get_scope_preview", "display_name": "作用域预览", "description": "预览当前作用域下匹配的条目统计",
+         "execute": _tool_get_scope_preview, "permission": "read",
+         "parameters": _PARAM_SCHEMAS.get("get_scope_preview", {})},        {"name": "set_term_config", "display_name": "术语配置",
+         "description": "设置术语数据库配置。term_sources 优先级列表(可选: dynamic/paratranz/json/excel) + 本地文件路径。修改前先调用 get_translation_config 查看当前配置",
+         "execute": _tool_set_term_config, "permission": "write",
+         "parameters": _PARAM_SCHEMAS.get("set_term_config", {})},
 
-    for name, display_name, description, execute, permission, is_long_running in tools:
-        ToolRegistry.register(ToolSpec(
-            name=name, display_name=display_name, description=description,
-            parameters=_PARAM_SCHEMAS.get(name, {}),
-            execute=execute, permission=permission,
-            is_long_running=is_long_running,
-            require_confirmation=(name in ("start_translation", "start_polish", "stop_task")),
-        ), namespace="translator")
+    ])
 
 
 _register_translator_tools()

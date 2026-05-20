@@ -89,7 +89,7 @@ class AgentRegistry:
             name="编排 Agent",
             role="你是一个翻译任务编排 Agent。分析用户请求，将复杂任务分解为子任务并调度合适的 Agent 执行。",
             namespace=None,
-            tools=["default:*", "editor:get_visible_entries", "editor:get_statistics",
+            tools=["default:*", "editor:get_visible_entries", "default:get_statistics",
                    "translator:get_translation_config", "translator:get_task_status",
                    "paratranz:list_projects", "paratranz:get_project_info"],
             skills=[],

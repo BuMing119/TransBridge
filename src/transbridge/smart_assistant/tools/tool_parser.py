@@ -1,10 +1,12 @@
 """P2 文件解析工具 — 将翻译文件加载到 AppContext (parser namespace)。
 
 Story 12 v2: 权限 write→read(H6), 文件扩展名白名单(E1)。
+Story 24: 副作用补全 — action 参数 (create_slot/append) + HITL 确认。
 """
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from .base import ToolResult
 
 _VALID_EXTENSIONS = {".esp", ".esm", ".esl", ".xml", ".json", ".strings", ".sst"}  # E1 + C4
@@ -39,9 +41,93 @@ def _validate_path(path: str, *, check_exists: bool = True, check_extension: boo
     return None
 
 
+# ── Story 24: 副作用辅助函数 ──────────────────────────────────────
+
+def _to_collection(result) -> "TranslationEntryCollection":
+    """将各类解析器返回值归一化为 TranslationEntryCollection。"""
+    from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
+    if isinstance(result, TranslationEntryCollection):
+        return result
+    if hasattr(result, 'entries'):
+        # ESP PluginParser 返回 plugin 对象，entries 属性为条目列表
+        return TranslationEntryCollection(result.entries)
+    # 列表/可迭代对象（EET/XT/SST/Strings 解析结果）
+    return TranslationEntryCollection(list(result) if result else [])
+
+
+def _create_slot(path: str, label: str, collection: "TranslationEntryCollection", ctx) -> ToolResult:
+    """创建新的 CollectionSlot 并激活。
+
+    Args:
+        path: 文件路径（作为 slot key）
+        label: slot 显示名称（文件名不含扩展名）
+        collection: 解析得到的翻译条目集合
+        ctx: 执行上下文
+    """
+    from src.transbridge.ui.context import CollectionSlot
+
+    # 检查同名 slot 是否已存在
+    if path in ctx.slots:
+        return ToolResult.fail(
+            f"集合「{label}」已存在。如需覆盖请先在界面中手动移除，"
+            f"或使用 action=append 将条目追加到当前活跃集合。"
+        )
+
+    slot = CollectionSlot(label=label, collection=collection)
+    ctx.add_slot(path, slot)
+    ctx.activate_slot(path)
+
+    return ToolResult.ok(
+        f"已创建并激活集合「{label}」，共 {len(collection)} 条条目",
+        data={
+            "action": "create_slot",
+            "label": label,
+            "entry_count": len(collection),
+            "activated": True,
+        },
+    )
+
+
+def _append_to_collection(collection: "TranslationEntryCollection", ctx) -> ToolResult:
+    """将解析出的条目追加到当前活跃集合。
+
+    Args:
+        collection: 解析得到的翻译条目集合
+        ctx: 执行上下文
+    """
+    active_slot = getattr(ctx, 'active_slot', None)
+    if active_slot is None or active_slot.collection is None:
+        return ToolResult.fail(
+            "当前无活跃集合，无法追加。请先使用 action=create_slot 创建集合，"
+            "或通过 switch_collection 切换到已有集合。"
+        )
+
+    existing = active_slot.collection
+    added_count = 0
+    for entry in collection:
+        existing.add(entry, overwrite=True)
+        added_count += 1
+
+    return ToolResult.ok(
+        f"已追加 {added_count} 条条目到当前集合「{active_slot.label}」，"
+        f"集合总计 {len(existing)} 条",
+        data={
+            "action": "append",
+            "added_count": added_count,
+            "total_count": len(existing),
+            "target_label": active_slot.label,
+        },
+    )
+
+
+# ── Parser 工具函数 ──────────────────────────────────────────────
+
 def _tool_parse_esp(args: dict, ctx) -> ToolResult:
     """解析 ESP/ESM 插件文件。"""
     path = args.get("path", "")
+    action = args.get("action", "create_slot")
+    if action not in ("create_slot", "append"):
+        return ToolResult.fail(f"无效的 action 值: {action}，有效值: create_slot, append")
     if not path:
         return ToolResult.fail("请提供 ESP 文件路径")
     err = _validate_path(path)
@@ -50,15 +136,23 @@ def _tool_parse_esp(args: dict, ctx) -> ToolResult:
         from src.transbridge.parser.plugin_parser import PluginParser
         parser = PluginParser()
         plugin = parser.parse(path)
-
-        return ToolResult.ok(f"已解析 ESP: {os.path.basename(path)}", data={"entry_count": len(plugin.entries) if hasattr(plugin, 'entries') else 0})  # M17: 仅显示文件名
+        collection = _to_collection(plugin)
     except Exception as exc:
-        return ToolResult.fail(f"解析 ESP 失败: {_sanitize_error(str(exc), path)}")  # M17: 清理错误信息中的路径
+        return ToolResult.fail(f"解析 ESP 失败: {_sanitize_error(str(exc), path)}")
+
+    label = Path(path).stem
+    if action == "create_slot":
+        return _create_slot(path, label, collection, ctx)
+    else:
+        return _append_to_collection(collection, ctx)
 
 
 def _tool_parse_eet(args: dict, ctx) -> ToolResult:
     """解析 EET XML 文件。"""
     path = args.get("path", "")
+    action = args.get("action", "create_slot")
+    if action not in ("create_slot", "append"):
+        return ToolResult.fail(f"无效的 action 值: {action}，有效值: create_slot, append")
     if not path: return ToolResult.fail("请提供 EET 文件路径")
     err = _validate_path(path)
     if err: return err
@@ -66,14 +160,23 @@ def _tool_parse_eet(args: dict, ctx) -> ToolResult:
         from src.transbridge.parser.eet_xml_parser import EET_XmlParser
         parser = EET_XmlParser()
         result = parser.parse(path)
-        return ToolResult.ok(f"已解析 EET: {os.path.basename(path)}", data={"entry_count": len(result) if result else 0})  # M17: 仅显示文件名
+        collection = _to_collection(result)
     except Exception as exc:
-        return ToolResult.fail(f"解析 EET 失败: {_sanitize_error(str(exc), path)}")  # M17: 清理错误信息中的路径
+        return ToolResult.fail(f"解析 EET 失败: {_sanitize_error(str(exc), path)}")
+
+    label = Path(path).stem
+    if action == "create_slot":
+        return _create_slot(path, label, collection, ctx)
+    else:
+        return _append_to_collection(collection, ctx)
 
 
 def _tool_parse_xt(args: dict, ctx) -> ToolResult:
     """解析 XT XML 文件。"""
     path = args.get("path", "")
+    action = args.get("action", "create_slot")
+    if action not in ("create_slot", "append"):
+        return ToolResult.fail(f"无效的 action 值: {action}，有效值: create_slot, append")
     if not path: return ToolResult.fail("请提供 XT 文件路径")
     err = _validate_path(path)
     if err: return err
@@ -81,53 +184,80 @@ def _tool_parse_xt(args: dict, ctx) -> ToolResult:
         from src.transbridge.parser.xt_xml_parser import XT_XmlParser
         parser = XT_XmlParser()
         result = parser.parse(path)
-        return ToolResult.ok(f"已解析 XT: {os.path.basename(path)}", data={"entry_count": len(result) if result else 0})  # M17: 仅显示文件名
+        collection = _to_collection(result)
     except Exception as exc:
-        return ToolResult.fail(f"解析 XT 失败: {_sanitize_error(str(exc), path)}")  # M17: 清理错误信息中的路径
+        return ToolResult.fail(f"解析 XT 失败: {_sanitize_error(str(exc), path)}")
+
+    label = Path(path).stem
+    if action == "create_slot":
+        return _create_slot(path, label, collection, ctx)
+    else:
+        return _append_to_collection(collection, ctx)
 
 
 def _tool_parse_sst(args: dict, ctx) -> ToolResult:
     """解析 SST 二进制文件。"""
     path = args.get("path", "")
+    action = args.get("action", "create_slot")
+    if action not in ("create_slot", "append"):
+        return ToolResult.fail(f"无效的 action 值: {action}，有效值: create_slot, append")
     if not path: return ToolResult.fail("请提供 SST 文件路径")
     err = _validate_path(path)  # C4: SST 与其他解析器统一路径校验
     if err: return err
     try:
-        from src.transbridge.parser.sst_parser import SST_Parser
+        from src.transbridge.parser.xt.sst_parser import SST_Parser
         parser = SST_Parser()
         result = parser.parse(path)
-        return ToolResult.ok(f"已解析 SST: {os.path.basename(path)}", data={"entry_count": len(result) if result else 0})  # M17: 仅显示文件名
+        collection = _to_collection(result)
     except Exception as exc:
-        return ToolResult.fail(f"解析 SST 失败: {_sanitize_error(str(exc), path)}")  # M17: 清理错误信息中的路径
+        return ToolResult.fail(f"解析 SST 失败: {_sanitize_error(str(exc), path)}")
+
+    label = Path(path).stem
+    if action == "create_slot":
+        return _create_slot(path, label, collection, ctx)
+    else:
+        return _append_to_collection(collection, ctx)
 
 
 def _tool_import_json(args: dict, ctx) -> ToolResult:
     """从 JSON 文件导入翻译集合。"""
     path = args.get("path", "")
+    action = args.get("action", "create_slot")
+    if action not in ("create_slot", "append"):
+        return ToolResult.fail(f"无效的 action 值: {action}，有效值: create_slot, append")
     if not path: return ToolResult.fail("请提供 JSON 文件路径")
     err = _validate_path(path)
     if err: return err
     try:
         from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
-        col = TranslationEntryCollection.from_json_file(path)
-        return ToolResult.ok(f"已从 JSON 导入 {len(col)} 条条目", data={"entry_count": len(col)})
+        collection = TranslationEntryCollection.from_json_file(path)
     except Exception as exc:
-        return ToolResult.fail(f"导入 JSON 失败: {_sanitize_error(str(exc), path)}")  # M17: 清理错误信息中的路径
+        return ToolResult.fail(f"导入 JSON 失败: {_sanitize_error(str(exc), path)}")
+
+    label = Path(path).stem
+    if action == "create_slot":
+        return _create_slot(path, label, collection, ctx)
+    else:
+        return _append_to_collection(collection, ctx)
 
 
 def _tool_import_strings(args: dict, ctx) -> ToolResult:
     """从 .strings 文件导入翻译。"""
     path = args.get("path", "")
+    action = args.get("action", "create_slot")
+    if action not in ("create_slot", "append"):
+        return ToolResult.fail(f"无效的 action 值: {action}，有效值: create_slot, append")
     if not path: return ToolResult.fail("请提供 strings 文件路径")
     err = _validate_path(path)
     if err: return err
-    try:
-        from src.transbridge.parser.strings_importer import StringsImporter
-        importer = StringsImporter()
-        result = importer.import_file(path)
-        return ToolResult.ok(f"已从 strings 导入 {len(result) if result else 0} 条", data={"entry_count": len(result) if result else 0})
-    except Exception as exc:
-        return ToolResult.fail(f"导入 strings 失败: {_sanitize_error(str(exc), path)}")  # M17: 清理错误信息中的路径
+    # FIXME: strings_importer module does not exist
+    return ToolResult.fail("import_strings 暂不可用：strings_importer 模块不存在")
+
+    label = Path(path).stem
+    if action == "create_slot":
+        return _create_slot(path, label, collection, ctx)
+    else:
+        return _append_to_collection(collection, ctx)
 
 
 # ── 注册 ──────────────────────────────────────────────────────
@@ -135,45 +265,47 @@ def _tool_import_strings(args: dict, ctx) -> ToolResult:
 _PARAM_SCHEMAS = {
     "parse_esp": {
         "path": {"type": "str", "required": True, "description": "ESP/ESM 文件路径"},
+        "action": {"type": "str", "required": False, "description": "解析后操作: create_slot（创建新槽位并激活，默认）或 append（追加到当前活跃集合）"},
     },
     "parse_eet": {
         "path": {"type": "str", "required": True, "description": "EET XML 文件路径"},
+        "action": {"type": "str", "required": False, "description": "解析后操作: create_slot（创建新槽位并激活，默认）或 append（追加到当前活跃集合）"},
     },
     "parse_xt": {
         "path": {"type": "str", "required": True, "description": "XT XML 文件路径"},
+        "action": {"type": "str", "required": False, "description": "解析后操作: create_slot（创建新槽位并激活，默认）或 append（追加到当前活跃集合）"},
     },
     "parse_sst": {
         "path": {"type": "str", "required": True, "description": "SST 二进制文件路径"},
+        "action": {"type": "str", "required": False, "description": "解析后操作: create_slot（创建新槽位并激活，默认）或 append（追加到当前活跃集合）"},
     },
     "import_json": {
         "path": {"type": "str", "required": True, "description": "JSON 文件路径"},
+        "action": {"type": "str", "required": False, "description": "导入后操作: create_slot（创建新槽位并激活，默认）或 append（追加到当前活跃集合）"},
     },
     "import_strings": {
         "path": {"type": "str", "required": True, "description": ".strings 文件路径"},
+        "action": {"type": "str", "required": False, "description": "导入后操作: create_slot（创建新槽位并激活，默认）或 append（追加到当前活跃集合）"},
     },
 }
 
 
 def _register_parser_tools():
-    from src.transbridge.smart_assistant.tool_registry import ToolRegistry, ToolSpec
-
-    # m5: 统一 5 元组格式 (name, display_name, description, execute, permission)
-    tools = [
-        ("parse_esp", "解析ESP", "解析 ESP/ESM 插件文件，提取翻译条目", _tool_parse_esp, "read"),
-        ("parse_eet", "解析EET", "解析 EET XML 翻译文件", _tool_parse_eet, "read"),
-        ("parse_xt", "解析XT", "解析 XT XML 翻译文件", _tool_parse_xt, "read"),
-        ("parse_sst", "解析SST", "解析 SST 二进制翻译文件", _tool_parse_sst, "read"),
-        ("import_json", "导入JSON", "从 JSON 文件导入翻译集合", _tool_import_json, "read"),
-        ("import_strings", "导入Strings", "从 .strings 文件导入翻译", _tool_import_strings, "read"),
-    ]
-
-    for name, display_name, description, execute, permission in tools:
-        ToolRegistry.register(ToolSpec(
-            name=name, display_name=display_name,
-            description=description,
-            parameters=_PARAM_SCHEMAS.get(name, {}),
-            execute=execute, permission=permission,
-        ), namespace="parser")
+    from src.transbridge.smart_assistant.tool_registry import ToolRegistry
+    ToolRegistry.register_tools("parser", [
+        {"name": "parse_esp", "display_name": "解析ESP", "description": "解析 ESP/ESM 插件文件，提取翻译条目并根据 action 参数创建槽位或追加到当前集合",
+         "execute": _tool_parse_esp, "parameters": _PARAM_SCHEMAS.get("parse_esp", {}), "permission": "write"},
+        {"name": "parse_eet", "display_name": "解析EET", "description": "解析 EET XML 翻译文件，提取翻译条目并根据 action 参数创建槽位或追加到当前集合",
+         "execute": _tool_parse_eet, "parameters": _PARAM_SCHEMAS.get("parse_eet", {}), "permission": "write"},
+        {"name": "parse_xt", "display_name": "解析XT", "description": "解析 XT XML 翻译文件，提取翻译条目并根据 action 参数创建槽位或追加到当前集合",
+         "execute": _tool_parse_xt, "parameters": _PARAM_SCHEMAS.get("parse_xt", {}), "permission": "write"},
+        {"name": "parse_sst", "display_name": "解析SST", "description": "解析 SST 二进制翻译文件，提取翻译条目并根据 action 参数创建槽位或追加到当前集合",
+         "execute": _tool_parse_sst, "parameters": _PARAM_SCHEMAS.get("parse_sst", {}), "permission": "write"},
+        {"name": "import_json", "display_name": "导入JSON", "description": "从 JSON 文件导入翻译集合，根据 action 参数创建槽位或追加到当前集合",
+         "execute": _tool_import_json, "parameters": _PARAM_SCHEMAS.get("import_json", {}), "permission": "write"},
+        {"name": "import_strings", "display_name": "导入Strings", "description": "从 .strings 文件导入翻译，根据 action 参数创建槽位或追加到当前集合",
+         "execute": _tool_import_strings, "parameters": _PARAM_SCHEMAS.get("import_strings", {}), "permission": "write"},
+    ])
 
 
 _register_parser_tools()
