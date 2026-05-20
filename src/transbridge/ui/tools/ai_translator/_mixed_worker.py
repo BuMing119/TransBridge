@@ -149,7 +149,7 @@ class _MixedWorker(QThread):
         stop_event = threading.Event()
         result = translator.translate(
             collection=self._translate_entries,
-            target_entry_ids=[e.id for e in self._translate_entries],
+            target_entry_ids=[e.key for e in self._translate_entries],
             progress_callback=lambda *a: None,
             stop_event=stop_event,
         )

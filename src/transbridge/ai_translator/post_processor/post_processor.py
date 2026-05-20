@@ -387,7 +387,7 @@ class PostProcessor:
                     refine_results[eid] = PostProcessCheckpoint.refine_result_from_dict(rdict)
 
             if self._refiner and issues_by_entry and not _should_stop():
-                entries_to_refine = [e for e in entries if e.id in issues_by_entry]
+                entries_to_refine = [e for e in entries if e.key in issues_by_entry]
                 total = len(entries_to_refine)
 
                 if total > 0:
@@ -641,13 +641,13 @@ class PostProcessor:
             # 只润色无问题的条目
             return [
                 e for e in entries
-                if e.translation and e.id not in issues_by_entry
+                if e.translation and e.key not in issues_by_entry
             ]
         elif scope == "has_issues":
             # 只润色有问题的条目（修复后润色）
             return [
                 e for e in entries
-                if e.translation and e.id in issues_by_entry and e.id in refine_results
+                if e.translation and e.key in issues_by_entry and e.key in refine_results
             ]
         else:
             # 默认润色所有
@@ -809,7 +809,7 @@ class PostProcessor:
         from ...converter.translation_entry import TranslationEntry
 
         fixed_count = 0
-        entry_map = {e.id: e for e in entries}
+        entry_map = {e.key: e for e in entries}
 
         for issue in issues:
             if issue.entry_id not in entry_map:

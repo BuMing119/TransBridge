@@ -309,7 +309,7 @@ class LLMArbiter:
         for ctx in contexts:
             quick = self._quick_decide(ctx)
             if quick:
-                decisions[ctx.entry.id] = quick
+                decisions[ctx.entry.key] = quick
             else:
                 needs_llm.append(ctx)
 
@@ -323,7 +323,7 @@ class LLMArbiter:
             except Exception as e:
                 # 批量失败，逐个使用fallback
                 for ctx in needs_llm:
-                    decisions[ctx.entry.id] = self._fallback_decision(ctx, str(e))
+                    decisions[ctx.entry.key] = self._fallback_decision(ctx, str(e))
 
         return decisions
 
@@ -341,7 +341,7 @@ class LLMArbiter:
         # 情况1：无问题且无修复/润色 -> 直接通过
         if not issues and not refine and not polish:
             return ArbiterDecision(
-                entry_id=entry.id,
+                entry_id=entry.key,
                 verdict="pass",
                 reason="无检测到的问题，无需修复或润色",
                 confidence=1.0,
@@ -352,7 +352,7 @@ class LLMArbiter:
         if refine and refine.confidence == 0 and refine.note.startswith("LLM修复失败"):
             if self._strict_mode:
                 return ArbiterDecision(
-                    entry_id=entry.id,
+                    entry_id=entry.key,
                     verdict="reject",
                     reason=f"修复失败: {refine.note}",
                     confidence=0.9,
@@ -360,7 +360,7 @@ class LLMArbiter:
                 )
             else:
                 return ArbiterDecision(
-                    entry_id=entry.id,
+                    entry_id=entry.key,
                     verdict="pending",
                     reason=f"修复失败: {refine.note}，需人工处理",
                     confidence=0.8,
@@ -375,7 +375,7 @@ class LLMArbiter:
             remaining_issues = [i for i in issues if i.issue_type not in fixed_types]
             if not remaining_issues:
                 return ArbiterDecision(
-                    entry_id=entry.id,
+                    entry_id=entry.key,
                     verdict="pass",
                     reason=f"修复信心度高({refine.confidence:.2f})，所有问题已修复",
                     confidence=refine.confidence,
@@ -386,7 +386,7 @@ class LLMArbiter:
         if refine and refine.confidence < 0.5:
             if self._strict_mode:
                 return ArbiterDecision(
-                    entry_id=entry.id,
+                    entry_id=entry.key,
                     verdict="reject",
                     reason=f"修复信心度过低({refine.confidence:.2f})，存在风险",
                     confidence=0.8,
@@ -394,7 +394,7 @@ class LLMArbiter:
                 )
             else:
                 return ArbiterDecision(
-                    entry_id=entry.id,
+                    entry_id=entry.key,
                     verdict="pending",
                     reason=f"修复信心度低({refine.confidence:.2f})，需要人工确认",
                     confidence=0.7,
@@ -405,7 +405,7 @@ class LLMArbiter:
         if error_issues:
             if self._strict_mode:
                 return ArbiterDecision(
-                    entry_id=entry.id,
+                    entry_id=entry.key,
                     verdict="reject",
                     reason=f"存在未修复的严重问题: {error_issues[0].message}",
                     confidence=0.85,
@@ -431,7 +431,7 @@ class LLMArbiter:
             verdict = "pending"
 
         return ArbiterDecision(
-            entry_id=ctx.entry.id,
+            entry_id=ctx.entry.key,
             verdict=verdict,
             reason=f"LLM裁决失败: {error_msg}，使用保守策略",
             confidence=0.5,
@@ -647,7 +647,7 @@ class LLMArbiter:
         response: str,
     ) -> dict[str, ArbiterDecision]:
         """解析批量裁决响应。"""
-        entry_map = {ctx.entry.id: ctx.entry for ctx in contexts}
+        entry_map = {ctx.entry.key: ctx.entry for ctx in contexts}
         decisions = {}
 
         try:
@@ -679,6 +679,6 @@ class LLMArbiter:
         except json.JSONDecodeError:
             # JSON解析失败，所有条目使用fallback
             for ctx in contexts:
-                decisions[ctx.entry.id] = self._fallback_decision(ctx, "批量响应解析失败")
+                decisions[ctx.entry.key] = self._fallback_decision(ctx, "批量响应解析失败")
 
         return decisions

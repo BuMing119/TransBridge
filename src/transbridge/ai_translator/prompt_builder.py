@@ -141,7 +141,7 @@ class PromptBuilder:
             terms_lines = "\n".join(f"  {t} → {tr}" for t, tr in matched_terms.items())
             system += f"\n\n【术语表（必须遵循）】\n{terms_lines}"
 
-        input_json = json.dumps({e.id: e.original for e in entries}, ensure_ascii=False, indent=2)
+        input_json = json.dumps({e.key: e.original for e in entries}, ensure_ascii=False, indent=2)
         user_content = self._render(self._translation_user_tpl, batch_type=batch_type, input_json=input_json)
 
         return [

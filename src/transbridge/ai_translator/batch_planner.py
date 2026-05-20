@@ -126,7 +126,7 @@ class BatchPlanner:
             return self._max_tokens * 3
 
         # 计算实际总字符数
-        total_chars = sum(len(e.original or "") + len(e.id or "") for e in entries)
+        total_chars = sum(len(e.original or "") + len(e.key or "") for e in entries)
 
         # 目标：每批字符数 = 总字符数 / 目标批次数
         # 留10%余量确保达到目标批次数
@@ -152,7 +152,7 @@ class BatchPlanner:
         current_chars = 0
 
         for entry in entries:
-            entry_chars = len(entry.original or "") + len(entry.id or "")
+            entry_chars = len(entry.original or "") + len(entry.key or "")
             if current and current_chars + entry_chars > char_limit:
                 batches.append(current)
                 current = []

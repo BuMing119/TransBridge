@@ -215,7 +215,7 @@ class _BatchTranslationWorker(QThread):
         else:
             # 仅翻译未翻译的条目
             target_ids = [
-                e.id for e in slot.collection
+                e.key for e in slot.collection
                 if not e.translation or e.stage == 0
             ]
             if not target_ids:

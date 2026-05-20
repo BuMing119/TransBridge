@@ -340,7 +340,7 @@ class QualityGateChecker(BaseChecker):
                 data = json.loads(response)
 
             issues = []
-            entry_map = {e.id: e for e in entries}
+            entry_map = {e.key: e for e in entries}
 
             for item in data:
                 entry_id = item.get("entry_id", "")

@@ -199,7 +199,7 @@ class ConsistencyChecker(BaseChecker):
                 # 生成警告级别的问题
                 issues.append(
                     PostProcessIssue(
-                        entry_id=entry.id,
+                        entry_id=entry.key,
                         issue_type=PostProcessIssue.TERM_MISMATCH,
                         severity="warning",
                         message=message,

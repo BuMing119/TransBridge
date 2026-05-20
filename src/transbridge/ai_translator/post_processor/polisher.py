@@ -410,7 +410,7 @@ class LLMPolisher:
         response: str,
     ) -> dict[str, PolishResult]:
         """解析批量润色响应。"""
-        entry_map = {e.id: e for e in entries}
+        entry_map = {e.key: e for e in entries}
         results = {}
 
         try:

@@ -258,7 +258,7 @@ class AutoTranslator:
                     return True, m.start()
         return False, -1
 
-    def _salvage_from_repetition_buffer(self, buffer: str, expected_ids: set[str], max_orig_repeat: int = 0) -> dict[str, str]:
+    def _salvage_from_repetition_buffer(self, buffer: str, expected_keys: set[str], max_orig_repeat: int = 0) -> dict[str, str]:
         """当流式输出出现重复时，截断重复部分并尝试修复 JSON， salvaging 已完成的翻译对。"""
         from src.transbridge.ai_translator.prompt_builder import _extract_partial_json_pairs
         text = "".join(buffer) if isinstance(buffer, list) else buffer
@@ -277,7 +277,7 @@ class AutoTranslator:
         try:
             data = json.loads(repaired)
             if isinstance(data, dict):
-                return {k: str(v) for k, v in data.items() if k in expected_ids and v}
+                return {k: str(v) for k, v in data.items() if k in expected_keys and v}
         except Exception:
             pass
         return _extract_partial_json_pairs(repaired)
@@ -365,7 +365,7 @@ class AutoTranslator:
         all_entries = list(collection)
         if target_entry_ids is not None:
             id_set = set(target_entry_ids)
-            candidates = [e for e in all_entries if e.id in id_set]
+            candidates = [e for e in all_entries if e.key in id_set]
         else:
             candidates = all_entries
 
@@ -441,7 +441,7 @@ class AutoTranslator:
             with lock:
                 batch_counter[0] += 1
                 idx = batch_counter[0]
-            batch_fp = frozenset(e.id for e in batch.entries)
+            batch_fp = frozenset(e.key for e in batch.entries)
 
             # 跳过已完成批次（断点续传）
             with lock:
@@ -558,7 +558,7 @@ class AutoTranslator:
             # 过滤已完成批次，基于剩余批次决定并发策略
             pending_round2 = [
                 b for b in plan.round2
-                if frozenset(e.id for e in b.entries) not in completed_fps
+                if frozenset(e.key for e in b.entries) not in completed_fps
             ]
 
             if not pending_round2:
@@ -642,7 +642,7 @@ class AutoTranslator:
             # 筛选出本次处理的条目（如果target_entry_ids不为空）
             if target_entry_ids:
                 target_set = set(target_entry_ids)
-                entries_to_check = [e for e in all_entries if e.id in target_set and e.translation]
+                entries_to_check = [e for e in all_entries if e.key in target_set and e.translation]
             else:
                 entries_to_check = [e for e in all_entries if e.translation]
 
@@ -742,17 +742,17 @@ class AutoTranslator:
         exact_orig_to_trans = self._term_mgr.exact_match([e.original for e in entries])
         direct_fill: dict[str, str] = {}   # entry_id → translation
         llm_entries = []
-        id_map_all = {e.id: e for e in entries}
+        key_map_all = {e.key: e for e in entries}
         for e in entries:
             if e.original in exact_orig_to_trans:
-                direct_fill[e.id] = exact_orig_to_trans[e.original]
+                direct_fill[e.key] = exact_orig_to_trans[e.original]
             else:
                 llm_entries.append(e)
 
         if direct_fill:
             _log(f"  术语精确匹配: {len(direct_fill)} 条直接填充")
             for eid, trans in direct_fill.items():
-                orig = id_map_all[eid].original
+                orig = key_map_all[eid].original
                 orig_disp = orig[:60] + "…" if len(orig) > 60 else orig
                 trans_disp = trans[:60] + "…" if len(trans) > 60 else trans
                 _log(f"{orig_disp} -> {trans_disp} [直填]")
@@ -810,8 +810,8 @@ class AutoTranslator:
             )
             stream_callback(prompt_header)
 
-        expected_ids = {e.id for e in llm_entries}
-        id_to_entry = {e.id: e for e in llm_entries}
+        expected_keys = {e.key for e in llm_entries}
+        key_to_entry = {e.key: e for e in llm_entries}
         max_orig_repeat = max((self._max_consecutive_repeat(e.original) for e in llm_entries), default=0)
         _stream_buffer: list[str] = []
         _stream_translations: dict[str, str] = {}  # 流式阶段已捕获并写回的翻译
@@ -823,9 +823,9 @@ class AutoTranslator:
             # 增量解析：每收到一个 chunk 就尝试从 buffer 中提取新完成的翻译对并立即写回
             partial = self._builder.extract_partial_pairs("".join(_stream_buffer))
             for eid, trans in partial.items():
-                if eid not in _stream_translations and eid in expected_ids:
+                if eid not in _stream_translations and eid in expected_keys:
                     _stream_translations[eid] = trans
-                    entry = id_to_entry[eid]
+                    entry = key_to_entry[eid]
                     # 流式阶段实时检测异常重复/回显
                     if self._is_translation_abnormal(entry.original, trans):
                         raise _RepetitionDetected(entry_id=eid)
@@ -855,11 +855,11 @@ class AutoTranslator:
             _log(f"⚠ 检测到重复输出（entry: {exc.entry_id or 'unknown'}），尝试截断修复并拆分重试")
             # 尝试从截断的 buffer 中 salvaging 翻译
             if exc.entry_id is None and _stream_buffer:
-                salvaged = self._salvage_from_repetition_buffer(_stream_buffer, expected_ids, max_orig_repeat=max_orig_repeat)
+                salvaged = self._salvage_from_repetition_buffer(_stream_buffer, expected_keys, max_orig_repeat=max_orig_repeat)
                 for eid, trans in salvaged.items():
-                    if eid not in _stream_translations and eid in expected_ids:
+                    if eid not in _stream_translations and eid in expected_keys:
                         _stream_translations[eid] = trans
-                        entry = id_to_entry[eid]
+                        entry = key_to_entry[eid]
                         _log(f"  [修复] {entry.original[:60]} -> {trans[:60]}")
                         self._update_collection({eid: trans}, collection, result, lock)
                         if progress_emit:
@@ -868,7 +868,7 @@ class AutoTranslator:
                         if ctx in AUTO_TERM_CONTEXTS:
                             with self._in_flight_lock:
                                 self._in_flight_terms[entry.original] = trans
-            remaining = [e for e in llm_entries if e.id not in _stream_translations]
+            remaining = [e for e in llm_entries if e.key not in _stream_translations]
             if remaining:
                 if len(remaining) > _min_size:
                     mid = len(remaining) // 2
@@ -892,7 +892,7 @@ class AutoTranslator:
             _log(f"❌ API 调用失败（{len(llm_entries)} 条）: {err_msg}")
             with lock:
                 # 流式阶段已成功写回的条目不计入失败
-                truly_failed = [e for e in llm_entries if e.id not in _stream_translations]
+                truly_failed = [e for e in llm_entries if e.key not in _stream_translations]
                 for e in truly_failed:
                     result.failed_entries.append(f"{e.id}: {err_msg}")
                 result.failed_count += len(truly_failed)
@@ -904,24 +904,24 @@ class AutoTranslator:
 
         t_parse_start = time.perf_counter()
         # 兜底解析：仅处理流式阶段未捕获的剩余条目
-        remaining_ids = expected_ids - _stream_translations.keys()
+        remaining_ids = expected_keys - _stream_translations.keys()
         fallback_translations = self._builder.parse_translation_response(response, remaining_ids)
         t_parse_elapsed = time.perf_counter() - t_parse_start
 
         # 记录兜底阶段获取的条目日志（流式阶段的已在 _chunk_cb 中实时记录）
         for eid, trans in fallback_translations.items():
-            orig = id_to_entry[eid].original if eid in id_to_entry else eid
+            orig = key_to_entry[eid].original if eid in key_to_entry else eid
             orig_disp = orig[:60] + "…" if len(orig) > 60 else orig
             trans_disp = trans[:60] + "…" if len(trans) > 60 else trans
             _log(f"{orig_disp} -> {trans_disp}")
 
         # 合并全量翻译结果（供后续 missing/动态术语/对话抽取逻辑使用）
         id_to_translation = {**_stream_translations, **fallback_translations}
-        missing = expected_ids - id_to_translation.keys()
+        missing = expected_keys - id_to_translation.keys()
 
         # 有未获得译文且批次可继续拆分 → 对 missing 条目重试
         if missing and len(llm_entries) > _min_size:
-            missing_entries = [e for e in llm_entries if e.id in missing]
+            missing_entries = [e for e in llm_entries if e.key in missing]
             if len(missing_entries) == len(llm_entries):
                 mid = len(llm_entries) // 2
                 halves = [llm_entries[:mid], llm_entries[mid:]]
@@ -980,7 +980,7 @@ class AutoTranslator:
         from src.transbridge.converter.translation_entry import TranslationEntry
         updates = []
         for entry_id, translation in id_to_translation.items():
-            entry = collection.get(entry_id)
+            entry = collection.get_by_id(entry_id)
             if entry is None:
                 continue
             updates.append(TranslationEntry(

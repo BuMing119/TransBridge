@@ -429,7 +429,7 @@ class LLMRefiner:
         response: str,
     ) -> dict[str, RefineResult]:
         """解析批量修复响应。"""
-        entry_map = {e.id: e for e in entries}
+        entry_map = {e.key: e for e in entries}
         results = {}
 
         try:
