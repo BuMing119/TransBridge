@@ -3,9 +3,9 @@
 **对应需求**: [FR9](../docs/requirements.md) — Agent 工具系统全面扩展
 **技术模块**: backend (smart_assistant)
 **业务域**: Agent 工具系统
-**状态**: 已确认（v2 — 按修改确认书更新，2026-05-15 追加 Story 15）
+**状态**: 已确认（v7 — 2026-05-18 追加 Story 25，后处理工具统一）
 **创建日期**: 2026-05-10
-**更新日期**: 2026-05-15（追加 Story 15: FR9.11 工具补完）
+**更新日期**: 2026-05-18（追加 Story 25: 后处理工具统一）
 
 ## 功能边界
 
@@ -27,7 +27,7 @@
 - 独立 PR: ParaTranz API 令牌桶限流、护栏审计日志、ToolSpec 移入 tools/
 
 ### 范围外
-- 集合管理 CRUD（创建/移除/迁移源追加）
+- 集合管理 CRUD（移除 slot / 重命名 / 迁移源手动追加）。注：创建 slot 和追加条目已由 Story 24 移入范围内。
 - 项目创建/版本管理（仅 read 级查询）
 - UI 导航操作（navigate_to 已裁剪）
 - 新 Skill 定义文件
@@ -313,7 +313,6 @@
 - [ ] `compare_with_remote` — 对比本地与远程差异（前 20 条详情），permission: read
 - [ ] `upload_entries` — 上传条目，is_long_running，permission: write，force_overwrite 需确认
 - [ ] `download_entries` — 下载条目，is_long_running，permission: write，require_confirmation: true。**单阶段执行**（O7: 下载完成后自动附加对比摘要到 ToolResult.data，不再分两阶段交互）
-- [ ] `sync_terms` — 同步术语库，permission: write
 - [ ] `export_artifact` — 导出工件，is_long_running，permission: write
 - [ ] `get_upload_history` — 上传历史，permission: read
 - [ ] **实施前完成 API surface 审查**（O10: 确认 ParatranzClient 完整 API，产出 API-工具映射表）
@@ -421,6 +420,90 @@
 
 ---
 
+### Story 16: Agent 死代码清理 + 注册样板消除
+
+删除 `agents/orchestrator.py` + `agents/agent_worker.py`（~194 行从未运行），7 模块调用 `ToolRegistry.register_tools()` 消除注册样板（-35 行）。**零风险**，工具数不变。
+
+**详细文档**: `plans/agent-tool-expansion/stories/story-16-dead-code-registration.md`
+
+---
+
+### Story 17: set_filters 合并 (5→1)
+
+`filter_by_stage/category/label` + `search_entries` + `clear_all_filters` → `set_filters`。6 个可选参数（均为 `None`=保持/`[]`=清除），`clear` 控制叠加语义。旧工具保留 deprecated wrapper。**净减 4 工具**。
+
+**详细文档**: `plans/agent-tool-expansion/stories/story-17-set-filters-merge.md`
+
+---
+
+### Story 18: stop_task 合并 (2→1)
+
+`stop_task` + `stop_all_tasks` → `stop_task`（`task_id` 改为可选，`None`/`""`=停止全部）。保留 `require_confirmation=True`。**净减 1 工具**。
+
+**详细文档**: `plans/agent-tool-expansion/stories/story-18-stop-task-merge.md`
+
+---
+
+### Story 19: write_back 合并 (4→1)
+
+`write_to_esp/eet/xt/strings` → `write_back`，dispatch 表路由。4 个实现重命名为 `_write_to_*_impl`，外层统一 `@require_collection`。保留 `admin` 权限 + 确认。**净减 3 工具**。
+
+**详细文档**: `plans/agent-tool-expansion/stories/story-19-write-back-merge.md`
+
+---
+
+### Story 20: manage_entry_labels 合并 (4→1)
+
+`create_label` + `assign_label` + `remove_label` + `batch_assign_label` → `manage_entry_labels`，`action` 参数（`create/assign/unassign/batch_assign`）。⚠️ **用户裁决**：含 `create_label`。需在 S17 后串行（同文件）。**净减 3 工具**。
+
+**详细文档**: `plans/agent-tool-expansion/stories/story-20-manage-entry-labels-merge.md`
+
+---
+
+### Story 21: 工具描述强化 + 系统 prompt + 测试补全
+
+重写合并后工具 description（三原则），系统 prompt 追加工具选择指南，参数矩阵测试 ~30 用例，LLM schema 回归验证。**合并后总计 42 工具**。
+
+**详细文档**: `plans/agent-tool-expansion/stories/story-21-descriptions-tests.md`
+
+---
+
+### Story 22: 工具描述全面重写（Claude Code 参考格式）
+
+参照 `docs/temp/claude-code-tools-reference.md` 三段格式（①功能描述 ②参数说明 ③使用规则），重写全部 45 工具描述。分 5 批次（editor→translator→writer/parser→proofreader/paratranz→default），每批次先确认方案再编码。
+
+**详细文档**: `plans/agent-tool-expansion/stories/story-22-tool-description-rewrite.md`
+
+---
+
+### Story 23: TranslationEntry.key 升主索引
+
+Collection 主索引从 `id` 切换为 `key`（跨 ParaTranz 同步稳定）。3 子 Story: 23a Collection 索引改造 → 23b 工具适配 + 23c 解析层/测试适配。23a 阻塞级先执行，23b+23c 并行。涉及 12+ 文件。
+
+**详细文档**: `plans/agent-tool-expansion/stories/story-23-key-primary-index.md`
+
+---
+
+### Story 24: Parser 工具副作用补全 — 解析结果落地为 Slot 或追加条目
+
+**对应需求**: FR9.12 | **优先级**: P1 | **涉及文件**: 3
+
+为 `tool_parser.py` 中 6 个工具新增 `action` 参数（`create_slot`/`append`），使解析结果不再丢弃，而是创建 CollectionSlot 或追加到当前活跃集合。permission 从 `read` 改为 `write`，副作用通过 PermissionGuard 触发 HITL 确认。
+
+**详细文档**: `plans/agent-tool-expansion/stories/story-24-parser-side-effects.md`
+
+---
+
+### Story 25: 后处理工具统一 — run_postprocess 替代 5 个独立工具
+
+**对应需求**: FR9.4 | **优先级**: P0 | **涉及文件**: 2
+
+QA审计发现 5 个后处理工具全部运行时崩溃（调用不存在的 API + 缺少 LLMClient）。废弃 5 个独立工具，新增 1 个 `run_postprocess` 统一工具，直接包装 GUI 同款 `PostProcessor.process_entries()` 五阶段流水线。proofreader namespace 6→2 工具。
+
+**详细文档**: `plans/agent-tool-expansion/stories/story-25-postprocess-unification.md`
+
+---
+
 ## 独立 PR（不进 Story 排期）
 
 以下三项作为独立 PR，在 Story 开发期间择机提交：
@@ -458,3 +541,7 @@
 | 50+ 工具注入 orchestrator prompt 导致 LLM 质量下降 | 中 | 中 | Story 13 的元工具描述 + namespace 通配符方案缓解，必要时降级为完整 schema |
 | MCP headless 模式下部分工具不可用 | 低 | 低 | parser/writer 工具通过 HITL 降级（path 可选），纯数据工具全部可用；admin/write 确认自动拒绝 |
 | profile 预设方案切换限制 Agent 灵活性 | 低 | 低 | 用户在 INI 中可配置任意数量预设方案（含本地代理），覆盖主流 LLM 提供商 |
+| 合并后工具描述过长导致 LLM 困惑 | 中 | 中 | 遵循描述三原则（区分信号/参数前置/组合示例），S21 做 LLM 选择回归测试 |
+| write_back target 参数 LLM 误选 | 中 | 高 | 描述中明确推断规则（"有 ESP → esp，有 EET → eet"）+ 回显确认写入类型 |
+| S17 和 S20 同文件串行合并冲突 | 低 | 低 | S20 明确在 S17 之后执行，代码 review 确认无冲突 |
+| 旧工具 deprecated wrapper 被外部引用 | 低 | 低 | 保留 wrapper 1-2 迭代，观察日志警告后清理 |

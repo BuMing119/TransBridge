@@ -23,7 +23,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | 编号 | 标题 | 状态 |
 |------|------|------|
 | [ADR-001](adr/001-unified-translation-entry.md) | TranslationEntry 作为统一翻译数据模型 | ✅ 已接受 |
-| [ADR-002](adr/002-collection-central-data-hub.md) | Collection 数据中枢与双索引设计 | ✅ 已接受 |
+| [ADR-002](adr/002-collection-central-data-hub.md) | Collection 数据中枢与双索引设计 | ✅ 已接受（更新: 2026-05-18） |
 | [ADR-003](adr/003-three-round-translation-strategy.md) | 三轮 AI 翻译策略 | ✅ 已接受 |
 | [ADR-004](adr/004-qthread-async-pattern.md) | QThread + 信号总线异步模式 | ✅ 已接受 |
 | [ADR-005](adr/005-toml-prompt-no-langchain.md) | TOML Prompt 模板 + Skill 定义格式 | ✅ 已接受（更新: 2026-05-10） |
@@ -54,7 +54,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [ui-workbench](../plans/ui-workbench/plan.md) | ✔️ 已实现 | 19 |
 | [batch-operations](../plans/batch-operations/plan.md) | ✔️ 已实现 | 7 |
 | [vector-term-retrieval](../plans/vector-term-retrieval/plan.md) | ✔️ 已实现 | — |
-| [agent-tool-expansion](../plans/agent-tool-expansion/plan.md) | ✅ 全部完成 (S01-15, 45工具, 7 Agent) | 15 |
+| [agent-tool-expansion](../plans/agent-tool-expansion/plan.md) | ✔️ S01-21+S23-24已实现 + 📝 S22已方案 + ⚠️ S25已实现(QA不通过) | 25 |
 | [agent-upgrade](../plans/agent-upgrade/plan.md) | ✅ Phase 1 + Phase 2 全部完成 | 12 |
 | [llm-chat](../plans/llm-chat/plan.md) | ✅ 全部完成 (S01-09，含 ChatWidget拆分) | 9 |
 | [smart-assistant-qa-fix](../plans/smart-assistant-qa-fix/plan.md) | ✅ 第五轮全量修复编码完成 (107/111, 60文件) | 7 |
@@ -137,6 +137,9 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | agent-tool-expansion | [S13: Story 13 Agent 集成编码实现](changelogs/agent-tool-expansion/story-13-agent-integration/2026-05-11-001-Story13编码实现.md) | 2026-05-11 |
 | agent-tool-expansion | [S14: Story 14 集成测试编码实现](changelogs/agent-tool-expansion/story-14-integration-tests/2026-05-11-001-Story14集成测试编码.md) | 2026-05-11 |
 | agent-tool-expansion | [QA修复: 28项安全/质量修复](changelogs/agent-tool-expansion/qa-fix/2026-05-11-001-QA审查28项修复.md) | 2026-05-11 |
+| agent-tool-expansion | [S15: 工具补完](changelogs/agent-tool-expansion/story-15-tool-completion/2026-05-15-001-Story15需求分析方案编码全流程.md) | 2026-05-15 |
+| agent-tool-expansion | [S16: 死代码清理与注册样板消除](changelogs/agent-tool-expansion/story-16-dead-code-registration/2026-05-18-001-死代码清理与注册样板消除.md) | 2026-05-18 |
+| agent-tool-expansion | [S17: set_filters 合并 5→1](changelogs/agent-tool-expansion/story-17-set-filters-merge/2026-05-18-001-set-filters合并5to1.md) | 2026-05-18 |
 | smart-assistant-qa-fix | [S05-④: checkpoint数据目录路径修复](changelogs/smart-assistant-qa-fix/story-05-thread-resource/2026-05-14-004-checkpoint数据目录路径修复.md) | 2026-05-14 |
 | smart-assistant-qa-fix | [QA5修复: 第五轮全量修复155项](changelogs/smart-assistant-qa-fix/qa-round5-fix/2026-05-15-001-第五轮全量QA修复编码155项.md) | 2026-05-15 |
 
@@ -164,6 +167,8 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | 2026-05-14 | llm-chat Story-10 ToolResult 观察消息序列化增强 QA 审查 | ✅ 通过 — 25/25 功能测试通过，0 Blocker/Critical/Major/Minor，性能/安全/代码质量全绿，[报告](test-reports/llm-chat-story-10-toolresult-observation.md) |
 | 2026-05-15 | smart-assistant 第五轮全量修复编码 (30+ Agent 并行) | ✅ 全部完成 — 修复 166/166 项 + 4 运行时错误，60文件 +2826/-1606行，[增量①](changelogs/smart-assistant-qa-fix/qa-round5-fix/2026-05-15-001-第五轮全量QA修复编码155项.md) · [②](changelogs/smart-assistant-qa-fix/qa-round5-fix/2026-05-15-002-第五轮收尾C18C19M4与Minor修复.md) · [③](changelogs/smart-assistant-qa-fix/qa-round5-fix/2026-05-15-003-第五轮Minor收尾类型注册竞态修复.md) · [④](changelogs/smart-assistant-qa-fix/qa-round5-fix/2026-05-15-004-运行时错误修复循环导入sip与setMaxLength.md) |
 | 2026-05-15 | agent-tool-expansion Story-15 工具补完 (search_entries 6字段 + PT项目切换) | ✅ 通过 — 12/12 验收标准通过，0 Blocker/Critical/Major/Minor，[报告](test-reports/agent-tool-expansion-story-15-tool-completion.md) |
+| 2026-05-15 | 工具架构路线 A 实施方法设计 — 评审委员会第二轮 (4角色: 架构师/开发者/QA/产品) | ✅ 完成 — 7项共识、2项分歧待用户裁决，[纪要](council-review-tool-architecture-methodology.md) |
+| 2026-05-20 | agent-tool-expansion Story-25 后处理工具统一 QA 审查 | 🔴 不通过 — 5 Blocker(运行时崩溃) + 5 Critical(功能缺失)，[报告](test-reports/story-25-postprocess-unification-qa.md) |
 
 ---
 
@@ -232,3 +237,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | 2026-05-14 | Smart Assistant 第五轮全量 QA 报告独立复核与修正：13 Agent 并行逐项验证 40 项 Blocker+Critical，推翻 1 项误报(B6)，修正 10 项描述偏差，问题识别率 97.5% | /bm-chronicle |
 | 2026-05-15 | Smart Assistant 第五轮 QA 收尾②：4 Agent 并行修复 C18(Orchestrator迁移)/C19(Handler迁移)/M4(AST扩展)/Minor(冗余异常/常量/annotations) | /bm-orchestrator --auto |
 | 2026-05-15 | Smart Assistant 运行时修复：循环导入/sip/setMaxLength/_worker守卫 + 全部组件移除 maxWidth 撑满面板 | — |
+| 2026-05-15 | 评审委员会第二轮：路线 A 实施方法设计（4角色并行评审，产出 7共识+2分歧），新增 docs/council-review-tool-architecture-methodology.md | — |
+| 2026-05-18 | agent-tool-expansion Story 16 编码完成：删除 Orchestrator/AgentWorker 死代码(~194行) + 7模块 register_tools() 注册样板消除(-35行)，净减~229行 | — |
+| 2026-05-18 | agent-tool-expansion Story 17 编码完成：set_filters 合并 5→1（6 可选参数，None=保持/[]=清除），5 deprecated wrapper，Editor 14→10 工具，总非废弃工具 56→52 | — |
+| 2026-05-20 | agent-tool-expansion Story 25 QA 审查：发现 PostProcessor/LLMPolisher 构造参数错误等 5 Blocker + 报告/断点/预览等 5 Critical 缺失，报告产出 docs/test-reports/story-25-postprocess-unification-qa.md | — |

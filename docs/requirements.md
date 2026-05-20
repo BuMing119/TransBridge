@@ -615,12 +615,11 @@ Agent SHALL 可操作 ParaTranz 平台的完整工作流。
 - **FR9.5.2 get_project_info** (`read`): 获取项目详细信息。参数：`project_id: int`（可选，不传则用当前配置的项目）。返回：项目详情（名称/描述/成员/文件列表/术语数）。
 - **FR9.5.3 upload_entries** (`write`, `is_long_running`): 上传条目到 ParaTranz。参数：`project_id: int`（可选）、`mode: str`（"update_original"/"import_safe"/"force_overwrite"）、`categories: list[str]`（可选，按分类筛选上传）。返回：task_id 和上传结果摘要（成功/跳过/冲突数）。
 - **FR9.5.4 download_entries** (`write`, `is_long_running`): 从 ParaTranz 下载条目。参数：`project_id: int`（可选）。在下载前 SHALL 返回对比摘要（本地条目数 vs 远程条目数、有差异的条目数），由 LLM 决定是否继续或由用户确认（`require_confirmation: true`）。返回：task_id 和合并结果（新增/更新/未变更数）。
-- **FR9.5.5 sync_terms** (`write`): 从 ParaTranz 同步术语库到本地。参数：`project_id: int`（可选）。返回：同步的术语数。
-- **FR9.5.6 compare_with_remote** (`read`): 对比本地集合与 ParaTranz 远程条目的差异。参数：`project_id: int`（可选）。返回：对比摘要（本地总数/远程总数/新增数/修改数/冲突数）+ 前 20 条差异详情（entry_key / 本地译文 / 远程译文 / 冲突类型）。供 download_entries 前做 informed decision。
-- **FR9.5.7 export_artifact** (`write`, `is_long_running`): 触发 ParaTranz 导出并下载。参数：`project_id: int`（可选）。返回：task_id 和下载的 zip 路径。
-- **FR9.5.8 get_upload_history** (`read`): 获取上传历史记录。参数：`project_id: int`（可选）、`limit: int`（默认 20）。返回：历史记录列表。
+- **FR9.5.5 compare_with_remote** (`read`): 对比本地集合与 ParaTranz 远程条目的差异。参数：`project_id: int`（可选）。返回：对比摘要（本地总数/远程总数/新增数/修改数/冲突数）+ 前 20 条差异详情（entry_key / 本地译文 / 远程译文 / 冲突类型）。供 download_entries 前做 informed decision。
+- **FR9.5.6 export_artifact** (`write`, `is_long_running`): 触发 ParaTranz 导出并下载。参数：`project_id: int`（可选）。返回：task_id 和下载的 zip 路径。
+- **FR9.5.7 get_upload_history** (`read`): 获取上传历史记录。参数：`project_id: int`（可选）、`limit: int`（默认 20）。返回：历史记录列表。
 
-**关联 Agent**: `paratranz` Agent（新增）— 拥有以上 8 个工具。
+**关联 Agent**: `paratranz` Agent（新增）— 拥有以上 7 个工具。
 
 **安全设计**:
 - `download_entries` SHALL 设置 `require_confirmation: true`，下载前展示对比摘要，避免意外覆盖本地译文
@@ -766,6 +765,28 @@ Agent SHALL 可查询软件全局状态和执行 UI 导航。
 
 **关联需求**: FR9.2.4（search_entries 原始定义）、FR9.5.2（get_project_info 的 project_id 可选语义）
 
+#### FR9.12 解析工具副作用补全 — 解析结果落地为 Slot 或追加条目 — *2026-05-18 | 状态: 已方案 | 优先级: P1*
+
+对 FR9.1 中已编码的 6 个 Parser/Import 工具的副作用补全。当前这些工具仅解析文件并返回 `entry_count`，解析结果直接丢弃，不产生任何副作用。
+
+**FR9.12.1 action 参数** (`write`): 6 个工具（`parse_esp`、`parse_eet`、`parse_xt`、`parse_sst`、`import_json`、`import_strings`）SHALL 新增 `action` 参数，可选值为 `create_slot`（创建新的翻译集合槽位）和 `append`（将解析结果追加到当前活跃集合）。默认行为为 `create_slot`。
+
+**FR9.12.2 create_slot 副作用**: 当 `action=create_slot` 时，工具 SHALL 在解析成功后创建新的 `CollectionSlot`，调用 `ctx.add_slot()` 注册到全局槽位，并激活为新活跃集合。slot 名称默认使用文件名（不含扩展名）。若同名 slot 已存在，SHALL 触发 HITL 确认覆盖或取消。
+
+**FR9.12.3 append 副作用**: 当 `action=append` 时，工具 SHALL 将解析出的条目合并到当前活跃集合中（通过 `collection.update_from_*()` 或等价迁移逻辑）。若无活跃集合（`ctx.active_slot` 为空），SHALL 返回错误，提示 LLM 先创建或切换 slot，不自动降级。
+
+**FR9.12.4 权限与确认**: 两种 action 均涉及写操作（修改全局状态），SHALL 声明 `permission: "write"`。副作用执行前 SHALL 通过 HITL 弹框请求用户确认，显示操作摘要（工具名、action 类型、文件名、预计条目数）。用户拒绝时返回取消状态，不做任何修改。
+
+**FR9.12.5 范围扩容**: 原 agent-tool-expansion plan 中"范围外"的「集合管理 CRUD（创建/移除/迁移源追加）」SHALL 部分移入范围——仅新增 create_slot（创建槽位）和 append（追加条目），移除 slot、重命名、迁移源手动追加等其他 CRUD 操作仍保持范围外。
+
+**异常场景**:
+- `action=append` 且无活跃集合 → 返回错误，引导 LLM 先创建/切换 slot
+- `action=create_slot` 且同名 slot 已存在 → HITL 确认覆盖或取消
+- 解析失败 → 不执行副作用（现有逻辑不变）
+- 用户拒绝 HITL 确认 → 返回取消状态，解析结果丢弃
+
+**关联需求**: FR9.1（Parser 工具原始定义）、FR9.9.6（工具描述中标注副作用）、ADR-002（Collection 数据中枢设计）
+
 ## 6. 需求变更历史
 
 | 日期 | 变更内容 | 来源 |
@@ -791,3 +812,4 @@ Agent SHALL 可查询软件全局状态和执行 UI 导航。
 | 2026-05-10 | FR9 评审委员会修正：架构师路线（纯数据操作）、拆分为 tools/ 子包、新增 FR9.0 基础设施（ToolResult/TaskManager/@require_collection/@validate_params）、权限修正（arbitration→write）、裁剪 navigate_to/get_write_status/get|set_parse_config、新增 compare_with_remote + list_local_projects + get_current_project | /bm-council |
 | 2026-05-11 | 新增 FR7.14 智能助手页面体验全面翻新（布局重组+对话增强+交互简化+视觉现代化，Markdown渲染器作为 infra/ 共享基础设施） | /bm-analyze |
 | 2026-05-15 | 新增 FR9.11 工具补完 — 搜索维度扩展（6字段：id/key/original/translation/context/all）+ ParaTranz 项目查询与切换（get_paratranz_project / switch_paratranz_project，会话内有效） | /bm-analyze |
+| 2026-05-18 | 新增 FR9.12 解析工具副作用补全 — 6个Parser/Import工具新增 action 参数（create_slot/append）+ HITL 确认机制，解析结果不再丢弃 | /bm-analyze |

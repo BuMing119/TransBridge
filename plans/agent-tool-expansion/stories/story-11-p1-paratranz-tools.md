@@ -27,7 +27,6 @@
 - [ ] `compare_with_remote` — 对比本地与远程差异（前 20 条详情），permission: read
 - [ ] `upload_entries` — 上传条目，is_long_running，permission: write
 - [ ] `download_entries` — 下载条目，is_long_running，require_confirmation: true
-- [ ] `sync_terms` — 同步术语库，permission: write
 - [ ] `export_artifact` — 导出工件，is_long_running，permission: write
 - [ ] `get_upload_history` — 上传历史，permission: read
 - [ ] 全部注册到 `paratranz` namespace
@@ -94,7 +93,6 @@ def _tool_download_entries(args, ctx) -> ToolResult:
 **实现要点**:
 - `upload_entries`: 后台线程执行上传，通过 TaskManager 管理
 - `download_entries`: 后台线程执行下载，require_confirmation=true
-- `sync_terms`: 同步执行术语下载（通常数据量小）
 - `export_artifact`: 触发导出+等待完成+下载 zip
 
 **边界条件**:
@@ -108,7 +106,7 @@ def _tool_download_entries(args, ctx) -> ToolResult:
 
 | 文件 | 操作 | 说明 |
 |------|------|------|
-| `smart_assistant/tools/tool_paratranz.py` | 新建 | 8 个 ParaTranz 工具 + 注册 |
+| `smart_assistant/tools/tool_paratranz.py` | 新建 | 7 个 ParaTranz 工具 + 注册 |
 
 ## 风险与注意事项
 

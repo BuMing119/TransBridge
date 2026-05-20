@@ -72,7 +72,7 @@ def init_presets(cls):
         role="ParaTranz 平台同步专家...",
         namespace="paratranz",
         tools=["list_projects", "get_project_info", "compare_with_remote",
-               "upload_entries", "download_entries", "sync_terms",
+               "upload_entries", "download_entries",
                "export_artifact", "get_upload_history"],
         system_prompt="你是 TransBridge ParaTranz 同步引擎...",
     ))
