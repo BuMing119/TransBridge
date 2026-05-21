@@ -98,34 +98,39 @@ class TaskManager:
 
     def on_completed(self, callback) -> None:
         """注册任务完成回调: callback(task_id, result_dict)。"""
-        self._listeners["completed"].append(callback)
+        with self._lock:
+            self._listeners["completed"].append(callback)
 
     def on_failed(self, callback) -> None:
         """注册任务失败回调: callback(task_id, error_message)。"""
-        self._listeners["failed"].append(callback)
+        with self._lock:
+            self._listeners["failed"].append(callback)
 
     def remove_listener(self, callback) -> None:
         """移除已注册的回调（从 completed 和 failed 列表中都尝试移除）。"""
-        for key in ("completed", "failed"):
-            try:
-                self._listeners[key].remove(callback)
-            except ValueError:
-                pass
+        with self._lock:
+            for key in ("completed", "failed"):
+                try:
+                    self._listeners[key].remove(callback)
+                except ValueError:
+                    pass
 
     # ── 公开 API ──────────────────────────────────────────────
 
     def register(self, stop_event: threading.Event | None = None,
                  metadata: dict | None = None,
                  thread: threading.Thread | None = None) -> str:
-        """注册新任务，返回 task_id。"""
+        """注册新任务，返回 task_id。默认创建 stop_event 和 pause_event（初始 set）。"""
         task_id = uuid4().hex[:12]
         if stop_event is None:
             stop_event = threading.Event()
         handle = TaskHandle(
             stop_event=stop_event,
+            pause_event=threading.Event(),  # Story 26: 默认创建，初始 set（非暂停）
             metadata=dict(metadata or {}),
             _thread=thread,
         )
+        handle.pause_event.set()  # 初始非暂停状态
         with self._lock:
             self._tasks[task_id] = handle
         return task_id
@@ -137,7 +142,34 @@ class TaskManager:
         if handle is None:
             return False
         handle.stop_event.set()
+        # 若任务处于暂停状态，唤醒以便退出
+        if handle.pause_event is not None:
+            handle.pause_event.set()
         handle.status = "cancelled"
+        return True
+
+    def pause(self, task_id: str) -> bool:
+        """暂停任务：clear pause_event，更新状态为 paused。返回是否成功。"""
+        with self._lock:
+            handle = self._tasks.get(task_id)
+        if handle is None:
+            return False
+        if handle.pause_event is None:
+            handle.pause_event = threading.Event()
+        handle.pause_event.clear()
+        handle.status = "paused"
+        return True
+
+    def resume(self, task_id: str) -> bool:
+        """恢复任务：set pause_event，更新状态为 running。返回是否成功。"""
+        with self._lock:
+            handle = self._tasks.get(task_id)
+        if handle is None:
+            return False
+        if handle.pause_event is None:
+            handle.pause_event = threading.Event()
+        handle.pause_event.set()
+        handle.status = "running"
         return True
 
     def get_status(self, task_id: str) -> dict:
@@ -165,9 +197,9 @@ class TaskManager:
                 handle.progress.update(progress)
 
     def list_active(self) -> list[str]:
-        """列出所有状态为 running 的任务 ID。(E7联动: 不再有 paused 状态)"""
+        """列出所有活跃任务 ID（含 running 和 paused 状态）。"""
         with self._lock:
-            return [tid for tid, h in self._tasks.items() if h.status == "running"]
+            return [tid for tid, h in self._tasks.items() if h.status in ("running", "paused")]
 
     def list_all(self) -> list[str]:
         """列出所有任务 ID（含已完成的）。"""
@@ -195,14 +227,19 @@ class TaskManager:
         调度器默认为直接调用（非 GUI 上下文），UI 层应通过
         set_main_thread_dispatcher() 注入 Qt 队列调度器以保证 GUI 操作安全。
         """
+        # C3-fix: 在锁内快照监听器列表，锁外派发，避免回调执行时持有锁
+        with self._lock:
+            completed = list(self._listeners.get("completed", []))
         dispatch = TaskManager._dispatcher
-        for cb in self._listeners.get("completed", []):
+        for cb in completed:
             dispatch(lambda c=cb, t=task_id, r=result: self._safe_callback(c, t, r))
 
     def notify_failed(self, task_id: str, error: str) -> None:
         """通知任务失败/取消。通过注入的调度器投递回调到主线程执行。"""
+        with self._lock:
+            failed = list(self._listeners.get("failed", []))
         dispatch = TaskManager._dispatcher
-        for cb in self._listeners.get("failed", []):
+        for cb in failed:
             dispatch(lambda c=cb, t=task_id, e=error: self._safe_callback(c, t, e))
 
     @staticmethod

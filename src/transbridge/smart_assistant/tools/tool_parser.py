@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 from .base import ToolResult
 
-_VALID_EXTENSIONS = {".esp", ".esm", ".esl", ".xml", ".json", ".strings", ".sst"}  # E1 + C4
+_VALID_EXTENSIONS = {".esp", ".esm", ".esl", ".xml", ".json", ".sst"}  # E1 + C4
 
 
 def _sanitize_error(msg: str, path: str) -> str:
@@ -241,25 +241,6 @@ def _tool_import_json(args: dict, ctx) -> ToolResult:
         return _append_to_collection(collection, ctx)
 
 
-def _tool_import_strings(args: dict, ctx) -> ToolResult:
-    """从 .strings 文件导入翻译。"""
-    path = args.get("path", "")
-    action = args.get("action", "create_slot")
-    if action not in ("create_slot", "append"):
-        return ToolResult.fail(f"无效的 action 值: {action}，有效值: create_slot, append")
-    if not path: return ToolResult.fail("请提供 strings 文件路径")
-    err = _validate_path(path)
-    if err: return err
-    # FIXME: strings_importer module does not exist
-    return ToolResult.fail("import_strings 暂不可用：strings_importer 模块不存在")
-
-    label = Path(path).stem
-    if action == "create_slot":
-        return _create_slot(path, label, collection, ctx)
-    else:
-        return _append_to_collection(collection, ctx)
-
-
 # ── 注册 ──────────────────────────────────────────────────────
 
 _PARAM_SCHEMAS = {
@@ -283,28 +264,22 @@ _PARAM_SCHEMAS = {
         "path": {"type": "str", "required": True, "description": "JSON 文件路径"},
         "action": {"type": "str", "required": False, "description": "导入后操作: create_slot（创建新槽位并激活，默认）或 append（追加到当前活跃集合）"},
     },
-    "import_strings": {
-        "path": {"type": "str", "required": True, "description": ".strings 文件路径"},
-        "action": {"type": "str", "required": False, "description": "导入后操作: create_slot（创建新槽位并激活，默认）或 append（追加到当前活跃集合）"},
-    },
 }
 
 
 def _register_parser_tools():
     from src.transbridge.smart_assistant.tool_registry import ToolRegistry
     ToolRegistry.register_tools("parser", [
-        {"name": "parse_esp", "display_name": "解析ESP", "description": "解析 ESP/ESM 插件文件，提取翻译条目并根据 action 参数创建槽位或追加到当前集合",
+        {"name": "parse_esp", "display_name": "解析ESP", "description": "①解析ESP/ESM/ESL插件文件提取可翻译字符串。②参数: path(必填, .esp/.esm/.esl), action(可选, create_slot默认创建新槽位并激活/append追加到当前活跃集合)。③返回: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}。规则: create_slot支持后续write_back target=esp/strings推断, append前需确认has_active_collection, path拒绝../和绝对路径, 通过get_app_state查看esp_file",
          "execute": _tool_parse_esp, "parameters": _PARAM_SCHEMAS.get("parse_esp", {}), "permission": "write"},
-        {"name": "parse_eet", "display_name": "解析EET", "description": "解析 EET XML 翻译文件，提取翻译条目并根据 action 参数创建槽位或追加到当前集合",
+        {"name": "parse_eet", "display_name": "解析EET", "description": "①解析EET XML翻译文件(Elder Scrolls Translation格式, 根元素<EET>)。②参数: path(必填, EET XML), action(可选, create_slot默认/append)。③返回: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}。规则: create_slot支持后续write_back target=eet推断, append前需确认has_active_collection, path拒绝../和绝对路径, 通过get_app_state查看eet_file",
          "execute": _tool_parse_eet, "parameters": _PARAM_SCHEMAS.get("parse_eet", {}), "permission": "write"},
-        {"name": "parse_xt", "display_name": "解析XT", "description": "解析 XT XML 翻译文件，提取翻译条目并根据 action 参数创建槽位或追加到当前集合",
+        {"name": "parse_xt", "display_name": "解析XT", "description": "①解析XT XML翻译文件(xTranslator格式, Skyrim MOD翻译工具, 根元素<XT>)。②参数: path(必填, XT XML), action(可选, create_slot默认/append)。③返回: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}。规则: create_slot支持后续write_back target=xt推断, append前需确认has_active_collection, path拒绝../和绝对路径, 通过get_app_state查看xt_file",
          "execute": _tool_parse_xt, "parameters": _PARAM_SCHEMAS.get("parse_xt", {}), "permission": "write"},
-        {"name": "parse_sst", "display_name": "解析SST", "description": "解析 SST 二进制翻译文件，提取翻译条目并根据 action 参数创建槽位或追加到当前集合",
+        {"name": "parse_sst", "display_name": "解析SST", "description": "①解析SST二进制翻译文件。SSU8=单语言记录, SSU9=双语言多字符串(含插件名头部)。②参数: path(必填, .sst), action(可选, create_slot默认/append)。③返回: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}。规则: 不支持write_back(SST序列化被屏蔽, 仅可浏览/筛选/统计), append前需确认has_active_collection, path拒绝../和绝对路径, sst_file通过get_app_state追踪",
          "execute": _tool_parse_sst, "parameters": _PARAM_SCHEMAS.get("parse_sst", {}), "permission": "write"},
-        {"name": "import_json", "display_name": "导入JSON", "description": "从 JSON 文件导入翻译集合，根据 action 参数创建槽位或追加到当前集合",
+        {"name": "import_json", "display_name": "导入JSON", "description": "①从JSON文件导入翻译条目(支持标准格式[{key,original,translation,stage,context}]和DSD格式)。②参数: path(必填, .json), action(可选, create_slot默认/append)。③返回: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}。规则: 不记录文件路径供write_back推断, append前需确认has_active_collection, path拒绝../和绝对路径",
          "execute": _tool_import_json, "parameters": _PARAM_SCHEMAS.get("import_json", {}), "permission": "write"},
-        {"name": "import_strings", "display_name": "导入Strings", "description": "从 .strings 文件导入翻译，根据 action 参数创建槽位或追加到当前集合",
-         "execute": _tool_import_strings, "parameters": _PARAM_SCHEMAS.get("import_strings", {}), "permission": "write"},
     ])
 
 

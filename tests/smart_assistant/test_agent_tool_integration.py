@@ -6,213 +6,25 @@
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 import threading
 import unittest
 from unittest.mock import MagicMock
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+from tests.conftest import (
+    make_entry,
+    make_test_collection,
+    MockAppContext,
+    MockSignal,
+    MockToolSpec,
+)
 
-from src.transbridge.converter.translation_entry import TranslationEntry
 from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from src.transbridge.ui.context import CollectionSlot
 from src.transbridge.smart_assistant.tools.base import (
     ToolResult, ExecutionContext, filter_entries, execute_with_guardrails,
     require_collection, validate_params,
 )
 from src.transbridge.smart_assistant.tools.task_manager import TaskManager
-
-
-# ── Test Helpers ────────────────────────────────────────────────────────
-
-def make_entry(eid: str, original: str = "", translation: str = "",
-               stage: int = 0, context: str = "NPC_:FULL") -> TranslationEntry:
-    return TranslationEntry(
-        id=eid, key=eid, original=original, translation=translation,
-        stage=stage, context=context,
-    )
-
-
-def make_test_collection(n: int = 10) -> TranslationEntryCollection:
-    entries = []
-    _stage_map = [0, 1, 2, 3, 5]
-    for i in range(n):
-        actual_stage = _stage_map[i % 5]
-        ctx = "NPC_:FULL" if i % 3 != 0 else "INFO:NAM1"
-        entries.append(make_entry(
-            f"entry_{i:03d}",
-            original=f"Original text {i}",
-            translation=f"Translation {i}" if actual_stage != 0 else "",
-            stage=actual_stage,
-            context=ctx,
-        ))
-    return TranslationEntryCollection(entries)
-
-
-class MockSignal:
-    def __init__(self):
-        self.calls = []
-    def emit(self, *args):
-        self.calls.append(args)
-    def connect(self, _fn):
-        pass
-
-
-class MockAppContext:
-    """模拟 AppContext，覆盖 ViewModel 层属性和方法。"""
-
-    def __init__(self, collection=None):
-        self._filter_state = {
-            "stage": [], "category": [], "label": [],
-            "search_query": "", "search_field": "text",
-        }
-        self._label_library: dict[str, dict] = {}
-        self._entry_labels: dict[str, set] = {}
-        self._translation_scope = {
-            "stages": [], "labels": [], "categories": [], "action": "include",
-        }
-        self._selected_ids: set = set()
-
-        self.filter_changed = MockSignal()
-        self.label_data_changed = MockSignal()
-        self.collection_changed = MockSignal()
-
-        if collection is not None:
-            slot = CollectionSlot(label="test", collection=collection)
-            self._slots = {"test_key": slot}
-            self._active_key = "test_key"
-        else:
-            self._slots = {}
-            self._active_key = None
-
-        self.esp_path = None
-        self.eet_path = None
-        self.xt_path = None
-        self.active_project = None
-        self.active_variant = None
-        self.workspace = None
-        self._config = MagicMock()
-        self._config.api_token = "test_token"
-
-    # ── collection (proxy to active_slot) ──
-    @property
-    def collection(self):
-        slot = self.active_slot
-        return slot.collection if slot else None
-
-    # ── filter_state ──
-    @property
-    def filter_state(self) -> dict:
-        return dict(self._filter_state)
-
-    @filter_state.setter
-    def filter_state(self, v: dict) -> None:
-        self._filter_state = dict(v)
-        self.filter_changed.emit(dict(self._filter_state))
-
-    def set_filter(self, **kwargs) -> None:
-        changed = False
-        for k, v in kwargs.items():
-            if k in self._filter_state and self._filter_state[k] != v:
-                self._filter_state[k] = v
-                changed = True
-        if changed:
-            self.filter_changed.emit(dict(self._filter_state))
-
-    def clear_filters(self) -> None:
-        self._filter_state = {"stage": [], "category": [], "label": [], "search_query": "", "search_field": "text"}
-        self.filter_changed.emit(dict(self._filter_state))
-
-    # ── labels ──
-    @property
-    def label_library(self) -> dict:
-        return self._label_library
-
-    @label_library.setter
-    def label_library(self, v: dict) -> None:
-        self._label_library = v
-        self.label_data_changed.emit()
-
-    @property
-    def entry_labels(self) -> dict:
-        return self._entry_labels
-
-    @entry_labels.setter
-    def entry_labels(self, v: dict) -> None:
-        self._entry_labels = v
-        self.label_data_changed.emit()
-
-    # ── scope ──
-    @property
-    def translation_scope(self) -> dict:
-        return dict(self._translation_scope)
-
-    @translation_scope.setter
-    def translation_scope(self, v: dict) -> None:
-        stages = v.get("stages", [])
-        if not isinstance(stages, list) or not all(isinstance(s, int) for s in stages):
-            raise TypeError("stages must be list[int]")
-        action = v.get("action", "include")
-        if action not in ("include", "exclude", "only"):
-            raise ValueError(f"invalid action: {action}")
-        self._translation_scope = {
-            "stages": list(stages), "labels": list(v.get("labels", [])),
-            "categories": list(v.get("categories", [])), "action": action,
-        }
-
-    # ── selection ──
-    @property
-    def selected_ids(self) -> set:
-        return self._selected_ids
-
-    @selected_ids.setter
-    def selected_ids(self, v: set) -> None:
-        self._selected_ids = v
-
-    def select_entries(self, entry_ids: list, action: str = "select") -> int:
-        if action == "clear":
-            self._selected_ids.clear()
-        elif action == "select":
-            self._selected_ids.update(entry_ids)
-        elif action == "deselect":
-            self._selected_ids.difference_update(entry_ids)
-        return len(self._selected_ids)
-
-    # ── C10: thread-safe mutation ──
-    def safe_mutate(self, fn) -> None:
-        """Mock safe_mutate: directly call fn (no UI thread scheduling in tests)."""
-        fn()
-
-    # ── slots ──
-    @property
-    def active_slot(self):
-        if self._active_key and self._active_key in self._slots:
-            return self._slots[self._active_key]
-        return None
-
-    @property
-    def slots(self) -> dict:
-        return self._slots
-
-    @property
-    def active_key(self) -> str | None:
-        return self._active_key
-
-    # ── config ──
-    @property
-    def config(self):
-        return self._config
-
-
-class MockToolSpec:
-    def __init__(self, name, permission, execute):
-        self.name = name
-        self.permission = permission
-        self.parameters = {}
-        self.execute = execute
-        self.require_confirmation = False
-        self.is_long_running = False
 
 
 # ── Test: 完整工作流链路 ────────────────────────────────────────────────
@@ -647,7 +459,7 @@ class TestParserWriterTools(unittest.TestCase):
 
     def test_validate_path_extension_whitelist_all(self):
         from src.transbridge.smart_assistant.tools.tool_parser import _validate_path, _VALID_EXTENSIONS
-        for ext in [".esp", ".esm", ".esl", ".xml", ".json", ".strings"]:
+        for ext in [".esp", ".esm", ".esl", ".xml", ".json", ".sst"]:
             self.assertIn(ext, _VALID_EXTENSIONS, f"Extension {ext} should be whitelisted")
 
     def test_validate_path_rejects_binary(self):

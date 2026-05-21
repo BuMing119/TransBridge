@@ -171,25 +171,31 @@ _PARAM_SCHEMAS = {
 
 
 def _register_default_tools():
-    from src.transbridge.smart_assistant.tool_registry import ToolRegistry, ToolSpec
-
-    tools = [
-        ("get_app_state", "应用状态", "返回当前应用状态（集合/项目/版本/筛选/API连接）", _tool_get_app_state, "read"),
-        ("list_collections", "列出集合", "列出所有已加载的翻译集合及基本信息", _tool_list_collections, "read"),
-        ("switch_collection", "切换集合", "切换活跃翻译集合（按名称或索引）", _tool_switch_collection, "write"),
-        ("get_current_filters", "当前筛选", "返回当前筛选状态", _tool_get_current_filters, "read"),
-        ("get_statistics", "翻译统计", "返回集合详细统计（总数/翻译率/stage分布/分类分布）。O8:合并get_collection_summary", _tool_get_statistics, "read"),
+    from src.transbridge.smart_assistant.tool_registry import ToolRegistry
+    ToolRegistry.register_tools("default", [
+        {"name": "get_app_state", "display_name": "应用状态", "description": "①一站式全局状态概览，用于判断当前工作阶段。②参数: 无，只读。③返回: {active_collection, esp_file, eet_file, xt_file(仅文件名), project, variant(版本变体名如\"v1\"), filters, collection_count, has_active_collection, paratranz_configured}。规则: 文件路径仅返回文件名(安全设计); 此处\"阶段\"指项目工作阶段，与翻译条目stage字段不同。",
+         "execute": _tool_get_app_state, "permission": "read",
+         "parameters": _PARAM_SCHEMAS.get("get_app_state", {})},
+        {"name": "list_collections", "display_name": "列出集合", "description": "①列出所有已加载翻译集合及基本信息。②参数: 无，只读。③返回: {collections: [{key, label, esp_name(非ESP来源为null), entry_count, is_active}]}。规则: 集合生命周期——parser action=create_slot创建, 创建时自动激活或switch_collection切换, 此处查询, UI移除; 筛选/作用域绑定到活跃集合。",
+         "execute": _tool_list_collections, "permission": "read",
+         "parameters": _PARAM_SCHEMAS.get("list_collections", {})},
+        {"name": "switch_collection", "display_name": "切换集合", "description": "①切换活跃翻译集合，后续所有操作针对新集合。②参数: collection_name(key或label, 优先), slot_index(0-based数组位置, 从list_collections推算)。③返回: {active_collection}。规则: 同时传入时collection_name优先; 建议使用collection_name而非slot_index; write权限。",
+         "execute": _tool_switch_collection, "permission": "write",
+         "parameters": _PARAM_SCHEMAS.get("switch_collection", {})},
+        {"name": "get_current_filters", "display_name": "当前筛选", "description": "①返回当前筛选条件完整快照。②参数: 无，只读。③返回: {filter_state: {stage(num[]: 0=未翻译/1=已翻译/2=有疑问/3=已检查/5=已审核/9=已锁定/-1=已隐藏, 4/6/7/8为ParaTranz预留), category, label, search_query, search_field(id/key/original/translation/context/all)}, active_filter_count}。规则: category通过get_statistics的category_distribution发现; label通过list_labels发现; 修改筛选用set_filters。",
+         "execute": _tool_get_current_filters, "permission": "read",
+         "parameters": _PARAM_SCHEMAS.get("get_current_filters", {})},
+        {"name": "get_statistics", "display_name": "翻译统计", "description": "①全量统计(不受当前筛选影响)。②参数: 无，只读。③返回: {total, translated, untranslated, translation_rate(%), stage_distribution({\"未翻译\":120,...}), category_distribution({\"NPC_\":150,...}, top 20)}。规则: 用于概览; 筛选后的条目用get_visible_entries。",
+         "execute": _tool_get_statistics, "permission": "read",
+         "parameters": _PARAM_SCHEMAS.get("get_statistics", {})},
         # Story 12: 项目管理
-        ("list_local_projects", "本地项目", "列出本地工作空间中的项目", _tool_list_local_projects, "read"),
-        ("get_current_project", "当前项目", "获取当前活跃项目信息", _tool_get_current_project, "read"),
-    ]
-
-    for name, display_name, description, execute, permission in tools:
-        ToolRegistry.register(ToolSpec(
-            name=name, display_name=display_name, description=description,
-            parameters=_PARAM_SCHEMAS.get(name, {}),
-            execute=execute, permission=permission,
-        ), namespace="default")
+        {"name": "list_local_projects", "display_name": "本地项目", "description": "①列出本地工作空间中的项目。②参数: 无，只读。③返回: {projects: [{name(仅目录名, 无完整路径)}]}。规则: workspace为本地项目目录, 每子目录为一个项目; 项目CRUD仅通过UI(无工具支持)。",
+         "execute": _tool_list_local_projects, "permission": "read",
+         "parameters": _PARAM_SCHEMAS.get("list_local_projects", {})},
+        {"name": "get_current_project", "display_name": "当前项目", "description": "①轻量当前项目查询。②参数: 无，只读。③返回: {name, variant, collection}。规则: vs get_app_state——此工具仅返回项目信息(更轻量); get_app_state返回完整上下文含文件路径/筛选/API状态; 文件路径不在此返回(安全设计), 需用get_app_state。",
+         "execute": _tool_get_current_project, "permission": "read",
+         "parameters": _PARAM_SCHEMAS.get("get_current_project", {})},
+    ])
 
 
 _register_default_tools()

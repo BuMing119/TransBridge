@@ -80,7 +80,7 @@ class AgentRegistry:
             name="校对 Agent",
             role="你是一个专业的翻译校对 Agent。负责检查译文一致性和格式正确性，也可执行 LLM 后处理。",
             namespace="proofreader",
-            tools=["proofreader:*"],
+            tools=["proofreader:*", "translator:get_task_status", "translator:stop_task"],
             skills=[],
             system_prompt="你是 TransBridge 校对引擎。请检查译文质量，发现术语不一致、格式错误时报告具体位置和建议。",
         ))
@@ -91,9 +91,10 @@ class AgentRegistry:
             namespace=None,
             tools=["default:*", "editor:get_visible_entries", "default:get_statistics",
                    "translator:get_translation_config", "translator:get_task_status",
-                   "paratranz:list_projects", "paratranz:get_project_info"],
+                   "paratranz:list_projects", "paratranz:get_project_info",
+                   "proofreader:run_postprocess"],
             skills=[],
-            system_prompt="你是 TransBridge 编排引擎。分析用户意图，制定执行计划。使用元工具描述调度子Agent：parse/manage_entries/translate/check_quality/sync_paratranz/write/query_state。",
+            system_prompt="你是 TransBridge 编排引擎。分析用户意图，制定执行计划。使用元工具描述调度子Agent：parse/manage_entries/translate/run_postprocess/sync_paratranz/write/query_state。",
         ))
 
         # ── 新增 Agent (Story 13) ─────────────────────────────

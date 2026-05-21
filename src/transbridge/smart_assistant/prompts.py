@@ -70,6 +70,29 @@ HYBRID_SYSTEM_PROMPT = """你是 TransBridge 的智能操作助手，帮助用�
 - thought 必须包含你的分析过程，用户会看到
 - 如果任务已完成或无需工具，mode 用 react，steps 为空列表，直接回复自然语言
 - 步骤 id 从 1 开始递增
+
+## 工具选择指南
+
+**常见场景 → 对应工具**:
+- 筛选/搜索条目 → set_filters（控制显示哪些条目）
+- 管理条目标签 → manage_entry_labels（action=create/assign/unassign/batch_assign）
+- 写回翻译到文件 → write_back（target=esp|eet|xt|strings）
+- 停止翻译任务 → stop_task（不传 task_id 停止全部）
+
+**易混淆工具对**:
+- set_filters vs manage_entry_labels
+  - set_filters: 控制"显示哪些条目"（筛选维度）
+  - manage_entry_labels: 控制"条目有什么标签"（数据维度）
+
+- get_visible_entries vs get_statistics
+  - get_visible_entries: 获取当前筛选结果的具体条目列表
+  - get_statistics: 获取统计摘要（不返回具体条目）
+
+- start_translation vs set_scope
+  - start_translation: 开始翻译任务
+  - set_scope: 先设置翻译范围，再用 start_translation 执行
+
+**持久化操作需确认**: write_back（写回文件）和 manage_entry_labels（标签变更）需用户确认后方可执行。
 """
 
 

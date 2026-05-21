@@ -146,6 +146,7 @@ def _tool_start_translation(args: dict, ctx, collection) -> ToolResult:
                 "failed_count": result.failed_count,
                 "skipped_count": result.skipped_count,
             })
+            ctx.safe_mutate(lambda: ctx.notify_collection_modified())
         except InterruptedError:
             tm.set_status(task_id, "cancelled")
             tm.notify_failed(task_id, "任务已被用户停止")
@@ -169,16 +170,49 @@ def _tool_start_translation(args: dict, ctx, collection) -> ToolResult:
 
 @require_collection
 def _tool_start_polish(args: dict, ctx, collection) -> ToolResult:
-    """启动 AI 润色任务（后台线程 + TaskManager 管理）。"""
-    entry_ids = args.get("entry_ids", [])
-    intensity = args.get("intensity", "medium")
+    """启动 AI 润色任务（后台线程 + TaskManager 管理）。
 
-    if not entry_ids:
+    entry_ids 和 scope 至少提供一个：
+    - scope="all" / "passed" / "has_issues"（默认 "all"），自动筛选条目
+    - 若同时提供 entry_ids，scope 被忽略
+    """
+    entry_ids = args.get("entry_ids")
+    intensity = args.get("intensity", "medium")
+    scope = args.get("scope", "all")
+
+    if scope not in ("all", "passed", "has_issues"):
+        return ToolResult.fail(f"无效 scope: {scope}，可选: all, passed, has_issues")
+
+    if entry_ids is None:
+        # 按 scope 筛选条目
+        all_entries = list(collection)
+        if scope == "all":
+            targets = [e for e in all_entries if e.translation]
+        elif scope == "passed":
+            # stage 1(检查通过) 或 3+(审核通过及以上) → 已通过检查的条目
+            targets = [e for e in all_entries if e.translation and e.stage in (1, 3, 4, 5, 6)]
+        else:  # has_issues
+            # stage 2(待审核) → 有问题的条目
+            targets = [e for e in all_entries if e.translation and e.stage == 2]
+
+        if not targets:
+            scope_labels = {"all": "有译文", "passed": "已通过检查", "has_issues": "待审核"}
+            return ToolResult.fail(f"没有符合 scope={scope}（{scope_labels.get(scope, scope)}）的条目")
+        entry_ids = [e.key for e in targets]
+    elif not entry_ids:
         return ToolResult.fail("请指定要润色的 entry_ids")
+    else:
+        targets = [collection.get(eid) for eid in entry_ids if collection.get(eid)]
+        entry_ids = [e.key for e in targets]
+
+    if not targets:
+        return ToolResult.fail("所有指定的 entry_id 均无效，未找到匹配条目")
 
     stop_event = threading.Event()
     tm = TaskManager()
-    task_id = tm.register(stop_event=stop_event, metadata={"intensity": intensity, "type": "polish"})
+    task_id = tm.register(stop_event=stop_event, metadata={
+        "intensity": intensity, "scope": scope, "type": "polish",
+    })
 
     def _run():
         try:
@@ -186,46 +220,69 @@ def _tool_start_polish(args: dict, ctx, collection) -> ToolResult:
             from src.transbridge.infra.llm_client import create_llm_client
             from src.transbridge.paratranz.config_manager import LLMConfig as _LLMCfg
 
-            # B5: 创建 LLMClient
             llm_cfg = _LLMCfg.load_from_file()
             llm_client = create_llm_client(llm_cfg)
 
-            # C6: 值映射 light/medium/heavy → light/moderate/aggressive
             _level_map = {"light": "light", "medium": "moderate", "heavy": "aggressive"}
             polish_level = _level_map.get(intensity, "moderate")
 
-            # B3: 传入必填参数 llm_client，参数名 polish_level
-            polisher = LLMPolisher(llm_client=llm_client, polish_level=polish_level)
+            from src.transbridge.ai_translator.term_database import TermDatabaseManager
+            term_mgr = TermDatabaseManager(
+                config=llm_cfg,
+                esp_path=getattr(ctx, 'esp_path', None) or "",
+            )
+            term_mgr.load_all()
 
-            targets = [collection.get(eid) for eid in entry_ids if collection.get(eid)]
+            polisher = LLMPolisher(
+                llm_client=llm_client,
+                term_manager=term_mgr,
+                game_profile=llm_cfg.game_profile,
+                target_lang=llm_cfg.target_lang,
+                polish_level=polish_level,
+            )
+
+            from src.transbridge.converter.translation_entry import TranslationEntry
+            results = {}
             total = len(targets)
             for i, entry in enumerate(targets):
                 if stop_event.is_set():
                     raise InterruptedError("任务已被用户停止")
                 try:
-                    polisher.polish(entry)
+                    result = polisher.polish(entry)
+                    results[entry.key] = result
+                    if result.polished_translation and result.confidence > 0:
+                        updated = TranslationEntry(
+                            id=entry.id, key=entry.key,
+                            original=entry.original,
+                            translation=result.polished_translation,
+                            stage=entry.stage,
+                            context=entry.context,
+                        )
+                        collection.add(updated, overwrite=True)
                 except Exception as exc:
                     logger.warning("润色条目 %s 失败: %s", getattr(entry, 'key', '?'), exc)
                 tm.update_progress(task_id, {"current": i + 1, "total": total})
 
             tm.set_status(task_id, "completed")
 
-            # C5: 写入 _last_report 供 get_quality_report 查询
             import time
             from src.transbridge.smart_assistant.tools import tool_proofreader
+            polished_count = sum(1 for r in results.values() if r.polished_translation and r.confidence > 0)
             tool_proofreader._last_report = {
                 "phase": "polish",
                 "entry_count": len(entry_ids),
+                "polished_count": polished_count,
                 "polish_level": polish_level,
+                "scope": scope,
                 "total": total,
                 "timestamp": time.time(),
             }
 
-            # B2: 通知完成
             tm.notify_completed(task_id, {
                 "status": "completed",
                 "entry_count": len(entry_ids),
             })
+            ctx.safe_mutate(lambda: ctx.notify_collection_modified())
         except InterruptedError:
             tm.set_status(task_id, "cancelled")
             tm.notify_failed(task_id, "任务已被用户停止")
@@ -241,41 +298,63 @@ def _tool_start_polish(args: dict, ctx, collection) -> ToolResult:
     thread.start()
 
     return ToolResult.ok(
-        f"润色任务已启动 (intensity={intensity}, {len(entry_ids)}条)",
-        data={"task_id": task_id, "intensity": intensity, "entry_count": len(entry_ids)},
+        f"润色任务已启动 (scope={scope}, intensity={intensity}, {len(entry_ids)}条)",
+        data={"task_id": task_id, "intensity": intensity, "scope": scope, "entry_count": len(entry_ids)},
     )
 
 
-# ── 停止翻译 ──────────────────────────────────────────────────
+# ── 停止/暂停/恢复 ──────────────────────────────────────────────
 
 def _tool_stop_task(args: dict, ctx) -> ToolResult:
-    """Story 18: 合并 2→1。停止指定任务或所有活跃任务。task_id 可选，None/""=停止全部。"""
+    """Story 18+26: 停止/暂停/恢复任务。task_id 可选，None/""=操作全部活跃任务。
+    action: "stop"(默认)/"pause"/"resume"。"""
     task_id = args.get("task_id")
+    action = args.get("action", "stop")
+    if action not in ("stop", "pause", "resume"):
+        return ToolResult.fail(f"无效 action: {action}，可选: stop, pause, resume")
+
     tm = TaskManager()
 
     if not task_id:
         active = tm.list_active()
         if not active:
-            return ToolResult.ok("当前无运行中的任务", data={"stopped_task_ids": []})
-        stopped, failed = [], []
+            return ToolResult.ok("当前无运行中的任务", data={"affected_task_ids": []})
+        affected, failed = [], []
         for tid in active:
-            if tm.cancel(tid):
-                stopped.append(tid)
+            if action == "pause":
+                ok = tm.pause(tid)
+            elif action == "resume":
+                ok = tm.resume(tid)
+            else:
+                ok = tm.cancel(tid)
+            if ok:
+                affected.append(tid)
             else:
                 failed.append(tid)
-        data = {"stopped_task_ids": stopped}
+        data = {"affected_task_ids": affected, "action": action}
         if failed:
             data["failed_task_ids"] = failed
-            return ToolResult.ok(f"已停止 {len(stopped)} 个任务，{len(failed)} 失败",
-                                data=data, partial=True)
-        return ToolResult.ok(f"已停止全部 {len(stopped)} 个任务", data=data)
+            return ToolResult.partial_ok(f"已{_action_label(action)} {len(affected)} 个任务，{len(failed)} 失败",
+                                        data=data)
+        return ToolResult.ok(f"已{_action_label(action)}全部 {len(affected)} 个任务", data=data)
 
-    success = tm.cancel(task_id)
-    if success:
-        return ToolResult.ok(f"任务 {task_id} 已发送停止信号",
-                            data={"task_id": task_id, "stopped": True})
-    return ToolResult.fail(f"任务不存在或已结束: {task_id}",
-                           data={"task_id": task_id, "stopped": False})
+    if action == "pause":
+        ok = tm.pause(task_id)
+    elif action == "resume":
+        ok = tm.resume(task_id)
+    else:
+        ok = tm.cancel(task_id)
+
+    if ok:
+        label = _action_label(action)
+        return ToolResult.ok(f"任务 {task_id} 已{label}",
+                            data={"task_id": task_id, "action": action})
+    return ToolResult.fail(f"任务不存在或已结束: {task_id} (action={action})")
+
+
+def _action_label(action: str) -> str:
+    """action → 中文标签。"""
+    return {"stop": "发送停止信号", "pause": "暂停", "resume": "恢复"}.get(action, action)
 
 
 # ── 查询状态 ──────────────────────────────────────────────────
@@ -518,11 +597,13 @@ _PARAM_SCHEMAS = {
         "entry_ids": {"type": "list", "required": False, "description": "目标条目ID列表，默认全部未翻译"},
     },
     "start_polish": {
-        "entry_ids": {"type": "list", "required": True, "description": "要润色的条目ID列表"},
+        "entry_ids": {"type": "list", "required": False, "description": "要润色的条目ID列表（与 scope 至少提供一个）"},
+        "scope": {"type": "str", "required": False, "description": "润色范围: all(全部有译文)/passed(已通过检查,stage=1/3/4/5/6)/has_issues(待审核,stage=2)，默认 all"},
         "intensity": {"type": "str", "required": False, "description": "润色强度: light/medium/heavy，默认 medium"},
     },
     "stop_task": {
-        "task_id": {"type": "str", "required": False, "description": "要停止的任务ID（不传则停止所有运行中任务）"},
+        "task_id": {"type": "str", "required": False, "description": "要操作的任务ID（不传则操作所有运行中任务）"},
+        "action": {"type": "str", "required": False, "description": "操作类型: stop(停止，默认)/pause(暂停)/resume(恢复)"},
     },
     "get_task_status": {
         "task_id": {"type": "str", "required": False, "description": "任务ID（不传则返回所有任务摘要）"},
@@ -557,32 +638,32 @@ _PARAM_SCHEMAS = {
 def _register_translator_tools():
     from src.transbridge.smart_assistant.tool_registry import ToolRegistry
     ToolRegistry.register_tools("translator", [
-        {"name": "start_translation", "display_name": "启动翻译", "description": "启动AI翻译任务（后台运行），返回task_id用于查询进度和停止",
+        {"name": "start_translation", "display_name": "启动翻译", "description": "①启动AI翻译后台任务。②参数: mode=translate(默认)/polish/mixed(mixed同translate), entry_ids=key列表(可选,不传则用set_scope作用域,默认stage=0未翻译)。③返回: {task_id, mode}。④规则: 前置需API key已配,先调get_translation_config确认配置;允许并行多任务。",
          "execute": _tool_start_translation, "permission": "write", "is_long_running": True,
          "require_confirmation": True, "parameters": _PARAM_SCHEMAS.get("start_translation", {})},
-        {"name": "start_polish", "display_name": "启动润色", "description": "启动AI润色任务（后台运行），返回task_id",
+        {"name": "start_polish", "display_name": "启动润色", "description": "①启动AI润色后台任务。②参数: entry_ids或scope至少传一(同时传entry_ids优先), scope=all(全部有译文)/passed(stage=1/3/4/5/6)/has_issues(2), intensity=light/medium/heavy(默认medium)。③返回: {task_id, intensity, scope, entry_count}。④规则: 前置需API key已配,先调get_translation_config确认。",
          "execute": _tool_start_polish, "permission": "write", "is_long_running": True,
          "require_confirmation": True, "parameters": _PARAM_SCHEMAS.get("start_polish", {})},
-        {"name": "stop_task", "display_name": "停止任务", "description": "①需要停止正在运行的翻译/润色任务时用我（替代已废弃的 stop_all_tasks）。②task_id 可选：不传或传空串则停止所有活跃任务，传具体 task_id 则只停止指定任务。③示例: stop_task task_id=\"abc123\" 停止指定任务 / stop_task 停止所有活跃任务",
+        {"name": "stop_task", "display_name": "停止/暂停/恢复", "description": "①控制后台任务(停止/暂停/恢复)。②参数: task_id(可选,不传则操作所有活跃任务), action=stop(默认,不可恢复)/pause(等当前批次完成)/resume。③单个: {task_id, action},全部: {affected_task_ids, action}。④规则: stop不可逆;活跃=仅running+paused;需用户确认。",
          "execute": _tool_stop_task, "permission": "write", "require_confirmation": True,
          "parameters": _PARAM_SCHEMAS.get("stop_task", {})},
-        {"name": "get_task_status", "display_name": "查询任务状态", "description": "查询指定任务或所有任务的进度状态",
+        {"name": "get_task_status", "display_name": "查询任务状态", "description": "①查询任务进度。②参数: task_id(可选)。③单个返回{task_id, status, progress{current,total,message}, created_at, metadata},全部返回{active_count, total_count, tasks[{task_id, status, metadata}]}(不含progress/created_at)。④status: running/paused/completed/cancelled/failed。",
          "execute": _tool_get_task_status, "permission": "read",
          "parameters": _PARAM_SCHEMAS.get("get_task_status", {})},
         # Story 09: 翻译配置
-        {"name": "get_translation_config", "display_name": "翻译配置", "description": "返回当前LLM翻译配置（provider/model/profile等）",
+        {"name": "get_translation_config", "display_name": "翻译配置", "description": "①返回LLM翻译配置完整快照(只读)。②无参数。③返回: provider/model/api_key_configured/temperature/max_tokens/target_lang/game_profile/term_priority/本地路径/post_process各项开关/available_profiles。④规则: game_profile无预定义值;调set_translation_config/set_term_config前先调此工具获取available_profiles和当前状态。",
          "execute": _tool_get_translation_config, "permission": "read",
          "parameters": _PARAM_SCHEMAS.get("get_translation_config", {})},
-        {"name": "set_translation_config", "display_name": "设置翻译配置", "description": "更新LLM翻译参数。H7: profile切换预设端点方案（非自由输入URL）",
+        {"name": "set_translation_config", "display_name": "设置翻译配置", "description": "①更新LLM翻译参数(只传需修改项)。②参数: profile(必须从available_profiles选), model(provider相关,不可枚举), temperature(0.0-2.0), max_tokens, target_lang(如chinese), game_profile。③返回: {changed_fields, profile}。④规则: 先调get_translation_config获取available_profiles列表;profile不可自由输入。",
          "execute": _tool_set_translation_config, "permission": "write",
          "parameters": _PARAM_SCHEMAS.get("set_translation_config", {})},
-        {"name": "set_scope", "display_name": "设置作用域", "description": "设置翻译作用域（stages/labels/categories/action）",
+        {"name": "set_scope", "display_name": "设置作用域", "description": "①设置翻译作用域(start_translation不传entry_ids时的默认范围)。②参数: stages[阶段号], labels[标签名], categories[分类名], action=include/exclude/only。③返回作用域快照。④规则: 维度间AND维度内OR;labels/categories需先用list_labels/get_statistics确认存在;include/only当前行为相同。",
          "execute": _tool_set_scope, "permission": "write",
          "parameters": _PARAM_SCHEMAS.get("set_scope", {})},
-        {"name": "get_scope_preview", "display_name": "作用域预览", "description": "预览当前作用域下匹配的条目统计",
+        {"name": "get_scope_preview", "display_name": "作用域预览", "description": "①预览当前作用域匹配条目统计。②无参数。③返回: {matched, total, scope{stages,labels,categories,action}}。④规则: 仅返回计数非条目列表;默认作用域=全部未翻译(stage=0);先调set_scope再调本工具确认范围。",
          "execute": _tool_get_scope_preview, "permission": "read",
          "parameters": _PARAM_SCHEMAS.get("get_scope_preview", {})},        {"name": "set_term_config", "display_name": "术语配置",
-         "description": "设置术语数据库配置。term_sources 优先级列表(可选: dynamic/paratranz/json/excel) + 本地文件路径。修改前先调用 get_translation_config 查看当前配置",
+         "description": "①设置术语来源优先级与本地路径。②参数: term_sources优先级列表(dynamic/paratranz/json/excel,顺序决定优先级), json_path, excel_path。dynamic=AI翻译中自动提取,始终可用。③返回: {changed}。④规则: 先调get_translation_config查看当前配置;空列表禁用所有来源;无效来源名被拒绝。",
          "execute": _tool_set_term_config, "permission": "write",
          "parameters": _PARAM_SCHEMAS.get("set_term_config", {})},
 

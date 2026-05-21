@@ -162,8 +162,12 @@ def _tool_select_entries(args: dict, ctx) -> ToolResult:
         return ToolResult.fail(f"无效操作: {action}，可选: select, deselect, clear")
 
     count = ctx.select_entries(entry_ids, action)
+    selected = list(ctx.selected_ids) if hasattr(ctx, 'selected_ids') else []
     action_names = {"select": "选中", "deselect": "取消选中", "clear": "清空选择"}
-    return ToolResult.ok(f"{action_names.get(action, action)}完成，当前已选 {count} 条", data={"selected_count": count})
+    return ToolResult.ok(
+        f"{action_names.get(action, action)}完成，当前已选 {count} 条",
+        data={"selected_count": count, "selected_ids": selected},
+    )
 
 
 # ── 编辑 ──────────────────────────────────────────────────────
@@ -376,21 +380,21 @@ def _tool_manage_entry_labels(args: dict, ctx, collection=None) -> ToolResult:
 def _register_editor_tools():
     from src.transbridge.smart_assistant.tool_registry import ToolRegistry
     ToolRegistry.register_tools("editor", [
-        {"name": "set_filters", "display_name": "设置筛选", "description": "①需要筛选/搜索翻译条目时用我（替代已废弃的 filter_by_stage/category/label/search_entries）。②stages=[0|1|2|3|5|9|-1]（0=未翻译 1=已翻译 2=有疑问 3=已检查 5=已审核 9=已锁定 -1=已隐藏），search_field=id|key|original|translation|context|all（默认 original），None=保持/[]=清除，clear=True 先清空再设置。③示例: set_filters stages=[0] 只看未翻译 / set_filters stages=[0] search_query=\"龙\" search_field=all 搜索关键词",
+        {"name": "set_filters", "display_name": "设置筛选", "description": "①设置条目表格筛选条件，多维度自由组合，仅传需修改维度，未传维度保持不变。②参数: stages(可选,list,0/1/2/3/5/9/-1), categories(可选,list), labels(可选,list), search_query(可选,str), search_field(可选,id/key/original/translation/context/all), clear(可选,bool,默认false,先清空再应用)。None=保持当前值，[]=清除。③返回: 筛选状态快照{stage,category,label,search_query,search_field}，无变更时返回{unchanged:true}。规则: 修改前用get_current_filters预检当前筛选状态；后续get_visible_entries/get_statistics/batch_assign均受此筛选影响。示例: set_filters stages=[0] 只看未翻译；set_filters clear=true stages=[1] search_field=all 全新筛选",
          "execute": _tool_set_filters, "permission": "read", "parameters": _PARAM_SCHEMAS.get("set_filters", {})},
-        {"name": "get_visible_entries", "display_name": "获取可见条目", "description": "获取当前筛选条件下可见的条目列表（分页，上限200）",
+        {"name": "get_visible_entries", "display_name": "获取可见条目", "description": "①获取当前筛选下可见条目列表(分页)。原文和译文均硬编码截断至200字符，无全文本检索通道。②参数: limit(可选,int,默认50,最大200), offset(可选,int,默认0)。③返回: {entries:[{key,id,original,translation,stage}], total_count, truncated}。规则: key字段为条目标识符，传给其他工具的entry_id/entry_ids参数；先用set_filters设筛选条件；truncated=true表示还有更多条目；统计信息用get_statistics，勿遍历全部分页",
          "execute": _tool_get_visible_entries, "permission": "read", "parameters": _PARAM_SCHEMAS.get("get_visible_entries", {})},
-        {"name": "select_entries", "display_name": "选择条目", "description": "选择/取消选择条目（使用独立选择集合，不影响标签系统）",
+        {"name": "select_entries", "display_name": "选择条目", "description": "①选中/取消选中条目，选择集合为独立临时存储，与标签系统隔离。②参数: action(可选,select/deselect/clear,默认select), entry_ids(select/deselect时必填,key值列表,clear时无需传)。③返回: {selected_count, selected_ids}。规则: 选择状态为临时不持久化；不影响标签(标签用manage_entry_labels)；典型流程: get_visible_entries取key→select_entries action=select→set_stage批量标记",
          "execute": _tool_select_entries, "permission": "write", "parameters": _PARAM_SCHEMAS.get("select_entries", {})},
-        {"name": "edit_translation", "display_name": "编辑翻译", "description": "编辑单条条目的翻译文本，可同时设置翻译阶段",
+        {"name": "edit_translation", "display_name": "编辑翻译", "description": "①修改单条条目的翻译文本，可同时调整翻译阶段。与set_stage区别: 本工具改译文+可选stage，单条；set_stage只改阶段，可批量。②参数: entry_id(必填,key值), new_translation(必填), new_stage(可选,0/1/2/3/5/9/-1,4/6/7/8为ParaTranz预留不可用)。不传则保持原stage。③返回: {entry_id, old_translation, new_translation, stage, stage_changed}(译文截断至100字)。错误: 条目不存在→fail；stage值非法→fail，提示合法值列表",
          "execute": _tool_edit_translation, "permission": "write", "parameters": _PARAM_SCHEMAS.get("edit_translation", {})},
-        {"name": "set_stage", "display_name": "批量设置阶段", "description": "批量设置多条条目的翻译阶段",
+        {"name": "set_stage", "display_name": "批量设置阶段", "description": "①批量设置多条条目的翻译阶段标记，不修改译文。与edit_translation区别: 本工具只改阶段、可批量；edit_translation改文本、单条。②参数: entry_ids(必填,key值列表,空列表静默返回{updated_count:0}), stage(必填,0/1/2/3/5/9/-1,4/6/7/8预留不可用)。③返回: 全部成功→{updated_count}；部分条目未找到→额外含{not_found}。规则: 流转路径0(未翻译)→1(已翻译)→2(有疑问)→3(已检查)→5(已审核)；9(已锁定)/-1(已隐藏)为特殊状态不参与常规流转。典型: get_visible_entries→select_entries→set_stage stage=3",
          "execute": _tool_set_stage, "permission": "write", "parameters": _PARAM_SCHEMAS.get("set_stage", {})},
         # Story 20: manage_entry_labels 合并 4→1
-        {"name": "list_labels", "display_name": "列出标签", "description": "列出所有已定义的标签及其使用次数",
+        {"name": "list_labels", "display_name": "列出标签", "description": "①列出所有已定义标签及其信息和使用次数(只读)。②参数: 无。③返回: {labels:[{id,name,color,count}]}。规则: 标签库为空/未初始化时返回空列表不报错；所有标签操作(assign/unassign/batch_assign)使用name字段，id仅供内部追踪不应传给其他工具；创建/修改标签用manage_entry_labels",
          "execute": _tool_list_labels, "permission": "read", "parameters": _PARAM_SCHEMAS.get("list_labels", {})},
         {"name": "manage_entry_labels", "display_name": "管理条目标签",
-         "description": "①需要管理标签（创建/分配/取消/批量分配）时用我（替代已废弃的 create_label/assign_label/remove_label/batch_assign_label）。②action=create|assign|unassign|batch_assign。create 需 name+[color]；assign/unassign 需 name+entry_ids；batch_assign 需 name，对当前筛选范围内所有条目操作。③示例: manage_entry_labels action=create name=\"待审核\" color=\"#FF0000\" 创建标签 / manage_entry_labels action=assign name=\"待审核\" entry_ids=[\"abc\",\"def\"] 分配标签",
+         "description": "①管理条目标签(数据层)——创建标签、分配/移除条目标签、批量分配，通过action参数选择操作类型。与set_filters区别: 本工具改变条目标签关系(数据层)，set_filters控制表格显示(视图层)。②参数: action(必填,create/assign/unassign/batch_assign), name(必填,标签名), color(可选,hex,仅create,默认#409EFF), entry_ids(assign/unassign必填,key值列表)。③返回: create→{label_id,name,color}；assign→{assigned_count}；unassign→{removed_count}；batch_assign→{assigned_count,filter_total}(需用户确认，取消则assigned_count=0)。规则: label_id仅create时返回，后续assign/unassign/batch_assign使用name而非id；批量分配前先用set_filters确认范围；先list_labels确保标签存在。示例: create标签→batch_assign→set_filters按标签筛选→get_visible_entries",
          "execute": _tool_manage_entry_labels, "permission": "write", "require_confirmation": True,
          "parameters": _PARAM_SCHEMAS.get("manage_entry_labels", {})},
     ])

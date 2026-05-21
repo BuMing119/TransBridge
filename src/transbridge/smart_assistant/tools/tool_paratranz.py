@@ -5,25 +5,24 @@ from .base import ToolResult, require_collection
 
 
 def _get_paratranz_client(ctx, project_id=None):
-    """获取 ParatranzClient 并解析 project_id。M30: 消除 7 个函数中重复的 import + 构造 + pid 解析模式。
+    """获取 ParatranzProjectAPI 并解析 project_id。M30: 消除 7 个函数中重复的 import + 构造 + pid 解析模式。
 
     Returns:
-        (client, pid): client 实例和解析后的 project_id（可能为 None）。
+        (client, pid): ParatranzProjectAPI 实例和解析后的 project_id（可能为 None）。
     """
-    from src.transbridge.paratranz import ParatranzClient
-    client = ParatranzClient(ctx.config)
+    from src.transbridge.paratranz import ParatranzProjectAPI
+    client = ParatranzProjectAPI(ctx.config)
     # 优先显式传入的 project_id，其次 ctx.paratranz_project_id（Story 15），最后 ctx.current_project
     pid = project_id or getattr(ctx, 'paratranz_project_id', None) or (ctx.current_project.get("id") if ctx.current_project else None)
     return client, pid
 
 
 def _tool_list_projects(args: dict, ctx) -> ToolResult:
-    """列出 ParaTranz 项目（all/mine）。"""
-    view = args.get("view", "mine")
+    """列出 ParaTranz 项目。uid="my" 查看我的项目，不传则查看全部。"""
+    uid = args.get("uid", "my")
     try:
-        from src.transbridge.paratranz import ParatranzClient
-        client = ParatranzClient(ctx.config)
-        projects = client.list_projects(view=view)
+        client, _ = _get_paratranz_client(ctx)
+        projects = client.list_projects(page=1, page_size=200, uid=uid)
         summary = [{"id": p.get("id"), "name": p.get("name"), "visibility": p.get("visibility")}
                    for p in (projects or [])]
         return ToolResult.ok(f"找到 {len(summary)} 个项目", data={"projects": summary})
@@ -146,12 +145,25 @@ def _tool_download_entries(args: dict, ctx) -> ToolResult:
 
 def _tool_export_artifact(args: dict, ctx) -> ToolResult:
     """导出 ParaTranz 工件。"""
+    from src.transbridge.paratranz.api.paratranz_export_api import ParatranzExportAPI
     client, pid = _get_paratranz_client(ctx, args.get("project_id"))
     if not pid:
         return ToolResult.fail("请指定 project_id")
     try:
-        result = client.export_artifact(pid)
-        return ToolResult.ok("工件导出请求已提交", data=result if isinstance(result, dict) else {"result": str(result)})
+        export_api = ParatranzExportAPI(ctx.config)
+        # 触发导出
+        job = export_api.trigger_export(pid)
+        # 轮询等待完成（最长 30 秒）
+        import time
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            time.sleep(2)
+            artifacts = export_api.get_artifacts(pid)
+            if artifacts:
+                latest = artifacts[-1] if isinstance(artifacts, list) else artifacts
+                return ToolResult.ok("工件导出完成", data=latest if isinstance(latest, dict) else {"artifact": str(latest)})
+        return ToolResult.ok("导出已触发，仍在处理中（超时未完成）",
+                           data={"job": job, "status": "pending"})
     except Exception as exc:
         return ToolResult.fail(f"导出失败: {exc}")
 
@@ -177,8 +189,7 @@ def _tool_get_paratranz_project(args: dict, ctx) -> ToolResult:
     if not pid:
         return ToolResult.ok("未选择 ParaTranz 项目", data={"selected_project": None})
     try:
-        from src.transbridge.paratranz import ParatranzClient
-        client = ParatranzClient(ctx.config)
+        client, _ = _get_paratranz_client(ctx, pid)
         info = client.get_project(pid)
         return ToolResult.ok(
             f"当前 ParaTranz 项目: {info.get('name')} (id={pid})",
@@ -192,8 +203,7 @@ def _tool_switch_paratranz_project(args: dict, ctx) -> ToolResult:
     """切换当前选中的 ParaTranz 项目。"""
     project_id = args["project_id"]
     try:
-        from src.transbridge.paratranz import ParatranzClient
-        client = ParatranzClient(ctx.config)
+        client, _ = _get_paratranz_client(ctx, project_id)
         info = client.get_project(project_id)  # 验证有效性
         ctx.paratranz_project_id = project_id
         return ToolResult.ok(
@@ -208,7 +218,7 @@ def _tool_switch_paratranz_project(args: dict, ctx) -> ToolResult:
 
 _PARAM_SCHEMAS = {
     "list_projects": {
-        "view": {"type": "str", "required": False, "description": "视图: all/mine，默认 mine"},
+        "uid": {"type": "str", "required": False, "description": "传 \"my\" 查看我的项目（默认），传 \"\" 查看全部项目"},
     },
     "get_project_info": {
         "project_id": {"type": "str", "required": False, "description": "项目ID（不传则使用当前选中项目）"},
@@ -241,32 +251,32 @@ _PARAM_SCHEMAS = {
 def _register_paratranz_tools():
     from src.transbridge.smart_assistant.tool_registry import ToolRegistry
     ToolRegistry.register_tools("paratranz", [
-        {"name": "list_projects", "display_name": "列出项目", "description": "列出ParaTranz项目(all/mine)",
+        {"name": "list_projects", "display_name": "列出项目", "description": "①列出ParaTranz项目。②参数: uid(\"my\"=仅我的项目/默认, \"\"=全部项目)。只读。③返回: {projects:[{id,name,visibility}]}。规则: 查看单项目详情用get_project_info。",
          "execute": _tool_list_projects, "permission": "read",
          "parameters": _PARAM_SCHEMAS.get("list_projects", {})},
-        {"name": "get_project_info", "display_name": "项目信息", "description": "获取项目详细信息",
+        {"name": "get_project_info", "display_name": "项目信息", "description": "①获取项目详细信息。②参数: project_id(可选, 不传则用当前选中项目)。只读。③返回: {id,name,visibility,member_count}。规则: vs get_paratranz_project: 用此工具查看特定项目详情或member_count; 用get_paratranz_project做快速当前项目查询(零参数, 无选中不报错)。",
          "execute": _tool_get_project_info, "permission": "read",
          "parameters": _PARAM_SCHEMAS.get("get_project_info", {})},
-        {"name": "compare_with_remote", "display_name": "对比远程", "description": "对比本地与远程差异(前20条详情)",
+        {"name": "compare_with_remote", "display_name": "对比远程", "description": "①对比本地翻译(ctx.collection)与远程差异。②参数: project_id(可选)。只读。③返回: {only_local,only_remote,different,same,details:[{key,status}](最多20条)}。status: only_local/different。规则: 用get_paratranz_project确认当前项目; 需已加载本地集合。",
          "execute": _tool_compare_with_remote, "permission": "read",
          "parameters": _PARAM_SCHEMAS.get("compare_with_remote", {})},
-        {"name": "upload_entries", "display_name": "上传条目", "description": "上传条目到ParaTranz(long_running)",
+        {"name": "upload_entries", "display_name": "上传条目", "description": "①上传本地条目到ParaTranz。②参数: project_id(可选), entry_ids(可选, key列表来自get_visible_entries, 不传则上传全部), force_overwrite(默认false)。key格式: {record_type}:{form_id}(如NPC_:00012345)。写权限, 长运行, 需确认。③返回: {uploaded,total,failed_items:[{key,error}]}。规则: 100+条目可能触发限流。",
          "execute": _tool_upload_entries, "permission": "write", "is_long_running": True,
          "require_confirmation": True, "parameters": _PARAM_SCHEMAS.get("upload_entries", {})},
-        {"name": "download_entries", "display_name": "下载条目", "description": "下载条目(单阶段,自动附加对比摘要,O7)",
+        {"name": "download_entries", "display_name": "下载条目", "description": "①从远程下载翻译条目。②参数: project_id(可选)。写权限, 长运行, 需确认。③返回: {downloaded_count,entries:[{key,original,translation,stage,context}],diff_summary}。规则: 不会自动修改本地集合, 条目数据需手动处理; 未加载本地集合时diff_summary为null。",
          "execute": _tool_download_entries, "permission": "write", "is_long_running": True,
          "require_confirmation": True, "parameters": _PARAM_SCHEMAS.get("download_entries", {})},
-        {"name": "export_artifact", "display_name": "导出工件", "description": "导出ParaTranz工件",
+        {"name": "export_artifact", "display_name": "导出工件", "description": "①从ParaTranz服务端导出翻译工件包(.zip)。②参数: project_id(可选)。写权限, 长运行, 需确认。③返回: 成功时返回artifact数据; 超时时返回{job,status:\"pending\"}。规则: 异步模型: trigger_export触发→轮询get_artifacts(2s间隔, 30s超时)→成功返回artifact数据或超时返回pending。",
          "execute": _tool_export_artifact, "permission": "write", "is_long_running": True,
-         "parameters": _PARAM_SCHEMAS.get("export_artifact", {})},
-        {"name": "get_upload_history", "display_name": "上传历史", "description": "获取上传历史",
+         "require_confirmation": True, "parameters": _PARAM_SCHEMAS.get("export_artifact", {})},
+        {"name": "get_upload_history", "display_name": "上传历史", "description": "①获取ParaTranz项目上传历史。②参数: project_id(可选), limit(默认20)。只读。③返回: {history:[{id,timestamp,filename,status,entries_count}]}。status: success/failed/processing。规则: 上传前检查上次同步时间, 上传后验证是否成功, 排查同步问题。",
          "execute": _tool_get_upload_history, "permission": "read",
          "parameters": _PARAM_SCHEMAS.get("get_upload_history", {})},
         # Story 15: 项目查询与切换
-        {"name": "get_paratranz_project", "display_name": "PT当前项目", "description": "获取当前选中的 ParaTranz 项目",
+        {"name": "get_paratranz_project", "display_name": "PT当前项目", "description": "①获取当前选中项目。②无参数, 只读。③返回: {id,name,visibility}或无选中时{selected_project:null}。规则: vs get_project_info: 用此工具做快速检查(零参数, 无选中不报错); 查看特定项目详情或member_count用get_project_info。",
          "execute": _tool_get_paratranz_project, "permission": "read",
          "parameters": _PARAM_SCHEMAS.get("get_paratranz_project", {})},
-        {"name": "switch_paratranz_project", "display_name": "切换PT项目", "description": "切换到指定的 ParaTranz 项目（project_id 必填）",
+        {"name": "switch_paratranz_project", "display_name": "切换PT项目", "description": "①切换当前PT项目, 后续操作的默认project_id自动更新。②参数: project_id(必填, int, 来自list_projects)。写权限。③返回: {id,name,visibility}。规则: 前置条件: 通过get_app_state检查paratranz_configured; 切换前先调list_projects获取可选ID; 本地数据(翻译集合/筛选条件)跨切换保持不变。",
          "execute": _tool_switch_paratranz_project, "permission": "write",
          "parameters": _PARAM_SCHEMAS.get("switch_paratranz_project", {})},
     ])

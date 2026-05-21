@@ -153,7 +153,7 @@ def _register_writer_tools():
     from src.transbridge.smart_assistant.tool_registry import ToolRegistry
     ToolRegistry.register_tools("writer", [
         {"name": "write_back", "display_name": "写回译文",
-         "description": "①需要将译文写回源文件时用我（替代已废弃的 write_to_esp/eet/xt/strings）。②target=esp|eet|xt|strings（必填）。esp/strings 需活跃槽位；eet/xt 需已解析对应源文件；path 可选（不传则用 ctx 内已解析路径）。③示例: write_back target=esp 写回ESP插件 / write_back target=strings path=./output 导出版本化 strings",
+         "description": "①将译文写回源文件。②参数: target(必填, esp/eet/xt/strings), path(可选, 不传则用ctx已解析路径), output_dir(仅target=strings时可用)。③返回: esp→{written_count,path}, strings→{written_count,strings_files}, eet/xt→{path}。规则: 需用户确认(admin权限), 长运行操作, esp/strings目标需先parse_esp, eet/xt目标需先parse_eet/parse_xt, path拒绝../和绝对路径, target推断可通过get_app_state查看esp_file/eet_file/xt_file",
          "execute": _tool_write_back, "permission": "admin", "require_confirmation": True,
          "is_long_running": True, "parameters": _PARAM_SCHEMAS.get("write_back", {})},
     ])
