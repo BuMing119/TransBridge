@@ -2,11 +2,8 @@
 from __future__ import annotations
 
 import sys
-import os
 import time
 import unittest
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from PyQt6.QtCore import QThread
 from PyQt6.QtWidgets import QApplication

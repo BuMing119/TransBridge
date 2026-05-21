@@ -3,9 +3,9 @@
 **对应需求**: [FR9](../docs/requirements.md) — Agent 工具系统全面扩展
 **技术模块**: backend (smart_assistant)
 **业务域**: Agent 工具系统
-**状态**: 已确认（v7 — 2026-05-18 追加 Story 25，后处理工具统一）
+**状态**: 已确认（v8 — 2026-05-21 追加 Story 26，断点续传与暂停/恢复）
 **创建日期**: 2026-05-10
-**更新日期**: 2026-05-18（追加 Story 25: 后处理工具统一）
+**更新日期**: 2026-05-21（追加 Story 26: 断点续传与暂停/恢复）
 
 ## 功能边界
 
@@ -33,7 +33,6 @@
 - 新 Skill 定义文件
 - Step2 表格 UI 代码改动（通过信号驱动，不改 UI 渲染逻辑）
 - API Key 加密存储（桌面个人应用，保持 INI 明文）
-- 真实暂停/恢复机制（P2 后续迭代，O11）
 
 ## Story 清单
 
@@ -504,6 +503,29 @@ QA审计发现 5 个后处理工具全部运行时崩溃（调用不存在的 AP
 
 ---
 
+### Story 26: 后处理断点续传与暂停/恢复
+
+**对应需求**: FR9.4.7, FR9.4.8 | **优先级**: P2 | **涉及文件**: 4
+
+为 `run_postprocess` 工具补全 checkpoint resume 和 pause/resume 功能。`PostProcessor.process_entries()` 已原生支持 `pause_event` 和 `checkpoint` 参数，`PostProcessCheckpoint` 已有完整 save/load API，`TaskHandle` 已预留 `pause_event` 字段——本 Story 在工具层串联这些已有能力。
+
+**验收标准**:
+- [ ] `run_postprocess` 每阶段完成后保存 `PostProcessCheckpoint` 到文件；再次调用时检测已有 checkpoint，跳过已完成阶段（`is_batch_completed` 按 phase+entry_ids 匹配）
+- [ ] 正常完成或用户停止后自动删除 checkpoint 文件
+- [ ] `stop_task` 工具扩展 `action` 参数：`"pause"`（set pause_event） / `"resume"`（clear pause_event） / `"stop"`（set stop_event，默认行为）
+- [ ] `get_task_status` 对 paused 任务返回 `"paused"` 状态；`list_active()` 包含 paused 任务
+- [ ] `run_postprocess` 将 `pause_event` 传入 `process_entries()`，暂停时等待当前批次完成后挂起
+- [ ] checkpoint 文件损坏时跳过恢复，从头开始，记录警告日志
+
+**涉及文件**:
+- `src/transbridge/smart_assistant/tools/tool_proofreader.py` — 主战场：checkpoint 创建/保存/加载/清理 + pause_event 传递
+- `src/transbridge/smart_assistant/tools/task_manager.py` — `list_active()` 含 paused + `pause()`/`resume()` 方法
+- `src/transbridge/smart_assistant/tools/tool_translator.py` — `stop_task` 扩展 `action` 参数
+
+**详细文档**: `plans/agent-tool-expansion/stories/story-26-checkpoint-pause.md`
+
+---
+
 ## 独立 PR（不进 Story 排期）
 
 以下三项作为独立 PR，在 Story 开发期间择机提交：
@@ -518,7 +540,6 @@ QA审计发现 5 个后处理工具全部运行时崩溃（调用不存在的 AP
 
 | 项目 | 内容 | 来源 |
 |------|------|------|
-| 真实暂停/恢复 | TaskHandle 已预留 `pause_event`，实现 AutoTranslator 真实暂停（`pause_event.wait()`），不消耗 API 费用 | O11（与 B5 配套） |
 | Reflexion 写工具重试 | 允许 Reflexion 对写工具重试，但需条件控制——在具体流程中根据操作上下文和重试次数动态判断，不在 ToolSpec 层一刀切禁止 | O5（用户方案） |
 
 ## 架构依赖

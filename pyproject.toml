@@ -55,6 +55,16 @@ force-sort-within-sections = true
 preview = true
 quote-style = "double"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = ["-v", "--tb=short", "--strict-markers"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "llm: marks tests that require LLM API access",
+]
+
 [dependency-groups]
 dev = [
     "pyinstaller>=6.19.0",

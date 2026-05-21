@@ -1,9 +1,32 @@
 # 工具描述审核报告
 
-**日期**: 2026-05-18
-**审核范围**: `docs/temp/batch1-5*.md`（45 个工具）
+**首次审核**: 2026-05-18 | **更新**: 2026-05-21（Story 25+26 变更同步）
+**审核范围**: `docs/temp/batch1-5*.md`（当前 47 个工具：editor 7 + translator 9 + writer 1 + parser 6 + proofreader 3 + paratranz 9 + default 7）
 **审核规范**: `docs/temp/tool-description-review-spec.md`（15 项检查清单）
-**方法**: 5 路子 Agent 并行，对照源码 `_PARAM_SCHEMAS` + 函数实现逐工具验证
+
+---
+
+## 2026-05-21 更新: Story 25+26 变更同步
+
+因 Story 25（后处理统一：5→1）和 Story 26（断点续传与暂停/恢复）导致以下工具描述过时，已于当日修复：
+
+| 批次 | 工具 | 变更内容 |
+|------|------|---------|
+| 2 | `stop_task` | 新增 `action` 参数（stop/pause/resume），文档补全 |
+| 2 | `start_polish` | `entry_ids` 改为可选；新增 `scope` 参数（all/passed/has_issues） |
+| 2 | `get_task_status` | 状态值新增 `paused` |
+| 4 | `run_postprocess` | 新增 `max_workers` 参数；补全断点续传/暂停恢复说明 |
+| 4 | `list_projects` | 参数名修正 `view`→`uid`，值修正 `"mine"/"all"`→`"my"/不传` |
+| 4 | `list_quality_reports` | 新工具，已补充完整描述 |
+
+以下旧审计发现因工具已被替换而自然消失：
+- `run_consistency_check` / `run_format_validation` / `run_quality_gate` → 被 `run_postprocess` 替代
+- `run_llm_refinement` / `run_llm_polish` / `run_llm_arbitration` → 同上
+- 报告统计从 45 工具变为 47 工具（-5 proofreader 旧 + 1 run_postprocess + 1 list_quality_reports + 5 parser/writer 合并调整）
+
+---
+
+## 原始 2026-05-18 审核结果（已部分过时，保留供参考）
 
 ---
 

@@ -35,13 +35,13 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
 
 **FR1.8 Strings 文件导入**: 系统 SHALL 支持从 `.strings` 文件导入翻译条目。
 
-**FR1.9 XT SST 二进制解析与迁移源** — *2026-05-08 | 状态: 待方案 | 优先级: P1*: 系统 SHALL 解析 XT (xTranslator) 的 SST 二进制文件（`SSU8` / `SSU9` 格式），提取 EDID、FormID、字符串文本、译文、子记录关联数据等字段，转为 TranslationEntry 统一格式。SST 文件作为新的迁移源类型（与现有 EET/XT XML/Strings 并列），用于将 SST 中的译文追加合并到当前集合。
+**FR1.9 XT SST 二进制解析与迁移源** — *2026-05-08 | 状态: 已实现 | 优先级: P1*: 系统 SHALL 解析 XT (xTranslator) 的 SST 二进制文件（`SSU8` / `SSU9` 格式），提取 EDID、FormID、字符串文本、译文、子记录关联数据等字段，转为 TranslationEntry 统一格式。SST 文件作为新的迁移源类型（与现有 EET/XT XML/Strings 并列），用于将 SST 中的译文追加合并到当前集合。
 
   - **FR1.9.1 二进制解析**: 解析器 SHALL 识别 `SSU8` / `SSU9` 魔数，按记录结构逐条解析。SSU8: 记录类型(2B) + EDID(8B) + Field_A(4B) + FormID(4B) + 字符串长度(4B LE) + UTF-16LE 字符串(N B) + 尾部长度(4B LE) + 尾部数据(M B) + 序号(4B LE) + 额外ID(2B LE)。SSU9: FormID(4B) + EDID(8B) + unk12(4B) + f2(4B) + str_idx(2B) + str_len(2B) + pad(2B) + UTF-16LE English(N B) + chn_len(4B) + UTF-16LE Chinese(N B) + extra/subrecords。解析失败时 SHALL 跳过异常条目并记录警告。
   - **FR1.9.2 迁移源集成**: SST 迁移源 SHALL 在 Step2 迁移源按钮区域提供加载入口。加载后 SST 条目与当前集合按匹配键（FormID + index）合并译文。
   - **FR1.9.3 格式校验**: 解析器 SHALL 校验魔数（非 `SSU8`/`SSU9` 则拒绝）、条目完整性（截断条目跳过并警告）、UTF-16LE 解码（失败则跳过并警告）、空文件（仅 header 无条目则返回空集合）。
   - **FR1.9.4 兼容性**: 新增解析器 SHALL NOT 修改现有 `XT_XmlParser` 的行为。SST 和 XML 两种格式独立解析，互不影响。
-  - **FR1.9.5 SST 序列化写回** — *2026-05-09 | 状态: 待方案 | 优先级: P1*: 系统 SHALL 支持将修改后的译文序列化回 SST 二进制格式。基于已解析的 SST 文件作为模板，修改条目的 `translated_text` / `text` 字段后，重建完整 SST 文件（Header 原样复制，记录重新序列化时更新 chn_len + chn_text，extra/subrecords 原样保留）。支持输出到新文件（默认）或原地覆盖（`--in-place`），提供单条 `update_entry()` 和批量 `update_entries()` 接口。不增删记录，不从零创建新 SST 文件。
+  - **FR1.9.5 SST 序列化写回** — *2026-05-09 | 状态: 已实现 | 优先级: P1*: 系统 SHALL 支持将修改后的译文序列化回 SST 二进制格式。基于已解析的 SST 文件作为模板，修改条目的 `translated_text` / `text` 字段后，重建完整 SST 文件（Header 原样复制，记录重新序列化时更新 chn_len + chn_text，extra/subrecords 原样保留）。支持输出到新文件（默认）或原地覆盖（`--in-place`），提供单条 `update_entry()` 和批量 `update_entries()` 接口。不增删记录，不从零创建新 SST 文件。
 
 ### FR2: 翻译条目管理
 
@@ -221,7 +221,7 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
   - **FR7.13.3 长期记忆**: 系统 SHALL 提供跨会话持久化的长期记忆能力，包含两个维度：(a) 翻译上下文记忆 — 用户偏好、术语决策、纠错历史、翻译风格选择等，下次翻译时自动加载相关记忆；(b) 全量对话历史 — 完整的对话记录可回溯。记忆存储基于向量嵌入（复用已有 FAISS 基础设施），支持语义检索 + 精确匹配两阶段召回。记忆数据存储在项目目录下，随项目切换。
   - **FR7.13.4 Reflexion 自纠错**: 系统 SHALL 在工具执行失败时自动触发自纠错机制。LLM 分析失败原因（错误消息/异常类型），调整参数或换策略，自动重试（最多 N 次，默认 3 次）。重试耗尽仍失败则反馈用户并继续 ReAct 循环。自纠错仅作用于工具调用层，不改变正常 LLM 响应流程。纠错过程对用户透明（显示"正在重试…"状态）。
 
-  **Phase 2（待方案 — 分三批实施）**:
+  **Phase 2（已实现 — ADR-008/011/012 + S06-S12 全部编码）**:
 
   **第一批（P0 — 核心能力）**:
 
@@ -298,7 +298,7 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
   - **FR7.11.5 动态标签筛选**: 标签筛选行 SHALL 动态显示标签库中的标签按钮（非固定三态），点击筛选对应标签条目。计数为 0 的标签隐藏。与分类/状态/搜索 AND 叠加。
   - **FR7.11.6 聚焦开关**: SHALL 保留「只看已标记」聚焦按钮，改为过滤出所有有标签的条目（`_entry_labels` 非空）。无标签条目时按钮禁用。
 
-**FR7.14 智能助手页面体验全面翻新** — *2026-05-11 | 状态: 待方案 | 优先级: P1*: 系统 SHALL 对 SmartAssistant 面板的 UI 层（6 个文件）进行四个维度的全面体验升级——布局重组（观测面板折叠+Agent 指示器移除）、对话增强（流式打字机+Markdown 渲染）、交互简化（自动模式开关）、视觉现代化（现代聊天应用风格）。后端 `smart_assistant/` 包不动，所有现有功能（ReAct 循环/Plan 模式/工具执行/文件上传/观测数据采集）保持正常。Markdown 渲染器 SHALL 提取为 `infra/` 共享基础设施组件，供消息气泡、后处理报告、Agent 输出等全局复用。
+**FR7.14 智能助手页面体验全面翻新** — *2026-05-11 | 状态: 已实现 | 优先级: P1*: 系统 SHALL 对 SmartAssistant 面板的 UI 层（6 个文件）进行四个维度的全面体验升级——布局重组（观测面板折叠+Agent 指示器移除）、对话增强（流式打字机+Markdown 渲染）、交互简化（自动模式开关）、视觉现代化（现代聊天应用风格）。后端 `smart_assistant/` 包不动，所有现有功能（ReAct 循环/Plan 模式/工具执行/文件上传/观测数据采集）保持正常。Markdown 渲染器 SHALL 提取为 `infra/` 共享基础设施组件，供消息气泡、后处理报告、Agent 输出等全局复用。
 
   - **FR7.14.1 Markdown 渲染器（基础设施）**: 系统 SHALL 在 `src/transbridge/infra/markdown_renderer.py` 中实现共享 Markdown 渲染组件。支持标题（H1-H6）、粗体/斜体/行内代码、代码块（带语言标注）、无序/有序列表、表格、链接、水平线。渲染输出为 QWidget（非 QLabel），支持文本选择和链接点击。不规范的 LLM 输出（混搭格式/未闭合标签）SHALL 降级为纯文本渲染，不崩溃。渲染器 SHALL 无 PyQt 之外的第三方依赖。
 
@@ -469,7 +469,7 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
 
 ### FR9: Agent 工具系统全面扩展
 
-**FR9 概述** — *2026-05-10 | 状态: 待方案 | 优先级: P1*: 系统 SHALL 将 Agent 可用工具从当前的 6 个翻译专用工具扩展至覆盖 6 大功能域（文件解析、表格交互/标签管理、AI翻译全流程、ParaTranz平台、文件写回、UI状态查询）的完整工具矩阵，按功能域新增专业 Agent 角色，使 AI 助手能通过 function calling 操作软件的绝大部分功能。
+**FR9 概述** — *2026-05-10 | 状态: 已实现 (S01-21+S23-26 已编码, S22 待编码) | 优先级: P1*: 系统 SHALL 将 Agent 可用工具从当前的 6 个翻译专用工具扩展至覆盖 6 大功能域（文件解析、表格交互/标签管理、AI翻译全流程、ParaTranz平台、文件写回、UI状态查询）的完整工具矩阵，按功能域新增专业 Agent 角色，使 AI 助手能通过 function calling 操作软件的绝大部分功能。
 
 **分批发版策略**（评审委员会共识）:
 
@@ -599,11 +599,17 @@ Agent SHALL 可操控 Step2 词条预览表格的筛选、搜索、排序、选�
 - **FR9.4.5 run_llm_arbitration** (`write`, `is_long_running`): 执行 LLM 裁决。参数：`entry_ids: list[str]`、`strict_mode: bool`（默认 false）。返回：task_id 和裁决结果摘要（pass/reject/pending 计数）。**权限修正**: 因产生 LLM API 费用，从 read 改为 write。
 - **FR9.4.6 get_quality_report** (`read`): 获取最近一次质量检查/后处理的报告摘要。参数：`task_id: str`（可选）。返回：报告结构（含问题分布/统计）。
 
+- **FR9.4.7 run_postprocess 断点续传** — *2026-05-21 | 状态: 已实现 | 优先级: P2*: `run_postprocess` 工具 SHALL 支持断点续传。每个阶段完成后自动保存 `PostProcessCheckpoint` 到文件（路径: `data/ai_translator/{esp_stem}/{esp_stem}_post_process.json`）。任务再次启动时 SHALL 检测已有 checkpoint 并跳过已完成的阶段。后处理正常完成（或用户主动停止）后 SHALL 自动删除 checkpoint 文件。
+- **FR9.4.8 run_postprocess 暂停/恢复** — *2026-05-21 | 状态: 已实现 | 优先级: P2*: `run_postprocess` 工具 SHALL 支持暂停和恢复。`TaskManager` SHALL 管理 `pause_event`（`threading.Event`），`stop_task` 工具 SHALL 扩展 `action` 参数（`"pause"` / `"resume"` / `"stop"`）。暂停时等待当前批次完成后挂起，恢复后从下一批次继续。`get_task_status` 返回的任务状态 SHALL 包含 `paused` 状态。
+
 **关联 Agent**: `proofreader` Agent（扩展现有）— 原有 2 个工具 + 新增 6 个工具 = 共 8 个。
 
 **异常场景**:
 - 未启用后处理阶段直接调用 → 提示后处理未配置
 - LLM 调用失败 → 受 Reflexion 保护，最多重试 3 次
+- Checkpoint 文件损坏 → 跳过恢复，从头开始，记录警告
+- 暂停后长时间未恢复（> 1 小时）→ 保持 paused 状态，不自动超时
+- 暂停时 LLM 调用正在进行中 → 等待当前批次完成后挂起
 
 ---
 

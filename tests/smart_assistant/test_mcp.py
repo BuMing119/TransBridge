@@ -1,12 +1,8 @@
 """Story 07: MCP 模块测试 — auth / tools/list / tools/call / 错误处理。"""
 from __future__ import annotations
 
-import sys
-import os
 import json
 import unittest
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 
 class FakeToolRegistry:

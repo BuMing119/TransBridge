@@ -34,6 +34,7 @@
 - `clear: true` 单独使用 = 清除所有筛选条件
 - `clear: true` + 其他参数 = 全新筛选（先清空再设置）
 - 返回: 正常设置后返回 `{stage, category, label, search_query, search_field}`（当前筛选条件快照）；所有参数均为 None 且 clear=false 时返回 `{unchanged: true}`（筛选条件无变化）
+- 修改前可通过 `get_current_filters` 查看当前筛选状态
 - 常用组合：
   - `set_filters stages=[0]` → 只看未翻译 → `get_visible_entries` 获取列表
   - `set_filters search_query="龙裔" search_field="translation"` → 在译文中搜索
@@ -44,11 +45,11 @@
 ## 2. get_visible_entries
 
 **描述:**
-获取当前筛选条件下表格中可见的条目列表（分页）。如需统计数据（翻译率、分布等），用 `get_statistics`。
+获取当前筛选条件下表格中可见的条目列表（分页）。原文和译文均截断至 200 字符（固定限制，不可绕过）。统计数据（翻译率、分布等）用 `get_statistics`。
 
 **参数:**
-- `limit` (可选): 每页返回条数，默认 50，最大 200
-- `offset` (可选): 分页偏移量，默认 0（第一页）
+- `limit` (可选, int): 每页返回条数，默认 50，最大 200
+- `offset` (可选, int): 分页偏移量，默认 0（第一页）
 
 **返回:**
 ```json
@@ -61,12 +62,12 @@
 - `key` — 条目标识符（传给其他工具的 `entry_id` / `entry_ids` 参数时使用此值）
 - `id` — 辅助标识（跨 ParaTranz 同步可能变化，不用于工具查找）
 - `original` / `translation` — 原文/译文，均截断至 200 字
-- `stage` — 翻译阶段 (0-5, 9, -1)
+- `stage` — 翻译阶段: 0=未翻译, 1=已翻译, 2=有疑问, 3=已检查, 5=已审核, 9=已锁定, -1=已隐藏
 
 **使用规则:**
 - 调用前先用 `set_filters` 设置筛选条件，否则返回全部条目
 - `truncated: true` 表示还有更多条目未显示，翻页用 `offset` 参数
-- 不要循环遍历所有页——若需统计信息直接用 `get_statistics`
+- 不要循环遍历所有页——若需统计信息直接用 `get_statistics`；完整文本当前不可获取
 
 ---
 
@@ -76,8 +77,8 @@
 选中或取消选中条目。选择的条目存储在独立的临时选择集合中（与标签系统无关），可供后续批量操作（如 `set_stage` 批量标记）使用。
 
 **参数:**
-- `entry_ids` (必填): `get_visible_entries` 返回的 `key` 值列表。`action` 为 `"clear"` 时传空列表 `[]` 即可
-- `action` (可选): 操作类型。`"select"` 加入选择, `"deselect"` 移除选择, `"clear"` 清空全部选择。默认 `"select"`
+- `action` (可选): 操作类型。`"select"` 加入选择(默认), `"deselect"` 移除选择, `"clear"` 清空全部选择
+- `entry_ids` (select/deselect 时必填): `get_visible_entries` 返回的 `key` 值列表。`action="clear"` 时无需传此参数
 
 **副作用:**
 - 选择状态保持到下次 `select_entries` 或 `clear` 操作之前
@@ -85,8 +86,8 @@
 **使用规则:**
 - 选择集合是临时的，不会持久化
 - 选择结果不影响标签（标签用 `manage_entry_labels` 管理）
-- 返回: `{selected_count}`（当前已选条目总数）
-- 典型流程: `get_visible_entries` → 从返回结果取 `key` → `select_entries action=select entry_ids=["key1","key2"]` → `set_stage stage=3`
+- 返回: `{selected_count, selected_ids}` — `selected_ids` 为当前已选条目 key 列表，`selected_count` 为已选条目总数
+- 典型流程: `get_visible_entries` → 从返回结果取 `key` → `select_entries action=select entry_ids=["key1","key2"]` → `set_stage stage=3`。可通过返回的 `selected_ids` 确认当前已选条目
 
 ---
 
@@ -100,7 +101,7 @@
 **参数:**
 - `entry_id` (必填): `get_visible_entries` 返回的 `key` 值
 - `new_translation` (必填): 新的翻译文本
-- `new_stage` (可选): 新的翻译阶段。合法值: 0=未翻译, 1=已翻译, 2=有疑问, 3=已检查, 5=已审核, 9=已锁定, -1=已隐藏。不传则保持原 stage 不变
+- `new_stage` (可选): 新的翻译阶段。合法值: 0=未翻译, 1=已翻译, 2=有疑问, 3=已检查, 5=已审核, 9=已锁定, -1=已隐藏。注意值不连续（4/6/7/8 为 ParaTranz 平台预留，不可使用）。不传则保持原 stage 不变
 
 **副作用:**
 - 条目的翻译文本被永久修改
@@ -109,6 +110,9 @@
 - 只操作单条条目，需要批量改文本请逐条调用
 - 批量改阶段（不改文本）用 `set_stage`
 - 返回: `{entry_id, old_translation, new_translation, stage, stage_changed}`。其中 `old_translation` 和 `new_translation` 均截断至 100 字
+- 错误返回：
+  - `entry_id` 不存在 → `ToolResult.fail("条目不存在: {entry_id}")`
+  - `new_stage` 值非法 → `ToolResult.fail("无效的 stage 值: {new_stage}，合法值: {sorted(_VALID_STAGES)}")`（注意 4/6/7/8 为 ParaTranz 平台预留，不可使用）
 
 ---
 
@@ -120,8 +124,8 @@
 与 `edit_translation` 的区别：set_stage 只改阶段、可批量；edit_translation 改文本、单条。
 
 **参数:**
-- `entry_ids` (必填): `get_visible_entries` 返回的 `key` 值列表
-- `stage` (必填): 目标阶段。合法值: 0=未翻译, 1=已翻译, 2=有疑问, 3=已检查, 5=已审核, 9=已锁定, -1=已隐藏
+- `entry_ids` (必填): `get_visible_entries` 返回的 `key` 值列表。传空列表 `[]` 时静默返回 `{updated_count: 0}`
+- `stage` (必填): 目标阶段。合法值: 0=未翻译, 1=已翻译, 2=有疑问, 3=已检查, 5=已审核, 9=已锁定, -1=已隐藏。注意值不连续（4/6/7/8 为 ParaTranz 平台预留，不可使用）
 
 **副作用:**
 - 条目的阶段标记被永久修改
@@ -129,7 +133,13 @@
 **使用规则:**
 - 典型流程: `get_visible_entries` → 确认条目 `key` → `select_entries` 选择 → `set_stage stage=3` 批量标记为已检查
 - stage 值不在合法范围内会被拒绝
-- 返回: 全部成功返回 `{updated_count}`，部分失败额外含 `not_found`（未找到的条目 ID 列表）
+- 返回: 全部成功返回 `{updated_count}`，部分失败额外含 `not_found`（未找到的条目 key 列表）
+- 典型流转路径: 0→1(翻译) → 2→3(检查) → 5(审核)。各阶段含义：
+  - 0(未翻译) → 1(已翻译) — AI 翻译完成后
+  - 1(已翻译) → 2(有疑问) — 标记需人工审核
+  - 2(有疑问) → 3(已检查) — 人工审核通过
+  - 3(已检查) → 5(已审核) — 最终定稿
+  - 9(已锁定)和-1(已隐藏)为特殊状态，不参与常规流转。
 
 ---
 
@@ -156,8 +166,8 @@
 
 **使用规则:**
 - 操作前确保标签已存在（`assign` / `unassign` / `batch_assign` 操作不存在的标签会失败）
-- `batch_assign` 操作当前 `set_filters` 筛选范围内的全部条目，需要用户确认
-- 返回: create→`{label_id, name, color}` / assign→`{assigned_count}` / unassign→`{removed_count}` / batch_assign→`{assigned_count, filter_total}`
+- `batch_assign` 操作当前 `set_filters` 筛选范围内的全部条目，调用时会弹出用户确认对话框，用户确认后执行；若用户取消，不分配任何标签，静默返回 `{assigned_count: 0}` 或类似结果。执行前应先通过 `set_filters` 确认范围，并通过 `get_current_filters` 验证筛选条件
+- 返回: create→`{label_id, name, color}`（`label_id` 仅创建时返回，后续 assign/unassign/batch_assign 使用 `name` 而非 `label_id`） / assign→`{assigned_count}` / unassign→`{removed_count}` / batch_assign→`{assigned_count, filter_total}`（若用户取消确认，`assigned_count` 为 0）
 - 典型流程:
   - 创建标签: `manage_entry_labels action=create name="重要" color="#FF0000"`
   - 打标签: `set_filters stages=[0]` → `manage_entry_labels action=batch_assign name="重要"`
@@ -177,3 +187,4 @@
 - 标签库为空或未初始化时返回空列表（不报错）
 - 返回格式: `{"labels": [{id, name, color, count}]}`
 - 需要创建或修改标签用 `manage_entry_labels`
+- **重要**: 所有标签操作（assign/unassign/batch_assign）使用标签的 `name` 字段，而非 `id`。`id` 仅供内部追踪，不应传给其他工具。

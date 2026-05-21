@@ -2,12 +2,9 @@
 from __future__ import annotations
 
 import sys
-import os
 import tempfile
 import unittest
 from pathlib import Path
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from PyQt6.QtWidgets import QApplication
 

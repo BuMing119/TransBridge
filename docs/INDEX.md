@@ -54,10 +54,10 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [ui-workbench](../plans/ui-workbench/plan.md) | ✔️ 已实现 | 19 |
 | [batch-operations](../plans/batch-operations/plan.md) | ✔️ 已实现 | 7 |
 | [vector-term-retrieval](../plans/vector-term-retrieval/plan.md) | ✔️ 已实现 | — |
-| [agent-tool-expansion](../plans/agent-tool-expansion/plan.md) | ✔️ S01-21+S23-24已实现 + 📝 S22已方案 + ⚠️ S25已实现(QA不通过) | 25 |
+| [agent-tool-expansion](../plans/agent-tool-expansion/plan.md) | ✔️ S01-21+S23-26已实现 + ✔️ S22已实现 (描述+代码修复) | 26 |
 | [agent-upgrade](../plans/agent-upgrade/plan.md) | ✅ Phase 1 + Phase 2 全部完成 | 12 |
-| [llm-chat](../plans/llm-chat/plan.md) | ✅ 全部完成 (S01-09，含 ChatWidget拆分) | 9 |
-| [smart-assistant-qa-fix](../plans/smart-assistant-qa-fix/plan.md) | ✅ 第五轮全量修复编码完成 (107/111, 60文件) | 7 |
+| [llm-chat](../plans/llm-chat/plan.md) | ✅ 全部完成 (S01-10，含 ChatWidget拆分) | 10 |
+| [smart-assistant-qa-fix](../plans/smart-assistant-qa-fix/plan.md) | ✅ 第五轮全量修复完成 (166/166) | 7 |
 
 ---
 
@@ -169,6 +169,14 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | 2026-05-15 | agent-tool-expansion Story-15 工具补完 (search_entries 6字段 + PT项目切换) | ✅ 通过 — 12/12 验收标准通过，0 Blocker/Critical/Major/Minor，[报告](test-reports/agent-tool-expansion-story-15-tool-completion.md) |
 | 2026-05-15 | 工具架构路线 A 实施方法设计 — 评审委员会第二轮 (4角色: 架构师/开发者/QA/产品) | ✅ 完成 — 7项共识、2项分歧待用户裁决，[纪要](council-review-tool-architecture-methodology.md) |
 | 2026-05-20 | agent-tool-expansion Story-25 后处理工具统一 QA 审查 | 🔴 不通过 — 5 Blocker(运行时崩溃) + 5 Critical(功能缺失)，[报告](test-reports/story-25-postprocess-unification-qa.md) |
+| 2026-05-20 | AI 助手工具 vs 原后处理工作流等价性复验 | ✅ 基本通过 — 上轮11项全修复，核心管线等价，4体验缺口(G1-G4)，87/89测试通过，[报告](test-reports/ai-tool-postprocess-parity-2026-05-20.md) |
+| 2026-05-20 | Story 25 G1-G4 体验缺口修补 QA 复验 | ✅ 通过 — 4项修补全部验证，120/123测试通过，[报告](test-reports/story-25-g1g4-fix-verification.md) |
+| 2026-05-20 | AI 助手工具 vs 原后处理工作流 — 完整等价性评估（独立全新审查） | ✅ 基本通过 — 核心管线等价，发现 3B+6C+12M+13M(34项)，二次复核补全 8项遗漏，P0+P1共14项已修复，135/137测试通过，[报告](test-reports/ai-tool-postprocess-parity-2026-05-20-final.md) |
+| 2026-05-21 | AI 助手工具 vs 原后处理工作流 — 等价性复验（修复后验证） | ✅ 通过 — 3B+6C全部修复，48/48 parity pass + 87/89 integration pass，核心管线等价，start_polish完整可用，[报告](test-reports/ai-tool-postprocess-parity-2026-05-21.md) |
+| 2026-05-21 | Story 26: 后处理断点续传与暂停/恢复 QA 审查 | ✅ 通过 — 6/6验收标准实现，18/18新测试通过，153/155全量通过，0 Blocker/Critical/Major，[报告](test-reports/story-26-checkpoint-pause.md) |
+| 2026-05-21 | agent-tool-expansion Story 22 QA 复验 — 工具描述修复与代码缺陷修复 | ✅ 通过 — 40/40修复验证，120/123测试通过，0新引入失败 |
+| 2026-05-21 | agent-tool-expansion 全面 QA 审查 (4维度并行) — 工具系统 | ⚠ 需修复 — 26项问题(1B+4C+10M+11m)，综合评分45/60，[报告](test-reports/agent-tool-expansion-qa-full-2026-05-21.md) |
+| 2026-05-21 | agent-tool-expansion QA 复验 — 5项Blocker+Critical修复验证 | ✅ 通过 — 34新测试通过，221/223全量通过，0新问题，[报告](test-reports/agent-tool-expansion-qa-full-2026-05-21.md) · [复验](test-reports/agent-tool-expansion-qa-round2-verify-2026-05-21.md) |
 
 ---
 
@@ -241,3 +249,5 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | 2026-05-18 | agent-tool-expansion Story 16 编码完成：删除 Orchestrator/AgentWorker 死代码(~194行) + 7模块 register_tools() 注册样板消除(-35行)，净减~229行 | — |
 | 2026-05-18 | agent-tool-expansion Story 17 编码完成：set_filters 合并 5→1（6 可选参数，None=保持/[]=清除），5 deprecated wrapper，Editor 14→10 工具，总非废弃工具 56→52 | — |
 | 2026-05-20 | agent-tool-expansion Story 25 QA 审查：发现 PostProcessor/LLMPolisher 构造参数错误等 5 Blocker + 报告/断点/预览等 5 Critical 缺失，报告产出 docs/test-reports/story-25-postprocess-unification-qa.md | — |
+| 2026-05-20 | agent-tool-expansion Story 25 后处理报告补全：集成 ReportGenerator (Excel生成) + 中间数据保留 (refine/polish/decisions) + list_quality_reports 工具 + start_polish scope 参数 + max_workers，proofreader 2→3 工具，changelog 007 | — |
+| 2026-05-20 | agent-tool-expansion Story 25 QA 二次复核 + P0/P1 修复：14 项修复（3B+6C+5M）涵盖 tool_proofreader.py/tool_translator.py/agent_registry.py/post_processor.py + 15 测试更新，135/137 通过，changelog 008 | — |
