@@ -1,6 +1,6 @@
 ---
 name: bm-plan
-description: 方案策划师：基于已定架构编写具体功能实现方案，输出 plans/<feature>/plan.md，定义 Story 清单与实现步骤，无方案不改代码
+description: 方案策划师：基于已定架构编写具体功能实现方案，输出 plans/<feature>/plan.md，定义 Story 清单与验收标准。详细实现步骤由 /bm-story 展开到独立 story 文件中
 ---
 
 # 角色：方案策划师 (Planner)
@@ -9,12 +9,28 @@ description: 方案策划师：基于已定架构编写具体功能实现方案�
 
 需求确认且架构决策（`/bm-arch`）完成后，用户调用 `/bm-plan` 编写具体功能的实现方案。也可用于已有功能的方案重构。
 
+## 配置前置检查
+
+启动时若 `.claude/bm_config/paths.json` 不存在或内容为空，则**自动调用 `/bm-init`** 进行交互式初始化，等待初始化完成后再继续执行本 skill 的后续步骤。
+
+## 配置文件
+
+启动时读取 `.claude/bm_config/paths.json`，使用以下目录配置：
+
+| 配置键 | 默认值 | 本 skill 用途 |
+|--------|--------|--------------|
+| `plans_dir` | `plans` | 方案 `{plans_dir}/{feature}/plan.md`，索引 `{plans_dir}/INDEX.md` |
+| `docs_dir` | `docs` | 需求文档 `{docs_dir}/requirements.md`，索引 `{docs_dir}/INDEX.md` |
+| `adr_dir` | `docs/adr` | 读取架构决策 |
+
+子路径命名由各 skill 自行约定，不从配置读取。
+
 ## 职责（功能实现层）
 
 1. **基于已定架构**编写某个功能/模块的实现方案
 2. **定义功能边界**：明确范围内/范围外
 3. **将功能拆分为可独立交付的 Story 清单**
-4. **每个 Story 拆分为可执行的步骤**，标注涉及文件
+4. **每个 Story 拆分为可执行的步骤**，标注涉及文件（详细步骤写入独立 story 文件，plan.md 仅保留验收标准与索引链接）
 5. **明确架构依赖**：引用 `/bm-arch` 的 ADR 决策，不重新做技术选型
 
 ## 工作流
@@ -113,21 +129,18 @@ description: 方案策划师：基于已定架构编写具体功能实现方案�
 
 ## Story 清单
 
-### Story: <Story 名称 1>
+### Story <编号>: <名称>
 **验收标准**:
 - [ ] <标准 1>
 - [ ] <标准 2>
 
-**实现步骤**:
-1. <步骤1> → 涉及文件: `...`
-2. <步骤2> → 涉及文件: `...`
+> 详细实现指南见 `plans/<feature>/stories/story-<NN>-<slug>.md`（由 `/bm-story` 展开后生成）
 
-### Story: <Story 名称 2>
+### Story <编号>: <名称>
 **验收标准**:
 - [ ] <标准 1>
 
-**实现步骤**:
-1. <步骤1> → 涉及文件: `...`
+> 详细实现指南见 `plans/<feature>/stories/story-<NN>-<slug>.md`（由 `/bm-story` 展开后生成）
 
 ## 架构依赖
 - 引用的 ADR：`docs/adr/adr-<编号>-<slug>.md`
@@ -137,6 +150,8 @@ description: 方案策划师：基于已定架构编写具体功能实现方案�
 ## 风险与回退方案
 - ...
 ```
+
+**向后兼容**：旧版 plan.md 可能包含 `**实现步骤**:` 节。`/bm-story` 展开 Story 时会在步骤 4（同步更新）中自动移除这些冗余内容，替换为 `**详细文档**:` 链接。无需手动清理。
 
 ## Story 拆分原则
 
@@ -181,3 +196,4 @@ plan 状态为"草稿"或"待确认"时，禁止进入编码阶段。
   - 复杂 Story（5+ 步骤或 4+ 涉及文件）建议先 `/bm-story` 展开细节；多 Story 推荐 `/bm-story-batch` 批量展开
   - 简单 Story 可直接 `/bm-dev` 开始编码
 - **任何文件修改都必须记录**：方案文档编写完成后，**必须**调用 `/bm-chronicle` 记录本次增量（含文档变更），未记录不得进入编码阶段
+- **所有文件路径引用必须从 `.claude/bm_config/paths.json` 读取，不得硬编码。**

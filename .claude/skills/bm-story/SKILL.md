@@ -18,7 +18,22 @@ description: Story 细节展开：将 plan 中的单个 Story 拆分为详细实
 
 Plan 已确认后、编码前。当某个 Story 复杂度较高（跨多个文件、多步骤、复杂数据流），需要在编码前明确实现细节时调用。
 
-**Story 展开是可选的**：简单的 Story 可直接由 `/bm-dev` 在编码时理解 plan 中的步骤即可，无需预展开。
+**Story 展开是推荐默认流程**：每个 Story 在编码前应展开为详细实现指南，以获得数据流、边界条件、伪代码和测试策略指导。仅极简 Story（单文件、无新依赖）可直接由 `/bm-dev` 按验收标准编码，跳过展开。
+
+## 配置前置检查
+
+启动时若 `.claude/bm_config/paths.json` 不存在或内容为空，则**自动调用 `/bm-init`** 进行交互式初始化，等待初始化完成后再继续执行本 skill 的后续步骤。
+
+## 配置文件
+
+启动时读取 `.claude/bm_config/paths.json`，使用以下目录配置：
+
+| 配置键 | 默认值 | 本 skill 用途 |
+|--------|--------|--------------|
+| `plans_dir` | `plans` | 方案 `{plans_dir}/{feature}/plan.md`，Story `{plans_dir}/{feature}/stories/story-{NN}-{slug}.md`，索引 `{plans_dir}/INDEX.md` |
+| `adr_dir` | `docs/adr` | 读取架构决策 |
+
+子路径命名由各 skill 自行约定，不从配置读取。
 
 ## 职责
 
@@ -31,7 +46,7 @@ Plan 已确认后、编码前。当某个 Story 复杂度较高（跨多个文�
 
 - **不写代码**：只输出设计文档，不修改任何业务代码
 - **不重新做技术选型**：所有技术决策引用 ADR 和 plan
-- **不修改 plan**：Story 边界由 plan 定义，story 阶段只展开不修改
+- **不修改 plan 的验收标准与 Story 边界**：验收标准和 Story 边界由 plan 定义，story 阶段只展开不修改。但会在 plan.md 中追加 `**详细文档**:` 链接，并清理旧版冗余的 `**实现步骤**:` 节（向后兼容清理）
 - **不修改 story 的验收标准**：验收标准以 plan 为准
 - **不替代 `/bm-dev`**：story 文档是 dev 的输入，dev 仍需按 step 编码
 
@@ -196,11 +211,14 @@ def key_logic():
 
 ### 步骤 4：同步更新
 
-1. 在 `plans/<plan>/plan.md` 的对应 Story 下追加一行：
-   ```
-   **详细文档**: `plans/<feature>/stories/story-<NN>-<slug>.md`
-   ```
-2. 更新 `plans/INDEX.md`，在对应 plan 行下方追加子行：
+1. **清理并更新 plan.md**：在 `plans/<plan>/plan.md` 中找到对应 Story 节（通过 Story 名称或编号匹配），执行以下操作：
+   a. **移除旧版冗余内容**：若该 Story 节内存在 `**实现步骤**:` 标题行，将该标题行及其下所有步骤行（以数字序号 `1.`, `2.` 等开头的行）整体删除。保留验收标准等其他内容不变。
+   b. **更新详细文档链接**：若已有 `**详细文档**:` 行，将其替换为新路径；若为占位符（`> 详细实现指南见 ...`）或不存在，则替换/追加为：
+      ```
+      **详细文档**: `plans/<feature>/stories/story-<NN>-<slug>.md`
+      ```
+   c. **清理后验证**：该 Story 节应仅包含 Story 标题、`**验收标准**:` 清单、`**详细文档**:` 链接。
+2. 更新 `plans/INDEX.md`，在对应 plan 行下方追加子行（若已存在则更新）：
    ```
    | [story-<NN>-<slug>.md](<feature>/story-<NN>-<slug>.md) | Story <编号>: <名称> | 草稿 | <日期> | <一句话摘要> |
    ```
@@ -235,7 +253,9 @@ def key_logic():
 - **跨 Story 依赖必须显式标注**：若本 Story 依赖同 plan 内其他 Story 的输出，必须在"前置依赖"中声明
 - **展开粒度适度**：伪代码而非完整代码，设计思路而非逐行注释
 - **状态流转**：`草稿 → 已确认`（用户确认后更新）
+- **plan.md 清理是步骤 4 的强制性部分**：每次展开 Story 后必须清理 plan.md 中的 `**实现步骤**:` 冗余内容，确保 plan.md 保持索引化。清理操作视为文档同步，不属于"修改 plan 验收标准"的禁止范围
 - **任何文件修改都必须记录**：Story 文档确认后，**必须**调用 `/bm-chronicle` 记录本次增量（含文档变更），未记录不得进入编码阶段
+- **所有文件路径引用必须从 `.claude/bm_config/paths.json` 读取，不得硬编码。**
 
 ## 与 `/bm-dev` 的关系
 

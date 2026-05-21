@@ -21,24 +21,27 @@ description: 显示所有可用 skill 的说明与使用场景，帮助用户快
 
 ---
 
-TransBridge 项目共有 **13 个 BM 系列 skill**，覆盖从需求分析到代码提交的完整开发流程：
+TransBridge 项目共有 **14 个 BM 系列 skill**，覆盖从项目初始化到代码提交的完整开发流程：
 
 | # | 命令 | 角色 | 一句话说明 |
 |---|------|------|-----------|
-| 1 | `/bm-orchestrator` | 编排器 | 全局总控，评估复杂度、展示进度、推荐/自动执行下一步 |
-| 2 | `/bm-analyze` | 需求分析师 | 澄清需求边界，输出 `docs/requirements.md` |
-| 3 | `/bm-arch` | 架构师 | 技术选型、目录结构、核心接口设计，输出 ADR |
-| 4 | `/bm-plan` | 方案策划师 | 编写实现方案，定义 Story 清单，输出 `plans/<feature>/plan.md` |
-| 5 | `/bm-story` | Story 展开 | 将单个 Story 细化为详细实现指南（含伪代码/测试策略） |
-| 6 | `/bm-story-batch` | 批量展开器 | 串行调用 `/bm-story` 逐个展开全部 Story |
-| 7 | `/bm-council` | 评审委员会 | 多角色圆桌讨论，输出纪要和建议，不强制结论 |
-| 8 | `/bm-dev` | 代码开发者 | 专注编码，支持严格执行（有方案）和灵活开发（无方案）两种模式 |
-| 9 | `/bm-chronicle` | 修改记录员 | 按 Epic→Story 记录每次增量变更，append-only |
-| 10 | `/bm-qa` | 测试审查员 | 编写测试、运行验证、代码审查，问题分四级 |
-| 11 | `/bm-git` | Git 管家 | 分析变更、分组规划提交、生成中文 commit message、安全执行 |
+| 1 | `/bm-init` | 初始化向导 | 交互式引导配置项目骨架、bm_config、索引文件 |
+| 2 | `/bm-orchestrator` | 流程顾问 | 评估复杂度、展示进度、推荐下一步，不代劳执行 |
+| 3 | `/bm-pilot` | 自动驾驶 | 确认路线后自动按阶段调用各 skill，仅在确认点暂停 |
+| 4 | `/bm-analyze` | 需求分析师 | 澄清需求边界，输出 `docs/requirements.md` |
+| 5 | `/bm-arch` | 架构师 | 技术选型、目录结构、核心接口设计，输出 ADR |
+| 6 | `/bm-plan` | 方案策划师 | 编写实现方案，定义 Story 清单，输出 `plans/<feature>/plan.md` |
+| 7 | `/bm-story` | Story 展开 | 将单个 Story 细化为详细实现指南（含伪代码/测试策略） |
+| 8 | `/bm-story-batch` | 批量展开器 | 串行调用 `/bm-story` 逐个展开全部 Story |
+| 9 | `/bm-council` | 评审委员会 | 多角色圆桌讨论，输出纪要和建议，不强制结论 |
+| 10 | `/bm-dev` | 代码开发者 | 专注编码，支持严格执行和灵活开发，多 Agent 并行 |
+| 11 | `/bm-dev-serial` | 代码开发者（串行） | 同上但多 Agent 串行执行，避免并发限流 |
+| 12 | `/bm-chronicle` | 修改记录员 | 按 Epic→Story 记录每次增量变更，append-only |
+| 13 | `/bm-qa` | 测试审查员 | 编写测试、运行验证、代码审查，问题分四级 |
+| 14 | `/bm-git` | Git 管家 | 分析变更、分组规划提交、生成中文 commit message、安全执行 |
 | — | `multi-agent-pattern` | 内部模板 | 同角色多 Agent 并行编排模式，供各 skill 内部参考，不直接调用 |
 
-> **典型流程**：`analyze → plan → (arch → story →) dev → chronicle → qa → git`，或直接 `/bm-orchestrator --auto` 全自动推进。
+> **典型流程**：手动推进 `analyze → plan → (arch → story →) dev → chronicle → qa → git`，或直接 `/bm-pilot` 全自动推进。
 
 ---
 
@@ -46,8 +49,9 @@ TransBridge 项目共有 **13 个 BM 系列 skill**，覆盖从需求分析到�
 
 | 你的场景 | 推荐命令 | 说明 |
 |---------|---------|------|
+| 新项目首次使用 BM skill 流程 | `/bm-init` | 交互式配置 dev_skill、开发者信息、阶段跳过策略，创建目录骨架和索引 |
 | 刚想到一个新功能/需求，不知道从哪开始 | `/bm-orchestrator` | 评估复杂度、展示进度看板、推荐下一步 |
-| 想全自动推进开发流程 | `/bm-orchestrator --auto` | 自动驾驶模式，按阶段自动调用各 skill，仅在确认点暂停 |
+| 想全自动推进开发流程 | `/bm-pilot` | 自动驾驶模式，确认路线后自动按阶段调用各 skill，仅在确认点暂停 |
 | 想手动从需求分析开始 | `/bm-analyze` | 澄清需求边界、识别隐性需求，输出 `docs/requirements.md` |
 | 需求已确认，需要写实现方案 | `/bm-plan` | 输出 `plans/<feature>/plan.md`，定义 Story 清单，支持多实例并行 |
 | 方案已有，复杂 Story 需要细化实现细节（单个） | `/bm-story` | 输出详细实现指南，含数据流/伪代码/边界条件/测试策略 |
@@ -65,16 +69,37 @@ TransBridge 项目共有 **13 个 BM 系列 skill**，覆盖从需求分析到�
 
 ## Skill 一览
 
-### `/bm-orchestrator` — 开发流程编排器（全局总控）
+### `/bm-init` — 项目初始化向导
 
-- **作用**：评估需求复杂度（极简/标准/复杂），扫描项目进度，推荐或自动执行下一步 skill
-- **何时用**：不确定该走哪个流程、想看当前进度、或想一键自动推进全流程时
+- **作用**：交互式引导配置 BM 流程所需的项目骨架、配置文件和索引文件
+- **何时用**：**新项目首次使用 BM skill 时**，或需要重置/检查配置时
 - **三种调用方式**：
+  - `/bm-init` — 交互式初始化：逐项引导配置
+  - `/bm-init --check` — 仅检查，输出缺失项清单，不做修改
+  - `/bm-init --force` — 覆盖已有配置为默认值（先备份）
+- **核心配置**：生成 `.claude/bm_config/pilot.json`（行为配置：dev_skill、开发者信息、阶段跳过策略）和 `.claude/bm_config/paths.json`（顶层目录配置）
+- **核心规则**：不创建源码文件；不修改已有配置（除非 `--force`）；目录创建幂等；索引仅初始化空壳
+- **下一步**：初始化完成后 → `/bm-orchestrator` 或 `/bm-pilot` 开始开发
+
+### `/bm-orchestrator` — 开发流程顾问（全局总控）
+
+- **作用**：评估需求复杂度（极简/标准/复杂），扫描项目进度，推荐下一步 skill
+- **何时用**：不确定该走哪个流程、想看当前进度时
+- **两种调用方式**：
   - `/bm-orchestrator 我要实现 xxx` — 传入需求，评估复杂度并推荐起点
   - `/bm-orchestrator` — 无参数，扫描当前项目状态，输出进度看板并推荐下一步
-  - `/bm-orchestrator 我要实现 xxx --auto` — 自动驾驶模式：确认路线后自动按阶段调用各 skill，仅在确认点和门禁处暂停
-- **核心规则**：不写文档、不改代码、不运行测试（由下游 skill 执行）；不做技术决策；每次调用都重新扫描推断；记录门禁是强制性的
-- **下一步**：按推荐调用对应 skill，或加 `--auto` 让编排器自动推进
+- **核心规则**：不写文档、不改代码、不运行测试（由下游 skill 执行）；不做技术决策；不调用其他 skill（纯顾问角色）；每次调用都重新扫描推断；记录门禁是强制性的
+- **下一步**：按推荐调用对应 skill；如需自动驾驶请用 `/bm-pilot`
+
+### `/bm-pilot` — 开发流程自动驾驶
+
+- **作用**：评估复杂度、确认路线后自动按阶段调用各 skill，仅在确认点和门禁处暂停
+- **何时用**：想一键自动推进全流程时
+- **两种调用方式**：
+  - `/bm-pilot 我要实现 xxx` — 传入需求，评估复杂度并确认路线后自动推进
+  - `/bm-pilot` — 无参数，扫描当前进度，自动推进到下一未完成阶段
+- **核心规则**：通过 `Skill` 工具自动 invoke 下游 skill；仅在路线确认、各 skill 内部确认、Blocker、门禁无法自动修复时暂停；每次阶段切换前强制执行记录门禁
+- **下一步**：自动驾驶结束后，如需调整直接调用对应 skill
 
 ### `/bm-dev` — 代码开发者
 
@@ -82,6 +107,14 @@ TransBridge 项目共有 **13 个 BM 系列 skill**，覆盖从需求分析到�
 - **模式一：严格执行模式** — `/bm-dev <feature>`，按 `plans/<feature>/plan.md` 逐 Story 编码，不修改 plan 未列出的文件
 - **模式二：灵活开发模式** — `/bm-dev 我要实现/修复 xxx`，适用于修 bug、改配置、小功能迭代，口头确认修改点后编码
 - **核心规则**：不调用任何其他 skill；不写 changelog、不更新索引（留给 chronicle）；编码完成后必须调用 `/bm-chronicle` 记录
+- **下一步**：编码完成 → `/bm-chronicle` → `/bm-qa`
+
+### `/bm-dev-serial` — 代码开发者（串行版）
+
+- **作用**：与 `/bm-dev` 功能相同，但多实例模式下 Agent **逐个串行执行**而非并行，避免并发限流
+- **何时用**：使用 DeepSeek 等有并发限流的模型时；或希望 Agent 间有明确先后依赖关系时
+- **调用方式**：与 `/bm-dev` 完全相同 — `/bm-dev-serial <feature>`（严格执行）或 `/bm-dev-serial 我要实现 xxx`（灵活开发）
+- **核心规则**：与 `/bm-dev` 相同；每个 Agent 完成后检查结果再启动下一个；子任务超过 6 个时建议分批执行
 - **下一步**：编码完成 → `/bm-chronicle` → `/bm-qa`
 
 ### `/bm-analyze` — 需求分析师
@@ -171,32 +204,48 @@ TransBridge 项目共有 **13 个 BM 系列 skill**，覆盖从需求分析到�
 ## 标准工作流顺序
 
 ```
-新需求
-  ├─ 方式一：全自动 ──→ /bm-orchestrator 我要实现 xxx --auto
-  │                     编排器自动按阶段推进，仅在确认点暂停
-  │
-  └─ 方式二：手动推进（推荐先调用 /bm-orchestrator 看进度）
-        → /bm-analyze（需求分析）
-          → /bm-plan（方案策划）
-            → /bm-arch（架构设计，可选——涉及技术选型时推荐）
-              → /bm-story（Story 细化，可选——复杂 Story 推荐）
-              → /bm-story-batch（批量 Story 展开，多 Story 时推荐）
-                → /bm-council（方案评审，可选）
-                  → /bm-dev（编码）
-                    → /bm-chronicle（记录增量，必须）
-                      → /bm-qa（测试审查）
-                        → /bm-council（执行评审，可选）
-                          → /bm-git（提交代码）
-                            → 完成
+首次使用 BM skill
+  → /bm-init（项目初始化——配置 dev_skill、创建目录骨架、初始化索引）
+    → 新需求
+      ├─ 方式一：全自动 ──→ /bm-pilot 我要实现 xxx
+      │                     pilot 自动按阶段推进，仅在确认点暂停
+      │
+      └─ 方式二：手动推进（推荐先调用 /bm-orchestrator 看进度）
+            → /bm-analyze（需求分析）
+              → /bm-plan（方案策划）
+                → /bm-arch（架构设计，可选——涉及技术选型时推荐）
+                  → /bm-story（Story 细化，可选——复杂 Story 推荐）
+                  → /bm-story-batch（批量 Story 展开，多 Story 时推荐）
+                    → /bm-council（方案评审，可选）
+                      → /bm-dev 或 /bm-dev-serial（编码）
+                        → /bm-chronicle（记录增量，必须）
+                          → /bm-qa（测试审查）
+                            → /bm-council（执行评审，可选）
+                              → /bm-git（提交代码）
+                                → 完成
 ```
 
 **简化路径**：
+- 首次使用 BM skill → `/bm-init`（必须，创建配置和目录骨架）
 - 修复 bug / 改配置 → `/bm-dev 我要修复xxx`（灵活模式，跳过分析/方案阶段），完成后 `/bm-chronicle` → `/bm-qa` → `/bm-git`
 - 已有方案想直接编码 → `/bm-dev <feature>`（严格执行模式），编码后 `/bm-chronicle` → `/bm-qa` → `/bm-git`
+- 使用限流模型编码 → `/bm-dev-serial <feature>`（串行版，避免并发限流）
 - 想看进度 / 不确定下一步 → `/bm-orchestrator`（无参数扫描）
+- 想全自动推进 → `/bm-pilot 我要实现 xxx`（自动按阶段调度）
 - 只想快速提交代码 → `/bm-git`（扫描、规划、提交）或 `/bm-git --status`（仅查看状态）
 
 ---
+
+## 配置系统
+
+BM skill 流程使用 `.claude/bm_config/` 目录下的两份 JSON 配置：
+
+| 配置 | 路径 | 说明 |
+|------|------|------|
+| 行为配置 | `.claude/bm_config/pilot.json` | dev_skill（`bm-dev` 或 `bm-dev-serial`）、开发者信息、阶段跳过策略（story_detail/council_review）、超时设置 |
+| 路径配置 | `.claude/bm_config/paths.json` | 顶层目录映射（docs_dir、plans_dir、changelogs_dir 等），子路径由各 skill 自行拼接 |
+
+> 由 `/bm-init` 生成，可手动编辑。所有 skill 启动时读取，不得硬编码路径。
 
 ## 文档索引位置
 

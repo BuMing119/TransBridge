@@ -15,6 +15,20 @@ description: 批量 Story 展开编排器：串行调用 /bm-story，用户逐�
 
 当用户需要一次性展开大量 Story，但仍希望对每个 Story 保持交互确认时使用。
 
+## 配置前置检查
+
+启动时若 `.claude/bm_config/paths.json` 不存在或内容为空，则**自动调用 `/bm-init`** 进行交互式初始化，等待初始化完成后再继续执行本 skill 的后续步骤。
+
+## 配置文件
+
+启动时读取 `.claude/bm_config/paths.json`，使用以下目录配置：
+
+| 配置键 | 默认值 | 本 skill 用途 |
+|--------|--------|--------------|
+| `plans_dir` | `plans` | 扫描 Story `{plans_dir}/INDEX.md`，委托 `/bm-story` 写入 |
+
+子路径命名由各 skill 自行约定，不从配置读取。
+
 ## 职责
 
 本 skill 是一个**编排器**，不直接生成 Story 文档。核心职责：
@@ -103,9 +117,9 @@ Phase 4:
 
 **推进规则**：
 - 调用 `/bm-story`（正常交互模式，不传 `--batch`）
-- 用户正常与 `/bm-story` 交互：确认骨架 → 文档生成 → 确认文档
+- 用户正常与 `/bm-story` 交互：确认骨架 → 文档生成 → 确认文档 → **自动清理 plan.md 冗余内容**
 - `/bm-story` 完成后，自动展示当前进度并推进到下一个 Story
-- 每个 Story 完成后输出进度条：`[5/29] tavern-llm ✓ → 下一个: tavern-character 1`
+- 每个 Story 完成后输出进度条：`[5/29] tavern-llm ✓（plan.md 已清理） → 下一个: tavern-character 1`
 
 **Phase 间暂停**：每完成一个 Phase 的全部 Story，向用户展示该 Phase 的完成摘要，并询问是否继续下一 Phase：
 
@@ -141,3 +155,5 @@ Phase 4: tavern-frontend    → plans/tavern-frontend/story-*.md × 6
 - **幂等**：跳过已有 `story-*.md` 的 Story
 - **不做技术选型**：所有决策引用已有 ADR 和 plan
 - **不替代 `/bm-dev`**：story 文档是 dev 的输入
+- **plan.md 清理自动完成**：batch 编排器无需额外处理 plan.md 清理。每个 `/bm-story` 调用在其步骤 4（同步更新）中自动执行清理，batch 编排器仅需在汇总阶段做一次快速校验，确认各 Story 的 plan.md 节已被清理
+- **所有文件路径引用必须从 `.claude/bm_config/paths.json` 读取，不得硬编码。**

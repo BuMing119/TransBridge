@@ -15,6 +15,22 @@ description: LLM修改记录员：按 Epic→Story 分层，每次增量输出�
   - bm-plan 结束后 → 记录 `plans/*/plan.md` 的方案/Story 变更
 - 用户主动要求记录时
 
+## 配置前置检查
+
+启动时若 `.claude/bm_config/paths.json` 不存在或内容为空，则**自动调用 `/bm-init`** 进行交互式初始化，等待初始化完成后再继续执行本 skill 的后续步骤。
+
+## 配置文件
+
+启动时读取 `.claude/bm_config/paths.json`，使用以下目录配置：
+
+| 配置键 | 默认值 | 本 skill 用途 |
+|--------|--------|--------------|
+| `changelogs_dir` | `docs/changelogs` | 增量文件 `{changelogs_dir}/{epic}/{story}/{date}-{seq}-{summary}.md`，索引 `{changelogs_dir}/INDEX.md` |
+| `plans_dir` | `plans` | 同步更新 `{plans_dir}/INDEX.md` |
+| `docs_dir` | `docs` | 同步更新 `{docs_dir}/INDEX.md` |
+
+子路径命名由各 skill 自行约定，不从配置读取。
+
 ## 职责
 
 1. 收集本次修改涉及的文件和变更摘要（每个文件改了什么、为什么改）
@@ -162,3 +178,4 @@ description: LLM修改记录员：按 Epic→Story 分层，每次增量输出�
 - **文件路径使用相对路径**，从项目根目录开始
 - **简述不超过 30 字**：从变更摘要自动派生，中文优先
 - **编号 NNN 三位零填充**：`001`, `002`, ..., `999`
+- **所有文件路径引用必须从 `.claude/bm_config/paths.json` 读取，不得硬编码。**

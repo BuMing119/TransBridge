@@ -12,6 +12,20 @@ description: Git版本管家：分析最近新增和修改文件，按功能分�
 - `/bm-git --auto` — 扫描规划后自动执行用户确认的提交序列
 - `/bm-git --push` — 提交完成后推送到远程（需先完成提交规划）
 
+## 配置前置检查
+
+启动时若 `.claude/bm_config/paths.json` 不存在或内容为空，则**自动调用 `/bm-init`** 进行交互式初始化，等待初始化完成后再继续执行本 skill 的后续步骤。
+
+## 配置文件
+
+启动时读取 `.claude/bm_config/paths.json`，使用以下目录配置：
+
+| 配置键 | 默认值 | 本 skill 用途 |
+|--------|--------|--------------|
+| `changelogs_dir` | `docs/changelogs` | 交叉匹配 Epic/Story `{changelogs_dir}/INDEX.md` |
+
+子路径命名由各 skill 自行约定，不从配置读取。
+
 ## 职责
 
 1. **状态扫描**：运行 `git status`、`git diff --stat`、`git diff --cached --stat`、`git log --oneline -10`，按功能区域归类所有变更文件
@@ -240,3 +254,4 @@ Git 状态概览: main
 - **CRLF 不阻断**：CRLF 警告记录但不阻止提交
 - **中文 commit message**：使用中文，10-60 字符，动词开头，主动语态
 - **提交粒度**：一个逻辑功能一个提交，不过粗（全挤一起）也不过细（每个文件一个提交）
+- **所有文件路径引用必须从 `.claude/bm_config/paths.json` 读取，不得硬编码。**

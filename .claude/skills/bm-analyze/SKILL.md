@@ -8,6 +8,20 @@ description: 需求分析师：分析用户需求，输出结构化需求文档 
 ## 触发时机
 用户提出新功能、新需求或需求变更时调用 `/bm-analyze`。
 
+## 配置前置检查
+
+启动时若 `.claude/bm_config/paths.json` 不存在或内容为空，则**自动调用 `/bm-init`** 进行交互式初始化，等待初始化完成后再继续执行本 skill 的后续步骤。
+
+## 配置文件
+
+启动时读取 `.claude/bm_config/paths.json`，使用以下目录配置：
+
+| 配置键 | 默认值 | 本 skill 用途 |
+|--------|--------|--------------|
+| `docs_dir` | `docs` | 需求文档 `{docs_dir}/requirements.md`，索引 `{docs_dir}/INDEX.md` |
+
+子路径命名由各 skill 自行约定，不从配置读取。
+
 ## 职责
 1. 与用户对话，澄清需求边界、范围、优先级
 2. 识别隐性需求、约束条件、异常场景
@@ -16,8 +30,8 @@ description: 需求分析师：分析用户需求，输出结构化需求文档 
 ## 工作流
 
 ### 阶段一：读取上下文（静默）
-1. 读取已有的 `docs/requirements.md`（如果存在）
-2. 读取 `docs/INDEX.md`
+1. 读取已有的需求文档（`paths.docs.requirements`，如 `docs/requirements.md`）
+2. 读取文档索引（`paths.docs.index`，如 `docs/INDEX.md`）
 
 ### 阶段二：需求澄清（必须与人交互）
 
@@ -98,4 +112,4 @@ description: 需求分析师：分析用户需求，输出结构化需求文档 
 - **严禁在阶段二/三输出完整的需求文档**：写文档前的交互阶段只进行对话和归纳，不得输出 `docs/requirements.md`
 - 严禁在分析阶段输出任何代码或方案细节，只聚焦"做什么"
 - 需求经用户**写前确认**后，方可编写文档；文档完成后方可告知用户下一步：`/bm-plan` 进行方案策划
-- 如需求与现有需求冲突，需标注冲突点
+- **所有文件路径引用必须从 `.claude/bm_config/paths.json` 读取，不得硬编码。**
