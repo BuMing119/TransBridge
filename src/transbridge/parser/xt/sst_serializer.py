@@ -51,14 +51,35 @@ class SST_Serializer:
         return cls(sst._magic, sst._raw_header, records,
                    trailing=getattr(sst, '_trailing', b''))
 
+    @classmethod
+    def create_new(cls, plugin_name: str, entries: list["SST_Entry"]) -> "SST_Serializer":
+        """从零创建 SSU9 SST 文件（无需模板 SST 文件）。
+
+        构建最小 SSU9 header + 逐条记录序列化。
+        返回的序列化器可直接 ``save()`` 或继续 ``update_and_save()``。
+        """
+        header = cls._build_ssu9_header(plugin_name)
+        records: list[tuple["SST_Entry", bytes]] = [
+            (e, cls._build_ssu9_record(e)) for e in entries
+        ]
+        return cls(b"SSU9", header, records)
+
     # ── 核心序列化 ─────────────────────────────────────────────
 
     def to_bytes(self) -> bytes:
-        """重建完整 SST 二进制（header + 逐条记录 + 尾部残余）。"""
-        rebuild = self._rebuild_ssu8 if self._magic == b"SSU8" else self._rebuild_ssu9
+        """重建完整 SST 二进制（header + 逐条记录 + 尾部残余）。
+
+        模板路径（from_parser）：使用 ``_rebuild_ssu8/9`` 基于原始二进制重建。
+        从零创建路径（create_new）：使用 ``_build_ssu9_record`` 基于当前 entry 字段重建。
+        """
         parts = [self._header]
         for entry, tail in self._records:
-            parts.append(rebuild(entry, tail))
+            if entry._raw:
+                rebuild = self._rebuild_ssu8 if self._magic == b"SSU8" else self._rebuild_ssu9
+                parts.append(rebuild(entry, tail))
+            else:
+                # 从零创建的记录：基于当前 entry 字段重建（支持 update_and_save 后重新序列化）
+                parts.append(self._build_ssu9_record(entry))
         if self._trailing:
             parts.append(self._trailing)
         return b"".join(parts)
@@ -70,8 +91,12 @@ class SST_Serializer:
         """SSU9: 26B 头 + eng_text UTF-16LE + chn_len(4B) + chn_text + extra."""
         head = bytearray(entry._raw[:26])
         eng_bytes = entry.text.encode("utf-16-le")
+        # 更新头中可能被修改的字段：form_id / unk12 / f2 / str_len
+        unk12 = ((entry.group_index << 16) | ((entry.index - 1) & 0xFFFF)) & 0xFFFFFFFF
+        struct.pack_into("<I", head, 0, entry.form_id & 0xFFFFFFFF)
+        struct.pack_into("<I", head, 12, unk12)
+        struct.pack_into("<I", head, 16, entry.f2 & 0xFFFFFFFF)
         struct.pack_into("<H", head, 22, len(eng_bytes))
-
         result = bytes(head) + eng_bytes
 
         chn_bytes = entry.translated_text.encode("utf-16-le") if entry.translated_text else b""
@@ -87,6 +112,56 @@ class SST_Serializer:
                     result += tail[extra_start:]
 
         return bytes(result)
+
+    # ── SSU9 from-scratch builders ─────────────────────────────
+
+    @staticmethod
+    def _build_ssu9_header(plugin_name: str) -> bytes:
+        """构建最小 SSU9 header（不含 master list）。
+
+        Header 结构:
+          [SSU9 4B][type 2B 0x0600][? 2B 0x0000][name_len 2B **big**][? 2B 0x0000]
+          [name UTF-16LE name_len B]
+          [0x0000 0x0000 终止符][8B 0x00 metadata]
+        """
+        name_utf16 = plugin_name.encode("utf-16-le")
+        parts = [
+            b"SSU9",
+            struct.pack("<H", 0x0006),       # type
+            struct.pack("<H", 0x0000),       # ?
+            struct.pack(">H", len(name_utf16)),  # name_len (BIG-ENDIAN)
+            struct.pack("<H", 0x0000),       # ?
+            name_utf16,
+            b"\x00\x00\x00\x00",             # terminator
+            b"\x00" * 8,                     # metadata
+        ]
+        return b"".join(parts)
+
+    @staticmethod
+    def _build_ssu9_record(entry: "SST_Entry") -> bytes:
+        """从 SST_Entry 字段构建完整 SSU9 记录（26B 头 + eng_text + chn_len + chn_text）。
+
+        unk12 从 index + group_index 反向计算。
+        str_idx 默认为 0x0100（标准记录）。
+        """
+        edid_bytes = entry.rec.encode("ascii").ljust(8, b"\0")[:8]
+        unk12 = ((entry.group_index << 16) | ((entry.index - 1) & 0xFFFF)) & 0xFFFFFFFF
+        f2 = entry.f2 if entry.f2 else entry.form_id
+        str_idx = 0x0100
+        eng_bytes = entry.text.encode("utf-16-le")
+        chn_bytes = entry.translated_text.encode("utf-16-le") if entry.translated_text else b""
+
+        head = struct.pack(
+            "<I8sIIHHH",
+            entry.form_id & 0xFFFFFFFF,
+            edid_bytes,
+            unk12,
+            f2 & 0xFFFFFFFF,
+            str_idx,
+            len(eng_bytes),
+            0x0000,  # pad
+        )
+        return head + eng_bytes + struct.pack("<I", len(chn_bytes)) + chn_bytes
 
     # ── SSU8 record rebuild ────────────────────────────────────
 

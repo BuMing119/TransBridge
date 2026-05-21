@@ -1,9 +1,10 @@
 from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable, Iterator
-from typing import Optional,Any
+from typing import Optional, Any
 from pathlib import Path
 import json
+import warnings
 
 from src.transbridge.converter.translation_entry import (
     TranslationEntry, _normalize_text,
@@ -19,14 +20,14 @@ import re
 class TranslationEntryCollection:
     """
     管理多个 TranslationEntry 的集合。
-    - 以 TranslationEntry.id 作为唯一索引
-    - 不使用 key
+    - 以 TranslationEntry.key 作为唯一主索引（ADR-002 更新 2026-05-18）
+    - _id_index: {id → entry} 辅助索引（供内部合并逻辑使用）
     - 适合作为后续 JSON / DB / 导出层的中间结构
     """
 
     def __init__(self, entries: Iterable[TranslationEntry] | None = None):
-        self._entries: dict[str, TranslationEntry] = {}  # 原来的 id 索引
-        self._key_index: dict[str, TranslationEntry] = {}  # 新增 key 索引
+        self._entries: dict[str, TranslationEntry] = {}   # key → entry 主索引
+        self._id_index: dict[str, TranslationEntry] = {}   # id → entry 辅助索引
 
         if entries:
             for e in entries:
@@ -40,8 +41,8 @@ class TranslationEntryCollection:
     def __iter__(self) -> Iterator[TranslationEntry]:
         return iter(self._entries.values())
 
-    def __contains__(self, entry_id: str) -> bool:
-        return entry_id in self._entries
+    def __contains__(self, key: str) -> bool:
+        return key in self._entries
 
     # ---------- 基本操作 ----------
 
@@ -50,35 +51,36 @@ class TranslationEntryCollection:
         添加一个 TranslationEntry。
 
         :param entry: TranslationEntry 实例
-        :param overwrite: 若 id 已存在，是否覆盖（默认 True）
+        :param overwrite: 若 key 已存在，是否覆盖（默认 True）
         """
-        # if not overwrite and entry.id in self._entries:
-        #     return
-        # self._entries[entry.id] = entry
-
-        # 按 id 添加
-        if not overwrite and entry.id in self._entries:
+        if not overwrite and entry.key in self._entries:
             return
-        self._entries[entry.id] = entry
-        self._key_index[entry.key] = entry
+        # 若覆盖已有 key，先清理旧 id 索引
+        if entry.key in self._entries:
+            old = self._entries[entry.key]
+            if old.id != entry.id:
+                self._id_index.pop(old.id, None)
+        self._entries[entry.key] = entry
+        self._id_index[entry.id] = entry
 
+    def get(self, key: str) -> Optional[TranslationEntry]:
+        """按 key 获取 TranslationEntry；不存在返回 None"""
+        return self._entries.get(key)
 
-        # 同步更新 key 索引
-        if not overwrite and entry.key in self._key_index:
-            return
-        self._key_index[entry.key] = entry
-
-    def get(self, entry_id: str) -> Optional[TranslationEntry]:
-        """按 id 获取 TranslationEntry；不存在返回 None"""
-        return self._entries.get(entry_id)
+    def get_by_id(self, entry_id: str) -> Optional[TranslationEntry]:
+        """按 id 辅助查找（供内部合并逻辑使用）；不存在返回 None"""
+        return self._id_index.get(entry_id)
 
     def get_by_key(self, key: str) -> Optional[TranslationEntry]:
-        """按 key 获取 TranslationEntry；不存在返回 None"""
-        return self._key_index.get(key)
+        """[已废弃] 使用 get(key) 替代。"""
+        warnings.warn("get_by_key is deprecated, use get(key) instead", DeprecationWarning, stacklevel=2)
+        return self.get(key)
 
-    def remove(self, entry_id: str) -> None:
-        """按 id 删除一条记录；不存在则忽略"""
-        self._entries.pop(entry_id, None)
+    def remove(self, key: str) -> None:
+        """按 key 删除一条记录；不存在则忽略"""
+        entry = self._entries.pop(key, None)
+        if entry is not None:
+            self._id_index.pop(entry.id, None)
 
     # ---------- 批量操作 ----------
 
@@ -102,7 +104,7 @@ class TranslationEntryCollection:
         合并另一个 TranslationEntryCollection。
 
         :param other: 另一个集合
-        :param overwrite: id 冲突时是否覆盖
+        :param overwrite: key 冲突时是否覆盖
         """
         for e in other:
             self.add(e, overwrite=overwrite)
@@ -181,8 +183,8 @@ class TranslationEntryCollection:
                     dsd_index=entry.dsd_index,
                     editor_id=entry.editor_id,
                 )
-                self._entries[entry.id] = updated_entry
-                self._key_index[entry.key] = updated_entry
+                self._entries[entry.key] = updated_entry
+                self._id_index[entry.id] = updated_entry
                 updated_count += 1
                 matched = True
                 break
@@ -192,7 +194,7 @@ class TranslationEntryCollection:
         # --- Phase 2：按 (original, type_field_base) 回退 ---
         if unmatched:
             # key = (form_id, grup:champ, original)，优先有译文的条目
-            fallback_index: dict[tuple[str, str, str], EET_Entry] = {}
+            fallback_index: dict[tuple[str, str], EET_Entry] = {}
             for eet_entry in all_eet:
                 if not eet_entry.traduit:
                     continue
@@ -216,8 +218,8 @@ class TranslationEntryCollection:
                     dsd_index=entry.dsd_index,
                     editor_id=entry.editor_id,
                 )
-                self._entries[entry.id] = updated_entry
-                self._key_index[entry.key] = updated_entry
+                self._entries[entry.key] = updated_entry
+                self._id_index[entry.id] = updated_entry
                 updated_count += 1
 
         return updated_count
@@ -291,8 +293,8 @@ class TranslationEntryCollection:
                     if updated is None:
                         continue
                     if updated is not entry:
-                        self._entries[entry.id] = updated
-                        self._key_index[entry.key] = updated
+                        self._entries[entry.key] = updated
+                        self._id_index[entry.id] = updated
                         entry = updated
                         updated_count += 1
                     matched = True
@@ -327,8 +329,8 @@ class TranslationEntryCollection:
                     dsd_index=entry.dsd_index,
                     editor_id=entry.editor_id,
                 )
-                self._entries[entry.id] = updated_entry
-                self._key_index[entry.key] = updated_entry
+                self._entries[entry.key] = updated_entry
+                self._id_index[entry.id] = updated_entry
                 updated_count += 1
 
         return updated_count
@@ -371,8 +373,8 @@ class TranslationEntryCollection:
             matched += 1
             result = TranslationEntry.try_update_from_sst(entry, sst)
             if result is not None and result is not entry:
-                self._entries[entry.id] = result
-                self._key_index[entry.key] = result
+                self._entries[entry.key] = result
+                self._id_index[entry.id] = result
                 updated += 1
 
         skipped = matched - updated
@@ -397,15 +399,15 @@ class TranslationEntryCollection:
         translated_entries = PluginParser().parse_plugin(Path(path), skip_empty=True)
         all_translated = list(translated_entries)
 
-        # Phase 1：按 id 精确查找
-        translated_lookup: dict[str, str] = {te.id: te.original for te in all_translated}
+        # Phase 1：按 id 精确查找（辅助索引）
+        translated_lookup: dict[str, str] = {te.id: te.translation for te in all_translated}
 
         updated_count = 0
         unmatched: list[TranslationEntry] = []
 
         for entry in list(self._entries.values()):
             translated_text = translated_lookup.get(entry.id)
-            if translated_text is None:
+            if translated_text is None or not translated_text:
                 unmatched.append(entry)
                 continue
             if translated_text == entry.original:
@@ -430,14 +432,13 @@ class TranslationEntryCollection:
         if unmatched:
             fallback_index: dict[tuple[str, str], str] = {}
             for te in all_translated:
-                if te.original == "":
+                if not te.translation:
                     continue
                 _, _, rest = te.id.partition(":")
                 _, _, type_part = rest.partition("~")
                 fb_key = (te.original, type_part.split("|")[0])
-                # 只保留第一个命中（避免重名条目污染）
                 if fb_key not in fallback_index:
-                    fallback_index[fb_key] = te.original
+                    fallback_index[fb_key] = te.translation
 
             for entry in unmatched:
                 if entry.translation and not overwrite:
@@ -483,17 +484,14 @@ class TranslationEntryCollection:
         updated_count = 0
 
         for entry in list(self._entries.values()):
-            # 跳过已有译文（除非覆盖）
             if entry.translation and not overwrite:
                 continue
-            # 跳过没有 string_id 的条目（非本地化插件）
             if entry.string_id is None:
                 continue
 
             translated_text = strings_lookup.get(entry.string_id)
             if translated_text is None:
                 continue
-            # 跳过译文与原文相同的条目
             if translated_text == entry.original:
                 continue
 
@@ -527,7 +525,7 @@ class TranslationEntryCollection:
         """
         return [e for e in self._entries.values() if predicate(e)]
 
-    # ---------- 未来扩展（暂不实现） ----------
+    # ---------- 序列化 ----------
 
     def to_dict(self) -> list[dict[str, Any]]:
         """
@@ -546,7 +544,7 @@ class TranslationEntryCollection:
         for e in self._entries.values():
             if e.translation:
                 dsd_dict = e.to_dsd_dict()
-                if dsd_dict:  # to_dsd_dict() 返回空字典表示无译文
+                if dsd_dict:
                     result.append(dsd_dict)
         return result
 
@@ -556,9 +554,7 @@ class TranslationEntryCollection:
         ensure_ascii: bool = False,
         indent: int = 2,
     ) -> str:
-        """
-        导出为 JSON 字符串。
-        """
+        """导出为 JSON 字符串。"""
         return json.dumps(
             self.to_dict(),
             ensure_ascii=ensure_ascii,
@@ -571,9 +567,7 @@ class TranslationEntryCollection:
         ensure_ascii: bool = False,
         indent: int = 2,
     ) -> str:
-        """
-        导出为简化格式的 JSON 字符串，用于外部工具兼容。
-        """
+        """导出为简化格式的 JSON 字符串，用于外部工具兼容。"""
         return json.dumps(
             self.to_export_dict(),
             ensure_ascii=ensure_ascii,
@@ -587,9 +581,7 @@ class TranslationEntryCollection:
         ensure_ascii: bool = False,
         indent: int = 2,
     ) -> None:
-        """
-        保存为 JSON 文件。
-        """
+        """保存为 JSON 文件。"""
         path = Path(path)
         path.write_text(
             self.to_json(ensure_ascii=ensure_ascii, indent=indent),
@@ -603,9 +595,7 @@ class TranslationEntryCollection:
         ensure_ascii: bool = False,
         indent: int = 2,
     ) -> None:
-        """
-        保存为简化格式的 JSON 文件，用于外部工具兼容。
-        """
+        """保存为简化格式的 JSON 文件，用于外部工具兼容。"""
         path = Path(path)
         path.write_text(
             self.to_export_json(ensure_ascii=ensure_ascii, indent=indent),
@@ -622,21 +612,15 @@ class TranslationEntryCollection:
         """
         从 JSON 文件加载数据并创建 TranslationEntryCollection 实例。
         JSON 格式应为简单的条目数组，不包含嵌套结构。
-        
-        :param path: JSON 文件路径
-        :param overwrite: 若 id 已存在，是否覆盖（默认 True）
-        :return: 新的 TranslationEntryCollection 实例
         """
         path = Path(path)
         data = json.loads(path.read_text(encoding="utf-8"))
-        
+
         collection = cls()
-        
-        # 验证格式 - 应该是一个条目数组
+
         if not isinstance(data, list):
             raise ValueError("无效的 JSON 格式：应该是一个条目数组")
-        
-        # 从字典创建 TranslationEntry 对象
+
         for entry_data in data:
             entry = TranslationEntry.from_dict(entry_data)
             collection.add(entry, overwrite=overwrite)
@@ -651,10 +635,7 @@ class TranslationEntryCollection:
         ensure_ascii: bool = False,
         indent: int = 2,
     ) -> str:
-        """
-        导出为 DSD 格式的 JSON 字符串。
-        只包含有译文的条目。
-        """
+        """导出为 DSD 格式的 JSON 字符串。只包含有译文的条目。"""
         return json.dumps(
             self.to_export_dict(),
             ensure_ascii=ensure_ascii,
@@ -668,13 +649,7 @@ class TranslationEntryCollection:
         ensure_ascii: bool = False,
         indent: int = 2,
     ) -> None:
-        """
-        导出为 DSD 格式的 JSON 文件，用于 xEdit 脚本等外部工具。
-
-        :param path: 输出文件路径
-        :param ensure_ascii: 是否转义非 ASCII 字符
-        :param indent: JSON 缩进空格数
-        """
+        """导出为 DSD 格式的 JSON 文件，用于 xEdit 脚本等外部工具。"""
         path = Path(path)
         path.write_text(
             self.to_dsd_json(ensure_ascii=ensure_ascii, indent=indent),
@@ -690,30 +665,17 @@ class TranslationEntryCollection:
     ) -> "TranslationEntryCollection":
         """
         从 DSD 格式的 JSON 文件导入翻译条目。
-
-        DSD 格式支持三种变体：
-        1. 基础格式：form_id, type, string
-        2. QUST CNAM：form_id, type, original, string
-        3. 索引格式：form_id, type, index, string
-
-        :param path: DSD 格式 JSON 文件路径
-        :param overwrite: 若 id 已存在，是否覆盖（默认 True）
-        :return: 新的 TranslationEntryCollection 实例
         """
         path = Path(path)
         data = json.loads(path.read_text(encoding="utf-8"))
 
         collection = cls()
 
-        # 验证格式
         if not isinstance(data, list):
             raise ValueError("无效的 DSD JSON 格式：应该是一个条目数组")
 
-        # 从 DSD 字典创建 TranslationEntry 对象
         for entry_data in data:
             entry = TranslationEntry.from_dsd_dict(entry_data)
             collection.add(entry, overwrite=overwrite)
 
         return collection
-
-

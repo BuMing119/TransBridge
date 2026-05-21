@@ -513,6 +513,18 @@ class PostProcessor:
                 total = len(entries)
                 _progress("arbitrate", 0, total, "开始裁决...")
 
+                # Pre-build quality gate verdict lookup (O(N) instead of O(N×M))
+                qg_verdicts: dict[str, str | None] = {}
+                for issue in result.issues:
+                    if issue.issue_type == PostProcessIssue.LOW_QUALITY:
+                        msg = issue.message.lower()
+                        if "[fail]" in msg:
+                            qg_verdicts[issue.entry_id] = "fail"
+                        elif "[pass]" in msg:
+                            qg_verdicts[issue.entry_id] = "pass"
+                        elif "[uncertain]" in msg:
+                            qg_verdicts[issue.entry_id] = "uncertain"
+
                 contexts = []
                 for entry in entries:
                     ctx = ArbitrationContext(
@@ -520,9 +532,7 @@ class PostProcessor:
                         original_issues=issues_by_entry.get(entry.id, []),
                         refine_result=refine_results.get(entry.id),
                         polish_result=polish_results.get(entry.id),
-                        quality_gate_verdict=self._get_quality_gate_verdict(
-                            entry.id, result.issues
-                        ),
+                        quality_gate_verdict=qg_verdicts.get(entry.id),
                     )
                     contexts.append(ctx)
 

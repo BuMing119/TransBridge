@@ -8,6 +8,23 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# ── FNV-1a hash constants (from xTranslator TESVT_Const.pas) ──
+_FNV_OFFSET = 0x811C9DC5
+_FNV_PRIME = 0x01000193
+
+
+def sst_string_hash(s: str) -> int:
+    """FNV-1a 32-bit string hash, matching xTranslator ``stringHash()``.
+
+    Used to compute EDID name hashes for SST binary records.
+    Equivalent to the Pascal ``TESVT_Const.stringHash`` with ``HashSalt=''``.
+    """
+    h = _FNV_OFFSET
+    for b in s.encode("utf-8"):
+        h = ((h ^ b) * _FNV_PRIME) & 0xFFFFFFFF
+    return h
+
+
 # ── SSE record type suffixes ──
 _VALID_EDID_SUFFIXES = (
     "FULL", "NAM1", "NAM2", "DATA", "DESC", "NAME", "GOLD", "SNAM",
@@ -58,7 +75,7 @@ class SST_Entry:
     trail_hash: bytes = field(default_factory=bytes)  # SSU8 translated text raw bytes (UTF-16LE)
     extra: int = 0  # extra ID (SSU8 only)
     global_seq: int = 0  # global sequence number from sID (SSU8 only)
-    f2: int = 0  # xTranslator internal record ID — form_id 完美一对一映射，非标准哈希算法，疑似 xTranslator 内部数据库主键
+    f2: int = 0  # xTranslator internal record ID (1:1 mapped to form_id, not a hash)
     translated_text: str = ""  # translated string (SSU8 decoded from trail, SSU9 from tail)
     subrecords: tuple[SST_Subrecord, ...] = ()  # SSU9 extra subrecords
 
