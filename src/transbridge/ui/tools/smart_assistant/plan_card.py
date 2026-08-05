@@ -4,6 +4,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QListWidget, QListWidgetItem,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtWidgets import QScrollArea  # noqa: F811 — 用于后续扩展
 
 from src.transbridge.smart_assistant.execution_engine import StepResult
 
@@ -34,6 +35,8 @@ class PlanCard(QWidget):
 
         # 步骤列表
         self._step_list = QListWidget()
+        self._step_list.setMaximumHeight(120)
+        self._step_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._step_list.setStyleSheet(
             "QListWidget { border: none; background: transparent; font-size: 12px; }"
         )

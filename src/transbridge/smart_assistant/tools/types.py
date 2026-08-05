@@ -92,6 +92,9 @@ class ToolResult:
             full = json.dumps(self.data, ensure_ascii=False, default=str)
         if len(full) <= max_chars:
             return full
+        # 非 dict 类型：直接截断
+        if not isinstance(self.data, dict):
+            return full[:max_chars - 3] + "..."
         # 大数据：智能摘要
         summary: dict[str, Any] = {}
         large_list_keys = {"entries", "projects", "tasks", "collections", "history", "details"}

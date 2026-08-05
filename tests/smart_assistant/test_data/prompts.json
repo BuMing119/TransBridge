@@ -1,0 +1,68 @@
+{
+  "description": "Phase 3 LLM 回归测试 — 50 prompts 覆盖 7 个 namespace。每个 prompt 标注期望的首个工具调用。",
+  "prompts": [
+    {"id": 1, "namespace": "default", "text": "现在什么状态？", "expect_tool": "get_app_state"},
+    {"id": 2, "namespace": "default", "text": "翻译进度怎么样？", "expect_tool": "get_statistics"},
+    {"id": 3, "namespace": "default", "text": "当前加载了哪些集合？", "expect_tool": "list_collections"},
+    {"id": 4, "namespace": "default", "text": "切换到第二个集合", "expect_tool": "switch_collection"},
+    {"id": 5, "namespace": "default", "text": "现在有什么筛选条件？", "expect_tool": "get_current_filters"},
+    {"id": 6, "namespace": "default", "text": "有哪些本地项目？", "expect_tool": "list_local_projects"},
+    {"id": 7, "namespace": "default", "text": "当前是哪个项目？", "expect_tool": "get_current_project"},
+    {"id": 8, "namespace": "default", "text": "帮我看看整体情况", "expect_tool": "get_app_state"},
+
+    {"id": 9, "namespace": "editor", "text": "筛选所有未翻译的NPC对话", "expect_tool": "set_filters"},
+    {"id": 10, "namespace": "editor", "text": "显示前20条", "expect_tool": "get_visible_entries"},
+    {"id": 11, "namespace": "editor", "text": "选中第3条", "expect_tool": "select_entries"},
+    {"id": 12, "namespace": "editor", "text": "把这条翻译改成'你好世界'", "expect_tool": "edit_translation"},
+    {"id": 13, "namespace": "editor", "text": "把这批条目标记为已检查", "expect_tool": "set_stage"},
+    {"id": 14, "namespace": "editor", "text": "有哪些标签？", "expect_tool": "list_labels"},
+    {"id": 15, "namespace": "editor", "text": "给选中的条目加个'待审核'标签", "expect_tool": "manage_entry_labels"},
+    {"id": 16, "namespace": "editor", "text": "搜索包含'龙裔'的条目", "expect_tool": "set_filters"},
+
+    {"id": 17, "namespace": "translator", "text": "帮我把未翻译的条目翻译了", "expect_tool": "start_translation"},
+    {"id": 18, "namespace": "translator", "text": "润色一下已翻译的内容", "expect_tool": "start_polish"},
+    {"id": 19, "namespace": "translator", "text": "停止翻译任务", "expect_tool": "stop_task"},
+    {"id": 20, "namespace": "translator", "text": "翻译进度怎么样了？", "expect_tool": "get_task_status"},
+    {"id": 21, "namespace": "translator", "text": "当前的翻译配置是什么？", "expect_tool": "get_translation_config"},
+    {"id": 22, "namespace": "translator", "text": "把温度调到0.5", "expect_tool": "set_translation_config"},
+    {"id": 23, "namespace": "translator", "text": "只翻译NPC对话部分", "expect_tool": "set_scope"},
+    {"id": 24, "namespace": "translator", "text": "看看要翻译多少条", "expect_tool": "get_scope_preview"},
+
+    {"id": 25, "namespace": "parser", "text": "解析这个ESP文件", "expect_tool": "parse_esp"},
+    {"id": 26, "namespace": "parser", "text": "解析EET文件", "expect_tool": "parse_eet"},
+    {"id": 27, "namespace": "parser", "text": "解析XT文件", "expect_tool": "parse_xt"},
+    {"id": 28, "namespace": "parser", "text": "解析SST文件", "expect_tool": "parse_sst"},
+    {"id": 29, "namespace": "parser", "text": "导入这个JSON翻译文件", "expect_tool": "import_json"},
+    {"id": 30, "namespace": "parser", "text": "把这个ESP的内容追加到当前集合", "expect_tool": "parse_esp"},
+    {"id": 31, "namespace": "parser", "text": "加载Dragonborn.esm的翻译", "expect_tool": "parse_esp"},
+
+    {"id": 32, "namespace": "proofreader", "text": "运行后处理检查质量", "expect_tool": "run_postprocess"},
+    {"id": 33, "namespace": "proofreader", "text": "最近的质量报告是什么？", "expect_tool": "get_quality_report"},
+    {"id": 34, "namespace": "proofreader", "text": "列出所有历史质量报告", "expect_tool": "list_quality_reports"},
+    {"id": 35, "namespace": "proofreader", "text": "检查一下翻译质量", "expect_tool": "run_postprocess"},
+    {"id": 36, "namespace": "proofreader", "text": "对这批翻译做质检", "expect_tool": "run_postprocess"},
+    {"id": 37, "namespace": "proofreader", "text": "看看上次检查的结果", "expect_tool": "get_quality_report"},
+
+    {"id": 38, "namespace": "paratranz", "text": "列出ParaTranz上的项目", "expect_tool": "list_projects"},
+    {"id": 39, "namespace": "paratranz", "text": "查看PT项目详情", "expect_tool": "get_project_info"},
+    {"id": 40, "namespace": "paratranz", "text": "对比本地和远程的差异", "expect_tool": "compare_with_remote"},
+    {"id": 41, "namespace": "paratranz", "text": "上传翻译到ParaTranz", "expect_tool": "upload_entries"},
+    {"id": 42, "namespace": "paratranz", "text": "从PT下载最新翻译", "expect_tool": "download_entries"},
+    {"id": 43, "namespace": "paratranz", "text": "导出工件包", "expect_tool": "export_artifact"},
+    {"id": 44, "namespace": "paratranz", "text": "切换PT项目", "expect_tool": "switch_paratranz_project"},
+
+    {"id": 45, "namespace": "writer", "text": "把译文写回ESP文件", "expect_tool": "write_back"},
+    {"id": 46, "namespace": "writer", "text": "保存到文件", "expect_tool": "write_back"},
+    {"id": 47, "namespace": "writer", "text": "写回EET XML", "expect_tool": "write_back"},
+
+    {"id": 48, "namespace": "cross", "text": "解析这个ESP，然后翻译NPC对话，最后上传到ParaTranz", "expect_first_ns": "parser"},
+    {"id": 49, "namespace": "cross", "text": "先看看整体状态，然后筛选未翻译的条目，帮我翻译了", "expect_first_ns": "default"},
+    {"id": 50, "namespace": "cross", "text": "检查翻译质量，有问题的地方自动修复，然后写回文件", "expect_first_ns": "proofreader"}
+  ],
+  "metrics": {
+    "tool_accuracy": "expect_tool 是否被正确调用",
+    "namespace_routing": "首次 get_tool_help 的 namespace 是否匹配 expect_first_ns",
+    "skip_rate": "是否跳过 get_tool_help 直接调用非预加载工具",
+    "param_accuracy": "调用参数是否与期望一致（人工判断）"
+  }
+}

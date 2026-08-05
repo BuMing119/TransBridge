@@ -168,7 +168,7 @@ def _tool_get_tool_help(args: dict, ctx) -> ToolResult:
     namespace = args.get("namespace") or None
     from ..tool_registry import ToolRegistry
     result = ToolRegistry.build_tool_help(tool=tool_name, namespace=namespace)
-    return ToolResult.ok(data=result)
+    return ToolResult.ok(data={"help": result})
 
 
 # ── 注册 ──────────────────────────────────────────────────────

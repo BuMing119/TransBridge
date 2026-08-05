@@ -111,8 +111,7 @@ class MessageBubble(QWidget):
         content = self._render_content(text)
         wrapper_layout.addWidget(content)
 
-        outer.addWidget(content_wrapper)
-        outer.addStretch()
+        outer.addWidget(content_wrapper, stretch=1)
 
         self._role = role
         self._content_wrapper = content_wrapper

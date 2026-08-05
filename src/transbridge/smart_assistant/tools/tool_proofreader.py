@@ -196,11 +196,12 @@ class ProofreaderController:
 
                 # ── 构建 report ──────────────────────────────────────────
                 verdict_stats = {"passed": 0, "rejected": 0, "pending": 0}
-                if result.execution_result:
+                exec_result = getattr(result, "execution_result", None)
+                if exec_result:
                     verdict_stats = {
-                        "passed": result.execution_result.passed,
-                        "rejected": result.execution_result.rejected,
-                        "pending": result.execution_result.pending,
+                        "passed": getattr(exec_result, "passed", 0),
+                        "rejected": getattr(exec_result, "rejected", 0),
+                        "pending": getattr(exec_result, "pending", 0),
                     }
 
                 # 中间数据摘要

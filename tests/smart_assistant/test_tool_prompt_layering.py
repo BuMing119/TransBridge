@@ -199,16 +199,16 @@ def test_get_tool_help_registered():
 def test_get_tool_help_execute_single_tool():
     from src.transbridge.smart_assistant.tools.tool_default import _tool_get_tool_help
     result = _tool_get_tool_help({"tool": "get_app_state"}, None)
-    assert "get_app_state" in result.data
+    assert "get_app_state" in result.data["help"]
 
 
 def test_get_tool_help_execute_namespace():
     from src.transbridge.smart_assistant.tools.tool_default import _tool_get_tool_help
     result = _tool_get_tool_help({"namespace": "default"}, None)
-    assert "get_app_state" in result.data
+    assert "get_app_state" in result.data["help"]
 
 
 def test_get_tool_help_execute_empty():
     from src.transbridge.smart_assistant.tools.tool_default import _tool_get_tool_help
     result = _tool_get_tool_help({}, None)
-    assert "工具概览" in result.data
+    assert "工具概览" in result.data["help"]

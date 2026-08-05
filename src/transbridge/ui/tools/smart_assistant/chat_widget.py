@@ -52,6 +52,7 @@ from src.transbridge.smart_assistant.tool_execution_handler import ToolExecution
 from src.transbridge.smart_assistant.conversation_orchestrator import ConversationOrchestrator
 from src.transbridge.smart_assistant.conversation_manager import ConversationManager
 from src.transbridge.smart_assistant.execution_engine import ExecutionEngine, StepResult
+from src.transbridge.smart_assistant.session_controller import SessionController  # FR12: Story 01
 from .tool_card import ToolCard, BatchToolCard
 from .plan_card import PlanCard
 
@@ -61,7 +62,6 @@ logger = logging.getLogger(__name__)
 class ChatWidget(QWidget):
     """聊天区域：消息滚动列表 + 输入框 + 发送/清空按钮 + 双模式循环控制。"""
 
-    _MAX_REACT_DEPTH = 10
     MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
     MAX_VISIBLE_WIDGETS = 100  # M52: 消息区最大控件数，超出时从头部移除最旧控件
 
@@ -85,6 +85,10 @@ class ChatWidget(QWidget):
 
         # B2: TaskManager 信号延迟到首次 LLM 轮次时连接，避免 UI 构建期 C 栈溢出
         self._task_manager_connected = False
+
+        # FR14: 后台任务监控
+        self._task_monitor = None
+        self._task_monitor_timer: QTimer | None = None
 
         # 自动模式 (QSettings 持久化)
         self._auto_mode = False
@@ -164,7 +168,7 @@ class ChatWidget(QWidget):
                 on_tool_card=lambda step: self.add_tool_card(step),
                 on_batch_tool_card=lambda steps: self.add_batch_tool_card(steps),
                 on_plan_confirmed=lambda steps: self._on_plan_confirmed(steps),
-                on_react_continue=lambda: self._check_react_continue(),
+                on_step_completed=lambda: self._controller.handle_execution_complete([]),
                 on_confirm_permission=lambda title, msg: (
                     QMessageBox.question(self, title, msg,
                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
@@ -186,7 +190,6 @@ class ChatWidget(QWidget):
                 on_scroll_to_bottom=lambda: self._scroll_to_bottom(),
                 on_thinking_indicator_show=lambda t: self._show_thinking_indicator(t),
                 on_thinking_indicator_hide=lambda: self._hide_thinking_indicator(),
-                on_auto_execute_steps=lambda s, m: self._auto_execute_steps(s, m),
                 on_plan_card=lambda steps: self.add_plan_card(steps),
                 on_tool_card=lambda step: self.add_tool_card(step),
                 on_batch_tool_card=lambda steps: self.add_batch_tool_card(steps),
@@ -197,10 +200,30 @@ class ChatWidget(QWidget):
                 on_get_uploaded_docs=lambda: self._uploaded_docs,
                 on_get_pending_memory=lambda: self._pending_memory_context,
                 on_clear_pending_memory=lambda: setattr(self, '_pending_memory_context', ''),
-                on_react_depth_check=lambda: self._check_react_depth(),
+                # FR12: SessionController 响应回调 + FR13 自动保存+命名
+                on_response_parsed=lambda parsed: self._on_response_parsed_safe(parsed),
             )
             # 同步 auto_mode
             self._orchestrator.auto_mode = self._auto_mode
+
+            # ── 会话控制器 (FR12 Story 01: 新旧并行) ──
+            self._controller = SessionController(
+                orchestrator=self._orchestrator,
+                tool_handler=self._tool_handler,
+                conversation=self._conversation,
+                on_state_changed=lambda old, new, ctx: logger.debug(
+                    "SessionController: %s → %s", old.value, new.value),
+                on_present_plan_card=lambda steps: self.add_plan_card(steps),
+                on_present_tool_card=lambda step: self.add_tool_card(step),
+                on_present_batch_tool_card=lambda steps: self.add_batch_tool_card(steps),
+                on_system_message=lambda msg: self.add_system_message(msg),
+                on_conversation_end=lambda: self._obs_collector.end_conversation(),
+                on_llm_round_start=lambda: self._orchestrator.start_round(),
+                on_thinking_indicator_hide=lambda: self._hide_thinking_indicator(),
+            )
+            # 同步 auto_mode 到 controller
+            self._controller.auto_mode = self._auto_mode
+            logger.debug("SessionController 初始化完成，新旧路径并行运行")
         except Exception as e:
             logger.error("UI初始化 Stage 1/4 失败: %s", e)
 
@@ -388,6 +411,13 @@ class ChatWidget(QWidget):
                 self._scroll_throttle_timer.stop()
         except Exception:
             logger.debug("shutdown: 停止 scroll_throttle_timer 失败", exc_info=True)
+        # FR14: 停止任务监控轮询定时器
+        try:
+            if self._task_monitor_timer is not None:
+                self._task_monitor_timer.stop()
+                self._task_monitor_timer = None
+        except Exception:
+            logger.debug("shutdown: 停止 task_monitor_timer 失败", exc_info=True)
 
         # 2/ 结束可观测性活跃追踪（防止 trace 数据丢失）
         try:
@@ -473,7 +503,6 @@ class ChatWidget(QWidget):
         self._orchestrator.cancel_current_round()
         self.add_user_bubble(text)
         self._conversation.add_user(text)
-        self._react_depth = 0
         # m22: LLM 推理在后台 QThread 中异步执行，本方法立即返回
         QTimer.singleShot(0, lambda: self._do_send_retrieve_and_run(text))
 
@@ -527,6 +556,10 @@ class ChatWidget(QWidget):
         return card
 
     def add_plan_card(self, steps: list) -> PlanCard:
+        if not hasattr(self, '_msg_layout') or self._msg_layout is None:
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(50, lambda: self.add_plan_card(steps))
+            return
         card = PlanCard(steps)
         # M34: 断开后再连接，防止重复连接导致信号重复触发
         try:
@@ -543,6 +576,10 @@ class ChatWidget(QWidget):
         return card
 
     def add_batch_tool_card(self, steps: list) -> BatchToolCard:
+        if not hasattr(self, '_msg_layout') or self._msg_layout is None:
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(50, lambda: self.add_batch_tool_card(steps))
+            return
         card = BatchToolCard(steps)
         # M34: 断开后再连接，防止重复连接导致信号重复触发
         try:
@@ -557,26 +594,6 @@ class ChatWidget(QWidget):
         card.all_ignored.connect(self._on_batch_ignored)
         self._add_widget(card)
         return card
-
-    # ── LLM 循环控制 ─────────────────────────────────────────
-
-    @property
-    def _react_depth(self) -> int:
-        return self._orchestrator.react_depth
-
-    @_react_depth.setter
-    def _react_depth(self, value: int) -> None:
-        self._orchestrator.react_depth = value
-
-    def _get_prompt_builder(self):
-        return self._orchestrator._get_prompt_builder()
-
-    def _get_llm_client(self):
-        return self._orchestrator._get_llm_client()
-
-    def _run_llm_round(self) -> None:
-        self._ensure_task_manager()
-        self._orchestrator.start_round()
 
     # ── 流式刷新辅助（回调，操作 MessageBubble 内部 Widget）──
 
@@ -637,6 +654,9 @@ class ChatWidget(QWidget):
     def _on_plan_confirmed(self, steps: list) -> None:
         from src.transbridge.smart_assistant.tool_registry import ToolRegistry
 
+        # FR12 Story 01: 新旧并行 — 通知 SessionController
+        self._controller.handle_user_confirmed(steps, "plan")
+
         # M61: 工具/计划开始执行时隐藏思考指示器
         self._hide_thinking_indicator()
 
@@ -673,18 +693,44 @@ class ChatWidget(QWidget):
         self.add_system_message(f"【计划执行完成】\n{summary}")
         self._conversation.add_plan_result(summary)
         self._obs_collector.end_conversation()
-        self._react_depth = 0
-        # M5: 计划执行完后检查 ReAct 深度，超限则停止
-        if not self._check_react_depth():
-            return
-        self._run_llm_round()
+        self._controller.handle_execution_complete(results)
 
     # ── 确认 (S08) ──────────────────────────────────────────
 
     def _on_confirm_required(self, node_id: str, prompt: str, choices: list) -> None:
+        """线程安全的确认回调：QMessageBox 必须在主线程创建，但本方法可能从
+        ThreadPoolExecutor worker 线程被调用（plan 模式执行路径）。
+        非主线程时通过 QTimer + threading.Event 桥接到主线程。"""
+        from PyQt6.QtCore import QThread, QCoreApplication
+        import threading
+
+        app_thread = QCoreApplication.instance().thread()
+        if QThread.currentThread() == app_thread:
+            self._show_confirm_dialog(node_id, prompt, choices)
+        else:
+            result_holder: list = []
+            done = threading.Event()
+
+            def _on_main():
+                try:
+                    self._show_confirm_dialog(node_id, prompt, choices)
+                    result_holder.append(True)
+                finally:
+                    done.set()
+
+            QTimer.singleShot(0, _on_main)
+            done.wait()
+            if not result_holder:
+                # 极端情况：主线程未能处理对话框，回退默认值
+                if self._engine:
+                    self._engine.provide_decision(node_id, choices[0])
+
+    def _show_confirm_dialog(self, node_id: str, prompt: str, choices: list) -> None:
+        """在主线程创建 QMessageBox 并注入决策结果。"""
         reply = QMessageBox.question(self, "操作确认", prompt,
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        choice = choices[0] if reply == QMessageBox.StandardButton.Yes else (choices[1] if len(choices) > 1 else "跳过")
+        choice = choices[0] if reply == QMessageBox.StandardButton.Yes else (
+            choices[1] if len(choices) > 1 else "跳过")
         if self._engine:
             self._engine.provide_decision(node_id, choice)
 
@@ -693,7 +739,7 @@ class ChatWidget(QWidget):
     def _ensure_task_manager(self) -> None:
         """懒初始化 TaskManager 单例并注册回调（幂等）。
 
-        不在 UI 构建期执行，而是延迟到首次 _run_llm_round 调用时。
+        不在 UI 构建期执行，而是延迟到首次 LLM 轮次时。
         此时 C 栈已完全展开。Phase 1: TaskManager 去 QObject 化后改用回调列表替代 pyqtSignal，
         消除 QObject.__new__ 的 C++ 元对象栈开销。
 
@@ -704,19 +750,23 @@ class ChatWidget(QWidget):
             return
         self._task_manager_connected = True
         try:
-            from PyQt6.QtCore import QMetaObject, Qt, QCoreApplication
+            from PyQt6.QtCore import QCoreApplication
             from src.transbridge.smart_assistant.tools.task_manager import TaskManager
 
             # ADR-008/B10: 注入 Qt 队列调度器，桥接后端→主线程回调
             app = QCoreApplication.instance()
             if app is not None:
                 TaskManager.set_main_thread_dispatcher(
-                    lambda fn: QMetaObject.invokeMethod(
-                        app, fn, Qt.ConnectionType.QueuedConnection))
+                    lambda fn: QTimer.singleShot(0, fn))
 
             tm = TaskManager()
             tm.on_completed(self._on_task_completed)
             tm.on_failed(self._on_task_failed)
+            # FR14: 任务完成/失败时立即刷新监控面板
+            tm.on_finished(lambda tid, success, msg, data: self._refresh_task_monitor())
+            # FR14: 启动定时轮询
+            if self._task_monitor is not None:
+                self._start_task_monitor_polling()
         except Exception as e:
             logger.error("TaskManager 初始化失败，后台任务通知不可用: %s", e)
             self._task_manager_connected = False
@@ -739,8 +789,7 @@ class ChatWidget(QWidget):
         msg = f"任务 {task_id} 完成: {', '.join(parts)}" if parts else f"任务 {task_id} 完成"
         self._conversation.add_observation("start_translation", msg)
         self.add_system_message(f"[OK] {msg}")
-        if self._check_react_depth():
-            self._run_llm_round()
+        self._controller.handle_task_completed(task_id, result)
 
     def _on_task_failed(self, task_id: str, error: str) -> None:
         """后台任务失败回调。"""
@@ -748,8 +797,7 @@ class ChatWidget(QWidget):
         msg = f"任务 {task_id} 失败: {safe_error}"
         self._conversation.add_observation("start_translation", msg)
         self.add_system_message(f"[FAIL] {msg}")
-        if self._check_react_depth():
-            self._run_llm_round()
+        self._controller.handle_task_completed(task_id, {"error": safe_error})
 
     def _on_token_stats_updated(self, stats) -> None:
         """FR7.16: 观测数据后台采集，内联可见时插入对话流。"""
@@ -767,30 +815,28 @@ class ChatWidget(QWidget):
     # ── ReAct 模式 ───────────────────────────────────────────
 
     def _on_tool_executed(self, step: dict) -> None:
-        """执行单个工具步骤（委托给 ToolExecutionHandler）。"""
-        # M61: 工具开始执行时隐藏思考指示器
+        """执行单个工具步骤（Controller 统一驱动）。"""
         self._hide_thinking_indicator()
-        self._tool_handler.execute_step(step)
+        self._controller.handle_user_confirmed([step], "react")
+        # Controller._execute_react 已通过 tool_handler.execute_step(skip_react_continue=True) 执行，
+        # 此处不再重复调用，仅触发 ReAct 继续
+        self._controller.handle_execution_complete([])
 
     def _on_tool_ignored(self, step: dict) -> None:
         tool_name = step.get("tool", "?")
         self.add_system_message(f"已忽略: {tool_name}")
         self._conversation.add_observation(tool_name, "用户选择不执行此操作。")
-        if self._check_react_depth():
-            self._run_llm_round()
+        self._controller.handle_user_cancelled()
 
     def _on_batch_executed(self, steps: list) -> None:
-        """批量执行确认后的工具步骤。
+        """批量执行确认后的工具步骤（Controller 统一驱动）。
 
-        逐个实际调用 execute_step，但跳过每步的 ReAct 继续触发，
-        所有步骤完成后统一触发一次 LLM 回合。
+        Controller._execute_react 已逐个调用 execute_step(skip_react_continue=True)，
+        此处不再重复执行，仅触发 ReAct 继续。
         """
-        # M61: 批量工具开始执行时隐藏思考指示器
+        self._controller.handle_user_confirmed(steps, "react")
         self._hide_thinking_indicator()
-        for s in steps:
-            self._tool_handler.execute_step(s, skip_react_continue=True)
-        if self._check_react_depth():
-            self._run_llm_round()
+        self._controller.handle_execution_complete([])
 
     def _on_batch_ignored(self, steps: list) -> None:
         """批量跳过：用户点击跳过按钮，不执行任何步骤。"""
@@ -798,70 +844,12 @@ class ChatWidget(QWidget):
         self.add_system_message("已跳过: " + ", ".join(tool_names))
         for name in tool_names:
             self._conversation.add_observation(name, "用户选择跳过此批量操作。")
-        if self._check_react_depth():
-            self._run_llm_round()
-
-    def _check_react_depth(self) -> bool:
-        if self._react_depth > self._MAX_REACT_DEPTH:
-            self._obs_collector.end_conversation()
-            self.add_system_message("已达最大推理深度，对话终止。")
-            self._react_depth = 0
-            return False
-        return True
-
-    def _check_react_continue(self) -> None:
-        """ReAct 继续检查：深度未达上限则进入下一轮 LLM。"""
-        if self._check_react_depth():
-            self._run_llm_round()
-
-    def _auto_execute_steps(self, steps: list, mode: str) -> None:
-        """自动模式批量执行：统一使用手动确认路径，消除双重分发。
-
-        M62: 旧代码通过 ToolExecutionHandler.auto_execute_steps 分叉出独立的
-        执行路径（内嵌 needs_confirm 回退 + 二次 plan/tool/batch 分发），与
-        orchestrator 的手动分发路径重复且脆弱。新代码统一路由：
-        - 需确认 → 走 add_plan_card / add_tool_card / add_batch_tool_card
-          （与 orchestrator._on_finished 手动路径完全一致）
-        - 无需确认 → plan 模式走 _on_plan_confirmed，react 模式直接执行
-        """
-        # M61: 自动执行开始时隐藏思考指示器
-        self._hide_thinking_indicator()
-
-        needs_confirm = any(
-            self._tool_handler._needs_confirm(s) for s in steps
-        )
-
-        if needs_confirm:
-            self.add_system_message("(自动模式：检测到需确认的操作，切换为手动确认)")
-            if mode == "plan":
-                self.add_plan_card(steps)
-            elif len(steps) == 1:
-                self.add_tool_card(steps[0])
-            else:
-                self.add_batch_tool_card(steps)
-            return
-
-        self.add_system_message(f"(自动模式：直接执行 {len(steps)} 步)")
-        if mode == "plan":
-            self._on_plan_confirmed(steps)
-        else:
-            # M10: 自动模式 ReAct 逐步执行，失败时暂停询问用户
-            for s in steps:
-                result = self._tool_handler.execute_step(s, mode=mode)
-                if result is not None and not result.success:
-                    reply = QMessageBox.question(
-                        self, "工具执行失败",
-                        f"工具 '{s.get('tool', '?')}' 执行失败: {result.message}\n"
-                        f"是否继续执行剩余步骤？",
-                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    )
-                    if reply != QMessageBox.StandardButton.Yes:
-                        self.add_system_message("(自动模式：用户中止执行)")
-                        break
+        self._controller.handle_user_cancelled()
 
     def _on_auto_mode_toggled(self, checked: bool) -> None:
         self._auto_mode = checked
         self._orchestrator.auto_mode = checked
+        self._controller.auto_mode = checked
         try:
             QSettings("TransBridge", "SmartAssistant").setValue("auto_mode", checked)
         except Exception as e:
@@ -904,7 +892,6 @@ class ChatWidget(QWidget):
         self.add_user_bubble(text)
         self._input.clear()
         self._conversation.add_user(text)
-        self._react_depth = 0
 
         # M18: 延迟到事件循环执行检索+LLM，避免主线程同步检索阻塞 UI
         QTimer.singleShot(0, lambda: self._do_send_retrieve_and_run(text))
@@ -922,7 +909,9 @@ class ChatWidget(QWidget):
                     self._pending_memory_context = "\n".join(mem_lines)
             except Exception as e:
                 logger.info("记忆检索失败: %s", e)
-        self._run_llm_round()
+        self._ensure_task_manager()
+        self._controller.handle_abort()
+        self._controller.handle_user_message(text)
 
     def _on_skill(self, skill_name: str) -> None:
         """Skill 按钮触发：加载并执行 Skill。"""
@@ -978,7 +967,7 @@ class ChatWidget(QWidget):
             self._engine.cancel()
             self._engine.shutdown()
             self._engine = None
-        self._react_depth = 0
+        self._controller.handle_abort()
         self._orchestrator.reset_state()
         self._hide_thinking_indicator()
         # M15: 从末尾向前移除 widget，避免每次 takeAt(0) 导致 O(n²) 内部移位
@@ -1097,6 +1086,148 @@ class ChatWidget(QWidget):
             # m3-fix: 延迟 btn.move() 到下一事件循环，切断 QScrollArea 内部
             # 布局反馈循环 (0xC00000FD stack overflow)。
             QTimer.singleShot(0, self._reposition_back_to_bottom_btn)
+
+    # ── 会话持久化 (FR13 Story 03) ──────────────────────────
+
+    def set_session_manager(self, mgr):
+        """注入 SessionManager 实例（由 Panel 调用）。"""
+        self._session_mgr = mgr
+
+    # ── FR14: 后台任务监控 ────────────────────────────────────
+
+    def set_task_monitor(self, monitor) -> None:
+        """注入 TaskMonitorWidget 引用（由 Panel 调用）。"""
+        self._task_monitor = monitor
+        # 如果 TaskManager 已初始化，立即启动轮询
+        if self._task_manager_connected:
+            self._start_task_monitor_polling()
+
+    def _start_task_monitor_polling(self) -> None:
+        """启动 1s 定时轮询刷新任务监控。"""
+        if self._task_monitor_timer is not None:
+            return  # 已启动
+        self._task_monitor_timer = QTimer(self)
+        self._task_monitor_timer.setInterval(1000)
+        self._task_monitor_timer.timeout.connect(self._refresh_task_monitor)
+        self._task_monitor_timer.start()
+
+    def _refresh_task_monitor(self) -> None:
+        """从 TaskManager 拉取最新任务列表并刷新 TaskMonitorWidget。"""
+        if self._task_monitor is None:
+            return
+        try:
+            from src.transbridge.smart_assistant.tools.task_manager import TaskManager
+            tm = TaskManager()
+            all_ids = tm.list_all()
+            tasks = []
+            for tid in all_ids:
+                status_data = tm.get_status(tid)
+                if status_data.get("error"):
+                    continue
+                tasks.append(status_data)
+            self._task_monitor.refresh(tasks)
+        except Exception:
+            logger.debug("刷新任务监控失败", exc_info=True)
+
+    def save_current_session(self, session_id: str) -> None:
+        """保存当前对话到指定会话。"""
+        if not hasattr(self, '_session_mgr') or self._session_mgr is None:
+            return
+        messages = self._conversation.to_dict()["messages"]
+        if messages:
+            self._session_mgr.save_session(session_id, messages)
+
+    def load_session(self, data: dict) -> None:
+        """加载会话数据：清空当前对话并渲染历史消息。"""
+        self._controller.handle_abort()
+        # 清空 UI
+        self._clear_all_bubbles()
+        # 从数据恢复
+        self._conversation.from_dict({"messages": data.get("messages", [])})
+        self.load_history(data.get("messages", []))
+        # FR14: 会话切换时重置任务监控
+        if self._task_monitor is not None:
+            self._task_monitor.reset()
+
+    def load_history(self, messages: list[dict]) -> None:
+        """渲染历史消息列表为 MessageBubble。若 UI 尚未就绪则延迟重试。"""
+        if not hasattr(self, '_msg_layout') or self._msg_layout is None:
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(50, lambda: self.load_history(messages))
+            return
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if role == "system":
+                continue  # system prompt 已通过 conversation.from_dict 恢复
+            elif role == "assistant":
+                self._add_bubble(MessageBubble(content, "assistant"))
+            elif role == "user":
+                if content.startswith("【工具执行结果") or content.startswith("【计划执行完成】"):
+                    self.add_system_message(content)
+                else:
+                    self._add_bubble(MessageBubble(content, "user"))
+
+    def _clear_all_bubbles(self) -> None:
+        """清空聊天区所有消息气泡。"""
+        while self._msg_layout.count() > 1:  # 最后一个是 stretch
+            item = self._msg_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+    def _on_response_parsed_safe(self, parsed: dict) -> None:
+        """安全包装：确保 Controller 异常不会导致 UI 卡死。"""
+        try:
+            self._controller.handle_llm_response(parsed)
+        except Exception:
+            logger.error("SessionController.handle_llm_response 异常", exc_info=True)
+            self.add_system_message("内部错误：响应处理失败，请重试")
+        try:
+            self._auto_save_hook(parsed)
+        except Exception:
+            logger.error("_auto_save_hook 异常", exc_info=True)
+
+    def _auto_save_hook(self, parsed: dict | None = None) -> None:
+        """每轮 LLM 后自动保存当前会话 + 首次对话后 AI 自动命名。"""
+        if not hasattr(self, '_session_mgr') or self._session_mgr is None:
+            return
+        panel = self._find_panel()
+        if panel is None:
+            return
+        sid = panel._active_session_id
+        if sid:
+            self.save_current_session(sid)
+            # 首次对话后：用 AI 的 thought 自动命名（仅当名称仍是"新对话"时）
+            if parsed:
+                self._auto_name_session(sid, parsed, panel)
+
+    def _auto_name_session(self, sid: str, parsed: dict, panel) -> None:
+        """如果会话名仍是默认的'新对话'，用 AI 的 thought 字段自动命名。"""
+        data = self._session_mgr.get_session(sid)
+        if data is None or data.get("name") != "新对话":
+            return
+        thought = parsed.get("thought", "")
+        if not thought:
+            # 无 thought 时用第一条用户消息前20字
+            msgs = data.get("messages", [])
+            for m in msgs:
+                if m.get("role") == "user" and not m.get("content", "").startswith("【"):
+                    thought = m["content"]
+                    break
+        name = thought[:20].strip()
+        if name:
+            self._session_mgr.rename_session(sid, name)
+            panel._refresh_session_list()
+
+    def _find_panel(self):
+        """向上查找 SmartAssistantPanel 父组件。"""
+        w = self.parent()
+        while w is not None:
+            from .panel import SmartAssistantPanel
+            if isinstance(w, SmartAssistantPanel):
+                return w
+            w = w.parent()
+        return None
 
     def eventFilter(self, obj, event):
         if obj == self._input and event.type() == QEvent.Type.KeyPress:

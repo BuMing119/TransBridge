@@ -1,0 +1,190 @@
+{
+  "summary": {
+    "total": 15,
+    "correct": 2,
+    "accuracy": "13%",
+    "skip_rate": "0%",
+    "skip_count": 0,
+    "non_preloaded_count": 5
+  },
+  "details": [
+    {
+      "id": 1,
+      "text": "现在什么状态？",
+      "namespace": "default",
+      "expect_tool": "get_app_state",
+      "got_tools": [
+        "get_app_state"
+      ],
+      "called_get_tool_help": false,
+      "match": true
+    },
+    {
+      "id": 2,
+      "text": "翻译进度怎么样？",
+      "namespace": "default",
+      "expect_tool": "get_statistics",
+      "got_tools": [
+        "get_tool_help",
+        "get_tool_help"
+      ],
+      "called_get_tool_help": true,
+      "match": false
+    },
+    {
+      "id": 3,
+      "text": "当前加载了哪些集合？",
+      "namespace": "default",
+      "expect_tool": "list_collections",
+      "got_tools": [],
+      "called_get_tool_help": false,
+      "match": false
+    },
+    {
+      "id": 4,
+      "text": "切换到第二个集合",
+      "namespace": "default",
+      "expect_tool": "switch_collection",
+      "got_tools": [
+        "get_tool_help",
+        "get_tool_help",
+        "get_tool_help",
+        "get_app_state"
+      ],
+      "called_get_tool_help": true,
+      "match": false
+    },
+    {
+      "id": 5,
+      "text": "现在有什么筛选条件？",
+      "namespace": "default",
+      "expect_tool": "get_current_filters",
+      "got_tools": [
+        "get_tool_help",
+        "get_tool_help"
+      ],
+      "called_get_tool_help": true,
+      "match": false
+    },
+    {
+      "id": 6,
+      "text": "有哪些本地项目？",
+      "namespace": "default",
+      "expect_tool": "list_local_projects",
+      "got_tools": [
+        "get_tool_help",
+        "get_app_state"
+      ],
+      "called_get_tool_help": true,
+      "match": false
+    },
+    {
+      "id": 7,
+      "text": "当前是哪个项目？",
+      "namespace": "default",
+      "expect_tool": "get_current_project",
+      "got_tools": [
+        "get_app_state"
+      ],
+      "called_get_tool_help": false,
+      "match": false
+    },
+    {
+      "id": 8,
+      "text": "帮我看看整体情况",
+      "namespace": "default",
+      "expect_tool": "get_app_state",
+      "got_tools": [
+        "get_tool_help",
+        "get_app_state",
+        "get_statistics"
+      ],
+      "called_get_tool_help": true,
+      "match": true
+    },
+    {
+      "id": 9,
+      "text": "筛选所有未翻译的NPC对话",
+      "namespace": "editor",
+      "expect_tool": "set_filters",
+      "got_tools": [
+        "get_tool_help",
+        "get_tool_help",
+        "get_tool_help",
+        "get_tool_help",
+        "get_tool_help",
+        "get_tool_help",
+        "get_tool_help"
+      ],
+      "called_get_tool_help": true,
+      "match": false
+    },
+    {
+      "id": 10,
+      "text": "显示前20条",
+      "namespace": "editor",
+      "expect_tool": "get_visible_entries",
+      "got_tools": [
+        "get_app_state",
+        "get_tool_help",
+        "get_tool_help"
+      ],
+      "called_get_tool_help": true,
+      "match": false
+    },
+    {
+      "id": 11,
+      "text": "选中第3条",
+      "namespace": "editor",
+      "expect_tool": "select_entries",
+      "got_tools": [
+        "get_tool_help",
+        "get_tool_help"
+      ],
+      "called_get_tool_help": true,
+      "match": false
+    },
+    {
+      "id": 12,
+      "text": "把这条翻译改成'你好世界'",
+      "namespace": "editor",
+      "expect_tool": "edit_translation",
+      "got_tools": [],
+      "called_get_tool_help": false,
+      "match": false
+    },
+    {
+      "id": 13,
+      "text": "把这批条目标记为已检查",
+      "namespace": "editor",
+      "expect_tool": "set_stage",
+      "got_tools": [],
+      "called_get_tool_help": false,
+      "match": false
+    },
+    {
+      "id": 14,
+      "text": "有哪些标签？",
+      "namespace": "editor",
+      "expect_tool": "list_labels",
+      "got_tools": [
+        "get_tool_help",
+        "get_tool_help"
+      ],
+      "called_get_tool_help": true,
+      "match": false
+    },
+    {
+      "id": 15,
+      "text": "给选中的条目加个'待审核'标签",
+      "namespace": "editor",
+      "expect_tool": "manage_entry_labels",
+      "got_tools": [
+        "get_tool_help",
+        "get_tool_help"
+      ],
+      "called_get_tool_help": true,
+      "match": false
+    }
+  ]
+}
