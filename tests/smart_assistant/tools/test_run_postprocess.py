@@ -122,7 +122,7 @@ class TestListQualityReports(unittest.TestCase):
     def test_no_esp_path_returns_empty(self):
         r = self.func({}, self.ctx)
         self.assertTrue(r.success)
-        self.assertIsNone(r.data["directory"])
+        self.assertNotIn("directory", r.data)
         self.assertEqual(r.data["files"], [])
 
     def test_with_esp_path_nonexistent_dir(self):
@@ -142,22 +142,23 @@ class TestListQualityReports(unittest.TestCase):
 # TestSummarizeHelpers (3 cases)
 # ============================================================
 class TestSummarizeHelpers(unittest.TestCase):
-    def test_summarize_refine_empty(self):
-        from src.transbridge.smart_assistant.tools.tool_proofreader import _summarize_refine_results
+    @classmethod
+    def setUpClass(cls):
+        from src.transbridge.smart_assistant.tools.tool_proofreader import ProofreaderController
+        from src.transbridge.ui.context import AppContext
+        from src.transbridge.smart_assistant.tools.task_manager import TaskManager
+        cls._ctrl = ProofreaderController(AppContext(), TaskManager())
 
-        r = _summarize_refine_results(None)
+    def test_summarize_refine_empty(self):
+        r = self._ctrl._summarize_refine_results(None)
         self.assertEqual(r, [])
 
     def test_summarize_polish_empty(self):
-        from src.transbridge.smart_assistant.tools.tool_proofreader import _summarize_polish_results
-
-        r = _summarize_polish_results(None)
+        r = self._ctrl._summarize_polish_results(None)
         self.assertEqual(r, [])
 
     def test_summarize_decisions_empty(self):
-        from src.transbridge.smart_assistant.tools.tool_proofreader import _summarize_decisions
-
-        r = _summarize_decisions(None)
+        r = self._ctrl._summarize_decisions(None)
         self.assertEqual(r, [])
 
 

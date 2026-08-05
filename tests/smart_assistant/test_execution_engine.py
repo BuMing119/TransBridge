@@ -46,7 +46,7 @@ class TestExecutionEngine(unittest.TestCase):
         from src.transbridge.smart_assistant.execution_engine import ExecutionEngine
         self.registry = FakeToolRegistry()
         self.ctx = FakeCtx()
-        self.engine = ExecutionEngine(self.registry, self.ctx)
+        self.engine = ExecutionEngine(self.registry, self.ctx, middlewares=[])
 
     def tearDown(self):
         self.engine.cancel()
@@ -137,15 +137,15 @@ class TestExecutionEngine(unittest.TestCase):
     def test_eval_condition_true(self):
         from src.transbridge.smart_assistant.execution_engine import StepResult
         r = StepResult(step_id=1, tool="test", success=True, message="ok")
-        self.assertTrue(self.engine._eval_condition("result.success == True", {"node1": r}))
+        self.assertTrue(self.engine._condition_evaluator.eval_condition("result.success == True", {"node1": r}))
 
     def test_eval_condition_false(self):
         from src.transbridge.smart_assistant.execution_engine import StepResult
         r = StepResult(step_id=1, tool="test", success=False, message="failed")
-        self.assertFalse(self.engine._eval_condition("result.success == True", {"node1": r}))
+        self.assertFalse(self.engine._condition_evaluator.eval_condition("result.success == True", {"node1": r}))
 
     def test_eval_condition_empty(self):
-        self.assertFalse(self.engine._eval_condition("", {}))
+        self.assertFalse(self.engine._condition_evaluator.eval_condition("", {}))
 
     # ── 中间件链 ─────────────────────────────────────────────────
 
@@ -173,8 +173,8 @@ class TestExecutionEngine(unittest.TestCase):
 
     def test_executor_reused(self):
         """M11: _executor 应在 __init__ 中创建并可用。"""
-        self.assertIsNotNone(self.engine._executor)
-        future = self.engine._executor.submit(lambda: 42)
+        self.assertIsNotNone(self.engine._executor._executor)
+        future = self.engine._executor._executor.submit(lambda: 42)
         self.assertEqual(future.result(timeout=5), 42)
 
 

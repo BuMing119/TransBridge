@@ -6,7 +6,6 @@ Qt 队列调度器以安全地在主线程操作 GUI（符合 ADR-008 后端去 
 """
 from __future__ import annotations
 
-import copy
 import logging
 import threading
 import time
@@ -66,7 +65,7 @@ class TaskManager:
                     instance = object.__new__(cls)
                     instance._lock = threading.Lock()
                     instance._tasks: dict[str, TaskHandle] = {}
-                    instance._listeners: dict[str, list] = {"completed": [], "failed": []}
+                    instance._listeners: dict[str, list] = {"completed": [], "failed": [], "finished": []}
                     cls._instance = instance
         return cls._instance
 
@@ -96,20 +95,35 @@ class TaskManager:
 
     # ── 回调注册 (Phase 1: 替代 pyqtSignal) ──────────────────────
 
-    def on_completed(self, callback) -> None:
-        """注册任务完成回调: callback(task_id, result_dict)。"""
+    def on_finished(self, callback: Callable) -> None:
+        """注册任务完成/失败统一回调。callback(task_id, success, message, data)。"""
         with self._lock:
-            self._listeners["completed"].append(callback)
+            self._listeners["finished"].append(callback)
+
+    def on_completed(self, callback) -> None:
+        """[Deprecated] 注册任务完成回调。请使用 on_finished。
+
+        callback(task_id, result_dict)
+        """
+        def _wrapper(task_id, success, message, data):
+            if success:
+                callback(task_id, data or {})
+        self.on_finished(_wrapper)
 
     def on_failed(self, callback) -> None:
-        """注册任务失败回调: callback(task_id, error_message)。"""
-        with self._lock:
-            self._listeners["failed"].append(callback)
+        """[Deprecated] 注册任务失败回调。请使用 on_finished。
+
+        callback(task_id, error_message)
+        """
+        def _wrapper(task_id, success, message, data):
+            if not success:
+                callback(task_id, message)
+        self.on_finished(_wrapper)
 
     def remove_listener(self, callback) -> None:
-        """移除已注册的回调（从 completed 和 failed 列表中都尝试移除）。"""
+        """移除已注册的回调（从 completed、failed 和 finished 列表中都尝试移除）。"""
         with self._lock:
-            for key in ("completed", "failed"):
+            for key in ("completed", "failed", "finished"):
                 try:
                     self._listeners[key].remove(callback)
                 except ValueError:
@@ -173,9 +187,10 @@ class TaskManager:
         return True
 
     def get_status(self, task_id: str) -> dict:
-        """获取任务状态快照。progress 深拷贝防止并发 RuntimeError。(E3)
+        """获取任务状态快照。
 
-        QA-001: deepcopy/属性读取全部在锁内进行，防止并发修改。
+        m3: progress 是扁平 dict（键为 "current"/"total"/"error" 等），
+        dict() 浅拷贝即可，无需昂贵的 deepcopy。属性读取全部在锁内进行。
         """
         with self._lock:
             handle = self._tasks.get(task_id)
@@ -184,7 +199,7 @@ class TaskManager:
             return {
                 "task_id": task_id,
                 "status": handle.status,
-                "progress": copy.deepcopy(handle.progress),  # E3: 深拷贝
+                "progress": dict(handle.progress),  # m3: 浅拷贝（progress 是扁平 dict）
                 "created_at": handle.created_at,
                 "metadata": dict(handle.metadata),
             }
@@ -220,27 +235,63 @@ class TaskManager:
         with self._lock:
             return self._tasks.get(task_id)
 
-    # B2: 异步通知方法（线程安全，可在任何线程调用）
-    def notify_completed(self, task_id: str, result: dict) -> None:
-        """通知任务成功完成。通过注入的调度器投递回调到主线程执行。
+    def start_thread(self, task_id: str, target: Callable[[], None]) -> threading.Thread:
+        """M2: 创建并启动守护线程，关联到已注册任务。
 
+        封装 tool_translator/tool_proofreader 中重复的线程创建样板：
+            thread = threading.Thread(target=_run, daemon=True)
+            handle = tm.get_handle(task_id)
+            if handle:
+                handle._thread = thread
+            thread.start()
+
+        get_handle() 已持有内部锁，此处无需额外加锁。
+
+        Returns:
+            创建的线程对象。
+        """
+        thread = threading.Thread(target=target, daemon=True)
+        handle = self.get_handle(task_id)
+        if handle is not None:
+            handle._thread = thread
+        thread.start()
+        return thread
+
+    # B2: 异步通知方法（线程安全，可在任何线程调用）
+
+    def notify_finished(self, task_id: str, success: bool, message: str = "",
+                        data: dict | None = None) -> None:
+        """统一通知任务完成。按 success 分发到对应的回调列表。
+
+        通过注入的调度器投递回调到主线程执行。
         调度器默认为直接调用（非 GUI 上下文），UI 层应通过
         set_main_thread_dispatcher() 注入 Qt 队列调度器以保证 GUI 操作安全。
         """
         # C3-fix: 在锁内快照监听器列表，锁外派发，避免回调执行时持有锁
         with self._lock:
-            completed = list(self._listeners.get("completed", []))
+            finished = list(self._listeners.get("finished", []))
+            legacy = list(self._listeners.get(
+                "completed" if success else "failed", []))
         dispatch = TaskManager._dispatcher
-        for cb in completed:
-            dispatch(lambda c=cb, t=task_id, r=result: self._safe_callback(c, t, r))
+        for cb in finished:
+            dispatch(lambda c=cb, t=task_id, s=success, m=message, d=data:
+                     self._safe_callback(c, t, s, m, d))
+        if success:
+            for cb in legacy:
+                dispatch(lambda c=cb, t=task_id, d=data or {}:
+                         self._safe_callback(c, t, d))
+        else:
+            for cb in legacy:
+                dispatch(lambda c=cb, t=task_id, m=message:
+                         self._safe_callback(c, t, m))
+
+    def notify_completed(self, task_id: str, result: dict) -> None:
+        """[Deprecated] 通知任务成功完成。请使用 notify_finished。"""
+        self.notify_finished(task_id, True, "", result)
 
     def notify_failed(self, task_id: str, error: str) -> None:
-        """通知任务失败/取消。通过注入的调度器投递回调到主线程执行。"""
-        with self._lock:
-            failed = list(self._listeners.get("failed", []))
-        dispatch = TaskManager._dispatcher
-        for cb in failed:
-            dispatch(lambda c=cb, t=task_id, e=error: self._safe_callback(c, t, e))
+        """[Deprecated] 通知任务失败/取消。请使用 notify_finished。"""
+        self.notify_finished(task_id, False, error)
 
     @staticmethod
     def _safe_callback(cb, *args) -> None:
@@ -263,16 +314,18 @@ class TaskManager:
     def cleanup_all(self) -> int:
         """清理所有非活跃任务，返回清理数量。
 
-        QA-002: 使用 list(self._tasks.keys()) 避免迭代过程中修改 dict。
+        m4: 锁内收集句柄后立即释放锁，再在锁外 join 线程，
+        避免 thread.join(timeout=2) 阻塞其他 TaskManager 操作。
         """
         with self._lock:
             inactive = [tid for tid in list(self._tasks.keys())
                         if self._tasks[tid].status in ("completed", "failed", "cancelled")]
-            for tid in inactive:
-                handle = self._tasks.pop(tid)
-                if handle._thread is not None and handle._thread.is_alive():
-                    handle._thread.join(timeout=2)
-            return len(inactive)
+            handles_to_clean = [self._tasks.pop(tid) for tid in inactive]
+        # 锁外 join，避免阻塞其他 TaskManager 操作
+        for handle in handles_to_clean:
+            if handle._thread is not None and handle._thread.is_alive():
+                handle._thread.join(timeout=2)
+        return len(inactive)
 
     @classmethod
     def reset(cls) -> None:
@@ -283,11 +336,13 @@ class TaskManager:
                     for tid in list(cls._instance._tasks.keys()):
                         handle = cls._instance._tasks.pop(tid)
                         handle.stop_event.set()
-                        if handle._thread is not None:
+                        # 仅 join 已启动的线程（ident 为 None 表示未启动）
+                        if handle._thread is not None and handle._thread.ident is not None:
                             handle._thread.join(timeout=2)
                 # Phase 1: 清理回调列表，防止悬空引用
                 cls._instance._listeners["completed"].clear()
                 cls._instance._listeners["failed"].clear()
+                cls._instance._listeners["finished"].clear()
                 # ADR-008: 重置调度器为默认直接调用（非 GUI 上下文）
                 TaskManager._dispatcher = _default_dispatcher
                 cls._instance = None

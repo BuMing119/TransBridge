@@ -44,6 +44,8 @@ __all__ = [
     "execute_with_guardrails",
     "filter_entries",
     "ConversationOrchestrator",
+    "ConditionEvaluator",
+    "CheckpointManager",
 ]
 
 # 符号 → 子模块映射表（供 __getattr__ 惰性加载用）
@@ -51,7 +53,7 @@ _SYMBOL_MODULES: dict[str, str] = {
     "ConversationManager": ".conversation_manager",
     "ChatWorker": ".chat_worker",
     "ExecutionEngine": ".execution_engine",
-    "StepResult": ".execution_engine",
+    "StepResult": ".graph_executor",
     "ToolRegistry": ".tool_registry",
     "ToolSpec": ".tool_registry",
     "ContextBuilder": ".context_builder",
@@ -82,6 +84,8 @@ _SYMBOL_MODULES: dict[str, str] = {
     "execute_with_guardrails": ".tools",
     "filter_entries": ".tools",
     "ConversationOrchestrator": ".conversation_orchestrator",
+    "ConditionEvaluator": ".condition_evaluator",
+    "CheckpointManager": ".checkpoint_manager",
 }
 
 

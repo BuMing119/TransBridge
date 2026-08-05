@@ -24,14 +24,15 @@ class TestMCPAuth(unittest.TestCase):
             "params": {"_meta": {"authorization": auth}},
         }
 
-    def test_no_auth_when_token_empty(self):
-        """空 auth_token 时认证应通过。"""
+    def test_auth_denied_when_token_empty(self):
+        """安全加固: 空 auth_token 时拒绝所有请求（run_stdio 未调用时无自动生成令牌）。"""
         self.server._config["auth_token"] = ""
-        self.assertTrue(self.server._authenticate(self._make_request()))
+        self.assertFalse(self.server._authenticate(self._make_request()))
 
-    def test_no_auth_when_token_whitespace(self):
+    def test_auth_denied_when_token_whitespace(self):
+        """安全加固: 空白 auth_token 时拒绝所有请求。"""
         self.server._config["auth_token"] = "  "
-        self.assertTrue(self.server._authenticate(self._make_request()))
+        self.assertFalse(self.server._authenticate(self._make_request()))
 
     def test_auth_rejected_wrong_token(self):
         self.server._config["auth_token"] = "secret123"
@@ -61,7 +62,6 @@ class TestMCPToolHandling(unittest.TestCase):
         schema = self.registry.build_tool_schema_for_prompt()
         self.assertNotIn("lookup_terms", schema, "deprecated v1 工具不应出现在 prompt")
         self.assertNotIn("translate_entries", schema)
-        self.assertNotIn("write_back", schema)
         self.assertNotIn("check_quality", schema)
         self.assertNotIn("export_json", schema)
 
@@ -80,9 +80,9 @@ class TestMCPToolHandling(unittest.TestCase):
         self.assertIsNone(spec)
 
     def test_deprecated_not_in_prompt(self):
-        """确保所有 5 个 deprecated v1 工具都不在 prompt 中。"""
+        """确保所有 4 个 deprecated v1 工具都不在 prompt 中（write_back 已转为当前工具，非 deprecated）。"""
         schema = self.registry.build_tool_schema_for_prompt()
-        deprecated_names = ["lookup_terms", "translate_entries", "check_quality", "export_json", "write_back"]
+        deprecated_names = ["lookup_terms", "translate_entries", "check_quality", "export_json"]
         for name in deprecated_names:
             self.assertNotIn(name, schema, f"deprecated 工具 {name} 不应出现在 prompt schema")
 

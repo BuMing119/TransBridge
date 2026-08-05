@@ -16,12 +16,13 @@ if _app is None:
 class MockLLMClient:
     """Mock LLM 客户端，可控制流式输出和错误行为。"""
 
-    def __init__(self, chunks=None, should_fail=False, fail_msg="API错误"):
+    def __init__(self, chunks=None, should_fail=False, fail_msg="API错误", chunk_delay=0.01):
         self.chunks = chunks or ["你好", "，", "世界"]
         self.should_fail = should_fail
         self.fail_msg = fail_msg
         self.cancelled = False
         self.stream_started = False
+        self._chunk_delay = chunk_delay
 
     def chat_stream(self, messages, max_tokens, callback):
         self.stream_started = True
@@ -31,7 +32,8 @@ class MockLLMClient:
             if self.cancelled:
                 return
             callback(chunk)
-            time.sleep(0.01)
+            if self._chunk_delay > 0:
+                time.sleep(self._chunk_delay)
 
     def cancel(self):
         self.cancelled = True
@@ -46,9 +48,9 @@ class TestChatWorker(unittest.TestCase):
         self._errors = []
 
     def _connect_worker(self, worker):
-        worker.chunk.connect(lambda c: self._chunks.append(c))
-        worker.finished.connect(lambda r: self._finished.append(r))
-        worker.error.connect(lambda e: self._errors.append(e))
+        worker.on_chunk = lambda c: self._chunks.append(c)
+        worker.on_finished = lambda r: self._finished.append(r)
+        worker.on_error = lambda e: self._errors.append(e)
 
     # ── 流式响应 ──────────────────────────────────────────────────
 
@@ -58,10 +60,13 @@ class TestChatWorker(unittest.TestCase):
         worker = ChatWorker(client, [{"role": "user", "content": "hi"}])
         self._connect_worker(worker)
         worker.start()
-        worker.wait(3000)
+        worker.join(timeout=3)
         QApplication.processEvents()
         QApplication.processEvents()  # 确保 Qt 事件循环处理信号
-        self.assertEqual(self._chunks, ["A", "B", "C"])
+        # 50ms 缓冲可能导致小块合并，验证全部内容被接收即可
+        all_chunks = "".join(self._chunks)
+        self.assertEqual(all_chunks, "ABC")
+        self.assertGreaterEqual(len(self._chunks), 1)
         self.assertEqual(self._finished, ["ABC"])
 
     def test_streaming_full_text(self):
@@ -70,7 +75,7 @@ class TestChatWorker(unittest.TestCase):
         worker = ChatWorker(client, [{"role": "user", "content": "test"}])
         self._connect_worker(worker)
         worker.start()
-        worker.wait(3000)
+        worker.join(timeout=3)
         QApplication.processEvents()
         self.assertEqual(len(self._finished), 1)
         self.assertEqual(self._finished[0], "Hello World!")
@@ -83,7 +88,7 @@ class TestChatWorker(unittest.TestCase):
         worker = ChatWorker(client, [{"role": "user", "content": "test"}])
         self._connect_worker(worker)
         worker.start()
-        worker.wait(3000)
+        worker.join(timeout=3)
         QApplication.processEvents()
         self.assertGreater(len(self._errors), 0)
         self.assertIn("timeout", self._errors[0].lower())
@@ -94,7 +99,7 @@ class TestChatWorker(unittest.TestCase):
         worker = ChatWorker(client, [{"role": "user", "content": "test"}])
         self._connect_worker(worker)
         worker.start()
-        worker.wait(3000)
+        worker.join(timeout=3)
         QApplication.processEvents()
         self.assertEqual(len(self._finished), 0)
 
@@ -110,7 +115,7 @@ class TestChatWorker(unittest.TestCase):
         worker.start()
         time.sleep(0.05)
         worker.cancel()
-        worker.wait(3000)
+        worker.join(timeout=3)
         # cancel 后不应有 finished 信号
         self.assertEqual(len(self._finished), 0)
 
@@ -122,7 +127,7 @@ class TestChatWorker(unittest.TestCase):
         worker = ChatWorker(client, [{"role": "user", "content": "test"}])
         self._connect_worker(worker)
         worker.start()
-        worker.wait(3000)
+        worker.join(timeout=3)
         QApplication.processEvents()
         self.assertEqual(len(self._finished), 1)
 

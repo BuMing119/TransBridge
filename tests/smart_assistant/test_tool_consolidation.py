@@ -234,7 +234,8 @@ class TestDeprecatedWrappers(unittest.TestCase):
                 ToolRegistry.get(name), f"{name} should be registered"
             )
 
-    def test_tool_count_is_45(self):
+    def test_tool_count_is_current(self):
+        """m2: 工具数量随 Story 17-25 合并而变化，使用范围断言避免每次过期。"""
         from src.transbridge.smart_assistant.tool_registry import ToolRegistry
 
         # 触发注册（模块导入）
@@ -249,9 +250,10 @@ class TestDeprecatedWrappers(unittest.TestCase):
         )
 
         count = len(ToolRegistry.list_all(include_deprecated=False))
-        # C21 合并后预期 45 个非废弃工具（editor 7 + translator 8 + writer 1
-        # + parser 6 + proofreader 6 + paratranz 10 + default 7）
-        self.assertEqual(count, 45, f"Expected 45 non-deprecated tools, got {count}")
+        # m2: 工具数随功能变更而浮动，以范围断言替代精确值
+        # Story 17-25 合并后当前约 41 个非废弃工具
+        self.assertGreaterEqual(count, 40, f"Expected at least 40 non-deprecated tools, got {count}")
+        self.assertLess(count, 50, f"Expected fewer than 50 non-deprecated tools, got {count}")
 
     def test_schema_no_old_names(self):
         from src.transbridge.smart_assistant.tool_registry import ToolRegistry

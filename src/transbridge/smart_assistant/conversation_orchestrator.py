@@ -13,6 +13,45 @@ from PyQt6.QtCore import QObject, pyqtSignal, QTimer
 logger = logging.getLogger(__name__)
 
 
+def _create_llm_client(config, _cache: dict | None = None):
+    """Create or reuse an LLM client based on configuration.
+
+    Extracted from ConversationOrchestrator._get_llm_client() for reuse and
+    testability. Computes a cache key from config attributes, checks the mutable
+    _cache dict for a matching client, and only creates a new client when the
+    configuration has changed.
+
+    Args:
+        config: LLMConfig object with api_key, provider, base_url, model.
+        _cache: Optional mutable dict for client caching. Keys:
+            "client" — cached LLMClient instance (or None).
+            "config_hash" — hash of current (api_key, provider, base_url, model).
+
+    Returns:
+        An LLMClient instance, or None if config is None or missing an api_key.
+    """
+    from src.transbridge.infra.llm_client import create_llm_client
+
+    if config is None or not config.api_key:
+        return None
+
+    current_hash = hash((config.api_key, config.provider, config.base_url, config.model))
+
+    if _cache is not None:
+        cached = _cache.get("client")
+        cached_hash = _cache.get("config_hash")
+        if cached is not None and cached_hash == current_hash:
+            return cached
+
+    client = create_llm_client(config)
+
+    if _cache is not None:
+        _cache["client"] = client
+        _cache["config_hash"] = current_hash
+
+    return client
+
+
 class _SignalBridge(QObject):
     """Worker→主线程回调桥接器。
 
@@ -133,7 +172,6 @@ class ConversationOrchestrator(QObject):
 
     def _get_llm_client(self):
         from src.transbridge.paratranz.config_manager import LLMConfig
-        from src.transbridge.infra.llm_client import create_llm_client
         from src.transbridge.config.paths import get_config_file_path
 
         config_path = get_config_file_path()
@@ -153,12 +191,15 @@ class ConversationOrchestrator(QObject):
 
         if not cfg.api_key:
             return None
-        current_hash = hash((cfg.api_key, cfg.provider, cfg.base_url, cfg.model))
-        if self._llm_client is not None and self._llm_client_config_hash == current_hash:
-            return self._llm_client
-        self._llm_client = create_llm_client(cfg)
-        self._llm_client_config_hash = current_hash
-        return self._llm_client
+
+        cache = {
+            "client": self._llm_client,
+            "config_hash": self._llm_client_config_hash,
+        }
+        client = _create_llm_client(cfg, cache)
+        self._llm_client = cache["client"]
+        self._llm_client_config_hash = cache["config_hash"]
+        return client
 
     # ── Worker 访问（供 panel.closeEvent 使用）──
 
@@ -211,10 +252,10 @@ class ConversationOrchestrator(QObject):
         """Stage C: 创建 ChatWorker，绑定回调，启动后台线程。"""
         from src.transbridge.smart_assistant.chat_worker import ChatWorker
         client = self._get_llm_client()
-        messages = self._round_messages
-        _max = self._round_max_tokens
-        del self._round_messages
-        del self._round_max_tokens
+        messages = getattr(self, '_round_messages', [])
+        _max = getattr(self, '_round_max_tokens', 0)
+        self._round_messages = []
+        self._round_max_tokens = 0
 
         _bridge = self._cb_bridge
 
@@ -413,7 +454,10 @@ class ConversationOrchestrator(QObject):
 
     def cancel_current_round(self) -> None:
         """中断当前流式输出，清理 worker 和流式状态。"""
-        self._streaming_timer.stop()
+        try:
+            self._streaming_timer.stop()
+        except RuntimeError:
+            pass
         if self._worker and self._worker.is_alive():
             self._worker.cancel()
         self._worker = None

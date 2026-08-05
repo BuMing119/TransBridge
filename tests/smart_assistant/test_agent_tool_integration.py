@@ -345,7 +345,14 @@ class TestSecurityGuardrails(unittest.TestCase):
         self.assertEqual(result.data["result"], 42)
 
     def test_execute_with_guardrails_input_validation(self):
-        """路径遍历参数应被 InputValidationGuard 拦截。"""
+        """路径遍历参数应被 InputValidationGuard 拦截。
+
+        PermissionGuard 会验证工具是否在 ToolRegistry 中注册，
+        因此需确保 tool_parser 模块已加载（parse_esp 注册为 write 权限，
+        PermissionGuard 放行 write 权限工具）。
+        """
+        import src.transbridge.smart_assistant.tools.tool_parser  # noqa: F401 — ensure parse_esp registered
+
         def _dummy_exec(args, ctx):
             return ToolResult.ok("should not reach")
 
@@ -363,6 +370,16 @@ class TestTranslationConfig(unittest.TestCase):
 
     def setUp(self):
         self.ctx = MockAppContext(make_test_collection(10))
+        # 防止 set_translation_config 测试写入真实 INI 覆盖用户配置
+        from unittest.mock import patch
+        self._save_patcher = patch(
+            "src.transbridge.config.llm.LLMConfig.save_to_file",
+            return_value=None,
+        )
+        self._save_patcher.start()
+
+    def tearDown(self):
+        self._save_patcher.stop()
 
     def test_set_scope_valid(self):
         from src.transbridge.smart_assistant.tools.tool_translator import _tool_set_scope
@@ -839,10 +856,10 @@ class TestAgentRegistry(unittest.TestCase):
 
     def test_namespace_wildcard_expansion(self):
         """O3: namespace:* 通配符正确展开。"""
-        from src.transbridge.smart_assistant.agents.agent_registry import _expand_wildcard
+        from src.transbridge.smart_assistant.agents.agent_registry import AgentRegistry
         from src.transbridge.smart_assistant.tool_registry import ToolRegistry
 
-        expanded = _expand_wildcard(["editor:*"])
+        expanded = AgentRegistry._expand_wildcard(["editor:*"])
         editor_specs = ToolRegistry.list_namespace("editor")
         editor_names = [s.name for s in editor_specs]
         for tool in expanded:

@@ -14,7 +14,7 @@ class TestMemoryStore(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.mkdtemp()
         self._dir = Path(self._tmp) / "mem"
-        self.store = MemoryStore(self._dir, embedding_mode="disabled", max_entries=10)
+        self.store = MemoryStore(self._dir, embedding_mode="disabled", max_entries=10, persist_to_disk=True)
 
     def tearDown(self):
         self.store.close()
@@ -99,7 +99,7 @@ class TestMemoryStore(unittest.TestCase):
         self.store.add(MemoryEntry(type="test", summary="持久化测试", content="重要数据"))
         self.store.close()
         # 重新加载
-        store2 = MemoryStore(self._dir, embedding_mode="disabled", max_entries=10)
+        store2 = MemoryStore(self._dir, embedding_mode="disabled", max_entries=10, persist_to_disk=True)
         self.assertGreaterEqual(store2.count, 1)
         store2.close()
 

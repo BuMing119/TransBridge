@@ -1,8 +1,10 @@
 """Story 07: ObservabilityCollector 测试 — token 统计 / 追踪持久化 / 过期清理。"""
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -22,6 +24,8 @@ class TestObservabilityCollector(unittest.TestCase):
         self.collector = ObservabilityCollector(storage_dir=Path(self._tmp))
 
     def tearDown(self):
+        # 等待 daemon 线程完成异步文件写入（_save_trace 在后台线程中运行）
+        time.sleep(0.3)
         import shutil
         shutil.rmtree(self._tmp, ignore_errors=True)
 
@@ -71,6 +75,8 @@ class TestObservabilityCollector(unittest.TestCase):
             message="OK", duration_ms=42,
         ))
         self.collector.end_conversation()
+        # 等待 daemon 线程完成异步文件写入
+        time.sleep(0.5)
         expected_path = Path(self._tmp) / "conv_save_test.json"
         self.assertTrue(expected_path.exists(), f"Expected {expected_path} to exist")
 
@@ -78,6 +84,8 @@ class TestObservabilityCollector(unittest.TestCase):
         import time
         self.collector.start_conversation("conv_old")
         self.collector.end_conversation()
+        # 等待 daemon 线程完成异步文件写入
+        time.sleep(0.5)
         old_path = Path(self._tmp) / "conv_old.json"
         self.assertTrue(old_path.exists())
         # 修改 mtime 为 31 天前

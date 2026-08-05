@@ -23,11 +23,14 @@ class TestReportSystem(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        import src.transbridge.smart_assistant.tools.tool_proofreader as tpr
-        cls.tpr = tpr
+        from src.transbridge.smart_assistant.tools.tool_proofreader import ProofreaderController
+        from src.transbridge.ui.context import AppContext
+        from src.transbridge.smart_assistant.tools.task_manager import TaskManager
+        cls.tpr = ProofreaderController(AppContext(), TaskManager())
 
     def setUp(self):
-        self.tpr._last_report = None
+        import src.transbridge.smart_assistant.tools.tool_proofreader as tpr_mod
+        tpr_mod.set_last_report(None)
 
     # ── _summarize_refine_results ──
 
@@ -184,7 +187,7 @@ class TestReportSystem(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertIn("未加载 ESP", result.message)
         self.assertEqual(result.data["files"], [])
-        self.assertIsNone(result.data["directory"])
+        self.assertNotIn("directory", result.data)
 
     def test_d15_list_quality_reports_nonexistent_directory(self):
         from src.transbridge.smart_assistant.tools.tool_proofreader import (
@@ -216,14 +219,14 @@ class TestLastReportIntegrity(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        import src.transbridge.smart_assistant.tools.tool_proofreader as tpr
-        cls.tpr = tpr
+        import src.transbridge.smart_assistant.tools.tool_proofreader as tpr_mod
+        cls.tpr_mod = tpr_mod
 
     def setUp(self):
-        self.tpr._last_report = None
+        self.tpr_mod.set_last_report(None)
 
     def tearDown(self):
-        self.tpr._last_report = None
+        self.tpr_mod.set_last_report(None)
 
     def test_e1_get_quality_report_no_report(self):
         from src.transbridge.smart_assistant.tools.tool_proofreader import (
@@ -238,7 +241,7 @@ class TestLastReportIntegrity(unittest.TestCase):
         self.assertEqual(result.data["reports"], [])
 
     def test_e2_last_report_structure_postprocess(self):
-        self.tpr._last_report = {
+        self.tpr_mod.set_last_report({
             "phase": "postprocess",
             "phases": ["consistency", "format", "quality_gate",
                       "refinement", "polish", "arbitration"],
@@ -268,7 +271,7 @@ class TestLastReportIntegrity(unittest.TestCase):
             ],
             "report_file": "/fake/path/report.xlsx",
             "timestamp": time.time(),
-        }
+        })
 
         from src.transbridge.smart_assistant.tools.tool_proofreader import (
             _tool_get_quality_report,
@@ -297,7 +300,7 @@ class TestLastReportIntegrity(unittest.TestCase):
         self.assertIn("timestamp", report)
 
     def test_e3_get_quality_report_message_format(self):
-        self.tpr._last_report = {
+        self.tpr_mod.set_last_report({
             "phase": "postprocess",
             "phases": ["consistency"],
             "total_checked": 10,
@@ -311,7 +314,7 @@ class TestLastReportIntegrity(unittest.TestCase):
             "decisions": [],
             "report_file": None,
             "timestamp": time.time(),
-        }
+        })
 
         from src.transbridge.smart_assistant.tools.tool_proofreader import (
             _tool_get_quality_report,
@@ -350,7 +353,7 @@ class TestLastReportIntegrity(unittest.TestCase):
         self.assertNotIn("auto_fixed", polish_report)
 
     def test_e5_report_missing_optional_fields(self):
-        self.tpr._last_report = {
+        self.tpr_mod.set_last_report({
             "phase": "postprocess",
             "phases": ["consistency"],
             "total_checked": 5,
@@ -363,7 +366,7 @@ class TestLastReportIntegrity(unittest.TestCase):
             "decisions": [],
             "report_file": None,
             "timestamp": time.time(),
-        }
+        })
 
         from src.transbridge.smart_assistant.tools.tool_proofreader import (
             _tool_get_quality_report,

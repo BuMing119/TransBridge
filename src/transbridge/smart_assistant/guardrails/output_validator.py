@@ -36,9 +36,9 @@ class OutputValidationGuard(GuardMiddleware):
         return GuardResult(True)
 
     def after_execute(self, step, result, ctx) -> GuardResult:
-        # M13: 放宽类型检查 — 允许 dict | list | None
-        if not isinstance(result.data, (dict, list)) and result.data is not None:
-            return GuardResult(False, f"输出类型错误: 期望 dict/list，实际 {type(result.data).__name__}")
+        # M13: 放宽类型检查 — 允许 dict | list | str | None
+        if not isinstance(result.data, (dict, list, str)) and result.data is not None:
+            return GuardResult(False, f"输出类型错误: 期望 dict/list/str，实际 {type(result.data).__name__}")
         message = result.message or ""
         if len(message) > _MAX_MESSAGE_LEN:
             result.message = message[:_MAX_MESSAGE_LEN] + "...(截断)"
