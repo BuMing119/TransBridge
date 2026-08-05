@@ -390,3 +390,206 @@ from .checkpoint_manager import CheckpointManager
 - 零新依赖，零外部 import 断裂
 - 与 ADR-009（Reflexion 边界）无冲突：`_execute_tool_with_retry` 保留在 GraphExecutor
 - 与 ADR-012（护栏体系）无冲突：guard_chain 函数保留在 base.py
+
+### 更新: 2026-08-05 - SessionController 会话控制流提取
+
+**背景**: FR12 要求将分散在 ChatWidget、ConversationOrchestrator、ToolExecutionHandler 中的会话主循环控制流提取为显式状态机。当前控制流通过回调链隐式串联——ChatWidget 的 8 个方法末尾各自判断 `_check_react_depth() + _run_llm_round()`，Orchestrator._on_finished() 内部做 Plan/Tool/Reply 模式分发，ToolHandler._handle_result() 末尾触发 ReAct 继续。没有统一的"当前处于什么状态"的显式表达。ADR-008 此前仅定义了包级和文件级分层，未涉及**会话控制流**的归属。
+
+**决策 D8: 新增 SessionController 作为会话级顶层调度者**
+
+在 `smart_assistant/` 后端包中新建 `session_controller.py`，位于 ConversationOrchestrator 和 ToolExecutionHandler 之上：
+
+```
+smart_assistant/
+├── session_controller.py        # NEW: 会话状态机 (~250-300行)
+├── conversation_orchestrator.py  # 保留: LLM轮次生命周期（移除分发逻辑）
+├── tool_execution_handler.py     # 保留: 工具调度（移除ReAct触发）
+├── execution_engine.py           # 不变
+├── graph_executor.py             # 不变
+└── ...
+```
+
+**层级关系**:
+```
+SessionController          ← 会话级：管理 IDLE→THINKING→AWAITING→EXECUTING
+  ├── ConversationOrchestrator  ← 轮次级：LLM请求/流式/响应解析
+  ├── ToolExecutionHandler      ← 步次级：工具查找/权限/执行/结果
+  └── ExecutionEngine           ← 图次级：DAG调度/Checkpoint/HITL
+       └── GraphExecutor
+```
+
+SessionController 持有 Orchestrator/ToolHandler/Engine 引用，通过回调接收下层事件，通过方法调用下达指令。
+
+**决策 D9: enum + 显式分发表实现状态机**
+
+不使用外部状态机库。采用 `enum.Enum` + 每个 `handle_*` 方法内部断言当前状态 + 显式 `_transition_to()` 方法：
+
+```python
+class SessionController:
+    class State(Enum):
+        IDLE = "idle"
+        THINKING = "thinking"
+        AWAITING_CONFIRM = "awaiting"
+        EXECUTING = "executing"
+        AWAITING_TASK = "awaiting_task"
+
+    def handle_user_message(self, text: str) -> None:
+        assert self._state == State.IDLE
+        self._transition_to(State.THINKING)
+        self._orchestrator.start_round()
+
+    def handle_execution_complete(self, results: list) -> None:
+        assert self._state == State.EXECUTING
+        if self._react_depth >= self._MAX_REACT_DEPTH:
+            self._transition_to(State.IDLE)
+        else:
+            self._react_depth += 1
+            self._transition_to(State.THINKING)
+            self._orchestrator.start_round()
+```
+
+**理由**: 5 状态 × 7 转换的规模不需要框架。`enum + assert + _transition_to()` 模式与项目现有的 `ConditionEvaluator._AST_DISPATCH` 分发表风格一致。每个转换点显式可读、可调试、可测试。
+
+**决策 D10: 双层状态管理 — SessionController (会话级) vs GraphExecutor (执行级)**
+
+两个状态机运行在不同抽象层级，互不穿透：
+
+| 层级 | 管理者 | 状态粒度 | 生命周期 |
+|------|--------|---------|---------|
+| 会话级 | SessionController | IDLE/THINKING/AWAITING/EXECUTING/TASK | 一次用户对话 |
+| 执行级 | GraphExecutor | BFS层级/Condition路由/Loop迭代/HITL暂停 | 一次 plan/tool 执行 |
+
+SessionController 不关心 GraphExecutor 内部的 BFS/Condition/Loop/HITL 细节——它只知道"提交了一个执行计划，等待完成通知"。GraphExecutor 的 HITL 暂停/恢复在 SessionController 看来是透明的（EXECUTING 状态持续直到 `all_finished` 回调）。这与 ADR-011 的设计一致：GraphExecutor 管理图级状态，SessionController 管理会话级状态。
+
+**决策 D11: 回调契约与接口变更**
+
+SessionController 定义清晰的输入接口（外部调用）和输出接口（回调注入）：
+
+**输入接口**（供 UI/外部调用）:
+- `handle_user_message(text: str)` — IDLE → THINKING
+- `handle_user_confirmed(steps, mode)` — AWAITING → EXECUTING
+- `handle_user_cancelled()` — AWAITING → IDLE
+- `handle_execution_complete(results)` — EXECUTING → THINKING | IDLE
+- `handle_task_completed(task_id, result)` — AWAITING_TASK → THINKING | IDLE
+- `handle_abort()` — 任意状态 → IDLE
+
+**输出接口**（回调注入，供 UI 响应）:
+- `on_state_changed(old, new, context)` — 状态变更通知
+- `on_present_plan_card(steps)` / `on_present_tool_card(step)` / `on_present_batch_tool_card(steps)`
+- `on_system_message(text)` / `on_conversation_end()`
+
+**现有组件接口变更**（最小侵入）:
+- `ConversationOrchestrator`: 新增 `on_response_parsed(parsed)` 回调，替代内部分发逻辑。`_on_finished()` 不再做 Plan/Tool/Reply 分发，改为调用回调通知 Controller
+- `ToolExecutionHandler`: 新增 `on_step_completed(step, result)` 回调。`_handle_result()` 不再末尾触发 ReAct 继续，改为调用回调通知 Controller
+
+**决策 D12: 两 Story 分步迁移**
+
+| Story | 内容 | 风险 |
+|-------|------|------|
+| **S01: 核心引入** | 新建 `session_controller.py`，ChatWidget 创建 Controller 实例并注入回调。新路径与旧路径并行运行——Controller 的状态转换不删除 ChatWidget 中旧逻辑，通过比对验证等价性后再切换 | 低 |
+| **S02: 旧逻辑清理** | 删除 ChatWidget 中 `_run_llm_round()`/`_check_react_depth()`/`_check_react_continue()`/`_auto_execute_steps()` 等方法；Orchestrator 移除模式分发逻辑；ToolHandler 移除 ReAct 触发逻辑 | 中 |
+
+**S01 新旧并行策略**: ChatWidget 同时持有 SessionController 引用和旧控制方法。`send_user_message()` 同时触发 Controller.handle_user_message() 和旧路径 `_run_llm_round()`。通过日志比对两者输出，验证一致后（通常 20-30 轮对话），在 S02 中删除旧路径。不引入 feature flag——用代码分支 + import 控制即可。
+
+**影响**:
+- 新增 1 文件：`smart_assistant/session_controller.py`
+- 修改 4 文件：`chat_widget.py`（S01 新增 Controller 初始化+回调注入，S02 删 ~150行）、`conversation_orchestrator.py`（新增 `on_response_parsed` 回调，移除分发 ~40行）、`tool_execution_handler.py`（新增 `on_step_completed` 回调，移除 ReAct 触发 ~15行）、`__init__.py`（新增 `SessionController` 懒加载映射）
+- 新增测试 1 文件：`test_session_controller.py`（状态转换覆盖 + 集成测试）
+- 零新依赖
+- 161 现有测试零回归
+- 外部行为不变（用户感知到的对话流程完全一致）
+- 与 ADR-011 无冲突：SessionController 和 GraphExecutor 是不同抽象层级
+- 与 ADR-012 无冲突：护栏链仍在 ToolExecutionHandler 中，SessionController 不介入
+
+### 更新: 2026-08-05 - SessionManager 会话持久化与多会话管理
+
+**背景**: FR13 要求添加多会话管理能力——用户可创建、切换、删除多个命名会话，每个会话有独立的对话历史，数据以 JSON 文件全局持久化，启动时自动恢复。
+
+**决策 D13: SessionManager 作为独立后端组件**
+
+在 `smart_assistant/` 下新建 `session_manager.py`，纯 Python 实现（ADR-008 兼容）。位于 ConversationManager 的下层——SessionManager 负责会话数据的持久化与多会话索引，ConversationManager 负责单会话内的消息列表操作。
+
+```
+smart_assistant/
+├── session_controller.py         # FR12: 会话内控制流状态机
+├── session_manager.py            # NEW: FR13 多会话持久化管理
+├── conversation_manager.py       # 保留: 单会话消息列表（+to_dict/from_dict）
+├── ...
+```
+
+层级关系：
+```
+SmartAssistantPanel (UI 协调)
+  ├── SessionListWidget (UI)     ← NEW: 左侧会话列表栏
+  ├── ChatWidget (UI)            ← 修改: 支持会话切换
+  └── SessionManager (后端)      ← NEW: 会话 CRUD + JSON 持久化
+        └── ConversationManager  ← 保留: 消息列表操作
+```
+
+**决策 D14: JSON 文件存储 + 目录扫描 + 懒加载**
+
+- 存储位置：全局 `data/sessions/` 目录（不绑定项目）
+- 存储格式：每个会话一个 `{session_id}.json` 文件
+- 索引方式：启动时扫描目录加载全部会话元数据到内存缓存；消息列表懒加载（仅切换会话时读取完整文件）
+- 自动保存：每轮 LLM 对话结束后自动保存当前活跃会话
+
+**JSON Schema**:
+```json
+{
+    "session_id": "abc123",
+    "name": "翻译 Dragonborn",
+    "created_at": "2026-08-05T10:00:00",
+    "last_active_at": "2026-08-05T14:30:00",
+    "project_name": "Dragonborn",
+    "message_count": 12,
+    "messages": [
+        {"role": "system", "content": "..."},
+        {"role": "user", "content": "你好"},
+        {"role": "assistant", "content": "..."}
+    ]
+}
+```
+
+**理由**: 零新依赖（JSON 序列化使用标准库 json）。目录扫描在会话数 <100 时性能无感知。懒加载避免启动时一次读取全部消息（每个会话可能含数万字对话）。与项目 JSON 惯例一致（ADR-006 current.json、memory_metadata.json）。
+
+**决策 D15: ConversationManager 序列化接口**
+
+`ConversationManager` 新增两个方法：
+- `to_dict() → dict`: 返回 `{"messages": [...]}`，消息列表中每个 dict 包含 `role` 和 `content`
+- `from_dict(data: dict) → None`: 替换内部 `_messages` 列表并重置轮次索引
+
+**理由**: 保持 ConversationManager 职责单一（消息列表管理），序列化逻辑不内嵌到 SessionManager。SessionManager 调用 `conv.to_dict()` 获取消息数据后写入 JSON，加载时读取 JSON 后调用 `conv.from_dict()`。
+
+**决策 D16: Panel 协调的会话切换流程**
+
+```
+用户点击会话B
+  → SessionListWidget 发出 on_switch_session("session_B")
+  → Panel._on_switch_session("session_B")
+    → 1. chat_widget.save_current_session()
+         → conversation.to_dict() → session_manager.save_session("A", data)
+    → 2. chat_widget.load_session("session_B")
+         → session_manager.get_session("B") → 返回 data
+         → conversation.clear()
+         → conversation.from_dict(data["messages"])
+         → 重建所有 MessageBubble 渲染历史消息
+         → 更新 session_manager 中 last_active_at
+         → controller.handle_abort()  # 重置状态到 IDLE
+```
+
+**Decision D17: SessionListWidget UI 契约**
+
+新建 `ui/tools/smart_assistant/session_list_widget.py`：
+- 位于 Panel 左侧，可折叠（toggle 按钮）
+- 每个会话行显示：名称（粗体）+ 消息数 + 时间（灰色小字）
+- 当前活跃会话高亮（背景色 `#E3F2FD`）
+- 顶部"+"按钮 → 弹出 QInputDialog 命名 → `on_create_session(name)` 回调
+- 每行悬停显示"×"删除按钮 → QMessageBox 确认 → `on_delete_session(session_id)` 回调
+- 点击行 → `on_switch_session(session_id)` 回调
+
+**影响**:
+- 新增 2 文件：`smart_assistant/session_manager.py` + `ui/tools/smart_assistant/session_list_widget.py`
+- 修改 4 文件：`conversation_manager.py` (+to_dict/from_dict) + `chat_widget.py` (+save/load/switch) + `panel.py` (+协调) + `__init__.py` (+懒加载)
+- 新增目录：`data/sessions/`
+- 零新依赖
+- 与 FR12 (SessionController) 无冲突：切换会话时 `handle_abort()` 重置状态

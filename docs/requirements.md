@@ -902,6 +902,135 @@ Agent SHALL 可查询软件全局状态和执行 UI 导航。
 
 ---
 
+#### FR12 SessionController — 智能助手会话控制流提取 — *2026-08-05 | 状态: 已实现 | 优先级: P1*
+
+将当前分散在 ChatWidget、ConversationOrchestrator、ToolExecutionHandler 三个对象中的会话主循环控制流提取到显式的 `SessionController` 状态机中，统一管理 IDLE → THINKING → AWAITING_CONFIRM → EXECUTING → AWAITING_TASK 的状态转换。
+
+**问题现状**:
+- ChatWidget (1108行) 承担了事实上的"主控制器"角色，但控制逻辑散落在 8+ 个方法的末尾 `_check_react_depth() + _run_llm_round()` 调用中
+- Orchestrator._on_finished() 内部做 Plan/Tool/Reply 模式分发
+- ToolHandler._handle_result() 末尾触发 ReAct 继续
+- 状态隐式分布在 `_react_depth` 计数器、`_auto_mode` 布尔、`_streaming_bubble is not None`、`_worker is not None` 等多个标志中
+- 没有统一的"当前处于什么状态"的显式表达
+
+**FR12.1 SessionController 新建**: 在 `smart_assistant/` 后端包中新建 `session_controller.py`，纯 Python 实现，遵循 ADR-008（不依赖 PyQt6）。核心能力：
+- 显式状态枚举：`IDLE | THINKING | AWAITING_CONFIRM | EXECUTING | AWAITING_TASK`
+- 公开方法作为状态转换入口：`handle_user_message()` / `handle_llm_response()` / `handle_user_confirmed()` / `handle_user_cancelled()` / `handle_execution_complete()` / `handle_task_completed()` / `handle_abort()`
+- 回调注入与 UI 通信：`on_state_changed()` / `on_present_plan_card()` / `on_present_tool_card()` / `on_present_batch_tool_card()` / `on_system_message()` / `on_conversation_end()`
+- ReAct 深度管理内置，不再暴露给 ChatWidget
+
+**FR12.2 ChatWidget 瘦身**: ChatWidget SHALL 移除以下方法和属性（迁移到 SessionController）：
+- `_run_llm_round()` → 删除
+- `_check_react_depth()` / `_check_react_continue()` → 删除
+- `_auto_execute_steps()` → 删除（逻辑移到 Controller）
+- `_on_plan_confirmed()` → 简化为调用 `controller.handle_user_confirmed()`
+- `_on_plan_all_finished()` → 简化为调用 `controller.handle_execution_complete()`
+- `_on_task_completed()` / `_on_task_failed()` → 简化为调用 `controller.handle_task_completed()`
+- `_react_depth` 属性 → 删除
+
+ChatWidget 保留职责：UI 渲染（bubble/card/thinking indicator/system message）、用户输入处理、文件上传、记忆检索触发。
+
+**FR12.3 Orchestrator 分发逻辑迁移**: `ConversationOrchestrator._on_finished()` SHALL 不再内部做模式分发。分发逻辑（Plan Card vs Tool Card vs Auto Execute vs Reply）移到 SessionController。Orchestrator 仅负责：LLM 轮次生命周期、流式处理、响应解析，完成后通过回调通知 Controller。
+
+**FR12.4 ToolHandler 控制逻辑迁移**: `ToolExecutionHandler._handle_result()` SHALL 不再末尾触发 ReAct 继续。改为通过回调通知 Controller "步骤执行完成"，由 Controller 决定下一步。
+
+**FR12.5 迁移策略**: 分两个 Story 逐步迁移，每步不破坏现有行为：
+- **Story 01**: 新建 `session_controller.py`，实现完整状态机。ChatWidget 创建 Controller 并注入回调。新路径与旧路径并行运行，验证通过后再切换。
+- **Story 02**: 删除 ChatWidget/Orchestrator/ToolHandler 中的旧控制逻辑。清理冗余方法和属性。
+
+**约束**:
+- 现有 161 个 smart_assistant 测试零回归
+- 外部行为不变（用户感知到的对话流程完全一致）
+- 不修改 ExecutionEngine / GraphExecutor
+- 不改变工具功能或 LLM prompt
+- 不改变 UI 外观
+
+**关联需求**: FR10（ExecutionEngine 拆分为此扫清基础）、ADR-008（代码分层约束）、ADR-011（图编排引擎）
+
+---
+
+#### FR13 Session 管理系统 — 多会话支持 — *2026-08-05 | 状态: 已实现 | 优先级: P1*
+
+为智能助手添加类似 Codex CLI 的多会话管理能力——用户可创建、切换、删除多个命名会话，每个会话有独立的对话历史，数据以 JSON 文件全局持久化，启动时自动恢复。
+
+**FR13.1 SessionManager 后端组件**: 在 `smart_assistant/` 后端包中新建 `session_manager.py`，纯 Python 实现（ADR-008 兼容）。核心能力：
+- 会话 CRUD：`create_session(name)` / `delete_session(session_id)` / `list_sessions()` / `get_session(session_id)`
+- 持久化：全局 `data/sessions/` 目录，每个会话一个 `{session_id}.json` 文件
+- 存储格式：`{meta: {session_id, name, created_at, last_active_at, project_name, message_count}, messages: [{role, content}, ...]}`
+- 自动保存：每轮 LLM 对话结束后自动保存当前会话
+- 启动恢复：加载会话列表，恢复上次活跃会话
+
+**FR13.2 ConversationManager 序列化扩展**: `ConversationManager` SHALL 新增 `to_dict()` 和 `from_dict(data)` 方法，支持消息列表的 JSON 序列化与反序列化。保留现有内存操作接口不变。
+
+**FR13.3 会话列表 UI**: 智能助手面板左侧 SHALL 新增可折叠的会话列表侧边栏：
+- 会话列表显示：会话名称、消息数量、最后活跃时间
+- 当前活跃会话高亮
+- 新建会话按钮（顶部"+"按钮，自动生成名称或弹出命名对话框）
+- 删除会话按钮（每个会话行右侧悬停显示"×"按钮，删除前弹出确认对话框）
+- 切换会话：点击会话行 → 保存当前会话 → 加载目标会话 → 刷新聊天区
+
+**FR13.4 ChatWidget 会话切换集成**: ChatWidget SHALL 支持会话切换时的完整状态重置：
+- 保存当前会话消息列表
+- 清空聊天区 UI
+- 加载目标会话消息列表并渲染历史消息
+- 重置 SessionController 状态到 IDLE
+
+**FR13.5 跨项目访问**: 会话全局存储，不绑定项目。会话元数据中记录创建时的项目名作为标签。切换到不同项目后仍可进入旧会话——对话历史完整保留，但当前翻译集合上下文（esp/eet/xt 文件）可能不匹配。
+
+**异常场景**:
+- 会话 JSON 文件损坏 → 跳过该文件，日志警告，不影响其他会话加载
+- 删除当前活跃会话 → 自动切换到最近活跃会话；若无其他会话则创建默认会话
+- 磁盘空间不足 → 保存失败时提示用户（通过 on_system_message），不丢失内存中的对话
+- 会话文件被外部删除 → 下次加载会话列表时自动清理不存在的条目
+
+**范围外**:
+- 会话导出/导入、重命名、搜索/过滤、归档/收藏
+- 云端同步
+- 与 FR12 SessionController 的集成（SessionController 管理单会话内控制流，FR13 管理多会话间切换）
+
+**关联需求**: FR12（SessionController）、ADR-008（代码分层）
+
+---
+
+### FR14: 后台任务监控面板
+
+**状态**: 待方案
+**优先级**: P1
+**提出者**: 用户反馈（BuMing，2026-08-05）
+
+**FR14.1 任务监控区**: SmartAssistantPanel SHALL 在右侧底部新增可折叠的任务监控区域，始终可见（无任务时显示"无后台任务"），展示所有已注册到 TaskManager 的后台任务。
+
+**FR14.2 任务卡片**: 每个任务 SHALL 以卡片形式展示以下信息：
+- 任务类型与名称（翻译、润色、后处理等，从 TaskHandle.metadata 读取）
+- 状态标签（running/completed/failed/cancelled/paused，彩色标签区分）
+- 进度条与百分比（从 TaskHandle.progress 读取 current/total）
+- 详细信息（如"已翻译 100/500 条"，从 progress 构建）
+- 运行时长（从 TaskHandle.created_at 计算）
+
+**FR14.3 任务操作**: 运行中的任务 SHALL 支持取消/暂停/恢复操作；已完成/失败的任务不显示操作按钮。
+
+**FR14.4 实时更新**: 任务状态变化时 SHALL 自动刷新 UI：
+- TaskManager.on_finished 回调触发任务完成/失败更新
+- TaskManager.update_progress 调用后通过定时轮询（1s间隔）刷新进度
+- 新任务注册时通过轮询发现并添加卡片
+
+**FR14.5 任务清理**: 已完成/失败/已取消的任务 SHALL 保留显示，用户可手动逐个清除或一键清除全部已完成任务。
+
+**异常场景**:
+- TaskManager 未初始化（ChatWidget 尚未调用 _ensure_task_manager）→ 显示"任务监控不可用"
+- 任务已从 TaskManager.cleanup() 移除但 UI 未刷新 → 刷新按钮手动同步
+- 短时间内大量任务（>20）→ 列表可滚动，显示任务计数
+
+**范围外**:
+- 任务历史持久化（仅内存中保留当前会话的任务）
+- 任务详情展开/执行日志查看
+- 离线/桌面通知
+- 任务优先级排序
+
+**关联需求**: FR13（多会话管理）、ADR-008（代码分层）、TaskManager（agent-tool-expansion Story 02）
+
+---
+
 ## 6. 需求变更历史
 
 | 日期 | 变更内容 | 来源 |
@@ -930,3 +1059,6 @@ Agent SHALL 可查询软件全局状态和执行 UI 导航。
 | 2026-05-18 | 新增 FR9.12 解析工具副作用补全 — 6个Parser/Import工具新增 action 参数（create_slot/append）+ HITL 确认机制，解析结果不再丢弃 | /bm-analyze |
 | 2026-05-22 | 新增 FR10 Smart Assistant 模块超重文件拆分重构 — 8文件→12-14文件，消除上帝类/反模式/杂物抽屉，纯结构调整，为工具提示词分层加载机制扫清基础 | /bm-analyze |
 | 2026-05-25 | 新增 FR11 工具提示词分层加载机制 — 41 工具完整 Schema（~14K tokens）替换为目录+路由表+get_tool_help 元工具（~1K tokens），节省 92.5%，含 Phase 0-4 实施顺序 | /bm-analyze |
+| 2026-08-05 | 新增 FR12 SessionController — 智能助手会话控制流提取，将分散在 ChatWidget/Orchestrator/ToolHandler 的回调链转为显式状态机 | /bm-analyze |
+| 2026-08-05 | 新增 FR13 Session 管理系统 — 多会话支持（创建/切换/删除会话 + JSON 持久化 + 左侧会话列表 UI），类似 Codex CLI | /bm-analyze |
+| 2026-08-05 | 新增 FR14 后台任务监控面板 — 在智能助手面板中增加任务监控区，实时展示后台任务状态/进度/操作按钮 | /bm-analyze |

@@ -22,7 +22,11 @@
 | smart-assistant-qa-fix | ✅ 第五轮全量修复完成 (166/166) | 7 | [plan](smart-assistant-qa-fix/plan.md) |
 | smart-assistant-refactor | ✔️ 已实现 | 4 | [plan](smart-assistant-refactor/plan.md) |
 | tool-prompt-layering | ✅ 全部完成 | 5 | [plan](tool-prompt-layering/plan.md) · [s01](tool-prompt-layering/stories/story-01-token-measurement.md) · [s02](tool-prompt-layering/stories/story-02-summary-and-builders.md) · [s03](tool-prompt-layering/stories/story-03-get-tool-help-and-prompt.md) · [s04](tool-prompt-layering/stories/story-04-regression-tests.md) · [s05](tool-prompt-layering/stories/story-05-tuning.md) |
+| session-controller | ✅ 全部完成 | 2 | [plan](session-controller/plan.md) |
+| session-manager | ✅ 全部完成 | 3 | [plan](session-manager/plan.md) |
+| task-monitor | ✔️ 已实现 | 2 | [plan](task-monitor/plan.md) |
 
 ## 统计
 
-- 已实现: 166 Story (全部 Epic 完成)
+- 已实现: 168 Story (全部 Epic 完成)
+- 进行中: 0 Epic

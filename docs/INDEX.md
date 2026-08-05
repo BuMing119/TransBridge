@@ -29,7 +29,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [ADR-005](adr/005-toml-prompt-no-langchain.md) | TOML Prompt 模板 + Skill 定义格式 | ✅ 已接受（更新: 2026-05-10） |
 | [ADR-006](adr/006-project-persistence-variant-management.md) | 项目持久化与翻译版本管理 | ✅ 已接受 |
 | [ADR-007](adr/007-mixed-translation-polish-mode.md) | AI翻译混合模式（三模式制+规则映射表+MixedWorker） | ✅ 已接受 |
-| [ADR-008](adr/008-smart-assistant-code-layering.md) | SmartAssistant 代码分层（UI与业务逻辑分离 + Agent框架4子包） | ✅ 已接受（更新: 2026-05-10³, 2026-05-22） |
+| [ADR-008](adr/008-smart-assistant-code-layering.md) | SmartAssistant 代码分层（UI与业务逻辑分离 + Agent框架4子包） | ✅ 已接受（更新: 2026-05-10³, 2026-05-22, 2026-08-05²） |
 | [ADR-009](adr/009-agent-file-memory-reflexion.md) | Agent 文件解析、长期记忆与 Reflexion 自纠错（三模式降级） | ✅ 已接受（更新: 2026-05-10²） |
 | [ADR-010](adr/010-infra-extraction.md) | 共享基础设施提取 — infra/ 包（Embedding三模式可选） | ✅ 已接受（更新: 2026-05-10） |
 | [ADR-011](adr/011-graph-orchestration-engine.md) | 自研有状态图编排引擎（StatefulDAGExecutor，零新依赖） | ✅ 已接受 |
@@ -60,6 +60,9 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [smart-assistant-qa-fix](../plans/smart-assistant-qa-fix/plan.md) | ✅ 第五轮全量修复完成 (166/166) | 7 |
 | [smart-assistant-refactor](../plans/smart-assistant-refactor/plan.md) | ✔️ 已实现 | 4 |
 | [tool-prompt-layering](../plans/tool-prompt-layering/plan.md) | ✅ 全部完成 (S01-S05) | 5 |
+| [session-controller](../plans/session-controller/plan.md) | ✅ 全部完成（2/2） | 2 |
+| [session-manager](../plans/session-manager/plan.md) | ✅ 全部完成（3/3） | 3 |
+| [task-monitor](../plans/task-monitor/plan.md) | ✔️ 已实现 (2/2 Story + QA 通过) | 2 |
 
 ---
 
@@ -184,6 +187,8 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | 2026-05-21 | agent-tool-expansion QA 复验 — 5项Blocker+Critical修复验证 | ✅ 通过 — 34新测试通过，221/223全量通过，0新问题，[报告](test-reports/agent-tool-expansion-qa-full-2026-05-21.md) · [复验](test-reports/agent-tool-expansion-qa-round2-verify-2026-05-21.md) |
 | 2026-05-25 | tool-prompt-layering QA 审查 — 工具提示词分层加载机制 | ✅ 通过 — 356/356 零回归，28 新测试，综合评分 55/60，0 Blocker/Critical/Major，[报告](test-reports/tool-prompt-layering-qa-2026-05-25.md) |
 | 2026-08-05 | tool-prompt-layering Phase 4 调优 QA | ✅ 通过 — 354/354 零新回归（4预存失败），5/5验收达标，零安全问题，[报告](test-reports/tool-prompt-layering-qa-2026-08-05.md) |
+| 2026-08-05 | session-manager QA | ✅ 通过 — 426/428 通过（2预存），3/3 Story验收，零新问题，[报告](test-reports/session-manager-qa-2026-08-05.md) |
+| 2026-08-05 | task-monitor QA | ✅ 通过 — 449/451 通过（2预存），2/2 Story验收，23新测试，零 Blocker/Critical/Major，[报告](test-reports/task-monitor-qa-2026-08-05.md) |
 
 ---
 
