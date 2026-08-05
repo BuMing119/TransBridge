@@ -1,0 +1,1534 @@
+{
+  "entries": [
+    {
+      "rec": "RACE:FULL",
+      "form_id": "0x7729721C",
+      "text": "Fox",
+      "translated_text": "狐狸",
+      "index": 1,
+      "global_seq": 2,
+      "f2": ""
+    },
+    {
+      "rec": "SPEL:FULL",
+      "form_id": "0xB8BAC729",
+      "text": "Command Spider",
+      "translated_text": "号令蜘蛛",
+      "index": 1,
+      "global_seq": 3,
+      "f2": ""
+    },
+    {
+      "rec": "QUST:NNAM",
+      "form_id": "0xEA1AE5E1",
+      "text": "Buy <Alias=AliasGoat> from <Alias=AliasFarmer>",
+      "translated_text": "从<Alias=AliasFarmer>处购买<Alias=AliasGoat>",
+      "index": 15,
+      "global_seq": 4,
+      "f2": ""
+    },
+    {
+      "rec": "MGEF:FULL",
+      "form_id": "0x337E841D",
+      "text": "Paralyze",
+      "translated_text": "麻痹术",
+      "index": 1,
+      "global_seq": 6,
+      "f2": ""
+    },
+    {
+      "rec": "ALCH:FULL",
+      "form_id": "0xFF6EAC01",
+      "text": "Potent Frostbite Venom",
+      "translated_text": "强效霜噬毒液",
+      "index": 1,
+      "global_seq": 7,
+      "f2": ""
+    },
+    {
+      "rec": "DIAL:FULL",
+      "form_id": "0x0B869D61",
+      "text": "Here's my offer...(<Global=ccVSVSSE002_GoatPrice> gold)",
+      "translated_text": "这是我出的价……（<Global=ccVSVSSE002_GoatPrice> 金币）",
+      "index": 1,
+      "global_seq": 8,
+      "f2": ""
+    },
+    {
+      "rec": "QUST:NNAM",
+      "form_id": "0xEA1AE5E1",
+      "text": "Find the tamed spider",
+      "translated_text": "找到驯化的蜘蛛",
+      "index": 3,
+      "global_seq": 9,
+      "f2": ""
+    },
+    {
+      "rec": "QUST:FULL",
+      "form_id": "0xEA1AE5E1",
+      "text": "Pets of Skyrim",
+      "translated_text": "天际宠物",
+      "index": 1,
+      "global_seq": 11,
+      "f2": ""
+    },
+    {
+      "rec": "DIAL:FULL",
+      "form_id": "0x6A53E774",
+      "text": "On second thought, never mind.",
+      "translated_text": "再次想来，我不介意。",
+      "index": 1,
+      "global_seq": 12,
+      "f2": ""
+    },
+    {
+      "rec": "NPC_:FULL",
+      "form_id": "0x048A7E75",
+      "text": "Skritch",
+      "translated_text": "吱吱",
+      "index": 1,
+      "global_seq": 13,
+      "f2": ""
+    },
+    {
+      "rec": "NPC_:FULL",
+      "form_id": "0x0C66F63F",
+      "text": "Hilda",
+      "translated_text": "希尔达",
+      "index": 1,
+      "global_seq": 14,
+      "f2": ""
+    },
+    {
+      "rec": "MGEF:FULL",
+      "form_id": "0xDDFA1964",
+      "text": "Command Spider",
+      "translated_text": "号令蜘蛛",
+      "index": 1,
+      "global_seq": 15,
+      "f2": ""
+    },
+    {
+      "rec": "NPC_:FULL",
+      "form_id": "0x16B3C38D",
+      "text": "Arachnia",
+      "translated_text": "阿蛛",
+      "index": 1,
+      "global_seq": 16,
+      "f2": ""
+    },
+    {
+      "rec": "DIAL:FULL",
+      "form_id": "0x5D8590F3",
+      "text": "Hey there, Thistle. Want a treat?",
+      "translated_text": "嘿，蓟花，想来点吃的吗？",
+      "index": 1,
+      "global_seq": 17,
+      "f2": ""
+    },
+    {
+      "rec": "NPC_:FULL",
+      "form_id": "0xAD8781B2",
+      "text": "Thief",
+      "translated_text": "盗贼",
+      "index": 1,
+      "global_seq": 18,
+      "f2": ""
+    },
+    {
+      "rec": "SPEL:FULL",
+      "form_id": "0xED352514",
+      "text": "Web Trap",
+      "translated_text": "蛛网陷阱",
+      "index": 1,
+      "global_seq": 19,
+      "f2": ""
+    },
+    {
+      "rec": "RACE:FULL",
+      "form_id": "0x3F09ECC0",
+      "text": "Frostbite Spider",
+      "translated_text": "霜噬蜘蛛",
+      "index": 1,
+      "global_seq": 21,
+      "f2": ""
+    },
+    {
+      "rec": "QUST:NNAM",
+      "form_id": "0xEA1AE5E1",
+      "text": "Feed <Alias=AliasFox> a sweet roll",
+      "translated_text": "向<Alias=AliasFox>喂食一块甜卷",
+      "index": 13,
+      "global_seq": 22,
+      "f2": ""
+    },
+    {
+      "rec": "BOOK:FULL",
+      "form_id": "0xF6F7556B",
+      "text": "Pickpocket's Journal",
+      "translated_text": "扒手的日记",
+      "index": 1,
+      "global_seq": 23,
+      "f2": ""
+    },
+    {
+      "rec": "DIAL:FULL",
+      "form_id": "0x2D92FF10",
+      "text": "Go find food!",
+      "translated_text": "去找样吃的来！",
+      "index": 1,
+      "global_seq": 26,
+      "f2": ""
+    },
+    {
+      "rec": "DIAL:FULL",
+      "form_id": "0x80602D0A",
+      "text": "Hey there, Sweet Roll. Want a treat?",
+      "translated_text": "嘿，甜卷，想来点吃的吗？",
+      "index": 1,
+      "global_seq": 29,
+      "f2": ""
+    },
+    {
+      "rec": "NPC_:FULL",
+      "form_id": "0x97F7C287",
+      "text": "Halvar",
+      "translated_text": "哈尔瓦",
+      "index": 1,
+      "global_seq": 30,
+      "f2": ""
+    },
+    {
+      "rec": "CELL:FULL",
+      "form_id": "0x956088D3",
+      "text": "Cronvangr Cave",
+      "translated_text": "克隆万格洞穴",
+      "index": 1,
+      "global_seq": 31,
+      "f2": ""
+    },
+    {
+      "rec": "DIAL:FULL",
+      "form_id": "0xA196A7B1",
+      "text": "Harvest venom",
+      "translated_text": "收获毒液",
+      "index": 1,
+      "global_seq": 33,
+      "f2": ""
+    },
+    {
+      "rec": "QUST:NNAM",
+      "form_id": "0xEA1AE5E1",
+      "text": "Find a treat for the rabbit",
+      "translated_text": "为兔子找一样吃食",
+      "index": 6,
+      "global_seq": 38,
+      "f2": ""
+    },
+    {
+      "rec": "QUST:NNAM",
+      "form_id": "0xEA1AE5E1",
+      "text": "Find <Alias=AliasGoat> the goat",
+      "translated_text": "找到山羊<Alias=AliasGoat>",
+      "index": 5,
+      "global_seq": 42,
+      "f2": ""
+    },
+    {
+      "rec": "DIAL:FULL",
+      "form_id": "0xF70255D5",
+      "text": "Go find an ingredient!",
+      "translated_text": "去找样炼金原料来！",
+      "index": 1,
+      "global_seq": 45,
+      "f2": ""
+    },
+    {
+      "rec": "QUST:NNAM",
+      "form_id": "0xEA1AE5E1",
+      "text": "Feed <Alias=AliasRabbit> a carrot",
+      "translated_text": "向<Alias=AliasRabbit>喂食一根胡萝卜",
+      "index": 7,
+      "global_seq": 46,
+      "f2": ""
+    },
+    {
+      "rec": "BOOK:FULL",
+      "form_id": "0x60234A92",
+      "text": "Notes on Tamed Rabbit",
+      "translated_text": "驯兔笔记",
+      "index": 1,
+      "global_seq": 49,
+      "f2": ""
+    },
+    {
+      "rec": "QUST:NNAM",
+      "form_id": "0xEA1AE5E1",
+      "text": "Find the tamed skeever",
+      "translated_text": "找到驯化的恶鼠",
+      "index": 2,
+      "global_seq": 52,
+      "f2": ""
+    },
+    {
+      "rec": "DIAL:FULL",
+      "form_id": "0xC3931D46",
+      "text": "What's that you got there?",
+      "translated_text": "你在那找到了什么？",
+      "index": 1,
+      "global_seq": 53,
+      "f2": ""
+    },
+    {
+      "rec": "DIAL:FULL",
+      "form_id": "0x5417A31F",
+      "text": "Collect milk",
+      "translated_text": "挤奶",
+      "index": 1,
+      "global_seq": 54,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:RNAM",
+      "form_id": "0xF903B977",
+      "text": "Actually, I don't have enough coin.",
+      "translated_text": "其实，我的钱不够。",
+      "index": 1,
+      "global_seq": 57,
+      "f2": ""
+    },
+    {
+      "rec": "NPC_:FULL",
+      "form_id": "0xDD734214",
+      "text": "Thistle",
+      "translated_text": "蓟丛",
+      "index": 1,
+      "global_seq": 60,
+      "f2": ""
+    },
+    {
+      "rec": "QUST:NNAM",
+      "form_id": "0xEA1AE5E1",
+      "text": "Free <Alias=AliasSkeever> from its cage",
+      "translated_text": "将<Alias=AliasSkeever>自笼中释放",
+      "index": 9,
+      "global_seq": 61,
+      "f2": ""
+    },
+    {
+      "rec": "DIAL:FULL",
+      "form_id": "0x18C5C97A",
+      "text": "Hey there, buddy. Want to come with me?",
+      "translated_text": "嘿，小家伙，想要跟我一起走吗？",
+      "index": 1,
+      "global_seq": 64,
+      "f2": ""
+    },
+    {
+      "rec": "CELL:FULL",
+      "form_id": "0xF071266C",
+      "text": "The Ratway",
+      "translated_text": "鼠道",
+      "index": 1,
+      "global_seq": 65,
+      "f2": ""
+    },
+    {
+      "rec": "ARMO:FULL",
+      "form_id": "0x962F579D",
+      "text": "Rabbit",
+      "translated_text": "兔子",
+      "index": 1,
+      "global_seq": 66,
+      "f2": ""
+    },
+    {
+      "rec": "DIAL:FULL",
+      "form_id": "0x290F4164",
+      "text": "Go find something valuable!",
+      "translated_text": "去找样好东西来！",
+      "index": 1,
+      "global_seq": 68,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:RNAM",
+      "form_id": "0xB5247445",
+      "text": "Hey buddy, are you hungry?",
+      "translated_text": "嘿小家伙，饿了吗？",
+      "index": 1,
+      "global_seq": 69,
+      "f2": ""
+    },
+    {
+      "rec": "QUST:NNAM",
+      "form_id": "0xEA1AE5E1",
+      "text": "Find out more about the goat",
+      "translated_text": "打探更多山羊的消息",
+      "index": 14,
+      "global_seq": 70,
+      "f2": ""
+    },
+    {
+      "rec": "QUST:NNAM",
+      "form_id": "0xEA1AE5E1",
+      "text": "Find out more about the fox",
+      "translated_text": "打探更多狐狸的消息",
+      "index": 12,
+      "global_seq": 72,
+      "f2": ""
+    },
+    {
+      "rec": "QUST:NNAM",
+      "form_id": "0xEA1AE5E1",
+      "text": "Free <Alias=AliasSpider> from its cage",
+      "translated_text": "将<Alias=AliasSpider>自笼中释放",
+      "index": 11,
+      "global_seq": 73,
+      "f2": ""
+    },
+    {
+      "rec": "MGEF:DNAM",
+      "form_id": "0xDDFA1964",
+      "text": "Command your pet spider to spin a web trap at the target location. Only <1> web trap can be active at a time.",
+      "translated_text": "命令宠物蜘蛛在目标位置结下一道蛛网陷阱，每次只能激活一道蛛网陷阱。",
+      "index": 1,
+      "global_seq": 74,
+      "f2": ""
+    },
+    {
+      "rec": "KEYM:FULL",
+      "form_id": "0x588766A5",
+      "text": "Spider Cage Key",
+      "translated_text": "蜘蛛笼钥匙",
+      "index": 1,
+      "global_seq": 75,
+      "f2": ""
+    },
+    {
+      "rec": "QUST:NNAM",
+      "form_id": "0xEA1AE5E1",
+      "text": "Find a key to the skeever cage",
+      "translated_text": "找到恶鼠笼的钥匙",
+      "index": 8,
+      "global_seq": 76,
+      "f2": ""
+    },
+    {
+      "rec": "RACE:FULL",
+      "form_id": "0xF50CE901",
+      "text": "Rabbit",
+      "translated_text": "兔子",
+      "index": 1,
+      "global_seq": 77,
+      "f2": ""
+    },
+    {
+      "rec": "QUST:NNAM",
+      "form_id": "0xEA1AE5E1",
+      "text": "Find the tamed fox",
+      "translated_text": "找到驯化的狐狸",
+      "index": 4,
+      "global_seq": 78,
+      "f2": ""
+    },
+    {
+      "rec": "QUST:NNAM",
+      "form_id": "0xEA1AE5E1",
+      "text": "Find the tamed rabbit",
+      "translated_text": "找到驯化的兔子",
+      "index": 1,
+      "global_seq": 79,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:RNAM",
+      "form_id": "0xF5415B19",
+      "text": "Hey buddy, are you hungry?",
+      "translated_text": "嘿小家伙，饿了吗？",
+      "index": 1,
+      "global_seq": 82,
+      "f2": ""
+    },
+    {
+      "rec": "DIAL:FULL",
+      "form_id": "0x2561B258",
+      "text": "Can I buy your goat?",
+      "translated_text": "我能买下你的山羊吗？",
+      "index": 1,
+      "global_seq": 85,
+      "f2": ""
+    },
+    {
+      "rec": "DIAL:FULL",
+      "form_id": "0x61FF38B8",
+      "text": "What's that you got there?",
+      "translated_text": "你在那找到了什么？",
+      "index": 1,
+      "global_seq": 87,
+      "f2": ""
+    },
+    {
+      "rec": "RACE:FULL",
+      "form_id": "0xA8815F22",
+      "text": "Goat",
+      "translated_text": "山羊",
+      "index": 1,
+      "global_seq": 88,
+      "f2": ""
+    },
+    {
+      "rec": "ARMO:FULL",
+      "form_id": "0x7962E345",
+      "text": "Animal Collar",
+      "translated_text": "动物项圈",
+      "index": 1,
+      "global_seq": 90,
+      "f2": ""
+    },
+    {
+      "rec": "WRLD:FULL",
+      "form_id": "0x0293F559",
+      "text": "Skyrim",
+      "translated_text": "天际",
+      "index": 1,
+      "global_seq": 91,
+      "f2": ""
+    },
+    {
+      "rec": "BOOK:FULL",
+      "form_id": "0x22AF6517",
+      "text": "Thief's Journal",
+      "translated_text": "盗贼的日记",
+      "index": 1,
+      "global_seq": 93,
+      "f2": ""
+    },
+    {
+      "rec": "NPC_:FULL",
+      "form_id": "0x919BA331",
+      "text": "Sweet Roll",
+      "translated_text": "甜卷",
+      "index": 1,
+      "global_seq": 94,
+      "f2": ""
+    },
+    {
+      "rec": "NPC_:FULL",
+      "form_id": "0xCCE861EA",
+      "text": "Vampire Naturalist",
+      "translated_text": "吸血鬼自然学家",
+      "index": 1,
+      "global_seq": 95,
+      "f2": ""
+    },
+    {
+      "rec": "BOOK:FULL",
+      "form_id": "0xEF0C2319",
+      "text": "Halvar's Journal",
+      "translated_text": "哈尔瓦的日记",
+      "index": 1,
+      "global_seq": 96,
+      "f2": ""
+    },
+    {
+      "rec": "RACE:FULL",
+      "form_id": "0xB83F8D48",
+      "text": "Skeever",
+      "translated_text": "恶鼠",
+      "index": 1,
+      "global_seq": 98,
+      "f2": ""
+    },
+    {
+      "rec": "DIAL:FULL",
+      "form_id": "0xA3A10829",
+      "text": "What's that you got there?",
+      "translated_text": "你在那找到了什么？",
+      "index": 1,
+      "global_seq": 101,
+      "f2": ""
+    },
+    {
+      "rec": "QUST:NNAM",
+      "form_id": "0xEA1AE5E1",
+      "text": "Find a key to the spider cage",
+      "translated_text": "找到蜘蛛笼的钥匙",
+      "index": 10,
+      "global_seq": 102,
+      "f2": ""
+    },
+    {
+      "rec": "ARMO:FULL",
+      "form_id": "0x5E171444",
+      "text": "Animal Pack",
+      "translated_text": "动物行囊",
+      "index": 1,
+      "global_seq": 103,
+      "f2": ""
+    },
+    {
+      "rec": "BOOK:FULL",
+      "form_id": "0xE8242867",
+      "text": "Vampire Naturalist's Journal",
+      "translated_text": "吸血鬼自然学家的日记",
+      "index": 1,
+      "global_seq": 105,
+      "f2": ""
+    },
+    {
+      "rec": "MGEF:FULL",
+      "form_id": "0xE5264143",
+      "text": "Stagger Push",
+      "translated_text": "失衡推击",
+      "index": 1,
+      "global_seq": 106,
+      "f2": ""
+    },
+    {
+      "rec": "ARMO:FULL",
+      "form_id": "0x11D35036",
+      "text": "Goat",
+      "translated_text": "山羊",
+      "index": 1,
+      "global_seq": 107,
+      "f2": ""
+    },
+    {
+      "rec": "KEYM:FULL",
+      "form_id": "0x2FAB8DDD",
+      "text": "Skeever Cage Key",
+      "translated_text": "恶鼠笼钥匙",
+      "index": 1,
+      "global_seq": 108,
+      "f2": ""
+    },
+    {
+      "rec": "DIAL:FULL",
+      "form_id": "0x9F1370B0",
+      "text": "Equip item",
+      "translated_text": "装备物品。",
+      "index": 1,
+      "global_seq": 109,
+      "f2": ""
+    },
+    {
+      "rec": "MGEF:DNAM",
+      "form_id": "0xE955221C",
+      "text": "Teleports Skritch the skeever",
+      "translated_text": "传送恶鼠吱吱。",
+      "index": 1,
+      "global_seq": 111,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:RNAM",
+      "form_id": "0xFF1F3124",
+      "text": "Let's remove your pack.",
+      "translated_text": "给你卸下行囊吧。",
+      "index": 1,
+      "global_seq": 112,
+      "f2": ""
+    },
+    {
+      "rec": "MESG:FULL",
+      "form_id": "0x46076B2E",
+      "text": "Pickpocket",
+      "translated_text": "扒窃",
+      "index": 1,
+      "global_seq": 113,
+      "f2": ""
+    },
+    {
+      "rec": "QUST:NNAM",
+      "form_id": "0xEA1AE5E1",
+      "text": "Greet <Alias=AliasGoat> the goat",
+      "translated_text": "与山羊<Alias=AliasGoat>照面",
+      "index": 18,
+      "global_seq": 114,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:RNAM",
+      "form_id": "0x967F9ED6",
+      "text": "Let's equip your collar.",
+      "translated_text": "给你装上项圈吧。",
+      "index": 1,
+      "global_seq": 115,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:RNAM",
+      "form_id": "0x1D487E6D",
+      "text": "Let's remove your pack.",
+      "translated_text": "给你卸下行囊吧。",
+      "index": 1,
+      "global_seq": 118,
+      "f2": ""
+    },
+    {
+      "rec": "QUST:NNAM",
+      "form_id": "0xEA1AE5E1",
+      "text": "Find out more about <Alias=AliasGoat>",
+      "translated_text": "打探更多<Alias=AliasGoat>的消息",
+      "index": 19,
+      "global_seq": 120,
+      "f2": ""
+    },
+    {
+      "rec": "MGEF:FULL",
+      "form_id": "0x43960E2E",
+      "text": "Teleport Arachnia",
+      "translated_text": "传送阿蛛",
+      "index": 1,
+      "global_seq": 121,
+      "f2": ""
+    },
+    {
+      "rec": "DIAL:FULL",
+      "form_id": "0xBCF1C798",
+      "text": "Equip Pack",
+      "translated_text": "装备行囊。",
+      "index": 1,
+      "global_seq": 123,
+      "f2": ""
+    },
+    {
+      "rec": "DIAL:FULL",
+      "form_id": "0xC6C0843C",
+      "text": "Equip collar",
+      "translated_text": "装备项圈。",
+      "index": 1,
+      "global_seq": 124,
+      "f2": ""
+    },
+    {
+      "rec": "QUST:NNAM",
+      "form_id": "0xEA1AE5E1",
+      "text": "Check the notices at the Bannered Mare",
+      "translated_text": "查看母马旗帜旅店的告示",
+      "index": 16,
+      "global_seq": 125,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:RNAM",
+      "form_id": "0x961C653E",
+      "text": "Let's remove your collar.",
+      "translated_text": "给你卸下项圈吧。",
+      "index": 1,
+      "global_seq": 129,
+      "f2": ""
+    },
+    {
+      "rec": "SPEL:FULL",
+      "form_id": "0xC65D4B8D",
+      "text": "Teleport Pet: Skritch",
+      "translated_text": "传送宠物：吱吱",
+      "index": 1,
+      "global_seq": 130,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:RNAM",
+      "form_id": "0x64A6C4E7",
+      "text": "Let's equip your pack.",
+      "translated_text": "给你装上行囊吧。",
+      "index": 1,
+      "global_seq": 131,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:RNAM",
+      "form_id": "0x3F21D47B",
+      "text": "Let's equip your pack.",
+      "translated_text": "给你装上行囊吧。",
+      "index": 1,
+      "global_seq": 132,
+      "f2": ""
+    },
+    {
+      "rec": "MGEF:DNAM",
+      "form_id": "0xCAB32EB4",
+      "text": "Teleports Hilda the goat",
+      "translated_text": "传送山羊希尔达。",
+      "index": 1,
+      "global_seq": 133,
+      "f2": ""
+    },
+    {
+      "rec": "DIAL:FULL",
+      "form_id": "0xBCA67B1C",
+      "text": "Equip Pack",
+      "translated_text": "装备行囊。",
+      "index": 1,
+      "global_seq": 134,
+      "f2": ""
+    },
+    {
+      "rec": "QUST:NNAM",
+      "form_id": "0xEA1AE5E1",
+      "text": "Purchase a tamed goat from <Alias=AliasFarmer>",
+      "translated_text": "从<Alias=AliasFarmer>处购买驯化的山羊",
+      "index": 17,
+      "global_seq": 135,
+      "f2": ""
+    },
+    {
+      "rec": "SPEL:FULL",
+      "form_id": "0xDF033035",
+      "text": "Teleport Pet: Arachnia",
+      "translated_text": "传送宠物：阿蛛",
+      "index": 1,
+      "global_seq": 136,
+      "f2": ""
+    },
+    {
+      "rec": "MGEF:DNAM",
+      "form_id": "0x30983577",
+      "text": "Teleports Thistle the rabbit",
+      "translated_text": "传送兔子蓟花。",
+      "index": 1,
+      "global_seq": 137,
+      "f2": ""
+    },
+    {
+      "rec": "MGEF:DNAM",
+      "form_id": "0x606CE058",
+      "text": "Teleports Sweet Roll the fox",
+      "translated_text": "传送狐狸甜卷。",
+      "index": 1,
+      "global_seq": 138,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:RNAM",
+      "form_id": "0x968A2C32",
+      "text": "Let's equip your collar.",
+      "translated_text": "给你装上项圈吧。",
+      "index": 1,
+      "global_seq": 139,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:RNAM",
+      "form_id": "0xD20FF7BF",
+      "text": "Let's equip your collar.",
+      "translated_text": "给你装上项圈吧。",
+      "index": 1,
+      "global_seq": 140,
+      "f2": ""
+    },
+    {
+      "rec": "SPEL:FULL",
+      "form_id": "0x3B7B38DC",
+      "text": "Teleport Pet: Thistle",
+      "translated_text": "传送宠物：蓟花",
+      "index": 1,
+      "global_seq": 142,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:RNAM",
+      "form_id": "0x96136AE2",
+      "text": "Let's remove your collar.",
+      "translated_text": "给你卸下项圈吧。",
+      "index": 1,
+      "global_seq": 143,
+      "f2": ""
+    },
+    {
+      "rec": "MISC:FULL",
+      "form_id": "0x029F3746",
+      "text": "Animal Collar",
+      "translated_text": "动物项圈",
+      "index": 1,
+      "global_seq": 144,
+      "f2": ""
+    },
+    {
+      "rec": "BOOK:FULL",
+      "form_id": "0x6DAC48FE",
+      "text": "For Sale",
+      "translated_text": "待售",
+      "index": 1,
+      "global_seq": 146,
+      "f2": ""
+    },
+    {
+      "rec": "DIAL:FULL",
+      "form_id": "0xEC026D81",
+      "text": "Equip item",
+      "translated_text": "装备物品。",
+      "index": 1,
+      "global_seq": 148,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:RNAM",
+      "form_id": "0x0325F335",
+      "text": "Let's equip your collar.",
+      "translated_text": "给你装上项圈吧。",
+      "index": 1,
+      "global_seq": 151,
+      "f2": ""
+    },
+    {
+      "rec": "MGEF:FULL",
+      "form_id": "0x30983577",
+      "text": "Teleport Thistle",
+      "translated_text": "传送蓟花",
+      "index": 1,
+      "global_seq": 153,
+      "f2": ""
+    },
+    {
+      "rec": "DIAL:FULL",
+      "form_id": "0xF728D56C",
+      "text": "Equip item",
+      "translated_text": "装备物品。",
+      "index": 1,
+      "global_seq": 155,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:RNAM",
+      "form_id": "0xD68CCF89",
+      "text": "Let's remove your collar.",
+      "translated_text": "给你卸下项圈吧。",
+      "index": 1,
+      "global_seq": 156,
+      "f2": ""
+    },
+    {
+      "rec": "SPEL:FULL",
+      "form_id": "0x86113859",
+      "text": "Teleport Pet: Sweet Roll",
+      "translated_text": "传送宠物：甜卷",
+      "index": 1,
+      "global_seq": 158,
+      "f2": ""
+    },
+    {
+      "rec": "MGEF:FULL",
+      "form_id": "0xE955221C",
+      "text": "Teleport Skritch",
+      "translated_text": "传送吱吱",
+      "index": 1,
+      "global_seq": 159,
+      "f2": ""
+    },
+    {
+      "rec": "SPEL:FULL",
+      "form_id": "0x2C339987",
+      "text": "Teleport Pet: Hilda",
+      "translated_text": "传送宠物：希尔达",
+      "index": 1,
+      "global_seq": 160,
+      "f2": ""
+    },
+    {
+      "rec": "MGEF:FULL",
+      "form_id": "0xCAB32EB4",
+      "text": "Teleport Hilda",
+      "translated_text": "传送希尔达",
+      "index": 1,
+      "global_seq": 161,
+      "f2": ""
+    },
+    {
+      "rec": "MGEF:FULL",
+      "form_id": "0x606CE058",
+      "text": "Teleport Sweet Roll",
+      "translated_text": "传送甜卷",
+      "index": 1,
+      "global_seq": 162,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:RNAM",
+      "form_id": "0x4324195E",
+      "text": "Let's remove your collar.",
+      "translated_text": "给你卸下项圈吧。",
+      "index": 1,
+      "global_seq": 163,
+      "f2": ""
+    },
+    {
+      "rec": "MGEF:DNAM",
+      "form_id": "0x43960E2E",
+      "text": "Teleports Arachnia the spider",
+      "translated_text": "传送蜘蛛阿蛛。",
+      "index": 1,
+      "global_seq": 164,
+      "f2": ""
+    },
+    {
+      "rec": "DIAL:FULL",
+      "form_id": "0x02B057E8",
+      "text": "Spin a web trap!",
+      "translated_text": "织一道蛛网陷阱！",
+      "index": 1,
+      "global_seq": 165,
+      "f2": ""
+    },
+    {
+      "rec": "MISC:FULL",
+      "form_id": "0x8C03AFCF",
+      "text": "Animal Pack",
+      "translated_text": "动物行囊",
+      "index": 1,
+      "global_seq": 167,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:RNAM",
+      "form_id": "0xF7F821C3",
+      "text": "Let's collect some milk.",
+      "translated_text": "咱们来挤一些奶吧。",
+      "index": 1,
+      "global_seq": 168,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:RNAM",
+      "form_id": "0xF11C83F4",
+      "text": "Let's harvest some venom.",
+      "translated_text": "咱们来收获毒液吧。",
+      "index": 1,
+      "global_seq": 170,
+      "f2": ""
+    },
+    {
+      "rec": "MGEF:DNAM",
+      "form_id": "0xE29722E6",
+      "text": "Carrying capacity increased by <mag> points.",
+      "translated_text": "负重能力提高<mag>点。",
+      "index": 1,
+      "global_seq": 171,
+      "f2": ""
+    },
+    {
+      "rec": "ENCH:FULL",
+      "form_id": "0x091347F1",
+      "text": "Fortify Carry Weight",
+      "translated_text": "强化负重",
+      "index": 1,
+      "global_seq": 172,
+      "f2": ""
+    },
+    {
+      "rec": "MGEF:FULL",
+      "form_id": "0xE29722E6",
+      "text": "Fortify Carry Weight",
+      "translated_text": "强化负重",
+      "index": 1,
+      "global_seq": 173,
+      "f2": ""
+    },
+    {
+      "rec": "SPEL:FULL",
+      "form_id": "0x5119E936",
+      "text": "Carry Weight Boost",
+      "translated_text": "Carry Weight Boost",
+      "index": 1,
+      "global_seq": 60030,
+      "f2": ""
+    },
+    {
+      "rec": "CELL:FULL",
+      "form_id": "0xE24CA49F",
+      "text": "The Bannered Mare",
+      "translated_text": "母马旗帜旅店",
+      "index": 1,
+      "global_seq": 5,
+      "f2": ""
+    },
+    {
+      "rec": "BOOK:DESC",
+      "form_id": "0x22AF6517",
+      "text": "<font face='$HandwrittenFont'><div align=\"left\">\r\n<b>4th of First Seed</b>\r\nI guess being Bosmer really does give me a way with animals! This little fox wandered up to me today, bold as brass, and started begging for treats. I didn't have anything on me at the time but a sweet roll, but it seemed to like that well enough. I wonder if this gift with animals works on horses - it would make stealing them dead easy.\r\n\r\n<b>15th of First Seed</b>\r\nThe furry nuisance won't leave me alone! It's been following me everywhere, even down into the sewers. At least it's quiet enough that it won't alert the guards...\r\n\r\n<b>1st of Rain's Hand</b>\r\nThe fox has a real nose for sniffing out valuables. Just this morning she dug a silver locket out of the mud - I never would have seen it if she hadn't started pawing at the ground. She must be attracted to shiny things. Can't say I blame her, really.\r\n\r\n<b>9th of Rain's Hand</b>\r\nFinding Sweet Roll has turned out to be the best stroke of luck I've had in a while. She's got better eyes and instincts than any thief I've ever met, including Vex. I can't remember the last time my coin purse was this heavy - I'm starting to jingle like a battalion of Imperials when I walk.\r\n\r\n<b>25th of Rain's Hand</b>\r\nI think I'll try out this animal-taming thing on the wolves outside of town. Some of the other thieves have been eyeing me recently; they would think twice about jumping me if I had a wolf at my heels. ",
+      "translated_text": "<font face='$HandwrittenFont'><div align=\"left\">\r\n<b>初种月4日</b>\r\n我猜我身为波兹莫确有与动物相处的独门之道！这只小狐狸今天游荡到我面前，颇为胆大，朝我要吃的。彼时除了一个甜卷外我别无他物，不过它还蛮喜欢的。我好奇要是给马匹带点小恩小惠，是不是就能顺手牵走了。\r\n\r\n<b>初种月15日</b>\r\n毛茸茸的小鬼头真是缠上我了！它到处跟着我，甚至钻进下水道。起码它还挺安静多，不会惊动卫兵……\r\n\r\n<b>雨手月1日</b>\r\n狐狸有一副能嗅出贵重物品到好鼻子。就在今天早上，她从泥里挖出了一个小银坠子——要不是她从地上刨起，我便永远发现不了。她一定被闪亮的东西吸引到了。我可没责怪她，真的。\r\n\r\n<b>雨手月9日</b>\r\n事实证明，见到甜卷真是让我时来运转。她的眼力跟直觉比我见过的任何小偷都要好，包括威克斯。我都忘了上次腰包鼓鼓囊囊是什么时候了——我走路的时候开始如一营帝国兵一般叮当作响。\r\n\r\n<b>雨手月25日</b>\r\n我要对城外的狼如法炮制进行驯服。其他一些盗贼最近盯上我了，要是我有狼在后头护着，他们便会三思而后行。",
+      "index": 1,
+      "global_seq": 10,
+      "f2": ""
+    },
+    {
+      "rec": "MESG:DESC",
+      "form_id": "0x0E201CF6",
+      "text": "<Alias=PetRabbit> found something!",
+      "translated_text": "<Alias=PetRabbit>找到了什么东西……",
+      "index": 1,
+      "global_seq": 25,
+      "f2": ""
+    },
+    {
+      "rec": "BOOK:DESC",
+      "form_id": "0xEF0C2319",
+      "text": "<font face='$HandwrittenFont'>\r\nCame into town a few days ago looking for work. The folks here are nice enough, and there's plenty of wheat and potatoes needing to be harvested, so I've got a steady supply of coin coming in. \r\n\r\nI don't think I'm going to need my old pack goat Hilda for much longer...all my bones are starting to creak, and my adventuring days are long over. Now I just need to find someone willing to take care of her. Maybe get a few coins for her too - there's strength in those old bones of hers yet.\r\n\r\nAh, how I'm going to miss wandering the wilds of Skyrim! I saw so many strange and wonderful things out there - pine trees as tall as mountains, old nord tombs, I once even stumbled across a wandering spirit made of pure ice!\r\n\r\nEven ran across a few folks trying their hand at taming different types of creatures. Don't know why they'd want anything but a loyal dog or trusty goat like my Hilda though - some of them beasts out in the wild just aren't meant to be tamed.\r\n\r\nRan across an alchemist with a pet rabbit, and almost got robbed by a thief with a tame fox, but I suppose a rabbit or a fox could be docile enough. But that pickpocket trying to train a skeever must have been as mad as old Sheo'. And I don't want to think too hard about the vampire that almost made a meal out of me...could have sworn it had a trained frostbite spider! Gives me the shivers just thinking about it.",
+      "translated_text": "<font face='$HandwrittenFont'>\r\n进城找营生有几天了。这里的人挺不错，还有大量的小麦和马铃薯要收获，于是我便有了份稳定的生计。\r\n\r\n我觉着我用不上我的老山羊希尔达了……我全身的骨头都开始嘎吱作响，我的冒险生涯早就结束了。目下我便要找一个愿意照料她的人。也许能从她那赚上几个子儿——她那身老骨头还有些力气。\r\n\r\n啊，真想念在天际的原野中漫游的日子！我曾目睹众多奇美景观——高大如山的松树、古老悠久的诺德陵墓，我甚至曾偶遇一个全然由冰构成的灵魂！\r\n\r\n甚至还遇见了一些试图驯化其它物种的人。不知道为何在忠犬和我的山羊老伙伴希尔达之外他们无所不包——其中一些野兽根本不适合驯化。\r\n\r\n我遇见一个养着宠物兔子的炼金术士，还差点被一个养着驯服的狐狸的小偷给掏包了，我想兔子或狐狸是足够温顺了。可那个试图训练恶鼠的扒手一定中了谢尔格拉的道。还有我不太想回想那个差点把我吃掉的吸血鬼……我打保票，那家伙真有一只训练有素的霜噬蜘蛛！想想就让我不寒而栗。",
+      "index": 1,
+      "global_seq": 27,
+      "f2": ""
+    },
+    {
+      "rec": "QUST:CNAM",
+      "form_id": "0xEA1AE5E1",
+      "text": "*Add log entry here*",
+      "translated_text": "*Add log entry here*",
+      "index": 1,
+      "global_seq": 32,
+      "f2": ""
+    },
+    {
+      "rec": "ARMO:DESC",
+      "form_id": "0x5E171444",
+      "text": "Equip on a pet goat or skeever to increase its carryweight by 40.",
+      "translated_text": "装载于宠物山羊或恶鼠后提高其负重<40>点。",
+      "index": 1,
+      "global_seq": 35,
+      "f2": ""
+    },
+    {
+      "rec": "MESG:DESC",
+      "form_id": "0x7DAC6E80",
+      "text": "You can't use that in combat",
+      "translated_text": "战斗中无法使用",
+      "index": 1,
+      "global_seq": 36,
+      "f2": ""
+    },
+    {
+      "rec": "MESG:DESC",
+      "form_id": "0x16BF427C",
+      "text": "<Alias=PetRabbit> couldn't find anything...",
+      "translated_text": "<Alias=PetRabbit>没找到任何东西……",
+      "index": 1,
+      "global_seq": 39,
+      "f2": ""
+    },
+    {
+      "rec": "MESG:DESC",
+      "form_id": "0xAA91FDAD",
+      "text": "<Alias=PetGoat> has milk to collect!",
+      "translated_text": "<Alias=PetGoat>有奶可挤！",
+      "index": 1,
+      "global_seq": 40,
+      "f2": ""
+    },
+    {
+      "rec": "MESG:DESC",
+      "form_id": "0x5A6218AF",
+      "text": "<Alias=PetSkeever> found something!",
+      "translated_text": "<Alias=PetSkeever>找到了什么东西……",
+      "index": 1,
+      "global_seq": 41,
+      "f2": ""
+    },
+    {
+      "rec": "MESG:DESC",
+      "form_id": "0x2BF4D393",
+      "text": "<Alias=PetSpider> has venom to harvest!",
+      "translated_text": "<Alias=PetSpider>有毒液可收集！",
+      "index": 1,
+      "global_seq": 43,
+      "f2": ""
+    },
+    {
+      "rec": "BOOK:DESC",
+      "form_id": "0xF6F7556B",
+      "text": "<font face='$HandwrittenFont'>\r\nI ain't been having no luck at lifting gold off them rich merchants in the market, and those thieves guild s'wits don't want me. Said I'm too clumsy. I'm running out of food and skooma, may need to start killing some of the skeevers down here for meat...\r\n\r\nOne of the skooma dealers at the docks told me he knew a guy from Morrowind who trained a nix hound to distract his marks - helped him steal a heaping pile of gold, he said. Don't know if I believe a word of it, but what else am I going to do? Might as well give it a try.\r\n\r\nToo bad there ain't any nix hounds around here. Plenty of skeevers, though...I'm gonna need to catch some anyway for food, might as well have a go at training one first.",
+      "translated_text": "<font face='$HandwrittenFont'>\r\n我可不是一直点背到在市场上从富商处顺手牵羊频频失手，可那些盗贼公会的大聪明照样不要我，觉着我太笨了。我的口粮和斯库玛快消耗完了，兴许得杀上这边的几只恶鼠吃肉……\r\n\r\n码头上的一位斯库玛贩子告诉我，他说他认识一个训练虚无猎犬帮他引开视线以成功偷上一大笔金子的晨风人。不知道我该不该信了他的话，可我还有得选吗？不妨死马当活马医。\r\n\r\n可惜这里没有虚无猎犬，却有很多恶鼠，不过……我无论如何都得抓几只果腹，不妨先去训练一只。",
+      "index": 1,
+      "global_seq": 44,
+      "f2": ""
+    },
+    {
+      "rec": "MESG:DESC",
+      "form_id": "0x760D77D5",
+      "text": "<Alias=AliasRabbit> the rabbit is now available to be recruited as your pet!\r\n<Alias=AliasRabbit> can be commanded to lead you to nearby ingredients. <Alias=AliasRabbit> also has a chance to find an ingredient once per day.",
+      "translated_text": "灰兔<Alias=AliasRabbit>现已成为可供招募的宠物！\r\n可向<Alias=AliasRabbit>下令将你带往周边的炼金原料处，<Alias=AliasRabbit>也可拿取某一件炼金原料，一天一次。",
+      "index": 1,
+      "global_seq": 48,
+      "f2": ""
+    },
+    {
+      "rec": "MESG:DESC",
+      "form_id": "0x105AA8CB",
+      "text": "<Alias=PetFox> found something!",
+      "translated_text": "<Alias=PetFox>找到了什么东西……",
+      "index": 1,
+      "global_seq": 50,
+      "f2": ""
+    },
+    {
+      "rec": "MESG:DESC",
+      "form_id": "0xA87006AD",
+      "text": "<Alias=PetSkeever> couldn't find anything...",
+      "translated_text": "<Alias=PetSkeever>没找到任何东西……",
+      "index": 1,
+      "global_seq": 51,
+      "f2": ""
+    },
+    {
+      "rec": "MESG:DESC",
+      "form_id": "0x1AE0E7BE",
+      "text": "<Alias=AliasFox> the fox is now available to be recruited as your pet!\r\n<Alias=AliasFox> can be commanded to lead you to nearby valuable items. <Alias=AliasFox> also has a chance to find a shiny item once per day.",
+      "translated_text": "狐狸<Alias=AliasFox>现已成为可供招募的宠物！\r\n可向<Alias=AliasFox>下令将你带往周边的有价值物品处，<Alias=AliasFox>也可拿取某一件小物件，一天一次。",
+      "index": 1,
+      "global_seq": 56,
+      "f2": ""
+    },
+    {
+      "rec": "MESG:DESC",
+      "form_id": "0x44BA0D18",
+      "text": "<Alias=AliasSpider> the spider is now available to be recruited as your pet!\r\n<Alias=AliasSpider> can be commanded to spin a sticky web trap to slow down your enemies. Potent venom can also be collected from <Alias=AliasSpider> once per day.",
+      "translated_text": "蜘蛛<Alias=AliasSpider>现已成为可供招募的宠物！\r\n可向<Alias=AliasSpider>下令编织粘稠蛛网陷阱令敌人减速，也可从<Alias=AliasSpider>处收集强效毒液，一天一次。",
+      "index": 1,
+      "global_seq": 58,
+      "f2": ""
+    },
+    {
+      "rec": "MESG:DESC",
+      "form_id": "0xE95DFD0A",
+      "text": "<Alias=PetSpider> couldn't spin a web trap there...",
+      "translated_text": "<Alias=PetSpider>无法在此编织蛛网陷阱……",
+      "index": 1,
+      "global_seq": 62,
+      "f2": ""
+    },
+    {
+      "rec": "MESG:DESC",
+      "form_id": "0x28446A2E",
+      "text": "<Alias=AliasGoat> the goat is now available to be recruited as your pet!\r\n<Alias=AliasGoat> can carry lots of items, and can be equipped with a pack to carry even more. A jug of milk can also be collected from <Alias=AliasGoat> once per day.",
+      "translated_text": "山羊<Alias=AliasGoat>现已成为可供招募的宠物！\r\n<Alias=AliasGoat>可负载大量物品，装备行囊则可背负更多，也可从<Alias=AliasGoat>处挤奶，一天一次。",
+      "index": 1,
+      "global_seq": 63,
+      "f2": ""
+    },
+    {
+      "rec": "MESG:DESC",
+      "form_id": "0x92644E79",
+      "text": "<Alias=PetFox> couldn't find anything...",
+      "translated_text": "<Alias=PetFox>没找到任何东西……",
+      "index": 1,
+      "global_seq": 67,
+      "f2": ""
+    },
+    {
+      "rec": "QUST:CNAM",
+      "form_id": "0xEBFC906A",
+      "text": "Recruit stage",
+      "translated_text": "Recruit stage",
+      "index": 1,
+      "global_seq": 81,
+      "f2": ""
+    },
+    {
+      "rec": "BOOK:DESC",
+      "form_id": "0x60234A92",
+      "text": "<font face=\"$HandwrittenFont\" size=\"18\">\r\n<b>14th of Second Seed</b>\r\nThe rabbits here seem particularly adept at sniffing out potion ingredients. I recently found one nibbling on my thistle plants and managed to capture it. It is my hope that I will be able to train it to lead me to the most bountiful flora.\r\n\r\n<b>22nd of Second Seed</b>\r\nThe rabbit (which I have decided to name Thistle, in honor of the carefully cultivated plants it managed to destroy) is showing great promise. It has proven to be quite tame and even rather intelligent. Getting it to respond to commands, however, can be a bit of a trial. I've resorted to plying it with carrots. ",
+      "translated_text": "<font face=\"$HandwrittenFont\" size=\"18\">\r\n<b>次种月14日</b>\r\n这里的兔子似乎尤为擅长嗅探药水原材料。我最近便在我培植的蓟丛上找到一只正在大快朵颐的并成功将其捕获。但愿我能够将其训练至足以引导我前往最为丰富的植物群的水平。\r\n\r\n<b>次种月22日</b>\r\n那兔子（我决定将其命名为蓟花，以纪念其常识毁坏的精心栽培的植物）天赋秉异。事实证明，其温顺非凡，还相当聪明机智。然而，令其响应命令可能有些费工夫。我只得给它喂上些胡萝卜。",
+      "index": 1,
+      "global_seq": 83,
+      "f2": ""
+    },
+    {
+      "rec": "MESG:DESC",
+      "form_id": "0xDA617CC2",
+      "text": "<Alias=PetSpider> must be your companion in order to give it commands",
+      "translated_text": "<Alias=PetSpider>必须追随你后方可对其下达命令。",
+      "index": 1,
+      "global_seq": 84,
+      "f2": ""
+    },
+    {
+      "rec": "MESG:DESC",
+      "form_id": "0x1D2B723A",
+      "text": "<Alias=AliasSkeever> the skeever is now available to be recruited as your pet!\r\n<Alias=AliasSkeever> can be commanded to lead you to nearby food items. <Alias=AliasSkeever> also has a chance to find food once per day.",
+      "translated_text": "恶鼠<Alias=AliasSkeever>现已成为可供招募的宠物！\r\n可向<Alias=AliasSkeever>下令将你带往周边的食物处，<Alias=AliasSkeever>也可拿取某一件食物，一天一次。",
+      "index": 1,
+      "global_seq": 100,
+      "f2": ""
+    },
+    {
+      "rec": "BOOK:DESC",
+      "form_id": "0xE8242867",
+      "text": "<font face='$HandwrittenFont'><div align=\"left\">\r\nWhile my siblings may be obsessed with the taste that fear imbues in the blood of mortals, I find that pain lends a much more potent sweetness. And nothing is quite so capable of causing pain as the venom of a frostbite spider.\r\n\r\nBut alas, the usual method of harvesting frostbite venom involves killing the spider - a costly and dangerous venture. Far too little venom can be obtained through violent methods for the experiments I wish to conduct. \r\n\r\nTo that end, I have captured a frostbite spider from deeper in the cave so that I may regularly collect its venom, which seems to be unusually potent. I discovered that it appears to have some measure of intelligence, and I have been attempting to teach it to obey certain orders. Oh how delicious it would be to have a tamed spider entangle my prey on command!\r\n\r\nI think I will name it Arachnia. ",
+      "translated_text": "<font face='$HandwrittenFont'><div align=\"left\">\r\n虽然我的同族或许沉迷于恐惧在凡人血液中蔓延的味道，但我发现猎物痛觉缠身则味道更佳。没有什么比霜噬蜘蛛的毒液更能引起疼痛了。\r\n\r\n但可惜的是，收获霜噬毒液的常规方法是杀死蜘蛛——此法代价高昂且颇为冒险。对我打算进行的实验而言，通过暴力手段以获得的毒液可太少了。\r\n\r\n为此，我从洞穴深处捕获了一只霜噬蜘蛛，以便我可以定期自其收集颇有奇效的毒液。我发觉其似乎具有某种水平的智力，我一直尝试驯服其服从某些命令。诶呀，让一只驯化的蜘蛛按照命令缠住我的猎物便是极好的！\r\n\r\n我想将其命名为阿蛛。",
+      "index": 1,
+      "global_seq": 117,
+      "f2": ""
+    },
+    {
+      "rec": "BOOK:DESC",
+      "form_id": "0x6DAC48FE",
+      "text": "<font face=\"$HandwrittenFont\">\r\n<font size=\"40\">For Sale</font>\r\n\r\nOne tamed mountain goat. Able to carry a hefty amount of weight to the Throat of the World and back again. Gives good milk. \r\n\r\nIf interested in purchasing, see Halvar in Rorikstead. \r\n\r\n- Halvar",
+      "translated_text": "<font face=\"$HandwrittenFont\">\r\n<font size=\"40\">待售</font>\r\n\r\n现有一只温驯山羊待售。其可负重驮物甚多至世界之喉，并安然返回，亦可产良奶。\r\n\r\n若有兴趣来购，请来洛利克镇与哈尔瓦商洽。\r\n\r\n哈尔瓦",
+      "index": 1,
+      "global_seq": 119,
+      "f2": ""
+    },
+    {
+      "rec": "QUST:CNAM",
+      "form_id": "0xEA1AE5E1",
+      "text": "After reading Halvar's journal on his adventures throughout Skyrim, I've discovered that there are many other tame animal companions out there in the wild. I should set out to find them.",
+      "translated_text": "读罢哈尔瓦天际旅途的日记，我了解到野外还有其它驯化的动物。我要出发寻找一番。",
+      "index": 4,
+      "global_seq": 126,
+      "f2": ""
+    },
+    {
+      "rec": "QUST:CNAM",
+      "form_id": "0xEA1AE5E1",
+      "text": "I found a notice in the Bannered Mare offering a tamed goat for sale. I need to talk to Halvar in Rorikstead to purchase it.",
+      "translated_text": "我在母马旗帜旅店看见一则驯化山羊待售的告示。我要去洛利克镇与哈尔瓦商洽购买事宜。",
+      "index": 3,
+      "global_seq": 128,
+      "f2": ""
+    },
+    {
+      "rec": "QUST:CNAM",
+      "form_id": "0xEA1AE5E1",
+      "text": "The journey through Skyrim can be hard and long, and I could use the companionship of a loyal animal. I should inquire in town to see if there are any tamed animals for sale.",
+      "translated_text": "游走天际是项漫长的苦差事，我在此期间可以驯化一些动物供我驱使。我要去城里看看有没有驯化的动物可供购买。",
+      "index": 2,
+      "global_seq": 169,
+      "f2": ""
+    },
+    {
+      "rec": "QUST:CNAM",
+      "form_id": "0xEBFC906A",
+      "text": "exit cage",
+      "translated_text": "exit cage",
+      "index": 2,
+      "global_seq": 20,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:NAM1",
+      "form_id": "0xF90E46D3",
+      "text": "(baa!)",
+      "translated_text": "（叭！）",
+      "index": 1,
+      "global_seq": 28,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:NAM1",
+      "form_id": "0xF7EF2767",
+      "text": "(squeal)",
+      "translated_text": "（嘶叫）",
+      "index": 1,
+      "global_seq": 34,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:NAM1",
+      "form_id": "0xB128EB27",
+      "text": "(squeal)",
+      "translated_text": "（嘶叫）",
+      "index": 1,
+      "global_seq": 37,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:NAM1",
+      "form_id": "0xF7F821C3",
+      "text": "(grunt)",
+      "translated_text": "（发哼声）",
+      "index": 1,
+      "global_seq": 47,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:NAM1",
+      "form_id": "0xF14764FB",
+      "text": "(grunt)",
+      "translated_text": "（发哼声）",
+      "index": 1,
+      "global_seq": 55,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:NAM1",
+      "form_id": "0xF53F1C82",
+      "text": "(squeal)",
+      "translated_text": "（嘶叫）",
+      "index": 1,
+      "global_seq": 59,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:NAM1",
+      "form_id": "0x3BF40FA1",
+      "text": "(grunt)",
+      "translated_text": "（发哼声）",
+      "index": 1,
+      "global_seq": 71,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:NAM1",
+      "form_id": "0xF11C83F4",
+      "text": "(grunt)",
+      "translated_text": "（发哼声）",
+      "index": 1,
+      "global_seq": 80,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:NAM1",
+      "form_id": "0xB54B83B5",
+      "text": "(grunt)",
+      "translated_text": "（发哼声）",
+      "index": 1,
+      "global_seq": 86,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:NAM1",
+      "form_id": "0xB5247445",
+      "text": "(squeal)",
+      "translated_text": "（嘶叫）",
+      "index": 1,
+      "global_seq": 92,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:NAM1",
+      "form_id": "0xF5180D12",
+      "text": "(squeal)",
+      "translated_text": "（嘶叫）",
+      "index": 1,
+      "global_seq": 99,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:NAM1",
+      "form_id": "0xF5415B19",
+      "text": "(squeal)",
+      "translated_text": "（嘶叫）",
+      "index": 1,
+      "global_seq": 104,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:NAM1",
+      "form_id": "0xB52235AE",
+      "text": "(squeal)",
+      "translated_text": "（嘶叫）",
+      "index": 1,
+      "global_seq": 110,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:NAM1",
+      "form_id": "0xFF1F3124",
+      "text": "(grunt)",
+      "translated_text": "（发哼声）",
+      "index": 1,
+      "global_seq": 116,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:NAM1",
+      "form_id": "0x64A6C4E7",
+      "text": "(baa!)",
+      "translated_text": "（叭！）",
+      "index": 1,
+      "global_seq": 122,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:NAM1",
+      "form_id": "0x3F21D47B",
+      "text": "(yip!)",
+      "translated_text": "（噫！）",
+      "index": 1,
+      "global_seq": 127,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:NAM1",
+      "form_id": "0x961C653E",
+      "text": "(grunt)",
+      "translated_text": "（发哼声）",
+      "index": 1,
+      "global_seq": 141,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:NAM1",
+      "form_id": "0x4324195E",
+      "text": "(grunt)",
+      "translated_text": "（发哼声）",
+      "index": 1,
+      "global_seq": 145,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:NAM1",
+      "form_id": "0x96136AE2",
+      "text": "(grunt)",
+      "translated_text": "（发哼声）",
+      "index": 1,
+      "global_seq": 147,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:NAM1",
+      "form_id": "0xD68CCF89",
+      "text": "(grunt)",
+      "translated_text": "（发哼声）",
+      "index": 1,
+      "global_seq": 149,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:NAM1",
+      "form_id": "0xD20FF7BF",
+      "text": "(yip!)",
+      "translated_text": "（噫！）",
+      "index": 1,
+      "global_seq": 150,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:NAM1",
+      "form_id": "0x968A2C32",
+      "text": "(yip)",
+      "translated_text": "（噫！）",
+      "index": 1,
+      "global_seq": 152,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:NAM1",
+      "form_id": "0xD589F551",
+      "text": "(grunt)",
+      "translated_text": "（发哼声）",
+      "index": 1,
+      "global_seq": 154,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:NAM1",
+      "form_id": "0x967F9ED6",
+      "text": "(grunt)",
+      "translated_text": "（发哼声）",
+      "index": 1,
+      "global_seq": 157,
+      "f2": ""
+    },
+    {
+      "rec": "INFO:NAM1",
+      "form_id": "0x1D487E6D",
+      "text": "(grunt)",
+      "translated_text": "（发哼声）",
+      "index": 1,
+      "global_seq": 166,
+      "f2": ""
+    }
+  ]
+}

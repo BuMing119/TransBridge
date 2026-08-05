@@ -1,0 +1,238 @@
+{
+  "entries": [
+    {
+      "rec": "ACTI:FULL",
+      "form_id": "0x731B5BB3",
+      "text": "Button",
+      "translated_text": "按钮",
+      "index": 1,
+      "global_seq": 4,
+      "f2": ""
+    },
+    {
+      "rec": "ACTI:FULL",
+      "form_id": "0x4D7677F7",
+      "text": "Button",
+      "translated_text": "按钮",
+      "index": 1,
+      "global_seq": 5,
+      "f2": ""
+    },
+    {
+      "rec": "CONT:FULL",
+      "form_id": "0x942A7C54",
+      "text": "Chest",
+      "translated_text": "箱子",
+      "index": 1,
+      "global_seq": 6,
+      "f2": ""
+    },
+    {
+      "rec": "ACTI:FULL",
+      "form_id": "0x42F27BE7",
+      "text": "Button",
+      "translated_text": "按钮",
+      "index": 1,
+      "global_seq": 7,
+      "f2": ""
+    },
+    {
+      "rec": "CONT:FULL",
+      "form_id": "0x9952FEE4",
+      "text": "Chest",
+      "translated_text": "箱子",
+      "index": 1,
+      "global_seq": 9,
+      "f2": ""
+    },
+    {
+      "rec": "INGR:FULL",
+      "form_id": "0xA15A4446",
+      "text": "Aloe Vera Leaves",
+      "translated_text": "芦荟叶",
+      "index": 1,
+      "global_seq": 10,
+      "f2": ""
+    },
+    {
+      "rec": "FLOR:FULL",
+      "form_id": "0x7813ED12",
+      "text": "Aloe Vera",
+      "translated_text": "芦荟",
+      "index": 1,
+      "global_seq": 11,
+      "f2": ""
+    },
+    {
+      "rec": "FLOR:RNAM",
+      "form_id": "0x7813ED12",
+      "text": "Harvest",
+      "translated_text": "收获",
+      "index": 1,
+      "global_seq": 12,
+      "f2": ""
+    },
+    {
+      "rec": "FLOR:FULL",
+      "form_id": "0x7713EB7F",
+      "text": "Aloe Vera",
+      "translated_text": "芦荟",
+      "index": 1,
+      "global_seq": 13,
+      "f2": ""
+    },
+    {
+      "rec": "FLOR:RNAM",
+      "form_id": "0x7713EB7F",
+      "text": "Harvest",
+      "translated_text": "收获",
+      "index": 1,
+      "global_seq": 15,
+      "f2": ""
+    },
+    {
+      "rec": "MISC:FULL",
+      "form_id": "0xF88B74B3",
+      "text": "Pillow",
+      "translated_text": "枕头",
+      "index": 1,
+      "global_seq": 16,
+      "f2": ""
+    },
+    {
+      "rec": "DOOR:FULL",
+      "form_id": "0xF0D822E4",
+      "text": "Cover",
+      "translated_text": "关上",
+      "index": 1,
+      "global_seq": 17,
+      "f2": ""
+    },
+    {
+      "rec": "MISC:FULL",
+      "form_id": "0x76EC0A86",
+      "text": "Jar",
+      "translated_text": "罐",
+      "index": 1,
+      "global_seq": 18,
+      "f2": ""
+    },
+    {
+      "rec": "DOOR:FULL",
+      "form_id": "0x704D2A30",
+      "text": "Cover",
+      "translated_text": "关上",
+      "index": 1,
+      "global_seq": 19,
+      "f2": ""
+    },
+    {
+      "rec": "FLOR:FULL",
+      "form_id": "0xEA988E77",
+      "text": "Aloe Vera",
+      "translated_text": "芦荟",
+      "index": 1,
+      "global_seq": 20,
+      "f2": ""
+    },
+    {
+      "rec": "DOOR:FULL",
+      "form_id": "0xFABAEC45",
+      "text": "Cover",
+      "translated_text": "关上",
+      "index": 1,
+      "global_seq": 21,
+      "f2": ""
+    },
+    {
+      "rec": "DOOR:FULL",
+      "form_id": "0x9C0297E3",
+      "text": "Cover",
+      "translated_text": "关上",
+      "index": 1,
+      "global_seq": 22,
+      "f2": ""
+    },
+    {
+      "rec": "MISC:FULL",
+      "form_id": "0x74EC0760",
+      "text": "Jar",
+      "translated_text": "罐",
+      "index": 1,
+      "global_seq": 23,
+      "f2": ""
+    },
+    {
+      "rec": "MISC:FULL",
+      "form_id": "0xE151338E",
+      "text": "Basket",
+      "translated_text": "筐",
+      "index": 1,
+      "global_seq": 24,
+      "f2": ""
+    },
+    {
+      "rec": "FLOR:RNAM",
+      "form_id": "0xEA988E77",
+      "text": "Harvest",
+      "translated_text": "收获",
+      "index": 1,
+      "global_seq": 25,
+      "f2": ""
+    },
+    {
+      "rec": "MISC:FULL",
+      "form_id": "0xE05131FB",
+      "text": "Basket",
+      "translated_text": "筐",
+      "index": 1,
+      "global_seq": 26,
+      "f2": ""
+    },
+    {
+      "rec": "MISC:FULL",
+      "form_id": "0x9B07A0FE",
+      "text": "Aloe Vera Leaves (2)",
+      "translated_text": "芦荟叶 （2）",
+      "index": 1,
+      "global_seq": 27,
+      "f2": ""
+    },
+    {
+      "rec": "MISC:FULL",
+      "form_id": "0x77EC0C19",
+      "text": "Jar",
+      "translated_text": "罐",
+      "index": 1,
+      "global_seq": 28,
+      "f2": ""
+    },
+    {
+      "rec": "MISC:FULL",
+      "form_id": "0xE35136B4",
+      "text": "Basket",
+      "translated_text": "筐",
+      "index": 1,
+      "global_seq": 29,
+      "f2": ""
+    },
+    {
+      "rec": "MISC:FULL",
+      "form_id": "0xF98B7646",
+      "text": "Pillow",
+      "translated_text": "枕头",
+      "index": 1,
+      "global_seq": 30,
+      "f2": ""
+    },
+    {
+      "rec": "MISC:FULL",
+      "form_id": "0xE2513521",
+      "text": "Basket",
+      "translated_text": "筐",
+      "index": 1,
+      "global_seq": 31,
+      "f2": ""
+    }
+  ]
+}

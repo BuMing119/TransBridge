@@ -1,0 +1,1141 @@
+﻿<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<SSTXMLRessources>
+  <Params>
+    <Addon>ccvsvsse002-pets</Addon>
+    <Source>english</Source>
+    <Dest>chinese</Dest>
+    <Version>2</Version>
+  </Params>
+  <Content>
+    <String List="0" sID="000001">
+      <EDID>ccVSVSSE002_FoxRace</EDID>
+      <REC>RACE:FULL</REC>
+      <Source>Fox</Source>
+      <Dest>狐狸</Dest>
+    </String>
+    <String List="0" sID="000002">
+      <EDID>ccVSVSSE002_SPELL_CommandSpider</EDID>
+      <REC>SPEL:FULL</REC>
+      <Source>Command Spider</Source>
+      <Dest>号令蜘蛛</Dest>
+    </String>
+    <String List="0" sID="000003">
+      <EDID>ccVSVSSE002_MainQuest</EDID>
+      <REC id="14" idMax="18">QUST:NNAM</REC>
+      <Source>Buy &lt;Alias=AliasGoat&gt; from &lt;Alias=AliasFarmer&gt;</Source>
+      <Dest>从&lt;Alias=AliasFarmer&gt;处购买&lt;Alias=AliasGoat&gt;</Dest>
+    </String>
+    <String List="0" sID="000004">
+      <EDID>ccVSVSSE002_MGEF_WebTrap</EDID>
+      <REC>MGEF:FULL</REC>
+      <Source>Paralyze</Source>
+      <Dest>麻痹术</Dest>
+    </String>
+    <String List="0" sID="000006">
+      <EDID>ccVSVSSE002_PotentFrostbiteVenom</EDID>
+      <REC>ALCH:FULL</REC>
+      <Source>Potent Frostbite Venom</Source>
+      <Dest>强效霜噬毒液</Dest>
+    </String>
+    <String List="0" sID="000007">
+      <EDID>ccVSVSSE002_FarmerDialogueQuest_AcceptTopic</EDID>
+      <REC>DIAL:FULL</REC>
+      <Source>Here&apos;s my offer...(&lt;Global=ccVSVSSE002_GoatPrice&gt; gold)</Source>
+      <Dest>这是我出的价……（&lt;Global=ccVSVSSE002_GoatPrice&gt; 金币）</Dest>
+    </String>
+    <String List="0" sID="000008">
+      <EDID>ccVSVSSE002_MainQuest</EDID>
+      <REC id="2" idMax="18">QUST:NNAM</REC>
+      <Source>Find the tamed spider</Source>
+      <Dest>找到驯化的蜘蛛</Dest>
+    </String>
+    <String List="0" sID="000009">
+      <EDID>ccVSVSSE002_MainQuest</EDID>
+      <REC>QUST:FULL</REC>
+      <Source>Pets of Skyrim</Source>
+      <Dest>天际宠物</Dest>
+    </String>
+    <String List="0" sID="00000B">
+      <EDID>ccVSVSSE002_FarmerDialogueQuest_RejectTopic</EDID>
+      <REC>DIAL:FULL</REC>
+      <Source>On second thought, never mind.</Source>
+      <Dest>再次想来，我不介意。</Dest>
+    </String>
+    <String List="0" sID="00000C">
+      <EDID>ccVSVSSE002_Skeever</EDID>
+      <REC>NPC_:FULL</REC>
+      <Source>Skritch</Source>
+      <Dest>吱吱</Dest>
+    </String>
+    <String List="0" sID="00000D">
+      <EDID>ccVSVSSE002_Goat</EDID>
+      <REC>NPC_:FULL</REC>
+      <Source>Hilda</Source>
+      <Dest>希尔达</Dest>
+    </String>
+    <String List="0" sID="00000E">
+      <EDID>ccVSVSSE002_MGEF_CommandSpider</EDID>
+      <REC>MGEF:FULL</REC>
+      <Source>Command Spider</Source>
+      <Dest>号令蜘蛛</Dest>
+    </String>
+    <String List="0" sID="00000F">
+      <EDID>ccVSVSSE002_Spider</EDID>
+      <REC>NPC_:FULL</REC>
+      <Source>Arachnia</Source>
+      <Dest>阿蛛</Dest>
+    </String>
+    <String List="0" sID="000010">
+      <EDID>ccVSVSSE002_PetControlQuest_Rabbit_BranchRecruitTopic</EDID>
+      <REC>DIAL:FULL</REC>
+      <Source>Hey there, Thistle. Want a treat?</Source>
+      <Dest>嘿，蓟花，想来点吃的吗？</Dest>
+    </String>
+    <String List="0" sID="000011">
+      <EDID>ccVSVSSE002_DeadThief</EDID>
+      <REC>NPC_:FULL</REC>
+      <Source>Thief</Source>
+      <Dest>盗贼</Dest>
+    </String>
+    <String List="0" sID="000012">
+      <EDID>ccVSVSSE002_SPELL_WebTrap</EDID>
+      <REC>SPEL:FULL</REC>
+      <Source>Web Trap</Source>
+      <Dest>蛛网陷阱</Dest>
+    </String>
+    <String List="0" sID="000013">
+      <EDID>ccVSVSSE002_SpiderRace</EDID>
+      <REC>RACE:FULL</REC>
+      <Source>Frostbite Spider</Source>
+      <Dest>霜噬蜘蛛</Dest>
+    </String>
+    <String List="0" sID="000015">
+      <EDID>ccVSVSSE002_MainQuest</EDID>
+      <REC id="12" idMax="18">QUST:NNAM</REC>
+      <Source>Feed &lt;Alias=AliasFox&gt; a sweet roll</Source>
+      <Dest>向&lt;Alias=AliasFox&gt;喂食一块甜卷</Dest>
+    </String>
+    <String List="0" sID="000016">
+      <EDID>ccVSVSSE002_Instructions_Skeever</EDID>
+      <REC>BOOK:FULL</REC>
+      <Source>Pickpocket&apos;s Journal</Source>
+      <Dest>扒手的日记</Dest>
+    </String>
+    <String List="0" sID="000017">
+      <EDID>ccVSVSSE002_PetControlQuest_Skeever_BranchFetchTopic</EDID>
+      <REC>DIAL:FULL</REC>
+      <Source>Go find food!</Source>
+      <Dest>去找样吃的来！</Dest>
+    </String>
+    <String List="0" sID="00001A">
+      <EDID>ccVSVSSE002_PetControlQuest_Fox_BranchRecruitTopic</EDID>
+      <REC>DIAL:FULL</REC>
+      <Source>Hey there, Sweet Roll. Want a treat?</Source>
+      <Dest>嘿，甜卷，想来点吃的吗？</Dest>
+    </String>
+    <String List="0" sID="00001D">
+      <EDID>ccVSVSSE002_Farmer</EDID>
+      <REC>NPC_:FULL</REC>
+      <Source>Halvar</Source>
+      <Dest>哈尔瓦</Dest>
+    </String>
+    <String List="0" sID="00001E">
+      <EDID>CronvangrHall01</EDID>
+      <REC>CELL:FULL</REC>
+      <Source>Cronvangr Cave</Source>
+      <Dest>克隆万格洞穴</Dest>
+    </String>
+    <String List="0" sID="00001F">
+      <EDID>ccVSVSSE002_PetControlQuest_Spider_BranchCollectVenomTopic</EDID>
+      <REC>DIAL:FULL</REC>
+      <Source>Harvest venom</Source>
+      <Dest>收获毒液</Dest>
+    </String>
+    <String List="0" sID="000021">
+      <EDID>ccVSVSSE002_MainQuest</EDID>
+      <REC id="5" idMax="18">QUST:NNAM</REC>
+      <Source>Find a treat for the rabbit</Source>
+      <Dest>为兔子找一样吃食</Dest>
+    </String>
+    <String List="0" sID="000026">
+      <EDID>ccVSVSSE002_MainQuest</EDID>
+      <REC id="4" idMax="18">QUST:NNAM</REC>
+      <Source>Find &lt;Alias=AliasGoat&gt; the goat</Source>
+      <Dest>找到山羊&lt;Alias=AliasGoat&gt;</Dest>
+    </String>
+    <String List="0" sID="00002A">
+      <EDID>ccVSVSSE002_PetControlQuest_Rabbit_BranchFetchTopic</EDID>
+      <REC>DIAL:FULL</REC>
+      <Source>Go find an ingredient!</Source>
+      <Dest>去找样炼金原料来！</Dest>
+    </String>
+    <String List="0" sID="00002D">
+      <EDID>ccVSVSSE002_MainQuest</EDID>
+      <REC id="6" idMax="18">QUST:NNAM</REC>
+      <Source>Feed &lt;Alias=AliasRabbit&gt; a carrot</Source>
+      <Dest>向&lt;Alias=AliasRabbit&gt;喂食一根胡萝卜</Dest>
+    </String>
+    <String List="0" sID="00002E">
+      <EDID>ccVSVSSE002_Instructions_Rabbit</EDID>
+      <REC>BOOK:FULL</REC>
+      <Source>Notes on Tamed Rabbit</Source>
+      <Dest>驯兔笔记</Dest>
+    </String>
+    <String List="0" sID="000031">
+      <EDID>ccVSVSSE002_MainQuest</EDID>
+      <REC id="1" idMax="18">QUST:NNAM</REC>
+      <Source>Find the tamed skeever</Source>
+      <Dest>找到驯化的恶鼠</Dest>
+    </String>
+    <String List="0" sID="000034">
+      <EDID>ccVSVSSE002_PetControlQuest_Skeever_BranchFindItemTopic</EDID>
+      <REC>DIAL:FULL</REC>
+      <Source>What&apos;s that you got there?</Source>
+      <Dest>你在那找到了什么？</Dest>
+    </String>
+    <String List="0" sID="000035">
+      <EDID>ccVSVSSE002_PetControlQuest_Goat_BranchCollectMilkTopic</EDID>
+      <REC>DIAL:FULL</REC>
+      <Source>Collect milk</Source>
+      <Dest>挤奶</Dest>
+    </String>
+    <String List="0" sID="000036">
+      <EDID>[050008BA]</EDID>
+      <REC>INFO:RNAM</REC>
+      <Source>Actually, I don&apos;t have enough coin.</Source>
+      <Dest>其实，我的钱不够。</Dest>
+    </String>
+    <String List="0" sID="000039">
+      <EDID>ccVSVSSE002_Rabbit</EDID>
+      <REC>NPC_:FULL</REC>
+      <Source>Thistle</Source>
+      <Dest>蓟丛</Dest>
+    </String>
+    <String List="0" sID="00003C">
+      <EDID>ccVSVSSE002_MainQuest</EDID>
+      <REC id="8" idMax="18">QUST:NNAM</REC>
+      <Source>Free &lt;Alias=AliasSkeever&gt; from its cage</Source>
+      <Dest>将&lt;Alias=AliasSkeever&gt;自笼中释放</Dest>
+    </String>
+    <String List="0" sID="00003D">
+      <EDID>ccVSVSSE002_PetControlQuest_Goat_BranchRecruitTopic</EDID>
+      <REC>DIAL:FULL</REC>
+      <Source>Hey there, buddy. Want to come with me?</Source>
+      <Dest>嘿，小家伙，想要跟我一起走吗？</Dest>
+    </String>
+    <String List="0" sID="000040">
+      <EDID>RiftenRatway01</EDID>
+      <REC>CELL:FULL</REC>
+      <Source>The Ratway</Source>
+      <Dest>鼠道</Dest>
+    </String>
+    <String List="0" sID="000041">
+      <EDID>ccVSVSSE002_SkinRabbit</EDID>
+      <REC>ARMO:FULL</REC>
+      <Source>Rabbit</Source>
+      <Dest>兔子</Dest>
+    </String>
+    <String List="0" sID="000042">
+      <EDID>ccVSVSSE002_PetControlQuest_Fox_BranchFetchTopic</EDID>
+      <REC>DIAL:FULL</REC>
+      <Source>Go find something valuable!</Source>
+      <Dest>去找样好东西来！</Dest>
+    </String>
+    <String List="0" sID="000044">
+      <EDID>[050008AF]</EDID>
+      <REC>INFO:RNAM</REC>
+      <Source>Hey buddy, are you hungry?</Source>
+      <Dest>嘿小家伙，饿了吗？</Dest>
+    </String>
+    <String List="0" sID="000045">
+      <EDID>ccVSVSSE002_MainQuest</EDID>
+      <REC id="13" idMax="18">QUST:NNAM</REC>
+      <Source>Find out more about the goat</Source>
+      <Dest>打探更多山羊的消息</Dest>
+    </String>
+    <String List="0" sID="000046">
+      <EDID>ccVSVSSE002_MainQuest</EDID>
+      <REC id="11" idMax="18">QUST:NNAM</REC>
+      <Source>Find out more about the fox</Source>
+      <Dest>打探更多狐狸的消息</Dest>
+    </String>
+    <String List="0" sID="000048">
+      <EDID>ccVSVSSE002_MainQuest</EDID>
+      <REC id="10" idMax="18">QUST:NNAM</REC>
+      <Source>Free &lt;Alias=AliasSpider&gt; from its cage</Source>
+      <Dest>将&lt;Alias=AliasSpider&gt;自笼中释放</Dest>
+    </String>
+    <String List="0" sID="000049">
+      <EDID>ccVSVSSE002_MGEF_CommandSpider</EDID>
+      <REC>MGEF:DNAM</REC>
+      <Source>Command your pet spider to spin a web trap at the target location. Only &lt;1&gt; web trap can be active at a time.</Source>
+      <Dest>命令宠物蜘蛛在目标位置结下一道蛛网陷阱，每次只能激活一道蛛网陷阱。</Dest>
+    </String>
+    <String List="0" sID="00004A">
+      <EDID>ccVSVSSE002_CageKey_Spider</EDID>
+      <REC>KEYM:FULL</REC>
+      <Source>Spider Cage Key</Source>
+      <Dest>蜘蛛笼钥匙</Dest>
+    </String>
+    <String List="0" sID="00004B">
+      <EDID>ccVSVSSE002_MainQuest</EDID>
+      <REC id="7" idMax="18">QUST:NNAM</REC>
+      <Source>Find a key to the skeever cage</Source>
+      <Dest>找到恶鼠笼的钥匙</Dest>
+    </String>
+    <String List="0" sID="00004C">
+      <EDID>ccVSVSSE002_RabbitRace</EDID>
+      <REC>RACE:FULL</REC>
+      <Source>Rabbit</Source>
+      <Dest>兔子</Dest>
+    </String>
+    <String List="0" sID="00004D">
+      <EDID>ccVSVSSE002_MainQuest</EDID>
+      <REC id="3" idMax="18">QUST:NNAM</REC>
+      <Source>Find the tamed fox</Source>
+      <Dest>找到驯化的狐狸</Dest>
+    </String>
+    <String List="0" sID="00004E">
+      <EDID>ccVSVSSE002_MainQuest</EDID>
+      <REC id="0" idMax="18">QUST:NNAM</REC>
+      <Source>Find the tamed rabbit</Source>
+      <Dest>找到驯化的兔子</Dest>
+    </String>
+    <String List="0" sID="00004F">
+      <EDID>[050008A2]</EDID>
+      <REC>INFO:RNAM</REC>
+      <Source>Hey buddy, are you hungry?</Source>
+      <Dest>嘿小家伙，饿了吗？</Dest>
+    </String>
+    <String List="0" sID="000052">
+      <EDID>ccVSVSSE002_FarmerDialogueQuest_BranchBuyGoatTopic</EDID>
+      <REC>DIAL:FULL</REC>
+      <Source>Can I buy your goat?</Source>
+      <Dest>我能买下你的山羊吗？</Dest>
+    </String>
+    <String List="0" sID="000055">
+      <EDID>ccVSVSSE002_PetControlQuest_Rabbit_BranchFoundItemTopic</EDID>
+      <REC>DIAL:FULL</REC>
+      <Source>What&apos;s that you got there?</Source>
+      <Dest>你在那找到了什么？</Dest>
+    </String>
+    <String List="0" sID="000057">
+      <EDID>ccVSVSSE002_GoatRace</EDID>
+      <REC>RACE:FULL</REC>
+      <Source>Goat</Source>
+      <Dest>山羊</Dest>
+    </String>
+    <String List="0" sID="000058">
+      <EDID>ccVSVSSE002_Collar</EDID>
+      <REC>ARMO:FULL</REC>
+      <Source>Animal Collar</Source>
+      <Dest>动物项圈</Dest>
+    </String>
+    <String List="0" sID="00005A">
+      <EDID>Tamriel</EDID>
+      <REC>WRLD:FULL</REC>
+      <Source>Skyrim</Source>
+      <Dest>天际</Dest>
+    </String>
+    <String List="0" sID="00005B">
+      <EDID>ccVSVSSE002_Instructions_Fox</EDID>
+      <REC>BOOK:FULL</REC>
+      <Source>Thief&apos;s Journal</Source>
+      <Dest>盗贼的日记</Dest>
+    </String>
+    <String List="0" sID="00005D">
+      <EDID>ccVSVSSE002_Fox</EDID>
+      <REC>NPC_:FULL</REC>
+      <Source>Sweet Roll</Source>
+      <Dest>甜卷</Dest>
+    </String>
+    <String List="0" sID="00005E">
+      <EDID>ccVSVSSE002_Vampire</EDID>
+      <REC>NPC_:FULL</REC>
+      <Source>Vampire Naturalist</Source>
+      <Dest>吸血鬼自然学家</Dest>
+    </String>
+    <String List="0" sID="00005F">
+      <EDID>ccVSVSSE002_Instructions_Goat</EDID>
+      <REC>BOOK:FULL</REC>
+      <Source>Halvar&apos;s Journal</Source>
+      <Dest>哈尔瓦的日记</Dest>
+    </String>
+    <String List="0" sID="000060">
+      <EDID>ccVSVSSE002_SkeeverRace</EDID>
+      <REC>RACE:FULL</REC>
+      <Source>Skeever</Source>
+      <Dest>恶鼠</Dest>
+    </String>
+    <String List="0" sID="000062">
+      <EDID>ccVSVSSE002_PetControlQuest_Fox_BranchFoundItemTopic</EDID>
+      <REC>DIAL:FULL</REC>
+      <Source>What&apos;s that you got there?</Source>
+      <Dest>你在那找到了什么？</Dest>
+    </String>
+    <String List="0" sID="000065">
+      <EDID>ccVSVSSE002_MainQuest</EDID>
+      <REC id="9" idMax="18">QUST:NNAM</REC>
+      <Source>Find a key to the spider cage</Source>
+      <Dest>找到蜘蛛笼的钥匙</Dest>
+    </String>
+    <String List="0" sID="000066">
+      <EDID>ccVSVSSE002_SaddleBags</EDID>
+      <REC>ARMO:FULL</REC>
+      <Source>Animal Pack</Source>
+      <Dest>动物行囊</Dest>
+    </String>
+    <String List="0" sID="000067">
+      <EDID>ccVSVSSE002_Instructions_Spider</EDID>
+      <REC>BOOK:FULL</REC>
+      <Source>Vampire Naturalist&apos;s Journal</Source>
+      <Dest>吸血鬼自然学家的日记</Dest>
+    </String>
+    <String List="0" sID="000069">
+      <EDID>ccVSVSSE002_MGEF_StaggerCont</EDID>
+      <REC>MGEF:FULL</REC>
+      <Source>Stagger Push</Source>
+      <Dest>失衡推击</Dest>
+    </String>
+    <String List="0" sID="00006A">
+      <EDID>ccVSVSSE002_SkinGoat</EDID>
+      <REC>ARMO:FULL</REC>
+      <Source>Goat</Source>
+      <Dest>山羊</Dest>
+    </String>
+    <String List="0" sID="00006B">
+      <EDID>ccVSVSSE002_CageKey_Skeever</EDID>
+      <REC>KEYM:FULL</REC>
+      <Source>Skeever Cage Key</Source>
+      <Dest>恶鼠笼钥匙</Dest>
+    </String>
+    <String List="0" sID="00006C">
+      <EDID>ccVSVSSE002_PetControlQuest_Skeever_BranchEquipTopic</EDID>
+      <REC>DIAL:FULL</REC>
+      <Source>Equip item</Source>
+      <Dest>装备物品。</Dest>
+    </String>
+    <String List="0" sID="00006D">
+      <EDID>ccVSVSSE002_MGEF_TeleportSkeever</EDID>
+      <REC>MGEF:DNAM</REC>
+      <Source>Teleports Skritch the skeever</Source>
+      <Dest>传送恶鼠吱吱。</Dest>
+    </String>
+    <String List="0" sID="00006F">
+      <EDID>[05000934]</EDID>
+      <REC>INFO:RNAM</REC>
+      <Source>Let&apos;s remove your pack.</Source>
+      <Dest>给你卸下行囊吧。</Dest>
+    </String>
+    <String List="0" sID="000070">
+      <EDID>ccVSVSSE002_msg_PickpocketName</EDID>
+      <REC>MESG:FULL</REC>
+      <Source>Pickpocket</Source>
+      <Dest>扒窃</Dest>
+    </String>
+    <String List="0" sID="000071">
+      <EDID>ccVSVSSE002_MainQuest</EDID>
+      <REC id="17" idMax="18">QUST:NNAM</REC>
+      <Source>Greet &lt;Alias=AliasGoat&gt; the goat</Source>
+      <Dest>与山羊&lt;Alias=AliasGoat&gt;照面</Dest>
+    </String>
+    <String List="0" sID="000072">
+      <EDID>[05000929]</EDID>
+      <REC>INFO:RNAM</REC>
+      <Source>Let&apos;s equip your collar.</Source>
+      <Dest>给你装上项圈吧。</Dest>
+    </String>
+    <String List="0" sID="000073">
+      <EDID>[05000913]</EDID>
+      <REC>INFO:RNAM</REC>
+      <Source>Let&apos;s remove your pack.</Source>
+      <Dest>给你卸下行囊吧。</Dest>
+    </String>
+    <String List="0" sID="000076">
+      <EDID>ccVSVSSE002_MainQuest</EDID>
+      <REC id="18" idMax="18">QUST:NNAM</REC>
+      <Source>Find out more about &lt;Alias=AliasGoat&gt;</Source>
+      <Dest>打探更多&lt;Alias=AliasGoat&gt;的消息</Dest>
+    </String>
+    <String List="0" sID="000078">
+      <EDID>ccVSVSSE002_MGEF_TeleportSpider</EDID>
+      <REC>MGEF:FULL</REC>
+      <Source>Teleport Arachnia</Source>
+      <Dest>传送阿蛛</Dest>
+    </String>
+    <String List="0" sID="000079">
+      <EDID>ccVSVSSE002_PetControlQuest_Skeever_BranchEquip2Topic</EDID>
+      <REC>DIAL:FULL</REC>
+      <Source>Equip Pack</Source>
+      <Dest>装备行囊。</Dest>
+    </String>
+    <String List="0" sID="00007B">
+      <EDID>ccVSVSSE002_PetControlQuest_Goat_BranchEquipTopic</EDID>
+      <REC>DIAL:FULL</REC>
+      <Source>Equip collar</Source>
+      <Dest>装备项圈。</Dest>
+    </String>
+    <String List="0" sID="00007C">
+      <EDID>ccVSVSSE002_MainQuest</EDID>
+      <REC id="15" idMax="18">QUST:NNAM</REC>
+      <Source>Check the notices at the Bannered Mare</Source>
+      <Dest>查看母马旗帜旅店的告示</Dest>
+    </String>
+    <String List="0" sID="00007D">
+      <EDID>[0500092A]</EDID>
+      <REC>INFO:RNAM</REC>
+      <Source>Let&apos;s remove your collar.</Source>
+      <Dest>给你卸下项圈吧。</Dest>
+    </String>
+    <String List="0" sID="000081">
+      <EDID>ccVSVSSE002_SPELL_TeleportSkeever</EDID>
+      <REC>SPEL:FULL</REC>
+      <Source>Teleport Pet: Skritch</Source>
+      <Dest>传送宠物：吱吱</Dest>
+    </String>
+    <String List="0" sID="000082">
+      <EDID>[050008ED]</EDID>
+      <REC>INFO:RNAM</REC>
+      <Source>Let&apos;s equip your pack.</Source>
+      <Dest>给你装上行囊吧。</Dest>
+    </String>
+    <String List="0" sID="000083">
+      <EDID>[05000933]</EDID>
+      <REC>INFO:RNAM</REC>
+      <Source>Let&apos;s equip your pack.</Source>
+      <Dest>给你装上行囊吧。</Dest>
+    </String>
+    <String List="0" sID="000084">
+      <EDID>ccVSVSSE002_MGEF_TeleportGoat</EDID>
+      <REC>MGEF:DNAM</REC>
+      <Source>Teleports Hilda the goat</Source>
+      <Dest>传送山羊希尔达。</Dest>
+    </String>
+    <String List="0" sID="000085">
+      <EDID>ccVSVSSE002_PetControlQuest_Goat_BranchEquip2Topic</EDID>
+      <REC>DIAL:FULL</REC>
+      <Source>Equip Pack</Source>
+      <Dest>装备行囊。</Dest>
+    </String>
+    <String List="0" sID="000086">
+      <EDID>ccVSVSSE002_MainQuest</EDID>
+      <REC id="16" idMax="18">QUST:NNAM</REC>
+      <Source>Purchase a tamed goat from &lt;Alias=AliasFarmer&gt;</Source>
+      <Dest>从&lt;Alias=AliasFarmer&gt;处购买驯化的山羊</Dest>
+    </String>
+    <String List="0" sID="000087">
+      <EDID>ccVSVSSE002_SPELL_TeleportSpider</EDID>
+      <REC>SPEL:FULL</REC>
+      <Source>Teleport Pet: Arachnia</Source>
+      <Dest>传送宠物：阿蛛</Dest>
+    </String>
+    <String List="0" sID="000088">
+      <EDID>ccVSVSSE002_MGEF_TeleportRabbit</EDID>
+      <REC>MGEF:DNAM</REC>
+      <Source>Teleports Thistle the rabbit</Source>
+      <Dest>传送兔子蓟花。</Dest>
+    </String>
+    <String List="0" sID="000089">
+      <EDID>ccVSVSSE002_MGEF_TeleportFox</EDID>
+      <REC>MGEF:DNAM</REC>
+      <Source>Teleports Sweet Roll the fox</Source>
+      <Dest>传送狐狸甜卷。</Dest>
+    </String>
+    <String List="0" sID="00008A">
+      <EDID>[05000925]</EDID>
+      <REC>INFO:RNAM</REC>
+      <Source>Let&apos;s equip your collar.</Source>
+      <Dest>给你装上项圈吧。</Dest>
+    </String>
+    <String List="0" sID="00008B">
+      <EDID>[0500092D]</EDID>
+      <REC>INFO:RNAM</REC>
+      <Source>Let&apos;s equip your collar.</Source>
+      <Dest>给你装上项圈吧。</Dest>
+    </String>
+    <String List="0" sID="00008C">
+      <EDID>ccVSVSSE002_SPELL_TeleportRabbit</EDID>
+      <REC>SPEL:FULL</REC>
+      <Source>Teleport Pet: Thistle</Source>
+      <Dest>传送宠物：蓟花</Dest>
+    </String>
+    <String List="0" sID="00008E">
+      <EDID>[0500092E]</EDID>
+      <REC>INFO:RNAM</REC>
+      <Source>Let&apos;s remove your collar.</Source>
+      <Dest>给你卸下项圈吧。</Dest>
+    </String>
+    <String List="0" sID="00008F">
+      <EDID>ccVSVSSE002_Collar_dummy</EDID>
+      <REC>MISC:FULL</REC>
+      <Source>Animal Collar</Source>
+      <Dest>动物项圈</Dest>
+    </String>
+    <String List="0" sID="000090">
+      <EDID>ccVSVSSE002_Notice_Goat</EDID>
+      <REC>BOOK:FULL</REC>
+      <Source>For Sale</Source>
+      <Dest>待售</Dest>
+    </String>
+    <String List="0" sID="000092">
+      <EDID>ccVSVSSE002_PetControlQuest_Rabbit_BranchEquipTopic</EDID>
+      <REC>DIAL:FULL</REC>
+      <Source>Equip item</Source>
+      <Dest>装备物品。</Dest>
+    </String>
+    <String List="0" sID="000094">
+      <EDID>[05000931]</EDID>
+      <REC>INFO:RNAM</REC>
+      <Source>Let&apos;s equip your collar.</Source>
+      <Dest>给你装上项圈吧。</Dest>
+    </String>
+    <String List="0" sID="000097">
+      <EDID>ccVSVSSE002_MGEF_TeleportRabbit</EDID>
+      <REC>MGEF:FULL</REC>
+      <Source>Teleport Thistle</Source>
+      <Dest>传送蓟花</Dest>
+    </String>
+    <String List="0" sID="000099">
+      <EDID>ccVSVSSE002_PetControlQuest_Fox_BranchEquipTopic</EDID>
+      <REC>DIAL:FULL</REC>
+      <Source>Equip item</Source>
+      <Dest>装备物品。</Dest>
+    </String>
+    <String List="0" sID="00009B">
+      <EDID>[05000926]</EDID>
+      <REC>INFO:RNAM</REC>
+      <Source>Let&apos;s remove your collar.</Source>
+      <Dest>给你卸下项圈吧。</Dest>
+    </String>
+    <String List="0" sID="00009C">
+      <EDID>ccVSVSSE002_SPELL_TeleportFox</EDID>
+      <REC>SPEL:FULL</REC>
+      <Source>Teleport Pet: Sweet Roll</Source>
+      <Dest>传送宠物：甜卷</Dest>
+    </String>
+    <String List="0" sID="00009E">
+      <EDID>ccVSVSSE002_MGEF_TeleportSkeever</EDID>
+      <REC>MGEF:FULL</REC>
+      <Source>Teleport Skritch</Source>
+      <Dest>传送吱吱</Dest>
+    </String>
+    <String List="0" sID="00009F">
+      <EDID>ccVSVSSE002_SPELL_TeleportGoat</EDID>
+      <REC>SPEL:FULL</REC>
+      <Source>Teleport Pet: Hilda</Source>
+      <Dest>传送宠物：希尔达</Dest>
+    </String>
+    <String List="0" sID="0000A0">
+      <EDID>ccVSVSSE002_MGEF_TeleportGoat</EDID>
+      <REC>MGEF:FULL</REC>
+      <Source>Teleport Hilda</Source>
+      <Dest>传送希尔达</Dest>
+    </String>
+    <String List="0" sID="0000A1">
+      <EDID>ccVSVSSE002_MGEF_TeleportFox</EDID>
+      <REC>MGEF:FULL</REC>
+      <Source>Teleport Sweet Roll</Source>
+      <Dest>传送甜卷</Dest>
+    </String>
+    <String List="0" sID="0000A2">
+      <EDID>[05000932]</EDID>
+      <REC>INFO:RNAM</REC>
+      <Source>Let&apos;s remove your collar.</Source>
+      <Dest>给你卸下项圈吧。</Dest>
+    </String>
+    <String List="0" sID="0000A3">
+      <EDID>ccVSVSSE002_MGEF_TeleportSpider</EDID>
+      <REC>MGEF:DNAM</REC>
+      <Source>Teleports Arachnia the spider</Source>
+      <Dest>传送蜘蛛阿蛛。</Dest>
+    </String>
+    <String List="0" sID="0000A4">
+      <EDID>ccVSVSSE002_PetControlQuest_Spider_BranchWebTopic</EDID>
+      <REC>DIAL:FULL</REC>
+      <Source>Spin a web trap!</Source>
+      <Dest>织一道蛛网陷阱！</Dest>
+    </String>
+    <String List="0" sID="0000A5">
+      <EDID>ccVSVSSE002_Saddlebags_dummy</EDID>
+      <REC>MISC:FULL</REC>
+      <Source>Animal Pack</Source>
+      <Dest>动物行囊</Dest>
+    </String>
+    <String List="0" sID="0000A7">
+      <EDID>[050008B5]</EDID>
+      <REC>INFO:RNAM</REC>
+      <Source>Let&apos;s collect some milk.</Source>
+      <Dest>咱们来挤一些奶吧。</Dest>
+    </String>
+    <String List="0" sID="0000A8">
+      <EDID>[050008AC]</EDID>
+      <REC>INFO:RNAM</REC>
+      <Source>Let&apos;s harvest some venom.</Source>
+      <Dest>咱们来收获毒液吧。</Dest>
+    </String>
+    <String List="0" sID="0000AA">
+      <EDID>ccVSVSSE002_EnchFortifyCarryConstantSelf</EDID>
+      <REC>MGEF:DNAM</REC>
+      <Source>Carrying capacity increased by &lt;mag&gt; points.</Source>
+      <Dest>负重能力提高&lt;mag&gt;点。</Dest>
+    </String>
+    <String List="0" sID="0000AB">
+      <EDID>ccVSVSSE002_ENCH_FortifyCarry</EDID>
+      <REC>ENCH:FULL</REC>
+      <Source>Fortify Carry Weight</Source>
+      <Dest>强化负重</Dest>
+    </String>
+    <String List="0" sID="0000AC">
+      <EDID>ccVSVSSE002_EnchFortifyCarryConstantSelf</EDID>
+      <REC>MGEF:FULL</REC>
+      <Source>Fortify Carry Weight</Source>
+      <Dest>强化负重</Dest>
+    </String>
+    <String List="0" sID="0000AD">
+      <EDID>ccVSVSSE002_AB_CarryWeightBoost</EDID>
+      <REC>SPEL:FULL</REC>
+      <Source>Carry Weight Boost</Source>
+      <Dest>Carry Weight Boost</Dest>
+    </String>
+    <String List="0" sID="00EA7E">
+      <EDID>WhiterunBanneredMare</EDID>
+      <REC>CELL:FULL</REC>
+      <Source>The Bannered Mare</Source>
+      <Dest>母马旗帜旅店</Dest>
+    </String>
+    <String List="1" sID="000005">
+      <EDID>ccVSVSSE002_Instructions_Fox</EDID>
+      <REC>BOOK:DESC</REC>
+      <Source>&lt;font face=&apos;$HandwrittenFont&apos;&gt;&lt;div align=&quot;left&quot;&gt;
+&lt;b&gt;4th of First Seed&lt;/b&gt;
+I guess being Bosmer really does give me a way with animals! This little fox wandered up to me today, bold as brass, and started begging for treats. I didn&apos;t have anything on me at the time but a sweet roll, but it seemed to like that well enough. I wonder if this gift with animals works on horses - it would make stealing them dead easy.
+
+&lt;b&gt;15th of First Seed&lt;/b&gt;
+The furry nuisance won&apos;t leave me alone! It&apos;s been following me everywhere, even down into the sewers. At least it&apos;s quiet enough that it won&apos;t alert the guards...
+
+&lt;b&gt;1st of Rain&apos;s Hand&lt;/b&gt;
+The fox has a real nose for sniffing out valuables. Just this morning she dug a silver locket out of the mud - I never would have seen it if she hadn&apos;t started pawing at the ground. She must be attracted to shiny things. Can&apos;t say I blame her, really.
+
+&lt;b&gt;9th of Rain&apos;s Hand&lt;/b&gt;
+Finding Sweet Roll has turned out to be the best stroke of luck I&apos;ve had in a while. She&apos;s got better eyes and instincts than any thief I&apos;ve ever met, including Vex. I can&apos;t remember the last time my coin purse was this heavy - I&apos;m starting to jingle like a battalion of Imperials when I walk.
+
+&lt;b&gt;25th of Rain&apos;s Hand&lt;/b&gt;
+I think I&apos;ll try out this animal-taming thing on the wolves outside of town. Some of the other thieves have been eyeing me recently; they would think twice about jumping me if I had a wolf at my heels. </Source>
+      <Dest>&lt;font face=&apos;$HandwrittenFont&apos;&gt;&lt;div align=&quot;left&quot;&gt;
+&lt;b&gt;初种月4日&lt;/b&gt;
+我猜我身为波兹莫确有与动物相处的独门之道！这只小狐狸今天游荡到我面前，颇为胆大，朝我要吃的。彼时除了一个甜卷外我别无他物，不过它还蛮喜欢的。我好奇要是给马匹带点小恩小惠，是不是就能顺手牵走了。
+
+&lt;b&gt;初种月15日&lt;/b&gt;
+毛茸茸的小鬼头真是缠上我了！它到处跟着我，甚至钻进下水道。起码它还挺安静多，不会惊动卫兵……
+
+&lt;b&gt;雨手月1日&lt;/b&gt;
+狐狸有一副能嗅出贵重物品到好鼻子。就在今天早上，她从泥里挖出了一个小银坠子——要不是她从地上刨起，我便永远发现不了。她一定被闪亮的东西吸引到了。我可没责怪她，真的。
+
+&lt;b&gt;雨手月9日&lt;/b&gt;
+事实证明，见到甜卷真是让我时来运转。她的眼力跟直觉比我见过的任何小偷都要好，包括威克斯。我都忘了上次腰包鼓鼓囊囊是什么时候了——我走路的时候开始如一营帝国兵一般叮当作响。
+
+&lt;b&gt;雨手月25日&lt;/b&gt;
+我要对城外的狼如法炮制进行驯服。其他一些盗贼最近盯上我了，要是我有狼在后头护着，他们便会三思而后行。</Dest>
+    </String>
+    <String List="1" sID="00000A">
+      <EDID>ccVSVSSE002_msg_FoundItem_rabbit</EDID>
+      <REC>MESG:DESC</REC>
+      <Source>&lt;Alias=PetRabbit&gt; found something!</Source>
+      <Dest>&lt;Alias=PetRabbit&gt;找到了什么东西……</Dest>
+    </String>
+    <String List="1" sID="000019">
+      <EDID>ccVSVSSE002_Instructions_Goat</EDID>
+      <REC>BOOK:DESC</REC>
+      <Source>&lt;font face=&apos;$HandwrittenFont&apos;&gt;
+Came into town a few days ago looking for work. The folks here are nice enough, and there&apos;s plenty of wheat and potatoes needing to be harvested, so I&apos;ve got a steady supply of coin coming in. 
+
+I don&apos;t think I&apos;m going to need my old pack goat Hilda for much longer...all my bones are starting to creak, and my adventuring days are long over. Now I just need to find someone willing to take care of her. Maybe get a few coins for her too - there&apos;s strength in those old bones of hers yet.
+
+Ah, how I&apos;m going to miss wandering the wilds of Skyrim! I saw so many strange and wonderful things out there - pine trees as tall as mountains, old nord tombs, I once even stumbled across a wandering spirit made of pure ice!
+
+Even ran across a few folks trying their hand at taming different types of creatures. Don&apos;t know why they&apos;d want anything but a loyal dog or trusty goat like my Hilda though - some of them beasts out in the wild just aren&apos;t meant to be tamed.
+
+Ran across an alchemist with a pet rabbit, and almost got robbed by a thief with a tame fox, but I suppose a rabbit or a fox could be docile enough. But that pickpocket trying to train a skeever must have been as mad as old Sheo&apos;. And I don&apos;t want to think too hard about the vampire that almost made a meal out of me...could have sworn it had a trained frostbite spider! Gives me the shivers just thinking about it.</Source>
+      <Dest>&lt;font face=&apos;$HandwrittenFont&apos;&gt;
+进城找营生有几天了。这里的人挺不错，还有大量的小麦和马铃薯要收获，于是我便有了份稳定的生计。
+
+我觉着我用不上我的老山羊希尔达了……我全身的骨头都开始嘎吱作响，我的冒险生涯早就结束了。目下我便要找一个愿意照料她的人。也许能从她那赚上几个子儿——她那身老骨头还有些力气。
+
+啊，真想念在天际的原野中漫游的日子！我曾目睹众多奇美景观——高大如山的松树、古老悠久的诺德陵墓，我甚至曾偶遇一个全然由冰构成的灵魂！
+
+甚至还遇见了一些试图驯化其它物种的人。不知道为何在忠犬和我的山羊老伙伴希尔达之外他们无所不包——其中一些野兽根本不适合驯化。
+
+我遇见一个养着宠物兔子的炼金术士，还差点被一个养着驯服的狐狸的小偷给掏包了，我想兔子或狐狸是足够温顺了。可那个试图训练恶鼠的扒手一定中了谢尔格拉的道。还有我不太想回想那个差点把我吃掉的吸血鬼……我打保票，那家伙真有一只训练有素的霜噬蜘蛛！想想就让我不寒而栗。</Dest>
+    </String>
+    <String List="1" sID="00001B">
+      <EDID>ccVSVSSE002_MainQuest</EDID>
+      <REC id="0" idMax="3">QUST:CNAM</REC>
+      <Source>*Add log entry here*</Source>
+      <Dest>*Add log entry here*</Dest>
+    </String>
+    <String List="1" sID="000020">
+      <EDID>ccVSVSSE002_SaddleBags</EDID>
+      <REC>ARMO:DESC</REC>
+      <Source>Equip on a pet goat or skeever to increase its carryweight by 40.</Source>
+      <Dest>装载于宠物山羊或恶鼠后提高其负重&lt;40&gt;点。</Dest>
+    </String>
+    <String List="1" sID="000023">
+      <EDID>ccVSVSSE002_msg_NoCombatUse</EDID>
+      <REC>MESG:DESC</REC>
+      <Source>You can&apos;t use that in combat</Source>
+      <Dest>战斗中无法使用</Dest>
+    </String>
+    <String List="1" sID="000024">
+      <EDID>ccVSVSSE002_msg_FetchFailed_rabbit</EDID>
+      <REC>MESG:DESC</REC>
+      <Source>&lt;Alias=PetRabbit&gt; couldn&apos;t find anything...</Source>
+      <Dest>&lt;Alias=PetRabbit&gt;没找到任何东西……</Dest>
+    </String>
+    <String List="1" sID="000027">
+      <EDID>ccVSVSSE002_msg_FoundItem_goat</EDID>
+      <REC>MESG:DESC</REC>
+      <Source>&lt;Alias=PetGoat&gt; has milk to collect!</Source>
+      <Dest>&lt;Alias=PetGoat&gt;有奶可挤！</Dest>
+    </String>
+    <String List="1" sID="000028">
+      <EDID>ccVSVSSE002_msg_FoundItem_skeever</EDID>
+      <REC>MESG:DESC</REC>
+      <Source>&lt;Alias=PetSkeever&gt; found something!</Source>
+      <Dest>&lt;Alias=PetSkeever&gt;找到了什么东西……</Dest>
+    </String>
+    <String List="1" sID="000029">
+      <EDID>ccVSVSSE002_msg_FoundItem_spider</EDID>
+      <REC>MESG:DESC</REC>
+      <Source>&lt;Alias=PetSpider&gt; has venom to harvest!</Source>
+      <Dest>&lt;Alias=PetSpider&gt;有毒液可收集！</Dest>
+    </String>
+    <String List="1" sID="00002B">
+      <EDID>ccVSVSSE002_Instructions_Skeever</EDID>
+      <REC>BOOK:DESC</REC>
+      <Source>&lt;font face=&apos;$HandwrittenFont&apos;&gt;
+I ain&apos;t been having no luck at lifting gold off them rich merchants in the market, and those thieves guild s&apos;wits don&apos;t want me. Said I&apos;m too clumsy. I&apos;m running out of food and skooma, may need to start killing some of the skeevers down here for meat...
+
+One of the skooma dealers at the docks told me he knew a guy from Morrowind who trained a nix hound to distract his marks - helped him steal a heaping pile of gold, he said. Don&apos;t know if I believe a word of it, but what else am I going to do? Might as well give it a try.
+
+Too bad there ain&apos;t any nix hounds around here. Plenty of skeevers, though...I&apos;m gonna need to catch some anyway for food, might as well have a go at training one first.</Source>
+      <Dest>&lt;font face=&apos;$HandwrittenFont&apos;&gt;
+我可不是一直点背到在市场上从富商处顺手牵羊频频失手，可那些盗贼公会的大聪明照样不要我，觉着我太笨了。我的口粮和斯库玛快消耗完了，兴许得杀上这边的几只恶鼠吃肉……
+
+码头上的一位斯库玛贩子告诉我，他说他认识一个训练虚无猎犬帮他引开视线以成功偷上一大笔金子的晨风人。不知道我该不该信了他的话，可我还有得选吗？不妨死马当活马医。
+
+可惜这里没有虚无猎犬，却有很多恶鼠，不过……我无论如何都得抓几只果腹，不妨先去训练一只。</Dest>
+    </String>
+    <String List="1" sID="00002C">
+      <EDID>ccVSVSSE002_msg_QuestDone_Rabbit</EDID>
+      <REC>MESG:DESC</REC>
+      <Source>&lt;Alias=AliasRabbit&gt; the rabbit is now available to be recruited as your pet!
+&lt;Alias=AliasRabbit&gt; can be commanded to lead you to nearby ingredients. &lt;Alias=AliasRabbit&gt; also has a chance to find an ingredient once per day.</Source>
+      <Dest>灰兔&lt;Alias=AliasRabbit&gt;现已成为可供招募的宠物！
+可向&lt;Alias=AliasRabbit&gt;下令将你带往周边的炼金原料处，&lt;Alias=AliasRabbit&gt;也可拿取某一件炼金原料，一天一次。</Dest>
+    </String>
+    <String List="1" sID="000030">
+      <EDID>ccVSVSSE002_msg_FoundItem_fox</EDID>
+      <REC>MESG:DESC</REC>
+      <Source>&lt;Alias=PetFox&gt; found something!</Source>
+      <Dest>&lt;Alias=PetFox&gt;找到了什么东西……</Dest>
+    </String>
+    <String List="1" sID="000032">
+      <EDID>ccVSVSSE002_msg_FetchFailed_skeever</EDID>
+      <REC>MESG:DESC</REC>
+      <Source>&lt;Alias=PetSkeever&gt; couldn&apos;t find anything...</Source>
+      <Dest>&lt;Alias=PetSkeever&gt;没找到任何东西……</Dest>
+    </String>
+    <String List="1" sID="000033">
+      <EDID>ccVSVSSE002_msg_QuestDone_Fox</EDID>
+      <REC>MESG:DESC</REC>
+      <Source>&lt;Alias=AliasFox&gt; the fox is now available to be recruited as your pet!
+&lt;Alias=AliasFox&gt; can be commanded to lead you to nearby valuable items. &lt;Alias=AliasFox&gt; also has a chance to find a shiny item once per day.</Source>
+      <Dest>狐狸&lt;Alias=AliasFox&gt;现已成为可供招募的宠物！
+可向&lt;Alias=AliasFox&gt;下令将你带往周边的有价值物品处，&lt;Alias=AliasFox&gt;也可拿取某一件小物件，一天一次。</Dest>
+    </String>
+    <String List="1" sID="000038">
+      <EDID>ccVSVSSE002_msg_QuestDone_Spider</EDID>
+      <REC>MESG:DESC</REC>
+      <Source>&lt;Alias=AliasSpider&gt; the spider is now available to be recruited as your pet!
+&lt;Alias=AliasSpider&gt; can be commanded to spin a sticky web trap to slow down your enemies. Potent venom can also be collected from &lt;Alias=AliasSpider&gt; once per day.</Source>
+      <Dest>蜘蛛&lt;Alias=AliasSpider&gt;现已成为可供招募的宠物！
+可向&lt;Alias=AliasSpider&gt;下令编织粘稠蛛网陷阱令敌人减速，也可从&lt;Alias=AliasSpider&gt;处收集强效毒液，一天一次。</Dest>
+    </String>
+    <String List="1" sID="00003A">
+      <EDID>ccVSVSSE002_msg_CommandFailed_Spider</EDID>
+      <REC>MESG:DESC</REC>
+      <Source>&lt;Alias=PetSpider&gt; couldn&apos;t spin a web trap there...</Source>
+      <Dest>&lt;Alias=PetSpider&gt;无法在此编织蛛网陷阱……</Dest>
+    </String>
+    <String List="1" sID="00003E">
+      <EDID>ccVSVSSE002_msg_QuestDone_Goat</EDID>
+      <REC>MESG:DESC</REC>
+      <Source>&lt;Alias=AliasGoat&gt; the goat is now available to be recruited as your pet!
+&lt;Alias=AliasGoat&gt; can carry lots of items, and can be equipped with a pack to carry even more. A jug of milk can also be collected from &lt;Alias=AliasGoat&gt; once per day.</Source>
+      <Dest>山羊&lt;Alias=AliasGoat&gt;现已成为可供招募的宠物！
+&lt;Alias=AliasGoat&gt;可负载大量物品，装备行囊则可背负更多，也可从&lt;Alias=AliasGoat&gt;处挤奶，一天一次。</Dest>
+    </String>
+    <String List="1" sID="00003F">
+      <EDID>ccVSVSSE002_msg_FetchFailed_fox</EDID>
+      <REC>MESG:DESC</REC>
+      <Source>&lt;Alias=PetFox&gt; couldn&apos;t find anything...</Source>
+      <Dest>&lt;Alias=PetFox&gt;没找到任何东西……</Dest>
+    </String>
+    <String List="1" sID="000043">
+      <EDID>ccVSVSSE002_PetControlQuest_Skeever</EDID>
+      <REC id="0" idMax="1">QUST:CNAM</REC>
+      <Source>Recruit stage</Source>
+      <Dest>Recruit stage</Dest>
+    </String>
+    <String List="1" sID="000051">
+      <EDID>ccVSVSSE002_Instructions_Rabbit</EDID>
+      <REC>BOOK:DESC</REC>
+      <Source>&lt;font face=&quot;$HandwrittenFont&quot; size=&quot;18&quot;&gt;
+&lt;b&gt;14th of Second Seed&lt;/b&gt;
+The rabbits here seem particularly adept at sniffing out potion ingredients. I recently found one nibbling on my thistle plants and managed to capture it. It is my hope that I will be able to train it to lead me to the most bountiful flora.
+
+&lt;b&gt;22nd of Second Seed&lt;/b&gt;
+The rabbit (which I have decided to name Thistle, in honor of the carefully cultivated plants it managed to destroy) is showing great promise. It has proven to be quite tame and even rather intelligent. Getting it to respond to commands, however, can be a bit of a trial. I&apos;ve resorted to plying it with carrots. </Source>
+      <Dest>&lt;font face=&quot;$HandwrittenFont&quot; size=&quot;18&quot;&gt;
+&lt;b&gt;次种月14日&lt;/b&gt;
+这里的兔子似乎尤为擅长嗅探药水原材料。我最近便在我培植的蓟丛上找到一只正在大快朵颐的并成功将其捕获。但愿我能够将其训练至足以引导我前往最为丰富的植物群的水平。
+
+&lt;b&gt;次种月22日&lt;/b&gt;
+那兔子（我决定将其命名为蓟花，以纪念其常识毁坏的精心栽培的植物）天赋秉异。事实证明，其温顺非凡，还相当聪明机智。然而，令其响应命令可能有些费工夫。我只得给它喂上些胡萝卜。</Dest>
+    </String>
+    <String List="1" sID="000053">
+      <EDID>ccVSVSSE002_msg_NotFollowing_Spider</EDID>
+      <REC>MESG:DESC</REC>
+      <Source>&lt;Alias=PetSpider&gt; must be your companion in order to give it commands</Source>
+      <Dest>&lt;Alias=PetSpider&gt;必须追随你后方可对其下达命令。</Dest>
+    </String>
+    <String List="1" sID="000054">
+      <EDID>ccVSVSSE002_msg_QuestDone_Skeever</EDID>
+      <REC>MESG:DESC</REC>
+      <Source>&lt;Alias=AliasSkeever&gt; the skeever is now available to be recruited as your pet!
+&lt;Alias=AliasSkeever&gt; can be commanded to lead you to nearby food items. &lt;Alias=AliasSkeever&gt; also has a chance to find food once per day.</Source>
+      <Dest>恶鼠&lt;Alias=AliasSkeever&gt;现已成为可供招募的宠物！
+可向&lt;Alias=AliasSkeever&gt;下令将你带往周边的食物处，&lt;Alias=AliasSkeever&gt;也可拿取某一件食物，一天一次。</Dest>
+    </String>
+    <String List="1" sID="000064">
+      <EDID>ccVSVSSE002_Instructions_Spider</EDID>
+      <REC>BOOK:DESC</REC>
+      <Source>&lt;font face=&apos;$HandwrittenFont&apos;&gt;&lt;div align=&quot;left&quot;&gt;
+While my siblings may be obsessed with the taste that fear imbues in the blood of mortals, I find that pain lends a much more potent sweetness. And nothing is quite so capable of causing pain as the venom of a frostbite spider.
+
+But alas, the usual method of harvesting frostbite venom involves killing the spider - a costly and dangerous venture. Far too little venom can be obtained through violent methods for the experiments I wish to conduct. 
+
+To that end, I have captured a frostbite spider from deeper in the cave so that I may regularly collect its venom, which seems to be unusually potent. I discovered that it appears to have some measure of intelligence, and I have been attempting to teach it to obey certain orders. Oh how delicious it would be to have a tamed spider entangle my prey on command!
+
+I think I will name it Arachnia. </Source>
+      <Dest>&lt;font face=&apos;$HandwrittenFont&apos;&gt;&lt;div align=&quot;left&quot;&gt;
+虽然我的同族或许沉迷于恐惧在凡人血液中蔓延的味道，但我发现猎物痛觉缠身则味道更佳。没有什么比霜噬蜘蛛的毒液更能引起疼痛了。
+
+但可惜的是，收获霜噬毒液的常规方法是杀死蜘蛛——此法代价高昂且颇为冒险。对我打算进行的实验而言，通过暴力手段以获得的毒液可太少了。
+
+为此，我从洞穴深处捕获了一只霜噬蜘蛛，以便我可以定期自其收集颇有奇效的毒液。我发觉其似乎具有某种水平的智力，我一直尝试驯服其服从某些命令。诶呀，让一只驯化的蜘蛛按照命令缠住我的猎物便是极好的！
+
+我想将其命名为阿蛛。</Dest>
+    </String>
+    <String List="1" sID="000075">
+      <EDID>ccVSVSSE002_Notice_Goat</EDID>
+      <REC>BOOK:DESC</REC>
+      <Source>&lt;font face=&quot;$HandwrittenFont&quot;&gt;
+&lt;font size=&quot;40&quot;&gt;For Sale&lt;/font&gt;
+
+One tamed mountain goat. Able to carry a hefty amount of weight to the Throat of the World and back again. Gives good milk. 
+
+If interested in purchasing, see Halvar in Rorikstead. 
+
+- Halvar</Source>
+      <Dest>&lt;font face=&quot;$HandwrittenFont&quot;&gt;
+&lt;font size=&quot;40&quot;&gt;待售&lt;/font&gt;
+
+现有一只温驯山羊待售。其可负重驮物甚多至世界之喉，并安然返回，亦可产良奶。
+
+若有兴趣来购，请来洛利克镇与哈尔瓦商洽。
+
+哈尔瓦</Dest>
+    </String>
+    <String List="1" sID="000077">
+      <EDID>ccVSVSSE002_MainQuest</EDID>
+      <REC id="3" idMax="3">QUST:CNAM</REC>
+      <Source>After reading Halvar&apos;s journal on his adventures throughout Skyrim, I&apos;ve discovered that there are many other tame animal companions out there in the wild. I should set out to find them.</Source>
+      <Dest>读罢哈尔瓦天际旅途的日记，我了解到野外还有其它驯化的动物。我要出发寻找一番。</Dest>
+    </String>
+    <String List="1" sID="00007E">
+      <EDID>ccVSVSSE002_MainQuest</EDID>
+      <REC id="2" idMax="3">QUST:CNAM</REC>
+      <Source>I found a notice in the Bannered Mare offering a tamed goat for sale. I need to talk to Halvar in Rorikstead to purchase it.</Source>
+      <Dest>我在母马旗帜旅店看见一则驯化山羊待售的告示。我要去洛利克镇与哈尔瓦商洽购买事宜。</Dest>
+    </String>
+    <String List="1" sID="000080">
+      <EDID>ccVSVSSE002_MainQuest</EDID>
+      <REC id="1" idMax="3">QUST:CNAM</REC>
+      <Source>The journey through Skyrim can be hard and long, and I could use the companionship of a loyal animal. I should inquire in town to see if there are any tamed animals for sale.</Source>
+      <Dest>游走天际是项漫长的苦差事，我在此期间可以驯化一些动物供我驱使。我要去城里看看有没有驯化的动物可供购买。</Dest>
+    </String>
+    <String List="1" sID="0000A9">
+      <EDID>ccVSVSSE002_PetControlQuest_Skeever</EDID>
+      <REC id="1" idMax="1">QUST:CNAM</REC>
+      <Source>exit cage</Source>
+      <Dest>exit cage</Dest>
+    </String>
+    <String List="2" sID="000014">
+      <EDID>[050008BE]</EDID>
+      <REC>INFO:NAM1</REC>
+      <Source>(baa!)</Source>
+      <Dest>（叭！）</Dest>
+    </String>
+    <String List="2" sID="00001C">
+      <EDID>[050008B1]</EDID>
+      <REC>INFO:NAM1</REC>
+      <Source>(squeal)</Source>
+      <Dest>（嘶叫）</Dest>
+    </String>
+    <String List="2" sID="000022">
+      <EDID>[050008A8]</EDID>
+      <REC>INFO:NAM1</REC>
+      <Source>(squeal)</Source>
+      <Dest>（嘶叫）</Dest>
+    </String>
+    <String List="2" sID="000025">
+      <EDID>[050008B5]</EDID>
+      <REC>INFO:NAM1</REC>
+      <Source>(grunt)</Source>
+      <Dest>（发哼声）</Dest>
+    </String>
+    <String List="2" sID="00002F">
+      <EDID>[050008A4]</EDID>
+      <REC>INFO:NAM1</REC>
+      <Source>(grunt)</Source>
+      <Dest>（发哼声）</Dest>
+    </String>
+    <String List="2" sID="000037">
+      <EDID>[050008A1]</EDID>
+      <REC>INFO:NAM1</REC>
+      <Source>(squeal)</Source>
+      <Dest>（嘶叫）</Dest>
+    </String>
+    <String List="2" sID="00003B">
+      <EDID>[050008B3]</EDID>
+      <REC>INFO:NAM1</REC>
+      <Source>(grunt)</Source>
+      <Dest>（发哼声）</Dest>
+    </String>
+    <String List="2" sID="000047">
+      <EDID>[050008AC]</EDID>
+      <REC>INFO:NAM1</REC>
+      <Source>(grunt)</Source>
+      <Dest>（发哼声）</Dest>
+    </String>
+    <String List="2" sID="000050">
+      <EDID>[050008A6]</EDID>
+      <REC>INFO:NAM1</REC>
+      <Source>(grunt)</Source>
+      <Dest>（发哼声）</Dest>
+    </String>
+    <String List="2" sID="000056">
+      <EDID>[050008AF]</EDID>
+      <REC>INFO:NAM1</REC>
+      <Source>(squeal)</Source>
+      <Dest>（嘶叫）</Dest>
+    </String>
+    <String List="2" sID="00005C">
+      <EDID>[050008AA]</EDID>
+      <REC>INFO:NAM1</REC>
+      <Source>(squeal)</Source>
+      <Dest>（嘶叫）</Dest>
+    </String>
+    <String List="2" sID="000063">
+      <EDID>[050008A2]</EDID>
+      <REC>INFO:NAM1</REC>
+      <Source>(squeal)</Source>
+      <Dest>（嘶叫）</Dest>
+    </String>
+    <String List="2" sID="000068">
+      <EDID>[050008AE]</EDID>
+      <REC>INFO:NAM1</REC>
+      <Source>(squeal)</Source>
+      <Dest>（嘶叫）</Dest>
+    </String>
+    <String List="2" sID="00006E">
+      <EDID>[05000934]</EDID>
+      <REC>INFO:NAM1</REC>
+      <Source>(grunt)</Source>
+      <Dest>（发哼声）</Dest>
+    </String>
+    <String List="2" sID="000074">
+      <EDID>[050008ED]</EDID>
+      <REC>INFO:NAM1</REC>
+      <Source>(baa!)</Source>
+      <Dest>（叭！）</Dest>
+    </String>
+    <String List="2" sID="00007A">
+      <EDID>[05000933]</EDID>
+      <REC>INFO:NAM1</REC>
+      <Source>(yip!)</Source>
+      <Dest>（噫！）</Dest>
+    </String>
+    <String List="2" sID="00007F">
+      <EDID>[0500092A]</EDID>
+      <REC>INFO:NAM1</REC>
+      <Source>(grunt)</Source>
+      <Dest>（发哼声）</Dest>
+    </String>
+    <String List="2" sID="00008D">
+      <EDID>[05000932]</EDID>
+      <REC>INFO:NAM1</REC>
+      <Source>(grunt)</Source>
+      <Dest>（发哼声）</Dest>
+    </String>
+    <String List="2" sID="000091">
+      <EDID>[0500092E]</EDID>
+      <REC>INFO:NAM1</REC>
+      <Source>(grunt)</Source>
+      <Dest>（发哼声）</Dest>
+    </String>
+    <String List="2" sID="000093">
+      <EDID>[05000926]</EDID>
+      <REC>INFO:NAM1</REC>
+      <Source>(grunt)</Source>
+      <Dest>（发哼声）</Dest>
+    </String>
+    <String List="2" sID="000095">
+      <EDID>[0500092D]</EDID>
+      <REC>INFO:NAM1</REC>
+      <Source>(yip!)</Source>
+      <Dest>（噫！）</Dest>
+    </String>
+    <String List="2" sID="000096">
+      <EDID>[05000925]</EDID>
+      <REC>INFO:NAM1</REC>
+      <Source>(yip)</Source>
+      <Dest>（噫！）</Dest>
+    </String>
+    <String List="2" sID="000098">
+      <EDID>[050008DE]</EDID>
+      <REC>INFO:NAM1</REC>
+      <Source>(grunt)</Source>
+      <Dest>（发哼声）</Dest>
+    </String>
+    <String List="2" sID="00009A">
+      <EDID>[05000929]</EDID>
+      <REC>INFO:NAM1</REC>
+      <Source>(grunt)</Source>
+      <Dest>（发哼声）</Dest>
+    </String>
+    <String List="2" sID="00009D">
+      <EDID>[05000913]</EDID>
+      <REC>INFO:NAM1</REC>
+      <Source>(grunt)</Source>
+      <Dest>（发哼声）</Dest>
+    </String>
+    <String List="2" sID="0000A6">
+      <EDID>[05000931]</EDID>
+      <REC>INFO:NAM1</REC>
+      <Source>(baa!)</Source>
+      <Dest>（叭！）</Dest>
+    </String>
+  </Content>
+</SSTXMLRessources>
