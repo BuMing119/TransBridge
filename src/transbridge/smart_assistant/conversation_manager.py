@@ -97,6 +97,22 @@ class ConversationManager:
         self._messages_dirty = True
         self._messages_cache.clear()
 
+    # ── 序列化 (FR13) ──────────────────────────────────────
+
+    def to_dict(self) -> dict:
+        """导出消息列表为可序列化的字典。"""
+        return {"messages": self.get_messages()}
+
+    def from_dict(self, data: dict) -> None:
+        """从字典恢复消息列表。替换现有消息并重置轮次索引。"""
+        self._messages = list(data.get("messages", []))
+        self._turn_starts = []
+        self._messages_dirty = True
+        # 重建轮次索引
+        for i, msg in enumerate(self._messages):
+            if msg.get("role") == "user":
+                self._turn_starts.append(i)
+
     def _trim(self) -> None:
         """M3/M10: 基于预记录的 turn_starts 裁剪，保留最后 max_turns 轮。
 
