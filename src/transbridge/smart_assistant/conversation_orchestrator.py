@@ -102,6 +102,8 @@ class ConversationOrchestrator(QObject):
         on_clear_pending_memory: Callable[[], None] | None = None,
         # React 深度回调
         on_react_depth_check: Callable[[], bool] | None = None,
+        # FR12: SessionController 响应回调
+        on_response_parsed: Callable[[dict], None] | None = None,
     ):
         super().__init__(None)
         self._ctx = ctx
@@ -161,6 +163,7 @@ class ConversationOrchestrator(QObject):
         self._on_get_pending_memory = on_get_pending_memory or (lambda: "")
         self._on_clear_pending_memory = on_clear_pending_memory or (lambda: None)
         self._on_react_depth_check = on_react_depth_check or (lambda: True)
+        self._on_response_parsed = on_response_parsed or (lambda _: None)  # FR12
 
     # ── 客户端管理 ─────────────────────────────────────────
 
@@ -311,21 +314,14 @@ class ConversationOrchestrator(QObject):
 
         self._conversation.add_assistant(response)
 
-        # FR7.16: thought + steps 时移除流式气泡，替换为 ThinkingIndicator
+        # FR7.16: 先清掉流式气泡（用户不应看到 JSON），再通知 Controller 分发
         if thought and steps:
             if _finished_bubble is not None:
                 self._on_remove_widget(_finished_bubble)
             self._on_thinking_indicator_show(thought)
 
-        # 模式分发
-        if self._auto_mode and steps:
-            self._on_auto_execute_steps(steps, mode)
-        elif mode == "plan" and steps:
-            self._on_plan_card(steps)
-        elif len(steps) == 1:
-            self._on_tool_card(steps[0])
-        elif len(steps) > 1:
-            self._on_batch_tool_card(steps)
+        # FR12 Story 02: 分发逻辑移交给 SessionController
+        self._on_response_parsed(parsed)
 
         if not steps:
             self._on_thinking_indicator_hide()

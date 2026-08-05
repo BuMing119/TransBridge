@@ -27,7 +27,7 @@ class ToolExecutionHandler:
         on_tool_card: Callable[[dict], None] | None = None,
         on_batch_tool_card: Callable[[list], None] | None = None,
         on_plan_confirmed: Callable[[list], None] | None = None,
-        on_react_continue: Callable[[], None] | None = None,
+        on_step_completed: Callable[[], None] | None = None,
         on_confirm_permission: Callable[[str, str], bool] | None = None,
     ):
         self._ctx = ctx
@@ -40,7 +40,7 @@ class ToolExecutionHandler:
         self._on_tool_card = on_tool_card or (lambda _: None)
         self._on_batch_tool_card = on_batch_tool_card or (lambda _: None)
         self._on_plan_confirmed = on_plan_confirmed or (lambda _: None)
-        self._on_react_continue = on_react_continue or (lambda: None)
+        self._on_step_completed = on_step_completed or (lambda: None)
         self._on_confirm_permission = on_confirm_permission
 
     # ── 护栏 ──────────────────────────────────────────────
@@ -249,9 +249,9 @@ class ToolExecutionHandler:
         # LLM observation (rich, with data)
         self._conversation.add_observation(tool_name, tr.to_observation(tool_name))
 
-        # M13/M67: plan 模式下不触发 ReAct 继续
+        # FR12: plan 模式下不触发 ReAct 继续；通过 on_step_completed 通知 Controller
         if not skip_react_continue and mode != "plan":
-            self._on_react_continue()
+            self._on_step_completed()
 
     # ── 自动模式批量执行 ──────────────────────────────────
     # M62: auto_execute_steps 已迁移至 ChatWidget._auto_execute_steps，

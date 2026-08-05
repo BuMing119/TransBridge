@@ -46,6 +46,8 @@ __all__ = [
     "ConversationOrchestrator",
     "ConditionEvaluator",
     "CheckpointManager",
+    "SessionController",
+    "SessionManager",
 ]
 
 # 符号 → 子模块映射表（供 __getattr__ 惰性加载用）
@@ -86,6 +88,8 @@ _SYMBOL_MODULES: dict[str, str] = {
     "ConversationOrchestrator": ".conversation_orchestrator",
     "ConditionEvaluator": ".condition_evaluator",
     "CheckpointManager": ".checkpoint_manager",
+    "SessionController": ".session_controller",
+    "SessionManager": ".session_manager",
 }
 
 
