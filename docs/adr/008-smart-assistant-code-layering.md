@@ -252,3 +252,141 @@ agents/ 子包依赖 smart_assistant/ 层级的 execution_engine 和 tool_regist
 - `smart_assistant/__init__.py` 扩展导出列表，新增 `AgentSpec`, `AgentRegistry`, `AgentWorker`, `Orchestrator`
 - 预置 Agent 定义在 `AgentRegistry` 初始化时加载，不依赖外部配置文件
 - 与 Phase 1 子包的关系: `orchestrator` 依赖 `skills/skill_executor` 执行 skill；`agent_worker` 依赖 `reflexion/retry_handler` 实现失败重试；`agent_worker` 依赖 `memory/memory_retriever` 为 Agent 提供上下文召回
+
+### 更新: 2026-05-22 - 超重文件拆分：模块与类粒度组织规范
+
+**背景**: Smart Assistant 包经多轮功能迭代后，51 文件 ~9300 行中 8 个文件超过 300 行，其中 execution_engine.py（888行/37方法）、tool_translator.py（660行）、base.py（605行）已达临界质量。ADR-008 此前仅定义了包级和子包级分层，未涉及类/模块粒度的组织规范。
+
+**决策**: 对 8 个超重文件进行职责拆分，建立以下模块粒度规范——
+
+#### D1: ExecutionEngine 组合拆分（4 模块）
+
+采用**组合模式**（非继承）拆分 ExecutionEngine 的 5 种职责：
+
+```
+smart_assistant/
+├── execution_engine.py           # 保留: 委托门面 + StepResult + 重导出 (~85行)
+├── graph_executor.py             # NEW: BFS图执行 + 护栏链/重试 + 生命周期 (~600行)
+├── condition_evaluator.py        # NEW: AST条件表达式求值器 (~250行)
+└── checkpoint_manager.py         # NEW: 检查点持久化管理器 (~80行)
+```
+
+- `ConditionEvaluator`: 承接全部 10 个 `_eval_ast_*` 方法，单一职责——对图节点的 condition 字段做布尔求值
+- `CheckpointManager`: 承接 `_save_checkpoint/_load_checkpoint/_checkpoint_path/_safe_serialize`，管理图执行中断点的持久化与恢复
+- `GraphExecutor`: 承接 BFS 图调度（`execute`/`execute_graph`/`_bfs_one_level`/`_dispatch_node`/`_run_single`）+ 护栏链 + 重试循环 + 生命周期 + 回调注册 + 决策注入
+- `ExecutionEngine` 持有 `GraphExecutor` 实例（组合），作为委托门面暴露所有公开 API，同时通过 `graph_executor` 重导出 `ConditionEvaluator` 和 `CheckpointManager`
+- `StepResult` 定义在 `graph_executor.py` 中（`execution_engine.py` 重导出），避免循环导入
+- `_execute_tool_with_retry` 随 GraphExecutor 整体迁移（不迁入 reflexion 包）：retry 是执行层关注点，reflexion 是策略层关注点（ADR-009 边界不变）
+
+**理由**: 37 方法的上帝类是最大的维护风险。AST 求值器（10 方法）天然独立——输入 condition 表达式 + 变量上下文，输出布尔值，无副作用；CheckpointManager 仅与文件系统交互。BFS 图调度逻辑（~400行）进一步提取到 GraphExecutor，ExecutionEngine 自身缩减为 84 行委托门面。四层组合：ExecutionEngine → GraphExecutor → ConditionEvaluator + CheckpointManager。
+
+#### D2: base.py 类型定义独立
+
+```
+tools/
+├── types.py           # NEW: ToolResult, ExecutionContext, HITLType, HITLRequest, HITLResponse (~340行)
+└── base.py            # 保留: 护栏构建+装饰器+作用域解析 (~280行)
+                      #   顶部添加 from .types import * 重导出，保持所有现有 import 兼容
+```
+
+**理由**: `ToolResult`/`ExecutionContext` 是 39 个工具函数的返回值类型和执行上下文，被所有工具模块 import。将它们与执行逻辑（guard_chain/decorators）混在一起，导致 base.py 既是"类型定义仓库"又是"工具基础设施层"。分离后 import 关系更清晰：工具模块 `from tools.types import ToolResult`，`from tools.base import require_collection`。
+
+#### D3: 工具模块函数封装为 Controller 类
+
+消除 `tool_translator.py`（15 函数）、`tool_proofreader.py`（11 函数）、`tool_editor.py`（9 函数）的模块级函数反模式——
+
+```
+tools/
+├── tool_translator.py       # TranslationController 类 (~350行)
+│                            #   构造函数注入 AppContext + TaskManager
+│                            #   每个工具作为一个实例方法
+├── tool_proofreader.py      # ProofreaderController 类 (~280行)
+├── tool_editor.py           # EditorController 类 (~350行)
+└── _common.py               # NEW: 共享工具函数 (~80行)
+                             #   _load_llm_config(), _build_postprocessor()
+```
+
+**变更前**:
+```python
+# 模块级函数通过闭包/外部全局获取 ctx
+def _tool_start_translation(args: dict, ctx: ExecutionContext) -> ToolResult:
+    config = _load_llm_config()  # 模块内重复定义
+    ...
+```
+
+**变更后**:
+```python
+class TranslationController:
+    def __init__(self, ctx: AppContext, task_manager: TaskManager):
+        self._ctx = ctx
+        self._task_mgr = task_manager
+
+    def start_translation(self, args: dict, ctx: ExecutionContext) -> ToolResult:
+        config = load_llm_config()  # 来自 _common.py
+        ...
+```
+
+`_register_*_tools()` 注册函数保留在模块末尾，创建 Controller 实例后将其实例方法传入 `ToolSpec.execute`。
+
+**理由**: 模块级函数通过闭包引用外部状态（AppContext 全局单例、TaskManager 全局单例），导致函数间隐式耦合、测试困难、可读性差。封装为 Controller 类后：依赖显式注入（构造器）、方法间通过 self 共享状态、mock 测试更简单。
+
+#### D4: _common.py 消除 LLM 配置加载重复
+
+`tool_translator.py` 和 `tool_proofreader.py` 中存在 `_load_llm_config()` 重复逻辑——从 `LLMConfig.load_from_file()` 加载，两文件各自实现了相同的 10 行代码。
+
+提取到 `tools/_common.py`（仅 `load_llm_config()` 函数，~30行），两个 Controller 统一 import。未来新增工具模块复用同一入口。
+
+`_build_postprocessor()` **不提取**：两处签名差异较大（参数数量不同、阶段配置不同），强行统一会引入回归风险，各自保留在对应 Controller 中。
+
+#### D5: MemoryWriterThread 外提
+
+`memory/memory_store.py`（335行）中内嵌的 `MemoryWriterThread` 类（~42行）提取到 `memory/memory_writer.py`，原位置 `from .memory_writer import MemoryWriterThread` 重导出。
+
+#### D6: ConversationOrchestrator 精简
+
+`conversation_orchestrator.py` 不改文件数量，仅内部重构——
+- 提取 `_create_llm_client()` 模块级函数（~60行）：封装缓存键计算、配置 mtime 检测、客户端创建
+- 去除 `_get_prompt_builder()` 中与 `prompts.build_system_prompt()` 重复的内联逻辑
+
+> **注**: 经代码验证，`react_depth` 和 `auto_mode` 无重复定义问题（各有一次属性赋值 + 一组 property getter/setter），无需修复。
+
+#### D7: TaskManager 精简
+
+不拆新文件，内部精简——
+- 合并 `on_completed`+`on_failed` → `on_finished`；`notify_completed`+`notify_failed` → `notify_finished`（旧方法保留为 deprecated wrapper，兼容 `chat_widget.py` 等外部调用方）
+- 所有公开 API 签名保持不变
+
+> **注**: `set_main_thread_dispatcher`/`reset_dispatcher`/`get_handle` **保留不动**——经全局搜索确认 `chat_widget.py:712` 和 `tool_proofreader.py:129` 有活跃调用方，移除会破坏现有功能。
+
+#### 模块粒度规范（本次建立，后续遵循）
+
+| 指标 | 上限 | 说明 |
+|------|------|------|
+| 文件行数 | ≤450 | 超过时评估拆分 |
+| 类方法数 | ≤22 | 超过时评估职责分离（回调注册/事件处理方法不计入） |
+| 模块级函数数 | ≤3 | 超过时考虑类封装 |
+
+> **注**: 类方法数上限不包含基础设施方法——回调注册（`on_*`）、事件发射（`_emit`）等纯转发/簿记方法不计入职责计数。这些方法不包含业务逻辑，提取到独立模块会破坏内聚性。ExecutionEngine 拆分后保留 21 方法（含 7 个回调注册 + 1 个静态 `_emit`），实际业务方法 13 个，符合规范。
+
+#### 导入兼容性策略
+
+所有新模块在原位置重导出，外部调用无需修改：
+```python
+# base.py 顶部
+from .types import ToolResult, ExecutionContext, HITLType, HITLRequest, HITLResponse
+# 外部仍可 import: from ...tools.base import ToolResult
+
+# execution_engine.py 顶部
+from .condition_evaluator import ConditionEvaluator
+from .checkpoint_manager import CheckpointManager
+# 外部仍可 import: from ...smart_assistant.execution_engine import ExecutionEngine
+```
+
+**影响**:
+- 新增 6 文件：`condition_evaluator.py`、`checkpoint_manager.py`、`graph_executor.py`、`tools/types.py`、`tools/_common.py`、`memory/memory_writer.py`
+- 修改 8 文件：`execution_engine.py`、`tools/base.py`、`tools/tool_translator.py`、`tools/tool_proofreader.py`、`tools/tool_editor.py`、`conversation_orchestrator.py`、`memory/memory_store.py`、`tools/task_manager.py`
+- `__init__.py` 懒加载映射更新：`StepResult` → `.graph_executor`
+- 测试 import 路径适配：内部辅助函数迁移到 Controller 类后，3 个测试文件更新 import
+- 零新依赖，零外部 import 断裂
+- 与 ADR-009（Reflexion 边界）无冲突：`_execute_tool_with_retry` 保留在 GraphExecutor
+- 与 ADR-012（护栏体系）无冲突：guard_chain 函数保留在 base.py

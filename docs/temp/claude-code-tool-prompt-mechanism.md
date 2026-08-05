@@ -123,7 +123,7 @@ Skill(name="code-conventions")
 框架拦截到调用：
 1. 如果 SKILL.md 中有 `!command` 动态注入指令，先执行 shell 命令
 2. 将渲染后的完整 SKILL.md 内容作为一条消息插入对话
-3. Claude 在下一轮读取并执行其中的指令
+3. Claude 在下一轮读取并执行其中的指令/
 
 **Step 6 — 修改代码（内置工具）**
 

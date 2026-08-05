@@ -793,6 +793,115 @@ Agent SHALL 可查询软件全局状态和执行 UI 导航。
 
 **关联需求**: FR9.1（Parser 工具原始定义）、FR9.9.6（工具描述中标注副作用）、ADR-002（Collection 数据中枢设计）
 
+---
+
+#### FR10 Smart Assistant 模块超重文件拆分重构 — *2026-05-22 | 状态: 待方案 | 优先级: P0*
+
+对 `smart_assistant` 包中 8 个超重文件进行职责拆分，消除上帝类、模块级函数反模式和杂物抽屉，为后续工具提示词分层加载机制扫清基础。纯结构重构，零行为变更，零新依赖。
+
+**FR10.1 ExecutionEngine 上帝类拆分**: `execution_engine.py`（888行，37方法）混合了图执行、条件求值、检查点管理、护栏链、生命周期 5 种职责。SHALL 拆分为 3 个模块——
+
+- `execution_engine.py`（保留，~350行）：`ExecutionEngine` 类，保留图执行（`execute_graph`/`_bfs_one_level`/`_dispatch_node`）+ 生命周期（`pause`/`resume`/`shutdown`）+ 护栏链/重试（`_run_guard_chain`/`_execute_tool_with_retry`）+ `execute()` 入口。
+- `condition_evaluator.py`（新增，~200行）：`ConditionEvaluator` 类，包含全部 10 个条件求值方法（`_eval_condition`/`_eval_ast_node`/`_eval_ast_constant`/`_eval_ast_name`/`_eval_ast_attribute`/`_eval_ast_subscript`/`_eval_ast_compare`/`_eval_compare_op`/`_eval_ast_boolop`/`_eval_ast_unaryop`/`_eval_ast_call`/`_resolve_isinstance_type`）。
+- `checkpoint_manager.py`（新增，~150行）：`CheckpointManager` 类，包含 `_save_checkpoint`/`_load_checkpoint`/`_checkpoint_path`/`_safe_serialize`。
+
+**FR10.2 base.py 类型与逻辑分离**: `tools/base.py`（605行）混合了数据类定义与执行逻辑。SHALL 拆分为 2 个模块——
+
+- `types.py`（新增，~340行）：`ToolResult`/`ExecutionContext`/`HITLType`/`HITLRequest`/`HITLResponse` 数据类。
+- `base.py`（保留，~280行）：`_build_guard_chain`/`_apply_after_guards`/`execute_with_guardrails`/`filter_entries`/`resolve_scope_to_entry_ids`/`require_collection`/`validate_params`。
+- 原 `from tools.base import ToolResult, ExecutionContext` 路径 SHALL 通过 `base.py` 顶部重导出保持兼容。
+
+**FR10.3 工具模块函数反模式消除**: `tool_translator.py`（660行，15 模块级函数）、`tool_proofreader.py`（430行，11 模块级函数）、`tool_editor.py`（406行，9 模块级函数）SHALL 各自封装为 Controller 类——
+
+- `TranslationController`（~350行）：封装 LLM 配置加载、翻译/润色启动、任务控制、状态查询、配置管理、作用域、术语配置。所有模块级函数转为实例方法，`AppContext` 和 `TaskManager` 通过构造函数注入。
+- `ProofreaderController`（~280行）：封装 PostProcessor 构建、后处理执行、报告生成、质量查询。共享的 LLM 配置加载和 PostProcessor 构建逻辑提取到 `_common.py`。
+- `EditorController`（~350行）：封装筛选、条目查询、选择、编辑、stage 设置、标签管理。
+- `tools/_common.py`（新增，~80行）：提取 `tool_translator` 与 `tool_proofreader` 之间重复的 `_load_llm_config()` 和 `_build_postprocessor()` 逻辑为共享函数。
+
+**FR10.4 ConversationOrchestrator 精简**: `conversation_orchestrator.py`（433行，21方法）SHALL——
+
+- 修复 `react_depth` 和 `auto_mode` 属性重复定义 bug（各定义了两次，后一个覆盖前一个）。
+- 提取 `LLMClientFactory`（新增内部类或独立函数，~60行）：封装 LLM 客户端创建、缓存键计算、配置 mtime 检测逻辑。
+- 去除 `_get_prompt_builder()` 内联逻辑（已有 `prompts.build_system_prompt()`）。
+- 保留对话编排、流式处理、stage_b/stage_c 解析核心职责（~350行）。
+
+**FR10.5 MemoryWriterThread 外提**: `memory/memory_store.py`（335行）SHALL 将内嵌的 `MemoryWriterThread` 类提取到独立文件 `memory/memory_writer.py`（~80行）。`memory_store.py` 保留 `MemoryEntry` + `MemoryStore` 核心类（~280行）。
+
+**FR10.6 TaskManager 精简**: `tools/task_manager.py`（317行，23方法）SHALL 精简——
+
+- 移除未使用的 `set_main_thread_dispatcher`/`reset_dispatcher` 方法（Phase 1 QObject 解耦遗留）。
+- 合并 `on_completed`/`on_failed` 为 `on_finished`（参数区分状态）。
+- 合并 `notify_completed`/`notify_failed` 为 `notify_finished`（参数区分状态）。
+- 内联 `get_handle` 方法（仅一处调用）。
+- 保留所有公开 API 签名不变。
+
+**范围外**:
+- `task_manager.py` 不拆分新文件，仅内部精简
+- `tool_paratranz.py`（301行）和 `tool_parser.py`（261行）不纳入本次，结构可接受
+- UI 层超重文件（`chat_widget.py` 1107行、`main_window.py` 1480行）不纳入本次
+- 不修改任何工具的业务行为、API 签名、注册机制
+- 不改变 `tools/__init__.py` 的 `register_all()` 导入链
+
+**风险评估**:
+- **最大风险**：execution_engine 拆分可能影响 BFS 执行顺序（`_bfs_one_level` 依赖 `_eval_condition` 内联调用 → 改为跨类方法调用，需确保无时序副作用）
+- **次级风险**：import 重导出遗漏导致外部调用方（UI/MCP）断裂
+- **缓解**：所有拆分前后运行全量测试（~223 用例），通过 CI 门禁。重导出路径在 `__init__.py` 中逐条验证。
+
+**关联需求**: FR7.13（Agent 框架）、FR7.15（QA 修复 — 其中已包含部分解耦工作）、ADR-008（SmartAssistant 代码分层 — 本次重构在其原则范围内，需扩展更新节）、ADR-009（Reflexion 边界 — ExecutionEngine 拆分可能涉及 retry 逻辑归属）
+
+**期望产出**:
+- 文件数量：51 → 55-57（增 4-6 个新文件）
+- 最大文件行数：888 → <400（所有文件 ≤400 行）
+- 最大类方法数：37 → <20（所有类 ≤20 方法）
+- 全量测试：223/223 保持通过
+- 零 import 断裂（重导出兼容层覆盖所有已知外部调用点）
+
+---
+
+#### FR11 工具提示词分层加载机制 — *2026-05-25 | 状态: 已方案 | 优先级: P0*
+
+将 system prompt 中 41 个工具的完整 Schema（~14,000 tokens）替换为精简目录 + 意图路由表 + `get_tool_help` 元工具 + 2 预加载工具的组合（~1,040 tokens），LLM 按需通过 `get_tool_help` 获取完整定义。节省 92.5% 工具段 token，同时保持工具选择准确率不降。
+
+**FR11.1 ToolSpec 新增 summary 字段**: `tools/base.py` 中 `ToolSpec` dataclass SHALL 新增 `summary` 字段（~30-50 chars 一句话摘要）。若未手动填写，SHALL 从 `description` 的 ① 段自动提取。现有 41 个工具注册代码零改动。
+
+**FR11.2 工具目录构建器**: `ToolRegistry` SHALL 新增 `build_tool_directory()` 类方法，按 namespace 分组输出精简工具目录（`[namespace] name — summary` 格式，~500 tokens）。同时新增 `build_tool_help(tool, namespace)` 类方法，按需返回单工具或整个 namespace 的完整 Schema（结构化参数表格格式）。
+
+**FR11.3 get_tool_help 元工具**: SHALL 在 `default` namespace 注册 `get_tool_help` 工具，支持三种调用模式——
+- `get_tool_help(tool="name")` — 单工具完整 Schema
+- `get_tool_help(namespace="translator")` — 整组工具完整 Schema（推荐用法）
+- `get_tool_help()` — 按 namespace 分组的工具概览
+
+**FR11.4 意图路由表**: System prompt SHALL 包含用户意图 → namespace 映射表（7 行，~180 tokens），覆盖 default/editor/translator/parser/proofreader/paratranz/writer 七个领域。规则：(1) 收到消息后先匹配路由表确定主 namespace；(2) 调用 `get_tool_help` 获取完整定义；(3) 禁止凭目录摘要直接调用非预加载工具；(4) 跨领域任务按顺序逐一加载。
+
+**FR11.5 预加载工具**: `get_app_state` 和 `get_statistics` 两个工具的完整 Schema SHALL 直接注入 system prompt（~300 tokens）。选择原则：无副作用 + 几乎所有会话都会用到。
+
+**FR11.6 build_system_prompt 重构**: `prompts.py` 中 `build_system_prompt()` SHALL 将工具段替换为：预加载工具完整 Schema → `get_tool_help` 完整 Schema → 意图路由表 → 工具目录。旧「工具选择指南」段（~200 tokens）移除，改为在 `get_tool_help` 返回结果中按需附带。接口签名不变。
+
+**实施顺序**:
+- Phase 0：用 target tokenizer 精确测量当前 system prompt 各段 token
+- Phase 1：实现 `summary` + `build_tool_directory()` + `build_tool_help()`
+- Phase 2：注册 `get_tool_help` + 修改 `build_system_prompt()`
+- Phase 3：建立工具选择准确率回归测试（50+ prompts，对比 full vs directory 模式）
+- Phase 4：按测试结果调优——调整目录摘要措辞、预加载工具数量、`get_tool_help` 返回格式
+
+**范围外**:
+- function calling 迁移（远期方向，非本次范围）
+- 工具描述瘦身（已拒绝）
+- ToolPreviewBuilder / ToolVisibilityPolicy Protocol（技术议会概念，与设计文档视角不同，不单独实现）
+- Agent 模式联动（Phase 4 之后再考虑）
+
+**风险与缓解**:
+| 风险 | 缓解 |
+|------|------|
+| LLM 不调用 `get_tool_help` 直接猜参数 | 意图路由表将 `get_tool_help` 作为查表后唯一后续动作；参数校验层兜底拦截错误 → LLM 看到错误后修正 |
+| 显式加载协议增加认知负担 | 路由表将推理降级为查表；Phase 3 监控跳过率，>5% 则强化硬约束 |
+| Schema 作为文本在压缩时丢失 | 将 `get_tool_help` 返回消息标记为高优先级保留；或在 messages 末尾追加已加载 namespace 摘要 |
+| 跨领域全流程轮次累积 | 支持多 namespace 批量加载（`namespace="parser,translator"`） |
+
+**关联需求**: FR10（重构已为此扫清基础）、FR7.13（Agent 框架）、FR9（工具系统扩展）
+
+---
+
 ## 6. 需求变更历史
 
 | 日期 | 变更内容 | 来源 |
@@ -819,3 +928,5 @@ Agent SHALL 可查询软件全局状态和执行 UI 导航。
 | 2026-05-11 | 新增 FR7.14 智能助手页面体验全面翻新（布局重组+对话增强+交互简化+视觉现代化，Markdown渲染器作为 infra/ 共享基础设施） | /bm-analyze |
 | 2026-05-15 | 新增 FR9.11 工具补完 — 搜索维度扩展（6字段：id/key/original/translation/context/all）+ ParaTranz 项目查询与切换（get_paratranz_project / switch_paratranz_project，会话内有效） | /bm-analyze |
 | 2026-05-18 | 新增 FR9.12 解析工具副作用补全 — 6个Parser/Import工具新增 action 参数（create_slot/append）+ HITL 确认机制，解析结果不再丢弃 | /bm-analyze |
+| 2026-05-22 | 新增 FR10 Smart Assistant 模块超重文件拆分重构 — 8文件→12-14文件，消除上帝类/反模式/杂物抽屉，纯结构调整，为工具提示词分层加载机制扫清基础 | /bm-analyze |
+| 2026-05-25 | 新增 FR11 工具提示词分层加载机制 — 41 工具完整 Schema（~14K tokens）替换为目录+路由表+get_tool_help 元工具（~1K tokens），节省 92.5%，含 Phase 0-4 实施顺序 | /bm-analyze |

@@ -14,7 +14,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 
 | 文档 | 说明 | 状态 |
 |------|------|------|
-| [requirements.md](requirements.md) | 项目需求概述：功能需求、非功能需求、系统边界。FR7.13 Phase 1+2 已实现，FR9 Agent工具扩展已编码完成（14/14 Story, 60工具, 7 Agent），FR7.17 已方案 | ✅ 编码中 |
+| [requirements.md](requirements.md) | 项目需求概述：功能需求、非功能需求、系统边界。FR7.13 Phase 1+2 已实现，FR9 Agent工具扩展已编码完成（14/14 Story, 60工具, 7 Agent），FR7.17 已方案，FR10 已实现（4/4 Story，330测试通过） | ✅ 已实现 |
 
 ---
 
@@ -29,7 +29,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [ADR-005](adr/005-toml-prompt-no-langchain.md) | TOML Prompt 模板 + Skill 定义格式 | ✅ 已接受（更新: 2026-05-10） |
 | [ADR-006](adr/006-project-persistence-variant-management.md) | 项目持久化与翻译版本管理 | ✅ 已接受 |
 | [ADR-007](adr/007-mixed-translation-polish-mode.md) | AI翻译混合模式（三模式制+规则映射表+MixedWorker） | ✅ 已接受 |
-| [ADR-008](adr/008-smart-assistant-code-layering.md) | SmartAssistant 代码分层（UI与业务逻辑分离 + Agent框架4子包） | ✅ 已接受（更新: 2026-05-10³） |
+| [ADR-008](adr/008-smart-assistant-code-layering.md) | SmartAssistant 代码分层（UI与业务逻辑分离 + Agent框架4子包） | ✅ 已接受（更新: 2026-05-10³, 2026-05-22） |
 | [ADR-009](adr/009-agent-file-memory-reflexion.md) | Agent 文件解析、长期记忆与 Reflexion 自纠错（三模式降级） | ✅ 已接受（更新: 2026-05-10²） |
 | [ADR-010](adr/010-infra-extraction.md) | 共享基础设施提取 — infra/ 包（Embedding三模式可选） | ✅ 已接受（更新: 2026-05-10） |
 | [ADR-011](adr/011-graph-orchestration-engine.md) | 自研有状态图编排引擎（StatefulDAGExecutor，零新依赖） | ✅ 已接受 |
@@ -58,6 +58,8 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [agent-upgrade](../plans/agent-upgrade/plan.md) | ✅ Phase 1 + Phase 2 全部完成 | 12 |
 | [llm-chat](../plans/llm-chat/plan.md) | ✅ 全部完成 (S01-10，含 ChatWidget拆分) | 10 |
 | [smart-assistant-qa-fix](../plans/smart-assistant-qa-fix/plan.md) | ✅ 第五轮全量修复完成 (166/166) | 7 |
+| [smart-assistant-refactor](../plans/smart-assistant-refactor/plan.md) | ✔️ 已实现 | 4 |
+| [tool-prompt-layering](../plans/tool-prompt-layering/plan.md) | ✅ 全部完成 (S01-S05) | 5 |
 
 ---
 
@@ -142,6 +144,9 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | agent-tool-expansion | [S17: set_filters 合并 5→1](changelogs/agent-tool-expansion/story-17-set-filters-merge/2026-05-18-001-set-filters合并5to1.md) | 2026-05-18 |
 | smart-assistant-qa-fix | [S05-④: checkpoint数据目录路径修复](changelogs/smart-assistant-qa-fix/story-05-thread-resource/2026-05-14-004-checkpoint数据目录路径修复.md) | 2026-05-14 |
 | smart-assistant-qa-fix | [QA5修复: 第五轮全量修复155项](changelogs/smart-assistant-qa-fix/qa-round5-fix/2026-05-15-001-第五轮全量QA修复编码155项.md) | 2026-05-15 |
+| tool-prompt-layering | [S02: Phase 1 核心基础设施](changelogs/tool-prompt-layering/story-02-summary-and-builders/2026-05-25-001-Phase1核心基础设施实现.md) | 2026-05-25 |
+| tool-prompt-layering | [S03: Phase 2 元工具注册与Prompt重构](changelogs/tool-prompt-layering/story-03-get-tool-help-and-prompt/2026-05-25-001-Phase2元工具注册与Prompt重构.md) | 2026-05-25 |
+| tool-prompt-layering | [S03: QA修复 output验证+orchestrator+自动保存+测试mock](changelogs/tool-prompt-layering/story-03-get-tool-help-and-prompt/2026-05-25-002-QA修复-output验证与orchestrator防御.md) | 2026-05-25 |
 
 历史发布记录见 [更新日志.md](更新日志.md)（2026-01 至 2026-03）。
 
@@ -177,6 +182,8 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | 2026-05-21 | agent-tool-expansion Story 22 QA 复验 — 工具描述修复与代码缺陷修复 | ✅ 通过 — 40/40修复验证，120/123测试通过，0新引入失败 |
 | 2026-05-21 | agent-tool-expansion 全面 QA 审查 (4维度并行) — 工具系统 | ⚠ 需修复 — 26项问题(1B+4C+10M+11m)，综合评分45/60，[报告](test-reports/agent-tool-expansion-qa-full-2026-05-21.md) |
 | 2026-05-21 | agent-tool-expansion QA 复验 — 5项Blocker+Critical修复验证 | ✅ 通过 — 34新测试通过，221/223全量通过，0新问题，[报告](test-reports/agent-tool-expansion-qa-full-2026-05-21.md) · [复验](test-reports/agent-tool-expansion-qa-round2-verify-2026-05-21.md) |
+| 2026-05-25 | tool-prompt-layering QA 审查 — 工具提示词分层加载机制 | ✅ 通过 — 356/356 零回归，28 新测试，综合评分 55/60，0 Blocker/Critical/Major，[报告](test-reports/tool-prompt-layering-qa-2026-05-25.md) |
+| 2026-08-05 | tool-prompt-layering Phase 4 调优 QA | ✅ 通过 — 354/354 零新回归（4预存失败），5/5验收达标，零安全问题，[报告](test-reports/tool-prompt-layering-qa-2026-08-05.md) |
 
 ---
 
@@ -250,4 +257,14 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | 2026-05-18 | agent-tool-expansion Story 17 编码完成：set_filters 合并 5→1（6 可选参数，None=保持/[]=清除），5 deprecated wrapper，Editor 14→10 工具，总非废弃工具 56→52 | — |
 | 2026-05-20 | agent-tool-expansion Story 25 QA 审查：发现 PostProcessor/LLMPolisher 构造参数错误等 5 Blocker + 报告/断点/预览等 5 Critical 缺失，报告产出 docs/test-reports/story-25-postprocess-unification-qa.md | — |
 | 2026-05-20 | agent-tool-expansion Story 25 后处理报告补全：集成 ReportGenerator (Excel生成) + 中间数据保留 (refine/polish/decisions) + list_quality_reports 工具 + start_polish scope 参数 + max_workers，proofreader 2→3 工具，changelog 007 | — |
+| 2026-05-22 | agent-tool-expansion QA 第三轮修复审查 (4维度并行): 21/21 原始问题全部修复，4 项新发现问题已当场修复，综合评分 49/60，0 新增失败，[报告](test-reports/agent-tool-expansion-qa-round3-2026-05-22.md) | — |
 | 2026-05-20 | agent-tool-expansion Story 25 QA 二次复核 + P0/P1 修复：14 项修复（3B+6C+5M）涵盖 tool_proofreader.py/tool_translator.py/agent_registry.py/post_processor.py + 15 测试更新，135/137 通过，changelog 008 | — |
+| 2026-05-22 | agent-tool-expansion QA 第三轮修复：21 项 Major+Minor 全量修复 — base.py(m5+M3)/task_manager.py(m3+m4+M2)/tool_paratranz.py(M4+m7+m8+m9)/tool_parser.py(M1+M9)/tool_translator.py(M2+M3+M8+m6+m10)/tool_proofreader.py(M5+M8+M10+M2+M3+m6)/tool_editor.py(m1+M7)/test 补全(+27) | — |
+| 2026-05-25 | FR11 工具提示词分层加载 QA 通过（综合评分 55/60）：356/356 零回归，28 新测试，0 Blocker/Critical/Major。已知限制：LLM 回归测试待手动运行、Phase 4 调优待数据 | /bm-qa |
+| 2026-08-05 | tool-prompt-layering Phase 4 调优 QA 通过：161/161 smart_assistant 零回归，system prompt ~3,435 tokens（vs 全量 9,183，节省 62.6%），[报告](test-reports/tool-prompt-layering-s05-tuning-2026-08-05.md) | /bm-qa |
+| 2026-05-25 | FR11 QA 修复 5 项：output_validator 放宽 str 类型 + orchestrator _stage_c 防御 + AI翻译器自动保存防抖 + 测试 mock save_to_file + INI model 修正为 deepseek-v4-pro | /bm-chronicle |
+| 2026-05-25 | 评审委员会：智能助手工具提示词管理机制方案讨论（4角色并行独立评审）→ changelog 001 | — |
+| 2026-05-25 | 评审委员会第二轮：交叉讨论与最终方案共识（4角色2轮讨论），更新 docs/council-reviews/council-review-tool-prompt-mechanism.md。用户新约束（拒绝描述瘦身、接受function calling迁移、架构层面方案）推动方案升级为 ToolPreviewBuilder + ToolVisibilityPolicy Protocol + tier纯元数据 + 三阶段路线 → changelog 002 | — |
+| 2026-05-25 | FR11 工具提示词分层加载 Phase 1-3 编码完成：tool_registry.py (+118: summary + build_tool_directory + build_tool_help)、tool_default.py (+16: get_tool_help 注册)、prompts.py (+48/-22: 分层 prompt 重构 + 删除旧指南)、test_tool_prompt_layering.py (28 测试)。工具段 ~14,000 → ~1,040 tokens (92.5% 节省)，356 全量测试零回归 | /bm-pilot → /bm-dev |
+| 2026-08-05 | FR11 tool-prompt-layering Story 01 (Phase 0 Token 精确测量) 完成：scripts/measure_tokens.py (测量脚本) + docs/temp/tool-prompt-layering-token-measurement.md (测量报告)。分层 system prompt ~3,365 tokens vs 全量 9,183 (节省 63.4%), 42 工具/7 namespace，发现 ToolRegistry 双重导入隐患 | /bm-pilot |
+| 2026-08-05 | FR11 tool-prompt-layering Story 05 (Phase 4 调优) 完成：工具目录瘦身(1,324→1,249, -5.7%) + 路由表关键词扩充(401→547) + ToolRegistry 导入统一(8文件, 消除双重导入) + 最终测量报告。System prompt ~3,435 tokens，161/161 测试零回归。Epic 全部完成 ✅ | /bm-pilot |
