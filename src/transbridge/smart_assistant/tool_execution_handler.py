@@ -76,7 +76,7 @@ class ToolExecutionHandler:
     @staticmethod
     def _needs_confirm(step: dict) -> bool:
         """检查步骤是否需要用户确认（admin 级或显式标记）。"""
-        from src.transbridge.smart_assistant.tool_registry import ToolRegistry
+        from .tool_registry import ToolRegistry
         spec = ToolRegistry.get(step.get("tool", ""))
         if spec is None:
             return False
@@ -196,7 +196,7 @@ class ToolExecutionHandler:
             ToolResult 或 None（用户拒绝权限确认时返回 None）。
         """
         tool_name = step.get("tool", "?")
-        from src.transbridge.smart_assistant.tool_registry import ToolRegistry
+        from .tool_registry import ToolRegistry
         spec = ToolRegistry.get(tool_name)
 
         if not spec or not spec.execute:

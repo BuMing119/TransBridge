@@ -71,32 +71,65 @@ HYBRID_SYSTEM_PROMPT = """你是 TransBridge 的智能操作助手，帮助用�
 - 如果任务已完成或无需工具，mode 用 react，steps 为空列表，直接回复自然语言
 - 步骤 id 从 1 开始递增
 
-## 工具选择指南
-
-**常见场景 → 对应工具**:
-- 筛选/搜索条目 → set_filters（控制显示哪些条目）
-- 管理条目标签 → manage_entry_labels（action=create/assign/unassign/batch_assign）
-- 写回翻译到文件 → write_back（target=esp|eet|xt|strings）
-- 停止翻译任务 → stop_task（不传 task_id 停止全部）
-
-**易混淆工具对**:
-- set_filters vs manage_entry_labels
-  - set_filters: 控制"显示哪些条目"（筛选维度）
-  - manage_entry_labels: 控制"条目有什么标签"（数据维度）
-
-- get_visible_entries vs get_statistics
-  - get_visible_entries: 获取当前筛选结果的具体条目列表
-  - get_statistics: 获取统计摘要（不返回具体条目）
-
-- start_translation vs set_scope
-  - start_translation: 开始翻译任务
-  - set_scope: 先设置翻译范围，再用 start_translation 执行
-
-**持久化操作需确认**: write_back（写回文件）和 manage_entry_labels（标签变更）需用户确认后方可执行。
 """
 
 
+def _build_preloaded_tools() -> str:
+    """构建预加载工具完整 Schema（get_app_state + get_statistics）。"""
+    help1 = ToolRegistry.build_tool_help(tool="get_app_state")
+    help2 = ToolRegistry.build_tool_help(tool="get_statistics")
+    return f"## 核心工具（始终可用）\n\n{help1}\n\n{help2}"
+
+
+def _build_get_tool_help_schema() -> str:
+    """get_tool_help 完整定义 + 使用规则。"""
+    schema = ToolRegistry.build_tool_help(tool="get_tool_help")
+    return f"""## 工具发现
+
+{schema}
+
+**使用规则**:
+1. 收到用户消息后，先匹配下方的「工具路由」表确定主 namespace
+2. 调用 get_tool_help(namespace="匹配的namespace") 获取该组完整工具定义
+3. **禁止**凭目录摘要直接调用非预加载工具（get_app_state 和 get_statistics 除外）
+4. 跨领域任务按顺序逐一加载各个 namespace"""
+
+
+def _build_routing_table() -> str:
+    """意图路由表。将用户意图映射到工具命名空间。"""
+    return """## 工具路由
+
+根据用户意图确定需要加载的工具组，调用 get_tool_help(namespace="xxx") 获取完整定义：
+
+| 用户意图关键词 | 加载命名空间 | 典型任务 |
+|--------------|------------|---------|
+| 状态、统计、概览、切换集合/项目、当前进度、列出、查看项目 | default | 全局状态、统计信息、集合/项目切换、工具发现 |
+| 翻译、润色、术语、术语库、自动翻译、AI翻译、机翻 | translator | AI翻译/润色、术语库配置、翻译进度 |
+| 解析、导入、加载文件、ESP/EET/XT/SST、JSON、读取插件 | parser | 文件解析、JSON/Strings导入 |
+| 筛选、编辑、修改译文、标签、标记、批量设置、查找 | editor | 条目筛选、译文编辑、标签管理 |
+| PT/Paratranz、上传、下载、同步、平台、发布到平台 | paratranz | ParaTranz上传/下载/同步 |
+| 后处理、质检、质量检查、检查、校验、质量报告、跑后处理 | proofreader | 六阶段后处理流水线、质量报告 |
+| 写回、保存、导出、写入文件、输出、生成插件 | writer | 译文写回ESP/EET/XT/导出strings |
+
+**规则**：
+1. 收到用户消息后，先匹配上表确定主 namespace
+2. 调用 get_tool_help(namespace="匹配的namespace") 获取该组完整工具定义
+3. **禁止**凭目录摘要直接调用非预加载工具（get_app_state 和 get_statistics 除外），**必须**先通过 get_tool_help 获取完整定义
+4. 跨领域任务按顺序逐一加载，例如："解析并翻译" → 先加载 parser（完成解析），再加载 translator（执行翻译）"""
+
+
+
 def build_system_prompt(context: str = "", namespace: str | None = None) -> str:
-    """构建完整的 system prompt。M11: namespace 过滤工具 schema 以节省 token。"""
-    tools_desc = ToolRegistry.build_tool_schema_for_prompt(namespace)
+    """构建分层 system prompt。工具段仅 ~1,040 tokens（vs 全量 ~14,000）。"""
+    preloaded = _build_preloaded_tools()
+    help_schema = _build_get_tool_help_schema()
+    routing = _build_routing_table()
+    directory = ToolRegistry.build_tool_directory()
+    tools_desc = f"""{preloaded}
+
+{help_schema}
+
+{routing}
+
+{directory}"""
     return HYBRID_SYSTEM_PROMPT.format(context=context, tools_desc=tools_desc)

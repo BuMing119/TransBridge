@@ -1,6 +1,9 @@
 """P1 ParaTranz 平台工具 (paratranz namespace)。Story 11 + Story 15（项目查询与切换）。"""
 from __future__ import annotations
 
+import logging
+logger = logging.getLogger(__name__)
+
 from .base import ToolResult, require_collection
 
 
@@ -23,10 +26,18 @@ def _tool_list_projects(args: dict, ctx) -> ToolResult:
     try:
         client, _ = _get_paratranz_client(ctx)
         projects = client.list_projects(page=1, page_size=200, uid=uid)
+        # 兼容 API 返回 list 或 {"projects": [...]} 两种格式
+        if isinstance(projects, dict):
+            project_list = projects.get("projects", [])
+        elif isinstance(projects, list):
+            project_list = projects
+        else:
+            project_list = []
         summary = [{"id": p.get("id"), "name": p.get("name"), "visibility": p.get("visibility")}
-                   for p in (projects or [])]
+                   for p in project_list]
         return ToolResult.ok(f"找到 {len(summary)} 个项目", data={"projects": summary})
     except Exception as exc:
+        logger.error("获取项目列表失败")
         return ToolResult.fail(f"获取项目列表失败: {exc}")
 
 
@@ -40,6 +51,7 @@ def _tool_get_project_info(args: dict, ctx) -> ToolResult:
         return ToolResult.ok(data={"id": info.get("id"), "name": info.get("name"),
                                    "visibility": info.get("visibility"), "member_count": len(info.get("members", []))})
     except Exception as exc:
+        logger.error("获取项目信息失败")
         return ToolResult.fail(f"获取项目信息失败: {exc}")
 
 
@@ -50,7 +62,8 @@ def _tool_compare_with_remote(args: dict, ctx, collection) -> ToolResult:
     if not pid:
         return ToolResult.fail("请指定 project_id")
     try:
-        remote_entries = client.get_entries(pid, limit=500)
+        limit = args.get("limit", 500)
+        remote_entries = client.get_entries(pid, limit=limit)
         remote_map = {e.get("key"): e for e in remote_entries if e.get("key")}
         diff = {"only_local": 0, "only_remote": 0, "different": 0, "same": 0, "details": []}
         local_keys = set()
@@ -70,6 +83,7 @@ def _tool_compare_with_remote(args: dict, ctx, collection) -> ToolResult:
         diff["only_remote"] = len([k for k in remote_map if k not in local_keys])
         return ToolResult.ok(f"对比完成: 仅本地{diff['only_local']} 仅远程{diff['only_remote']} 不同{diff['different']}", data=diff)
     except Exception as exc:
+        logger.error("对比远程条目失败")
         return ToolResult.fail(f"对比失败: {exc}")
 
 
@@ -96,6 +110,7 @@ def _tool_upload_entries(args: dict, ctx, collection) -> ToolResult:
                                           "context": e.context or "", "stage": e.stage}, force_overwrite=force)
                 uploaded += 1
             except Exception as exc:
+                logger.warning("上传条目失败: %s", exc)
                 failed_items.append({
                     "key": e.key if hasattr(e, 'key') else str(e),
                     "error": str(exc),
@@ -105,6 +120,7 @@ def _tool_upload_entries(args: dict, ctx, collection) -> ToolResult:
             data={"uploaded": uploaded, "total": len(entries), "failed_items": failed_items},
         )
     except Exception as exc:
+        logger.error("上传条目失败")
         return ToolResult.fail(f"上传失败: {exc}")
 
 
@@ -116,7 +132,8 @@ def _tool_download_entries(args: dict, ctx) -> ToolResult:
     try:
         from src.transbridge.converter.translation_entry import TranslationEntry
         from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
-        remote_entries = client.get_entries(pid, limit=2000)
+        limit = args.get("limit", 2000)
+        remote_entries = client.get_entries(pid, limit=limit)
         downloaded = TranslationEntryCollection()
         for re in remote_entries:
             e = TranslationEntry(id=re.get("key", ""), key=re.get("key", ""),
@@ -140,6 +157,7 @@ def _tool_download_entries(args: dict, ctx) -> ToolResult:
             data={"downloaded_count": len(downloaded), "diff_summary": diff_summary},
         )
     except Exception as exc:
+        logger.error("下载条目失败")
         return ToolResult.fail(f"下载失败: {exc}")
 
 
@@ -153,6 +171,7 @@ def _tool_export_artifact(args: dict, ctx) -> ToolResult:
         export_api = ParatranzExportAPI(ctx.config)
         # 触发导出
         job = export_api.trigger_export(pid)
+        # m9: 30秒阻塞轮询占用Agent工作线程，后续可优化为异步回调
         # 轮询等待完成（最长 30 秒）
         import time
         deadline = time.time() + 30
@@ -165,6 +184,7 @@ def _tool_export_artifact(args: dict, ctx) -> ToolResult:
         return ToolResult.ok("导出已触发，仍在处理中（超时未完成）",
                            data={"job": job, "status": "pending"})
     except Exception as exc:
+        logger.error("导出工件失败")
         return ToolResult.fail(f"导出失败: {exc}")
 
 
@@ -177,6 +197,7 @@ def _tool_get_upload_history(args: dict, ctx) -> ToolResult:
         history = client.get_upload_history(pid, limit=args.get("limit", 20))
         return ToolResult.ok(data={"history": history if history else []})
     except Exception as exc:
+        logger.error("获取上传历史失败")
         return ToolResult.fail(f"获取历史失败: {exc}")
 
 
@@ -196,6 +217,7 @@ def _tool_get_paratranz_project(args: dict, ctx) -> ToolResult:
             data={"id": info.get("id"), "name": info.get("name"), "visibility": info.get("visibility")}
         )
     except Exception as exc:
+        logger.error("获取ParaTranz项目失败")
         return ToolResult.fail(f"获取项目信息失败: {exc}")
 
 
@@ -211,6 +233,7 @@ def _tool_switch_paratranz_project(args: dict, ctx) -> ToolResult:
             data={"id": info.get("id"), "name": info.get("name"), "visibility": info.get("visibility")}
         )
     except Exception as exc:
+        logger.error("切换ParaTranz项目失败")
         return ToolResult.fail(f"切换项目失败: {exc}")
 
 
@@ -249,7 +272,7 @@ _PARAM_SCHEMAS = {
 # ── 注册 ──────────────────────────────────────────────────────
 
 def _register_paratranz_tools():
-    from src.transbridge.smart_assistant.tool_registry import ToolRegistry
+    from ..tool_registry import ToolRegistry
     ToolRegistry.register_tools("paratranz", [
         {"name": "list_projects", "display_name": "列出项目", "description": "①列出ParaTranz项目。②参数: uid(\"my\"=仅我的项目/默认, \"\"=全部项目)。只读。③返回: {projects:[{id,name,visibility}]}。规则: 查看单项目详情用get_project_info。",
          "execute": _tool_list_projects, "permission": "read",

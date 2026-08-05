@@ -160,6 +160,17 @@ def _tool_get_current_project(args: dict, ctx) -> ToolResult:
     })
 
 
+# ── 工具发现 ──────────────────────────────────────────────
+
+def _tool_get_tool_help(args: dict, ctx) -> ToolResult:
+    """获取工具的完整定义（参数Schema、返回值、规则）。"""
+    tool_name = args.get("tool") or None
+    namespace = args.get("namespace") or None
+    from ..tool_registry import ToolRegistry
+    result = ToolRegistry.build_tool_help(tool=tool_name, namespace=namespace)
+    return ToolResult.ok(data=result)
+
+
 # ── 注册 ──────────────────────────────────────────────────────
 
 _PARAM_SCHEMAS = {
@@ -171,7 +182,7 @@ _PARAM_SCHEMAS = {
 
 
 def _register_default_tools():
-    from src.transbridge.smart_assistant.tool_registry import ToolRegistry
+    from ..tool_registry import ToolRegistry
     ToolRegistry.register_tools("default", [
         {"name": "get_app_state", "display_name": "应用状态", "description": "①一站式全局状态概览，用于判断当前工作阶段。②参数: 无，只读。③返回: {active_collection, esp_file, eet_file, xt_file(仅文件名), project, variant(版本变体名如\"v1\"), filters, collection_count, has_active_collection, paratranz_configured}。规则: 文件路径仅返回文件名(安全设计); 此处\"阶段\"指项目工作阶段，与翻译条目stage字段不同。",
          "execute": _tool_get_app_state, "permission": "read",
@@ -195,6 +206,19 @@ def _register_default_tools():
         {"name": "get_current_project", "display_name": "当前项目", "description": "①轻量当前项目查询。②参数: 无，只读。③返回: {name, variant, collection}。规则: vs get_app_state——此工具仅返回项目信息(更轻量); get_app_state返回完整上下文含文件路径/筛选/API状态; 文件路径不在此返回(安全设计), 需用get_app_state。",
          "execute": _tool_get_current_project, "permission": "read",
          "parameters": _PARAM_SCHEMAS.get("get_current_project", {})},
+        # 工具发现
+        {"name": "get_tool_help", "display_name": "工具帮助", "description": (
+            "①获取工具的完整定义（参数Schema、返回值、规则），用于在使用工具前了解其详细参数。"
+            "②参数: tool(str,可选,工具名如'start_translation'); namespace(str,可选,命名空间如'translator',返回该空间所有工具完整定义,支持逗号分隔多个namespace)。"
+            "③返回: 指定工具或namespace的完整参数表格与规则说明。"
+            "规则: 1.推荐使用namespace批量查询,一次获取整组工具; "
+            "2.不要凭目录摘要直接调用非预加载工具,必须通过本工具获取完整定义后再调用。"
+        ),
+         "execute": _tool_get_tool_help, "permission": "read",
+         "parameters": {
+             "tool": {"type": "str", "required": False, "description": "工具名，如'start_translation'"},
+             "namespace": {"type": "str", "required": False, "description": "命名空间，如'translator'。支持逗号分隔多个，如'parser,translator'"},
+         }},
     ])
 
 

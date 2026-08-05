@@ -150,7 +150,7 @@ _PARAM_SCHEMAS = {
 # ── 注册 ──────────────────────────────────────────────────────
 
 def _register_writer_tools():
-    from src.transbridge.smart_assistant.tool_registry import ToolRegistry
+    from ..tool_registry import ToolRegistry
     ToolRegistry.register_tools("writer", [
         {"name": "write_back", "display_name": "写回译文",
          "description": "①将译文写回源文件。②参数: target(必填, esp/eet/xt/strings), path(可选, 不传则用ctx已解析路径), output_dir(仅target=strings时可用)。③返回: esp→{written_count,path}, strings→{written_count,strings_files}, eet/xt→{path}。规则: 需用户确认(admin权限), 长运行操作, esp/strings目标需先parse_esp, eet/xt目标需先parse_eet/parse_xt, path拒绝../和绝对路径, target推断可通过get_app_state查看esp_file/eet_file/xt_file",

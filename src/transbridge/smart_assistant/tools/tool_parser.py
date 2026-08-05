@@ -120,25 +120,72 @@ def _append_to_collection(collection: "TranslationEntryCollection", ctx) -> Tool
     )
 
 
-# ── Parser 工具函数 ──────────────────────────────────────────────
+# ── Parser 工具函数工厂 ─────────────────────────────────────────
+# M1: 消除 5 个 parser 函数中 95% 相同的代码（action校验/path校验/懒加载导入/解析/slot操作）
 
-def _tool_parse_esp(args: dict, ctx) -> ToolResult:
-    """解析 ESP/ESM 插件文件。"""
+_PARSER_DISPATCH = {
+    "esp": {
+        "module": "src.transbridge.parser.plugin_parser",
+        "class": "PluginParser",
+        "parse_fn": lambda m, path: m().parse(path),
+        "label": "ESP 插件",
+    },
+    "eet": {
+        "module": "src.transbridge.parser.eet_xml_parser",
+        "class": "EET_XmlParser",
+        "parse_fn": lambda m, path: m().parse(path),
+        "label": "EET XML",
+    },
+    "xt": {
+        "module": "src.transbridge.parser.xt_xml_parser",
+        "class": "XT_XmlParser",
+        "parse_fn": lambda m, path: m().parse(path),
+        "label": "XT XML",
+    },
+    "sst": {
+        "module": "src.transbridge.parser.xt.sst_parser",
+        "class": "SST_Parser",
+        "parse_fn": lambda m, path: m().parse(path),
+        "label": "SST 二进制",
+    },
+    "json": {
+        "import_fn": lambda: __import__("src.transbridge.converter.translation_entry_collection", fromlist=["TranslationEntryCollection"]).TranslationEntryCollection,
+        "parse_fn_str": "from_json_file",
+        "label": "JSON 导入",
+    },
+}
+
+
+def _parse_file(file_type: str, args: dict, ctx) -> ToolResult:
+    """统一的文件解析入口。根据 file_type 分派到对应的解析器。
+
+    file_type: "esp" | "eet" | "xt" | "sst" | "json"
+    """
     path = args.get("path", "")
     action = args.get("action", "create_slot")
     if action not in ("create_slot", "append"):
         return ToolResult.fail(f"无效的 action 值: {action}，有效值: create_slot, append")
     if not path:
-        return ToolResult.fail("请提供 ESP 文件路径")
+        return ToolResult.fail(f"请提供 {_PARSER_DISPATCH[file_type]['label']} 文件路径")
     err = _validate_path(path)
-    if err: return err
+    if err:
+        return err
+
+    dispatch = _PARSER_DISPATCH[file_type]
     try:
-        from src.transbridge.parser.plugin_parser import PluginParser
-        parser = PluginParser()
-        plugin = parser.parse(path)
-        collection = _to_collection(plugin)
+        if file_type == "json":
+            cls = dispatch["import_fn"]()
+            collection = getattr(cls, dispatch["parse_fn_str"])(path)
+        else:
+            import importlib
+            mod = importlib.import_module(dispatch["module"])
+            cls = getattr(mod, dispatch["class"])
+            result = cls().parse(path)
+            collection = _to_collection(result)
     except Exception as exc:
-        return ToolResult.fail(f"解析 ESP 失败: {_sanitize_error(str(exc), path)}")
+        return ToolResult.fail(
+            f"解析 {dispatch['label']} 失败: {_sanitize_error(str(exc), path)}"
+        )
 
     label = Path(path).stem
     if action == "create_slot":
@@ -146,99 +193,23 @@ def _tool_parse_esp(args: dict, ctx) -> ToolResult:
     else:
         return _append_to_collection(collection, ctx)
 
+
+# ── Parser 工具函数 ──────────────────────────────────────────────
+
+def _tool_parse_esp(args: dict, ctx) -> ToolResult:
+    return _parse_file("esp", args, ctx)
 
 def _tool_parse_eet(args: dict, ctx) -> ToolResult:
-    """解析 EET XML 文件。"""
-    path = args.get("path", "")
-    action = args.get("action", "create_slot")
-    if action not in ("create_slot", "append"):
-        return ToolResult.fail(f"无效的 action 值: {action}，有效值: create_slot, append")
-    if not path: return ToolResult.fail("请提供 EET 文件路径")
-    err = _validate_path(path)
-    if err: return err
-    try:
-        from src.transbridge.parser.eet_xml_parser import EET_XmlParser
-        parser = EET_XmlParser()
-        result = parser.parse(path)
-        collection = _to_collection(result)
-    except Exception as exc:
-        return ToolResult.fail(f"解析 EET 失败: {_sanitize_error(str(exc), path)}")
-
-    label = Path(path).stem
-    if action == "create_slot":
-        return _create_slot(path, label, collection, ctx)
-    else:
-        return _append_to_collection(collection, ctx)
-
+    return _parse_file("eet", args, ctx)
 
 def _tool_parse_xt(args: dict, ctx) -> ToolResult:
-    """解析 XT XML 文件。"""
-    path = args.get("path", "")
-    action = args.get("action", "create_slot")
-    if action not in ("create_slot", "append"):
-        return ToolResult.fail(f"无效的 action 值: {action}，有效值: create_slot, append")
-    if not path: return ToolResult.fail("请提供 XT 文件路径")
-    err = _validate_path(path)
-    if err: return err
-    try:
-        from src.transbridge.parser.xt_xml_parser import XT_XmlParser
-        parser = XT_XmlParser()
-        result = parser.parse(path)
-        collection = _to_collection(result)
-    except Exception as exc:
-        return ToolResult.fail(f"解析 XT 失败: {_sanitize_error(str(exc), path)}")
-
-    label = Path(path).stem
-    if action == "create_slot":
-        return _create_slot(path, label, collection, ctx)
-    else:
-        return _append_to_collection(collection, ctx)
-
+    return _parse_file("xt", args, ctx)
 
 def _tool_parse_sst(args: dict, ctx) -> ToolResult:
-    """解析 SST 二进制文件。"""
-    path = args.get("path", "")
-    action = args.get("action", "create_slot")
-    if action not in ("create_slot", "append"):
-        return ToolResult.fail(f"无效的 action 值: {action}，有效值: create_slot, append")
-    if not path: return ToolResult.fail("请提供 SST 文件路径")
-    err = _validate_path(path)  # C4: SST 与其他解析器统一路径校验
-    if err: return err
-    try:
-        from src.transbridge.parser.xt.sst_parser import SST_Parser
-        parser = SST_Parser()
-        result = parser.parse(path)
-        collection = _to_collection(result)
-    except Exception as exc:
-        return ToolResult.fail(f"解析 SST 失败: {_sanitize_error(str(exc), path)}")
-
-    label = Path(path).stem
-    if action == "create_slot":
-        return _create_slot(path, label, collection, ctx)
-    else:
-        return _append_to_collection(collection, ctx)
-
+    return _parse_file("sst", args, ctx)
 
 def _tool_import_json(args: dict, ctx) -> ToolResult:
-    """从 JSON 文件导入翻译集合。"""
-    path = args.get("path", "")
-    action = args.get("action", "create_slot")
-    if action not in ("create_slot", "append"):
-        return ToolResult.fail(f"无效的 action 值: {action}，有效值: create_slot, append")
-    if not path: return ToolResult.fail("请提供 JSON 文件路径")
-    err = _validate_path(path)
-    if err: return err
-    try:
-        from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
-        collection = TranslationEntryCollection.from_json_file(path)
-    except Exception as exc:
-        return ToolResult.fail(f"导入 JSON 失败: {_sanitize_error(str(exc), path)}")
-
-    label = Path(path).stem
-    if action == "create_slot":
-        return _create_slot(path, label, collection, ctx)
-    else:
-        return _append_to_collection(collection, ctx)
+    return _parse_file("json", args, ctx)
 
 
 # ── 注册 ──────────────────────────────────────────────────────
@@ -267,8 +238,12 @@ _PARAM_SCHEMAS = {
 }
 
 
+# M9: Parser 工具权限为 write 而非 Plan 原定的 read。
+# Story 24 增加了 create_slot/append 副作用（修改 AppContext 全局状态），
+# 因此权限从 read 提升为 write 是合理的设计变更。
+# 参见: plans/agent-tool-expansion/stories/story-24-parser-side-effects.md
 def _register_parser_tools():
-    from src.transbridge.smart_assistant.tool_registry import ToolRegistry
+    from ..tool_registry import ToolRegistry
     ToolRegistry.register_tools("parser", [
         {"name": "parse_esp", "display_name": "解析ESP", "description": "①解析ESP/ESM/ESL插件文件提取可翻译字符串。②参数: path(必填, .esp/.esm/.esl), action(可选, create_slot默认创建新槽位并激活/append追加到当前活跃集合)。③返回: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}。规则: create_slot支持后续write_back target=esp/strings推断, append前需确认has_active_collection, path拒绝../和绝对路径, 通过get_app_state查看esp_file",
          "execute": _tool_parse_esp, "parameters": _PARAM_SCHEMAS.get("parse_esp", {}), "permission": "write"},
