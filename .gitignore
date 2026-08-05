@@ -1,7 +1,6 @@
 /.claude/*
 !/.claude/skills/
 !/.claude/settings.json
-/tests/
 /out/
 /data/
 /.venv/
@@ -13,3 +12,4 @@ __pycache__/
 /build/
 /dist/
 *.spec
+/简历/

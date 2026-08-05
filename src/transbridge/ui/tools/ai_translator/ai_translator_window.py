@@ -792,43 +792,53 @@ class AITranslatorWindow(QWidget):
         cfg.save_to_file()
         return cfg
 
+    def _schedule_save(self):
+        """防抖保存：延迟 2 秒，期间有新变更则重置计时器。"""
+        if self._save_timer is None:
+            from PyQt6.QtCore import QTimer
+            self._save_timer = QTimer(self)
+            self._save_timer.setSingleShot(True)
+            self._save_timer.timeout.connect(self._save_config)
+        self._save_timer.start(2000)
+
     def _connect_auto_save(self):
-        """在配置加载完成后连接所有控件的变更信号，实现自动保存。"""
-        self._provider_combo.currentIndexChanged.connect(self._save_config)
-        self._target_lang_combo.currentIndexChanged.connect(self._save_config)
-        self._model_edit.textChanged.connect(self._save_config)
-        self._apikey_edit.textChanged.connect(self._save_config)
-        self._baseurl_edit.textChanged.connect(self._save_config)
-        self._concurrent_spin.valueChanged.connect(self._save_config)
-        self._tokens_spin.valueChanged.connect(self._save_config)
-        self._output_tokens_spin.valueChanged.connect(self._save_config)
-        self._max_terms_spin.valueChanged.connect(self._save_config)
-        self._json_path_edit.textChanged.connect(self._save_config)
-        self._excel_path_edit.textChanged.connect(self._save_config)
-        self._excel_orig_col_edit.textChanged.connect(self._save_config)
-        self._excel_trans_col_edit.textChanged.connect(self._save_config)
-        self._priority_list.model().rowsMoved.connect(self._save_config)
+        """在配置加载完成后连接所有控件的变更信号，实现防抖自动保存。"""
+        self._save_timer = None  # 延迟初始化，避免 _load_config 触发保存
+        self._provider_combo.currentIndexChanged.connect(self._schedule_save)
+        self._target_lang_combo.currentIndexChanged.connect(self._schedule_save)
+        self._model_edit.textChanged.connect(self._schedule_save)
+        self._apikey_edit.textChanged.connect(self._schedule_save)
+        self._baseurl_edit.textChanged.connect(self._schedule_save)
+        self._concurrent_spin.valueChanged.connect(self._schedule_save)
+        self._tokens_spin.valueChanged.connect(self._schedule_save)
+        self._output_tokens_spin.valueChanged.connect(self._schedule_save)
+        self._max_terms_spin.valueChanged.connect(self._schedule_save)
+        self._json_path_edit.textChanged.connect(self._schedule_save)
+        self._excel_path_edit.textChanged.connect(self._schedule_save)
+        self._excel_orig_col_edit.textChanged.connect(self._schedule_save)
+        self._excel_trans_col_edit.textChanged.connect(self._schedule_save)
+        self._priority_list.model().rowsMoved.connect(self._schedule_save)
         # 后处理配置自动保存
-        self._pp_enable_check.toggled.connect(self._save_config)
-        self._pp_consistency_check.toggled.connect(self._save_config)
-        self._pp_format_check.toggled.connect(self._save_config)
-        self._pp_quality_gate_check.toggled.connect(self._save_config)
-        self._pp_refinement_check.toggled.connect(self._save_config)
-        self._pp_polish_check.toggled.connect(self._save_config)
-        self._pp_polish_scope_combo.currentIndexChanged.connect(self._save_config)
-        self._pp_polish_level_combo.currentIndexChanged.connect(self._save_config)
-        self._pp_arbitration_check.toggled.connect(self._save_config)
-        self._pp_strict_mode_check.toggled.connect(self._save_config)
-        self._polish_preview_check.toggled.connect(self._save_config)
+        self._pp_enable_check.toggled.connect(self._schedule_save)
+        self._pp_consistency_check.toggled.connect(self._schedule_save)
+        self._pp_format_check.toggled.connect(self._schedule_save)
+        self._pp_quality_gate_check.toggled.connect(self._schedule_save)
+        self._pp_refinement_check.toggled.connect(self._schedule_save)
+        self._pp_polish_check.toggled.connect(self._schedule_save)
+        self._pp_polish_scope_combo.currentIndexChanged.connect(self._schedule_save)
+        self._pp_polish_level_combo.currentIndexChanged.connect(self._schedule_save)
+        self._pp_arbitration_check.toggled.connect(self._schedule_save)
+        self._pp_strict_mode_check.toggled.connect(self._schedule_save)
+        self._polish_preview_check.toggled.connect(self._schedule_save)
         # 后处理控件联动
         self._pp_enable_check.toggled.connect(self._on_pp_enable_changed)
         self._pp_polish_check.toggled.connect(self._on_polish_changed)
         # Embedding 配置自动保存
-        self._embed_provider_combo.currentIndexChanged.connect(self._save_config)
-        self._embed_local_model_edit.textChanged.connect(self._save_config)
-        self._embed_model_edit.textChanged.connect(self._save_config)
-        self._embed_apikey_edit.textChanged.connect(self._save_config)
-        self._embed_baseurl_edit.textChanged.connect(self._save_config)
+        self._embed_provider_combo.currentIndexChanged.connect(self._schedule_save)
+        self._embed_local_model_edit.textChanged.connect(self._schedule_save)
+        self._embed_model_edit.textChanged.connect(self._schedule_save)
+        self._embed_apikey_edit.textChanged.connect(self._schedule_save)
+        self._embed_baseurl_edit.textChanged.connect(self._schedule_save)
 
     def _build_llm_config(self):
         from src.transbridge.paratranz.config_manager import LLMConfig

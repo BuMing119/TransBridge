@@ -655,7 +655,8 @@ class ChatWidget(QWidget):
         self._engine.on_step_finished(self._obs_collector.on_step_finished)
         self._engine.on_step_retrying(self._obs_collector.on_step_retrying)
         # CR15: 复用引擎内置的 ThreadPoolExecutor 替代冗余 daemon 线程
-        self._engine._executor.submit(self._engine.execute, steps)
+        # M1: _executor 现为 GraphExecutor，ThreadPoolExecutor 在其下一层
+        self._engine._executor._executor.submit(self._engine.execute, steps)
 
     def _on_plan_cancelled(self) -> None:
         if self._engine:

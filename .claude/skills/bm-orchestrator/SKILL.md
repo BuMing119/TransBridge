@@ -96,6 +96,7 @@ description: 开发流程顾问：评估复杂度、推断项目进度、推荐�
 | **分析** | `docs/requirements.md` + `docs/INDEX.md` | 存在匹配的需求条目且内容完整 → 完成 |
 | **架构** | `docs/adr/*.md` | 复杂模式下，已有 ADR 覆盖当前需求的所有架构层面 → 完成；需扩展已有 ADR → 待架构补充；全新架构领域 → 待架构 |
 | **方案** | `plans/<feature>/plan.md` | 已确认 → 完成；草稿 → 需继续；需追加 Story 到已有 plan → 待方案补充；新 Epic → 待方案 |
+| **议会评审** | 无文件产出（对话式） | （可选）用户可选择在方案完成后召集议会评审 |
 | **Story 细化** | `plans/<feature>/stories/story-*.md` | （可选）复杂 Story 存在对应详细文档且状态为"已确认" → 完成；无则跳过 |
 | **编码** | 代码文件修改 + `docs/changelogs/INDEX.md` | 存在编码产出 → 完成 |
 | **记录** | `docs/changelogs/<epic>/<story>/` 文件 | 存在对应增量文件，且 Story/Epic 状态已更新 → 完成 |
@@ -144,6 +145,7 @@ description: 开发流程顾问：评估复杂度、推断项目进度、推荐�
 [✓] 需求分析    → docs/requirements.md
 [○] 架构设计    → 待调用 /bm-arch（复杂模式必需）
 [○] 方案策划    → 
+[○] 议会评审    → （可选，方案确认后可召集）
 [○] Story 细化  → （可选）
 [○] 编码实现    → 
 [○] 记录归档    → 
@@ -172,6 +174,7 @@ description: 开发流程顾问：评估复杂度、推断项目进度、推荐�
 | 待架构补充 | 已有 ADR 需扩展 | `/bm-arch`（将在已有 ADR 尾部追加 `### 更新:` 节） |
 | 待方案（新 Epic） | plan 不存在 | `/bm-plan`（将创建新 plan） |
 | 待方案补充 | 已有 plan 需追加 Story | `/bm-plan`（将编辑已有 plan 追加 Story 节） |
+| 待议会评审 | 方案已确认，需多视角评审决策 | `/bm-council`（按需召集专家进行双轮辩论） |
 | 待 Story 细化 | plan 已确认，存在复杂 Story（5+ 步骤或 4+ 文件） | `/bm-story <plan> <story-id>`（单个）或 `/bm-story-batch <plan>`（批量） |
 | 待编码 | 无代码修改产出 | `/bm-dev <feature>` |
 | 待记录 | changelog 无五级结构记录 | `/bm-chronicle` |
