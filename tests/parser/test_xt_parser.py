@@ -252,7 +252,7 @@ class TestXTXmlParser:
             assert len(rows) == 3
 
             # 检查列名
-            assert set(rows[0].keys()) == {"list_id", "edid", "rec", "source", "dest"}
+            assert set(rows[0].keys()) == {"list_id", "edid", "rec", "source", "dest", "index"}
 
             # 检查第一行数据
             assert rows[0]["list_id"] == "0"

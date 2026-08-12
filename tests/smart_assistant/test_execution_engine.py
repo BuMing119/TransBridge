@@ -36,7 +36,17 @@ class FakeCtx:
     esp_path = None
 
 
+class NoopGuard:
+    """护栏中间件：放行所有步骤，用于隔离权限检查、专注测试图执行逻辑。"""
+    def before_execute(self, step, ctx):
+        return GuardResult(allowed=True)
+
+    def after_execute(self, step, result, ctx):
+        return GuardResult(allowed=True)
+
+
 from src.transbridge.smart_assistant.graph_types import ActionNode, EdgeSpec, GraphSpec
+from src.transbridge.smart_assistant.guardrails.base import GuardResult
 
 
 class TestExecutionEngine(unittest.TestCase):
@@ -46,7 +56,7 @@ class TestExecutionEngine(unittest.TestCase):
         from src.transbridge.smart_assistant.execution_engine import ExecutionEngine
         self.registry = FakeToolRegistry()
         self.ctx = FakeCtx()
-        self.engine = ExecutionEngine(self.registry, self.ctx, middlewares=[])
+        self.engine = ExecutionEngine(self.registry, self.ctx, middlewares=[NoopGuard()])
 
     def tearDown(self):
         self.engine.cancel()

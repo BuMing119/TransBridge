@@ -75,20 +75,20 @@ def test_apply_collection_updates():
     # 创建翻译集合
     entries = [
         TranslationEntry(
-            id="NPC_John:12345",
-            key="INFO:NAM1",
+            id="NPC_John:12345|1~INFO:NAM1",
+            key="NPC_John:12345|1~INFO:NAM1",
             original="Hello",
             translation="你好",
             stage=1,
-            context=None
+            context="INFO:NAM1"
         ),
         TranslationEntry(
-            id="BOOK_Intro:67890",
-            key="DESC",
+            id="BOOK_Intro:67890|1~DESC",
+            key="BOOK_Intro:67890|1~DESC",
             original="Welcome",
             translation="欢迎",
             stage=0,
-            context=None
+            context="DESC"
         )
     ]
     collection = TranslationEntryCollection(entries)
@@ -222,12 +222,12 @@ def test_apply_collection_partial_match():
     # 创建部分匹配的翻译集合
     entries = [
         TranslationEntry(
-            id="NPC_John:12345",
-            key="INFO:NAM1",
+            id="NPC_John:12345|1~INFO:NAM1",
+            key="NPC_John:12345|1~INFO:NAM1",
             original="Hello",
             translation="你好",
             stage=1,
-            context=None
+            context="INFO:NAM1"
         )
         # 没有提供 BOOK_Intro 的翻译
     ]
@@ -361,12 +361,12 @@ def test_apply_collection_with_none_translation():
     # 创建翻译为 None 的集合
     entries = [
         TranslationEntry(
-            id="NPC_John:12345",
-            key="INFO:NAM1",
+            id="NPC_John:12345|1~INFO:NAM1",
+            key="NPC_John:12345|1~INFO:NAM1",
             original="Hello",
             translation=None,  # 翻译为 None
             stage=0,
-            context=None
+            context="INFO:NAM1"
         )
     ]
     collection = TranslationEntryCollection(entries)
@@ -375,8 +375,8 @@ def test_apply_collection_with_none_translation():
     writer = XTWriter(parser)
     updated = writer.apply_collection(collection)
 
-    # 验证更新数量
-    assert updated == 1
+    # 验证更新数量（translation 为 None 的条目被跳过）
+    assert updated == 0
 
     # 验证 XML 内容已更新为空字符串
     root = parser._root

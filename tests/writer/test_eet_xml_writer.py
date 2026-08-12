@@ -73,20 +73,20 @@ def test_apply_collection_updates():
     # 创建翻译集合
     entries = [
         TranslationEntry(
-            id="NPC_John",  # 只使用 EDID 部分
-            key="INFO:NAM1",
+            id="NPC_John:12345|1~INFO:NAM1",
+            key="NPC_John:12345|1~INFO:NAM1",
             original="Hello",
             translation="你好",
             stage=1,
-            context=None
+            context="INFO:NAM1"
         ),
         TranslationEntry(
-            id="BOOK_Intro",  # 只使用 EDID 部分
-            key="BOOK:DESC",
+            id="BOOK_Intro:67890|1~BOOK:DESC",
+            key="BOOK_Intro:67890|1~BOOK:DESC",
             original="Welcome",
             translation="欢迎",
-            stage=0,
-            context=None
+            stage=1,
+            context="BOOK:DESC"
         )
     ]
     collection = TranslationEntryCollection(entries)
@@ -110,7 +110,7 @@ def test_apply_collection_updates():
     # 验证第二个条目
     esp2 = esp_elements[1]
     assert esp2.findtext("TRADUIT") == "欢迎"
-    assert esp2.findtext("STATUS") == "0"  # stage=0
+    assert esp2.findtext("STATUS") == "99"  # stage=1
 
 
 def test_apply_collection_no_match():

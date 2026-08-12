@@ -189,6 +189,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | 2026-08-05 | tool-prompt-layering Phase 4 调优 QA | ✅ 通过 — 354/354 零新回归（4预存失败），5/5验收达标，零安全问题，[报告](test-reports/tool-prompt-layering-qa-2026-08-05.md) |
 | 2026-08-05 | session-manager QA | ✅ 通过 — 426/428 通过（2预存），3/3 Story验收，零新问题，[报告](test-reports/session-manager-qa-2026-08-05.md) |
 | 2026-08-05 | task-monitor QA | ✅ 通过 — 449/451 通过（2预存），2/2 Story验收，23新测试，零 Blocker/Critical/Major，[报告](test-reports/task-monitor-qa-2026-08-05.md) |
+| 2026-08-13 | unit-test-staleness QA — 预存测试失败根因定位 | ⚠ 需修复 — 19 失败（非 2 预存）：17 数据模型漂移 + 2 护栏默认拒绝，全部测试侧，零真实代码缺陷，[报告](test-reports/unit-test-staleness-qa-2026-08-13.md) |
 
 ---
 
@@ -273,3 +274,4 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | 2026-05-25 | FR11 工具提示词分层加载 Phase 1-3 编码完成：tool_registry.py (+118: summary + build_tool_directory + build_tool_help)、tool_default.py (+16: get_tool_help 注册)、prompts.py (+48/-22: 分层 prompt 重构 + 删除旧指南)、test_tool_prompt_layering.py (28 测试)。工具段 ~14,000 → ~1,040 tokens (92.5% 节省)，356 全量测试零回归 | /bm-pilot → /bm-dev |
 | 2026-08-05 | FR11 tool-prompt-layering Story 01 (Phase 0 Token 精确测量) 完成：scripts/measure_tokens.py (测量脚本) + docs/temp/tool-prompt-layering-token-measurement.md (测量报告)。分层 system prompt ~3,365 tokens vs 全量 9,183 (节省 63.4%), 42 工具/7 namespace，发现 ToolRegistry 双重导入隐患 | /bm-pilot |
 | 2026-08-05 | FR11 tool-prompt-layering Story 05 (Phase 4 调优) 完成：工具目录瘦身(1,324→1,249, -5.7%) + 路由表关键词扩充(401→547) + ToolRegistry 导入统一(8文件, 消除双重导入) + 最终测量报告。System prompt ~3,435 tokens，161/161 测试零回归。Epic 全部完成 ✅ | /bm-pilot |
+| 2026-08-13 | 修复 19 项预存测试失败：6 个测试文件同步到演进后的数据模型（复合 id / key-context 对调 / DSD 字段 / SSEPluginWithContext / extract_strings_with_context），`pytest` 516/19 → 535/0 全绿。根因定位报告 + 增量归档 | /bm-pilot |
