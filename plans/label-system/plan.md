@@ -39,7 +39,7 @@
 
 **对应需求**: FR7.11.1, FR7.11.3
 **归属 Epic**: ui-workbench（追加 Story-23）
-**状态**: ✅ 已确认
+**状态**: ✔️ 已实现
 **验收标准**:
 - [ ] `_label_library: dict[str, dict]` 和 `_entry_labels: dict[str, set[str]]` 数据结构
 - [ ] `_LabelManagerDialog` 对话框（标签列表 + 添加/编辑/删除 + 颜色选择）
@@ -58,7 +58,7 @@
 
 **对应需求**: FR7.11.2, FR7.11.4
 **归属 Epic**: ui-workbench（追加 Story-24）
-**状态**: ✅ 已确认
+**状态**: ✔️ 已实现
 **验收标准**:
 - [ ] 右键点击行弹出标签列表菜单（勾选=已分配）
 - [ ] 菜单底部「管理标签…」「+ 新建标签…」
@@ -78,7 +78,7 @@
 
 **对应需求**: FR7.11.5, FR7.11.6
 **归属 Epic**: ui-workbench（追加 Story-25）
-**状态**: ✅ 已确认
+**状态**: ✔️ 已实现
 **验收标准**:
 - [ ] `_build_label_tags` 替代 `_build_mark_tags`，动态从 `_label_library` 构建
 - [ ] `_apply_all_filters` 中标记筛选改为标签筛选
@@ -97,7 +97,7 @@
 
 **对应需求**: FR5.10 标签维度对接
 **归属 Epic**: ai-translation（追加 Story-10）
-**状态**: ✅ 已确认
+**状态**: ✔️ 已实现
 **验收标准**:
 - [ ] `_scope_mark_filters` → `_scope_label_filters`
 - [ ] `_rebuild_scope_tags` 中标记维度从 `_step2._label_library` 读取

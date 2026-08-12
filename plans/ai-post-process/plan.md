@@ -30,7 +30,7 @@ AI 翻译完成后的五阶段质量保障流水线：检测 → 修复 → 润�
 **详细文档**: `plans/ai-post-process/stories/story-09-standalone-polish.md`
 
 **对应需求**: FR6.9（独立润色入口）
-**状态**: 🚧 待编码
+**状态**: ✔️ 已实现
 **归属**: ai-post-process（追加）
 
 #### 验收标准

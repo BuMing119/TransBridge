@@ -1,6 +1,6 @@
 # AI 自动翻译
 
-> **状态**: 🚧 扩展中（Story 1-9 已完成，Story-10~14 待编码）
+> **状态**: ✔️ 已实现（Story 1-14 全部完成）
 > **模块**: `src/transbridge/ai_translator/`
 
 ## 概述
@@ -20,11 +20,11 @@
 | Story-07 | 向量术语检索（FAISS + 两阶段召回） | ✔️ |
 | Story-08 | Embedding 客户端（本地模型 + API 双实现） | ✔️ |
 | Story-09 | 组合式作用域选择器（三维度标签 + 快捷预设 + 翻译/润色自适应） | ✔️ · [详细](stories/story-09-scope-selector.md) |
-| Story-10 | ActionRule模型+规则编辑器（规则映射表数据模型 + LLMConfig持久化 + _RuleEditorWidget） | 🚧 已确认 · [详细](stories/story-10-action-rule-editor.md) |
-| Story-11 | 三模式制+混合模式UI（混合RadioButton + 面板切换 + 执行顺序配置 + _on_start分流） | 🚧 已确认 · [详细](stories/story-11-mixed-mode-ui.md) |
-| Story-12 | MixedWorker+统一进度窗口（_MixedWorker统一调度 + 双进度条 + 失败隔离） | 🚧 已确认 · [详细](stories/story-12-mixed-worker.md) |
-| Story-13 | 合并报告（generate_mixed_report + 对话框混合模板） | 🚧 已确认 · [详细](stories/story-13-mixed-report.md) |
-| Story-14 | 冲突处理+集成收尾（后处理润色禁用 + 空作用域提示 + 全链路集成） | 🚧 已确认 · [详细](stories/story-14-integration-polish.md) |
+| Story-10 | ActionRule模型+规则编辑器（规则映射表数据模型 + LLMConfig持久化 + _RuleEditorWidget） | ✔️ 已实现 · [详细](stories/story-10-action-rule-editor.md) |
+| Story-11 | 三模式制+混合模式UI（混合RadioButton + 面板切换 + 执行顺序配置 + _on_start分流） | ✔️ 已实现 · [详细](stories/story-11-mixed-mode-ui.md) |
+| Story-12 | MixedWorker+统一进度窗口（_MixedWorker统一调度 + 双进度条 + 失败隔离） | ✔️ 已实现 · [详细](stories/story-12-mixed-worker.md) |
+| Story-13 | 合并报告（generate_mixed_report + 对话框混合模板） | ✔️ 已实现 · [详细](stories/story-13-mixed-report.md) |
+| Story-14 | 冲突处理+集成收尾（后处理润色禁用 + 空作用域提示 + 全链路集成） | ✔️ 已实现 · [详细](stories/story-14-integration-polish.md) |
 
 ## 关键文件
 
@@ -47,7 +47,7 @@
 ## Story-09: 组合式作用域选择器
 
 **对应需求**: FR5.10.1 ~ FR5.10.6  
-**状态**: ✅ 已确认  
+**状态**: ✔️ 已实现  
 **验收标准**:
 - [ ] 3 个 RadioButton 替换为组合式作用域面板（翻译状态 + 标记 + 分类三维度标签）
 - [ ] 快捷预设按钮（全部未翻译/已翻译条目/当前主表视图）

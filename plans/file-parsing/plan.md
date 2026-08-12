@@ -20,8 +20,8 @@
 | Story-07 | Strings 文件导入 | ✔️ |
 | Story-08 | FormID 转换工具 | ✔️ |
 | Story-09 | XT SST 二进制解析（SSU8 + SSU9） | ✔️ |
-| Story-10 | SST 迁移源集成（try_update_from_sst + apply_sst_entries + UI 入口） | ✔️ 已确认 |
-| Story-11 | SST 二进制序列化器（SST_Serializer + 译文写回） | 📋 草稿 |
+| Story-10 | SST 迁移源集成（try_update_from_sst + apply_sst_entries + UI 入口） | ✔️ 已实现 |
+| Story-11 | SST 二进制序列化器（SST_Serializer + 译文写回） | ✔️ 已实现 |
 
 **详细文档**: `plans/file-parsing/stories/story-09-sst-parser.md`
 

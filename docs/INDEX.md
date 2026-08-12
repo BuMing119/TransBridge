@@ -14,7 +14,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 
 | 文档 | 说明 | 状态 |
 |------|------|------|
-| [requirements.md](requirements.md) | 项目需求概述：功能需求、非功能需求、系统边界。FR7.13 Phase 1+2 已实现，FR9 Agent工具扩展已编码完成（14/14 Story, 60工具, 7 Agent），FR7.17 已方案，FR10 已实现（4/4 Story，330测试通过） | ✅ 已实现 |
+| [requirements.md](requirements.md) | 项目需求概述：功能需求、非功能需求、系统边界。FR7.13 Phase 1+2 已实现，FR9 Agent工具扩展已编码完成（26/26 Story, 60工具, 7 Agent），FR7.17 已实现，FR10 已实现（4/4 Story，330测试通过） | ✅ 已实现 |
 
 ---
 

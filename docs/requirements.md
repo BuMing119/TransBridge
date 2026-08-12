@@ -212,7 +212,7 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
   - **FR7.10.5 标记计数**: 底部状态栏 SHALL 显示各标记类型的计数（"★ N / ? N / ✓ N | 显示 M 条（共 K 条）"）。
   - **FR7.10.6 与 AI 翻译解耦**: `get_selected_entries()` SHALL 保持返回 ★ 标记条目（向后兼容）。AI 翻译窗口的作用域选择（翻译/润色哪些条目）由 AI 翻译面板自行处理，不耦合到标记系统。
 
-**FR7.13 Agent 框架全面升级** — *2026-05-10 | 状态: 已方案（Phase 1 已实现，Phase 2 待方案）| 优先级: P1*: 系统 SHALL 将 smart_assistant 从带工具的 LLM 对话面板升级为完整的翻译 Agent 框架，分两阶段实施。Phase 1（已实现，5 Story，QA 通过）覆盖 Skill 系统、文件上传、长期记忆、Reflexion 自纠错。Phase 2（待方案，分三批实施）覆盖多 Agent 协作、安全护栏、Graph 编排、可观测性、MCP Server 五个能力。
+**FR7.13 Agent 框架全面升级** — *2026-05-10 | 状态: 已实现（Phase 1 + Phase 2 全部完成）| 优先级: P1*: 系统 SHALL 将 smart_assistant 从带工具的 LLM 对话面板升级为完整的翻译 Agent 框架，分两阶段实施。Phase 1（已实现，5 Story，QA 通过）覆盖 Skill 系统、文件上传、长期记忆、Reflexion 自纠错。Phase 2（待方案，分三批实施）覆盖多 Agent 协作、安全护栏、Graph 编排、可观测性、MCP Server 五个能力。
 
   **Phase 1（已实现 — 2026-05-10 QA 通过）**:
 
@@ -328,7 +328,7 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
   - 窗口宽度 < 300px → 消息气泡和输入框采用弹性布局，不溢出
   - 自动模式下 admin 级工具触发 → 仍然弹窗确认，安全护栏不受自动模式影响
 
-**FR7.15 Smart Assistant QA 全面修复** — *2026-05-12 | 状态: 已方案 | 优先级: P0*: 系统 SHALL 基于 QA 审查报告（`docs/test-reports/smart-assistant.md`）修复 Smart Assistant 的全部 50 项问题（3 Blocker + 10 Critical + 16 Major + 21 Minor），覆盖 llm-chat / agent-upgrade / agent-tool-expansion 三个 Epic 的安全、功能、性能、代码质量四个维度。
+**FR7.15 Smart Assistant QA 全面修复** — *2026-05-12 | 状态: 已实现 | 优先级: P0*: 系统 SHALL 基于 QA 审查报告（`docs/test-reports/smart-assistant.md`）修复 Smart Assistant 的全部 50 项问题（3 Blocker + 10 Critical + 16 Major + 21 Minor），覆盖 llm-chat / agent-upgrade / agent-tool-expansion 三个 Epic 的安全、功能、性能、代码质量四个维度。
 
   - **FR7.15.1 安全护栏修复**: ReAct 模式 SHALL 通过 `execute_with_guardrails()` 执行工具，而非绕过中间件链直接调用 `spec.execute()`。ExecutionEngine SHALL 使用传入的 `middlewares` 参数构建护栏链，而非忽略用户配置。用户上传文件内容 SHALL NOT 直接拼接到系统提示词中。
   - **FR7.15.2 异步通知**: TaskManager SHALL 添加 `task_completed` / `task_failed` pyqtSignal，异步翻译/润色任务完成后自动通知 LLM 结果。
@@ -341,7 +341,7 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
   **关联需求**: FR7.12（代码分层）、FR7.13（Agent 框架）、FR7.14（UX 翻新）、FR9（工具扩展）
   **对应方案**: `plans/smart-assistant-qa-fix/plan.md`（7 Story，预估 22h）
 
-**FR7.16 对话 UI 文档流重构** — *2026-05-14 | 状态: 已方案 | 优先级: P1*: 系统 SHALL 将 Smart Assistant 对话界面从当前微信风格（左右气泡对齐、颜色区分角色）重构为现代 AI 网页文档流风格，提升对话沉浸感和专业度。
+**FR7.16 对话 UI 文档流重构** — *2026-05-14 | 状态: 已实现 | 优先级: P1*: 系统 SHALL 将 Smart Assistant 对话界面从当前微信风格（左右气泡对齐、颜色区分角色）重构为现代 AI 网页文档流风格，提升对话沉浸感和专业度。
 
   - **FR7.16.1 纯文档流布局**: 所有消息 SHALL 统一左对齐排列，取消左右气泡对齐模式。消息内容区 SHALL 居中显示，最大宽度约 720px，左右留白。消息间 SHALL 使用间距（非气泡边框）区分。
   - **FR7.16.2 文字头像**: 每条消息 SHALL 显示简洁文字头像（用户="U"、AI="A"），圆形背景，放置在消息内容左侧。头像 SHALL 替代当前气泡颜色作为主要角色区分方式。
@@ -362,7 +362,7 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
   **关联需求**: FR7.14（UX 翻新）、FR7.15（QA 修复）、Story-08-5（思考过程折叠显示）
   **对应 Epic**: llm-chat（追加到 Story-08-2/08-3）
 
-**FR7.17 ToolResult 结构化数据传递增强** — *2026-05-14 | 状态: 已方案 | 优先级: P0*
+**FR7.17 ToolResult 结构化数据传递增强** — *2026-05-14 | 状态: 已实现 | 优先级: P0*
 
 系统 SHALL 确保工具执行结果中的结构化数据（`ToolResult.data`）正确序列化到 LLM 观察消息中，使大模型能够基于工具返回的具体数据（而非仅人读摘要）进行后续推理。
 
@@ -722,7 +722,7 @@ Agent SHALL 可查询软件全局状态和执行 UI 导航。
 - FR7.11（自定义标签系统）— 标签管理工具依赖 FR7.11 的标签库模型
 - FR5.11（混合模式）— AI 翻译执行工具兼容混合模式
 
-#### FR9.11 工具补完 — 搜索维度扩展与 ParaTranz 项目选择 — *2026-05-15 | 状态: 已方案 | 优先级: P1*
+#### FR9.11 工具补完 — 搜索维度扩展与 ParaTranz 项目选择 — *2026-05-15 | 状态: 已实现 | 优先级: P1*
 
 对 FR9.2 和 FR9.5 已编码工具的缺陷补完与能力追加。
 
@@ -771,7 +771,7 @@ Agent SHALL 可查询软件全局状态和执行 UI 导航。
 
 **关联需求**: FR9.2.4（search_entries 原始定义）、FR9.5.2（get_project_info 的 project_id 可选语义）
 
-#### FR9.12 解析工具副作用补全 — 解析结果落地为 Slot 或追加条目 — *2026-05-18 | 状态: 已方案 | 优先级: P1*
+#### FR9.12 解析工具副作用补全 — 解析结果落地为 Slot 或追加条目 — *2026-05-18 | 状态: 已实现 | 优先级: P1*
 
 对 FR9.1 中已编码的 6 个 Parser/Import 工具的副作用补全。当前这些工具仅解析文件并返回 `entry_count`，解析结果直接丢弃，不产生任何副作用。
 
@@ -795,7 +795,7 @@ Agent SHALL 可查询软件全局状态和执行 UI 导航。
 
 ---
 
-#### FR10 Smart Assistant 模块超重文件拆分重构 — *2026-05-22 | 状态: 待方案 | 优先级: P0*
+#### FR10 Smart Assistant 模块超重文件拆分重构 — *2026-05-22 | 状态: 已实现 | 优先级: P0*
 
 对 `smart_assistant` 包中 8 个超重文件进行职责拆分，消除上帝类、模块级函数反模式和杂物抽屉，为后续工具提示词分层加载机制扫清基础。纯结构重构，零行为变更，零新依赖。
 
@@ -858,7 +858,7 @@ Agent SHALL 可查询软件全局状态和执行 UI 导航。
 
 ---
 
-#### FR11 工具提示词分层加载机制 — *2026-05-25 | 状态: 已方案 | 优先级: P0*
+#### FR11 工具提示词分层加载机制 — *2026-05-25 | 状态: 已实现 | 优先级: P0*
 
 将 system prompt 中 41 个工具的完整 Schema（~14,000 tokens）替换为精简目录 + 意图路由表 + `get_tool_help` 元工具 + 2 预加载工具的组合（~1,040 tokens），LLM 按需通过 `get_tool_help` 获取完整定义。节省 92.5% 工具段 token，同时保持工具选择准确率不降。
 
@@ -994,7 +994,7 @@ ChatWidget 保留职责：UI 渲染（bubble/card/thinking indicator/system mess
 
 ### FR14: 后台任务监控面板
 
-**状态**: 待方案
+**状态**: 已实现
 **优先级**: P1
 **提出者**: 用户反馈（BuMing，2026-08-05）
 
