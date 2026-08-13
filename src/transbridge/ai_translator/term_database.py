@@ -321,8 +321,9 @@ class TermDatabaseManager:
             from ..infra.embedding_client import create_embedding_client
 
             # 获取配置参数
-            threshold = getattr(self._config, 'semantic_similarity_threshold', 0.8)
+            threshold = getattr(self._config, 'semantic_similarity_threshold', 0.7)
             top_k = getattr(self._config, 'semantic_top_k', 5)
+            bm25_weight = getattr(self._config, 'bm25_weight', 0.5)
 
             # 创建 EmbeddingClient
             embedding_client = create_embedding_client(self._config)
@@ -338,6 +339,7 @@ class TermDatabaseManager:
                 embedding_client=embedding_client,
                 similarity_threshold=threshold,
                 top_k_per_entry=top_k,
+                bm25_weight=bm25_weight,
             )
 
             success = self._vector_index.build_index(self._merged_terms)
@@ -446,17 +448,17 @@ class TermDatabaseManager:
         semantic_terms: set[str] = set()
         if enable_semantic and self._vector_index and self._vector_index.available:
             # 找出没有子串命中的原文
-            unmatched_entries = [
-                e for e in entries
+            unmatched_originals = [
+                e.original for e in entries
                 if not any(
                     term.lower() in e.original.lower()
                     for term in substring_matched
                 )
             ]
 
-            # 对未命中原文做语义检索，补充高置信术语
-            for entry in unmatched_entries[:10]:  # 最多处理 10 条
-                results = self._vector_index.search(entry.original, top_k=3)
+            # 批量语义检索（BM25 混合，_bm25 缺失时退化为纯向量），补充高置信术语
+            batch_results = self._vector_index.search_hybrid_batch(unmatched_originals, top_k=3)
+            for results in batch_results.values():
                 for r in results:
                     if r.term not in matched:
                         matched[r.term] = r.translation

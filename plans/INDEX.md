@@ -25,8 +25,9 @@
 | session-controller | ✅ 全部完成 | 2 | [plan](session-controller/plan.md) |
 | session-manager | ✅ 全部完成 | 3 | [plan](session-manager/plan.md) |
 | task-monitor | ✔️ 已实现 | 2 | [plan](task-monitor/plan.md) |
+| fr5.12-embedding-optimization | ✔️ 已实现 | 3 | [plan](fr5.12-embedding-optimization/plan.md) · [s01](fr5.12-embedding-optimization/stories/story-01-batch-recall-threshold.md) [s02](fr5.12-embedding-optimization/stories/story-02-incremental-index-cache.md) [s03](fr5.12-embedding-optimization/stories/story-03-bm25-hybrid.md) |
 
 ## 统计
 
 - 已实现: 168 Story (全部 Epic 完成)
-- 进行中: 0 Epic
+- 进行中: 1 Epic (fr5.12-embedding-optimization, 3 Story 草稿)

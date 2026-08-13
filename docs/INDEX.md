@@ -34,6 +34,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [ADR-010](adr/010-infra-extraction.md) | 共享基础设施提取 — infra/ 包（Embedding三模式可选） | ✅ 已接受（更新: 2026-05-10） |
 | [ADR-011](adr/011-graph-orchestration-engine.md) | 自研有状态图编排引擎（StatefulDAGExecutor，零新依赖） | ✅ 已接受 |
 | [ADR-012](adr/012-safety-observability-mcp.md) | 安全护栏（中间件链）+ 可观测性（pyqtSignal遥测）+ MCP Server（stdio） | ✅ 已接受（更新: 2026-05-14） |
+| [ADR-013](adr/013-vector-retrieval-enhancement.md) | 向量语义检索增强（BM25 混合检索 + 增量索引 + 编码缓存） | ✅ 已接受 |
 
 > 详细架构文档见 [dev/ARCHITECTURE.md](dev/ARCHITECTURE.md)（模块依赖、数据流、全局状态管理、设计决策）。
 
@@ -116,6 +117,12 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | ai-translation | [修复: EmbeddingConfig属性访问与默认模型名](changelogs/ai-translation/fix/2026-05-11-001-修复EmbeddingConfig属性访问与默认模型名.md) | 2026-05-11 |
 | ai-translation | [修复: 配置窗口滚动区域与宽度调整](changelogs/ai-translation/fix/2026-05-11-002-配置窗口滚动区域与宽度调整.md) | 2026-05-11 |
 | ai-translation | [修复: embedding语义检索断连](changelogs/ai-translation/fix/2026-08-13-003-修复embedding语义检索断连.md) | 2026-08-13 |
+| ai-translation | [FR5.12: 需求分析语义检索优化](changelogs/ai-translation/fr5.12-embedding-optimization/2026-08-13-001-需求分析FR5.12语义检索优化.md) | 2026-08-13 |
+| ai-translation | [FR5.12: 架构决策 ADR-013](changelogs/ai-translation/fr5.12-embedding-optimization/2026-08-13-002-架构决策ADR013.md) | 2026-08-13 |
+| ai-translation | [FR5.12: 方案策划 3 Story](changelogs/ai-translation/fr5.12-embedding-optimization/2026-08-13-003-方案策划3Story.md) | 2026-08-13 |
+| ai-translation | [FR5.12: Story 展开 3 个实现指南](changelogs/ai-translation/fr5.12-embedding-optimization/2026-08-13-004-Story展开3个Story.md) | 2026-08-13 |
+| ai-translation | [FR5.12: 编码实现 3 Story](changelogs/ai-translation/fr5.12-embedding-optimization/2026-08-13-005-编码实现3Story.md) | 2026-08-13 |
+| ai-translation | [FR5.12: QA 审查与 Critical 修复](changelogs/ai-translation/fr5.12-embedding-optimization/2026-08-13-006-QA审查与Critical修复.md) | 2026-08-13 |
 | label-system | [S01: 标签库UI集成与右键菜单](changelogs/label-system/story-01-label-model/2026-05-08-005-标签库UI集成与右键菜单.md) | 2026-05-08 |
 | project-init | [001-007 文档体系初始化](changelogs/project-init/docs-bootstrap/) | 2026-05-06 |
 | project-init | [008-FR8 需求扩展](changelogs/project-init/docs-bootstrap/2026-05-08-001-FR8需求扩展翻译版本管理.md) | 2026-05-08 |
@@ -192,6 +199,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | 2026-08-05 | task-monitor QA | ✅ 通过 — 449/451 通过（2预存），2/2 Story验收，23新测试，零 Blocker/Critical/Major，[报告](test-reports/task-monitor-qa-2026-08-05.md) |
 | 2026-08-13 | unit-test-staleness QA — 预存测试失败根因定位 | ⚠ 需修复 — 19 失败（非 2 预存）：17 数据模型漂移 + 2 护栏默认拒绝，全部测试侧，零真实代码缺陷，[报告](test-reports/unit-test-staleness-qa-2026-08-13.md) |
 | 2026-08-13 | embedding 语义检索断连修复 QA | ✅ 通过 — 5 新测试 + 540/540 全绿，无 Blocker/Critical/Major，[报告](test-reports/ai-translation-qa-2026-08-13.md) |
+| 2026-08-13 | FR5.12 embedding 语义检索优化 QA | ✅ 通过 — 10 新测试 + 550/550 全绿，1 Critical（加载 _row_map 未重建）已修复，[报告](test-reports/fr5.12-embedding-optimization-qa-2026-08-13.md) |
 
 ---
 
@@ -278,3 +286,9 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | 2026-08-05 | FR11 tool-prompt-layering Story 05 (Phase 4 调优) 完成：工具目录瘦身(1,324→1,249, -5.7%) + 路由表关键词扩充(401→547) + ToolRegistry 导入统一(8文件, 消除双重导入) + 最终测量报告。System prompt ~3,435 tokens，161/161 测试零回归。Epic 全部完成 ✅ | /bm-pilot |
 | 2026-08-13 | 修复 19 项预存测试失败：6 个测试文件同步到演进后的数据模型（复合 id / key-context 对调 / DSD 字段 / SSEPluginWithContext / extract_strings_with_context），`pytest` 516/19 → 535/0 全绿。根因定位报告 + 增量归档 | /bm-pilot |
 | 2026-08-13 | 修复 embedding 语义检索断连（P0 回归）：term_database.py 过期导入路径对齐 infra 包 + create_embedding_client 工厂函数改读 config.embedding.* 子对象（原读旧平铺字段致语义召回静默失效），新增 5 用例回归保护，540/540 全绿 → changelog ai-translation/fix-003 | /bm-pilot |
+| 2026-08-13 | FR5.12 embedding 语义检索优化需求分析：基于 vector-term-retrieval 后续优化方向，三项增强（批量召回 / 增量索引+缓存 / BM25 混合检索），5 子需求 → changelog ai-translation/fr5.12-001 | /bm-pilot |
+| 2026-08-13 | FR5.12 架构决策 ADR-013：引入 rank_bm25 + 加权求和融合 + ID 映射软删除增量索引 + term_vector_index 层 LRU 缓存 → changelog ai-translation/fr5.12-002 | /bm-pilot |
+| 2026-08-13 | FR5.12 方案策划：3 Story（批量召回+阈值统一 / 增量索引+缓存 / BM25 混合检索），plan 已确认 → changelog ai-translation/fr5.12-003 | /bm-pilot |
+| 2026-08-13 | FR5.12 Story 展开：3 个详细实现指南（数据流/接口/边界/伪代码/测试）全部已确认 → changelog ai-translation/fr5.12-004 | /bm-pilot |
+| 2026-08-13 | FR5.12 编码实现：增量索引+软删除压缩 + LRU 缓存 + BM25 融合检索（rank_bm25），549/549 测试全绿 → changelog ai-translation/fr5.12-005 | /bm-pilot |
+| 2026-08-13 | FR5.12 QA 审查：1 Critical（加载 _row_map 未重建）修复 + 550/550 全绿，状态 → 已实现 → changelog ai-translation/fr5.12-006 | /bm-pilot |

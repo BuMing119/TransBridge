@@ -44,6 +44,7 @@ class LLMConfig:
     semantic_similarity_threshold: float = 0.7
     semantic_top_k: int = 5
     max_terms_per_batch: int = 50
+    bm25_weight: float = 0.5  # BM25 混合检索的向量权重 α（BM25 权重为 1-α）
 
     # Embedding（引用独立配置对象）
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
@@ -107,6 +108,7 @@ class LLMConfig:
         ("llm", "semantic_similarity_threshold", "semantic_similarity_threshold", "getfloat"),
         ("llm", "semantic_top_k", "semantic_top_k", "getint"),
         ("llm", "max_terms_per_batch", "max_terms_per_batch", "getint"),
+        ("llm", "bm25_weight", "bm25_weight", "getfloat"),
         # ── 后处理 ──
         ("llm", "enable_post_process", "enable_post_process", "getboolean"),
         ("llm", "pp_enable_consistency_check", "pp_enable_consistency_check", "getboolean"),
