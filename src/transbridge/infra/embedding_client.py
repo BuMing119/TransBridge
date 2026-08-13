@@ -240,8 +240,8 @@ def create_embedding_client(config: "LLMConfig") -> EmbeddingClient:
     工厂函数，按配置创建 EmbeddingClient 实例。
 
     优先级：
-    1. 如果 embedding_provider 为空或 "local"，使用本地模型
-    2. 否则使用指定的 API 服务
+    1. embedding.provider 为 "local" 时使用本地模型
+    2. 否则使用指定的 API 服务（openai / custom）
 
     Args:
         config: LLMConfig 实例
@@ -249,18 +249,21 @@ def create_embedding_client(config: "LLMConfig") -> EmbeddingClient:
     Returns:
         EmbeddingClient 实例（可能 available=False）
     """
-    provider = getattr(config, "embedding_provider", "local") or "local"
+    emb = config.embedding  # EmbeddingConfig 子对象
+    provider = (emb.provider or "local").lower()
 
     if provider == "local":
-        model_name = getattr(config, "embedding_local_model", "paraphrase-multilingual-MiniLM-L12-v2")
-        return LocalSentenceTransformerClient(model_name=model_name)
+        local_path = (emb.local_model_path or "").strip()
+        if local_path:
+            return LocalSentenceTransformerClient(model_name=local_path)
+        return LocalSentenceTransformerClient()
 
-    # API 服务（openai / anthropic / custom）
-    api_key = getattr(config, "embedding_api_key", "") or config.api_key
-    base_url = getattr(config, "embedding_base_url", "") or config.base_url
-    model = getattr(config, "embedding_model", "text-embedding-3-small")
+    # API 服务（openai / custom）
+    api_key = emb.api_key or config.api_key
+    base_url = emb.base_url or config.base_url
+    model = emb.model or "text-embedding-3-small"
 
-    if provider == "openai" or provider == "custom":
+    if provider in ("openai", "custom", "api"):
         return OpenAIEmbeddingClient(
             api_key=api_key,
             base_url=base_url,

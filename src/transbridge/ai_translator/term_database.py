@@ -318,7 +318,7 @@ class TermDatabaseManager:
         """初始化向量索引（延迟构建，失败时降级）。"""
         try:
             from .term_vector_index import TermVectorIndex
-            from .embedding_client import create_embedding_client
+            from ..infra.embedding_client import create_embedding_client
 
             # 获取配置参数
             threshold = getattr(self._config, 'semantic_similarity_threshold', 0.8)
