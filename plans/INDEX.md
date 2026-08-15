@@ -27,7 +27,14 @@
 | task-monitor | ✔️ 已实现 | 2 | [plan](task-monitor/plan.md) |
 | fr5.12-embedding-optimization | ✔️ 已实现 | 3 | [plan](fr5.12-embedding-optimization/plan.md) · [s01](fr5.12-embedding-optimization/stories/story-01-batch-recall-threshold.md) [s02](fr5.12-embedding-optimization/stories/story-02-incremental-index-cache.md) [s03](fr5.12-embedding-optimization/stories/story-03-bm25-hybrid.md) |
 
+## 进行中 (🔄)
+
+| Epic | 状态 | Stories | 文档 |
+|------|------|---------|------|
+| translation-memory | ✅ 全部完成 (S01-10) | 10 | [plan](translation-memory/plan.md) · [s01](translation-memory/stories/story-01-data-model.md) [s02](translation-memory/stories/story-02-query-fallback.md) [s03](translation-memory/stories/story-03-save-from-collection.md) [s04](translation-memory/stories/story-04-query-apply.md) [s05](translation-memory/stories/story-05-gui.md) · [s06](translation-memory/stories/story-06-model-refactor.md) [s07](translation-memory/stories/story-07-locate-load-refactor.md) [s08](translation-memory/stories/story-08-multi-dict-query.md) [s09](translation-memory/stories/story-09-scope-share.md) [s10](translation-memory/stories/story-10-gui-arbitration.md) |
+
 ## 统计
 
 - 已实现: 168 Story (全部 Epic 完成)
 - 进行中: 1 Epic (fr5.12-embedding-optimization, 3 Story 草稿)
+- 新完成: 1 Epic (translation-memory, S01-05 全部完成)

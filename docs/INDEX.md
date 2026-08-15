@@ -14,7 +14,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 
 | 文档 | 说明 | 状态 |
 |------|------|------|
-| [requirements.md](requirements.md) | 项目需求概述：功能需求、非功能需求、系统边界。FR7.13 Phase 1+2 已实现，FR9 Agent工具扩展已编码完成（26/26 Story, 60工具, 7 Agent），FR7.17 已实现，FR10 已实现（4/4 Story，330测试通过） | ✅ 已实现 |
+| [requirements.md](requirements.md) | 项目需求概述：功能需求、非功能需求、系统边界。FR7.13 Phase 1+2 已实现，FR9 Agent工具扩展已编码完成（26/26 Story, 60工具, 7 Agent），FR7.17 已实现，FR10 已实现（4/4 Story，330测试通过），FR15 FOMOD 翻译 + 翻译记忆系统（词典系统已方案） | ✅ 已实现 |
 
 ---
 
@@ -35,6 +35,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [ADR-011](adr/011-graph-orchestration-engine.md) | 自研有状态图编排引擎（StatefulDAGExecutor，零新依赖） | ✅ 已接受 |
 | [ADR-012](adr/012-safety-observability-mcp.md) | 安全护栏（中间件链）+ 可观测性（pyqtSignal遥测）+ MCP Server（stdio） | ✅ 已接受（更新: 2026-05-14） |
 | [ADR-013](adr/013-vector-retrieval-enhancement.md) | 向量语义检索增强（BM25 混合检索 + 增量索引 + 编码缓存） | ✅ 已接受 |
+| [ADR-014](adr/014-fomod-translation-memory.md) | FOMOD 翻译流水线 + 通用翻译记忆（键+文本分层匹配 / 独立双包 / py7zr+rarfile 自包含 / 精确匹配） | ✅ 已接受（更新: 2026-08-14） |
 
 > 详细架构文档见 [dev/ARCHITECTURE.md](dev/ARCHITECTURE.md)（模块依赖、数据流、全局状态管理、设计决策）。
 
@@ -64,6 +65,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [session-controller](../plans/session-controller/plan.md) | ✅ 全部完成（2/2） | 2 |
 | [session-manager](../plans/session-manager/plan.md) | ✅ 全部完成（3/3） | 3 |
 | [task-monitor](../plans/task-monitor/plan.md) | ✔️ 已实现 (2/2 Story + QA 通过) | 2 |
+| [translation-memory](../plans/translation-memory/plan.md) | ✅ 全部完成 (S01-10，含词典粒度重构) | 10 |
 
 ---
 
@@ -200,6 +202,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | 2026-08-13 | unit-test-staleness QA — 预存测试失败根因定位 | ⚠ 需修复 — 19 失败（非 2 预存）：17 数据模型漂移 + 2 护栏默认拒绝，全部测试侧，零真实代码缺陷，[报告](test-reports/unit-test-staleness-qa-2026-08-13.md) |
 | 2026-08-13 | embedding 语义检索断连修复 QA | ✅ 通过 — 5 新测试 + 540/540 全绿，无 Blocker/Critical/Major，[报告](test-reports/ai-translation-qa-2026-08-13.md) |
 | 2026-08-13 | FR5.12 embedding 语义检索优化 QA | ✅ 通过 — 10 新测试 + 550/550 全绿，1 Critical（加载 _row_map 未重建）已修复，[报告](test-reports/fr5.12-embedding-optimization-qa-2026-08-13.md) |
+| 2026-08-14 | translation-memory 词典粒度重构 QA | ✅ 通过 — 27/27 翻译记忆测试全绿（零 Blocker/Critical/Major），全量测试的 28 failed+50 errors 为沙箱 tmp_path 预存问题（非本次引入），[报告](test-reports/translation-memory-granularity-refactor-qa-2026-08-14.md) |
 
 ---
 
@@ -292,3 +295,5 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | 2026-08-13 | FR5.12 Story 展开：3 个详细实现指南（数据流/接口/边界/伪代码/测试）全部已确认 → changelog ai-translation/fr5.12-004 | /bm-pilot |
 | 2026-08-13 | FR5.12 编码实现：增量索引+软删除压缩 + LRU 缓存 + BM25 融合检索（rank_bm25），549/549 测试全绿 → changelog ai-translation/fr5.12-005 | /bm-pilot |
 | 2026-08-13 | FR5.12 QA 审查：1 Critical（加载 _row_map 未重建）修复 + 550/550 全绿，状态 → 已实现 → changelog ai-translation/fr5.12-006 | /bm-pilot |
+| 2026-08-14 | FR15 翻译记忆（词典）系统：需求分析 FR15 + ADR-014 + plan + 5 Story + 技术议会 2 轮评审（5 专家）+ backend 实现（model.py/manager.py 单表权威对象+双索引，17 测试通过）。scope 收敛为 project/global 两档，game 降为 global 的 scope_id 标签 → changelog translation-memory/story-01-001 | /bm-pilot → /bm-council → /bm-dev |
+| 2026-08-14 | FR15.1.6 词典粒度重构：一文件一 mod（.tbdict）+ scope 降为单值标签 + 多词典全查兜底 + 冲突可视化仲裁 + 分享导入 + 旧数据弃置。技术议会查漏（13 项问题清单）+ 逐条确认 13 项决策 + ADR-014 更新节 + S06-10 Story 展开 + 编码（model/manager/panel/dialog/conflict_dialog）+ 27 测试通过 → changelog translation-memory/story-02-005 | /bm-pilot → /bm-council → /bm-arch → /bm-plan → /bm-story-batch → /bm-dev → /bm-chronicle |

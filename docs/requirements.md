@@ -1039,6 +1039,83 @@ ChatWidget 保留职责：UI 渲染（bubble/card/thinking indicator/system mess
 
 ---
 
+### FR15: FOMOD 安装包翻译与通用翻译记忆系统
+
+**状态**: 待方案
+**优先级**: P1
+**提出者**: 用户需求（BuMing，2026-08-14）
+
+**FR15 概述**: 系统 SHALL 新增「FOMOD 安装包翻译」能力，并配套一个独立的通用「翻译记忆（Translation Memory, TM）」系统，解决 mod 更新时译者需重复刷写全部 ESP 词条、重翻 fomod 界面文本、删除侵权文件这一反复劳动。核心价值：自动复用历史翻译，仅对增量（新增/原文变化的条目）做处理，最终自动组装并打包出中文版 FOMOD 安装包。
+
+#### FR15.1 通用翻译记忆系统（Translation Memory）
+
+系统 SHALL 新建独立的翻译记忆模块（区别于 FR5.2 术语库的专有名词粒度，翻译记忆存储完整的「原文→译文」整句/整段映射），供 FOMOD 翻译与后续批量翻译复用。
+
+- **FR15.1.1 翻译记忆数据模型**: 翻译记忆 SHALL 采用「一文件一 mod + 单表权威对象 + 双索引」模型——(a) 词典以**模组文件**（.esp/.esl/.esm，未来 .txt）为粒度，一本词典 = 一个 mod 的词条集合，存储为一个 `.tbdict` 文件（内容为 JSON）；(b) 每本词典带单值 `scope` 属性（project 项目专属 / global 全局共享）标记其词条可使用范围，scope 用词条的使用范围属性而非切割维度，支持通过 GUI 切换；(c) 每本词典内部单表权威对象 `entries`（译文只存一份）+ 键索引 `key_index`（`EditorID:FormID|index~context` → 对象 + 键命中数）+ 文本索引 `text_index`（规范化原文 → 对象 + 文本命中数），命中计数落在索引而非对象；(d) 词典条目额外持久化 `source_mod`（来源 mod 名，从打开文件路径推断）与 `form_id_with_plugin`（完整 FormID 含插件名，用于精细去重/诊断/未来 txt 回溯）；(e) 词条主键由 `sha1(mod名 | 原文)` 派生，**不含 scope**，保证词条身份与词典位置解耦、跨 scope 切换不换 ID；(f) 匹配键取值来源为 `TranslationEntry.id`，存储层按不透明字符串处理。更新语义：同名 mod 只存一本词典，重复写入时「新增追加、已存在原文覆盖新译文、从不删除」，支持叠加合并。
+- **FR15.1.2 来源一：从已译 ESP 抽取**: 系统 SHALL 支持从旧版中文 FOMOD 中已翻译的插件文件（ESP/ESM/ESL）抽取「原文→译文」映射写入翻译记忆。抽取复用现有 `PluginParser` 解析能力。
+- **FR15.1.3 来源二：XT/EET XML 词典导入**: 系统 SHALL 支持读入 XTranslator/EET 导出的 XML 翻译词典文件，将其中已翻译条目写入翻译记忆，复用现有 `XT_XmlParser`/`EET_XmlParser`。
+- **FR15.1.4 来源三：ParaTranz 项目拉取**: 系统 SHALL 支持从 ParaTranz 项目拉取已翻译词条写入翻译记忆，复用现有 `ParaTranzDownloader`。
+- **FR15.1.5 来源叠加与冲突**: 多来源翻译记忆 SHALL 支持叠加合并；同一原文存在多译文时 SHALL 按来源优先级（可配置）或保留最早记录，冲突记录在报告中列出。
+
+- **FR15.1.6 词典粒度重构（多词典组合查询）**:
+  - **FR15.1.6.1 一文件一 mod**: 词典以 mod 文件为粒度，一个 `.tbdict` 文件对应一个 mod（严格一一对应，不允许多 mod 混装）。词典文件名 = mod 名（去扩展名），不含 scope；scope 存于文件内部字段。
+  - **FR15.1.6.2 多词典查询（全查兜底）**: 翻译某 mod 时，系统 SHALL 组合多个词典做匹配：同名 mod 词典最优先，其次其余 project 词典，最后其余 global 词典（全量兜底，跨 mod 复用自动发生）。
+  - **FR15.1.6.3 冲突仲裁**: 多词典命中同一原文且译文不同时，系统 SHALL 收集冲突候选并做仲裁（按优先级 rule），且提供**可视化仲裁界面**让用户逐条采纳/拒绝，而非静默选一。
+  - **FR15.1.6.4 scope 修改**: 系统 SHALL 提供 GUI 入口让用户修改词典 scope（global ↔ project 切换）。
+  - **FR15.1.6.5 分享与导入**: 词典统一存放于 `data/translation_memory/` 目录；提供「导入词典」（选 `.tbdict` 复制进目录，同名提示覆盖/跳过）、「导出」（选目标位置复制出去）、「打开词典目录」三个 GUI 能力，支撑词典共享使用。
+  - **FR15.1.6.6 旧数据弃置**: 旧 `global__skyrim_se.json` 等混装多 mod 的旧格式词典数据 SHALL 弃置，不迁移（重构从零开始）。
+
+#### FR15.2 FOMOD 归档解包与打包
+
+- **FR15.2.1 解包**: 系统 SHALL 支持解包 FOMOD 源文件（`.7z`/`.zip`/`.rar`），通过 Python 库自包含实现——7z 用 `py7zr`、zip 用标准库 `zipfile`、rar 用 `rarfile` + 捆绑的 `unrar.exe`（随应用分发，仅用于解压），不依赖用户环境的外部解压工具。解包失败（归档损坏 / unrar 后端缺失）SHALL 报告明确错误。
+- **FR15.2.2 打包**: 系统 SHALL 支持将组装后的目录重新打包为 `.7z` 中文 FOMOD 成品。根目录是否包裹由组装目录结构决定，不做强制假设。
+- **FR15.2.3 路径归一化**: 新旧版根目录层级可能不一致（如旧版多一层根目录包裹），系统 SHALL 按相对路径（相对于 fomod 元数据目录/插件目录）对齐比较，消除包裹层级差异。
+
+#### FR15.3 新旧版本差异分析（Diff）
+
+- **FR15.3.1 插件清单 diff**: 系统 SHALL 对比新旧版插件文件清单（按相对路径），识别三种状态：新增（new）、删除（removed）、内容变化（changed，按文件内容哈希判断）。
+- **FR15.3.2 fomod 元数据 diff**: 系统 SHALL 对比 `ModuleConfig.xml`/`info.xml` 等 fomod 元数据，识别模块名/步骤/组/插件/描述文本的新增与修改。
+
+#### FR15.4 ESP 词条迁移与翻译记忆套用
+
+- **FR15.4.1 键匹配迁移**: 系统 SHALL 对每个新插件按 TranslationEntry 匹配键（`EditorID:FormID|index~context`）与旧版同插件译文做精确匹配；键命中且原文未变的条目直接继承旧译文（stage=已翻译）。
+- **FR15.4.2 原文变化检测**: 键命中但原文被 mod 修改的条目 SHALL 标记为「需复核」（不直接套用旧译文），在结果中单独列出供译者确认。
+- **FR15.4.3 翻译记忆兜底**: 键未命中的新增条目 SHALL 通过翻译记忆（原文文本匹配）套用译文；仍无法套用的条目保留待翻译（stage=未翻译），可选走 AI 翻译。
+- **FR15.4.4 写回复用**: 迁移后的译文 SHALL 通过现有 `PluginWriter` 写回插件文件，复用 inline/localised 两种模式与 ESL-flagged 处理。
+
+#### FR15.5 fomod 界面文本翻译
+
+- **FR15.5.1 键匹配复用**: 新版 `ModuleConfig.xml` 中与旧版同名的 moduleName/installStep/group/plugin/description 文本 SHALL 直接复用旧版已译文本。
+- **FR15.5.2 AI 翻译新增**: 新增或文本变化且未被旧译覆盖的界面文本 SHALL 通过现有 LLM 能力自动翻译（目标语言中文）。fomod XML SHALL 正确处理 UTF-16LE 编码与 BOM。
+
+#### FR15.6 输出组装与侵权规避
+
+- **FR15.6.1 剔除侵权资源**: 输出组装时 SHALL 剔除 mod 自带的非翻译资源文件——BSA 归档、贴图（dds/png/jpg）、模型（nif）、声音（wav/fuz/xwm）等，避免分发侵权素材。
+- **FR15.6.2 保留可翻译脚本**: `.pex`/`.psc` 脚本文件 SHALL 保留（部分 patch 的脚本内置可翻译文本或依赖脚本运行）。
+- **FR15.6.3 保留 fomod 必需元数据**: `info.xml`/`ModuleConfig.xml` 及 fomod 界面图片 SHALL 保留（安装界面运行所需）。
+- **FR15.6.4 保留/剔除规则可配置**: 保留/剔除的文件扩展名规则 SHALL 通过配置清单定义，不同 mod 可复用不同规则。
+
+#### FR15.7 GUI 面板
+
+- **FR15.7.1 FOMOD 翻译面板**: 系统 SHALL 在主窗口新增 FOMOD 翻译入口/面板，提供：选新 mod 源文件、选旧 chs 成品（可选）、配置词典来源、查看 diff 结果、执行迁移与翻译、预览输出并触发打包。
+- **FR15.7.2 后台执行**: 解包/diff/迁移/打包等耗时操作 SHALL 在后台线程执行（复用 QThread + 信号总线模式），不阻塞 UI，提供进度反馈。
+- **FR15.7.3 结果摘要**: 完成后 SHALL 展示迁移统计（精确继承条数/原文变化标记数/翻译记忆命中数/待翻译数）与 diff 摘要。
+
+#### FR15.8 异常场景
+
+- 归档损坏或 unrar 后端缺失（rar 解压）→ 报告明确错误，不崩溃
+- 新旧版根目录层级不一致 → 相对路径归一化后对齐
+- 插件为 ESL-flagged ESP → 复用现有解析器的 ESL 处理
+- EditorID/FormID 因 mod 大改漂移导致键匹配失败 → 降级到翻译记忆文本匹配，仍失败则标待翻译
+- ModuleConfig.xml 为 UTF-16 编码 → 正确处理 BOM/编码
+- 新旧版 fomod 图片文件名大小写不一致（`.jpg` vs `.JPG`）→ 按不区分大小写对齐复用
+- 翻译记忆为空且无旧版 → 全量走新增流程，提示译者
+
+**关联需求**: FR1（插件解析）、FR2.5（Stage 状态）、FR4（文件写回）、FR5.2（术语库，互补）、FR5.4（LLM 客户端）、FR3.3（ParaTranz 下载）
+**对应方案**: `plans/fomod-translation/plan.md`（待创建）
+
+---
+
 ## 6. 需求变更历史
 
 | 日期 | 变更内容 | 来源 |
@@ -1070,3 +1147,5 @@ ChatWidget 保留职责：UI 渲染（bubble/card/thinking indicator/system mess
 | 2026-08-05 | 新增 FR12 SessionController — 智能助手会话控制流提取，将分散在 ChatWidget/Orchestrator/ToolHandler 的回调链转为显式状态机 | /bm-analyze |
 | 2026-08-05 | 新增 FR13 Session 管理系统 — 多会话支持（创建/切换/删除会话 + JSON 持久化 + 左侧会话列表 UI），类似 Codex CLI | /bm-analyze |
 | 2026-08-05 | 新增 FR14 后台任务监控面板 — 在智能助手面板中增加任务监控区，实时展示后台任务状态/进度/操作按钮 | /bm-analyze |
+| 2026-08-14 | 新增 FR15 FOMOD 安装包翻译 + 通用翻译记忆系统 — 解包/diff/词条迁移/翻译记忆复用/fomod文本翻译/剔除侵权资源/重打包 + GUI 面板 | /bm-analyze (via /bm-pilot) |
+| 2026-08-14 | FR15.1 词典粒度重构：从「(scope,scope_id) 扁平大库」改为「一文件一 mod（.tbdict）+ scope 降为单值属性 + 多词典全查兜底 + 冲突可视化仲裁 + 分享/导入 + 旧数据弃置」 | /bm-analyze (via /bm-pilot) |
