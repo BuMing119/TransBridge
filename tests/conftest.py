@@ -332,3 +332,21 @@ def mock_app_ctx():
 def mock_app_ctx_with_collection():
     """Fixture: MockAppContext pre-loaded with a 10-entry collection."""
     return MockAppContext(make_test_collection(10))
+
+
+@pytest.fixture
+def tm_tmp_dir() -> "Path":
+    """workspace 内临时目录（绕开 sandbox 对外部 %TEMP% 的写限制）。
+
+    pytest 默认 tmp_path 落在 %TEMP%（workspace 外，sandbox 拒绝写入），
+    改用 tests/ 下的固定临时目录，用后清理。
+    """
+    import shutil
+    from pathlib import Path as _Path
+
+    base = _Path(__file__).parent / "_tm_tmp"
+    base.mkdir(parents=True, exist_ok=True)
+    d = base / f"case_{id(object())}"
+    d.mkdir(parents=True, exist_ok=True)
+    yield d
+    shutil.rmtree(d, ignore_errors=True)

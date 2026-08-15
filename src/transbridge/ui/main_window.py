@@ -21,6 +21,28 @@ from src.transbridge.converter.translation_entry_collection import TranslationEn
 from src.transbridge.persistence import WorkspaceState, ProjectHandle, VariantStore, PERSISTENCE_ROOT, workspace_path
 
 
+def _apply_dictionary_to_collection(collection):
+    """解析后自动套用词典，将已有译文填入未翻译条目。
+
+    自动套用走「全词典兜底」（mod_file_id 为空，跳过同名 mod，其余 project/global 全查）。
+    只填空译文（不覆盖已有译文）；词典为空或加载失败时静默返回 0，不阻断解析。
+
+    :return: 命中填充的条目数（用于累加到 migrate_count）
+    """
+    try:
+        from src.transbridge.translation_memory import TranslationMemoryManager
+        from src.transbridge.translation_memory.manager import QueryContext
+
+        manager = TranslationMemoryManager()
+        manager.load()
+
+        context = QueryContext(mod_file_id="")
+        result = manager.apply_to_collection(collection, context=context)
+        return result.applied
+    except Exception:  # noqa: BLE001 - 词典不可用时不影响解析
+        return 0
+
+
 class _ApiStatusIndicator(QLabel):
     """状态栏 API 状态指示器：绿点（正常）/ 转圈动画（请求中）/ 红点（异常）。"""
 
@@ -293,6 +315,9 @@ class MainWindow(QMainWindow):
         self._smart_assistant_act.setCheckable(True)
         self._smart_assistant_act.setShortcut("Ctrl+Shift+I")
         self._smart_assistant_act.triggered.connect(self._toggle_smart_assistant)
+        tools_menu.addSeparator()
+        self._dictionary_act = tools_menu.addAction("📖 翻译词典")
+        self._dictionary_act.triggered.connect(self._open_dictionary_panel)
 
         # ═══════════════════════════════════════════════════════════
         # 视图菜单
@@ -495,6 +520,8 @@ class MainWindow(QMainWindow):
                         migrate_count += collection.update_from_strings_lookup(strings_lookup)
                 except Exception:
                     pass
+            # 自动套用词典（全局词典兜底，填空译文）
+            migrate_count += _apply_dictionary_to_collection(collection)
             return collection, migrate_count, parser.get_plugin(), parser.get_strings_lookup()
 
         def _on_done(result):
@@ -549,7 +576,9 @@ class MainWindow(QMainWindow):
                 parser = PluginParser()
                 entries = parser.parse_plugin(Path(esp_path), skip_empty=cfg.skip_empty)
                 collection = TranslationEntryCollection(entries)
-                return collection, 0, parser.get_plugin(), parser.get_strings_lookup()
+                # 自动套用词典（全局词典兜底，填空译文）
+                dict_hits = _apply_dictionary_to_collection(collection)
+                return collection, dict_hits, parser.get_plugin(), parser.get_strings_lookup()
 
             def _on_one_done(result):
                 collection, migrate_count, plugin, strings_lookup = result
@@ -900,6 +929,11 @@ class MainWindow(QMainWindow):
 
     def _open_ai_translator(self):
         self._workbench.open_tool("ai_translator")
+
+    def _open_dictionary_panel(self):
+        from src.transbridge.ui.tools.dictionary_panel import DictionaryPanel
+        panel = DictionaryPanel(self._ctx, self)
+        panel.exec()
 
     # ── Smart Assistant ───────────────────────────────────────
 
