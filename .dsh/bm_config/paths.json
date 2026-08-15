@@ -1,0 +1,12 @@
+{
+  "_schema": "bm-paths config v2",
+
+  "docs_dir": "docs",
+  "plans_dir": "plans",
+  "changelogs_dir": "docs/changelogs",
+  "adr_dir": "docs/adr",
+  "test_reports_dir": "docs/test-reports",
+  "council_reviews_dir": "docs/council-reviews",
+  "tests_dir": "tests",
+  "src_dir": "src"
+}
