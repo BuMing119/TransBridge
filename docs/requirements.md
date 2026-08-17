@@ -1067,16 +1067,22 @@ ChatWidget 保留职责：UI 渲染（bubble/card/thinking indicator/system mess
 
 #### FR15.2 FOMOD 归档解包与打包
 
+> **已由 FR16 通用工具实现**（`fileops/archive.py`）。FOMOD 流水线直接复用 `extract()`/`pack()`，不再重复实现。
+
 - **FR15.2.1 解包**: 系统 SHALL 支持解包 FOMOD 源文件（`.7z`/`.zip`/`.rar`），通过 Python 库自包含实现——7z 用 `py7zr`、zip 用标准库 `zipfile`、rar 用 `rarfile` + 捆绑的 `unrar.exe`（随应用分发，仅用于解压），不依赖用户环境的外部解压工具。解包失败（归档损坏 / unrar 后端缺失）SHALL 报告明确错误。
 - **FR15.2.2 打包**: 系统 SHALL 支持将组装后的目录重新打包为 `.7z` 中文 FOMOD 成品。根目录是否包裹由组装目录结构决定，不做强制假设。
 - **FR15.2.3 路径归一化**: 新旧版根目录层级可能不一致（如旧版多一层根目录包裹），系统 SHALL 按相对路径（相对于 fomod 元数据目录/插件目录）对齐比较，消除包裹层级差异。
 
 #### FR15.3 新旧版本差异分析（Diff）
 
+> **已由 FR16 通用工具实现**（`fileops/differ.py`）。FOMOD 流水线复用 `diff_directories()`。fomod 元数据文本级 diff 仍属 FOMOD 特有（FR15.5 的 fomod_xml.py）。
+
 - **FR15.3.1 插件清单 diff**: 系统 SHALL 对比新旧版插件文件清单（按相对路径），识别三种状态：新增（new）、删除（removed）、内容变化（changed，按文件内容哈希判断）。
 - **FR15.3.2 fomod 元数据 diff**: 系统 SHALL 对比 `ModuleConfig.xml`/`info.xml` 等 fomod 元数据，识别模块名/步骤/组/插件/描述文本的新增与修改。
 
 #### FR15.4 ESP 词条迁移与翻译记忆套用
+
+> **部分已由 FR16 实现**：键对齐迁移（`migrator/key_migrator.py`）、词典套用（`apply_dictionary` Agent 工具）。FOMOD 特有部分为「键对齐→词典兜底→AI 翻译」的序贯编排（在 pipeline.py 中）。
 
 - **FR15.4.1 键匹配迁移**: 系统 SHALL 对每个新插件按 TranslationEntry 匹配键（`EditorID:FormID|index~context`）与旧版同插件译文做精确匹配；键命中且原文未变的条目直接继承旧译文（stage=已翻译）。
 - **FR15.4.2 原文变化检测**: 键命中但原文被 mod 修改的条目 SHALL 标记为「需复核」（不直接套用旧译文），在结果中单独列出供译者确认。
@@ -1089,6 +1095,8 @@ ChatWidget 保留职责：UI 渲染（bubble/card/thinking indicator/system mess
 - **FR15.5.2 AI 翻译新增**: 新增或文本变化且未被旧译覆盖的界面文本 SHALL 通过现有 LLM 能力自动翻译（目标语言中文）。fomod XML SHALL 正确处理 UTF-16LE 编码与 BOM。
 
 #### FR15.6 输出组装与侵权规避
+
+> **过滤规则已由 FR16 实现**（`fileops/filter_rules.py`）。FOMOD 特有部分为「组装编排」（目录复制 + 打包，在 builder.py/pipeline.py 中）。
 
 - **FR15.6.1 剔除侵权资源**: 输出组装时 SHALL 剔除 mod 自带的非翻译资源文件——BSA 归档、贴图（dds/png/jpg）、模型（nif）、声音（wav/fuz/xwm）等，避免分发侵权素材。
 - **FR15.6.2 保留可翻译脚本**: `.pex`/`.psc` 脚本文件 SHALL 保留（部分 patch 的脚本内置可翻译文本或依赖脚本运行）。
@@ -1111,8 +1119,79 @@ ChatWidget 保留职责：UI 渲染（bubble/card/thinking indicator/system mess
 - 新旧版 fomod 图片文件名大小写不一致（`.jpg` vs `.JPG`）→ 按不区分大小写对齐复用
 - 翻译记忆为空且无旧版 → 全量走新增流程，提示译者
 
+
+#### FR15.9 FOMOD 使用端可配置性 — *2026-08-14 | 状态: 待方案 | 优先级: P1*
+
+系统 SHALL 为 FOMOD 翻译提供**面向产出的使用端配置**，用户仅需配置「成品相关内容」，翻译机制（翻译来源优先级、键对齐/词典兜底匹配、术语库、名词提取、断点续传）SHALL 保持黑盒，不暴露为可选项。
+
+- **FR15.9.1 过滤规则预设套**: 系统 SHALL 提供多套过滤预设（如「常规 mod」剔除 BSA/贴图/模型/声音、「含脚本 mod」额外保留 .pex/.psc），用户选择预设套，并可在预设基础上自定义增删扩展名（白名单/黑名单）。
+- **FR15.9.2 打包格式**: 用户 SHALL 可选输出打包格式（zip / 7z）。
+- **FR15.9.3 目标语言**: 用户 SHALL 可选目标语言（默认中文）。
+- **FR15.9.4 输出路径**: 用户 SHALL 指定成品安装包输出路径。
+- **FR15.9.5 AI 补翻译开关**: 用户 SHALL 可选择是否启用 AI 翻译新增/未命中词条（关闭时仅做键对齐 + 词典兜底，剩余条目保留待翻译）。
+- **FR15.9.6 旧版归档选择**: 用户 SHALL 可选择旧版中文成品（可选，无则跳过键对齐）。
+
+**范围外（黑盒，不暴露）**: 翻译来源优先级、键对齐/词典兜底的具体匹配机制、术语库/名词提取开关、并发数、断点续传参数。
+
+**关联需求**: FR15.6（过滤规则）、FR15.7（GUI 面板）、FR16.3（FilterRules 通用能力）
+
 **关联需求**: FR1（插件解析）、FR2.5（Stage 状态）、FR4（文件写回）、FR5.2（术语库，互补）、FR5.4（LLM 客户端）、FR3.3（ParaTranz 下载）
-**对应方案**: `plans/fomod-translation/plan.md`（待创建）
+**对应方案**: `plans/fomod-translation/plan.md`
+
+---
+
+### FR16: 通用文件与词条工具（Agent 可调用）
+
+**状态**: 待方案
+**优先级**: P1
+**提出者**: 用户需求（BuMing，2026-08-14）
+
+**FR16 概述**: 系统 SHALL 提供一组通用文件/词条处理工具，既作为纯 Python 能力沉淀到 `infra/` 或独立包，又注册为 AI 助手（Agent）可调用的工具，供 FOMOD 翻译流水线（FR15）及未来批量翻译场景复用。这些工具解决 FR15 流水线中的通用文件操作（解包/对比/过滤）与词条复用（键对齐迁移/词典套用）能力，避免这些通用能力被 FOMOD 特有逻辑锁死。
+
+#### FR16.1 归档解包与打包
+
+系统 SHALL 提供统一的归档处理接口 `extract(archive_path, dest_dir)` / `pack(src_dir, archive_path)`，支持 `.7z`（py7zr）、`.zip`（zipfile 标准库）、`.rar`（rarfile + 捆绑 unrar.exe）三种格式，对上层隐藏格式差异。**不依赖用户环境是否安装 7-Zip/RAR**。解包失败（归档损坏/unrar 后端缺失）SHALL 报告明确错误。
+
+- **FR16.1.1 分层提取**: 解包 SHALL 支持按文件列表选择性提取（如仅提取插件与 fomod 目录），避免解压 GB 级资源文件
+- **FR16.1.2 进度回调**: 解包/打包 SHALL 支持进度回调（复用 ApiWorker 模式），避免 UI 阻塞
+- **FR16.1.3 Agent 工具**: 注册为 Agent 工具（`extract_archive` / `pack_archive`），供 AI 助手解包/打包 mod 文件
+
+#### FR16.2 目录与文件差异分析
+
+系统 SHALL 提供通用的目录/文件 diff 能力，对比两个目录清单（按相对路径），识别新增（new）/删除（removed）/内容变化（changed，按内容哈希）/不变四种状态。
+
+- **FR16.2.1 路径归一化**: 新旧目录根层级不一致时 SHALL 按相对路径对齐（消除包裹层级差异）
+- **FR16.2.2 哈希策略**: 内容变化按文件 SHA-256 哈希判断；支持跳过特定扩展名的哈希（如 BSA 等大文件仅比较存在性）
+- **FR16.2.3 Agent 工具**: 注册为 Agent 工具（`diff_directories`），供 AI 助手对比新旧版本
+
+#### FR16.3 资源过滤规则引擎
+
+系统 SHALL 提供可配置的扩展名保留/剔除过滤规则，按扩展名分类文件为「保留」「剔除」两类，规则集中在配置清单中（如 `[keep]`/`[strip]` 列表），不同 mod 可复用不同规则。
+
+- **FR16.3.1 目录级规则**: 同一扩展名在不同目录下可有不同处理（如 fomod 界面图片保留 vs textures 贴图剔除）
+- **FR16.3.2 Agent 工具**: 注册为 Agent 工具（`filter_files`），供 AI 助手按规则过滤文件
+
+#### FR16.4 词条键对齐迁移
+
+系统 SHALL 提供词条键对齐迁移能力——输入新旧两个翻译集合（或版本），按 `TranslationEntry.key`（`EditorID:FormID|index~context`）将旧集合译文对齐迁移到新集合同名键条目。
+
+- **FR16.4.1 键匹配继承**: 键命中且原文未变 → 直接继承译文（stage=已翻译）
+- **FR16.4.2 原文变化检测**: 键命中但原文变化 → 标记「需复核」，不直接套用
+- **FR16.4.3 键未命中**: 键未命中的新条目保留待翻译（stage=未翻译），不在此工具内做文本兜底（文本兜底是词典套用的职责，见 FR16.5）
+- **FR16.4.4 Agent 工具**: 注册为 Agent 工具（`migrate_entries`），供 AI 助手按键对齐迁移译文
+
+**注意**: 词条键对齐迁移（本工具）与词典套用（FR16.5）是**两个独立工具**——前者是「旧版集合 → 新版集合」的键对齐，后者是「词典 → 集合」的译文套用。二者不混淆。
+
+#### FR16.5 词典套用与存词典（Agent 工具注册补全）
+
+`translation_memory` 的 `apply_to_collection()`（词典套用）与 `save_from_collection()`（存词典）能力已实现，但 Agent 工具层未注册，AI 助手无法调用。本工具 SHALL 补全 Agent 工具注册。
+
+- **FR16.5.1 词典套用 Agent 工具**: 注册 `apply_dictionary` 工具，调用 `TranslationMemoryManager.apply_to_collection()`
+- **FR16.5.2 存词典 Agent 工具**: 注册 `save_dictionary` 工具，调用 `TranslationMemoryManager.save_from_collection()`
+- **FR16.5.3 纯 Python 能力无新增**: 复用已有 `translation_memory/manager.py`，不重复实现
+
+**关联需求**: FR15（FOMOD 翻译流水线的前置通用能力）、FR7.13（Agent 框架的 ToolRegistry）、FR9（Agent 工具扩展的注册规范）、FR15.1（translation_memory 已有能力）
+**对应方案**: `plans/agent-infra-tools/plan.md`（待创建）
 
 ---
 
@@ -1149,3 +1228,6 @@ ChatWidget 保留职责：UI 渲染（bubble/card/thinking indicator/system mess
 | 2026-08-05 | 新增 FR14 后台任务监控面板 — 在智能助手面板中增加任务监控区，实时展示后台任务状态/进度/操作按钮 | /bm-analyze |
 | 2026-08-14 | 新增 FR15 FOMOD 安装包翻译 + 通用翻译记忆系统 — 解包/diff/词条迁移/翻译记忆复用/fomod文本翻译/剔除侵权资源/重打包 + GUI 面板 | /bm-analyze (via /bm-pilot) |
 | 2026-08-14 | FR15.1 词典粒度重构：从「(scope,scope_id) 扁平大库」改为「一文件一 mod（.tbdict）+ scope 降为单值属性 + 多词典全查兜底 + 冲突可视化仲裁 + 分享/导入 + 旧数据弃置」 | /bm-analyze (via /bm-pilot) |
+| 2026-08-14 | 新增 FR16 通用文件与词条工具（Agent 可调用）— 归档解包/打包、目录diff、资源过滤规则、词条键对齐迁移、词典套用/存词典 Agent 注册补全，作为 FR15 FOMOD 流水线的通用能力前置（把通用能力从 FR15 中独立出来） | /bm-analyze (via /bm-pilot) |
+| 2026-08-14 | FR16 实现完成后回写 FR15：FR15.2/15.3/15.6 已完全由 FR16 复用，FR15.4 键对齐+词典套用由 FR16 复用（仅剩序贯编排）。FR15 剩余范围收缩为 fomod_xml.py + builder.py 组装编排 + pipeline.py + GUI 面板 | /bm-analyze (via /bm-pilot) |
+| 2026-08-14 | 新增 FR15.9 FOMOD 使用端可配置性 — 面向产出的配置（过滤规则预设套+自定义扩展名、打包格式、目标语言、输出路径、AI开关、旧版归档），翻译机制黑盒不暴露 | /bm-analyze (via /bm-pilot) |

@@ -14,7 +14,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 
 | 文档 | 说明 | 状态 |
 |------|------|------|
-| [requirements.md](requirements.md) | 项目需求概述：功能需求、非功能需求、系统边界。FR7.13 Phase 1+2 已实现，FR9 Agent工具扩展已编码完成（26/26 Story, 60工具, 7 Agent），FR7.17 已实现，FR10 已实现（4/4 Story，330测试通过），FR15 FOMOD 翻译 + 翻译记忆系统（词典系统已方案） | ✅ 已实现 |
+| [requirements.md](requirements.md) | 项目需求概述：功能需求、非功能需求、系统边界。FR7.13 Phase 1+2 已实现，FR9 Agent工具扩展已编码完成（26/26 Story, 60工具, 7 Agent），FR7.17 已实现，FR10 已实现（4/4 Story，330测试通过），FR16 通用文件与词条工具已实现（fileops/migrator + 7 Agent工具），FR15 FOMOD 翻译流水线已实现（翻译记忆 + fomod_xml/builder/pipeline/GUI） | ✅ 已实现 |
 
 ---
 
@@ -36,6 +36,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [ADR-012](adr/012-safety-observability-mcp.md) | 安全护栏（中间件链）+ 可观测性（pyqtSignal遥测）+ MCP Server（stdio） | ✅ 已接受（更新: 2026-05-14） |
 | [ADR-013](adr/013-vector-retrieval-enhancement.md) | 向量语义检索增强（BM25 混合检索 + 增量索引 + 编码缓存） | ✅ 已接受 |
 | [ADR-014](adr/014-fomod-translation-memory.md) | FOMOD 翻译流水线 + 通用翻译记忆（键+文本分层匹配 / 独立双包 / py7zr+rarfile 自包含 / 精确匹配） | ✅ 已接受（更新: 2026-08-14） |
+| [ADR-015](adr/015-generic-file-entry-tools.md) | 通用文件与词条工具（fileops/migrator 独立包 / archive·editor·translator namespace / 键对齐与词典套用严格分离） | ✅ 已接受 |
 
 > 详细架构文档见 [dev/ARCHITECTURE.md](dev/ARCHITECTURE.md)（模块依赖、数据流、全局状态管理、设计决策）。
 
@@ -53,7 +54,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [paratranz-integration](../plans/paratranz-integration/plan.md) | ✔️ 已实现 | 8 |
 | [ai-translation](../plans/ai-translation/plan.md) | ✔️ 已实现 | 14 |
 | [ai-post-process](../plans/ai-post-process/plan.md) | ✔️ 已实现 | 13 |
-| [ui-workbench](../plans/ui-workbench/plan.md) | ✔️ 已实现 | 19 |
+| [ui-workbench](../plans/ui-workbench/plan.md) | ✔️ 已实现 | 22 |
 | [batch-operations](../plans/batch-operations/plan.md) | ✔️ 已实现 | 7 |
 | [vector-term-retrieval](../plans/vector-term-retrieval/plan.md) | ✔️ 已实现 | — |
 | [agent-tool-expansion](../plans/agent-tool-expansion/plan.md) | ✔️ S01-21+S23-26已实现 + ✔️ S22已实现 (描述+代码修复) | 26 |
@@ -66,6 +67,12 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [session-manager](../plans/session-manager/plan.md) | ✅ 全部完成（3/3） | 3 |
 | [task-monitor](../plans/task-monitor/plan.md) | ✔️ 已实现 (2/2 Story + QA 通过) | 2 |
 | [translation-memory](../plans/translation-memory/plan.md) | ✅ 全部完成 (S01-10，含词典粒度重构) | 10 |
+| [stage-unification](../plans/stage-unification/plan.md) | ✔️ 已实现 | 3 |
+| [label-system](../plans/label-system/plan.md) | ✔️ 已实现 | 4 |
+| [project-persistence](../plans/project-persistence/plan.md) | ✔️ 已实现 | 8 |
+| [fr5.12-embedding-optimization](../plans/fr5.12-embedding-optimization/plan.md) | ✔️ 已实现 | 3 |
+| [agent-infra-tools](../plans/agent-infra-tools/plan.md) | ✔️ 已实现 | 5 |
+| [fomod-translation](../plans/fomod-translation/plan.md) | ✔️ 已实现 | 4 |
 
 ---
 

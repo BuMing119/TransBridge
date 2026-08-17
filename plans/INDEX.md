@@ -26,15 +26,11 @@
 | session-manager | ✅ 全部完成 | 3 | [plan](session-manager/plan.md) |
 | task-monitor | ✔️ 已实现 | 2 | [plan](task-monitor/plan.md) |
 | fr5.12-embedding-optimization | ✔️ 已实现 | 3 | [plan](fr5.12-embedding-optimization/plan.md) · [s01](fr5.12-embedding-optimization/stories/story-01-batch-recall-threshold.md) [s02](fr5.12-embedding-optimization/stories/story-02-incremental-index-cache.md) [s03](fr5.12-embedding-optimization/stories/story-03-bm25-hybrid.md) |
-
-## 进行中 (🔄)
-
-| Epic | 状态 | Stories | 文档 |
-|------|------|---------|------|
 | translation-memory | ✅ 全部完成 (S01-10) | 10 | [plan](translation-memory/plan.md) · [s01](translation-memory/stories/story-01-data-model.md) [s02](translation-memory/stories/story-02-query-fallback.md) [s03](translation-memory/stories/story-03-save-from-collection.md) [s04](translation-memory/stories/story-04-query-apply.md) [s05](translation-memory/stories/story-05-gui.md) · [s06](translation-memory/stories/story-06-model-refactor.md) [s07](translation-memory/stories/story-07-locate-load-refactor.md) [s08](translation-memory/stories/story-08-multi-dict-query.md) [s09](translation-memory/stories/story-09-scope-share.md) [s10](translation-memory/stories/story-10-gui-arbitration.md) |
+| agent-infra-tools | ✔️ 已实现（S01-05，12 测试通过） | 5 | [plan](agent-infra-tools/plan.md) · [s01](agent-infra-tools/stories/story-01-archive.md) [s02](agent-infra-tools/stories/story-02-differ.md) [s03](agent-infra-tools/stories/story-03-filter-rules.md) [s04](agent-infra-tools/stories/story-04-key-migrator.md) [s05](agent-infra-tools/stories/story-05-dictionary-tools.md) |
+| fomod-translation | ✔️ 已实现（S01-04，4 测试通过） | 4 | [plan](fomod-translation/plan.md) · [s01](fomod-translation/stories/story-01-fomod-xml.md) [s02](fomod-translation/stories/story-02-builder.md) [s03](fomod-translation/stories/story-03-pipeline.md) [s04](fomod-translation/stories/story-04-gui.md) |
 
 ## 统计
 
-- 已实现: 168 Story (全部 Epic 完成)
-- 进行中: 1 Epic (fr5.12-embedding-optimization, 3 Story 草稿)
-- 新完成: 1 Epic (translation-memory, S01-05 全部完成)
+- 已实现: 195 Story (含 FR16 agent-infra-tools 5 Story + FR15 fomod-translation 4 Story)
+- 待实现: 无（全部 Epic 完成）
