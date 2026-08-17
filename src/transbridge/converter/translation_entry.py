@@ -44,12 +44,12 @@ STAGE_COLORS: dict[int, str] = {
 
 @dataclass
 class TranslationEntry:
-    id: str
-    key: str  # 现在存储原来的id值
+    id: str  # 历史遗留字段：ADR-002（2026-05-18）后不再作为主索引，语义见 key/context
+    key: str  # 唯一主索引（EditorID:FormID|index~context 复合键），TranslationEntryCollection._entries 的主键
     original: str
     translation: str
     stage: int
-    context: str  # 现在存储原来的key值
+    context: str  # 条目上下文分类（NPC_:FULL / INFO NAM1 等）
     string_id: int | None = None  # 本地化插件的字符串ID，用于精确匹配 strings 文件
     form_id_with_plugin: str | None = None  # 完整的 FormID|BaseRecordPlugin 格式，用于导出新JSON格式
 

@@ -314,7 +314,9 @@ class TranslationMemoryManager:
                 continue
             if e.stage in (9, -1):  # 锁定/隐藏不收录
                 continue
-            self.add(e.id, e.original, e.translation,
+            # 锁语义：e.key = TranslationEntry 唯一主索引（EditorID:FormID|index~context），
+            # 即词典 key_index 的 complete_key，勿改用 e.id（id 非主索引，见 ADR-002）
+            self.add(e.key, e.original, e.translation,
                      mod_file_id=key, scope=scope, tags=tags,
                      source_mod=key,
                      form_id_with_plugin=getattr(e, "form_id_with_plugin", None) or "")
@@ -340,21 +342,22 @@ class TranslationMemoryManager:
                 continue
             if e.stage in (9, -1):  # 锁定/隐藏不套用
                 continue
-            if not e.id and not e.original:
+            if not e.key and not e.original:
                 continue
-            res = self.query(e.id, e.original, context)
+            # 锁语义：e.key 是主索引（=词典 key_index 的 complete_key），勿改用 e.id
+            res = self.query(e.key, e.original, context)
             if res.translation:
                 e.translation = res.translation
                 result.applied += 1
                 if res.matched_via == "key":
                     result.key_hits += 1
                     if res.match_status == "STALE":
-                        result.needs_review.append(e.id)
+                        result.needs_review.append(e.key)
                 else:
                     result.text_hits += 1
                 if res.conflicts:
                     for c in res.conflicts:
-                        c["entry_id"] = e.id
+                        c["entry_id"] = e.key
                         result.conflicts.append(c)
             else:
                 result.misses += 1
