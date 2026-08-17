@@ -41,17 +41,16 @@ src/transbridge/translation_memory/   # 通用翻译记忆（可被任何翻译�
     ├── model.py          # DictionaryEntry / Dictionary（单表权威对象 + 双索引）
     └── manager.py        # TranslationMemoryManager：定位/查询/写入/持久化
 
-src/transbridge/fomod/                  # FOMOD 安装包翻译流水线（本次不实现）
+src/transbridge/fomod/                  # FOMOD 安装包翻译流水线（FR16 后瘦身）
     ├── __init__.py
-    ├── archive.py        # 7z/zip/rar 解包与打包（见决策 4）
     ├── fomod_xml.py      # ModuleConfig.xml / info.xml 解析与翻译（UTF-16LE 处理）
-    ├── differ.py         # 新旧版本 diff（插件清单 + fomod 元数据）
-    ├── migrator.py       # ESP 词条迁移（键匹配 + 原文变化检测 + 翻译记忆兜底）
-    ├── builder.py        # 输出组装（剔除侵权资源、保留 pex/psc、保留 fomod 元数据）
+    ├── builder.py        # 输出组装编排（复用 fileops/filter_rules.py 的过滤 + 目录复制/打包）
     └── pipeline.py       # 流水线编排（解包→diff→迁移→翻译→组装→打包）
 ```
 
 > 勘误（2026-08-14）：本决策初版目录写了 `entry.py`/`store.py`/`sources/` 子包，经议会评审后收敛为 `model.py`（数据类）+ `manager.py`（逻辑），以代码实际落地为准。`sources/` 可插拔抽取器子包本次不实现（「导入翻译」能力已由现有 parser/paratranz 提供，翻译记忆仅负责「保存 + 使用」）。
+>
+> 勘误（2026-08-14，FR16）：原 fomod 包中的通用能力已独立为 FR16 通用工具——`archive.py`→`fileops/archive.py`、`differ.py`→`fileops/differ.py`、过滤规则→`fileops/filter_rules.py`、键对齐迁移→`migrator/key_migrator.py`。fomod 包瘦身为仅保留 FOMOD 特有逻辑（`fomod_xml.py` + `builder.py` 组装编排 + `pipeline.py`）。见 ADR-015。
 
 ### 3.1 翻译记忆词典模型：两档 scope + 单表权威对象 + 双索引 + 逐级兜底
 
@@ -155,3 +154,83 @@ query(complete_key, original, context)
 - **接口变更**: `TranslationMemoryManager` 新增 `mod_file_id` 维度；`QueryContext` 的「激活集规则」（同名 mod → project → global 全查）；`QueryResult.conflicts` 需真正填充（冲突仲裁）；新增 scope 修改、导入/导出/打开目录能力
 - **废弃语义**: 决策 3.1 的「每 scope 仅一本词典」「同级冲突不存在」「game_id 过滤」均被本更新替换
 - **无新依赖**: 本重构不引入新依赖；`.tbdict` 后缀为文件扩展名约定，序列化仍用现有 JSON 工具
+
+---
+
+### 更新: 2026-08-14 - FOMOD 流水线翻译来源与词条迁移架构（议会评审定论）
+
+**决策**: 为 FR15.2-15.7 FOMOD 翻译流水线确立翻译来源优先级与词条迁移的接口复用原则。
+
+#### 1. 翻译来源优先级（多级降序）
+
+FOMOD 翻译的词条译文复用，按以下优先级从高到低依次尝试：
+
+| 优先级 | 来源 | 匹配方式 | 说明 |
+|--------|------|---------|------|
+| ① | **项目已有翻译**（用户手动指定，可多选） | 键匹配 + 文本匹配 | 从用户选中的 TransBridge 项目（`data/projects/{project}/{variant}/current.json`）提取译文 |
+| ② | **翻译记忆词典**（`.tbdict`） | 键匹配 + 文本匹配 | 现有词典系统，同名 mod 词典优先，再 project → global 逐级兜底 |
+| ③ | **旧归档译文** | 键匹配 + 文本匹配 | **仅当 ①+② 均未命中时才直接查询**；正常情况下旧归档仅作为「词典原料」，灌入词典后即退休 |
+| ④ | **AI 翻译** | 直接生成 | 最终兜底 |
+
+**旧归档的定位**：旧版 FOMOD 归档中的译文，主要在**首次翻译时灌入词典**（持久化为「同名 mod 词典」，一文件一 mod，一个 FOMOD 含多个 ESP 则拆多本词典）。灌入后旧归档译文成为词典资产，日常翻译靠词典复用；只有当词典缺失时才回头直接查旧归档。
+
+#### 2. 词条迁移接口复用原则（做法 1 + 键优先级）
+
+所有翻译来源（项目译文、旧归档译文）在参与匹配前，统一**归一化灌入翻译记忆词典**，整个迁移流程**只通过 `TranslationMemoryManager.apply_to_collection()` 一个接口**完成译文套用。
+
+**关键约束**：灌词典时必须**保留完整的 `entry.key`**（`EditorID:FormID|index~context`），不得只存「原文→译文」。这样 `apply_to_collection()` 内部自动走「键索引精确命中 → 文本索引兜底」的两级策略，天然保留键匹配的精确性（避免文本匹配误配），同时统一了接口。
+
+`fomod/` 包**不重复实现词典匹配逻辑**，仅做「新旧归档间的键对齐迁移」这一 FOMOD 特有之事；其余一律委托 `TranslationMemoryManager`，与主工作台「套用到集合」共用同一份代码。
+
+#### 3. fomod 界面文本翻译来源
+
+`ModuleConfig.xml` 的 moduleName/step/group/plugin/description 文本（无 FormID 键）通过词典 `text_index` 做文本匹配复用；未命中的新增/变化文本走 AI 翻译。
+
+#### 4. 冲突仲裁
+
+多来源译文命中同一原文且译文不同时，**复用现有 `DictionaryConflictDialog`** 可视化仲裁界面，不针对 FOMOD 场景定制。
+
+#### 5. 输出边界
+
+FOMOD 翻译**只产出新中文安装包**（在解压临时目录上翻译/组装/打包），**不写回用户本地已有 ESP 文件**。写回本地 ESP 是现有工作台的职责，FOMOD 面板不重复。
+
+**原因**: 用户实际场景中经常没有旧版 FOMOD 归档，但有 TransBridge 项目译文和词典资产；旧归档不应是硬依赖。统一走 `apply_to_collection()` 接口可保证词典匹配逻辑单一、行为与主工作台一致，`fomod/` 保持纯编配层定位（不侵蚀业务逻辑）。
+
+**影响**:
+- **接口变更**: FOMOD 面板新增「翻译来源项目」选择项（可多选）；`fomod/` 包通过适配器调用 `TranslationMemoryManager.save_from_collection()`/`apply_to_collection()`，不新增词典查询接口
+- **数据流变更**: 翻译来源归一化流程 —— 项目译文 + 旧归档译文 → 灌词典（保留 entry.key）→ `apply_to_collection()` 统一套用 → AI 翻译兜底
+- **无新依赖**: 本决策不引入新依赖；复用现有 `translation_memory`/`PluginParser`/`PluginWriter`/`LLMClient`
+
+---
+
+### 更新: 2026-08-14 - 逐插件翻译循环与 AI 兜底入口（AutoTranslator）
+
+**决策**: pipeline.py 的 ESP 词条翻译采用**逐插件循环**，AI 兜底入口复用 `AutoTranslator` 而非裸 `LLMClient.chat()`。
+
+**逐插件循环**（每个 .esp/.esm/.esl 独立处理）：
+
+```
+for esp in new_dir 插件:
+  ① PluginParser.parse_plugin(esp) → TranslationEntryCollection
+  ② 有旧版同款插件 → migrator.migrate（键对齐：继承 + needs_review）
+  ③ tm.apply_to_collection（词典兜底：键索引 + 文本索引）
+  ④ 剩余 stage=0 无译文 → AutoTranslator.translate（AI 兜底）
+  ⑤ PluginWriter 写回 esp（解压临时目录内的副本）
+```
+
+**AI 兜底为什么用 AutoTranslator 而非裸 LLMClient**：
+
+| 能力 | 裸 LLMClient.chat | AutoTranslator |
+|------|------------------|----------------|
+| 术语库匹配（术语一致性） | ❌ 需自建 | ✅ 内置 TermDatabaseManager |
+| 名词提取（术语库成长） | ❌ 需自建 | ✅ 内置 NounExtractor |
+| 批量分页 + 进度 + 断点续传 | ❌ 需自建 | ✅ 内置 BatchPlanner + ProgressCheckpoint |
+| 后处理（可关） | ❌ | ✅ enable_post_process 开关 |
+
+术语库匹配与名词提取是翻译正确性的**必要环节**（保证同一术语跨版本译名一致、术语库持续成长），非可省的"开销"；因此 AI 兜底复用 AutoTranslator 而非写轻量翻译循环。
+
+**运行时上下文注入**：`FomodPipeline.__init__(rules, llm_config, tm_manager)`——`llm_config`（LLMConfig）驱动 AutoTranslator 与界面文本翻译，`tm_manager`（TranslationMemoryManager）驱动词典兜底；二者由 GUI 层注入（`LLMConfig.load_from_file()` + `TranslationMemoryManager()` 加载默认词典目录）。
+
+**原因**: 用户明确翻译必须具备术语库与名词提取；这是 AutoTranslator 已封装的能力，逐插件循环复用即可，不重造。
+
+**影响**: `pipeline.py` 新增 `_translate_plugins`/`_ai_translate`/`_write_back` 三个私有方法；`FomodPipeline` 构造与 `run()` 增加 `llm_config`/`tm_manager`/`progress_callback`/`stop_event` 注入参数；复用 `ai_translator.translator.AutoTranslator`（`TranslatorConfig(llm_config, esp_path)`）
