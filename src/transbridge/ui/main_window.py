@@ -318,6 +318,9 @@ class MainWindow(QMainWindow):
         tools_menu.addSeparator()
         self._dictionary_act = tools_menu.addAction("📖 翻译词典")
         self._dictionary_act.triggered.connect(self._open_dictionary_panel)
+        tools_menu.addSeparator()
+        self._fomod_act = tools_menu.addAction("📦 FOMOD 安装包翻译")
+        self._fomod_act.triggered.connect(self._open_fomod_panel)
 
         # ═══════════════════════════════════════════════════════════
         # 视图菜单
@@ -933,6 +936,11 @@ class MainWindow(QMainWindow):
     def _open_dictionary_panel(self):
         from src.transbridge.ui.tools.dictionary_panel import DictionaryPanel
         panel = DictionaryPanel(self._ctx, self)
+        panel.exec()
+
+    def _open_fomod_panel(self):
+        from src.transbridge.ui.tools.fomod import FomodPanel
+        panel = FomodPanel(self._ctx, self)
         panel.exec()
 
     # ── Smart Assistant ───────────────────────────────────────
