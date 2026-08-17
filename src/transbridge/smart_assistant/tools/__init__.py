@@ -30,6 +30,8 @@ def register_all() -> None:
         tool_writer,
         tool_parser,
         tool_default,
+        tool_archive,
+        tool_migrator,
     )
 
 
