@@ -4,12 +4,27 @@
 本包仅保留 FOMOD 特有逻辑：fomod_xml（安装界面文本）、builder（组装）、pipeline（编排）。
 """
 
-from src.transbridge.fomod.fomod_xml import read_fomod_xml, write_fomod_xml, translate_module_config
-from src.transbridge.fomod.builder import assemble_output
-from src.transbridge.fomod.pipeline import FomodPipeline, PipelineResult
+from transbridge.fomod.builder import assemble_output
+from transbridge.fomod.discovery import (
+    FomodExtractionResult,
+    RootCandidate,
+    RootDetectionResult,
+    detect_mod_roots,
+    extract_fomod_archive,
+)
+from transbridge.fomod.fomod_xml import read_fomod_xml, translate_module_config, write_fomod_xml
+from transbridge.fomod.pipeline import FomodPipeline, PipelineResult
 
 __all__ = [
-    "read_fomod_xml", "write_fomod_xml", "translate_module_config",
+    "read_fomod_xml",
+    "write_fomod_xml",
+    "translate_module_config",
     "assemble_output",
-    "FomodPipeline", "PipelineResult",
+    "FomodExtractionResult",
+    "RootCandidate",
+    "RootDetectionResult",
+    "detect_mod_roots",
+    "extract_fomod_archive",
+    "FomodPipeline",
+    "PipelineResult",
 ]

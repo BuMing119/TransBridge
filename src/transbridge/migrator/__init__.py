@@ -4,6 +4,22 @@
 不做文本兜底。文本兜底是词典套用的职责。
 """
 
-from src.transbridge.migrator.key_migrator import migrate, MigrationResult
+from transbridge.migrator.key_migrator import (
+    KeyMigrationPlan,
+    MigrationCandidate,
+    MigrationDisposition,
+    MigrationEntry,
+    MigrationResult,
+    migrate,
+    plan_migration,
+)
 
-__all__ = ["migrate", "MigrationResult"]
+__all__ = [
+    "KeyMigrationPlan",
+    "MigrationCandidate",
+    "MigrationDisposition",
+    "MigrationEntry",
+    "MigrationResult",
+    "migrate",
+    "plan_migration",
+]

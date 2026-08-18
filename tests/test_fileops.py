@@ -5,16 +5,19 @@
 
 from __future__ import annotations
 
-import shutil
-import tempfile
 from pathlib import Path
+import shutil
 
 import pytest
 
-from src.transbridge.fileops import (
-    extract, pack,
+from transbridge.fileops import (
+    DEFAULT_PRESET,
+    PRESETS,
+    FilterRules,
     diff_directories,
-    FilterRules, filter_files, PRESETS, DEFAULT_PRESET,
+    extract,
+    filter_files,
+    pack,
 )
 
 
@@ -22,6 +25,7 @@ from src.transbridge.fileops import (
 def workdir():
     """在工作区创建独立工作目录（DSH 沙箱仅允许写工作区），测试后清理。"""
     import uuid
+
     base = Path(__file__).resolve().parent.parent / ".tmp_tests"
     base.mkdir(exist_ok=True)
     d = base / f"fileops_{uuid.uuid4().hex[:8]}"
@@ -95,12 +99,13 @@ def test_diff_directories(workdir):
 def test_diff_skip_hash(workdir):
     old = workdir / "old"
     new = workdir / "new"
-    old.mkdir(); new.mkdir()
+    old.mkdir()
+    new.mkdir()
     (old / "big.bsa").write_bytes(b"aaaa")
     (new / "big.bsa").write_bytes(b"bbbb")
     result = diff_directories(str(old), str(new), skip_hash_exts={".bsa"})
-    assert "big.bsa" in result.unchanged
-    assert "big.bsa" not in result.changed
+    assert "big.bsa" in result.changed
+    assert "big.bsa" in result.hash_reprocessed
 
 
 def test_filter_rules_default():

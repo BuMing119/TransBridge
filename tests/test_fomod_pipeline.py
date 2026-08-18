@@ -1,9 +1,9 @@
 """FomodPipeline 纯逻辑测试：AI 翻译条目筛选 + 结果累加。"""
 from __future__ import annotations
 
-from src.transbridge.converter.translation_entry import TranslationEntry
-from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from src.transbridge.fomod.pipeline import FomodPipeline, PipelineResult, _PLUGIN_EXTS
+from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.fomod.pipeline import FomodPipeline, PipelineResult, _PLUGIN_EXTS
 
 
 def _mk(key, translation="", stage=0):

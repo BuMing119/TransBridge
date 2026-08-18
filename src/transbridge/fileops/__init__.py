@@ -4,12 +4,74 @@
 批量翻译等场景复用。所有能力均为纯 Python，无 PyQt 依赖。
 """
 
-from src.transbridge.fileops.archive import extract, pack, _find_unrar
-from src.transbridge.fileops.differ import diff_directories, DiffResult, normalize_root
-from src.transbridge.fileops.filter_rules import FilterRules, filter_files, PRESETS, DEFAULT_PRESET
+from transbridge.fileops.archive import (
+    ArchiveCancelledError,
+    ArchiveCapabilityError,
+    ArchiveExtractionError,
+    ArchiveExtractor,
+    ExtractionResult,
+    _find_unrar,
+    extract,
+    inspect_archive,
+    pack,
+)
+from transbridge.fileops.archive_policy import (
+    ArchiveBudget,
+    ArchiveManifest,
+    ArchiveMember,
+    ArchiveMemberType,
+    ArchivePolicy,
+    ArchivePolicyError,
+)
+from transbridge.fileops.differ import (
+    HASH_POLICY_VERSION,
+    DiffResult,
+    HashReuseEvidence,
+    diff_directories,
+    normalize_root,
+)
+from transbridge.fileops.filter_rules import (
+    DEFAULT_PRESET,
+    PRESETS,
+    RESOURCE_FILTER_POLICY_VERSION,
+    FilterAction,
+    FilterDecision,
+    FilterRules,
+    ResourceRole,
+    ResourceRoleClassifier,
+    classify_files,
+    filter_files,
+)
 
 __all__ = [
-    "extract", "pack", "_find_unrar",
-    "diff_directories", "DiffResult", "normalize_root",
-    "FilterRules", "filter_files", "PRESETS", "DEFAULT_PRESET",
+    "ArchiveBudget",
+    "ArchiveCancelledError",
+    "ArchiveCapabilityError",
+    "ArchiveExtractionError",
+    "ArchiveExtractor",
+    "ArchiveManifest",
+    "ArchiveMember",
+    "ArchiveMemberType",
+    "ArchivePolicy",
+    "ArchivePolicyError",
+    "ExtractionResult",
+    "extract",
+    "inspect_archive",
+    "pack",
+    "_find_unrar",
+    "diff_directories",
+    "DiffResult",
+    "HASH_POLICY_VERSION",
+    "HashReuseEvidence",
+    "normalize_root",
+    "FilterRules",
+    "FilterAction",
+    "FilterDecision",
+    "ResourceRole",
+    "ResourceRoleClassifier",
+    "RESOURCE_FILTER_POLICY_VERSION",
+    "classify_files",
+    "filter_files",
+    "PRESETS",
+    "DEFAULT_PRESET",
 ]

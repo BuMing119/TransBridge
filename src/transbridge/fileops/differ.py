@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass, field
+import hashlib
 from pathlib import Path
+
+HASH_POLICY_VERSION = "sha256-v2"
+
+
+@dataclass(frozen=True, slots=True)
+class HashReuseEvidence:
+    source_digest: str
+    target_digest: str
+    policy_version: str
 
 
 @dataclass
@@ -13,6 +22,9 @@ class DiffResult:
     removed: list[str] = field(default_factory=list)
     changed: list[str] = field(default_factory=list)
     unchanged: list[str] = field(default_factory=list)
+    hash_policy_version: str = HASH_POLICY_VERSION
+    hash_reused: list[str] = field(default_factory=list)
+    hash_reprocessed: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -20,6 +32,9 @@ class DiffResult:
             "removed": self.removed,
             "changed": self.changed,
             "unchanged": self.unchanged,
+            "hash_policy_version": self.hash_policy_version,
+            "hash_reused": self.hash_reused,
+            "hash_reprocessed": self.hash_reprocessed,
             "summary": {
                 "added": len(self.added),
                 "removed": len(self.removed),
@@ -53,12 +68,22 @@ def _sha256(path: Path) -> str:
 def _collect_files(root: Path) -> dict:
     if not root.exists():
         return {}
-    return {str(p.relative_to(root)): p for p in root.rglob("*") if p.is_file()}
+    return {p.relative_to(root).as_posix(): p for p in root.rglob("*") if p.is_file()}
 
 
-def diff_directories(old_dir: str, new_dir: str, *,
-                     skip_hash_exts=None) -> DiffResult:
-    """对比两个目录清单。skip_hash_exts（如 {".bsa"}）内扩展名仅比较存在性不哈希。"""
+def diff_directories(
+    old_dir: str,
+    new_dir: str,
+    *,
+    skip_hash_exts=None,
+    hash_evidence: dict[str, HashReuseEvidence] | None = None,
+) -> DiffResult:
+    """Compare trees without trusting extension-only hash skips.
+
+    ``skip_hash_exts`` remains a compatibility hint. A reuse is recorded only
+    when both current digests and the policy version match supplied evidence;
+    missing or stale evidence is explicitly reprocessed.
+    """
     old_root = normalize_root(old_dir)
     new_root = normalize_root(new_dir)
     skip = skip_hash_exts or set()
@@ -77,10 +102,20 @@ def diff_directories(old_dir: str, new_dir: str, *,
             result.added.append(rel)
         else:
             ext = Path(rel).suffix.lower()
+            source_digest = _sha256(old_files[rel])
+            target_digest = _sha256(new_files[rel])
             if ext in skip:
-                result.unchanged.append(rel)
-                continue
-            if _sha256(old_files[rel]) == _sha256(new_files[rel]):
+                evidence = (hash_evidence or {}).get(rel)
+                if (
+                    evidence is not None
+                    and evidence.policy_version == HASH_POLICY_VERSION
+                    and evidence.source_digest == source_digest
+                    and evidence.target_digest == target_digest
+                ):
+                    result.hash_reused.append(rel)
+                else:
+                    result.hash_reprocessed.append(rel)
+            if source_digest == target_digest:
                 result.unchanged.append(rel)
             else:
                 result.changed.append(rel)

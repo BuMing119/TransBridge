@@ -1,14 +1,21 @@
 """FOMOD 输出组装：复用 fileops/filter_rules.py 过滤侵权资源，复制保留文件。"""
+
 from __future__ import annotations
 
 import os
-import shutil
 from pathlib import Path
+import shutil
 
-from src.transbridge.fileops import FilterRules, filter_files
+from transbridge.fileops import FilterAction, FilterDecision, FilterRules, classify_files
 
 
-def assemble_output(src_dir: str, dest_dir: str, rules: FilterRules | None = None) -> dict:
+def assemble_output(
+    src_dir: str,
+    dest_dir: str,
+    rules: FilterRules | None = None,
+    *,
+    decisions: tuple[FilterDecision, ...] | None = None,
+) -> dict:
     """将 src_dir 组装到 dest_dir：过滤侵权资源 + 复制保留文件。
 
     返回 {"kept_count": int, "stripped_count": int, "dest_dir": str}。
@@ -21,7 +28,13 @@ def assemble_output(src_dir: str, dest_dir: str, rules: FilterRules | None = Non
 
     # 收集所有文件相对路径
     rel_files = [str(p.relative_to(src)) for p in src.rglob("*") if p.is_file()]
-    kept, stripped = filter_files(rel_files, rules)
+    active_decisions = classify_files(rel_files, rules) if decisions is None else decisions
+    known_files = {item.path for item in classify_files(rel_files, rules)}
+    decision_paths = [item.path for item in active_decisions]
+    if len(set(decision_paths)) != len(decision_paths) or set(decision_paths) != known_files:
+        raise ValueError("filter decisions do not match the current source manifest")
+    kept = [item.path for item in active_decisions if item.action is FilterAction.KEEP]
+    stripped = [item.path for item in active_decisions if item.action is FilterAction.STRIP]
 
     for rel in kept:
         sp = src / rel

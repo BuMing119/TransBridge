@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from src.transbridge.converter.translation_entry import TranslationEntry
-from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from src.transbridge.migrator import migrate
+from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.migrator import migrate
 
 
 def _mk(key, original, translation="", stage=0):
