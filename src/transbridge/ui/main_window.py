@@ -164,6 +164,9 @@ class MainWindow(QMainWindow):
         self._project_commands = (
             None if runtime is None else runtime.use_cases.resolve("gui_project_commands")
         )
+        self._current_project = (
+            None if runtime is None else runtime.use_cases.resolve("current_project")
+        )
         self._session_commands = (
             None if runtime is None else runtime.use_cases.resolve("gui_session_commands")
         )
@@ -1014,9 +1017,23 @@ class MainWindow(QMainWindow):
         self._ctx.workspace = ws
 
         if self._ctx.uses_authoritative_projection:
-            self.show_message(
-                "V2 persistence is active; legacy projects remain read-only until explicit ID mapping and source baseline migration."
-            )
+            if self._current_project is None or self._runtime_context is None:
+                self.show_message("当前项目恢复服务不可用。")
+                return
+            restored = self._current_project.restore(self._runtime_context)
+            if not restored.is_success:
+                diagnostic = restored.diagnostics[0]
+                self.show_message(f"{diagnostic.code}: {diagnostic.message}")
+                return
+            services = self._app_runtime.use_cases.resolve("persistence_v2")
+            active_state = services.project_lifecycle.active
+            if active_state is not None:
+                for source in active_state.project.envelope.data.get("sources", ()):
+                    if source.get("type") == "esp" and source.get("path"):
+                        self._restore_parse_esp(source["path"])
+                self.show_message(
+                    f"项目「{active_state.project.envelope.data.get('name', '')}」已恢复"
+                )
             return
 
         active = ws.active_project
@@ -1180,6 +1197,24 @@ class MainWindow(QMainWindow):
         def _do():
             parser = PluginParser()
             entries = parser.parse_plugin(PathLib(esp_path))
+            if self._ctx.uses_authoritative_projection:
+                projection = self._app_runtime.use_cases.resolve("project_projection").snapshot()
+                projected = {} if projection is None else {
+                    item["entry_key"]["local_key"]: item
+                    for item in projection.to_dict()["values"].get("entries", ())
+                }
+                from dataclasses import replace
+
+                entries = [
+                    replace(
+                        entry,
+                        translation=projected[entry.key]["translation"],
+                        stage=projected[entry.key]["stage"],
+                    )
+                    if entry.key in projected
+                    else entry
+                    for entry in entries
+                ]
             return TranslationEntryCollection(entries), parser.get_plugin()
 
         def _on_done(result):

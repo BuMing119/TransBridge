@@ -13,6 +13,7 @@ from transbridge.application.projections import (
 )
 from transbridge.application.projects import GuiProjectCommandFacade, ProjectLifecycleService
 from transbridge.application.sessions import GuiSessionCommandFacade, SessionLifecycleService
+from transbridge.persistence.current_project import CurrentProjectActivator
 from transbridge.persistence.project_lifecycle_loader import V2ProjectCandidateLoader
 from transbridge.persistence.project_lifecycle_uow import RepositoryLifecycleUnitOfWorkFactory
 from transbridge.persistence.session_lifecycle import (
@@ -46,6 +47,7 @@ class PersistenceV2Services:
     legacy_identities: LegacyIdentityRegistry
     project_lifecycle: ProjectLifecycleService
     gui_project_commands: GuiProjectCommandFacade
+    current_project: CurrentProjectActivator
     session_lifecycle: SessionLifecycleService
     gui_session_commands: GuiSessionCommandFacade
     project_projection: ProjectionStore
@@ -96,6 +98,13 @@ def build_persistence_v2_services(
         identities,
         project_publisher.rebuild,
     )
+    current_project = CurrentProjectActivator(
+        resolved_root,
+        projects,
+        variants,
+        baselines,
+        gui_project_commands,
+    )
 
     session_projection = ProjectionStore()
     session_publisher = SessionProjectionPublisher(session_projection)
@@ -127,6 +136,7 @@ def build_persistence_v2_services(
         identities,
         project_lifecycle,
         gui_project_commands,
+        current_project,
         session_lifecycle,
         gui_session_commands,
         project_projection,
