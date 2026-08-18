@@ -50,8 +50,7 @@ class TranslationEntryCollection:
         self._lock = RLock()
 
         if entries:
-            for e in entries:
-                self.add(e)
+            self._bulk_load(entries)
 
     # ---------- 基础容器行为 ----------
 
@@ -69,6 +68,38 @@ class TranslationEntryCollection:
         return self._collection_revision
 
     # ---------- 基本操作 ----------
+
+    def _bulk_load(self, entries: Iterable[TranslationEntry]) -> None:
+        """Build an initial collection in linear time before it becomes observable."""
+
+        with self._lock:
+            projected: dict[str, TranslationEntry] = {}
+            revision = self._collection_revision
+            for entry in entries:
+                storage_key = entry.identity.serialize()
+                existing = projected.get(storage_key)
+                if existing is not None:
+                    warnings.warn(
+                        "TranslationEntryCollection constructor received a duplicate EntryKey; "
+                        "the last value wins",
+                        DeprecationWarning,
+                        stacklevel=3,
+                    )
+                    entry = replace(
+                        entry,
+                        revision=EntryRevision(max(existing.revision.value + 1, entry.revision.value)),
+                        external_refs=entry.external_refs or existing.external_refs,
+                        provenance=entry.provenance or existing.provenance,
+                        metadata=entry.metadata or existing.metadata,
+                    )
+                projected[storage_key] = entry
+                revision = revision.next()
+            external_index, conflicts = self._build_external_index(projected)
+            if conflicts:
+                raise ValueError(f"external reference conflict: {conflicts[0][0]}")
+            self._entries = projected
+            self._external_ref_index = external_index
+            self._collection_revision = revision
 
     def add(self, entry: TranslationEntry, *, overwrite: bool = True) -> None:
         """

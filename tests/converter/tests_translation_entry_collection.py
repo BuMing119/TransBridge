@@ -28,6 +28,30 @@ class TestTranslationEntryCollection:
         assert collection.get("id1") == entry1
         assert collection.get("id2") == entry2
 
+    def test_init_builds_external_reference_index_once(self, monkeypatch):
+        original = TranslationEntryCollection._build_external_index
+        calls = 0
+
+        def counted(entries):
+            nonlocal calls
+            calls += 1
+            return original(entries)
+
+        monkeypatch.setattr(
+            TranslationEntryCollection,
+            "_build_external_index",
+            staticmethod(counted),
+        )
+        entries = [
+            TranslationEntry(str(index), f"key-{index}", "source", "", 0, None)
+            for index in range(500)
+        ]
+
+        collection = TranslationEntryCollection(entries)
+
+        assert len(collection) == len(entries)
+        assert calls == 1
+
     def test_add(self):
         """测试添加条目"""
         collection = TranslationEntryCollection()
