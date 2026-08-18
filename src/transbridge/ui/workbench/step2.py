@@ -22,6 +22,7 @@ from transbridge.converter.translation_entry import (
 
 # context → 显示类别名称的映射（复用 export 中的分类逻辑）
 _CONTEXT_TO_CATEGORY: dict[str, str] = {}
+_ROW_BATCH_SIZE = 250
 _CAT_MAP = {
     "人名": {"NPC_:FULL", "NPC_:SHRT", "TACT:FULL"},
     "地名": {"CELL:FULL", "DOOR:FULL", "LCTN:FULL", "REFR:FULL", "WRLD:FULL"},
@@ -228,6 +229,10 @@ class Step2PreviewWidget(QWidget):
         self._entry_labels: dict[str, set[str]] = {}  # entry_id → set[label_id]
         self._label_filters: set[str] = set()  # 标签筛选
         self._focus_labeled: bool = False  # 只看有标签条目
+        self._filtered_total = 0
+        self._render_generation = 0
+        self._render_entries: tuple[TranslationEntry, ...] = ()
+        self._pending_locate_entry_id: str | None = None
         self._tag_buttons: dict[str | int | None, QPushButton] = {}  # 标签按钮
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
@@ -366,7 +371,7 @@ class Step2PreviewWidget(QWidget):
 
         outer.addWidget(self._table, stretch=1)
 
-        # 底部计数标签
+        # 底部计数。表格通过 Qt 事件循环自动增量渲染直至全部完成。
         self._count_lbl = QLabel("已选 0 条 / 共 0 条")
         self._count_lbl.setStyleSheet("color: #888; font-size: 11px;")
         outer.addWidget(self._count_lbl)
@@ -418,7 +423,7 @@ class Step2PreviewWidget(QWidget):
 
     def get_filtered_count(self) -> int:
         """返回当前筛选后显示的条数。"""
-        return self._table.rowCount()  # 当前表格实际显示的行数（过滤后）
+        return self._filtered_total
 
     # ── 进度 / 刷新 ───────────────────────────────────────────────────────────
 
@@ -449,6 +454,9 @@ class Step2PreviewWidget(QWidget):
             self._mark_tags_widget.hide()
             self._search_widget.hide()
             self._table.setRowCount(0)
+            self._filtered_total = 0
+            self._render_generation += 1
+            self._render_entries = ()
             self._update_count_label()
             return
 
@@ -690,16 +698,35 @@ class Step2PreviewWidget(QWidget):
     # ── 表格填充 ──────────────────────────────────────────────────────────────
 
     def _populate_table(self):
+        self._render_generation += 1
+        generation = self._render_generation
+        self._render_entries = tuple(self._apply_all_filters())
+        self._filtered_total = len(self._render_entries)
+        self._table.clearContents()
+        self._table.setRowCount(0)
+        if self._filtered_total:
+            self._progress.setRange(0, self._filtered_total)
+            self._progress.setValue(0)
+        else:
+            self._progress.setRange(0, 100)
+            self._progress.setValue(100)
+        self._append_table_batch(generation)
+
+    def _append_table_batch(self, generation: int) -> None:
+        if generation != self._render_generation:
+            return
+        start = self._table.rowCount()
+        end = min(start + _ROW_BATCH_SIZE, self._filtered_total)
         hh = self._table.horizontalHeader()
         hh.setSectionResizeMode(_COL_KEY, QHeaderView.ResizeMode.Interactive)
         hh.setSectionResizeMode(_COL_CTX, QHeaderView.ResizeMode.Interactive)
         self._table.setUpdatesEnabled(False)
         self._table.blockSignals(True)
 
-        entries_to_show = self._apply_all_filters()
-        self._table.setRowCount(len(entries_to_show))
+        self._table.setRowCount(end)
 
-        for row, entry in enumerate(entries_to_show):
+        for row in range(start, end):
+            entry = self._render_entries[row]
             # 行背景色（按 ParaTranz stage）
             if entry.stage == STAGE_HIDDEN:
                 row_bg = QColor("#F5F5F5")  # 已隐藏 → 浅灰
@@ -777,11 +804,34 @@ class Step2PreviewWidget(QWidget):
 
         self._table.setUpdatesEnabled(True)
         self._table.blockSignals(False)
-        self._table.resizeColumnToContents(_COL_KEY)
-        self._table.resizeColumnToContents(_COL_CTX)
-        hh.setSectionResizeMode(_COL_KEY, QHeaderView.ResizeMode.Interactive)
-        hh.setSectionResizeMode(_COL_CTX, QHeaderView.ResizeMode.Interactive)
+        self._progress.setValue(end)
         self._update_count_label()
+        self._select_pending_entry(start, end)
+        if start == 0:
+            # Size against the first batch only. Scanning tens of thousands of
+            # populated rows at completion would freeze the GUI again.
+            self._table.resizeColumnToContents(_COL_KEY)
+            self._table.resizeColumnToContents(_COL_CTX)
+            hh.setSectionResizeMode(_COL_KEY, QHeaderView.ResizeMode.Interactive)
+            hh.setSectionResizeMode(_COL_CTX, QHeaderView.ResizeMode.Interactive)
+        if end < self._filtered_total:
+            QTimer.singleShot(0, lambda: self._append_table_batch(generation))
+            return
+        self._progress.setRange(0, 100)
+        self._progress.setValue(100)
+
+    def _select_pending_entry(self, start: int, end: int) -> None:
+        target = self._pending_locate_entry_id
+        if target is None:
+            return
+        for row in range(start, end):
+            if self._render_entries[row].id != target:
+                continue
+            item = self._table.item(row, _COL_KEY)
+            self._table.selectRow(row)
+            self._table.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
+            self._pending_locate_entry_id = None
+            return
 
     def _apply_all_filters(self) -> list[TranslationEntry]:
         """叠加所有筛选条件（分类 + 状态 + 搜索 + 标记 + 聚焦），返回过滤后的词条列表。"""
@@ -868,6 +918,10 @@ class Step2PreviewWidget(QWidget):
         """译文编辑后更新 entry 和行背景色。"""
         if item.column() != _COL_TRANS:
             return
+        # Projection commands notify synchronously. A subscriber may rebuild the
+        # table during the command, which deletes this QTableWidgetItem wrapper.
+        # Capture every value needed from it before crossing that boundary.
+        original_row = item.row()
         entry = item.data(Qt.ItemDataRole.UserRole)
         if not isinstance(entry, TranslationEntry) or not entry.id:
             return
@@ -887,8 +941,10 @@ class Step2PreviewWidget(QWidget):
         entry.translation = new_text if new_text else ""
         if entry.translation and entry.stage < 2:
             entry.stage = 2
+        row, current_item = self._find_rendered_translation_item(original_row, entry.id)
+        if current_item is None:
+            return
         # 刷新该行显示（颜色 + 文本）
-        row = item.row()
         if entry.stage == STAGE_HIDDEN:
             row_bg = QColor("#F5F5F5")
         elif entry.stage == STAGE_LOCKED:
@@ -899,11 +955,11 @@ class Step2PreviewWidget(QWidget):
             row_bg = None
         self._table.blockSignals(True)
         if entry.translation:
-            item.setForeground(QColor("#4CAF50"))
-            item.setText(entry.translation[:80] if len(entry.translation) > 80 else entry.translation)
+            current_item.setForeground(QColor("#4CAF50"))
+            current_item.setText(entry.translation[:80] if len(entry.translation) > 80 else entry.translation)
         else:
-            item.setForeground(QColor("#9E9E9E"))
-            item.setText("（无译文）")
+            current_item.setForeground(QColor("#9E9E9E"))
+            current_item.setText("（无译文）")
         # 刷新该行所有列的背景色
         for c in range(_NUM_COLS):
             ci = self._table.item(row, c)
@@ -913,6 +969,28 @@ class Step2PreviewWidget(QWidget):
                 else:
                     ci.setData(Qt.ItemDataRole.BackgroundRole, None)
         self._table.blockSignals(False)
+
+    def _find_rendered_translation_item(
+        self,
+        preferred_row: int,
+        entry_id: str,
+    ) -> tuple[int, QTableWidgetItem | None]:
+        """Return the current item without dereferencing a deleted Qt wrapper."""
+        if 0 <= preferred_row < self._table.rowCount():
+            candidate = self._table.item(preferred_row, _COL_TRANS)
+            candidate_entry = (
+                None if candidate is None else candidate.data(Qt.ItemDataRole.UserRole)
+            )
+            if isinstance(candidate_entry, TranslationEntry) and candidate_entry.id == entry_id:
+                return preferred_row, candidate
+        for row in range(self._table.rowCount()):
+            candidate = self._table.item(row, _COL_TRANS)
+            candidate_entry = (
+                None if candidate is None else candidate.data(Qt.ItemDataRole.UserRole)
+            )
+            if isinstance(candidate_entry, TranslationEntry) and candidate_entry.id == entry_id:
+                return row, candidate
+        return -1, None
 
     def _on_cell_clicked(self, row: int, col: int):
         """占位：标签分配由右键菜单处理。"""
@@ -1037,12 +1115,17 @@ class Step2PreviewWidget(QWidget):
     def _update_count_label(self):
         labeled = sum(1 for ls in self._entry_labels.values() if ls)
         shown = self._table.rowCount()
+        filtered = self._filtered_total
         total = len(self._entries)
 
-        if shown == total:
+        if filtered == total and shown == total:
             self._count_lbl.setText(f"有标签 {labeled} 条 | 共 {total} 条")
+        elif shown < filtered:
+            self._count_lbl.setText(
+                f"有标签 {labeled} 条 | 已加载 {shown} 条（筛选结果 {filtered} 条，共 {total} 条）"
+            )
         else:
-            self._count_lbl.setText(f"有标签 {labeled} 条 | 显示 {shown} 条（共 {total} 条）")
+            self._count_lbl.setText(f"有标签 {labeled} 条 | 筛选结果 {filtered} 条（共 {total} 条）")
 
     def locate_entry(self, entry_id: str):
         """在表格中定位到指定条目（清除筛选，滚动到行并选中）。"""
@@ -1050,14 +1133,12 @@ class Step2PreviewWidget(QWidget):
         self._category_filters.clear()
         self._stage_filters.clear()
         self._search_key.clear()
-        self._search_original.clear()
-        self._search_translation.clear()
+        self._search_orig.clear()
+        self._search_trans.clear()
         if hasattr(self, '_label_filters'):
             self._label_filters.clear()
-        if hasattr(self, '_focus_mode'):
-            self._focus_mode = False
-            if hasattr(self, '_focus_btn'):
-                self._focus_btn.setChecked(False)
+        self._focus_labeled = False
+        self._focus_btn.setStyleSheet(self._TAG_NORMAL)
 
         # 更新标签UI
         self._build_category_tags()
@@ -1066,14 +1147,5 @@ class Step2PreviewWidget(QWidget):
             self._build_label_tags()
 
         # 刷新表格
+        self._pending_locate_entry_id = entry_id
         self._populate_table()
-
-        # 查找目标行：遍历表格，匹配 entry_id
-        for row in range(self._table.rowCount()):
-            key_item = self._table.item(row, _COL_KEY)
-            if key_item:
-                entry = key_item.data(Qt.ItemDataRole.UserRole)
-                if entry and entry.id == entry_id:
-                    self._table.selectRow(row)
-                    self._table.scrollToItem(key_item, QAbstractItemView.ScrollHint.PositionAtCenter)
-                    return
