@@ -1,0 +1,21 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.12, pytest-9.0.3, pluggy-1.6.0
+rootdir: D:\MyCode\TransBridge
+configfile: pyproject.toml
+plugins: anyio-4.12.1
+collected 116 items
+
+tests\test_fomod_tm_provenance.py ..............                         [ 12%]
+tests\test_fomod_typed_pipeline.py ...............................       [ 38%]
+tests\test_translation_memory.py ........................                [ 59%]
+tests\contracts\io\test_contracts.py .......                             [ 65%]
+tests\contracts\io\test_stage_policy.py .......................          [ 85%]
+tests\contracts\test_task_runtime.py .................                   [100%]
+
+============================== warnings summary ===============================
+tests/test_translation_memory.py::test_apply_to_collection_fills_empty_only
+  D:\MyCode\TransBridge\src\transbridge\translation_memory\manager.py:406: DeprecationWarning: Direct TranslationEntry.translation mutation is deprecated; use CollectionMutationPort.apply()
+    e.translation = res.translation
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================= 116 passed, 1 warning in 0.74s ========================

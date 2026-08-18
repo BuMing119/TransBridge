@@ -1,0 +1,48 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.12, pytest-9.0.3, pluggy-1.6.0
+rootdir: D:\MyCode\TransBridge
+configfile: pyproject.toml
+plugins: anyio-4.12.1
+collected 118 items
+
+tests\contracts\io\test_catalog.py ................                      [ 13%]
+tests\contracts\io\test_contracts.py .......                             [ 19%]
+tests\contracts\io\test_identity_mutation.py ........................... [ 42%]
+....                                                                     [ 45%]
+tests\contracts\io\test_paratranz_adapter.py ...............             [ 58%]
+tests\contracts\io\test_paratranz_facades.py ..                          [ 60%]
+tests\converter\test_translation_entry.py ......                         [ 65%]
+tests\converter\tests_translation_entry_collection.py .................. [ 80%]
+                                                                         [ 80%]
+tests\paratranz\test_workflow.py .......................                 [100%]
+
+============================== warnings summary ===============================
+tests/contracts/io/test_identity_mutation.py::test_legacy_add_facade_preserves_v2_envelope_without_second_index
+  D:\MyCode\TransBridge\tests\contracts\io\test_identity_mutation.py:314: DeprecationWarning: TranslationEntryCollection.add(overwrite=True) is a compatibility facade; use apply(ChangeSet, context)
+    collection.add(legacy_rebuild)
+
+tests/contracts/io/test_identity_mutation.py::test_legacy_xt_updater_preserves_v2_envelope
+tests/converter/tests_translation_entry_collection.py::TestTranslationEntryCollection::test_apply_xt_entries
+tests/converter/tests_translation_entry_collection.py::TestTranslationEntryCollection::test_apply_xt_entries
+  D:\MyCode\TransBridge\src\transbridge\converter\translation_entry_collection.py:550: DeprecationWarning: TranslationEntryCollection.add(overwrite=True) is a compatibility facade; use apply(ChangeSet, context)
+    self.add(updated, overwrite=True)
+
+tests/converter/tests_translation_entry_collection.py::TestTranslationEntryCollection::test_add_overwrite
+  D:\MyCode\TransBridge\tests\converter\tests_translation_entry_collection.py:61: DeprecationWarning: TranslationEntryCollection.add(overwrite=True) is a compatibility facade; use apply(ChangeSet, context)
+    collection.add(entry2, overwrite=True)
+
+tests/converter/tests_translation_entry_collection.py::TestTranslationEntryCollection::test_merge
+  D:\MyCode\TransBridge\src\transbridge\converter\translation_entry_collection.py:378: DeprecationWarning: TranslationEntryCollection.add(overwrite=True) is a compatibility facade; use apply(ChangeSet, context)
+    self.add(e, overwrite=overwrite)
+
+tests/paratranz/test_workflow.py::TestParaTranzDownloader::test_download_merges_translated_strings
+tests/paratranz/test_workflow.py::TestParaTranzDownloader::test_download_merges_translated_strings
+tests/paratranz/test_workflow.py::TestParaTranzDownloader::test_download_continues_on_file_error
+tests/paratranz/test_workflow.py::TestParaTranzDownloader::test_download_min_stage_filter
+tests/paratranz/test_workflow.py::TestParaTranzDownloader::test_download_accumulates_across_files
+tests/paratranz/test_workflow.py::TestParaTranzDownloader::test_download_accumulates_across_files
+  D:\MyCode\TransBridge\src\transbridge\paratranz\workflow\downloader.py:114: DeprecationWarning: TranslationEntryCollection.add(overwrite=True) is a compatibility facade; use apply(ChangeSet, context)
+    collection.add(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+====================== 118 passed, 12 warnings in 0.29s =======================

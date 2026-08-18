@@ -1,0 +1,13 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.12, pytest-9.0.3, pluggy-1.6.0
+rootdir: D:\MyCode\TransBridge
+configfile: pyproject.toml
+plugins: anyio-4.12.1
+collected 50 items
+
+tests\contracts\test_task_runtime.py .................                   [ 34%]
+tests\smart_assistant\test_task_runtime_facade.py ......                 [ 46%]
+tests\smart_assistant\postprocess\test_task_manager.py ................. [ 80%]
+..........                                                               [100%]
+
+============================= 50 passed in 2.50s ==============================

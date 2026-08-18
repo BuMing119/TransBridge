@@ -1,0 +1,14 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.12, pytest-9.0.3, pluggy-1.6.0
+rootdir: D:\MyCode\TransBridge
+configfile: pyproject.toml
+plugins: anyio-4.12.1
+collected 36 items
+
+tests\integration\entrypoints\test_cli_entrypoint.py ..                  [  5%]
+tests\integration\entrypoints\test_mcp_stdio.py ............             [ 38%]
+tests\smart_assistant\test_mcp.py ..........                             [ 66%]
+tests\integration\bootstrap\test_composition.py ...........              [ 97%]
+tests\integration\bootstrap\test_task_runtime_wiring.py .                [100%]
+
+============================= 36 passed in 1.75s ==============================

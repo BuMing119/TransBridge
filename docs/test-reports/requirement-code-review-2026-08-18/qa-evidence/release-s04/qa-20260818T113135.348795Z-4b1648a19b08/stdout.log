@@ -1,0 +1,14 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.12, pytest-9.0.3, pluggy-1.6.0
+rootdir: D:\MyCode\TransBridge
+configfile: pyproject.toml
+plugins: anyio-4.12.1
+collected 74 items
+
+tests\security\test_archive_attack_corpus.py .......................     [ 31%]
+tests\security\test_dependency_degraded.py ............                  [ 47%]
+tests\security\test_secret_canary.py ......                              [ 55%]
+tests\security\test_windows_paths.py ..........ss...s.....               [ 83%]
+tests\capability\test_capability_matrix.py ............                  [100%]
+
+======================= 71 passed, 3 skipped in 10.49s ========================

@@ -1,0 +1,44 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.12, pytest-9.0.3, pluggy-1.6.0
+rootdir: D:\MyCode\TransBridge
+configfile: pyproject.toml
+plugins: anyio-4.12.1
+collected 141 items
+
+tests\contracts\config\test_unified_repository.py ...........            [  7%]
+tests\contracts\translation\test_planning.py ................            [ 19%]
+tests\paratranz\test_credentials_security.py ...............             [ 29%]
+tests\ai_translator\test_term_vector_index.py ..........                 [ 36%]
+tests\smart_assistant\test_agent_tool_integration.py ................... [ 50%]
+......................................................................   [100%]
+
+============================== warnings summary ===============================
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+tests/smart_assistant/test_agent_tool_integration.py::TestFullWorkflowChain::test_edit_translation
+tests/smart_assistant/test_agent_tool_integration.py::TestFullWorkflowChain::test_edit_translation_with_stage_change
+tests/smart_assistant/test_agent_tool_integration.py::TestFullWorkflowChain::test_full_workflow_filter_search_select_edit_mark
+  D:\MyCode\TransBridge\src\transbridge\smart_assistant\tools\tool_editor.py:192: DeprecationWarning: Direct TranslationEntry.translation mutation is deprecated; use CollectionMutationPort.apply()
+    entry.translation = new_translation
+
+tests/smart_assistant/test_agent_tool_integration.py::TestFullWorkflowChain::test_edit_translation_with_stage_change
+tests/smart_assistant/test_agent_tool_integration.py::TestFullWorkflowChain::test_full_workflow_filter_search_select_edit_mark
+  D:\MyCode\TransBridge\src\transbridge\smart_assistant\tools\tool_editor.py:198: DeprecationWarning: Direct TranslationEntry.stage mutation is deprecated; use CollectionMutationPort.apply()
+    entry.stage = int(new_stage)
+
+tests/smart_assistant/test_agent_tool_integration.py::TestFullWorkflowChain::test_set_stage_batch
+tests/smart_assistant/test_agent_tool_integration.py::TestFullWorkflowChain::test_set_stage_batch
+tests/smart_assistant/test_agent_tool_integration.py::TestFullWorkflowChain::test_set_stage_batch
+tests/smart_assistant/test_agent_tool_integration.py::TestFullWorkflowChain::test_set_stage_partial_not_found
+  D:\MyCode\TransBridge\src\transbridge\smart_assistant\tools\tool_editor.py:238: DeprecationWarning: Direct TranslationEntry.stage mutation is deprecated; use CollectionMutationPort.apply()
+    entry.stage = int(stage)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+====================== 141 passed, 12 warnings in 1.10s =======================

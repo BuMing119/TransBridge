@@ -1,0 +1,18 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.12, pytest-9.0.3, pluggy-1.6.0
+rootdir: D:\MyCode\TransBridge
+configfile: pyproject.toml
+plugins: anyio-4.12.1
+collected 69 items
+
+tests\persistence\v2\test_faults.py .......                              [ 10%]
+tests\persistence\v2\test_ids_paths.py ..............                    [ 30%]
+tests\persistence\v2\test_os_filesystem.py ..                            [ 33%]
+tests\persistence\v2\test_repository.py ..............                   [ 53%]
+tests\persistence\v2\test_variant_materialization.py .........           [ 66%]
+tests\persistence\v2\test_variant_store_compatibility.py ...             [ 71%]
+tests\application\projects\test_lifecycle.py ...............             [ 92%]
+tests\application\projects\test_unit_of_work.py ..                       [ 95%]
+tests\application\projects\test_v2_loader.py ...                         [100%]
+
+============================= 69 passed in 0.35s ==============================

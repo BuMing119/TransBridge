@@ -1,0 +1,13 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.12, pytest-9.0.3, pluggy-1.6.0
+rootdir: D:\MyCode\TransBridge
+configfile: pyproject.toml
+plugins: anyio-4.12.1
+collected 53 items
+
+tests\contracts\tasks\test_entrypoint_bridge.py .....                    [  9%]
+tests\contracts\tasks\test_projection.py ......                          [ 20%]
+tests\contracts\test_task_runtime.py .................                   [ 52%]
+tests\contracts\test_checkpoint_runtime.py .........................     [100%]
+
+============================= 53 passed in 0.53s ==============================

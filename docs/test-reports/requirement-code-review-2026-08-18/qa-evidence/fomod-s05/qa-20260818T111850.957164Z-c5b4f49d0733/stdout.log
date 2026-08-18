@@ -1,0 +1,10 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.12, pytest-9.0.3, pluggy-1.6.0
+rootdir: D:\MyCode\TransBridge
+configfile: pyproject.toml
+plugins: anyio-4.12.1
+collected 10 items
+
+tests\test_fomod_staging_publish.py ..........                           [100%]
+
+============================= 10 passed in 0.27s ==============================

@@ -1,0 +1,31 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.12, pytest-9.0.3, pluggy-1.6.0
+rootdir: D:\MyCode\TransBridge
+configfile: pyproject.toml
+plugins: anyio-4.12.1
+collected 128 items
+
+tests\integration\publish\test_atomic_publish.py ..............s.....    [ 15%]
+tests\contracts\io\test_legacy_format_adapters.py ................       [ 28%]
+tests\contracts\io\test_localized_strings_adapter.py .............       [ 38%]
+tests\contracts\io\test_paratranz_adapter.py ...............             [ 50%]
+tests\contracts\io\test_paratranz_facades.py ..                          [ 51%]
+tests\contracts\io\test_contracts.py .......                             [ 57%]
+tests\contracts\io\test_catalog.py ................                      [ 69%]
+tests\contracts\io\test_stage_policy.py .......................          [ 87%]
+tests\writer\test_eet_xml_writer.py ....                                 [ 90%]
+tests\writer\test_xt_xml_writer.py ......                                [ 95%]
+tests\writer\test_plugin_writer.py ......                                [100%]
+
+============================== warnings summary ===============================
+tests/contracts/io/test_legacy_format_adapters.py: 8745 warnings
+tests/writer/test_plugin_writer.py: 12 warnings
+  D:\MyCode\TransBridge\src\transbridge\writer\plugin_writer.py:88: DeprecationWarning: get_by_key is deprecated, use get(key) instead
+    entry = collection.get_by_key(entry_id)
+
+tests/contracts/io/test_localized_strings_adapter.py: 17490 warnings
+  D:\MyCode\TransBridge\src\transbridge\writer\plugin_writer.py:161: DeprecationWarning: get_by_key is deprecated, use get(key) instead
+    entry: TranslationEntry | None = collection.get_by_key(entry_id)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=============== 127 passed, 1 skipped, 26247 warnings in 30.87s ===============

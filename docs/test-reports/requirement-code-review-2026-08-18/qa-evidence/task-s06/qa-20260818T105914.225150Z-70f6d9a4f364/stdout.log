@@ -1,0 +1,27 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.12, pytest-9.0.3, pluggy-1.6.0
+rootdir: D:\MyCode\TransBridge
+configfile: pyproject.toml
+plugins: anyio-4.12.1
+collected 51 items
+
+tests\contracts\translation\test_planning.py ................            [ 31%]
+tests\contracts\translation\test_postprocess_candidate_report.py ....... [ 45%]
+.                                                                        [ 47%]
+tests\contracts\translation\test_postprocess_checkpoint.py .....         [ 56%]
+tests\contracts\translation\test_postprocess_report.py ....              [ 64%]
+tests\contracts\translation\test_workload_commit.py ................     [ 96%]
+tests\integration\translation\test_http_postprocess_chain.py ..          [100%]
+
+============================== warnings summary ===============================
+tests/contracts/translation/test_planning.py::test_auto_translator_passes_prompt_profile_and_target_language
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+tests/contracts/translation/test_planning.py::test_auto_translator_passes_prompt_profile_and_target_language
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+tests/contracts/translation/test_planning.py::test_auto_translator_passes_prompt_profile_and_target_language
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================= 51 passed, 3 warnings in 1.76s ========================

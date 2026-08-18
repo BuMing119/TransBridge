@@ -1,0 +1,67 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.12, pytest-9.0.3, pluggy-1.6.0
+rootdir: D:\MyCode\TransBridge
+configfile: pyproject.toml
+plugins: anyio-4.12.1
+collected 231 items
+
+tests\contracts\io\test_catalog.py ................                      [  6%]
+tests\contracts\io\test_contracts.py .......                             [  9%]
+tests\contracts\io\test_identity_mutation.py ........................... [ 21%]
+....                                                                     [ 23%]
+tests\contracts\io\test_legacy_format_adapters.py ................       [ 30%]
+tests\contracts\io\test_paratranz_adapter.py ...............             [ 36%]
+tests\contracts\io\test_paratranz_facades.py ..                          [ 37%]
+tests\parser\test_eet_parser.py .....................                    [ 46%]
+tests\parser\test_xt_parser.py ............                              [ 51%]
+tests\parser\test_plugin_parser.py .....                                 [ 54%]
+tests\parser\test_plugin_parser_integration.py .                         [ 54%]
+tests\writer\test_eet_xml_writer.py ....                                 [ 56%]
+tests\writer\test_xt_xml_writer.py ......                                [ 58%]
+tests\writer\test_plugin_writer.py ......                                [ 61%]
+tests\smart_assistant\test_agent_tool_integration.py ................... [ 69%]
+......................................................................   [100%]
+
+============================== warnings summary ===============================
+tests/contracts/io/test_identity_mutation.py::test_legacy_add_facade_preserves_v2_envelope_without_second_index
+  D:\MyCode\TransBridge\tests\contracts\io\test_identity_mutation.py:314: DeprecationWarning: TranslationEntryCollection.add(overwrite=True) is a compatibility facade; use apply(ChangeSet, context)
+    collection.add(legacy_rebuild)
+
+tests/contracts/io/test_identity_mutation.py::test_legacy_xt_updater_preserves_v2_envelope
+  D:\MyCode\TransBridge\src\transbridge\converter\translation_entry_collection.py:550: DeprecationWarning: TranslationEntryCollection.add(overwrite=True) is a compatibility facade; use apply(ChangeSet, context)
+    self.add(updated, overwrite=True)
+
+tests/contracts/io/test_legacy_format_adapters.py: 8745 warnings
+tests/writer/test_plugin_writer.py: 12 warnings
+  D:\MyCode\TransBridge\src\transbridge\writer\plugin_writer.py:88: DeprecationWarning: get_by_key is deprecated, use get(key) instead
+    entry = collection.get_by_key(entry_id)
+
+tests/smart_assistant/test_agent_tool_integration.py::TestFullWorkflowChain::test_edit_translation
+tests/smart_assistant/test_agent_tool_integration.py::TestFullWorkflowChain::test_edit_translation_with_stage_change
+tests/smart_assistant/test_agent_tool_integration.py::TestFullWorkflowChain::test_full_workflow_filter_search_select_edit_mark
+  D:\MyCode\TransBridge\src\transbridge\smart_assistant\tools\tool_editor.py:192: DeprecationWarning: Direct TranslationEntry.translation mutation is deprecated; use CollectionMutationPort.apply()
+    entry.translation = new_translation
+
+tests/smart_assistant/test_agent_tool_integration.py::TestFullWorkflowChain::test_edit_translation_with_stage_change
+tests/smart_assistant/test_agent_tool_integration.py::TestFullWorkflowChain::test_full_workflow_filter_search_select_edit_mark
+  D:\MyCode\TransBridge\src\transbridge\smart_assistant\tools\tool_editor.py:198: DeprecationWarning: Direct TranslationEntry.stage mutation is deprecated; use CollectionMutationPort.apply()
+    entry.stage = int(new_stage)
+
+tests/smart_assistant/test_agent_tool_integration.py::TestFullWorkflowChain::test_set_stage_batch
+tests/smart_assistant/test_agent_tool_integration.py::TestFullWorkflowChain::test_set_stage_batch
+tests/smart_assistant/test_agent_tool_integration.py::TestFullWorkflowChain::test_set_stage_batch
+tests/smart_assistant/test_agent_tool_integration.py::TestFullWorkflowChain::test_set_stage_partial_not_found
+  D:\MyCode\TransBridge\src\transbridge\smart_assistant\tools\tool_editor.py:238: DeprecationWarning: Direct TranslationEntry.stage mutation is deprecated; use CollectionMutationPort.apply()
+    entry.stage = int(stage)
+
+tests/smart_assistant/test_agent_tool_integration.py::TestTaskManager::test_cancel
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+tests/smart_assistant/test_agent_tool_integration.py::TestTaskManager::test_cancel
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+tests/smart_assistant/test_agent_tool_integration.py::TestTaskManager::test_cancel
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+===================== 231 passed, 8771 warnings in 5.76s ======================

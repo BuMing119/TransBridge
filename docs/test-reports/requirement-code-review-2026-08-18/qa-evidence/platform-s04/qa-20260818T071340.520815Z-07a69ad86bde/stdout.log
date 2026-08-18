@@ -1,0 +1,12 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.12, pytest-9.0.3, pluggy-1.6.0
+rootdir: D:\MyCode\TransBridge
+configfile: pyproject.toml
+plugins: anyio-4.12.1
+collected 31 items
+
+tests\contracts\security\test_tool_schema_security.py ..............s... [ 58%]
+.......                                                                  [ 80%]
+tests\smart_assistant\test_tool_execution_security.py ......             [100%]
+
+======================== 30 passed, 1 skipped in 0.18s ========================

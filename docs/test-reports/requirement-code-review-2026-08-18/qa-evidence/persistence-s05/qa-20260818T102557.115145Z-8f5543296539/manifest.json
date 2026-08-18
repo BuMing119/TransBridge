@@ -1,0 +1,125 @@
+{
+  "artifacts": [
+    {
+      "sha256": "68ef5ea749216565927dfa68b302b4e44ea1f335e9a8d394ab59995ddea32ff3",
+      "size": 1711,
+      "snapshot_path": "stdout.log",
+      "source_path": null
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0,
+      "snapshot_path": "stderr.log",
+      "source_path": null
+    }
+  ],
+  "command": {
+    "argv": [
+      ".venv\\Scripts\\python.exe",
+      "-m",
+      "pytest",
+      "tests/application/projections",
+      "tests/application/projects",
+      "tests/application/sessions",
+      "tests/integration/bootstrap",
+      "tests/integration/gui/test_app_context_projection.py",
+      "tests/persistence/v2/test_variant_store_compatibility.py",
+      "tests/smart_assistant/test_session_manager.py",
+      "-q",
+      "--basetemp",
+      ".tmp-p-s05-mainline",
+      "-p",
+      "no:cacheprovider"
+    ],
+    "cwd": ".",
+    "duration_ms": 3704.0,
+    "ended_at": "2026-08-18T10:26:01.588489Z",
+    "process_exit_code": 0,
+    "started_at": "2026-08-18T10:25:57.883810Z",
+    "verdict": "passed",
+    "wrapper_exit_code": 0
+  },
+  "created_at": "2026-08-18T10:25:57.883810Z",
+  "environment": {
+    "cpu_count": 32,
+    "environment": {
+      "LANG": "C.UTF-8",
+      "LC_ALL": "C.UTF-8"
+    },
+    "environment_allowlist": [
+      "CI",
+      "GITHUB_ACTIONS",
+      "LANG",
+      "LC_ALL",
+      "PROCESSOR_ARCHITECTURE",
+      "PYTHONHASHSEED",
+      "RUNNER_ARCH",
+      "RUNNER_OS",
+      "TZ"
+    ],
+    "machine": "AMD64",
+    "os": "Windows",
+    "os_release": "11",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "processor": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "python": {
+      "executable": ".venv/Scripts/python.exe",
+      "implementation": "CPython",
+      "project_environment": true,
+      "version": "3.12.12"
+    }
+  },
+  "evidence_errors": [],
+  "inputs": [
+    {
+      "path": "pyproject.toml",
+      "sha256": "a7316ba98fc656007bd60e0b8c1870164aa511a402558a8a865e35c2789422e3",
+      "size": 2026
+    },
+    {
+      "path": "uv.lock",
+      "sha256": "8ad6000856b1c97b7f48a77366729db829cd1d776fc64f32b76524147f7c2850",
+      "size": 451338
+    },
+    {
+      "path": "src/transbridge/application/projections/store.py",
+      "sha256": "94c3c633c3be056ab3824220c449ea0e5296d66abafbaeef94846f419992917e",
+      "size": 6602
+    },
+    {
+      "path": "src/transbridge/application/projects/gui_facade.py",
+      "sha256": "ceaf5ecb50a4415ce577f25ab7fe402d9f53ea4ce327733ab7b079f9114887ba",
+      "size": 5974
+    },
+    {
+      "path": "src/transbridge/application/sessions/gui_facade.py",
+      "sha256": "5ba69bdbf4d3a76aaa59b04a1c39bb487650713cd627077f665825252f04a4fb",
+      "size": 6219
+    },
+    {
+      "path": "src/transbridge/bootstrap/persistence.py",
+      "sha256": "9c250457390f3bdc34133b5e0260efc251f61007f41e62858f2e41f5a879a7ca",
+      "size": 4638
+    },
+    {
+      "path": "tests/application/projections/test_projection_store_contract.py",
+      "sha256": "3b14dabed3a91441fd8f563d8113580db290990e4beb3a7bc43c94698dfc0b80",
+      "size": 3140
+    },
+    {
+      "path": "tests/integration/bootstrap/test_persistence_v2_projection_composition.py",
+      "sha256": "58045c2d4541a400659f2223259f6e2ca458a07f32e36c47bdb279a40778550a",
+      "size": 6453
+    }
+  ],
+  "manifest_id": "transbridge.qa.evidence",
+  "repository": {
+    "available": true,
+    "diff_sha256": "a732e0cda3104446af7ee3dd2adc2e048fd38265d578b7d009f2f331b55b9de5",
+    "dirty": true,
+    "head_commit": "8cdb8744841c00168dabc2d4a1b093bcb646f291",
+    "name": "TransBridge"
+  },
+  "run_id": "qa-20260818T102557.115145Z-8f5543296539",
+  "schema_version": 1
+}

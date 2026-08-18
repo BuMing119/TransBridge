@@ -1,0 +1,36 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.12, pytest-9.0.3, pluggy-1.6.0
+rootdir: D:\MyCode\TransBridge
+configfile: pyproject.toml
+plugins: anyio-4.12.1
+collected 117 items
+
+tests\test_fomod_typed_pipeline.py ...F..........................        [ 25%]
+tests\test_fomod_pipeline.py ...                                         [ 28%]
+tests\test_fomod.py ....                                                 [ 31%]
+tests\test_fileops.py ........                                           [ 38%]
+tests\test_fomod_archive_policy.py ......................                [ 57%]
+tests\contracts\io\test_localized_strings_adapter.py .............       [ 68%]
+tests\contracts\test_task_runtime.py .................                   [ 82%]
+tests\contracts\test_task_runtime_backends.py ................F...       [100%]
+
+================================== FAILURES ===================================
+____ test_ambiguous_roots_and_changed_input_fingerprint_block_publication _____
+tests\test_fomod_typed_pipeline.py:173: in test_ambiguous_roots_and_changed_input_fingerprint_block_publication
+    assert any(item.code == "FOMOD_ROOT_CONFIRMATION_REQUIRED" for item in ambiguous_report.diagnostics)
+E   assert False
+E    +  where False = any(<generator object test_ambiguous_roots_and_changed_input_fingerprint_block_publication.<locals>.<genexpr> at 0x000001F3001265A0>)
+_______ test_fake_llm_cancellation_stops_new_side_effects_within_budget _______
+tests\contracts\test_task_runtime_backends.py:346: in test_fake_llm_cancellation_stops_new_side_effects_within_budget
+    assert latencies
+E   assert []
+============================== warnings summary ===============================
+tests/contracts/io/test_localized_strings_adapter.py: 17490 warnings
+  D:\MyCode\TransBridge\src\transbridge\writer\plugin_writer.py:161: DeprecationWarning: get_by_key is deprecated, use get(key) instead
+    entry: TranslationEntry | None = collection.get_by_key(entry_id)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_fomod_typed_pipeline.py::test_ambiguous_roots_and_changed_input_fingerprint_block_publication
+FAILED tests/contracts/test_task_runtime_backends.py::test_fake_llm_cancellation_stops_new_side_effects_within_budget
+=============== 2 failed, 115 passed, 17490 warnings in 42.65s ================

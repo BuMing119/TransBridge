@@ -1,0 +1,16 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.12, pytest-9.0.3, pluggy-1.6.0
+rootdir: D:\MyCode\TransBridge
+configfile: pyproject.toml
+plugins: anyio-4.12.1
+collected 92 items
+
+tests\test_fomod_xml_resource_fidelity.py ..........                     [ 10%]
+tests\test_fileops.py ........                                           [ 19%]
+tests\test_fomod.py ....                                                 [ 23%]
+tests\test_fomod_typed_pipeline.py ...............................       [ 57%]
+tests\test_fomod_tm_provenance.py ..............                         [ 72%]
+tests\test_fomod_pipeline.py ...                                         [ 76%]
+tests\test_fomod_archive_policy.py ......................                [100%]
+
+============================= 92 passed in 0.89s ==============================

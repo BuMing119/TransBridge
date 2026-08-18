@@ -1,0 +1,23 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.12, pytest-9.0.3, pluggy-1.6.0
+rootdir: D:\MyCode\TransBridge
+configfile: pyproject.toml
+plugins: anyio-4.12.1
+collected 118 items
+
+tests\test_fomod_typed_pipeline.py ...............................       [ 26%]
+tests\test_fomod_pipeline.py ...                                         [ 28%]
+tests\test_fomod.py ....                                                 [ 32%]
+tests\test_fileops.py ........                                           [ 38%]
+tests\test_fomod_archive_policy.py ......................                [ 57%]
+tests\contracts\io\test_localized_strings_adapter.py .............       [ 68%]
+tests\contracts\test_task_runtime.py .................                   [ 83%]
+tests\contracts\test_task_runtime_backends.py ....................       [100%]
+
+============================== warnings summary ===============================
+tests/contracts/io/test_localized_strings_adapter.py: 17490 warnings
+  D:\MyCode\TransBridge\src\transbridge\writer\plugin_writer.py:161: DeprecationWarning: get_by_key is deprecated, use get(key) instead
+    entry: TranslationEntry | None = collection.get_by_key(entry_id)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+==================== 118 passed, 17490 warnings in 33.08s =====================

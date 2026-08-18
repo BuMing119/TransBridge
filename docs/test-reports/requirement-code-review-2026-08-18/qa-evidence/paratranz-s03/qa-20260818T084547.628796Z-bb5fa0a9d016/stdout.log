@@ -1,0 +1,29 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.12, pytest-9.0.3, pluggy-1.6.0
+rootdir: D:\MyCode\TransBridge
+configfile: pyproject.toml
+plugins: anyio-4.12.1
+collected 109 items
+
+tests\contracts\paratranz\test_sync_plan_confirmation.py ............... [ 13%]
+........                                                                 [ 21%]
+tests\smart_assistant\tools\test_paratranz_sync_plan.py ...              [ 23%]
+tests\paratranz\test_typed_client.py ...............                     [ 37%]
+tests\paratranz\test_credentials_security.py ...............             [ 51%]
+tests\paratranz\test_workflow.py .......................                 [ 72%]
+tests\smart_assistant\tools\test_paratranz_tools.py .................... [ 90%]
+                                                                         [ 90%]
+tests\smart_assistant\test_mcp.py ..........                             [100%]
+
+============================== warnings summary ===============================
+tests/paratranz/test_workflow.py::TestParaTranzDownloader::test_download_merges_translated_strings
+tests/paratranz/test_workflow.py::TestParaTranzDownloader::test_download_merges_translated_strings
+tests/paratranz/test_workflow.py::TestParaTranzDownloader::test_download_continues_on_file_error
+tests/paratranz/test_workflow.py::TestParaTranzDownloader::test_download_min_stage_filter
+tests/paratranz/test_workflow.py::TestParaTranzDownloader::test_download_accumulates_across_files
+tests/paratranz/test_workflow.py::TestParaTranzDownloader::test_download_accumulates_across_files
+  D:\MyCode\TransBridge\src\transbridge\paratranz\workflow\downloader.py:114: DeprecationWarning: TranslationEntryCollection.add(overwrite=True) is a compatibility facade; use apply(ChangeSet, context)
+    collection.add(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+====================== 109 passed, 6 warnings in 12.06s =======================

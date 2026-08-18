@@ -1,0 +1,10 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.12, pytest-9.0.3, pluggy-1.6.0
+rootdir: D:\MyCode\TransBridge
+configfile: pyproject.toml
+plugins: anyio-4.12.1
+collected 8 items
+
+tests\quality\test_evidence.py ........                                  [100%]
+
+============================== 8 passed in 3.22s ==============================

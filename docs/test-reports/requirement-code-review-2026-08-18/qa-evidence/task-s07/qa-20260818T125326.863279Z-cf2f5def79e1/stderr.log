@@ -1,0 +1,3 @@
+input_missing:src/transbridge/application/tasks/legacy_bridge.py
+input_missing:src/transbridge/smart_assistant/task_manager.py
+input_missing:tests/contracts/tasks

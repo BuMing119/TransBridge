@@ -1,0 +1,11 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.12, pytest-9.0.3, pluggy-1.6.0
+rootdir: D:\MyCode\TransBridge
+configfile: pyproject.toml
+plugins: anyio-4.12.1
+collected 8 items
+
+tests\packaging\test_clean_release_smoke.py .....                        [ 62%]
+tests\packaging\test_final_qa_gate.py ...                                [100%]
+
+============================== 8 passed in 1.11s ==============================

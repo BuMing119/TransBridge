@@ -1,0 +1,139 @@
+{
+  "artifacts": [
+    {
+      "sha256": "edc34eb465c6b2ec4daaaf81c7512787f07e69e4d42d8c616b3578c6387bbbad",
+      "size": 15814,
+      "snapshot_path": "stdout.log",
+      "source_path": null
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0,
+      "snapshot_path": "stderr.log",
+      "source_path": null
+    }
+  ],
+  "command": {
+    "argv": [
+      ".venv/Scripts/python.exe",
+      "-m",
+      "pytest",
+      "-q",
+      "-p",
+      "no:cacheprovider",
+      "--ignore=tests/packaging/test_final_qa_gate.py",
+      "--basetemp",
+      ".tmp_tests/r5"
+    ],
+    "cwd": ".",
+    "duration_ms": 98797.0,
+    "ended_at": "2026-08-18T13:17:18.822415Z",
+    "process_exit_code": 0,
+    "started_at": "2026-08-18T13:15:40.029363Z",
+    "verdict": "passed",
+    "wrapper_exit_code": 0
+  },
+  "created_at": "2026-08-18T13:15:40.029363Z",
+  "environment": {
+    "cpu_count": 32,
+    "environment": {
+      "LANG": "C.UTF-8",
+      "LC_ALL": "C.UTF-8"
+    },
+    "environment_allowlist": [
+      "CI",
+      "GITHUB_ACTIONS",
+      "LANG",
+      "LC_ALL",
+      "PROCESSOR_ARCHITECTURE",
+      "PYTHONHASHSEED",
+      "RUNNER_ARCH",
+      "RUNNER_OS",
+      "TZ"
+    ],
+    "machine": "AMD64",
+    "os": "Windows",
+    "os_release": "11",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "processor": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "python": {
+      "executable": ".venv/Scripts/python.exe",
+      "implementation": "CPython",
+      "project_environment": true,
+      "version": "3.12.12"
+    }
+  },
+  "evidence_errors": [],
+  "inputs": [
+    {
+      "path": "pyproject.toml",
+      "sha256": "a7316ba98fc656007bd60e0b8c1870164aa511a402558a8a865e35c2789422e3",
+      "size": 2026
+    },
+    {
+      "path": "uv.lock",
+      "sha256": "8ad6000856b1c97b7f48a77366729db829cd1d776fc64f32b76524147f7c2850",
+      "size": 451338
+    },
+    {
+      "path": "tools/qa/expected_evidence_targets.json",
+      "sha256": "47aeaf1d098fee45f1451ac1ef79747104c3511ed1991b6b2c8a17ae0d28467c",
+      "size": 570
+    },
+    {
+      "path": "tools/qa/final_qa.py",
+      "sha256": "fed2bf454eb412bcc229c995ff63181c4eda2069dbd3a3fd3f7141438e4bd0ad",
+      "size": 4402
+    },
+    {
+      "path": "tools/qa/run_evidence.py",
+      "sha256": "fbaa32d1047c3b3841b80b9d77ba437967931f1b5b9a7cd0ce121c6eb3991bf1",
+      "size": 1558
+    },
+    {
+      "path": "tools/qa/verify_evidence.py",
+      "sha256": "1d5606081426275c095bd6523f8b1c38ea8cf463d1a20533002484fb37bd5dd8",
+      "size": 886
+    },
+    {
+      "path": "tests/packaging/test_final_qa_gate.py",
+      "sha256": "ad985a0e6bad36acb8ff7e4a695d7fdefe2c57f18c1320fe8c4dd921be19dccf",
+      "size": 3586
+    },
+    {
+      "path": "tests/contracts/test_task_runtime_backends.py",
+      "sha256": "f341d9f4af674aa9e2c90f156550d572e8498fbebc539552b7375bf0ed07c89c",
+      "size": 13156
+    },
+    {
+      "path": "src/transbridge/application/tasks/checkpoint_fs.py",
+      "sha256": "808ee9c626d7ed11751a75a7bdb95a59dd180689d012a95c0667213008183ed2",
+      "size": 7538
+    },
+    {
+      "path": "tests/contracts/test_checkpoint_runtime.py",
+      "sha256": "16dcc299a8ada079c5e74f7eb0e9b52bf79f96385b2fcf8fddea4fb7f484f283",
+      "size": 11177
+    },
+    {
+      "path": "src/transbridge/config/repository.py",
+      "sha256": "515a4a8aecdb6304ac75f8fbef06f74b49b35c0b720cc59c8a4669d054bc090b",
+      "size": 15838
+    },
+    {
+      "path": "tests/contracts/config/test_unified_repository.py",
+      "sha256": "d3084f07769b594e9483d14f2b5377e036dd735a7c402a1e7e0af7403bdd6885",
+      "size": 11980
+    }
+  ],
+  "manifest_id": "transbridge.qa.evidence",
+  "repository": {
+    "available": true,
+    "diff_sha256": "c20fc80245dcc6516fb3b343e0e2ef8877a5b75d708f23cace964e22a0387527",
+    "dirty": true,
+    "head_commit": "8cdb8744841c00168dabc2d4a1b093bcb646f291",
+    "name": "TransBridge"
+  },
+  "run_id": "qa-20260818T131538.395439Z-e907afb40368",
+  "schema_version": 1
+}

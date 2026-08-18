@@ -1,0 +1,132 @@
+{
+  "artifacts": [
+    {
+      "sha256": "f409b08e27907c2522ffcfebdeada92b1b525f8cfc59bd19d762cc00dbb40410",
+      "size": 1723,
+      "snapshot_path": "stdout.log",
+      "source_path": null
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0,
+      "snapshot_path": "stderr.log",
+      "source_path": null
+    }
+  ],
+  "command": {
+    "argv": [
+      ".venv\\Scripts\\python.exe",
+      "-m",
+      "pytest",
+      "tests/contracts/translation",
+      "tests/integration/translation/test_http_postprocess_chain.py",
+      "-q",
+      "-p",
+      "no:cacheprovider"
+    ],
+    "cwd": ".",
+    "duration_ms": 2234.0,
+    "ended_at": "2026-08-18T10:59:17.154389Z",
+    "process_exit_code": 0,
+    "started_at": "2026-08-18T10:59:14.908889Z",
+    "verdict": "passed",
+    "wrapper_exit_code": 0
+  },
+  "created_at": "2026-08-18T10:59:14.908889Z",
+  "environment": {
+    "cpu_count": 32,
+    "environment": {
+      "PROCESSOR_ARCHITECTURE": "AMD64"
+    },
+    "environment_allowlist": [
+      "CI",
+      "GITHUB_ACTIONS",
+      "LANG",
+      "LC_ALL",
+      "PROCESSOR_ARCHITECTURE",
+      "PYTHONHASHSEED",
+      "RUNNER_ARCH",
+      "RUNNER_OS",
+      "TZ"
+    ],
+    "machine": "AMD64",
+    "os": "Windows",
+    "os_release": "11",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "processor": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "python": {
+      "executable": ".venv/Scripts/python.exe",
+      "implementation": "CPython",
+      "project_environment": true,
+      "version": "3.12.12"
+    }
+  },
+  "evidence_errors": [],
+  "inputs": [
+    {
+      "path": "pyproject.toml",
+      "sha256": "a7316ba98fc656007bd60e0b8c1870164aa511a402558a8a865e35c2789422e3",
+      "size": 2026
+    },
+    {
+      "path": "uv.lock",
+      "sha256": "8ad6000856b1c97b7f48a77366729db829cd1d776fc64f32b76524147f7c2850",
+      "size": 451338
+    },
+    {
+      "path": "src/transbridge/application/translation/postprocess.py",
+      "sha256": "8b70a55bb567c09cca93f77de22b01dcd1f999bb4b3d185bd4128923782f86a9",
+      "size": 15310
+    },
+    {
+      "path": "src/transbridge/application/translation/postprocess_checkpoint.py",
+      "sha256": "54e8f4542fb28b76b8cb71e320b68f03666ec32e245c350bd94eefc557d81ce4",
+      "size": 13489
+    },
+    {
+      "path": "src/transbridge/application/translation/postprocess_report.py",
+      "sha256": "7fb139c91f3be1d2ecd450282d8c926c60b7e2069664be036061f8fc2a91936f",
+      "size": 7902
+    },
+    {
+      "path": "src/transbridge/application/translation/postprocess_stages.py",
+      "sha256": "705e84a4fdc92eec3773e074c254517683df32df73724b27355d553f4acebe06",
+      "size": 15531
+    },
+    {
+      "path": "src/transbridge/application/translation/__init__.py",
+      "sha256": "b7249677fd45a85bd8a96669c675146b564cef3d033011808c3ada57e5184838",
+      "size": 3702
+    },
+    {
+      "path": "tests/contracts/translation/test_postprocess_candidate_report.py",
+      "sha256": "b187d69bec485fad1feacde09bb6b4f0cdddbed6ba7f554248ef8ff216b647b9",
+      "size": 5736
+    },
+    {
+      "path": "tests/contracts/translation/test_postprocess_checkpoint.py",
+      "sha256": "24a74cab9c3dfc03552f25608d4f7d66bd2244836c5206305fb941646d3d2a8f",
+      "size": 5352
+    },
+    {
+      "path": "tests/contracts/translation/test_postprocess_report.py",
+      "sha256": "175e81069ccde33937b643c1b7cdf62a58cb0a3123b269fff19584327fcb6f3f",
+      "size": 4248
+    },
+    {
+      "path": "tests/integration/translation/test_http_postprocess_chain.py",
+      "sha256": "9723717892c5449b7f40204176efcedc1b17d2b3cd41f0aa693e609fb0753963",
+      "size": 5209
+    }
+  ],
+  "manifest_id": "transbridge.qa.evidence",
+  "repository": {
+    "available": true,
+    "diff_sha256": "e40929bdaf4bb0cd392bca2a3ecc4283c0bd953fab216ed1d186b7e40468467f",
+    "dirty": true,
+    "head_commit": "8cdb8744841c00168dabc2d4a1b093bcb646f291",
+    "name": "TransBridge"
+  },
+  "run_id": "qa-20260818T105914.225150Z-70f6d9a4f364",
+  "schema_version": 1
+}

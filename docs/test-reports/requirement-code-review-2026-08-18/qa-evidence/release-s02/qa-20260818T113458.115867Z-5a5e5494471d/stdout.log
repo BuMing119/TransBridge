@@ -1,0 +1,17 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.12, pytest-9.0.3, pluggy-1.6.0
+rootdir: D:\MyCode\TransBridge
+configfile: pyproject.toml
+plugins: anyio-4.12.1
+collected 20 items
+
+tests\quality\test_evidence.py ........                                  [ 40%]
+tests\quality\test_success_chains.py ............                        [100%]
+
+============================== warnings summary ===============================
+tests/quality/test_success_chains.py: 34980 warnings
+  D:\MyCode\TransBridge\src\transbridge\writer\plugin_writer.py:88: DeprecationWarning: get_by_key is deprecated, use get(key) instead
+    entry = collection.get_by_key(entry_id)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+===================== 20 passed, 34980 warnings in 29.04s =====================

@@ -1,0 +1,10 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.12, pytest-9.0.3, pluggy-1.6.0
+rootdir: D:\MyCode\TransBridge
+configfile: pyproject.toml
+plugins: anyio-4.12.1
+collected 12 items
+
+tests\performance\test_performance_gates.py ............                 [100%]
+
+============================= 12 passed in 8.94s ==============================

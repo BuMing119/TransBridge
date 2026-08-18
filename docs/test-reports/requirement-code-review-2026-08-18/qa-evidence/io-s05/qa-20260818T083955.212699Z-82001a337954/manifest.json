@@ -1,0 +1,140 @@
+{
+  "artifacts": [
+    {
+      "sha256": "5c2f96ceb86a77c667e333411cb749780ab53d7b2b19188e6bc23a17b94cf9e6",
+      "size": 5809,
+      "snapshot_path": "stdout.log",
+      "source_path": null
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0,
+      "snapshot_path": "stderr.log",
+      "source_path": null
+    }
+  ],
+  "command": {
+    "argv": [
+      ".venv\\Scripts\\python.exe",
+      "-m",
+      "pytest",
+      "tests/contracts/io",
+      "tests/parser/test_plugin_parser.py",
+      "tests/parser/test_plugin_parser_integration.py",
+      "tests/writer/test_plugin_writer.py",
+      "tests/writer/test_eet_xml_writer.py",
+      "tests/smart_assistant/test_agent_tool_integration.py",
+      "tests/test_translation_memory.py",
+      "tests/test_fomod_pipeline.py",
+      "tests/test_fomod.py",
+      "-q",
+      "-p",
+      "no:cacheprovider"
+    ],
+    "cwd": ".",
+    "duration_ms": 50141.0,
+    "ended_at": "2026-08-18T08:40:46.027072Z",
+    "process_exit_code": 0,
+    "started_at": "2026-08-18T08:39:55.885572Z",
+    "verdict": "passed",
+    "wrapper_exit_code": 0
+  },
+  "created_at": "2026-08-18T08:39:55.885572Z",
+  "environment": {
+    "cpu_count": 32,
+    "environment": {
+      "LANG": "C.UTF-8",
+      "LC_ALL": "C.UTF-8"
+    },
+    "environment_allowlist": [
+      "CI",
+      "GITHUB_ACTIONS",
+      "LANG",
+      "LC_ALL",
+      "PROCESSOR_ARCHITECTURE",
+      "PYTHONHASHSEED",
+      "RUNNER_ARCH",
+      "RUNNER_OS",
+      "TZ"
+    ],
+    "machine": "AMD64",
+    "os": "Windows",
+    "os_release": "11",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "processor": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "python": {
+      "executable": ".venv/Scripts/python.exe",
+      "implementation": "CPython",
+      "project_environment": true,
+      "version": "3.12.12"
+    }
+  },
+  "evidence_errors": [],
+  "inputs": [
+    {
+      "path": "pyproject.toml",
+      "sha256": "a7316ba98fc656007bd60e0b8c1870164aa511a402558a8a865e35c2789422e3",
+      "size": 2026
+    },
+    {
+      "path": "uv.lock",
+      "sha256": "8ad6000856b1c97b7f48a77366729db829cd1d776fc64f32b76524147f7c2850",
+      "size": 451338
+    },
+    {
+      "path": "src/transbridge/application/io/stage_policy.py",
+      "sha256": "79b1fa2e5f33de8427e18018d42459f551aa22b03e88b82767d2c3b7268da8d5",
+      "size": 5657
+    },
+    {
+      "path": "src/transbridge/application/io/strings_adapter.py",
+      "sha256": "c49a617e77c4d2185547f82a8ef3805e0ac3825e111366d3187060a70a8059eb",
+      "size": 20180
+    },
+    {
+      "path": "src/transbridge/application/io/legacy_adapters.py",
+      "sha256": "b07adc8f835ef33804b2e6da4d5ef80f53fd8c2a42e1b459832f57fd8448d146",
+      "size": 38105
+    },
+    {
+      "path": "src/transbridge/fomod/pipeline.py",
+      "sha256": "319d2f7e2bddae089f77c794968d3c9552753091c92150f47ff2fa87c70d9b7c",
+      "size": 10281
+    },
+    {
+      "path": "src/transbridge/ai_translator/translator.py",
+      "sha256": "ed6e004b99a9b6229f094cc7307351f477ef1dfe0a507b9d9a0314f84b883a08",
+      "size": 48679
+    },
+    {
+      "path": "src/transbridge/translation_memory/manager.py",
+      "sha256": "640a93922b7a9f8c74f07aa660a0fb854f51818191fb5772af871638eabfa934",
+      "size": 19936
+    },
+    {
+      "path": "src/transbridge/writer/eet_xml_writer.py",
+      "sha256": "e08a52f23bd047123ce33c55c0c1ae7ba9cdcfc2b0e19e34fc588669113b341f",
+      "size": 3730
+    },
+    {
+      "path": "tests/contracts/io/test_stage_policy.py",
+      "sha256": "2dd77b100d26093fc60b3107e58a8b90e90879fd4a64280a69eb25cd5852eb1e",
+      "size": 7639
+    },
+    {
+      "path": "tests/contracts/io/test_localized_strings_adapter.py",
+      "sha256": "896fc530fdafafc2cf1c32bf1c772ecd817673a152e69aeca80bf29218b6b708",
+      "size": 10578
+    }
+  ],
+  "manifest_id": "transbridge.qa.evidence",
+  "repository": {
+    "available": true,
+    "diff_sha256": "b3285c8bfb311227f19f0232ce76bb61b797d9277a0b9918e9ffd31a31b9ed29",
+    "dirty": true,
+    "head_commit": "8cdb8744841c00168dabc2d4a1b093bcb646f291",
+    "name": "TransBridge"
+  },
+  "run_id": "qa-20260818T083955.212699Z-82001a337954",
+  "schema_version": 1
+}

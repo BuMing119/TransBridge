@@ -1,0 +1,214 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.12, pytest-9.0.3, pluggy-1.6.0
+rootdir: D:\MyCode\TransBridge
+configfile: pyproject.toml
+testpaths: tests
+plugins: anyio-4.12.1
+collected 1377 items
+
+tests\ai_translator\test_term_vector_index.py ..........                 [  0%]
+tests\application\projections\test_projection_ownership_audit.py ..      [  0%]
+tests\application\projections\test_projection_store_contract.py .....    [  1%]
+tests\application\projects\test_lifecycle.py ...............             [  2%]
+tests\application\projects\test_unit_of_work.py ..                       [  2%]
+tests\application\projects\test_v2_loader.py ...                         [  2%]
+tests\application\sessions\test_aggregate.py ......                      [  3%]
+tests\application\sessions\test_controller_contract.py ...               [  3%]
+tests\application\sessions\test_persistence_adapter.py ...               [  3%]
+tests\application\sessions\test_recovery.py ...                          [  3%]
+tests\application\sessions\test_session_lifecycle.py .........           [  4%]
+tests\capability\test_capability_matrix.py ............                  [  5%]
+tests\contracts\config\test_unified_repository.py ...........            [  6%]
+tests\contracts\io\test_catalog.py ................                      [  7%]
+tests\contracts\io\test_contracts.py .......                             [  7%]
+tests\contracts\io\test_identity_mutation.py ........................... [  9%]
+....                                                                     [ 10%]
+tests\contracts\io\test_legacy_format_adapters.py ................       [ 11%]
+tests\contracts\io\test_localized_strings_adapter.py .............       [ 12%]
+tests\contracts\io\test_paratranz_adapter.py ...............             [ 13%]
+tests\contracts\io\test_paratranz_facades.py ..                          [ 13%]
+tests\contracts\io\test_stage_policy.py .......................          [ 15%]
+tests\contracts\paratranz\test_sync_execution.py .............           [ 15%]
+tests\contracts\paratranz\test_sync_plan_confirmation.py ............... [ 17%]
+........                                                                 [ 17%]
+tests\contracts\security\test_tool_schema_security.py ..............s... [ 18%]
+.......                                                                  [ 19%]
+tests\contracts\tasks\test_entrypoint_bridge.py .......                  [ 19%]
+tests\contracts\tasks\test_projection.py .......                         [ 20%]
+tests\contracts\test_checkpoint_runtime.py .........................     [ 22%]
+tests\contracts\test_operation_contracts.py ............................ [ 24%]
+...                                                                      [ 24%]
+tests\contracts\test_task_runtime.py .................                   [ 25%]
+tests\contracts\test_task_runtime_backends.py ....................       [ 27%]
+tests\contracts\translation\test_planning.py ................            [ 28%]
+tests\contracts\translation\test_postprocess_candidate_report.py ....... [ 28%]
+.                                                                        [ 28%]
+tests\contracts\translation\test_postprocess_checkpoint.py .....         [ 29%]
+tests\contracts\translation\test_postprocess_execution.py ...            [ 29%]
+tests\contracts\translation\test_postprocess_report.py ....              [ 29%]
+tests\contracts\translation\test_workload_commit.py ................     [ 31%]
+tests\converter\test_translation_entry.py ......                         [ 31%]
+tests\infra\test_embedding_client.py .....                               [ 31%]
+tests\integration\bootstrap\test_composition.py ...........              [ 32%]
+tests\integration\bootstrap\test_persistence_v2_projection_composition.py . [ 32%]
+...                                                                      [ 32%]
+tests\integration\bootstrap\test_task_runtime_wiring.py .                [ 32%]
+tests\integration\entrypoints\test_cli_entrypoint.py ..                  [ 33%]
+tests\integration\entrypoints\test_mcp_stdio.py ............             [ 33%]
+tests\integration\gui\test_app_context_projection.py .                   [ 34%]
+tests\integration\publish\test_atomic_publish.py ..............s.....    [ 35%]
+tests\integration\translation\test_http_postprocess_chain.py ..          [ 35%]
+tests\integration\translation\test_http_translation_workload.py ..       [ 35%]
+tests\packaging\test_clean_release_smoke.py .....                        [ 36%]
+tests\packaging\test_final_qa_gate.py .F..                               [ 36%]
+tests\packaging\test_package_baseline.py .......                         [ 36%]
+tests\paratranz\test_credentials_security.py ...............             [ 38%]
+tests\paratranz\test_typed_client.py ...............                     [ 39%]
+tests\paratranz\test_workflow.py .......................                 [ 40%]
+tests\parser\test_eet_parser.py .....................                    [ 42%]
+tests\parser\test_plugin_parser.py .....                                 [ 42%]
+tests\parser\test_plugin_parser_integration.py .                         [ 42%]
+tests\parser\test_xt_parser.py ............                              [ 43%]
+tests\performance\test_performance_gates.py ............                 [ 44%]
+tests\persistence\v2\test_faults.py .......                              [ 45%]
+tests\persistence\v2\test_ids_paths.py ..............                    [ 46%]
+tests\persistence\v2\test_os_filesystem.py ..                            [ 46%]
+tests\persistence\v2\test_repository.py ..............                   [ 47%]
+tests\persistence\v2\test_variant_materialization.py .........           [ 47%]
+tests\persistence\v2\test_variant_store_compatibility.py ...             [ 48%]
+tests\quality\test_evidence.py ........                                  [ 48%]
+tests\quality\test_success_chains.py ............                        [ 49%]
+tests\security\test_archive_attack_corpus.py .......................     [ 51%]
+tests\security\test_dependency_degraded.py ............                  [ 52%]
+tests\security\test_secret_canary.py ......                              [ 52%]
+tests\security\test_windows_paths.py ..........ss...s.....               [ 54%]
+tests\smart_assistant\postprocess\test_config_equivalence.py .....       [ 54%]
+tests\smart_assistant\postprocess\test_param_validation.py ............. [ 55%]
+.........                                                                [ 55%]
+tests\smart_assistant\postprocess\test_report_system.py ................ [ 57%]
+.....                                                                    [ 57%]
+tests\smart_assistant\postprocess\test_task_manager.py ................. [ 58%]
+..........                                                               [ 59%]
+tests\smart_assistant\test_agent_tool_integration.py ................... [ 60%]
+......................................................................   [ 65%]
+tests\smart_assistant\test_chat_worker.py ......                         [ 66%]
+tests\smart_assistant\test_context_builder.py .......                    [ 66%]
+tests\smart_assistant\test_conversation_manager.py .........             [ 67%]
+tests\smart_assistant\test_execution_engine.py ..............            [ 68%]
+tests\smart_assistant\test_graph_checkpoint_runtime.py .........         [ 69%]
+tests\smart_assistant\test_markdown_renderer.py ...............          [ 70%]
+tests\smart_assistant\test_mcp.py ..........                             [ 71%]
+tests\smart_assistant\test_memory.py ..........                          [ 71%]
+tests\smart_assistant\test_observability.py .........                    [ 72%]
+tests\smart_assistant\test_session_controller.py ....................... [ 74%]
+.............                                                            [ 75%]
+tests\smart_assistant\test_session_controller_integration.py ........... [ 75%]
+                                                                         [ 75%]
+tests\smart_assistant\test_session_manager.py ........................   [ 77%]
+tests\smart_assistant\test_task_monitor.py .......................       [ 79%]
+tests\smart_assistant\test_task_runtime_facade.py ......                 [ 79%]
+tests\smart_assistant\test_tool_consolidation.py ....................... [ 81%]
+...........                                                              [ 82%]
+tests\smart_assistant\test_tool_execution_security.py .......            [ 82%]
+tests\smart_assistant\test_tool_prompt_layering.py ..................... [ 84%]
+.......                                                                  [ 84%]
+tests\smart_assistant\tools\test_base.py ..................              [ 85%]
+tests\smart_assistant\tools\test_paratranz_sync_plan.py ...              [ 86%]
+tests\smart_assistant\tools\test_paratranz_tools.py .................... [ 87%]
+                                                                         [ 87%]
+tests\smart_assistant\tools\test_run_postprocess.py ................     [ 88%]
+tests\test_fileops.py ........                                           [ 89%]
+tests\test_fomod.py ....                                                 [ 89%]
+tests\test_fomod_archive_policy.py .......................               [ 91%]
+tests\test_fomod_pipeline.py ...                                         [ 91%]
+tests\test_fomod_staging_publish.py ............                         [ 92%]
+tests\test_fomod_tm_provenance.py ..............                         [ 93%]
+tests\test_fomod_typed_pipeline.py ...............................       [ 95%]
+tests\test_fomod_xml_resource_fidelity.py ..........                     [ 96%]
+tests\test_key_migrator.py .....                                         [ 96%]
+tests\test_translation_memory.py ........................                [ 98%]
+tests\test_translation_memory_gui.py ....                                [ 98%]
+tests\writer\test_eet_xml_writer.py ....                                 [ 99%]
+tests\writer\test_plugin_writer.py ......                                [ 99%]
+tests\writer\test_xt_xml_writer.py ......                                [100%]
+
+================================== FAILURES ===================================
+_____ test_every_story_target_has_a_latest_manifest_with_passing_verdict ______
+tests\packaging\test_final_qa_gate.py:63: in test_every_story_target_has_a_latest_manifest_with_passing_verdict
+    assert not failures, "evidence gate failures:\n" + "\n".join(failures)
+E   AssertionError: evidence gate failures:
+E     release-s05: latest qa-20260818T125352.259769Z-f04b0148b647 schema/verdict invalid (schema=1, verdict=failed)
+E   assert not ['release-s05: latest qa-20260818T125352.259769Z-f04b0148b647 schema/verdict invalid (schema=1, verdict=failed)']
+============================== warnings summary ===============================
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+tests/contracts/io/test_identity_mutation.py::test_legacy_add_facade_preserves_v2_envelope_without_second_index
+  D:\MyCode\TransBridge\tests\contracts\io\test_identity_mutation.py:314: DeprecationWarning: TranslationEntryCollection.add(overwrite=True) is a compatibility facade; use apply(ChangeSet, context)
+    collection.add(legacy_rebuild)
+
+tests/contracts/io/test_identity_mutation.py::test_legacy_xt_updater_preserves_v2_envelope
+  D:\MyCode\TransBridge\src\transbridge\converter\translation_entry_collection.py:550: DeprecationWarning: TranslationEntryCollection.add(overwrite=True) is a compatibility facade; use apply(ChangeSet, context)
+    self.add(updated, overwrite=True)
+
+tests/contracts/io/test_legacy_format_adapters.py: 8745 warnings
+tests/quality/test_success_chains.py: 34980 warnings
+tests/writer/test_plugin_writer.py: 12 warnings
+  D:\MyCode\TransBridge\src\transbridge\writer\plugin_writer.py:88: DeprecationWarning: get_by_key is deprecated, use get(key) instead
+    entry = collection.get_by_key(entry_id)
+
+tests/contracts/io/test_localized_strings_adapter.py: 17490 warnings
+  D:\MyCode\TransBridge\src\transbridge\writer\plugin_writer.py:161: DeprecationWarning: get_by_key is deprecated, use get(key) instead
+    entry: TranslationEntry | None = collection.get_by_key(entry_id)
+
+tests/paratranz/test_workflow.py::TestParaTranzDownloader::test_download_merges_translated_strings
+tests/paratranz/test_workflow.py::TestParaTranzDownloader::test_download_merges_translated_strings
+tests/paratranz/test_workflow.py::TestParaTranzDownloader::test_download_continues_on_file_error
+tests/paratranz/test_workflow.py::TestParaTranzDownloader::test_download_min_stage_filter
+tests/paratranz/test_workflow.py::TestParaTranzDownloader::test_download_accumulates_across_files
+tests/paratranz/test_workflow.py::TestParaTranzDownloader::test_download_accumulates_across_files
+  D:\MyCode\TransBridge\src\transbridge\paratranz\workflow\downloader.py:114: DeprecationWarning: TranslationEntryCollection.add(overwrite=True) is a compatibility facade; use apply(ChangeSet, context)
+    collection.add(
+
+tests/smart_assistant/test_agent_tool_integration.py::TestFullWorkflowChain::test_edit_translation
+tests/smart_assistant/test_agent_tool_integration.py::TestFullWorkflowChain::test_edit_translation_with_stage_change
+tests/smart_assistant/test_agent_tool_integration.py::TestFullWorkflowChain::test_full_workflow_filter_search_select_edit_mark
+  D:\MyCode\TransBridge\src\transbridge\smart_assistant\tools\tool_editor.py:192: DeprecationWarning: Direct TranslationEntry.translation mutation is deprecated; use CollectionMutationPort.apply()
+    entry.translation = new_translation
+
+tests/smart_assistant/test_agent_tool_integration.py::TestFullWorkflowChain::test_edit_translation_with_stage_change
+tests/smart_assistant/test_agent_tool_integration.py::TestFullWorkflowChain::test_full_workflow_filter_search_select_edit_mark
+  D:\MyCode\TransBridge\src\transbridge\smart_assistant\tools\tool_editor.py:198: DeprecationWarning: Direct TranslationEntry.stage mutation is deprecated; use CollectionMutationPort.apply()
+    entry.stage = int(new_stage)
+
+tests/smart_assistant/test_agent_tool_integration.py::TestFullWorkflowChain::test_set_stage_batch
+tests/smart_assistant/test_agent_tool_integration.py::TestFullWorkflowChain::test_set_stage_batch
+tests/smart_assistant/test_agent_tool_integration.py::TestFullWorkflowChain::test_set_stage_batch
+tests/smart_assistant/test_agent_tool_integration.py::TestFullWorkflowChain::test_set_stage_partial_not_found
+  D:\MyCode\TransBridge\src\transbridge\smart_assistant\tools\tool_editor.py:238: DeprecationWarning: Direct TranslationEntry.stage mutation is deprecated; use CollectionMutationPort.apply()
+    entry.stage = int(stage)
+
+tests/test_key_migrator.py::test_migrate_inherit_exact
+tests/test_key_migrator.py::test_migrate_normalize_whitespace
+  D:\MyCode\TransBridge\src\transbridge\migrator\key_migrator.py:253: DeprecationWarning: Direct TranslationEntry.translation mutation is deprecated; use CollectionMutationPort.apply()
+    e.translation = old.translation
+
+tests/test_key_migrator.py::test_migrate_inherit_exact
+tests/test_key_migrator.py::test_migrate_normalize_whitespace
+  D:\MyCode\TransBridge\src\transbridge\migrator\key_migrator.py:254: DeprecationWarning: Direct TranslationEntry.stage mutation is deprecated; use CollectionMutationPort.apply()
+    e.stage = STAGE_TRANSLATED
+
+tests/test_translation_memory.py::test_apply_to_collection_fills_empty_only
+  D:\MyCode\TransBridge\src\transbridge\translation_memory\manager.py:406: DeprecationWarning: Direct TranslationEntry.translation mutation is deprecated; use CollectionMutationPort.apply()
+    e.translation = res.translation
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/packaging/test_final_qa_gate.py::test_every_story_target_has_a_latest_manifest_with_passing_verdict
+==== 1 failed, 1371 passed, 5 skipped, 61252 warnings in 99.86s (0:01:39) =====

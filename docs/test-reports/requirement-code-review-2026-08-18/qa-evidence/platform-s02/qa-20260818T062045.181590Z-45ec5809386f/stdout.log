@@ -1,0 +1,11 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.12, pytest-9.0.3, pluggy-1.6.0
+rootdir: D:\MyCode\TransBridge
+configfile: pyproject.toml
+plugins: anyio-4.12.1
+collected 31 items
+
+tests\contracts\test_operation_contracts.py ............................ [ 90%]
+...                                                                      [100%]
+
+============================= 31 passed in 0.03s ==============================

@@ -1,0 +1,89 @@
+{
+  "artifacts": [
+    {
+      "sha256": "d49908fe01aaf31fb8848361196ffddf7faed646a558e0b95900cddcedffce5d",
+      "size": 493,
+      "snapshot_path": "stdout.log",
+      "source_path": null
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0,
+      "snapshot_path": "stderr.log",
+      "source_path": null
+    }
+  ],
+  "command": {
+    "argv": [
+      ".venv/Scripts/python.exe",
+      "-m",
+      "pytest",
+      "tests/contracts/test_operation_contracts.py",
+      "-q",
+      "-p",
+      "no:cacheprovider",
+      "--basetemp",
+      ".tmp_tests/evidence-platform-s02"
+    ],
+    "cwd": ".",
+    "duration_ms": 390.0,
+    "ended_at": "2026-08-18T06:20:46.001763Z",
+    "process_exit_code": 0,
+    "started_at": "2026-08-18T06:20:45.608015Z",
+    "verdict": "passed",
+    "wrapper_exit_code": 0
+  },
+  "created_at": "2026-08-18T06:20:45.608015Z",
+  "environment": {
+    "cpu_count": 32,
+    "environment": {
+      "LANG": "C.UTF-8",
+      "LC_ALL": "C.UTF-8"
+    },
+    "environment_allowlist": [
+      "CI",
+      "GITHUB_ACTIONS",
+      "LANG",
+      "LC_ALL",
+      "PROCESSOR_ARCHITECTURE",
+      "PYTHONHASHSEED",
+      "RUNNER_ARCH",
+      "RUNNER_OS",
+      "TZ"
+    ],
+    "machine": "AMD64",
+    "os": "Windows",
+    "os_release": "11",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "processor": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "python": {
+      "executable": ".venv/Scripts/python.exe",
+      "implementation": "CPython",
+      "project_environment": true,
+      "version": "3.12.12"
+    }
+  },
+  "evidence_errors": [],
+  "inputs": [
+    {
+      "path": "pyproject.toml",
+      "sha256": "6026c63a9157c177e5359e2d94a36b38439e1eeeb61916c0f6d0d00c1c3bd017",
+      "size": 2000
+    },
+    {
+      "path": "uv.lock",
+      "sha256": "6272616772c67d7fe6fde634a4e71a983e09f0b131e66cc68d27c241a0989981",
+      "size": 419215
+    }
+  ],
+  "manifest_id": "transbridge.qa.evidence",
+  "repository": {
+    "available": true,
+    "diff_sha256": "85f7736b313cd65b6f35c8ea448d3d0ede8d2570b9fb37d9edb4fd127c604595",
+    "dirty": true,
+    "head_commit": "8cdb8744841c00168dabc2d4a1b093bcb646f291",
+    "name": "TransBridge"
+  },
+  "run_id": "qa-20260818T062045.181590Z-45ec5809386f",
+  "schema_version": 1
+}

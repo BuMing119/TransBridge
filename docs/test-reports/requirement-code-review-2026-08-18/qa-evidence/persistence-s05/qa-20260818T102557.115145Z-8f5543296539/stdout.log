@@ -1,0 +1,26 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.12, pytest-9.0.3, pluggy-1.6.0
+rootdir: D:\MyCode\TransBridge
+configfile: pyproject.toml
+plugins: anyio-4.12.1
+collected 95 items
+
+tests\application\projections\test_projection_ownership_audit.py ..      [  2%]
+tests\application\projections\test_projection_store_contract.py .....    [  7%]
+tests\application\projects\test_lifecycle.py ...............             [ 23%]
+tests\application\projects\test_unit_of_work.py ..                       [ 25%]
+tests\application\projects\test_v2_loader.py ...                         [ 28%]
+tests\application\sessions\test_aggregate.py ......                      [ 34%]
+tests\application\sessions\test_controller_contract.py ...               [ 37%]
+tests\application\sessions\test_persistence_adapter.py ...               [ 41%]
+tests\application\sessions\test_recovery.py ...                          [ 44%]
+tests\application\sessions\test_session_lifecycle.py .........           [ 53%]
+tests\integration\bootstrap\test_composition.py ...........              [ 65%]
+tests\integration\bootstrap\test_persistence_v2_projection_composition.py . [ 66%]
+...                                                                      [ 69%]
+tests\integration\bootstrap\test_task_runtime_wiring.py .                [ 70%]
+tests\integration\gui\test_app_context_projection.py .                   [ 71%]
+tests\persistence\v2\test_variant_store_compatibility.py ...             [ 74%]
+tests\smart_assistant\test_session_manager.py ........................   [100%]
+
+============================= 95 passed in 3.26s ==============================

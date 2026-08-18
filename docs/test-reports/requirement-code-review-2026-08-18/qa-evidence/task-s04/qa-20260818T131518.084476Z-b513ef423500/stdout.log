@@ -1,0 +1,12 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.12, pytest-9.0.3, pluggy-1.6.0
+rootdir: D:\MyCode\TransBridge
+configfile: pyproject.toml
+plugins: anyio-4.12.1
+collected 47 items
+
+tests\contracts\config\test_unified_repository.py ............           [ 25%]
+tests\paratranz\test_credentials_security.py ...............             [ 57%]
+tests\smart_assistant\tools\test_paratranz_tools.py .................... [100%]
+
+============================= 47 passed in 2.55s ==============================
