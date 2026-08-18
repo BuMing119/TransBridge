@@ -1,0 +1,532 @@
+"""Two-phase Project/Variant lifecycle service.
+
+No projection changes until ``commit_transition`` succeeds.  Prepared tokens
+and export revision leases are one-shot and owner-bound.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass, replace
+import secrets
+from threading import RLock
+from typing import Any, cast
+
+from transbridge.application.contracts import (
+    Diagnostic,
+    DiagnosticSeverity,
+    DomainError,
+    ErrorCategory,
+    OperationOutcome,
+    OperationResult,
+    RequestContext,
+)
+
+from .models import (
+    ActiveProject,
+    DirtyDecision,
+    ExportRevisionLease,
+    LifecycleActivation,
+    LifecycleEvent,
+    LifecycleLease,
+    LifecycleSave,
+    LifecycleSnapshot,
+    PreparedTransition,
+    TransitionTarget,
+    project_with_active_variant,
+)
+from .ports import (
+    CandidateLoaderPort,
+    LifecycleLeasePort,
+    LifecycleUnitOfWorkFactoryPort,
+    NullLifecycleLeasePort,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedState:
+    public: PreparedTransition
+    candidate: ActiveProject | None
+    leases: tuple[LifecycleLease, ...]
+    old_signature: tuple[str, int, str | None, int | None] | None
+
+
+class ProjectLifecycleService:
+    def __init__(
+        self,
+        loader: CandidateLoaderPort,
+        unit_of_work: LifecycleUnitOfWorkFactoryPort,
+        *,
+        active: ActiveProject | None = None,
+        leases: LifecycleLeasePort | None = None,
+        token_factory: Callable[[], str] | None = None,
+        event_publisher: Callable[[LifecycleEvent], None] | None = None,
+    ) -> None:
+        self._loader = loader
+        self._unit_of_work = unit_of_work
+        self._active = active
+        self._leases = leases or NullLifecycleLeasePort()
+        self._token_factory = token_factory or (lambda: secrets.token_urlsafe(24))
+        self._event_publisher = event_publisher
+        self._generation = 0
+        self._prepared: dict[str, _PreparedState] = {}
+        self._exports: dict[str, ExportRevisionLease] = {}
+        self._issued_tokens: set[str] = set()
+        self._lock = RLock()
+
+    @property
+    def generation(self) -> int:
+        with self._lock:
+            return self._generation
+
+    @property
+    def active(self) -> ActiveProject | None:
+        with self._lock:
+            return self._active
+
+    def prepare_transition(
+        self,
+        target: TransitionTarget,
+        context: RequestContext,
+        *,
+        dirty_decision: DirtyDecision | None = None,
+    ) -> OperationResult[dict[str, Any]]:
+        with self._lock:
+            if dirty_decision is not None and not isinstance(dirty_decision, DirtyDecision):
+                try:
+                    dirty_decision = DirtyDecision(dirty_decision)
+                except ValueError:
+                    return _failed(
+                        "DIRTY_DECISION_INVALID",
+                        "Dirty decision must be save, discard, or cancel.",
+                        ErrorCategory.INPUT,
+                        context,
+                    )
+            if (
+                context.project_id is not None
+                and target.project_ref is not None
+                and context.project_id != target.project_ref.identity.value
+            ):
+                return _failed(
+                    "PROJECT_CONTEXT_MISMATCH",
+                    "The request context targets a different Project.",
+                    ErrorCategory.PERMISSION,
+                    context,
+                )
+            if (
+                context.variant_id is not None
+                and target.variant_ref is not None
+                and context.variant_id != target.variant_ref.identity.value
+            ):
+                return _failed(
+                    "VARIANT_CONTEXT_MISMATCH",
+                    "The request context targets a different Variant.",
+                    ErrorCategory.PERMISSION,
+                    context,
+                )
+            if self._active is not None and self._active.dirty:
+                if dirty_decision is None:
+                    return _failed(
+                        "DIRTY_DECISION_REQUIRED",
+                        "The active Project or Variant has unpersisted changes and requires an explicit decision.",
+                        ErrorCategory.PREREQUISITE,
+                        context,
+                    )
+                if dirty_decision is DirtyDecision.CANCEL:
+                    return OperationResult.cancelled(
+                        Diagnostic(
+                            "LIFECYCLE_TRANSITION_CANCELLED",
+                            "The lifecycle transition was cancelled before target loading.",
+                            DiagnosticSeverity.INFO,
+                            ErrorCategory.CANCELLED,
+                        ),
+                        run_id=context.run_id,
+                    )
+                if dirty_decision is DirtyDecision.SAVE:
+                    saved = self.save_active(context)
+                    if saved.outcome is not OperationOutcome.COMPLETED:
+                        return cast(OperationResult[dict[str, Any]], saved)
+
+            acquired: tuple[LifecycleLease, ...] = ()
+            try:
+                acquired = self._leases.acquire(target, context)
+                if any(lease.owner_id != context.owner_id for lease in acquired):
+                    raise DomainError(
+                        ErrorCategory.PERMISSION,
+                        "LIFECYCLE_LEASE_OWNER_MISMATCH",
+                        "A lifecycle lease was issued to a different owner.",
+                    )
+                candidate = None if target.project_ref is None else self._loader.prepare_candidate(target, context)
+                candidate = self._validate_candidate(target, candidate, acquired)
+                token = self._new_token(self._prepared)
+                public: PreparedTransition = {
+                    "token": token,
+                    "owner_id": context.owner_id,
+                    "expected_generation": self._generation,
+                    "old": None if self._active is None else self._active.summary(),
+                    "candidate": None if candidate is None else candidate.summary(),
+                    "target": target.to_dict(),
+                    "leases": [lease.lease_id for lease in acquired],
+                }
+                self._prepared[token] = _PreparedState(
+                    public,
+                    candidate,
+                    acquired,
+                    _active_signature(self._active),
+                )
+                return OperationResult.completed(public, run_id=context.run_id)
+            except Exception as exc:  # noqa: BLE001 - map adapter failures without leaking details
+                self._safe_release(acquired)
+                return _from_exception(exc, "LIFECYCLE_PREPARE_FAILED", context)
+
+    def commit_transition(self, token: str, context: RequestContext) -> OperationResult[dict[str, Any]]:
+        with self._lock:
+            prepared = self._prepared.get(token)
+            if prepared is None:
+                return _failed(
+                    "PREPARED_TRANSITION_INVALID",
+                    "The prepared transition is unknown, expired, or already consumed.",
+                    ErrorCategory.CONFLICT,
+                    context,
+                )
+            if prepared.public["owner_id"] != context.owner_id:
+                return _failed(
+                    "PREPARED_TRANSITION_OWNER_MISMATCH",
+                    "The prepared transition belongs to another owner.",
+                    ErrorCategory.PERMISSION,
+                    context,
+                )
+            self._prepared.pop(token)
+            if prepared.public[
+                "expected_generation"
+            ] != self._generation or prepared.old_signature != _active_signature(self._active):
+                self._safe_release(prepared.leases)
+                return _failed(
+                    "PREPARED_TRANSITION_STALE",
+                    "The active lifecycle changed after this transition was prepared.",
+                    ErrorCategory.CONFLICT,
+                    context,
+                )
+
+            old = self._active
+            activation = LifecycleActivation.capture(old, prepared.candidate)
+            uow = None
+            try:
+                uow = self._unit_of_work.begin()
+                uow.stage_activate(activation)
+                uow.commit()
+            except Exception as exc:  # noqa: BLE001 - rollback is part of the application contract
+                _rollback(uow)
+                self._safe_release(prepared.leases)
+                return _from_exception(exc, "LIFECYCLE_COMMIT_FAILED", context)
+
+            activated = prepared.candidate
+            if activated is not None and activated.variant is not None:
+                assert activation.candidate_variant is not None
+                activated = replace(
+                    activated,
+                    persisted_project_revision=activation.candidate_project.envelope.revision,
+                    persisted_variant_revision=activation.candidate_variant.revision,
+                )
+            elif activated is not None:
+                assert activation.candidate_project is not None
+                activated = replace(
+                    activated,
+                    persisted_project_revision=activation.candidate_project.envelope.revision,
+                )
+            self._active = activated
+            self._generation += 1
+            diagnostics: list[Diagnostic] = []
+            release_error = self._safe_release(() if old is None else old.leases)
+            if release_error:
+                diagnostics.append(
+                    Diagnostic(
+                        "OLD_LIFECYCLE_LEASE_RELEASE_FAILED",
+                        "The new lifecycle is active, but an old lease could not be released.",
+                        DiagnosticSeverity.WARNING,
+                    )
+                )
+            if self._active is None and self._safe_release(prepared.leases):
+                diagnostics.append(
+                    Diagnostic(
+                        "CLOSE_LIFECYCLE_LEASE_RELEASE_FAILED",
+                        "The lifecycle closed, but its preparation lease could not be released.",
+                        DiagnosticSeverity.WARNING,
+                    )
+                )
+            event = LifecycleEvent(
+                "active-project-changed",
+                self._generation,
+                None if old is None else old.summary(),
+                None if self._active is None else self._active.summary(),
+            )
+            if self._event_publisher is not None:
+                try:
+                    self._event_publisher(event)
+                except Exception:  # noqa: BLE001 - projection callbacks cannot roll back domain state
+                    diagnostics.append(
+                        Diagnostic(
+                            "PROJECTION_EVENT_FAILED",
+                            "The lifecycle committed, but a projection callback failed.",
+                            DiagnosticSeverity.WARNING,
+                        )
+                    )
+            return OperationResult.completed(
+                None if self._active is None else self._active.summary(),
+                diagnostics=tuple(diagnostics),
+                run_id=context.run_id,
+            )
+
+    def discard_prepared(self, token: str, context: RequestContext) -> OperationResult[None]:
+        with self._lock:
+            prepared = self._prepared.get(token)
+            if prepared is None:
+                return _failed(
+                    "PREPARED_TRANSITION_INVALID",
+                    "The prepared transition is unknown, expired, or already consumed.",
+                    ErrorCategory.CONFLICT,
+                    context,
+                )
+            if prepared.public["owner_id"] != context.owner_id:
+                return _failed(
+                    "PREPARED_TRANSITION_OWNER_MISMATCH",
+                    "The prepared transition belongs to another owner.",
+                    ErrorCategory.PERMISSION,
+                    context,
+                )
+            self._prepared.pop(token)
+            self._safe_release(prepared.leases)
+            return OperationResult.completed(run_id=context.run_id)
+
+    def save_active(self, context: RequestContext) -> OperationResult[dict[str, Any] | None]:
+        with self._lock:
+            active = self._active
+            if active is None or not active.dirty:
+                return OperationResult.completed(
+                    None if active is None else active.summary(),
+                    run_id=context.run_id,
+                )
+            uow = None
+            save = LifecycleSave.capture(active)
+            try:
+                uow = self._unit_of_work.begin()
+                uow.stage_save(save)
+                uow.commit()
+            except Exception as exc:  # noqa: BLE001
+                _rollback(uow)
+                return _from_exception(exc, "ACTIVE_SAVE_FAILED", context)
+            saved_variant_revision = None if save.variant is None else save.variant.revision
+            self._active = replace(
+                active,
+                persisted_project_revision=save.project.envelope.revision,
+                persisted_variant_revision=saved_variant_revision,
+            )
+            revision_changed = active.project.envelope.revision != save.project.envelope.revision
+            if active.variant is not None and save.variant is not None:
+                revision_changed = revision_changed or active.variant.revision != save.variant.revision
+            if revision_changed:
+                return _failed(
+                    "ACTIVE_SAVE_REVISION_CHANGED",
+                    "The active Project or Variant changed while its snapshot was being saved; retry is required.",
+                    ErrorCategory.CONFLICT,
+                    context,
+                )
+            return OperationResult.completed(self._active.summary(), run_id=context.run_id)
+
+    def save_snapshot(self, name: str, context: RequestContext) -> OperationResult[dict[str, Any]]:
+        with self._lock:
+            if not name or not name.strip():
+                return _failed(
+                    "SNAPSHOT_NAME_REQUIRED",
+                    "Snapshot display name must not be empty.",
+                    ErrorCategory.INPUT,
+                    context,
+                )
+            active = self._active
+            if active is None or active.variant is None or active.formal_variant_ref is None:
+                return _failed(
+                    "ACTIVE_VARIANT_REQUIRED",
+                    "A snapshot requires an active formal Variant.",
+                    ErrorCategory.PREREQUISITE,
+                    context,
+                )
+            capture = LifecycleSnapshot(
+                active.project_ref,
+                active.formal_variant_ref,
+                active.variant.snapshot(),
+                name.strip(),
+            )
+            generation = self._generation
+            uow = None
+            try:
+                uow = self._unit_of_work.begin()
+                uow.stage_snapshot(capture)
+                uow.commit()
+            except Exception as exc:  # noqa: BLE001
+                _rollback(uow)
+                return _from_exception(exc, "SNAPSHOT_SAVE_FAILED", context)
+            if self._generation != generation or self._active is not active:
+                return _failed(
+                    "SNAPSHOT_LIFECYCLE_CONFLICT",
+                    "The active lifecycle changed while the snapshot was being saved.",
+                    ErrorCategory.CONFLICT,
+                    context,
+                )
+            return OperationResult.completed(
+                {
+                    "name": capture.name,
+                    "project_id": capture.project_ref.identity.value,
+                    "variant_id": capture.formal_variant_ref.identity.value,
+                    "variant_revision": capture.variant.revision,
+                    "current_pointer_changed": False,
+                },
+                run_id=context.run_id,
+            )
+
+    def acquire_export_lease(self, context: RequestContext) -> OperationResult[dict[str, Any]]:
+        with self._lock:
+            active = self._active
+            if active is None or active.variant is None or active.formal_variant_ref is None:
+                return _failed(
+                    "ACTIVE_VARIANT_REQUIRED",
+                    "Export requires an active Variant.",
+                    ErrorCategory.PREREQUISITE,
+                    context,
+                )
+            token = self._new_token(self._exports)
+            lease: ExportRevisionLease = {
+                "token": token,
+                "owner_id": context.owner_id,
+                "generation": self._generation,
+                "project_id": active.project_ref.identity.value,
+                "variant_id": active.formal_variant_ref.identity.value,
+                "variant_revision": active.variant.revision,
+            }
+            self._exports[token] = lease
+            return OperationResult.completed(lease, run_id=context.run_id)
+
+    def validate_export_lease(self, token: str, context: RequestContext) -> OperationResult[dict[str, Any]]:
+        with self._lock:
+            lease = self._exports.get(token)
+            if lease is None:
+                return _failed(
+                    "EXPORT_REVISION_LEASE_INVALID",
+                    "The export revision lease is unknown or already consumed.",
+                    ErrorCategory.CONFLICT,
+                    context,
+                )
+            if lease["owner_id"] != context.owner_id:
+                return _failed(
+                    "EXPORT_REVISION_LEASE_OWNER_MISMATCH",
+                    "The export revision lease belongs to another owner.",
+                    ErrorCategory.PERMISSION,
+                    context,
+                )
+            self._exports.pop(token)
+            active = self._active
+            current = None
+            if active is not None and active.variant is not None and active.formal_variant_ref is not None:
+                current = (
+                    self._generation,
+                    active.project_ref.identity.value,
+                    active.formal_variant_ref.identity.value,
+                    active.variant.revision,
+                )
+            expected = (
+                lease["generation"],
+                lease["project_id"],
+                lease["variant_id"],
+                lease["variant_revision"],
+            )
+            if current != expected:
+                return _failed(
+                    "EXPORT_VARIANT_REVISION_CHANGED",
+                    "The active Variant changed during export; publication must fail or retry.",
+                    ErrorCategory.CONFLICT,
+                    context,
+                )
+            return OperationResult.completed(lease, run_id=context.run_id)
+
+    def _validate_candidate(
+        self,
+        target: TransitionTarget,
+        candidate: ActiveProject | None,
+        leases: tuple[LifecycleLease, ...],
+    ) -> ActiveProject | None:
+        if target.project_ref is None:
+            if candidate is not None:
+                raise ValueError("close transition must not materialize a candidate")
+            return None
+        if candidate is None or candidate.project_ref != target.project_ref:
+            raise ValueError("candidate Project does not match the transition target")
+        if candidate.formal_variant_ref != target.variant_ref:
+            raise ValueError("candidate Variant does not match the transition target")
+        if target.snapshot_ref is not None and candidate.source_ref != target.snapshot_ref:
+            raise ValueError("snapshot candidate does not retain its read-only source reference")
+        if candidate.leases:
+            raise ValueError("candidate loader must not retain hidden lifecycle leases")
+        project = project_with_active_variant(candidate.project, target.variant_ref)
+        return replace(candidate, project=project, source_ref=target.snapshot_ref, leases=leases)
+
+    def _new_token(self, existing: dict[str, Any]) -> str:
+        token = self._token_factory()
+        if not token or token in existing or token in self._issued_tokens:
+            raise RuntimeError("token factory returned an empty or duplicate token")
+        self._issued_tokens.add(token)
+        return token
+
+    def _safe_release(self, leases: tuple[LifecycleLease, ...]) -> bool:
+        if not leases:
+            return False
+        try:
+            self._leases.release(leases)
+        except Exception:  # noqa: BLE001 - release failure is surfaced as a warning where possible
+            return True
+        return False
+
+
+def _failed[T](
+    code: str,
+    message: str,
+    category: ErrorCategory,
+    context: RequestContext,
+) -> OperationResult[T]:
+    return OperationResult.failed(DomainError(category, code, message), run_id=context.run_id)
+
+
+def _from_exception[T](exc: Exception, fallback_code: str, context: RequestContext) -> OperationResult[T]:
+    if isinstance(exc, DomainError):
+        error = exc
+    else:
+        error = DomainError(
+            ErrorCategory.INTERNAL,
+            fallback_code,
+            "The lifecycle operation failed before its state could commit.",
+            cause=exc,
+        )
+    return OperationResult.failed(error, run_id=context.run_id)
+
+
+def _rollback(unit_of_work: Any | None) -> None:
+    if unit_of_work is None:
+        return
+    try:
+        unit_of_work.rollback()
+    except Exception:
+        # The active state has not been exchanged; adapter cleanup failure must
+        # not replace the original lifecycle diagnostic.
+        return
+
+
+def _active_signature(active: ActiveProject | None) -> tuple[str, int, str | None, int | None] | None:
+    if active is None:
+        return None
+    return (
+        active.project_ref.identity.value,
+        active.project.envelope.revision,
+        None if active.formal_variant_ref is None else active.formal_variant_ref.identity.value,
+        None if active.variant is None else active.variant.revision,
+    )
+
+
+__all__ = ["ProjectLifecycleService"]

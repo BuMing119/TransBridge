@@ -1,0 +1,8 @@
+{
+  "name": "Fixture Project",
+  "created": "2026-01-01T00:00:00+00:00",
+  "sources": [{"key": "source-1", "type": "esp", "path": "fixture.esp"}],
+  "variants": [{"name": "main", "created": "2026-01-01T00:00:00+00:00"}],
+  "active_variant": "main",
+  "esp_key_format": true
+}

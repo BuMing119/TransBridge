@@ -8,7 +8,7 @@ from .project import ProjectHandle
 from .variant_store import VariantStore
 
 from pathlib import Path
-from src.transbridge.paratranz.config_manager import ParatranzConfig
+from transbridge.paratranz.config_manager import ParatranzConfig
 
 
 def _data_dir() -> Path:
