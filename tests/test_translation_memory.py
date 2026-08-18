@@ -10,18 +10,17 @@ from pathlib import Path
 
 import pytest
 
-from src.transbridge.converter.translation_entry import TranslationEntry
-from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from src.transbridge.translation_memory import (
-    TranslationMemoryManager,
+from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.translation_memory import (
     QueryContext,
+    TranslationMemoryManager,
 )
-from src.transbridge.translation_memory.model import (
+from transbridge.translation_memory.model import (
     Dictionary,
     DictionaryEntry,
     entry_id,
 )
-
 
 # ---------------------------------------------------------------------------
 # 数据模型
@@ -30,11 +29,13 @@ from src.transbridge.translation_memory.model import (
 
 def test_dictionary_entry_roundtrip():
     e = DictionaryEntry(
-        translation="你好", original="Hello",
+        translation="你好",
+        original="Hello",
         source_mod="LegacyPatch",
         form_id_with_plugin="0001A2B3|LegacyPatch.esp",
         imported_at="2026-01-01T00:00:00+00:00",
-        updated_at="2026-01-02T00:00:00+00:00", tags=["a", "b"],
+        updated_at="2026-01-02T00:00:00+00:00",
+        tags=["a", "b"],
     )
     e2 = DictionaryEntry.from_dict(e.to_dict())
     assert e2 == e
@@ -59,7 +60,7 @@ def test_dictionary_roundtrip_with_indexes():
     assert d2.entries["id1"].translation == "译"
     assert d2.key_index["K|1~NPC_:FULL"]["hits"] == 3
     assert d2.text_index["原"]["hits"] == 5
-    assert d2.to_dict()["schema_version"] == 1
+    assert d2.to_dict()["schema_version"] == 2
 
 
 def test_entry_id_excludes_scope():
@@ -170,14 +171,38 @@ def test_requires_mod_file_id():
 
 def _make_collection():
     entries = [
-        TranslationEntry(id="E1:0001|1~NPC_:FULL", key="E1:0001|1~NPC_:FULL",
-                         original="Hello", translation="你好", stage=1, context="NPC_:FULL"),
-        TranslationEntry(id="E2:0002|1~NPC_:FULL", key="E2:0002|1~NPC_:FULL",
-                         original="World", translation="世界", stage=1, context="NPC_:FULL"),
-        TranslationEntry(id="E3:0003|1~NPC_:FULL", key="E3:0003|1~NPC_:FULL",
-                         original="Empty translation", translation="", stage=0, context="NPC_:FULL"),
-        TranslationEntry(id="E4:0004|1~NPC_:FULL", key="E4:0004|1~NPC_:FULL",
-                         original="Locked", translation="锁定", stage=9, context="NPC_:FULL"),
+        TranslationEntry(
+            id="E1:0001|1~NPC_:FULL",
+            key="E1:0001|1~NPC_:FULL",
+            original="Hello",
+            translation="你好",
+            stage=1,
+            context="NPC_:FULL",
+        ),
+        TranslationEntry(
+            id="E2:0002|1~NPC_:FULL",
+            key="E2:0002|1~NPC_:FULL",
+            original="World",
+            translation="世界",
+            stage=1,
+            context="NPC_:FULL",
+        ),
+        TranslationEntry(
+            id="E3:0003|1~NPC_:FULL",
+            key="E3:0003|1~NPC_:FULL",
+            original="Empty translation",
+            translation="",
+            stage=0,
+            context="NPC_:FULL",
+        ),
+        TranslationEntry(
+            id="E4:0004|1~NPC_:FULL",
+            key="E4:0004|1~NPC_:FULL",
+            original="Locked",
+            translation="锁定",
+            stage=9,
+            context="NPC_:FULL",
+        ),
     ]
     return TranslationEntryCollection(entries)
 
@@ -205,10 +230,17 @@ def test_apply_to_collection_fills_empty_only():
     m = TranslationMemoryManager()
     m.add("", "Hello", "你好", mod_file_id="ModG", scope="global")
     entries = [
-        TranslationEntry(id="X:1|1~NPC_:FULL", key="X:1|1~NPC_:FULL",
-                         original="Hello", translation="", stage=0, context="NPC_:FULL"),
-        TranslationEntry(id="X:2|1~NPC_:FULL", key="X:2|1~NPC_:FULL",
-                         original="Hello", translation="已有", stage=1, context="NPC_:FULL"),
+        TranslationEntry(
+            id="X:1|1~NPC_:FULL", key="X:1|1~NPC_:FULL", original="Hello", translation="", stage=0, context="NPC_:FULL"
+        ),
+        TranslationEntry(
+            id="X:2|1~NPC_:FULL",
+            key="X:2|1~NPC_:FULL",
+            original="Hello",
+            translation="已有",
+            stage=1,
+            context="NPC_:FULL",
+        ),
     ]
     c = TranslationEntryCollection(entries)
     r = m.apply_to_collection(c, QueryContext(mod_file_id=""))
@@ -222,8 +254,9 @@ def test_apply_to_collection_fills_empty_only():
 def test_apply_excludes_locked_stage():
     m = TranslationMemoryManager()
     m.add("", "Locked", "译文", mod_file_id="ModG", scope="global")
-    entry = TranslationEntry(id="L:1|1~NPC_:FULL", key="L:1|1~NPC_:FULL",
-                             original="Locked", translation="", stage=9, context="NPC_:FULL")
+    entry = TranslationEntry(
+        id="L:1|1~NPC_:FULL", key="L:1|1~NPC_:FULL", original="Locked", translation="", stage=9, context="NPC_:FULL"
+    )
     c = TranslationEntryCollection([entry])
     r = m.apply_to_collection(c, QueryContext(mod_file_id=""))
     assert r.applied == 0
@@ -290,8 +323,6 @@ def test_load_duplicate_mod_raises(tm_tmp_dir: Path):
     )
     # 已有一个 LegacyPatch.tbdict，且目录里还有另一文件——但 load 只 glob 一次，重复在内存层检测
     # 这里验证：同一 mod_file_id 出现两份文件时抛错
-    from src.transbridge.translation_memory.model import Dictionary
-    d = Dictionary(mod_file_id="LegacyPatch", scope="global")
     (tm_tmp_dir / "LegacyPatch_copy.tbdict").write_text(
         '{"schema_version": 1, "mod_file_id": "LegacyPatch", "scope": "global", '
         '"entries": {}, "key_index": {}, "text_index": {}}',
@@ -337,7 +368,6 @@ def test_import_dict(tm_tmp_dir: Path):
     m_src.save()
 
     # 目标目录：另一个 base_dir
-    import shutil
     dst_dir = tm_tmp_dir / "dst"
     dst_dir.mkdir(exist_ok=True)
     src_file = src_dir / "ModA.tbdict"

@@ -15,8 +15,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.transbridge.converter.translation_entry import TranslationEntry
-from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
 
 # ── Plain Functions (usable from both pytest fixtures and unittest imports) ─
@@ -87,7 +87,7 @@ class MockAppContext:
         self.collection_changed_calls: list = []
 
         if collection is not None:
-            from src.transbridge.ui.context import CollectionSlot
+            from transbridge.ui.context import CollectionSlot
             slot = CollectionSlot(label="test", collection=collection)
             self._slots = {"test_key": slot}
             self._active_key = "test_key"
@@ -296,7 +296,7 @@ def make_llm_config(**overrides):
     cfg.model = "gpt-4o"
     cfg.save_to_file = MagicMock()
     cfg.load_from_file = MagicMock(return_value=cfg)
-    from src.transbridge.config.llm import LLMConfig
+    from transbridge.config.llm import LLMConfig
     cfg.get_ai_translator_dir = LLMConfig.get_ai_translator_dir
     return cfg
 

@@ -7,23 +7,23 @@
 
 from __future__ import annotations
 
-import json
-import threading
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+import json
 from pathlib import Path
-from typing import Any
+import threading
 
-from src.transbridge.config.paths import get_data_dir
-from src.transbridge.converter.translation_entry import _normalize_text
-from src.transbridge.persistence._utils import atomic_write_json, validate_name
-from src.transbridge.translation_memory.model import (
-    Dictionary,
-    DictionaryEntry,
+from transbridge.application.io.identity import Provenance
+from transbridge.application.io.stage_policy import DEFAULT_STAGE_POLICY
+from transbridge.config.paths import get_data_dir
+from transbridge.converter.translation_entry import _normalize_text
+from transbridge.persistence._utils import atomic_write_json, validate_name
+from transbridge.translation_memory.model import (
     SCOPE_GLOBAL,
-    SCOPE_PROJECT,
     SCOPE_RANK,
     VALID_SCOPES,
+    Dictionary,
+    DictionaryEntry,
     entry_id,
 )
 
@@ -48,14 +48,14 @@ def _normalize(text: str) -> str:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 @dataclass
 class QueryContext:
     """查询上下文：决定激活集与兜底顺序。"""
 
-    mod_file_id: str = ""   # 当前翻译的 mod 名（同名词典最高优先）
+    mod_file_id: str = ""  # 当前翻译的 mod 名（同名词典最高优先）
 
 
 @dataclass
@@ -63,10 +63,10 @@ class QueryResult:
     """查询结果。"""
 
     translation: str | None = None
-    matched_scope: str = ""           # 命中的 scope（project/global）
-    matched_via: str = ""             # "key" | "text"
-    match_status: str = ""            # "EXACT"（原文一致）| "STALE"（原文已变）| ""（文本命中）
-    matched_mod: str = ""             # 命中的词典 mod_file_id
+    matched_scope: str = ""  # 命中的 scope（project/global）
+    matched_via: str = ""  # "key" | "text"
+    match_status: str = ""  # "EXACT"（原文一致）| "STALE"（原文已变）| ""（文本命中）
+    matched_mod: str = ""  # 命中的词典 mod_file_id
     conflicts: list[dict] = field(default_factory=list)  # 冲突候选（含译文/来源/胜者）
 
 
@@ -74,12 +74,12 @@ class QueryResult:
 class ApplyResult:
     """套用结果统计。"""
 
-    key_hits: int = 0       # 键索引命中条数
-    text_hits: int = 0      # 文本索引命中条数
-    misses: int = 0         # 未命中条数
-    applied: int = 0        # 实际被填充译文的条数
+    key_hits: int = 0  # 键索引命中条数
+    text_hits: int = 0  # 文本索引命中条数
+    misses: int = 0  # 未命中条数
+    applied: int = 0  # 实际被填充译文的条数
     needs_review: list[str] = field(default_factory=list)  # 键命中但原文变化（STALE）的 entry_id
-    conflicts: list[dict] = field(default_factory=list)    # 冲突候选（供 GUI 仲裁）
+    conflicts: list[dict] = field(default_factory=list)  # 冲突候选（供 GUI 仲裁）
 
 
 class TranslationMemoryManager:
@@ -87,7 +87,7 @@ class TranslationMemoryManager:
 
     def __init__(self, base_dir: Path | None = None) -> None:
         self._base_dir: Path | None = base_dir
-        self._dicts: dict[str, Dictionary] = {}   # mod_file_id -> Dictionary
+        self._dicts: dict[str, Dictionary] = {}  # mod_file_id -> Dictionary
         self._lock = threading.Lock()  # 保护 _dicts 与词典内容（命中计数、写入）
 
     # ------------------------------------------------------------------
@@ -120,14 +120,35 @@ class TranslationMemoryManager:
         """mod_file_id -> Dictionary。"""
         return self._dicts
 
+    def snapshot_dictionaries(self) -> tuple[Dictionary, ...]:
+        """Return detached dictionaries for V2 read-only planning."""
+        with self._lock:
+            return tuple(Dictionary.from_dict(item.to_dict()) for item in self._dicts.values())
+
     # ------------------------------------------------------------------
     # 写入
     # ------------------------------------------------------------------
 
-    def add(self, complete_key: str, original: str, translation: str,
-            mod_file_id: str = "", scope: str = SCOPE_GLOBAL,
-            tags: list[str] | None = None, source_mod: str = "",
-            form_id_with_plugin: str = "", overwrite: bool = False) -> None:
+    def add(
+        self,
+        complete_key: str,
+        original: str,
+        translation: str,
+        mod_file_id: str = "",
+        scope: str = SCOPE_GLOBAL,
+        tags: list[str] | None = None,
+        source_mod: str = "",
+        form_id_with_plugin: str = "",
+        overwrite: bool = False,
+        *,
+        source_locale: str = "",
+        target_locale: str = "",
+        stage: int = 0,
+        provenance: tuple[Provenance, ...] = (),
+        source_namespace: str = "",
+        source_fingerprint: str = "",
+        enabled: bool | None = None,
+    ) -> None:
         """写入一条译文到词典（单表权威对象 + 双索引）。
 
         键索引用 complete_key，文本索引用规范化原文；两条索引指向同一 entry_id。
@@ -138,6 +159,7 @@ class TranslationMemoryManager:
             key = self._key(mod_file_id)
             d = self._dict(key)
             d.scope = scope  # 词典 scope 随写入同步（一本词典一个 scope）
+            d.revision += 1
             nk = _normalize(original) if original else ""
             seed = nk or complete_key or original
             if not seed:
@@ -158,6 +180,19 @@ class TranslationMemoryManager:
                     imported_at=d.entries[eid].imported_at if eid in d.entries else now,
                     updated_at=now,
                     tags=sorted(set(tags or [])),
+                    source_locale=source_locale,
+                    target_locale=target_locale,
+                    stage=stage,
+                    provenance=provenance,
+                    dictionary_id=d.dictionary_id or key,
+                    dictionary_revision=d.revision,
+                    source_namespace=source_namespace,
+                    source_fingerprint=source_fingerprint,
+                    enabled=(
+                        bool(source_locale and target_locale and source_namespace and source_fingerprint)
+                        if enabled is None
+                        else enabled
+                    ),
                 )
                 d.entries[eid] = entry
             # 双索引：只登记 entry_id + 初始 hits=0
@@ -180,8 +215,7 @@ class TranslationMemoryManager:
     # 查询
     # ------------------------------------------------------------------
 
-    def _hit(self, d: Dictionary, complete_key: str, original: str,
-             via: str, status: str) -> QueryResult:
+    def _hit(self, d: Dictionary, complete_key: str, original: str, via: str, status: str) -> QueryResult:
         """在单本词典内命中，返回 QueryResult（不计 conflicts）。"""
         nk = _normalize(original) if original else ""
         if via == "key":
@@ -202,8 +236,7 @@ class TranslationMemoryManager:
             matched_mod=d.mod_file_id,
         )
 
-    def query(self, complete_key: str, original: str,
-              context: QueryContext | None = None) -> QueryResult:
+    def query(self, complete_key: str, original: str, context: QueryContext | None = None) -> QueryResult:
         """多词典全查兜底：同名 mod 优先（键命中即停），其余 project/global 收集候选仲裁。"""
         ctx = context or QueryContext()
         nk = _normalize(original) if original else ""
@@ -240,6 +273,7 @@ class TranslationMemoryManager:
 
     def _arbitrate(self, candidates: list[tuple[Dictionary, str, str, str]]) -> QueryResult:
         """对候选按 scope 优先级 + hits 降序仲裁，填充 conflicts。"""
+
         def hits_of(c: tuple[Dictionary, str, str, str]) -> int:
             d, k, via, _ = c
             idx = d.key_index.get(k) if via == "key" else d.text_index.get(k)
@@ -290,10 +324,20 @@ class TranslationMemoryManager:
     # 存为词典（从集合落地）
     # ------------------------------------------------------------------
 
-    def save_from_collection(self, collection,
-                             mod_file_id: str = "", scope: str = SCOPE_GLOBAL,
-                             entry_ids: list[str] | None = None,
-                             tags: list[str] | None = None) -> int:
+    def save_from_collection(
+        self,
+        collection,
+        mod_file_id: str = "",
+        scope: str = SCOPE_GLOBAL,
+        entry_ids: list[str] | None = None,
+        tags: list[str] | None = None,
+        *,
+        source_locale: str = "",
+        target_locale: str = "",
+        source_namespace: str = "",
+        source_fingerprint: str = "",
+        provenance: tuple[Provenance, ...] = (),
+    ) -> int:
         """将集合已译条目写入词典（来源 mod = mod_file_id）。返回新增 entry_id 数。
 
         排除 stage==9（锁定）/ stage==-1（隐藏）与空译文/空原文条目。
@@ -312,14 +356,26 @@ class TranslationMemoryManager:
         for e in targets:
             if not e.translation or not e.original:
                 continue
-            if e.stage in (9, -1):  # 锁定/隐藏不收录
+            if not DEFAULT_STAGE_POLICY.allows_tm_write(e.stage, e.translation, original=e.original):
                 continue
             # 锁语义：e.key = TranslationEntry 唯一主索引（EditorID:FormID|index~context），
             # 即词典 key_index 的 complete_key，勿改用 e.id（id 非主索引，见 ADR-002）
-            self.add(e.key, e.original, e.translation,
-                     mod_file_id=key, scope=scope, tags=tags,
-                     source_mod=key,
-                     form_id_with_plugin=getattr(e, "form_id_with_plugin", None) or "")
+            self.add(
+                e.key,
+                e.original,
+                e.translation,
+                mod_file_id=key,
+                scope=scope,
+                tags=tags,
+                source_mod=key,
+                form_id_with_plugin=getattr(e, "form_id_with_plugin", None) or "",
+                source_locale=source_locale,
+                target_locale=target_locale,
+                stage=e.stage,
+                provenance=provenance or tuple(getattr(e, "provenance", ())),
+                source_namespace=source_namespace,
+                source_fingerprint=source_fingerprint,
+            )
 
         if key in self._dicts:
             after = set(self._dicts[key].entries.keys())
@@ -330,9 +386,9 @@ class TranslationMemoryManager:
     # 套用到集合
     # ------------------------------------------------------------------
 
-    def apply_to_collection(self, collection,
-                            context: QueryContext | None = None,
-                            overwrite: bool = False) -> ApplyResult:
+    def apply_to_collection(
+        self, collection, context: QueryContext | None = None, overwrite: bool = False
+    ) -> ApplyResult:
         """按词典补集合空译文。返回统计（含 conflicts）。"""
         if collection is None:
             raise ValueError("collection 不能为 None")
@@ -340,7 +396,7 @@ class TranslationMemoryManager:
         for e in collection:
             if e.translation and not overwrite:
                 continue
-            if e.stage in (9, -1):  # 锁定/隐藏不套用
+            if not DEFAULT_STAGE_POLICY.allows_tm_read(e.stage, e.translation, original=e.original):
                 continue
             if not e.key and not e.original:
                 continue
@@ -400,14 +456,13 @@ class TranslationMemoryManager:
             except Exception as exc:  # noqa: BLE001 - 损坏文件保留现场不静默吞
                 corrupt = f.with_suffix(f".corrupt-{int(datetime.now().timestamp())}")
                 f.replace(corrupt)
-                raise RuntimeError(
-                    f"词典文件损坏，已保留现场: {corrupt}（{exc}）"
-                )
+                raise RuntimeError(f"词典文件损坏，已保留现场: {corrupt}（{exc}）")
         return count
 
     def import_dict(self, src_path: str | Path, overwrite: bool = False) -> bool:
         """导入外部 .tbdict 词典，同步名校验。返回是否成功（同名且不覆盖返回 False）。"""
         import shutil
+
         src = Path(src_path)
         if src.suffix.lower() != DICT_SUFFIX:
             raise ValueError(f"仅支持 {DICT_SUFFIX} 词典文件")
@@ -426,6 +481,7 @@ class TranslationMemoryManager:
     def export_dict(self, mod_file_id: str, dest_dir: str | Path) -> Path:
         """导出词典到目标目录，返回目标路径。"""
         import shutil
+
         key = self._key(mod_file_id)
         target_dir = Path(dest_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -438,7 +494,7 @@ class TranslationMemoryManager:
         shutil.copy2(src, dest)
         return dest
 
-    def merge(self, other: "TranslationMemoryManager") -> int:
+    def merge(self, other: TranslationMemoryManager) -> int:
         """合并另一个 manager 的全部词典。返回新增 entry_id 数。"""
         added = 0
         for key, od in other.dictionaries.items():

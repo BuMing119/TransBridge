@@ -11,17 +11,29 @@
 - 多词典组合查询：同名 mod → 其余 project → 其余 global，冲突收集仲裁
 """
 
-from src.transbridge.translation_memory.model import (
+from transbridge.translation_memory.contracts import (
+    TmConflictPolicy,
+    TmMatchStatus,
+    TranslationMemoryCandidate,
+    TranslationMemoryQuery,
+    TranslationMemoryQueryResult,
+)
+from transbridge.translation_memory.manager import (
+    ApplyResult,
+    QueryContext,
+    QueryResult,
+    TranslationMemoryManager,
+)
+from transbridge.translation_memory.migration import (
+    TranslationMemoryMigrationReport,
+    migrate_legacy_dictionary,
+)
+from transbridge.translation_memory.model import (
     Dictionary,
     DictionaryEntry,
     entry_id,
 )
-from src.transbridge.translation_memory.manager import (
-    TranslationMemoryManager,
-    QueryContext,
-    QueryResult,
-    ApplyResult,
-)
+from transbridge.translation_memory.service import TranslationMemoryQueryService
 
 __all__ = [
     "Dictionary",
@@ -31,4 +43,12 @@ __all__ = [
     "QueryContext",
     "QueryResult",
     "ApplyResult",
+    "TmConflictPolicy",
+    "TmMatchStatus",
+    "TranslationMemoryCandidate",
+    "TranslationMemoryMigrationReport",
+    "TranslationMemoryQuery",
+    "TranslationMemoryQueryResult",
+    "TranslationMemoryQueryService",
+    "migrate_legacy_dictionary",
 ]

@@ -24,7 +24,7 @@ def qapp():
 
 
 def test_save_dialog_result_parsing(qapp):
-    from src.transbridge.ui.tools.dictionary_dialog import SaveToDictionaryDialog
+    from transbridge.ui.tools.dictionary_dialog import SaveToDictionaryDialog
 
     dlg = SaveToDictionaryDialog(source_path="/path/to/LegacyPatch.esp")
     # 默认 global + mod 名预填（从路径推断）+ 全量 + 无词典标签
@@ -49,7 +49,7 @@ def test_save_dialog_result_parsing(qapp):
 
 
 def test_save_dialog_manual_mod_id(qapp):
-    from src.transbridge.ui.tools.dictionary_dialog import SaveToDictionaryDialog
+    from transbridge.ui.tools.dictionary_dialog import SaveToDictionaryDialog
 
     # 无 source_path 时，用户手填 mod 名
     dlg = SaveToDictionaryDialog(mod_file_id="MyMod")
@@ -58,8 +58,8 @@ def test_save_dialog_manual_mod_id(qapp):
 
 
 def test_dictionary_panel_loads_empty(qapp, tm_tmp_dir):
-    from src.transbridge.ui.tools.dictionary_panel import DictionaryPanel
-    from src.transbridge.ui.context import AppContext
+    from transbridge.ui.tools.dictionary_panel import DictionaryPanel
+    from transbridge.ui.context import AppContext
 
     ctx = AppContext()
     # 传入隔离的临时目录，避免加载真实 data/translation_memory 数据
@@ -72,9 +72,9 @@ def test_dictionary_panel_loads_empty(qapp, tm_tmp_dir):
 
 def test_panel_default_source_path_from_esp(qapp, tm_tmp_dir):
     """有 esp_path 时，面板能从当前解析文件推断 mod 名。"""
-    from src.transbridge.ui.tools.dictionary_panel import DictionaryPanel
-    from src.transbridge.ui.context import AppContext, CollectionSlot
-    from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
+    from transbridge.ui.tools.dictionary_panel import DictionaryPanel
+    from transbridge.ui.context import AppContext, CollectionSlot
+    from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
     ctx = AppContext()
     slot = CollectionSlot(
