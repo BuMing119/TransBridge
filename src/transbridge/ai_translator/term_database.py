@@ -19,8 +19,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.transbridge.paratranz.config_manager import LLMConfig
-    from src.transbridge.converter.translation_entry import TranslationEntry
+    from transbridge.paratranz.config_manager import LLMConfig
+    from transbridge.converter.translation_entry import TranslationEntry
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ class DynamicTermDatabase:
 
     def __init__(self, esp_path: str):
         stem = os.path.splitext(os.path.basename(esp_path))[0]
-        from src.transbridge.paratranz.config_manager import LLMConfig
+        from transbridge.paratranz.config_manager import LLMConfig
         ai_dir = LLMConfig.get_ai_translator_dir(stem)
         self._path = os.path.join(ai_dir, f"{stem}_terms.json")
         self._entries: list[TermEntry] = []
@@ -127,27 +127,36 @@ class TermDatabaseManager:
         self._esp_path = esp_path
         self._paratranz_client = paratranz_client
         self._project_id = project_id
-        self._dynamic_db = DynamicTermDatabase(esp_path)
-        self._dynamic_db.load()
+        self._retrieval_enabled = getattr(config, "retrieval_enabled", True)
+        self._dynamic_db: DynamicTermDatabase | None = None
         self._merged_terms: list[TermEntry] = []  # 缓存合并后的术语列表
         self._load_log: list[tuple[str, int, str | None]] = []  # (source, count, error)
         self._vector_index = None  # 延迟初始化
 
         # 缓存目录：data/ai_translator/{stem}/cache/
-        from src.transbridge.paratranz.config_manager import LLMConfig
+        from transbridge.paratranz.config_manager import LLMConfig
         stem = os.path.splitext(os.path.basename(esp_path))[0]
         self._cache_dir = os.path.join(LLMConfig.get_ai_translator_dir(stem), "cache")
         os.makedirs(self._cache_dir, exist_ok=True)
 
     def get_dynamic_db(self) -> DynamicTermDatabase:
+        if self._dynamic_db is None:
+            self._dynamic_db = DynamicTermDatabase(self._esp_path)
+            self._dynamic_db.load()
         return self._dynamic_db
 
     def load_all(self) -> dict[str, str]:
         """按 term_priority 顺序加载并合并，优先级从低到高（后者覆盖前者）。返回 {term: translation}。"""
+        if not self._retrieval_enabled:
+            self._merged_terms = []
+            self._load_log = []
+            return {}
         self._merged_terms = self._load_all_with_metadata()
 
-        # 初始化向量索引
-        self._init_vector_index()
+        # Disabled retrieval must not import or initialize any vector backend.
+        embedding_mode = getattr(getattr(self._config, "embedding", None), "mode", "disabled")
+        if getattr(self._config, "enable_semantic_match", False) and embedding_mode != "disabled":
+            self._init_vector_index()
 
         return {e.term: e.translation for e in self._merged_terms}
 
@@ -214,7 +223,7 @@ class TermDatabaseManager:
         Returns:
             TermEntry 列表，缓存不存在或无效时返回空列表
         """
-        from src.transbridge.paratranz.config_manager import LLMConfig
+        from transbridge.paratranz.config_manager import LLMConfig
         stem = os.path.splitext(os.path.basename(esp_path))[0]
         cache_path = os.path.join(LLMConfig.get_ai_translator_dir(stem), "cache", CACHE_FILES["merged"])
 
@@ -281,7 +290,7 @@ class TermDatabaseManager:
             if entry.term.lower() == term_lower:
                 return True
         # 同时检查翻译过程中动态追加的新条目（_merged_terms 仅缓存初始状态）
-        for entry in self._dynamic_db.as_list():
+        for entry in self.get_dynamic_db().as_list():
             if entry.term.lower() == term_lower:
                 return True
         return False
@@ -292,7 +301,7 @@ class TermDatabaseManager:
             self._merged_terms = self._load_all_with_metadata()
         # 把 _dynamic_db 中在 _merged_terms 之后新增的条目追加进来
         merged_terms_set = {e.term.lower() for e in self._merged_terms}
-        extra = [e for e in self._dynamic_db.as_list() if e.term.lower() not in merged_terms_set]
+        extra = [e for e in self.get_dynamic_db().as_list() if e.term.lower() not in merged_terms_set]
         return self._merged_terms + extra
 
     def _get_term_matcher_map(self) -> dict[str, tuple[str, str, bool]]:
@@ -570,7 +579,7 @@ class TermDatabaseManager:
         return result
 
     def _load_dynamic(self) -> list[TermEntry]:
-        return self._dynamic_db.as_list()
+        return self.get_dynamic_db().as_list()
 
     def _load_paratranz(self) -> list[TermEntry]:
         if not self._paratranz_client or not self._project_id:

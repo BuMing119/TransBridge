@@ -17,10 +17,10 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 
 if TYPE_CHECKING:
-    from src.transbridge.ai_translator.translator import TranslationResult
-    from src.transbridge.ai_translator.post_processor.base import PostProcessResult
-    from src.transbridge.ai_translator.post_processor.polisher import PolishResult
-    from src.transbridge.converter.translation_entry import TranslationEntry
+    from transbridge.ai_translator.translator import TranslationResult
+    from transbridge.ai_translator.post_processor.base import PostProcessResult
+    from transbridge.ai_translator.post_processor.polisher import PolishResult
+    from transbridge.converter.translation_entry import TranslationEntry
 
 _logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ class ReportGenerator:
 
     def __init__(self, esp_stem: str):
         self._esp_stem = esp_stem
-        from src.transbridge.paratranz.config_manager import LLMConfig
+        from transbridge.paratranz.config_manager import LLMConfig
         ai_dir = LLMConfig.get_ai_translator_dir(esp_stem)
         self._output_dir = os.path.join(ai_dir, "reports")
 

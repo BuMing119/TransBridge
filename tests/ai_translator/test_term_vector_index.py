@@ -5,12 +5,12 @@ import numpy as np
 import pytest
 from unittest.mock import patch
 
-from src.transbridge.ai_translator.term_database import TermEntry
-from src.transbridge.ai_translator.term_vector_index import (
+from transbridge.ai_translator.term_database import TermEntry
+from transbridge.ai_translator.term_vector_index import (
     DEFAULT_SIMILARITY_THRESHOLD,
     TermVectorIndex,
 )
-from src.transbridge.config.llm import LLMConfig
+from transbridge.config.llm import LLMConfig
 
 
 class _FakeEmbeddingClient:

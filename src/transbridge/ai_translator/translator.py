@@ -10,15 +10,18 @@ AutoTranslator.translate() 驱动整个翻译流程：
 
 from __future__ import annotations
 
-import json
-import os
-import re
-import threading
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+import json
+import os
 from pathlib import Path
-from typing import Callable, TYPE_CHECKING
+import re
+import secrets
+import threading
+import time
+from typing import TYPE_CHECKING, Callable
+
+from transbridge.application.io.stage_policy import DEFAULT_STAGE_POLICY
 
 
 class _CancelledByPause(BaseException):
@@ -35,11 +38,40 @@ class _RepetitionDetected(Exception):
     def __init__(self, entry_id: str | None = None):
         self.entry_id = entry_id
 
+
+def _select_stage_candidates(candidates: list, *, overwrite: bool) -> list:
+    """Apply workflow targeting first, then the shared discrete Stage policy."""
+    selected = candidates
+    if not overwrite:
+        selected = [entry for entry in selected if not entry.translation or entry.stage == 0]
+    return [
+        entry
+        for entry in selected
+        if DEFAULT_STAGE_POLICY.allows_ai(
+            entry.stage, entry.translation, original=entry.original
+        )
+    ]
+
+
+def _select_post_process_candidates(entries: list, target_entry_ids: list[str] | None) -> list:
+    """Keep post-processing inside the same automatic-edit policy as translation."""
+    target_set = set(target_entry_ids) if target_entry_ids else None
+    return [
+        entry
+        for entry in entries
+        if entry.translation
+        and (target_set is None or entry.key in target_set)
+        and DEFAULT_STAGE_POLICY.allows_ai(
+            entry.stage, entry.translation, original=entry.original
+        )
+    ]
+
+
 if TYPE_CHECKING:
-    from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
-    from src.transbridge.paratranz.config_manager import LLMConfig
-    from src.transbridge.ai_translator.batch_planner import Batch
-    from src.transbridge.ai_translator.post_processor import PostProcessResult
+    from transbridge.ai_translator.batch_planner import Batch
+    from transbridge.ai_translator.post_processor import PostProcessResult
+    from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+    from transbridge.paratranz.config_manager import LLMConfig
 
 
 @dataclass
@@ -71,10 +103,11 @@ class ProgressCheckpoint:
     overwrite: bool
     completed_fingerprints: list[list[str]]   # 每项为已完成批次的排序 entry id 列表
     result_so_far: dict                        # success_count / failed_count / new_dynamic_terms
+    run_id: str = ""
 
     @staticmethod
     def _get_path(esp_path: str) -> str:
-        from src.transbridge.paratranz.config_manager import LLMConfig
+        from transbridge.paratranz.config_manager import LLMConfig
         stem = Path(esp_path).stem
         ai_dir = LLMConfig.get_ai_translator_dir(stem)
         return os.path.join(ai_dir, f"{stem}_progress.json")
@@ -87,6 +120,7 @@ class ProgressCheckpoint:
             "overwrite": self.overwrite,
             "completed_fingerprints": self.completed_fingerprints,
             "result_so_far": self.result_so_far,
+            "run_id": self.run_id,
         }
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -105,6 +139,7 @@ class ProgressCheckpoint:
                 overwrite=data.get("overwrite", False),
                 completed_fingerprints=data.get("completed_fingerprints", []),
                 result_so_far=data.get("result_so_far", {}),
+                run_id=data.get("run_id", ""),
             )
         except Exception:
             return None
@@ -123,19 +158,29 @@ class AutoTranslator:
         project_id: int | None = None,
         shared_in_flight_terms: dict | None = None,
         shared_in_flight_lock: threading.Lock | None = None,
+        candidate_checkpoint=None,
+        run_id_factory: Callable[[], str] | None = None,
     ):
         self._cfg = config
         self._paratranz_client = paratranz_client
         self._project_id = project_id
+        self._candidate_checkpoint_port = candidate_checkpoint
+        self._run_id_factory = run_id_factory or (
+            lambda: f"translation-{secrets.token_hex(16)}"
+        )
+        self._candidate_session = None
 
-        from src.transbridge.infra.llm_client import create_llm_client
-        from src.transbridge.ai_translator.prompt_builder import PromptBuilder
-        from src.transbridge.ai_translator.term_database import TermDatabaseManager
-        from src.transbridge.ai_translator.noun_extractor import NounExtractor
-        from src.transbridge.ai_translator.batch_planner import BatchPlanner
+        from transbridge.infra.llm_client import create_llm_client
+        from transbridge.ai_translator.prompt_builder import PromptBuilder
+        from transbridge.ai_translator.term_database import TermDatabaseManager
+        from transbridge.ai_translator.noun_extractor import NounExtractor
+        from transbridge.ai_translator.batch_planner import BatchPlanner
 
         self._llm = create_llm_client(config.llm_config)
-        self._builder = PromptBuilder()
+        self._builder = PromptBuilder(
+            game_profile=config.llm_config.game_profile,
+            target_lang=config.llm_config.target_lang,
+        )
         self._term_mgr = TermDatabaseManager(
             config=config.llm_config,
             esp_path=config.esp_path,
@@ -260,7 +305,7 @@ class AutoTranslator:
 
     def _salvage_from_repetition_buffer(self, buffer: str, expected_keys: set[str], max_orig_repeat: int = 0) -> dict[str, str]:
         """当流式输出出现重复时，截断重复部分并尝试修复 JSON， salvaging 已完成的翻译对。"""
-        from src.transbridge.ai_translator.prompt_builder import _extract_partial_json_pairs
+        from transbridge.ai_translator.prompt_builder import _extract_partial_json_pairs
         text = "".join(buffer) if isinstance(buffer, list) else buffer
         is_abnormal, truncate_pos = self._detect_stream_repetition(text, max_orig_repeat=max_orig_repeat)
         if not is_abnormal:
@@ -292,7 +337,7 @@ class AutoTranslator:
         当批次数 < max_workers 时，将最后一批拆分成多份。
         返回拆分后的批次列表。
         """
-        from src.transbridge.ai_translator.batch_planner import Batch
+        from transbridge.ai_translator.batch_planner import Batch
 
         if len(batches) >= max_workers or len(batches) == 0:
             return batches
@@ -355,7 +400,7 @@ class AutoTranslator:
 
         # 从断点恢复累计统计
         completed_fps: set[frozenset] = set()
-        if checkpoint:
+        if checkpoint and checkpoint.run_id:
             result.success_count = checkpoint.result_so_far.get("success_count", 0)
             result.failed_count = checkpoint.result_so_far.get("failed_count", 0)
             result.new_dynamic_terms = checkpoint.result_so_far.get("new_dynamic_terms", 0)
@@ -369,15 +414,59 @@ class AutoTranslator:
         else:
             candidates = all_entries
 
-        if not self._cfg.overwrite:
-            candidates = [e for e in candidates if not e.translation or e.stage == 0]
-
-        # 排除已锁定（强制译文）和已隐藏（强制原文）的条目
-        from ..converter.translation_entry import STAGE_LOCKED, STAGE_HIDDEN
-        candidates = [e for e in candidates if e.stage not in (STAGE_LOCKED, STAGE_HIDDEN)]
+        candidates = _select_stage_candidates(candidates, overwrite=self._cfg.overwrite)
 
         if not candidates:
             return result
+
+        from transbridge.application.translation import (
+            FilesystemTranslationCheckpointPort,
+            LegacyTranslationCandidateSession,
+            TranslationInput,
+        )
+        from transbridge.application.translation.workload_models import (
+            canonical_hash,
+            translation_input_fingerprint,
+        )
+
+        run_id = checkpoint.run_id if checkpoint and checkpoint.run_id else self._run_id_factory()
+        translation_inputs = tuple(
+            TranslationInput(
+                entry.identity,
+                entry.revision,
+                entry.original,
+                entry.translation,
+                entry.stage,
+                entry.context or "",
+            )
+            for entry in candidates
+        )
+        spec_fingerprint = canonical_hash(
+            {
+                "run_id": run_id,
+                "config_revision": self._cfg.llm_config.config_revision,
+                "provider": self._cfg.llm_config.provider,
+                "base_url": self._cfg.llm_config.base_url,
+                "model": self._cfg.llm_config.model,
+                "target_lang": self._cfg.llm_config.target_lang,
+                "scope": [entry.entry_key.to_dict() for entry in translation_inputs],
+            }
+        )
+        candidate_port = self._candidate_checkpoint_port
+        if candidate_port is None:
+            checkpoint_root = Path(
+                self._cfg.llm_config.get_ai_translator_dir(Path(self._cfg.esp_path).stem)
+            ) / "runtime-v2"
+            candidate_port = FilesystemTranslationCheckpointPort(checkpoint_root)
+        self._candidate_session = LegacyTranslationCandidateSession(
+            run_id=run_id,
+            owner_id="legacy-auto-translator",
+            spec_fingerprint=spec_fingerprint,
+            input_fingerprint=translation_input_fingerprint(translation_inputs),
+            checkpoint=candidate_port,
+            provider=self._cfg.llm_config.provider,
+            model=self._cfg.llm_config.model,
+        )
 
         max_workers = self._cfg.llm_config.max_concurrent
 
@@ -388,8 +477,10 @@ class AutoTranslator:
         total_entries = sum(len(b.entries) for b in all_batches)
 
         # 断点续传：将已完成的词条数加到总计中，避免 current 超过 total
-        if checkpoint:
-            completed_from_checkpoint = checkpoint.result_so_far.get("success_count", 0) + checkpoint.result_so_far.get("failed_count", 0)
+        if checkpoint and checkpoint.run_id:
+            completed_from_checkpoint = checkpoint.result_so_far.get(
+                "success_count", 0
+            ) + checkpoint.result_so_far.get("failed_count", 0)
             total_entries += completed_from_checkpoint
 
         if total_batches == 0:
@@ -433,6 +524,7 @@ class AutoTranslator:
                         "failed_count": result.failed_count,
                         "new_dynamic_terms": result.new_dynamic_terms,
                     },
+                    run_id=run_id,
                 )
             cp.save(self._cfg.esp_path)
 
@@ -618,11 +710,52 @@ class AutoTranslator:
 
         t_total = time.perf_counter() - t_total_start
 
+        if not stop_event.is_set() and self._candidate_session is not None:
+            from transbridge.application.contracts import OperationOutcome, RequestContext
+            from transbridge.application.io.publish import ImmediateCommitGuard
+
+            accepted_count = result.success_count
+            commit = self._candidate_session.commit(
+                collection,
+                RequestContext(
+                    "legacy-auto-translator",
+                    run_id=run_id,
+                    permissions=frozenset(
+                        {"entry.translation.write", "entry.stage.write"}
+                    ),
+                ),
+                ImmediateCommitGuard(run_id, active=lambda: not stop_event.is_set()),
+            )
+            if commit.outcome in {OperationOutcome.COMPLETED, OperationOutcome.PARTIAL}:
+                result.success_count = commit.counts.succeeded + commit.counts.skipped
+                result.failed_count += commit.counts.failed
+            else:
+                result.success_count = 0
+                result.failed_count += accepted_count
+            result.failed_entries.extend(
+                f"{diagnostic.code}: {diagnostic.message}"
+                for diagnostic in commit.diagnostics
+            )
+
         # ── 后处理：质量检查 ─────────────────────────────────────────────────────
         if not stop_event.is_set() and result.success_count > 0 and getattr(self._cfg.llm_config, 'enable_post_process', True):
             _log(f"\n── 开始质量检查 ──")
+            from transbridge.application.contracts import OperationOutcome, RequestContext
+            from transbridge.application.io import StagePolicy
+            from transbridge.application.io.publish import ImmediateCommitGuard
+            from transbridge.application.translation import (
+                CheckerStage,
+                FilesystemPostProcessCheckpointPort,
+                FilesystemTranslationCheckpointPort,
+                LlmPostProcessStage,
+                OpenAiPostProcessHttpPort,
+                PostProcessExecutionService,
+                PostProcessLlmPhase,
+                PostProcessWorkload,
+                TranslationInput,
+            )
+
             from .post_processor import PostProcessor, PostProcessorConfig
-            from .post_processor.checkpoint import PostProcessCheckpoint
 
             # 从LLMConfig加载后处理配置
             pp_config = PostProcessorConfig.from_llm_config(self._cfg.llm_config)
@@ -637,55 +770,103 @@ class AutoTranslator:
 
             # 只对成功翻译的条目进行后处理
             # 收集本次翻译成功的条目
-            from ..converter.translation_entry import TranslationEntry
             all_entries = list(collection)
-            # 筛选出本次处理的条目（如果target_entry_ids不为空）
-            if target_entry_ids:
-                target_set = set(target_entry_ids)
-                entries_to_check = [e for e in all_entries if e.key in target_set and e.translation]
-            else:
-                entries_to_check = [e for e in all_entries if e.translation]
+            entries_to_check = _select_post_process_candidates(
+                all_entries, target_entry_ids
+            )
 
             if entries_to_check:
-                # 加载或创建后处理断点
-                pp_checkpoint = PostProcessCheckpoint.load(self._cfg.esp_path) or PostProcessCheckpoint(esp_stem=esp_stem)
-
-                def _pp_log(line: str):
-                    if log_callback:
-                        log_callback(-1, line)
-
-                pp_result = post_processor.process_entries(
-                    entries_to_check,
-                    progress_callback=lambda phase, c, t, m: _emit(f"后处理[{phase}] {m}"),
-                    stop_event=stop_event,
-                    pause_event=pause_event,
-                    checkpoint=pp_checkpoint,
-                    max_workers=max_workers,
-                    log_callback=_pp_log,
-                    esp_path=self._cfg.esp_path,
+                stages = []
+                stage_names = []
+                checker_phases = {
+                    "ConsistencyChecker": "consistency",
+                    "FormatValidator": "format",
+                    "QualityGateChecker": "quality_gate",
+                }
+                for checker in post_processor._checkers:
+                    phase = checker_phases.get(type(checker).__name__)
+                    if phase is not None:
+                        stages.append(CheckerStage(phase, checker))
+                        stage_names.append(phase)
+                llm_port = OpenAiPostProcessHttpPort(
+                    credential=lambda: self._cfg.llm_config.api_key
                 )
-
-                # 输出后处理摘要
-                _log(f"质量检查完成：检查 {pp_result.total_checked} 条")
-                error_count = sum(1 for i in pp_result.issues if i.severity == "error")
-                warning_count = sum(1 for i in pp_result.issues if i.severity == "warning")
-                _log(f"  发现问题：{error_count} 个错误，{warning_count} 个警告")
-                if pp_result.needs_review:
-                    _log(f"  需审核条目：{len(pp_result.needs_review)} 条")
-
-                # 更新stage（根据检查结果）
-                stage_stats = post_processor.update_entry_stages(collection, pp_result)
-                if stage_stats.get("reset_to_untranslated", 0) > 0:
-                    _log(f"  重置为未翻译：{stage_stats['reset_to_untranslated']} 条")
-                if stage_stats.get("kept_for_review", 0) > 0:
-                    _log(f"  保持待审核：{stage_stats['kept_for_review']} 条")
-
-                # 将后处理结果附加到TranslationResult
-                result.post_process_result = pp_result
-
-                if not stop_event.is_set():
-                    # 后处理正常完成，删除后处理断点
-                    pp_checkpoint.delete(self._cfg.esp_path)
+                llm_phases = (
+                    (pp_config.enable_refinement, PostProcessLlmPhase.REFINE, "refinement"),
+                    (pp_config.enable_polish, PostProcessLlmPhase.POLISH, "polish"),
+                    (pp_config.enable_llm_arbitration, PostProcessLlmPhase.ARBITRATE, "arbitration"),
+                )
+                for enabled, phase, phase_name in llm_phases:
+                    if enabled:
+                        stages.append(
+                            LlmPostProcessStage(
+                                phase,
+                                llm_port,
+                                target_locale=self._cfg.llm_config.target_lang,
+                                game_profile=self._cfg.llm_config.game_profile,
+                                base_url=self._cfg.llm_config.base_url,
+                                model=self._cfg.llm_config.model,
+                            )
+                        )
+                        stage_names.append(phase_name)
+                checkpoint_root = Path(self._cfg.esp_path).parent / ".transbridge" / "checkpoints"
+                workload = PostProcessWorkload(
+                    tuple(stages),
+                    stage_policy=StagePolicy(),
+                    stage_names=tuple(stage_names),
+                    checkpoint_port=FilesystemPostProcessCheckpointPort(checkpoint_root / "postprocess"),
+                )
+                post_run_id = f"{run_id}:postprocess"
+                inputs = tuple(
+                    TranslationInput(
+                        entry.identity,
+                        entry.revision,
+                        entry.original,
+                        entry.translation,
+                        entry.stage,
+                        entry.context or "",
+                    )
+                    for entry in entries_to_check
+                )
+                execution = PostProcessExecutionService(workload).execute(
+                    run_id=post_run_id,
+                    entries=inputs,
+                    collection=collection,
+                    context=RequestContext(
+                        "legacy-auto-translator",
+                        run_id=post_run_id,
+                        permissions=frozenset(
+                            {"entry.translation.write", "entry.stage.write"}
+                        ),
+                    ),
+                    commit_guard=ImmediateCommitGuard(
+                        post_run_id, active=lambda: not stop_event.is_set()
+                    ),
+                    commit_checkpoint=FilesystemTranslationCheckpointPort(
+                        checkpoint_root / "postprocess-commit"
+                    ),
+                    is_cancelled=stop_event.is_set,
+                    run_spec_summary={
+                        "source": "auto-translator",
+                        "model": self._cfg.llm_config.model,
+                    },
+                )
+                pp_result = execution.report_result.value
+                if pp_result is None:
+                    codes = ", ".join(item.code for item in execution.report_result.diagnostics)
+                    result.failed_entries.append(f"后处理失败: {codes or 'POSTPROCESS_FAILED'}")
+                else:
+                    _log(f"质量检查完成：检查 {pp_result.input_count} 条")
+                    _log(f"  发现问题：{pp_result.issue_count} 个")
+                    result.post_process_result = pp_result
+                    if execution.commit_result is not None and execution.commit_result.outcome not in {
+                        OperationOutcome.COMPLETED,
+                        OperationOutcome.PARTIAL,
+                    }:
+                        result.failed_entries.extend(
+                            f"{diagnostic.code}: {diagnostic.message}"
+                            for diagnostic in execution.commit_result.diagnostics
+                        )
             else:
                 _log(f"无可检查的条目")
 
@@ -716,7 +897,7 @@ class AutoTranslator:
         _timing_out: dict | None = None,
         progress_emit: Callable[[], None] | None = None,
     ) -> int:
-        from src.transbridge.converter.context_categories import AUTO_TERM_CONTEXTS
+        from transbridge.converter.context_categories import AUTO_TERM_CONTEXTS
 
         def _log(line: str):
             if log_callback:
@@ -756,7 +937,7 @@ class AutoTranslator:
                 orig_disp = orig[:60] + "…" if len(orig) > 60 else orig
                 trans_disp = trans[:60] + "…" if len(trans) > 60 else trans
                 _log(f"{orig_disp} -> {trans_disp} [直填]")
-            self._update_collection(direct_fill, collection, result, lock)
+            self._accept_candidates(direct_fill, collection, result, lock)
 
         if not llm_entries:
             if _timing_out is not None:
@@ -824,7 +1005,6 @@ class AutoTranslator:
             partial = self._builder.extract_partial_pairs("".join(_stream_buffer))
             for eid, trans in partial.items():
                 if eid not in _stream_translations and eid in expected_keys:
-                    _stream_translations[eid] = trans
                     entry = key_to_entry[eid]
                     # 流式阶段实时检测异常重复/回显
                     if self._is_translation_abnormal(entry.original, trans):
@@ -832,7 +1012,8 @@ class AutoTranslator:
                     orig_disp = entry.original[:60] + "…" if len(entry.original) > 60 else entry.original
                     trans_disp = trans[:60] + "…" if len(trans) > 60 else trans
                     _log(f"{orig_disp} -> {trans_disp}")
-                    self._update_collection({eid: trans}, collection, result, lock)
+                    self._accept_candidates({eid: trans}, collection, result, lock)
+                    _stream_translations[eid] = trans
                     if progress_emit:
                         progress_emit()
                     # Round 1 术语即时写入 in-flight 缓存（供并发批次使用）
@@ -858,10 +1039,10 @@ class AutoTranslator:
                 salvaged = self._salvage_from_repetition_buffer(_stream_buffer, expected_keys, max_orig_repeat=max_orig_repeat)
                 for eid, trans in salvaged.items():
                     if eid not in _stream_translations and eid in expected_keys:
-                        _stream_translations[eid] = trans
                         entry = key_to_entry[eid]
                         _log(f"  [修复] {entry.original[:60]} -> {trans[:60]}")
-                        self._update_collection({eid: trans}, collection, result, lock)
+                        self._accept_candidates({eid: trans}, collection, result, lock)
+                        _stream_translations[eid] = trans
                         if progress_emit:
                             progress_emit()
                         ctx = entry.context.split("|")[0] if "|" in (entry.context or "") else entry.context
@@ -874,7 +1055,7 @@ class AutoTranslator:
                     mid = len(remaining) // 2
                     halves = [remaining[:mid], remaining[mid:]]
                     _log(f"  ↩ {len(remaining)} 条拆分重试")
-                    from src.transbridge.ai_translator.batch_planner import Batch as _Batch
+                    from transbridge.ai_translator.batch_planner import Batch as _Batch
                     for half in halves:
                         sub = _Batch(entries=half, batch_type=batch.batch_type, quest_formid=batch.quest_formid)
                         self._run_batch(sub, collection, result, lock, log_callback, pause_event, stop_event, stream_callback, _min_size, progress_emit=progress_emit)
@@ -929,9 +1110,9 @@ class AutoTranslator:
             else:
                 halves = [missing_entries]
                 _log(f"  ↩ {len(missing)} 条未获译文，单独重试")
-            from src.transbridge.ai_translator.batch_planner import Batch as _Batch
+            from transbridge.ai_translator.batch_planner import Batch as _Batch
             # 仅写回兜底阶段的结果（流式阶段已写回）
-            success = self._update_collection(fallback_translations, collection, result, lock)
+            success = self._accept_candidates(fallback_translations, collection, result, lock)
             if id_to_translation:
                 auto_term_entries = [
                     e for e in llm_entries
@@ -952,7 +1133,7 @@ class AutoTranslator:
             _log(f"  ⚠ {len(missing)} 条未获得译文（已缩至单条，无法继续拆分）")
 
         # 仅写回兜底阶段的结果（流式阶段已写回）
-        success = self._update_collection(fallback_translations, collection, result, lock)
+        success = self._accept_candidates(fallback_translations, collection, result, lock)
 
         # 自动写入动态术语库（仅 context 属于 AUTO_TERM_CONTEXTS 的条目，直接填充的来源已在术语库中）
         auto_term_entries = [
@@ -970,37 +1151,19 @@ class AutoTranslator:
             _timing_out.update({'t_terms': t_terms - t0, 't_llm': t_llm_elapsed, 't_parse': t_parse_elapsed})
         return success + len(direct_fill)
 
-    def _update_collection(
+    def _accept_candidates(
         self,
         id_to_translation: dict[str, str],
         collection: "TranslationEntryCollection",
         result: TranslationResult,
         lock: threading.Lock,
     ) -> int:
-        from src.transbridge.converter.translation_entry import TranslationEntry
-        updates = []
-        for entry_id, translation in id_to_translation.items():
-            entry = collection.get_by_id(entry_id)
-            if entry is None:
-                continue
-            updates.append(TranslationEntry(
-                id=entry.id,
-                key=entry.key,
-                original=entry.original,
-                translation=translation,
-                stage=2,
-                context=entry.context,
-                form_id_with_plugin=entry.form_id_with_plugin,
-                string_id=entry.string_id,
-                dsd_type=entry.dsd_type,
-                dsd_index=entry.dsd_index,
-                editor_id=entry.editor_id,
-            ))
+        if self._candidate_session is None:
+            raise RuntimeError("translation candidate session was not initialized")
         with lock:
-            for updated in updates:
-                collection.add(updated, overwrite=True)
-            result.success_count += len(updates)
-        return len(updates)
+            accepted = self._candidate_session.accept(id_to_translation, collection)
+            result.success_count += accepted.accepted
+        return accepted.accepted
 
     def _update_dynamic_terms(
         self,

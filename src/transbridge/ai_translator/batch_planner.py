@@ -13,14 +13,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.transbridge.converter.translation_entry import TranslationEntry
-
-from src.transbridge.converter.context_categories import (
-    AUTO_TERM_CONTEXTS,
-    ROUND1_CATEGORIES,
-    ROUND2_PREFIXES,
-    ROUND3_CONTEXTS,
-)
+    from transbridge.converter.translation_entry import TranslationEntry
 
 
 @dataclass
@@ -55,57 +48,44 @@ class BatchPlanner:
         self._max_tokens = max_tokens_per_batch
 
     def plan(self, entries: list["TranslationEntry"], max_workers: int = 0) -> BatchPlan:
+        from transbridge.application.translation import (
+            ActionPlanner,
+            ActionRuleSpec,
+            ContextPlanner,
+            PlanningEntry,
+            TranslationAction,
+        )
+
+        planning_entries = [
+            PlanningEntry(
+                entry.identity,
+                entry.stage,
+                entry.original,
+                entry.translation,
+                entry.context or "",
+            )
+            for entry in entries
+        ]
+        action_plan = ActionPlanner().plan(
+            planning_entries,
+            [ActionRuleSpec("legacy-batch-planner", 0, TranslationAction.TRANSLATE)],
+        )
+        char_limit = self._compute_adaptive_char_limit(entries, max_workers)
+        context_plan = ContextPlanner(char_limit).plan(planning_entries, action_plan)
+        by_key = {entry.identity: entry for entry in entries}
         plan = BatchPlan()
-
-        # 建立 context 到 round1 类别的快查表
-        ctx_to_category: dict[str, str] = {}
-        for category, contexts in ROUND1_CATEGORIES.items():
-            for ctx in contexts:
-                ctx_to_category[ctx] = category
-
-        round1_buckets: dict[str, list["TranslationEntry"]] = {cat: [] for cat in ROUND1_CATEGORIES}
-        round2_buckets: dict[str, list["TranslationEntry"]] = {}
-        round3_entries: list["TranslationEntry"] = []
-
-        for entry in entries:
-            ctx = entry.context or ""
-            base_ctx = ctx.split("|")[0] if "|" in ctx else ctx
-            rec_type = base_ctx.split(":")[0]
-
-            if base_ctx in ctx_to_category:
-                round1_buckets[ctx_to_category[base_ctx]].append(entry)
-            elif rec_type in ROUND2_PREFIXES:
-                quest_formid = self._get_quest_formid(entry)
-                round2_buckets.setdefault(quest_formid, []).append(entry)
-            elif base_ctx in ROUND3_CONTEXTS:
-                round3_entries.append(entry)
-            # 其他未分类的跳过（可视需求放入 round3）
-
-        # 计算自适应字符限制（用于确保足够的批次数以提高并发效率）
-        adaptive_char_limit = self._compute_adaptive_char_limit(entries, max_workers)
-
-        # 第一轮：按类别分批
-        for category, bucket in round1_buckets.items():
-            if bucket:
-                for sub_batch in self._split_by_tokens(bucket, adaptive_char_limit):
-                    plan.round1.append(Batch(entries=sub_batch, batch_type=category))
-
-        # 第二轮：按 quest_formid 分批
-        for quest_formid, bucket in round2_buckets.items():
-            if bucket:
-                # 对每quest组也应用自适应限制
-                effective_limit = self._compute_adaptive_char_limit(bucket, max_workers)
-                for sub_batch in self._split_by_tokens(bucket, effective_limit):
-                    plan.round2.append(Batch(
-                        entries=sub_batch,
-                        batch_type="对话",
-                        quest_formid=quest_formid,
-                    ))
-
-        # 第三轮：统一分批
-        for sub_batch in self._split_by_tokens(round3_entries, adaptive_char_limit):
-            plan.round3.append(Batch(entries=sub_batch, batch_type="长文本"))
-
+        for context_batch in context_plan.batches:
+            batch = Batch(
+                entries=[by_key[key] for key in context_batch.keys],
+                batch_type=context_batch.category,
+                quest_formid=context_batch.quest_id,
+            )
+            if context_batch.round_number == 1:
+                plan.round1.append(batch)
+            elif context_batch.round_number == 2:
+                plan.round2.append(batch)
+            else:
+                plan.round3.append(batch)
         return plan
 
     def _compute_adaptive_char_limit(self, entries: list, max_workers: int) -> int:

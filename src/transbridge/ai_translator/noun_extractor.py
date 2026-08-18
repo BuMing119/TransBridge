@@ -7,9 +7,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.transbridge.infra.llm_client import LLMClient
-    from src.transbridge.ai_translator.prompt_builder import PromptBuilder
-    from src.transbridge.ai_translator.term_database import TermEntry
+    from transbridge.infra.llm_client import LLMClient
+    from transbridge.ai_translator.prompt_builder import PromptBuilder
+    from transbridge.ai_translator.term_database import TermEntry
 
 
 class NounExtractor:
@@ -29,7 +29,7 @@ class NounExtractor:
         if not translated_pairs:
             return []
 
-        from src.transbridge.ai_translator.term_database import TermEntry
+        from transbridge.ai_translator.term_database import TermEntry
 
         messages = self._builder.build_extraction_prompt(translated_pairs)
         try:

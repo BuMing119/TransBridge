@@ -126,7 +126,7 @@ class TermVectorIndex:
         self._bm25 = None
 
         # 文件路径
-        from src.transbridge.paratranz.config_manager import LLMConfig
+        from transbridge.paratranz.config_manager import LLMConfig
         stem = os.path.splitext(os.path.basename(esp_path))[0]
         ai_dir = LLMConfig.get_ai_translator_dir(stem)
         self._index_path = os.path.join(ai_dir, f"{stem}_terms.faiss")

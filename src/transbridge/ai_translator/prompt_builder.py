@@ -20,7 +20,7 @@ from string import Template
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.transbridge.converter.translation_entry import TranslationEntry
+    from transbridge.converter.translation_entry import TranslationEntry
 
 # ── 内置默认值（文件完全缺失时使用，已预先完成变量替换） ─────────────────────
 
@@ -55,7 +55,7 @@ _DEFAULT_EXTRACTION_USER = "请从以下原文-译文对中提取专有名词：
 
 def _get_prompts_dir() -> Path:
     """定位 data/prompts/ 目录，兼容开发环境和 PyInstaller 打包环境。"""
-    from src.transbridge.paratranz.config_manager import ParatranzConfig
+    from transbridge.paratranz.config_manager import ParatranzConfig
     return Path(ParatranzConfig.get_data_dir()) / "prompts"
 
 
