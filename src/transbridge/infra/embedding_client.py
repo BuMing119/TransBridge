@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    from src.transbridge.paratranz.config_manager import LLMConfig
+    from transbridge.paratranz.config_manager import LLMConfig
 
 logger = logging.getLogger(__name__)
 

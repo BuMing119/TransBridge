@@ -27,5 +27,10 @@ def get_data_dir() -> str:
 
 
 def get_config_file_path() -> str:
-    """获取共享 INI 配置文件完整路径。"""
+    """Return the single versioned application INI path."""
+    return os.path.join(get_data_dir(), "transbridge.ini")
+
+
+def get_legacy_config_file_path() -> str:
+    """Return the read-only V1 migration source path."""
     return os.path.join(get_data_dir(), "paratranz_config.ini")

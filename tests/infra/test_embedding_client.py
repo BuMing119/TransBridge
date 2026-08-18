@@ -10,8 +10,8 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from src.transbridge.config.llm import EmbeddingConfig, LLMConfig
-from src.transbridge.infra.embedding_client import create_embedding_client
+from transbridge.config.llm import EmbeddingConfig, LLMConfig
+from transbridge.infra.embedding_client import create_embedding_client
 
 
 def _make_config(
@@ -39,20 +39,20 @@ def _make_config(
 class TestCreateEmbeddingClient(unittest.TestCase):
     """create_embedding_client 工厂函数分派逻辑。"""
 
-    @patch("src.transbridge.infra.embedding_client.LocalSentenceTransformerClient")
+    @patch("transbridge.infra.embedding_client.LocalSentenceTransformerClient")
     def test_local_provider_default_model(self, MockLocal):
         client = create_embedding_client(_make_config(provider="local"))
         MockLocal.assert_called_once_with()
         self.assertIs(client, MockLocal.return_value)
 
-    @patch("src.transbridge.infra.embedding_client.LocalSentenceTransformerClient")
+    @patch("transbridge.infra.embedding_client.LocalSentenceTransformerClient")
     def test_local_provider_with_path(self, MockLocal):
         create_embedding_client(
             _make_config(provider="local", local_model_path="/models/minilm")
         )
         MockLocal.assert_called_once_with(model_name="/models/minilm")
 
-    @patch("src.transbridge.infra.embedding_client.OpenAIEmbeddingClient")
+    @patch("transbridge.infra.embedding_client.OpenAIEmbeddingClient")
     def test_openai_provider_full(self, MockOpenAI):
         client = create_embedding_client(
             _make_config(
@@ -69,7 +69,7 @@ class TestCreateEmbeddingClient(unittest.TestCase):
         )
         self.assertIs(client, MockOpenAI.return_value)
 
-    @patch("src.transbridge.infra.embedding_client.OpenAIEmbeddingClient")
+    @patch("transbridge.infra.embedding_client.OpenAIEmbeddingClient")
     def test_openai_provider_falls_back_to_llm_key_and_url(self, MockOpenAI):
         # embedding 未配置独立 api_key/base_url 时回退到 LLM 主配置
         create_embedding_client(_make_config(provider="openai"))
@@ -79,7 +79,7 @@ class TestCreateEmbeddingClient(unittest.TestCase):
             model="text-embedding-3-small",
         )
 
-    @patch("src.transbridge.infra.embedding_client.LocalSentenceTransformerClient")
+    @patch("transbridge.infra.embedding_client.LocalSentenceTransformerClient")
     def test_unknown_provider_fallback_local(self, MockLocal):
         create_embedding_client(_make_config(provider="weird"))
         MockLocal.assert_called_once_with()
