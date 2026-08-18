@@ -57,6 +57,7 @@ def build_runtime(
         "persistence_v2": persistence,
         "project_lifecycle": persistence.project_lifecycle,
         "gui_project_commands": persistence.gui_project_commands,
+        "current_project": persistence.current_project,
         "session_lifecycle": persistence.session_lifecycle,
         "gui_session_commands": persistence.gui_session_commands,
         "project_projection": persistence.project_projection,

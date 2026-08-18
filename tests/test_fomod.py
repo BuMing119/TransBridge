@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from src.transbridge.fomod.fomod_xml import read_fomod_xml, write_fomod_xml, translate_module_config
-from src.transbridge.fomod.builder import assemble_output
-from src.transbridge.fileops import FilterRules
+from transbridge.fomod.fomod_xml import read_fomod_xml, write_fomod_xml, translate_module_config
+from transbridge.fomod.builder import assemble_output
+from transbridge.fileops import FilterRules
 
 
 @pytest.fixture
