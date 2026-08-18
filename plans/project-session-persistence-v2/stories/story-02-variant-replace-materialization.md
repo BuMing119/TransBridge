@@ -24,3 +24,9 @@ SourceSnapshot/materialized baseline + `VariantSnapshot(source_namespaces, entri
 ## 边界与测试
 
 来源删除/新增、条目集合变化、空 Variant、显式清空、标签清空、unknown EntryKey 都需诊断。测试首先固化现有“from-A 残留”和“old 复活”探针，再覆盖多 namespace/fingerprint、Stage/provenance 往返、原子 ChangeSet failure。用 100k fixture 测 snapshot/restore 时间与内存，基准结果交 release S03。
+
+## 2026-08-18 性能实现补充
+
+- `VariantMaterializer.materialize()` 对每个 `SourceBaseline` 只构建一次 `EntryKey → VariantEntryState` 索引，再用该索引恢复基线并应用 Variant snapshot；禁止在遍历每条 Variant entry 时重新扫描 baseline 或重建整份索引。
+- 物化复杂度目标为 `O(B + V)`（`B` 为全部 baseline entries，`V` 为 Variant entries），额外索引空间为 `O(B)`；该优化不改变 fingerprint conflict、tombstone、显式空值或单一 `VariantChangeSet` 提交语义。
+- 回归测试应以多 source、约 20k entries 的 fixture 验证结果与原有 replace 语义一致，并通过可观察的索引构建次数或分档基准证明“每 source 一次”，避免仅以宽松墙钟阈值掩盖 `O(n²)` 回归；既有 100k snapshot/restore 基准继续保留。

@@ -23,3 +23,9 @@
 ## 剩余门禁
 
 旧调用方仍可经 mutable entry 与 `add(overwrite=True)` facade 写入，但会被审计；后续 Story 应迁移至唯一 MutationPort。legacy facade 不提供以 V2 语义主动清空 metadata/external refs；ParaTranz 离线 JSON 双 ID 的具体映射由 S03 承接。
+
+## 2026-08-18 Collection 构建性能补充
+
+- `TranslationEntryCollection` 构造改为一次性建立 primary index，并在全部条目归并后只构建一次 external-ref index；后续单条 mutation 语义保持不变。
+- 重复 `EntryKey` 仍遵循 last-wins，同时保留 revision、provenance 与 external metadata 合同，不以性能优化改变兼容行为。
+- 增加 500 条目下 external index 仅构建一次的合同测试；真实约 19,470 条目 Collection 构建由约 50 秒降至约 0.15 秒。

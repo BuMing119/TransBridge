@@ -26,3 +26,9 @@
 ## 边界、迁移与测试
 
 namespace 由规范化来源 identity/fingerprint 产生但不包含易变绝对路径；外部 id 可缺失、重分配或多系统并存。迁移失败保留原数据。测试覆盖相同 local key 多 namespace、外部 id 变化、重复 external id、expected revision race、序列化 round-trip 和 legacy facade parity；属性测试保证 ChangeSet 原子性。
+
+## 2026-08-18 批量构造性能补充
+
+- `TranslationEntryCollection(entries)` 是尚未对外可见的初始化边界：先在局部主索引中一次遍历全部 entries，再基于最终主索引一次构建 `ExternalEntryRef` 索引并做冲突校验；禁止让构造函数逐条调用会复制整个集合、重建 external-ref index 的公开 mutation 路径。
+- 批量构造复杂度目标为 `O(n + r)`（`n` 为 entries，`r` 为 external refs），同时保留既有 EntryKey 重复策略、ExternalEntryRef 冲突拒绝、revision/provenance 合并及构造失败不暴露半成品的语义。公开 `add/apply(ChangeSet)` 仍负责可观察状态下的受控 mutation，不能因初始化优化绕过 expected revision/run_id 合同。
+- 增加等价性与回归测试：空集合、生成器输入、重复 EntryKey、重复 external ref、多 external refs 以及约 20k entries；通过 external-index 构建次数或分档增长基准证明一次批量建索引，并核对 `get`/external-ref 查询结果与逐项语义基线一致。

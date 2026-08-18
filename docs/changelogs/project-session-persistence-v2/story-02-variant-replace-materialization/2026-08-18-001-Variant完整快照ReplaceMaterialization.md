@@ -15,3 +15,9 @@
 ## 剩余门禁
 
 旧 `list[TranslationEntry]` facade 不能无损恢复 labels/revision/provenance；GUI/session active-variant 生命周期和 baseline 注入留 S03，100k 性能证据留 release S03。未执行 Git commit/push。
+
+## 2026-08-18 项目加载性能补充
+
+- `VariantMaterializer` 改为每个 source baseline 只建立一次 `EntryKey` 索引，再以 O(B+V) 应用 Variant 状态，消除逐条重复扫描 baseline 的 O(B×V) 路径。
+- loader 仅在 materialized aggregate 与已存 Variant 内容完全一致时复用 persisted revision；若 source materialization 改变内容，即使数字 revision 相同也保持 dirty 并写回，避免性能优化跳过必要持久化。
+- 增加 baseline 单次迭代合同测试；真实 19,387 条目项目的 activate 阶段约 5.48 秒，原路径超过 90 秒仍未完成。
