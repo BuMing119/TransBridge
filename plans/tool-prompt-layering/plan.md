@@ -127,3 +127,9 @@
 | 跨领域全流程额外轮次 | Medium | 支持多 namespace 批量加载（逗号分隔） | 若 >2 额外轮次，扩大预加载范围 |
 
 回退方案极简：`build_system_prompt()` 内部切换回 `ToolRegistry.build_full_schema()` 即可，一行代码，不影响任何工具逻辑。
+
+## 综合整改状态增量（2026-08-18）
+
+- `partially-verified`：保留 S01～S05 历史交付；真实 Observation 会截断 schema，历史 13% LLM eval 不满足验收。
+- `blocked_by`：`platform-contract-foundation-v2` S04、`release-hardening-v2` S01/S02。
+- `superseded_by`：执行所需结构化 schema 与展示摘要分离的合同取代“依赖 observation 文本保留完整 schema”的假设。

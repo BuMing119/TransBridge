@@ -28,3 +28,9 @@
 
 - [ADR-001: TranslationEntry 作为统一数据模型](../../docs/adr/001-unified-translation-entry.md)
 - [ADR-002: Collection 数据中枢与双索引](../../docs/adr/002-collection-central-data-hub.md)
+
+## 综合整改状态增量（2026-08-18）
+
+- `partially-verified`：保留 5/5 历史交付；V1 `id/key` 假设、来源命名空间、ExternalEntryRef、revision/provenance 与受控 mutation 尚未通过本轮合同。
+- `blocked_by`：`translation-io-kernel-v2` S02、`project-session-persistence-v2` S02、`release-hardening-v2` S02。
+- `superseded_by`：V1 身份与直接字段 mutation 边界由 ADR-017 和 Translation I/O Kernel V2 取代；统一 Entry/Collection 资产保留。

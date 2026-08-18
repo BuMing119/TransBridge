@@ -110,3 +110,9 @@ AI 翻译完成后的五阶段质量保障流水线：检测 → 修复 → 润�
 ## 相关文档
 
 - [后处理报告设计](../../docs/dev/post_process_report.md)
+
+## 综合整改状态增量（2026-08-18）
+
+- `partially-verified`：保留 13 Story 历史交付；候选阶段传递、精确 scope、失败终态、幂等恢复和报告单源未通过本轮验收。
+- `blocked_by`：`unified-task-translation-runtime-v2` S03/S06/S07、`release-hardening-v2` S02/S03。
+- `superseded_by`：各阶段直接/隐式修改正式值与多种报告 DTO 由候选链、唯一 commit 和 ReportSnapshot 取代。

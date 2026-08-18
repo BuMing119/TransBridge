@@ -237,3 +237,9 @@
 
 - ADR-001: TranslationEntry 统一数据模型
 - Story-09: SST 解析器（已完成，提供 SST_Parser + SST_Entry + SST_Subrecord）
+
+## 综合整改状态增量（2026-08-18）
+
+- `partially-verified`：保留历史 11/11 实现记录；尚未以统一 FormatAdapter、真实 parse→write→reparse 与入口等价合同完成本轮验收。
+- `blocked_by`：`translation-io-kernel-v2` S01/S04、`release-hardening-v2` S02/S04。
+- DSD/SST Reader 保持实验性；SST Writer 不因历史 serializer 存在而视为开放。

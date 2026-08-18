@@ -62,3 +62,9 @@
 3. 翻译/润色模式切换时自动调整默认值：翻译模式→状态默认选中「未翻译」；润色模式→状态默认选中「已翻译」→ 涉及文件: `src/transbridge/ui/tools/ai_translator/ai_translator_window.py`
 4. 重写 `_update_estimate()`：通过 `_ctx.collection` 获取全量条目，按三维度筛选（翻译状态 AND 标记 AND 分类）计算候选条目，调用 BatchPlanner.plan() 预估 → 涉及文件: `src/transbridge/ui/tools/ai_translator/ai_translator_window.py`
 5. 移除 `get_selected_entries()` 调用，翻译/润色真正执行时从作用域面板的筛选条件构建候选条目列表 → 涉及文件: `src/transbridge/ui/tools/ai_translator/ai_translator_window.py`
+
+## 综合整改状态增量（2026-08-18）
+
+- `partially-verified`：保留 14 Story 历史交付；MixedWorker 构造、上下文分配、RunSpec、取消与唯一提交点未通过本轮成功链。
+- `blocked_by`：`unified-task-translation-runtime-v2` S03～S05/S07、`translation-io-kernel-v2` S02/S05、`release-hardening-v2` S02/S03。
+- `superseded_by`：worker 直接修改 Collection 与独立 checkpoint 生命周期由 CandidateSet、TaskRuntime 和 CheckpointPort 取代；翻译策略资产保留。

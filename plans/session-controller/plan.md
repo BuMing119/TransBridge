@@ -76,3 +76,9 @@
 | S01 新旧并行产生行为不一致 | 日志比对 + 20-30 轮对话验证后才进入 S02 | 删除 Controller 实例化代码，恢复纯旧路径 |
 | Orchestrator/ToolHandler 回调变更影响其他调用方 | 全量搜索 `on_react_continue` 和 `_on_finished` 的引用方 | 保留旧回调作为 deprecated wrapper，新回调并行存在 |
 | 测试因 import 变更失败 | S01 阶段不删除任何旧方法，仅新增 | `git revert` 单文件回退 |
+
+## 综合整改状态增量（2026-08-18）
+
+- `partially-verified`：保留 2/2 历史交付；`assert` 状态校验、TaskRef 生产路径和 Session owner 隔离未通过本轮验收。
+- `blocked_by`：`project-session-persistence-v2` S04、`unified-task-translation-runtime-v2` S01/S07。
+- `superseded_by`：可恢复 SessionAggregate 与显式 domain transition 取代仅由 UI controller 持有的权威状态。

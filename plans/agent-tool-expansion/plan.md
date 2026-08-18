@@ -566,3 +566,9 @@ QA审计发现 5 个后处理工具全部运行时崩溃（调用不存在的 AP
 | write_back target 参数 LLM 误选 | 中 | 高 | 描述中明确推断规则（"有 ESP → esp，有 EET → eet"）+ 回显确认写入类型 |
 | S17 和 S20 同文件串行合并冲突 | 低 | 低 | S20 明确在 S17 之后执行，代码 review 确认无冲突 |
 | 旧工具 deprecated wrapper 被外部引用 | 低 | 低 | 保留 wrapper 1-2 迭代，观察日志警告后清理 |
+
+## 综合整改状态增量（2026-08-18）
+
+- `partially-verified`：保留 26 Story 历史交付；工具存在/单测通过不等于 registry、parser/writer、Task、ParaTranz 与 Observation 真实调用链已验收。
+- `blocked_by`：`platform-contract-foundation-v2` S02～S05、`translation-io-kernel-v2` S01/S04、`unified-task-translation-runtime-v2` S01/S07、`paratranz-sync-service-v2` S02～S04。
+- `superseded_by`：TaskManager、AppContext 写状态、parser/writer 直接编排和网络工具合同分别由对应 V2 use case/facade 取代；旧工具名按删除门禁保留。

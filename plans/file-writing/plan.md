@@ -26,3 +26,9 @@
 - `src/transbridge/writer/eet_xml_builder.py` — EET XML 构建器
 - `src/transbridge/writer/xt_xml_writer.py` — XT XML 更新器
 - `src/transbridge/writer/xt_xml_builder.py` — XT XML 构建器
+
+## 综合整改状态增量（2026-08-18）
+
+- `partially-verified`：保留历史 7/7 实现记录；Writer 构造、source context、Localized Strings 保真和原子发布尚未通过本轮合同。
+- `blocked_by`：`translation-io-kernel-v2` S04～S06、`release-hardening-v2` S02/S04。
+- `superseded_by`：直接写目标与按有译文条目重建输出的发布步骤由 `translation-io-kernel-v2` 的 StagePolicy/SourceSnapshot/staging publish 取代。

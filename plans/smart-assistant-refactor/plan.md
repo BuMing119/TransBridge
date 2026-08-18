@@ -133,3 +133,9 @@
 ### 回退方案
 - 每个 Story 独立 commit，出问题后 `git revert <commit>` 单 Story 即可
 - 不涉及数据格式/API 变更，回退无副作用
+
+## 综合整改状态增量（2026-08-18）
+
+- `partially-verified`：文件拆分与 Controller 封装作为历史实现保留；后端仍存在 UI 反向依赖、隐式全局状态和应用编排所有权问题。
+- `blocked_by`：`platform-contract-foundation-v2` S03、`project-session-persistence-v2` S05、`unified-task-translation-runtime-v2` S07。
+- `superseded_by`：Controller 内部直接持有业务状态的部分由 Application Use Case、Aggregate 和 projection/facade 边界取代。

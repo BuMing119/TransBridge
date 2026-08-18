@@ -319,3 +319,9 @@ src/transbridge/ui/workbench/
 | 版本切换频繁导致性能问题 | 大集合切换卡顿 | VariantStore.apply_to() 仅更新 translation 字段，O(n) 遍历，10 万条以内可接受 |
 | 源文件路径变更（用户移动文件） | 启动恢复失败 | project.json 记录源文件哈希，启动时检测路径有效性，无效时提示重新定位 |
 | .transbridge 文件过大 | ZIP 打包/解压耗时 | 仅打包当前版本数据（不含快照），快照可选是否包含 |
+
+## 综合整改状态增量（2026-08-18）
+
+- `partially-verified`：保留历史 8 Story 实现记录；空 Variant、显式清空、Stage/provenance/revision 和生命周期故障路径未通过本轮验收。
+- `blocked_by`：`project-session-persistence-v2` S01～S05、`release-hardening-v2` S02/S03。
+- `superseded_by`：V1 overlay、AppContext 权威状态和旧迁移口径由 `project-session-persistence-v2` 的 V2 schema、replace materialization 与 UnitOfWork 取代。

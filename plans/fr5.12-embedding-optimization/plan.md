@@ -59,3 +59,9 @@
 - rank_bm25 依赖失败 → 延迟导入 + 降级为纯向量检索（现有行为）
 - 增量索引 ID 映射不一致 → hash 校验兜底，不匹配回退全量重建
 - BM25 融合噪声增多 → 权重可配，可调低 BM25 权重或关闭融合
+
+## 综合整改状态增量（2026-08-18）
+
+- `partially-verified`：保留 3 Story 历史算法交付；rank-bm25 锁定/构建、manifest 生命周期、restart 与 disabled 零加载未通过本轮验收。
+- `blocked_by`：`platform-contract-foundation-v2` S01/S02、`unified-task-translation-runtime-v2` S04、`release-hardening-v2` S01/S04/S05。
+- 算法与权重策略保留；依赖和运行 capability 以 ADR-013 增量为准。

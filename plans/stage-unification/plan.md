@@ -97,3 +97,9 @@
 ## 风险与回退方案
 - **风险 1**: 现有数据中可能存在 stage=3/5/9/-1 的条目（来自 ParaTranz 下载），UI 改为 7 级后这些条目将正确显示而非隐藏
 - **风险 2**: EET 写回只有二元状态，stage≥2 的条目写回为 status=99（已翻译）可能丢失精确状态信息。缓解：EET 格式本身不支持 7 级状态，这是格式限制而非 bug
+
+## 综合整改状态增量（2026-08-18）
+
+- `partially-verified`：保留 3/3 历史交付；多处 `stage >= n`、hidden/locked/空译文和发布策略仍不一致。
+- `blocked_by`：`translation-io-kernel-v2` S05、`unified-task-translation-runtime-v2` S04/S06、`fomod-pipeline-v2` S03。
+- `superseded_by`：分散的 Writer/UI/AI 推断由单一离散 StagePolicy 取代。

@@ -67,3 +67,9 @@
 - **大量任务导致 UI 卡顿**: 限制最多显示 20 个任务卡片，超出时滚动
 - **定时器内存泄漏**: Panel.closeEvent 中停止定时器，会话切换时重置
 - **回退方案**: 删除 TaskMonitorWidget，移除 panel.py 中的 QSplitter 和集成代码，恢复原布局
+
+## 综合整改状态增量（2026-08-18）
+
+- `partially-verified`：保留 2 Story UI 交付；当前 Monitor/TaskManager 状态并非统一 JobSnapshot 的只读投影。
+- `blocked_by`：`unified-task-translation-runtime-v2` S01/S02/S07、`release-hardening-v2` S02/S03。
+- `superseded_by`：可写 TaskManager 状态、全局 reset 和按钮推断由 TaskRuntime capability/JobSnapshot 取代；现有 Widget 作为 adapter 保留。

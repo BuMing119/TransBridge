@@ -233,3 +233,8 @@
 5. **标记计数**: `_update_count_label` 改为统计 `_entry_marks` 中各标记类型的数量，显示「★ {star} / ? {question} / ✓ {confirmed} | 显示 {shown} 条（共 {total} 条）」→ 涉及文件: `src/transbridge/ui/workbench/step2.py`
 6. **get_selected_entries() 适配**: 改为返回所有 ★ 标记（`mark_type == "star"`）的条目列表，保持接口签名不变，确保 AI 翻译窗口无需修改 → 涉及文件: `src/transbridge/ui/workbench/step2.py`
 
+## 综合整改状态增量（2026-08-18）
+
+- `partially-verified`：保留 22 Story 历史 UI 交付；AppContext/Step2/Variant 的筛选、标签、选择和 dirty 仍存在重复可写所有权。
+- `blocked_by`：`project-session-persistence-v2` S03/S05、`platform-contract-foundation-v2` S03、`release-hardening-v2` S02/S03。
+- `superseded_by`：业务写状态由 Aggregate/Use Case 持有，Workbench 改为 projection/command adapter；视觉与交互资产保留。

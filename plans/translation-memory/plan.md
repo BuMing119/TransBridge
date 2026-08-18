@@ -162,3 +162,9 @@
 - **多词典全查性能**：Story 08 重点——若全查兜底性能不达标，回退为「同名 mod 优先 + global 文本预建合并索引」，或引入按活跃度分级缓存；必须在 QA 阶段量化万级词典查询耗时
 - **旧数据弃置不可逆**：本次明确不迁移旧 `*.json`；若后续发现需要旧数据，需从源 collection 重新「存为词典」重建（源数据仍在，非永久丢失）
 - **冲突仲裁交互复杂度**：全查兜底下冲突概率上升，若逐条仲裁体验过重，可退化为「默认采纳最高优先级译文 + 冲突仅报告不逐条选」
+
+## 综合整改状态增量（2026-08-18）
+
+- `partially-verified`：保留 S01～S10 历史交付；locale、Stage、provenance、来源变化和 FOMOD 冲突策略尚未通过本轮验收。
+- `blocked_by`：`translation-io-kernel-v2` S02/S05、`fomod-pipeline-v2` S03、`release-hardening-v2` S02。
+- `superseded_by`：只按文本/旧 key 直接套用正式集合的边界由 EntryKey/ExternalEntryRef、CandidateSet 和显式仲裁取代。

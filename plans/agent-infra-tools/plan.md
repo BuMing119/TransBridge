@@ -88,3 +88,9 @@
 - py7zr 大归档解压性能慢 → 分层提取（仅提取必要文件）+ 进度回调
 - unrar.exe PyInstaller 打包路径 → `_find_unrar()` 多路径探测 + 打包冒烟测试
 - fileops/ 与 infra/ 边界模糊 → 后续开发持续澄清，先聚焦文件操作与 LLM 基础设施的语义区分
+
+## 综合整改状态增量（2026-08-18）
+
+- `partially-verified`：保留 S01～S05 历史交付；12 个测试未覆盖跨格式统一归档预算、路径逃逸、取消和 staging cleanup。
+- `blocked_by`：`fomod-pipeline-v2` S01/S05、`platform-contract-foundation-v2` S04、`release-hardening-v2` S02/S04。
+- `superseded_by`：各归档库独立安全检查由统一 ArchivePolicy 取代；differ/filter/migrator 继续作为 ports adapter。

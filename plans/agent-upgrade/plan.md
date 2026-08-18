@@ -458,3 +458,9 @@ src/transbridge/smart_assistant/mcp/         # Story-12
 | HITL 确认弹窗阻塞 | 用户离开无法操作 | 可配置超时 + 默认策略兜底（continue/skip/abort） |
 | 观测数据 JSON 积累过大 | 磁盘占用 | 30 天自动清理 + 单个文件上限 10MB |
 | MCP Server stdio 读写阻塞 | 应用卡死 | 独立线程运行，不阻塞主线程 + 缓冲区大小限制 |
+
+## 综合整改状态增量（2026-08-18）
+
+- `partially-verified`：保留 Phase 1/2 历史交付；Composition Root、Graph checkpoint、MCP 独立进程和真实工具成功链未通过本轮验收。
+- `blocked_by`：`platform-contract-foundation-v2` S03～S05、`unified-task-translation-runtime-v2` S01～S03/S07、`release-hardening-v2` S02/S05。
+- `superseded_by`：Graph/MCP 的应用级状态与启动拓扑由 ADR-016/019 及上述 V2 Plan 取代；Graph 算法资产继续作为 workload adapter 保留。

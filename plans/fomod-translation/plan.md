@@ -73,3 +73,9 @@
 - UTF-16LE XML 处理错误 → fomod_xml.py 显式处理 BOM（不依赖 ElementTree 自动检测）+ 往返一致性测试
 - py7zr 大归档解压慢 → 分层提取（仅提取插件 + fomod 目录，跳过 BSA/贴图）
 - fomod XML 结构不统一（无官方 schema）→ 解析容错，未知节点忽略
+
+## 综合整改状态增量（2026-08-18）
+
+- `partially-verified`：保留 4 Story 历史交付；必要阶段吞异常、取消后 pack、target_lang/TM/资源保真和原子发布未通过本轮验收。
+- `blocked_by`：`fomod-pipeline-v2` S01～S05、`unified-task-translation-runtime-v2` S01/S02、`release-hardening-v2` S02/S04。
+- `superseded_by`：旧 pipeline/builder 直接编排与发布流程由 typed stages、ArchivePolicy 和 staging publish 取代；XML/builder 资产作为 adapter 保留。

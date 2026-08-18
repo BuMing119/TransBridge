@@ -90,3 +90,9 @@
 | 会话切换时消息渲染性能（长对话 100+ 轮） | S03 渲染时限制最多显示最近 50 轮，超出部分折叠 | 删除 `data/sessions/` 目录即可回到单会话模式 |
 | 原子写入失败导致数据丢失 | 保留内存中的 ConversationManager 副本，仅磁盘写入失败时日志警告 | 手动备份 `data/sessions/` |
 | Panel 布局改动影响现有 UI | QSplitter 默认比例 1:3（列表:聊天），用户可拖拽调整 | 恢复 Panel 原布局只需删除 SessionListWidget |
+
+## 综合整改状态增量（2026-08-18）
+
+- `partially-verified`：保留 3/3 历史交付；当前只恢复 UI 消息且切换/ID/schema/后台 owner 不满足 FR19。
+- `blocked_by`：`project-session-persistence-v2` S01/S04/S05、`unified-task-translation-runtime-v2` S07。
+- `superseded_by`：旧 JSON/active-id 切换流程由 V2 schema、两阶段切换和 SessionAggregate 取代。
