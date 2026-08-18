@@ -13,11 +13,11 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .base import ToolResult
+from .base import ToolResult, require_runtime_context
 from .task_manager import TaskManager
 
 if TYPE_CHECKING:
-    from src.transbridge.ai_translator.post_processor.base import PostProcessResult
+    from transbridge.ai_translator.post_processor.base import PostProcessResult
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ def get_last_report() -> dict | None:
 class ProofreaderController:
     """后处理控制器：统一管理 proofreader 命名空间的工具逻辑。"""
 
-    def __init__(self, app_context, task_manager):
+    def __init__(self, app_context=None, task_manager=None):
         self._ctx = app_context
         self._task_mgr = task_manager
 
@@ -60,9 +60,9 @@ class ProofreaderController:
         Raises:
             ValueError: 若 API Key 未配置。
         """
-        from src.transbridge.infra.llm_client import create_llm_client
-        from src.transbridge.ai_translator.term_database import TermDatabaseManager
-        from src.transbridge.ai_translator.post_processor.post_processor import (
+        from transbridge.infra.llm_client import create_llm_client
+        from transbridge.ai_translator.term_database import TermDatabaseManager
+        from transbridge.ai_translator.post_processor.post_processor import (
             PostProcessor, PostProcessorConfig,
         )
 
@@ -140,123 +140,175 @@ class ProofreaderController:
             handle.pause_event = pause_event
 
         def _run():
-            cp = None
-            last_phase = [None]  # 列表以在闭包中修改
-            all_entry_keys = [e.key for e in entries]
-
             try:
-                # ── 加载 checkpoint ───────────────────────────────────────
-                esp_path = getattr(ctx, 'esp_path', None)
-                if esp_path:
-                    try:
-                        from src.transbridge.ai_translator.post_processor.checkpoint import PostProcessCheckpoint
-                        cp = PostProcessCheckpoint.load(esp_path)
-                        if cp:
-                            logger.info("从 checkpoint 恢复: %s, 已完成阶段=%s",
-                                        esp_path, list(cp.completed_batches.keys()))
-                    except Exception:
-                        logger.warning("Checkpoint 加载失败，从头开始")
-                        cp = None
+                from transbridge.application.contracts import OperationOutcome, RequestContext
+                from transbridge.application.io import StagePolicy
+                from transbridge.application.io.publish import ImmediateCommitGuard
+                from transbridge.application.translation import (
+                    CheckerStage,
+                    FilesystemPostProcessCheckpointPort,
+                    FilesystemTranslationCheckpointPort,
+                    LlmPostProcessStage,
+                    OpenAiPostProcessHttpPort,
+                    PostProcessExecutionService,
+                    PostProcessLlmPhase,
+                    PostProcessWorkload,
+                    TranslationInput,
+                    render_report,
+                )
+                from transbridge.paratranz.config_manager import ParatranzConfig
 
-                # M10: 提取 PostProcessor 构建逻辑
                 from ._common import load_llm_config
                 llm_cfg = load_llm_config()
-                processor, config, llm_client, term_mgr = self._build_postprocessor(
+                processor, _config, _llm_client, _term_mgr = self._build_postprocessor(
                     entries, llm_cfg, phases, max_workers, ctx)
+                stages = []
+                stage_names = []
+                checker_phases = {
+                    "ConsistencyChecker": "consistency",
+                    "FormatValidator": "format",
+                    "QualityGateChecker": "quality_gate",
+                }
+                for checker in processor._checkers:
+                    phase = checker_phases.get(type(checker).__name__)
+                    if phase in phases:
+                        stages.append(CheckerStage(phase, checker))
+                        stage_names.append(phase)
+                llm_port = OpenAiPostProcessHttpPort(credential=lambda: llm_cfg.api_key)
+                llm_phases = {
+                    "refinement": PostProcessLlmPhase.REFINE,
+                    "polish": PostProcessLlmPhase.POLISH,
+                    "arbitration": PostProcessLlmPhase.ARBITRATE,
+                }
+                for requested_phase, phase in llm_phases.items():
+                    if requested_phase in phases:
+                        stages.append(
+                            LlmPostProcessStage(
+                                phase,
+                                llm_port,
+                                target_locale=llm_cfg.target_lang,
+                                game_profile=llm_cfg.game_profile,
+                                base_url=llm_cfg.base_url,
+                                model=llm_cfg.model,
+                            )
+                        )
+                        stage_names.append(requested_phase)
 
-                # 若从 checkpoint 恢复且已有 checkpoint，传递给 processor
-                if cp is None and esp_path:
-                    from src.transbridge.ai_translator.post_processor.checkpoint import PostProcessCheckpoint
-                    cp = PostProcessCheckpoint(esp_stem=Path(esp_path).stem)
-                # 进度回调 → TaskManager + checkpoint 阶段保存
-                def _progress(phase, current, total, message):
-                    tm.update_progress(task_id, {
-                        "phase": phase, "current": current,
-                        "total": total, "message": message,
-                    })
-                    # 阶段切换时保存 checkpoint
-                    if phase != last_phase[0] and last_phase[0] is not None:
-                        if cp and esp_path:
-                            cp.mark_batch_completed(last_phase[0], all_entry_keys)
-                            cp.save(esp_path)
-                    last_phase[0] = phase
-
-                result = processor.process_entries(
-                    entries, stop_event=stop_event,
-                    pause_event=pause_event,
-                    checkpoint=cp,
-                    esp_path=getattr(ctx, 'esp_path', None),
-                    progress_callback=_progress,
-                    max_workers=max_workers,
+                checkpoint_root = Path(ParatranzConfig.get_data_dir()) / "checkpoints"
+                workload = PostProcessWorkload(
+                    tuple(stages),
+                    stage_policy=StagePolicy(),
+                    stage_names=tuple(stage_names),
+                    checkpoint_port=FilesystemPostProcessCheckpointPort(checkpoint_root / "postprocess"),
                 )
-
-                # 正常完成 → 删除 checkpoint
-                if cp and esp_path:
-                    cp.delete(esp_path)
-
-                # ── 构建 report ──────────────────────────────────────────
-                verdict_stats = {"passed": 0, "rejected": 0, "pending": 0}
-                exec_result = getattr(result, "execution_result", None)
-                if exec_result:
-                    verdict_stats = {
-                        "passed": getattr(exec_result, "passed", 0),
-                        "rejected": getattr(exec_result, "rejected", 0),
-                        "pending": getattr(exec_result, "pending", 0),
-                    }
-
-                # 中间数据摘要
-                refine_summaries = self._summarize_refine_results(result.refine_results)
-                polish_summaries = self._summarize_polish_results(result.polish_results)
-                decision_summaries = self._summarize_decisions(result.decisions)
-
-                # ── 生成 Excel 报告 ───────────────────────────────────────
-                report_file = self._generate_report(
-                    entries, result, getattr(ctx, 'esp_path', None), llm_cfg,
+                request_context = getattr(ctx, "request_context", None)
+                owner_id = getattr(request_context, "owner_id", "") or getattr(ctx, "owner_id", "")
+                context = RequestContext(
+                    owner_id or "smart-assistant",
+                    run_id=task_id,
+                    project_id=getattr(request_context, "project_id", None),
+                    variant_id=getattr(request_context, "variant_id", None),
+                    session_id=getattr(request_context, "session_id", None),
+                    permissions=frozenset({"entry.translation.write", "entry.stage.write"}),
                 )
+                inputs = tuple(
+                    TranslationInput(
+                        entry.identity,
+                        entry.revision,
+                        entry.original,
+                        entry.translation,
+                        entry.stage,
+                        entry.context or "",
+                    )
+                    for entry in entries
+                )
+                execution = PostProcessExecutionService(workload).execute(
+                    run_id=task_id,
+                    entries=inputs,
+                    collection=collection,
+                    context=context,
+                    commit_guard=ImmediateCommitGuard(task_id, active=lambda: not stop_event.is_set()),
+                    commit_checkpoint=FilesystemTranslationCheckpointPort(checkpoint_root / "translation"),
+                    is_cancelled=stop_event.is_set,
+                    run_spec_summary={"phases": list(phases), "model": llm_cfg.model},
+                )
+                if execution.report_result.outcome is OperationOutcome.CANCELLED:
+                    tm.set_status(task_id, "cancelled")
+                    tm.notify_failed(task_id, "任务已被用户停止")
+                    return
+                if execution.report_result.value is None:
+                    codes = ", ".join(item.code for item in execution.report_result.diagnostics)
+                    raise RuntimeError(f"后处理候选阶段失败: {codes or 'POSTPROCESS_FAILED'}")
+                if execution.commit_result is not None and execution.commit_result.outcome not in {
+                    OperationOutcome.COMPLETED,
+                    OperationOutcome.PARTIAL,
+                }:
+                    codes = ", ".join(item.code for item in execution.commit_result.diagnostics)
+                    raise RuntimeError(f"后处理提交失败: {codes or 'POSTPROCESS_COMMIT_FAILED'}")
 
-                set_last_report({
+                report = execution.report_result.value
+                rendered = render_report(
+                    report,
+                    base_dir=Path(ParatranzConfig.get_data_dir()) / "reports" / "postprocess",
+                )
+                artifact_paths = [
+                    artifact.artifact_path
+                    for artifact in rendered.value.artifacts
+                    if artifact.artifact_path
+                ] if rendered.value is not None else []
+                report_data = {
                     "phase": "postprocess",
                     "phases": list(phases),
-                    "total_checked": result.total_checked,
-                    "issue_count": result.issue_count,
-                    "auto_fixed": result.auto_fixed,
-                    "needs_review": list(result.needs_review),
-                    "verdict_stats": verdict_stats,
-                    "issues": [
-                        {"entry_id": iss.entry_id, "issue_type": iss.issue_type,
-                         "severity": iss.severity, "message": iss.message,
-                         "original": iss.original, "translation": iss.translation,
-                         "suggestion": getattr(iss, 'suggestion', '')}
-                        for iss in result.issues[:50]
+                    "total_checked": report.input_count,
+                    "issue_count": report.issue_count,
+                    "auto_fixed": len(
+                        [candidate for candidate in report.candidates if candidate.text != candidate.before_text]
+                    ),
+                    "needs_review": [
+                        candidate.entry_key.serialize()
+                        for candidate in report.candidates
+                        if not candidate.accepted
                     ],
-                    "refine_results": refine_summaries,
-                    "polish_results": polish_summaries,
-                    "decisions": decision_summaries,
-                    "report_file": report_file,
+                    "verdict_stats": {
+                        "passed": report.accepted_count,
+                        "rejected": len(report.candidates) - report.accepted_count,
+                        "pending": 0,
+                    },
+                    "issues": [diagnostic.to_dict() for diagnostic in report.diagnostics[:50]],
+                    "report_file": artifact_paths[0] if artifact_paths else None,
+                    "report_files": artifact_paths,
+                    "report_fingerprint": report.fingerprint,
+                    "outcome": execution.outcome.value,
                     "timestamp": time.time(),
-                })
+                }
+                set_last_report(report_data)
 
                 completion_data = {
-                    "status": "completed",
-                    "total_checked": result.total_checked,
-                    "issue_count": result.issue_count,
-                    "auto_fixed": result.auto_fixed,
-                    "verdict_stats": verdict_stats,
+                    key: report_data[key]
+                    for key in ("total_checked", "issue_count", "auto_fixed", "verdict_stats", "outcome")
                 }
-                if report_file:
-                    completion_data["report_file"] = report_file
+                if artifact_paths:
+                    completion_data["report_file"] = artifact_paths[0]
 
-                tm.update_progress(task_id, completion_data)
+                tm.update_progress(
+                    task_id,
+                    {
+                        "outcome": completion_data["outcome"],
+                        "current": completion_data["total_checked"],
+                        "total": completion_data["total_checked"],
+                        "issue_count": completion_data["issue_count"],
+                        "auto_fixed": completion_data["auto_fixed"],
+                    },
+                )
                 tm.set_status(task_id, "completed")
                 tm.notify_completed(task_id, completion_data)
-                # G3: 通知 UI 集合已修改，Step2 表格自动刷新
-                ctx.safe_mutate(lambda: ctx.notify_collection_modified())
+                if execution.commit_result is not None:
+                    ctx.safe_mutate(lambda: ctx.notify_collection_modified())
             except Exception as exc:
                 logger.exception("后处理异常: %s", exc)
                 tm.set_status(task_id, "failed")
                 tm.update_progress(task_id, {"error": str(exc)})
                 tm.notify_failed(task_id, str(exc))
-                # 异常中断 → 保留 checkpoint 以便恢复（不删除）
 
         thread = tm.start_thread(task_id, _run)  # M2: 复用 TaskManager.start_thread
         # m6: 无全局线程池，每次后处理创建独立 Thread。并发上限由 max_workers 和 TaskManager 控制。
@@ -299,7 +351,7 @@ class ProofreaderController:
         if not esp_path:
             return ToolResult.ok("未加载 ESP，无法定位报告目录", data={"files": []})
 
-        from src.transbridge.paratranz.config_manager import LLMConfig
+        from transbridge.paratranz.config_manager import LLMConfig
         ai_dir = LLMConfig.get_ai_translator_dir(Path(esp_path).stem)
         reports_dir = os.path.join(ai_dir, "reports")
 
@@ -384,7 +436,7 @@ class ProofreaderController:
 
         try:
             from types import SimpleNamespace
-            from src.transbridge.ai_translator.post_processor.report_generator import ReportGenerator
+            from transbridge.ai_translator.post_processor.report_generator import ReportGenerator
 
             esp_stem = Path(esp_path).stem
 
@@ -409,30 +461,24 @@ class ProofreaderController:
             return None
 
 
-# ── 惰性初始化 + 模块级 wrapper ──────────────────────────────────
+# ── 无状态 controller + 模块级兼容 wrapper ───────────────────────
 
-_proofreader_ctrl: ProofreaderController | None = None
-
-
-def _get_proofreader_controller() -> ProofreaderController:
-    global _proofreader_ctrl
-    if _proofreader_ctrl is None:
-        from src.transbridge.ui.context import AppContext
-        from .task_manager import TaskManager
-        _proofreader_ctrl = ProofreaderController(AppContext(), TaskManager())
-    return _proofreader_ctrl
+_proofreader_ctrl = ProofreaderController()
 
 
+@require_runtime_context
 def _tool_run_postprocess(args: dict, ctx) -> ToolResult:
-    return _get_proofreader_controller().run_postprocess(args, ctx)
+    return _proofreader_ctrl.run_postprocess(args, ctx)
 
 
+@require_runtime_context
 def _tool_get_quality_report(args: dict, ctx) -> ToolResult:
-    return _get_proofreader_controller().get_quality_report(args, ctx)
+    return _proofreader_ctrl.get_quality_report(args, ctx)
 
 
+@require_runtime_context
 def _tool_list_quality_reports(args: dict, ctx) -> ToolResult:
-    return _get_proofreader_controller().list_quality_reports(args, ctx)
+    return _proofreader_ctrl.list_quality_reports(args, ctx)
 
 
 # ── 注册 ──────────────────────────────────────────────────────

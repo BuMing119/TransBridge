@@ -19,12 +19,12 @@ from tests.conftest import (
     MockToolSpec,
 )
 
-from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from src.transbridge.smart_assistant.tools.base import (
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.smart_assistant.tools.base import (
     ToolResult, ExecutionContext, filter_entries, execute_with_guardrails,
     require_collection, validate_params,
 )
-from src.transbridge.smart_assistant.tools.task_manager import TaskManager
+from transbridge.smart_assistant.tools.task_manager import TaskManager
 
 
 # ── Test: 完整工作流链路 ────────────────────────────────────────────────
@@ -37,35 +37,35 @@ class TestFullWorkflowChain(unittest.TestCase):
         self.ctx = MockAppContext(self.collection)
 
     def test_filter_by_stage(self):
-        from src.transbridge.smart_assistant.tools.tool_editor import _tool_set_filters
+        from transbridge.smart_assistant.tools.tool_editor import _tool_set_filters
         result = _tool_set_filters({"stages": [0, 1]}, self.ctx)
         self.assertTrue(result.success)
         self.assertEqual(self.ctx.filter_state["stage"], [0, 1])
 
     def test_filter_by_stage_rejects_invalid(self):
-        from src.transbridge.smart_assistant.tools.tool_editor import _tool_set_filters
+        from transbridge.smart_assistant.tools.tool_editor import _tool_set_filters
         result = _tool_set_filters({"stages": [99]}, self.ctx)
         self.assertFalse(result.success)
 
     def test_filter_by_category(self):
-        from src.transbridge.smart_assistant.tools.tool_editor import _tool_set_filters
+        from transbridge.smart_assistant.tools.tool_editor import _tool_set_filters
         result = _tool_set_filters({"categories": ["NPC_"]}, self.ctx)
         self.assertTrue(result.success)
         self.assertEqual(self.ctx.filter_state["category"], ["NPC_"])
 
     def test_search_entries(self):
-        from src.transbridge.smart_assistant.tools.tool_editor import _tool_set_filters
+        from transbridge.smart_assistant.tools.tool_editor import _tool_set_filters
         result = _tool_set_filters({"search_query": "Original", "search_field": "original"}, self.ctx)
         self.assertTrue(result.success)
         self.assertEqual(self.ctx.filter_state["search_query"], "Original")
 
     def test_search_entries_invalid_field(self):
-        from src.transbridge.smart_assistant.tools.tool_editor import _tool_set_filters
+        from transbridge.smart_assistant.tools.tool_editor import _tool_set_filters
         result = _tool_set_filters({"search_query": "test", "search_field": "unknown"}, self.ctx)
         self.assertFalse(result.success)
 
     def test_get_visible_entries_respects_filter(self):
-        from src.transbridge.smart_assistant.tools.tool_editor import (
+        from transbridge.smart_assistant.tools.tool_editor import (
             _tool_set_filters, _tool_get_visible_entries,
         )
         _tool_set_filters({"stages": [1]}, self.ctx)
@@ -75,14 +75,14 @@ class TestFullWorkflowChain(unittest.TestCase):
         self.assertEqual(result.data["total_count"], 3)
 
     def test_get_visible_entries_pagination(self):
-        from src.transbridge.smart_assistant.tools.tool_editor import _tool_get_visible_entries
+        from transbridge.smart_assistant.tools.tool_editor import _tool_get_visible_entries
         result = _tool_get_visible_entries({"limit": 3, "offset": 0}, self.ctx)
         self.assertTrue(result.success)
         self.assertEqual(len(result.data["entries"]), 3)
         self.assertTrue(result.truncated)
 
     def test_select_entries(self):
-        from src.transbridge.smart_assistant.tools.tool_editor import _tool_select_entries
+        from transbridge.smart_assistant.tools.tool_editor import _tool_select_entries
         result = _tool_select_entries(
             {"entry_ids": ["entry_000", "entry_001", "entry_002"], "action": "select"},
             self.ctx,
@@ -92,7 +92,7 @@ class TestFullWorkflowChain(unittest.TestCase):
         self.assertIn("entry_000", self.ctx.selected_ids)
 
     def test_deselect_and_clear(self):
-        from src.transbridge.smart_assistant.tools.tool_editor import _tool_select_entries
+        from transbridge.smart_assistant.tools.tool_editor import _tool_select_entries
         _tool_select_entries({"entry_ids": ["entry_000", "entry_001"], "action": "select"}, self.ctx)
         self.assertEqual(len(self.ctx.selected_ids), 2)
         _tool_select_entries({"entry_ids": ["entry_000"], "action": "deselect"}, self.ctx)
@@ -101,7 +101,7 @@ class TestFullWorkflowChain(unittest.TestCase):
         self.assertEqual(len(self.ctx.selected_ids), 0)
 
     def test_edit_translation(self):
-        from src.transbridge.smart_assistant.tools.tool_editor import _tool_edit_translation
+        from transbridge.smart_assistant.tools.tool_editor import _tool_edit_translation
         ec = ExecutionContext(app_context=self.ctx)
         result = _tool_edit_translation(
             {"entry_id": "entry_000", "new_translation": "新翻译文本"}, ec,
@@ -110,7 +110,7 @@ class TestFullWorkflowChain(unittest.TestCase):
         self.assertEqual(self.collection.get("entry_000").translation, "新翻译文本")
 
     def test_edit_translation_with_stage_change(self):
-        from src.transbridge.smart_assistant.tools.tool_editor import _tool_edit_translation
+        from transbridge.smart_assistant.tools.tool_editor import _tool_edit_translation
         ec = ExecutionContext(app_context=self.ctx)
         result = _tool_edit_translation(
             {"entry_id": "entry_000", "new_translation": "改译文", "new_stage": 1}, ec,
@@ -120,13 +120,13 @@ class TestFullWorkflowChain(unittest.TestCase):
         self.assertEqual(self.collection.get("entry_000").stage, 1)
 
     def test_edit_translation_nonexistent(self):
-        from src.transbridge.smart_assistant.tools.tool_editor import _tool_edit_translation
+        from transbridge.smart_assistant.tools.tool_editor import _tool_edit_translation
         ec = ExecutionContext(app_context=self.ctx)
         result = _tool_edit_translation({"entry_id": "nonexistent", "new_translation": "x"}, ec)
         self.assertFalse(result.success)
 
     def test_set_stage_batch(self):
-        from src.transbridge.smart_assistant.tools.tool_editor import _tool_set_stage
+        from transbridge.smart_assistant.tools.tool_editor import _tool_set_stage
         ec = ExecutionContext(app_context=self.ctx)
         ids = ["entry_000", "entry_001", "entry_002"]
         result = _tool_set_stage({"entry_ids": ids, "stage": 9}, ec)
@@ -136,7 +136,7 @@ class TestFullWorkflowChain(unittest.TestCase):
             self.assertEqual(self.collection.get(eid).stage, 9)
 
     def test_set_stage_partial_not_found(self):
-        from src.transbridge.smart_assistant.tools.tool_editor import _tool_set_stage
+        from transbridge.smart_assistant.tools.tool_editor import _tool_set_stage
         ec = ExecutionContext(app_context=self.ctx)
         result = _tool_set_stage({"entry_ids": ["entry_000", "missing_999"], "stage": 1}, ec)
         self.assertTrue(result.success)
@@ -144,7 +144,7 @@ class TestFullWorkflowChain(unittest.TestCase):
         self.assertEqual(len(result.failed_items), 1)
 
     def test_start_translation_stop_and_status(self):
-        from src.transbridge.smart_assistant.tools.tool_translator import (
+        from transbridge.smart_assistant.tools.tool_translator import (
             _tool_start_translation, _tool_stop_task,
             _tool_get_task_status,
         )
@@ -164,14 +164,14 @@ class TestFullWorkflowChain(unittest.TestCase):
         self.assertTrue(all_result.success)
 
     def test_start_polish_needs_entry_ids(self):
-        from src.transbridge.smart_assistant.tools.tool_translator import _tool_start_polish
+        from transbridge.smart_assistant.tools.tool_translator import _tool_start_polish
         ec = ExecutionContext(app_context=self.ctx)
         result = _tool_start_polish({"entry_ids": []}, ec)
         self.assertFalse(result.success)
 
     def test_full_workflow_filter_search_select_edit_mark(self):
         """端到端: 筛选→搜索→查询→选择→编辑→标记，验证数据在各 Story 间正确传递。"""
-        from src.transbridge.smart_assistant.tools.tool_editor import (
+        from transbridge.smart_assistant.tools.tool_editor import (
             _tool_set_filters,
             _tool_get_visible_entries, _tool_select_entries,
             _tool_edit_translation, _tool_set_stage,
@@ -225,7 +225,7 @@ class TestLabelSystem(unittest.TestCase):
         self.ctx = MockAppContext(self.collection)
 
     def test_label_full_lifecycle(self):
-        from src.transbridge.smart_assistant.tools.tool_editor import (
+        from transbridge.smart_assistant.tools.tool_editor import (
             _tool_manage_entry_labels, _tool_list_labels,
         )
         ec = ExecutionContext(app_context=self.ctx)
@@ -265,12 +265,12 @@ class TestLabelSystem(unittest.TestCase):
         self.assertIn("entry_001", self.ctx.entry_labels)
 
     def test_create_label_empty_name_rejected(self):
-        from src.transbridge.smart_assistant.tools.tool_editor import _tool_manage_entry_labels
+        from transbridge.smart_assistant.tools.tool_editor import _tool_manage_entry_labels
         result = _tool_manage_entry_labels({"action": "create", "name": ""}, self.ctx)
         self.assertFalse(result.success)
 
     def test_assign_nonexistent_label(self):
-        from src.transbridge.smart_assistant.tools.tool_editor import _tool_manage_entry_labels
+        from transbridge.smart_assistant.tools.tool_editor import _tool_manage_entry_labels
         ec = ExecutionContext(app_context=self.ctx)
         result = _tool_manage_entry_labels(
             {"action": "assign", "name": "不存在的标签", "entry_ids": ["entry_000"]}, ec, self.collection,
@@ -287,35 +287,35 @@ class TestSecurityGuardrails(unittest.TestCase):
         self.ctx = MockAppContext(make_test_collection(5))
 
     def test_path_traversal_dot_dot_slash(self):
-        from src.transbridge.smart_assistant.guardrails.input_validator import InputValidationGuard
+        from transbridge.smart_assistant.guardrails.input_validator import InputValidationGuard
         guard = InputValidationGuard()
         step = {"tool": "parse_esp", "args": {"path": "../etc/passwd"}}
         result = guard.before_execute(step, ExecutionContext(app_context=self.ctx))
         self.assertFalse(result.allowed)
 
     def test_path_traversal_dot_dot_backslash(self):
-        from src.transbridge.smart_assistant.guardrails.input_validator import InputValidationGuard
+        from transbridge.smart_assistant.guardrails.input_validator import InputValidationGuard
         guard = InputValidationGuard()
         step = {"tool": "parse_esp", "args": {"path": "..\\Windows\\system32\\config"}}
         result = guard.before_execute(step, ExecutionContext(app_context=self.ctx))
         self.assertFalse(result.allowed)
 
     def test_path_traversal_absolute_windows(self):
-        from src.transbridge.smart_assistant.guardrails.input_validator import InputValidationGuard
+        from transbridge.smart_assistant.guardrails.input_validator import InputValidationGuard
         guard = InputValidationGuard()
         step = {"tool": "parse_esp", "args": {"path": "C:\\Windows\\system32\\config"}}
         result = guard.before_execute(step, ExecutionContext(app_context=self.ctx))
         self.assertFalse(result.allowed)
 
     def test_path_traversal_absolute_unix(self):
-        from src.transbridge.smart_assistant.guardrails.input_validator import InputValidationGuard
+        from transbridge.smart_assistant.guardrails.input_validator import InputValidationGuard
         guard = InputValidationGuard()
         step = {"tool": "parse_esp", "args": {"path": "/etc/passwd"}}
         result = guard.before_execute(step, ExecutionContext(app_context=self.ctx))
         self.assertFalse(result.allowed)
 
     def test_read_permission_allowed(self):
-        from src.transbridge.smart_assistant.guardrails.permission import PermissionGuard
+        from transbridge.smart_assistant.guardrails.permission import PermissionGuard
         guard = PermissionGuard()
         # Story 17: filter_by_stage → set_filters
         step = {"tool": "set_filters", "args": {"stages": [0]}}
@@ -351,7 +351,7 @@ class TestSecurityGuardrails(unittest.TestCase):
         因此需确保 tool_parser 模块已加载（parse_esp 注册为 write 权限，
         PermissionGuard 放行 write 权限工具）。
         """
-        import src.transbridge.smart_assistant.tools.tool_parser  # noqa: F401 — ensure parse_esp registered
+        import transbridge.smart_assistant.tools.tool_parser  # noqa: F401 — ensure parse_esp registered
 
         def _dummy_exec(args, ctx):
             return ToolResult.ok("should not reach")
@@ -373,7 +373,7 @@ class TestTranslationConfig(unittest.TestCase):
         # 防止 set_translation_config 测试写入真实 INI 覆盖用户配置
         from unittest.mock import patch
         self._save_patcher = patch(
-            "src.transbridge.config.llm.LLMConfig.save_to_file",
+            "transbridge.config.llm.LLMConfig.save_to_file",
             return_value=None,
         )
         self._save_patcher.start()
@@ -382,18 +382,18 @@ class TestTranslationConfig(unittest.TestCase):
         self._save_patcher.stop()
 
     def test_set_scope_valid(self):
-        from src.transbridge.smart_assistant.tools.tool_translator import _tool_set_scope
+        from transbridge.smart_assistant.tools.tool_translator import _tool_set_scope
         result = _tool_set_scope({"stages": [0, 1], "action": "include"}, self.ctx)
         self.assertTrue(result.success)
         self.assertEqual(self.ctx.translation_scope["stages"], [0, 1])
 
     def test_set_scope_invalid_action(self):
-        from src.transbridge.smart_assistant.tools.tool_translator import _tool_set_scope
+        from transbridge.smart_assistant.tools.tool_translator import _tool_set_scope
         result = _tool_set_scope({"stages": [0], "action": "invalid"}, self.ctx)
         self.assertFalse(result.success)
 
     def test_get_scope_preview_consistency(self):
-        from src.transbridge.smart_assistant.tools.tool_translator import (
+        from transbridge.smart_assistant.tools.tool_translator import (
             _tool_set_scope, _tool_get_scope_preview,
         )
         _tool_set_scope({"stages": [0], "action": "include"}, self.ctx)
@@ -405,7 +405,7 @@ class TestTranslationConfig(unittest.TestCase):
         self.assertGreater(result.data["total"], 0)
 
     def test_set_translation_config_without_profile(self):
-        from src.transbridge.smart_assistant.tools.tool_translator import _tool_set_translation_config
+        from transbridge.smart_assistant.tools.tool_translator import _tool_set_translation_config
         ec = ExecutionContext(app_context=self.ctx)
         result = _tool_set_translation_config({"model": "gpt-4o"}, ec)
         self.assertIsInstance(result, ToolResult)
@@ -421,7 +421,7 @@ class TestStateQueryTools(unittest.TestCase):
         self.ctx = MockAppContext(self.collection)
 
     def test_get_statistics(self):
-        from src.transbridge.smart_assistant.tools.tool_default import _tool_get_statistics
+        from transbridge.smart_assistant.tools.tool_default import _tool_get_statistics
         ec = ExecutionContext(app_context=self.ctx)
         result = _tool_get_statistics({}, ec)
         self.assertTrue(result.success)
@@ -429,19 +429,19 @@ class TestStateQueryTools(unittest.TestCase):
         self.assertEqual(result.data["total"], 15)
 
     def test_list_local_projects(self):
-        from src.transbridge.smart_assistant.tools.tool_default import _tool_list_local_projects
+        from transbridge.smart_assistant.tools.tool_default import _tool_list_local_projects
         result = _tool_list_local_projects({}, self.ctx)
         self.assertTrue(result.success)
         self.assertIn("projects", result.data)
 
     def test_get_current_project_no_active(self):
-        from src.transbridge.smart_assistant.tools.tool_default import _tool_get_current_project
+        from transbridge.smart_assistant.tools.tool_default import _tool_get_current_project
         result = _tool_get_current_project({}, self.ctx)
         self.assertTrue(result.success)
         self.assertIsNone(result.data["active_project"])
 
     def test_get_quality_report(self):
-        from src.transbridge.smart_assistant.tools.tool_proofreader import _tool_get_quality_report
+        from transbridge.smart_assistant.tools.tool_proofreader import _tool_get_quality_report
         ec = ExecutionContext(app_context=self.ctx)
         result = _tool_get_quality_report({}, ec)
         self.assertTrue(result.success)
@@ -457,14 +457,14 @@ class TestParserWriterTools(unittest.TestCase):
         self.ctx = MockAppContext()
 
     def test_validate_path_nonexistent_file(self):
-        from src.transbridge.smart_assistant.tools.tool_parser import _validate_path
+        from transbridge.smart_assistant.tools.tool_parser import _validate_path
         result = _validate_path("nonexistent.esp")
         self.assertIsNotNone(result)
         self.assertIn("文件不存在", result.message)
 
     def test_validate_path_invalid_extension(self):
         """Extension check runs only when file exists — use temp file."""
-        from src.transbridge.smart_assistant.tools.tool_parser import _validate_path
+        from transbridge.smart_assistant.tools.tool_parser import _validate_path
         with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as f:
             exe_path = f.name
         try:
@@ -475,12 +475,12 @@ class TestParserWriterTools(unittest.TestCase):
             os.unlink(exe_path)
 
     def test_validate_path_extension_whitelist_all(self):
-        from src.transbridge.smart_assistant.tools.tool_parser import _validate_path, _VALID_EXTENSIONS
+        from transbridge.smart_assistant.tools.tool_parser import _validate_path, _VALID_EXTENSIONS
         for ext in [".esp", ".esm", ".esl", ".xml", ".json", ".sst"]:
             self.assertIn(ext, _VALID_EXTENSIONS, f"Extension {ext} should be whitelisted")
 
     def test_validate_path_rejects_binary(self):
-        from src.transbridge.smart_assistant.tools.tool_parser import _validate_path
+        from transbridge.smart_assistant.tools.tool_parser import _validate_path
         with tempfile.NamedTemporaryFile(suffix=".dll", delete=False) as f:
             dll_path = f.name
         try:
@@ -491,18 +491,18 @@ class TestParserWriterTools(unittest.TestCase):
             os.unlink(dll_path)
 
     def test_parse_esp_no_path(self):
-        from src.transbridge.smart_assistant.tools.tool_parser import _tool_parse_esp
+        from transbridge.smart_assistant.tools.tool_parser import _tool_parse_esp
         result = _tool_parse_esp({"path": ""}, self.ctx)
         self.assertFalse(result.success)
 
     def test_parse_esp_nonexistent_file(self):
-        from src.transbridge.smart_assistant.tools.tool_parser import _tool_parse_esp
+        from transbridge.smart_assistant.tools.tool_parser import _tool_parse_esp
         result = _tool_parse_esp({"path": "nonexistent.esp"}, self.ctx)
         self.assertFalse(result.success)
         self.assertIn("文件不存在", result.message)
 
     def test_parse_esp_invalid_extension(self):
-        from src.transbridge.smart_assistant.tools.tool_parser import _tool_parse_esp
+        from transbridge.smart_assistant.tools.tool_parser import _tool_parse_esp
         with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as f:
             exe_path = f.name
         try:
@@ -513,7 +513,7 @@ class TestParserWriterTools(unittest.TestCase):
             os.unlink(exe_path)
 
     def test_writer_tools_have_admin_permission(self):
-        from src.transbridge.smart_assistant.tool_registry import ToolRegistry
+        from transbridge.smart_assistant.tool_registry import ToolRegistry
         writer_specs = ToolRegistry.list_namespace("writer")
         for spec in writer_specs:
             self.assertEqual(spec.permission, "admin",
@@ -523,7 +523,7 @@ class TestParserWriterTools(unittest.TestCase):
 
     def test_parser_tools_have_write_permission(self):
         """Story 24: parser 工具执行副作用（创建slot/追加条目），permission 升级为 write。"""
-        from src.transbridge.smart_assistant.tool_registry import ToolRegistry
+        from transbridge.smart_assistant.tool_registry import ToolRegistry
         parser_specs = ToolRegistry.list_namespace("parser")
         for spec in parser_specs:
             self.assertEqual(spec.permission, "write",
@@ -845,19 +845,19 @@ class TestAgentRegistry(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # Ensure presets are initialized (idempotent, may have run at module load)
-        from src.transbridge.smart_assistant.agents.agent_registry import AgentRegistry
+        from transbridge.smart_assistant.agents.agent_registry import AgentRegistry
         AgentRegistry.init_presets()
 
     def test_seven_agents_registered(self):
-        from src.transbridge.smart_assistant.agents.agent_registry import AgentRegistry
+        from transbridge.smart_assistant.agents.agent_registry import AgentRegistry
         agents = AgentRegistry.list_all()
         self.assertGreaterEqual(len(agents), 7,
                                f"Expected at least 7 agents, got {len(agents)}")
 
     def test_namespace_wildcard_expansion(self):
         """O3: namespace:* 通配符正确展开。"""
-        from src.transbridge.smart_assistant.agents.agent_registry import AgentRegistry
-        from src.transbridge.smart_assistant.tool_registry import ToolRegistry
+        from transbridge.smart_assistant.agents.agent_registry import AgentRegistry
+        from transbridge.smart_assistant.tool_registry import ToolRegistry
 
         expanded = AgentRegistry._expand_wildcard(["editor:*"])
         editor_specs = ToolRegistry.list_namespace("editor")
@@ -867,18 +867,18 @@ class TestAgentRegistry(unittest.TestCase):
                          f"Wildcard expanded tool '{tool}' not in editor namespace")
 
     def test_orchestrator_has_cross_namespace_tools(self):
-        from src.transbridge.smart_assistant.agents.agent_registry import AgentRegistry
+        from transbridge.smart_assistant.agents.agent_registry import AgentRegistry
         orch = AgentRegistry.get("orchestrator")
         self.assertIsNotNone(orch, "Orchestrator agent should be registered")
         self.assertGreater(len(orch.tools), 0)
 
     def test_translator_has_namespace_wildcard(self):
-        from src.transbridge.smart_assistant.agents.agent_registry import AgentRegistry
+        from transbridge.smart_assistant.agents.agent_registry import AgentRegistry
         translator = AgentRegistry.get("translator")
         self.assertIsNotNone(translator, "Translator agent should be registered")
 
     def test_all_agent_ids(self):
-        from src.transbridge.smart_assistant.agents.agent_registry import AgentRegistry
+        from transbridge.smart_assistant.agents.agent_registry import AgentRegistry
         expected_ids = {"translator", "proofreader", "orchestrator",
                        "parser", "editor", "paratranz", "writer"}
         actual_ids = {a.agent_id for a in AgentRegistry.list_all()}
@@ -887,7 +887,7 @@ class TestAgentRegistry(unittest.TestCase):
 
     def test_agent_tools_are_expanded(self):
         """O3: 注册时通配符已被展开为具体工具名。"""
-        from src.transbridge.smart_assistant.agents.agent_registry import AgentRegistry
+        from transbridge.smart_assistant.agents.agent_registry import AgentRegistry
         editor_agent = AgentRegistry.get("editor")
         self.assertIsNotNone(editor_agent)
         # After registration, tools should be concrete names, not wildcards

@@ -11,9 +11,17 @@ NOTE (QA-007): 注册模式不一致 — 当前 tools/skills/file_parser 三个�
   调用 register_all() 显式注册所有工具（无导入副作用）。
   模块级的 side-effect 导入已标记为 DEPRECATED，仅保留向后兼容。
 """
-from .base import ToolResult, ExecutionContext, HITLRequest, HITLResponse, HITLType
-from .base import execute_with_guardrails, filter_entries
-from .base import require_collection, validate_params
+from .base import (
+    ExecutionContext,
+    HITLRequest,
+    HITLResponse,
+    HITLType,
+    ToolResult,
+    execute_with_guardrails,
+    filter_entries,
+    require_collection,
+    validate_params,
+)
 
 
 def register_all() -> None:
@@ -22,17 +30,23 @@ def register_all() -> None:
     显式导入各工具模块，触发各自的 _register_*_tools() 调用。
     应用启动时调用一次即可。
     """
-    from . import (          # noqa: F401
-        tool_editor,
-        tool_translator,
-        tool_proofreader,
-        tool_paratranz,
-        tool_writer,
-        tool_parser,
-        tool_default,
+    # Agent capabilities are authoritative only after every namespace is known.
+    from transbridge.smart_assistant.agents.agent_registry import AgentRegistry
+
+    from . import (  # noqa: F401
         tool_archive,
+        tool_default,
+        tool_editor,
         tool_migrator,
+        tool_paratranz,
+        tool_parser,
+        tool_proofreader,
+        tool_translator,
+        tool_writer,
     )
+
+    AgentRegistry.init_presets()
+    AgentRegistry.finalize()
 
 
 __all__ = [

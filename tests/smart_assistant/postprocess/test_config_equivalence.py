@@ -8,7 +8,7 @@ import unittest
 
 from tests.conftest import make_llm_config
 
-from src.transbridge.ai_translator.post_processor.post_processor import PostProcessorConfig
+from transbridge.ai_translator.post_processor.post_processor import PostProcessorConfig
 
 
 class TestPostProcessorConfigEquivalence(unittest.TestCase):

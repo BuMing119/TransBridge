@@ -19,7 +19,7 @@ class TestObservabilityCollector(unittest.TestCase):
     """可观测性收集器核心逻辑测试。"""
 
     def setUp(self):
-        from src.transbridge.smart_assistant.observability.collector import ObservabilityCollector
+        from transbridge.smart_assistant.observability.collector import ObservabilityCollector
         self._tmp = tempfile.mkdtemp()
         self.collector = ObservabilityCollector(storage_dir=Path(self._tmp))
 
@@ -69,7 +69,7 @@ class TestObservabilityCollector(unittest.TestCase):
     def test_save_trace_persists_file(self):
         self.collector.start_conversation("conv_save_test")
         self.collector.on_step_started(1, "test_tool")
-        from src.transbridge.smart_assistant.execution_engine import StepResult
+        from transbridge.smart_assistant.execution_engine import StepResult
         self.collector.on_step_finished(StepResult(
             step_id=1, tool="test_tool", success=True,
             message="OK", duration_ms=42,
@@ -99,7 +99,7 @@ class TestObservabilityCollector(unittest.TestCase):
     def test_tools_called_recorded(self):
         self.collector.start_conversation("conv_tools")
         self.collector.on_step_started(1, "translate")
-        from src.transbridge.smart_assistant.execution_engine import StepResult
+        from transbridge.smart_assistant.execution_engine import StepResult
         self.collector.on_step_finished(StepResult(
             step_id=1, tool="translate", success=True,
             message="翻译完成", duration_ms=500,
@@ -110,7 +110,7 @@ class TestObservabilityCollector(unittest.TestCase):
     def test_retry_tracking(self):
         self.collector.start_conversation("conv_retry")
         self.collector.on_step_started(1, "flakey_tool")
-        from src.transbridge.smart_assistant.execution_engine import StepResult
+        from transbridge.smart_assistant.execution_engine import StepResult
         self.collector.on_step_finished(StepResult(
             step_id=1, tool="flakey_tool", success=False,
             message="timeout", duration_ms=100,

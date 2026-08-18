@@ -1,8 +1,17 @@
 """ParaTranz 导出格式解析器。"""
 
-import json
 import logging
 from pathlib import Path
+
+from transbridge.application.contracts import OperationOutcome, RequestContext
+from transbridge.application.io import (
+    FormatId,
+    ParatranzJsonAdapter,
+    ParseRequest,
+    SourceDescriptor,
+    paratranz_record_from_entry,
+)
+
 from .base import FileParser, ParsedDocument
 
 logger = logging.getLogger(__name__)
@@ -24,19 +33,30 @@ class ParatranzParser(FileParser):
             return self._parse_json(path)
 
     def _parse_json(self, path: Path) -> ParsedDocument:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        raw_text = json.dumps(data, ensure_ascii=False, indent=2)
-        entries = []
-        if isinstance(data, list):
-            entries = data
-        elif isinstance(data, dict) and "entries" in data:
-            entries = data["entries"]
+        import json
+
+        source = SourceDescriptor(str(path), path.name, path.stat().st_size, "application/json")
+        result = ParatranzJsonAdapter().parse(
+            ParseRequest(
+                source,
+                RequestContext("legacy-smart-assistant-file-parser"),
+                FormatId.JSON_PARATRANZ,
+            )
+        )
+        if result.outcome in {OperationOutcome.FAILED, OperationOutcome.CANCELLED}:
+            messages = "; ".join(diagnostic.message for diagnostic in result.diagnostics)
+            raise ValueError(messages or "Unable to parse ParaTranz JSON.")
+        entries = [paratranz_record_from_entry(entry) for entry in result.entries]
+        raw_text = json.dumps(entries, ensure_ascii=False, indent=2, allow_nan=False)
         sections = [{"heading": path.stem, "entries": entries}]
         return ParsedDocument(
             source_path=path, format="paratranz", title=path.stem,
             sections=sections, raw_text=raw_text,
-            metadata={"entry_count": len(entries)},
+            metadata={
+                "entry_count": len(entries),
+                "outcome": result.outcome.value,
+                "diagnostics": [diagnostic.to_dict() for diagnostic in result.diagnostics],
+            },
         )
 
     def _parse_zip(self, path: Path) -> ParsedDocument:

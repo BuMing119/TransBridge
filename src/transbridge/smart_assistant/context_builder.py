@@ -5,7 +5,7 @@ from collections import Counter
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from src.transbridge.ui.context import AppContext
+    from transbridge.ui.context import AppContext
 
 
 class ContextBuilder:

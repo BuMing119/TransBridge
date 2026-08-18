@@ -10,11 +10,25 @@ Story 01: 新建 + 新旧并行。不删除 ChatWidget 中任何旧方法。
 
 from __future__ import annotations
 
-import logging
+from collections.abc import Callable
 from enum import Enum
-from typing import Any, Callable
+import logging
+from typing import Any
+
+from transbridge.application.contracts import DomainError, ErrorCategory
+from transbridge.application.sessions.models import ControllerSnapshot, ControllerState
 
 logger = logging.getLogger(__name__)
+
+
+class SessionTransitionError(DomainError):
+    def __init__(self, action: str, current: str, expected: tuple[str, ...]) -> None:
+        super().__init__(
+            ErrorCategory.CONFLICT,
+            "SESSION_STATE_TRANSITION_INVALID",
+            "The Session controller action is invalid for its current state.",
+            details={"action": action, "current": current, "expected": list(expected)},
+        )
 
 
 class SessionController:
@@ -45,6 +59,13 @@ class SessionController:
         AWAITING_TASK = "awaiting_task"
 
     _MAX_REACT_DEPTH = 10
+    _TRANSITIONS = {
+        State.IDLE: frozenset({State.IDLE, State.THINKING}),
+        State.THINKING: frozenset({State.IDLE, State.AWAITING_CONFIRM, State.EXECUTING}),
+        State.AWAITING_CONFIRM: frozenset({State.IDLE, State.EXECUTING}),
+        State.EXECUTING: frozenset({State.IDLE, State.THINKING, State.AWAITING_TASK}),
+        State.AWAITING_TASK: frozenset({State.IDLE, State.THINKING}),
+    }
 
     def __init__(
         self,
@@ -86,6 +107,8 @@ class SessionController:
         self._state: SessionController.State = self.State.IDLE
         self._react_depth: int = 0
         self._auto_mode: bool = False
+        self._active_task: tuple[str, str] | None = None
+        self._stale_task_events: list[tuple[str, str]] = []
 
     # ── 状态属性 ─────────────────────────────────────────────
 
@@ -109,16 +132,14 @@ class SessionController:
 
     def handle_user_message(self, text: str) -> None:
         """IDLE → THINKING: 用户发送消息，启动 LLM 轮次。"""
-        assert self._state == self.State.IDLE, (
-            f"handle_user_message 仅允许在 IDLE 状态调用，当前: {self._state}")
+        self._require("handle_user_message", self.State.IDLE)
         self._react_depth = 0
         self._transition_to(self.State.THINKING)
         self._on_llm_round_start()
 
     def handle_llm_response(self, parsed: dict) -> None:
         """THINKING → AWAITING_CONFIRM | EXECUTING | IDLE: LLM 响应到达，按模式分发。"""
-        assert self._state == self.State.THINKING, (
-            f"handle_llm_response 仅允许在 THINKING 状态调用，当前: {self._state}")
+        self._require("handle_llm_response", self.State.THINKING)
 
         self._on_thinking_indicator_hide()
 
@@ -138,7 +159,8 @@ class SessionController:
             self._transition_to(self.State.EXECUTING)
             self._dispatch_steps(steps, mode)
             # 执行完成后自动触发下一轮（ReAct 继续）
-            self.handle_execution_complete([])
+            if self._state is self.State.EXECUTING:
+                self.handle_execution_complete([])
         else:
             # 需要用户确认 → 展示确认卡片
             self._transition_to(self.State.AWAITING_CONFIRM)
@@ -151,22 +173,19 @@ class SessionController:
 
     def handle_user_confirmed(self, steps: list, mode: str = "react") -> None:
         """AWAITING_CONFIRM → EXECUTING: 用户确认执行。"""
-        assert self._state == self.State.AWAITING_CONFIRM, (
-            f"handle_user_confirmed 仅允许在 AWAITING_CONFIRM 状态调用，当前: {self._state}")
+        self._require("handle_user_confirmed", self.State.AWAITING_CONFIRM)
         self._transition_to(self.State.EXECUTING)
         self._dispatch_steps(steps, mode)
 
     def handle_user_cancelled(self) -> None:
         """AWAITING_CONFIRM → IDLE: 用户取消操作。"""
-        assert self._state == self.State.AWAITING_CONFIRM, (
-            f"handle_user_cancelled 仅允许在 AWAITING_CONFIRM 状态调用，当前: {self._state}")
+        self._require("handle_user_cancelled", self.State.AWAITING_CONFIRM)
         self._transition_to(self.State.IDLE)
         self.on_system_message("操作已取消")
 
     def handle_execution_complete(self, results: list) -> None:
         """EXECUTING → THINKING | IDLE: 计划/工具执行完成，决定是否继续 ReAct 循环。"""
-        assert self._state == self.State.EXECUTING, (
-            f"handle_execution_complete 仅允许在 EXECUTING 状态调用，当前: {self._state}")
+        self._require("handle_execution_complete", self.State.EXECUTING)
 
         if self._react_depth > self._MAX_REACT_DEPTH:
             logger.info("ReAct 深度已达上限 %d，终止循环", self._MAX_REACT_DEPTH)
@@ -181,10 +200,16 @@ class SessionController:
             self._transition_to(self.State.THINKING)
             self._on_llm_round_start()
 
-    def handle_task_completed(self, task_id: str, result: dict) -> None:
+    def handle_task_completed(self, task_id: str, result: dict, run_id: str = "") -> None:
         """AWAITING_TASK → THINKING | IDLE: 异步后台任务完成。"""
-        assert self._state == self.State.AWAITING_TASK, (
-            f"handle_task_completed 仅允许在 AWAITING_TASK 状态调用，当前: {self._state}")
+        if self._active_task is not None:
+            expected_task_id, expected_run_id = self._active_task
+            if task_id != expected_task_id or (run_id and run_id != expected_run_id):
+                self._stale_task_events.append((task_id, run_id))
+                logger.warning("Ignoring stale task completion task=%s run=%s", task_id, run_id)
+                return
+        self._require("handle_task_completed", self.State.AWAITING_TASK)
+        self._active_task = None
 
         if self._react_depth > self._MAX_REACT_DEPTH:
             self._react_depth = 0
@@ -196,10 +221,10 @@ class SessionController:
             self._transition_to(self.State.THINKING)
             self._on_llm_round_start()
 
-    def handle_task_started(self) -> None:
+    def handle_task_started(self, task_id: str = "", run_id: str = "") -> None:
         """EXECUTING → AWAITING_TASK: 长运行异步任务已启动，等待完成通知。"""
-        assert self._state == self.State.EXECUTING, (
-            f"handle_task_started 仅允许在 EXECUTING 状态调用，当前: {self._state}")
+        self._require("handle_task_started", self.State.EXECUTING)
+        self._active_task = (task_id, run_id) if task_id else None
         self._transition_to(self.State.AWAITING_TASK)
 
     def handle_abort(self) -> None:
@@ -211,6 +236,7 @@ class SessionController:
             except Exception:
                 pass
         self._react_depth = 0
+        self._active_task = None
         self._transition_to(self.State.IDLE)
 
     # ── 内部方法 ─────────────────────────────────────────────
@@ -218,9 +244,55 @@ class SessionController:
     def _transition_to(self, new_state: State) -> None:
         """执行状态转换并触发回调。"""
         old_state = self._state
+        if new_state not in self._TRANSITIONS[old_state]:
+            raise SessionTransitionError(
+                "transition",
+                old_state.value,
+                tuple(item.value for item in self._TRANSITIONS[old_state]),
+            )
         self._state = new_state
         logger.debug("SessionController: %s → %s", old_state.value, new_state.value)
         self.on_state_changed(old_state, new_state, {})
+
+    def to_recovery_snapshot(self) -> ControllerSnapshot:
+        state = ControllerState(self._state.value)
+        recoverable = state in {ControllerState.IDLE, ControllerState.AWAITING_CONFIRM}
+        return ControllerSnapshot(
+            state,
+            self._react_depth,
+            self._auto_mode,
+            recoverable,
+            None if recoverable else "in_flight_controller_state_requires_job_reconciliation",
+        )
+
+    def restore_recovery_snapshot(self, snapshot: ControllerSnapshot) -> ControllerSnapshot:
+        if snapshot.recoverable and snapshot.state in {
+            ControllerState.IDLE,
+            ControllerState.AWAITING_CONFIRM,
+        }:
+            self._state = self.State(snapshot.state.value)
+            self._react_depth = snapshot.react_depth
+            self._auto_mode = snapshot.auto_mode
+            return snapshot
+        degraded = ControllerSnapshot(
+            ControllerState.IDLE,
+            0,
+            snapshot.auto_mode,
+            False,
+            snapshot.reason or "controller_state_not_recoverable",
+        )
+        self._state = self.State.IDLE
+        self._react_depth = 0
+        self._auto_mode = snapshot.auto_mode
+        return degraded
+
+    def _require(self, action: str, *expected: State) -> None:
+        if self._state not in expected:
+            raise SessionTransitionError(
+                action,
+                self._state.value,
+                tuple(item.value for item in expected),
+            )
 
     def _any_needs_confirm(self, steps: list) -> bool:
         """检查步骤列表中是否有需要用户确认的工具。"""

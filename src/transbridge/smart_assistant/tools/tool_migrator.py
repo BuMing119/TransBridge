@@ -26,7 +26,7 @@ _PARAM_SCHEMAS = {
 def _tool_apply_dictionary(args: dict, ctx, collection) -> ToolResult:
     """调用 TranslationMemoryManager.apply_to_collection() 套用词典。"""
     try:
-        from src.transbridge.translation_memory.manager import TranslationMemoryManager, QueryContext
+        from transbridge.translation_memory.manager import TranslationMemoryManager, QueryContext
         manager = TranslationMemoryManager()
         manager.load()
         context = QueryContext()
@@ -53,8 +53,8 @@ def _tool_apply_dictionary(args: dict, ctx, collection) -> ToolResult:
 def _tool_save_dictionary(args: dict, ctx, collection) -> ToolResult:
     """调用 TranslationMemoryManager.save_from_collection() 存词典。"""
     try:
-        from src.transbridge.translation_memory.manager import TranslationMemoryManager
-        from src.transbridge.translation_memory.model import SCOPE_GLOBAL
+        from transbridge.translation_memory.manager import TranslationMemoryManager
+        from transbridge.translation_memory.model import SCOPE_GLOBAL
         manager = TranslationMemoryManager()
         manager.load()
         added = manager.save_from_collection(

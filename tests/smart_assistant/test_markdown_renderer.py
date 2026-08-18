@@ -9,7 +9,7 @@ class TestMarkdownRendererTokenize(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from src.transbridge.infra import markdown_renderer as _mr
+        from transbridge.infra import markdown_renderer as _mr
         cls._mr = _mr
         cls._HeadingBlock = _mr._HeadingBlock
         cls._CodeBlock = _mr._CodeBlock
@@ -113,7 +113,7 @@ class TestMarkdownRendererRender(unittest.TestCase):
         app = QApplication.instance()
         if app is None:
             raise unittest.SkipTest("无 QApplication 实例，跳过渲染测试")
-        from src.transbridge.infra.markdown_renderer import MarkdownRenderer
+        from transbridge.infra.markdown_renderer import MarkdownRenderer
         r = MarkdownRenderer()
         widget = r.render("## 测试标题\n测试内容")
         self.assertIsInstance(widget, QWidget)
@@ -123,7 +123,7 @@ class TestMarkdownRendererRender(unittest.TestCase):
         app = QApplication.instance()
         if app is None:
             raise unittest.SkipTest("无 QApplication 实例，跳过渲染测试")
-        from src.transbridge.infra.markdown_renderer import MarkdownRenderer
+        from transbridge.infra.markdown_renderer import MarkdownRenderer
         r = MarkdownRenderer()
         widget = r.render("\x00\x01\x02")
         self.assertIsInstance(widget, QWidget)

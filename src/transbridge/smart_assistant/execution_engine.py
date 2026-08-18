@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
 
 from .checkpoint_manager import CheckpointManager  # noqa: F401
 from .condition_evaluator import ConditionEvaluator  # noqa: F401
 from .graph_executor import GraphExecutor, StepResult
-
-
 
 
 class ExecutionEngine:
@@ -31,8 +29,8 @@ class ExecutionEngine:
     def execute(self, steps: list[dict]) -> list[StepResult]:
         return self._executor.execute(steps)
 
-    def execute_graph(self, graph) -> list[StepResult]:
-        return self._executor.execute_graph(graph)
+    def execute_graph(self, graph, *, checkpoint_identity=None) -> list[StepResult]:
+        return self._executor.execute_graph(graph, checkpoint_identity=checkpoint_identity)
 
     # ── 生命周期 ────────────────────────────────────────────────
 

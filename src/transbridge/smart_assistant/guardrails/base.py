@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from ..execution_engine import StepResult
+
+if TYPE_CHECKING:
+    from ..tools.types import ExecutionContext
 
 
 @dataclass
@@ -13,6 +17,8 @@ class GuardResult:
     modified_args: dict | None = None
     modified_result: dict | None = None
     requires_confirmation: str = ""
+    code: str = ""
+    json_pointer: str = ""
     # C28: dedicated field to distinguish hard blocks from confirmation-pending.
     # "" = no confirmation needed (hard block if allowed=False).
     # "write" = write-level confirmation pending.

@@ -8,9 +8,9 @@ from unittest.mock import MagicMock
 from tests.conftest import MockAppContext, make_test_collection, make_entry
 
 # Module-level imports to avoid bound-method descriptor wrapping
-from src.transbridge.smart_assistant.tools.base import _apply_after_guards, resolve_scope_to_entry_ids
-from src.transbridge.smart_assistant.guardrails.base import GuardResult
-from src.transbridge.smart_assistant.execution_engine import StepResult
+from transbridge.smart_assistant.tools.base import _apply_after_guards, resolve_scope_to_entry_ids
+from transbridge.smart_assistant.guardrails.base import GuardResult
+from transbridge.smart_assistant.execution_engine import StepResult
 
 
 # ============================================================

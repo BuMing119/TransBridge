@@ -2,22 +2,101 @@
 from __future__ import annotations
 
 import logging
-logger = logging.getLogger(__name__)
+
+from transbridge.application.io.identity import EntryRevision, SourceNamespace
+from transbridge.application.ports.paratranz import ParaTranzEntry, ParaTranzProject
+from transbridge.application.sync import (
+    ConflictPolicy,
+    CreateSyncPlanRequest,
+    LocalEntrySnapshot,
+    ParaTranzSyncPlanningUseCase,
+    SyncOperation,
+)
+from transbridge.application.tasks import TaskCancelled
+from transbridge.paratranz.sync_snapshot import ParaTranzRemoteSnapshotAdapter
 
 from .base import ToolResult, require_collection
 
+logger = logging.getLogger(__name__)
+
 
 def _get_paratranz_client(ctx, project_id=None):
-    """获取 ParatranzProjectAPI 并解析 project_id。M30: 消除 7 个函数中重复的 import + 构造 + pid 解析模式。
+    """获取 typed ParaTranz port 并解析 project_id。
 
     Returns:
-        (client, pid): ParatranzProjectAPI 实例和解析后的 project_id（可能为 None）。
+        (client, pid): ParaTranzPort 实例和解析后的 project_id（可能为 None）。
     """
-    from src.transbridge.paratranz import ParatranzProjectAPI
-    client = ParatranzProjectAPI(ctx.config)
+    from transbridge.paratranz.service import ParaTranzService
+
+    client = ParaTranzService.from_config(ctx.config)
     # 优先显式传入的 project_id，其次 ctx.paratranz_project_id（Story 15），最后 ctx.current_project
-    pid = project_id or getattr(ctx, 'paratranz_project_id', None) or (ctx.current_project.get("id") if ctx.current_project else None)
+    pid = (
+        project_id
+        or getattr(ctx, "paratranz_project_id", None)
+        or (ctx.current_project.get("id") if ctx.current_project else None)
+    )
     return client, pid
+
+
+def _cancellation(ctx):
+    return getattr(ctx, "cancellation_token", None)
+
+
+def _project_mapping(project):
+    if isinstance(project, ParaTranzProject):
+        return {
+            "id": project.project_id,
+            "name": project.name,
+            "visibility": project.visibility,
+            "member_count": project.member_count,
+        }
+    return project
+
+
+def _paratranz_ref(entry, project_id: int):
+    scope = f"project:{project_id}"
+    matches = tuple(
+        reference
+        for reference in getattr(entry, "external_refs", ())
+        if reference.system == "paratranz" and reference.scope == scope
+    )
+    if len(matches) > 1:
+        raise ValueError(f"条目 {entry.key} 存在重复 ParaTranz 远端引用")
+    return matches[0] if matches else None
+
+
+def _local_sync_snapshots(collection, project_id: int, entry_ids=None):
+    if entry_ids:
+        entries = tuple(collection.get(entry_id) for entry_id in entry_ids)
+        missing = tuple(entry_id for entry_id, entry in zip(entry_ids, entries, strict=True) if entry is None)
+        if missing:
+            raise ValueError(f"找不到本地条目: {', '.join(map(str, missing[:5]))}")
+    else:
+        entries = tuple(collection)
+    namespaces = {entry.identity.namespace for entry in entries}
+    if len(namespaces) != 1:
+        raise ValueError("同步计划要求本地快照属于单一 source namespace")
+    namespace = next(iter(namespaces))
+    snapshots = tuple(
+        LocalEntrySnapshot(
+            entry.identity,
+            entry.revision if isinstance(entry.revision, EntryRevision) else EntryRevision(entry.revision),
+            entry.original,
+            entry.translation or "",
+            entry.context or "",
+            entry.stage,
+            _paratranz_ref(entry, project_id),
+        )
+        for entry in entries
+    )
+    return namespace, snapshots
+
+
+def _sync_planning_use_case(ctx, client):
+    injected = getattr(ctx, "paratranz_sync_planning", None)
+    if injected is not None:
+        return injected
+    return ParaTranzSyncPlanningUseCase(ParaTranzRemoteSnapshotAdapter(client))
 
 
 def _tool_list_projects(args: dict, ctx) -> ToolResult:
@@ -25,17 +104,26 @@ def _tool_list_projects(args: dict, ctx) -> ToolResult:
     uid = args.get("uid", "my")
     try:
         client, _ = _get_paratranz_client(ctx)
-        projects = client.list_projects(page=1, page_size=200, uid=uid)
+        projects = client.list_projects(uid=uid, cancellation=_cancellation(ctx))
         # 兼容 API 返回 list 或 {"projects": [...]} 两种格式
         if isinstance(projects, dict):
             project_list = projects.get("projects", [])
-        elif isinstance(projects, list):
+        elif isinstance(projects, (list, tuple)):
             project_list = projects
         else:
             project_list = []
-        summary = [{"id": p.get("id"), "name": p.get("name"), "visibility": p.get("visibility")}
-                   for p in project_list]
+        summary = [
+            {
+                "id": mapped.get("id"),
+                "name": mapped.get("name"),
+                "visibility": mapped.get("visibility"),
+            }
+            for project in project_list
+            if isinstance((mapped := _project_mapping(project)), dict)
+        ]
         return ToolResult.ok(f"找到 {len(summary)} 个项目", data={"projects": summary})
+    except TaskCancelled:
+        raise
     except Exception as exc:
         logger.error("获取项目列表失败")
         return ToolResult.fail(f"获取项目列表失败: {exc}")
@@ -47,9 +135,17 @@ def _tool_get_project_info(args: dict, ctx) -> ToolResult:
     if not pid:
         return ToolResult.fail("请指定 project_id")
     try:
-        info = client.get_project(pid)
-        return ToolResult.ok(data={"id": info.get("id"), "name": info.get("name"),
-                                   "visibility": info.get("visibility"), "member_count": len(info.get("members", []))})
+        info = _project_mapping(client.get_project(pid, cancellation=_cancellation(ctx)))
+        return ToolResult.ok(
+            data={
+                "id": info.get("id"),
+                "name": info.get("name"),
+                "visibility": info.get("visibility"),
+                "member_count": info.get("member_count", len(info.get("members", []))),
+            }
+        )
+    except TaskCancelled:
+        raise
     except Exception as exc:
         logger.error("获取项目信息失败")
         return ToolResult.fail(f"获取项目信息失败: {exc}")
@@ -63,8 +159,14 @@ def _tool_compare_with_remote(args: dict, ctx, collection) -> ToolResult:
         return ToolResult.fail("请指定 project_id")
     try:
         limit = args.get("limit", 500)
-        remote_entries = client.get_entries(pid, limit=limit)
-        remote_map = {e.get("key"): e for e in remote_entries if e.get("key")}
+        remote_entries = client.list_entries(
+            pid, limit=limit, cancellation=_cancellation(ctx)
+        )
+        remote_map = {
+            (entry.key if isinstance(entry, ParaTranzEntry) else entry.get("key")): entry
+            for entry in remote_entries
+            if (entry.key if isinstance(entry, ParaTranzEntry) else entry.get("key"))
+        }
         diff = {"only_local": 0, "only_remote": 0, "different": 0, "same": 0, "details": []}
         local_keys = set()
         for e in collection:
@@ -74,17 +176,81 @@ def _tool_compare_with_remote(args: dict, ctx, collection) -> ToolResult:
                 diff["only_local"] += 1
                 if len(diff["details"]) < 20:
                     diff["details"].append({"key": e.key, "status": "only_local"})
-            elif remote.get("translation") != e.translation:
+            elif (
+                remote.translation if isinstance(remote, ParaTranzEntry) else remote.get("translation")
+            ) != e.translation:
                 diff["different"] += 1
                 if len(diff["details"]) < 20:
                     diff["details"].append({"key": e.key, "status": "different"})
             else:
                 diff["same"] += 1
         diff["only_remote"] = len([k for k in remote_map if k not in local_keys])
-        return ToolResult.ok(f"对比完成: 仅本地{diff['only_local']} 仅远程{diff['only_remote']} 不同{diff['different']}", data=diff)
+        return ToolResult.ok(
+            f"对比完成: 仅本地{diff['only_local']} 仅远程{diff['only_remote']} "
+            f"不同{diff['different']}",
+            data=diff,
+        )
+    except TaskCancelled:
+        raise
     except Exception as exc:
         logger.error("对比远程条目失败")
         return ToolResult.fail(f"对比失败: {exc}")
+
+
+@require_collection
+def _tool_plan_sync(args: dict, ctx, collection) -> ToolResult:
+    """Build an inspectable, side-effect-free ParaTranz synchronization plan."""
+
+    client, pid = _get_paratranz_client(ctx, args.get("project_id"))
+    if not pid:
+        return ToolResult.fail("请指定 project_id")
+    try:
+        project_id = int(pid)
+        namespace, local_entries = _local_sync_snapshots(
+            collection,
+            project_id,
+            args.get("entry_ids"),
+        )
+        requested_namespace = args.get("source_namespace")
+        if requested_namespace is not None and SourceNamespace(requested_namespace) != namespace:
+            return ToolResult.fail(
+                "source_namespace 与本地条目身份不一致",
+                error_category="input",
+                error_code="SOURCE_NAMESPACE_MISMATCH",
+            )
+        use_case = _sync_planning_use_case(ctx, client)
+        plan = use_case.create_plan(
+            CreateSyncPlanRequest(
+                project_id=project_id,
+                namespace=namespace,
+                local_entries=local_entries,
+                operation=SyncOperation(args.get("operation", "upload")),
+                conflict_policy=ConflictPolicy(args.get("conflict_policy", "abort")),
+                remote_limit=int(args.get("remote_limit", 100_000)),
+                cancellation=_cancellation(ctx),
+            )
+        )
+        page_size = int(args.get("page_size", 100))
+        offset = int(args.get("offset", 0))
+        return ToolResult.ok(
+            "同步计划已生成；尚未执行任何远端或本地写入",
+            data=plan.to_dict(offset=offset, limit=page_size),
+        )
+    except TaskCancelled:
+        raise
+    except (TypeError, ValueError) as exc:
+        return ToolResult.fail(
+            f"同步计划参数无效: {exc}",
+            error_category="input",
+            error_code="SYNC_PLAN_INPUT_INVALID",
+        )
+    except Exception as exc:
+        logger.error("生成 ParaTranz 同步计划失败: %s", type(exc).__name__)
+        return ToolResult.fail(
+            "生成同步计划失败",
+            error_category="internal",
+            error_code="SYNC_PLAN_FAILED",
+        )
 
 
 @require_collection
@@ -106,9 +272,22 @@ def _tool_upload_entries(args: dict, ctx, collection) -> ToolResult:
         failed_items = []
         for e in entries:
             try:
-                client.upsert_entry(pid, {"key": e.key, "original": e.original, "translation": e.translation or "",
-                                          "context": e.context or "", "stage": e.stage}, force_overwrite=force)
+                client.upsert_entry(
+                    pid,
+                    ParaTranzEntry(
+                        None,
+                        e.key,
+                        e.original,
+                        e.translation or "",
+                        e.context or "",
+                        e.stage,
+                    ),
+                    force_overwrite=force,
+                    cancellation=_cancellation(ctx),
+                )
                 uploaded += 1
+            except TaskCancelled:
+                raise
             except Exception as exc:
                 logger.warning("上传条目失败: %s", exc)
                 failed_items.append({
@@ -119,6 +298,8 @@ def _tool_upload_entries(args: dict, ctx, collection) -> ToolResult:
             f"已上传 {uploaded}/{len(entries)} 条" + (f"，失败 {len(failed_items)} 条" if failed_items else ""),
             data={"uploaded": uploaded, "total": len(entries), "failed_items": failed_items},
         )
+    except TaskCancelled:
+        raise
     except Exception as exc:
         logger.error("上传条目失败")
         return ToolResult.fail(f"上传失败: {exc}")
@@ -130,15 +311,26 @@ def _tool_download_entries(args: dict, ctx) -> ToolResult:
     if not pid:
         return ToolResult.fail("请指定 project_id")
     try:
-        from src.transbridge.converter.translation_entry import TranslationEntry
-        from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
+        from transbridge.converter.translation_entry import TranslationEntry
+        from transbridge.converter.translation_entry_collection import TranslationEntryCollection
         limit = args.get("limit", 2000)
-        remote_entries = client.get_entries(pid, limit=limit)
+        remote_entries = client.list_entries(
+            pid, limit=limit, cancellation=_cancellation(ctx)
+        )
         downloaded = TranslationEntryCollection()
-        for re in remote_entries:
-            e = TranslationEntry(id=re.get("key", ""), key=re.get("key", ""),
-                                 original=re.get("original", ""), translation=re.get("translation", ""),
-                                 context=re.get("context", ""), stage=re.get("stage", 0))
+        for remote in remote_entries:
+            if isinstance(remote, ParaTranzEntry):
+                data = remote.to_remote_payload()
+            else:
+                data = remote
+            e = TranslationEntry(
+                id=data.get("key", ""),
+                key=data.get("key", ""),
+                original=data.get("original", ""),
+                translation=data.get("translation", ""),
+                context=data.get("context", ""),
+                stage=data.get("stage", 0),
+            )
             downloaded.add(e, overwrite=True)
         # O7: 自动附加对比摘要
         collection = ctx.collection
@@ -152,10 +344,17 @@ def _tool_download_entries(args: dict, ctx) -> ToolResult:
                                if collection.get_by_key(k) and downloaded.get_by_key(k)
                                and collection.get_by_key(k).translation != downloaded.get_by_key(k).translation]),
             }
+        suffix = (
+            f"（新增{diff_summary['new_from_remote']} 更新{diff_summary['updated']}）"
+            if diff_summary
+            else ""
+        )
         return ToolResult.ok(
-            f"已下载 {len(downloaded)} 条" + (f"（新增{diff_summary['new_from_remote']} 更新{diff_summary['updated']}）" if diff_summary else ""),
+            f"已下载 {len(downloaded)} 条{suffix}",
             data={"downloaded_count": len(downloaded), "diff_summary": diff_summary},
         )
+    except TaskCancelled:
+        raise
     except Exception as exc:
         logger.error("下载条目失败")
         return ToolResult.fail(f"下载失败: {exc}")
@@ -163,26 +362,31 @@ def _tool_download_entries(args: dict, ctx) -> ToolResult:
 
 def _tool_export_artifact(args: dict, ctx) -> ToolResult:
     """导出 ParaTranz 工件。"""
-    from src.transbridge.paratranz.api.paratranz_export_api import ParatranzExportAPI
     client, pid = _get_paratranz_client(ctx, args.get("project_id"))
     if not pid:
         return ToolResult.fail("请指定 project_id")
     try:
-        export_api = ParatranzExportAPI(ctx.config)
         # 触发导出
-        job = export_api.trigger_export(pid)
+        cancellation = _cancellation(ctx)
+        job = client.trigger_export(pid, cancellation=cancellation)
         # m9: 30秒阻塞轮询占用Agent工作线程，后续可优化为异步回调
         # 轮询等待完成（最长 30 秒）
         import time
         deadline = time.time() + 30
         while time.time() < deadline:
-            time.sleep(2)
-            artifacts = export_api.get_artifacts(pid)
+            if cancellation is None:
+                time.sleep(2)
+            elif cancellation.wait(2):
+                cancellation.raise_if_cancelled()
+            artifacts = client.get_artifacts(pid, cancellation=cancellation)
             if artifacts:
-                latest = artifacts[-1] if isinstance(artifacts, list) else artifacts
-                return ToolResult.ok("工件导出完成", data=latest if isinstance(latest, dict) else {"artifact": str(latest)})
+                latest = artifacts[-1] if isinstance(artifacts, (list, tuple)) else artifacts
+                result = latest if isinstance(latest, dict) else {"artifact": str(latest)}
+                return ToolResult.ok("工件导出完成", data=result)
         return ToolResult.ok("导出已触发，仍在处理中（超时未完成）",
                            data={"job": job, "status": "pending"})
+    except TaskCancelled:
+        raise
     except Exception as exc:
         logger.error("导出工件失败")
         return ToolResult.fail(f"导出失败: {exc}")
@@ -194,8 +398,13 @@ def _tool_get_upload_history(args: dict, ctx) -> ToolResult:
     if not pid:
         return ToolResult.fail("请指定 project_id")
     try:
-        history = client.get_upload_history(pid, limit=args.get("limit", 20))
-        return ToolResult.ok(data={"history": history if history else []})
+        history = client.list_upload_history(
+            pid, limit=args.get("limit", 20), cancellation=_cancellation(ctx)
+        )
+        projected = [dict(item.raw) if hasattr(item, "raw") else item for item in history]
+        return ToolResult.ok(data={"history": projected})
+    except TaskCancelled:
+        raise
     except Exception as exc:
         logger.error("获取上传历史失败")
         return ToolResult.fail(f"获取历史失败: {exc}")
@@ -211,11 +420,13 @@ def _tool_get_paratranz_project(args: dict, ctx) -> ToolResult:
         return ToolResult.ok("未选择 ParaTranz 项目", data={"selected_project": None})
     try:
         client, _ = _get_paratranz_client(ctx, pid)
-        info = client.get_project(pid)
+        info = _project_mapping(client.get_project(pid, cancellation=_cancellation(ctx)))
         return ToolResult.ok(
             f"当前 ParaTranz 项目: {info.get('name')} (id={pid})",
             data={"id": info.get("id"), "name": info.get("name"), "visibility": info.get("visibility")}
         )
+    except TaskCancelled:
+        raise
     except Exception as exc:
         logger.error("获取ParaTranz项目失败")
         return ToolResult.fail(f"获取项目信息失败: {exc}")
@@ -226,12 +437,16 @@ def _tool_switch_paratranz_project(args: dict, ctx) -> ToolResult:
     project_id = args["project_id"]
     try:
         client, _ = _get_paratranz_client(ctx, project_id)
-        info = client.get_project(project_id)  # 验证有效性
+        info = _project_mapping(
+            client.get_project(project_id, cancellation=_cancellation(ctx))
+        )  # 验证有效性
         ctx.paratranz_project_id = project_id
         return ToolResult.ok(
             f"已切换到项目: {info.get('name')} (id={project_id})",
             data={"id": info.get("id"), "name": info.get("name"), "visibility": info.get("visibility")}
         )
+    except TaskCancelled:
+        raise
     except Exception as exc:
         logger.error("切换ParaTranz项目失败")
         return ToolResult.fail(f"切换项目失败: {exc}")
@@ -248,6 +463,24 @@ _PARAM_SCHEMAS = {
     },
     "compare_with_remote": {
         "project_id": {"type": "str", "required": False, "description": "项目ID（不传则使用当前选中项目）"},
+    },
+    "plan_sync": {
+        "project_id": {"type": "str", "required": False, "description": "项目ID（不传则使用当前选中项目）"},
+        "operation": {"type": "str", "required": False, "description": "upload/download/bidirectional，默认 upload"},
+        "conflict_policy": {
+            "type": "str",
+            "required": False,
+            "description": "abort/prefer_local/prefer_remote/skip，默认 abort",
+        },
+        "entry_ids": {"type": "list", "required": False, "description": "可选本地 EntryKey.local_key 列表"},
+        "source_namespace": {
+            "type": "str",
+            "required": False,
+            "description": "可选显式来源命名空间；必须与本地身份一致",
+        },
+        "remote_limit": {"type": "int", "required": False, "description": "远端只读快照上限，默认 100000"},
+        "offset": {"type": "int", "required": False, "description": "计划展示偏移，默认 0"},
+        "page_size": {"type": "int", "required": False, "description": "计划展示页大小，默认 100"},
     },
     "upload_entries": {
         "project_id": {"type": "str", "required": False, "description": "项目ID（不传则使用当前选中项目）"},
@@ -271,6 +504,7 @@ _PARAM_SCHEMAS = {
 
 # ── 注册 ──────────────────────────────────────────────────────
 
+
 def _register_paratranz_tools():
     from ..tool_registry import ToolRegistry
     ToolRegistry.register_tools("paratranz", [
@@ -283,6 +517,10 @@ def _register_paratranz_tools():
         {"name": "compare_with_remote", "display_name": "对比远程", "description": "①对比本地翻译(ctx.collection)与远程差异。②参数: project_id(可选)。只读。③返回: {only_local,only_remote,different,same,details:[{key,status}](最多20条)}。status: only_local/different。规则: 用get_paratranz_project确认当前项目; 需已加载本地集合。",
          "execute": _tool_compare_with_remote, "permission": "read",
          "parameters": _PARAM_SCHEMAS.get("compare_with_remote", {})},
+        {"name": "plan_sync", "display_name": "规划同步",
+         "description": "生成无副作用 ParaTranz 同步计划；返回哈希、计数和分页条目，覆盖或删除需后续确认。",
+         "execute": _tool_plan_sync, "permission": "read",
+         "parameters": _PARAM_SCHEMAS.get("plan_sync", {})},
         {"name": "upload_entries", "display_name": "上传条目", "description": "①上传本地条目到ParaTranz。②参数: project_id(可选), entry_ids(可选, key列表来自get_visible_entries, 不传则上传全部), force_overwrite(默认false)。key格式: {record_type}:{form_id}(如NPC_:00012345)。写权限, 长运行, 需确认。③返回: {uploaded,total,failed_items:[{key,error}]}。规则: 100+条目可能触发限流。",
          "execute": _tool_upload_entries, "permission": "write", "is_long_running": True,
          "require_confirmation": True, "parameters": _PARAM_SCHEMAS.get("upload_entries", {})},

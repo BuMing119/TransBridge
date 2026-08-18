@@ -1,10 +1,20 @@
-"""工具注册表：ToolSpec + ToolRegistry + v1 工具注册。"""
-import re
+"""工具注册表：规范 ToolSpec、启动校验与 namespace 查询。"""
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Any
+import re
+from typing import Any
+
+from transbridge.application.tools.schema import (
+    LegacySchemaConversionError,
+    canonicalize_parameters,
+)
 
 
-@dataclass
+class DuplicateToolError(RuntimeError):
+    """A duplicate tool name makes startup ambiguous."""
+
+
+@dataclass(frozen=True)
 class ToolSpec:
     name: str
     display_name: str
@@ -17,12 +27,21 @@ class ToolSpec:
     require_confirmation: bool = False
     max_output_size: int = 102400
     deprecated: bool = False  # M2: 标记已废弃工具
+    available: bool = True
+    unavailable_reason: str = ""
 
     def __post_init__(self):
         if not self.summary and self.description:
             m = re.match(r'①(.+?)(?:②|$)', self.description)
             if m:
-                self.summary = m.group(1).strip()[:50]
+                object.__setattr__(self, "summary", m.group(1).strip()[:50])
+        try:
+            canonical = canonicalize_parameters(self.parameters)
+        except LegacySchemaConversionError as exc:
+            object.__setattr__(self, "available", False)
+            object.__setattr__(self, "unavailable_reason", str(exc))
+            canonical = canonicalize_parameters({})
+        object.__setattr__(self, "parameters", canonical)
 
 
 class _ToolRegistry:
@@ -37,6 +56,9 @@ class _ToolRegistry:
     @classmethod
     def register(cls, spec: ToolSpec, namespace: str = "default") -> None:
         """注册工具 spec 到指定 namespace。"""
+        existing = cls.get(spec.name)
+        if existing is not None:
+            raise DuplicateToolError(f"重复工具名: {spec.name}")
         if namespace not in cls._namespaced_tools:
             cls._namespaced_tools[namespace] = {}
         cls._namespaced_tools[namespace][spec.name] = spec
@@ -85,7 +107,7 @@ class _ToolRegistry:
                 tools.update(ns_tools)
         lines = ["可用工具列表："]
         for tool in tools.values():
-            if tool.deprecated:
+            if tool.deprecated or not tool.available:
                 continue
             lines.append(f"- {tool.name}: {tool.description}")
             lines.append(f"  参数: {tool.parameters}")
@@ -124,7 +146,7 @@ class _ToolRegistry:
             if not tools:
                 continue
             for spec in sorted(tools, key=lambda s: s.name):
-                if spec.deprecated:
+                if spec.deprecated or not spec.available:
                     continue
                 summary = spec.summary or spec.description[:50]
                 lines.append(f"[{ns}] {spec.name} — {summary}")
@@ -154,6 +176,8 @@ class _ToolRegistry:
             if matches:
                 return f"未找到 '{name}'，您是否要找: {', '.join(matches)}？"
             return f"未找到工具 '{name}'。使用 get_tool_help() 查看可用工具列表。"
+        if not spec.available:
+            return f"工具 '{name}' 当前不可用: {spec.unavailable_reason}"
         return cls._format_tool_schema(spec)
 
     @classmethod
@@ -167,7 +191,7 @@ class _ToolRegistry:
                 continue
             parts.append(f"## {ns}")
             for spec in sorted(tools, key=lambda s: s.name):
-                if spec.deprecated:
+                if spec.deprecated or not spec.available:
                     continue
                 parts.append(cls._format_tool_schema(spec))
         return "\n\n".join(parts)
@@ -179,7 +203,7 @@ class _ToolRegistry:
         ns_order = ["default"] + sorted(ns for ns in all_ns if ns != "default")
         for ns in ns_order:
             tools = all_ns.get(ns, [])
-            active = [t for t in tools if not t.deprecated]
+            active = [t for t in tools if not t.deprecated and t.available]
             if not active:
                 continue
             lines.append(f"\n### {ns}")
@@ -191,20 +215,22 @@ class _ToolRegistry:
     @staticmethod
     def _format_tool_schema(spec: ToolSpec) -> str:
         lines = [f"### {spec.name}", f"> {spec.description}"]
-        if spec.parameters:
+        properties = spec.parameters.get("properties", {})
+        required_names = set(spec.parameters.get("required", ()))
+        if properties:
             lines.append("| 参数 | 类型 | 必填 | 说明 |")
             lines.append("|------|------|------|------|")
-            for pname, pinfo in spec.parameters.items():
-                required = "是" if pinfo.get("required") else "否"
-                ptype = pinfo.get("type", "str")
+            for pname, pinfo in properties.items():
+                required = "是" if pname in required_names else "否"
+                ptype = pinfo.get("type", "string")
                 desc = pinfo.get("description", "")
                 lines.append(f"| {pname} | {ptype} | {required} | {desc} |")
         else:
             lines.append("（无参数）")
         if spec.is_long_running:
-            lines.append(f"\n**类型**: 长时间运行（异步）")
+            lines.append("\n**类型**: 长时间运行（异步）")
         if spec.require_confirmation:
-            lines.append(f"\n**注意**: 此工具需要用户确认后才能执行。")
+            lines.append("\n**注意**: 此工具需要用户确认后才能执行。")
         return "\n".join(lines)
 
     @classmethod

@@ -11,7 +11,7 @@ from tests.conftest import MockAppContext
 # ============================================================
 class TestSetFilters(unittest.TestCase):
     def setUp(self):
-        from src.transbridge.smart_assistant.tools.tool_editor import _tool_set_filters
+        from transbridge.smart_assistant.tools.tool_editor import _tool_set_filters
 
         self.func = _tool_set_filters
         self.ctx = MockAppContext()
@@ -75,7 +75,7 @@ class TestSetFilters(unittest.TestCase):
 # ============================================================
 class TestStopTask(unittest.TestCase):
     def setUp(self):
-        from src.transbridge.smart_assistant.tools.tool_translator import _tool_stop_task
+        from transbridge.smart_assistant.tools.tool_translator import _tool_stop_task
 
         self.func = _tool_stop_task
         self.ctx = MockAppContext()
@@ -108,7 +108,7 @@ class TestStopTask(unittest.TestCase):
 # ============================================================
 class TestWriteBack(unittest.TestCase):
     def setUp(self):
-        from src.transbridge.smart_assistant.tools.tool_writer import _tool_write_back
+        from transbridge.smart_assistant.tools.tool_writer import _tool_write_back
 
         self.func = _tool_write_back
         self.ctx = MockAppContext()
@@ -155,7 +155,7 @@ class TestWriteBack(unittest.TestCase):
 # ============================================================
 class TestManageEntryLabels(unittest.TestCase):
     def setUp(self):
-        from src.transbridge.smart_assistant.tools.tool_editor import _tool_manage_entry_labels
+        from transbridge.smart_assistant.tools.tool_editor import _tool_manage_entry_labels
 
         self.func = _tool_manage_entry_labels
         self.ctx = MockAppContext()
@@ -191,7 +191,7 @@ class TestManageEntryLabels(unittest.TestCase):
 # ============================================================
 class TestDeprecatedWrappers(unittest.TestCase):
     def test_old_tool_names_not_in_registry(self):
-        from src.transbridge.smart_assistant.tool_registry import ToolRegistry
+        from transbridge.smart_assistant.tool_registry import ToolRegistry
 
         old_names = [
             "filter_by_stage",
@@ -215,10 +215,10 @@ class TestDeprecatedWrappers(unittest.TestCase):
             )
 
     def test_new_tool_names_in_registry(self):
-        from src.transbridge.smart_assistant.tool_registry import ToolRegistry
+        from transbridge.smart_assistant.tool_registry import ToolRegistry
 
         # 触发注册（模块导入）
-        from src.transbridge.smart_assistant.tools import (  # noqa: F401
+        from transbridge.smart_assistant.tools import (  # noqa: F401
             tool_editor,
             tool_translator,
             tool_writer,
@@ -235,31 +235,31 @@ class TestDeprecatedWrappers(unittest.TestCase):
             )
 
     def test_tool_count_is_current(self):
-        """m2: 工具数量随 Story 17-25 合并而变化，使用范围断言避免每次过期。"""
-        from src.transbridge.smart_assistant.tool_registry import ToolRegistry
+        """The complete FR9/FR16 catalog is explicit and contains no hidden wrappers."""
+        from transbridge.smart_assistant.tool_registry import ToolRegistry
+        from transbridge.smart_assistant.tools import register_all
 
-        # 触发注册（模块导入）
-        from src.transbridge.smart_assistant.tools import (  # noqa: F401
-            tool_editor,
-            tool_translator,
-            tool_writer,
-            tool_parser,
-            tool_proofreader,
-            tool_paratranz,
-            tool_default,
-        )
+        register_all()
 
-        count = len(ToolRegistry.list_all(include_deprecated=False))
-        # m2: 工具数随功能变更而浮动，以范围断言替代精确值
-        # Story 17-25 合并后当前约 41 个非废弃工具
-        self.assertGreaterEqual(count, 40, f"Expected at least 40 non-deprecated tools, got {count}")
-        self.assertLess(count, 50, f"Expected fewer than 50 non-deprecated tools, got {count}")
+        active = {spec.name for spec in ToolRegistry.list_all(include_deprecated=False)}
+        required_fr16 = {
+            "extract_archive",
+            "pack_archive",
+            "diff_directories",
+            "filter_files",
+            "migrate_entries",
+            "apply_dictionary",
+            "save_dictionary",
+            "plan_sync",
+        }
+        self.assertTrue(required_fr16.issubset(active))
+        self.assertEqual(len(active), 50, "unexpected active tool was added or removed")
 
     def test_schema_no_old_names(self):
-        from src.transbridge.smart_assistant.tool_registry import ToolRegistry
+        from transbridge.smart_assistant.tool_registry import ToolRegistry
 
         # 触发注册（模块导入）
-        from src.transbridge.smart_assistant.tools import (  # noqa: F401
+        from transbridge.smart_assistant.tools import (  # noqa: F401
             tool_editor,
             tool_translator,
             tool_writer,

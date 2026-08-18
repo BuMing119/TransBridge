@@ -4,7 +4,7 @@ Usage:
     cd /path/to/TransBridge
     PYTHONPATH=src python tests/smart_assistant/test_data/run_llm_regression.py
 
-Requires: data/paratranz_config.ini with [llm] section configured.
+Requires: the unified data/transbridge.ini and an approved credential provider.
 Consumes: ~50 prompts * 2 modes * ~2000 tokens = ~200K tokens.
 
 Output: terminal comparison + tests/smart_assistant/test_data/result.json
@@ -17,31 +17,30 @@ from pathlib import Path
 
 
 def load_llm_config() -> dict:
-    """从 INI 文件加载 LLM 配置。"""
-    import configparser
-    ini = configparser.ConfigParser()
-    ini_path = Path(__file__).resolve().parents[3] / "data" / "paratranz_config.ini"
-    ini.read(ini_path, encoding="utf-8")
-    llm = ini["llm"]
+    """Load through the production facade; never parse or expose INI secrets."""
+    from transbridge.config.llm import LLMConfig
+
+    llm = LLMConfig.load_from_file()
     return {
-        "api_key": llm.get("api_key", ""),
-        "api_base": llm.get("base_url", "https://api.openai.com/v1"),
-        "model": "deepseek-v4-pro",  # INI 中的 gpt-4o 是占位名，DeepSeek API 需用实际模型名
-        "provider": llm.get("provider", "openai"),
+        "api_key": llm.api_key,
+        "api_base": llm.base_url,
+        "model": llm.model,
+        "provider": llm.provider,
+        "config_revision": llm.config_revision,
     }
 
 
 def build_old_prompt() -> str:
     """旧版 system prompt（全量工具注入）。"""
-    from src.transbridge.smart_assistant.tool_registry import ToolRegistry
-    from src.transbridge.smart_assistant.prompts import HYBRID_SYSTEM_PROMPT
+    from transbridge.smart_assistant.tool_registry import ToolRegistry
+    from transbridge.smart_assistant.prompts import HYBRID_SYSTEM_PROMPT
     tools_desc = ToolRegistry.build_tool_schema_for_prompt()
     return HYBRID_SYSTEM_PROMPT.format(context="", tools_desc=tools_desc)
 
 
 def build_new_prompt() -> str:
     """新版 system prompt（分层加载）。"""
-    from src.transbridge.smart_assistant.prompts import build_system_prompt
+    from transbridge.smart_assistant.prompts import build_system_prompt
     return build_system_prompt(context="")
 
 
@@ -65,7 +64,7 @@ def call_llm(system_prompt: str, user_message: str, config: dict) -> str:
 def call_llm_two_rounds(system_prompt: str, user_message: str, config: dict) -> list[str]:
     """两轮对话：R1 让 LLM 发现工具，注入 get_tool_help 结果，R2 让 LLM 真正调用。"""
     from openai import OpenAI
-    from src.transbridge.smart_assistant.tool_registry import ToolRegistry
+    from transbridge.smart_assistant.tool_registry import ToolRegistry
 
     client = OpenAI(api_key=config["api_key"], base_url=config["api_base"])
     messages = [
@@ -118,7 +117,7 @@ def has_get_tool_help(response: str) -> bool:
 def main():
     config = load_llm_config()
     if not config["api_key"]:
-        print("错误: 未配置 API key (data/paratranz_config.ini [llm] 段)")
+        print("错误: 未配置 LLM CredentialRef 对应的安全凭据")
         return 1
 
     old_prompt = build_old_prompt()

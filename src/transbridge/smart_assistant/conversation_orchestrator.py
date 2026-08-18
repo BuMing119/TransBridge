@@ -30,7 +30,7 @@ def _create_llm_client(config, _cache: dict | None = None):
     Returns:
         An LLMClient instance, or None if config is None or missing an api_key.
     """
-    from src.transbridge.infra.llm_client import create_llm_client
+    from transbridge.infra.llm_client import create_llm_client
 
     if config is None or not config.api_key:
         return None
@@ -169,13 +169,13 @@ class ConversationOrchestrator(QObject):
 
     def _get_prompt_builder(self):
         if self._prompt_builder is None:
-            from src.transbridge.ai_translator.prompt_builder import PromptBuilder
+            from transbridge.ai_translator.prompt_builder import PromptBuilder
             self._prompt_builder = PromptBuilder()
         return self._prompt_builder
 
     def _get_llm_client(self):
-        from src.transbridge.paratranz.config_manager import LLMConfig
-        from src.transbridge.config.paths import get_config_file_path
+        from transbridge.paratranz.config_manager import LLMConfig
+        from transbridge.config.paths import get_config_file_path
 
         config_path = get_config_file_path()
 
@@ -224,8 +224,8 @@ class ConversationOrchestrator(QObject):
             return
 
         if not any(m["role"] == "system" for m in self._conversation.get_messages()):
-            from src.transbridge.smart_assistant.context_builder import ContextBuilder
-            from src.transbridge.smart_assistant.prompts import build_system_prompt
+            from transbridge.smart_assistant.context_builder import ContextBuilder
+            from transbridge.smart_assistant.prompts import build_system_prompt
             ctx = self._ctx
             ctx._uploaded_docs = self._on_get_uploaded_docs()
             context = ContextBuilder(ctx).build()
@@ -253,7 +253,7 @@ class ConversationOrchestrator(QObject):
 
     def _stage_c(self) -> None:
         """Stage C: 创建 ChatWorker，绑定回调，启动后台线程。"""
-        from src.transbridge.smart_assistant.chat_worker import ChatWorker
+        from transbridge.smart_assistant.chat_worker import ChatWorker
         client = self._get_llm_client()
         messages = getattr(self, '_round_messages', [])
         _max = getattr(self, '_round_max_tokens', 0)

@@ -4,9 +4,9 @@ from __future__ import annotations
 import unittest
 from unittest.mock import MagicMock
 
-from src.transbridge.smart_assistant.context_builder import ContextBuilder
-from src.transbridge.converter.translation_entry import TranslationEntry
-from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.smart_assistant.context_builder import ContextBuilder
+from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
 
 def make_mock_ctx(collection=None, esp_path="/mods/test.esp",

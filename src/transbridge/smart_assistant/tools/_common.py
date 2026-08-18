@@ -2,5 +2,5 @@
 
 def load_llm_config():
     """从 LLMConfig.load_from_file() 加载配置。"""
-    from src.transbridge.infra.config import LLMConfig
+    from transbridge.infra.config import LLMConfig
     return LLMConfig.load_from_file()

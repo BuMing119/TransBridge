@@ -3,10 +3,13 @@
 从 ChatWidget 提取，遵循 ADR-008 代码分层。
 通过回调与 UI 层通信，不持有 ChatWidget 引用。
 """
+from collections.abc import Callable
 import logging
-from typing import Any, Callable
+import time
 
-from src.transbridge.smart_assistant.tools.base import ToolResult
+from transbridge.application.security.hitl import ConfirmationAuthority
+from transbridge.application.tools.contracts import ToolInvocation
+from transbridge.smart_assistant.tools.base import ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +31,7 @@ class ToolExecutionHandler:
         on_batch_tool_card: Callable[[list], None] | None = None,
         on_plan_confirmed: Callable[[list], None] | None = None,
         on_step_completed: Callable[[], None] | None = None,
+        on_task_started: Callable[[str, str], None] | None = None,
         on_confirm_permission: Callable[[str, str], bool] | None = None,
     ):
         self._ctx = ctx
@@ -41,7 +45,11 @@ class ToolExecutionHandler:
         self._on_batch_tool_card = on_batch_tool_card or (lambda _: None)
         self._on_plan_confirmed = on_plan_confirmed or (lambda _: None)
         self._on_step_completed = on_step_completed or (lambda: None)
+        self._on_task_started = on_task_started or (lambda _task_id, _run_id: None)
         self._on_confirm_permission = on_confirm_permission
+        self._confirmation_authority = ConfirmationAuthority(ttl_seconds=60.0)
+        self._fallback_owner_id = f"gui:{id(ctx)}"
+        self._structured_observations: list = []
 
     # ── 护栏 ──────────────────────────────────────────────
 
@@ -50,15 +58,19 @@ class ToolExecutionHandler:
         if self._middlewares is not None:
             return self._middlewares
         try:
-            from src.transbridge.paratranz.config_manager import LLMConfig
+            from transbridge.paratranz.config_manager import LLMConfig
             cfg = LLMConfig.load_from_file()
         except Exception as e:
             logger.warning("护栏配置加载失败，使用默认护栏链: %s", e)
-            from src.transbridge.smart_assistant.tools.base import _build_guard_chain
+            from transbridge.smart_assistant.tools.base import _build_guard_chain
             self._middlewares = _build_guard_chain() or []
             return self._middlewares
 
-        from src.transbridge.smart_assistant.guardrails import PermissionGuard, InputValidationGuard, OutputValidationGuard
+        from transbridge.smart_assistant.guardrails import (
+            InputValidationGuard,
+            OutputValidationGuard,
+            PermissionGuard,
+        )
         middlewares = []
         if getattr(cfg, 'guardrails_enable_input_validation', True):
             middlewares.append(InputValidationGuard(getattr(cfg, 'guardrails_max_input_size', 102400)))
@@ -87,9 +99,22 @@ class ToolExecutionHandler:
 
     def _build_execution_context(self):
         """构建工具执行上下文 (ExecutionContext)。"""
-        from src.transbridge.smart_assistant.tools.base import ExecutionContext
-        from src.transbridge.smart_assistant.tools.task_manager import TaskManager
-        return ExecutionContext(app_context=self._ctx, task_manager=TaskManager())
+        from transbridge.smart_assistant.tools.base import ExecutionContext
+        from transbridge.smart_assistant.tools.task_manager import TaskManager
+        request_context = getattr(self._ctx, "request_context", None)
+        owner_id = (
+            getattr(request_context, "owner_id", "")
+            or getattr(self._ctx, "owner_id", "")
+            or self._fallback_owner_id
+        )
+        return ExecutionContext(
+            app_context=self._ctx,
+            task_manager=TaskManager(),
+            request_context=request_context,
+            owner_id=owner_id,
+            plan_hash=getattr(self._ctx, "plan_hash", ""),
+            confirmation_authority=self._confirmation_authority,
+        )
 
     # ── 权限预检查 ──────────────────────────────────────
 
@@ -110,7 +135,7 @@ class ToolExecutionHandler:
             (allowed, filtered_middlewares): allowed 为 False 表示用户拒绝，
             权限结果已通过 _handle_result 处理。
         """
-        from src.transbridge.smart_assistant.guardrails.permission import PermissionGuard
+        from transbridge.smart_assistant.guardrails.permission import PermissionGuard
         perm_guard = next((mw for mw in middlewares if isinstance(mw, PermissionGuard)), None)
         if perm_guard is None:
             return True, middlewares
@@ -121,19 +146,52 @@ class ToolExecutionHandler:
 
         tool_name = step.get("tool", "?")
         perm_label = "管理级" if perm_result.requires_confirmation == "admin" else "写入级"
-        if self._on_confirm_permission is not None:
-            confirmed = self._on_confirm_permission(
-                "操作确认",
-                f"工具 '{tool_name}' 需要{perm_label}权限确认。是否继续？",
+        if self._on_confirm_permission is None:
+            result = ToolResult.fail(
+                f"缺少确认通道，拒绝{perm_label}操作: {tool_name}",
+                error_category="permission",
+                error_code="CONFIRMATION_CHANNEL_UNAVAILABLE",
             )
-            if not confirmed:
-                result = ToolResult.fail(f"用户拒绝{perm_label}操作: {tool_name}")
-                self._handle_result(step, result, skip_react_continue=skip_react_continue, mode=mode)
-                return False, middlewares
+            self._handle_result(step, result, skip_react_continue=skip_react_continue, mode=mode)
+            return False, middlewares
 
-        # 用户确认后，移除权限护栏以避免执行时二次检查
-        filtered = [mw for mw in middlewares if not isinstance(mw, PermissionGuard)]
-        return True, filtered
+        invocation = ToolInvocation(
+            tool_name=tool_name,
+            arguments=step.get("args", {}),
+            owner_id=exec_ctx.owner_id,
+            plan_hash=exec_ctx.plan_hash,
+        )
+        started = time.monotonic()
+        confirmed = self._on_confirm_permission(
+            "操作确认",
+            f"工具 '{tool_name}' 需要{perm_label}权限确认。是否继续？",
+        )
+        elapsed = time.monotonic() - started
+        if not confirmed or elapsed > self._confirmation_authority.ttl_seconds:
+            code = "CONFIRMATION_EXPIRED" if confirmed else "CONFIRMATION_DENIED"
+            result = ToolResult.fail(
+                f"用户拒绝或确认超时，未执行{perm_label}操作: {tool_name}",
+                error_category="permission",
+                error_code=code,
+            )
+            self._handle_result(step, result, skip_react_continue=skip_react_continue, mode=mode)
+            return False, middlewares
+
+        exec_ctx.confirmation_token = self._confirmation_authority.issue(
+            owner_id=invocation.owner_id,
+            request_hash=invocation.request_hash,
+        )
+        # Re-read mutable GUI context after the callback. Owner/plan changes make
+        # the issued token fail closed when PermissionGuard consumes it.
+        request_context = getattr(self._ctx, "request_context", None)
+        exec_ctx.request_context = request_context
+        exec_ctx.owner_id = (
+            getattr(request_context, "owner_id", "")
+            or getattr(self._ctx, "owner_id", "")
+            or self._fallback_owner_id
+        )
+        exec_ctx.plan_hash = getattr(self._ctx, "plan_hash", "")
+        return True, middlewares
 
     # ── 重试执行 ──────────────────────────────────────
 
@@ -149,10 +207,10 @@ class ToolExecutionHandler:
         Returns:
             最终执行结果 (ToolResult)。
         """
-        from src.transbridge.smart_assistant.tools.base import execute_with_guardrails
+        from transbridge.smart_assistant.tools.base import execute_with_guardrails
 
         try:
-            from src.transbridge.smart_assistant.reflexion.retry_handler import RetryHandler
+            from transbridge.smart_assistant.reflexion.retry_handler import RetryHandler
             retry_handler = RetryHandler()
         except ImportError:
             retry_handler = None
@@ -203,6 +261,14 @@ class ToolExecutionHandler:
             result = ToolResult.fail(f"未知工具: {tool_name}")
             self._handle_result(step, result, skip_react_continue=skip_react_continue, mode=mode)
             return result
+        if not getattr(spec, "available", True):
+            result = ToolResult.fail(
+                f"工具能力不可用: {getattr(spec, 'unavailable_reason', '')}",
+                error_category="config",
+                error_code="CAPABILITY_UNAVAILABLE",
+            )
+            self._handle_result(step, result, skip_react_continue=skip_react_continue, mode=mode)
+            return result
 
         exec_ctx = self._build_execution_context()
         middlewares = self._ensure_middlewares()
@@ -215,7 +281,22 @@ class ToolExecutionHandler:
             return None
 
         result = self._execute_with_retry(spec, step, middlewares, exec_ctx)
-        self._handle_result(step, result, skip_react_continue=skip_react_continue, mode=mode)
+        awaiting_task = False
+        if getattr(spec, "is_long_running", False) and getattr(result, "success", False):
+            data = getattr(result, "data", None)
+            task_id = str(data.get("task_id", "")) if isinstance(data, dict) else ""
+            if task_id:
+                status = exec_ctx.task_manager.get_status(task_id)
+                run_id = str(status.get("run_id", ""))
+                if run_id:
+                    self._on_task_started(task_id, run_id)
+                    awaiting_task = True
+        self._handle_result(
+            step,
+            result,
+            skip_react_continue=skip_react_continue or awaiting_task,
+            mode=mode,
+        )
         return result
 
     # ── 结果处理 ──────────────────────────────────────────
@@ -242,16 +323,28 @@ class ToolExecutionHandler:
         else:
             tr = ToolResult(success=False, message=str(result))
 
-        # UI display (simple status line)
+        observation = tr.to_structured_observation(tool_name)
+        safe_message = str(observation.result.get("message", ""))
+        # UI display (simple status line) uses the same redacted projection.
         self._on_system_message(
-            f"[{'OK' if tr.success else 'FAIL'}] {tool_name}: {tr.message or ('完成' if tr.success else '失败')}"
+            f"[{'OK' if tr.success else 'FAIL'}] {tool_name}: "
+            f"{safe_message or ('完成' if tr.success else '失败')}"
         )
-        # LLM observation (rich, with data)
-        self._conversation.add_observation(tool_name, tr.to_observation(tool_name))
+        # LLM display and authoritative structured result remain separate.
+        self._structured_observations.append(observation)
+        self._conversation.add_observation(tool_name, observation.display_summary)
+        record_structured = getattr(self._conversation, "add_structured_observation", None)
+        if callable(record_structured):
+            record_structured(tool_name, observation.to_dict())
 
         # FR12: plan 模式下不触发 ReAct 继续；通过 on_step_completed 通知 Controller
         if not skip_react_continue and mode != "plan":
             self._on_step_completed()
+
+    def get_structured_observations(self) -> tuple:
+        """Return complete redacted results, independent from LLM display text."""
+
+        return tuple(self._structured_observations)
 
     # ── 自动模式批量执行 ──────────────────────────────────
     # M62: auto_execute_steps 已迁移至 ChatWidget._auto_execute_steps，

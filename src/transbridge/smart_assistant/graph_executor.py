@@ -1,17 +1,32 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
+import hashlib
+import json
 import logging
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
+from uuid import uuid4
 
-from src.transbridge.config.paratranz import ParatranzConfig
+from transbridge.application.tasks import (
+    CheckpointExpectation,
+    CheckpointFrontier,
+    CheckpointRecord,
+    OwnerRef,
+)
+from transbridge.config.paratranz import ParatranzConfig
+
 from .checkpoint_manager import CheckpointManager
 from .condition_evaluator import ConditionEvaluator
 
 logger = logging.getLogger(__name__)
+
+
+class GraphCheckpointFault(RuntimeError):
+    """Fault-injection exception that must escape result conversion."""
 
 
 @dataclass
@@ -37,15 +52,15 @@ class GraphExecutor:
     _MAX_DISPATCH_DEPTH = 50
     _SAFE_SERIALIZE_MAX_CHARS = 2000
 
-    def __init__(self, tool_registry, ctx, middlewares=None):
+    def __init__(self, tool_registry, ctx, middlewares=None, *, checkpoint_manager=None):
         self._registry = tool_registry
         self._ctx = ctx
         self._cancelled = threading.Event()
         # M1: 实例化 RetryHandler 并注入 LLM 客户端以启用 Reflexion 自纠错
         try:
-            from src.transbridge.smart_assistant.reflexion.retry_handler import RetryHandler
-            from src.transbridge.infra.llm_client import create_llm_client
-            from src.transbridge.config.llm import LLMConfig
+            from transbridge.config.llm import LLMConfig
+            from transbridge.infra.llm_client import create_llm_client
+            from transbridge.smart_assistant.reflexion.retry_handler import RetryHandler
             llm_cfg = LLMConfig.load_from_file()
             self._retry_handler = RetryHandler(llm_client=create_llm_client(llm_cfg))
         except ImportError:
@@ -54,13 +69,14 @@ class GraphExecutor:
         if middlewares:
             self._guards = list(middlewares)
         else:
-            from src.transbridge.smart_assistant.tools.base import _build_guard_chain
+            from transbridge.smart_assistant.tools.base import _build_guard_chain
             self._guards = _build_guard_chain() or []
         self._pending_decisions: dict[str, str] = {}
         # m9: Condition 替代忙等轮询
         self._decision_cv = threading.Condition()
         # M8: _paused 改为实例级属性，不同会话独立暂停
         self._paused = threading.Event()
+        self._pause_cv = threading.Condition()
         # m11: 复用 ThreadPoolExecutor
         self._executor = ThreadPoolExecutor(max_workers=self._MAX_WORKERS)
         # ADR-008: 回调列表替代 pyqtSignal
@@ -73,10 +89,23 @@ class GraphExecutor:
 
         # Story 01: 组合 ConditionEvaluator 和 CheckpointManager
         self._condition_evaluator = ConditionEvaluator()
-        self._checkpoint_manager = CheckpointManager(self._default_checkpoint_dir())
+        self._checkpoint_manager = checkpoint_manager or CheckpointManager(self._default_checkpoint_dir())
+        self._branch_decisions: dict[str, str] = {}
+        self._loop_counters: dict[str, int] = {}
+        self._hitl_results: dict[str, str] = {}
+        self._active_checkpoint_run_id: str | None = None
+        self._active_checkpoint_identity: tuple[str, OwnerRef, str, str] | None = None
+        self._active_checkpoint_ready: tuple[str, ...] = ()
+        self._active_checkpoint_running: tuple[str, ...] = ()
+        self._active_checkpoint_completed: set[str] | None = None
+        self._active_checkpoint_results: dict[str, StepResult] | None = None
+        self._checkpoint_revision = 0
+        self._checkpoint_write_lock = threading.RLock()
 
     def cancel(self) -> None:
         self._cancelled.set()
+        with self._pause_cv:
+            self._pause_cv.notify_all()
 
     def shutdown(self):
         """关闭线程池，释放线程资源。"""
@@ -87,9 +116,7 @@ class GraphExecutor:
                 # Already shut down, ignore
                 pass
 
-
     def _default_checkpoint_dir(self):
-        import re
         from pathlib import Path
         project_dir = getattr(self._ctx, "project_path", None) or Path(ParatranzConfig.get_data_dir())
         return Path(project_dir) / "checkpoints"
@@ -134,6 +161,40 @@ class GraphExecutor:
         self._pending_decisions[node_id] = choice
         with self._decision_cv:
             self._decision_cv.notify_all()
+
+    def _wait_if_paused(self) -> bool:
+        with self._pause_cv:
+            while self._paused.is_set() and not self._cancelled.is_set():
+                self._pause_cv.wait(timeout=0.5)
+        return not self._cancelled.is_set()
+
+    def _inject_checkpoint_fault(self, stage: str) -> None:
+        if self._active_checkpoint_run_id is not None:
+            if stage in {
+                "node_completed",
+                "branch_decision",
+                "loop_iteration",
+                "loop_iteration_completed",
+                "hitl_result",
+            }:
+                self._persist_active_graph_state()
+            self._checkpoint_manager.inject(stage, self._active_checkpoint_run_id)
+
+    def _persist_active_graph_state(self) -> None:
+        identity = self._active_checkpoint_identity
+        completed = self._active_checkpoint_completed
+        results = self._active_checkpoint_results
+        if identity is None or completed is None or results is None:
+            return
+        with self._checkpoint_write_lock:
+            self._checkpoint_revision = self._save_graph_checkpoint(
+                *identity,
+                self._checkpoint_revision,
+                ready=self._active_checkpoint_ready,
+                running=self._active_checkpoint_running,
+                completed=completed,
+                results=results,
+            )
 
     # ── 确认等待 ──────────────────────────────────────────────
 
@@ -240,8 +301,8 @@ class GraphExecutor:
             )
 
         # Before 中间件链
-        from src.transbridge.smart_assistant.tools.base import ExecutionContext
-        from src.transbridge.smart_assistant.tools.task_manager import TaskManager
+        from transbridge.smart_assistant.tools.base import ExecutionContext
+        from transbridge.smart_assistant.tools.task_manager import TaskManager
         raw_ctx = agent_instance.ctx if agent_instance is not None else self._ctx
         exec_ctx = ExecutionContext(app_context=raw_ctx, task_manager=TaskManager())
 
@@ -332,8 +393,7 @@ class GraphExecutor:
 
         C9: _visited 防止环路导致的无限递归，_depth 作为硬上限兜底。
         """
-        from .graph_types import (ActionNode, ConditionNode, LoopNode,
-                                   HumanConfirmNode)
+        from .graph_types import ActionNode, ConditionNode, HumanConfirmNode, LoopNode
 
         if _visited is None:
             _visited = set()
@@ -355,7 +415,7 @@ class GraphExecutor:
             return None
         if isinstance(node, ActionNode):
             step = {
-                "id": hash(node.node_id) % 1000000,
+                "id": self._stable_step_id(node.node_id),
                 "tool": node.tool, "args": node.args,
                 "retry": node.retry, "agent": node.agent,
                 "agent_instance_id": "", "_instance": None,
@@ -363,17 +423,26 @@ class GraphExecutor:
             return self._run_single(step)
         elif isinstance(node, ConditionNode):
             cond_results = {nid: results.get(nid) for nid in results}
-            cond = self._condition_evaluator.eval_condition(node.condition, cond_results)
-            next_id = node.true_node if cond else node.false_node
+            next_id = self._branch_decisions.get(node.node_id)
+            if next_id is None:
+                cond = self._condition_evaluator.eval_condition(node.condition, cond_results)
+                next_id = node.true_node if cond else node.false_node
+                self._branch_decisions[node.node_id] = next_id
+                self._inject_checkpoint_fault("branch_decision")
             if next_id and next_id in node_map:
                 return self._dispatch_node(node_map[next_id], node_map, results,
                                           _visited, _depth + 1)
             return None
         elif isinstance(node, LoopNode):
             last_result = None
-            for i in range(node.max_iterations):
+            start_iteration = self._loop_counters.get(node.node_id, 0)
+            for i in range(start_iteration, node.max_iterations):
                 if self._cancelled.is_set():
                     break
+                if not self._wait_if_paused():
+                    break
+                self._loop_counters[node.node_id] = i
+                self._inject_checkpoint_fault("loop_iteration")
                 # C9: 每轮迭代使用 _visited 副本，允许跨迭代重入但阻断单次内环路
                 iter_visited = set(_visited)
                 for sub_node in node.sub_nodes:
@@ -382,26 +451,42 @@ class GraphExecutor:
                     if r is not None:
                         results[sub_node.node_id] = r
                         last_result = r
+                self._loop_counters[node.node_id] = i + 1
+                self._inject_checkpoint_fault("loop_iteration_completed")
                 if last_result and self._condition_evaluator.eval_condition(
                         node.exit_condition,
                         {nid: results.get(nid) for nid in results}):
                     break
             return last_result
         elif isinstance(node, HumanConfirmNode):
-            self._emit(self._on_step_requires_confirmation,
-                node.node_id, node.prompt, node.choices)
-            decision = self._await_decision(
-                node.node_id, default=node.default_choice)
+            decision = self._hitl_results.get(node.node_id)
+            if decision is None:
+                self._emit(self._on_step_requires_confirmation,
+                    node.node_id, node.prompt, node.choices)
+                decision = self._await_decision(
+                    node.node_id, default=node.default_choice)
             if decision is None:
                 return None
+            self._hitl_results[node.node_id] = decision
+            self._inject_checkpoint_fault("hitl_result")
             return StepResult(
-                step_id=hash(node.node_id) % 1000000,
+                step_id=self._stable_step_id(node.node_id),
                 tool="human_confirm",
                 success=decision != "终止",
                 message=f"用户选择: {decision}",
                 data={"decision": decision},
             )
         return None
+
+    @staticmethod
+    def _stable_step_id(node_id: str) -> int:
+        return int.from_bytes(hashlib.sha256(node_id.encode("utf-8")).digest()[:4], "big") % 1_000_000
+
+    @staticmethod
+    def _stable_graph_id(prefix: str, steps: list[dict]) -> str:
+        payload = CheckpointManager._safe_serialize(steps)
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return f"{prefix}_{hashlib.sha256(encoded).hexdigest()[:24]}"
 
     # ── BFS 层级迭代 ──────────────────────────────────────────
 
@@ -430,15 +515,18 @@ class GraphExecutor:
             node = futures[future]
             try:
                 r = future.result()
+            except GraphCheckpointFault:
+                raise
             except Exception as exc:
                 r = StepResult(
-                    step_id=hash(node.node_id) % 1000000,
+                    step_id=self._stable_step_id(node.node_id),
                     tool=getattr(node, 'tool', '?'),
                     success=False, message=f"异常: {exc}",
                 )
             if r is not None:
                 results[node.node_id] = r
                 completed.add(node.node_id)
+                self._inject_checkpoint_fault("node_completed")
                 self._emit(self._on_step_finished, r)
                 self._emit(self._on_progress, len(completed), total)
 
@@ -453,43 +541,224 @@ class GraphExecutor:
 
     # ── Graph 执行入口 ────────────────────────────────────────
 
-    def execute_graph(self, graph) -> list[StepResult]:
+    def execute_graph(
+        self,
+        graph,
+        *,
+        checkpoint_identity: CheckpointExpectation | None = None,
+    ) -> list[StepResult]:
         """执行有状态图：BFS 遍历 + 条件路由 + 循环 + HITL + checkpoint。"""
         self._cancelled.clear()
-        self._paused.clear()
-
-        from .graph_types import (ActionNode, ConditionNode, LoopNode,
-                                   HumanConfirmNode, Checkpoint)
 
         node_map = {n.node_id: n for n in graph.nodes}
-        results: dict[str, StepResult] = {}
-        ckpt = self._checkpoint_manager.load_checkpoint(graph.graph_id)
-        completed = set(ckpt.completed_results.keys()) if ckpt else set()
+        run_id, owner, spec_fingerprint, input_fingerprint = self._graph_checkpoint_identity(
+            graph,
+            checkpoint_identity,
+        )
+        expected = CheckpointExpectation(run_id, owner, spec_fingerprint, input_fingerprint)
+        checkpoint = self._checkpoint_manager.load_record(run_id, expected=expected)
+        self._active_checkpoint_run_id = run_id
+        self._active_checkpoint_identity = (run_id, owner, spec_fingerprint, input_fingerprint)
+        if checkpoint is None:
+            results: dict[str, StepResult] = {}
+            completed: set[str] = set()
+            pending = [graph.entry_node] if graph.entry_node else []
+            visited: set[str] = set()
+            revision = 0
+            self._branch_decisions = {}
+            self._loop_counters = {}
+            self._hitl_results = {}
+        else:
+            results = {
+                node_id: self._deserialize_step_result(json.loads(value))
+                for node_id, value in checkpoint.graph_results
+            }
+            completed = set(checkpoint.frontier.completed)
+            pending = list(dict.fromkeys((*checkpoint.frontier.running, *checkpoint.frontier.ready)))
+            visited = set(completed)
+            if not pending and completed != set(node_map):
+                pending = list(
+                    dict.fromkeys(
+                        edge.to_node
+                        for edge in graph.edges
+                        if edge.from_node in completed and edge.to_node not in completed
+                    )
+                )
+                if not pending and graph.entry_node not in completed:
+                    pending = [graph.entry_node]
+            revision = checkpoint.revision
+            self._branch_decisions = dict(checkpoint.branch_decisions)
+            self._loop_counters = dict(checkpoint.loop_counters)
+            self._hitl_results = dict(checkpoint.hitl_results)
         total = len(graph.nodes)
-
-        pending = [graph.entry_node] if graph.entry_node else []
-        visited: set = set()
+        self._checkpoint_revision = revision
+        self._active_checkpoint_completed = completed
+        self._active_checkpoint_results = results
 
         while pending:
-            # 暂停检查
-            if self._paused.is_set():
-                self._paused.wait()
-            if self._cancelled.is_set():
+            if not self._wait_if_paused():
                 break
+
+            running = tuple(node_id for node_id in dict.fromkeys(pending) if node_id not in visited)
+            self._active_checkpoint_ready = ()
+            self._active_checkpoint_running = running
+            with self._checkpoint_write_lock:
+                revision = self._save_graph_checkpoint(
+                    run_id,
+                    owner,
+                    spec_fingerprint,
+                    input_fingerprint,
+                    max(revision, self._checkpoint_revision),
+                    ready=(),
+                    running=running,
+                    completed=completed,
+                    results=results,
+                )
+                self._checkpoint_revision = revision
 
             pending = self._bfs_one_level(
                 pending, node_map, visited, graph, results, completed, total)
 
-            # 自动保存 checkpoint
-            try:
-                self._checkpoint_manager.save_checkpoint(graph.graph_id, graph.entry_node, results)
-            except Exception:
-                logger.warning(
-                    "Checkpoint 自动保存失败 (graph_id=%s)", graph.graph_id)
+            self._active_checkpoint_ready = tuple(dict.fromkeys(pending))
+            self._active_checkpoint_running = ()
+            with self._checkpoint_write_lock:
+                revision = self._save_graph_checkpoint(
+                    run_id,
+                    owner,
+                    spec_fingerprint,
+                    input_fingerprint,
+                    max(revision, self._checkpoint_revision),
+                    ready=self._active_checkpoint_ready,
+                    running=(),
+                    completed=completed,
+                    results=results,
+                )
+                self._checkpoint_revision = revision
 
         final = [results.get(n.node_id) for n in graph.nodes if n.node_id in results]
         self._emit(self._on_all_finished, final)
         return [r for r in final if r is not None]
+
+    def _graph_checkpoint_identity(
+        self,
+        graph,
+        explicit: CheckpointExpectation | None,
+    ) -> tuple[str, OwnerRef, str, str]:
+        spec_fingerprint = self.graph_spec_fingerprint(graph)
+
+        if explicit is not None:
+            if explicit.spec_fingerprint != spec_fingerprint:
+                from transbridge.application.tasks import CheckpointMismatchError
+
+                raise CheckpointMismatchError(
+                    "checkpoint_graph_spec_mismatch",
+                    "explicit checkpoint identity does not match graph definition",
+                )
+            return explicit.run_id, explicit.owner, spec_fingerprint, explicit.input_fingerprint
+
+        run_id = self._non_empty_context_value("run_id")
+        owner_id = self._non_empty_context_value("owner_id")
+        entrypoint = self._non_empty_context_value("entrypoint")
+        input_fingerprint = self._non_empty_context_value("input_fingerprint")
+        if all((run_id, owner_id, entrypoint, input_fingerprint)):
+            owner = OwnerRef(
+                owner_id=owner_id,
+                entrypoint=entrypoint,
+                project_id=self._optional_context_value("project_id"),
+                variant_id=self._optional_context_value("variant_id"),
+                session_id=self._optional_context_value("session_id"),
+            )
+            return run_id, owner, spec_fingerprint, input_fingerprint
+
+        # Legacy callers have no authority to resume another execution. Give each
+        # invocation an isolated identity instead of keying durable state by graph_id.
+        isolated = uuid4().hex
+        owner = OwnerRef(f"legacy-graph-{isolated}", "graph")
+        return f"legacy-graph-run-{isolated}", owner, spec_fingerprint, spec_fingerprint
+
+    @staticmethod
+    def graph_spec_fingerprint(graph) -> str:
+        payload = {
+            "graph_id": graph.graph_id,
+            "entry_node": graph.entry_node,
+            "nodes": [CheckpointManager._safe_serialize(vars(node)) for node in graph.nodes],
+            "edges": [CheckpointManager._safe_serialize(vars(edge)) for edge in graph.edges],
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+    def _non_empty_context_value(self, name: str) -> str | None:
+        value = getattr(self._ctx, name, None)
+        if not isinstance(value, str) or not value.strip():
+            return None
+        return value
+
+    def _optional_context_value(self, name: str) -> str | None:
+        value = getattr(self._ctx, name, None)
+        if value is None:
+            return None
+        if not isinstance(value, str) or not value.strip():
+            return None
+        return value
+
+    def _save_graph_checkpoint(
+        self,
+        run_id: str,
+        owner: OwnerRef,
+        spec_fingerprint: str,
+        input_fingerprint: str,
+        revision: int,
+        *,
+        ready: tuple[str, ...],
+        running: tuple[str, ...],
+        completed: set[str],
+        results: dict[str, StepResult],
+    ) -> int:
+        next_revision = revision + 1
+        completed_ids = set(completed)
+        normalized_ready = tuple(node_id for node_id in dict.fromkeys(ready) if node_id not in completed_ids)
+        ready_ids = set(normalized_ready)
+        normalized_running = tuple(
+            node_id
+            for node_id in dict.fromkeys(running)
+            if node_id not in completed_ids and node_id not in ready_ids
+        )
+        record = CheckpointRecord(
+            run_id=run_id,
+            owner=owner,
+            spec_fingerprint=spec_fingerprint,
+            input_fingerprint=input_fingerprint,
+            revision=next_revision,
+            frontier=CheckpointFrontier(
+                ready=normalized_ready,
+                running=normalized_running,
+                completed=tuple(sorted(completed)),
+            ),
+            completed_commit_ids=frozenset(completed),
+            branch_decisions=tuple(sorted(self._branch_decisions.items())),
+            loop_counters=tuple(sorted(self._loop_counters.items())),
+            hitl_results=tuple(sorted(self._hitl_results.items())),
+            graph_results=tuple(
+                sorted(
+                    (node_id, CheckpointManager.serialize_step_result(result))
+                    for node_id, result in results.items()
+                )
+            ),
+        )
+        self._checkpoint_manager.save_record(record)
+        return next_revision
+
+    @staticmethod
+    def _deserialize_step_result(value: dict) -> StepResult:
+        return StepResult(
+            step_id=int(value["step_id"]),
+            tool=str(value["tool"]),
+            success=bool(value["success"]),
+            message=str(value["message"]),
+            data=value.get("data"),
+            duration_ms=int(value.get("duration_ms", 0)),
+            agent_instance_id=str(value.get("agent_instance_id", "")),
+        )
 
     def execute(self, steps: list[dict]) -> list[StepResult]:
         """执行步骤列表：基于 depends_on 的 DAG 拓扑并行 + 线性兜底。
@@ -519,9 +788,9 @@ class GraphExecutor:
                 ))
                 if i > 0:
                     edges.append(EdgeSpec(
-                        from_node=f"step_{steps[i-1]['id']}", to_node=nid))
+                        from_node=f"step_{steps[i - 1]['id']}", to_node=nid))
             graph = GraphSpec(
-                graph_id=f"linear_{abs(hash(str(steps)))}",
+                graph_id=self._stable_graph_id("linear", steps),
                 nodes=nodes, edges=edges,
                 entry_node=nodes[0].node_id if nodes else "",
             )
@@ -591,7 +860,7 @@ class GraphExecutor:
             edges.append(EdgeSpec(from_node=start_nid, to_node=nid))
 
         graph = GraphSpec(
-            graph_id=f"dag_{abs(hash(str(steps)))}",
+            graph_id=self._stable_graph_id("dag", steps),
             nodes=nodes, edges=edges,
             entry_node=start_nid,
         )
@@ -604,3 +873,5 @@ class GraphExecutor:
 
     def resume(self) -> None:
         self._paused.clear()
+        with self._pause_cv:
+            self._pause_cv.notify_all()

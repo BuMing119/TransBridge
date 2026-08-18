@@ -4,10 +4,11 @@ FR12 Story 01: 核心状态机验证。
 """
 from __future__ import annotations
 
-import pytest
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
-from src.transbridge.smart_assistant.session_controller import SessionController
+import pytest
+
+from transbridge.smart_assistant.session_controller import SessionController, SessionTransitionError
 
 
 class TestSessionControllerInit:
@@ -54,7 +55,7 @@ class TestStateTransitions:
         controller = SessionController()
         controller.handle_user_message("first")
         # Now in THINKING
-        with pytest.raises(AssertionError):
+        with pytest.raises(SessionTransitionError):
             controller.handle_user_message("second")
 
     # ── handle_llm_response ──────────────────────────────────
@@ -123,7 +124,7 @@ class TestStateTransitions:
 
     def test_llm_response_asserts_if_not_thinking(self):
         controller = SessionController()
-        with pytest.raises(AssertionError):
+        with pytest.raises(SessionTransitionError):
             controller.handle_llm_response({"mode": "react", "steps": [], "thought": ""})
 
     # ── handle_user_confirmed ────────────────────────────────
@@ -139,7 +140,7 @@ class TestStateTransitions:
 
     def test_user_confirmed_asserts_if_not_awaiting(self):
         controller = SessionController()
-        with pytest.raises(AssertionError):
+        with pytest.raises(SessionTransitionError):
             controller.handle_user_confirmed([], "react")
 
     # ── handle_user_cancelled ────────────────────────────────
@@ -163,7 +164,7 @@ class TestStateTransitions:
 
     def test_user_cancelled_asserts_if_not_awaiting(self):
         controller = SessionController()
-        with pytest.raises(AssertionError):
+        with pytest.raises(SessionTransitionError):
             controller.handle_user_cancelled()
 
     # ── handle_execution_complete ────────────────────────────
@@ -192,7 +193,7 @@ class TestStateTransitions:
 
     def test_execution_complete_asserts_if_not_executing(self):
         controller = SessionController()
-        with pytest.raises(AssertionError):
+        with pytest.raises(SessionTransitionError):
             controller.handle_execution_complete([])
 
     # ── handle_task_started ──────────────────────────────────
@@ -210,7 +211,7 @@ class TestStateTransitions:
 
     def test_task_started_asserts_if_not_executing(self):
         controller = SessionController()
-        with pytest.raises(AssertionError):
+        with pytest.raises(SessionTransitionError):
             controller.handle_task_started()
 
     # ── handle_task_completed ────────────────────────────────
@@ -228,6 +229,17 @@ class TestStateTransitions:
         assert controller.state == SessionController.State.THINKING
         assert controller.react_depth == 1
 
+    def test_stale_task_completion_cannot_advance_active_awaiting_session(self):
+        controller = SessionController()
+        controller._state = SessionController.State.EXECUTING
+        controller.handle_task_started("task-active", "run-active")
+
+        controller.handle_task_completed("task-old", {"success": True}, "run-old")
+
+        assert controller.state == SessionController.State.AWAITING_TASK
+        controller.handle_task_completed("task-active", {"success": True}, "run-active")
+        assert controller.state == SessionController.State.THINKING
+
     def test_task_completed_max_depth_to_idle(self):
         controller = SessionController()
         # > MAX 才触发终止
@@ -239,7 +251,7 @@ class TestStateTransitions:
 
     def test_task_completed_asserts_if_not_awaiting_task(self):
         controller = SessionController()
-        with pytest.raises(AssertionError):
+        with pytest.raises(SessionTransitionError):
             controller.handle_task_completed("t1", {})
 
     # ── handle_abort ─────────────────────────────────────────

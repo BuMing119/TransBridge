@@ -45,15 +45,15 @@ class NoopGuard:
         return GuardResult(allowed=True)
 
 
-from src.transbridge.smart_assistant.graph_types import ActionNode, EdgeSpec, GraphSpec
-from src.transbridge.smart_assistant.guardrails.base import GuardResult
+from transbridge.smart_assistant.graph_types import ActionNode, EdgeSpec, GraphSpec
+from transbridge.smart_assistant.guardrails.base import GuardResult
 
 
 class TestExecutionEngine(unittest.TestCase):
     """ExecutionEngine 核心功能测试。"""
 
     def setUp(self):
-        from src.transbridge.smart_assistant.execution_engine import ExecutionEngine
+        from transbridge.smart_assistant.execution_engine import ExecutionEngine
         self.registry = FakeToolRegistry()
         self.ctx = FakeCtx()
         self.engine = ExecutionEngine(self.registry, self.ctx, middlewares=[NoopGuard()])
@@ -145,12 +145,12 @@ class TestExecutionEngine(unittest.TestCase):
     # ── 条件求值 ─────────────────────────────────────────────────
 
     def test_eval_condition_true(self):
-        from src.transbridge.smart_assistant.execution_engine import StepResult
+        from transbridge.smart_assistant.execution_engine import StepResult
         r = StepResult(step_id=1, tool="test", success=True, message="ok")
         self.assertTrue(self.engine._condition_evaluator.eval_condition("result.success == True", {"node1": r}))
 
     def test_eval_condition_false(self):
-        from src.transbridge.smart_assistant.execution_engine import StepResult
+        from transbridge.smart_assistant.execution_engine import StepResult
         r = StepResult(step_id=1, tool="test", success=False, message="failed")
         self.assertFalse(self.engine._condition_evaluator.eval_condition("result.success == True", {"node1": r}))
 

@@ -7,7 +7,12 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
+
 from .base import ToolResult
+
+if TYPE_CHECKING:
+    from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
 _VALID_EXTENSIONS = {".esp", ".esm", ".esl", ".xml", ".json", ".sst"}  # E1 + C4
 
@@ -32,12 +37,10 @@ def _validate_path(path: str, *, check_exists: bool = True, check_extension: boo
         ext = os.path.splitext(path)[1].lower()
         if ext not in _VALID_EXTENSIONS:
             return ToolResult.fail(f"不支持的文件类型: {ext}，允许: {sorted(_VALID_EXTENSIONS)}")
-    # 拒绝路径遍历
-    if ".." in path.replace("\\", "/").split("/"):
-        return ToolResult.fail("拒绝路径遍历攻击")
-    # M4: 拒绝绝对路径
-    if os.path.isabs(path):
-        return ToolResult.fail("不允许使用绝对路径")
+    # Security authorization is intentionally not duplicated here. The shared
+    # InputValidationGuard resolves the canonical path (including symlinks and
+    # junctions) and checks it against RuntimeContext.authorized_roots before
+    # this business-level existence/extension validation runs.
     return None
 
 
@@ -45,7 +48,7 @@ def _validate_path(path: str, *, check_exists: bool = True, check_extension: boo
 
 def _to_collection(result) -> "TranslationEntryCollection":
     """将各类解析器返回值归一化为 TranslationEntryCollection。"""
-    from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
+    TranslationEntryCollection = _collection_type()
     if isinstance(result, TranslationEntryCollection):
         return result
     if hasattr(result, 'entries'):
@@ -55,7 +58,22 @@ def _to_collection(result) -> "TranslationEntryCollection":
     return TranslationEntryCollection(list(result) if result else [])
 
 
-def _create_slot(path: str, label: str, collection: "TranslationEntryCollection", ctx) -> ToolResult:
+def _collection_type():
+    """延迟加载集合类型，避免 parser 工具注册阶段形成 I/O/legacy 循环导入。"""
+    from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+
+    return TranslationEntryCollection
+
+
+def _create_slot(
+    path: str,
+    label: str,
+    collection: "TranslationEntryCollection",
+    ctx,
+    *,
+    source_snapshot=None,
+    format_id=None,
+) -> ToolResult:
     """创建新的 CollectionSlot 并激活。
 
     Args:
@@ -64,7 +82,7 @@ def _create_slot(path: str, label: str, collection: "TranslationEntryCollection"
         collection: 解析得到的翻译条目集合
         ctx: 执行上下文
     """
-    from src.transbridge.ui.context import CollectionSlot
+    from transbridge.ui.context import CollectionSlot
 
     # 检查同名 slot 是否已存在
     if path in ctx.slots:
@@ -73,7 +91,12 @@ def _create_slot(path: str, label: str, collection: "TranslationEntryCollection"
             f"或使用 action=append 将条目追加到当前活跃集合。"
         )
 
-    slot = CollectionSlot(label=label, collection=collection)
+    slot = CollectionSlot(
+        label=label,
+        collection=collection,
+        source_snapshot=source_snapshot,
+        format_id=format_id,
+    )
     ctx.add_slot(path, slot)
     ctx.activate_slot(path)
 
@@ -125,31 +148,25 @@ def _append_to_collection(collection: "TranslationEntryCollection", ctx) -> Tool
 
 _PARSER_DISPATCH = {
     "esp": {
-        "module": "src.transbridge.parser.plugin_parser",
-        "class": "PluginParser",
-        "parse_fn": lambda m, path: m().parse(path),
+        "format_id": "plugin.sse",
         "label": "ESP 插件",
     },
     "eet": {
-        "module": "src.transbridge.parser.eet_xml_parser",
-        "class": "EET_XmlParser",
-        "parse_fn": lambda m, path: m().parse(path),
+        "format_id": "xml.eet",
         "label": "EET XML",
     },
     "xt": {
-        "module": "src.transbridge.parser.xt_xml_parser",
-        "class": "XT_XmlParser",
-        "parse_fn": lambda m, path: m().parse(path),
+        "format_id": "xml.xt",
         "label": "XT XML",
     },
     "sst": {
-        "module": "src.transbridge.parser.xt.sst_parser",
+        "module": "transbridge.parser.xt.sst_parser",
         "class": "SST_Parser",
         "parse_fn": lambda m, path: m().parse(path),
         "label": "SST 二进制",
     },
     "json": {
-        "import_fn": lambda: __import__("src.transbridge.converter.translation_entry_collection", fromlist=["TranslationEntryCollection"]).TranslationEntryCollection,
+        "import_fn": _collection_type,
         "parse_fn_str": "from_json_file",
         "label": "JSON 导入",
     },
@@ -172,10 +189,37 @@ def _parse_file(file_type: str, args: dict, ctx) -> ToolResult:
         return err
 
     dispatch = _PARSER_DISPATCH[file_type]
+    source_snapshot = None
+    format_id = None
     try:
         if file_type == "json":
             cls = dispatch["import_fn"]()
             collection = getattr(cls, dispatch["parse_fn_str"])(path)
+        elif "format_id" in dispatch:
+            from transbridge.application.contracts import OperationOutcome, RequestContext
+            from transbridge.application.io import (
+                FormatId,
+                ParseRequest,
+                SourceDescriptor,
+                TranslationIoUseCase,
+            )
+            from transbridge.entrypoints.agent import parse_translation_source
+
+            source = Path(path)
+            format_id = FormatId(dispatch["format_id"])
+            parsed = parse_translation_source(
+                TranslationIoUseCase(),
+                ParseRequest(
+                    SourceDescriptor(str(source), source.name, source.stat().st_size),
+                    RequestContext("smart-assistant-parser"),
+                    format_id,
+                ),
+            )
+            if parsed.outcome not in {OperationOutcome.COMPLETED, OperationOutcome.PARTIAL}:
+                message = "; ".join(diagnostic.message for diagnostic in parsed.diagnostics)
+                return ToolResult.fail(f"解析 {dispatch['label']} 失败: {message}")
+            collection = _to_collection(parsed.entries)
+            source_snapshot = parsed.source_snapshot
         else:
             import importlib
             mod = importlib.import_module(dispatch["module"])
@@ -189,7 +233,14 @@ def _parse_file(file_type: str, args: dict, ctx) -> ToolResult:
 
     label = Path(path).stem
     if action == "create_slot":
-        return _create_slot(path, label, collection, ctx)
+        return _create_slot(
+            path,
+            label,
+            collection,
+            ctx,
+            source_snapshot=source_snapshot,
+            format_id=format_id,
+        )
     else:
         return _append_to_collection(collection, ctx)
 
@@ -217,23 +268,23 @@ def _tool_import_json(args: dict, ctx) -> ToolResult:
 _PARAM_SCHEMAS = {
     "parse_esp": {
         "path": {"type": "str", "required": True, "description": "ESP/ESM 文件路径"},
-        "action": {"type": "str", "required": False, "description": "解析后操作: create_slot（创建新槽位并激活，默认）或 append（追加到当前活跃集合）"},
+        "action": {"type": "str", "required": False, "description": "解析后操作: create_slot（创建新槽位并激活，默认）或 append（追加到当前活跃集合）"},  # noqa: E501
     },
     "parse_eet": {
         "path": {"type": "str", "required": True, "description": "EET XML 文件路径"},
-        "action": {"type": "str", "required": False, "description": "解析后操作: create_slot（创建新槽位并激活，默认）或 append（追加到当前活跃集合）"},
+        "action": {"type": "str", "required": False, "description": "解析后操作: create_slot（创建新槽位并激活，默认）或 append（追加到当前活跃集合）"},  # noqa: E501
     },
     "parse_xt": {
         "path": {"type": "str", "required": True, "description": "XT XML 文件路径"},
-        "action": {"type": "str", "required": False, "description": "解析后操作: create_slot（创建新槽位并激活，默认）或 append（追加到当前活跃集合）"},
+        "action": {"type": "str", "required": False, "description": "解析后操作: create_slot（创建新槽位并激活，默认）或 append（追加到当前活跃集合）"},  # noqa: E501
     },
     "parse_sst": {
         "path": {"type": "str", "required": True, "description": "SST 二进制文件路径"},
-        "action": {"type": "str", "required": False, "description": "解析后操作: create_slot（创建新槽位并激活，默认）或 append（追加到当前活跃集合）"},
+        "action": {"type": "str", "required": False, "description": "解析后操作: create_slot（创建新槽位并激活，默认）或 append（追加到当前活跃集合）"},  # noqa: E501
     },
     "import_json": {
         "path": {"type": "str", "required": True, "description": "JSON 文件路径"},
-        "action": {"type": "str", "required": False, "description": "导入后操作: create_slot（创建新槽位并激活，默认）或 append（追加到当前活跃集合）"},
+        "action": {"type": "str", "required": False, "description": "导入后操作: create_slot（创建新槽位并激活，默认）或 append（追加到当前活跃集合）"},  # noqa: E501
     },
 }
 
@@ -245,15 +296,15 @@ _PARAM_SCHEMAS = {
 def _register_parser_tools():
     from ..tool_registry import ToolRegistry
     ToolRegistry.register_tools("parser", [
-        {"name": "parse_esp", "display_name": "解析ESP", "description": "①解析ESP/ESM/ESL插件文件提取可翻译字符串。②参数: path(必填, .esp/.esm/.esl), action(可选, create_slot默认创建新槽位并激活/append追加到当前活跃集合)。③返回: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}。规则: create_slot支持后续write_back target=esp/strings推断, append前需确认has_active_collection, path拒绝../和绝对路径, 通过get_app_state查看esp_file",
+        {"name": "parse_esp", "display_name": "解析ESP", "description": "①解析ESP/ESM/ESL插件文件提取可翻译字符串。②参数: path(必填, .esp/.esm/.esl), action(可选, create_slot默认创建新槽位并激活/append追加到当前活跃集合)。③返回: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}。规则: create_slot支持后续write_back target=esp/strings推断, append前需确认has_active_collection, path仅允许RuntimeContext授权根内规范化路径, 通过get_app_state查看esp_file",  # noqa: E501
          "execute": _tool_parse_esp, "parameters": _PARAM_SCHEMAS.get("parse_esp", {}), "permission": "write"},
-        {"name": "parse_eet", "display_name": "解析EET", "description": "①解析EET XML翻译文件(Elder Scrolls Translation格式, 根元素<EET>)。②参数: path(必填, EET XML), action(可选, create_slot默认/append)。③返回: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}。规则: create_slot支持后续write_back target=eet推断, append前需确认has_active_collection, path拒绝../和绝对路径, 通过get_app_state查看eet_file",
+        {"name": "parse_eet", "display_name": "解析EET", "description": "①解析EET XML翻译文件(Elder Scrolls Translation格式, 根元素<EET>)。②参数: path(必填, EET XML), action(可选, create_slot默认/append)。③返回: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}。规则: create_slot支持后续write_back target=eet推断, append前需确认has_active_collection, path仅允许RuntimeContext授权根内规范化路径, 通过get_app_state查看eet_file",  # noqa: E501
          "execute": _tool_parse_eet, "parameters": _PARAM_SCHEMAS.get("parse_eet", {}), "permission": "write"},
-        {"name": "parse_xt", "display_name": "解析XT", "description": "①解析XT XML翻译文件(xTranslator格式, Skyrim MOD翻译工具, 根元素<XT>)。②参数: path(必填, XT XML), action(可选, create_slot默认/append)。③返回: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}。规则: create_slot支持后续write_back target=xt推断, append前需确认has_active_collection, path拒绝../和绝对路径, 通过get_app_state查看xt_file",
+        {"name": "parse_xt", "display_name": "解析XT", "description": "①解析XT XML翻译文件(xTranslator格式, Skyrim MOD翻译工具, 根元素<XT>)。②参数: path(必填, XT XML), action(可选, create_slot默认/append)。③返回: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}。规则: create_slot支持后续write_back target=xt推断, append前需确认has_active_collection, path仅允许RuntimeContext授权根内规范化路径, 通过get_app_state查看xt_file",  # noqa: E501
          "execute": _tool_parse_xt, "parameters": _PARAM_SCHEMAS.get("parse_xt", {}), "permission": "write"},
-        {"name": "parse_sst", "display_name": "解析SST", "description": "①解析SST二进制翻译文件。SSU8=单语言记录, SSU9=双语言多字符串(含插件名头部)。②参数: path(必填, .sst), action(可选, create_slot默认/append)。③返回: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}。规则: 不支持write_back(SST序列化被屏蔽, 仅可浏览/筛选/统计), append前需确认has_active_collection, path拒绝../和绝对路径, sst_file通过get_app_state追踪",
+        {"name": "parse_sst", "display_name": "解析SST", "description": "①解析SST二进制翻译文件。SSU8=单语言记录, SSU9=双语言多字符串(含插件名头部)。②参数: path(必填, .sst), action(可选, create_slot默认/append)。③返回: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}。规则: 不支持write_back(SST序列化被屏蔽, 仅可浏览/筛选/统计), append前需确认has_active_collection, path仅允许RuntimeContext授权根内规范化路径, sst_file通过get_app_state追踪",  # noqa: E501
          "execute": _tool_parse_sst, "parameters": _PARAM_SCHEMAS.get("parse_sst", {}), "permission": "write"},
-        {"name": "import_json", "display_name": "导入JSON", "description": "①从JSON文件导入翻译条目(支持标准格式[{key,original,translation,stage,context}]和DSD格式)。②参数: path(必填, .json), action(可选, create_slot默认/append)。③返回: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}。规则: 不记录文件路径供write_back推断, append前需确认has_active_collection, path拒绝../和绝对路径",
+        {"name": "import_json", "display_name": "导入JSON", "description": "①从JSON文件导入翻译条目(支持标准格式[{key,original,translation,stage,context}]和DSD格式)。②参数: path(必填, .json), action(可选, create_slot默认/append)。③返回: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}。规则: 不记录文件路径供write_back推断, append前需确认has_active_collection, path仅允许RuntimeContext授权根内规范化路径",  # noqa: E501
          "execute": _tool_import_json, "parameters": _PARAM_SCHEMAS.get("import_json", {}), "permission": "write"},
     ])
 

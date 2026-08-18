@@ -29,7 +29,7 @@ def _tool_get_app_state(args: dict, ctx) -> ToolResult:
     # C5: ParaTranz 配置状态
     pt_configured = False
     try:
-        from src.transbridge.paratranz.config_manager import ParatranzConfig
+        from transbridge.paratranz.config_manager import ParatranzConfig
         pt_cfg = ParatranzConfig.load_from_file()
         pt_configured = bool(getattr(pt_cfg, 'token', None))
     except Exception as exc:

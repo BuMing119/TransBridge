@@ -10,7 +10,7 @@ import threading
 from collections import deque
 from pathlib import Path
 
-from src.transbridge.smart_assistant.guardrails.output_validator import sanitize_for_storage
+from transbridge.smart_assistant.guardrails.output_validator import sanitize_for_storage
 
 logger = logging.getLogger(__name__)
 

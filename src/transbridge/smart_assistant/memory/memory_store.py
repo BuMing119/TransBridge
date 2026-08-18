@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
-from src.transbridge.smart_assistant.memory.memory_writer import MemoryWriterThread
+from transbridge.smart_assistant.memory.memory_writer import MemoryWriterThread
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +70,7 @@ class MemoryStore:
             self._load_metadata()
         self._vector_store = None
         if self._mode != "disabled":
-            from src.transbridge.infra.vector_store import VectorStore
+            from transbridge.infra.vector_store import VectorStore
             self._vector_store = VectorStore(dimension=dimension)
             if self._index_path.exists():
                 try:

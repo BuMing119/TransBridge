@@ -11,7 +11,19 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from uuid import uuid4
+
+from transbridge.application.tasks import (
+    JobCapabilities,
+    JobSpec,
+    JobState,
+    OwnerRef,
+    TaskAccessError,
+    TaskRuntime,
+    TransitionError,
+    job_snapshot_to_view,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +36,16 @@ logger = logging.getLogger(__name__)
 def _default_dispatcher(fn: Callable[[], None]) -> None:
     """默认调度器：直接调用（非 GUI 上下文 / 测试用）。"""
     fn()
+
+
+class _LegacyIdGenerator:
+    def new_id(self) -> str:
+        return uuid4().hex
+
+
+class _LegacyClock:
+    def now(self) -> datetime:
+        return datetime.now(UTC)
 
 
 @dataclass
@@ -65,9 +87,38 @@ class TaskManager:
                     instance = object.__new__(cls)
                     instance._lock = threading.Lock()
                     instance._tasks: dict[str, TaskHandle] = {}
+                    instance._runtime = TaskRuntime(
+                        id_generator=_LegacyIdGenerator(),
+                        clock=_LegacyClock(),
+                    )
+                    instance._owns_runtime = True
+                    instance._refs = {}
+                    instance._owners = {}
+                    instance._listener_wrappers = {}
                     instance._listeners: dict[str, list] = {"completed": [], "failed": [], "finished": []}
                     cls._instance = instance
         return cls._instance
+
+    def bind_runtime(self, runtime: TaskRuntime) -> None:
+        """Bind the compatibility facade to the Composition Root runtime.
+
+        Binding is only legal before any task is registered, preventing live
+        task identities from being split across two authorities.
+        """
+        if not isinstance(runtime, TaskRuntime):
+            raise TypeError("runtime must be a TaskRuntime")
+        previous: TaskRuntime | None = None
+        with self._lock:
+            if self._runtime is runtime:
+                return
+            if self._tasks:
+                raise RuntimeError("cannot rebind TaskManager while tasks exist")
+            if self._owns_runtime:
+                previous = self._runtime
+            self._runtime = runtime
+            self._owns_runtime = False
+        if previous is not None:
+            previous.close()
 
     # ── 调度器注入 (ADR-008: 消除 PyQt6 耦合) ────────────────
 
@@ -108,6 +159,8 @@ class TaskManager:
         def _wrapper(task_id, success, message, data):
             if success:
                 callback(task_id, data or {})
+        with self._lock:
+            self._listener_wrappers.setdefault(callback, []).append(_wrapper)
         self.on_finished(_wrapper)
 
     def on_failed(self, callback) -> None:
@@ -118,16 +171,16 @@ class TaskManager:
         def _wrapper(task_id, success, message, data):
             if not success:
                 callback(task_id, message)
+        with self._lock:
+            self._listener_wrappers.setdefault(callback, []).append(_wrapper)
         self.on_finished(_wrapper)
 
     def remove_listener(self, callback) -> None:
         """移除已注册的回调（从 completed、failed 和 finished 列表中都尝试移除）。"""
         with self._lock:
+            callbacks = [callback, *self._listener_wrappers.pop(callback, [])]
             for key in ("completed", "failed", "finished"):
-                try:
-                    self._listeners[key].remove(callback)
-                except ValueError:
-                    pass
+                self._listeners[key] = [item for item in self._listeners[key] if item not in callbacks]
 
     # ── 公开 API ──────────────────────────────────────────────
 
@@ -135,56 +188,108 @@ class TaskManager:
                  metadata: dict | None = None,
                  thread: threading.Thread | None = None) -> str:
         """注册新任务，返回 task_id。默认创建 stop_event 和 pause_event（初始 set）。"""
-        task_id = uuid4().hex[:12]
+        task_metadata = dict(metadata or {})
+        owner = OwnerRef(
+            owner_id=str(task_metadata.get("owner_id", "legacy-task-manager")),
+            entrypoint=str(task_metadata.get("entrypoint", "legacy")),
+            project_id=task_metadata.get("project_id"),
+            variant_id=task_metadata.get("variant_id"),
+            session_id=task_metadata.get("session_id"),
+        )
+        specification = JobSpec(
+            job_type=str(task_metadata.get("job_type", "legacy-task")),
+            input_ref=str(task_metadata.get("input_ref", "legacy:unspecified")),
+            input_fingerprint=str(task_metadata.get("input_fingerprint", "legacy:unspecified")),
+            display_name=str(task_metadata.get("display_name", "")),
+            capabilities=JobCapabilities(
+                supports_pause=True,
+                supports_resume=True,
+                supports_cancel=True,
+            ),
+            metadata=tuple(sorted((str(key), str(value)) for key, value in task_metadata.items())),
+        )
+        ref = self._runtime.submit(specification, owner).ref
+        self._runtime.start(ref, owner)
+        task_id = ref.job_id
         if stop_event is None:
             stop_event = threading.Event()
         handle = TaskHandle(
             stop_event=stop_event,
             pause_event=threading.Event(),  # Story 26: 默认创建，初始 set（非暂停）
-            metadata=dict(metadata or {}),
+            metadata=task_metadata,
             _thread=thread,
         )
         handle.pause_event.set()  # 初始非暂停状态
         with self._lock:
             self._tasks[task_id] = handle
+            self._refs[task_id] = ref
+            self._owners[task_id] = owner
         return task_id
 
     def cancel(self, task_id: str) -> bool:
         """取消任务：set stop_event + 更新状态。返回是否成功。"""
         with self._lock:
             handle = self._tasks.get(task_id)
-        if handle is None:
+            ref = self._refs.get(task_id)
+            owner = self._owners.get(task_id)
+        if handle is None or ref is None or owner is None:
             return False
-        handle.stop_event.set()
-        # 若任务处于暂停状态，唤醒以便退出
-        if handle.pause_event is not None:
-            handle.pause_event.set()
-        handle.status = "cancelled"
-        return True
+        try:
+            snapshot = self._runtime.cancel(ref, owner)
+            handle.stop_event.set()
+            # 若任务处于暂停状态，唤醒以便退出
+            if handle.pause_event is not None:
+                handle.pause_event.set()
+            if snapshot.state is JobState.CANCELLING:
+                snapshot = self._runtime.finish_cancelled(ref, owner)
+        except (TaskAccessError, TransitionError):
+            return False
+        handle.status = snapshot.state.value
+        return snapshot.state is JobState.CANCELLED
 
     def pause(self, task_id: str) -> bool:
         """暂停任务：clear pause_event，更新状态为 paused。返回是否成功。"""
         with self._lock:
             handle = self._tasks.get(task_id)
-        if handle is None:
+            ref = self._refs.get(task_id)
+            owner = self._owners.get(task_id)
+        if handle is None or ref is None or owner is None:
             return False
         if handle.pause_event is None:
             handle.pause_event = threading.Event()
+        try:
+            if self._runtime.get(ref, owner).state is JobState.PAUSED:
+                handle.pause_event.clear()
+                handle.status = JobState.PAUSED.value
+                return True
+            snapshot = self._runtime.pause(ref, owner)
+        except (TaskAccessError, TransitionError):
+            return False
         handle.pause_event.clear()
-        handle.status = "paused"
-        return True
+        handle.status = snapshot.state.value
+        return snapshot.state is JobState.PAUSED
 
     def resume(self, task_id: str) -> bool:
         """恢复任务：set pause_event，更新状态为 running。返回是否成功。"""
         with self._lock:
             handle = self._tasks.get(task_id)
-        if handle is None:
+            ref = self._refs.get(task_id)
+            owner = self._owners.get(task_id)
+        if handle is None or ref is None or owner is None:
             return False
         if handle.pause_event is None:
             handle.pause_event = threading.Event()
+        try:
+            if self._runtime.get(ref, owner).state is JobState.RUNNING:
+                handle.pause_event.set()
+                handle.status = JobState.RUNNING.value
+                return True
+            snapshot = self._runtime.resume(ref, owner)
+        except (TaskAccessError, TransitionError):
+            return False
         handle.pause_event.set()
-        handle.status = "running"
-        return True
+        handle.status = snapshot.state.value
+        return snapshot.state is JobState.RUNNING
 
     def get_status(self, task_id: str) -> dict:
         """获取任务状态快照。
@@ -194,27 +299,45 @@ class TaskManager:
         """
         with self._lock:
             handle = self._tasks.get(task_id)
-            if handle is None:
+            ref = self._refs.get(task_id)
+            owner = self._owners.get(task_id)
+            if handle is None or ref is None or owner is None:
                 return {"error": "任务不存在", "task_id": task_id}
-            return {
-                "task_id": task_id,
-                "status": handle.status,
-                "progress": dict(handle.progress),  # m3: 浅拷贝（progress 是扁平 dict）
-                "created_at": handle.created_at,
-                "metadata": dict(handle.metadata),
-            }
+            try:
+                snapshot = self._runtime.get(ref, owner)
+            except TaskAccessError:
+                return {"error": "任务不存在", "task_id": task_id}
+            handle.status = snapshot.state.value
+            view = job_snapshot_to_view(snapshot)
+            view["metadata"].update(handle.metadata)
+            return view
 
     def update_progress(self, task_id: str, progress: dict) -> None:
         """更新任务进度信息。m10: progress 修改在锁内。"""
         with self._lock:
             handle = self._tasks.get(task_id)
-            if handle is not None:
-                handle.progress.update(progress)
+            ref = self._refs.get(task_id)
+            owner = self._owners.get(task_id)
+        if handle is None or ref is None or owner is None:
+            return
+        try:
+            snapshot = self._runtime.update_progress(ref, owner, progress)
+        except (TaskAccessError, TransitionError, TypeError, ValueError):
+            return
+        with self._lock:
+            current = self._tasks.get(task_id)
+            if current is handle:
+                current.progress = dict(snapshot.progress)
 
     def list_active(self) -> list[str]:
         """列出所有活跃任务 ID（含 running 和 paused 状态）。"""
         with self._lock:
-            return [tid for tid, h in self._tasks.items() if h.status in ("running", "paused")]
+            task_ids = tuple(self._tasks)
+        return [
+            task_id
+            for task_id in task_ids
+            if self.get_status(task_id).get("status") in ("running", "paused")
+        ]
 
     def list_all(self) -> list[str]:
         """列出所有任务 ID（含已完成的）。"""
@@ -222,13 +345,33 @@ class TaskManager:
             return list(self._tasks.keys())
 
     def set_status(self, task_id: str, status: str) -> bool:
-        """M5: 设置任务状态。外部不再直接访问 _lock/_tasks。"""
+        """Deprecated terminal adapter; arbitrary state writes are rejected."""
+        if status not in {"completed", "failed", "cancelled"}:
+            return False
         with self._lock:
             handle = self._tasks.get(task_id)
-            if handle is not None:
-                handle.status = status
+            ref = self._refs.get(task_id)
+            owner = self._owners.get(task_id)
+        if handle is None or ref is None or owner is None:
+            return False
+        try:
+            current = self._runtime.get(ref, owner)
+            if current.state.value == status:
                 return True
-        return False
+            if current.is_terminal:
+                return False
+            if status == "completed":
+                snapshot = self._runtime.complete(ref, owner)
+            elif status == "failed":
+                snapshot = self._runtime.fail(ref, owner)
+            else:
+                snapshot = self._runtime.cancel(ref, owner)
+                if snapshot.state is JobState.CANCELLING:
+                    snapshot = self._runtime.finish_cancelled(ref, owner)
+        except (TaskAccessError, TransitionError):
+            return False
+        handle.status = snapshot.state.value
+        return True
 
     def get_handle(self, task_id: str) -> TaskHandle | None:
         """M5: 安全获取任务句柄（含锁保护）。"""
@@ -267,6 +410,20 @@ class TaskManager:
         调度器默认为直接调用（非 GUI 上下文），UI 层应通过
         set_main_thread_dispatcher() 注入 Qt 队列调度器以保证 GUI 操作安全。
         """
+        current_status = self.get_status(task_id).get("status")
+        if current_status in {"completed", "failed", "cancelled"}:
+            late_success = success and current_status != "completed"
+            late_failure = not success and current_status == "completed"
+            if late_success or late_failure:
+                logger.warning(
+                    "丢弃任务 %s 的迟到终态通知: current=%s requested_success=%s",
+                    task_id,
+                    current_status,
+                    success,
+                )
+                return
+        elif not self.set_status(task_id, "completed" if success else "failed"):
+            return
         # C3-fix: 在锁内快照监听器列表，锁外派发，避免回调执行时持有锁
         with self._lock:
             finished = list(self._listeners.get("finished", []))
@@ -305,6 +462,8 @@ class TaskManager:
         """移除已完成/已取消的任务句柄。确保线程 join。(O9)"""
         with self._lock:
             handle = self._tasks.pop(task_id, None)
+            self._refs.pop(task_id, None)
+            self._owners.pop(task_id, None)
         if handle is None:
             return
         # O9: 确保线程退出
@@ -318,9 +477,22 @@ class TaskManager:
         避免 thread.join(timeout=2) 阻塞其他 TaskManager 操作。
         """
         with self._lock:
-            inactive = [tid for tid in list(self._tasks.keys())
-                        if self._tasks[tid].status in ("completed", "failed", "cancelled")]
+            inactive = []
+            for task_id in self._tasks:
+                ref = self._refs.get(task_id)
+                owner = self._owners.get(task_id)
+                if ref is None or owner is None:
+                    continue
+                try:
+                    snapshot = self._runtime.get(ref, owner)
+                except TaskAccessError:
+                    continue
+                if snapshot.is_terminal:
+                    inactive.append(task_id)
             handles_to_clean = [self._tasks.pop(tid) for tid in inactive]
+            for task_id in inactive:
+                self._refs.pop(task_id, None)
+                self._owners.pop(task_id, None)
         # 锁外 join，避免阻塞其他 TaskManager 操作
         for handle in handles_to_clean:
             if handle._thread is not None and handle._thread.is_alive():
@@ -343,6 +515,11 @@ class TaskManager:
                 cls._instance._listeners["completed"].clear()
                 cls._instance._listeners["failed"].clear()
                 cls._instance._listeners["finished"].clear()
+                cls._instance._listener_wrappers.clear()
+                cls._instance._refs.clear()
+                cls._instance._owners.clear()
+                if cls._instance._owns_runtime:
+                    cls._instance._runtime.close()
                 # ADR-008: 重置调度器为默认直接调用（非 GUI 上下文）
                 TaskManager._dispatcher = _default_dispatcher
                 cls._instance = None

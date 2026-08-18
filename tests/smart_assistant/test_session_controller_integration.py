@@ -7,7 +7,7 @@ from __future__ import annotations
 import pytest
 from unittest.mock import MagicMock, patch
 
-from src.transbridge.smart_assistant.session_controller import SessionController
+from transbridge.smart_assistant.session_controller import SessionController
 
 
 # ── 模拟 Orchestrator 响应解析的简化版 ──
@@ -253,8 +253,8 @@ class TestFullConversationFlow:
     def test_orchestrator_on_response_parsed_integration(self):
         """验证 Orchestrator._on_finished 确实调用了 on_response_parsed。"""
         # 这个测试验证 Orchestrator 回调链完整
-        from src.transbridge.smart_assistant.conversation_orchestrator import ConversationOrchestrator
-        from src.transbridge.smart_assistant.conversation_manager import ConversationManager
+        from transbridge.smart_assistant.conversation_orchestrator import ConversationOrchestrator
+        from transbridge.smart_assistant.conversation_manager import ConversationManager
 
         parsed_calls = []
 

@@ -16,8 +16,8 @@ from tests.conftest import (
     MockAppContext,
 )
 
-from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from src.transbridge.smart_assistant.tools.base import ExecutionContext
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.smart_assistant.tools.base import ExecutionContext
 
 
 # ── Test A: run_postprocess Parameter Validation ──────────────────────────
@@ -26,7 +26,7 @@ class TestRunPostprocessParamValidation(unittest.TestCase):
     """验收标准: run_postprocess 参数校验正确拒绝无效输入。"""
 
     def setUp(self):
-        from src.transbridge.smart_assistant.tools.tool_proofreader import _tool_run_postprocess
+        from transbridge.smart_assistant.tools.tool_proofreader import _tool_run_postprocess
         self.func = _tool_run_postprocess
 
     def test_a1_empty_collection_returns_fail(self):
@@ -58,7 +58,7 @@ class TestRunPostprocessParamValidation(unittest.TestCase):
         ec = ExecutionContext(app_context=ctx)
 
         with patch(
-            "src.transbridge.paratranz.config_manager.LLMConfig.load_from_file"
+            "transbridge.paratranz.config_manager.LLMConfig.load_from_file"
         ) as mock_load:
             mock_cfg = make_llm_config(api_key="")
             mock_load.return_value = mock_cfg
@@ -77,7 +77,7 @@ class TestRunPostprocessParamValidation(unittest.TestCase):
         ec = ExecutionContext(app_context=ctx)
 
         with patch(
-            "src.transbridge.paratranz.config_manager.LLMConfig.load_from_file"
+            "transbridge.paratranz.config_manager.LLMConfig.load_from_file"
         ) as mock_load:
             mock_cfg = make_llm_config(api_key="")
             mock_load.return_value = mock_cfg
@@ -97,7 +97,7 @@ class TestRunPostprocessParamValidation(unittest.TestCase):
         ec = ExecutionContext(app_context=ctx)
 
         with patch(
-            "src.transbridge.paratranz.config_manager.LLMConfig.load_from_file"
+            "transbridge.paratranz.config_manager.LLMConfig.load_from_file"
         ) as mock_load:
             mock_cfg = make_llm_config(api_key="")
             mock_load.return_value = mock_cfg
@@ -163,7 +163,7 @@ class TestRunPostprocessParamValidation(unittest.TestCase):
         ec = ExecutionContext(app_context=ctx)
 
         with patch(
-            "src.transbridge.paratranz.config_manager.LLMConfig.load_from_file"
+            "transbridge.paratranz.config_manager.LLMConfig.load_from_file"
         ) as mock_load:
             mock_cfg = make_llm_config(api_key="")
             mock_load.return_value = mock_cfg
@@ -180,7 +180,7 @@ class TestStartPolishParamValidation(unittest.TestCase):
     """验收标准: start_polish 参数校验 + intensity 映射一致。"""
 
     def setUp(self):
-        from src.transbridge.smart_assistant.tools.tool_translator import _tool_start_polish
+        from transbridge.smart_assistant.tools.tool_translator import _tool_start_polish
         self.func = _tool_start_polish
 
     def test_c1_invalid_scope_rejected(self):

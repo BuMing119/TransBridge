@@ -5,13 +5,14 @@
 
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 from enum import Enum
-from typing import Callable, Any
-
+import json
+from typing import Any
 
 # ── ToolResult v2 ──────────────────────────────────────────────
+
 
 @dataclass
 class ToolResult:
@@ -23,7 +24,7 @@ class ToolResult:
     """
     success: bool
     message: str
-    data: dict[str, Any] | None = None
+    data: Any = None
     failed_items: list[dict[str, Any]] | None = None
     truncated: bool = False
     partial: bool = False
@@ -38,6 +39,27 @@ class ToolResult:
     tool_suggestions: list[str] | None = None      # ["get_visible_entries", "edit_translation"]
 
     def to_observation(self, tool_name: str, max_chars: int = 2000) -> str:
+        """Return only the bounded display projection of the full observation."""
+        return self.to_structured_observation(tool_name, max_chars).display_summary
+
+    def to_structured_observation(self, tool_name: str, max_chars: int = 2000):
+        """Keep the complete redacted result independent from display truncation."""
+        from transbridge.application.security.redaction import SecretRedactor
+        from transbridge.application.tools.contracts import StructuredObservation
+
+        redactor = SecretRedactor.default()
+        redacted_fields = {
+            field_name: redactor.redact(getattr(self, field_name))
+            for field_name in self.__dataclass_fields__
+        }
+        redacted = replace(self, **redacted_fields)
+        return StructuredObservation(
+            tool_name=tool_name,
+            result=redacted._to_dict_unredacted(),
+            display_summary=redacted._to_observation_unredacted(tool_name, max_chars),
+        )
+
+    def _to_observation_unredacted(self, tool_name: str, max_chars: int) -> str:
         """序列化为 LLM 可解析的观察文本。
 
         格式:
@@ -131,8 +153,7 @@ class ToolResult:
                 summary[k] = str(v)[:100]
         return json.dumps(summary, ensure_ascii=False, default=str, separators=(",", ":"))[:max_chars]
 
-    def to_dict(self) -> dict[str, Any]:
-        """转为字典。success 保持为 bool，向后兼容。"""
+    def _to_dict_unredacted(self) -> dict[str, Any]:
         result: dict[str, Any] = {"success": self.success, "message": self.message}
         if self.partial:
             result["partial"] = True
@@ -157,6 +178,12 @@ class ToolResult:
         if self.tool_suggestions:
             result["tool_suggestions"] = self.tool_suggestions
         return result
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the complete result after applying the shared redactor."""
+        from transbridge.application.security.redaction import SecretRedactor
+
+        return SecretRedactor.default().redact(self._to_dict_unredacted())
 
     # B2: 字典兼容方法
     def get(self, key: str, default: Any = None) -> Any:
@@ -194,21 +221,21 @@ class ToolResult:
 
     @classmethod
     def ok(cls, message: str = "操作成功", data: dict | None = None,
-           warnings: list[str] | None = None) -> "ToolResult":
+           warnings: list[str] | None = None) -> ToolResult:
         return cls(success=True, message=message, data=data, warnings=warnings)
 
     @classmethod
     def fail(cls, message: str, failed_items: list | None = None, *,
              error_category: str | None = None,
              error_code: str | None = None,
-             recovery_action: str | None = None) -> "ToolResult":
+             recovery_action: str | None = None) -> ToolResult:
         return cls(success=False, message=message, failed_items=failed_items,
                    error_category=error_category, error_code=error_code,
                    recovery_action=recovery_action)
 
     @classmethod
     def partial_ok(cls, message: str, data: dict | None = None,
-                   failed_items: list | None = None) -> "ToolResult":
+                   failed_items: list | None = None) -> ToolResult:
         """部分成功 —— success=True, partial=True (B3 变更)"""
         return cls(success=True, partial=True, message=message, data=data, failed_items=failed_items)
 
@@ -243,6 +270,11 @@ class ExecutionContext:
     """
     app_context: Any = None
     task_manager: Any = None
+    request_context: Any = None
+    owner_id: str = ""
+    plan_hash: str = ""
+    confirmation_authority: Any = None
+    confirmation_token: Any = None
 
     # ── C10: 线程安全状态变更 ──────────────────────────────────
 
@@ -306,7 +338,15 @@ class ExecutionContext:
         避免嵌套排队导致赋值顺序错误。
         对 app_context / task_manager 等自身字段，正常写入实例 __dict__。
         """
-        if name in ('app_context', 'task_manager'):
+        if name in (
+            'app_context',
+            'task_manager',
+            'request_context',
+            'owner_id',
+            'plan_hash',
+            'confirmation_authority',
+            'confirmation_token',
+        ):
             object.__setattr__(self, name, value)
             return
         app_ctx = self.__dict__.get('app_context')

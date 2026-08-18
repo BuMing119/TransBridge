@@ -9,13 +9,9 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from tests.conftest import MockAppContext, make_test_collection
+from transbridge.application.tasks import TaskCancelled
 
-# ParatranzProjectAPI is imported INSIDE _get_paratranz_client() as:
-#   from src.transbridge.paratranz import ParatranzProjectAPI
-_PT_PROJECT_API_PATH = "src.transbridge.paratranz.ParatranzProjectAPI"
-# ParatranzExportAPI is imported INSIDE _tool_export_artifact() as:
-#   from src.transbridge.paratranz.api.paratranz_export_api import ParatranzExportAPI
-_PT_EXPORT_API_PATH = "src.transbridge.paratranz.api.paratranz_export_api.ParatranzExportAPI"
+_PT_PROJECT_API_PATH = "transbridge.paratranz.service.ParaTranzService.from_config"
 
 
 # ============================================================
@@ -23,7 +19,7 @@ _PT_EXPORT_API_PATH = "src.transbridge.paratranz.api.paratranz_export_api.Paratr
 # ============================================================
 class TestListProjects(unittest.TestCase):
     def setUp(self):
-        from src.transbridge.smart_assistant.tools.tool_paratranz import _tool_list_projects
+        from transbridge.smart_assistant.tools.tool_paratranz import _tool_list_projects
         self.func = _tool_list_projects
         self.ctx = MockAppContext()
 
@@ -63,7 +59,7 @@ class TestListProjects(unittest.TestCase):
 # ============================================================
 class TestGetProjectInfo(unittest.TestCase):
     def setUp(self):
-        from src.transbridge.smart_assistant.tools.tool_paratranz import _tool_get_project_info
+        from transbridge.smart_assistant.tools.tool_paratranz import _tool_get_project_info
         self.func = _tool_get_project_info
         self.ctx = MockAppContext()
 
@@ -92,7 +88,7 @@ class TestGetProjectInfo(unittest.TestCase):
 # ============================================================
 class TestCompareWithRemote(unittest.TestCase):
     def setUp(self):
-        from src.transbridge.smart_assistant.tools.tool_paratranz import _tool_compare_with_remote
+        from transbridge.smart_assistant.tools.tool_paratranz import _tool_compare_with_remote
         self.func = _tool_compare_with_remote
         self.ctx = MockAppContext(make_test_collection(5))
 
@@ -104,7 +100,7 @@ class TestCompareWithRemote(unittest.TestCase):
     @patch(_PT_PROJECT_API_PATH)
     def test_compare_all_local_only(self, mock_api):
         mock_client = MagicMock()
-        mock_client.get_entries.return_value = []
+        mock_client.list_entries.return_value = []
         mock_api.return_value = mock_client
 
         r = self.func({"project_id": 1}, self.ctx)
@@ -118,7 +114,7 @@ class TestCompareWithRemote(unittest.TestCase):
 # ============================================================
 class TestUploadEntries(unittest.TestCase):
     def setUp(self):
-        from src.transbridge.smart_assistant.tools.tool_paratranz import _tool_upload_entries
+        from transbridge.smart_assistant.tools.tool_paratranz import _tool_upload_entries
         self.func = _tool_upload_entries
         self.ctx = MockAppContext(make_test_collection(3))
 
@@ -142,7 +138,7 @@ class TestUploadEntries(unittest.TestCase):
 # ============================================================
 class TestDownloadEntries(unittest.TestCase):
     def setUp(self):
-        from src.transbridge.smart_assistant.tools.tool_paratranz import _tool_download_entries
+        from transbridge.smart_assistant.tools.tool_paratranz import _tool_download_entries
         self.func = _tool_download_entries
         self.ctx = MockAppContext(make_test_collection(3))
 
@@ -153,7 +149,7 @@ class TestDownloadEntries(unittest.TestCase):
     @patch(_PT_PROJECT_API_PATH)
     def test_download_entries(self, mock_api):
         mock_client = MagicMock()
-        mock_client.get_entries.return_value = [
+        mock_client.list_entries.return_value = [
             {"key": "NPC_:0001", "original": "Hello", "translation": "你好",
              "context": "NPC_:FULL", "stage": 1},
         ]
@@ -169,7 +165,7 @@ class TestDownloadEntries(unittest.TestCase):
 # ============================================================
 class TestExportArtifact(unittest.TestCase):
     def setUp(self):
-        from src.transbridge.smart_assistant.tools.tool_paratranz import _tool_export_artifact
+        from transbridge.smart_assistant.tools.tool_paratranz import _tool_export_artifact
         self.func = _tool_export_artifact
         self.ctx = MockAppContext()
 
@@ -177,19 +173,24 @@ class TestExportArtifact(unittest.TestCase):
         r = self.func({}, self.ctx)
         self.assertFalse(r.success)
 
-    @patch(_PT_EXPORT_API_PATH)
     @patch(_PT_PROJECT_API_PATH)
-    def test_export_artifact_success(self, mock_project_api, mock_export_api):
-        mock_project = MagicMock()
-        mock_project_api.return_value = mock_project
-
-        mock_export = MagicMock()
-        mock_export.trigger_export.return_value = {"job_id": "abc"}
-        mock_export.get_artifacts.return_value = [{"url": "https://example.com/artifact.zip"}]
-        mock_export_api.return_value = mock_export
+    def test_export_artifact_success(self, mock_api):
+        mock_service = MagicMock()
+        mock_service.trigger_export.return_value = {"job_id": "abc"}
+        mock_service.get_artifacts.return_value = [{"url": "https://example.com/artifact.zip"}]
+        mock_api.return_value = mock_service
 
         r = self.func({"project_id": 1}, self.ctx)
         self.assertTrue(r.success)
+
+    @patch(_PT_PROJECT_API_PATH)
+    def test_export_cancellation_propagates(self, mock_api):
+        mock_service = MagicMock()
+        mock_service.trigger_export.side_effect = TaskCancelled("cancelled")
+        mock_api.return_value = mock_service
+
+        with self.assertRaises(TaskCancelled):
+            self.func({"project_id": 1}, self.ctx)
 
 
 # ============================================================
@@ -197,7 +198,7 @@ class TestExportArtifact(unittest.TestCase):
 # ============================================================
 class TestGetUploadHistory(unittest.TestCase):
     def setUp(self):
-        from src.transbridge.smart_assistant.tools.tool_paratranz import _tool_get_upload_history
+        from transbridge.smart_assistant.tools.tool_paratranz import _tool_get_upload_history
         self.func = _tool_get_upload_history
         self.ctx = MockAppContext()
 
@@ -208,7 +209,7 @@ class TestGetUploadHistory(unittest.TestCase):
     @patch(_PT_PROJECT_API_PATH)
     def test_history_with_project(self, mock_api):
         mock_client = MagicMock()
-        mock_client.get_upload_history.return_value = [
+        mock_client.list_upload_history.return_value = [
             {"id": 1, "status": "success", "entries_count": 10},
         ]
         mock_api.return_value = mock_client
@@ -223,7 +224,7 @@ class TestGetUploadHistory(unittest.TestCase):
 # ============================================================
 class TestGetParatranzProject(unittest.TestCase):
     def setUp(self):
-        from src.transbridge.smart_assistant.tools.tool_paratranz import _tool_get_paratranz_project
+        from transbridge.smart_assistant.tools.tool_paratranz import _tool_get_paratranz_project
         self.func = _tool_get_paratranz_project
         self.ctx = MockAppContext()
 
@@ -251,7 +252,7 @@ class TestGetParatranzProject(unittest.TestCase):
 # ============================================================
 class TestSwitchParatranzProject(unittest.TestCase):
     def setUp(self):
-        from src.transbridge.smart_assistant.tools.tool_paratranz import _tool_switch_paratranz_project
+        from transbridge.smart_assistant.tools.tool_paratranz import _tool_switch_paratranz_project
         self.func = _tool_switch_paratranz_project
         self.ctx = MockAppContext()
 

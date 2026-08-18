@@ -10,7 +10,7 @@ import pytest
 from PyQt6.QtWidgets import QApplication, QPushButton
 from PyQt6.QtCore import Qt
 
-from src.transbridge.ui.tools.smart_assistant.task_monitor import (
+from transbridge.ui.tools.smart_assistant.task_monitor import (
     TaskMonitorWidget, _TaskCard, _STATUS_COLORS, _STATUS_LABELS,
 )
 

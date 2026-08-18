@@ -1,5 +1,7 @@
-from .agent_spec import AgentSpec
+from dataclasses import replace
+
 from ..tool_registry import ToolRegistry
+from .agent_spec import AgentSpec
 
 # ── Agent ID 常量 (QA-007) ──────────────────────────────────────
 AGENT_TRANSLATOR = "translator"
@@ -19,52 +21,81 @@ _ALL_AGENT_IDS = frozenset({
 
 class AgentRegistry:
     _agents: dict[str, AgentSpec] = {}
+    _finalized = False
 
     @staticmethod
-    def _expand_wildcard(tools: list[str]) -> list[str]:
-        """O3 / QA-006: 展开 namespace:* 通配符为具体工具名列表。改为 @staticmethod 消除模块级函数。"""
-        expanded = []
+    def _expand_wildcard(tools) -> tuple[str, ...]:
+        """Resolve namespace references against the completed tool registry."""
+        expanded: list[str] = []
         for t in tools:
             if t.endswith(":*"):
                 ns = t[:-2]
                 ns_tools = ToolRegistry.list_namespace(ns)
-                expanded.extend([spec.name for spec in ns_tools])
+                expanded.extend(
+                    spec.name for spec in ns_tools if spec.available and not spec.deprecated
+                )
+            elif ":" in t:
+                namespace, name = t.split(":", 1)
+                spec = ToolRegistry.get(name, namespace=namespace)
+                if spec is not None and spec.available and not spec.deprecated:
+                    expanded.append(spec.name)
             else:
-                expanded.append(t)
-        return expanded
+                spec = ToolRegistry.get(t)
+                if spec is None or (spec.available and not spec.deprecated):
+                    expanded.append(t)
+        return tuple(dict.fromkeys(expanded))
 
     @classmethod
     def register(cls, spec: AgentSpec) -> None:
-        # O3: 注册时展开通配符
-        spec.tools = cls._expand_wildcard(spec.tools)
+        if cls._finalized:
+            raise RuntimeError("AgentRegistry 已冻结")
         cls._agents[spec.agent_id] = spec
 
     @classmethod
+    def finalize(cls) -> None:
+        """Resolve tool capabilities once, after all tool registration completes."""
+        if cls._finalized:
+            return
+        cls._agents = {
+            agent_id: replace(spec, tools=cls._expand_wildcard(spec.tools))
+            for agent_id, spec in cls._agents.items()
+        }
+        cls._finalized = True
+
+    @classmethod
+    def _resolved(cls, spec: AgentSpec | None) -> AgentSpec | None:
+        if spec is None or cls._finalized:
+            return spec
+        return replace(spec, tools=cls._expand_wildcard(spec.tools))
+
+    @classmethod
     def get(cls, agent_id: str) -> AgentSpec | None:
-        return cls._agents.get(agent_id)
+        return cls._resolved(cls._agents.get(agent_id))
 
     @classmethod
     def list_all(cls) -> list[AgentSpec]:
-        return list(cls._agents.values())
+        return [cls._resolved(spec) for spec in cls._agents.values()]
 
     @classmethod
     def list_enabled(cls) -> list[AgentSpec]:
-        return [a for a in cls._agents.values() if a.enabled]
+        return [spec for spec in cls.list_all() if spec.enabled]
 
     @classmethod
     def enable(cls, agent_id: str) -> None:
         spec = cls._agents.get(agent_id)
         if spec:
-            spec.enabled = True
+            cls._agents[agent_id] = replace(spec, enabled=True)
 
     @classmethod
     def disable(cls, agent_id: str) -> None:
         spec = cls._agents.get(agent_id)
         if spec:
-            spec.enabled = False
+            cls._agents[agent_id] = replace(spec, enabled=False)
 
     @classmethod
     def init_presets(cls) -> None:
+        if cls._finalized:
+            return
         # ── 更新现有 Agent (Story 13) ─────────────────────────
         cls.register(AgentSpec(
             agent_id=AGENT_TRANSLATOR,

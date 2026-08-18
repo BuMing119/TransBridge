@@ -11,7 +11,7 @@ import time
 import unittest
 from types import SimpleNamespace
 
-from src.transbridge.smart_assistant.tools.task_manager import TaskManager
+from transbridge.smart_assistant.tools.task_manager import TaskManager
 
 
 class TestTaskManagerPauseResume(unittest.TestCase):
@@ -118,7 +118,7 @@ class TestStopTaskActionParameter(unittest.TestCase):
                                translation_scope={}, safe_mutate=lambda fn: fn())
 
     def test_g1_stop_task_action_pause(self):
-        from src.transbridge.smart_assistant.tools.tool_translator import _tool_stop_task
+        from transbridge.smart_assistant.tools.tool_translator import _tool_stop_task
         tid = self.tm.register()
         self._test_ids.append(tid)
         result = _tool_stop_task({"task_id": tid, "action": "pause"}, self._mock_ctx())
@@ -127,7 +127,7 @@ class TestStopTaskActionParameter(unittest.TestCase):
         self.assertEqual(status["status"], "paused")
 
     def test_g2_stop_task_action_resume(self):
-        from src.transbridge.smart_assistant.tools.tool_translator import _tool_stop_task
+        from transbridge.smart_assistant.tools.tool_translator import _tool_stop_task
         tid = self.tm.register()
         self._test_ids.append(tid)
         self.tm.pause(tid)
@@ -137,7 +137,7 @@ class TestStopTaskActionParameter(unittest.TestCase):
         self.assertEqual(status["status"], "running")
 
     def test_g3_stop_task_action_stop_default(self):
-        from src.transbridge.smart_assistant.tools.tool_translator import _tool_stop_task
+        from transbridge.smart_assistant.tools.tool_translator import _tool_stop_task
         tid = self.tm.register()
         self._test_ids.append(tid)
         result = _tool_stop_task({"task_id": tid}, self._mock_ctx())
@@ -146,14 +146,14 @@ class TestStopTaskActionParameter(unittest.TestCase):
         self.assertEqual(status["status"], "cancelled")
 
     def test_g4_stop_task_invalid_action(self):
-        from src.transbridge.smart_assistant.tools.tool_translator import _tool_stop_task
+        from transbridge.smart_assistant.tools.tool_translator import _tool_stop_task
         tid = self.tm.register()
         self._test_ids.append(tid)
         result = _tool_stop_task({"task_id": tid, "action": "invalid"}, self._mock_ctx())
         self.assertFalse(result.success)
 
     def test_g5_stop_task_pause_all(self):
-        from src.transbridge.smart_assistant.tools.tool_translator import _tool_stop_task
+        from transbridge.smart_assistant.tools.tool_translator import _tool_stop_task
         tid1 = self.tm.register()
         tid2 = self.tm.register()
         self._test_ids.extend([tid1, tid2])
@@ -163,7 +163,7 @@ class TestStopTaskActionParameter(unittest.TestCase):
         self.assertEqual(self.tm.get_status(tid2)["status"], "paused")
 
     def test_g6_stop_task_resume_all(self):
-        from src.transbridge.smart_assistant.tools.tool_translator import _tool_stop_task
+        from transbridge.smart_assistant.tools.tool_translator import _tool_stop_task
         tid1 = self.tm.register()
         tid2 = self.tm.register()
         self._test_ids.extend([tid1, tid2])
@@ -175,16 +175,16 @@ class TestStopTaskActionParameter(unittest.TestCase):
         self.assertEqual(self.tm.get_status(tid2)["status"], "running")
 
     def test_g7_stop_task_no_active_tasks_empty_state(self):
-        from src.transbridge.smart_assistant.tools.tool_translator import _tool_stop_task
+        from transbridge.smart_assistant.tools.tool_translator import _tool_stop_task
         _tool_stop_task({"action": "stop"}, self._mock_ctx())
         result = _tool_stop_task({"action": "pause"}, self._mock_ctx())
         self.assertTrue(result.success)
         self.assertEqual(result.data.get("affected_task_ids"), [])
 
     def test_g8_action_label_helper(self):
-        from src.transbridge.smart_assistant.tools.tool_translator import TranslationController
-        from src.transbridge.ui.context import AppContext
-        from src.transbridge.smart_assistant.tools.task_manager import TaskManager
+        from transbridge.smart_assistant.tools.tool_translator import TranslationController
+        from transbridge.ui.context import AppContext
+        from transbridge.smart_assistant.tools.task_manager import TaskManager
         ctrl = TranslationController(AppContext(), TaskManager())
         self.assertIn("停止", ctrl._action_label("stop"))
         self.assertIn("暂停", ctrl._action_label("pause"))

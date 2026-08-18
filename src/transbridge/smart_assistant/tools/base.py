@@ -18,8 +18,8 @@ import logging
 from typing import Callable, Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
-    from src.transbridge.converter.translation_entry import TranslationEntry
+    from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+    from transbridge.converter.translation_entry import TranslationEntry
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +37,9 @@ def _build_guard_chain() -> list | None:
     返回 None 表示护栏模块不可用。
     """
     try:
-        from src.transbridge.smart_assistant.guardrails.permission import PermissionGuard
-        from src.transbridge.smart_assistant.guardrails.input_validator import InputValidationGuard
-        from src.transbridge.smart_assistant.guardrails.output_validator import OutputValidationGuard
+        from transbridge.smart_assistant.guardrails.permission import PermissionGuard
+        from transbridge.smart_assistant.guardrails.input_validator import InputValidationGuard
+        from transbridge.smart_assistant.guardrails.output_validator import OutputValidationGuard
         return [PermissionGuard(), InputValidationGuard(), OutputValidationGuard()]
     except ImportError:
         return None
@@ -52,7 +52,7 @@ def _apply_after_guards(guards: list, step: dict, tool_name: str, success: bool,
     Returns (StepResult, rejection_reason_or_None).
     Extracted from execute_with_guardrails to deduplicate ToolResult/dict branches (m5).
     """
-    from src.transbridge.smart_assistant.execution_engine import StepResult
+    from transbridge.smart_assistant.execution_engine import StepResult
     temp = StepResult(
         step_id="", tool=tool_name, success=success,
         message=message, data=data, duration_ms=0,
@@ -102,7 +102,9 @@ def execute_with_guardrails(spec, args: dict, ctx: ExecutionContext,
         raw_result.message = step_result.message
         if step_result.data is not raw_result.data:
             raw_result.data = step_result.data
-        return raw_result
+        from transbridge.application.security.redaction import SecretRedactor
+
+        return SecretRedactor.default().redact(raw_result)
     elif isinstance(raw_result, dict):
         result = ToolResult(
             success=raw_result.get("success", True),
@@ -117,7 +119,9 @@ def execute_with_guardrails(spec, args: dict, ctx: ExecutionContext,
         result.message = step_result.message
         if step_result.data is not result.data:
             result.data = step_result.data
-        return result
+        from transbridge.application.security.redaction import SecretRedactor
+
+        return SecretRedactor.default().redact(result)
     return raw_result
 
 
@@ -221,16 +225,26 @@ def require_collection(func: Callable) -> Callable:
     return wrapper
 
 
-# ── _TYPE_MAP (M48: 移至模块级避免每次调用重建) ──────────────
+def require_runtime_context(func: Callable) -> Callable:
+    """Reject missing injected context before any controller or side effect runs.
 
-_TYPE_MAP: dict[str, type] = {
-    "str": str, "string": str,
-    "int": int, "integer": int,
-    "float": float, "number": float,
-    "bool": bool, "boolean": bool,
-    "list": list, "array": list,
-    "dict": dict, "object": dict,
-}
+    ``config`` is the legacy ToolResult category mapped by the S02 compatibility
+    adapter to the canonical ``prerequisite`` category.
+    """
+
+    @functools.wraps(func)
+    def wrapper(args: dict, ctx, *rest) -> ToolResult:
+        app_context = getattr(ctx, "app_context", object()) if ctx is not None else None
+        if ctx is None or app_context is None:
+            return ToolResult.fail(
+                "运行上下文未初始化",
+                error_category="config",
+                error_code="RUNTIME_CONTEXT_REQUIRED",
+                recovery_action="inject_runtime_context",
+            )
+        return func(args, ctx, *rest)
+
+    return wrapper
 
 
 # ── @validate_params ────────────────────────────────────────────
@@ -243,30 +257,37 @@ def validate_params(schema: dict) -> Callable:
     支持类型: str, int, float, bool, list, dict
     """
 
+    from transbridge.application.tools.schema import (
+        LegacySchemaConversionError,
+        ToolSchemaError,
+        canonicalize_parameters,
+        validate_arguments,
+    )
+
+    try:
+        canonical_schema = canonicalize_parameters(schema)
+        schema_error = ""
+    except (LegacySchemaConversionError, ToolSchemaError) as exc:
+        canonical_schema = canonicalize_parameters({})
+        schema_error = str(exc)
+
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         def wrapper(args: dict, *rest) -> ToolResult:
-            if not isinstance(args, dict):
-                return ToolResult.fail(f"参数类型错误: 期望 dict，实际 {type(args).__name__}")
-            errors = []
-            for param_name, param_info in schema.items():
-                expected_type_str = param_info.get("type", "str")
-                expected_type = _TYPE_MAP.get(expected_type_str)
-                required = param_info.get("required", True)
-
-                if param_name not in args or args[param_name] is None:
-                    if required:
-                        errors.append(f"缺少必需参数: {param_name}")
-                    continue
-
-                value = args[param_name]
-                if expected_type and not isinstance(value, expected_type):
-                    errors.append(
-                        f"参数类型错误: {param_name} 期望 {expected_type_str}，实际 {type(value).__name__}"
-                    )
-
+            if schema_error:
+                return ToolResult.fail(
+                    f"工具参数能力不可用: {schema_error}",
+                    error_category="config",
+                    error_code="CAPABILITY_UNAVAILABLE",
+                )
+            errors = validate_arguments(canonical_schema, args)
             if errors:
-                return ToolResult.fail(f"参数校验失败: {'; '.join(errors)}")
+                error = errors[0]
+                return ToolResult.fail(
+                    f"参数校验失败 {error.pointer}: {error.message}",
+                    error_category="input",
+                    error_code="ARGUMENT_SCHEMA_INVALID",
+                )
 
             return func(args, *rest)
         return wrapper

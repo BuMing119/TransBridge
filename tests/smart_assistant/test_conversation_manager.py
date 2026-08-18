@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import unittest
 
-from src.transbridge.smart_assistant.conversation_manager import ConversationManager
+from transbridge.smart_assistant.conversation_manager import ConversationManager
 
 
 def _make_msg(role: str, content: str) -> dict:

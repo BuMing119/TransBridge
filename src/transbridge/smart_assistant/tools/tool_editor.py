@@ -6,7 +6,7 @@ Story 03B: 重构为 EditorController 类。
 """
 from __future__ import annotations
 
-from .base import ToolResult, filter_entries, require_collection, validate_params
+from .base import ToolResult, filter_entries, require_collection, require_runtime_context, validate_params
 
 _VALID_STAGES = {0, 1, 2, 3, 5, 9, -1}
 
@@ -55,7 +55,7 @@ _PARAM_SCHEMAS = {
 class EditorController:
     """编辑器控制器：统一管理 editor 命名空间的工具逻辑。"""
 
-    def __init__(self, app_context, task_manager):
+    def __init__(self, app_context=None, task_manager=None):
         self._ctx = app_context
         self._task_mgr = task_manager
 
@@ -371,55 +371,53 @@ class EditorController:
                 data={"assigned_count": len(entries), "filter_total": len(entries)})
 
 
-# ── 惰性初始化 + 模块级 wrapper ──────────────────────────────────
+# ── 无状态 controller + 模块级兼容 wrapper ───────────────────────
 
-_editor_ctrl: EditorController | None = None
-
-
-def _get_editor_controller() -> EditorController:
-    global _editor_ctrl
-    if _editor_ctrl is None:
-        from src.transbridge.ui.context import AppContext
-        from .task_manager import TaskManager
-        _editor_ctrl = EditorController(AppContext(), TaskManager())
-    return _editor_ctrl
+_editor_ctrl = EditorController()
 
 
+@require_runtime_context
 @validate_params(_PARAM_SCHEMAS["set_filters"])
 def _tool_set_filters(args: dict, ctx) -> ToolResult:
-    return _get_editor_controller().set_filters(args, ctx)
+    return _editor_ctrl.set_filters(args, ctx)
 
 
+@require_runtime_context
 @require_collection
 @validate_params(_PARAM_SCHEMAS["get_visible_entries"])
 def _tool_get_visible_entries(args: dict, ctx, collection=None) -> ToolResult:
-    return _get_editor_controller().get_visible_entries(args, ctx, collection)
+    return _editor_ctrl.get_visible_entries(args, ctx, collection)
 
 
+@require_runtime_context
 @validate_params(_PARAM_SCHEMAS["select_entries"])
 def _tool_select_entries(args: dict, ctx) -> ToolResult:
-    return _get_editor_controller().select_entries(args, ctx)
+    return _editor_ctrl.select_entries(args, ctx)
 
 
+@require_runtime_context
 @require_collection
 @validate_params(_PARAM_SCHEMAS["edit_translation"])
 def _tool_edit_translation(args: dict, ctx, collection=None) -> ToolResult:
-    return _get_editor_controller().edit_translation(args, ctx, collection)
+    return _editor_ctrl.edit_translation(args, ctx, collection)
 
 
+@require_runtime_context
 @require_collection
 @validate_params(_PARAM_SCHEMAS["set_stage"])
 def _tool_set_stage(args: dict, ctx, collection=None) -> ToolResult:
-    return _get_editor_controller().set_stage(args, ctx, collection)
+    return _editor_ctrl.set_stage(args, ctx, collection)
 
 
+@require_runtime_context
 def _tool_list_labels(args: dict, ctx) -> ToolResult:
-    return _get_editor_controller().list_labels(args, ctx)
+    return _editor_ctrl.list_labels(args, ctx)
 
 
+@require_runtime_context
 @validate_params(_PARAM_SCHEMAS["manage_entry_labels"])
 def _tool_manage_entry_labels(args: dict, ctx, collection=None) -> ToolResult:
-    return _get_editor_controller().manage_entry_labels(args, ctx, collection)
+    return _editor_ctrl.manage_entry_labels(args, ctx, collection)
 
 
 # ── 注册 ──────────────────────────────────────────────────────

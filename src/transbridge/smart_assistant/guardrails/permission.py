@@ -1,5 +1,7 @@
 import logging
 
+from transbridge.application.tools.contracts import ToolInvocation
+
 from ..tool_registry import ToolRegistry
 from .base import GuardMiddleware, GuardResult
 
@@ -27,13 +29,47 @@ class PermissionGuard(GuardMiddleware):
         # 是否需要弹窗确认，不再依赖 reason 中的 magic string。
         if perm == "write":
             if self._write_require_confirm or getattr(spec, 'require_confirmation', False):
-                return GuardResult(False, "需要写入权限确认", requires_confirmation="write")
+                return self._confirm_or_request(step, ctx, "write")
             return GuardResult(True)
         if perm == "admin":
             if self._enable_admin_confirm:
-                return GuardResult(False, "需要管理级权限确认", requires_confirmation="admin")
+                return self._confirm_or_request(step, ctx, "admin")
             return GuardResult(True)
         return GuardResult(True)
+
+    @staticmethod
+    def _confirm_or_request(step, ctx, level: str) -> GuardResult:
+        request_context = getattr(ctx, "request_context", None)
+        owner_id = (
+            getattr(request_context, "owner_id", "")
+            or getattr(ctx, "owner_id", "")
+        )
+        plan_hash = getattr(ctx, "plan_hash", "")
+        invocation = ToolInvocation(
+            tool_name=step.get("tool", ""),
+            arguments=step.get("args", {}),
+            owner_id=owner_id,
+            plan_hash=plan_hash,
+        )
+        authority = getattr(ctx, "confirmation_authority", None)
+        token = getattr(ctx, "confirmation_token", None)
+        if authority is None or token is None:
+            label = "写入" if level == "write" else "管理级"
+            return GuardResult(
+                False,
+                f"需要{label}权限确认",
+                requires_confirmation=level,
+                code="CONFIRMATION_REQUIRED",
+            )
+        decision = authority.consume(
+            token,
+            owner_id=owner_id,
+            request_hash=invocation.request_hash,
+        )
+        ctx.confirmation_token = None
+        if decision.allowed:
+            return GuardResult(True, code=decision.code)
+        return GuardResult(False, decision.reason, code=decision.code)
 
     def after_execute(self, step, result, ctx) -> GuardResult:
         return GuardResult(True)

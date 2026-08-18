@@ -1,6 +1,6 @@
 """Story 04: 工具提示词分层加载 — 单元测试。"""
 import pytest
-from src.transbridge.smart_assistant.tool_registry import (
+from transbridge.smart_assistant.tool_registry import (
     ToolSpec, ToolRegistry, _levenshtein_distance,
 )
 
@@ -8,7 +8,7 @@ from src.transbridge.smart_assistant.tool_registry import (
 @pytest.fixture(scope="module", autouse=True)
 def _ensure_tools_registered():
     """确保所有工具已注册（模块级，只执行一次）。"""
-    from src.transbridge.smart_assistant.tools import register_all
+    from transbridge.smart_assistant.tools import register_all
     register_all()
 
 
@@ -156,7 +156,7 @@ def test_build_tool_help_with_params_shows_table():
 # ── build_system_prompt 新结构 ───────────────────────────────
 
 def test_build_system_prompt_has_layered_structure():
-    from src.transbridge.smart_assistant.prompts import build_system_prompt
+    from transbridge.smart_assistant.prompts import build_system_prompt
     prompt = build_system_prompt(context="test")
     assert "核心工具" in prompt
     assert "工具发现" in prompt
@@ -165,21 +165,21 @@ def test_build_system_prompt_has_layered_structure():
 
 
 def test_build_system_prompt_no_old_guide():
-    from src.transbridge.smart_assistant.prompts import build_system_prompt
+    from transbridge.smart_assistant.prompts import build_system_prompt
     prompt = build_system_prompt()
     assert "工具选择指南" not in prompt
     assert "易混淆工具对" not in prompt
 
 
 def test_build_system_prompt_has_preloaded():
-    from src.transbridge.smart_assistant.prompts import build_system_prompt
+    from transbridge.smart_assistant.prompts import build_system_prompt
     prompt = build_system_prompt()
     assert "get_app_state" in prompt
     assert "get_statistics" in prompt
 
 
 def test_build_system_prompt_has_routing_table():
-    from src.transbridge.smart_assistant.prompts import build_system_prompt
+    from transbridge.smart_assistant.prompts import build_system_prompt
     prompt = build_system_prompt()
     assert "用户意图关键词" in prompt
     assert "加载命名空间" in prompt
@@ -197,18 +197,18 @@ def test_get_tool_help_registered():
 
 
 def test_get_tool_help_execute_single_tool():
-    from src.transbridge.smart_assistant.tools.tool_default import _tool_get_tool_help
+    from transbridge.smart_assistant.tools.tool_default import _tool_get_tool_help
     result = _tool_get_tool_help({"tool": "get_app_state"}, None)
     assert "get_app_state" in result.data["help"]
 
 
 def test_get_tool_help_execute_namespace():
-    from src.transbridge.smart_assistant.tools.tool_default import _tool_get_tool_help
+    from transbridge.smart_assistant.tools.tool_default import _tool_get_tool_help
     result = _tool_get_tool_help({"namespace": "default"}, None)
     assert "get_app_state" in result.data["help"]
 
 
 def test_get_tool_help_execute_empty():
-    from src.transbridge.smart_assistant.tools.tool_default import _tool_get_tool_help
+    from transbridge.smart_assistant.tools.tool_default import _tool_get_tool_help
     result = _tool_get_tool_help({}, None)
     assert "工具概览" in result.data["help"]

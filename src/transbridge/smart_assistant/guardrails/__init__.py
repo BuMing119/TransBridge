@@ -1,7 +1,7 @@
 from .base import GuardMiddleware, GuardResult
-from .permission import PermissionGuard
 from .input_validator import InputValidationGuard
 from .output_validator import OutputValidationGuard, sanitize_for_storage
+from .permission import PermissionGuard
 
 __all__ = [
     "GuardMiddleware",

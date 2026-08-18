@@ -2,7 +2,7 @@ import logging
 import threading
 import time
 
-from src.transbridge.smart_assistant.workers.async_worker import AsyncWorker
+from transbridge.smart_assistant.workers.async_worker import AsyncWorker
 
 logger = logging.getLogger(__name__)
 

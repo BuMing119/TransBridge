@@ -14,8 +14,8 @@ from unittest.mock import MagicMock
 
 from tests.conftest import make_entry, MockAppContext
 
-from src.transbridge.ai_translator.post_processor.base import PostProcessResult
-from src.transbridge.smart_assistant.tools.base import ExecutionContext
+from transbridge.ai_translator.post_processor.base import PostProcessResult
+from transbridge.smart_assistant.tools.base import ExecutionContext
 
 
 class TestReportSystem(unittest.TestCase):
@@ -23,13 +23,13 @@ class TestReportSystem(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from src.transbridge.smart_assistant.tools.tool_proofreader import ProofreaderController
-        from src.transbridge.ui.context import AppContext
-        from src.transbridge.smart_assistant.tools.task_manager import TaskManager
+        from transbridge.smart_assistant.tools.tool_proofreader import ProofreaderController
+        from transbridge.ui.context import AppContext
+        from transbridge.smart_assistant.tools.task_manager import TaskManager
         cls.tpr = ProofreaderController(AppContext(), TaskManager())
 
     def setUp(self):
-        import src.transbridge.smart_assistant.tools.tool_proofreader as tpr_mod
+        import transbridge.smart_assistant.tools.tool_proofreader as tpr_mod
         tpr_mod.set_last_report(None)
 
     # ── _summarize_refine_results ──
@@ -176,7 +176,7 @@ class TestReportSystem(unittest.TestCase):
     # ── list_quality_reports ──
 
     def test_d14_list_quality_reports_no_esp_path(self):
-        from src.transbridge.smart_assistant.tools.tool_proofreader import (
+        from transbridge.smart_assistant.tools.tool_proofreader import (
             _tool_list_quality_reports,
         )
         ctx = MockAppContext(collection=None)
@@ -190,7 +190,7 @@ class TestReportSystem(unittest.TestCase):
         self.assertNotIn("directory", result.data)
 
     def test_d15_list_quality_reports_nonexistent_directory(self):
-        from src.transbridge.smart_assistant.tools.tool_proofreader import (
+        from transbridge.smart_assistant.tools.tool_proofreader import (
             _tool_list_quality_reports,
         )
         ctx = MockAppContext(collection=None)
@@ -202,7 +202,7 @@ class TestReportSystem(unittest.TestCase):
         self.assertEqual(result.data["files"], [])
 
     def test_d16_list_quality_reports_with_limit(self):
-        from src.transbridge.smart_assistant.tools.tool_proofreader import (
+        from transbridge.smart_assistant.tools.tool_proofreader import (
             _tool_list_quality_reports,
         )
         ctx = MockAppContext(collection=None)
@@ -219,7 +219,7 @@ class TestLastReportIntegrity(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        import src.transbridge.smart_assistant.tools.tool_proofreader as tpr_mod
+        import transbridge.smart_assistant.tools.tool_proofreader as tpr_mod
         cls.tpr_mod = tpr_mod
 
     def setUp(self):
@@ -229,7 +229,7 @@ class TestLastReportIntegrity(unittest.TestCase):
         self.tpr_mod.set_last_report(None)
 
     def test_e1_get_quality_report_no_report(self):
-        from src.transbridge.smart_assistant.tools.tool_proofreader import (
+        from transbridge.smart_assistant.tools.tool_proofreader import (
             _tool_get_quality_report,
         )
         ctx = MockAppContext()
@@ -273,7 +273,7 @@ class TestLastReportIntegrity(unittest.TestCase):
             "timestamp": time.time(),
         })
 
-        from src.transbridge.smart_assistant.tools.tool_proofreader import (
+        from transbridge.smart_assistant.tools.tool_proofreader import (
             _tool_get_quality_report,
         )
         ctx = MockAppContext()
@@ -316,7 +316,7 @@ class TestLastReportIntegrity(unittest.TestCase):
             "timestamp": time.time(),
         })
 
-        from src.transbridge.smart_assistant.tools.tool_proofreader import (
+        from transbridge.smart_assistant.tools.tool_proofreader import (
             _tool_get_quality_report,
         )
         ctx = MockAppContext()
@@ -368,7 +368,7 @@ class TestLastReportIntegrity(unittest.TestCase):
             "timestamp": time.time(),
         })
 
-        from src.transbridge.smart_assistant.tools.tool_proofreader import (
+        from transbridge.smart_assistant.tools.tool_proofreader import (
             _tool_get_quality_report,
         )
         ctx = MockAppContext()

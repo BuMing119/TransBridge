@@ -5,13 +5,13 @@ FR13 Story 01: SessionManager 后端 + ConversationManager 序列化。
 from __future__ import annotations
 
 import json
-import tempfile
 from pathlib import Path
+import tempfile
 
 import pytest
 
-from src.transbridge.smart_assistant.session_manager import SessionManager
-from src.transbridge.smart_assistant.conversation_manager import ConversationManager
+from transbridge.smart_assistant.conversation_manager import ConversationManager
+from transbridge.smart_assistant.session_manager import SessionManager
 
 
 class TestSessionManagerCRUD:
@@ -32,7 +32,7 @@ class TestSessionManagerCRUD:
         assert mgr.count() == 1
 
     def test_create_session_auto_name(self, mgr):
-        sid = mgr.create_session()
+        mgr.create_session()
         sessions = mgr.list_sessions()
         assert len(sessions) == 1
         assert sessions[0]["name"] == "新对话"
@@ -66,6 +66,9 @@ class TestSessionManagerCRUD:
         assert data["name"] == "完整测试"
         assert data["project_name"] == "TestProject"
         assert len(data["messages"]) == 2
+        assert data["recovery"] == "degraded"
+        assert data["persistence_format"] == "legacy-messages-only"
+        assert "backend_history_unavailable" in data["degradation_reasons"]
 
     def test_get_session_updates_last_active(self, mgr):
         sid = mgr.create_session("活跃测试")

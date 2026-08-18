@@ -6,17 +6,23 @@ ADR-008 (D13-D14): 后端纯 Python，零 PyQt6 依赖。
 """
 from __future__ import annotations
 
+from datetime import datetime
 import json
 import logging
 import os
-import uuid
-from datetime import datetime
 from pathlib import Path
 from typing import Any
+import uuid
 
 logger = logging.getLogger(__name__)
 
 _SESSIONS_DIR_NAME = "sessions"
+_LEGACY_DEGRADATION_REASONS = (
+    "backend_history_unavailable",
+    "controller_state_unavailable",
+    "owner_scope_unavailable",
+    "task_refs_unavailable",
+)
 
 
 class SessionManager:
@@ -47,6 +53,9 @@ class SessionManager:
             "last_active_at": now,
             "project_name": project_name,
             "message_count": 0,
+            "recovery": "degraded",
+            "degradation_reasons": list(_LEGACY_DEGRADATION_REASONS),
+            "persistence_format": "legacy-messages-only",
         }
         # 写入空会话文件
         data = dict(meta, messages=[])
@@ -85,7 +94,7 @@ class SessionManager:
             del self._cache[session_id]
             return None
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = _mark_legacy_degraded(json.loads(path.read_text(encoding="utf-8")))
             # 更新活跃时间
             data["last_active_at"] = datetime.now().isoformat()
             self._cache[session_id] = {k: v for k, v in data.items() if k != "messages"}
@@ -151,7 +160,7 @@ class SessionManager:
         try:
             for f in sorted(self._dir.glob("*.json")):
                 try:
-                    data = json.loads(f.read_text(encoding="utf-8"))
+                    data = _mark_legacy_degraded(json.loads(f.read_text(encoding="utf-8")))
                     sid = data.get("session_id", f.stem)
                     self._cache[sid] = {
                         "session_id": sid,
@@ -160,9 +169,23 @@ class SessionManager:
                         "last_active_at": data.get("last_active_at", ""),
                         "project_name": data.get("project_name", ""),
                         "message_count": len(data.get("messages", [])),
+                        "recovery": data["recovery"],
+                        "degradation_reasons": data["degradation_reasons"],
+                        "persistence_format": data["persistence_format"],
                     }
                 except (json.JSONDecodeError, OSError) as exc:
                     logger.warning("SessionManager: 跳过损坏文件 %s: %s", f.name, exc)
         except OSError as exc:
             logger.warning("SessionManager: 扫描目录失败: %s", exc)
         logger.info("SessionManager: 已加载 %d 个会话", len(self._cache))
+
+
+def _mark_legacy_degraded(data: dict[str, Any]) -> dict[str, Any]:
+    """Never expose a messages-only facade record as a full Session recovery."""
+    marked = dict(data)
+    marked["recovery"] = "degraded"
+    reasons = set(str(value) for value in marked.get("degradation_reasons", ()))
+    reasons.update(_LEGACY_DEGRADATION_REASONS)
+    marked["degradation_reasons"] = sorted(reasons)
+    marked["persistence_format"] = "legacy-messages-only"
+    return marked

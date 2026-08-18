@@ -1,13 +1,13 @@
 """Story 07: MCP 模块测试 — auth / tools/list / tools/call / 错误处理。"""
 from __future__ import annotations
 
-import json
+from importlib import import_module
 import unittest
 
 
 class FakeToolRegistry:
     def get(self, name, namespace=None):
-        from src.transbridge.smart_assistant.tool_registry import ToolSpec
+        from transbridge.smart_assistant.tool_registry import ToolSpec
         return ToolSpec(name=name, display_name=name, description="fake", parameters={})
 
 
@@ -15,7 +15,7 @@ class TestMCPAuth(unittest.TestCase):
     """MCP Server 认证逻辑测试。"""
 
     def setUp(self):
-        from src.transbridge.smart_assistant.mcp.server import MCPServer
+        from transbridge.smart_assistant.mcp.server import MCPServer
         self.server = MCPServer(FakeToolRegistry())
 
     def _make_request(self, auth=""):
@@ -48,9 +48,9 @@ class TestMCPToolHandling(unittest.TestCase):
 
     def setUp(self):
         # 确保工具已注册
-        import src.transbridge.smart_assistant.tools.tool_default
-        import src.transbridge.smart_assistant.tools.tool_translator
-        from src.transbridge.smart_assistant.tool_registry import ToolRegistry
+        from transbridge.smart_assistant.tool_registry import ToolRegistry
+        import_module("transbridge.smart_assistant.tools.tool_default")
+        import_module("transbridge.smart_assistant.tools.tool_translator")
         self.registry = ToolRegistry
 
     def test_tools_list_not_empty(self):

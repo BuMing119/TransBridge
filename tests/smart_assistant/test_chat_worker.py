@@ -55,7 +55,7 @@ class TestChatWorker(unittest.TestCase):
     # ── 流式响应 ──────────────────────────────────────────────────
 
     def test_streaming_chunks(self):
-        from src.transbridge.smart_assistant.chat_worker import ChatWorker
+        from transbridge.smart_assistant.chat_worker import ChatWorker
         client = MockLLMClient(chunks=["A", "B", "C"])
         worker = ChatWorker(client, [{"role": "user", "content": "hi"}])
         self._connect_worker(worker)
@@ -70,7 +70,7 @@ class TestChatWorker(unittest.TestCase):
         self.assertEqual(self._finished, ["ABC"])
 
     def test_streaming_full_text(self):
-        from src.transbridge.smart_assistant.chat_worker import ChatWorker
+        from transbridge.smart_assistant.chat_worker import ChatWorker
         client = MockLLMClient(chunks=["Hello", " ", "World", "!"])
         worker = ChatWorker(client, [{"role": "user", "content": "test"}])
         self._connect_worker(worker)
@@ -83,7 +83,7 @@ class TestChatWorker(unittest.TestCase):
     # ── 错误处理 ──────────────────────────────────────────────────
 
     def test_error_signal_on_failure(self):
-        from src.transbridge.smart_assistant.chat_worker import ChatWorker
+        from transbridge.smart_assistant.chat_worker import ChatWorker
         client = MockLLMClient(should_fail=True, fail_msg="Connection timeout")
         worker = ChatWorker(client, [{"role": "user", "content": "test"}])
         self._connect_worker(worker)
@@ -94,7 +94,7 @@ class TestChatWorker(unittest.TestCase):
         self.assertIn("timeout", self._errors[0].lower())
 
     def test_no_finished_on_error(self):
-        from src.transbridge.smart_assistant.chat_worker import ChatWorker
+        from transbridge.smart_assistant.chat_worker import ChatWorker
         client = MockLLMClient(should_fail=True, fail_msg="Server error")
         worker = ChatWorker(client, [{"role": "user", "content": "test"}])
         self._connect_worker(worker)
@@ -106,7 +106,7 @@ class TestChatWorker(unittest.TestCase):
     # ── 取消 ──────────────────────────────────────────────────────
 
     def test_cancel_stops_streaming(self):
-        from src.transbridge.smart_assistant.chat_worker import ChatWorker
+        from transbridge.smart_assistant.chat_worker import ChatWorker
         # 大量 chunk 以便有机会在中间 cancel
         chunks = [f"chunk_{i}" for i in range(100)]
         client = MockLLMClient(chunks=chunks)
@@ -122,7 +122,7 @@ class TestChatWorker(unittest.TestCase):
     # ── 空消息 ───────────────────────────────────────────────────
 
     def test_empty_chunks(self):
-        from src.transbridge.smart_assistant.chat_worker import ChatWorker
+        from transbridge.smart_assistant.chat_worker import ChatWorker
         client = MockLLMClient(chunks=[""])  # 至少一个空chunk确保finished触发
         worker = ChatWorker(client, [{"role": "user", "content": "test"}])
         self._connect_worker(worker)

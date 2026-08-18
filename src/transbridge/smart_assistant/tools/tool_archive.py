@@ -36,7 +36,7 @@ _PARAM_SCHEMAS = {
 
 def _tool_extract_archive(args: dict, ctx) -> ToolResult:
     try:
-        from src.transbridge.fileops.archive import extract
+        from transbridge.fileops.archive import extract
         result = extract(
             args["archive_path"], args["dest_dir"],
             files=args.get("files"),
@@ -51,7 +51,7 @@ def _tool_extract_archive(args: dict, ctx) -> ToolResult:
 
 def _tool_pack_archive(args: dict, ctx) -> ToolResult:
     try:
-        from src.transbridge.fileops.archive import pack
+        from transbridge.fileops.archive import pack
         out = pack(
             args["src_dir"], args["archive_path"],
             fmt=args.get("fmt", "zip"),
@@ -63,7 +63,7 @@ def _tool_pack_archive(args: dict, ctx) -> ToolResult:
 
 def _tool_diff_directories(args: dict, ctx) -> ToolResult:
     try:
-        from src.transbridge.fileops.differ import diff_directories
+        from transbridge.fileops.differ import diff_directories
         skip = set(args.get("skip_hash_exts") or [])
         result = diff_directories(args["old_dir"], args["new_dir"], skip_hash_exts=skip)
         data = result.to_dict()
@@ -78,7 +78,7 @@ def _tool_diff_directories(args: dict, ctx) -> ToolResult:
 
 def _tool_filter_files(args: dict, ctx) -> ToolResult:
     try:
-        from src.transbridge.fileops.filter_rules import FilterRules, filter_files
+        from transbridge.fileops.filter_rules import FilterRules, filter_files
         rules = FilterRules.from_json(args["rules_json"]) if "rules_json" in args else FilterRules()
         kept, stripped = filter_files(args["files"], rules)
         return ToolResult.ok(

@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.transbridge.smart_assistant.memory.memory_store import MemoryStore, MemoryEntry
+from transbridge.smart_assistant.memory.memory_store import MemoryStore, MemoryEntry
 
 
 class TestMemoryStore(unittest.TestCase):

@@ -1,4 +1,6 @@
-from .server import MCPServer
-from .adapter import MCPAdapter
+"""Legacy import facade for the headless MCP transport."""
 
-__all__ = ["MCPServer", "MCPAdapter"]
+from .adapter import MCPAdapter, MCPInvalidParams
+from .server import MCPServer
+
+__all__ = ["MCPAdapter", "MCPInvalidParams", "MCPServer"]

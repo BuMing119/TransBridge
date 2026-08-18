@@ -14,7 +14,7 @@ def _create_plugin_writer(slot):
 
     返回 (writer, None) 或 (None, ToolResult) 表示失败。
     """
-    from src.transbridge.writer.plugin_writer import PluginWriter
+    from transbridge.writer.plugin_writer import PluginWriter
     plugin = slot.plugin
     if plugin is None:
         return None, ToolResult.fail("当前槽位无已解析的插件")
@@ -44,7 +44,7 @@ def _write_to_esp_impl(slot, collection, path):
 def _write_to_eet_impl(collection, path):
     """写回译文到 EET XML 文件。"""
     try:
-        from src.transbridge.writer.eet_xml_writer import EETWriter
+        from transbridge.writer.eet_xml_writer import EETWriter
         writer = EETWriter()
         writer.write(collection, path)
         return ToolResult.ok("已写回译文到 EET XML", data={"path": path})
@@ -55,7 +55,7 @@ def _write_to_eet_impl(collection, path):
 def _write_to_xt_impl(collection, path):
     """写回译文到 XT XML 文件。"""
     try:
-        from src.transbridge.writer.xt_xml_writer import XTWriter
+        from transbridge.writer.xt_xml_writer import XTWriter
         writer = XTWriter()
         writer.write(collection, path)
         return ToolResult.ok("已写回译文到 XT XML", data={"path": path})
@@ -153,7 +153,7 @@ def _register_writer_tools():
     from ..tool_registry import ToolRegistry
     ToolRegistry.register_tools("writer", [
         {"name": "write_back", "display_name": "写回译文",
-         "description": "①将译文写回源文件。②参数: target(必填, esp/eet/xt/strings), path(可选, 不传则用ctx已解析路径), output_dir(仅target=strings时可用)。③返回: esp→{written_count,path}, strings→{written_count,strings_files}, eet/xt→{path}。规则: 需用户确认(admin权限), 长运行操作, esp/strings目标需先parse_esp, eet/xt目标需先parse_eet/parse_xt, path拒绝../和绝对路径, target推断可通过get_app_state查看esp_file/eet_file/xt_file",
+         "description": "①将译文写回源文件。②参数: target(必填, esp/eet/xt/strings), path(可选, 不传则用ctx已解析路径), output_dir(仅target=strings时可用)。③返回: esp→{written_count,path}, strings→{written_count,strings_files}, eet/xt→{path}。规则: 需用户确认(admin权限), 长运行操作, esp/strings目标需先parse_esp, eet/xt目标需先parse_eet/parse_xt, path仅允许RuntimeContext授权根内规范化路径, target推断可通过get_app_state查看esp_file/eet_file/xt_file",
          "execute": _tool_write_back, "permission": "admin", "require_confirmation": True,
          "is_long_running": True, "parameters": _PARAM_SCHEMAS.get("write_back", {})},
     ])
