@@ -5,7 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from transbridge.application.projects import ActiveProject, LifecycleEvent, ProjectLifecycleService
+from transbridge.application.projects import (
+    ActiveProject,
+    LifecycleEvent,
+    ProjectLifecycleService,
+    variant_catalog,
+)
 from transbridge.application.sessions import SessionLifecycleService, SessionSnapshot
 
 from .models import ProjectionSnapshot
@@ -18,9 +23,12 @@ def project_projection(active: ActiveProject | None) -> ProjectionSnapshot | Non
     summary = active.summary()
     variant = None if active.variant is None else active.variant.snapshot()
     values: dict[str, Any] = dict(summary)
+    variants = variant_catalog(active.project)
     values.update({
         "project_name": str(active.project.envelope.data.get("name", "")),
+        "sources": [dict(value) for value in active.project.envelope.data.get("sources", ())],
         "active_variant_id": active.project.envelope.data.get("active_variant_id"),
+        "variants": [item.to_dict() for item in variants],
         "entries": [] if variant is None else [entry.to_dict() for entry in variant.entries],
         "label_library": ({} if variant is None else variant.to_dto().envelope.data.get("label_library", {})),
     })

@@ -145,6 +145,8 @@ class LifecycleActivation:
     candidate_variant_ref: VariantRef | None
     candidate_variant: VariantSnapshot | None
     source_ref: str | None
+    write_candidate_project: bool = True
+    write_candidate_variant: bool = True
 
     @classmethod
     def capture(
@@ -161,6 +163,15 @@ class LifecycleActivation:
             None if candidate is None else candidate.formal_variant_ref,
             None if candidate is None or candidate.variant is None else candidate.variant.snapshot(),
             None if candidate is None else candidate.source_ref,
+            (
+                candidate is not None
+                and candidate.project.envelope.revision != candidate.persisted_project_revision
+            ),
+            (
+                candidate is not None
+                and candidate.variant is not None
+                and candidate.variant.revision != candidate.persisted_variant_revision
+            ),
         )
 
 
@@ -197,6 +208,8 @@ def project_with_active_variant(project: ProjectDto, variant_ref: VariantRef | N
     variant_ids = tuple(str(value) for value in data["variant_ids"])
     if active_id is not None and active_id not in variant_ids:
         raise ValueError("active Variant must be declared by the Project")
+    if data.get("active_variant_id") == active_id:
+        return _clone_project(project)
     data["active_variant_id"] = active_id
     envelope = project.envelope
     return ProjectDto(

@@ -78,6 +78,26 @@ def test_v2_loader_prepares_isolated_clean_candidate_from_verified_baseline() ->
     assert not candidate.dirty
 
 
+def test_v2_loader_marks_materialized_content_change_for_persistence() -> None:
+    project_ref, variant_ref, project, _stored, baseline = _records()
+    stored = VariantSnapshot(variant_ref, (), (), revision=8)
+    loader = V2ProjectCandidateLoader(
+        _Repository(LoadedRecord(project_ref, project, "project-hash")),
+        _Repository(LoadedRecord(variant_ref, stored.to_dto(), "variant-hash")),
+        lambda _project, _variant, _context: (baseline,),
+    )
+
+    candidate = loader.prepare_candidate(
+        TransitionTarget(project_ref, variant_ref),
+        RequestContext(owner_id="owner", run_id="run"),
+    )
+
+    assert candidate.variant is not None
+    assert candidate.variant.snapshot().entries == baseline.entries
+    assert candidate.persisted_variant_revision is None
+    assert candidate.dirty
+
+
 def test_v2_loader_refuses_fingerprint_conflict_without_blind_local_key_overlay() -> None:
     project_ref, variant_ref, project, stored, baseline = _records()
     changed = SourceBaseline(

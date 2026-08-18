@@ -357,13 +357,20 @@ class VariantMaterializer:
                 FingerprintMigrationPlan(tuple(conflicts)),
             )
 
-        desired = {entry.entry_key: entry for baseline in baseline_map.values() for entry in baseline.entries}
+        baseline_entries = {
+            namespace: {entry.entry_key: entry for entry in baseline.entries}
+            for namespace, baseline in baseline_map.items()
+        }
+        desired = {
+            entry_key: entry
+            for entries in baseline_entries.values()
+            for entry_key, entry in entries.items()
+        }
         for entry in snapshot.entries:
-            baseline = baseline_map.get(entry.entry_key.namespace)
-            if baseline is None:
+            source_entries = baseline_entries.get(entry.entry_key.namespace)
+            if source_entries is None:
                 continue
-            baseline_entries = {item.entry_key: item for item in baseline.entries}
-            baseline_entry = baseline_entries.get(entry.entry_key)
+            baseline_entry = source_entries.get(entry.entry_key)
             if baseline_entry is None:
                 diagnostics.append(
                     _warning(

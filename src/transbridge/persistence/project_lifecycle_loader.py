@@ -65,12 +65,13 @@ class V2ProjectCandidateLoader:
         stored = self._load_variant(target, context)
         baselines = self._baseline_provider(project, target.variant_ref, context)
         materialized = self._materialize(stored, baselines, context)
+        persisted_variant_revision = stored.revision if materialized == stored else None
         return ActiveProject(
             project=project,
             variant=VariantAggregate(materialized),
             formal_variant_ref=target.variant_ref,
             persisted_project_revision=project.envelope.revision,
-            persisted_variant_revision=materialized.revision,
+            persisted_variant_revision=persisted_variant_revision,
             source_ref=target.snapshot_ref,
         )
 

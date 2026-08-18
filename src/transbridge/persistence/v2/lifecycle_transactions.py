@@ -63,10 +63,14 @@ class ProjectLifecycleTransactionStore:
                 if mutation.variant is not None and mutation.formal_variant_ref is not None:
                     self._variants.save(mutation.formal_variant_ref, mutation.variant.to_dto())
             elif isinstance(mutation, LifecycleActivation):
-                if mutation.candidate_project is not None:
+                if mutation.candidate_project is not None and mutation.write_candidate_project:
                     project_ref = ProjectRef(ProjectId(mutation.candidate_project.envelope.identity))
                     self._projects.save(project_ref, mutation.candidate_project)
-                if mutation.candidate_variant is not None and mutation.candidate_variant_ref is not None:
+                if (
+                    mutation.candidate_variant is not None
+                    and mutation.candidate_variant_ref is not None
+                    and mutation.write_candidate_variant
+                ):
                     self._variants.save(
                         mutation.candidate_variant_ref,
                         mutation.candidate_variant.to_dto(),

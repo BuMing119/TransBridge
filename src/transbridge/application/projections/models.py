@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from copy import deepcopy
 from dataclasses import dataclass
-import json
+import math
 from typing import Any
 
 from transbridge.application.contracts import Diagnostic
@@ -84,12 +83,7 @@ class ProjectionDecision:
 
 
 def _freeze_mapping(values: Mapping[str, Any]) -> Mapping[str, Any]:
-    copied = deepcopy(dict(values))
-    try:
-        json.dumps(copied, allow_nan=False)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("projection values must contain finite JSON values") from exc
-    return _FrozenMapping(tuple(sorted((str(key), _freeze_value(value)) for key, value in copied.items())))
+    return _FrozenMapping(tuple(sorted((str(key), _freeze_value(value)) for key, value in values.items())))
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,11 +109,15 @@ class _FrozenArray:
 
 
 def _freeze_value(value: Any) -> Any:
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return _freeze_mapping(value)
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
         return _FrozenArray(tuple(_freeze_value(item) for item in value))
-    return deepcopy(value)
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float) and math.isfinite(value):
+        return value
+    raise ValueError("projection values must contain finite JSON values")
 
 
 def _thaw_mapping(values: Mapping[str, Any]) -> dict[str, Any]:
@@ -131,7 +129,7 @@ def _thaw_value(value: Any) -> Any:
         return _thaw_mapping(value)
     if isinstance(value, _FrozenArray):
         return [_thaw_value(item) for item in value.values]
-    return deepcopy(value)
+    return value
 
 
 __all__ = [

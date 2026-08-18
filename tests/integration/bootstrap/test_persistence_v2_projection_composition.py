@@ -7,7 +7,7 @@ from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.application.projects import DirtyDecision
 from transbridge.bootstrap import build_runtime
 from transbridge.bootstrap.persistence import build_persistence_v2_services
-from transbridge.persistence.current_project import CurrentProjectActivator
+from transbridge.persistence.current_project import PROJECT_FILE_FILTER, CurrentProjectOpener
 from transbridge.persistence.v2 import (
     ProjectDto,
     ProjectId,
@@ -115,6 +115,39 @@ def test_variant_gui_commands_make_dirty_from_revision_then_save_clears_it(tmp_p
     assert clean.to_dict()["values"]["entries"][0]["translation"] == "new"
 
 
+def test_v2_variant_catalog_create_copy_switch_and_delete(tmp_path: Path) -> None:
+    ids = _Ids()
+    services = build_persistence_v2_services(
+        tmp_path,
+        id_factory=ids,
+        timestamp_factory=lambda: "2026-08-18T00:00:00+00:00",
+    )
+    project_ref, original_ref, baseline = _records(services)
+    services.baselines.register(project_ref, original_ref, (baseline,))
+    context = RequestContext("gui", run_id="catalog")
+    assert services.gui_project_commands.switch_v2(project_ref, original_ref, context).is_success
+
+    created = services.gui_project_commands.create_variant("空白版", context)
+    created_id = str(created.value["id"])
+    changed = services.gui_project_commands.update_entry("entry-a", context, translation="copied")
+    saved = services.gui_project_commands.save(context)
+    copied = services.gui_project_commands.create_variant("复制版", context, copy_active=True)
+    copied_id = str(copied.value["id"])
+    deleted = services.gui_project_commands.delete_variant(created_id, context)
+    projection = services.project_projection.snapshot().to_dict()["values"]
+
+    assert created.is_success
+    assert changed.is_success and saved.is_success and copied.is_success and deleted.is_success
+    assert projection["project_name"] == "Project A"
+    assert [(item["id"], item["name"]) for item in projection["variants"]] == [
+        (original_ref.identity.value, "默认"),
+        (copied_id, "复制版"),
+    ]
+    assert projection["active_variant_id"] == copied_id
+    assert projection["entries"][0]["translation"] == "copied"
+    assert not Path(services.variants.path_for(VariantRef(VariantId(created_id), project_ref.identity))).exists()
+
+
 def test_session_gui_commands_publish_only_committed_full_conversation(tmp_path: Path) -> None:
     ids = _Ids()
     services = build_persistence_v2_services(
@@ -172,18 +205,14 @@ def test_runtime_registers_real_v2_services_and_releases_projection_subscription
     assert subscription.closed
 
 
-def test_current_active_pointer_restores_without_legacy_identity_mapping(tmp_path: Path) -> None:
+def test_current_project_file_opens_but_variant_file_is_rejected(tmp_path: Path, monkeypatch) -> None:
     services = build_persistence_v2_services(
         tmp_path,
         id_factory=_Ids(),
         timestamp_factory=lambda: "2026-08-18T00:00:00+00:00",
     )
     project_ref, variant_ref, baseline = _records(services)
-    (tmp_path / "active-project.json").write_text(
-        '{"schema_version":1,"project_id":"project-a","variant_id":"variant-a","source_ref":null}',
-        encoding="utf-8",
-    )
-    activator = CurrentProjectActivator(
+    opener = CurrentProjectOpener(
         str(tmp_path),
         services.projects,
         services.variants,
@@ -191,10 +220,44 @@ def test_current_active_pointer_restores_without_legacy_identity_mapping(tmp_pat
         services.gui_project_commands,
         baseline_loader=lambda source, context: baseline,
     )
+    context = RequestContext("gui", run_id="open")
 
-    restored = activator.restore(RequestContext("gui", run_id="restore"))
+    prepared = opener.prepare_path(services.projects.path_for(project_ref), context)
 
-    assert restored.is_success
+    assert prepared.is_success
+    assert services.project_lifecycle.active is None
+
+    project_saves: list[object] = []
+    variant_saves: list[object] = []
+    monkeypatch.setattr(services.projects, "save", lambda *args: project_saves.append(args))
+    monkeypatch.setattr(services.variants, "save", lambda *args: variant_saves.append(args))
+
+    opened = opener.activate(prepared.value, context)
+    rejected = opener.prepare_path(services.variants.path_for(variant_ref), context)
+
+    assert opened.is_success
+    assert opened.value["name"] == "Project A"
     assert services.project_lifecycle.active is not None
-    assert services.project_lifecycle.active.project_ref == project_ref
-    assert services.project_lifecycle.active.formal_variant_ref == variant_ref
+    assert project_saves == []
+    assert variant_saves == []
+    assert rejected.diagnostics[0].code == "PROJECT_RECORD_REQUIRED"
+    assert "*.json" in PROJECT_FILE_FILTER
+
+    (tmp_path / "active-project.json").write_text(
+        '{"schema_version":1,"project_id":"project-a","variant_id":"variant-a","source_ref":null}',
+        encoding="utf-8",
+    )
+    active_prepared = opener.prepare_active(RequestContext("gui", run_id="restore"))
+    assert active_prepared.is_success
+
+
+def test_default_runtime_uses_unversioned_data_root(tmp_path: Path, monkeypatch) -> None:
+    import transbridge.bootstrap.composition as composition
+
+    monkeypatch.setattr(composition, "get_data_dir", lambda: tmp_path)
+    runtime = build_runtime()
+    services = runtime.use_cases.resolve("persistence_v2")
+
+    assert services.root == str(tmp_path.resolve())
+    assert runtime.use_cases.resolve("current_project_opener") is services.current_project_opener
+    runtime.close()

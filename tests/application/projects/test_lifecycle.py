@@ -219,6 +219,26 @@ def _prepare_token(result) -> str:
     return result.value["token"]
 
 
+def test_activation_capture_skips_clean_candidate_record_rewrites() -> None:
+    project_ref, variant_ref = _refs("project-a", "variant-a")
+    clean = _active(project_ref, variant_ref, revision=7, persisted_revision=7)
+
+    activation = LifecycleActivation.capture(None, clean)
+
+    assert not activation.write_candidate_project
+    assert not activation.write_candidate_variant
+
+
+def test_activation_capture_writes_only_dirty_candidate_records() -> None:
+    project_ref, variant_ref = _refs("project-a", "variant-a")
+    dirty_variant = _active(project_ref, variant_ref, revision=8, persisted_revision=7)
+
+    activation = LifecycleActivation.capture(None, dirty_variant)
+
+    assert not activation.write_candidate_project
+    assert activation.write_candidate_variant
+
+
 def test_cancel_dirty_transition_has_zero_save_load_or_pointer_side_effects() -> None:
     old_project, old_variant = _refs("old-project", "old-variant")
     new_project, new_variant = _refs("new-project", "new-variant")

@@ -4,14 +4,25 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import replace
+import hashlib
 from typing import Any
 
-from transbridge.application.contracts import OperationOutcome, OperationResult, RequestContext
+from transbridge.application.contracts import (
+    Diagnostic,
+    DiagnosticSeverity,
+    DomainError,
+    ErrorCategory,
+    OperationOutcome,
+    OperationResult,
+    RequestContext,
+)
 from transbridge.application.io.stage_policy import Stage
 from transbridge.persistence.v2.baselines import LegacyIdentityRegistry
-from transbridge.persistence.v2.ids import ProjectRef, VariantRef
-from transbridge.persistence.v2.variant import VariantChangeSet
+from transbridge.persistence.v2.ids import ProjectRef, VariantId, VariantRef
+from transbridge.persistence.v2.models import LoadedRecord, ProjectDto
+from transbridge.persistence.v2.variant import VariantChangeSet, VariantSnapshot
 
+from .catalog import project_with_added_variant, project_without_variant, variant_catalog
 from .lifecycle import ProjectLifecycleService
 from .models import DirtyDecision, TransitionTarget
 
@@ -22,10 +33,19 @@ class GuiProjectCommandFacade:
         lifecycle: ProjectLifecycleService,
         legacy_identities: LegacyIdentityRegistry,
         projection_rebuild: Callable[[], None] | None = None,
+        *,
+        projects=None,
+        variants=None,
+        baselines=None,
+        id_factory: Callable[[], str] | None = None,
     ) -> None:
         self._lifecycle = lifecycle
         self._legacy_identities = legacy_identities
         self._projection_rebuild = projection_rebuild
+        self._projects = projects
+        self._variants = variants
+        self._baselines = baselines
+        self._id_factory = id_factory
 
     def switch_v2(
         self,
@@ -71,6 +91,115 @@ class GuiProjectCommandFacade:
         if result.is_success and self._projection_rebuild is not None:
             self._projection_rebuild()
         return result
+
+    def create_variant(
+        self,
+        name: str,
+        context: RequestContext,
+        *,
+        copy_active: bool = False,
+    ) -> OperationResult[dict[str, Any]]:
+        """Create a named Variant, then activate it through the lifecycle boundary."""
+
+        try:
+            active = self._catalog_active()
+            if active.dirty:
+                raise DomainError(
+                    ErrorCategory.PREREQUISITE,
+                    "ACTIVE_SAVE_REQUIRED",
+                    "请先保存当前版本，再创建或复制版本。",
+                )
+            assert active.variant is not None and active.formal_variant_ref is not None
+            baselines = self._baselines.provide(active.project, active.formal_variant_ref, context)
+            new_ref = self._new_variant_ref(active.project_ref)
+            if copy_active:
+                source = active.variant.snapshot()
+                snapshot = VariantSnapshot(
+                    new_ref,
+                    source.source_fingerprints,
+                    source.entries,
+                    0,
+                    source.label_library,
+                )
+            else:
+                snapshot = VariantSnapshot(
+                    new_ref,
+                    tuple(item.fingerprint for item in baselines),
+                    tuple(entry for item in baselines for entry in item.entries),
+                )
+            updated_project = project_with_added_variant(active.project, new_ref, name)
+            self._variants.save(new_ref, snapshot.to_dto())
+            try:
+                self._projects.save(active.project_ref, updated_project)
+            except Exception:
+                self._variants.delete(new_ref)
+                raise
+            self._baselines.register(active.project_ref, new_ref, baselines)
+            switched = self.switch_v2(active.project_ref, new_ref, context)
+            if not switched.is_success:
+                return switched
+            descriptor = next(
+                item for item in variant_catalog(updated_project) if item.variant_id == new_ref.identity.value
+            )
+            return OperationResult.completed(descriptor.to_dict(), run_id=context.run_id)
+        except Exception as exc:  # noqa: BLE001
+            return OperationResult.from_exception(exc, run_id=context.run_id)
+
+    def delete_variant(self, variant_id: str, context: RequestContext) -> OperationResult[dict[str, Any]]:
+        """Remove a Variant from the Project catalog, retaining one active Variant."""
+
+        try:
+            active = self._catalog_active()
+            if active.dirty:
+                raise DomainError(
+                    ErrorCategory.PREREQUISITE,
+                    "ACTIVE_SAVE_REQUIRED",
+                    "请先保存当前版本，再删除版本。",
+                )
+            catalog = variant_catalog(active.project)
+            target = next((item for item in catalog if item.variant_id == variant_id), None)
+            if target is None:
+                raise DomainError(ErrorCategory.INPUT, "VARIANT_NOT_FOUND", "指定版本不存在。")
+            if len(catalog) <= 1:
+                raise DomainError(
+                    ErrorCategory.PREREQUISITE,
+                    "LAST_VARIANT_REQUIRED",
+                    "项目必须至少保留一个版本。",
+                )
+            target_ref = VariantRef(VariantId(variant_id), active.project_ref.identity)
+            if active.formal_variant_ref == target_ref:
+                replacement = next(item for item in catalog if item.variant_id != variant_id)
+                replacement_ref = VariantRef(VariantId(replacement.variant_id), active.project_ref.identity)
+                switched = self.switch_v2(active.project_ref, replacement_ref, context)
+                if not switched.is_success:
+                    return switched
+                active = self._catalog_active()
+
+            updated_project = project_without_variant(active.project, variant_id)
+            self._projects.save(active.project_ref, updated_project)
+            assert active.formal_variant_ref is not None
+            refreshed = self.switch_v2(active.project_ref, active.formal_variant_ref, context)
+            if not refreshed.is_success:
+                return refreshed
+            self._baselines.remove(active.project_ref, target_ref)
+            diagnostics: tuple[Diagnostic, ...] = ()
+            try:
+                self._variants.delete(target_ref)
+            except Exception:  # The catalog is authoritative; an orphan is safe but should be reported.
+                diagnostics = (
+                    Diagnostic(
+                        "VARIANT_RECORD_CLEANUP_FAILED",
+                        "版本已从项目中删除，但未能清理孤立的数据文件。",
+                        DiagnosticSeverity.WARNING,
+                    ),
+                )
+            return OperationResult.completed(
+                {"id": target.variant_id, "name": target.name},
+                diagnostics=diagnostics,
+                run_id=context.run_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return OperationResult.from_exception(exc, run_id=context.run_id)
 
     def update_entry(
         self,
@@ -159,6 +288,39 @@ class GuiProjectCommandFacade:
             )
         except Exception as exc:  # noqa: BLE001
             return OperationResult.from_exception(exc, run_id=context.run_id)
+
+    def _catalog_active(self):
+        if any(value is None for value in (self._projects, self._variants, self._baselines, self._id_factory)):
+            raise DomainError(
+                ErrorCategory.PREREQUISITE,
+                "VARIANT_CATALOG_UNAVAILABLE",
+                "版本目录服务未配置。",
+            )
+        active = self._lifecycle.active
+        if active is None or active.variant is None or active.formal_variant_ref is None:
+            raise DomainError(ErrorCategory.PREREQUISITE, "ACTIVE_VARIANT_REQUIRED", "请先打开一个项目版本。")
+        loaded = self._projects.load(active.project_ref)
+        if not isinstance(loaded, LoadedRecord) or not isinstance(loaded.value, ProjectDto):
+            raise DomainError(ErrorCategory.PREREQUISITE, "PROJECT_RECORD_UNAVAILABLE", "项目记录不可用。")
+        if loaded.value.envelope.revision != active.persisted_project_revision:
+            raise DomainError(
+                ErrorCategory.CONFLICT,
+                "PROJECT_CATALOG_STALE",
+                "项目版本目录已被其他操作修改，请重新打开项目。",
+            )
+        return active
+
+    def _new_variant_ref(self, project_ref: ProjectRef) -> VariantRef:
+        existing = {item.variant_id for item in variant_catalog(self._lifecycle.active.project)}
+        for _ in range(8):
+            raw = str(self._id_factory())
+            candidate = f"variant-{raw}"
+            if len(candidate) > 64:
+                candidate = f"variant-{hashlib.sha256(raw.encode()).hexdigest()[:24]}"
+            ref = VariantRef(VariantId(candidate), project_ref.identity)
+            if ref.identity.value not in existing:
+                return ref
+        raise RuntimeError("unable to allocate a unique Variant ID")
 
 
 __all__ = ["GuiProjectCommandFacade"]

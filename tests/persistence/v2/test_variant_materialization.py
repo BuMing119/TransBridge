@@ -302,3 +302,31 @@ def test_new_source_uses_baseline_and_is_diagnostic() -> None:
         "VARIANT_SOURCE_ADDED",
     }
     assert aggregate.snapshot().entries == (baseline_state,)
+
+
+def test_materialization_indexes_each_source_baseline_once() -> None:
+    """Large Variants must not rebuild the full source index for every stored entry."""
+
+    class CountingEntries:
+        def __init__(self, values):
+            self.values = tuple(values)
+            self.iterations = 0
+
+        def __iter__(self):
+            self.iterations += 1
+            return iter(self.values)
+
+    ref = _ref()
+    namespace, fingerprint = _source("esp", "5" * 64)
+    states = tuple(_state(namespace, f"entry-{index}") for index in range(200))
+    counted = CountingEntries(states)
+    baseline = SourceBaseline(fingerprint, counted)  # type: ignore[arg-type]
+    counted.iterations = 0
+    snapshot = VariantSnapshot(ref, (fingerprint,), states)
+    aggregate = VariantAggregate(VariantSnapshot(ref, (fingerprint,), ()))
+
+    result = VariantMaterializer().materialize(snapshot, (baseline,), aggregate, _context(ref))
+
+    assert result.committed
+    assert counted.iterations == 1
+    assert len(aggregate.snapshot().entries) == len(states)

@@ -43,14 +43,11 @@ class ProjectionStore:
 
     def snapshot(self) -> ProjectionSnapshot | None:
         with self._lock:
-            if self._snapshot is None:
-                return None
-            return ProjectionSnapshot(
-                self._snapshot.stream_id,
-                self._snapshot.revision,
-                self._snapshot.persisted_revision,
-                self._snapshot.to_dict()["values"],
-            )
+            # ProjectionSnapshot recursively freezes JSON values. Returning the
+            # immutable instance avoids rebuilding large entry projections for
+            # every listener/read; callers still receive mutable copies through
+            # ProjectionSnapshot.to_dict().
+            return self._snapshot
 
     @property
     def listener_count(self) -> int:

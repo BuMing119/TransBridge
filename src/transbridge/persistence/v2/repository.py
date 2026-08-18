@@ -144,6 +144,14 @@ class JsonRepository[RefT, DtoT]:
         )
         return LoadedRecord(ref, validated, digest)
 
+    def delete(self, ref: RefT) -> None:
+        """Delete one validated record after its owning aggregate dropped the reference."""
+
+        self._check_ref(ref)
+        path = self.path_for(ref)
+        self._assert_writable_destination(ref, path)
+        self._filesystem.remove(path, missing_ok=False)
+
     def _assert_writable_destination(self, ref: RefT, path: str) -> None:
         if not self._filesystem.exists(path):
             return
