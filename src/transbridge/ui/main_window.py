@@ -92,13 +92,14 @@ class _ApiStatusIndicator(QLabel):
 
 
 class _AutoSaveManager(QObject):
-    """管理自动保存：QTimer 定时器 + 防抖。"""
+    """管理自动保存：连续编辑停止后静默保存。"""
 
-    def __init__(self, main_window, parent=None):
+    def __init__(self, main_window, parent=None, *, debounce_ms: int = 10_000):
         super().__init__(parent)
         self._mw = main_window
+        self._debounce_ms = debounce_ms
         self._interval_timer = QTimer(self)
-        self._interval_timer.timeout.connect(self._auto_save)
+        self._interval_timer.timeout.connect(self.trigger_debounce)
         self._debounce_timer = QTimer(self)
         self._debounce_timer.setSingleShot(True)
         self._debounce_timer.timeout.connect(self._auto_save)
@@ -111,34 +112,23 @@ class _AutoSaveManager(QObject):
         self._debounce_timer.stop()
 
     def trigger_debounce(self):
-        """操作触发防抖——重启 2s 定时器。"""
-        self._debounce_timer.start(2000)
+        """每次内容变化都重启空闲窗口；clean 状态取消排队保存。"""
+        if not self._mw._ctx.dirty:
+            self._debounce_timer.stop()
+            return
+        self._debounce_timer.start(self._debounce_ms)
 
     def _auto_save(self):
         ctx = self._mw._ctx
         vs = ctx.variant_store
-        if vs is None or not vs.dirty:
+        if ctx.uses_authoritative_projection:
+            if not ctx.dirty:
+                return
+        elif vs is None or not vs.dirty:
             return
-        try:
-            if ctx.collection:
-                wb = getattr(self._mw, '_workbench', None)
-                step2 = getattr(wb, '_step2', None) if wb else None
-                labels, label_lib = ({}, {})
-                if step2:
-                    labels, label_lib = step2.collect_labels()
-                vs.collect_from(list(ctx.collection), labels, label_lib)
-            vs.save()
-            vs.dirty = False
-            # 更新保存按钮状态
-            try:
-                self._mw._workbench._project_bar.set_save_dirty(False)
-            except Exception:
-                pass
-            self._mw.show_message("已自动保存")
-        except Exception as e:
-            import sys, traceback
-            print(f"[自动保存失败] {e}", file=sys.stderr)
-            traceback.print_exc()
+        accepted = self._mw._save_current_project_async(automatic=True)
+        if not accepted and ctx.dirty:
+            self._debounce_timer.start(self._debounce_ms)
 
 
 class MainWindow(QMainWindow):
@@ -164,8 +154,8 @@ class MainWindow(QMainWindow):
         self._project_commands = (
             None if runtime is None else runtime.use_cases.resolve("gui_project_commands")
         )
-        self._current_project = (
-            None if runtime is None else runtime.use_cases.resolve("current_project")
+        self._current_project_opener = (
+            None if runtime is None else runtime.use_cases.resolve("current_project_opener")
         )
         self._session_commands = (
             None if runtime is None else runtime.use_cases.resolve("gui_session_commands")
@@ -175,6 +165,12 @@ class MainWindow(QMainWindow):
         )
         self._legacy_mapping_key: str | None = None
         self._workers: list[ApiWorker] = []
+        self._foreground_worker: ApiWorker | None = None
+        self._project_open_worker: ApiWorker | None = None
+        self._save_worker: ApiWorker | None = None
+        self._save_callbacks: list = []
+        self._close_pending = False
+        self._close_ready = False
         self._assistant_panel = None
 
         self._setup_op_cards()
@@ -203,30 +199,61 @@ class MainWindow(QMainWindow):
         self._auto_saver = _AutoSaveManager(self)
         self._auto_saver.start()
         self._ctx.dirty_changed.connect(self._auto_saver.trigger_debounce)
-        self._ctx.dirty_changed.connect(lambda: self._workbench._project_bar.set_save_dirty(True))
+        self._ctx.dirty_changed.connect(
+            lambda: self._workbench._project_bar.set_save_dirty(self._ctx.dirty)
+        )
 
     def closeEvent(self, event):
-        # 保存持久化状态
+        if self._close_ready:
+            super().closeEvent(event)
+            return
+
+        event.ignore()
+        if self._close_pending:
+            return
+        self._close_pending = True
+        self._auto_saver.stop()
+        self._workbench.show_step2_progress(0, "正在保存并关闭…")
+
+        if self._project_open_worker is not None and self._project_open_worker.isRunning():
+            self._project_open_worker.finished.connect(self._begin_background_close)
+        elif self._foreground_worker is not None and self._foreground_worker.isRunning():
+            self._foreground_worker.finished.connect(self._begin_background_close)
+        else:
+            self._begin_background_close()
+
+    def _begin_background_close(self) -> None:
+        if self._project_open_worker is not None and self._project_open_worker.isRunning():
+            self._project_open_worker.finished.connect(self._begin_background_close)
+            return
+        if self._foreground_worker is not None and self._foreground_worker.isRunning():
+            self._foreground_worker.finished.connect(self._begin_background_close)
+            return
+        if not self._save_current_project_async(on_finished=self._finish_background_close):
+            QTimer.singleShot(0, self._begin_background_close)
+
+    def _finish_background_close(self, saved: bool) -> None:
+        if not saved:
+            self._close_pending = False
+            self._workbench.setEnabled(True)
+            self._workbench.hide_step2_progress()
+            self._auto_saver.start()
+            QMessageBox.warning(self, "无法关闭", "项目保存失败，窗口保持打开以避免数据丢失。")
+            return
         try:
-            self._save_current_project()
             self._save_workspace_session()
             if self._ctx.workspace:
                 self._ctx.workspace.save()
-        except Exception:
-            import traceback
-            traceback.print_exc()
-
-        if self._assistant_panel and hasattr(self._assistant_panel.chat, '_worker') and self._assistant_panel.chat._worker:
-            w = self._assistant_panel.chat._worker
-            if w.is_alive():
-                w.cancel()
-                w.join(timeout=3)
-
-        settings = QSettings("TransBridge", "MainWindow")
-        settings.setValue("geometry", self.saveGeometry())
-        settings.setValue("state", self.saveState())
-        self._ctx.close_projection()
-        super().closeEvent(event)
+            settings = QSettings("TransBridge", "MainWindow")
+            settings.setValue("geometry", self.saveGeometry())
+            settings.setValue("state", self.saveState())
+            if self._assistant_panel is not None:
+                self._assistant_panel.chat.shutdown(wait_for_worker=False)
+            self._ctx.close_projection()
+        finally:
+            self._workbench.hide_step2_progress()
+            self._close_ready = True
+            self.close()
 
     def _restore_state(self):
         settings = QSettings("TransBridge", "MainWindow")
@@ -1017,23 +1044,17 @@ class MainWindow(QMainWindow):
         self._ctx.workspace = ws
 
         if self._ctx.uses_authoritative_projection:
-            if self._current_project is None or self._runtime_context is None:
-                self.show_message("当前项目恢复服务不可用。")
+            if self._current_project_opener is None or self._runtime_context is None:
+                self.show_message("当前项目打开服务不可用。")
                 return
-            restored = self._current_project.restore(self._runtime_context)
-            if not restored.is_success:
-                diagnostic = restored.diagnostics[0]
-                self.show_message(f"{diagnostic.code}: {diagnostic.message}")
-                return
-            services = self._app_runtime.use_cases.resolve("persistence_v2")
-            active_state = services.project_lifecycle.active
-            if active_state is not None:
-                for source in active_state.project.envelope.data.get("sources", ()):
-                    if source.get("type") == "esp" and source.get("path"):
-                        self._restore_parse_esp(source["path"])
-                self.show_message(
-                    f"项目「{active_state.project.envelope.data.get('name', '')}」已恢复"
-                )
+            from transbridge.application.projects import DirtyDecision
+
+            self._start_current_project_open(
+                lambda: self._current_project_opener.prepare_active(self._runtime_context),
+                dirty_decision=DirtyDecision.SAVE,
+                success_verb="已恢复",
+                show_error_dialog=False,
+            )
             return
 
         active = ws.active_project
@@ -1042,35 +1063,43 @@ class MainWindow(QMainWindow):
             return
 
         proj_path = PathLib(ws.projects[active])
-        proj = ProjectHandle.load(proj_path)
-        if not proj.name:
-            ws.active_project = None
-            ws.save()
-            self.show_message(f"上次项目「{active}」的配置文件不存在或已损坏")
-            return
-
-        self._ctx.active_project = proj
-        self._ctx.active_variant = proj.active_variant
-
-        variant_name = proj.active_variant
-        vs = None
-        if variant_name and proj.has_variant(variant_name):
-            vs_path = proj.variant_dir(variant_name) / "current.json"
-            vs = VariantStore.load(vs_path)
-            self._ctx.variant_store = vs
-            if self._ctx.collection:
-                count = vs.apply_to(list(self._ctx.collection))
-                self.show_message(f"项目「{proj.name}」已恢复，版本「{variant_name}」，恢复 {count} 条译文")
-
-        # 解析项目源文件
-        for src in proj.sources:
-            if src.get("type") == "esp" and src.get("path"):
-                self._restore_parse_esp(src["path"])
-
-        # 异步恢复筛选状态（等待解析完成后应用）
         filter_state = ws.last_session.get("filter_state", {})
-        if filter_state:
-            QTimer.singleShot(3000, lambda: self._apply_saved_filter_state(filter_state))
+
+        def _prepare_restore():
+            project = ProjectHandle.load(proj_path)
+            if not project.name:
+                raise ValueError(f"上次项目「{active}」的配置文件不存在或已损坏")
+            variant_store = None
+            variant_name = project.active_variant
+            if variant_name and project.has_variant(variant_name):
+                variant_store = VariantStore.load(
+                    project.variant_dir(variant_name) / "current.json"
+                )
+            return project, variant_store
+
+        def _activate_restore(result) -> None:
+            project, variant_store = result
+            self._ctx.active_project = project
+            self._ctx.active_variant = project.active_variant
+            self._ctx.variant_store = variant_store
+            if variant_store is not None and self._ctx.collection:
+                count = variant_store.apply_to(list(self._ctx.collection))
+                self.show_message(
+                    f"项目「{project.name}」已恢复，版本「{project.active_variant}」，"
+                    f"恢复 {count} 条译文"
+                )
+            for source in project.sources:
+                if source.get("type") == "esp" and source.get("path"):
+                    self._restore_parse_esp(source["path"])
+            if filter_state:
+                QTimer.singleShot(3000, lambda: self._apply_saved_filter_state(filter_state))
+
+        self._start_foreground_task(
+            _prepare_restore,
+            message="正在恢复上次项目…",
+            on_result=_activate_restore,
+            on_error=lambda error: self.show_message(error),
+        )
 
     def _save_workspace_session(self):
         """关闭前保存会话状态。"""
@@ -1133,60 +1162,289 @@ class MainWindow(QMainWindow):
 
     def _on_open_project(self):
         """弹出打开项目对话框。"""
+        from transbridge.persistence.current_project import PROJECT_FILE_FILTER
+
+        initial_directory = (
+            str(PERSISTENCE_ROOT)
+            if self._current_project_opener is None
+            else self._current_project_opener.directory
+        )
         path, _ = QFileDialog.getOpenFileName(
-            self, "打开项目文件", str(PERSISTENCE_ROOT),
-            "Project JSON (project.json);;所有文件 (*)"
+            self,
+            "打开项目文件",
+            initial_directory,
+            PROJECT_FILE_FILTER,
         )
         if not path:
             return
 
         if self._ctx.uses_authoritative_projection:
-            self._activate_legacy_project(path)
+            if self._current_project_opener is None or self._runtime_context is None:
+                self.show_message("当前项目打开服务不可用。")
+                return
+            dirty_decision = None
+            if self._ctx.dirty:
+                from transbridge.application.projects import DirtyDecision
+
+                answer = QMessageBox.question(
+                    self,
+                    "保存确认",
+                    "当前项目有未保存修改。打开其他项目前是否保存？",
+                    QMessageBox.StandardButton.Yes
+                    | QMessageBox.StandardButton.No
+                    | QMessageBox.StandardButton.Cancel,
+                )
+                if answer == QMessageBox.StandardButton.Cancel:
+                    return
+                dirty_decision = (
+                    DirtyDecision.SAVE
+                    if answer == QMessageBox.StandardButton.Yes
+                    else DirtyDecision.DISCARD
+                )
+            self._start_current_project_open(
+                lambda: self._current_project_opener.prepare_path(path, self._runtime_context),
+                dirty_decision=dirty_decision,
+                success_verb="已打开",
+            )
             return
 
-        try:
-            proj = ProjectHandle.load(PathLib(path))
-        except FileNotFoundError:
-            QMessageBox.warning(self, "错误", f"文件不存在: {path}")
+        def _prepare_legacy_project():
+            project = ProjectHandle.load(PathLib(path))
+            variant_store = None
+            variant_name = project.active_variant
+            if variant_name and project.has_variant(variant_name):
+                variant_store = VariantStore.load(
+                    project.variant_dir(variant_name) / "current.json"
+                )
+            return project, variant_store
+
+        def _activate_legacy(result) -> None:
+            project, variant_store = result
+            workspace = self._ctx.workspace or WorkspaceState.load(workspace_path())
+            workspace.add_project(project.name, PathLib(path))
+            workspace.save()
+            self._ctx.workspace = workspace
+            self._ctx.active_project = project
+            self._ctx.active_variant = project.active_variant
+            self._ctx.variant_store = variant_store
+            if variant_store is not None and self._ctx.collection:
+                variant_store.apply_to(list(self._ctx.collection))
+            for source in project.sources:
+                if source.get("type") == "esp" and source.get("path"):
+                    self._restore_parse_esp(source["path"])
+
+        def _start_legacy_open(saved: bool) -> None:
+            if saved:
+                self._start_foreground_task(
+                    _prepare_legacy_project,
+                    message="正在加载项目…",
+                    on_result=_activate_legacy,
+                    on_error=lambda error: QMessageBox.warning(
+                        self,
+                        "无法读取项目文件",
+                        error,
+                    ),
+                )
+
+        self._save_current_project_async(on_finished=_start_legacy_open)
+
+    def _start_current_project_open(
+        self,
+        prepare,
+        *,
+        dirty_decision,
+        success_verb: str,
+        show_error_dialog: bool = True,
+    ) -> None:
+        """Prepare a current Project off the GUI thread, then commit on the GUI thread."""
+
+        if self._project_open_worker is not None and self._project_open_worker.isRunning():
+            self.show_message("已有项目正在后台打开，请稍候。")
             return
-        except Exception as e:
-            QMessageBox.warning(self, "错误", f"无法读取项目文件: {e}")
+        if self._save_worker is not None and self._save_worker.isRunning():
+            self.show_message("项目仍在保存，请稍候再打开其他项目。")
             return
+        self._workbench.show_step2_progress(0, "正在校验项目源文件…")
 
-        # 保存当前项目（如果有）
-        self._save_current_project()
+        def _show_failure(code: str, message: str) -> None:
+            self.show_message(f"{code}: {message}")
+            if show_error_dialog:
+                QMessageBox.warning(self, "无法打开项目", message)
 
-        # 加载新项目
-        ws = self._ctx.workspace or WorkspaceState.load(workspace_path())
-        ws.add_project(proj.name, PathLib(path))
-        ws.save()
-        self._ctx.workspace = ws
-        self._ctx.active_project = proj
-        self._ctx.active_variant = proj.active_variant
+        def _prepare_and_activate():
+            prepared = prepare()
+            if not prepared.is_success or prepared.value is None:
+                return prepared
+            return self._current_project_opener.activate(
+                prepared.value,
+                self._runtime_context,
+                dirty_decision=dirty_decision,
+            )
 
-        variant_name = proj.active_variant
-        if variant_name and proj.has_variant(variant_name):
-            vs = VariantStore.load(proj.variant_dir(variant_name) / "current.json")
-            self._ctx.variant_store = vs
-            if self._ctx.collection:
-                vs.apply_to(list(self._ctx.collection))
+        def _on_opened(opened):
+            self._workbench.hide_step2_progress()
+            if not opened.is_success or opened.value is None:
+                diagnostic = opened.diagnostics[0]
+                _show_failure(diagnostic.code, diagnostic.message)
+                return
+            for source in opened.value["sources"]:
+                if source.get("type") == "esp" and source.get("path"):
+                    self._restore_parse_esp(source["path"])
+            self.show_message(f"项目「{opened.value['name']}」{success_verb}")
 
-        # 解析源文件
-        for src in proj.sources:
-            if src.get("type") == "esp" and src.get("path"):
-                self._restore_parse_esp(src["path"])
+        def _on_prepare_error(message):
+            self._workbench.hide_step2_progress()
+            _show_failure("PROJECT_PREPARE_FAILED", message)
+
+        worker = ApiWorker(_prepare_and_activate)
+        worker.result.connect(_on_opened)
+        worker.error.connect(_on_prepare_error)
+        worker.finished.connect(
+            lambda: setattr(self, "_project_open_worker", None)
+            if self._project_open_worker is worker
+            else None
+        )
+        self._project_open_worker = worker
+        worker.start()
+        self._workers.append(worker)
+
+    def _start_foreground_task(
+        self,
+        fn,
+        *,
+        message: str,
+        on_result=None,
+        on_error=None,
+        on_finished=None,
+        disable_workbench: bool = True,
+    ) -> bool:
+        """Run one visible disk task without blocking the GUI event loop."""
+
+        if (
+            self._foreground_worker is not None
+            and self._foreground_worker.isRunning()
+        ) or (self._save_worker is not None and self._save_worker.isRunning()) or (
+            self._project_open_worker is not None and self._project_open_worker.isRunning()
+        ):
+            self.show_message("另一项后台操作仍在进行，请稍候。")
+            return False
+        self._workbench.show_step2_progress(0, message)
+        if disable_workbench:
+            self._workbench.setEnabled(False)
+        worker = ApiWorker(fn, route_http_errors=False)
+        self._foreground_worker = worker
+        outcome: dict[str, object] = {}
+
+        worker.result.connect(lambda result: outcome.__setitem__("result", result))
+        worker.error.connect(lambda error: outcome.__setitem__("error", error))
+
+        def _cleanup() -> None:
+            if self._foreground_worker is worker:
+                self._foreground_worker = None
+                self._workbench.hide_step2_progress()
+                if disable_workbench:
+                    self._workbench.setEnabled(True)
+            if "error" in outcome:
+                error = str(outcome["error"])
+                if on_error is not None:
+                    on_error(error)
+                else:
+                    self.show_message(f"后台操作失败：{error}")
+            elif "result" in outcome and on_result is not None:
+                on_result(outcome["result"])
+            if on_finished is not None:
+                on_finished()
+
+        worker.finished.connect(_cleanup)
+        worker.start()
+        self._workers.append(worker)
+        return True
 
     def _save_current_project(self):
-        """保存当前项目的 VariantStore 和 ProjectHandle。"""
+        """同步保存实现；仅允许从后台 worker 调用。"""
         if self._ctx.uses_authoritative_projection:
             if self._project_commands is not None and self._runtime_context is not None:
-                self._project_commands.save(self._runtime_context)
-            return
+                return self._project_commands.save(self._runtime_context)
+            return None
         ctx = self._ctx
         if ctx.variant_store and ctx.variant_store.dirty:
             ctx.variant_store.save()
         if ctx.active_project:
             ctx.active_project.save()
+        return ctx.variant_store
+
+    def _save_current_project_async(self, *, automatic: bool = False, on_finished=None) -> bool:
+        """Queue one Project save and coalesce callers while it is active."""
+
+        if self._foreground_worker is not None and self._foreground_worker.isRunning():
+            if not automatic:
+                self.show_message("另一项后台操作仍在进行，请稍候。")
+            return False
+        if self._project_open_worker is not None and self._project_open_worker.isRunning():
+            if not automatic:
+                self.show_message("项目仍在打开，请稍候。")
+            return False
+        if on_finished is not None:
+            self._save_callbacks.append(on_finished)
+        if self._save_worker is not None and self._save_worker.isRunning():
+            return True
+
+        ctx = self._ctx
+        save_fn = self._save_current_project
+        if not ctx.uses_authoritative_projection and ctx.variant_store is not None and ctx.collection:
+            variant_store = ctx.variant_store
+            step2 = getattr(self._workbench, "_step2", None)
+            labels, label_library = step2.collect_labels() if step2 else ({}, {})
+            entries = list(ctx.collection)
+            active_project = ctx.active_project
+
+            def save_fn():
+                variant_store.collect_from(entries, labels, label_library)
+                variant_store.save()
+                if active_project is not None:
+                    active_project.save()
+                return variant_store
+
+        if not automatic:
+            self._workbench.show_step2_progress(0, "正在保存项目…")
+            self._workbench.setEnabled(False)
+        worker = ApiWorker(save_fn, route_http_errors=False)
+        self._save_worker = worker
+        save_succeeded = False
+
+        def _on_saved(result) -> None:
+            nonlocal save_succeeded
+            if hasattr(result, "is_success") and not result.is_success:
+                diagnostic = result.diagnostics[0]
+                self.show_message(f"{diagnostic.code}: {diagnostic.message}")
+                return
+            save_succeeded = True
+            self._workbench._project_bar.set_save_dirty(False)
+            if not automatic:
+                self._workbench._project_bar.flash_saved()
+            if not automatic:
+                self.show_message("项目已保存")
+
+        def _on_error(error: str) -> None:
+            self.show_message(f"保存失败：{error}")
+
+        def _on_done() -> None:
+            if self._save_worker is worker:
+                self._save_worker = None
+            if not automatic and self._foreground_worker is None:
+                self._workbench.hide_step2_progress()
+            if not automatic and not self._close_pending:
+                self._workbench.setEnabled(True)
+            callbacks, self._save_callbacks = self._save_callbacks, []
+            for callback in callbacks:
+                callback(save_succeeded)
+
+        worker.result.connect(_on_saved)
+        worker.error.connect(_on_error)
+        worker.finished.connect(_on_done)
+        worker.start()
+        self._workers.append(worker)
+        return True
 
     def _restore_parse_esp(self, esp_path: str):
         """后台解析 ESP 源文件（启动恢复用，不阻塞 UI）。"""
@@ -1199,10 +1457,14 @@ class MainWindow(QMainWindow):
             entries = parser.parse_plugin(PathLib(esp_path))
             if self._ctx.uses_authoritative_projection:
                 projection = self._app_runtime.use_cases.resolve("project_projection").snapshot()
-                projected = {} if projection is None else {
-                    item["entry_key"]["local_key"]: item
-                    for item in projection.to_dict()["values"].get("entries", ())
-                }
+                projected = (
+                    {}
+                    if projection is None
+                    else {
+                        item["entry_key"]["local_key"]: item
+                        for item in projection.to_dict()["values"].get("entries", ())
+                    }
+                )
                 from dataclasses import replace
 
                 entries = [
@@ -1244,7 +1506,31 @@ class MainWindow(QMainWindow):
     def _on_new_variant(self):
         """创建空白新版本。"""
         if self._ctx.uses_authoritative_projection:
-            self.show_message("Create the Variant through the V2 lifecycle command adapter.")
+            from PyQt6.QtWidgets import QInputDialog
+
+            name, ok = QInputDialog.getText(self, "新建版本", "版本名称:")
+            if not ok or not name.strip():
+                return
+            display_name = name.strip()
+
+            def _create() -> None:
+                self._start_foreground_task(
+                    lambda: self._project_commands.create_variant(
+                        display_name,
+                        self._runtime_context,
+                    ),
+                    message=f"正在创建版本「{display_name}」…",
+                    on_result=lambda result: self._finish_v2_variant_operation(
+                        result,
+                        success_message=f"版本「{display_name}」已创建",
+                        reload_source=True,
+                    ),
+                )
+
+            if self._ctx.dirty:
+                self._save_current_project_async(on_finished=lambda saved: saved and _create())
+            else:
+                _create()
             return
         proj = self._ctx.active_project
         if not proj:
@@ -1258,19 +1544,53 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "冲突", f"版本「{name}」已存在")
             return
 
-        self._save_current_project()
-        proj.add_variant(name)
-        proj.save()
-        vs_dir = proj.variant_dir(name)
-        vs_dir.mkdir(parents=True, exist_ok=True)
-        vs = VariantStore(vs_dir / "current.json")
-        vs.save()
-        self._switch_to_variant(proj, name, vs)
+        def _create_variant():
+            proj.add_variant(name)
+            proj.save()
+            vs_dir = proj.variant_dir(name)
+            vs_dir.mkdir(parents=True, exist_ok=True)
+            vs = VariantStore(vs_dir / "current.json")
+            vs.save()
+            return vs
+
+        self._save_current_project_async(
+            on_finished=lambda saved: saved
+            and self._start_foreground_task(
+                    _create_variant,
+                    message="正在创建版本…",
+                    on_result=lambda vs: self._switch_to_variant(proj, name, vs),
+                )
+        )
 
     def _on_copy_variant(self):
         """从当前版本复制创建新版本。"""
         if self._ctx.uses_authoritative_projection:
-            self.show_message("Copy requires a V2 snapshot command and cannot use the legacy store.")
+            from PyQt6.QtWidgets import QInputDialog
+
+            name, ok = QInputDialog.getText(self, "复制版本", "新版本名称:")
+            if not ok or not name.strip():
+                return
+            display_name = name.strip()
+
+            def _copy() -> None:
+                self._start_foreground_task(
+                    lambda: self._project_commands.create_variant(
+                        display_name,
+                        self._runtime_context,
+                        copy_active=True,
+                    ),
+                    message=f"正在复制版本「{display_name}」…",
+                    on_result=lambda result: self._finish_v2_variant_operation(
+                        result,
+                        success_message=f"版本「{display_name}」已复制",
+                        reload_source=True,
+                    ),
+                )
+
+            if self._ctx.dirty:
+                self._save_current_project_async(on_finished=lambda saved: saved and _copy())
+            else:
+                _copy()
             return
         proj = self._ctx.active_project
         if not proj:
@@ -1285,34 +1605,94 @@ class MainWindow(QMainWindow):
             return
 
         source_name = self._ctx.active_variant or proj.active_variant
-        self._save_current_project()
+        source_store = self._ctx.variant_store
 
-        proj.add_variant(name, copied_from=source_name)
-        proj.save()
-        vs_dir = proj.variant_dir(name)
-        vs_dir.mkdir(parents=True, exist_ok=True)
+        def _copy_variant():
+            proj.add_variant(name, copied_from=source_name)
+            proj.save()
+            vs_dir = proj.variant_dir(name)
+            vs_dir.mkdir(parents=True, exist_ok=True)
+            new_vs = VariantStore(vs_dir / "current.json")
+            if source_store:
+                new_vs.translations = dict(source_store.translations)
+                new_vs.labels = {key: set(value) for key, value in source_store.labels.items()}
+                new_vs.label_library = dict(source_store.label_library)
+                new_vs.entry_states = dict(source_store.entry_states)
+            new_vs.save()
+            return new_vs
 
-        # 复制当前版本的 translation + labels
-        dest = vs_dir / "current.json"
-        new_vs = VariantStore(dest)
-        if self._ctx.variant_store:
-            new_vs.translations = dict(self._ctx.variant_store.translations)
-            new_vs.labels = {k: set(v) for k, v in self._ctx.variant_store.labels.items()}
-            new_vs.label_library = dict(self._ctx.variant_store.label_library)
-        new_vs.save()
-        self._switch_to_variant(proj, name, new_vs)
+        self._save_current_project_async(
+            on_finished=lambda saved: saved
+            and self._start_foreground_task(
+                    _copy_variant,
+                    message="正在复制版本…",
+                    on_result=lambda vs: self._switch_to_variant(proj, name, vs),
+                )
+        )
 
     def _switch_variant(self, name: str):
         """从 ProjectBar 下拉切换版本。"""
         if self._ctx.uses_authoritative_projection:
-            if self._legacy_mapping_key is None:
-                self.show_message("No explicitly mapped legacy Project is available.")
+            if self._project_commands is None or self._runtime_context is None:
+                self.show_message("V2 项目版本服务不可用。")
                 return
-            self._activate_legacy_variant(self._legacy_mapping_key, name)
+            from transbridge.application.projects import DirtyDecision
+            from transbridge.persistence.v2 import ProjectId, ProjectRef, VariantId, VariantRef
+
+            project_id = self._ctx.active_project_id
+            if project_id is None:
+                self.show_message("没有活动项目。")
+                return
+            display_name = next(
+                (str(item["name"]) for item in self._ctx.project_variants if item["id"] == name),
+                name,
+            )
+            decision = None
+            if self._ctx.dirty:
+                answer = QMessageBox.question(
+                    self,
+                    "保存确认",
+                    "当前版本有未保存修改。切换前是否保存？",
+                    QMessageBox.StandardButton.Yes
+                    | QMessageBox.StandardButton.No
+                    | QMessageBox.StandardButton.Cancel,
+                )
+                if answer == QMessageBox.StandardButton.Cancel:
+                    self._workbench._project_bar.refresh()
+                    return
+                if answer == QMessageBox.StandardButton.Yes:
+                    self._save_current_project_async(
+                        on_finished=lambda saved: (
+                            self._switch_variant(name)
+                            if saved
+                            else self._workbench._project_bar.refresh()
+                        )
+                    )
+                    return
+                decision = DirtyDecision.DISCARD
+            project_ref = ProjectRef(ProjectId(project_id))
+            variant_ref = VariantRef(VariantId(name), project_ref.identity)
+            started = self._start_foreground_task(
+                lambda: self._project_commands.switch_v2(
+                    project_ref,
+                    variant_ref,
+                    self._runtime_context,
+                    dirty_decision=decision,
+                ),
+                message=f"正在加载版本「{display_name}」…",
+                on_result=lambda result: self._finish_v2_variant_operation(
+                    result,
+                    success_message=f"已切换到版本「{display_name}」",
+                    reload_source=True,
+                ),
+            )
+            if not started:
+                self._workbench._project_bar.refresh()
             return
         proj = self._ctx.active_project
         if not proj or not proj.has_variant(name):
             return
+        should_save = True
         # 检查脏标记
         if self._ctx.variant_store and self._ctx.variant_store.dirty:
             ws = self._ctx.workspace
@@ -1325,15 +1705,20 @@ class MainWindow(QMainWindow):
                 )
                 if ret == QMessageBox.StandardButton.Cancel:
                     return
-                if ret == QMessageBox.StandardButton.Yes:
-                    self._on_manual_save()
-            else:
-                self._on_manual_save()
+                should_save = ret == QMessageBox.StandardButton.Yes
 
-        self._save_current_project()
-        vs_path = proj.variant_dir(name) / "current.json"
-        vs = VariantStore.load(vs_path)
-        self._switch_to_variant(proj, name, vs)
+        def _load_variant() -> None:
+            vs_path = proj.variant_dir(name) / "current.json"
+            self._start_foreground_task(
+                lambda: VariantStore.load(vs_path),
+                message=f"正在加载版本「{name}」…",
+                on_result=lambda vs: self._switch_to_variant(proj, name, vs),
+            )
+
+        if should_save:
+            self._save_current_project_async(on_finished=lambda saved: saved and _load_variant())
+        else:
+            _load_variant()
 
     def _on_manual_save(self):
         """手动保存当前版本数据（Ctrl+S / 工具栏按钮）。"""
@@ -1341,30 +1726,10 @@ class MainWindow(QMainWindow):
             if self._project_commands is None or self._runtime_context is None:
                 self.show_message("V2 Project command adapter is unavailable.")
                 return
-            result = self._project_commands.save(self._runtime_context)
-            if result.is_success:
-                self._workbench._project_bar.set_save_dirty(False)
-                self._workbench._project_bar.flash_saved()
-                self.show_message("V2 Project/Variant revisions saved.")
-            else:
-                self.show_message(result.diagnostics[0].message)
-            return
-        ctx = self._ctx
-        vs = ctx.variant_store
-        if vs is None:
+        elif self._ctx.variant_store is None:
             self.show_message("无活跃版本，无需保存")
             return
-        if ctx.collection:
-            step2 = getattr(self._workbench, '_step2', None)
-            labels, label_lib = step2.collect_labels() if step2 else ({}, {})
-            vs.collect_from(list(ctx.collection), labels, label_lib)
-        vs.save()
-        vs.dirty = False
-        self._workbench._project_bar.set_save_dirty(False)
-        self._workbench._project_bar.flash_saved()
-        total = len(vs.translations)
-        labels = sum(1 for s in vs.labels.values() if s)
-        self.show_message(f"已保存 — {ctx.active_variant}，{total} 条译文，{labels} 条标签")
+        self._save_current_project_async()
 
     def _activate_legacy_project(self, path: str) -> None:
         project = ProjectHandle.load(PathLib(path))
@@ -1421,6 +1786,40 @@ class MainWindow(QMainWindow):
 
     def _on_delete_variant(self, name: str):
         """删除指定版本（至少保留一个）。"""
+        if self._ctx.uses_authoritative_projection:
+            display_name = next(
+                (str(item["name"]) for item in self._ctx.project_variants if item["id"] == name),
+                name,
+            )
+            if len(self._ctx.project_variants) <= 1:
+                QMessageBox.warning(self, "无法删除", "至少保留一个版本。")
+                return
+            answer = QMessageBox.question(
+                self,
+                "确认删除",
+                f"确定要删除版本「{display_name}」吗？\n此操作不可撤销。",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            deleting_active = self._ctx.active_variant_id == name
+
+            def _delete() -> None:
+                self._start_foreground_task(
+                    lambda: self._project_commands.delete_variant(name, self._runtime_context),
+                    message=f"正在删除版本「{display_name}」…",
+                    on_result=lambda result: self._finish_v2_variant_operation(
+                        result,
+                        success_message=f"版本「{display_name}」已删除",
+                        reload_source=deleting_active,
+                    ),
+                )
+
+            if self._ctx.dirty:
+                self._save_current_project_async(on_finished=lambda saved: saved and _delete())
+            else:
+                _delete()
+            return
         proj = self._ctx.active_project
         if not proj:
             return
@@ -1447,6 +1846,27 @@ class MainWindow(QMainWindow):
         proj.save()
         self._workbench._project_bar.refresh()
         self.show_message(f"已删除版本「{name}」")
+
+    def _finish_v2_variant_operation(
+        self,
+        result,
+        *,
+        success_message: str,
+        reload_source: bool,
+    ) -> None:
+        if not result.is_success:
+            diagnostic = result.diagnostics[0]
+            self.show_message(f"{diagnostic.code}: {diagnostic.message}")
+            QMessageBox.warning(self, "版本操作失败", diagnostic.message)
+            self._workbench._project_bar.refresh()
+            return
+        self.show_message(success_message)
+        if result.diagnostics:
+            self.show_message(f"{success_message}；{result.diagnostics[0].message}")
+        if reload_source:
+            for source in self._ctx.project_sources:
+                if source.get("type") == "esp" and source.get("path"):
+                    self._restore_parse_esp(str(source["path"]))
 
     def _on_rename_project(self, new_name: str):
         """重命名项目——移动目录、更新 workspace。"""
@@ -1496,8 +1916,16 @@ class MainWindow(QMainWindow):
         if not ok or not name.strip():
             return
         snap_dir = proj.variant_dir(self._ctx.active_variant) / "snapshots"
-        dest = vs.save_snapshot(snap_dir, name.strip())
-        QMessageBox.information(self, "快照已保存", f"快照已保存到:\n{dest}")
+        self._start_foreground_task(
+            lambda: vs.save_snapshot(snap_dir, name.strip()),
+            message="正在保存快照…",
+            on_result=lambda dest: QMessageBox.information(
+                self,
+                "快照已保存",
+                f"快照已保存到:\n{dest}",
+            ),
+            on_error=lambda error: QMessageBox.warning(self, "快照保存失败", error),
+        )
 
     def _on_load_snapshot(self):
         """加载快照。"""
@@ -1506,35 +1934,51 @@ class MainWindow(QMainWindow):
             return
         variant_name = self._ctx.active_variant or proj.active_variant
         snap_dir = proj.variant_dir(variant_name) / "snapshots"
-        snapshots = VariantStore.list_snapshots(snap_dir)
-        if not snapshots:
-            QMessageBox.information(self, "无快照", "当前版本无可用快照。")
-            return
 
-        # 简单列表选择
-        items = [f"{s['name']} ({s['updated'][:19]})" for s in snapshots]
-        from PyQt6.QtWidgets import QInputDialog
-        choice, ok = QInputDialog.getItem(self, "加载快照", "选择快照:", items, 0, False)
-        if not ok:
-            return
-        idx = items.index(choice)
-        snap_path = PathLib(snapshots[idx]["path"])
+        def _choose_snapshot(snapshots) -> None:
+            if not snapshots:
+                QMessageBox.information(self, "无快照", "当前版本无可用快照。")
+                return
+            items = [f"{item['name']} ({item['updated'][:19]})" for item in snapshots]
+            from PyQt6.QtWidgets import QInputDialog
 
-        mb = QMessageBox(QMessageBox.Icon.Warning, "确认加载",
-                         f"加载快照将覆盖当前版本数据。\n建议先保存当前修改。\n是否继续？",
-                         parent=self)
-        btn_save = mb.addButton("保存后加载", QMessageBox.ButtonRole.AcceptRole)
-        btn_load = mb.addButton("直接加载", QMessageBox.ButtonRole.DestructiveRole)
-        btn_cancel = mb.addButton("取消", QMessageBox.ButtonRole.RejectRole)
-        mb.exec()
-        clicked = mb.clickedButton()
-        if clicked == btn_cancel:
-            return
-        if clicked == btn_save:
-            self._on_manual_save()
+            choice, ok = QInputDialog.getItem(self, "加载快照", "选择快照:", items, 0, False)
+            if not ok:
+                return
+            snap_path = PathLib(snapshots[items.index(choice)]["path"])
+            mb = QMessageBox(
+                QMessageBox.Icon.Warning,
+                "确认加载",
+                "加载快照将覆盖当前版本数据。\n建议先保存当前修改。\n是否继续？",
+                parent=self,
+            )
+            btn_save = mb.addButton("保存后加载", QMessageBox.ButtonRole.AcceptRole)
+            btn_load = mb.addButton("直接加载", QMessageBox.ButtonRole.DestructiveRole)
+            btn_cancel = mb.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+            mb.exec()
+            clicked = mb.clickedButton()
+            if clicked == btn_cancel:
+                return
 
-        vs = VariantStore.load_snapshot(snap_path)
-        self._switch_to_variant(proj, variant_name, vs)
+            def _load() -> None:
+                self._start_foreground_task(
+                    lambda: VariantStore.load_snapshot(snap_path),
+                    message="正在加载快照…",
+                    on_result=lambda store: self._switch_to_variant(proj, variant_name, store),
+                    on_error=lambda error: QMessageBox.warning(self, "快照加载失败", error),
+                )
+
+            if clicked == btn_save:
+                self._save_current_project_async(on_finished=lambda saved: saved and _load())
+            elif clicked == btn_load:
+                _load()
+
+        self._start_foreground_task(
+            lambda: VariantStore.list_snapshots(snap_dir),
+            message="正在读取快照列表…",
+            on_result=_choose_snapshot,
+            on_error=lambda error: QMessageBox.warning(self, "快照读取失败", error),
+        )
 
     # ── 持久化：.transbridge 导出导入（S07） ──────────────────
 
@@ -1552,18 +1996,31 @@ class MainWindow(QMainWindow):
         if not path:
             return
 
-        self._save_current_project()
-        import zipfile
         proj_dir = proj.project_dir
-        with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as zf:
-            for f in proj_dir.rglob("*.json"):
-                arcname = str(f.relative_to(proj_dir))
-                zf.write(f, arcname)
 
-        QMessageBox.information(
-            self, "导出完成",
-            f"项目「{proj.name}」已导出到:\n{path}"
-        )
+        def _export() -> str:
+            import zipfile
+
+            with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+                for source in proj_dir.rglob("*.json"):
+                    archive.write(source, str(source.relative_to(proj_dir)))
+            return path
+
+        def _start_export(saved: bool) -> None:
+            if not saved:
+                return
+            self._start_foreground_task(
+                _export,
+                message="正在导出项目包…",
+                on_result=lambda target: QMessageBox.information(
+                    self,
+                    "导出完成",
+                    f"项目「{proj.name}」已导出到:\n{target}",
+                ),
+                on_error=lambda error: QMessageBox.warning(self, "导出失败", error),
+            )
+
+        self._save_current_project_async(on_finished=_start_export)
 
     def _on_import_transbridge(self):
         """导入 .transbridge 文件。"""
@@ -1574,77 +2031,90 @@ class MainWindow(QMainWindow):
         if not path:
             return
 
-        import zipfile
-        try:
-            with zipfile.ZipFile(path, 'r') as zf:
-                # 读取 project.json 获取项目名
-                if "project.json" not in zf.namelist():
+        def _inspect_archive():
+            import json
+            import shutil
+            import zipfile
+
+            from transbridge.persistence._utils import validate_name
+
+            with zipfile.ZipFile(path, "r") as archive:
+                if "project.json" not in archive.namelist():
                     raise ValueError("无效的 .transbridge 文件：缺少 project.json")
-
-                # 检查项目名安全
-                from transbridge.persistence._utils import validate_name
-
-                # ZIP Slip 防护：逐一检查成员路径
-                for member in zf.namelist():
+                for member in archive.namelist():
                     member_path = Path(member)
                     if member_path.is_absolute() or ".." in member_path.parts:
                         raise ValueError(f".transbridge 包含非法路径: {member}")
-
-                # ZIP Bomb 防护：检查解压后总大小
-                total_size = sum(info.file_size for info in zf.infolist())
-                if total_size > 500 * 1024 * 1024:  # 500MB
+                total_size = sum(info.file_size for info in archive.infolist())
+                project_data = json.loads(archive.read("project.json").decode("utf-8"))
+                project_name = validate_name(project_data.get("name", ""))
+                destination = PERSISTENCE_ROOT / project_name
+                free_bytes = shutil.disk_usage(destination.parent).free
+                reserve = max(64 * 1024 * 1024, total_size // 20)
+                if total_size + reserve > free_bytes:
+                    required_gib = (total_size + reserve) / (1024**3)
+                    free_gib = free_bytes / (1024**3)
                     raise ValueError(
-                        f".transbridge 文件解压后过大（{total_size / 1024 / 1024:.0f}MB），"
-                        f"超过 500MB 上限"
+                        f"目标磁盘空间不足：至少需要 {required_gib:.1f} GiB，"
+                        f"当前可用 {free_gib:.1f} GiB。"
                     )
+                return project_name, destination
 
-                import json, io
-                proj_data = json.loads(zf.read("project.json").decode("utf-8"))
-                proj_name = proj_data.get("name", "")
+        def _confirm_and_import(info) -> None:
+            project_name, destination = info
+            if destination.exists():
+                answer = QMessageBox.question(
+                    self,
+                    "项目已存在",
+                    f"项目「{project_name}」已存在。\n覆盖将丢失现有数据，是否继续？",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                )
+                if answer != QMessageBox.StandardButton.Yes:
+                    return
 
-                if not proj_name:
-                    raise ValueError("project.json 中缺少项目名称")
+            def _extract_and_load():
+                import zipfile
 
-                proj_name = validate_name(proj_name)
-
-                dest_dir = PERSISTENCE_ROOT / proj_name
-                if dest_dir.exists():
-                    ret = QMessageBox.question(
-                        self, "项目已存在",
-                        f"项目「{proj_name}」已存在。\n覆盖将丢失现有数据，是否继续？",
-                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                with zipfile.ZipFile(path, "r") as archive:
+                    archive.extractall(destination)
+                project = ProjectHandle.load(destination / "project.json")
+                variant_store = None
+                variant_name = project.active_variant
+                if variant_name and project.has_variant(variant_name):
+                    variant_store = VariantStore.load(
+                        project.variant_dir(variant_name) / "current.json"
                     )
-                    if ret != QMessageBox.StandardButton.Yes:
-                        return
+                return project_name, destination, project, variant_store
 
-                # 解压（成员路径已校验安全）
-                zf.extractall(dest_dir)
-        except Exception as e:
-            QMessageBox.warning(self, "导入失败", f"无法导入 .transbridge 文件:\n{e}")
-            return
+            def _activate_imported(result) -> None:
+                imported_name, destination, project, variant_store = result
+                workspace = self._ctx.workspace or WorkspaceState.load(workspace_path())
+                workspace.add_project(imported_name, destination / "project.json")
+                workspace.save()
+                self._ctx.workspace = workspace
+                self._ctx.active_project = project
+                self._ctx.active_variant = project.active_variant
+                self._ctx.variant_store = variant_store
+                if variant_store is not None and self._ctx.collection:
+                    variant_store.apply_to(list(self._ctx.collection))
+                QMessageBox.information(
+                    self,
+                    "导入完成",
+                    f"项目「{imported_name}」已导入。\n请通过文件菜单解析源文件。",
+                )
 
-        # 加载导入的项目
-        try:
-            proj = ProjectHandle.load(dest_dir / "project.json")
-            ws = self._ctx.workspace or WorkspaceState.load(workspace_path())
-            ws.add_project(proj_name, dest_dir / "project.json")
-            ws.save()
-            self._ctx.workspace = ws
-            self._ctx.active_project = proj
-            self._ctx.active_variant = proj.active_variant
+            self._start_foreground_task(
+                _extract_and_load,
+                message="正在解压并加载项目包…",
+                on_result=_activate_imported,
+                on_error=lambda error: QMessageBox.warning(self, "导入失败", error),
+            )
 
-            variant_name = proj.active_variant
-            if variant_name and proj.has_variant(variant_name):
-                vs = VariantStore.load(proj.variant_dir(variant_name) / "current.json")
-                self._ctx.variant_store = vs
-                if self._ctx.collection:
-                    vs.apply_to(list(self._ctx.collection))
-        except Exception as e:
-            QMessageBox.warning(self, "加载失败", f"项目文件已解压，但加载失败:\n{e}")
-
-        QMessageBox.information(
-            self, "导入完成",
-            f"项目「{proj_name}」已导入。\n请通过文件菜单解析源文件。"
+        self._start_foreground_task(
+            _inspect_archive,
+            message="正在校验项目包…",
+            on_result=_confirm_and_import,
+            on_error=lambda error: QMessageBox.warning(self, "导入失败", error),
         )
 
     def _show_about(self):

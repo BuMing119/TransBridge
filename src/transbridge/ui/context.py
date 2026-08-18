@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import threading
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QObject, Qt, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal, pyqtSlot
 
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.paratranz.config_manager import ParatranzConfig
@@ -49,7 +49,8 @@ class AppContext(QObject):
     navigate_to = pyqtSignal(int)             # 请求切换主 tab（0=工作台, 1=ParaTranz 管理）
     project_list_changed = pyqtSignal()       # 请求刷新项目列表（ParaTranz）
     workspace_changed = pyqtSignal()          # 持久化项目列表变动
-    variant_changed = pyqtSignal(str)         # 翻译版本切换（variant_name）
+    project_changed = pyqtSignal()            # 翻译项目/Variant 目录投影变动
+    variant_changed = pyqtSignal(str)         # 旧模式为名称，V2 模式为稳定 Variant ID
     dirty_changed = pyqtSignal()              # 版本数据被修改（触发自动保存防抖）
     # Story 03: ViewModel 扩展
     filter_changed = pyqtSignal(dict)         # 筛选状态变更
@@ -94,6 +95,11 @@ class AppContext(QObject):
         self._runtime_context = runtime_context
         self._projection_subscription: ProjectionSubscription | None = None
         self._projection_dirty = False
+        self._projection_revision: int | None = None
+        self._active_project_id: str | None = None
+        self._project_name: str | None = None
+        self._project_sources: tuple[dict[str, object], ...] = ()
+        self._project_variants: tuple[dict[str, object], ...] = ()
         self._active_variant_id: str | None = None
 
         if self._project_projection is not None:
@@ -432,6 +438,31 @@ class AppContext(QObject):
         return self._active_variant_id
 
     @property
+    def active_project_id(self) -> str | None:
+        return self._active_project_id
+
+    @property
+    def project_name(self) -> str | None:
+        if self._project_projection is not None:
+            return self._project_name
+        return None if self._active_project is None else self._active_project.name
+
+    @property
+    def project_variants(self) -> tuple[dict[str, object], ...]:
+        if self._project_projection is not None:
+            return tuple(dict(value) for value in self._project_variants)
+        if self._active_project is None:
+            return ()
+        return tuple(
+            {"id": value["name"], "name": value["name"], "active": value["name"] == self._active_variant}
+            for value in self._active_project.variants
+        )
+
+    @property
+    def project_sources(self) -> tuple[dict[str, object], ...]:
+        return tuple(dict(value) for value in self._project_sources)
+
+    @property
     def uses_authoritative_projection(self) -> bool:
         return self._project_projection is not None
 
@@ -471,16 +502,43 @@ class AppContext(QObject):
         )
 
     def _on_project_projection(self, snapshot: ProjectionSnapshot | None) -> None:
+        if QThread.currentThread() != self.thread():
+            self.safe_mutate(lambda: self._apply_project_projection(snapshot))
+            return
+        self._apply_project_projection(snapshot)
+
+    def _apply_project_projection(self, snapshot: ProjectionSnapshot | None) -> None:
         old_dirty = self._projection_dirty
+        old_revision = self._projection_revision
+        old_label_library = self._label_library
+        old_entry_labels = self._entry_labels
+        old_project = (
+            self._active_project_id,
+            self._project_name,
+            self._project_sources,
+            self._project_variants,
+        )
         old_variant = self._active_variant_id
         if snapshot is None:
             self._projection_dirty = False
+            self._projection_revision = None
+            self._active_project_id = None
+            self._project_name = None
+            self._project_sources = ()
+            self._project_variants = ()
             self._active_variant_id = None
             self._label_library = {}
             self._entry_labels = {}
         else:
             values = snapshot.to_dict()["values"]
             self._projection_dirty = snapshot.dirty
+            self._projection_revision = snapshot.revision
+            project_id = values.get("project_id")
+            self._active_project_id = None if project_id is None else str(project_id)
+            project_name = values.get("project_name")
+            self._project_name = None if project_name is None else str(project_name)
+            self._project_sources = tuple(dict(value) for value in values.get("sources", ()))
+            self._project_variants = tuple(dict(value) for value in values.get("variants", ()))
             variant_id = values.get("variant_id") or values.get("active_variant_id")
             self._active_variant_id = None if variant_id is None else str(variant_id)
             library = values.get("label_library") or {}
@@ -492,9 +550,23 @@ class AppContext(QObject):
                 if local_key is not None:
                     labels[str(local_key)] = set(str(value) for value in entry.get("labels", ()))
             self._entry_labels = labels
-        self.label_data_changed.emit()
-        if old_dirty != self._projection_dirty:
+        if old_label_library != self._label_library or old_entry_labels != self._entry_labels:
+            self.label_data_changed.emit()
+        dirty_content_changed = (
+            snapshot is not None
+            and old_revision is not None
+            and snapshot.revision != old_revision
+            and snapshot.dirty
+        )
+        if old_dirty != self._projection_dirty or dirty_content_changed:
             self.dirty_changed.emit()
+        if old_project != (
+            self._active_project_id,
+            self._project_name,
+            self._project_sources,
+            self._project_variants,
+        ):
+            self.project_changed.emit()
         if old_variant != self._active_variant_id and self._active_variant_id is not None:
             self.variant_changed.emit(self._active_variant_id)
 

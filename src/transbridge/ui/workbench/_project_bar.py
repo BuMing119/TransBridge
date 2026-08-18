@@ -1,10 +1,7 @@
 """项目工具栏：项目名/版本切换/保存/管理按钮。"""
 
-from PyQt6.QtWidgets import (
-    QWidget, QHBoxLayout, QLabel, QPushButton, QComboBox,
-    QMenu, QInputDialog, QMessageBox,
-)
-from PyQt6.QtCore import pyqtSignal, QTimer
+from PyQt6.QtCore import QTimer, pyqtSignal
+from PyQt6.QtWidgets import QComboBox, QHBoxLayout, QInputDialog, QLabel, QMenu, QPushButton, QWidget
 
 
 class ProjectBar(QWidget):
@@ -79,6 +76,7 @@ class ProjectBar(QWidget):
 
         # 监听状态变化
         ctx.workspace_changed.connect(self.refresh)
+        ctx.project_changed.connect(self.refresh)
         ctx.variant_changed.connect(self._on_external_variant_change)
 
     # ── 版本下拉 ──────────────────────────────────────────────
@@ -86,9 +84,10 @@ class ProjectBar(QWidget):
     def _on_variant_selected(self, index: int):
         if index < 0:
             return
-        name = self._variant_combo.currentData()
-        if name and name != self._ctx.active_variant:
-            self.variant_switch_requested.emit(name)
+        variant_id = self._variant_combo.currentData()
+        active = self._ctx.active_variant_id if self._ctx.uses_authoritative_projection else self._ctx.active_variant
+        if variant_id and variant_id != active:
+            self.variant_switch_requested.emit(variant_id)
 
     def _on_external_variant_change(self, name: str):
         self._variant_combo.blockSignals(True)
@@ -107,13 +106,16 @@ class ProjectBar(QWidget):
         menu.addAction("新建版本...", lambda: self.variant_add_requested.emit())
         menu.addAction("复制当前版本...", lambda: self.variant_copy_requested.emit())
 
-        proj = self._ctx.active_project
-        variants = proj.variants if proj else []
+        variants = self._ctx.project_variants
         if len(variants) > 1:
             del_menu = menu.addMenu("删除版本")
             for v in variants:
-                vname = v["name"]
-                del_menu.addAction(vname, lambda n=vname: self.variant_delete_requested.emit(n))
+                variant_id = str(v["id"])
+                display_name = str(v["name"])
+                del_menu.addAction(
+                    display_name,
+                    lambda value=variant_id: self.variant_delete_requested.emit(value),
+                )
 
         menu.addSeparator()
         menu.addAction("管理快照...", lambda: None)  # 预留
@@ -124,6 +126,8 @@ class ProjectBar(QWidget):
     # ── 重命名项目 ────────────────────────────────────────────
 
     def _on_rename_project(self):
+        if self._ctx.uses_authoritative_projection:
+            return
         proj = self._ctx.active_project
         if not proj:
             return
@@ -135,15 +139,22 @@ class ProjectBar(QWidget):
     # ── 刷新 ──────────────────────────────────────────────────
 
     def refresh(self):
-        proj = self._ctx.active_project
-        variant = self._ctx.active_variant
+        if self._ctx.uses_authoritative_projection:
+            project_name = self._ctx.project_name
+            variants = self._ctx.project_variants
+            variant = self._ctx.active_variant_id
+        else:
+            proj = self._ctx.active_project
+            project_name = None if proj is None else proj.name
+            variants = self._ctx.project_variants
+            variant = self._ctx.active_variant
 
         self._variant_combo.blockSignals(True)
         try:
             self._variant_combo.clear()
-            if proj and proj.variants:
-                for v in proj.variants:
-                    self._variant_combo.addItem(v["name"], v["name"])
+            if project_name and variants:
+                for v in variants:
+                    self._variant_combo.addItem(str(v["name"]), str(v["id"]))
                 if variant:
                     for i in range(self._variant_combo.count()):
                         if self._variant_combo.itemData(i) == variant:
@@ -152,9 +163,9 @@ class ProjectBar(QWidget):
         finally:
             self._variant_combo.blockSignals(False)
 
-        if proj:
-            self._project_label.setText(proj.name)
-            self._rename_btn.setVisible(True)
+        if project_name:
+            self._project_label.setText(project_name)
+            self._rename_btn.setVisible(not self._ctx.uses_authoritative_projection)
             self._variant_combo.setVisible(True)
             self._variant_menu_btn.setVisible(True)
             self._save_btn.setVisible(True)
