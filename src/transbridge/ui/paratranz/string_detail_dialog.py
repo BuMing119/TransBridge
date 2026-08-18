@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
     QListWidget, QListWidgetItem, QStyledItemDelegate, QApplication, QStyle,
     QPushButton, QLabel, QComboBox, QTextEdit,
     QFormLayout, QCheckBox, QRadioButton, QButtonGroup, QMessageBox,
+    QProgressDialog,
 )
 from PyQt6.QtCore import Qt, QSize, QRect, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QCloseEvent
@@ -99,6 +100,8 @@ class StringDetailDialog(QDialog):
         self._page = page
         self._page_size = page_size
         self._workers: list[ApiWorker] = []
+        self._close_pending = False
+        self._close_progress: QProgressDialog | None = None
         self._modified = False
         self._nav_gen = 0
         self.setWindowTitle("词条详情")
@@ -566,11 +569,39 @@ class StringDetailDialog(QDialog):
         self._workers.append(w)
 
     def closeEvent(self, event: QCloseEvent):
-        """关闭前等待所有后台 worker 完成，避免 load_strings() 拉到同步前的旧数据。"""
-        for w in self._workers:
-            if w.isRunning():
-                w.wait()
-        event.accept()
+        """后台任务完成后再关闭，同时保持 Qt 事件循环可响应。"""
+        running = [worker for worker in self._workers if worker.isRunning()]
+        if not running:
+            event.accept()
+            return
+
+        event.ignore()
+        if self._close_pending:
+            return
+        self._close_pending = True
+        self.setEnabled(False)
+        self._close_progress = QProgressDialog(
+            "正在等待后台同步完成…",
+            "",
+            0,
+            0,
+            self,
+        )
+        self._close_progress.setCancelButton(None)
+        self._close_progress.setWindowTitle("正在关闭")
+        self._close_progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self._close_progress.show()
+        for worker in running:
+            worker.finished.connect(self._finish_close_if_idle)
+
+    def _finish_close_if_idle(self) -> None:
+        if any(worker.isRunning() for worker in self._workers):
+            return
+        if self._close_progress is not None:
+            self._close_progress.close()
+            self._close_progress = None
+        self._close_pending = False
+        self.close()
 
     def was_modified(self) -> bool:
         return self._modified

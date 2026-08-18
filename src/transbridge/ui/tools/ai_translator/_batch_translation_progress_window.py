@@ -46,6 +46,7 @@ class _BatchTranslationProgressWindow(QWidget):
         self._current_plugin_idx = 0
         self._total_plugins = 0
         self._was_stopped = False
+        self._close_after_stop = False
         self._log_viewer = None
         self._batch_widgets: dict[int, _BatchWidget] = {}
         self._init_ui()
@@ -417,6 +418,9 @@ class _BatchTranslationProgressWindow(QWidget):
         return self._worker.isRunning()
 
     def closeEvent(self, event):
+        if self._close_after_stop and self._worker.isRunning():
+            event.ignore()
+            return
         if not self._worker.isRunning():
             event.accept()
             return
@@ -448,8 +452,16 @@ class _BatchTranslationProgressWindow(QWidget):
 
         if rb_stop.isChecked():
             self._worker.stop()
-            self._worker.wait(3000)
-            event.accept()
+            self._close_after_stop = True
+            self.setEnabled(False)
+            self._overall_progress_bar.setRange(0, 0)
+            self.setWindowTitle("AI 批量翻译 — 正在停止…")
+            self._worker.finished.connect(self._close_after_worker_stopped)
+            event.ignore()
         else:
             self._background_mode = True
             event.accept()
+
+    def _close_after_worker_stopped(self) -> None:
+        if self._close_after_stop:
+            self.close()

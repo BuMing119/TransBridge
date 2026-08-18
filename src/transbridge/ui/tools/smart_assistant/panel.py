@@ -283,7 +283,7 @@ class SmartAssistantPanel(QDockWidget):
                 self._chat.save_current_session(self._active_session_id)
             except Exception:
                 logger.debug("关闭时保存会话失败", exc_info=True)
-        self._chat.shutdown()
+        self._chat.shutdown(wait_for_worker=False)
         if self._session_subscription is not None:
             self._session_subscription.close()
             self._session_subscription = None

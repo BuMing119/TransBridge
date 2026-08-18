@@ -396,11 +396,14 @@ class ChatWidget(QWidget):
 
     # ── 公共方法 ──────────────────────────────────────────────
 
-    def shutdown(self) -> None:
+    def shutdown(self, *, wait_for_worker: bool = True) -> None:
         """关闭 ChatWidget 时清理所有资源（B8: panel.closeEvent 只需调用此方法）。
 
         所有清理操作各自 try/except，确保单个失败不影响后续清理。
         """
+        if getattr(self, "_shutdown_complete", False):
+            return
+        self._shutdown_complete = True
         # 1/ 停止定时器
         try:
             if hasattr(self, '_streaming_timer') and self._streaming_timer is not None:
@@ -447,7 +450,8 @@ class ChatWidget(QWidget):
         try:
             if hasattr(self, '_worker') and self._worker is not None and self._worker.is_alive():
                 self._worker.cancel()
-                self._worker.join(timeout=3)
+                if wait_for_worker:
+                    self._worker.join(timeout=3)
         except Exception:
             logger.debug("shutdown: 取消 worker 线程失败", exc_info=True)
 

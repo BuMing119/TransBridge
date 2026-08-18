@@ -160,6 +160,7 @@ class _TranslationProgressWindow(QWidget):
         self._background_mode = False
         self._collection_synced = False
         self._was_stopped = False
+        self._close_after_stop = False
         self._log_viewer = None
         self._batch_widgets: dict[int, _BatchWidget] = {}
         self._init_ui()
@@ -434,6 +435,9 @@ class _TranslationProgressWindow(QWidget):
         return self._worker.isRunning()
 
     def closeEvent(self, event):
+        if self._close_after_stop and self._worker.isRunning():
+            event.ignore()
+            return
         if not self._worker.isRunning():
             event.accept()
             return
@@ -465,11 +469,19 @@ class _TranslationProgressWindow(QWidget):
 
         if rb_stop.isChecked():
             self._worker.stop()
-            self._worker.wait(3000)
-            event.accept()
+            self._close_after_stop = True
+            self.setEnabled(False)
+            self._total_progress_bar.setRange(0, 0)
+            self.setWindowTitle("AI 自动翻译 — 正在停止…")
+            self._worker.finished.connect(self._close_after_worker_stopped)
+            event.ignore()
         else:
             self._background_mode = True
             event.accept()
+
+    def _close_after_worker_stopped(self) -> None:
+        if self._close_after_stop:
+            self.close()
 
     def _get_esp_stem(self) -> str:
         """获取当前翻译的 ESP stem（用于报告目录）。"""
