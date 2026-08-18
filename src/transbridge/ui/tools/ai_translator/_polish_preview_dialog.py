@@ -13,8 +13,8 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 
 if TYPE_CHECKING:
-    from src.transbridge.ai_translator.post_processor.polisher import PolishResult
-    from src.transbridge.converter.translation_entry import TranslationEntry
+    from transbridge.ai_translator.post_processor.polisher import PolishResult
+    from transbridge.converter.translation_entry import TranslationEntry
 
 _COL_ORIGINAL = 0
 _COL_CURRENT = 1

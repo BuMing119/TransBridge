@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QScrollArea  # noqa: F811 — 用于后续扩展
 
-from src.transbridge.smart_assistant.execution_engine import StepResult
+from transbridge.smart_assistant.execution_engine import StepResult
 
 
 class PlanCard(QWidget):

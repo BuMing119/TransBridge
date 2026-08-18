@@ -8,11 +8,11 @@ from PyQt6.QtWidgets import (
     QButtonGroup, QScrollArea, QWidget, QCheckBox,
 )
 
-from src.transbridge.writer.plugin_writer import PluginWriter
-from src.transbridge.writer.eet_xml_writer import EETWriter
-from src.transbridge.writer.xt_xml_writer import XTWriter
-from src.transbridge.parser.eet_parser import EET_XmlParser
-from src.transbridge.parser.xt import XT_XmlParser
+from transbridge.writer.plugin_writer import PluginWriter
+from transbridge.writer.eet_xml_writer import EETWriter
+from transbridge.writer.xt_xml_writer import XTWriter
+from transbridge.parser.eet_parser import EET_XmlParser
+from transbridge.parser.xt import XT_XmlParser
 from .base import OpCard
 
 
@@ -572,7 +572,7 @@ class WriteCard(OpCard):
             # 切换到目标版本的译文
             if vname != current_variant:
                 vs_path = proj.variant_dir(vname) / "current.json"
-                from src.transbridge.persistence import VariantStore
+                from transbridge.persistence import VariantStore
                 vs = VariantStore.load(vs_path)
                 vs.apply_to(list(collection))
             else:

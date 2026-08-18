@@ -9,9 +9,9 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import pyqtSignal, Qt
 
-from src.transbridge.paratranz.config_manager import ParatranzConfig
-from src.transbridge.paratranz.api.paratranz_project_api import ParatranzProjectAPI
-from src.transbridge.paratranz.api.paratranz_user_api import ParatranzUserAPI
+from transbridge.paratranz.config_manager import ParatranzConfig
+from transbridge.paratranz.api.paratranz_project_api import ParatranzProjectAPI
+from transbridge.paratranz.api.paratranz_user_api import ParatranzUserAPI
 
 
 class ConfigDialog(QDialog):

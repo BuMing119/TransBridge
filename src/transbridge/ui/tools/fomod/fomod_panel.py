@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
     QFileDialog, QTextEdit, QProgressBar, QMessageBox, QComboBox, QGroupBox, QCheckBox,
 )
 
-from src.transbridge.fileops import PRESETS, DEFAULT_PRESET
+from transbridge.fileops import PRESETS, DEFAULT_PRESET
 
 
 class _PipelineWorker(QThread):
@@ -32,8 +32,8 @@ class _PipelineWorker(QThread):
 
     def run(self):
         try:
-            from src.transbridge.fomod import FomodPipeline
-            from src.transbridge.config.llm import LLMConfig
+            from transbridge.fomod import FomodPipeline
+            from transbridge.config.llm import LLMConfig
             pipeline = FomodPipeline(rules=self._rules, llm_config=LLMConfig.load_from_file())
             result = pipeline.run(
                 self._new, self._out,
@@ -184,7 +184,7 @@ class FomodPanel(QDialog):
 
     def _collect_rules(self):
         """从 GUI 收集 FilterRules：预设套 + 自定义扩展名。"""
-        from src.transbridge.fileops import FilterRules
+        from transbridge.fileops import FilterRules
         rules = FilterRules.from_preset(self._preset_combo.currentText())
         # 自定义保留
         keep_txt = self._keep_ext_edit.text().strip()

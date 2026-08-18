@@ -9,8 +9,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 
-from src.transbridge.paratranz.api.paratranz_project_api import ParatranzProjectAPI
-from src.transbridge.paratranz.api.paratranz_files_api import ParatranzFilesAPI
+from transbridge.paratranz.api.paratranz_project_api import ParatranzProjectAPI
+from transbridge.paratranz.api.paratranz_files_api import ParatranzFilesAPI
 from ..workers import ApiWorker
 
 

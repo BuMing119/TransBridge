@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 
 if TYPE_CHECKING:
-    from src.transbridge.paratranz.config_manager import LLMConfig
+    from transbridge.paratranz.config_manager import LLMConfig
 
 
 class _BatchConfigDialog(QDialog):
@@ -116,7 +116,7 @@ class _BatchConfigDialog(QDialog):
             QMessageBox.warning(self, "测试连接", "请先填写模型名。")
             return
         try:
-            from src.transbridge.infra.llm_client import create_llm_client
+            from transbridge.infra.llm_client import create_llm_client
             client = create_llm_client(cfg)
             reply = client.chat([{"role": "user", "content": "Say 'OK' in one word."}], max_tokens=10)
             QMessageBox.information(self, "测试连接", f"连接成功！模型回复：{reply}")
@@ -125,7 +125,7 @@ class _BatchConfigDialog(QDialog):
 
     def _build_config(self) -> "LLMConfig":
         """从控件构建配置对象，保留原有其他字段。"""
-        from src.transbridge.paratranz.config_manager import LLMConfig
+        from transbridge.paratranz.config_manager import LLMConfig
         # 使用传入的配置作为基础，保留其他字段
         cfg = self._config or LLMConfig()
         cfg.provider = "anthropic" if self._provider_combo.currentIndex() == 1 else "openai_compatible"

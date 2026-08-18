@@ -4,21 +4,22 @@ AppContext: 全局应用上下文，持有配置、当前用户、当前项目�
 """
 
 from __future__ import annotations
-from dataclasses import dataclass, field
+
+from collections import deque
+from dataclasses import dataclass
+import threading
 from typing import TYPE_CHECKING
 
-import threading
-from collections import deque
+from PyQt6.QtCore import QObject, Qt, pyqtSignal, pyqtSlot
 
-from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot, Qt
-
-from src.transbridge.paratranz.config_manager import ParatranzConfig
-from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.paratranz.config_manager import ParatranzConfig
 
 if TYPE_CHECKING:
-    from src.transbridge.persistence.workspace import WorkspaceState
-    from src.transbridge.persistence.project import ProjectHandle
-    from src.transbridge.persistence.variant_store import VariantStore
+    from transbridge.application.projections import ProjectionSnapshot, ProjectionStore, ProjectionSubscription
+    from transbridge.persistence.project import ProjectHandle
+    from transbridge.persistence.variant_store import VariantStore
+    from transbridge.persistence.workspace import WorkspaceState
 
 
 @dataclass
@@ -35,6 +36,8 @@ class CollectionSlot:
     migrate_count: int = 0
     plugin: object = None                           # 解析出的 Plugin 实例
     strings_lookup: object = None                  # PluginStringsLookup 实例（本地化插件）
+    source_snapshot: object = None                 # V2 写回所需的不可变来源快照
+    format_id: object = None                       # V2 FormatId；兼容期保持可选
 
 
 class AppContext(QObject):
@@ -52,7 +55,14 @@ class AppContext(QObject):
     filter_changed = pyqtSignal(dict)         # 筛选状态变更
     label_data_changed = pyqtSignal()         # 标签数据变更
 
-    def __init__(self, parent=None):
+    def __init__(
+        self,
+        parent=None,
+        *,
+        project_projection: ProjectionStore | None = None,
+        project_commands=None,
+        runtime_context=None,
+    ):
         super().__init__(parent)
         self._config: ParatranzConfig = ParatranzConfig.create_or_load()
         self._current_user: dict | None = None
@@ -79,8 +89,17 @@ class AppContext(QObject):
         }
         self._selected_ids: set[str] = set()            # H2: Agent 选择集合（独立于标签系统）
         self.paratranz_project_id: int | None = None     # Story 15: 当前选中的 ParaTranz 项目 ID（会话内有效）
+        self._project_projection = project_projection
+        self._project_commands = project_commands
+        self._runtime_context = runtime_context
+        self._projection_subscription: ProjectionSubscription | None = None
+        self._projection_dirty = False
+        self._active_variant_id: str | None = None
 
-        self.collection_changed.connect(lambda _: self.mark_dirty())
+        if self._project_projection is not None:
+            self._projection_subscription = self._project_projection.subscribe(
+                self._on_project_projection
+            )
 
         self.__init_safe_mutate()
 
@@ -122,20 +141,24 @@ class AppContext(QObject):
     # B1: 标签数据
     @property
     def label_library(self) -> dict[str, dict]:
-        return self._label_library
+        return {key: dict(value) for key, value in self._label_library.items()}
 
     @label_library.setter
     def label_library(self, v: dict[str, dict]) -> None:
-        self._label_library = v
+        if self._project_projection is not None:
+            raise RuntimeError("label_library is a read-only projection; submit a Variant command")
+        self._label_library = {key: dict(value) for key, value in v.items()}
         self.label_data_changed.emit()
 
     @property
     def entry_labels(self) -> dict[str, set[str]]:
-        return self._entry_labels
+        return {key: set(value) for key, value in self._entry_labels.items()}
 
     @entry_labels.setter
     def entry_labels(self, v: dict[str, set[str]]) -> None:
-        self._entry_labels = v
+        if self._project_projection is not None:
+            raise RuntimeError("entry_labels is a read-only projection; submit a Variant command")
+        self._entry_labels = {key: set(value) for key, value in v.items()}
         self.label_data_changed.emit()
 
     # E8: 翻译作用域（带类型校验的正式属性）
@@ -362,6 +385,8 @@ class AppContext(QObject):
 
     @active_project.setter
     def active_project(self, v: ProjectHandle | None) -> None:
+        if self._project_projection is not None:
+            raise RuntimeError("active_project is a read-only projection; use the lifecycle command facade")
         self._active_project = v
         self.workspace_changed.emit()
 
@@ -371,6 +396,8 @@ class AppContext(QObject):
 
     @active_variant.setter
     def active_variant(self, name: str | None) -> None:
+        if self._project_projection is not None:
+            raise RuntimeError("active_variant is a read-only projection; use the lifecycle command facade")
         old = self._active_variant
         self._active_variant = name
         if old != name and name is not None:
@@ -382,13 +409,94 @@ class AppContext(QObject):
 
     @variant_store.setter
     def variant_store(self, v: VariantStore | None) -> None:
+        if self._project_projection is not None:
+            raise RuntimeError("variant_store is disabled when V2 aggregate authority is active")
         self._variant_store = v
 
     def mark_dirty(self) -> None:
         """标记当前版本数据已修改，触发自动保存防抖。"""
+        if self._project_projection is not None:
+            return
         if self._variant_store is not None:
             self._variant_store.dirty = True
             self.dirty_changed.emit()
+
+    @property
+    def dirty(self) -> bool:
+        if self._project_projection is not None:
+            return self._projection_dirty
+        return self._variant_store is not None and self._variant_store.dirty
+
+    @property
+    def active_variant_id(self) -> str | None:
+        return self._active_variant_id
+
+    @property
+    def uses_authoritative_projection(self) -> bool:
+        return self._project_projection is not None
+
+    def close_projection(self) -> None:
+        subscription = self._projection_subscription
+        self._projection_subscription = None
+        if subscription is not None:
+            subscription.close()
+
+    def update_projected_entry(
+        self,
+        local_key: str,
+        *,
+        translation: str | None = None,
+        stage: int | None = None,
+    ):
+        if self._project_commands is None or self._runtime_context is None:
+            raise RuntimeError("authoritative Variant command adapter is unavailable")
+        return self._project_commands.update_entry(
+            local_key,
+            self._runtime_context,
+            translation=translation,
+            stage=stage,
+        )
+
+    def replace_projected_labels(
+        self,
+        entry_labels: dict[str, set[str]],
+        label_library: dict[str, dict],
+    ):
+        if self._project_commands is None or self._runtime_context is None:
+            raise RuntimeError("authoritative Variant command adapter is unavailable")
+        return self._project_commands.replace_labels(
+            entry_labels,
+            label_library,
+            self._runtime_context,
+        )
+
+    def _on_project_projection(self, snapshot: ProjectionSnapshot | None) -> None:
+        old_dirty = self._projection_dirty
+        old_variant = self._active_variant_id
+        if snapshot is None:
+            self._projection_dirty = False
+            self._active_variant_id = None
+            self._label_library = {}
+            self._entry_labels = {}
+        else:
+            values = snapshot.to_dict()["values"]
+            self._projection_dirty = snapshot.dirty
+            variant_id = values.get("variant_id") or values.get("active_variant_id")
+            self._active_variant_id = None if variant_id is None else str(variant_id)
+            library = values.get("label_library") or {}
+            self._label_library = {str(key): dict(value) for key, value in library.items()}
+            labels: dict[str, set[str]] = {}
+            for entry in values.get("entries", ()):
+                entry_key = entry.get("entry_key") or {}
+                local_key = entry_key.get("local_key")
+                if local_key is not None:
+                    labels[str(local_key)] = set(str(value) for value in entry.get("labels", ()))
+            self._entry_labels = labels
+        self.label_data_changed.emit()
+        if old_dirty != self._projection_dirty:
+            self.dirty_changed.emit()
+        if old_variant != self._active_variant_id and self._active_variant_id is not None:
+            self.variant_changed.emit(self._active_variant_id)
 
     # ── C10: 跨线程安全状态变更 ─────────────────────────────────
 

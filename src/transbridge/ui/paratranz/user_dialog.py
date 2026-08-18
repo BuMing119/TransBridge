@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QTableWidgetItem, QHeaderView, QMessageBox,
 )
 
-from src.transbridge.paratranz.api.paratranz_user_api import ParatranzUserAPI
+from transbridge.paratranz.api.paratranz_user_api import ParatranzUserAPI
 from ..workers import ApiWorker
 
 

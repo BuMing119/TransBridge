@@ -23,8 +23,8 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QBrush
 
 if TYPE_CHECKING:
-    from src.transbridge.ui.context import AppContext, CollectionSlot
-    from src.transbridge.paratranz.config_manager import LLMConfig
+    from transbridge.ui.context import AppContext, CollectionSlot
+    from transbridge.paratranz.config_manager import LLMConfig
 
 
 class _BatchTranslationDialog(QDialog):
@@ -221,7 +221,7 @@ class _BatchTranslationDialog(QDialog):
 
     def _load_config(self):
         """加载 LLM 配置并更新显示。"""
-        from src.transbridge.paratranz.config_manager import LLMConfig
+        from transbridge.paratranz.config_manager import LLMConfig
         self._llm_config = LLMConfig.load_from_file()
         self._update_config_label()
 
@@ -248,7 +248,7 @@ class _BatchTranslationDialog(QDialog):
 
     def _on_edit_config(self):
         """打开配置编辑对话框。"""
-        from src.transbridge.ui.tools.ai_translator._batch_config_dialog import _BatchConfigDialog
+        from transbridge.ui.tools.ai_translator._batch_config_dialog import _BatchConfigDialog
         dlg = _BatchConfigDialog(self._llm_config, parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._llm_config = dlg.get_config()

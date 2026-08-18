@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QSize, QRect, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QCloseEvent
 
-from src.transbridge.paratranz.api.paratranz_strings_api import ParatranzStringsAPI
+from transbridge.paratranz.api.paratranz_strings_api import ParatranzStringsAPI
 from ..workers import ApiWorker
 from ._strings_common import _STAGE_LABELS, _KEY_ROLE, _extract_list
 from .string_dialogs import _SyncTranslationDialog

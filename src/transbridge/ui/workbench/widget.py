@@ -67,7 +67,7 @@ class WorkbenchWidget(QWidget):
                 progress_win.activateWindow()
                 return
 
-            from src.transbridge.ui.tools.ai_translator.ai_translator_window import AITranslatorWindow
+            from transbridge.ui.tools.ai_translator.ai_translator_window import AITranslatorWindow
             win = AITranslatorWindow.open_for_translation(self._ctx, self._step2, parent=self)
             if win is None:
                 return
@@ -162,11 +162,11 @@ class WorkbenchWidget(QWidget):
         self._ctx.activate_slot("")
 
     def _on_import_json(self):
-        from src.transbridge.converter.translation_entry_collection import (
+        from transbridge.converter.translation_entry_collection import (
             TranslationEntryCollection,
         )
-        from src.transbridge.ui.context import CollectionSlot
-        from src.transbridge.ui.workers import ApiWorker
+        from transbridge.ui.context import CollectionSlot
+        from transbridge.ui.workers import ApiWorker
 
         path, _ = QFileDialog.getOpenFileName(
             self, "导入 JSON 文件", "", "JSON 文件 (*.json);;所有文件 (*)"

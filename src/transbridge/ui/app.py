@@ -1,11 +1,16 @@
-import sys
-import logging
-import traceback
 from datetime import datetime
+import logging
 from pathlib import Path
+import sys
+import traceback
+
 from PyQt6.QtWidgets import QApplication
+
+from transbridge.bootstrap import AppRuntime, bind_runtime, build_runtime
+from transbridge.paratranz.config_manager import ParatranzConfig
+
+from .context import AppContext
 from .main_window import MainWindow
-from ..paratranz.config_manager import ParatranzConfig
 
 _LOG_FORMAT = "%(asctime)s [%(name)s] %(levelname)s: %(message)s"
 
@@ -27,44 +32,53 @@ def _setup_logging() -> None:
 
 def _global_exception_hook(exc_type, exc_value, exc_tb):
     """全局异常捕获器，将未捕获的异常记录到日志"""
-    _logger.critical(
-        "未捕获的异常:\n%s",
-        "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
-    )
+    _logger.critical("未捕获的异常:\n%s", "".join(traceback.format_exception(exc_type, exc_value, exc_tb)))
     # 调用默认异常处理器（保持原有行为）
     sys.__excepthook__(exc_type, exc_value, exc_tb)
 
 
-def main():
+def main(runtime: AppRuntime | None = None) -> int:
+    """Run the GUI adapter against one explicitly owned application runtime."""
+
     _setup_logging()
     sys.excepthook = _global_exception_hook
-    app = QApplication(sys.argv)
-    app.setApplicationName("TransBridge")
-    app.setOrganizationName("TransBridge")
-    # 初始化 Phase 2 Agent 系统
-    from src.transbridge.smart_assistant.agents import AgentRegistry
-    AgentRegistry.init_presets()
-    # 显式注册所有内置工具（替代模块级导入副作用，消除循环导入风险）
-    from src.transbridge.smart_assistant.tools import register_all as register_all_tools
-    register_all_tools()
-    # 条件启动 MCP Server
-    from src.transbridge.paratranz.config_manager import LLMConfig
-    llm_cfg = LLMConfig.load_from_file()
-    if llm_cfg.mcp_enabled:
-        from src.transbridge.smart_assistant.mcp import MCPAdapter, MCPServer
-        import threading
-        mcp_config = {
-            "admin_tool_whitelist": llm_cfg.mcp_admin_tool_whitelist,
-            "write_tool_policy": llm_cfg.mcp_write_tool_policy,
-        }
-        adapter = MCPAdapter(ToolRegistry, mcp_config)
-        server = MCPServer(ToolRegistry, adapter)
-        t = threading.Thread(target=server.run_stdio, daemon=True)
-        t.start()
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec())
+    app_runtime = runtime or build_runtime({"entrypoint": "gui"})
+    binding = bind_runtime(
+        app_runtime,
+        "gui:main-window",
+        permissions=frozenset({"gui"}),
+        metadata=(("entrypoint", "gui"),),
+    )
+    try:
+        app = QApplication.instance() or QApplication(sys.argv)
+        app.setApplicationName("TransBridge")
+        app.setOrganizationName("TransBridge")
+        app._transbridge_runtime = app_runtime  # type: ignore[attr-defined]
+
+        # Legacy registry setup remains an entrypoint adapter until S04 migrates it.
+        from transbridge.smart_assistant.agents import AgentRegistry
+        from transbridge.smart_assistant.tools import register_all as register_all_tools
+        from transbridge.smart_assistant.tools.task_manager import TaskManager
+
+        TaskManager().bind_runtime(app_runtime.tasks)
+        AgentRegistry.init_presets()
+        register_all_tools()
+
+        projection = AppContext(
+            project_projection=app_runtime.use_cases.resolve("project_projection"),
+            project_commands=app_runtime.use_cases.resolve("gui_project_commands"),
+            runtime_context=binding.context,
+        )
+        window = MainWindow(
+            app_context=projection,
+            runtime=app_runtime,
+            runtime_context=binding.context,
+        )
+        window.show()
+        return int(app.exec())
+    finally:
+        app_runtime.close()
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

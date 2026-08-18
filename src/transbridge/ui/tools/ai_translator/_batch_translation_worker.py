@@ -21,9 +21,9 @@ from PyQt6.QtCore import QThread, pyqtSignal
 _logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from src.transbridge.ui.context import CollectionSlot
-    from src.transbridge.paratranz.config_manager import LLMConfig
-    from src.transbridge.ai_translator.translator import TranslationResult
+    from transbridge.ui.context import CollectionSlot
+    from transbridge.paratranz.config_manager import LLMConfig
+    from transbridge.ai_translator.translator import TranslationResult
 
 
 @dataclass
@@ -113,7 +113,7 @@ class _BatchTranslationWorker(QThread):
 
     def _make_stream_log_dir(self) -> str:
         """创建日志目录。"""
-        from src.transbridge.paratranz.config_manager import ParatranzConfig
+        from transbridge.paratranz.config_manager import ParatranzConfig
         log_base = os.path.join(ParatranzConfig.get_data_dir(), "log")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_dir = os.path.join(log_base, f"batch_{timestamp}")
@@ -183,7 +183,7 @@ class _BatchTranslationWorker(QThread):
         plugin_name: str,
     ) -> "TranslationResult | None":
         """翻译单个插件。"""
-        from src.transbridge.ai_translator.translator import (
+        from transbridge.ai_translator.translator import (
             AutoTranslator, TranslatorConfig, ProgressCheckpoint, TranslationResult
         )
 

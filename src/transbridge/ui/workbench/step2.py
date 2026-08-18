@@ -8,13 +8,13 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView, QProgressBar,
     QPushButton, QLineEdit, QDialog, QListWidget, QListWidgetItem,
-    QAbstractItemView,
+    QAbstractItemView, QMenu,
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QActionGroup
 
-from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from src.transbridge.converter.translation_entry import (
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.converter.translation_entry import (
     TranslationEntry,
     STAGE_LABELS, STAGE_COLORS,
     STAGE_LOCKED, STAGE_HIDDEN, STAGE_TRANSLATED,
@@ -235,6 +235,9 @@ class Step2PreviewWidget(QWidget):
         self._search_timer.timeout.connect(self._populate_table)
         self._init_ui()
         ctx.collection_changed.connect(self.refresh)
+        if getattr(ctx, "uses_authoritative_projection", False):
+            ctx.label_data_changed.connect(self._reload_projected_labels)
+            self._reload_projected_labels()
 
     # ── 初始化 UI ────────────────────────────────────────────────────────────
 
@@ -593,6 +596,7 @@ class Step2PreviewWidget(QWidget):
     def _ensure_default_labels(self):
         import uuid
         if not self._label_library:
+            library = {}
             defaults = [
                 ("待处理", "#2196F3"),
                 ("有疑问", "#FF9800"),
@@ -600,15 +604,21 @@ class Step2PreviewWidget(QWidget):
             ]
             for name, color in defaults:
                 lid = uuid.uuid4().hex[:8]
-                self._label_library[lid] = {"name": name, "color": color}
+                library[lid] = {"name": name, "color": color}
+            if self._commit_labels(self._entry_labels, library):
+                self._label_library = library
 
     def _on_manage_labels(self):
         dlg = _LabelManagerDialog(self._label_library, self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             new_library = dlg.get_label_library()
             removed = set(self._label_library) - set(new_library)
-            for labels in self._entry_labels.values():
+            new_entry_labels = {key: set(value) for key, value in self._entry_labels.items()}
+            for labels in new_entry_labels.values():
                 labels.difference_update(removed)
+            if not self._commit_labels(new_entry_labels, new_library):
+                return
+            self._entry_labels = new_entry_labels
             self._label_library = new_library
             self._build_label_tags()
             self._populate_table()
@@ -842,7 +852,10 @@ class Step2PreviewWidget(QWidget):
 
     def collect_labels(self) -> tuple[dict[str, set[str]], dict[str, dict]]:
         """返回 (_entry_labels, _label_library) 副本，供持久化保存。"""
-        return (dict(self._entry_labels), dict(self._label_library))
+        return (
+            {key: set(value) for key, value in self._entry_labels.items()},
+            {key: dict(value) for key, value in self._label_library.items()},
+        )
 
     # ── 事件处理 ──────────────────────────────────────────────────────────────
 
@@ -861,6 +874,16 @@ class Step2PreviewWidget(QWidget):
         new_text = item.text().strip()
         if new_text == "（无译文）":
             new_text = ""
+        if getattr(self._ctx, "uses_authoritative_projection", False):
+            stage = 2 if new_text and entry.stage < 2 else entry.stage
+            result = self._ctx.update_projected_entry(
+                entry.key,
+                translation=new_text,
+                stage=stage,
+            )
+            if not result.is_success:
+                self._populate_table()
+                return
         entry.translation = new_text if new_text else ""
         if entry.translation and entry.stage < 2:
             entry.stage = 2
@@ -910,7 +933,7 @@ class Step2PreviewWidget(QWidget):
         if not isinstance(entry, TranslationEntry) or not entry.id:
             return QMenu(self)
 
-        from PyQt6.QtWidgets import QMenu, QInputDialog
+        from PyQt6.QtWidgets import QInputDialog
 
         menu = QMenu(self)
         labels = self._entry_labels.get(entry.id, set())
@@ -949,16 +972,24 @@ class Step2PreviewWidget(QWidget):
         return menu
 
     def _on_label_toggle(self, entry_id: str, lid: str, checked: bool):
-        if entry_id not in self._entry_labels:
-            self._entry_labels[entry_id] = set()
+        entry_labels = {key: set(value) for key, value in self._entry_labels.items()}
+        if entry_id not in entry_labels:
+            entry_labels[entry_id] = set()
         if checked:
-            self._entry_labels[entry_id].add(lid)
+            entry_labels[entry_id].add(lid)
         else:
-            self._entry_labels[entry_id].discard(lid)
+            entry_labels[entry_id].discard(lid)
+        if not self._commit_labels(entry_labels, self._label_library):
+            return
+        self._entry_labels = entry_labels
         self._build_label_tags()
         self._populate_table()
 
     def _on_stage_change(self, entry: TranslationEntry, stage_val: int):
+        if getattr(self._ctx, "uses_authoritative_projection", False):
+            result = self._ctx.update_projected_entry(entry.key, stage=stage_val)
+            if not result.is_success:
+                return
         entry.stage = stage_val
         self._build_stage_tags()
         self._populate_table()
@@ -972,12 +1003,36 @@ class Step2PreviewWidget(QWidget):
         name = name.strip()
         color = random.choice(_PRESET_COLORS)
         lid = uuid.uuid4().hex[:8]
-        self._label_library[lid] = {"name": name, "color": color}
-        if entry.id not in self._entry_labels:
-            self._entry_labels[entry.id] = set()
-        self._entry_labels[entry.id].add(lid)
+        library = {key: dict(value) for key, value in self._label_library.items()}
+        entry_labels = {key: set(value) for key, value in self._entry_labels.items()}
+        library[lid] = {"name": name, "color": color}
+        if entry.id not in entry_labels:
+            entry_labels[entry.id] = set()
+        entry_labels[entry.id].add(lid)
+        if not self._commit_labels(entry_labels, library):
+            return
+        self._label_library = library
+        self._entry_labels = entry_labels
         self._build_label_tags()
         self._populate_table()
+
+    def _commit_labels(
+        self,
+        entry_labels: dict[str, set[str]],
+        label_library: dict[str, dict],
+    ) -> bool:
+        if not getattr(self._ctx, "uses_authoritative_projection", False):
+            return True
+        result = self._ctx.replace_projected_labels(entry_labels, label_library)
+        return result.is_success
+
+    def _reload_projected_labels(self) -> None:
+        self._label_library = self._ctx.label_library
+        self._entry_labels = self._ctx.entry_labels
+        if hasattr(self, "_mark_tags_container"):
+            self._build_label_tags()
+        if hasattr(self, "_table"):
+            self._populate_table()
 
     def _update_count_label(self):
         labeled = sum(1 for ls in self._entry_labels.values() if ls)

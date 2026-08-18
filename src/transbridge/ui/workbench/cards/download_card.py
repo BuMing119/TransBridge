@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 
-from src.transbridge.paratranz.workflow.downloader import ParaTranzDownloader
+from transbridge.paratranz.workflow.downloader import ParaTranzDownloader
 from ...workers import ApiWorker
 from .base import OpCard
 
@@ -275,7 +275,7 @@ class _FileSelectDialog(QDialog):
         self._load_files()
 
     def _load_files(self):
-        from src.transbridge.paratranz.api.paratranz_files_api import ParatranzFilesAPI
+        from transbridge.paratranz.api.paratranz_files_api import ParatranzFilesAPI
         config = self._config
         project_id = self._project_id
 
@@ -417,7 +417,7 @@ class DownloadCard(OpCard):
 
     def do_batch_download(self, selected_slots: list, project: dict):
         """执行批量下载（由 step3 调用）。"""
-        from src.transbridge.paratranz.api.paratranz_files_api import ParatranzFilesAPI
+        from transbridge.paratranz.api.paratranz_files_api import ParatranzFilesAPI
 
         project_id = project.get("id")
         project_name = project.get("name", "?")

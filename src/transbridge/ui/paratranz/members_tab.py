@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 
-from src.transbridge.paratranz.api.paratranz_members_api import ParatranzMembersAPI
+from transbridge.paratranz.api.paratranz_members_api import ParatranzMembersAPI
 from ..workers import ApiWorker
 
 _PERM_LABELS = {1: "翻译者", 2: "校对者", 3: "管理员", 4: "所有者"}

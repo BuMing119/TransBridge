@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 
-from src.transbridge.paratranz.api.paratranz_issues_api import ParatranzIssuesAPI
+from transbridge.paratranz.api.paratranz_issues_api import ParatranzIssuesAPI
 from ..workers import ApiWorker
 
 

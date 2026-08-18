@@ -12,8 +12,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 
-from src.transbridge.paratranz.api.paratranz_strings_api import ParatranzStringsAPI
-from src.transbridge.paratranz.api.paratranz_files_api import ParatranzFilesAPI
+from transbridge.paratranz.api.paratranz_strings_api import ParatranzStringsAPI
+from transbridge.paratranz.api.paratranz_files_api import ParatranzFilesAPI
 from ..workers import ApiWorker
 from ._strings_common import _STAGE_LABELS, _STAGE_COLORS, _extract_list
 from .string_detail_dialog import StringDetailDialog

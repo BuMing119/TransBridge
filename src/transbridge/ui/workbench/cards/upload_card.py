@@ -9,11 +9,11 @@ from PyQt6.QtWidgets import (
     QScrollArea, QWidget, QCheckBox as QtCheckBox, QComboBox,
 )
 
-from src.transbridge.converter.translation_entry_collection_export import (
+from transbridge.converter.translation_entry_collection_export import (
     export_to_categorized_json_files,
     get_categorized_file_names,
 )
-from src.transbridge.paratranz.workflow.uploader import ParaTranzUploader, ConflictInfo, FileMaps, FileMaps
+from transbridge.paratranz.workflow.uploader import ParaTranzUploader, ConflictInfo, FileMaps, FileMaps
 from .base import OpCard
 
 

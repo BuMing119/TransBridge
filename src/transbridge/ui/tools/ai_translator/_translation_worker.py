@@ -38,7 +38,7 @@ class _TranslationWorker(QThread):
         return self._stream_log_dir
 
     def _make_stream_log_dir(self) -> str:
-        from src.transbridge.paratranz.config_manager import ParatranzConfig
+        from transbridge.paratranz.config_manager import ParatranzConfig
         log_base = os.path.join(ParatranzConfig.get_data_dir(), "log")
         esp_stem = Path(self._translator._cfg.esp_path).stem
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

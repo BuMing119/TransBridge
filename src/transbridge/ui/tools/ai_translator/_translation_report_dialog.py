@@ -18,10 +18,10 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 
 if TYPE_CHECKING:
-    from src.transbridge.ai_translator.translator import TranslationResult
-    from src.transbridge.ai_translator.post_processor.base import PostProcessResult
-    from src.transbridge.ai_translator.post_processor.polisher import PolishResult
-    from src.transbridge.converter.translation_entry import TranslationEntry
+    from transbridge.ai_translator.translator import TranslationResult
+    from transbridge.ai_translator.post_processor.base import PostProcessResult
+    from transbridge.ai_translator.post_processor.polisher import PolishResult
+    from transbridge.converter.translation_entry import TranslationEntry
 
 
 class _TranslationReportDialog(QDialog):

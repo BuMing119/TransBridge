@@ -12,8 +12,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QSize
 
-from src.transbridge.paratranz.api.paratranz_terms_api import ParatranzTermsAPI
-from src.transbridge.paratranz.api.paratranz_history_api import ParatranzHistoryAPI
+from transbridge.paratranz.api.paratranz_terms_api import ParatranzTermsAPI
+from transbridge.paratranz.api.paratranz_history_api import ParatranzHistoryAPI
 from ..workers import ApiWorker
 
 

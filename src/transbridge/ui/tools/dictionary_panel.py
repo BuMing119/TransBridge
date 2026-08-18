@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from src.transbridge.translation_memory import TranslationMemoryManager
+from transbridge.translation_memory import TranslationMemoryManager
 
 
 class DictionaryPanel(QDialog):
@@ -208,7 +208,7 @@ class DictionaryPanel(QDialog):
             QMessageBox.warning(self, "提示", "请先解析并加载翻译集合")
             return
 
-        from src.transbridge.ui.tools.dictionary_dialog import SaveToDictionaryDialog
+        from transbridge.ui.tools.dictionary_dialog import SaveToDictionaryDialog
         dlg = SaveToDictionaryDialog(
             self,
             source_path=self._default_source_path(),
@@ -266,7 +266,7 @@ class DictionaryPanel(QDialog):
             QMessageBox.warning(self, "提示", "请先解析并加载翻译集合")
             return
 
-        from src.transbridge.translation_memory.manager import QueryContext
+        from transbridge.translation_memory.manager import QueryContext
 
         manager = TranslationMemoryManager()
         try:
@@ -288,7 +288,7 @@ class DictionaryPanel(QDialog):
 
         # 冲突仲裁
         if result.conflicts:
-            from src.transbridge.ui.tools.conflict_dialog import DictionaryConflictDialog
+            from transbridge.ui.tools.conflict_dialog import DictionaryConflictDialog
             dlg = DictionaryConflictDialog(result.conflicts, self)
             if dlg.exec() == QDialog.DialogCode.Accepted:
                 for entry_id, chosen in dlg.result():

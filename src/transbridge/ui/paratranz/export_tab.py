@@ -8,8 +8,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 
-from src.transbridge.paratranz.api.paratranz_export_api import ParatranzExportAPI
-from src.transbridge.paratranz.workflow.artifact import ArtifactWorkflow
+from transbridge.paratranz.api.paratranz_export_api import ParatranzExportAPI
+from transbridge.paratranz.workflow.artifact import ArtifactWorkflow
 from ..workers import ApiWorker
 
 

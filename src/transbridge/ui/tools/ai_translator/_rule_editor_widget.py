@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 
 if TYPE_CHECKING:
-    from src.transbridge.paratranz.config_manager import ActionRule
+    from transbridge.paratranz.config_manager import ActionRule
 
 # ── 预设 ─────────────────────────────────────────────────────────────────────
 
@@ -76,7 +76,7 @@ class _RuleEditorWidget(QWidget):
 
     def get_rules(self) -> list:
         """导出为 ActionRule 列表。"""
-        from src.transbridge.paratranz.config_manager import ActionRule
+        from transbridge.paratranz.config_manager import ActionRule
         result = []
         for i, r in enumerate(self._rules):
             result.append(ActionRule(

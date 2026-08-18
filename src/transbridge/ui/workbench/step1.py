@@ -16,12 +16,12 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import pyqtSignal, Qt
 
-from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from src.transbridge.parser.plugin_parser import PluginParser
-from src.transbridge.parser.eet_parser import EET_XmlParser
-from src.transbridge.parser.xt import XT_XmlParser
-from src.transbridge.parser.strings_file import PluginStringsLookup
-from src.transbridge.ui.context import CollectionSlot
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.parser.plugin_parser import PluginParser
+from transbridge.parser.eet_parser import EET_XmlParser
+from transbridge.parser.xt import XT_XmlParser
+from transbridge.parser.strings_file import PluginStringsLookup
+from transbridge.ui.context import CollectionSlot
 from ..workers import ApiWorker
 
 
@@ -695,7 +695,7 @@ class Step1SourceWidget(QWidget):
                     pass
             if sst_path:
                 try:
-                    from src.transbridge.parser.xt.sst_parser import SST_Parser
+                    from transbridge.parser.xt.sst_parser import SST_Parser
                     sp = SST_Parser.from_file(sst_path)
                     result = collection.apply_sst_entries(sp.entries)
                     migrate_count += result["updated"]
@@ -865,7 +865,7 @@ class Step1SourceWidget(QWidget):
                             pass
                     if sst_path and getattr(s, 'sst_path', None) is None:
                         try:
-                            from src.transbridge.parser.xt.sst_parser import SST_Parser
+                            from transbridge.parser.xt.sst_parser import SST_Parser
                             sp = SST_Parser.from_file(sst_path)
                             result = collection.apply_sst_entries(sp.entries)
                             slot_migrate += result["updated"]

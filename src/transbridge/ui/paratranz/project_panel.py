@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import pyqtSignal, Qt
 
-from src.transbridge.paratranz.api.paratranz_project_api import ParatranzProjectAPI
+from transbridge.paratranz.api.paratranz_project_api import ParatranzProjectAPI
 from ..workers import ApiWorker
 
 

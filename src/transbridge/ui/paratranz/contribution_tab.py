@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QDate
 from PyQt6.QtGui import QColor
 
-from src.transbridge.paratranz.api.paratranz_contribution_api import ParatranzScoresAPI
+from transbridge.paratranz.api.paratranz_contribution_api import ParatranzScoresAPI
 from ..workers import ApiWorker
 
 

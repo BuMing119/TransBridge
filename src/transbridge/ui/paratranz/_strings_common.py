@@ -2,7 +2,7 @@
 
 from PyQt6.QtCore import Qt
 
-from src.transbridge.converter.translation_entry import STAGE_LABELS, STAGE_COLORS
+from transbridge.converter.translation_entry import STAGE_LABELS, STAGE_COLORS
 
 # 扩展：添加 ParaTranz UI 哨兵值 "全部"（-2）
 _STAGE_LABELS = {-2: "全部", **STAGE_LABELS}

@@ -20,14 +20,14 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QBrush
 
-from src.transbridge.ui.tools.ai_translator._translation_worker import _TranslationWorker
-from src.transbridge.ui.tools.ai_translator._translation_progress_window import _TranslationProgressWindow
-from src.transbridge.ui.tools.ai_translator._term_editor_dialog import _TermEditorDialog
-from src.transbridge.paratranz.config_manager import apply_rules
+from transbridge.ui.tools.ai_translator._translation_worker import _TranslationWorker
+from transbridge.ui.tools.ai_translator._translation_progress_window import _TranslationProgressWindow
+from transbridge.ui.tools.ai_translator._term_editor_dialog import _TermEditorDialog
+from transbridge.paratranz.config_manager import apply_rules
 
 if TYPE_CHECKING:
-    from src.transbridge.ui.context import AppContext
-    from src.transbridge.ui.workbench.step2 import Step2PreviewWidget
+    from transbridge.ui.context import AppContext
+    from transbridge.ui.workbench.step2 import Step2PreviewWidget
 
 
 class AITranslatorWindow(QWidget):
@@ -65,7 +65,7 @@ class AITranslatorWindow(QWidget):
             return None
 
         # 延迟导入批量翻译相关模块
-        from src.transbridge.ui.tools.ai_translator._translation_target_dialog import _TranslationTargetDialog
+        from transbridge.ui.tools.ai_translator._translation_target_dialog import _TranslationTargetDialog
 
         # 弹出目标选择对话框
         target_dlg = _TranslationTargetDialog(ctx, parent)
@@ -85,9 +85,9 @@ class AITranslatorWindow(QWidget):
     def _open_batch_mode(cls, ctx: "AppContext", parent=None) -> QWidget | None:
         """打开批量翻译流程。"""
         # 延迟导入批量翻译相关模块
-        from src.transbridge.ui.tools.ai_translator._batch_translation_dialog import _BatchTranslationDialog
-        from src.transbridge.ui.tools.ai_translator._batch_translation_worker import _BatchTranslationWorker
-        from src.transbridge.ui.tools.ai_translator._batch_translation_progress_window import _BatchTranslationProgressWindow
+        from transbridge.ui.tools.ai_translator._batch_translation_dialog import _BatchTranslationDialog
+        from transbridge.ui.tools.ai_translator._batch_translation_worker import _BatchTranslationWorker
+        from transbridge.ui.tools.ai_translator._batch_translation_progress_window import _BatchTranslationProgressWindow
 
         # 弹出批量翻译对话框（包含配置编辑）
         batch_dlg = _BatchTranslationDialog(ctx, parent)
@@ -126,7 +126,7 @@ class AITranslatorWindow(QWidget):
         project_id = None
         if ctx.current_project:
             project_id = ctx.current_project.get("id")
-            from src.transbridge.paratranz.api.paratranz_terms_api import ParatranzTermsAPI
+            from transbridge.paratranz.api.paratranz_terms_api import ParatranzTermsAPI
             paratranz_client = ParatranzTermsAPI(ctx.config)
 
         # 创建 Worker 和进度窗口
@@ -148,7 +148,7 @@ class AITranslatorWindow(QWidget):
     def _check_all_terms_empty_batch(cls, cfg, slots: list) -> bool:
         """检查所有术语来源是否均为空。"""
         import os
-        from src.transbridge.ai_translator.term_database import DynamicTermDatabase
+        from transbridge.ai_translator.term_database import DynamicTermDatabase
 
         # 检查第一个插件的动态术语库
         if slots:
@@ -654,7 +654,7 @@ class AITranslatorWindow(QWidget):
         esp_path = self._ctx.esp_path
         if not esp_path:
             return
-        from src.transbridge.ai_translator.translator import ProgressCheckpoint
+        from transbridge.ai_translator.translator import ProgressCheckpoint
         cp = ProgressCheckpoint.load(esp_path)
         if cp is None:
             return
@@ -673,7 +673,7 @@ class AITranslatorWindow(QWidget):
     # ── 配置加载/保存 ─────────────────────────────────────────────────────────
 
     def _load_config(self):
-        from src.transbridge.paratranz.config_manager import LLMConfig
+        from transbridge.paratranz.config_manager import LLMConfig
         cfg = LLMConfig.load_from_file()
         self._provider_combo.setCurrentIndex(0 if cfg.provider != "anthropic" else 1)
         self._target_lang_combo.setCurrentText(cfg.target_lang)
@@ -743,7 +743,7 @@ class AITranslatorWindow(QWidget):
                 break
 
     def _save_config(self):
-        from src.transbridge.paratranz.config_manager import LLMConfig
+        from transbridge.paratranz.config_manager import LLMConfig
         cfg = LLMConfig.load_from_file()
         cfg.provider = "anthropic" if self._provider_combo.currentIndex() == 1 else "openai_compatible"
         cfg.target_lang = self._target_lang_combo.currentText()
@@ -841,7 +841,7 @@ class AITranslatorWindow(QWidget):
         self._embed_baseurl_edit.textChanged.connect(self._schedule_save)
 
     def _build_llm_config(self):
-        from src.transbridge.paratranz.config_manager import LLMConfig
+        from transbridge.paratranz.config_manager import LLMConfig
         cfg = LLMConfig()
         cfg.provider = "anthropic" if self._provider_combo.currentIndex() == 1 else "openai_compatible"
         cfg.target_lang = self._target_lang_combo.currentText()
@@ -959,8 +959,8 @@ class AITranslatorWindow(QWidget):
 
     def _rebuild_scope_tags(self):
         from collections import Counter
-        from src.transbridge.converter.translation_entry import STAGE_LABELS
-        from src.transbridge.ui.workbench.step2 import _ALL_CATEGORIES
+        from transbridge.converter.translation_entry import STAGE_LABELS
+        from transbridge.ui.workbench.step2 import _ALL_CATEGORIES
 
         collection = self._ctx.collection
         entries = list(collection) if collection else []
@@ -1022,7 +1022,7 @@ class AITranslatorWindow(QWidget):
 
         # Category 标签
         cat_counter = Counter()
-        from src.transbridge.ui.workbench.step2 import _entry_category
+        from transbridge.ui.workbench.step2 import _entry_category
         for e in entries:
             cat_counter[_entry_category(e)] += 1
         for cat in _ALL_CATEGORIES:
@@ -1047,8 +1047,8 @@ class AITranslatorWindow(QWidget):
 
     def _build_scope_candidates(self) -> list:
         """按三维度筛选候选条目，与主表完全解耦。"""
-        from src.transbridge.converter.translation_entry import STAGE_LOCKED, STAGE_HIDDEN
-        from src.transbridge.ui.workbench.step2 import _entry_category
+        from transbridge.converter.translation_entry import STAGE_LOCKED, STAGE_HIDDEN
+        from transbridge.ui.workbench.step2 import _entry_category
 
         collection = self._ctx.collection
         if collection is None:
@@ -1153,7 +1153,7 @@ class AITranslatorWindow(QWidget):
             self._estimate_lbl.setText("预计：0 条（无匹配条目，请调整作用域）")
             return
 
-        from src.transbridge.ai_translator.batch_planner import BatchPlanner
+        from transbridge.ai_translator.batch_planner import BatchPlanner
         planner = BatchPlanner(max_tokens_per_batch=self._tokens_spin.value())
         plan = planner.plan(candidates)
         self._estimate_lbl.setText(
@@ -1172,7 +1172,7 @@ class AITranslatorWindow(QWidget):
             QMessageBox.warning(self, "测试连接", "请先填写模型名。")
             return
         try:
-            from src.transbridge.infra.llm_client import create_llm_client
+            from transbridge.infra.llm_client import create_llm_client
             client = create_llm_client(cfg)
             reply = client.chat([{"role": "user", "content": "Say 'OK' in one word."}], max_tokens=10)
             QMessageBox.information(self, "测试连接", f"连接成功！模型回复：{reply}")
@@ -1189,7 +1189,7 @@ class AITranslatorWindow(QWidget):
         if not esp_path:
             QMessageBox.warning(self, "术语库", "尚未加载 ESP 文件。")
             return
-        from src.transbridge.ai_translator.term_database import DynamicTermDatabase
+        from transbridge.ai_translator.term_database import DynamicTermDatabase
         db = DynamicTermDatabase(esp_path)
         db.load()
         dlg = _TermEditorDialog(db, parent=self)
@@ -1239,7 +1239,7 @@ class AITranslatorWindow(QWidget):
         target_ids = [e.id for e in candidates]
 
         # 加载断点（如有）
-        from src.transbridge.ai_translator.translator import AutoTranslator, TranslatorConfig, ProgressCheckpoint
+        from transbridge.ai_translator.translator import AutoTranslator, TranslatorConfig, ProgressCheckpoint
         checkpoint = ProgressCheckpoint.load(self._ctx.esp_path)
 
         translator_cfg = TranslatorConfig(
@@ -1252,7 +1252,7 @@ class AITranslatorWindow(QWidget):
         project_id = None
         if self._ctx.current_project:
             project_id = self._ctx.current_project.get("id")
-            from src.transbridge.paratranz.api.paratranz_terms_api import ParatranzTermsAPI
+            from transbridge.paratranz.api.paratranz_terms_api import ParatranzTermsAPI
             paratranz_client = ParatranzTermsAPI(self._ctx.config)
 
         translator = AutoTranslator(translator_cfg, paratranz_client, project_id)
@@ -1348,19 +1348,19 @@ class AITranslatorWindow(QWidget):
             return
 
         # 创建 LLM 客户端
-        from src.transbridge.infra.llm_client import create_llm_client
+        from transbridge.infra.llm_client import create_llm_client
         llm_client = create_llm_client(cfg)
 
         # 创建术语管理器（可选）
         term_manager = None
         if self._ctx.esp_path:
-            from src.transbridge.ai_translator.term_database import DynamicTermDatabase, TermDatabaseManager
+            from transbridge.ai_translator.term_database import DynamicTermDatabase, TermDatabaseManager
             dynamic_db = DynamicTermDatabase(self._ctx.esp_path)
             dynamic_db.load()
             term_manager = TermDatabaseManager([dynamic_db.as_list()])
 
         # 创建润色器
-        from src.transbridge.ai_translator.post_processor.polisher import LLMPolisher
+        from transbridge.ai_translator.post_processor.polisher import LLMPolisher
         polish_level = cfg.pp_polish_level or "moderate"
         polisher = LLMPolisher(
             llm_client=llm_client,
@@ -1371,7 +1371,7 @@ class AITranslatorWindow(QWidget):
         )
 
         # 创建 Worker
-        from src.transbridge.ui.tools.ai_translator._polish_worker import _PolishWorker
+        from transbridge.ui.tools.ai_translator._polish_worker import _PolishWorker
         worker = _PolishWorker(polisher, entries_with_translation)
 
         # 进度窗口（复用翻译进度窗口模式 — 简单弹窗）
@@ -1434,7 +1434,7 @@ class AITranslatorWindow(QWidget):
         def _on_done(results):
             progress_dlg.close()
             self._last_polish_results = results
-            from src.transbridge.ui.tools.ai_translator._polish_preview_dialog import _PolishPreviewDialog
+            from transbridge.ui.tools.ai_translator._polish_preview_dialog import _PolishPreviewDialog
             preview = _PolishPreviewDialog(entries, results, parent=self)
             if preview.exec() == QDialog.DialogCode.Accepted:
                 self._apply_polish_results(entries, preview.get_results(), collection)
@@ -1519,7 +1519,7 @@ class AITranslatorWindow(QWidget):
 
         report_path = None
         try:
-            from src.transbridge.ai_translator.post_processor.report_generator import ReportGenerator
+            from transbridge.ai_translator.post_processor.report_generator import ReportGenerator
             gen = ReportGenerator(esp_stem)
             report_path = gen.generate_polish_report(results, entries, stats)
         except Exception:
@@ -1545,7 +1545,7 @@ class AITranslatorWindow(QWidget):
 
     @staticmethod
     def _find_main_window():
-        from src.transbridge.ui.main_window import MainWindow
+        from transbridge.ui.main_window import MainWindow
         from PyQt6.QtWidgets import QWidget as QW
         for widget in QW.topLevelWidgets():
             if isinstance(widget, MainWindow):
@@ -1555,7 +1555,7 @@ class AITranslatorWindow(QWidget):
     def _check_all_terms_empty(self, cfg) -> bool:
         """检查所有术语来源是否均为空。"""
         import os
-        from src.transbridge.ai_translator.term_database import DynamicTermDatabase
+        from transbridge.ai_translator.term_database import DynamicTermDatabase
         dynamic_db = DynamicTermDatabase(self._ctx.esp_path)
         dynamic_db.load()
         if dynamic_db.as_list():
@@ -1603,14 +1603,14 @@ class AITranslatorWindow(QWidget):
         return idx - 1
 
     def _get_filtered_entry_ids(self) -> list[str] | None:
-        from src.transbridge.ui.workbench.step2 import _COL_KEY
+        from transbridge.ui.workbench.step2 import _COL_KEY
         result = []
         table = self._step2._table
         for row in range(table.rowCount()):
             if not table.isRowHidden(row):
                 item = table.item(row, _COL_KEY)
                 if item:
-                    from src.transbridge.converter.translation_entry import TranslationEntry
+                    from transbridge.converter.translation_entry import TranslationEntry
                     e = item.data(Qt.ItemDataRole.UserRole)
                     if isinstance(e, TranslationEntry):
                         result.append(e.id)

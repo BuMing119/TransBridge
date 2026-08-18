@@ -16,9 +16,9 @@ from .workers import ApiWorker, get_http_error_bus, get_api_status_bus
 from .workbench.widget import WorkbenchWidget
 from .paratranz.widget import ParaTranzWidget
 from .paratranz.config_dialog import ConfigDialog
-from src.transbridge.paratranz.api.paratranz_user_api import ParatranzUserAPI
-from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from src.transbridge.persistence import WorkspaceState, ProjectHandle, VariantStore, PERSISTENCE_ROOT, workspace_path
+from transbridge.paratranz.api.paratranz_user_api import ParatranzUserAPI
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.persistence import WorkspaceState, ProjectHandle, VariantStore, PERSISTENCE_ROOT, workspace_path
 
 
 def _apply_dictionary_to_collection(collection):
@@ -30,8 +30,8 @@ def _apply_dictionary_to_collection(collection):
     :return: 命中填充的条目数（用于累加到 migrate_count）
     """
     try:
-        from src.transbridge.translation_memory import TranslationMemoryManager
-        from src.transbridge.translation_memory.manager import QueryContext
+        from transbridge.translation_memory import TranslationMemoryManager
+        from transbridge.translation_memory.manager import QueryContext
 
         manager = TranslationMemoryManager()
         manager.load()
@@ -143,12 +143,34 @@ class _AutoSaveManager(QObject):
 
 class MainWindow(QMainWindow):
 
-    def __init__(self):
+    def __init__(self, app_context=None, runtime=None, runtime_context=None):
         super().__init__()
         self.setWindowTitle("TransBridge")
         self.resize(1280, 820)
 
-        self._ctx = AppContext(self)
+        # ``ui.app`` is the authoritative path and injects the projection/runtime.
+        # The fallback preserves direct historical/test construction until its
+        # callers pass the deletion gate.
+        self._ctx = app_context if app_context is not None else AppContext(self)
+        if (
+            app_context is not None
+            and hasattr(app_context, "parent")
+            and app_context.parent() is None
+            and hasattr(app_context, "setParent")
+        ):
+            app_context.setParent(self)
+        self._app_runtime = runtime
+        self._runtime_context = runtime_context
+        self._project_commands = (
+            None if runtime is None else runtime.use_cases.resolve("gui_project_commands")
+        )
+        self._session_commands = (
+            None if runtime is None else runtime.use_cases.resolve("gui_session_commands")
+        )
+        self._session_projection = (
+            None if runtime is None else runtime.use_cases.resolve("session_projection")
+        )
+        self._legacy_mapping_key: str | None = None
         self._workers: list[ApiWorker] = []
         self._assistant_panel = None
 
@@ -200,6 +222,7 @@ class MainWindow(QMainWindow):
         settings = QSettings("TransBridge", "MainWindow")
         settings.setValue("geometry", self.saveGeometry())
         settings.setValue("state", self.saveState())
+        self._ctx.close_projection()
         super().closeEvent(event)
 
     def _restore_state(self):
@@ -484,9 +507,9 @@ class MainWindow(QMainWindow):
     # ── Parse implementation ──────────────────────────────────
 
     def _run_parse_esp(self, cfg):
-        from src.transbridge.parser.plugin_parser import PluginParser
-        from src.transbridge.parser.xt import XT_XmlParser
-        from src.transbridge.parser.strings_file import PluginStringsLookup
+        from transbridge.parser.plugin_parser import PluginParser
+        from transbridge.parser.xt import XT_XmlParser
+        from transbridge.parser.strings_file import PluginStringsLookup
 
         esp_path = cfg.esp_paths[0]
         self._workbench.show_step2_progress(0, "解析中…")
@@ -558,7 +581,7 @@ class MainWindow(QMainWindow):
         self._workers.append(w)
 
     def _run_batch_parse_esp(self, cfg):
-        from src.transbridge.parser.plugin_parser import PluginParser
+        from transbridge.parser.plugin_parser import PluginParser
 
         esp_paths = cfg.esp_paths
         total = len(esp_paths)
@@ -635,7 +658,7 @@ class MainWindow(QMainWindow):
         _parse_next()
 
     def _run_parse_eet(self, cfg):
-        from src.transbridge.parser.xt import XT_XmlParser
+        from transbridge.parser.xt import XT_XmlParser
 
         eet_path = cfg.eet_path
         self._workbench.show_step2_progress(0, "解析 EET 中…")
@@ -714,8 +737,8 @@ class MainWindow(QMainWindow):
     # ── Migration implementation ───────────────────────────────
 
     def _run_migrate(self, slot, cfg):
-        from src.transbridge.parser.xt import XT_XmlParser
-        from src.transbridge.parser.strings_file import PluginStringsLookup
+        from transbridge.parser.xt import XT_XmlParser
+        from transbridge.parser.strings_file import PluginStringsLookup
 
         self._workbench.show_step2_progress(0, "应用迁移源中…")
 
@@ -934,12 +957,12 @@ class MainWindow(QMainWindow):
         self._workbench.open_tool("ai_translator")
 
     def _open_dictionary_panel(self):
-        from src.transbridge.ui.tools.dictionary_panel import DictionaryPanel
+        from transbridge.ui.tools.dictionary_panel import DictionaryPanel
         panel = DictionaryPanel(self._ctx, self)
         panel.exec()
 
     def _open_fomod_panel(self):
-        from src.transbridge.ui.tools.fomod import FomodPanel
+        from transbridge.ui.tools.fomod import FomodPanel
         panel = FomodPanel(self._ctx, self)
         panel.exec()
 
@@ -953,8 +976,14 @@ class MainWindow(QMainWindow):
 
     def _get_assistant_panel(self):
         if self._assistant_panel is None:
-            from src.transbridge.ui.tools.smart_assistant import SmartAssistantPanel
-            self._assistant_panel = SmartAssistantPanel(self._ctx, self)
+            from transbridge.ui.tools.smart_assistant import SmartAssistantPanel
+            self._assistant_panel = SmartAssistantPanel(
+                self._ctx,
+                self,
+                session_commands=self._session_commands,
+                session_projection=self._session_projection,
+                runtime_context=self._runtime_context,
+            )
             self._assistant_panel.visibility_changed.connect(
                 self._on_assistant_visibility_changed
             )
@@ -983,6 +1012,12 @@ class MainWindow(QMainWindow):
         ws_path = workspace_path()
         ws = WorkspaceState.load(ws_path)
         self._ctx.workspace = ws
+
+        if self._ctx.uses_authoritative_projection:
+            self.show_message(
+                "V2 persistence is active; legacy projects remain read-only until explicit ID mapping and source baseline migration."
+            )
+            return
 
         active = ws.active_project
         if not active or active not in ws.projects:
@@ -1043,6 +1078,9 @@ class MainWindow(QMainWindow):
 
     def _on_new_project(self):
         """弹出新建项目对话框。"""
+        if self._ctx.uses_authoritative_projection:
+            self.show_message("Legacy Project creation is disabled under the V2 authority migration gate.")
+            return
         from PyQt6.QtWidgets import QInputDialog
         name, ok = QInputDialog.getText(self, "新建项目", "项目名称:")
         if not ok or not name.strip():
@@ -1059,7 +1097,7 @@ class MainWindow(QMainWindow):
         proj.save()
 
         # 创建默认版本的 current.json
-        from src.transbridge.persistence import VariantStore
+        from transbridge.persistence import VariantStore
         vs = VariantStore(proj.variant_dir("默认") / "current.json")
         vs.save()
 
@@ -1083,6 +1121,10 @@ class MainWindow(QMainWindow):
             "Project JSON (project.json);;所有文件 (*)"
         )
         if not path:
+            return
+
+        if self._ctx.uses_authoritative_projection:
+            self._activate_legacy_project(path)
             return
 
         try:
@@ -1119,6 +1161,10 @@ class MainWindow(QMainWindow):
 
     def _save_current_project(self):
         """保存当前项目的 VariantStore 和 ProjectHandle。"""
+        if self._ctx.uses_authoritative_projection:
+            if self._project_commands is not None and self._runtime_context is not None:
+                self._project_commands.save(self._runtime_context)
+            return
         ctx = self._ctx
         if ctx.variant_store and ctx.variant_store.dirty:
             ctx.variant_store.save()
@@ -1127,7 +1173,7 @@ class MainWindow(QMainWindow):
 
     def _restore_parse_esp(self, esp_path: str):
         """后台解析 ESP 源文件（启动恢复用，不阻塞 UI）。"""
-        from src.transbridge.parser.plugin_parser import PluginParser
+        from transbridge.parser.plugin_parser import PluginParser
 
         self._workbench.show_step2_progress(0, f"解析中: {PathLib(esp_path).name}…")
 
@@ -1162,6 +1208,9 @@ class MainWindow(QMainWindow):
 
     def _on_new_variant(self):
         """创建空白新版本。"""
+        if self._ctx.uses_authoritative_projection:
+            self.show_message("Create the Variant through the V2 lifecycle command adapter.")
+            return
         proj = self._ctx.active_project
         if not proj:
             return
@@ -1185,6 +1234,9 @@ class MainWindow(QMainWindow):
 
     def _on_copy_variant(self):
         """从当前版本复制创建新版本。"""
+        if self._ctx.uses_authoritative_projection:
+            self.show_message("Copy requires a V2 snapshot command and cannot use the legacy store.")
+            return
         proj = self._ctx.active_project
         if not proj:
             return
@@ -1217,6 +1269,12 @@ class MainWindow(QMainWindow):
 
     def _switch_variant(self, name: str):
         """从 ProjectBar 下拉切换版本。"""
+        if self._ctx.uses_authoritative_projection:
+            if self._legacy_mapping_key is None:
+                self.show_message("No explicitly mapped legacy Project is available.")
+                return
+            self._activate_legacy_variant(self._legacy_mapping_key, name)
+            return
         proj = self._ctx.active_project
         if not proj or not proj.has_variant(name):
             return
@@ -1244,6 +1302,18 @@ class MainWindow(QMainWindow):
 
     def _on_manual_save(self):
         """手动保存当前版本数据（Ctrl+S / 工具栏按钮）。"""
+        if self._ctx.uses_authoritative_projection:
+            if self._project_commands is None or self._runtime_context is None:
+                self.show_message("V2 Project command adapter is unavailable.")
+                return
+            result = self._project_commands.save(self._runtime_context)
+            if result.is_success:
+                self._workbench._project_bar.set_save_dirty(False)
+                self._workbench._project_bar.flash_saved()
+                self.show_message("V2 Project/Variant revisions saved.")
+            else:
+                self.show_message(result.diagnostics[0].message)
+            return
         ctx = self._ctx
         vs = ctx.variant_store
         if vs is None:
@@ -1260,6 +1330,49 @@ class MainWindow(QMainWindow):
         total = len(vs.translations)
         labels = sum(1 for s in vs.labels.values() if s)
         self.show_message(f"已保存 — {ctx.active_variant}，{total} 条译文，{labels} 条标签")
+
+    def _activate_legacy_project(self, path: str) -> None:
+        project = ProjectHandle.load(PathLib(path))
+        if not project.name or not project.active_variant:
+            self.show_message("Legacy Project metadata is unavailable or has no active Variant.")
+            return
+        self._activate_legacy_variant(str(project.config_path), project.active_variant)
+
+    def _activate_legacy_variant(self, project_key: str, variant_name: str) -> None:
+        if self._project_commands is None or self._runtime_context is None:
+            self.show_message("V2 Project command adapter is unavailable.")
+            return
+        from transbridge.application.projects import DirtyDecision
+
+        decision = None
+        if self._ctx.dirty:
+            ret = QMessageBox.question(
+                self,
+                "保存确认",
+                "The active V2 Variant has unpersisted revisions. Save before switching?",
+                QMessageBox.StandardButton.Yes
+                | QMessageBox.StandardButton.No
+                | QMessageBox.StandardButton.Cancel,
+            )
+            if ret == QMessageBox.StandardButton.Cancel:
+                return
+            decision = (
+                DirtyDecision.SAVE
+                if ret == QMessageBox.StandardButton.Yes
+                else DirtyDecision.DISCARD
+            )
+        result = self._project_commands.switch_legacy(
+            project_key,
+            variant_name,
+            self._runtime_context,
+            dirty_decision=decision,
+        )
+        if not result.is_success:
+            diagnostic = result.diagnostics[0]
+            self.show_message(f"{diagnostic.code}: {diagnostic.message}")
+            return
+        self._legacy_mapping_key = project_key
+        self.show_message("V2 Project/Variant activated after mapping and baseline validation.")
 
     def _switch_to_variant(self, proj: ProjectHandle, name: str, vs: VariantStore) -> None:
         """切换到指定版本并刷新 UI。"""
@@ -1302,7 +1415,7 @@ class MainWindow(QMainWindow):
 
     def _on_rename_project(self, new_name: str):
         """重命名项目——移动目录、更新 workspace。"""
-        from src.transbridge.persistence._utils import validate_name
+        from transbridge.persistence._utils import validate_name
         try:
             new_name = validate_name(new_name)
         except ValueError as e:
@@ -1434,7 +1547,7 @@ class MainWindow(QMainWindow):
                     raise ValueError("无效的 .transbridge 文件：缺少 project.json")
 
                 # 检查项目名安全
-                from src.transbridge.persistence._utils import validate_name
+                from transbridge.persistence._utils import validate_name
 
                 # ZIP Slip 防护：逐一检查成员路径
                 for member in zf.namelist():

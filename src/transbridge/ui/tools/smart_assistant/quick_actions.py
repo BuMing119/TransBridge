@@ -53,7 +53,7 @@ class QuickActionsChips(QWidget):
         layout.addStretch()
 
     def _show_skill_menu(self) -> None:
-        from src.transbridge.smart_assistant.skills import SkillRegistry
+        from transbridge.smart_assistant.skills import SkillRegistry
         skills = SkillRegistry.list_all()
         menu = QMenu(self)
         if not skills:

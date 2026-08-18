@@ -22,7 +22,7 @@ import threading
 from PyQt6.QtWidgets import QWidget, QLabel, QHBoxLayout, QVBoxLayout
 from PyQt6.QtCore import Qt
 
-from src.transbridge.infra.markdown_renderer import MarkdownRenderer
+from transbridge.infra.markdown_renderer import MarkdownRenderer
 
 _RENDERER: MarkdownRenderer | None = None
 _renderer_lock = threading.Lock()

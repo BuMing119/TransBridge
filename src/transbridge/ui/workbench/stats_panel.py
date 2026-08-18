@@ -11,8 +11,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 
-from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from src.transbridge.converter.context_categories import EXPORT_CATEGORIES, ROUND2_PREFIXES
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.converter.context_categories import EXPORT_CATEGORIES, ROUND2_PREFIXES
 
 # 从 EXPORT_CATEGORIES 派生：context → 分类名（去掉 .json 后缀）
 _CONTEXT_TO_CATEGORY: dict[str, str] = {

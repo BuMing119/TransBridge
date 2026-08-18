@@ -48,11 +48,11 @@ from pathlib import Path
 from .message_bubble import MessageBubble
 from .quick_actions import QuickActionsChips
 from .thinking_indicator import ThinkingIndicator
-from src.transbridge.smart_assistant.tool_execution_handler import ToolExecutionHandler
-from src.transbridge.smart_assistant.conversation_orchestrator import ConversationOrchestrator
-from src.transbridge.smart_assistant.conversation_manager import ConversationManager
-from src.transbridge.smart_assistant.execution_engine import ExecutionEngine, StepResult
-from src.transbridge.smart_assistant.session_controller import SessionController  # FR12: Story 01
+from transbridge.smart_assistant.tool_execution_handler import ToolExecutionHandler
+from transbridge.smart_assistant.conversation_orchestrator import ConversationOrchestrator
+from transbridge.smart_assistant.conversation_manager import ConversationManager
+from transbridge.smart_assistant.execution_engine import ExecutionEngine, StepResult
+from transbridge.smart_assistant.session_controller import SessionController  # FR12: Story 01
 from .tool_card import ToolCard, BatchToolCard
 from .plan_card import PlanCard
 
@@ -126,7 +126,7 @@ class ChatWidget(QWidget):
     def _init_ui_stage1(self) -> None:
         """Stage 1/4: QTimers + 长期记忆 + 可观测性收集器。"""
         try:
-            from src.transbridge.config.paths import get_data_dir
+            from transbridge.config.paths import get_data_dir
 
             # ── QTimers ──
             self._pending_scroll_value = 0
@@ -136,24 +136,24 @@ class ChatWidget(QWidget):
             self._scroll_throttle_timer.timeout.connect(self._update_scroll_button)
 
             # ── 长期记忆 ──
-            from src.transbridge.smart_assistant.memory import MemoryStore, MemoryRetriever
+            from transbridge.smart_assistant.memory import MemoryStore, MemoryRetriever
             self._memory_store = MemoryStore(
                 Path(get_data_dir()) / "memory", embedding_mode="disabled",
                 persist_to_disk=False,
             )
             _emb_client = None
             try:
-                from src.transbridge.paratranz.config_manager import LLMConfig as _LLMCfg
+                from transbridge.paratranz.config_manager import LLMConfig as _LLMCfg
                 _cfg = _LLMCfg.load_from_file()
                 if _cfg.embedding.mode != "disabled" and _cfg.embedding.api_key:
-                    from src.transbridge.infra import create_llm_client
+                    from transbridge.infra import create_llm_client
                     _emb_client = create_llm_client(_cfg.embedding.api_key, _cfg.embedding.base_url)
             except Exception as e:
                 logger.info("Embedding 客户端创建失败，语义检索降级: %s", e)
             self._memory_retriever = MemoryRetriever(self._memory_store, embedding_client=_emb_client)
 
             # ── 可观测性收集器 ──
-            from src.transbridge.smart_assistant.observability import ObservabilityCollector
+            from transbridge.smart_assistant.observability import ObservabilityCollector
             self._obs_collector = ObservabilityCollector(
                 storage_dir=Path(get_data_dir()) / "observability",
                 on_token_stats_updated=lambda stats: self._on_token_stats_updated(stats),
@@ -169,6 +169,7 @@ class ChatWidget(QWidget):
                 on_batch_tool_card=lambda steps: self.add_batch_tool_card(steps),
                 on_plan_confirmed=lambda steps: self._on_plan_confirmed(steps),
                 on_step_completed=lambda: self._controller.handle_execution_complete([]),
+                on_task_started=lambda task_id, run_id: self._controller.handle_task_started(task_id, run_id),
                 on_confirm_permission=lambda title, msg: (
                     QMessageBox.question(self, title, msg,
                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
@@ -435,7 +436,7 @@ class ChatWidget(QWidget):
 
         # 4/ 移除 TaskManager 监听器
         try:
-            from src.transbridge.smart_assistant.tools.task_manager import TaskManager
+            from transbridge.smart_assistant.tools.task_manager import TaskManager
             tm = TaskManager()
             tm.remove_listener(self._on_task_completed)
             tm.remove_listener(self._on_task_failed)
@@ -474,7 +475,7 @@ class ChatWidget(QWidget):
 
         # 9/ 重置 TaskManager 单例，防止会话间泄漏
         try:
-            from src.transbridge.smart_assistant.tools.task_manager import TaskManager
+            from transbridge.smart_assistant.tools.task_manager import TaskManager
             TaskManager.reset()
         except Exception:
             logger.debug("shutdown: 重置 TaskManager 失败", exc_info=True)
@@ -636,7 +637,7 @@ class ChatWidget(QWidget):
     def _log_conversation_memory(self, messages: list, response: str) -> None:
         """记录本轮对话到长期记忆。"""
         try:
-            from src.transbridge.smart_assistant.memory import MemoryEntry
+            from transbridge.smart_assistant.memory import MemoryEntry
             user_msgs = [m["content"] for m in messages if m.get("role") == "user"]
             last_user = user_msgs[-1][:100] if user_msgs else ""
             entry = MemoryEntry(
@@ -652,7 +653,7 @@ class ChatWidget(QWidget):
     # ── 计划模式 ─────────────────────────────────────────────
 
     def _on_plan_confirmed(self, steps: list) -> None:
-        from src.transbridge.smart_assistant.tool_registry import ToolRegistry
+        from transbridge.smart_assistant.tool_registry import ToolRegistry
 
         # FR12 Story 01: 新旧并行 — 通知 SessionController
         self._controller.handle_user_confirmed(steps, "plan")
@@ -751,7 +752,7 @@ class ChatWidget(QWidget):
         self._task_manager_connected = True
         try:
             from PyQt6.QtCore import QCoreApplication
-            from src.transbridge.smart_assistant.tools.task_manager import TaskManager
+            from transbridge.smart_assistant.tools.task_manager import TaskManager
 
             # ADR-008/B10: 注入 Qt 队列调度器，桥接后端→主线程回调
             app = QCoreApplication.instance()
@@ -773,6 +774,8 @@ class ChatWidget(QWidget):
 
     def _on_task_completed(self, task_id: str, result: dict) -> None:
         """后台翻译/润色任务完成回调。"""
+        from transbridge.smart_assistant.tools.task_manager import TaskManager
+
         succ = result.get("success_count", 0)
         fail = result.get("failed_count", 0)
         skip = result.get("skipped_count", 0)
@@ -789,15 +792,19 @@ class ChatWidget(QWidget):
         msg = f"任务 {task_id} 完成: {', '.join(parts)}" if parts else f"任务 {task_id} 完成"
         self._conversation.add_observation("start_translation", msg)
         self.add_system_message(f"[OK] {msg}")
-        self._controller.handle_task_completed(task_id, result)
+        run_id = str(TaskManager().get_status(task_id).get("run_id", ""))
+        self._controller.handle_task_completed(task_id, result, run_id)
 
     def _on_task_failed(self, task_id: str, error: str) -> None:
         """后台任务失败回调。"""
+        from transbridge.smart_assistant.tools.task_manager import TaskManager
+
         safe_error = self._sanitize_error_message(error)
         msg = f"任务 {task_id} 失败: {safe_error}"
         self._conversation.add_observation("start_translation", msg)
         self.add_system_message(f"[FAIL] {msg}")
-        self._controller.handle_task_completed(task_id, {"error": safe_error})
+        run_id = str(TaskManager().get_status(task_id).get("run_id", ""))
+        self._controller.handle_task_completed(task_id, {"error": safe_error}, run_id)
 
     def _on_token_stats_updated(self, stats) -> None:
         """FR7.16: 观测数据后台采集，内联可见时插入对话流。"""
@@ -915,7 +922,7 @@ class ChatWidget(QWidget):
 
     def _on_skill(self, skill_name: str) -> None:
         """Skill 按钮触发：加载并执行 Skill。"""
-        from src.transbridge.smart_assistant.skills import SkillRegistry, SkillExecutor
+        from transbridge.smart_assistant.skills import SkillRegistry, SkillExecutor
         spec = SkillRegistry.get(skill_name)
         if spec:
             executor = SkillExecutor(self)
@@ -931,7 +938,7 @@ class ChatWidget(QWidget):
         if not paths:
             return
         from pathlib import Path
-        from src.transbridge.smart_assistant.file_parser import FileParser
+        from transbridge.smart_assistant.file_parser import FileParser
         for p in paths:
             fpath = Path(p)
             parser = FileParser.get_parser(fpath)
@@ -1116,7 +1123,7 @@ class ChatWidget(QWidget):
         if self._task_monitor is None:
             return
         try:
-            from src.transbridge.smart_assistant.tools.task_manager import TaskManager
+            from transbridge.smart_assistant.tools.task_manager import TaskManager
             tm = TaskManager()
             all_ids = tm.list_all()
             tasks = []

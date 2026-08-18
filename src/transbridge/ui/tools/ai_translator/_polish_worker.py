@@ -10,8 +10,8 @@ from typing import TYPE_CHECKING
 from PyQt6.QtCore import QThread, pyqtSignal
 
 if TYPE_CHECKING:
-    from src.transbridge.ai_translator.post_processor.polisher import PolishResult
-    from src.transbridge.converter.translation_entry import TranslationEntry
+    from transbridge.ai_translator.post_processor.polisher import PolishResult
+    from transbridge.converter.translation_entry import TranslationEntry
 
 _logger = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ class _PolishWorker(QThread):
                     self.entry_done.emit(entry.id, result)
                 except Exception as exc:
                     _logger.error("润色条目 %s 失败: %s", entry.id, exc)
-                    from src.transbridge.ai_translator.post_processor.polisher import PolishResult
+                    from transbridge.ai_translator.post_processor.polisher import PolishResult
                     results[entry.id] = PolishResult(
                         entry_id=entry.id,
                         original_translation=entry.translation or "",

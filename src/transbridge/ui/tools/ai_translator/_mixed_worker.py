@@ -142,13 +142,17 @@ class _MixedWorker(QThread):
 
     def _do_translate(self):
         """执行翻译（复用 AutoTranslator）。"""
-        from src.transbridge.ai_translator.translator import AutoTranslator, TranslatorConfig
+        from transbridge.ai_translator.translator import AutoTranslator, TranslatorConfig
+        if self._ctx is None or not self._ctx.collection or not self._ctx.esp_path:
+            raise RuntimeError("混合翻译需要活动集合和源文件路径")
         translator = AutoTranslator(TranslatorConfig(
-            llm_config=self._cfg, overwrite=False,
+            llm_config=self._cfg,
+            esp_path=self._ctx.esp_path,
+            overwrite=False,
         ))
         stop_event = threading.Event()
         result = translator.translate(
-            collection=self._translate_entries,
+            collection=self._ctx.collection,
             target_entry_ids=[e.key for e in self._translate_entries],
             progress_callback=lambda *a: None,
             stop_event=stop_event,
@@ -157,7 +161,7 @@ class _MixedWorker(QThread):
 
     def _do_polish(self):
         """执行润色（复用 LLMPolisher）。"""
-        from src.transbridge.ai_translator.post_processor.polisher import LLMPolisher
+        from transbridge.ai_translator.post_processor.polisher import LLMPolisher
         polisher = LLMPolisher(self._cfg)
         details = []
         for entry in self._polish_entries:

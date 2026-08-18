@@ -24,7 +24,15 @@ class SmartAssistantPanel(QDockWidget):
 
     visibility_changed = pyqtSignal(bool)
 
-    def __init__(self, ctx, parent=None):
+    def __init__(
+        self,
+        ctx,
+        parent=None,
+        *,
+        session_commands=None,
+        session_projection=None,
+        runtime_context=None,
+    ):
         super().__init__("智能助手", parent)
         self.setObjectName("SmartAssistantPanel")
 
@@ -42,9 +50,17 @@ class SmartAssistantPanel(QDockWidget):
         self.setMinimumHeight(300)
 
         self._active_session_id: str | None = None
+        self._session_commands = session_commands
+        self._session_projection = session_projection
+        self._runtime_context = runtime_context
+        self._session_subscription = None
         self._init_skills()
         self._init_session_manager()
         self._init_ui(ctx)
+        if self._session_projection is not None:
+            self._session_subscription = self._session_projection.subscribe(
+                self._on_session_projection
+            )
         # 延迟到 ChatWidget UI 构建完成后再恢复会话（ChatWidget._init_ui 是 QTimer 延迟的）
         from PyQt6.QtCore import QTimer
         QTimer.singleShot(0, self._restore_last_session)
@@ -52,13 +68,16 @@ class SmartAssistantPanel(QDockWidget):
     # ── 初始化 ──────────────────────────────────────────────────
 
     def _init_skills(self):
-        from src.transbridge.config.paths import get_data_dir
-        from src.transbridge.smart_assistant.skills import SkillRegistry
+        from transbridge.config.paths import get_data_dir
+        from transbridge.smart_assistant.skills import SkillRegistry
         SkillRegistry.reload(Path(get_data_dir()) / "skills")
 
     def _init_session_manager(self):
-        from src.transbridge.config.paths import get_data_dir
-        from src.transbridge.smart_assistant.session_manager import SessionManager
+        if self._session_commands is not None:
+            self._session_mgr = None
+            return
+        from transbridge.config.paths import get_data_dir
+        from transbridge.smart_assistant.session_manager import SessionManager
         self._session_mgr = SessionManager(get_data_dir())
 
     def _init_ui(self, ctx):
@@ -80,7 +99,8 @@ class SmartAssistantPanel(QDockWidget):
             lambda sid, name: self._on_rename_session(sid, name))
 
         self._chat = ChatWidget(ctx)
-        self._chat.set_session_manager(self._session_mgr)
+        if self._session_mgr is not None:
+            self._chat.set_session_manager(self._session_mgr)
 
         # 右侧垂直分割：聊天区 + 任务监控（7:3）
         right_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -110,6 +130,14 @@ class SmartAssistantPanel(QDockWidget):
 
     def _restore_last_session(self):
         """启动时恢复上次活跃会话。若无会话则自动创建默认会话。"""
+        if self._session_commands is not None:
+            if self._current_session_id() is None:
+                sessions = self._session_commands.list_sessions()
+                if sessions:
+                    self._switch_to(sessions[0]["session_id"])
+                else:
+                    self._create_authoritative_session("")
+            return
         if self._session_mgr.count() == 0:
             sid = self._session_mgr.create_session(project_name=self._get_project_name())
             self._active_session_id = sid
@@ -127,6 +155,10 @@ class SmartAssistantPanel(QDockWidget):
     # ── 会话操作 ──────────────────────────────────────────────
 
     def _on_create_session(self, name: str):
+        if self._session_commands is not None:
+            self._persist_authoritative_chat()
+            self._create_authoritative_session(name)
+            return
         sid = self._session_mgr.create_session(name=name, project_name=self._get_project_name())
         self._switch_to(sid)
 
@@ -134,6 +166,9 @@ class SmartAssistantPanel(QDockWidget):
         self._switch_to(session_id)
 
     def _on_delete_session(self, session_id: str):
+        if self._session_commands is not None:
+            logger.warning("V2 Session deletion requires an explicit repository command")
+            return
         self._session_mgr.delete_session(session_id)
         if self._active_session_id == session_id:
             self._active_session_id = None
@@ -145,6 +180,9 @@ class SmartAssistantPanel(QDockWidget):
         self._refresh_session_list()
 
     def _on_rename_session(self, session_id: str, current_name: str):
+        if self._session_commands is not None:
+            logger.warning("V2 Session rename requires an explicit aggregate command")
+            return
         from PyQt6.QtWidgets import QInputDialog
         new_name, ok = QInputDialog.getText(
             self, "重命名会话", "新名称:",
@@ -155,6 +193,19 @@ class SmartAssistantPanel(QDockWidget):
             self._refresh_session_list()
 
     def _switch_to(self, session_id: str):
+        if self._session_commands is not None:
+            if self._current_session_id() == session_id:
+                return
+            self._persist_authoritative_chat()
+            from transbridge.persistence.v2 import SessionId, SessionRef
+
+            result = self._session_commands.switch(
+                SessionRef(SessionId(session_id)),
+                self._runtime_context,
+            )
+            if not result.is_success:
+                logger.warning("V2 Session switch refused: %s", result.diagnostics[0].code)
+            return
         if self._active_session_id == session_id:
             return
         # 保存当前会话
@@ -169,6 +220,13 @@ class SmartAssistantPanel(QDockWidget):
         self._session_list.set_active(session_id)
 
     def _refresh_session_list(self):
+        if self._session_commands is not None:
+            sessions = self._session_commands.list_sessions()
+            self._session_list.set_sessions(sessions)
+            current = self._current_session_id()
+            if current is not None:
+                self._session_list.set_active(current)
+            return
         sessions = self._session_mgr.list_sessions()
         self._session_list.set_sessions(sessions)
         if self._active_session_id:
@@ -189,7 +247,7 @@ class SmartAssistantPanel(QDockWidget):
 
     def _on_task_action(self, task_id: str, action: str):
         """处理 TaskMonitorWidget 发出的操作信号。"""
-        from src.transbridge.smart_assistant.tools.task_manager import TaskManager
+        from transbridge.smart_assistant.tools.task_manager import TaskManager
         tm = TaskManager()
         if action == "cleanup_completed":
             for tid in tm.list_all():
@@ -218,13 +276,62 @@ class SmartAssistantPanel(QDockWidget):
         super().hideEvent(event)
 
     def closeEvent(self, event):
-        if self._active_session_id:
+        if self._session_commands is not None:
+            self._persist_authoritative_chat()
+        elif self._active_session_id:
             try:
                 self._chat.save_current_session(self._active_session_id)
             except Exception:
                 logger.debug("关闭时保存会话失败", exc_info=True)
         self._chat.shutdown()
+        if self._session_subscription is not None:
+            self._session_subscription.close()
+            self._session_subscription = None
         super().closeEvent(event)
+
+    def _current_session_id(self) -> str | None:
+        if self._session_projection is None:
+            return self._active_session_id
+        snapshot = self._session_projection.snapshot()
+        if snapshot is None:
+            return None
+        value = snapshot.to_dict()["values"].get("session_id")
+        return None if value is None else str(value)
+
+    def _create_authoritative_session(self, name: str) -> None:
+        if self._runtime_context is None:
+            logger.error("V2 Session creation requires RuntimeContext")
+            return
+        result = self._session_commands.create_and_activate(name, self._runtime_context)
+        if not result.is_success:
+            logger.warning("V2 Session creation failed: %s", result.diagnostics[0].code)
+
+    def _persist_authoritative_chat(self) -> None:
+        session_id = self._current_session_id()
+        if session_id is None or self._runtime_context is None:
+            return
+        from transbridge.persistence.v2 import SessionId, SessionRef
+
+        backend = self._chat._conversation.to_dict().get("messages", [])
+        controller = self._chat._controller.to_recovery_snapshot()
+        result = self._session_commands.save_conversation(
+            SessionRef(SessionId(session_id)),
+            list(backend),
+            list(backend),
+            self._runtime_context,
+            controller=controller,
+        )
+        if not result.is_success:
+            logger.warning("V2 Session save failed: %s", result.diagnostics[0].code)
+
+    def _on_session_projection(self, snapshot) -> None:
+        if not hasattr(self, "_session_list"):
+            return
+        self._refresh_session_list()
+        if snapshot is None:
+            return
+        values = snapshot.to_dict()["values"]
+        self._chat.load_session(values)
 
     # ── 公共访问 ──────────────────────────────────────────────
 

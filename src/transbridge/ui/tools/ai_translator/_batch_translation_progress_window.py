@@ -22,7 +22,7 @@ from PyQt6.QtGui import QFont
 from ._translation_progress_window import _BatchWidget
 
 if TYPE_CHECKING:
-    from src.transbridge.ui.context import AppContext
+    from transbridge.ui.context import AppContext
     from ._batch_translation_worker import _BatchTranslationWorker, BatchTranslationSummary
 
 
@@ -294,7 +294,7 @@ class _BatchTranslationProgressWindow(QWidget):
             needs_review = 0
             if d.success and d.result:
                 try:
-                    from src.transbridge.ai_translator.post_processor.report_generator import ReportGenerator
+                    from transbridge.ai_translator.post_processor.report_generator import ReportGenerator
                     gen = ReportGenerator(esp_stem)
                     report_path = gen.generate_translate_report(
                         d.result,
@@ -352,7 +352,7 @@ class _BatchTranslationProgressWindow(QWidget):
     @staticmethod
     def _find_main_window():
         """向上查找 MainWindow。"""
-        from src.transbridge.ui.main_window import MainWindow
+        from transbridge.ui.main_window import MainWindow
         for widget in QWidget.topLevelWidgets():
             if isinstance(widget, MainWindow):
                 return widget
@@ -367,7 +367,7 @@ class _BatchTranslationProgressWindow(QWidget):
 
     def _on_open_log_viewer(self):
         """打开/激活 LLM 流式日志查看窗口。"""
-        from src.transbridge.ui.tools.ai_translator._batch_llm_log_viewer import _BatchLLMLogViewer
+        from transbridge.ui.tools.ai_translator._batch_llm_log_viewer import _BatchLLMLogViewer
         path = self._worker.stream_log_dir
         if not path:
             return
