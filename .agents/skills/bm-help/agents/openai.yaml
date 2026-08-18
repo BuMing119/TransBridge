@@ -1,0 +1,4 @@
+interface:
+  display_name: "BM 使用帮助"
+  short_description: "根据当前开发场景推荐最合适的 BM skill 和最短工作流。"
+  default_prompt: "使用 $bm-help 告诉我当前任务最适合哪个 BM skill。"

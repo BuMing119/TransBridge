@@ -46,3 +46,7 @@ class ApiWorker(QThread):
 - **asyncio + qasync**: 用 asyncio 替代 QThread → 拒绝：与现有 openai/anthropic 同步 SDK 集成困难，LLM 流式响应的取消逻辑需要重写
 - **QThreadPool + QRunnable**: 轻量级线程池 → 部分采用（用于并发批次），但顶层控制仍用 QThread
 - **multiprocessing**: 多进程 → 拒绝：数据共享复杂（Collection 在进程间传递开销大）
+
+### 更新：2026-08-18 — QThread 降级为 GUI 执行 Adapter（已接受）
+
+QThread 与 Qt signal 继续用于 GUI 线程调度和事件投影，但“ApiWorker 是唯一后台执行通道”由 [ADR-019](019-unified-task-runtime.md) 取代。业务任务状态、owner、取消、checkpoint 和终态属于 TaskRuntime；QThread、threading、线程池或进程仅是 backend adapter。取消不得依赖跨层 BaseException 传播，正式提交必须经过 run_id/终态 guard。

@@ -213,3 +213,7 @@ class MemoryStore:
 - **正面**: 文件解析、记忆、自纠错三个子系统独立解耦；FAISS 复用避免引入新的向量数据库；ExecutionEngine 无侵入式集成 Reflexion
 - **负面**: 新增 PDF/Word 解析依赖增加打包体积（~20MB）；FAISS 索引随记忆增长需定期维护
 - **风险**: PDF 解析质量依赖第三方库，复杂排版可能提取不完整 → 提供纯文本 fallback，提示用户转换格式
+
+### 更新：2026-08-18 — 知识文件、格式 I/O 与重试边界（已接受）
+
+Smart Assistant 的 `FileParser/ParsedDocument` 只负责知识文件提取，不替代 [ADR-017](017-translation-io-kernel-v2.md) 的翻译格式 Adapter；ParaTranz JSON 的业务导入必须走明确 format_id 和双 ID 合同。Memory/Embedding disabled 模式不得加载向量索引或语料。Reflexion 只可重试经错误分类判定为安全且幂等的步骤，并受 ADR-019 的次数、取消、owner 和 idempotency key 约束；不得调整参数后重复不可逆副作用。

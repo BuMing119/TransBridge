@@ -1,0 +1,4 @@
+interface:
+  display_name: "BM Story 批量展开"
+  short_description: "按依赖顺序批量生成或更新多个复杂 Story 的详细实施指南。"
+  default_prompt: "使用 $bm-story-batch 批量展开这个计划中的复杂 Story。"

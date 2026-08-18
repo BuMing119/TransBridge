@@ -35,3 +35,7 @@ class TranslationEntry:
 
 - **多态类型层级**: 为每种来源创建 TranslationEntry 子类 → 拒绝：增加复杂度，下游需要 instanceof 判断
 - **字典/JSON 透传**: 不转换，保留原始格式 → 拒绝：下游代码需要理解所有来源格式
+
+### 更新：2026-08-18 — V2 身份与来源字段边界（已接受）
+
+本 ADR 的“统一 TranslationEntry”方向继续有效，但 `id == key`、Stage 只有 0/1/2、来源字段允许丢失的旧模型由 [ADR-017](017-translation-io-kernel-v2.md) 部分取代。V2 使用带 source namespace 的 EntryKey 作为内部身份，将 ParaTranz 等外部 ID 保存为独立 ExternalEntryRef，并以命名空间 metadata 保留格式特有字段。历史 `id` 仅作兼容 facade，不得再作为新代码的身份合同。

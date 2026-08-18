@@ -593,3 +593,13 @@ SmartAssistantPanel (UI 协调)
 - 新增目录：`data/sessions/`
 - 零新依赖
 - 与 FR12 (SessionController) 无冲突：切换会话时 `handle_abort()` 重置状态
+
+### 更新：2026-08-18 — Application 边界、Session 所有权与任务运行时（已接受）
+
+UI/后端分离的历史方向继续有效，但仅移动目录不足以形成业务边界。后续迁移遵循 [ADR-016](016-modular-monolith-application-composition.md)、[ADR-018](018-project-session-persistence-v2.md) 和 [ADR-019](019-unified-task-runtime.md)：
+
+- Smart Assistant 后端通过 application use case/ports 工作，不直接构造 AppContext、TaskManager 或具体业务客户端；
+- SessionManager/Controller 的权威状态进入 SessionAggregate，Panel 只在两阶段切换 commit 后更新 UI；
+- 状态转换使用显式 transition table/domain error，不使用可被 `python -O` 移除的 assert；
+- Agent、Graph 和工具任务共享 owner/run_id/互斥终态；Task Monitor 是只读 projection；
+- 现有 Controller、ToolRegistry 和 TaskManager 作为 compatibility facade 渐进迁移。

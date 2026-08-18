@@ -1,0 +1,4 @@
+interface:
+  display_name: "BM 代码开发"
+  short_description: "实现功能或修复缺陷，并完成与变更风险相称的测试和结果验证。"
+  default_prompt: "使用 $bm-dev 在当前仓库实现这项改动并验证结果。"

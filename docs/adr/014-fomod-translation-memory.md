@@ -234,3 +234,9 @@ for esp in new_dir 插件:
 **原因**: 用户明确翻译必须具备术语库与名词提取；这是 AutoTranslator 已封装的能力，逐插件循环复用即可，不重造。
 
 **影响**: `pipeline.py` 新增 `_translate_plugins`/`_ai_translate`/`_write_back` 三个私有方法；`FomodPipeline` 构造与 `run()` 增加 `llm_config`/`tm_manager`/`progress_callback`/`stop_event` 注入参数；复用 `ai_translator.translator.AutoTranslator`（`TranslatorConfig(llm_config, esp_path)`）
+
+### 更新：2026-08-18 — Typed Transactional FOMOD Pipeline（已接受）
+
+FOMOD/TM 资产和“FOMOD 只产出新安装包”的边界继续有效；流水线改由 application use case 编排，现有 `FomodPipeline` 作为 compatibility adapter。每个阶段返回 typed outcome，统一使用 ADR-019 的 JobSpec、取消和互斥终态；fatal/failed/cancelled 阻止发布，所有中间产物进入 staging，验证后原子发布。
+
+TM 记录 SHALL 保存 locale、Stage、provenance、source namespace 和 revision；匹配使用 ADR-017 EntryKey，外部 ID 不参与内部匹配。`locked(9)` 空译文阻断正式发布，hidden 写原文。归档处理统一使用 ADR-015 的 ArchivePolicy；FOMOD XML 更新保留命名空间、未翻译节点、属性和图片引用。旧“扩展名白名单即可保证安全/保真”和直接逐阶段 mutation 被本更新取代。

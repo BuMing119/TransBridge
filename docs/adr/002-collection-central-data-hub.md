@@ -77,3 +77,7 @@ _id_index: dict[str, TranslationEntry]  # id → entry（辅助索引，保留�
 - 接口变更: Collection 类 6 个方法签名语义变更；7 个工具模块参数语义更新；`get_visible_entries` 返回格式调整
 - 依赖变更: 无新依赖
 - 数据兼容: `key` 值与旧 `id` 值相同（当前数据），序列化 JSON 无需迁移
+
+### 更新：2026-08-18 — 聚合、来源命名空间与受控 mutation（已接受）
+
+Collection 作为条目聚合和主索引继续有效，但“当前 `key == id` 因而无需迁移”只适用于历史 V1 数据。按 [ADR-017](017-translation-io-kernel-v2.md)，V2 EntryKey 包含 source namespace，外部 ID 不进入主索引；修改通过带 expected revision、provenance 和 run_id 的 ChangeSet 提交。AppContext 的 Qt 信号只作为 projection 通知，不再代表业务状态所有权。

@@ -69,3 +69,7 @@ fused_score = α · vec_sim + β · bm25_norm
 - **接口变更**: `TermVectorIndex` 新增增量构建与融合检索方法；`match_terms_enhanced` 语义召回分支行为调整（批量 + 无 10 条上限）
 - **正面**: 专有名词召回精度提升；术语库更新不再全量重建；重复编码消除
 - **负面**: 引入一个第三方依赖；增量索引需维护 ID 映射与失效向量，实现复杂度上升
+
+### 更新：2026-08-18 — 可选能力与依赖基线（已接受）
+
+BM25/向量融合算法继续保留。`rank-bm25`、FAISS 和本地 embedding backend 的声明、锁定、构建收集与运行 capability 必须一致；系统环境偶然可导入不代表发布物可用。disabled 模式不得加载索引、模型或语料；依赖缺失时 capability 标记 degraded/unavailable，并允许不依赖检索的工作流继续。索引 manifest 记录 schema、corpus/config fingerprint 和 active/stale 状态。

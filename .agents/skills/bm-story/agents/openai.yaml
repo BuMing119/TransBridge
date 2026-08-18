@@ -1,0 +1,4 @@
+interface:
+  display_name: "BM Story 展开"
+  short_description: "将单个复杂 Story 展开为基于现有代码和测试的实施指南。"
+  default_prompt: "使用 $bm-story 展开指定 Story 的实现细节和测试策略。"

@@ -4,7 +4,7 @@
 - **日期**: 2026-05-10
 - **决策者**: BuMing
 - **对应需求**: FR7.13.5, FR7.13.8, FR7.13.9
-- **关联 ADR**: [ADR-008](008-smart-assistant-code-layering.md)（子包结构）、[ADR-009](009-agent-file-memory-reflexion.md)（RetryHandler 注入模式）、[ADR-011](011-graph-types-executor.md)（Graph 编排）
+- **关联 ADR**: [ADR-008](008-smart-assistant-code-layering.md)（子包结构）、[ADR-009](009-agent-file-memory-reflexion.md)（RetryHandler 注入模式）、[ADR-011](011-graph-orchestration-engine.md)（Graph 编排）
 
 ## Context
 
@@ -786,3 +786,14 @@ Layer 3: ConversationManager.add_observation() → 兜底安全网
 - **接口变更**: `ToolResult` 新增 3 个可选字段（`pagination`/`execution_meta`/`tool_suggestions`）+ 2 个方法（`to_observation()`/`_serialize_data()`）。`ToolExecutionHandler._handle_result()` 改为调用 `to_observation()` 生成观察文本。`ConversationManager.add_observation()` 截断逻辑优化为换行感知。
 - **向后兼容**: 完全兼容 — 所有新字段默认 None，不传 `data` 的 ToolResult 输出与之前相同的状态行格式。
 - **依赖变更**: 零新依赖（仅 `import json`）。
+
+### 更新：2026-08-18 — 独立 stdio MCP、RuntimeContext 与共享安全策略（已接受）
+
+本更新以 [ADR-016](016-modular-monolith-application-composition.md) 部分取代本 ADR 的 MCPServer/AppContext 构造、固定协议版本、GUI 内线程启动和自定义逐请求 token 设计：
+
+- MCP 由独立 `transbridge-mcp` console entry point 启动，使用 headless Composition Root；GUI 不读取 stdin。
+- MCP adapter 调用 application use case，并建立 owner/权限/授权路径受限的 RuntimeContext；不得把空 AppContext 传给 GUI 工具。
+- 协议版本和 capabilities 在 initialize 生命周期协商，不硬编码单一版本；stdout 只输出合法 MCP 消息，日志写 stderr。
+- 官方 stdio 规范要求客户端把 server 作为子进程启动；stdio 凭据应从环境获取，而不是套用 HTTP 授权流。参考：[MCP transports](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports)、[MCP lifecycle](https://modelcontextprotocol.io/specification/2025-06-18/basic/lifecycle)、[MCP authorization](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization)。
+- admin/write 工具默认不暴露；没有 HITL 通道时需要确认的操作返回明确拒绝。路径授权在 canonical path/symlink 解析后执行，GUI/Agent/MCP 复用同一 policy。
+- ToolResult/观察消息保留结构化状态与诊断；截断只影响展示摘要，不得删除执行所需 schema 或把 partial/failed 改为成功。

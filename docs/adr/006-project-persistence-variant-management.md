@@ -269,3 +269,13 @@ class VariantStore:
 ### 依赖变更
 
 无新增外部依赖。使用 Python 标准库 `json`, `pathlib`, `shutil`（ZIP 打包用 `zipfile`）。
+
+### 更新：2026-08-18 — 状态所有权与 V2 持久化（已接受）
+
+JSON、Project/Variant 和快照资产继续保留；以下旧决策被 [ADR-018](018-project-session-persistence-v2.md) 部分取代：
+
+- 不再由 AppContext 直接拥有 Project/Variant 持久化状态，AppContext 改为 GUI projection/facade；
+- Variant 不再以非空译文 overlay 方式应用，改为完整快照和 replace materialization；
+- Stage、空译文、labels、provenance、revision、source namespace/fingerprint 必须持久化，不得从 translation 推导 Stage；
+- workspace/project/variant 文件必须带 schema version、校验、备份、迁移和 quarantine 语义；
+- 项目/版本切换采用两阶段提交，失败不提前改变 active pointer。

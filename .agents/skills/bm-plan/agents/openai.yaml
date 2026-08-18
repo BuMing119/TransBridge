@@ -1,0 +1,4 @@
+interface:
+  display_name: "BM 实现计划"
+  short_description: "基于真实代码和架构约束编写可执行、可验证的 Story 级计划。"
+  default_prompt: "使用 $bm-plan 为这项功能编写可直接执行的实现计划。"

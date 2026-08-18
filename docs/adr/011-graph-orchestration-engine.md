@@ -311,3 +311,7 @@ ExecutionEngine = StatefulDAGExecutor  # 向后兼容别名，deprecated
   - QEventLoop 嵌套在非主线程的行为在不同 Qt 版本间可能存在差异 → 限制 PyQt6 >= 6.5，并在 CI 中增加人机协同场景的集成测试
   - 超时期间用户关闭应用 → checkpoint 已保存，下次启动检测到未完成的 checkpoint 提示用户是否恢复
   - 循环节点 max_iterations 默认 10 可能对某些场景不够 → 提供配置项，Agent 构建 GraphSpec 时可覆盖
+
+### 更新：2026-08-18 — Graph 作为 Task Workload Adapter（已接受）
+
+Graph/Node 语义继续保留，但执行实例必须作为 [ADR-019](019-unified-task-runtime.md) 的 Job 运行。graph checkpoint 成为统一 checkpoint envelope 的 payload，包含 owner、run_id、JobSpec/input digest、已计算/已提交边界和 idempotency key。GraphExecutor 不独立决定应用终态，也不得在取消后提交工具副作用；HumanConfirm 是可暂停 capability，没有交互通道的入口返回 blocked/failed 诊断而非创建 Qt local loop。

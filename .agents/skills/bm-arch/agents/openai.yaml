@@ -1,0 +1,4 @@
+interface:
+  display_name: "BM 架构设计"
+  short_description: "设计跨模块架构、公共契约与迁移方案，并维护项目 ADR。"
+  default_prompt: "使用 $bm-arch 为这项改动设计架构并记录必要的 ADR。"

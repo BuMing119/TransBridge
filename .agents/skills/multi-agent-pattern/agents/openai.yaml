@@ -1,0 +1,6 @@
+interface:
+  display_name: "BM 多 Agent 模式"
+  short_description: "Codex 内部的安全多 Agent 拆分、协作、集成与验证规范。"
+  default_prompt: "使用 $multi-agent-pattern 为已授权的并行任务设计安全拆分。"
+policy:
+  allow_implicit_invocation: false

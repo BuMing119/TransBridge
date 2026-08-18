@@ -1,0 +1,4 @@
+interface:
+  display_name: "BM 自动驾驶"
+  short_description: "在同一 Codex 任务中持续执行必要阶段，直到形成可交付结果。"
+  default_prompt: "使用 $bm-pilot 端到端推进这项需求直到完成验证。"

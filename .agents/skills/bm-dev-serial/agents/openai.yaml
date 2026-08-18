@@ -1,0 +1,4 @@
+interface:
+  display_name: "BM 串行开发"
+  short_description: "按依赖顺序串行委派大型实现任务，并由主会话统一集成和验证。"
+  default_prompt: "使用 $bm-dev-serial 按依赖顺序串行完成这项实现。"

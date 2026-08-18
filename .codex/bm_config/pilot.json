@@ -1,0 +1,24 @@
+{
+  "_schema": "bm-pilot config v1",
+
+  "dev_skill": "bm-dev",
+
+  "developer": {
+    "name": "BuMing",
+    "email": ""
+  },
+
+  "defaults": {
+    "complexity": "auto"
+  },
+
+  "skip_stages": {
+    "story_detail": false,
+    "story_detail_auto": true,
+    "council_review": true
+  },
+
+  "timeout": {
+    "per_stage_minutes": 30
+  }
+}

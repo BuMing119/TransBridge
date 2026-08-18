@@ -103,3 +103,8 @@ src/transbridge/migrator/        # 词条键对齐迁移（FR16.4）
 
 **影响**: `translation_memory/manager.py` 3 处字段引用（e.id → e.key）+ Story 04/05 的匹配键取值明确为 entry.key
 
+### 更新：2026-08-18 — FileOps Ports、ArchivePolicy 与来源身份（已接受）
+
+`fileops/`、`migrator/` 独立包和键迁移/TM 套用职责分离继续有效。它们作为 ADR-016 application ports 的 adapter，不直接编排 Project/FOMOD 或修改正式状态。
+
+统一 `ArchivePolicy` 对 ZIP/7z/RAR 应用规范路径、符号链接/特殊文件、条目数、展开总量、压缩比、路径深度和超时预算，并在写入目标目录前完成检查。不同后端不得各自遗漏预算。KeyMigrator 使用 ADR-017 的完整 EntryKey/source namespace；只有同一或经显式映射的来源可做 key 继承，结果以 ChangeSet 候选返回，不直接 mutation 新集合。

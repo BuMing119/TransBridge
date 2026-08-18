@@ -1,0 +1,4 @@
+interface:
+  display_name: "BM 初始化"
+  short_description: "幂等检查或创建 BM 工作流配置、文档目录与最小索引骨架。"
+  default_prompt: "使用 $bm-init 检查并初始化当前仓库的 BM 配置。"

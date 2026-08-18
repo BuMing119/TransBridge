@@ -1,0 +1,4 @@
+interface:
+  display_name: "BM 流程顾问"
+  short_description: "只读判断项目进度、任务复杂度和下一步最合适的 BM skill。"
+  default_prompt: "使用 $bm-orchestrator 检查当前进度并推荐下一步。"

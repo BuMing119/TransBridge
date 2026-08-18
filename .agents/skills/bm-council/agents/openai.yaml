@@ -1,0 +1,4 @@
+interface:
+  display_name: "BM 技术议会"
+  short_description: "召集少量独立专家评议复杂技术决策，核验证据并综合行动建议。"
+  default_prompt: "使用 $bm-council 从独立专家视角评议这个技术问题。"

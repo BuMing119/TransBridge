@@ -162,3 +162,7 @@ class EmbeddingConfig:
 - **正面**: 消除 ai_translator ↔ smart_assistant 的直接代码依赖，两者都仅依赖 infra/；FAISS 操作统一到 VectorStore；新增 embedding/vector 需求时只需引用 infra/
 - **负面**: 需要更新 9+ 个文件的 import 路径；paratranz/config_manager.py 需要结构调整（LLMConfig 提取后）
 - **风险**: import 更新遗漏导致 ImportError → 通过全局 grep + import 验证链规避
+
+### 更新：2026-08-18 — Infrastructure 作为 Ports Adapter（已接受）
+
+`infra/` 中现有 LLM、Embedding、配置和向量资产继续保留，但它只实现 [ADR-016](016-modular-monolith-application-composition.md) 定义的 application ports，不承载 use case、Project/Session 状态或入口编排。安装态 import 统一使用 `transbridge...`；本 ADR 历史示例中的 `src.transbridge...` 路径只保留为历史上下文，不再是冻结的新代码规范。

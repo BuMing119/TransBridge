@@ -1,0 +1,4 @@
+interface:
+  display_name: "BM Git 管家"
+  short_description: "安全检查、规划并在明确授权后执行逻辑化的 Git 提交。"
+  default_prompt: "使用 $bm-git 检查当前变更并规划安全的逻辑提交。"

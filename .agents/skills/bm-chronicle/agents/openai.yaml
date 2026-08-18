@@ -1,0 +1,4 @@
+interface:
+  display_name: "BM 增量记录"
+  short_description: "依据真实 Git 差异生成可追溯的 Epic/Story 变更记录。"
+  default_prompt: "使用 $bm-chronicle 根据当前真实差异记录本次增量。"

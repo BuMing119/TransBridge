@@ -1,0 +1,4 @@
+interface:
+  display_name: "BM 质量验证"
+  short_description: "运行测试和静态检查，执行证据驱动的代码审查与修复复验。"
+  default_prompt: "使用 $bm-qa 验证当前变更并报告高价值问题。"

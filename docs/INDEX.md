@@ -4,9 +4,9 @@
 
 TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 ESP/ESM 插件、EET/XT XML 与 ParaTranz 平台之间的翻译条目转换、上传和同步。内置 AI 自动翻译功能，支持多轮批量翻译与五阶段后处理。
 
-- **技术栈**: Python 3.11+, PyQt6, openpyxl, pandas, openai>=1.0, anthropic>=0.20
+- **技术栈**: Python 3.12.12+, uv, PyQt6, openpyxl, pandas, openai>=1.0, anthropic>=0.20
 - **仓库**: 本地 git 仓库，主分支 `main`
-- **入口**: `src/transbridge/main.py` (CLI), `src/transbridge/ui/app.py` (GUI)
+- **入口**: `transbridge.cli:main` (`transbridge`), `transbridge.entrypoints.mcp:main` (`transbridge-mcp`), `src/transbridge/ui/app.py` (GUI adapter)
 
 ---
 
@@ -14,7 +14,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 
 | 文档 | 说明 | 状态 |
 |------|------|------|
-| [requirements.md](requirements.md) | 项目需求概述：功能需求、非功能需求、系统边界。FR7.13 Phase 1+2 已实现，FR9 Agent工具扩展已编码完成（26/26 Story, 60工具, 7 Agent），FR7.17 已实现，FR10 已实现（4/4 Story，330测试通过），FR16 通用文件与词条工具已实现（fileops/migrator + 7 Agent工具），FR15 FOMOD 翻译流水线已实现（翻译记忆 + fomod_xml/builder/pipeline/GUI） | ✅ 已实现 |
+| [requirements.md](requirements.md) | 项目需求概述及历史 FR1～FR16；2026-08-18 已确认综合整改需求 FR17～FR23 与 NFR 增量，覆盖入口一致性、I/O 身份、持久化、任务、翻译工作流、ParaTranz、FOMOD 和发行质量合同 | ⚠️ 历史实现部分核验；整改需求已确认 |
 
 ---
 
@@ -22,21 +22,25 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 
 | 编号 | 标题 | 状态 |
 |------|------|------|
-| [ADR-001](adr/001-unified-translation-entry.md) | TranslationEntry 作为统一翻译数据模型 | ✅ 已接受 |
-| [ADR-002](adr/002-collection-central-data-hub.md) | Collection 数据中枢与双索引设计 | ✅ 已接受（更新: 2026-05-18） |
+| [ADR-001](adr/001-unified-translation-entry.md) | TranslationEntry 作为统一翻译数据模型 | ✅ 历史与 V2 身份增量已接受 |
+| [ADR-002](adr/002-collection-central-data-hub.md) | Collection 数据中枢与双索引设计 | ✅ 历史与聚合增量已接受 |
 | [ADR-003](adr/003-three-round-translation-strategy.md) | 三轮 AI 翻译策略 | ✅ 已接受 |
-| [ADR-004](adr/004-qthread-async-pattern.md) | QThread + 信号总线异步模式 | ✅ 已接受 |
+| [ADR-004](adr/004-qthread-async-pattern.md) | QThread + 信号总线异步模式 | ✅ 历史与 Task adapter 增量已接受 |
 | [ADR-005](adr/005-toml-prompt-no-langchain.md) | TOML Prompt 模板 + Skill 定义格式 | ✅ 已接受（更新: 2026-05-10） |
-| [ADR-006](adr/006-project-persistence-variant-management.md) | 项目持久化与翻译版本管理 | ✅ 已接受 |
+| [ADR-006](adr/006-project-persistence-variant-management.md) | 项目持久化与翻译版本管理 | ✅ 历史已接受；被 ADR-018 部分取代 |
 | [ADR-007](adr/007-mixed-translation-polish-mode.md) | AI翻译混合模式（三模式制+规则映射表+MixedWorker） | ✅ 已接受 |
-| [ADR-008](adr/008-smart-assistant-code-layering.md) | SmartAssistant 代码分层（UI与业务逻辑分离 + Agent框架4子包） | ✅ 已接受（更新: 2026-05-10³, 2026-05-22, 2026-08-05²） |
-| [ADR-009](adr/009-agent-file-memory-reflexion.md) | Agent 文件解析、长期记忆与 Reflexion 自纠错（三模式降级） | ✅ 已接受（更新: 2026-05-10²） |
-| [ADR-010](adr/010-infra-extraction.md) | 共享基础设施提取 — infra/ 包（Embedding三模式可选） | ✅ 已接受（更新: 2026-05-10） |
-| [ADR-011](adr/011-graph-orchestration-engine.md) | 自研有状态图编排引擎（StatefulDAGExecutor，零新依赖） | ✅ 已接受 |
-| [ADR-012](adr/012-safety-observability-mcp.md) | 安全护栏（中间件链）+ 可观测性（pyqtSignal遥测）+ MCP Server（stdio） | ✅ 已接受（更新: 2026-05-14） |
-| [ADR-013](adr/013-vector-retrieval-enhancement.md) | 向量语义检索增强（BM25 混合检索 + 增量索引 + 编码缓存） | ✅ 已接受 |
-| [ADR-014](adr/014-fomod-translation-memory.md) | FOMOD 翻译流水线 + 通用翻译记忆（键+文本分层匹配 / 独立双包 / py7zr+rarfile 自包含 / 精确匹配） | ✅ 已接受（更新: 2026-08-14） |
-| [ADR-015](adr/015-generic-file-entry-tools.md) | 通用文件与词条工具（fileops/migrator 独立包 / archive·editor·translator namespace / 键对齐与词典套用严格分离） | ✅ 已接受 |
+| [ADR-008](adr/008-smart-assistant-code-layering.md) | SmartAssistant 代码分层（UI与业务逻辑分离 + Agent框架4子包） | ✅ 历史与应用/Session/Task 增量已接受 |
+| [ADR-009](adr/009-agent-file-memory-reflexion.md) | Agent 文件解析、长期记忆与 Reflexion 自纠错（三模式降级） | ✅ 历史与 I/O/重试边界增量已接受 |
+| [ADR-010](adr/010-infra-extraction.md) | 共享基础设施提取 — infra/ 包（Embedding三模式可选） | ✅ 历史与 Ports adapter 增量已接受 |
+| [ADR-011](adr/011-graph-orchestration-engine.md) | 自研有状态图编排引擎（StatefulDAGExecutor，零新依赖） | ✅ 历史与 Task workload 增量已接受 |
+| [ADR-012](adr/012-safety-observability-mcp.md) | 安全护栏（中间件链）+ 可观测性（pyqtSignal遥测）+ MCP Server（stdio） | ✅ 历史与 MCP 拓扑/安全增量已接受 |
+| [ADR-013](adr/013-vector-retrieval-enhancement.md) | 向量语义检索增强（BM25 混合检索 + 增量索引 + 编码缓存） | ✅ 历史与 capability/依赖增量已接受 |
+| [ADR-014](adr/014-fomod-translation-memory.md) | FOMOD 翻译流水线 + 通用翻译记忆（键+文本分层匹配 / 独立双包 / py7zr+rarfile 自包含 / 精确匹配） | ✅ 历史与事务流水线增量已接受 |
+| [ADR-015](adr/015-generic-file-entry-tools.md) | 通用文件与词条工具（fileops/migrator 独立包 / archive·editor·translator namespace / 键对齐与词典套用严格分离） | ✅ 历史与 ArchivePolicy 增量已接受 |
+| [ADR-016](adr/016-modular-monolith-application-composition.md) | 模块化单体应用层、Ports/Adapters 与 Composition Root | ✅ 已接受（2026-08-18） |
+| [ADR-017](adr/017-translation-io-kernel-v2.md) | Translation I/O Kernel V2、双层身份与原子发布 | ✅ 已接受（2026-08-18） |
+| [ADR-018](adr/018-project-session-persistence-v2.md) | Project/Variant/Session 状态所有权与持久化 V2 | ✅ 已接受（2026-08-18） |
+| [ADR-019](adr/019-unified-task-runtime.md) | Unified Task Runtime、互斥终态与幂等恢复 | ✅ 已接受（2026-08-18） |
 
 > 详细架构文档见 [dev/ARCHITECTURE.md](dev/ARCHITECTURE.md)（模块依赖、数据流、全局状态管理、设计决策）。
 
@@ -45,6 +49,34 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 ## 方案目录
 
 > 参见 [plans/INDEX.md](../plans/INDEX.md)
+
+### 综合整改 V2（37/37 Story 实现完成，综合 QA 通过）
+
+| Epic / Feature | 状态 | Story 数 |
+|----------------|------|---------|
+| [platform-contract-foundation-v2](../plans/platform-contract-foundation-v2/plan.md) | 实现完成，综合 QA 通过 | 5 |
+| [translation-io-kernel-v2](../plans/translation-io-kernel-v2/plan.md) | 实现完成，综合 QA 通过 | 6 |
+| [project-session-persistence-v2](../plans/project-session-persistence-v2/plan.md) | 实现完成，综合 QA 通过 | 5 |
+| [unified-task-translation-runtime-v2](../plans/unified-task-translation-runtime-v2/plan.md) | 实现完成，综合 QA 通过 | 7 |
+| [paratranz-sync-service-v2](../plans/paratranz-sync-service-v2/plan.md) | 实现完成，综合 QA 通过 | 4 |
+| [fomod-pipeline-v2](../plans/fomod-pipeline-v2/plan.md) | 实现完成，综合 QA 通过 | 5 |
+| [release-hardening-v2](../plans/release-hardening-v2/plan.md) | 实现完成，综合 QA 通过 | 5 |
+
+### 历史交付记录
+
+> 以下“已实现”保留当时交付状态，不代表已通过 2026-08-18 综合整改验收；具体纠偏关系已按确认结果增量写回。
+
+### 历史完成状态纠偏（2026-08-18）
+
+> 以下历史 Plan 保留原交付记录，但本轮状态统一为 `partially-verified`；详细 `blocked_by` / `superseded_by` 见 [plans/INDEX.md](../plans/INDEX.md) 和各 Plan 末尾增量。
+
+| 范围 | 历史 Plan |
+|---|---|
+| 数据与 I/O | core-data-model、file-parsing、file-writing、stage-unification |
+| 项目与会话 | project-persistence、ui-workbench、session-controller、session-manager |
+| 任务与翻译 | task-monitor、ai-translation、ai-post-process、fr5.12-embedding-optimization |
+| Agent/入口 | agent-upgrade、agent-tool-expansion、smart-assistant-refactor、tool-prompt-layering |
+| 外部流水线 | paratranz-integration、translation-memory、fomod-translation、agent-infra-tools |
 
 | Epic / Feature | 状态 | Story 数 |
 |----------------|------|---------|
@@ -217,6 +249,15 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 
 | 日期 | 修改内容 | 修改人 |
 |------|---------|--------|
+| 2026-08-18 | unified-task-translation-runtime-v2 S06 实现完成：PostProcess 候选链 + stage/candidate hash checkpoint + canonical ReportSnapshot（JSON/CSV/Excel 渲染器），51 passed + task-s06 evidence 通过 verify → changelog story-06-001 | /bm-pilot |
+| 2026-08-18 | unified-task-translation-runtime-v2 S07 实现完成：RuntimeTaskBridge（AWAITING_TASK 生产路径）+ SessionJobGate + 只读投影与 capability 控制 + 兼容删除门禁清单，63 passed + task-s07 evidence 通过 verify → changelog story-07-001 | /bm-pilot |
+| 2026-08-18 | fomod-pipeline-v2 S05 实现完成：StagingPackPublisher 隔离构建+重开验证+原子发布+CleanupPolicy+FomodManifest，PublishStage 重构，10 passed + fomod-s05 evidence 通过 verify（全 FOMOD 84 passed）→ changelog story-05-001 | /bm-pilot |
+| 2026-08-18 | release-hardening-v2 S04 实现完成：CapabilityMatrix 生成器 + Windows 路径/归档攻击/依赖降级/secret canary 测试资产，71 passed+3 skip + release-s04 evidence 通过 verify → changelog story-04-001 | /bm-pilot（子代理） |
+| 2026-08-18 | release-hardening-v2 S02 实现完成：真实成功链 + 跨入口 parity 测试资产（success_chains harness，EET/XT/Strings/ESP/ParaTranz parse→write→reparse + 受控 HTTP 后处理 + FOMOD 九阶段 + GUI/Agent parity），20 passed + release-s02 evidence 通过 verify → changelog story-02-001 | /bm-pilot（子代理） |
+| 2026-08-18 | release-hardening-v2 S03 实现完成：性能/取消/恢复/长期稳定门禁（小ESP P951.05s、checkpoint P9516ms、500轮Session RSS+0.14%；100k checkpoint 超预算留 S05 权威复验），12 passed + release-s03 evidence 通过 verify → changelog story-03-001 | /bm-pilot（子代理） |
+| 2026-08-18 | release-hardening-v2 S05 早期增量：CleanRelease smoke + evidence QA 门禁（当时 36/36；已由 maintenance-011 的显式 37-target 综合 QA supersede）→ changelog story-05-001 | /bm-pilot |
+| 2026-08-18 | 综合 QA：37/37 Story 增量验证通过；最终 QA 报告 final-release-qa-2026-08-18.md；四全局索引已同步 | /bm-pilot |
+| 2026-08-18 | 综合 QA 防御性复核收口：修复生产 PostProcess/TaskRuntime/FOMOD 终态与 Windows 原子替换竞态；release evidence 1370 passed+5 skipped，自引用门禁 4 passed，37/37 latest manifest passed → changelog maintenance-011 | /bm-pilot → /bm-qa → /bm-chronicle |
 | 2026-05-06 | 文档体系完整初始化：顶层索引、需求文档、5 ADR、10 plan、70 Story、2 条 changelog | — |
 | 2026-05-06 | 新增 FR7.7 文件菜单统一入口需求（/bm-analyze）→ changelog 003 | — |
 | 2026-05-06 | 新增 FR6.9 独立润色入口需求（/bm-analyze）→ changelog 007 | — |
