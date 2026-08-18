@@ -1,9 +1,8 @@
-import pytest
 from types import SimpleNamespace
 
-from src.transbridge.converter.translation_entry import TranslationEntry
-from src.transbridge.parser.eet_parser import EET_Entry
-from src.transbridge.parser.xt import XT_Entry
+from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.parser.eet_parser import EET_Entry
+from transbridge.parser.xt import XT_Entry
 
 
 class TestTranslationEntry:
@@ -256,8 +255,14 @@ class TestTranslationEntry:
         result = entry.to_dict()
 
         assert result == {
+            "schema_version": 2,
             "id": "test_id",
             "key": "test_key",
+            "entry_key": {"namespace": "legacy:v1", "local_key": "test_key"},
+            "external_refs": [],
+            "revision": 0,
+            "provenance": [],
+            "metadata": {},
             "original": "original_text",
             "translation": "translated_text",
             "stage": 1,
@@ -298,7 +303,7 @@ class TestTranslationEntry:
         partial_entry = TranslationEntry.from_dict(partial_data)
 
         assert partial_entry.id == "partial_id"
-        assert partial_entry.key == ""  # 默认值
+        assert partial_entry.key == "partial_id"  # V1 只读映射使用 id 作为缺省 local_key
         assert partial_entry.original == ""  # 默认值
         assert partial_entry.translation == ""  # 默认值
         assert partial_entry.stage == 0  # 默认值

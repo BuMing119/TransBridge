@@ -4,9 +4,9 @@ import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from src.transbridge.converter.translation_entry import TranslationEntry
-from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from src.transbridge.writer.plugin_writer import PluginWriter
+from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.writer.plugin_writer import PluginWriter
 
 
 # 伪造的 PluginString 对象

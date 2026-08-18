@@ -1,7 +1,7 @@
 import pytest
 from pathlib import Path
 from xml.etree.ElementTree import Element
-from src.transbridge.parser.eet_parser import EET_Entry, EET_XmlParser, _text_or_empty, _int_or_none
+from transbridge.parser.eet_parser import EET_Entry, EET_XmlParser, _text_or_empty, _int_or_none
 
 
 class TestHelperFunctions:

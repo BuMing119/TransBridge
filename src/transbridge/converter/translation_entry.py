@@ -1,10 +1,18 @@
-from dataclasses import dataclass
-
+from dataclasses import dataclass, field, replace
 from typing import Any
-from src.transbridge.parser import EET_Entry
-from src.transbridge.parser.xt import SST_Entry
-from src.transbridge.parser.xt import XT_Entry
-from src.transbridge.parser.plugin.plugin_string_with_context import PluginStringWithContext
+import warnings
+
+from transbridge.application.io.identity import (
+    EntryKey,
+    EntryRevision,
+    ExternalEntryRef,
+    Provenance,
+    SourceNamespace,
+)
+from transbridge.application.io.mutation import EntrySnapshot
+from transbridge.parser import EET_Entry
+from transbridge.parser.plugin.plugin_string_with_context import PluginStringWithContext
+from transbridge.parser.xt import SST_Entry, XT_Entry
 
 
 def _normalize_text(s: str) -> str:
@@ -49,7 +57,7 @@ class TranslationEntry:
     original: str
     translation: str
     stage: int
-    context: str  # 条目上下文分类（NPC_:FULL / INFO NAM1 等）
+    context: str | None  # 条目上下文分类（NPC_:FULL / INFO NAM1 等）
     string_id: int | None = None  # 本地化插件的字符串ID，用于精确匹配 strings 文件
     form_id_with_plugin: str | None = None  # 完整的 FormID|BaseRecordPlugin 格式，用于导出新JSON格式
 
@@ -57,6 +65,70 @@ class TranslationEntry:
     dsd_type: str = ""           # DSD 类型格式："NPC_ FULL" / "INFO NAM1"（空格分隔）
     dsd_index: int = 1           # 原始索引
     editor_id: str = ""          # 原始 editor_id
+
+    # V2 identity envelope. ``id`` and ``key`` above remain read-compatible facades.
+    entry_key: EntryKey | None = None
+    external_refs: tuple[ExternalEntryRef, ...] = ()
+    revision: EntryRevision = field(default_factory=EntryRevision)
+    provenance: tuple[Provenance, ...] = ()
+    metadata: tuple[tuple[str, Any], ...] = ()
+    _initialized: bool = field(default=False, init=False, repr=False, compare=False)
+
+    SCHEMA_VERSION = 2
+    _IDENTITY_FIELDS = frozenset({"id", "key", "entry_key", "external_refs", "revision", "provenance", "metadata"})
+    _LEGACY_MUTABLE_FIELDS = frozenset({"original", "translation", "stage", "context"})
+
+    def __post_init__(self) -> None:
+        local_key = str(self.key or self.id)
+        entry_key = self.entry_key or EntryKey(SourceNamespace.legacy(), local_key)
+        if self.key and self.key != entry_key.local_key:
+            raise ValueError("legacy key facade must match EntryKey.local_key")
+        refs = tuple(self.external_refs)
+        if len({item.index_key for item in refs}) != len(refs):
+            raise ValueError("external_refs must not contain duplicate identities")
+        revision = self.revision if isinstance(self.revision, EntryRevision) else EntryRevision(self.revision)
+        object.__setattr__(self, "id", str(self.id))
+        object.__setattr__(self, "key", entry_key.local_key)
+        object.__setattr__(self, "entry_key", entry_key)
+        object.__setattr__(self, "external_refs", refs)
+        object.__setattr__(self, "revision", revision)
+        object.__setattr__(self, "provenance", tuple(self.provenance))
+        object.__setattr__(self, "metadata", tuple(self.metadata))
+        object.__setattr__(self, "_initialized", True)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if self.__dict__.get("_initialized", False) and name in self._IDENTITY_FIELDS:
+            if getattr(self, name) != value:
+                raise AttributeError(f"{name} is V2 identity state; use CollectionMutationPort.apply()")
+        if self.__dict__.get("_initialized", False) and name in self._LEGACY_MUTABLE_FIELDS:
+            if getattr(self, name) != value:
+                warnings.warn(
+                    f"Direct TranslationEntry.{name} mutation is deprecated; use CollectionMutationPort.apply()",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+        super().__setattr__(name, value)
+
+    def snapshot(self) -> EntrySnapshot:
+        entry_key = self.identity
+        return EntrySnapshot(
+            entry_key=entry_key,
+            legacy_id=self.id,
+            original=self.original,
+            translation=self.translation,
+            stage=self.stage,
+            context=self.context,
+            external_refs=self.external_refs,
+            revision=self.revision,
+            provenance=self.provenance,
+            metadata=self.metadata,
+        )
+
+    @property
+    def identity(self) -> EntryKey:
+        if self.entry_key is None:
+            raise RuntimeError("TranslationEntry identity was not initialized")
+        return self.entry_key
 
     @staticmethod
     def _build_eet_id(edid: str | None, form_id: str, index: int, grup: str, champ: str) -> str:
@@ -151,10 +223,8 @@ class TranslationEntry:
             quest_formid_ori = getattr(ps.context, "quest", None) or ""
             quest_formid = quest_formid_ori.split("|")[0]
 
-            #original_key = f"{original_key}|{getattr(ps, 'quest_formid', '')}"
+            # original_key = f"{original_key}|{getattr(ps, 'quest_formid', '')}"
             original_key = f"{original_key}|{quest_formid}"
-
-
 
         return cls(
             id=id_value,
@@ -227,20 +297,7 @@ class TranslationEntry:
 
         # ---------- 4. 返回更新后的新实例 ----------
 
-        return cls(
-            id=entry.id,
-            key=entry.key,
-            original=entry.original,
-            translation=xt.dest,
-            stage=STAGE_TRANSLATED,
-            context=entry.context,
-            form_id_with_plugin=entry.form_id_with_plugin,
-            string_id=entry.string_id,
-            # 保留 DSD 字段
-            dsd_type=entry.dsd_type,
-            dsd_index=entry.dsd_index,
-            editor_id=entry.editor_id,
-        )
+        return replace(entry, translation=xt.dest, stage=STAGE_TRANSLATED)
 
     @classmethod
     def try_update_from_sst(
@@ -288,27 +345,21 @@ class TranslationEntry:
 
         # ---------- 5. 返回更新后的新实例 ----------
 
-        return cls(
-            id=entry.id,
-            key=entry.key,
-            original=entry.original,
-            translation=sst.translated_text,
-            stage=STAGE_TRANSLATED,
-            context=entry.context,
-            form_id_with_plugin=entry.form_id_with_plugin,
-            string_id=entry.string_id,
-            dsd_type=entry.dsd_type,
-            dsd_index=entry.dsd_index,
-            editor_id=entry.editor_id,
-        )
+        return replace(entry, translation=sst.translated_text, stage=STAGE_TRANSLATED)
 
     def to_dict(self) -> dict[str, Any]:
         """
         将 TranslationEntry 转为可序列化 dict。
         """
         return {
+            "schema_version": self.SCHEMA_VERSION,
             "id": self.id,
             "key": self.key,
+            "entry_key": self.identity.to_dict(),
+            "external_refs": [reference.to_dict() for reference in self.external_refs],
+            "revision": self.revision.value,
+            "provenance": [item.to_dict() for item in self.provenance],
+            "metadata": dict(self.metadata),
             "original": self.original,
             "translation": self.translation,
             "stage": self.stage,
@@ -326,9 +377,21 @@ class TranslationEntry:
         """
         从 dict 恢复 TranslationEntry。
         """
+        entry_key_data = data.get("entry_key")
+        if entry_key_data is not None:
+            if not isinstance(entry_key_data, dict):
+                raise TypeError("entry_key must be an object")
+            entry_key = EntryKey.from_dict(entry_key_data)
+        else:
+            legacy_id = str(data.get("id", ""))
+            legacy_key = str(data.get("key") or legacy_id)
+            entry_key = EntryKey(SourceNamespace.legacy(), legacy_key)
+        refs = tuple(ExternalEntryRef.from_dict(item) for item in data.get("external_refs", ()))
+        provenance = tuple(Provenance.from_dict(item) for item in data.get("provenance", ()))
+        metadata = data.get("metadata") or {}
         return cls(
-            id=data["id"],
-            key=data.get("key", ""),
+            id=str(data.get("id", entry_key.local_key)),
+            key=entry_key.local_key,
             original=data.get("original", ""),
             translation=data.get("translation", ""),
             stage=data.get("stage", 0),
@@ -339,6 +402,11 @@ class TranslationEntry:
             dsd_type=data.get("dsd_type", ""),
             dsd_index=data.get("dsd_index", 1),
             editor_id=data.get("dsd_editor_id", ""),
+            entry_key=entry_key,
+            external_refs=refs,
+            revision=EntryRevision(data.get("revision", 0)),
+            provenance=provenance,
+            metadata=tuple(sorted(metadata.items())),
         )
 
     # ==================== DSD 格式转换 ====================

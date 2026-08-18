@@ -2,8 +2,8 @@ import os
 import pytest
 from pathlib import Path
 
-from src.transbridge.parser.plugin_parser import PluginParser
-from src.transbridge.converter.translation_entry import TranslationEntry
+from transbridge.parser.plugin_parser import PluginParser
+from transbridge.converter.translation_entry import TranslationEntry
 
 
 def _esp_path() -> Path:

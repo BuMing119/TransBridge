@@ -4,11 +4,11 @@ import logging
 from sse_plugin_interface.datatypes import RawString
 from sse_plugin_interface.subrecord import StringSubrecord
 
-from src.transbridge.converter.translation_entry import TranslationEntry
-from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from src.transbridge.parser.plugin.plugin_string_with_context import PluginStringWithContext
-from src.transbridge.parser.plugin.plugin_with_context import SSEPluginWithContext
-from src.transbridge.parser.strings_file import PluginStringsLookup, PluginStringsWriter
+from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.parser.plugin.plugin_string_with_context import PluginStringWithContext
+from transbridge.parser.plugin.plugin_with_context import SSEPluginWithContext
+from transbridge.parser.strings_file import PluginStringsLookup, PluginStringsWriter
 
 log = logging.getLogger("PluginWriter")
 

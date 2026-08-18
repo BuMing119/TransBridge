@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from xml.etree.ElementTree import Element, SubElement, tostring
 import xml.etree.ElementTree as ET
-from src.transbridge.parser.xt import XT_Entry, XT_XmlParser
+from transbridge.parser.xt import XT_Entry, XT_XmlParser
 
 
 # 创建测试用的 XML 文件

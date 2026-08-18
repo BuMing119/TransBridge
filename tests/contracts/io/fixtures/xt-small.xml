@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<SSTXMLRessources>
+  <Params>
+    <Addon>fixture.esp</Addon>
+    <Version>1</Version>
+  </Params>
+  <Content>
+    <String List="0">
+      <EDID>GreetingTopic</EDID>
+      <REC id="0">INFO:NAM1</REC>
+      <Source>Hello, traveler.</Source>
+      <Dest></Dest>
+    </String>
+  </Content>
+</SSTXMLRessources>

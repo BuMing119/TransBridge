@@ -1,0 +1,27 @@
+[
+  {
+    "id": 42,
+    "key": "NPC_:0001|1~NPC_:FULL",
+    "original": "Auri",
+    "translation": "奥里",
+    "stage": 1,
+    "context": "NPC_:FULL",
+    "labels": ["人物", "同伴"]
+  },
+  {
+    "id": "remote-α",
+    "key": "BOOK:0002|1~BOOK:DESC",
+    "original": "A snow-covered journal",
+    "translation": "覆雪的日记",
+    "stage": 3,
+    "context": "BOOK:DESC",
+    "note": "保留扩展字段"
+  },
+  {
+    "key": "INFO:0003|1~INFO:NAM1",
+    "original": "Welcome, traveler.",
+    "translation": "欢迎，旅行者。",
+    "stage": 5,
+    "context": "INFO:NAM1|0000ABCD"
+  }
+]

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<DocumentElement>
+  <ESP>
+    <GRUP>INFO</GRUP>
+    <ID>00000001</ID>
+    <EDID>GreetingTopic</EDID>
+    <CHAMP>NAM1</CHAMP>
+    <ORIGINAL>Hello, traveler.</ORIGINAL>
+    <TRADUIT></TRADUIT>
+    <PERSO></PERSO>
+    <INDEX>1</INDEX>
+    <STATUS>0</STATUS>
+    <IDSTEXTE>1</IDSTEXTE>
+    <COMMENTAIRE></COMMENTAIRE>
+    <ICON>0</ICON>
+  </ESP>
+</DocumentElement>

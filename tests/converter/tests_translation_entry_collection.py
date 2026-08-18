@@ -1,14 +1,10 @@
 
-import pytest
-from unittest.mock import MagicMock, patch, mock_open
-from pathlib import Path
 import json
+from unittest.mock import MagicMock, mock_open, patch
 
-from src.transbridge.converter.translation_entry import TranslationEntry
-from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from src.transbridge.parser.eet_parser import EET_Entry, EET_XmlParser
-from src.transbridge.parser.xt_parser import XT_Entry
-from src.transbridge.parser.plugin_parser import PluginParser
+from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.parser.xt import XT_Entry
 
 
 class TestTranslationEntryCollection:
@@ -61,10 +57,17 @@ class TestTranslationEntryCollection:
         entry2 = TranslationEntry("id1", "key1", "original1", "translation2", 1, None)
 
         collection.add(entry1)
+        original_snapshot = entry1.snapshot()
         collection.add(entry2, overwrite=True)
 
         assert len(collection) == 1
-        assert collection.get("id1") == entry2
+        updated = collection.get("id1")
+        assert updated.id == entry2.id
+        assert updated.key == entry2.key
+        assert updated.translation == entry2.translation
+        assert updated.stage == entry2.stage
+        assert updated.revision.value == 1
+        assert entry1.snapshot() == original_snapshot
 
     def test_remove(self):
         """测试删除条目"""
@@ -154,11 +157,10 @@ class TestTranslationEntryCollection:
         ])
 
         result = collection.to_dict()
-        assert result["version"] == 1
-        assert result["count"] == 2
-        assert len(result["entries"]) == 2
-        assert result["entries"][0]["id"] == "id1"
-        assert result["entries"][1]["id"] == "id2"
+        assert len(result) == 2
+        assert result[0]["schema_version"] == 2
+        assert result[0]["id"] == "id1"
+        assert result[1]["id"] == "id2"
 
     def test_to_json(self):
         """测试转换为JSON"""
@@ -168,9 +170,9 @@ class TestTranslationEntryCollection:
 
         json_str = collection.to_json()
         data = json.loads(json_str)
-        assert data["version"] == 1
-        assert data["count"] == 1
-        assert data["entries"][0]["id"] == "id1"
+        assert len(data) == 1
+        assert data[0]["schema_version"] == 2
+        assert data[0]["id"] == "id1"
 
     @patch('builtins.open', new_callable=mock_open)
     @patch('pathlib.Path.write_text')
@@ -230,12 +232,14 @@ class TestTranslationEntryCollection:
         assert collection.get("edid3:form3").translation == "Translated text 3"
         assert collection.get("edid3:form3").stage == 1
 
-    @patch('src.transbridge.converter.translation_entry_collection.EET_XmlParser')
+    @patch('transbridge.converter.translation_entry_collection.EET_XmlParser')
     def test_from_eet_xml(self, mock_parser_class):
         """测试从EET XML文件创建集合"""
         # 创建模拟的EET条目
         mock_eet_entry1 = MagicMock()
         mock_eet_entry1.edid = "edid1"
+        mock_eet_entry1.id = "00000001"
+        mock_eet_entry1.index = 1
         mock_eet_entry1.grup = "INFO"
         mock_eet_entry1.champ = "DESC"
         mock_eet_entry1.original = "Original text 1"
@@ -244,6 +248,8 @@ class TestTranslationEntryCollection:
 
         mock_eet_entry2 = MagicMock()
         mock_eet_entry2.edid = "edid2"
+        mock_eet_entry2.id = "00000002"
+        mock_eet_entry2.index = 1
         mock_eet_entry2.grup = "INFO"
         mock_eet_entry2.champ = "NAM1"
         mock_eet_entry2.original = "Original text 2"
@@ -260,15 +266,19 @@ class TestTranslationEntryCollection:
 
         # 验证结果
         assert len(collection) == 2
-        assert collection.get("edid1").stage == 1  # status=99 => stage=1
-        assert collection.get("edid1").translation == "Translated text 1"
-        assert collection.get("edid2").stage == 0  # status=0 => stage=0
-        assert collection.get("edid2").translation == ""
+        entry1 = collection.get("edid1:00000001|1~INFO:DESC")
+        entry2 = collection.get("edid2:00000002|1~INFO:NAM1")
+        assert entry1.identity.local_key == "edid1:00000001|1~INFO:DESC"
+        assert entry1.stage == 1  # status=99 => stage=1
+        assert entry1.translation == "Translated text 1"
+        assert entry2.identity.local_key == "edid2:00000002|1~INFO:NAM1"
+        assert entry2.stage == 0  # status=0 => stage=0
+        assert entry2.translation == ""
 
         # 确保解析器被正确调用
         mock_parser_class.from_file.assert_called_once_with("test.xml")
 
-    @patch('src.transbridge.converter.translation_entry_collection.PluginParser')
+    @patch('transbridge.converter.translation_entry_collection.PluginParser')
     def test_from_plugin(self, mock_parser_class):
         """测试从Plugin文件创建集合"""
         # 创建模拟的TranslationEntry条目

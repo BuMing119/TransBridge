@@ -1,12 +1,14 @@
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
-from src.transbridge.converter.translation_entry import (
-    TranslationEntry,
-    STAGE_TRANSLATED, STAGE_LOCKED, STAGE_HIDDEN,
+from transbridge.application.io.stage_policy import (
+    DEFAULT_STAGE_POLICY,
+    Stage,
+    StageOperation,
 )
-from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from src.transbridge.parser.eet_parser import EET_XmlParser
+from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.parser.eet_parser import EET_XmlParser
 
 
 class EETWriter:
@@ -62,31 +64,32 @@ class EETWriter:
                 # Phase 2：(original, type_field) 回退
                 entry = fallback_index.get((original, type_field))
 
-            if entry is None or not entry.translation:
+            if entry is None:
                 continue
 
-            # 确定写回策略
-            if entry.stage == STAGE_HIDDEN:
-                # 已隐藏：强制原文，不写译文
-                should_translate = False
-                status = "0"
-            elif entry.stage == STAGE_LOCKED:
-                # 已锁定：强制译文
-                should_translate = True
-                status = "99"
-            elif entry.stage >= STAGE_TRANSLATED and entry.translation:
-                # 正常有译文
-                should_translate = True
-                status = "99"
-            else:
-                # 未翻译或无译文
-                should_translate = False
-                status = "0"
+            decision = DEFAULT_STAGE_POLICY.evaluate(
+                entry.stage, entry.translation, StageOperation.PUBLISH,
+                original=entry.original,
+            )
+            if decision.blocks_publish or decision.publish_text is None:
+                code = decision.code or "STAGE_PUBLISH_BLOCKED"
+                raise ValueError(f"{code}: EET write is blocked by stage policy")
 
-            if should_translate:
-                trad_node = esp.find("TRADUIT")
-                if trad_node is not None:
-                    trad_node.text = entry.translation
+            translated_stages = {
+                Stage.TRANSLATED,
+                Stage.QUESTIONABLE,
+                Stage.CHECKED,
+                Stage.REVIEWED,
+                Stage.LOCKED,
+            }
+            status = (
+                "99"
+                if decision.stage in translated_stages and bool(entry.translation)
+                else "0"
+            )
+            trad_node = esp.find("TRADUIT")
+            if trad_node is not None:
+                trad_node.text = decision.publish_text
 
             status_node = esp.find("STATUS")
             if status_node is not None:

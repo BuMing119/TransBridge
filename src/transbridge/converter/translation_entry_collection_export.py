@@ -1,16 +1,23 @@
 from __future__ import annotations
+
 from collections import defaultdict
 from pathlib import Path
-from typing import TYPE_CHECKING
 import re
 
-from src.transbridge.converter.context_categories import EXPORT_CATEGORIES
-from src.transbridge.converter.translation_entry import TranslationEntry
-from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.application.contracts import OperationOutcome, RequestContext
+from transbridge.application.io import (
+    FormatId,
+    ParatranzJsonAdapter,
+    SourceDescriptor,
+    WriteRequest,
+)
+from transbridge.converter.context_categories import EXPORT_CATEGORIES
+from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
 
 def export_to_categorized_json_files(
-    collection: TranslationEntryCollection ,
+    collection: TranslationEntryCollection,
     output_dir: str | Path,
     *,
     ensure_ascii: bool = False,
@@ -28,8 +35,10 @@ def export_to_categorized_json_files(
     - 人名.json: "NPC_:FULL", "NPC_:SHRT", "TACT:FULL"
     - 任务日志.json: "QUST:FULL", "QUST:NNAM"
     - 地名与门.json: "CELL:FULL", "DOOR:FULL", "LCTN:FULL", "REFR:FULL", "WRLD:FULL"
-    - 法术_龙吼_技能.json: "ENCH:FULL", "EXPL:FULL", "MESG:DESC", "MESG:FULL", "MESG:ITXT", "MGEF:DNAM", "MGEF:FULL", "PERK:FULL", "SHOU:FULL", "SPEL:DESC", "SPEL:FULL"
-    - 物品.json: "ACTI:FULL", "ACTI:RNAM", "ALCH:FULL", "AMMO:FULL", "ARMO:DESC", "ARMO:FULL", "CONT:FULL", "INGR:FULL", "KEYM:FULL", "MISC:FULL", "SLGM:FULL", "TREE:FULL", "WEAP:DESC", "WEAP:FULL"
+    - 法术_龙吼_技能.json: "ENCH:FULL", "EXPL:FULL", "MESG:DESC", "MESG:FULL", "MESG:ITXT", "MGEF:DNAM",
+      "MGEF:FULL", "PERK:FULL", "SHOU:FULL", "SPEL:DESC", "SPEL:FULL"
+    - 物品.json: "ACTI:FULL", "ACTI:RNAM", "ALCH:FULL", "AMMO:FULL", "ARMO:DESC", "ARMO:FULL", "CONT:FULL",
+      "INGR:FULL", "KEYM:FULL", "MISC:FULL", "SLGM:FULL", "TREE:FULL", "WEAP:DESC", "WEAP:FULL"
 
     :param collection: TranslationEntryCollection 实例
     :param output_dir: 输出目录路径
@@ -69,15 +78,37 @@ def export_to_categorized_json_files(
     for filename, entries in categorized_entries.items():
         if entries:  # 只保存非空文件
             file_path = output_dir / filename
-            temp_collection = collection.__class__(entries)
-            temp_collection.to_json_file(file_path, ensure_ascii=ensure_ascii, indent=indent)
+            _write_paratranz_entries(entries, file_path, ensure_ascii=ensure_ascii, indent=indent)
 
     # 将INFO和DIAL类型的条目保存到单独的JSON文件
     for quest_formid, entries in dial_entries.items():
         filename = _dial_filename(quest_formid, collection)
         file_path = output_dir / filename
-        temp_collection = collection.__class__(entries)
-        temp_collection.to_json_file(file_path, ensure_ascii=ensure_ascii, indent=indent)
+        _write_paratranz_entries(entries, file_path, ensure_ascii=ensure_ascii, indent=indent)
+
+
+def _write_paratranz_entries(
+    entries: list[TranslationEntry],
+    file_path: Path,
+    *,
+    ensure_ascii: bool,
+    indent: int,
+) -> None:
+    """Compatibility facade over the V2 offline ParaTranz writer."""
+    result = ParatranzJsonAdapter().write(
+        WriteRequest(
+            SourceDescriptor(str(file_path), file_path.name, media_type="application/json"),
+            FormatId.JSON_PARATRANZ,
+            tuple(entries),
+            0,
+            RequestContext("legacy-categorized-paratranz-export"),
+            new_template=b"",
+            options=(("ensure_ascii", ensure_ascii), ("indent", indent)),
+        )
+    )
+    if result.outcome is not OperationOutcome.COMPLETED:
+        messages = "; ".join(diagnostic.message for diagnostic in result.diagnostics)
+        raise ValueError(messages or "Unable to write ParaTranz JSON.")
 
 
 def _dial_filename(quest_formid: str, collection: TranslationEntryCollection) -> str:

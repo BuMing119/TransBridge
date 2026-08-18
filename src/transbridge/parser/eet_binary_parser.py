@@ -33,7 +33,7 @@ import struct
 from collections.abc import Iterator
 from pathlib import Path
 
-from src.transbridge.parser.eet_parser import EET_Entry
+from transbridge.parser.eet_parser import EET_Entry
 
 logger = logging.getLogger(__name__)
 

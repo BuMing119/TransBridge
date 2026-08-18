@@ -5,10 +5,10 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest.mock import Mock
 
-from src.transbridge.converter.translation_entry import TranslationEntry
-from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from src.transbridge.parser.xt import XT_XmlParser
-from src.transbridge.writer.xt_xml_writer import XTWriter
+from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.parser.xt import XT_XmlParser
+from transbridge.writer.xt_xml_writer import XTWriter
 
 
 def create_test_xml(content):

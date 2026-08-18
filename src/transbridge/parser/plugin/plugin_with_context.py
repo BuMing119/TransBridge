@@ -13,7 +13,7 @@ from .item import (
     InfoContext,
     NPCContext,
 )
-from src.transbridge.parser.utils.fromid_trans import formid_bytes_to_complete, formid_bytes_to_hex
+from transbridge.parser.utils.fromid_trans import formid_bytes_to_complete, formid_bytes_to_hex
 from sse_plugin_interface.datatypes import RawString
 from sse_plugin_interface.group import Group
 from sse_plugin_interface.plugin import SSEPlugin
@@ -21,7 +21,7 @@ from sse_plugin_interface.record import Record
 from sse_plugin_interface.subrecord import TRDT, StringSubrecord
 
 from .plugin_string_with_context import PluginStringWithContext
-from src.transbridge.parser.strings_file import PluginStringsLookup
+from transbridge.parser.strings_file import PluginStringsLookup
 
 
 class SSEPluginWithContext(SSEPlugin):

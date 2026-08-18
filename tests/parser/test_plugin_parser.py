@@ -2,8 +2,8 @@ import pytest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from src.transbridge.parser.plugin_parser import PluginParser
-from src.transbridge.converter.translation_entry import TranslationEntry
+from transbridge.parser.plugin_parser import PluginParser
+from transbridge.converter.translation_entry import TranslationEntry
 
 
 # 伪造的 PluginString 对象
@@ -32,8 +32,8 @@ def make_fake_strings():
     ]
 
 
-@patch("src.transbridge.parser.plugin_parser.PluginStringsLookup.from_plugin", return_value=None)
-@patch("src.transbridge.parser.plugin_parser.SSEPluginWithContext")
+@patch("transbridge.parser.plugin_parser.PluginStringsLookup.from_plugin", return_value=None)
+@patch("transbridge.parser.plugin_parser.SSEPluginWithContext")
 def test_parse_plugin_basic(mock_sseplugin, mock_strings_lookup):
     fake_plugin = Mock()
     fake_plugin.extract_strings_with_context.return_value = make_fake_strings()
@@ -50,8 +50,8 @@ def test_parse_plugin_basic(mock_sseplugin, mock_strings_lookup):
     assert results[0].original == "Hello"
 
 
-@patch("src.transbridge.parser.plugin_parser.PluginStringsLookup.from_plugin", return_value=None)
-@patch("src.transbridge.parser.plugin_parser.SSEPluginWithContext")
+@patch("transbridge.parser.plugin_parser.PluginStringsLookup.from_plugin", return_value=None)
+@patch("transbridge.parser.plugin_parser.SSEPluginWithContext")
 def test_parse_plugin_without_skip_empty(mock_sseplugin, mock_strings_lookup):
     fake_plugin = Mock()
     fake_plugin.extract_strings_with_context.return_value = make_fake_strings()
@@ -63,8 +63,8 @@ def test_parse_plugin_without_skip_empty(mock_sseplugin, mock_strings_lookup):
     assert len(results) == 3
 
 
-@patch("src.transbridge.parser.plugin_parser.PluginStringsLookup.from_plugin", return_value=None)
-@patch("src.transbridge.parser.plugin_parser.SSEPluginWithContext")
+@patch("transbridge.parser.plugin_parser.PluginStringsLookup.from_plugin", return_value=None)
+@patch("transbridge.parser.plugin_parser.SSEPluginWithContext")
 def test_progress_callback_called(mock_sseplugin, mock_strings_lookup):
     fake_plugin = Mock()
     fake_plugin.extract_strings_with_context.return_value = make_fake_strings()
@@ -81,7 +81,7 @@ def test_progress_callback_called(mock_sseplugin, mock_strings_lookup):
     progress.assert_any_call(3, 3, "BOOK_Intro_DESC")
 
 
-@patch("src.transbridge.parser.plugin_parser.SSEPluginWithContext")
+@patch("transbridge.parser.plugin_parser.SSEPluginWithContext")
 def test_parse_plugin_exception_returns_empty(mock_sseplugin):
     mock_sseplugin.from_file.side_effect = Exception("broken")
 
