@@ -14,3 +14,13 @@ __pycache__/
 *.spec
 .pytest_cache/
 /简历/
+
+# QA/性能临时目录（各 Story 会话的 TMP/TEMP 落点，勿入库；
+# 同时保证 evidence 工具的 untracked diff-hash 不被并发临时文件抖动干扰）
+/qa-tmp-*/
+
+# Remediation local temp dirs (do not commit)
+/.tmp_tests/
+/.tmp-p-*/
+/.qa-evidence-tmp/
+/.dsh/

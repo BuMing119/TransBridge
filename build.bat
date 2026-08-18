@@ -10,18 +10,19 @@ echo.
 :: 切换到项目根目录
 cd /d "%~dp0"
 
-:: ── 步骤 1：安装 / 确认 pyinstaller ──────────────────────────
-echo [1/4] 检查 pyinstaller...
-uv run pyinstaller --version >nul 2>&1
+:: ── 步骤 1：按锁文件同步构建环境 ─────────────────────────────
+echo [1/4] 按 uv.lock 同步构建环境...
+uv sync --frozen --group dev
 if errorlevel 1 (
-    echo 正在安装 pyinstaller...
-    uv add --dev pyinstaller
-    if errorlevel 1 (
-        echo [错误] pyinstaller 安装失败，请检查网络或 uv 配置。
-        pause & exit /b 1
-    )
+    echo [错误] 构建环境与 uv.lock 不一致。请先重建环境和锁文件。
+    pause & exit /b 1
 )
-echo pyinstaller 已就绪。
+for /f "usebackq delims=" %%V in (`uv run --frozen python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"`) do set "APP_VERSION=%%V"
+if not defined APP_VERSION (
+    echo [错误] 无法从 pyproject.toml 读取版本。
+    pause & exit /b 1
+)
+echo 构建版本：%APP_VERSION%
 echo.
 
 :: ── 步骤 2：预下载 embedding 模型 ────────────────────────────
@@ -66,7 +67,7 @@ if "%ISCC%"=="" (
 )
 
 mkdir installer\output 2>nul
-"%ISCC%" installer\setup.iss
+"%ISCC%" /DAppVersion=%APP_VERSION% installer\setup.iss
 if errorlevel 1 (
     echo [错误] Inno Setup 编译失败，请查看上方日志。
     pause & exit /b 1

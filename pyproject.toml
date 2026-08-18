@@ -19,6 +19,9 @@ dependencies = [
     "sentence-transformers>=2.2",
     "faiss-cpu>=1.7",
     "rank-bm25>=0.2.2",
+    "py7zr>=1.1.0",
+    "rarfile>=4.2",
+    "jsonschema>=4.23.0",
     "requests>=2.33.0",
     "sse-bsa>=1.1.0",
     # Fixed torch version to avoid conflict with PyQt6
@@ -28,7 +31,8 @@ dependencies = [
 ]
 
 [project.scripts]
-transbridge = "transbridge:main"
+transbridge = "transbridge.cli:main"
+transbridge-mcp = "transbridge.entrypoints.mcp:main"
 
 [build-system]
 requires = ["uv_build>=0.9.13,<0.10.0"]

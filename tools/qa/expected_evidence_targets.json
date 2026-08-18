@@ -1,0 +1,10 @@
+[
+  "fomod-s01", "fomod-s02", "fomod-s03", "fomod-s04", "fomod-s05",
+  "io-s01", "io-s02", "io-s03", "io-s04", "io-s05", "io-s06",
+  "paratranz-s01", "paratranz-s02", "paratranz-s03", "paratranz-s04",
+  "persistence-s01", "persistence-s02", "persistence-s03", "persistence-s04", "persistence-s05",
+  "platform-s01", "platform-s02", "platform-s03", "platform-s04", "platform-s05",
+  "release-s01", "release-s02", "release-s03", "release-s04", "release-s05",
+  "task-runtime-s01", "task-runtime-s02", "task-runtime-s03",
+  "task-s04", "task-s05", "task-s06", "task-s07"
+]
