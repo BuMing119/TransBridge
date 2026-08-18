@@ -1,5 +1,5 @@
 from typing import Optional
-from src.transbridge.paratranz.paratranz_client import ParatranzClient
+from transbridge.paratranz.paratranz_client import ParatranzClient
 
 
 class ParatranzHistoryAPI(ParatranzClient):
@@ -39,7 +39,9 @@ class ParatranzHistoryAPI(ParatranzClient):
         page: int = 1,
         page_size: int = 50,
         file: Optional[int] = None,
-        revision_type: Optional[str] = None
+        revision_type: Optional[str] = None,
+        *,
+        cancellation=None,
     ):
         """
         获取文件上传历史（Revision 记录）
@@ -56,7 +58,13 @@ class ParatranzHistoryAPI(ParatranzClient):
             params["file"] = file
         if revision_type is not None:
             params["type"] = revision_type
-        return self._request("GET", f"/projects/{project_id}/files/revisions", params=params)
+        return self._request(
+            "GET",
+            f"/projects/{project_id}/files/revisions",
+            params=params,
+            cancellation=cancellation,
+            expected_type=(list, dict),
+        )
 
     def get_term_history(self, project_id: int, term_id: int, page: int = 1, page_size: int = 50):
         """获取术语历史记录"""

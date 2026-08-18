@@ -5,23 +5,23 @@ WorkFlow 单元测试：ParaTranzUploader / ParaTranzDownloader / ArtifactWorkfl
 """
 
 import json
-import zipfile
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
+import zipfile
 
 import pytest
 
-from src.transbridge.converter.translation_entry import TranslationEntry
-from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from src.transbridge.paratranz.config_manager import ParatranzConfig
-from src.transbridge.paratranz.workflow.artifact import ArtifactWorkflow
-from src.transbridge.paratranz.workflow.downloader import DownloadResult, ParaTranzDownloader
-from src.transbridge.paratranz.workflow.uploader import ParaTranzUploader, UploadResult
-
+from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.paratranz.config_manager import ParatranzConfig
+from transbridge.paratranz.workflow.artifact import ArtifactWorkflow
+from transbridge.paratranz.workflow.downloader import ParaTranzDownloader
+from transbridge.paratranz.workflow.uploader import ParaTranzUploader
 
 # ─────────────────────────────────────────────────────────────
 # 测试辅助函数
 # ─────────────────────────────────────────────────────────────
+
 
 def make_config() -> ParatranzConfig:
     return ParatranzConfig(token="test_token")
@@ -79,7 +79,7 @@ class TestParaTranzUploader:
                 (Path(output_dir) / name).write_text("[]", encoding="utf-8")
 
         return patch(
-            "src.transbridge.paratranz.workflow.uploader.export_to_categorized_json_files",
+            "transbridge.paratranz.workflow.uploader.export_to_categorized_json_files",
             side_effect=side_effect,
         )
 
@@ -378,6 +378,12 @@ class TestParaTranzDownloader:
 
 class TestArtifactWorkflow:
 
+    @staticmethod
+    def _write_artifact(project_id, save_path):
+        with zipfile.ZipFile(save_path, "w") as zf:
+            zf.writestr("result.json", "{}")
+        return save_path
+
     def _make_workflow(self) -> tuple[ArtifactWorkflow, MagicMock]:
         workflow = ArtifactWorkflow(make_config())
         mock_api = MagicMock()
@@ -395,15 +401,19 @@ class TestArtifactWorkflow:
             {"createdAt": "2025-01-01T00:00:00.000Z"},  # 触发前的旧记录
             {"createdAt": "2025-01-01T01:00:00.000Z"},  # 触发后的新记录
         ]
+        mock_api.download_artifacts.side_effect = self._write_artifact
 
-        with patch("src.transbridge.paratranz.workflow.artifact.time.sleep"):
-            with patch("src.transbridge.paratranz.workflow.artifact.time.monotonic",
+        with patch("transbridge.paratranz.workflow.artifact.time.sleep"):
+            with patch("transbridge.paratranz.workflow.artifact.time.monotonic",
                        side_effect=[0, 0]):  # deadline=305, while 0<305 → True → break
                 result = workflow.trigger_and_download(1, save_path)
 
         assert result == save_path
         mock_api.trigger_export.assert_called_once_with(1)
-        mock_api.download_artifacts.assert_called_once_with(1, save_path)
+        mock_api.download_artifacts.assert_called_once()
+        assert mock_api.download_artifacts.call_args.args[0] == 1
+        assert mock_api.download_artifacts.call_args.args[1].endswith(".part")
+        assert Path(save_path).exists()
 
     # ── 首次导出（无历史 artifact）也能正常工作 ───────────────────
 
@@ -414,11 +424,12 @@ class TestArtifactWorkflow:
 
         mock_api.get_artifacts.side_effect = [
             None,                                       # 首次：无历史记录
-            {"createdAt": "2025-01-01T01:00:00.000Z"}, # 轮询：新记录
+            {"createdAt": "2025-01-01T01:00:00.000Z"},  # 轮询：新记录
         ]
+        mock_api.download_artifacts.side_effect = self._write_artifact
 
-        with patch("src.transbridge.paratranz.workflow.artifact.time.sleep"):
-            with patch("src.transbridge.paratranz.workflow.artifact.time.monotonic",
+        with patch("transbridge.paratranz.workflow.artifact.time.sleep"):
+            with patch("transbridge.paratranz.workflow.artifact.time.monotonic",
                        side_effect=[0, 0]):
                 result = workflow.trigger_and_download(1, save_path)
 
@@ -434,10 +445,11 @@ class TestArtifactWorkflow:
             {"createdAt": "2025-01-01T00:00:00.000Z"},
             {"createdAt": "2025-01-01T01:00:00.000Z"},
         ]
+        mock_api.download_artifacts.side_effect = self._write_artifact
         messages = []
 
-        with patch("src.transbridge.paratranz.workflow.artifact.time.sleep"):
-            with patch("src.transbridge.paratranz.workflow.artifact.time.monotonic",
+        with patch("transbridge.paratranz.workflow.artifact.time.sleep"):
+            with patch("transbridge.paratranz.workflow.artifact.time.monotonic",
                        side_effect=[0, 0]):
                 workflow.trigger_and_download(
                     1, str(tmp_path / "export.zip"),
@@ -455,12 +467,17 @@ class TestArtifactWorkflow:
         # get_artifacts 始终返回旧 createdAt，不出现新记录
         mock_api.get_artifacts.return_value = {"createdAt": "2025-01-01T00:00:00.000Z"}
 
-        with patch("src.transbridge.paratranz.workflow.artifact.time.sleep"):
+        with patch("transbridge.paratranz.workflow.artifact.time.sleep"):
             # monotonic: 第1次(deadline计算)=0, 第2次(while判断)=999 → 超出 timeout=5
-            with patch("src.transbridge.paratranz.workflow.artifact.time.monotonic",
+            with patch("transbridge.paratranz.workflow.artifact.time.monotonic",
                        side_effect=[0, 999]):
                 with pytest.raises(TimeoutError, match="导出超时"):
-                    workflow.trigger_and_download(1, str(tmp_path / "export.zip"), timeout=5)
+                    workflow.trigger_and_download(
+                        1,
+                        str(tmp_path / "export.zip"),
+                        poll_interval=0.001,
+                        timeout=0.002,
+                    )
 
         mock_api.download_artifacts.assert_not_called()
 
@@ -476,11 +493,12 @@ class TestArtifactWorkflow:
             RuntimeError("timeout"),                       # 第1次轮询失败
             {"createdAt": "2025-01-01T01:00:00.000Z"},    # 第2次轮询成功
         ]
+        mock_api.download_artifacts.side_effect = self._write_artifact
 
-        with patch("src.transbridge.paratranz.workflow.artifact.time.sleep"):
-            with patch("src.transbridge.paratranz.workflow.artifact.time.monotonic",
+        with patch("transbridge.paratranz.workflow.artifact.time.sleep"):
+            with patch("transbridge.paratranz.workflow.artifact.time.monotonic",
                        side_effect=[0, 0, 0]):
-                result = workflow.trigger_and_download(1, save_path)
+                result = workflow.trigger_and_download(1, save_path, poll_interval=0.001)
 
         mock_api.download_artifacts.assert_called_once()
         assert result == save_path

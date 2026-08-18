@@ -1,5 +1,5 @@
 from typing import Optional
-from src.transbridge.paratranz.paratranz_client import ParatranzClient
+from transbridge.paratranz.paratranz_client import ParatranzClient
 
 
 class ParatranzIssuesAPI(ParatranzClient):

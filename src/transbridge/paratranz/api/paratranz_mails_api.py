@@ -1,4 +1,4 @@
-from src.transbridge.paratranz.paratranz_client import ParatranzClient
+from transbridge.paratranz.paratranz_client import ParatranzClient
 
 
 class ParatranzMailsAPI(ParatranzClient):

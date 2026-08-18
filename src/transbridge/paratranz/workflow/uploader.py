@@ -21,10 +21,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from src.transbridge.converter.translation_entry_collection_export import export_to_categorized_json_files
-from src.transbridge.paratranz.api.paratranz_files_api import ParatranzFilesAPI
-from src.transbridge.paratranz.config_manager import ParatranzConfig
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.converter.translation_entry_collection_export import export_to_categorized_json_files
+from transbridge.paratranz.api.paratranz_files_api import ParatranzFilesAPI
+from transbridge.paratranz.config_manager import ParatranzConfig
 
 
 @dataclass

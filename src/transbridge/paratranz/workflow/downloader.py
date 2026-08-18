@@ -12,10 +12,10 @@ ParaTranzDownloader：从 ParaTranz 下载译文并合并到本地 TranslationEn
 from dataclasses import dataclass
 from typing import Callable
 
-from src.transbridge.converter.translation_entry import TranslationEntry
-from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from src.transbridge.paratranz.api.paratranz_files_api import ParatranzFilesAPI
-from src.transbridge.paratranz.config_manager import ParatranzConfig
+from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.paratranz.api.paratranz_files_api import ParatranzFilesAPI
+from transbridge.paratranz.config_manager import ParatranzConfig
 
 
 @dataclass

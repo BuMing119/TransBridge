@@ -9,11 +9,11 @@ from dataclasses import dataclass, field
 from typing import Optional, TYPE_CHECKING
 
 # ── Re-export（向后兼容）──────────────────────────────────
-from src.transbridge.config.llm import LLMConfig, EmbeddingConfig  # noqa: F401
-from src.transbridge.config.paratranz import ParatranzConfig        # noqa: F401
+from transbridge.config.llm import LLMConfig, EmbeddingConfig  # noqa: F401
+from transbridge.config.paratranz import ParatranzConfig        # noqa: F401
 
 if TYPE_CHECKING:
-    from src.transbridge.converter.translation_entry import TranslationEntry
+    from transbridge.converter.translation_entry import TranslationEntry
 
 
 # ── ActionRule ────────────────────────────────────────────
@@ -34,7 +34,7 @@ class ActionRule:
     action: str = "skip"
 
     def match(self, entry: "TranslationEntry") -> bool:
-        from src.transbridge.converter.translation_entry import TranslationEntry
+        from transbridge.converter.translation_entry import TranslationEntry
         if self.status_filter is not None and entry.stage not in self.status_filter:
             return False
         if self.label_filter is not None:
@@ -81,13 +81,38 @@ def apply_rules(rules: list, entries: list) -> dict:
     Returns:
         {entry_id: action} 映射，未匹配的条目默认 "skip"
     """
-    result = {}
-    for entry in entries:
-        action = "skip"  # 未匹配默认跳过
-        for rule in sorted(rules, key=lambda r: getattr(r, 'priority', 0)):
-            if rule.match(entry):
-                action = rule.action
-                break
-        eid = getattr(entry, 'id', str(id(entry)))
-        result[eid] = action
-    return result
+    from transbridge.application.translation import (
+        ActionPlanner,
+        ActionRuleSpec,
+        PlanningEntry,
+        TranslationAction,
+    )
+
+    planning_entries = [
+        PlanningEntry(
+            entry.identity,
+            entry.stage,
+            entry.original,
+            entry.translation,
+            entry.context or "",
+            frozenset(getattr(entry, "labels", set()) or set()),
+        )
+        for entry in entries
+    ]
+    rule_specs = [
+        ActionRuleSpec(
+            rule.rule_id,
+            rule.priority,
+            TranslationAction(rule.action),
+            None if rule.status_filter is None else frozenset(rule.status_filter),
+            None if rule.label_filter is None else frozenset(rule.label_filter),
+            None if rule.category_filter is None else frozenset(rule.category_filter),
+        )
+        for rule in rules
+    ]
+    assignments = ActionPlanner().plan(planning_entries, rule_specs).assignments
+    by_key = {entry.identity: entry for entry in entries}
+    return {
+        by_key[assignment.key].id: assignment.action.value
+        for assignment in assignments
+    }

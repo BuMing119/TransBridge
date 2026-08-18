@@ -1,5 +1,5 @@
-from typing import Optional
-from src.transbridge.paratranz.paratranz_client import ParatranzClient
+
+from transbridge.paratranz.paratranz_client import ParatranzClient
 
 
 class ParatranzStringsAPI(ParatranzClient):
@@ -9,9 +9,11 @@ class ParatranzStringsAPI(ParatranzClient):
         project_id: int,
         page: int = 1,
         page_size: int = 50,
-        file: Optional[int] = None,
-        stage: Optional[int] = None,
-        detailed: bool = False
+        file: int | None = None,
+        stage: int | None = None,
+        detailed: bool = False,
+        *,
+        cancellation=None,
     ):
         """
         获取词条列表（分页）
@@ -31,9 +33,15 @@ class ParatranzStringsAPI(ParatranzClient):
             params["stage"] = stage
         if detailed:
             params["detailed"] = 1
-        return self._request("GET", f"/projects/{project_id}/strings", params=params)
+        return self._request(
+            "GET",
+            f"/projects/{project_id}/strings",
+            params=params,
+            cancellation=cancellation,
+            expected_type=(list, dict),
+        )
 
-    def create_string(self, project_id: int, data: dict):
+    def create_string(self, project_id: int, data: dict, *, cancellation=None):
         """
         创建词条
 
@@ -47,9 +55,22 @@ class ParatranzStringsAPI(ParatranzClient):
             "context": "UI greeting"
         }
         """
-        return self._request("POST", f"/projects/{project_id}/strings", json=data)
+        return self._request(
+            "POST",
+            f"/projects/{project_id}/strings",
+            json=data,
+            cancellation=cancellation,
+            expected_type=dict,
+        )
 
-    def batch_strings(self, project_id: int, op: str, ids: list, stage: Optional[int] = None, translation: Optional[str] = None):
+    def batch_strings(
+        self,
+        project_id: int,
+        op: str,
+        ids: list,
+        stage: int | None = None,
+        translation: str | None = None,
+    ):
         """
         批量操作词条
 
@@ -71,7 +92,7 @@ class ParatranzStringsAPI(ParatranzClient):
         """获取单个词条"""
         return self._request("GET", f"/projects/{project_id}/strings/{string_id}")
 
-    def update_string(self, project_id: int, string_id: int, data: dict):
+    def update_string(self, project_id: int, string_id: int, data: dict, *, cancellation=None):
         """
         更新单个词条
 
@@ -82,8 +103,18 @@ class ParatranzStringsAPI(ParatranzClient):
             "context": "UI"
         }
         """
-        return self._request("PUT", f"/projects/{project_id}/strings/{string_id}", json=data)
+        return self._request(
+            "PUT",
+            f"/projects/{project_id}/strings/{string_id}",
+            json=data,
+            cancellation=cancellation,
+            expected_type=dict,
+        )
 
-    def delete_string(self, project_id: int, string_id: int):
+    def delete_string(self, project_id: int, string_id: int, *, cancellation=None):
         """删除单个词条（仅管理员可用）"""
-        return self._request("DELETE", f"/projects/{project_id}/strings/{string_id}")
+        return self._request(
+            "DELETE",
+            f"/projects/{project_id}/strings/{string_id}",
+            cancellation=cancellation,
+        )

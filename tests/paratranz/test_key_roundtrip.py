@@ -20,9 +20,9 @@ import tempfile
 import time
 from pathlib import Path
 
-from src.transbridge.paratranz.config_manager import ParatranzConfig
-from src.transbridge.paratranz.api.paratranz_files_api import ParatranzFilesAPI
-from src.transbridge.paratranz.api.paratranz_strings_api import ParatranzStringsAPI
+from transbridge.paratranz.config_manager import ParatranzConfig
+from transbridge.paratranz.api.paratranz_files_api import ParatranzFilesAPI
+from transbridge.paratranz.api.paratranz_strings_api import ParatranzStringsAPI
 
 # ===================== 修改这里 =====================
 TEST_PROJECT_ID = 17633
