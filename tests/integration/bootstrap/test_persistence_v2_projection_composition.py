@@ -7,6 +7,7 @@ from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.application.projects import DirtyDecision
 from transbridge.bootstrap import build_runtime
 from transbridge.bootstrap.persistence import build_persistence_v2_services
+from transbridge.persistence.current_project import CurrentProjectActivator
 from transbridge.persistence.v2 import (
     ProjectDto,
     ProjectId,
@@ -44,7 +45,7 @@ def _records(services):
             0,
             {
                 "name": "Project A",
-                "sources": [],
+                "sources": [{"type": "esp", "path": "source.esp"}],
                 "variant_ids": [variant_ref.identity.value],
                 "active_variant_id": variant_ref.identity.value,
             },
@@ -169,3 +170,31 @@ def test_runtime_registers_real_v2_services_and_releases_projection_subscription
     assert result.is_success
     assert services.project_projection.listener_count == 0
     assert subscription.closed
+
+
+def test_current_active_pointer_restores_without_legacy_identity_mapping(tmp_path: Path) -> None:
+    services = build_persistence_v2_services(
+        tmp_path,
+        id_factory=_Ids(),
+        timestamp_factory=lambda: "2026-08-18T00:00:00+00:00",
+    )
+    project_ref, variant_ref, baseline = _records(services)
+    (tmp_path / "active-project.json").write_text(
+        '{"schema_version":1,"project_id":"project-a","variant_id":"variant-a","source_ref":null}',
+        encoding="utf-8",
+    )
+    activator = CurrentProjectActivator(
+        str(tmp_path),
+        services.projects,
+        services.variants,
+        services.baselines,
+        services.gui_project_commands,
+        baseline_loader=lambda source, context: baseline,
+    )
+
+    restored = activator.restore(RequestContext("gui", run_id="restore"))
+
+    assert restored.is_success
+    assert services.project_lifecycle.active is not None
+    assert services.project_lifecycle.active.project_ref == project_ref
+    assert services.project_lifecycle.active.formal_variant_ref == variant_ref
