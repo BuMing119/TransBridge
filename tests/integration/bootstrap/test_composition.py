@@ -107,6 +107,29 @@ def test_runtime_uses_injected_ports_and_generates_scoped_contexts() -> None:
     assert second.run_id == "run-2"
 
 
+def test_fr26_project_and_task_activity_services_are_registered(tmp_path: Path) -> None:
+    runtime = build_runtime(
+        {"persistence_v2_root": tmp_path},
+        ports=_ports(),
+    )
+
+    names = set(runtime.use_cases.names())
+
+    assert {
+        "project_provisioning",
+        "task_history",
+        "task_recovery",
+        "task_recovery_expectations",
+        "task_retry_intents",
+        "ui_preferences",
+    } <= names
+    assert (
+        runtime.use_cases.resolve("project_provisioning")
+        is runtime.use_cases.resolve("persistence_v2").project_provisioning
+    )
+    assert runtime.close().is_success
+
+
 def test_missing_project_returns_structured_prerequisite_result() -> None:
     runtime = build_runtime(ports=_ports())
     context = runtime.context("agent")

@@ -161,6 +161,8 @@ class StagingPackPublisher:
         build_fingerprint: str = "",
         progress: Callable[[int, int], None] | None = None,
     ) -> StagingPublishResult:
+        if expected_target_sha256 is None:
+            expected_target_sha256 = spec.expected_output_hash
         guard = commit_guard or (lambda run_id, mutation: (mutation(), True)[1])
         if _cancelled(cancellation):
             return _result(
@@ -282,6 +284,16 @@ class StagingPackPublisher:
                 )
 
             current = _sha256_or_none(target)
+            if current != staged.initial_target_sha256:
+                return self._finish(
+                    OperationOutcome.FAILED,
+                    "TARGET_FINGERPRINT_CONFLICT",
+                    "publish target changed while the staged archive was being built",
+                    spec,
+                    staged,
+                    None,
+                    cleanup_policy,
+                )
             if expected_target_sha256 is not None and current is not None and current != expected_target_sha256:
                 return self._finish(
                     OperationOutcome.FAILED,
@@ -366,6 +378,8 @@ class StagingPackPublisher:
         if not parent.exists() or not parent.is_dir():
             raise OSError("publish target parent must exist and be a directory")
         initial = _sha256_or_none(target)
+        if spec.expected_output_missing and initial is not None:
+            raise TargetFingerprintConflict()
         if expected_target_sha256 is not None and initial is not None and initial != expected_target_sha256:
             raise TargetFingerprintConflict()
         # The staged artifact keeps the target's format extension so the archive

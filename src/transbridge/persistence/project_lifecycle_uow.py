@@ -16,12 +16,14 @@ from transbridge.application.projects.models import (
     LifecycleSave,
     LifecycleSnapshot,
 )
+from transbridge.application.projects.provisioning import ProjectProvisioningCommit
 
 
 class LifecycleMutationKind(StrEnum):
     SAVE = "save"
     ACTIVATE = "activate"
     SNAPSHOT = "snapshot"
+    PROVISION = "provision"
 
 
 @runtime_checkable
@@ -39,6 +41,12 @@ class LifecycleTransactionStorePort(Protocol):
     def stage_activate(self, transaction_id: str, activation: LifecycleActivation) -> None: ...
 
     def stage_snapshot(self, transaction_id: str, snapshot: LifecycleSnapshot) -> None: ...
+
+    def stage_provisioning(
+        self,
+        transaction_id: str,
+        provisioning: ProjectProvisioningCommit,
+    ) -> None: ...
 
     def commit(self, transaction_id: str) -> None: ...
 
@@ -77,6 +85,13 @@ class RepositoryLifecycleUnitOfWork:
 
     def stage_snapshot(self, snapshot: LifecycleSnapshot) -> None:
         self._stage(LifecycleMutationKind.SNAPSHOT, self._store.stage_snapshot, snapshot)
+
+    def stage_provisioning(self, provisioning: ProjectProvisioningCommit) -> None:
+        self._stage(
+            LifecycleMutationKind.PROVISION,
+            self._store.stage_provisioning,
+            provisioning,
+        )
 
     def commit(self) -> None:
         self._ensure_open()

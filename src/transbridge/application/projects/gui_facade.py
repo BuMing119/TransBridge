@@ -25,6 +25,7 @@ from transbridge.persistence.v2.variant import VariantChangeSet, VariantSnapshot
 from .catalog import project_with_added_variant, project_without_variant, variant_catalog
 from .lifecycle import ProjectLifecycleService
 from .models import DirtyDecision, TransitionTarget
+from .provisioning import ProjectProvisioningRequest, ProjectProvisioningService
 
 
 class GuiProjectCommandFacade:
@@ -38,6 +39,7 @@ class GuiProjectCommandFacade:
         variants=None,
         baselines=None,
         id_factory: Callable[[], str] | None = None,
+        provisioning: ProjectProvisioningService | None = None,
     ) -> None:
         self._lifecycle = lifecycle
         self._legacy_identities = legacy_identities
@@ -46,6 +48,100 @@ class GuiProjectCommandFacade:
         self._variants = variants
         self._baselines = baselines
         self._id_factory = id_factory
+        self._provisioning = provisioning
+
+    def prepare_create(
+        self,
+        request: ProjectProvisioningRequest,
+        context: RequestContext,
+    ) -> OperationResult[dict[str, Any]]:
+        if self._provisioning is None:
+            return OperationResult.failed(
+                DomainError(
+                    ErrorCategory.PREREQUISITE,
+                    "PROJECT_PROVISIONING_UNAVAILABLE",
+                    "建项服务未配置。",
+                ),
+                run_id=context.run_id,
+            )
+        result = self._provisioning.prepare(request, context)
+        if result.outcome is OperationOutcome.COMPLETED and result.value is not None:
+            return OperationResult.completed(
+                result.value.to_dict(),
+                diagnostics=result.diagnostics,
+                run_id=result.run_id,
+            )
+        return OperationResult(
+            result.outcome,
+            diagnostics=result.diagnostics,
+            counts=result.counts,
+            run_id=result.run_id,
+        )
+
+    def commit_create(
+        self,
+        token: str,
+        context: RequestContext,
+        *,
+        request_fingerprint: str | None = None,
+    ) -> OperationResult[dict[str, Any]]:
+        if self._provisioning is None:
+            return OperationResult.failed(
+                DomainError(
+                    ErrorCategory.PREREQUISITE,
+                    "PROJECT_PROVISIONING_UNAVAILABLE",
+                    "建项服务未配置。",
+                ),
+                run_id=context.run_id,
+            )
+        return self._provisioning.commit(
+            token,
+            context,
+            request_fingerprint=request_fingerprint,
+        )
+
+    def discard_create(self, token: str, context: RequestContext) -> OperationResult[None]:
+        if self._provisioning is None:
+            return OperationResult.failed(
+                DomainError(
+                    ErrorCategory.PREREQUISITE,
+                    "PROJECT_PROVISIONING_UNAVAILABLE",
+                    "建项服务未配置。",
+                ),
+                run_id=context.run_id,
+            )
+        return self._provisioning.discard(token, context)
+
+    def consume_create_hydration(self, project_id: str, context: RequestContext):
+        """Consume the one-shot UI read model produced by S02 prepare."""
+
+        if self._provisioning is None:
+            from .provisioning import ProjectProvisioningHydrationResult
+
+            return ProjectProvisioningHydrationResult(
+                diagnostics=(
+                    Diagnostic(
+                        "PROJECT_PROVISIONING_UNAVAILABLE",
+                        "建项服务未配置。",
+                        category=ErrorCategory.PREREQUISITE,
+                    ),
+                )
+            )
+        return self._provisioning.consume_hydration(project_id, context)
+
+    def create_project(
+        self,
+        request: ProjectProvisioningRequest,
+        context: RequestContext,
+    ) -> OperationResult[dict[str, Any]]:
+        prepared = self.prepare_create(request, context)
+        if prepared.outcome is not OperationOutcome.COMPLETED or prepared.value is None:
+            return prepared
+        return self.commit_create(
+            str(prepared.value["token"]),
+            context,
+            request_fingerprint=str(prepared.value["request_fingerprint"]),
+        )
 
     def switch_v2(
         self,
@@ -134,7 +230,12 @@ class GuiProjectCommandFacade:
             except Exception:
                 self._variants.delete(new_ref)
                 raise
-            self._baselines.register(active.project_ref, new_ref, baselines)
+            self._baselines.register(
+                active.project_ref,
+                new_ref,
+                baselines,
+                allow_empty=not active.project.envelope.data.get("sources"),
+            )
             switched = self.switch_v2(active.project_ref, new_ref, context)
             if not switched.is_success:
                 return switched

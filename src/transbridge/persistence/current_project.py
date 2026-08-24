@@ -71,6 +71,12 @@ class CurrentProjectOpener:
     def directory(self) -> str:
         return str(Path(self._projects.root) / "projects")
 
+    @property
+    def has_active_reference(self) -> bool:
+        """Whether startup has an authoritative Project pointer to restore."""
+
+        return self._active_pointer.is_file()
+
     def open_path(
         self,
         path: str | os.PathLike[str],
@@ -134,10 +140,9 @@ class CurrentProjectOpener:
                     "VARIANT_RECORD_UNAVAILABLE",
                     "项目的活动版本记录不存在。",
                 )
-            baselines = tuple(
-                self._baseline_loader(source, context) for source in project.envelope.data.get("sources", ())
-            )
-            if not baselines:
+            sources = tuple(project.envelope.data.get("sources", ()))
+            baselines = tuple(self._baseline_loader(source, context) for source in sources)
+            if sources and not baselines:
                 raise DomainError(
                     ErrorCategory.PREREQUISITE,
                     "SOURCE_BASELINE_REQUIRED",
@@ -154,7 +159,7 @@ class CurrentProjectOpener:
                     variant_refs,
                     baselines,
                     str(project.envelope.data["name"]),
-                    tuple(project.envelope.data.get("sources", ())),
+                    sources,
                 ),
                 run_id=context.run_id,
             )
@@ -196,6 +201,7 @@ class CurrentProjectOpener:
                     prepared.project_ref,
                     variant_ref,
                     prepared.baselines,
+                    allow_empty=not prepared.sources,
                 )
             switched = self._commands.switch_v2(
                 prepared.project_ref,
@@ -220,11 +226,20 @@ class CurrentProjectOpener:
 
 def _load_baseline(source: dict, context: RequestContext) -> SourceBaseline:
     path = Path(str(source.get("path", ""))).resolve(strict=True)
+    raw_format = source.get("format_id", FormatId.PLUGIN_SSE.value)
+    try:
+        format_id = FormatId(str(raw_format))
+    except ValueError as exc:
+        raise DomainError(
+            ErrorCategory.INPUT,
+            "SOURCE_FORMAT_UNSUPPORTED",
+            "项目来源记录包含不支持的格式。",
+        ) from exc
     parsed = TranslationIoUseCase().parse(
         ParseRequest(
             SourceDescriptor(str(path), path.name, path.stat().st_size),
             context,
-            format_hint=FormatId.PLUGIN_SSE,
+            format_hint=format_id,
             options=(("skip_empty", False),),
         )
     )

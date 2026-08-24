@@ -3,6 +3,7 @@
 从 ChatWidget 提取，遵循 ADR-008 代码分层。
 通过回调与 UI 层通信，不持有 ChatWidget 引用。
 """
+
 from collections.abc import Callable
 import logging
 import time
@@ -59,10 +60,12 @@ class ToolExecutionHandler:
             return self._middlewares
         try:
             from transbridge.paratranz.config_manager import LLMConfig
+
             cfg = LLMConfig.load_from_file()
         except Exception as e:
             logger.warning("护栏配置加载失败，使用默认护栏链: %s", e)
             from transbridge.smart_assistant.tools.base import _build_guard_chain
+
             self._middlewares = _build_guard_chain() or []
             return self._middlewares
 
@@ -71,17 +74,24 @@ class ToolExecutionHandler:
             OutputValidationGuard,
             PermissionGuard,
         )
+
         middlewares = []
-        if getattr(cfg, 'guardrails_enable_input_validation', True):
-            middlewares.append(InputValidationGuard(getattr(cfg, 'guardrails_max_input_size', 102400)))
-        middlewares.append(PermissionGuard(
-            enable_admin_confirm=getattr(cfg, 'guardrails_enable_admin_confirm', True),
-            write_require_confirm=getattr(cfg, 'guardrails_write_require_confirm', False),
-        ))
-        if getattr(cfg, 'guardrails_enable_output_validation', True):
+        if getattr(cfg, "guardrails_enable_input_validation", True):
+            middlewares.append(InputValidationGuard(getattr(cfg, "guardrails_max_input_size", 102400)))
+        middlewares.append(
+            PermissionGuard(
+                enable_admin_confirm=getattr(cfg, "guardrails_enable_admin_confirm", True),
+                write_require_confirm=getattr(cfg, "guardrails_write_require_confirm", False),
+            )
+        )
+        if getattr(cfg, "guardrails_enable_output_validation", True):
             middlewares.append(OutputValidationGuard())
         self._middlewares = middlewares
         return middlewares
+
+    def ensure_middlewares(self) -> list:
+        """Return the lazily composed middleware chain through a public port."""
+        return self._ensure_middlewares()
 
     # ── 权限检查 ──────────────────────────────────────────
 
@@ -89,11 +99,11 @@ class ToolExecutionHandler:
     def _needs_confirm(step: dict) -> bool:
         """检查步骤是否需要用户确认（admin 级或显式标记）。"""
         from .tool_registry import ToolRegistry
+
         spec = ToolRegistry.get(step.get("tool", ""))
         if spec is None:
             return False
-        return (getattr(spec, "permission", "") == "admin"
-                or getattr(spec, "require_confirmation", False))
+        return getattr(spec, "permission", "") == "admin" or getattr(spec, "require_confirmation", False)
 
     # ── 执行上下文构建 ──────────────────────────────────
 
@@ -101,11 +111,10 @@ class ToolExecutionHandler:
         """构建工具执行上下文 (ExecutionContext)。"""
         from transbridge.smart_assistant.tools.base import ExecutionContext
         from transbridge.smart_assistant.tools.task_manager import TaskManager
+
         request_context = getattr(self._ctx, "request_context", None)
         owner_id = (
-            getattr(request_context, "owner_id", "")
-            or getattr(self._ctx, "owner_id", "")
-            or self._fallback_owner_id
+            getattr(request_context, "owner_id", "") or getattr(self._ctx, "owner_id", "") or self._fallback_owner_id
         )
         return ExecutionContext(
             app_context=self._ctx,
@@ -119,8 +128,12 @@ class ToolExecutionHandler:
     # ── 权限预检查 ──────────────────────────────────────
 
     def _check_permission(
-        self, step: dict, middlewares: list, exec_ctx,
-        skip_react_continue: bool, mode: str,
+        self,
+        step: dict,
+        middlewares: list,
+        exec_ctx,
+        skip_react_continue: bool,
+        mode: str,
     ) -> tuple:
         """CR3: ReAct/Plan 权限预检查。
 
@@ -136,6 +149,7 @@ class ToolExecutionHandler:
             权限结果已通过 _handle_result 处理。
         """
         from transbridge.smart_assistant.guardrails.permission import PermissionGuard
+
         perm_guard = next((mw for mw in middlewares if isinstance(mw, PermissionGuard)), None)
         if perm_guard is None:
             return True, middlewares
@@ -186,9 +200,7 @@ class ToolExecutionHandler:
         request_context = getattr(self._ctx, "request_context", None)
         exec_ctx.request_context = request_context
         exec_ctx.owner_id = (
-            getattr(request_context, "owner_id", "")
-            or getattr(self._ctx, "owner_id", "")
-            or self._fallback_owner_id
+            getattr(request_context, "owner_id", "") or getattr(self._ctx, "owner_id", "") or self._fallback_owner_id
         )
         exec_ctx.plan_hash = getattr(self._ctx, "plan_hash", "")
         return True, middlewares
@@ -211,6 +223,7 @@ class ToolExecutionHandler:
 
         try:
             from transbridge.smart_assistant.reflexion.retry_handler import RetryHandler
+
             retry_handler = RetryHandler()
         except ImportError:
             retry_handler = None
@@ -220,16 +233,18 @@ class ToolExecutionHandler:
         for attempt in range(max_attempts):
             try:
                 result = execute_with_guardrails(
-                    spec, current_step.get("args", {}), exec_ctx,
+                    spec,
+                    current_step.get("args", {}),
+                    exec_ctx,
                     middlewares=middlewares,
                 )
             except Exception as exc:
                 result = ToolResult.fail(str(exc))
 
-            if getattr(result, 'success', False) or attempt == max_attempts - 1:
+            if getattr(result, "success", False) or attempt == max_attempts - 1:
                 return result
 
-            err_msg = getattr(result, 'message', '')
+            err_msg = getattr(result, "message", "")
             if retry_handler and retry_handler.should_retry(err_msg):
                 adjusted = retry_handler.analyze_and_adjust(current_step, err_msg, attempt)
                 if adjusted:
@@ -255,6 +270,7 @@ class ToolExecutionHandler:
         """
         tool_name = step.get("tool", "?")
         from .tool_registry import ToolRegistry
+
         spec = ToolRegistry.get(tool_name)
 
         if not spec or not spec.execute:
@@ -274,8 +290,11 @@ class ToolExecutionHandler:
         middlewares = self._ensure_middlewares()
 
         allowed, middlewares = self._check_permission(
-            step, middlewares, exec_ctx,
-            skip_react_continue=skip_react_continue, mode=mode,
+            step,
+            middlewares,
+            exec_ctx,
+            skip_react_continue=skip_react_continue,
+            mode=mode,
         )
         if not allowed:
             return None
@@ -327,8 +346,7 @@ class ToolExecutionHandler:
         safe_message = str(observation.result.get("message", ""))
         # UI display (simple status line) uses the same redacted projection.
         self._on_system_message(
-            f"[{'OK' if tr.success else 'FAIL'}] {tool_name}: "
-            f"{safe_message or ('完成' if tr.success else '失败')}"
+            f"[{'OK' if tr.success else 'FAIL'}] {tool_name}: {safe_message or ('完成' if tr.success else '失败')}"
         )
         # LLM display and authoritative structured result remain separate.
         self._structured_observations.append(observation)

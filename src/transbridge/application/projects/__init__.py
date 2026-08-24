@@ -29,6 +29,21 @@ from .ports import (
     LifecycleUnitOfWorkPort,
     NullLifecycleLeasePort,
 )
+from .provisioning import (
+    PreparedProjectSource,
+    PreparedSourceHydration,
+    ProjectProvisioningCommit,
+    ProjectProvisioningHydration,
+    ProjectProvisioningHydrationResult,
+    ProjectProvisioningIdentityPort,
+    ProjectProvisioningLifecyclePort,
+    ProjectProvisioningPreview,
+    ProjectProvisioningRequest,
+    ProjectProvisioningService,
+    ProjectSourcePreparationPort,
+    ProjectSourceRequest,
+)
+from .recent_catalog import ProjectCatalogEntry, ProjectCatalogQuery, ProjectCatalogSnapshot
 
 __all__ = [
     "ActiveProject",
@@ -46,6 +61,21 @@ __all__ = [
     "LifecycleUnitOfWorkPort",
     "NullLifecycleLeasePort",
     "PreparedTransition",
+    "PreparedProjectSource",
+    "PreparedSourceHydration",
+    "ProjectProvisioningCommit",
+    "ProjectProvisioningIdentityPort",
+    "ProjectProvisioningLifecyclePort",
+    "ProjectProvisioningHydration",
+    "ProjectProvisioningHydrationResult",
+    "ProjectProvisioningPreview",
+    "ProjectProvisioningRequest",
+    "ProjectProvisioningService",
+    "ProjectCatalogEntry",
+    "ProjectCatalogQuery",
+    "ProjectCatalogSnapshot",
+    "ProjectSourcePreparationPort",
+    "ProjectSourceRequest",
     "ProjectLifecycleService",
     "GuiProjectCommandFacade",
     "TransitionTarget",

@@ -24,6 +24,11 @@ from .models import (
     SyncPlanItem,
 )
 from .planner import SyncPlanner
+from .task_adapter import (
+    ParaTranzSyncTaskDraft,
+    ParaTranzSyncTaskEntrypoint,
+    ParaTranzSyncTaskFailed,
+)
 from .use_case import (
     AuthorizedSyncPlan,
     AuthorizeSyncPlanRequest,
@@ -61,4 +66,7 @@ __all__ = [
     "SyncPlanStaleError",
     "SyncPlanner",
     "sync_item_id",
+    "ParaTranzSyncTaskDraft",
+    "ParaTranzSyncTaskEntrypoint",
+    "ParaTranzSyncTaskFailed",
 ]

@@ -63,6 +63,8 @@ class FomodRunSpec:
     workspace_root: str | None = None
     ai_enabled: bool = True
     required_stages: frozenset[FomodStageId] = field(default_factory=lambda: frozenset(FOMOD_STAGE_ORDER))
+    expected_output_hash: str | None = None
+    expected_output_missing: bool = False
 
     def __post_init__(self) -> None:
         for name in (
@@ -87,6 +89,13 @@ class FomodRunSpec:
             raise ValueError("old_archive_hash must not be empty")
         if self.workspace_root is not None and not self.workspace_root.strip():
             raise ValueError("workspace_root must not be empty when provided")
+        if self.expected_output_hash is not None and (
+            len(self.expected_output_hash) != 64
+            or any(character not in "0123456789abcdef" for character in self.expected_output_hash)
+        ):
+            raise ValueError("expected_output_hash must be a lowercase SHA-256 digest")
+        if self.expected_output_hash is not None and self.expected_output_missing:
+            raise ValueError("output expectation cannot be both an existing hash and missing")
         if not isinstance(self.policies, FomodPolicies):
             raise TypeError("policies must be FomodPolicies")
         if self.output_format not in {"zip", "7z"}:

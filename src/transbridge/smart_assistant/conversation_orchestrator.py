@@ -3,12 +3,16 @@
 从 ChatWidget 提取，遵循 ADR-008 代码分层。
 通过回调与 UI 层通信，不持有 ChatWidget 引用。
 """
+
+from collections.abc import Callable
 import logging
 import os
 import re
-from typing import Any, Callable
+import threading
+import time
+from typing import Any
 
-from PyQt6.QtCore import QObject, pyqtSignal, QTimer
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +61,7 @@ class _SignalBridge(QObject):
 
     在 worker 线程中调用 _dispatch.emit(callback)，Qt 自动排队到主线程执行。
     """
+
     _dispatch = pyqtSignal(object)
 
 
@@ -121,6 +126,11 @@ class ConversationOrchestrator(QObject):
 
         # Worker
         self._worker = None
+        self._workers: set[Any] = set()
+        self._generation = 0
+        self._active_generation: int | None = None
+        self._streaming_generation: int | None = None
+        self._shutdown_complete = False
         self._react_depth = 0
         self._consecutive_errors = 0
 
@@ -135,11 +145,11 @@ class ConversationOrchestrator(QObject):
         self._auto_mode = False
 
         # Signal bridge
-        self._cb_bridge = _SignalBridge()
+        self._cb_bridge = _SignalBridge(self)
         self._cb_bridge._dispatch.connect(lambda cb: cb())
 
         # Streaming timer
-        self._streaming_timer = QTimer()
+        self._streaming_timer = QTimer(self)
         self._streaming_timer.setInterval(self._STREAMING_FLUSH_MS)
         self._streaming_timer.timeout.connect(self._flush_streaming)
 
@@ -170,12 +180,13 @@ class ConversationOrchestrator(QObject):
     def _get_prompt_builder(self):
         if self._prompt_builder is None:
             from transbridge.ai_translator.prompt_builder import PromptBuilder
+
             self._prompt_builder = PromptBuilder()
         return self._prompt_builder
 
     def _get_llm_client(self):
-        from transbridge.paratranz.config_manager import LLMConfig
         from transbridge.config.paths import get_config_file_path
+        from transbridge.paratranz.config_manager import LLMConfig
 
         config_path = get_config_file_path()
 
@@ -214,18 +225,24 @@ class ConversationOrchestrator(QObject):
 
     def start_round(self) -> None:
         """Stage A: 准备上下文，构建系统提示词。"""
-        # Guard: cancel any running worker to prevent concurrent rounds
-        if self._worker is not None:
-            self.cancel_current_round()
+        if self._shutdown_complete:
+            return
+        # Invalidate scheduled stages and callbacks from the previous round.
+        self.cancel_current_round()
 
         client = self._get_llm_client()
         if client is None:
             self._on_system_message("请先在设置中配置 LLM API Key")
             return
 
+        self._generation += 1
+        generation = self._generation
+        self._active_generation = generation
+
         if not any(m["role"] == "system" for m in self._conversation.get_messages()):
             from transbridge.smart_assistant.context_builder import ContextBuilder
             from transbridge.smart_assistant.prompts import build_system_prompt
+
             ctx = self._ctx
             ctx._uploaded_docs = self._on_get_uploaded_docs()
             context = ContextBuilder(ctx).build()
@@ -240,43 +257,57 @@ class ConversationOrchestrator(QObject):
         self._on_thinking_indicator_hide()
         self._round_messages = self._conversation.get_messages()
         self._round_max_tokens = 0
-        QTimer.singleShot(0, self._stage_b)
+        QTimer.singleShot(0, lambda g=generation: self._stage_b(g))
 
-    def _stage_b(self) -> None:
+    def _stage_b(self, generation: int) -> None:
         """Stage B: 创建流式气泡。"""
+        if not self._is_current(generation):
+            return
         self._streaming_text = ""
+        self._streaming_generation = generation
         bubble = self._on_streaming_bubble_factory()
         if bubble is not None:
             self._streaming_bubble = bubble
             self._on_add_bubble(bubble)
-        QTimer.singleShot(0, self._stage_c)
+        QTimer.singleShot(0, lambda g=generation: self._stage_c(g))
 
-    def _stage_c(self) -> None:
+    def _stage_c(self, generation: int) -> None:
         """Stage C: 创建 ChatWorker，绑定回调，启动后台线程。"""
+        if not self._is_current(generation):
+            return
         from transbridge.smart_assistant.chat_worker import ChatWorker
+
         client = self._get_llm_client()
-        messages = getattr(self, '_round_messages', [])
-        _max = getattr(self, '_round_max_tokens', 0)
+        messages = getattr(self, "_round_messages", [])
+        _max = getattr(self, "_round_max_tokens", 0)
         self._round_messages = []
         self._round_max_tokens = 0
 
         _bridge = self._cb_bridge
 
-        self._worker = ChatWorker(client, messages, max_tokens=_max)
-        self._worker.on_chunk = lambda c: _bridge._dispatch.emit(
-            lambda: self._on_chunk(c))
-        self._worker.on_finished = lambda t: _bridge._dispatch.emit(
-            lambda: self._on_finished(t))
-        self._worker.on_error = lambda m: _bridge._dispatch.emit(
-            lambda: self._on_error(m))
+        worker = ChatWorker(client, messages, max_tokens=_max)
+        self._worker = worker
+        self._workers.add(worker)
+        worker.on_chunk = lambda chunk, g=generation, w=worker: _bridge._dispatch.emit(
+            lambda: self._on_chunk(g, w, chunk)
+        )
+        worker.on_finished = lambda text, g=generation, w=worker: _bridge._dispatch.emit(
+            lambda: self._on_finished(g, w, text)
+        )
+        worker.on_error = lambda message, g=generation, w=worker: _bridge._dispatch.emit(
+            lambda: self._on_error(g, w, message)
+        )
         if self._obs_collector:
-            self._worker.on_token_usage = lambda model, i, o: _bridge._dispatch.emit(
-                lambda: self._obs_collector.on_llm_tokens(model, i, o))
-        self._worker.start()
+            worker.on_token_usage = lambda model, i, o, g=generation, w=worker: _bridge._dispatch.emit(
+                lambda: self._on_token_usage(g, w, model, i, o)
+            )
+        worker.start()
 
     # ── 流式处理 ───────────────────────────────────────────
 
-    def _on_chunk(self, chunk: str) -> None:
+    def _on_chunk(self, generation: int, worker, chunk: str) -> None:
+        if not self._is_current(generation, worker):
+            return
         # M57: Guard against unbounded memory growth on very long responses
         if len(self._streaming_text) >= self._MAX_STREAMING_CHARS:
             return
@@ -286,6 +317,10 @@ class ConversationOrchestrator(QObject):
             self._streaming_timer.start()
 
     def _flush_streaming(self) -> None:
+        if self._streaming_generation is None or not self._is_current(self._streaming_generation):
+            self._streaming_timer.stop()
+            self._streaming_dirty = False
+            return
         if not self._streaming_dirty or self._streaming_bubble is None:
             self._streaming_timer.stop()
             return
@@ -295,7 +330,10 @@ class ConversationOrchestrator(QObject):
 
     # ── 响应处理 ───────────────────────────────────────────
 
-    def _on_finished(self, response: str) -> None:
+    def _on_finished(self, generation: int, worker, response: str) -> None:
+        if not self._is_current(generation, worker):
+            self._forget_stopped_workers()
+            return
         self._streaming_timer.stop()
         _finished_bubble = self._streaming_bubble
         if self._streaming_bubble:
@@ -310,7 +348,6 @@ class ConversationOrchestrator(QObject):
 
         thought = parsed.get("thought", "")
         steps = parsed.get("steps", [])
-        mode = parsed.get("mode", "react")
 
         self._conversation.add_assistant(response)
 
@@ -334,9 +371,12 @@ class ConversationOrchestrator(QObject):
         )
 
         # 清理 worker
-        self._cleanup_worker()
+        self._cleanup_worker(worker)
 
-    def _on_error(self, msg: str) -> None:
+    def _on_error(self, generation: int, worker, msg: str) -> None:
+        if not self._is_current(generation, worker):
+            self._forget_stopped_workers()
+            return
         self._streaming_timer.stop()
         self._streaming_text = ""
         self._streaming_dirty = False
@@ -351,9 +391,9 @@ class ConversationOrchestrator(QObject):
             self._on_remove_widget(self._streaming_bubble)
             self._streaming_bubble = None
 
-        is_network = any(kw in msg.lower() for kw in (
-            "timeout", "connection", "refused", "network", "reset", "unreachable"
-        ))
+        is_network = any(
+            kw in msg.lower() for kw in ("timeout", "connection", "refused", "network", "reset", "unreachable")
+        )
         is_auth = "401" in msg or "403" in msg or "unauthorized" in msg.lower()
 
         if is_auth:
@@ -370,27 +410,50 @@ class ConversationOrchestrator(QObject):
         else:
             self._on_system_message(f"请求失败: {safe_msg}")
 
-        self._cleanup_worker()
+        self._cleanup_worker(worker)
 
     # ── 重试 ──────────────────────────────────────────────
 
     def retry(self) -> None:
         """网络错误后重试。"""
-        if self._worker and self._worker.is_alive():
-            self._worker.cancel()
-        self._worker = None
+        if self._shutdown_complete:
+            return
+        self.cancel_current_round()
         self._on_system_message("正在重试…")
         self.start_round()
 
     # ── 内部工具 ──────────────────────────────────────────
 
-    def _cleanup_worker(self) -> None:
-        if self._worker:
-            self._worker.on_chunk = None
-            self._worker.on_finished = None
-            self._worker.on_error = None
-            self._worker.on_token_usage = None
+    def _cleanup_worker(self, worker=None) -> None:
+        target = worker or self._worker
+        if target is None:
+            return
+        target.on_chunk = None
+        target.on_finished = None
+        target.on_error = None
+        target.on_token_usage = None
+        if self._worker is target:
             self._worker = None
+        self._forget_stopped_workers()
+
+    def _forget_stopped_workers(self) -> None:
+        self._workers = {worker for worker in self._workers if worker.is_alive()}
+
+    def _is_current(self, generation: int, worker=None) -> bool:
+        if self._shutdown_complete or self._active_generation != generation:
+            return False
+        return worker is None or self._worker is worker
+
+    def _on_token_usage(
+        self,
+        generation: int,
+        worker,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+    ) -> None:
+        if self._is_current(generation, worker) and self._obs_collector is not None:
+            self._obs_collector.on_llm_tokens(model, input_tokens, output_tokens)
 
     @staticmethod
     def _sanitize_error_message(msg: str) -> str:
@@ -398,37 +461,43 @@ class ConversationOrchestrator(QObject):
         if not msg:
             return msg
         # 移除 Windows 绝对路径 (e.g. D:\path\to\file.py:123)
-        msg = re.sub(r'[A-Za-z]:[\\/][^\s,;:"]+', '[path]', msg)
+        msg = re.sub(r'[A-Za-z]:[\\/][^\s,;:"]+', "[path]", msg)
         # 移除 Unix 绝对路径 (e.g. /home/user/project/file.py)
-        msg = re.sub(r'/(?:home|Users|usr|tmp|var|etc|opt|root|mnt)/[^\s,;:"]+', '[path]', msg)
+        msg = re.sub(r'/(?:home|Users|usr|tmp|var|etc|opt|root|mnt)/[^\s,;:"]+', "[path]", msg)
         # 移除常见 API 密钥前缀 (OpenAI sk-, Anthropic sk-ant-, 等)
-        msg = re.sub(r'\b(sk-[A-Za-z0-9_-]{20,})\b', '[api_key]', msg)
-        msg = re.sub(r'\b(sk-ant-[A-Za-z0-9_-]{20,})\b', '[api_key]', msg)
+        msg = re.sub(r"\b(sk-[A-Za-z0-9_-]{20,})\b", "[api_key]", msg)
+        msg = re.sub(r"\b(sk-ant-[A-Za-z0-9_-]{20,})\b", "[api_key]", msg)
         return msg
 
-    def shutdown(self) -> None:
+    def shutdown(self, *, wait: bool = True, timeout: float | None = 3.0) -> bool:
         """清理所有内部 Qt 资源：worker、信号桥、流式计时器。
 
         调用方应在持有方（如 ChatWidget）销毁前调用此方法，
         确保无父 QObject 被正确释放。
         """
-        if self._worker and self._worker.is_alive():
-            self._worker.cancel()
-        self._cleanup_worker()
+        self._shutdown_complete = True
+        self._generation += 1
+        self._active_generation = None
+        workers = set(self._workers)
+        if self._worker is not None:
+            workers.add(self._worker)
+        for worker in workers:
+            worker.cancel()
+            self._cleanup_worker(worker)
         self._streaming_timer.stop()
         self._streaming_bubble = None
         self._streaming_text = ""
         self._streaming_dirty = False
-        if self._cb_bridge is not None:
-            try:
-                self._cb_bridge.deleteLater()
-            except RuntimeError:
-                pass
-            self._cb_bridge = None
-        try:
-            self._streaming_timer.deleteLater()
-        except RuntimeError:
-            pass
+        self._streaming_generation = None
+        if wait:
+            deadline = None if timeout is None else time.monotonic() + max(0.0, timeout)
+            for worker in workers:
+                if worker is threading.current_thread() or not worker.is_alive():
+                    continue
+                remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+                worker.join(timeout=remaining)
+        self._forget_stopped_workers()
+        return not any(worker.is_alive() for worker in workers)
 
     # ── 状态访问 ──────────────────────────────────────────
 
@@ -450,21 +519,27 @@ class ConversationOrchestrator(QObject):
 
     def cancel_current_round(self) -> None:
         """中断当前流式输出，清理 worker 和流式状态。"""
+        self._generation += 1
+        self._active_generation = None
         try:
             self._streaming_timer.stop()
         except RuntimeError:
             pass
-        if self._worker and self._worker.is_alive():
-            self._worker.cancel()
-        self._worker = None
+        worker = self._worker
+        if worker is not None:
+            if worker.is_alive():
+                worker.cancel()
+            self._cleanup_worker(worker)
         if self._streaming_bubble:
             self._on_remove_widget(self._streaming_bubble)
             self._streaming_bubble = None
         self._streaming_text = ""
         self._streaming_dirty = False
+        self._streaming_generation = None
 
     def reset_state(self) -> None:
         """清空对话时重置状态。"""
+        self.cancel_current_round()
         self._react_depth = 0
         self._consecutive_errors = 0
         self._streaming_text = ""

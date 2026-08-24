@@ -11,11 +11,18 @@ from transbridge.application.projections import (
     ProjectProjectionPublisher,
     SessionProjectionPublisher,
 )
-from transbridge.application.projects import GuiProjectCommandFacade, ProjectLifecycleService
+from transbridge.application.projects import (
+    GuiProjectCommandFacade,
+    ProjectLifecycleService,
+    ProjectProvisioningService,
+    ProjectSourcePreparationPort,
+)
 from transbridge.application.sessions import GuiSessionCommandFacade, SessionLifecycleService
 from transbridge.persistence.current_project import CurrentProjectOpener
+from transbridge.persistence.project_catalog import V2ProjectCatalog
 from transbridge.persistence.project_lifecycle_loader import V2ProjectCandidateLoader
 from transbridge.persistence.project_lifecycle_uow import RepositoryLifecycleUnitOfWorkFactory
+from transbridge.persistence.project_provisioning import TranslationIoProjectSourcePreparer
 from transbridge.persistence.session_lifecycle import (
     SessionUnitOfWorkFactory,
     V2SessionSnapshotRepository,
@@ -46,6 +53,8 @@ class PersistenceV2Services:
     baselines: BaselineRegistry
     legacy_identities: LegacyIdentityRegistry
     project_lifecycle: ProjectLifecycleService
+    project_provisioning: ProjectProvisioningService
+    project_catalog: V2ProjectCatalog
     gui_project_commands: GuiProjectCommandFacade
     current_project_opener: CurrentProjectOpener
     session_lifecycle: SessionLifecycleService
@@ -66,6 +75,7 @@ def build_persistence_v2_services(
     id_factory,
     timestamp_factory,
     filesystem: PersistenceFilesystemPort | None = None,
+    source_preparer: ProjectSourcePreparationPort | None = None,
 ) -> PersistenceV2Services:
     resolved_root = str(Path(root).resolve(strict=False))
     adapter = filesystem or OsPersistenceFilesystem()
@@ -83,6 +93,7 @@ def build_persistence_v2_services(
         adapter,
         projects,
         variants,
+        baselines,
     )
     project_uow = RepositoryLifecycleUnitOfWorkFactory(project_store, id_factory)
     project_loader = V2ProjectCandidateLoader(projects, variants, baselines.provide)
@@ -93,6 +104,14 @@ def build_persistence_v2_services(
         event_publisher=project_publisher,
     )
     project_publisher.bind(project_lifecycle)
+    project_provisioning = ProjectProvisioningService(
+        project_lifecycle,
+        source_preparer or TranslationIoProjectSourcePreparer(),
+        project_store,
+        id_factory=id_factory,
+        token_factory=id_factory,
+    )
+    project_catalog = V2ProjectCatalog(resolved_root, adapter, projects)
     gui_project_commands = GuiProjectCommandFacade(
         project_lifecycle,
         identities,
@@ -101,6 +120,7 @@ def build_persistence_v2_services(
         variants=variants,
         baselines=baselines,
         id_factory=id_factory,
+        provisioning=project_provisioning,
     )
     current_project_opener = CurrentProjectOpener(
         resolved_root,
@@ -139,6 +159,8 @@ def build_persistence_v2_services(
         baselines,
         identities,
         project_lifecycle,
+        project_provisioning,
+        project_catalog,
         gui_project_commands,
         current_project_opener,
         session_lifecycle,

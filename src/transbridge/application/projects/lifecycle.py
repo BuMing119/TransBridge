@@ -41,6 +41,7 @@ from .ports import (
     LifecycleUnitOfWorkFactoryPort,
     NullLifecycleLeasePort,
 )
+from .provisioning import ProjectProvisioningCommit
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,6 +274,101 @@ class ProjectLifecycleService:
                     )
             return OperationResult.completed(
                 None if self._active is None else self._active.summary(),
+                diagnostics=tuple(diagnostics),
+                run_id=context.run_id,
+            )
+
+    def commit_provisioning(
+        self,
+        provisioning: ProjectProvisioningCommit,
+        candidate: ActiveProject,
+        expected_generation: int,
+        expected_active_signature: tuple[str, int, str | None, int | None] | None,
+        context: RequestContext,
+    ) -> OperationResult[dict[str, Any]]:
+        """Publish a new Project while holding the lifecycle generation lock."""
+
+        with self._lock:
+            if expected_generation != self._generation or expected_active_signature != _active_signature(self._active):
+                return _failed(
+                    "PROJECT_PROVISIONING_STALE",
+                    "The active lifecycle changed after the Project preview was prepared.",
+                    ErrorCategory.CONFLICT,
+                    context,
+                )
+            if self._active is not None and self._active.dirty:
+                return _failed(
+                    "ACTIVE_SAVE_REQUIRED",
+                    "Save or discard the active Project changes before creating another Project.",
+                    ErrorCategory.PREREQUISITE,
+                    context,
+                )
+            if candidate.project_ref != provisioning.project_ref:
+                return _failed(
+                    "PROJECT_PROVISIONING_CANDIDATE_MISMATCH",
+                    "The prepared Project candidate does not match its persistence mutation.",
+                    ErrorCategory.CONFLICT,
+                    context,
+                )
+            if candidate.formal_variant_ref != provisioning.variant_ref or candidate.variant is None:
+                return _failed(
+                    "PROJECT_PROVISIONING_VARIANT_MISMATCH",
+                    "The prepared default Variant does not match its persistence mutation.",
+                    ErrorCategory.CONFLICT,
+                    context,
+                )
+            if candidate.variant.snapshot() != provisioning.variant:
+                return _failed(
+                    "PROJECT_PROVISIONING_SNAPSHOT_MISMATCH",
+                    "The prepared Variant changed before Project publication.",
+                    ErrorCategory.CONFLICT,
+                    context,
+                )
+
+            old = self._active
+            uow = None
+            try:
+                uow = self._unit_of_work.begin()
+                uow.stage_provisioning(provisioning)
+                uow.commit()
+            except Exception as exc:  # noqa: BLE001 - rollback is part of the application contract
+                _rollback(uow)
+                return _from_exception(exc, "PROJECT_PROVISIONING_COMMIT_FAILED", context)
+
+            self._active = replace(
+                candidate,
+                persisted_project_revision=provisioning.project.envelope.revision,
+                persisted_variant_revision=provisioning.variant.revision,
+            )
+            self._generation += 1
+            diagnostics: list[Diagnostic] = []
+            if old is not None and self._safe_release(old.leases):
+                diagnostics.append(
+                    Diagnostic(
+                        "OLD_LIFECYCLE_LEASE_RELEASE_FAILED",
+                        "The new lifecycle is active, but an old lease could not be released.",
+                        DiagnosticSeverity.WARNING,
+                    )
+                )
+            event = LifecycleEvent(
+                "active-project-changed",
+                self._generation,
+                None if old is None else old.summary(),
+                self._active.summary(),
+            )
+            if self._event_publisher is not None:
+                try:
+                    self._event_publisher(event)
+                except Exception:  # noqa: BLE001 - committed data remains authoritative
+                    diagnostics.append(
+                        Diagnostic(
+                            "PROJECTION_EVENT_FAILED",
+                            "The lifecycle committed, but a projection callback failed.",
+                            DiagnosticSeverity.WARNING,
+                        )
+                    )
+            return OperationResult.completed(
+                self._active.summary(),
                 diagnostics=tuple(diagnostics),
                 run_id=context.run_id,
             )

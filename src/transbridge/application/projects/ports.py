@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from transbridge.application.contracts import RequestContext
 
@@ -14,6 +14,9 @@ from .models import (
     LifecycleSnapshot,
     TransitionTarget,
 )
+
+if TYPE_CHECKING:
+    from .provisioning import ProjectProvisioningCommit
 
 
 @runtime_checkable
@@ -39,6 +42,8 @@ class LifecycleUnitOfWorkPort(Protocol):
     def stage_activate(self, activation: LifecycleActivation) -> None: ...
 
     def stage_snapshot(self, snapshot: LifecycleSnapshot) -> None: ...
+
+    def stage_provisioning(self, provisioning: ProjectProvisioningCommit) -> None: ...
 
     def commit(self) -> None: ...
 

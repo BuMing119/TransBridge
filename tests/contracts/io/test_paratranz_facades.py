@@ -10,6 +10,34 @@ from transbridge.converter.translation_entry_collection_export import export_to_
 from transbridge.smart_assistant.file_parser.paratranz_parser import ParatranzParser
 
 
+def test_paratranz_public_package_keeps_legacy_exports_after_lazy_loading() -> None:
+    import transbridge.paratranz as package
+
+    expected = {
+        "ParatranzClient",
+        "ParatranzConfig",
+        "ParatranzProjectAPI",
+        "ParatranzFilesAPI",
+        "ParatranzStringsAPI",
+        "ParatranzTermsAPI",
+        "ParatranzMembersAPI",
+        "ParatranzHistoryAPI",
+        "ParatranzExportAPI",
+        "ParatranzIssuesAPI",
+        "ParatranzScoresAPI",
+        "ParatranzMailsAPI",
+        "ParatranzUserAPI",
+        "ParaTranzUploader",
+        "UploadResult",
+        "ParaTranzDownloader",
+        "DownloadResult",
+        "ArtifactWorkflow",
+    }
+
+    assert set(package.__all__) == expected
+    assert all(getattr(package, name, None) is not None for name in expected)
+
+
 def test_smart_assistant_legacy_parser_delegates_to_v2_mapping(tmp_path: Path) -> None:
     source = tmp_path / "legacy.json"
     source.write_text(

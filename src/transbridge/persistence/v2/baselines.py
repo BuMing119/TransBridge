@@ -21,10 +21,12 @@ class BaselineRegistry:
         project_ref: ProjectRef,
         variant_ref: VariantRef,
         baselines: tuple[SourceBaseline, ...],
+        *,
+        allow_empty: bool = False,
     ) -> None:
         if variant_ref.project_id != project_ref.identity:
             raise ValueError("baseline Variant must belong to its Project")
-        if not baselines:
+        if not baselines and not allow_empty:
             raise ValueError("an authoritative baseline registration must not be empty")
         with self._lock:
             self._items[(project_ref.identity.value, variant_ref.identity.value)] = baselines

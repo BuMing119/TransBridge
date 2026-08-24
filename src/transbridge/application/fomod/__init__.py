@@ -32,6 +32,10 @@ from .publish import (
 from .runtime import (
     FomodPipelineFailed,
     FomodPipelineWorkload,
+    FomodTaskDraft,
+    FomodTaskEntrypoint,
+    FomodTaskPreflight,
+    FomodTaskPreflightService,
     TaskRuntimeCommitGuard,
     TaskRuntimeRunGuard,
 )
@@ -64,6 +68,10 @@ __all__ = [
     "StageExecutionError",
     "StageEventSink",
     "FomodPipelineFailed",
+    "FomodTaskDraft",
+    "FomodTaskEntrypoint",
+    "FomodTaskPreflight",
+    "FomodTaskPreflightService",
     "FomodPipelineWorkload",
     "TaskRuntimeCommitGuard",
     "TaskRuntimeRunGuard",

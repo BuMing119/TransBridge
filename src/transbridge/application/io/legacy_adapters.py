@@ -89,6 +89,15 @@ class _LegacyFormatAdapter:
         snapshot = request.source_snapshot
         if snapshot is None or snapshot.format_id is not self.format_id:
             return Diagnostic("SOURCE_SNAPSHOT_REQUIRED", "This format requires its original source snapshot.")
+        # A hydrated in-memory snapshot is the immutable source authority.  UI
+        # project provisioning deliberately does not retain a mutable parser or
+        # plugin, and writing must not parse/reopen the legacy source merely to
+        # reconstruct one.  Path-backed snapshots still require lease recheck.
+        hydration_authority = dict(request.options).get("source_authority") == "hydration-v2"
+        if snapshot.content is not None and hydration_authority:
+            if hashlib.sha256(snapshot.content).hexdigest() != snapshot.sha256:
+                return Diagnostic("SOURCE_FINGERPRINT_CONFLICT", "The hydrated source snapshot is invalid.")
+            return None
         try:
             current = _local_path(snapshot.source.uri).read_bytes()
         except (OSError, ValueError) as exc:

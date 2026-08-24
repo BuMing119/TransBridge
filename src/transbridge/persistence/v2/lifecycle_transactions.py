@@ -9,9 +9,15 @@ import os
 from threading import RLock
 from typing import Any
 
-from transbridge.application.projects import LifecycleActivation, LifecycleSave, LifecycleSnapshot
+from transbridge.application.projects import (
+    LifecycleActivation,
+    LifecycleSave,
+    LifecycleSnapshot,
+    ProjectProvisioningCommit,
+)
 from transbridge.application.sessions import SessionSnapshot
 
+from .baselines import BaselineRegistry
 from .filesystem import PersistenceFilesystemPort
 from .ids import ProjectId, ProjectRef, SessionRef
 from .repository import ProjectRepository, VariantRepository
@@ -19,7 +25,7 @@ from .repository import ProjectRepository, VariantRepository
 
 @dataclass(slots=True)
 class _ProjectTransaction:
-    mutation: LifecycleSave | LifecycleActivation | LifecycleSnapshot | None = None
+    mutation: LifecycleSave | LifecycleActivation | LifecycleSnapshot | ProjectProvisioningCommit | None = None
 
 
 class ProjectLifecycleTransactionStore:
@@ -29,10 +35,13 @@ class ProjectLifecycleTransactionStore:
         filesystem: PersistenceFilesystemPort,
         projects: ProjectRepository,
         variants: VariantRepository,
+        baselines: BaselineRegistry | None = None,
     ) -> None:
         self._documents = _AtomicDocuments(root, filesystem)
+        self._filesystem = filesystem
         self._projects = projects
         self._variants = variants
+        self._baselines = baselines
         self._transactions: dict[str, _ProjectTransaction] = {}
         self._lock = RLock()
 
@@ -51,13 +60,32 @@ class ProjectLifecycleTransactionStore:
     def stage_snapshot(self, transaction_id: str, snapshot: LifecycleSnapshot) -> None:
         self._stage(transaction_id, snapshot)
 
+    def stage_provisioning(
+        self,
+        transaction_id: str,
+        provisioning: ProjectProvisioningCommit,
+    ) -> None:
+        self._stage(transaction_id, provisioning)
+
+    def project_exists(self, ref) -> bool:
+        return self._filesystem.exists(self._projects.path_for(ref))
+
+    def variant_exists(self, ref) -> bool:
+        return self._filesystem.exists(self._variants.path_for(ref))
+
+    def project_name_exists(self, name_key: str) -> bool:
+        catalog = self._read_project_catalog()
+        return any(item.get("name_key") == name_key for item in catalog["projects"].values())
+
     def commit(self, transaction_id: str) -> None:
         with self._lock:
             transaction = self._required(transaction_id)
             mutation = transaction.mutation
             if mutation is None:
                 raise RuntimeError("cannot commit an empty lifecycle transaction")
-            if isinstance(mutation, LifecycleSave):
+            if isinstance(mutation, ProjectProvisioningCommit):
+                self._commit_provisioning(transaction_id, mutation)
+            elif isinstance(mutation, LifecycleSave):
                 project_ref = ProjectRef(ProjectId(mutation.project.envelope.identity))
                 self._projects.save(project_ref, mutation.project)
                 if mutation.variant is not None and mutation.formal_variant_ref is not None:
@@ -118,6 +146,91 @@ class ProjectLifecycleTransactionStore:
             if transaction.mutation is not None:
                 raise RuntimeError("lifecycle transaction already has a mutation")
             transaction.mutation = mutation
+
+    def _commit_provisioning(
+        self,
+        transaction_id: str,
+        provisioning: ProjectProvisioningCommit,
+    ) -> None:
+        project_ref = provisioning.project_ref
+        variant_ref = provisioning.variant_ref
+        if self.project_exists(project_ref) or self.variant_exists(variant_ref):
+            raise RuntimeError("provisioning identity already exists")
+        catalog = self._read_project_catalog()
+        if any(item.get("name_key") == provisioning.project_name_key for item in catalog["projects"].values()):
+            raise RuntimeError("provisioning Project name already exists")
+
+        catalog_path = self._documents.path("project-catalog.json")
+        previous_catalog = self._filesystem.read_bytes(catalog_path) if self._filesystem.exists(catalog_path) else None
+        project_created = False
+        variant_created = False
+        baseline_registered = False
+        try:
+            self._projects.save(project_ref, provisioning.project)
+            project_created = True
+            self._variants.save(variant_ref, provisioning.variant.to_dto())
+            variant_created = True
+            catalog["projects"][project_ref.identity.value] = {
+                "name": provisioning.project.envelope.data["name"],
+                "name_key": provisioning.project_name_key,
+            }
+            self._documents.write_json("project-catalog.json", catalog, transaction_id)
+            if self._baselines is not None:
+                self._baselines.register(
+                    project_ref,
+                    variant_ref,
+                    provisioning.baselines,
+                    allow_empty=not provisioning.baselines,
+                )
+                baseline_registered = True
+            # The active pointer is the publication boundary and is always last.
+            self._documents.write_json(
+                "active-project.json",
+                {
+                    "schema_version": 1,
+                    "project_id": project_ref.identity.value,
+                    "variant_id": variant_ref.identity.value,
+                    "source_ref": None,
+                },
+                transaction_id,
+            )
+        except Exception:
+            if baseline_registered and self._baselines is not None:
+                self._baselines.remove(project_ref, variant_ref)
+            self._restore_document(catalog_path, previous_catalog, transaction_id)
+            if variant_created:
+                try:
+                    self._variants.delete(variant_ref)
+                except Exception:
+                    pass
+            if project_created:
+                try:
+                    self._projects.delete(project_ref)
+                except Exception:
+                    pass
+            raise
+
+    def _read_project_catalog(self) -> dict[str, Any]:
+        path = self._documents.path("project-catalog.json")
+        if not self._filesystem.exists(path):
+            return {"schema_version": 1, "projects": {}}
+        try:
+            value = json.loads(self._filesystem.read_bytes(path).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Project catalog is invalid") from exc
+        if value.get("schema_version") != 1 or not isinstance(value.get("projects"), dict):
+            raise RuntimeError("Project catalog schema is invalid")
+        return value
+
+    def _restore_document(self, path: str, previous: bytes | None, token: str) -> None:
+        try:
+            if previous is None:
+                self._filesystem.remove(path, missing_ok=True)
+            else:
+                self._documents.write_bytes(path, previous, f"{token}-restore")
+        except Exception:
+            # Cleanup failure cannot replace the original transaction failure.
+            return
 
     def _required(self, transaction_id: str) -> _ProjectTransaction:
         try:
@@ -188,10 +301,17 @@ class _AtomicDocuments:
         self._root = filesystem.canonicalize(root)
 
     def write_json(self, relative_path: str, document: dict[str, Any], token: str) -> None:
-        destination = self._guard(os.path.join(self._root, relative_path))
+        destination = self.path(relative_path)
+        payload = json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        self.write_bytes(destination, payload, token)
+
+    def path(self, relative_path: str) -> str:
+        return self._guard(os.path.join(self._root, relative_path))
+
+    def write_bytes(self, destination: str, payload: bytes, token: str) -> None:
+        destination = self._guard(destination)
         suffix = hashlib.sha256(token.encode()).hexdigest()
         stage = self._guard(os.path.join(self._root, ".staging", f"lifecycle-{suffix}.tmp"))
-        payload = json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
         self._filesystem.make_dirs(os.path.dirname(destination))
         self._filesystem.make_dirs(os.path.dirname(stage))
         self._filesystem.remove(stage, missing_ok=True)
