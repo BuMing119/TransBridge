@@ -14,6 +14,7 @@ dependencies = [
     "sse-plugin-interface>=1.0.1",
     "openai>=1.0",
     "anthropic>=0.20",
+    "tiktoken>=0.12.0",
     "PyQt6>=6.5",
     # Vector search for semantic term matching
     "sentence-transformers>=2.2",
@@ -73,4 +74,5 @@ markers = [
 [dependency-groups]
 dev = [
     "pyinstaller>=6.19.0",
+    "pytest>=9.0.3",
 ]
