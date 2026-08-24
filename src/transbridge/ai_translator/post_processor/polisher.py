@@ -4,14 +4,20 @@ LLM润色器。
 对译文进行风格优化和流畅度提升，无需前置问题检测。
 """
 
+from dataclasses import dataclass, field
 import json
+from pathlib import Path
 import re
 import tomllib
-import warnings
-from dataclasses import dataclass, field
-from pathlib import Path
-from string import Template
 from typing import TYPE_CHECKING
+import warnings
+
+from .prompt_contract import (
+    PromptTemplateContractError,
+    build_postprocess_messages,
+    render_prompt_template,
+    validate_prompt_template,
+)
 
 if TYPE_CHECKING:
     from ...converter.translation_entry import TranslationEntry
@@ -34,9 +40,10 @@ class PolishResult:
 
 # ── 内置默认提示词 ─────────────────────────────────────────────────────────
 
-_DEFAULT_SYSTEM = """你是专业的游戏本地化润色专家。
-
-你的任务：优化译文的流畅度、风格和语境适配，使其更符合游戏氛围。
+_DEFAULT_SYSTEM = (
+    "你是 $game_name 本地化润色专家，负责把 $source_lang 原文的译文润色为"
+    "更自然、更符合游戏语境的 $target_lang 表达。\n\n"
+    """你的任务：优化译文的流畅度、风格和语境适配，使其更符合游戏氛围。
 
 润色原则：
 1. 流畅度优化
@@ -61,7 +68,7 @@ _DEFAULT_SYSTEM = """你是专业的游戏本地化润色专家。
    - 引号、括号等必须正确闭合
    - 术语必须使用提供的标准译法
 
-润色级别说明：
+润色级别说明（当前使用的级别由 User 指定）：
 - light: 仅修正明显错误，保持原译文风格
 - moderate: 适度优化流畅度和表达
 - aggressive: 深度润色，追求最佳表达
@@ -71,7 +78,7 @@ _DEFAULT_SYSTEM = """你是专业的游戏本地化润色专家。
     "polished_translation": "润色后的译文",
     "changes": [
         {
-            "aspect": "改动维度(fluency/style/context/terminology)",
+            "aspect": "fluency",
             "before": "改动前片段",
             "after": "改动后片段",
             "reason": "改动理由"
@@ -88,6 +95,7 @@ _DEFAULT_SYSTEM = """你是专业的游戏本地化润色专家。
 - needs_arbitration 为 true 表示润色改动较大，需要确认
 - 如果认为原译文已很好，changes 可为空，confidence 应较高
 """
+)
 
 _DEFAULT_USER = """【原文】
 $original
@@ -104,16 +112,12 @@ $terms
 【润色设置】
 级别: $polish_level
 
-请对当前译文进行润色优化，按指定JSON格式输出。
+请对当前译文进行润色优化，按指定JSON格式输出。"""
 
-润色级别说明：
-- light: 仅修正明显错误，保持原译文风格
-- moderate: 适度优化流畅度和表达
-- aggressive: 深度润色，追求最佳表达"""
-
-_DEFAULT_BATCH_SYSTEM = """你是专业的游戏本地化润色专家。
-
-你的任务：批量优化多个翻译条目的流畅度和风格。
+_DEFAULT_BATCH_SYSTEM = (
+    "你是 $game_name 本地化润色专家，负责把 $source_lang 原文的批量译文润色为"
+    "更自然、更符合游戏语境的 $target_lang 表达。\n\n"
+    """你的任务：批量优化多个翻译条目的流畅度和风格。
 
 约束条件：
 - 必须保留所有占位符（%s, %d, {0}等）
@@ -121,23 +125,28 @@ _DEFAULT_BATCH_SYSTEM = """你是专业的游戏本地化润色专家。
 - 术语必须使用标准译法
 - 不得改变原文语义
 
+润色级别说明（当前使用的级别由 User 指定）：
+- light: 仅修正明显错误，保持原译文风格
+- moderate: 适度优化流畅度和表达
+- aggressive: 深度润色，追求最佳表达
+
 输出格式（必须严格遵循JSON数组）：
 [
     {
         "entry_id": "条目ID",
         "polished_translation": "润色后的译文",
-        "changes": [...],
+        "changes": [],
         "confidence": 0.85,
         "needs_arbitration": false,
         "note": ""
-    },
-    ...
+    }
 ]
 
 注意：
 - 必须包含所有条目的结果
 - confidence > 0.9 表示润色效果很好
 - 如果原译文已很好，changes 可为空"""
+)
 
 
 def _get_prompts_dir() -> Path:
@@ -157,6 +166,53 @@ def _load_toml(path: Path) -> dict:
     except Exception as e:
         warnings.warn(f"加载 {path.name} 失败，使用内置默认提示词：{e}")
         return {}
+
+
+# System 只允许稳定变量：game_name / source_lang / target_lang
+_SYSTEM_ALLOWED = frozenset({"game_name", "source_lang", "target_lang"})
+_SYSTEM_REQUIRED = frozenset({"game_name", "source_lang", "target_lang"})
+# 单条 User 模板的 required 动态变量
+_POLISH_USER_REQUIRED = frozenset({"original", "current_translation", "context", "terms", "polish_level"})
+
+
+def _resolve_system_template(name: str, template: str, fallback: str, ctx: dict) -> str:
+    """校验 System 模板；违规记录 warning 并回退到内置默认模板。"""
+    try:
+        validate_prompt_template(
+            name=name,
+            template=template,
+            allowed_variables=_SYSTEM_ALLOWED,
+            required_variables=_SYSTEM_REQUIRED,
+        )
+        return template
+    except PromptTemplateContractError as e:
+        warnings.warn(f"{name}: {e}；使用内置默认模板")
+        return fallback
+
+
+def _render_system(name: str, template: str, ctx: dict) -> str:
+    """严格渲染 System；失败抛 PromptTemplateContractError（进入 LLM 降级路径）。"""
+    return render_prompt_template(name=name, template=template, values=ctx)
+
+
+def _resolve_user_template(name: str, template: str, fallback: str, required: frozenset) -> str:
+    """校验 User 模板；违规记录 warning 并回退到内置默认模板。"""
+    try:
+        validate_prompt_template(
+            name=name,
+            template=template,
+            allowed_variables=frozenset({
+                "game_name",
+                "source_lang",
+                "target_lang",
+                *required,
+            }),
+            required_variables=required,
+        )
+        return template
+    except PromptTemplateContractError as e:
+        warnings.warn(f"{name}: {e}；使用内置默认模板")
+        return fallback
 
 
 class LLMPolisher:
@@ -214,16 +270,43 @@ class LLMPolisher:
 
         polish_cfg = polish_data.get("polish", {})
 
+        # System 只允许稳定变量；三种润色级别定义稳定在 System。
+        system_tpl = _resolve_system_template(
+            "polish.system",
+            polish_cfg.get("system", _DEFAULT_SYSTEM),
+            _DEFAULT_SYSTEM,
+            ctx,
+        )
+        batch_system_tpl = _resolve_system_template(
+            "polish.batch_system",
+            polish_cfg.get("batch_system", _DEFAULT_BATCH_SYSTEM),
+            _DEFAULT_BATCH_SYSTEM,
+            ctx,
+        )
+        # 单条 User 模板需包含全部动态字段。
+        user_tpl = _resolve_user_template(
+            "polish.user",
+            polish_cfg.get("user", _DEFAULT_USER),
+            _DEFAULT_USER,
+            _POLISH_USER_REQUIRED,
+        )
+
         return {
             "ctx": ctx,
-            "system": polish_cfg.get("system", _DEFAULT_SYSTEM).strip(),
-            "user": polish_cfg.get("user", _DEFAULT_USER).strip(),
-            "batch_system": polish_cfg.get("batch_system", _DEFAULT_BATCH_SYSTEM).strip(),
+            "system": system_tpl,
+            "system_rendered": _render_system("polish.system", system_tpl, ctx),
+            "batch_system": batch_system_tpl,
+            "batch_system_rendered": _render_system("polish.batch_system", batch_system_tpl, ctx),
+            "user": user_tpl,
         }
 
-    def _render(self, template: str, **extra) -> str:
-        """将 $var 占位符替换为实际值。"""
-        return Template(template).safe_substitute({**self._prompts["ctx"], **extra})
+    def _render_user(self, **extra) -> str:
+        """严格渲染单条 User 模板；失败抛 PromptTemplateContractError。"""
+        return render_prompt_template(
+            name="polish.user",
+            template=self._prompts["user"],
+            values={**self._prompts["ctx"], **extra},
+        )
 
     def polish(self, entry: "TranslationEntry") -> PolishResult:
         """
@@ -252,9 +335,7 @@ class LLMPolisher:
                 note=f"LLM润色失败: {e}",
             )
 
-    def polish_batch(
-        self, entries: list["TranslationEntry"]
-    ) -> dict[str, PolishResult]:
+    def polish_batch(self, entries: list["TranslationEntry"]) -> dict[str, PolishResult]:
         """
         批量润色条目。
 
@@ -287,19 +368,16 @@ class LLMPolisher:
                 )
             return results
 
-    def _build_polish_prompt(
-        self, entry: "TranslationEntry"
-    ) -> list[dict]:
-        """构建润色Prompt。"""
+    def _build_polish_prompt(self, entry: "TranslationEntry") -> list[dict]:
+        """构建润色Prompt（SYSTEM(FINAL) -> USER）。"""
         # 获取相关术语
         terms_text = self._get_relevant_terms_text(entry)
 
         # 确定润色级别描述
         polish_level_desc = self._get_polish_level_desc()
 
-        # 渲染用户Prompt
-        user_content = self._render(
-            self._prompts["user"],
+        # 严格渲染用户Prompt（当前选中级别放动态 User，不改变 System/cache key）
+        user_content = self._render_user(
             original=entry.original or "",
             current_translation=entry.translation or "",
             context=entry.context or "未知",
@@ -307,19 +385,20 @@ class LLMPolisher:
             polish_level=polish_level_desc,
         )
 
-        return [
-            {"role": "system", "content": self._prompts["system"]},
-            {"role": "user", "content": user_content},
-        ]
+        return build_postprocess_messages(
+            stage="polish",
+            shape="single",
+            rendered_system=self._prompts["system_rendered"],
+            user_content=user_content,
+        )
 
-    def _build_batch_polish_prompt(
-        self, entries: list["TranslationEntry"]
-    ) -> list[dict]:
-        """构建批量润色Prompt。"""
+    def _build_batch_polish_prompt(self, entries: list["TranslationEntry"]) -> list[dict]:
+        """构建批量润色Prompt（SYSTEM(FINAL) -> USER）。"""
         lines = ["请批量润色以下翻译条目。\n"]
+        lines.append(f"润色级别: {self._get_polish_level_desc()}\n")
 
         for entry in entries:
-            lines.append(f"\n{'='*60}")
+            lines.append(f"\n{'=' * 60}")
             lines.append(f"【ENTRY_ID: {entry.id}】")
             lines.append(f"原文：{entry.original or ''}")
             lines.append(f"当前译文：{entry.translation or ''}")
@@ -332,13 +411,14 @@ class LLMPolisher:
                 for term, trans in terms.items():
                     lines.append(f"  {term} → {trans}")
 
-        lines.append(f"\n{'='*60}")
-        lines.append(f"\n润色级别: {self._get_polish_level_desc()}")
+        lines.append(f"\n{'=' * 60}")
 
-        return [
-            {"role": "system", "content": self._prompts["batch_system"]},
-            {"role": "user", "content": "\n".join(lines)},
-        ]
+        return build_postprocess_messages(
+            stage="polish",
+            shape="batch",
+            rendered_system=self._prompts["batch_system_rendered"],
+            user_content="\n".join(lines),
+        )
 
     def _get_relevant_terms(self, entry: "TranslationEntry") -> dict[str, str]:
         """获取与条目相关的术语。"""
@@ -384,9 +464,7 @@ class LLMPolisher:
             return PolishResult(
                 entry_id=entry.id,
                 original_translation=entry.translation or "",
-                polished_translation=data.get(
-                    "polished_translation", entry.translation or ""
-                ),
+                polished_translation=data.get("polished_translation", entry.translation or ""),
                 changes=data.get("changes", []),
                 confidence=data.get("confidence", 0.0),
                 needs_arbitration=data.get("needs_arbitration", False),
@@ -430,9 +508,7 @@ class LLMPolisher:
                 results[entry_id] = PolishResult(
                     entry_id=entry_id,
                     original_translation=entry.translation or "",
-                    polished_translation=item.get(
-                        "polished_translation", entry.translation or ""
-                    ),
+                    polished_translation=item.get("polished_translation", entry.translation or ""),
                     changes=item.get("changes", []),
                     confidence=item.get("confidence", 0.0),
                     needs_arbitration=item.get("needs_arbitration", False),

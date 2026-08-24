@@ -8,24 +8,23 @@
 
 from __future__ import annotations
 
-import hashlib
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
 import json
 import logging
 import os
 import re
 import threading
-from dataclasses import dataclass, field, asdict
-from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from transbridge.paratranz.config_manager import LLMConfig
     from transbridge.converter.translation_entry import TranslationEntry
+    from transbridge.paratranz.config_manager import LLMConfig
 
 logger = logging.getLogger(__name__)
 
 # 匹配术语开头的英文冠词（The / A / An），用于冠词规范化匹配
-_ARTICLE_RE = re.compile(r'^(?:the|a|an)\s+', re.IGNORECASE)
+_ARTICLE_RE = re.compile(r"^(?:the|a|an)\s+", re.IGNORECASE)
 
 # 缓存文件名
 CACHE_FILES = {
@@ -40,14 +39,23 @@ CACHE_FILES = {
 class TermEntry:
     term: str
     translation: str
-    source: str          # auto_name | auto_dialogue | manual | paratranz | json | excel
+    source: str  # auto_name | auto_dialogue | manual | paratranz | json | excel
     context: str = ""
     created_at: str = ""
     case_sensitive: bool = False  # 仅 paratranz 来源可能为 True
     variants: list[str] = field(default_factory=list)  # 术语变体列表（单复数、缩写等）
 
 
+@dataclass
+class ScopedTermMatches:
+    """一次请求内的平面术语结果及逐条作用域，不参与任何持久化。"""
+
+    flat_terms: dict[str, str]
+    terms_by_entry: dict[str, dict[str, str]]
+
+
 # ─────────────────────────── DynamicTermDatabase ─────────────────────────────
+
 
 class DynamicTermDatabase:
     """按 ESP stem 绑定，持久化到 data/ai_translator/{stem}/{stem}_terms.json。"""
@@ -55,6 +63,7 @@ class DynamicTermDatabase:
     def __init__(self, esp_path: str):
         stem = os.path.splitext(os.path.basename(esp_path))[0]
         from transbridge.paratranz.config_manager import LLMConfig
+
         ai_dir = LLMConfig.get_ai_translator_dir(stem)
         self._path = os.path.join(ai_dir, f"{stem}_terms.json")
         self._entries: list[TermEntry] = []
@@ -84,13 +93,15 @@ class DynamicTermDatabase:
                 e.source = source
                 e.context = context
                 return
-        self._entries.append(TermEntry(
-            term=term,
-            translation=translation,
-            source=source,
-            context=context,
-            created_at=datetime.now().isoformat(timespec="seconds"),
-        ))
+        self._entries.append(
+            TermEntry(
+                term=term,
+                translation=translation,
+                source=source,
+                context=context,
+                created_at=datetime.now().isoformat(timespec="seconds"),
+            )
+        )
 
     def add_many_and_save(self, terms: list[tuple[str, str, str, str]]) -> None:
         """原子性批量写入并保存，加锁保证并发安全。terms: [(term, translation, source, context), ...]"""
@@ -105,6 +116,7 @@ class DynamicTermDatabase:
 
 # ─────────────────────────── TermDatabaseManager ─────────────────────────────
 
+
 class TermDatabaseManager:
     """
     加载四来源术语，按 priority 顺序合并（后加载的优先级高的覆盖低的），
@@ -118,7 +130,7 @@ class TermDatabaseManager:
 
     def __init__(
         self,
-        config: "LLMConfig",
+        config: LLMConfig,
         esp_path: str,
         paratranz_client=None,
         project_id: int | None = None,
@@ -135,6 +147,7 @@ class TermDatabaseManager:
 
         # 缓存目录：data/ai_translator/{stem}/cache/
         from transbridge.paratranz.config_manager import LLMConfig
+
         stem = os.path.splitext(os.path.basename(esp_path))[0]
         self._cache_dir = os.path.join(LLMConfig.get_ai_translator_dir(stem), "cache")
         os.makedirs(self._cache_dir, exist_ok=True)
@@ -224,6 +237,7 @@ class TermDatabaseManager:
             TermEntry 列表，缓存不存在或无效时返回空列表
         """
         from transbridge.paratranz.config_manager import LLMConfig
+
         stem = os.path.splitext(os.path.basename(esp_path))[0]
         cache_path = os.path.join(LLMConfig.get_ai_translator_dir(stem), "cache", CACHE_FILES["merged"])
 
@@ -326,13 +340,13 @@ class TermDatabaseManager:
     def _init_vector_index(self) -> None:
         """初始化向量索引（延迟构建，失败时降级）。"""
         try:
-            from .term_vector_index import TermVectorIndex
             from ..infra.embedding_client import create_embedding_client
+            from .term_vector_index import TermVectorIndex
 
             # 获取配置参数
-            threshold = getattr(self._config, 'semantic_similarity_threshold', 0.7)
-            top_k = getattr(self._config, 'semantic_top_k', 5)
-            bm25_weight = getattr(self._config, 'bm25_weight', 0.5)
+            threshold = getattr(self._config, "semantic_similarity_threshold", 0.7)
+            top_k = getattr(self._config, "semantic_top_k", 5)
+            bm25_weight = getattr(self._config, "bm25_weight", 0.5)
 
             # 创建 EmbeddingClient
             embedding_client = create_embedding_client(self._config)
@@ -404,7 +418,7 @@ class TermDatabaseManager:
 
     def match_terms_enhanced(
         self,
-        entries: list["TranslationEntry"],
+        entries: list[TranslationEntry],
         enable_semantic: bool = True,
         max_terms: int = 100,
         in_flight_terms: dict[str, str] | None = None,
@@ -424,6 +438,57 @@ class TermDatabaseManager:
         Returns:
             {term: translation} 合并后的术语表
         """
+        return self.match_terms_scoped(
+            entries=entries,
+            enable_semantic=enable_semantic,
+            max_terms=max_terms,
+            in_flight_terms=in_flight_terms,
+        ).flat_terms
+
+    @staticmethod
+    def _match_key_applies_to_original(
+        match_key: str,
+        original: str,
+        case_sensitive: bool,
+    ) -> bool:
+        """按现有正向、冠词和反向规则判断匹配键是否属于单条原文。"""
+        match_key_lower = match_key.lower()
+        original_lower = original.lower()
+
+        if case_sensitive:
+            if match_key in original:
+                return True
+        elif match_key_lower in original_lower:
+            return True
+
+        match_key_without_article = _ARTICLE_RE.sub("", match_key_lower)
+        if match_key_without_article != match_key_lower and match_key_without_article in original_lower:
+            return True
+
+        if len(original) < 4:
+            return False
+        if match_key_lower.startswith(original_lower) and (
+            len(match_key_lower) == len(original_lower) or match_key_lower[len(original_lower)] == " "
+        ):
+            return True
+        return match_key_lower.endswith(original_lower) and (
+            len(match_key_lower) == len(original_lower) or match_key_lower[-(len(original_lower) + 1)] == " "
+        )
+
+    def match_terms_scoped(
+        self,
+        entries: list[TranslationEntry],
+        enable_semantic: bool = True,
+        max_terms: int = 100,
+        in_flight_terms: dict[str, str] | None = None,
+    ) -> ScopedTermMatches:
+        """执行现有增强召回，同时保留每个术语对应的翻译条目。"""
+        if not entries or max_terms <= 0 or not getattr(self, "_retrieval_enabled", True):
+            return ScopedTermMatches(
+                flat_terms={},
+                terms_by_entry={entry.key: {} for entry in entries},
+            )
+
         originals = [e.original for e in entries]
         originals_lower = [o.lower() for o in originals]
 
@@ -446,44 +511,73 @@ class TermDatabaseManager:
         # 合并基础匹配
         matched = {**exact_matched, **substring_matched}
 
+        # matcher 已包含主术语与 variants；这里只保留归属，不改变候选内容。
+        matcher_map = self._get_term_matcher_map()
+        candidate_terms_by_entry: dict[str, set[str]] = {entry.key: set() for entry in entries}
+        for entry in entries:
+            scoped_terms = candidate_terms_by_entry[entry.key]
+            for match_key, (main_term, _translation, case_sensitive) in matcher_map.items():
+                if main_term in scoped_terms or main_term not in matched:
+                    continue
+                if self._match_key_applies_to_original(
+                    match_key,
+                    entry.original,
+                    case_sensitive,
+                ):
+                    scoped_terms.add(main_term)
+
         # 合并 in-flight 术语（并发批次实时产生的术语）
         if in_flight_terms:
             for term, trans in in_flight_terms.items():
                 if term not in matched:
                     matched[term] = trans
                     priority[term] = 2  # 与反向匹配同级
+                for entry in entries:
+                    if self._match_key_applies_to_original(
+                        term,
+                        entry.original,
+                        case_sensitive=False,
+                    ):
+                        candidate_terms_by_entry[entry.key].add(term)
 
         # 阶段2：语义召回（仅对子串未命中的原文）
-        semantic_terms: set[str] = set()
         if enable_semantic and self._vector_index and self._vector_index.available:
             # 找出没有子串命中的原文
             unmatched_originals = [
-                e.original for e in entries
-                if not any(
-                    term.lower() in e.original.lower()
-                    for term in substring_matched
-                )
+                e.original for e in entries if not any(term.lower() in e.original.lower() for term in substring_matched)
             ]
 
             # 批量语义检索（BM25 混合，_bm25 缺失时退化为纯向量），补充高置信术语
             batch_results = self._vector_index.search_hybrid_batch(unmatched_originals, top_k=3)
-            for results in batch_results.values():
+            entry_keys_by_original: dict[str, list[str]] = {}
+            for entry in entries:
+                entry_keys_by_original.setdefault(entry.original, []).append(entry.key)
+            for original, results in batch_results.items():
                 for r in results:
                     if r.term not in matched:
                         matched[r.term] = r.translation
-                        semantic_terms.add(r.term)
                         priority[r.term] = 3  # 语义召回优先级最低
+                    for entry_key in entry_keys_by_original.get(original, ()):
+                        candidate_terms_by_entry[entry_key].add(r.term)
 
         # 硬上限保护：按优先级排序后截断
         if len(matched) > max_terms:
             # 按优先级升序，同优先级按术语长度升序（短词更基础）
-            sorted_terms = sorted(
-                matched.keys(),
-                key=lambda t: (priority.get(t, 99), len(t))
-            )
+            sorted_terms = sorted(matched.keys(), key=lambda t: (priority.get(t, 99), len(t)))
             matched = {t: matched[t] for t in sorted_terms[:max_terms]}
 
-        return matched
+        terms_by_entry = {
+            entry.key: {
+                term: translation
+                for term, translation in matched.items()
+                if term in candidate_terms_by_entry[entry.key]
+            }
+            for entry in entries
+        }
+        return ScopedTermMatches(
+            flat_terms=matched,
+            terms_by_entry=terms_by_entry,
+        )
 
     def match_terms(self, text_batch: list[str]) -> dict[str, str]:
         """在 text_batch 的原文中扫描匹配的术语，返回 {term: translation}。
@@ -524,14 +618,14 @@ class TermDatabaseManager:
                     continue
 
             # 2. 冠词规范化：术语含冠词前缀，去掉后重试正向子串
-            mk_no_art = _ARTICLE_RE.sub('', mk_lower)
+            mk_no_art = _ARTICLE_RE.sub("", mk_lower)
             if mk_no_art != mk_lower and mk_no_art in combined_lower:
                 matched[main_term] = translation
                 continue
 
             # 3. 反向前缀：original 是 match_key 的词边界前缀
             for orig in originals_lower:
-                if mk_lower.startswith(orig) and (len(mk_lower) == len(orig) or mk_lower[len(orig)] == ' '):
+                if mk_lower.startswith(orig) and (len(mk_lower) == len(orig) or mk_lower[len(orig)] == " "):
                     matched[main_term] = translation
                     break
             if main_term in matched:
@@ -539,7 +633,7 @@ class TermDatabaseManager:
 
             # 4. 反向后缀：original 是 match_key 的词边界后缀
             for orig in originals_lower:
-                if mk_lower.endswith(orig) and (len(mk_lower) == len(orig) or mk_lower[-(len(orig) + 1)] == ' '):
+                if mk_lower.endswith(orig) and (len(mk_lower) == len(orig) or mk_lower[-(len(orig) + 1)] == " "):
                     matched[main_term] = translation
                     break
 
@@ -551,8 +645,8 @@ class TermDatabaseManager:
         支持变体：如果原文精确匹配某个变体，返回主术语的译文。
         """
         # 构建两张查找表（O(n) 预处理，O(1) 查询）
-        cs_map: dict[str, tuple[str, str]] = {}   # 区分大小写: exact term → (main_term, translation)
-        ci_map: dict[str, tuple[str, str]] = {}   # 不区分大小写: lower term → (main_term, translation)
+        cs_map: dict[str, tuple[str, str]] = {}  # 区分大小写: exact term → (main_term, translation)
+        ci_map: dict[str, tuple[str, str]] = {}  # 不区分大小写: lower term → (main_term, translation)
         for entry in self._effective_terms():
             # 主术语
             if entry.case_sensitive:
@@ -595,13 +689,15 @@ class TermDatabaseManager:
                 term = item.get("term", "")
                 translation = item.get("translation", "")
                 if term and translation:
-                    results.append(TermEntry(
-                        term=term,
-                        translation=translation,
-                        source="paratranz",
-                        case_sensitive=bool(item.get("caseSensitive", False)),
-                        variants=item.get("variants") or [],
-                    ))
+                    results.append(
+                        TermEntry(
+                            term=term,
+                            translation=translation,
+                            source="paratranz",
+                            case_sensitive=bool(item.get("caseSensitive", False)),
+                            variants=item.get("variants") or [],
+                        )
+                    )
             if len(items) < 100:
                 break
             page += 1
@@ -619,12 +715,14 @@ class TermDatabaseManager:
                 term = item.get("term", "") or item.get("original", "")
                 translation = item.get("translation", "")
                 if term and translation:
-                    results.append(TermEntry(
-                        term=term,
-                        translation=translation,
-                        source="json",
-                        variants=item.get("variants") or [],
-                    ))
+                    results.append(
+                        TermEntry(
+                            term=term,
+                            translation=translation,
+                            source="json",
+                            variants=item.get("variants") or [],
+                        )
+                    )
         elif isinstance(raw, dict):
             for term, translation in raw.items():
                 if term and translation:
@@ -636,6 +734,7 @@ class TermDatabaseManager:
         if not path or not os.path.exists(path):
             return []
         import openpyxl
+
         wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
         ws = wb.active
         col_orig = _col_letter_to_index(self._config.excel_original_col)

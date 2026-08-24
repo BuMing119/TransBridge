@@ -4,14 +4,20 @@ LLM裁决者。
 对"模棱两可"的问题做最终判定，决定条目是接受、打回还是待审。
 """
 
+from dataclasses import dataclass, field
 import json
+from pathlib import Path
 import re
 import tomllib
-import warnings
-from dataclasses import dataclass, field
-from pathlib import Path
-from string import Template
 from typing import TYPE_CHECKING, Literal
+import warnings
+
+from .prompt_contract import (
+    PromptTemplateContractError,
+    build_postprocess_messages,
+    render_prompt_template,
+    validate_prompt_template,
+)
 
 if TYPE_CHECKING:
     from ...converter.translation_entry import TranslationEntry
@@ -46,41 +52,43 @@ class ArbitrationContext:
 
 # ── 内置默认提示词 ─────────────────────────────────────────────────────────
 
-_DEFAULT_SYSTEM = """你是游戏本地化质量裁决官。
+_DEFAULT_SYSTEM = """你是 $game_name 本地化质量裁决官，负责对 $source_lang 原文译文的最终质量进行裁决。
 
-你的职责：对翻译条目的最终质量进行裁决。
+你的职责：只对最终候选译文做出裁决，输出 pass / reject / pending 三者之一。
+评估对象是最终候选译文，优先级为：润色结果 > 修复结果 > 初始译文。
+你绝不可以生成新的最终译文，也不对译文做任何改写。
 
 裁决标准：
 
-1. "pass": 译文质量合格，可以发布
+1. "pass": 最终译文质量合格，可以发布
    - 修复有效，原问题已解决
-   - 译文流畅自然，符合游戏语境
+   - 最终译文流畅自然，符合游戏语境
    - 无明显错误或风险
    - 术语使用正确
 
-2. "reject": 译文存在严重问题，必须打回重翻
+2. "reject": 最终译文存在严重问题，必须打回重翻
    - 语义错误、漏翻、错翻
    - 术语严重不一致且未修复
    - 格式损坏无法修复
    - 风格严重不符游戏语境
-   - 修复尝试失败或产生新问题
+   - 修复/润色尝试失败或产生新问题
 
-3. "pending": 质量存疑，建议人工审核
-   - 修复效果不确定
+3. "pending": 最终译文质量存疑，建议人工审核
+   - 修复/润色效果不确定
    - 存在争议或歧义
    - 涉及创意性判断（如角色性格体现）
    - 不确定是否准确传达原文语境
-   - 修复改动较大，需要确认
+   - 改动较大，需要确认
 
 裁决原则：
 - 宁可pending也不接受有风险的译文
 - 明确reject的情况必须给出具体理由
 - pending时需说明需要审核的具体要点
-- 考虑修复者的信心度，低信心度倾向pending
+- 考虑修复者/润色者的信心度，低信心度倾向pending
 
-输出格式（必须严格遵循JSON）：
+输出格式（必须严格遵循JSON）。verdict 只能取 "pass"、"reject"、"pending" 三者之一：
 {
-    "verdict": "pass" | "reject" | "pending",
+    "verdict": "pass",
     "reason": "详细裁决理由，说明为什么做这个决定",
     "confidence": 0.9,
     "suggested_action": "具体建议动作",
@@ -139,28 +147,29 @@ $quality_gate_verdict
 
 按指定JSON格式输出你的裁决结果。"""
 
-_DEFAULT_BATCH_SYSTEM = """你是游戏本地化质量裁决官。
+_DEFAULT_BATCH_SYSTEM = """你是 $game_name 本地化质量裁决官，负责对 $source_lang 原文译文的最终质量进行批量裁决。
 
-你的职责：批量裁决多个翻译条目的最终质量。
+你的职责：只对最终候选译文做出裁决，输出 pass / reject / pending 三者之一。
+评估对象是最终候选译文，优先级为：润色结果 > 修复结果 > 初始译文。
+你绝不可以生成新的最终译文，也不对译文做任何改写。
 
 裁决标准：
-- "pass": 质量合格，可以发布
-- "reject": 严重问题，必须打回重翻
-- "pending": 质量存疑，建议人工审核
+- "pass": 最终译文质量合格，可以发布
+- "reject": 最终译文存在严重问题，必须打回重翻
+- "pending": 最终译文质量存疑，建议人工审核
 
 裁决原则：宁可pending也不接受有风险的译文。
 
-输出格式（必须严格遵循JSON数组）：
+输出格式（必须严格遵循JSON数组）。每项 verdict 只能取 "pass"、"reject"、"pending" 三者之一：
 [
     {
         "entry_id": "条目ID",
-        "verdict": "pass" | "reject" | "pending",
+        "verdict": "pass",
         "reason": "详细裁决理由",
         "confidence": 0.9,
         "suggested_action": "建议动作",
         "alternatives": []
-    },
-    ...
+    }
 ]
 
 注意：
@@ -186,6 +195,65 @@ def _load_toml(path: Path) -> dict:
     except Exception as e:
         warnings.warn(f"加载 {path.name} 失败，使用内置默认提示词：{e}")
         return {}
+
+
+# System 只允许稳定变量：game_name / source_lang / target_lang
+_SYSTEM_ALLOWED = frozenset({"game_name", "source_lang", "target_lang"})
+_SYSTEM_REQUIRED = frozenset({"game_name", "source_lang", "target_lang"})
+# 单条 User 模板的 required 动态变量（含 Python 已传入的润色字段）
+_ARB_USER_REQUIRED = frozenset({
+    "original",
+    "initial_translation",
+    "refined_translation",
+    "polished_translation",
+    "context",
+    "original_issues",
+    "fix_details",
+    "polish_details",
+    "refiner_confidence",
+    "polisher_confidence",
+    "quality_gate_verdict",
+})
+
+
+def _resolve_system_template(name: str, template: str, fallback: str, ctx: dict) -> str:
+    """校验 System 模板；违规记录 warning 并回退到内置默认模板。"""
+    try:
+        validate_prompt_template(
+            name=name,
+            template=template,
+            allowed_variables=_SYSTEM_ALLOWED,
+            required_variables=_SYSTEM_REQUIRED,
+        )
+        return template
+    except PromptTemplateContractError as e:
+        warnings.warn(f"{name}: {e}；使用内置默认模板")
+        return fallback
+
+
+def _render_system(name: str, template: str, ctx: dict) -> str:
+    """严格渲染 System；失败抛 PromptTemplateContractError（进入 LLM 降级路径）。"""
+    return render_prompt_template(name=name, template=template, values=ctx)
+
+
+def _resolve_user_template(name: str, template: str, fallback: str, required: frozenset) -> str:
+    """校验 User 模板；违规记录 warning 并回退到内置默认模板。"""
+    try:
+        validate_prompt_template(
+            name=name,
+            template=template,
+            allowed_variables=frozenset({
+                "game_name",
+                "source_lang",
+                "target_lang",
+                *required,
+            }),
+            required_variables=required,
+        )
+        return template
+    except PromptTemplateContractError as e:
+        warnings.warn(f"{name}: {e}；使用内置默认模板")
+        return fallback
 
 
 class LLMArbiter:
@@ -248,16 +316,42 @@ class LLMArbiter:
 
         arb_cfg = arb_data.get("arbitration", {})
 
+        # System 只允许稳定变量（game_name / source_lang / target_lang）。
+        system_tpl = _resolve_system_template(
+            "arbitration.system",
+            arb_cfg.get("system", _DEFAULT_SYSTEM),
+            _DEFAULT_SYSTEM,
+            ctx,
+        )
+        batch_system_tpl = _resolve_system_template(
+            "arbitration.batch_system",
+            arb_cfg.get("batch_system", _DEFAULT_BATCH_SYSTEM),
+            _DEFAULT_BATCH_SYSTEM,
+            ctx,
+        )
+        user_tpl = _resolve_user_template(
+            "arbitration.user",
+            arb_cfg.get("user", _DEFAULT_USER),
+            _DEFAULT_USER,
+            _ARB_USER_REQUIRED,
+        )
+
         return {
             "ctx": ctx,
-            "system": arb_cfg.get("system", _DEFAULT_SYSTEM).strip(),
-            "user": arb_cfg.get("user", _DEFAULT_USER).strip(),
-            "batch_system": arb_cfg.get("batch_system", _DEFAULT_BATCH_SYSTEM).strip(),
+            "system": system_tpl,
+            "system_rendered": _render_system("arbitration.system", system_tpl, ctx),
+            "batch_system": batch_system_tpl,
+            "batch_system_rendered": _render_system("arbitration.batch_system", batch_system_tpl, ctx),
+            "user": user_tpl,
         }
 
-    def _render(self, template: str, **extra) -> str:
-        """将 $var 占位符替换为实际值。"""
-        return Template(template).safe_substitute({**self._prompts["ctx"], **extra})
+    def _render_user(self, **extra) -> str:
+        """严格渲染单条 User 模板；失败抛 PromptTemplateContractError。"""
+        return render_prompt_template(
+            name="arbitration.user",
+            template=self._prompts["user"],
+            values={**self._prompts["ctx"], **extra},
+        )
 
     def arbitrate(
         self,
@@ -463,9 +557,8 @@ class LLMArbiter:
         else:
             final_translation = entry.translation or ""
 
-        # 渲染用户Prompt
-        user_content = self._render(
-            self._prompts["user"],
+        # 渲染用户Prompt（严格渲染，含润色后译文/详情/信心度）
+        user_content = self._render_user(
             original=entry.original or "",
             initial_translation=entry.translation or "",
             refined_translation=refine.refined_translation if refine else entry.translation or "",
@@ -479,10 +572,12 @@ class LLMArbiter:
             quality_gate_verdict=ctx.quality_gate_verdict or "N/A",
         )
 
-        return [
-            {"role": "system", "content": self._prompts["system"]},
-            {"role": "user", "content": user_content},
-        ]
+        return build_postprocess_messages(
+            stage="arbitration",
+            shape="single",
+            rendered_system=self._prompts["system_rendered"],
+            user_content=user_content,
+        )
 
     def _build_batch_arbitration_prompt(
         self,
@@ -504,7 +599,7 @@ class LLMArbiter:
             else:
                 final_translation = entry.translation or ""
 
-            lines.append(f"\n{'='*60}")
+            lines.append(f"\n{'=' * 60}")
             lines.append(f"【ENTRY_ID: {entry.id}】")
             lines.append(f"原文：{entry.original or ''}")
             lines.append(f"初始译文：{entry.translation or ''}")
@@ -535,12 +630,14 @@ class LLMArbiter:
 
             lines.append(f"原质量关卡判定：{ctx.quality_gate_verdict or 'N/A'}")
 
-        lines.append(f"\n{'='*60}")
+        lines.append(f"\n{'=' * 60}")
 
-        return [
-            {"role": "system", "content": self._prompts["batch_system"]},
-            {"role": "user", "content": "\n".join(lines)},
-        ]
+        return build_postprocess_messages(
+            stage="arbitration",
+            shape="batch",
+            rendered_system=self._prompts["batch_system_rendered"],
+            user_content="\n".join(lines),
+        )
 
     def _format_issues(self, issues: list["PostProcessIssue"]) -> str:
         """格式化问题列表。"""

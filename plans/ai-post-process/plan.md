@@ -1,6 +1,6 @@
 # AI 翻译后处理
 
-> **状态**: ✔️ 已实现（Story-01~13 全部完成）
+> **状态**: Story-01~14 已实现
 > **模块**: `src/transbridge/ai_translator/post_processor/`
 
 ## 概述
@@ -24,6 +24,29 @@ AI 翻译完成后的五阶段质量保障流水线：检测 → 修复 → 润�
 | Story-11 | 应用内报告对话框（多Tab QDialog：汇总/条目/问题，翻译/润色双模板，双击跳转Step2） | ✔️ 已实现 · [详细](stories/story-11-report-dialog.md) |
 | Story-12 | 完成流程集成（替换QMessageBox，翻译/润色/批量完成→报告对话框，批量跨插件汇总） | ✔️ 已实现 · [详细](stories/story-12-integration.md) |
 | Story-13 | 历史报告查看（工具面板入口 + 历史文件列表 + 双击打开Excel） | ✔️ 已实现 · [详细](stories/story-13-history-viewer.md) |
+| Story-14 | 后处理提示词契约修复与阶段级缓存 | ✔️ 已实现 · [详细](stories/story-14-prompt-contract-stage-cache.md) |
+
+## Story-14：后处理提示词契约修复与阶段级缓存
+
+**状态**：✔️ 已实现
+**详细文档**：[stories/story-14-prompt-contract-stage-cache.md](stories/story-14-prompt-contract-stage-cache.md)
+
+### 目标
+
+修复质量检测、问题修复、翻译润色和质量裁决提示词与代码之间的既有契约偏差，并为每个“阶段 × 单条/批量”提示词建立一个完整稳定 `SYSTEM` 前缀和一个阶段级缓存断点；动态条目、问题、设置和现有术语继续位于 `USER`。
+
+### 验收标准
+
+- [ ] 八个提示词变体均保持 `SYSTEM -> USER` 两消息结构，每个变体只有一个位于完整稳定 `SYSTEM` 末尾的缓存断点。
+- [ ] 不建立跨后处理阶段共享的 A/B 双层 System；各阶段使用独立 cache key。
+- [ ] 润色 System 中的游戏、源语言和目标语言变量被正确渲染，不向模型泄漏 `$...` 占位符。
+- [ ] Refiner 恢复“只修复明确问题”的既有 Story 边界，不承担 Polisher 的润色职责。
+- [ ] 单条 Arbiter 能看到润色后译文、润色详情和润色者信心度。
+- [ ] 批量 QualityGate 使用每条现有动态术语，术语匹配、顺序和语义不变。
+- [ ] 单条/批量输出协议、结果数据类、解析器及裁决阈值保持兼容。
+- [ ] JSON 示例均为合法 JSON，枚举约束与示例数据分开表达。
+- [ ] 官方 OpenAI、Anthropic 与非官方兼容端点复用 Story-15 的 Provider 缓存转换与清理边界。
+- [ ] 缓存未达 token 门槛或 Provider 不支持时安全降级，不填充无意义提示词。
 
 ### Story-09: 独立润色入口
 

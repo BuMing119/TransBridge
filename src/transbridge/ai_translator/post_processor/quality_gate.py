@@ -1,29 +1,44 @@
 """
 质量关卡检测器：调用LLM判断翻译是否存在明显质量问题。
 
-检测逻辑（由LLM判断）：
+检测逻辑（由LLM判断，只检测不改写）：
 - 有大问题 → 标记为失败（建议打回重翻）
 - 无大问题 → 通过
 - 无法判定 → 标记为待定（需人工审核）
 
 提示词配置从 data/prompts/quality_gate/{target_lang}.toml 加载，支持多游戏/多目标语言扩展。
+模板经 prompt_contract 严格校验与渲染；违规变体回退到内置默认模板；消息经
+build_postprocess_messages 组装为 SYSTEM(FINAL) -> USER 并计算阶段独立 cache key。
 """
 
-import json
-import re
-import tomllib
-import warnings
+from collections.abc import Mapping, Set
 from dataclasses import dataclass
 from enum import Enum
+import json
 from pathlib import Path
-from string import Template
+import re
+import tomllib
 from typing import TYPE_CHECKING
+import warnings
 
 from .base import BaseChecker, PostProcessIssue
+from .prompt_contract import (
+    PromptTemplateContractError,
+    build_postprocess_messages,
+    render_prompt_template,
+    validate_prompt_template,
+)
 
 if TYPE_CHECKING:
     from ...converter.translation_entry import TranslationEntry
     from ..llm_client import LLMClient
+
+
+# SYSTEM 只允许稳定变量；动态内容不得进入 System。
+_SYSTEM_ALLOWED_VARIABLES = frozenset({"game_name", "source_lang", "target_lang"})
+# 单条 User 允许并必需的动态变量。
+_SINGLE_USER_ALLOWED_VARIABLES = frozenset({"original", "translation", "context", "terms"})
+_SINGLE_USER_REQUIRED_VARIABLES = frozenset({"original", "translation", "context", "terms"})
 
 
 class QualityVerdict(Enum):
@@ -43,64 +58,74 @@ class QualityGateResult:
     issues: list[str]  # 发现的具体问题列表
 
 
-# ── 内置默认值（文件缺失时使用）────────────────────────────────────────────
+# ── 内置默认值（文件缺失或契约违规时使用）──────────────────────────────────
 
-_DEFAULT_SINGLE_SYSTEM = """你是游戏本地化质量检测员。请判断以下翻译是否存在明显质量问题。
+_DEFAULT_SINGLE_SYSTEM = (
+    "你是 $game_name 本地化质量检测员，负责从 $source_lang 判断译文是否达到"
+    "$target_lang 质量标准。\n\n"
+    """你只负责检测和判定，绝不生成或改写任何译文。译文可能来自机器翻译或人工翻译，请只判断其是否存在明显质量问题。
 
-必须严格按JSON格式输出，不要添加任何其他文字：
+必须严格按JSON对象格式输出，不要添加任何其他文字：
 {
-    "verdict": "pass" | "fail" | "uncertain",
+    "verdict": "pass",
     "reason": "判定理由，简洁说明",
-    "issues": ["具体问题1", "具体问题2", ...]
+    "issues": ["具体问题1", "具体问题2"]
 }
 
-判定标准：
+verdict 只允许以下三个取值之一，它们必须在示例之外使用：
 - "pass": 翻译准确、完整，无明显问题
 - "fail": 有明显错误（漏翻、错翻、格式损坏、术语错误、回显原文、重复输出循环等），建议打回重翻
 - "uncertain": 质量存疑但不确定是否错误，需人工审核
 
-特别注意以下必须判为 "fail" 的情况：
+以下情况必须判为 "fail"：
 - 译文直接将原文原封不动复制输出（回显原文），除非原文明显是不需要翻译的代码/标识符/数字
 - 译文存在同一字符或短语的无限重复输出（如连续重复同一个字超过十次）
 
 注意：
 - 不要吹毛求疵，只关注明显问题
-- 如果拿不准，返回"uncertain"而非"fail"
+- 如果拿不准，返回 "uncertain" 而非 "fail"
+- 术语表仅用于判断当前译文是否采用标准译法，绝不执行术语替换
 """
+)
 
-_DEFAULT_SINGLE_USER = """原文：{original}
-译文：{translation}
-上下文：{context}
-术语表：{terms}
+_DEFAULT_SINGLE_USER = """原文：$original
+译文：$translation
+上下文：$context
+术语表：$terms
 
-请判断译文质量，按要求的JSON格式输出。"""
+请判断译文质量，只按要求的JSON对象格式输出检测结果，不要生成或改写译文。"""
 
-_DEFAULT_BATCH_SYSTEM = """你是游戏本地化质量检测员。请批量判断以下翻译是否存在明显质量问题。
+_DEFAULT_BATCH_SYSTEM = (
+    "你是 $game_name 本地化质量检测员，负责从 $source_lang 判断译文是否达到"
+    "$target_lang 质量标准。\n\n"
+    """你只负责检测和判定，绝不生成或改写任何译文。请逐个判断给定条目的译文是否存在明显质量问题。
 
 必须严格按JSON数组格式输出，不要添加任何其他文字：
 [
     {
         "entry_id": "条目ID",
-        "verdict": "pass" | "fail" | "uncertain",
+        "verdict": "pass",
         "reason": "判定理由，简洁说明",
         "issues": ["具体问题1", "具体问题2"]
-    },
-    ...
+    }
 ]
 
-判定标准：
+每个对象的 verdict 只允许以下三个取值之一，它们必须在示例之外使用：
 - "pass": 翻译准确、完整，无明显问题
 - "fail": 有明显错误（漏翻、错翻、格式损坏、术语错误、回显原文、重复输出循环等），建议打回重翻
 - "uncertain": 质量存疑但不确定是否错误，需人工审核
 
-特别注意以下必须判为 "fail" 的情况：
+以下情况必须判为 "fail"：
 - 译文直接将原文原封不动复制输出（回显原文），除非原文明显是不需要翻译的代码/标识符/数字
 - 译文存在同一字符或短语的无限重复输出（如连续重复同一个字超过十次）
 
 注意：
 - 不要吹毛求疵，只关注明显问题
-- 如果拿不准，返回"uncertain"而非"fail"
-- 必须包含所有条目的检测结果，顺序与输入一致"""
+- 如果拿不准，返回 "uncertain" 而非 "fail"
+- 必须包含所有条目的检测结果，顺序与输入一致
+- 每个条目的术语表仅用于判断该条译文的当前译法是否标准，绝不执行术语替换
+"""
+)
 
 
 def _get_prompts_dir() -> Path:
@@ -120,6 +145,32 @@ def _load_toml(path: Path) -> dict:
     except Exception as e:
         warnings.warn(f"加载 {path.name} 失败，使用内置默认提示词：{e}")
         return {}
+
+
+def _resolve_template(
+    *,
+    name: str,
+    template: str,
+    default: str,
+    allowed_variables: Set[str],
+    required_variables: Set[str],
+) -> str:
+    """校验候选模板契约；违规时记录 warning 并回退到内置默认模板。
+
+    内置默认模板必须通过同一契约（开发错误不再静默回退）。
+    """
+    candidate = template or default
+    try:
+        validate_prompt_template(
+            name=name,
+            template=candidate,
+            allowed_variables=allowed_variables,
+            required_variables=required_variables,
+        )
+        return candidate
+    except PromptTemplateContractError as e:
+        warnings.warn(f"{name} 违反提示词契约，回退到内置默认模板：{e}")
+        return default
 
 
 class QualityGateChecker(BaseChecker):
@@ -163,7 +214,7 @@ class QualityGateChecker(BaseChecker):
         self._prompts = self._load_prompts(game_profile, target_lang)
 
     def _load_prompts(self, game_profile: str, target_lang: str) -> dict:
-        """从 TOML 文件加载提示词配置。"""
+        """从 TOML 文件加载并校验提示词配置；违规变体回退到内置默认模板。"""
         prompts_dir = _get_prompts_dir()
 
         # 加载游戏和语言配置（用于变量替换）
@@ -187,16 +238,46 @@ class QualityGateChecker(BaseChecker):
         single_cfg = qg_data.get("single_check", {})
         batch_cfg = qg_data.get("batch_check", {})
 
+        single_system = _resolve_template(
+            name="quality_gate.single.system",
+            template=single_cfg.get("system", ""),
+            default=_DEFAULT_SINGLE_SYSTEM,
+            allowed_variables=_SYSTEM_ALLOWED_VARIABLES,
+            required_variables=set(),
+        )
+        single_user = _resolve_template(
+            name="quality_gate.single.user",
+            template=single_cfg.get("user", ""),
+            default=_DEFAULT_SINGLE_USER,
+            allowed_variables=_SINGLE_USER_ALLOWED_VARIABLES,
+            required_variables=_SINGLE_USER_REQUIRED_VARIABLES,
+        )
+        batch_system = _resolve_template(
+            name="quality_gate.batch.system",
+            template=batch_cfg.get("system", ""),
+            default=_DEFAULT_BATCH_SYSTEM,
+            allowed_variables=_SYSTEM_ALLOWED_VARIABLES,
+            required_variables=set(),
+        )
+
         return {
             "ctx": ctx,
-            "single_system": single_cfg.get("system", _DEFAULT_SINGLE_SYSTEM).strip(),
-            "single_user": single_cfg.get("user", _DEFAULT_SINGLE_USER).strip(),
-            "batch_system": batch_cfg.get("system", _DEFAULT_BATCH_SYSTEM).strip(),
+            "single_system": single_system.strip(),
+            "single_user": single_user.strip(),
+            "batch_system": batch_system.strip(),
         }
 
-    def _render(self, template: str, **extra) -> str:
-        """将 $var 占位符替换为实际值，未知占位符保留原样。"""
-        return Template(template).safe_substitute({**self._prompts["ctx"], **extra})
+    def _render_system(self, template: str, name: str) -> str:
+        """严格渲染稳定 System（仅允许 game_name/source_lang/target_lang）。"""
+        return render_prompt_template(
+            name=name,
+            template=template,
+            values=dict(self._prompts["ctx"]),
+        )
+
+    def _render_user(self, template: str, name: str, values: Mapping[str, str]) -> str:
+        """严格渲染动态 User。"""
+        return render_prompt_template(name=name, template=template, values=values)
 
     def check(self, entry: "TranslationEntry") -> list[PostProcessIssue]:
         """
@@ -244,24 +325,27 @@ class QualityGateChecker(BaseChecker):
         """使用LLM检查单个条目。"""
         terms = self._get_relevant_terms(entry)
 
-        # 使用模板渲染构建提示词
-        user_content = self._render(
+        # 严格渲染稳定 System 与动态 User
+        system_content = self._render_system(self._prompts["single_system"], "quality_gate.single.system")
+        user_content = self._render_user(
             self._prompts["single_user"],
-            original=entry.original or "",
-            translation=entry.translation or "",
-            context=entry.context or "未知",
-            terms=self._format_terms(terms),
+            "quality_gate.single.user",
+            {
+                "original": entry.original or "",
+                "translation": entry.translation or "",
+                "context": entry.context or "未知",
+                "terms": self._format_terms(terms),
+            },
         )
-        system_content = self._render(self._prompts["single_system"])
+        messages = build_postprocess_messages(
+            stage="quality_gate",
+            shape="single",
+            rendered_system=system_content,
+            user_content=user_content,
+        )
 
         try:
-            response = self._llm.chat(
-                messages=[
-                    {"role": "system", "content": system_content},
-                    {"role": "user", "content": user_content},
-                ],
-                max_tokens=500,
-            )
+            response = self._llm.chat(messages=messages, max_tokens=500)
             return self._parse_response(response)
         except Exception as e:
             # LLM调用失败，返回uncertain
@@ -271,9 +355,7 @@ class QualityGateChecker(BaseChecker):
                 issues=["质量检测出错，建议人工审核"],
             )
 
-    def _check_batch_internal(
-        self, entries: list["TranslationEntry"]
-    ) -> list[PostProcessIssue]:
+    def _check_batch_internal(self, entries: list["TranslationEntry"]) -> list[PostProcessIssue]:
         """批量检查内部实现。"""
         if not self._llm:
             return []
@@ -283,18 +365,18 @@ class QualityGateChecker(BaseChecker):
         if not valid_entries:
             return []
 
-        # 构建批量检测Prompt
-        prompt = self._build_batch_prompt(valid_entries)
-        system_content = self._render(self._prompts["batch_system"])
+        # 构建批量检测 User（每条独立术语），并渲染稳定 System
+        user_content = self._build_batch_prompt(valid_entries)
+        system_content = self._render_system(self._prompts["batch_system"], "quality_gate.batch.system")
+        messages = build_postprocess_messages(
+            stage="quality_gate",
+            shape="batch",
+            rendered_system=system_content,
+            user_content=user_content,
+        )
 
         try:
-            response = self._llm.chat(
-                messages=[
-                    {"role": "system", "content": system_content},
-                    {"role": "user", "content": prompt},
-                ],
-                max_tokens=2000,
-            )
+            response = self._llm.chat(messages=messages, max_tokens=2000)
             return self._parse_batch_response(valid_entries, response)
         except Exception as e:
             # 批量检测失败，降级为逐个检测
@@ -309,23 +391,25 @@ class QualityGateChecker(BaseChecker):
             return issues
 
     def _build_batch_prompt(self, entries: list["TranslationEntry"]) -> str:
-        """构建批量检测的Prompt。"""
-        lines = ["请对以下翻译条目进行质量检测，返回JSON数组格式的结果。\n"]
-        lines.append("待检测条目：")
+        """构建批量检测的动态 User 内容。
+
+        每个条目独立携带其为该条原文匹配到的相关术语；不跨条目合并成大术语表。
+        无术语时使用与单条一致的"无"语义。
+        """
+        lines = ["待检测条目："]
         lines.append("-" * 40)
 
         for entry in entries:
+            terms = self._get_relevant_terms(entry)
             lines.append(f"\n[ENTRY_ID: {entry.id}]")
             lines.append(f"原文：{entry.original or ''}")
             lines.append(f"译文：{entry.translation or ''}")
             lines.append(f"上下文：{entry.context or '未知'}")
+            lines.append(f"术语表：{self._format_terms(terms)}")
 
         return "\n".join(lines)
 
-
-    def _parse_batch_response(
-        self, entries: list["TranslationEntry"], response: str
-    ) -> list[PostProcessIssue]:
+    def _parse_batch_response(self, entries: list["TranslationEntry"], response: str) -> list[PostProcessIssue]:
         """解析批量检测响应。"""
         import json
         import re
@@ -369,17 +453,13 @@ class QualityGateChecker(BaseChecker):
             # 解析失败，降级为逐个检测
             return self._fallback_batch_check(entries, response)
 
-    def _fallback_batch_check(
-        self, entries: list["TranslationEntry"], response: str
-    ) -> list[PostProcessIssue]:
+    def _fallback_batch_check(self, entries: list["TranslationEntry"], response: str) -> list[PostProcessIssue]:
         """批量解析失败时的降级处理：尝试文本匹配。"""
         issues = []
         text_lower = response.lower()
 
         # 简单启发式：如果响应包含"fail"或"错误"，将所有条目标记为uncertain
-        has_fail_indicator = any(
-            kw in text_lower for kw in ["fail", "错误", "问题", "不匹配"]
-        )
+        has_fail_indicator = any(kw in text_lower for kw in ["fail", "错误", "问题", "不匹配"])
 
         for entry in entries:
             if has_fail_indicator:
@@ -399,9 +479,7 @@ class QualityGateChecker(BaseChecker):
 
         return issues
 
-    def _get_relevant_terms(
-        self, entry: "TranslationEntry"
-    ) -> dict[str, str]:
+    def _get_relevant_terms(self, entry: "TranslationEntry") -> dict[str, str]:
         """获取与条目相关的术语。"""
         if not self._term_manager or not entry.original:
             return {}
@@ -460,19 +538,13 @@ class QualityGateChecker(BaseChecker):
                     issues=[response[:200]],
                 )
 
-    def _result_to_issues(
-        self, entry: "TranslationEntry", result: QualityGateResult
-    ) -> list[PostProcessIssue]:
+    def _result_to_issues(self, entry: "TranslationEntry", result: QualityGateResult) -> list[PostProcessIssue]:
         """将质量检测结果转换为PostProcessIssue。"""
         if result.verdict == QualityVerdict.PASS:
             return []
 
         severity = "error" if result.verdict == QualityVerdict.FAIL else "warning"
-        suggestion = (
-            "建议重新翻译"
-            if result.verdict == QualityVerdict.FAIL
-            else "建议人工审核"
-        )
+        suggestion = "建议重新翻译" if result.verdict == QualityVerdict.FAIL else "建议人工审核"
 
         # 合并issues列表为描述
         details = "; ".join(result.issues) if result.issues else result.reason

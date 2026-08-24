@@ -4,12 +4,13 @@ Test F: TaskManager pause/resume 功能
 Test G: stop_task action 参数
 Test H: Phase 1 infrastructure changes (m3, m4, M2)
 """
+
 from __future__ import annotations
 
 import threading
 import time
-import unittest
 from types import SimpleNamespace
+import unittest
 
 from transbridge.smart_assistant.tools.task_manager import TaskManager
 
@@ -114,11 +115,13 @@ class TestStopTaskActionParameter(unittest.TestCase):
                 pass
 
     def _mock_ctx(self):
-        return SimpleNamespace(collection=None, esp_path=None, config=None,
-                               translation_scope={}, safe_mutate=lambda fn: fn())
+        return SimpleNamespace(
+            collection=None, esp_path=None, config=None, translation_scope={}, safe_mutate=lambda fn: fn()
+        )
 
     def test_g1_stop_task_action_pause(self):
         from transbridge.smart_assistant.tools.tool_translator import _tool_stop_task
+
         tid = self.tm.register()
         self._test_ids.append(tid)
         result = _tool_stop_task({"task_id": tid, "action": "pause"}, self._mock_ctx())
@@ -128,6 +131,7 @@ class TestStopTaskActionParameter(unittest.TestCase):
 
     def test_g2_stop_task_action_resume(self):
         from transbridge.smart_assistant.tools.tool_translator import _tool_stop_task
+
         tid = self.tm.register()
         self._test_ids.append(tid)
         self.tm.pause(tid)
@@ -138,6 +142,7 @@ class TestStopTaskActionParameter(unittest.TestCase):
 
     def test_g3_stop_task_action_stop_default(self):
         from transbridge.smart_assistant.tools.tool_translator import _tool_stop_task
+
         tid = self.tm.register()
         self._test_ids.append(tid)
         result = _tool_stop_task({"task_id": tid}, self._mock_ctx())
@@ -147,6 +152,7 @@ class TestStopTaskActionParameter(unittest.TestCase):
 
     def test_g4_stop_task_invalid_action(self):
         from transbridge.smart_assistant.tools.tool_translator import _tool_stop_task
+
         tid = self.tm.register()
         self._test_ids.append(tid)
         result = _tool_stop_task({"task_id": tid, "action": "invalid"}, self._mock_ctx())
@@ -154,6 +160,7 @@ class TestStopTaskActionParameter(unittest.TestCase):
 
     def test_g5_stop_task_pause_all(self):
         from transbridge.smart_assistant.tools.tool_translator import _tool_stop_task
+
         tid1 = self.tm.register()
         tid2 = self.tm.register()
         self._test_ids.extend([tid1, tid2])
@@ -164,6 +171,7 @@ class TestStopTaskActionParameter(unittest.TestCase):
 
     def test_g6_stop_task_resume_all(self):
         from transbridge.smart_assistant.tools.tool_translator import _tool_stop_task
+
         tid1 = self.tm.register()
         tid2 = self.tm.register()
         self._test_ids.extend([tid1, tid2])
@@ -176,15 +184,17 @@ class TestStopTaskActionParameter(unittest.TestCase):
 
     def test_g7_stop_task_no_active_tasks_empty_state(self):
         from transbridge.smart_assistant.tools.tool_translator import _tool_stop_task
+
         _tool_stop_task({"action": "stop"}, self._mock_ctx())
         result = _tool_stop_task({"action": "pause"}, self._mock_ctx())
         self.assertTrue(result.success)
         self.assertEqual(result.data.get("affected_task_ids"), [])
 
     def test_g8_action_label_helper(self):
+        from transbridge.smart_assistant.tools.task_manager import TaskManager
         from transbridge.smart_assistant.tools.tool_translator import TranslationController
         from transbridge.ui.context import AppContext
-        from transbridge.smart_assistant.tools.task_manager import TaskManager
+
         ctrl = TranslationController(AppContext(), TaskManager())
         self.assertIn("停止", ctrl._action_label("stop"))
         self.assertIn("暂停", ctrl._action_label("pause"))
@@ -221,8 +231,7 @@ class TestTaskManagerPhase1(unittest.TestCase):
         # 修改返回的 progress 不应影响内部 handle
         status["progress"]["current"] = 999
         handle = self.tm.get_handle(tid)
-        self.assertEqual(handle.progress["current"], 5,
-                         "dict() 浅拷贝应对扁平 dict 提供独立副本")
+        self.assertEqual(handle.progress["current"], 5, "dict() 浅拷贝应对扁平 dict 提供独立副本")
 
     def test_h2_get_status_progress_shallow_copy_isolation(self):
         """m3: progress 中嵌套 mutable 值时，浅拷贝共享内层引用（可接受）。
@@ -239,6 +248,18 @@ class TestTaskManagerPhase1(unittest.TestCase):
         self.assertEqual(status["progress"]["current"], 0)
         self.assertEqual(status["progress"]["total"], 100)
         self.assertIsNone(status["progress"]["error"])
+
+    def test_progress_update_notifies_event_listener_without_polling(self):
+        observed = []
+        callback = observed.append
+        self.tm.on_updated(callback)
+        tid = self.tm.register()
+        self._test_ids.append(tid)
+
+        self.tm.update_progress(tid, {"current": 1, "total": 2})
+
+        self.assertEqual(observed, [tid, tid])
+        self.tm.remove_listener(callback)
 
     # ── m4: cleanup_all 锁外 join ─────────────────────────────
 
@@ -300,6 +321,7 @@ class TestTaskManagerPhase1(unittest.TestCase):
 
         # cleanup_all 应该在锁外 join，所以 get_handle 应该可以快速返回
         import time as _time
+
         t0 = _time.time()
         count = self.tm.cleanup_all()
         elapsed = _time.time() - t0

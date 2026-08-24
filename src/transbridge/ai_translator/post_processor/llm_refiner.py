@@ -1,23 +1,38 @@
 """
-LLM修复者与润色者。
+LLM修复者。
 
-使用LLM修复检测出的问题，并对译文进行润色优化。
+使用LLM修复检测出的明确问题。本类只负责针对性修复，不做润色优化——
+润色职责已移交给 LLMPolisher（见 Story 04 / Story 14）。
 """
 
+from collections.abc import Mapping, Set
+from dataclasses import dataclass, field
 import json
+from pathlib import Path
 import re
 import tomllib
-import warnings
-from dataclasses import dataclass, field
-from pathlib import Path
-from string import Template
 from typing import TYPE_CHECKING
+import warnings
+
+from .prompt_contract import (
+    PromptTemplateContractError,
+    build_postprocess_messages,
+    render_prompt_template,
+    validate_prompt_template,
+)
 
 if TYPE_CHECKING:
     from ...converter.translation_entry import TranslationEntry
     from ..llm_client import LLMClient
     from ..term_database import TermDatabaseManager
     from .base import PostProcessIssue
+
+
+# SYSTEM 只允许稳定变量；动态内容不得进入 System。
+_SYSTEM_ALLOWED_VARIABLES = frozenset({"game_name", "source_lang", "target_lang"})
+# 单条 User 允许并必需的动态变量。
+_SINGLE_USER_ALLOWED_VARIABLES = frozenset({"original", "current_translation", "context", "issues", "terms"})
+_SINGLE_USER_REQUIRED_VARIABLES = frozenset({"original", "current_translation", "context", "issues", "terms"})
 
 
 @dataclass
@@ -42,11 +57,11 @@ class RefineResult:
     note: str = ""  # 额外说明
 
 
-# ── 内置默认提示词 ─────────────────────────────────────────────────────────
+# ── 内置默认提示词（只修复，不润色；JSON 示例为合法 JSON）─────────────────
 
-_DEFAULT_SYSTEM = """你是专业的游戏本地化修复专家。
+_DEFAULT_SYSTEM = """你是游戏本地化问题修复专家，负责修复译文中的明确检测问题。
 
-你的任务：修复译文中的具体问题。
+你只修复列出的问题所直接涉及的部分，不做任何主动润色。若未检测到问题，则原样返回当前译文。
 
 修复原则：
 - 必须保留原文的所有占位符（%s, %d, {0}等）
@@ -54,9 +69,9 @@ _DEFAULT_SYSTEM = """你是专业的游戏本地化修复专家。
 - 术语必须使用提供的标准译法
 - 不得改变原文的语义
 - 引号、括号等必须正确闭合
-- 修复要精准，只改需要改的地方
+- 保留译文的原有风格和流畅度
 
-输出格式（必须严格遵循JSON）：
+必须严格按JSON对象格式输出，不要添加任何其他文字：
 {
     "refined_translation": "修复后的译文",
     "fixes_applied": [
@@ -71,12 +86,16 @@ _DEFAULT_SYSTEM = """你是专业的游戏本地化修复专家。
     "note": "额外说明"
 }
 
+输出字段说明（示例只作格式参考，取值按实际情况填写）：
+- refined_translation：修复后的译文；无问题时与当前译文一致
+- fixes_applied：修复明细；没有修复时为空数组
+- confidence：0~1，对修复结果的信心度。confidence > 0.9 表示修复效果很好，confidence < 0.7 建议人工审核
+- needs_arbitration：true 表示修复结果不确定，需要裁决者介入
+- note：额外说明，可为空字符串
+
 注意：
-- confidence > 0.9 表示修复效果很好，confidence < 0.7 建议人工审核
-- needs_arbitration 为 true 表示修复结果不确定，需要裁决者介入
-- 如果没有需要修复的问题，fixes_applied 可以为空，直接返回原文
 - 只修复检测到的问题，不要过度改写
-"""
+- 没有需要修复的问题时，直接返回当前译文，不主动润色"""
 
 _DEFAULT_USER = """【原文】
 $original
@@ -93,41 +112,49 @@ $issues
 【相关术语表】
 $terms
 
-请修复检测到的问题，按指定JSON格式输出。
+只修复检测到的问题，按指定JSON对象格式输出。注意：没有需要修复的问题时，直接返回当前译文，不主动润色。"""
 
-注意：
-- 只修复列出的问题，不要过度改写
-- 如果没有需要修复的问题，直接返回原文
-- 保持译文的原有风格和流畅度"""
+_DEFAULT_BATCH_SYSTEM = """你是游戏本地化问题修复专家，负责批量修复多个检测问题。
 
-_DEFAULT_BATCH_SYSTEM = """你是专业的游戏本地化修复专家。
-
-你的任务：批量修复多个翻译条目中的问题。
+你只修复列出的问题所直接涉及的部分，不做任何主动润色。若某条目未检测到问题，则对应该条目原样返回当前译文。
 
 修复原则：
 - 必须保留原文的所有占位符（%s, %d, {0}等）
 - 必须保留原文的格式标记（<br>, [pagebreak], \n等）
 - 术语必须使用提供的标准译法
 - 不得改变原文的语义
-- 只修复检测到的问题，不要过度改写
+- 保留译文的原有风格和流畅度
 
-输出格式（必须严格遵循JSON数组）：
+必须严格按JSON数组格式输出，不要添加任何其他文字：
 [
     {
         "entry_id": "条目ID",
         "refined_translation": "修复后的译文",
-        "fixes_applied": [...],
+        "fixes_applied": [
+            {
+                "issue_type": "问题类型",
+                "original_problem": "原问题描述",
+                "fix_description": "如何修复的"
+            }
+        ],
         "confidence": 0.85,
         "needs_arbitration": false,
-        "note": ""
-    },
-    ...
+        "note": "额外说明"
+    }
 ]
 
+输出字段说明（示例只作格式参考，取值按实际情况填写）：
+- entry_id：条目ID
+- refined_translation：修复后的译文；无问题时与当前译文一致
+- fixes_applied：修复明细；没有修复时为空数组
+- confidence：0~1，对修复结果的信心度。confidence > 0.9 表示修复效果很好
+- needs_arbitration：true 表示修复结果不确定，需要裁决者介入
+- note：额外说明，可为空字符串
+
 注意：
-- 必须包含所有条目的结果
-- confidence > 0.9 表示修复效果很好
-- needs_arbitration 为 true 表示需要人工审核"""
+- 必须包含所有条目的结果，顺序与输入一致
+- 只修复检测到的问题，不要过度改写
+- 没有需要修复的问题时，直接返回当前译文，不主动润色"""
 
 
 def _get_prompts_dir() -> Path:
@@ -149,15 +176,41 @@ def _load_toml(path: Path) -> dict:
         return {}
 
 
+def _resolve_template(
+    *,
+    name: str,
+    template: str,
+    default: str,
+    allowed_variables: Set[str],
+    required_variables: Set[str],
+) -> str:
+    """校验候选模板契约；违规时记录 warning 并回退到内置默认模板。
+
+    内置默认模板必须通过同一契约（开发错误不再静默回退）。
+    """
+    candidate = template or default
+    try:
+        validate_prompt_template(
+            name=name,
+            template=candidate,
+            allowed_variables=allowed_variables,
+            required_variables=required_variables,
+        )
+        return candidate
+    except PromptTemplateContractError as e:
+        warnings.warn(f"{name} 违反提示词契约，回退到内置默认模板：{e}")
+        return default
+
+
 class LLMRefiner:
     """
     LLM修复者。
 
     职责：
-    1. 根据检测到的问题，使用LLM修复译文
+    1. 根据检测到的问题，使用LLM针对性修复译文
     2. 评估修复质量，标记是否需要人工裁决
 
-    注意：润色功能已移至 LLMPolisher
+    注意：只修复明确问题，不承担润色职责（润色功能已移至 LLMPolisher）。
     """
 
     def __init__(
@@ -181,14 +234,14 @@ class LLMRefiner:
         self._prompts = self._load_prompts(game_profile, target_lang)
 
     def _load_prompts(self, game_profile: str, target_lang: str) -> dict:
-        """从 TOML 文件加载提示词配置。"""
+        """从 TOML 文件加载并校验提示词配置；违规变体回退到内置默认模板。"""
         prompts_dir = _get_prompts_dir()
 
         # 加载游戏和语言配置
         game_data = _load_toml(prompts_dir / "games" / f"{game_profile}.toml")
         lang_data = _load_toml(prompts_dir / "langs" / f"{target_lang}.toml")
 
-        # 加载修复润色专用配置
+        # 加载修复专用配置（不再加载 polish_levels）
         ref_path = prompts_dir / "refinement" / f"{target_lang}.toml"
         ref_data = _load_toml(ref_path)
 
@@ -204,16 +257,46 @@ class LLMRefiner:
 
         ref_cfg = ref_data.get("refinement", {})
 
+        system = _resolve_template(
+            name="refinement.single.system",
+            template=ref_cfg.get("system", ""),
+            default=_DEFAULT_SYSTEM,
+            allowed_variables=_SYSTEM_ALLOWED_VARIABLES,
+            required_variables=set(),
+        )
+        user = _resolve_template(
+            name="refinement.single.user",
+            template=ref_cfg.get("user", ""),
+            default=_DEFAULT_USER,
+            allowed_variables=_SINGLE_USER_ALLOWED_VARIABLES,
+            required_variables=_SINGLE_USER_REQUIRED_VARIABLES,
+        )
+        batch_system = _resolve_template(
+            name="refinement.batch.system",
+            template=ref_cfg.get("batch_system", ""),
+            default=_DEFAULT_BATCH_SYSTEM,
+            allowed_variables=_SYSTEM_ALLOWED_VARIABLES,
+            required_variables=set(),
+        )
+
         return {
             "ctx": ctx,
-            "system": ref_cfg.get("system", _DEFAULT_SYSTEM).strip(),
-            "user": ref_cfg.get("user", _DEFAULT_USER).strip(),
-            "batch_system": ref_cfg.get("batch_system", _DEFAULT_BATCH_SYSTEM).strip(),
+            "system": system.strip(),
+            "user": user.strip(),
+            "batch_system": batch_system.strip(),
         }
 
-    def _render(self, template: str, **extra) -> str:
-        """将 $var 占位符替换为实际值。"""
-        return Template(template).safe_substitute({**self._prompts["ctx"], **extra})
+    def _render_system(self, template: str, name: str) -> str:
+        """严格渲染稳定 System（仅允许 game_name/source_lang/target_lang）。"""
+        return render_prompt_template(
+            name=name,
+            template=template,
+            values=dict(self._prompts["ctx"]),
+        )
+
+    def _render_user(self, template: str, name: str, values: Mapping[str, str]) -> str:
+        """严格渲染动态 User。"""
+        return render_prompt_template(name=name, template=template, values=values)
 
     def refine(
         self,
@@ -221,7 +304,7 @@ class LLMRefiner:
         issues: list["PostProcessIssue"],
     ) -> RefineResult:
         """
-        对单个条目进行修复和润色。
+        对单个条目进行针对性修复。
 
         Args:
             entry: 待修复的翻译条目
@@ -271,7 +354,7 @@ class LLMRefiner:
         try:
             response = self._llm.chat(messages=messages, max_tokens=4000)
             return self._parse_batch_refinement_response(entries, response)
-        except Exception as e:
+        except Exception:
             # 批量失败，降级为逐个处理
             results = {}
             for entry in entries:
@@ -284,27 +367,32 @@ class LLMRefiner:
         entry: "TranslationEntry",
         issues: list["PostProcessIssue"],
     ) -> list[dict]:
-        """构建修复+润色的Prompt。"""
+        """构建针对性修复的Prompt。"""
         # 格式化问题列表
         issues_text = self._format_issues(issues)
 
         # 获取相关术语
         terms_text = self._get_relevant_terms_text(entry)
 
-        # 渲染用户Prompt
-        user_content = self._render(
+        # 渲染稳定 System 与动态 User，并组装 SYSTEM(FINAL) -> USER
+        system_content = self._render_system(self._prompts["system"], "refinement.single.system")
+        user_content = self._render_user(
             self._prompts["user"],
-            original=entry.original or "",
-            current_translation=entry.translation or "",
-            context=entry.context or "未知",
-            issues=issues_text,
-            terms=terms_text,
+            "refinement.single.user",
+            {
+                "original": entry.original or "",
+                "current_translation": entry.translation or "",
+                "context": entry.context or "未知",
+                "issues": issues_text,
+                "terms": terms_text,
+            },
         )
-
-        return [
-            {"role": "system", "content": self._prompts["system"]},
-            {"role": "user", "content": user_content},
-        ]
+        return build_postprocess_messages(
+            stage="refinement",
+            shape="single",
+            rendered_system=system_content,
+            user_content=user_content,
+        )
 
     def _build_batch_refinement_prompt(
         self,
@@ -312,10 +400,10 @@ class LLMRefiner:
         issues_map: dict[str, list["PostProcessIssue"]],
     ) -> list[dict]:
         """构建批量修复的Prompt。"""
-        lines = ["请批量修复和润色以下翻译条目。\n"]
+        lines = ["待修复条目："]
 
         for entry in entries:
-            lines.append(f"\n{'='*60}")
+            lines.append(f"\n{'=' * 60}")
             lines.append(f"【ENTRY_ID: {entry.id}】")
             lines.append(f"原文：{entry.original or ''}")
             lines.append(f"当前译文：{entry.translation or ''}")
@@ -327,7 +415,7 @@ class LLMRefiner:
                 for issue in issues:
                     lines.append(f"  - [{issue.severity}] {issue.issue_type}: {issue.message}")
             else:
-                lines.append("检测到的问题：无（仅需润色）")
+                lines.append("检测到的问题：无（保持不变，无需修复）")
 
             # 获取该条目的相关术语
             terms = self._get_relevant_terms(entry)
@@ -335,18 +423,23 @@ class LLMRefiner:
                 lines.append("相关术语：")
                 for term, trans in terms.items():
                     lines.append(f"  {term} → {trans}")
+            else:
+                lines.append("相关术语：无")
 
-        lines.append(f"\n{'='*60}")
+        lines.append(f"\n{'=' * 60}")
 
-        return [
-            {"role": "system", "content": self._prompts["batch_system"]},
-            {"role": "user", "content": "\n".join(lines)},
-        ]
+        system_content = self._render_system(self._prompts["batch_system"], "refinement.batch.system")
+        return build_postprocess_messages(
+            stage="refinement",
+            shape="batch",
+            rendered_system=system_content,
+            user_content="\n".join(lines),
+        )
 
     def _format_issues(self, issues: list["PostProcessIssue"]) -> str:
         """格式化问题列表为文本。"""
         if not issues:
-            return "无（仅需润色）"
+            return "无（无检测到的问题，返回当前译文即可）"
 
         lines = []
         for issue in issues:
@@ -403,9 +496,7 @@ class LLMRefiner:
             return RefineResult(
                 entry_id=entry.id,
                 original_translation=entry.translation or "",
-                refined_translation=data.get(
-                    "refined_translation", entry.translation or ""
-                ),
+                refined_translation=data.get("refined_translation", entry.translation or ""),
                 fixes_applied=fixes,
                 confidence=data.get("confidence", 0.0),
                 needs_arbitration=data.get("needs_arbitration", False),
@@ -460,9 +551,7 @@ class LLMRefiner:
                 results[entry_id] = RefineResult(
                     entry_id=entry_id,
                     original_translation=entry.translation or "",
-                    refined_translation=item.get(
-                        "refined_translation", entry.translation or ""
-                    ),
+                    refined_translation=item.get("refined_translation", entry.translation or ""),
                     fixes_applied=fixes,
                     confidence=item.get("confidence", 0.0),
                     needs_arbitration=item.get("needs_arbitration", False),

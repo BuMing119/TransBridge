@@ -10,10 +10,10 @@ LLM 客户端抽象层。
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 import logging
 import threading
 import time
-from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 import httpx
@@ -27,6 +27,46 @@ logger = logging.getLogger(__name__)
 _DEFAULT_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
 # SDK 内置重试次数默认值（429/5xx/连接错误自动重试）
 _DEFAULT_MAX_RETRIES = 2
+
+# Provider cache 参数被 Provider 拒绝时，仅去掉缓存参数降级重试一次的信号。
+_PROMPT_CACHE_REJECTION_KEYWORDS = ("prompt_cache", "prompt cache", "cache_control", "cache")
+
+
+def _is_cache_rejection(exc: Exception) -> bool:
+    """判断异常是否为 Provider 拒绝缓存参数（400/422 且信息含缓存关键字）。
+
+    仅用于触发「去掉缓存参数重试一次」的降级；其他错误原样上抛。
+    """
+    status = getattr(exc, "status_code", None)
+    if status not in (400, 422):
+        return False
+    message = getattr(exc, "message", None)
+    text = message if isinstance(message, str) else str(exc)
+    lowered = text.lower()
+    return any(k in lowered for k in _PROMPT_CACHE_REJECTION_KEYWORDS)
+
+
+def _is_system_blocks_unsupported(exc: Exception) -> bool:
+    """判断 Anthropic 异常是否为「老版本 SDK 不支持 system 为 content blocks 列表」。
+
+    老版本 SDK 会在本地（联网前）因 system 为 list 而抛非 HTTP 校验错误；
+    网络/HTTP/状态类错误不算，交给上层原样上抛。
+    """
+    if isinstance(exc, httpx.HTTPError):
+        return False
+    if getattr(exc, "status_code", None) is not None:
+        return False
+    return "system" in str(exc).lower()
+
+
+def _has_anthropic_cache_control(system_blocks: list[dict]) -> bool:
+    return any(isinstance(block, dict) and "cache_control" in block for block in system_blocks)
+
+
+def _anthropic_system_text(system_blocks: list[dict]) -> str:
+    return "\n".join(
+        block.get("text", "") for block in system_blocks if isinstance(block, dict) and block.get("type") == "text"
+    )
 
 
 class LLMClient(ABC):
@@ -72,6 +112,7 @@ class OpenAICompatibleClient(LLMClient):
 
     def _make_client(self):
         from openai import OpenAI
+
         return OpenAI(
             api_key=self._api_key,
             base_url=self._base_url,
@@ -98,14 +139,42 @@ class OpenAICompatibleClient(LLMClient):
             pass
 
     def chat(self, messages: list[dict], max_tokens: int = 0) -> str:
+        from transbridge.infra.prompt_cache import (
+            extract_prompt_cache_directives,
+            prepare_openai_chat_cache_request,
+        )
+
         with self._lock:
             client = self._client
             self._active_requests += 1
-        kwargs: dict = dict(model=self._model, messages=messages)
-        if max_tokens > 0:
-            kwargs["max_tokens"] = max_tokens
         try:
-            resp = client.chat.completions.create(**kwargs)
+            # 普通与流式共用同一转换器，避免缓存参数漂移。
+            req = prepare_openai_chat_cache_request(model=self._model, base_url=self._base_url, messages=messages)
+            kwargs: dict = dict(model=self._model, messages=req["messages"])
+            if req["request_options"]:
+                # request_options 含 prompt_cache_options 等非标准字段，走 extra_body，
+                # 不污染标准参数。
+                kwargs["extra_body"] = req["request_options"]
+            if max_tokens > 0:
+                kwargs["max_tokens"] = max_tokens
+            try:
+                resp = client.chat.completions.create(**kwargs)
+            except Exception as exc:
+                # 缓存参数被 Provider 拒绝（401/400 含 cache 相关错误）时，
+                # 仅去掉缓存参数（干净标准消息）重试一次；第二次失败原样上抛。
+                if _is_cache_rejection(exc):
+                    clean, _ = extract_prompt_cache_directives(messages)
+                    retry_kwargs: dict = dict(model=self._model, messages=clean)
+                    if max_tokens > 0:
+                        retry_kwargs["max_tokens"] = max_tokens
+                    logger.warning(
+                        "OpenAI 缓存参数被拒绝(%s)，降级为无缓存重试: model=%s",
+                        exc,
+                        self._model,
+                    )
+                    resp = client.chat.completions.create(**retry_kwargs)
+                else:
+                    raise
             return resp.choices[0].message.content or ""
         except Exception:
             logger.exception("OpenAI chat() 调用失败: model=%s, messages_count=%d", self._model, len(messages))
@@ -115,20 +184,49 @@ class OpenAICompatibleClient(LLMClient):
                 self._active_requests -= 1
 
     def chat_stream(self, messages: list[dict], max_tokens: int, chunk_callback) -> str:
+        from transbridge.infra.prompt_cache import (
+            extract_prompt_cache_directives,
+            prepare_openai_chat_cache_request,
+        )
+
         with self._lock:
             client = self._client
             self._active_requests += 1
-        kwargs: dict = dict(model=self._model, messages=messages, stream=True)
-        if max_tokens > 0:
-            kwargs["max_tokens"] = max_tokens
-        full_text = ""
         try:
-            with client.chat.completions.create(**kwargs) as stream:
-                for chunk in stream:
-                    delta = chunk.choices[0].delta.content or ""
-                    if delta:
-                        full_text += delta
-                        chunk_callback(delta)
+            # 与 chat() 共用同一转换器。
+            req = prepare_openai_chat_cache_request(model=self._model, base_url=self._base_url, messages=messages)
+            kwargs: dict = dict(model=self._model, messages=req["messages"], stream=True)
+            if req["request_options"]:
+                kwargs["extra_body"] = req["request_options"]
+            if max_tokens > 0:
+                kwargs["max_tokens"] = max_tokens
+            full_text = ""
+            try:
+                with client.chat.completions.create(**kwargs) as stream:
+                    for chunk in stream:
+                        delta = chunk.choices[0].delta.content or ""
+                        if delta:
+                            full_text += delta
+                            chunk_callback(delta)
+            except Exception as exc:
+                if _is_cache_rejection(exc):
+                    clean, _ = extract_prompt_cache_directives(messages)
+                    retry_kwargs: dict = dict(model=self._model, messages=clean, stream=True)
+                    if max_tokens > 0:
+                        retry_kwargs["max_tokens"] = max_tokens
+                    logger.warning(
+                        "OpenAI chat_stream 缓存参数被拒绝(%s)，降级为无缓存重试: model=%s",
+                        exc,
+                        self._model,
+                    )
+                    with client.chat.completions.create(**retry_kwargs) as stream:
+                        for chunk in stream:
+                            delta = chunk.choices[0].delta.content or ""
+                            if delta:
+                                full_text += delta
+                                chunk_callback(delta)
+                else:
+                    raise
         except Exception:
             logger.exception("OpenAI chat_stream() 调用失败: model=%s, messages_count=%d", self._model, len(messages))
             raise
@@ -154,6 +252,7 @@ class AnthropicClient(LLMClient):
 
     def _make_client(self):
         import anthropic
+
         return anthropic.Anthropic(
             api_key=self._api_key,
             http_client=self._http_client,
@@ -179,28 +278,55 @@ class AnthropicClient(LLMClient):
             pass
 
     def chat(self, messages: list[dict], max_tokens: int = 0) -> str:
+        from transbridge.infra.prompt_cache import build_anthropic_system_blocks
+
         with self._lock:
             client = self._client
             self._active_requests += 1
-        # Anthropic 的 max_tokens 为必填，0 时 fallback 到 8192
-        system_content = ""
-        user_messages = []
-        for msg in messages:
-            if msg.get("role") == "system":
-                system_content = msg.get("content", "")
-            else:
-                user_messages.append(msg)
-
-        kwargs: dict = dict(
-            model=self._model,
-            max_tokens=max_tokens if max_tokens > 0 else 8192,
-            messages=user_messages,
-        )
-        if system_content:
-            kwargs["system"] = system_content
-
         try:
-            resp = client.messages.create(**kwargs)
+            # 普通与流式共用同一转换器：把内部指令 system 消息转为
+            # 带 ephemeral cache_control 的 content blocks + user_messages。
+            system_blocks, user_messages = build_anthropic_system_blocks(
+                messages,
+                model=self._model,
+            )
+            kwargs: dict = dict(
+                model=self._model,
+                max_tokens=max_tokens if max_tokens > 0 else 8192,
+                messages=user_messages,
+            )
+            if system_blocks:
+                kwargs["system"] = system_blocks
+            try:
+                resp = client.messages.create(**kwargs)
+            except Exception as exc:
+                if _is_cache_rejection(exc) and _has_anthropic_cache_control(system_blocks):
+                    no_cache_blocks, no_cache_messages = build_anthropic_system_blocks(
+                        messages,
+                        model=self._model,
+                        enable_cache=False,
+                    )
+                    retry_kwargs = {
+                        **kwargs,
+                        "system": no_cache_blocks,
+                        "messages": no_cache_messages,
+                    }
+                    logger.warning(
+                        "Anthropic 缓存参数被拒绝(%s)，降级为无缓存重试: model=%s",
+                        exc,
+                        self._model,
+                    )
+                    resp = client.messages.create(**retry_kwargs)
+                # 老版本 SDK 不支持 system 为 content blocks 列表时，降级为字符串重试一次。
+                elif _is_system_blocks_unsupported(exc) and system_blocks:
+                    kwargs["system"] = _anthropic_system_text(system_blocks)
+                    logger.warning(
+                        "Anthropic 不支持 system content blocks，降级为字符串 system 重试: model=%s",
+                        self._model,
+                    )
+                    resp = client.messages.create(**kwargs)
+                else:
+                    raise
             return resp.content[0].text if resp.content else ""
         except Exception:
             logger.exception("Anthropic chat() 调用失败: model=%s, messages_count=%d", self._model, len(messages))
@@ -210,33 +336,70 @@ class AnthropicClient(LLMClient):
                 self._active_requests -= 1
 
     def chat_stream(self, messages: list[dict], max_tokens: int, chunk_callback) -> str:
+        from transbridge.infra.prompt_cache import build_anthropic_system_blocks
+
         with self._lock:
             client = self._client
             self._active_requests += 1
-        system_content = ""
-        user_messages = []
-        for msg in messages:
-            if msg.get("role") == "system":
-                system_content = msg.get("content", "")
-            else:
-                user_messages.append(msg)
-
-        kwargs: dict = dict(
-            model=self._model,
-            max_tokens=max_tokens if max_tokens > 0 else 8192,
-            messages=user_messages,
-        )
-        if system_content:
-            kwargs["system"] = system_content
-
-        full_text = ""
         try:
-            with client.messages.stream(**kwargs) as stream:
-                for text in stream.text_stream:
-                    full_text += text
-                    chunk_callback(text)
+            # 与 chat() 共用同一转换器。
+            system_blocks, user_messages = build_anthropic_system_blocks(
+                messages,
+                model=self._model,
+            )
+            kwargs: dict = dict(
+                model=self._model,
+                max_tokens=max_tokens if max_tokens > 0 else 8192,
+                messages=user_messages,
+            )
+            if system_blocks:
+                kwargs["system"] = system_blocks
+
+            full_text = ""
+            try:
+                with client.messages.stream(**kwargs) as stream:
+                    for text in stream.text_stream:
+                        full_text += text
+                        chunk_callback(text)
+            except Exception as exc:
+                if _is_cache_rejection(exc) and _has_anthropic_cache_control(system_blocks):
+                    no_cache_blocks, no_cache_messages = build_anthropic_system_blocks(
+                        messages,
+                        model=self._model,
+                        enable_cache=False,
+                    )
+                    retry_kwargs = {
+                        **kwargs,
+                        "system": no_cache_blocks,
+                        "messages": no_cache_messages,
+                    }
+                    logger.warning(
+                        "Anthropic chat_stream 缓存参数被拒绝(%s)，降级为无缓存重试: model=%s",
+                        exc,
+                        self._model,
+                    )
+                    with client.messages.stream(**retry_kwargs) as stream:
+                        for text in stream.text_stream:
+                            full_text += text
+                            chunk_callback(text)
+                elif _is_system_blocks_unsupported(exc) and system_blocks:
+                    kwargs["system"] = _anthropic_system_text(system_blocks)
+                    logger.warning(
+                        "Anthropic chat_stream 不支持 system content blocks，降级为字符串 system 重试: model=%s",
+                        self._model,
+                    )
+                    with client.messages.stream(**kwargs) as stream:
+                        for text in stream.text_stream:
+                            full_text += text
+                            chunk_callback(text)
+                else:
+                    raise
         except Exception:
-            logger.exception("Anthropic chat_stream() 调用失败: model=%s, messages_count=%d", self._model, len(messages))
+            logger.exception(
+                "Anthropic chat_stream() 调用失败: model=%s, messages_count=%d",
+                self._model,
+                len(messages),
+            )
             raise
         finally:
             with self._lock:
@@ -244,7 +407,7 @@ class AnthropicClient(LLMClient):
         return full_text
 
 
-def create_llm_client(config: "LLMConfig") -> LLMClient:
+def create_llm_client(config: LLMConfig) -> LLMClient:
     """工厂函数，按 provider 返回对应实现。"""
     max_retries = getattr(config, "llm_max_retries", _DEFAULT_MAX_RETRIES)
     if config.provider == "anthropic":

@@ -4,14 +4,15 @@
 将回调投递到主线程执行。默认使用直接调用（非 GUI 上下文），UI 层可注入
 Qt 队列调度器以安全地在主线程操作 GUI（符合 ADR-008 后端去 PyQt6 要求）。
 """
+
 from __future__ import annotations
 
-import logging
-import threading
-import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+import logging
+import threading
+import time
 from uuid import uuid4
 
 from transbridge.application.tasks import (
@@ -51,6 +52,7 @@ class _LegacyClock:
 @dataclass
 class TaskHandle:
     """单个任务的运行时句柄。"""
+
     stop_event: threading.Event
     pause_event: threading.Event | None = None  # B5联动: 预留字段，P2真实暂停时实现
     status: str = "running"  # "running" | "completed" | "failed" | "cancelled"
@@ -74,13 +76,13 @@ class TaskManager:
     消除 C++ 元对象系统的栈空间占用。
     """
 
-    _instance: "TaskManager | None" = None
+    _instance: TaskManager | None = None
     _instance_lock: threading.Lock = threading.Lock()
 
     # 主线程调度器：由 UI 层注入（符合 ADR-008 后端去 PyQt6 要求）
     _dispatcher: Callable[[Callable[[], None]], None] = _default_dispatcher
 
-    def __new__(cls) -> "TaskManager":
+    def __new__(cls) -> TaskManager:
         if cls._instance is None:
             with cls._instance_lock:
                 if cls._instance is None:
@@ -95,7 +97,12 @@ class TaskManager:
                     instance._refs = {}
                     instance._owners = {}
                     instance._listener_wrappers = {}
-                    instance._listeners: dict[str, list] = {"completed": [], "failed": [], "finished": []}
+                    instance._listeners: dict[str, list] = {
+                        "completed": [],
+                        "failed": [],
+                        "finished": [],
+                        "updated": [],
+                    }
                     cls._instance = instance
         return cls._instance
 
@@ -123,9 +130,10 @@ class TaskManager:
     # ── 调度器注入 (ADR-008: 消除 PyQt6 耦合) ────────────────
 
     @classmethod
-    def set_main_thread_dispatcher(cls,
-                                   dispatcher: Callable[[Callable[[], None]], None],
-                                   ) -> None:
+    def set_main_thread_dispatcher(
+        cls,
+        dispatcher: Callable[[Callable[[], None]], None],
+    ) -> None:
         """注入主线程调度器。UI 层应在初始化时调用此方法。
 
         调度器签名: dispatcher(fn: Callable[[], None]) -> None
@@ -151,14 +159,25 @@ class TaskManager:
         with self._lock:
             self._listeners["finished"].append(callback)
 
+    def on_updated(self, callback: Callable[[str], None]) -> None:
+        """Register a task snapshot/progress listener.
+
+        Notifications use the same injected dispatcher as terminal events, so
+        GUI consumers can subscribe without polling or touching worker threads.
+        """
+        with self._lock:
+            self._listeners["updated"].append(callback)
+
     def on_completed(self, callback) -> None:
         """[Deprecated] 注册任务完成回调。请使用 on_finished。
 
         callback(task_id, result_dict)
         """
+
         def _wrapper(task_id, success, message, data):
             if success:
                 callback(task_id, data or {})
+
         with self._lock:
             self._listener_wrappers.setdefault(callback, []).append(_wrapper)
         self.on_finished(_wrapper)
@@ -168,9 +187,11 @@ class TaskManager:
 
         callback(task_id, error_message)
         """
+
         def _wrapper(task_id, success, message, data):
             if not success:
                 callback(task_id, message)
+
         with self._lock:
             self._listener_wrappers.setdefault(callback, []).append(_wrapper)
         self.on_finished(_wrapper)
@@ -179,14 +200,24 @@ class TaskManager:
         """移除已注册的回调（从 completed、failed 和 finished 列表中都尝试移除）。"""
         with self._lock:
             callbacks = [callback, *self._listener_wrappers.pop(callback, [])]
-            for key in ("completed", "failed", "finished"):
+            for key in ("completed", "failed", "finished", "updated"):
                 self._listeners[key] = [item for item in self._listeners[key] if item not in callbacks]
+
+    def _notify_updated(self, task_id: str) -> None:
+        with self._lock:
+            listeners = list(self._listeners.get("updated", []))
+        dispatch = TaskManager._dispatcher
+        for callback in listeners:
+            dispatch(lambda c=callback, t=task_id: self._safe_callback(c, t))
 
     # ── 公开 API ──────────────────────────────────────────────
 
-    def register(self, stop_event: threading.Event | None = None,
-                 metadata: dict | None = None,
-                 thread: threading.Thread | None = None) -> str:
+    def register(
+        self,
+        stop_event: threading.Event | None = None,
+        metadata: dict | None = None,
+        thread: threading.Thread | None = None,
+    ) -> str:
         """注册新任务，返回 task_id。默认创建 stop_event 和 pause_event（初始 set）。"""
         task_metadata = dict(metadata or {})
         owner = OwnerRef(
@@ -224,6 +255,7 @@ class TaskManager:
             self._tasks[task_id] = handle
             self._refs[task_id] = ref
             self._owners[task_id] = owner
+        self._notify_updated(task_id)
         return task_id
 
     def cancel(self, task_id: str) -> bool:
@@ -245,6 +277,7 @@ class TaskManager:
         except (TaskAccessError, TransitionError):
             return False
         handle.status = snapshot.state.value
+        self._notify_updated(task_id)
         return snapshot.state is JobState.CANCELLED
 
     def pause(self, task_id: str) -> bool:
@@ -261,12 +294,14 @@ class TaskManager:
             if self._runtime.get(ref, owner).state is JobState.PAUSED:
                 handle.pause_event.clear()
                 handle.status = JobState.PAUSED.value
+                self._notify_updated(task_id)
                 return True
             snapshot = self._runtime.pause(ref, owner)
         except (TaskAccessError, TransitionError):
             return False
         handle.pause_event.clear()
         handle.status = snapshot.state.value
+        self._notify_updated(task_id)
         return snapshot.state is JobState.PAUSED
 
     def resume(self, task_id: str) -> bool:
@@ -283,12 +318,14 @@ class TaskManager:
             if self._runtime.get(ref, owner).state is JobState.RUNNING:
                 handle.pause_event.set()
                 handle.status = JobState.RUNNING.value
+                self._notify_updated(task_id)
                 return True
             snapshot = self._runtime.resume(ref, owner)
         except (TaskAccessError, TransitionError):
             return False
         handle.pause_event.set()
         handle.status = snapshot.state.value
+        self._notify_updated(task_id)
         return snapshot.state is JobState.RUNNING
 
     def get_status(self, task_id: str) -> dict:
@@ -328,16 +365,13 @@ class TaskManager:
             current = self._tasks.get(task_id)
             if current is handle:
                 current.progress = dict(snapshot.progress)
+        self._notify_updated(task_id)
 
     def list_active(self) -> list[str]:
         """列出所有活跃任务 ID（含 running 和 paused 状态）。"""
         with self._lock:
             task_ids = tuple(self._tasks)
-        return [
-            task_id
-            for task_id in task_ids
-            if self.get_status(task_id).get("status") in ("running", "paused")
-        ]
+        return [task_id for task_id in task_ids if self.get_status(task_id).get("status") in ("running", "paused")]
 
     def list_all(self) -> list[str]:
         """列出所有任务 ID（含已完成的）。"""
@@ -371,6 +405,7 @@ class TaskManager:
         except (TaskAccessError, TransitionError):
             return False
         handle.status = snapshot.state.value
+        self._notify_updated(task_id)
         return True
 
     def get_handle(self, task_id: str) -> TaskHandle | None:
@@ -402,8 +437,7 @@ class TaskManager:
 
     # B2: 异步通知方法（线程安全，可在任何线程调用）
 
-    def notify_finished(self, task_id: str, success: bool, message: str = "",
-                        data: dict | None = None) -> None:
+    def notify_finished(self, task_id: str, success: bool, message: str = "", data: dict | None = None) -> None:
         """统一通知任务完成。按 success 分发到对应的回调列表。
 
         通过注入的调度器投递回调到主线程执行。
@@ -427,20 +461,16 @@ class TaskManager:
         # C3-fix: 在锁内快照监听器列表，锁外派发，避免回调执行时持有锁
         with self._lock:
             finished = list(self._listeners.get("finished", []))
-            legacy = list(self._listeners.get(
-                "completed" if success else "failed", []))
+            legacy = list(self._listeners.get("completed" if success else "failed", []))
         dispatch = TaskManager._dispatcher
         for cb in finished:
-            dispatch(lambda c=cb, t=task_id, s=success, m=message, d=data:
-                     self._safe_callback(c, t, s, m, d))
+            dispatch(lambda c=cb, t=task_id, s=success, m=message, d=data: self._safe_callback(c, t, s, m, d))
         if success:
             for cb in legacy:
-                dispatch(lambda c=cb, t=task_id, d=data or {}:
-                         self._safe_callback(c, t, d))
+                dispatch(lambda c=cb, t=task_id, d=data or {}: self._safe_callback(c, t, d))
         else:
             for cb in legacy:
-                dispatch(lambda c=cb, t=task_id, m=message:
-                         self._safe_callback(c, t, m))
+                dispatch(lambda c=cb, t=task_id, m=message: self._safe_callback(c, t, m))
 
     def notify_completed(self, task_id: str, result: dict) -> None:
         """[Deprecated] 通知任务成功完成。请使用 notify_finished。"""
@@ -469,6 +499,7 @@ class TaskManager:
         # O9: 确保线程退出
         if handle._thread is not None and handle._thread.is_alive():
             handle._thread.join(timeout=5)
+        self._notify_updated(task_id)
 
     def cleanup_all(self) -> int:
         """清理所有非活跃任务，返回清理数量。
@@ -497,6 +528,8 @@ class TaskManager:
         for handle in handles_to_clean:
             if handle._thread is not None and handle._thread.is_alive():
                 handle._thread.join(timeout=2)
+        for task_id in inactive:
+            self._notify_updated(task_id)
         return len(inactive)
 
     @classmethod
@@ -515,6 +548,7 @@ class TaskManager:
                 cls._instance._listeners["completed"].clear()
                 cls._instance._listeners["failed"].clear()
                 cls._instance._listeners["finished"].clear()
+                cls._instance._listeners["updated"].clear()
                 cls._instance._listener_wrappers.clear()
                 cls._instance._refs.clear()
                 cls._instance._owners.clear()

@@ -10,6 +10,7 @@ AutoTranslator.translate() 驱动整个翻译流程：
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 import json
@@ -19,7 +20,7 @@ import re
 import secrets
 import threading
 import time
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 from transbridge.application.io.stage_policy import DEFAULT_STAGE_POLICY
 
@@ -47,9 +48,7 @@ def _select_stage_candidates(candidates: list, *, overwrite: bool) -> list:
     return [
         entry
         for entry in selected
-        if DEFAULT_STAGE_POLICY.allows_ai(
-            entry.stage, entry.translation, original=entry.original
-        )
+        if DEFAULT_STAGE_POLICY.allows_ai(entry.stage, entry.translation, original=entry.original)
     ]
 
 
@@ -61,9 +60,7 @@ def _select_post_process_candidates(entries: list, target_entry_ids: list[str] |
         for entry in entries
         if entry.translation
         and (target_set is None or entry.key in target_set)
-        and DEFAULT_STAGE_POLICY.allows_ai(
-            entry.stage, entry.translation, original=entry.original
-        )
+        and DEFAULT_STAGE_POLICY.allows_ai(entry.stage, entry.translation, original=entry.original)
     ]
 
 
@@ -76,9 +73,9 @@ if TYPE_CHECKING:
 
 @dataclass
 class TranslatorConfig:
-    llm_config: "LLMConfig"
+    llm_config: LLMConfig
     esp_path: str
-    overwrite: bool = False    # True = 全部重翻，False = 仅翻未翻译
+    overwrite: bool = False  # True = 全部重翻，False = 仅翻未翻译
 
 
 @dataclass
@@ -88,26 +85,28 @@ class TranslationResult:
     skipped_count: int = 0
     new_dynamic_terms: int = 0
     failed_entries: list[str] = field(default_factory=list)
-    post_process_result: "PostProcessResult | None" = None  # 后处理结果
-    refine_results: dict | None = None     # {entry_id: RefineResult}，后处理修复中间数据
-    polish_results: dict | None = None     # {entry_id: PolishResult}，后处理润色中间数据
-    decisions: dict | None = None          # {entry_id: ArbiterDecision}，后处理裁决中间数据
-    report_path: str | None = None         # 生成的 Excel 报告路径
+    post_process_result: PostProcessResult | None = None  # 后处理结果
+    refine_results: dict | None = None  # {entry_id: RefineResult}，后处理修复中间数据
+    polish_results: dict | None = None  # {entry_id: PolishResult}，后处理润色中间数据
+    decisions: dict | None = None  # {entry_id: ArbiterDecision}，后处理裁决中间数据
+    report_path: str | None = None  # 生成的 Excel 报告路径
 
 
 @dataclass
 class ProgressCheckpoint:
     """批次级断点，持久化到 data/ai_translator/{esp_stem}/{esp_stem}_progress.json。"""
+
     esp_stem: str
     target_entry_ids: list[str] | None
     overwrite: bool
-    completed_fingerprints: list[list[str]]   # 每项为已完成批次的排序 entry id 列表
-    result_so_far: dict                        # success_count / failed_count / new_dynamic_terms
+    completed_fingerprints: list[list[str]]  # 每项为已完成批次的排序 entry id 列表
+    result_so_far: dict  # success_count / failed_count / new_dynamic_terms
     run_id: str = ""
 
     @staticmethod
     def _get_path(esp_path: str) -> str:
         from transbridge.paratranz.config_manager import LLMConfig
+
         stem = Path(esp_path).stem
         ai_dir = LLMConfig.get_ai_translator_dir(stem)
         return os.path.join(ai_dir, f"{stem}_progress.json")
@@ -126,7 +125,7 @@ class ProgressCheckpoint:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
     @classmethod
-    def load(cls, esp_path: str) -> "ProgressCheckpoint | None":
+    def load(cls, esp_path: str) -> ProgressCheckpoint | None:
         path = cls._get_path(esp_path)
         if not os.path.exists(path):
             return None
@@ -165,16 +164,14 @@ class AutoTranslator:
         self._paratranz_client = paratranz_client
         self._project_id = project_id
         self._candidate_checkpoint_port = candidate_checkpoint
-        self._run_id_factory = run_id_factory or (
-            lambda: f"translation-{secrets.token_hex(16)}"
-        )
+        self._run_id_factory = run_id_factory or (lambda: f"translation-{secrets.token_hex(16)}")
         self._candidate_session = None
 
-        from transbridge.infra.llm_client import create_llm_client
+        from transbridge.ai_translator.batch_planner import BatchPlanner
+        from transbridge.ai_translator.noun_extractor import NounExtractor
         from transbridge.ai_translator.prompt_builder import PromptBuilder
         from transbridge.ai_translator.term_database import TermDatabaseManager
-        from transbridge.ai_translator.noun_extractor import NounExtractor
-        from transbridge.ai_translator.batch_planner import BatchPlanner
+        from transbridge.infra.llm_client import create_llm_client
 
         self._llm = create_llm_client(config.llm_config)
         self._builder = PromptBuilder(
@@ -251,7 +248,7 @@ class AutoTranslator:
         if not text:
             return 0
         return max(
-            (len(m.group(0)) for m in re.finditer(r'(.|.{2}|.{3})\1*', text)),
+            (len(m.group(0)) for m in re.finditer(r"(.|.{2}|.{3})\1*", text)),
             default=0,
         )
 
@@ -291,21 +288,24 @@ class AutoTranslator:
         buffer_repeat = AutoTranslator._max_consecutive_repeat(text)
         adaptive_threshold = max(80, max_orig_repeat * 2 + 20)
         if buffer_repeat > adaptive_threshold:
-            for m in re.finditer(r'(.|.{2}|.{3})\1*', text):
+            for m in re.finditer(r"(.|.{2}|.{3})\1*", text):
                 if len(m.group(0)) == buffer_repeat:
                     return True, m.start()
         # 额外兜底：4-10 字符短语的极端重复
         for length, min_count in [(4, 20), (5, 15), (6, 12), (7, 10), (8, 10), (9, 8), (10, 8)]:
-            m = re.search(r'(.{' + str(length) + r'})\1{' + str(min_count - 1) + r',}', text)
+            m = re.search(r"(.{" + str(length) + r"})\1{" + str(min_count - 1) + r",}", text)
             if m:
                 repeat_total = len(m.group(0))
                 if repeat_total > 200 and repeat_total > max_orig_repeat * 1.5 + 20:
                     return True, m.start()
         return False, -1
 
-    def _salvage_from_repetition_buffer(self, buffer: str, expected_keys: set[str], max_orig_repeat: int = 0) -> dict[str, str]:
+    def _salvage_from_repetition_buffer(
+        self, buffer: str, expected_keys: set[str], max_orig_repeat: int = 0
+    ) -> dict[str, str]:
         """当流式输出出现重复时，截断重复部分并尝试修复 JSON， salvaging 已完成的翻译对。"""
         from transbridge.ai_translator.prompt_builder import _extract_partial_json_pairs
+
         text = "".join(buffer) if isinstance(buffer, list) else buffer
         is_abnormal, truncate_pos = self._detect_stream_repetition(text, max_orig_repeat=max_orig_repeat)
         if not is_abnormal:
@@ -315,10 +315,10 @@ class AutoTranslator:
         for m in re.finditer(r'"((?:[^"\\]|\\.)*?)"\s*:\s*"((?:[^"\\]|\\.)*?)"', truncated):
             last_pair_match = m
         if last_pair_match:
-            repaired = truncated[:last_pair_match.end()] + "}"
+            repaired = truncated[: last_pair_match.end()] + "}"
         else:
             brace_idx = truncated.find("{")
-            repaired = truncated[:brace_idx + 1] + "}" if brace_idx != -1 else "{}"
+            repaired = truncated[: brace_idx + 1] + "}" if brace_idx != -1 else "{}"
         try:
             data = json.loads(repaired)
             if isinstance(data, dict):
@@ -328,10 +328,7 @@ class AutoTranslator:
         return _extract_partial_json_pairs(repaired)
 
     @staticmethod
-    def _split_last_batch_to_fill_workers(
-        batches: list["Batch"],
-        max_workers: int
-    ) -> list["Batch"]:
+    def _split_last_batch_to_fill_workers(batches: list[Batch], max_workers: int) -> list[Batch]:
         """拆分最后一批以填满并发。
 
         当批次数 < max_workers 时，将最后一批拆分成多份。
@@ -360,24 +357,26 @@ class AutoTranslator:
             if i == needed - 1:
                 chunk = entries[start:]  # 最后一份包含剩余所有
             else:
-                chunk = entries[start:start + chunk_size]
+                chunk = entries[start : start + chunk_size]
             if chunk:
-                split_batches.append(Batch(
-                    entries=chunk,
-                    batch_type=last_batch.batch_type,
-                    quest_formid=last_batch.quest_formid,
-                ))
+                split_batches.append(
+                    Batch(
+                        entries=chunk,
+                        batch_type=last_batch.batch_type,
+                        quest_formid=last_batch.quest_formid,
+                    )
+                )
 
         return batches[:-1] + split_batches
 
     def translate(
         self,
-        collection: "TranslationEntryCollection",
+        collection: TranslationEntryCollection,
         target_entry_ids: list[str] | None,
         progress_callback: Callable[[int, int, str, int, int, int], None],
         stop_event: threading.Event,
         pause_event: threading.Event | None = None,
-        checkpoint: "ProgressCheckpoint | None" = None,
+        checkpoint: ProgressCheckpoint | None = None,
         log_callback: Callable[[int, str], None] | None = None,
         stream_callback: Callable[[int, str], None] | None = None,
     ) -> TranslationResult:
@@ -441,22 +440,20 @@ class AutoTranslator:
             )
             for entry in candidates
         )
-        spec_fingerprint = canonical_hash(
-            {
-                "run_id": run_id,
-                "config_revision": self._cfg.llm_config.config_revision,
-                "provider": self._cfg.llm_config.provider,
-                "base_url": self._cfg.llm_config.base_url,
-                "model": self._cfg.llm_config.model,
-                "target_lang": self._cfg.llm_config.target_lang,
-                "scope": [entry.entry_key.to_dict() for entry in translation_inputs],
-            }
-        )
+        spec_fingerprint = canonical_hash({
+            "run_id": run_id,
+            "config_revision": self._cfg.llm_config.config_revision,
+            "provider": self._cfg.llm_config.provider,
+            "base_url": self._cfg.llm_config.base_url,
+            "model": self._cfg.llm_config.model,
+            "target_lang": self._cfg.llm_config.target_lang,
+            "scope": [entry.entry_key.to_dict() for entry in translation_inputs],
+        })
         candidate_port = self._candidate_checkpoint_port
         if candidate_port is None:
-            checkpoint_root = Path(
-                self._cfg.llm_config.get_ai_translator_dir(Path(self._cfg.esp_path).stem)
-            ) / "runtime-v2"
+            checkpoint_root = (
+                Path(self._cfg.llm_config.get_ai_translator_dir(Path(self._cfg.esp_path).stem)) / "runtime-v2"
+            )
             candidate_port = FilesystemTranslationCheckpointPort(checkpoint_root)
         self._candidate_session = LegacyTranslationCandidateSession(
             run_id=run_id,
@@ -478,9 +475,9 @@ class AutoTranslator:
 
         # 断点续传：将已完成的词条数加到总计中，避免 current 超过 total
         if checkpoint and checkpoint.run_id:
-            completed_from_checkpoint = checkpoint.result_so_far.get(
-                "success_count", 0
-            ) + checkpoint.result_so_far.get("failed_count", 0)
+            completed_from_checkpoint = checkpoint.result_so_far.get("success_count", 0) + checkpoint.result_so_far.get(
+                "failed_count", 0
+            )
             total_entries += completed_from_checkpoint
 
         if total_batches == 0:
@@ -496,8 +493,12 @@ class AutoTranslator:
                 pct = done_entries * 100 // total_entries if total_entries > 0 else 0
                 full_msg = f"[{pct:3d}%] {done_entries}/{total_entries} | {msg}"
                 progress_callback(
-                    done_entries, total_entries, full_msg,
-                    result.success_count, result.failed_count, result.new_dynamic_terms,
+                    done_entries,
+                    total_entries,
+                    full_msg,
+                    result.success_count,
+                    result.failed_count,
+                    result.new_dynamic_terms,
                 )
 
         def _log(line: str, idx: int = -1):
@@ -528,7 +529,7 @@ class AutoTranslator:
                 )
             cp.save(self._cfg.esp_path)
 
-        def _run_one_batch(batch: "Batch", round_name: str) -> None:
+        def _run_one_batch(batch: Batch, round_name: str) -> None:
             """在线程池中执行单个批次，含暂停/停止检查。"""
             with lock:
                 batch_counter[0] += 1
@@ -565,9 +566,9 @@ class AutoTranslator:
             _per_batch_stream = (lambda chunk: stream_callback(idx, chunk)) if stream_callback else None
 
             # 批次头
-            _blog(f"\n开始翻译：")
+            _blog("\n开始翻译：")
             _blog(f"任务{idx}：{batch.batch_type}")
-            _blog(f"-----------------------")
+            _blog("-----------------------")
 
             t_batch = time.perf_counter()
             _batch_timing: dict = {}
@@ -575,9 +576,22 @@ class AutoTranslator:
                 _success_before = result.success_count
                 _terms_before = result.new_dynamic_terms
 
-            _progress_emit = lambda: _emit(msg)
+            def _progress_emit() -> None:
+                _emit(msg)
+
             try:
-                self._run_batch(batch, collection, result, lock, _batch_log_cb, pause_event, stop_event, _per_batch_stream, _timing_out=_batch_timing, progress_emit=_progress_emit)
+                self._run_batch(
+                    batch,
+                    collection,
+                    result,
+                    lock,
+                    _batch_log_cb,
+                    pause_event,
+                    stop_event,
+                    _per_batch_stream,
+                    _timing_out=_batch_timing,
+                    progress_emit=_progress_emit,
+                )
             except _CancelledByStop:
                 _blog("⏹ 批次已中断（停止）")
                 _save_checkpoint()
@@ -585,7 +599,7 @@ class AutoTranslator:
             except _CancelledByPause:
                 _blog("⏸ 批次已中断（暂停）")
                 if pause_event is not None:
-                    pause_event.wait()   # 阻塞直到用户点击继续
+                    pause_event.wait()  # 阻塞直到用户点击继续
                 if stop_event.is_set():
                     _save_checkpoint()
                     return
@@ -595,7 +609,18 @@ class AutoTranslator:
                 with lock:
                     _success_before = result.success_count
                     _terms_before = result.new_dynamic_terms
-                self._run_batch(batch, collection, result, lock, _batch_log_cb, pause_event, stop_event, _per_batch_stream, _timing_out=_batch_timing, progress_emit=_progress_emit)
+                self._run_batch(
+                    batch,
+                    collection,
+                    result,
+                    lock,
+                    _batch_log_cb,
+                    pause_event,
+                    stop_event,
+                    _per_batch_stream,
+                    _timing_out=_batch_timing,
+                    progress_emit=_progress_emit,
+                )
 
             t_batch_elapsed = time.perf_counter() - t_batch
             with lock:
@@ -603,8 +628,8 @@ class AutoTranslator:
                 _terms_delta = result.new_dynamic_terms - _terms_before
 
             # 批次尾
-            _blog(f"-----------------------")
-            _blog(f"已完成：")
+            _blog("-----------------------")
+            _blog("已完成：")
             _blog(f"术语匹配时长:{_batch_timing.get('t_terms', 0):.2f} s")
             _blog(f"LLM调用时长:{_batch_timing.get('t_llm', 0):.2f} s")
             _blog(f"解析时长：{_batch_timing.get('t_parse', 0):.3f} s")
@@ -628,12 +653,9 @@ class AutoTranslator:
                 _log(f"  最后一批拆分为 {len(batches_to_run) - len(plan.round1) + 1} 份以填满并发")
 
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = [
-                    executor.submit(_run_one_batch, batch, "第一轮")
-                    for batch in batches_to_run
-                ]
+                futures = [executor.submit(_run_one_batch, batch, "第一轮") for batch in batches_to_run]
                 for f in as_completed(futures):
-                    f.result()   # 传播异常
+                    f.result()  # 传播异常
             _log(f"── 第一轮完成: {time.perf_counter() - t_round:.2f}s ──\n")
 
         # ── 第二轮：quest 间并发，quest 内串行 ───────────────────────────────
@@ -641,23 +663,20 @@ class AutoTranslator:
             t_round = time.perf_counter()
             _log(f"\n── 第二轮开始（{len(plan.round2)} 批，对话）──")
 
-            def _run_quest_group(quest_batches: list["Batch"]) -> None:
+            def _run_quest_group(quest_batches: list[Batch]) -> None:
                 for batch in quest_batches:
                     if stop_event.is_set():
                         break
                     _run_one_batch(batch, "第二轮")
 
             # 过滤已完成批次，基于剩余批次决定并发策略
-            pending_round2 = [
-                b for b in plan.round2
-                if frozenset(e.key for e in b.entries) not in completed_fps
-            ]
+            pending_round2 = [b for b in plan.round2 if frozenset(e.key for e in b.entries) not in completed_fps]
 
             if not pending_round2:
-                _log(f"── 第二轮无待处理批次 ──\n")
+                _log("── 第二轮无待处理批次 ──\n")
             else:
                 # 按 quest 分组
-                pending_quest_groups: dict[str, list["Batch"]] = {}
+                pending_quest_groups: dict[str, list[Batch]] = {}
                 for batch in pending_round2:
                     pending_quest_groups.setdefault(batch.quest_formid or "", []).append(batch)
 
@@ -666,25 +685,27 @@ class AutoTranslator:
                     # quest 数不足以填满线程池 → 批次级并发（拆分最后一批）
                     batches_to_run = self._split_last_batch_to_fill_workers(pending_round2, max_workers)
                     strategy = "批次级（含拆分）" if len(batches_to_run) > len(pending_round2) else "批次级"
-                    _log(f"  活跃 quest 数={len(pending_quest_groups)}, max_workers={max_workers}, 未完成任务数={len(pending_round2)}, 并发策略={strategy}")
+                    _log(
+                        f"  活跃 quest 数={len(pending_quest_groups)}, "
+                        f"max_workers={max_workers}, 未完成任务数={len(pending_round2)}, "
+                        f"并发策略={strategy}"
+                    )
 
                     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                        futures = [
-                            executor.submit(_run_one_batch, batch, "第二轮")
-                            for batch in batches_to_run
-                        ]
+                        futures = [executor.submit(_run_one_batch, batch, "第二轮") for batch in batches_to_run]
                         for f in as_completed(futures):
                             f.result()
                 else:
                     # quest 组级并发（quest 内串行，不拆分）
                     quest_groups = plan.round2_by_quest()
-                    _log(f"  活跃 quest 数={len(pending_quest_groups)}, max_workers={max_workers}, 未完成任务数={len(pending_round2)}, 并发策略=quest组级")
+                    _log(
+                        f"  活跃 quest 数={len(pending_quest_groups)}, "
+                        f"max_workers={max_workers}, 未完成任务数={len(pending_round2)}, "
+                        "并发策略=quest组级"
+                    )
 
                     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                        futures = [
-                            executor.submit(_run_quest_group, batches)
-                            for batches in quest_groups.values()
-                        ]
+                        futures = [executor.submit(_run_quest_group, batches) for batches in quest_groups.values()]
                         for f in as_completed(futures):
                             f.result()
                 _log(f"── 第二轮完成: {time.perf_counter() - t_round:.2f}s ──\n")
@@ -700,10 +721,7 @@ class AutoTranslator:
                 _log(f"  最后一批拆分为 {len(batches_to_run) - len(plan.round3) + 1} 份以填满并发")
 
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = [
-                    executor.submit(_run_one_batch, batch, "第三轮")
-                    for batch in batches_to_run
-                ]
+                futures = [executor.submit(_run_one_batch, batch, "第三轮") for batch in batches_to_run]
                 for f in as_completed(futures):
                     f.result()
             _log(f"── 第三轮完成: {time.perf_counter() - t_round:.2f}s ──\n")
@@ -720,9 +738,7 @@ class AutoTranslator:
                 RequestContext(
                     "legacy-auto-translator",
                     run_id=run_id,
-                    permissions=frozenset(
-                        {"entry.translation.write", "entry.stage.write"}
-                    ),
+                    permissions=frozenset({"entry.translation.write", "entry.stage.write"}),
                 ),
                 ImmediateCommitGuard(run_id, active=lambda: not stop_event.is_set()),
             )
@@ -733,13 +749,16 @@ class AutoTranslator:
                 result.success_count = 0
                 result.failed_count += accepted_count
             result.failed_entries.extend(
-                f"{diagnostic.code}: {diagnostic.message}"
-                for diagnostic in commit.diagnostics
+                f"{diagnostic.code}: {diagnostic.message}" for diagnostic in commit.diagnostics
             )
 
         # ── 后处理：质量检查 ─────────────────────────────────────────────────────
-        if not stop_event.is_set() and result.success_count > 0 and getattr(self._cfg.llm_config, 'enable_post_process', True):
-            _log(f"\n── 开始质量检查 ──")
+        if (
+            not stop_event.is_set()
+            and result.success_count > 0
+            and getattr(self._cfg.llm_config, "enable_post_process", True)
+        ):
+            _log("\n── 开始质量检查 ──")
             from transbridge.application.contracts import OperationOutcome, RequestContext
             from transbridge.application.io import StagePolicy
             from transbridge.application.io.publish import ImmediateCommitGuard
@@ -771,9 +790,7 @@ class AutoTranslator:
             # 只对成功翻译的条目进行后处理
             # 收集本次翻译成功的条目
             all_entries = list(collection)
-            entries_to_check = _select_post_process_candidates(
-                all_entries, target_entry_ids
-            )
+            entries_to_check = _select_post_process_candidates(all_entries, target_entry_ids)
 
             if entries_to_check:
                 stages = []
@@ -788,9 +805,7 @@ class AutoTranslator:
                     if phase is not None:
                         stages.append(CheckerStage(phase, checker))
                         stage_names.append(phase)
-                llm_port = OpenAiPostProcessHttpPort(
-                    credential=lambda: self._cfg.llm_config.api_key
-                )
+                llm_port = OpenAiPostProcessHttpPort(credential=lambda: self._cfg.llm_config.api_key)
                 llm_phases = (
                     (pp_config.enable_refinement, PostProcessLlmPhase.REFINE, "refinement"),
                     (pp_config.enable_polish, PostProcessLlmPhase.POLISH, "polish"),
@@ -835,16 +850,10 @@ class AutoTranslator:
                     context=RequestContext(
                         "legacy-auto-translator",
                         run_id=post_run_id,
-                        permissions=frozenset(
-                            {"entry.translation.write", "entry.stage.write"}
-                        ),
+                        permissions=frozenset({"entry.translation.write", "entry.stage.write"}),
                     ),
-                    commit_guard=ImmediateCommitGuard(
-                        post_run_id, active=lambda: not stop_event.is_set()
-                    ),
-                    commit_checkpoint=FilesystemTranslationCheckpointPort(
-                        checkpoint_root / "postprocess-commit"
-                    ),
+                    commit_guard=ImmediateCommitGuard(post_run_id, active=lambda: not stop_event.is_set()),
+                    commit_checkpoint=FilesystemTranslationCheckpointPort(checkpoint_root / "postprocess-commit"),
                     is_cancelled=stop_event.is_set,
                     run_spec_summary={
                         "source": "auto-translator",
@@ -868,10 +877,10 @@ class AutoTranslator:
                             for diagnostic in execution.commit_result.diagnostics
                         )
             else:
-                _log(f"无可检查的条目")
+                _log("无可检查的条目")
 
         elif not stop_event.is_set() and result.success_count > 0:
-            _log(f"\n── 质量检查已跳过（用户设置）──")
+            _log("\n── 质量检查已跳过（用户设置）──")
 
         if not stop_event.is_set():
             # 翻译与后处理均完成，删除翻译断点
@@ -885,8 +894,8 @@ class AutoTranslator:
 
     def _run_batch(
         self,
-        batch: "Batch",
-        collection: "TranslationEntryCollection",
+        batch: Batch,
+        collection: TranslationEntryCollection,
         result: TranslationResult,
         lock: threading.Lock,
         log_callback: Callable[[str], None] | None = None,
@@ -911,17 +920,18 @@ class AutoTranslator:
         # 使用增强版两阶段术语匹配（合并 in-flight 缓存）
         with self._in_flight_lock:
             in_flight_snapshot = dict(self._in_flight_terms)
-        matched_terms = self._term_mgr.match_terms_enhanced(
+        scoped_term_matches = self._term_mgr.match_terms_scoped(
             entries=entries,
-            enable_semantic=getattr(self._cfg.llm_config, 'enable_semantic_match', True),
-            max_terms=getattr(self._cfg.llm_config, 'max_terms_per_batch', 200),
+            enable_semantic=getattr(self._cfg.llm_config, "enable_semantic_match", True),
+            max_terms=getattr(self._cfg.llm_config, "max_terms_per_batch", 200),
             in_flight_terms=in_flight_snapshot,
         )
+        matched_terms = scoped_term_matches.flat_terms
         t_terms = time.perf_counter()
 
         # ── 精确匹配：原文与术语完全相同的条目直接填充，无需发送给 LLM ──────
         exact_orig_to_trans = self._term_mgr.exact_match([e.original for e in entries])
-        direct_fill: dict[str, str] = {}   # entry_id → translation
+        direct_fill: dict[str, str] = {}  # entry_id → translation
         llm_entries = []
         key_map_all = {e.key: e for e in entries}
         for e in entries:
@@ -941,12 +951,18 @@ class AutoTranslator:
 
         if not llm_entries:
             if _timing_out is not None:
-                _timing_out.update({'t_terms': t_terms - t0, 't_llm': 0.0, 't_parse': 0.0})
+                _timing_out.update({"t_terms": t_terms - t0, "t_llm": 0.0, "t_parse": 0.0})
             return len(direct_fill)
 
         # ── LLM 翻译剩余条目 ──────────────────────────────────────────────────
-        messages = self._builder.build_translation_prompt(llm_entries, matched_terms, batch.batch_type)
-        _log(f"  LLM 响应中...")
+        terms_by_llm_entry = {entry.key: scoped_term_matches.terms_by_entry.get(entry.key, {}) for entry in llm_entries}
+        messages = self._builder.build_translation_prompt(
+            llm_entries,
+            matched_terms,
+            batch.batch_type,
+            terms_by_entry=terms_by_llm_entry,
+        )
+        _log("  LLM 响应中...")
         t_llm_elapsed = 0.0
         t_parse_elapsed = 0.0
 
@@ -955,9 +971,9 @@ class AutoTranslator:
             # 先写入术语加载情况
             load_log = self._term_mgr.get_load_log()
             debug_info = (
-                f"\n{'='*60}\n"
+                f"\n{'=' * 60}\n"
                 f"[DEBUG] 术语库加载情况\n"
-                f"{'='*60}\n"
+                f"{'=' * 60}\n"
                 f"ParaTranz client: {self._paratranz_client is not None}\n"
                 f"project_id: {self._project_id}\n"
             )
@@ -967,27 +983,23 @@ class AutoTranslator:
                 else:
                     debug_info += f"  [{source}]: {count} 条\n"
             debug_info += f"合并后术语总数: {len(self._term_mgr._merged_terms)}\n"
-            debug_info += (
-                f"\n{'='*60}\n"
-                f"[DEBUG] 匹配到的术语 ({len(matched_terms)} 个)\n"
-                f"{'='*60}\n"
-            )
+            debug_info += f"\n{'=' * 60}\n[DEBUG] 匹配到的术语 ({len(matched_terms)} 个)\n{'=' * 60}\n"
             for term, trans in matched_terms.items():
                 debug_info += f"  {term} → {trans}\n"
 
             # 再写入提示词
             prompt_header = (
                 f"{debug_info}"
-                f"\n{'='*60}\n"
+                f"\n{'=' * 60}\n"
                 f"[REQUEST TO LLM]\n"
-                f"{'='*60}\n"
+                f"{'=' * 60}\n"
                 f"--- SYSTEM ---\n"
                 f"{messages[0]['content']}\n"
                 f"--- USER ---\n"
                 f"{messages[1]['content']}\n"
-                f"{'='*60}\n"
+                f"{'=' * 60}\n"
                 f"[RESPONSE FROM LLM]\n"
-                f"{'='*60}\n"
+                f"{'=' * 60}\n"
             )
             stream_callback(prompt_header)
 
@@ -1029,14 +1041,19 @@ class AutoTranslator:
         t_llm_start = time.perf_counter()
         try:
             response = self._monitored_chat(
-                messages, self._cfg.llm_config.max_output_tokens, pause_event, stop_event,
+                messages,
+                self._cfg.llm_config.max_output_tokens,
+                pause_event,
+                stop_event,
                 chunk_callback=_chunk_cb,
             )
         except _RepetitionDetected as exc:
             _log(f"⚠ 检测到重复输出（entry: {exc.entry_id or 'unknown'}），尝试截断修复并拆分重试")
             # 尝试从截断的 buffer 中 salvaging 翻译
             if exc.entry_id is None and _stream_buffer:
-                salvaged = self._salvage_from_repetition_buffer(_stream_buffer, expected_keys, max_orig_repeat=max_orig_repeat)
+                salvaged = self._salvage_from_repetition_buffer(
+                    _stream_buffer, expected_keys, max_orig_repeat=max_orig_repeat
+                )
                 for eid, trans in salvaged.items():
                     if eid not in _stream_translations and eid in expected_keys:
                         entry = key_to_entry[eid]
@@ -1056,9 +1073,21 @@ class AutoTranslator:
                     halves = [remaining[:mid], remaining[mid:]]
                     _log(f"  ↩ {len(remaining)} 条拆分重试")
                     from transbridge.ai_translator.batch_planner import Batch as _Batch
+
                     for half in halves:
                         sub = _Batch(entries=half, batch_type=batch.batch_type, quest_formid=batch.quest_formid)
-                        self._run_batch(sub, collection, result, lock, log_callback, pause_event, stop_event, stream_callback, _min_size, progress_emit=progress_emit)
+                        self._run_batch(
+                            sub,
+                            collection,
+                            result,
+                            lock,
+                            log_callback,
+                            pause_event,
+                            stop_event,
+                            stream_callback,
+                            _min_size,
+                            progress_emit=progress_emit,
+                        )
                 else:
                     _log(f"  ⚠ {len(remaining)} 条因重复输出无法翻译（已缩至最小）")
                     with lock:
@@ -1066,7 +1095,11 @@ class AutoTranslator:
                             result.failed_entries.append(f"{e.id}: 模型重复输出")
                         result.failed_count += len(remaining)
             if _timing_out is not None:
-                _timing_out.update({'t_terms': t_terms - t0, 't_llm': time.perf_counter() - t_llm_start, 't_parse': 0.0})
+                _timing_out.update({
+                    "t_terms": t_terms - t0,
+                    "t_llm": time.perf_counter() - t_llm_start,
+                    "t_parse": 0.0,
+                })
             return len(direct_fill) + len(_stream_translations)
         except Exception as exc:
             err_msg = str(exc)
@@ -1078,7 +1111,11 @@ class AutoTranslator:
                     result.failed_entries.append(f"{e.id}: {err_msg}")
                 result.failed_count += len(truly_failed)
             if _timing_out is not None:
-                _timing_out.update({'t_terms': t_terms - t0, 't_llm': time.perf_counter() - t_llm_start, 't_parse': 0.0})
+                _timing_out.update({
+                    "t_terms": t_terms - t0,
+                    "t_llm": time.perf_counter() - t_llm_start,
+                    "t_parse": 0.0,
+                })
             return len(direct_fill)
 
         t_llm_elapsed = time.perf_counter() - t_llm_start
@@ -1111,11 +1148,13 @@ class AutoTranslator:
                 halves = [missing_entries]
                 _log(f"  ↩ {len(missing)} 条未获译文，单独重试")
             from transbridge.ai_translator.batch_planner import Batch as _Batch
+
             # 仅写回兜底阶段的结果（流式阶段已写回）
             success = self._accept_candidates(fallback_translations, collection, result, lock)
             if id_to_translation:
                 auto_term_entries = [
-                    e for e in llm_entries
+                    e
+                    for e in llm_entries
                     if (e.context.split("|")[0] if "|" in (e.context or "") else e.context) in AUTO_TERM_CONTEXTS
                 ]
                 if auto_term_entries:
@@ -1124,9 +1163,20 @@ class AutoTranslator:
                     self._extract_dialogue_terms(llm_entries, id_to_translation, result, lock)
             for half in halves:
                 sub = _Batch(entries=half, batch_type=batch.batch_type, quest_formid=batch.quest_formid)
-                self._run_batch(sub, collection, result, lock, log_callback, pause_event, stop_event, stream_callback, _min_size, progress_emit=progress_emit)
+                self._run_batch(
+                    sub,
+                    collection,
+                    result,
+                    lock,
+                    log_callback,
+                    pause_event,
+                    stop_event,
+                    stream_callback,
+                    _min_size,
+                    progress_emit=progress_emit,
+                )
             if _timing_out is not None:
-                _timing_out.update({'t_terms': t_terms - t0, 't_llm': t_llm_elapsed, 't_parse': t_parse_elapsed})
+                _timing_out.update({"t_terms": t_terms - t0, "t_llm": t_llm_elapsed, "t_parse": t_parse_elapsed})
             return success + len(direct_fill)
 
         if missing:
@@ -1137,7 +1187,8 @@ class AutoTranslator:
 
         # 自动写入动态术语库（仅 context 属于 AUTO_TERM_CONTEXTS 的条目，直接填充的来源已在术语库中）
         auto_term_entries = [
-            e for e in llm_entries
+            e
+            for e in llm_entries
             if (e.context.split("|")[0] if "|" in (e.context or "") else e.context) in AUTO_TERM_CONTEXTS
         ]
         if auto_term_entries:
@@ -1148,13 +1199,13 @@ class AutoTranslator:
             self._extract_dialogue_terms(llm_entries, id_to_translation, result, lock)
 
         if _timing_out is not None:
-            _timing_out.update({'t_terms': t_terms - t0, 't_llm': t_llm_elapsed, 't_parse': t_parse_elapsed})
+            _timing_out.update({"t_terms": t_terms - t0, "t_llm": t_llm_elapsed, "t_parse": t_parse_elapsed})
         return success + len(direct_fill)
 
     def _accept_candidates(
         self,
         id_to_translation: dict[str, str],
-        collection: "TranslationEntryCollection",
+        collection: TranslationEntryCollection,
         result: TranslationResult,
         lock: threading.Lock,
     ) -> int:
@@ -1193,7 +1244,8 @@ class AutoTranslator:
     ) -> None:
         translated_pairs = [
             {"original": e.original, "translation": id_to_translation[e.id]}
-            for e in entries if e.id in id_to_translation
+            for e in entries
+            if e.id in id_to_translation
         ]
         if not translated_pairs:
             return

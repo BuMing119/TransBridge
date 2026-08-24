@@ -562,8 +562,8 @@ def test_real_auto_translator_constructor_buffers_then_commits_once(monkeypatch)
         def get_load_log(self):
             return ()
 
-        def match_terms_enhanced(self, **kwargs):
-            return {}
+        def match_terms_scoped(self, **kwargs):
+            return SimpleNamespace(flat_terms={}, terms_by_entry={})
 
         def exact_match(self, originals):
             return {original: f"exact:{original}" for original in originals}
@@ -629,11 +629,25 @@ def test_stream_candidate_is_only_accepted_after_durable_checkpoint_and_retries(
             callback('{"stream":"streamed"}')
             return '{"stream":"streamed"}'
 
+    captured_prompt_calls: list[dict] = []
+
     class StreamingPrompt:
         def __init__(self, *args, **kwargs) -> None:
             pass
 
-        def build_translation_prompt(self, entries, terms, batch_type):
+        def build_translation_prompt(
+            self,
+            entries,
+            terms,
+            batch_type,
+            *,
+            terms_by_entry=None,
+        ):
+            captured_prompt_calls.append({
+                "entries": {entry.key: entry.original for entry in entries},
+                "terms": dict(terms),
+                "terms_by_entry": {key: dict(value) for key, value in (terms_by_entry or {}).items()},
+            })
             return [{"role": "system", "content": "fixture"}, {"role": "user", "content": "fixture"}]
 
         def extract_partial_pairs(self, value):
@@ -652,8 +666,11 @@ def test_stream_candidate_is_only_accepted_after_durable_checkpoint_and_retries(
         def get_load_log(self):
             return ()
 
-        def match_terms_enhanced(self, **kwargs):
-            return {}
+        def match_terms_scoped(self, **kwargs):
+            return SimpleNamespace(
+                flat_terms={"stream-source": "流式源文"},
+                terms_by_entry={"stream": {"stream-source": "流式源文"}},
+            )
 
         def exact_match(self, originals):
             return {}
@@ -715,6 +732,12 @@ def test_stream_candidate_is_only_accepted_after_durable_checkpoint_and_retries(
     assert second.failed_count == 0
     assert collection.apply_count == 1
     assert collection.get(_key("stream")).translation == "streamed"
+    assert captured_prompt_calls
+    assert captured_prompt_calls[-1] == {
+        "entries": {"stream": "stream-source"},
+        "terms": {"stream-source": "流式源文"},
+        "terms_by_entry": {"stream": {"stream-source": "流式源文"}},
+    }
 
 
 def test_mixed_worker_passes_active_collection_and_source_path_to_auto_translator(
