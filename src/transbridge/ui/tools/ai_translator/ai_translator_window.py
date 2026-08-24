@@ -1,10 +1,3 @@
-"""
-AI 翻译配置窗口。
-
-AITranslatorWindow  — 配置窗口，翻译开始前使用
-进度窗口见 _translation_progress_window.py
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -12,6 +5,8 @@ from typing import TYPE_CHECKING
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QFileDialog, QLineEdit, QMessageBox, QWidget
 
+from transbridge.ui.foundation.adapters import ThemeView
+from transbridge.ui.foundation.components import ComponentStyle, SemanticState
 from transbridge.ui.tools.ai_translator.batch_runtime import TermSourceInspector, open_batch_translation
 from transbridge.ui.tools.ai_translator.config_dialogs import open_term_editor, show_connection_test
 from transbridge.ui.tools.ai_translator.config_presenter import ConfigPresenter
@@ -32,46 +27,18 @@ from transbridge.ui.tools.ai_translator.run_controller import (
     try_begin_run,
 )
 from transbridge.ui.tools.ai_translator.run_spec import preflight_ai_run
-from transbridge.ui.tools.ai_translator.scope_presenter import (
-    ScopePresenter,
-    Step2ScopeAdapter,
-)
+from transbridge.ui.tools.ai_translator.scope_presenter import ScopePresenter, Step2ScopeAdapter
 from transbridge.ui.tools.ai_translator.view_state import TranslatorViewPort
 from transbridge.ui.windowing import show_and_activate
 from transbridge.ui.workbench.filters_presenter import ALL_CATEGORIES, entry_category
+
+from ._theme_support import AiThemeBinding, set_widget_brush
+from ._window_actions import apply_window_theme, open_batch_from_window, preflight_candidates, require_ready
 
 if TYPE_CHECKING:
     from transbridge.application.tasks import TaskRuntime
     from transbridge.ui.context import AppContext
     from transbridge.ui.workbench.step2 import Step2PreviewWidget
-
-
-def _preflight_candidates(window: AITranslatorWindow, mode: str) -> list:
-    if mode == "polish":
-        return [entry for entry in window._build_scope_candidates() if entry.translation]
-    if mode == "mixed":
-        collection = list(window._ctx.collection or ())
-        partition = window._scope_presenter.partition_mixed(window._view_port.rules, collection)
-        return list(partition.translate_entries) + list(partition.polish_entries)
-    return window._build_scope_candidates()
-
-
-def _require_ready(window: AITranslatorWindow, mode: str, cfg: object, entries: list) -> bool:
-    result = preflight_ai_run(mode, cfg, entries, esp_path=window._ctx.esp_path)
-    if result.ready:
-        return True
-    QMessageBox.warning(window, "AI 运行条件未满足", result.reason or "请检查运行配置。")
-    window.update_quick_run()
-    return False
-
-
-def _open_batch_from_window(window: AITranslatorWindow) -> None:
-    progress = type(window).open_for_batch_translation(
-        window._ctx, window._step2, window, task_runtime=window._task_runtime
-    )
-    if progress is not None:
-        window.progress_window_created.emit(progress)
-        window.close()
 
 
 class AITranslatorWindow(QWidget):
@@ -80,13 +47,20 @@ class AITranslatorWindow(QWidget):
     progress_window_created = pyqtSignal(object)
 
     def __init__(
-        self, ctx: AppContext, step2: Step2PreviewWidget, parent=None, *, task_runtime: TaskRuntime | None = None
+        self,
+        ctx: AppContext,
+        step2: Step2PreviewWidget,
+        parent=None,
+        *,
+        task_runtime: TaskRuntime | None = None,
+        theme_view: ThemeView | None = None,
     ):
         super().__init__(parent, Qt.WindowType.Window)
         self._ctx = ctx
         self._step2 = step2
         self._task_runtime = task_runtime
-        self.on_batch_start = lambda: _open_batch_from_window(self)
+        self._theme_view = theme_view
+        self.on_batch_start = lambda: open_batch_from_window(self)
         self._scope_port = Step2ScopeAdapter(step2)
         self._scope_presenter = ScopePresenter(
             collection_provider=lambda: self._ctx.collection,
@@ -96,9 +70,13 @@ class AITranslatorWindow(QWidget):
         )
         self.setWindowTitle("AI 自动翻译")
         self.resize(680, 520)
-        self._view = AITranslatorView(self, self)
+        self._view = AITranslatorView(self, self, theme_view=theme_view)
         self._view_port = TranslatorViewPort(self._view)
-        self._config_presenter = ConfigPresenter(WindowConfigView(self._view, self, lambda: self._ctx.current_project))
+        from transbridge.ui.paratranz.target_context import bound_paratranz_project
+
+        self._config_presenter = ConfigPresenter(
+            WindowConfigView(self._view, self, lambda: bound_paratranz_project(self._ctx))
+        )
         self._config_binding = ConfigAutosaveBinding(
             self._view,
             self,
@@ -108,25 +86,38 @@ class AITranslatorWindow(QWidget):
         self._run_controller = RunController(task_runtime=task_runtime)
         self._quick_run_presenter = AiQuickRunPresenter()
         self._result_presenter = ResultPresenter()
+        self._theme_binding = AiThemeBinding(self, theme_view, lambda binding: apply_window_theme(self, binding))
         self._config_presenter.load()
         self._config_binding.start()
         self.update_quick_run()
 
     @classmethod
     def open_for_translation(
-        cls, ctx: AppContext, step2: Step2PreviewWidget, parent=None, *, task_runtime: TaskRuntime | None = None
+        cls,
+        ctx: AppContext,
+        step2: Step2PreviewWidget,
+        parent=None,
+        *,
+        task_runtime: TaskRuntime | None = None,
+        theme_view: ThemeView | None = None,
     ) -> QWidget | None:
         """直接打开当前翻译内容的 AI 快速运行页。"""
         if not ctx.slots:
             QMessageBox.warning(parent, "AI 翻译", "请先加载插件。")
             return None
-        window = cls(ctx, step2, parent, task_runtime=task_runtime)
+        window = cls(ctx, step2, parent, task_runtime=task_runtime, theme_view=theme_view)
         show_and_activate(window)
         return window
 
     @classmethod
     def open_for_batch_translation(
-        cls, ctx: AppContext, step2: Step2PreviewWidget, parent=None, *, task_runtime: TaskRuntime | None = None
+        cls,
+        ctx: AppContext,
+        step2: Step2PreviewWidget,
+        parent=None,
+        *,
+        task_runtime: TaskRuntime | None = None,
+        theme_view: ThemeView | None = None,
     ) -> QWidget | None:
         """显式打开批量翻译计划；普通 AI intent 不调用此路径。"""
         return open_batch_translation(
@@ -134,6 +125,7 @@ class AITranslatorWindow(QWidget):
             parent,
             Step2ScopeAdapter(step2).locate_entry,
             task_runtime=task_runtime,
+            theme_view=theme_view,
         )
 
     def on_provider_changed(self):
@@ -218,7 +210,7 @@ class AITranslatorWindow(QWidget):
     def update_quick_run(self):
         mode = self._view_port.mode
         cfg = self._config_presenter.build()
-        candidates = _preflight_candidates(self, mode)
+        candidates = preflight_candidates(self, mode)
         preflight = preflight_ai_run(
             mode,
             cfg,
@@ -240,10 +232,20 @@ class AITranslatorWindow(QWidget):
             active_run_id=None if active is None else active.run_id,
         )
         self._view.controls.start_btn.setEnabled(state.enabled)
-        self._view.controls.preflight_label.setText(
-            state.scope_summary if state.enabled else state.enabled_reason or "暂不可运行"
+        preflight_text = state.scope_summary if state.enabled else state.enabled_reason or "暂不可运行"
+        self._view.controls.preflight_label.set_full_text(preflight_text)
+        self._view.controls.preflight_label.setToolTip(preflight_text)
+        self._view.controls.preflight_label.setAccessibleDescription(
+            state.enabled_reason or state.scope_summary or "运行条件已满足"
         )
-        self._view.controls.preflight_label.setToolTip(state.enabled_reason or "运行条件已满足")
+        ComponentStyle.apply_state(
+            self._view.controls.preflight_label,
+            SemanticState.SUCCESS if state.enabled else SemanticState.WARNING,
+        )
+        set_widget_brush(
+            self._view.controls.preflight_label,
+            self._theme_binding.report("success" if state.enabled else "warning"),
+        )
 
     def on_test_connection(self):
         show_connection_test(self, self._config_presenter.test_connection())
@@ -272,10 +274,12 @@ class AITranslatorWindow(QWidget):
         cfg = self._config_presenter.build()
 
         candidates = self._build_scope_candidates()
-        if not _require_ready(self, "translate", cfg, candidates):
+        if not require_ready(self, "translate", cfg, candidates):
             return
 
-        if not self._ctx.current_project and TermSourceInspector.all_empty(cfg, self._ctx.esp_path):
+        from transbridge.ui.paratranz.target_context import bound_paratranz_project
+
+        if not bound_paratranz_project(self._ctx) and TermSourceInspector.all_empty(cfg, self._ctx.esp_path):
             reply = QMessageBox.question(
                 self,
                 "术语库为空",
@@ -315,6 +319,7 @@ class AITranslatorWindow(QWidget):
                 request,
                 progress_created=self.progress_window_created.emit,
                 entry_activated=self._scope_presenter.locate_entry,
+                theme_view=self._theme_view,
             )
         except Exception as exc:
             self._run_controller.create_activity(request).fail(str(exc))
@@ -350,7 +355,7 @@ class AITranslatorWindow(QWidget):
             if entry_id not in seen_entry_ids:
                 seen_entry_ids.add(entry_id)
                 run_entries.append(entry)
-        if not _require_ready(self, "mixed", cfg, run_entries):
+        if not require_ready(self, "mixed", cfg, run_entries):
             return
         cfg = self._config_presenter.save()
         cfg.mixed_execution_order = self._view_port.execution_order
@@ -378,10 +383,12 @@ class AITranslatorWindow(QWidget):
             finished=self._on_mixed_finished,
             error=lambda message: QMessageBox.warning(self, "混合模式错误", message),
             progress_created=self.progress_window_created.emit,
+            theme_view=self._theme_view,
         )
-        self._view.controls.preflight_label.setText(
-            f"已启动：翻译 {len(translate_entries)} 条，润色 {len(polish_entries)} 条"
-        )
+        started_text = f"已启动：翻译 {len(translate_entries)} 条，润色 {len(polish_entries)} 条"
+        self._view.controls.preflight_label.set_full_text(started_text)
+        self._view.controls.preflight_label.setToolTip(started_text)
+        self._view.controls.preflight_label.setAccessibleDescription(started_text)
 
     def _on_mixed_finished(self, result: dict):
         QMessageBox.information(self, "混合模式", self._result_presenter.mixed_summary(result))
@@ -398,7 +405,7 @@ class AITranslatorWindow(QWidget):
         # 按作用域获取有译文的条目
         candidates = self._build_scope_candidates()
         entries_with_translation = [e for e in candidates if e.translation]
-        if not _require_ready(self, "polish", cfg, entries_with_translation):
+        if not require_ready(self, "polish", cfg, entries_with_translation):
             return
         cfg = self._config_presenter.save()
         request = try_begin_run(
@@ -441,6 +448,7 @@ class AITranslatorWindow(QWidget):
             entries_with_translation,
             on_results=on_results,
             preview=preview_enabled,
+            theme_view=self._theme_view,
         )
 
     def _on_polish_preview_ready(self, payload, entries, collection):
@@ -473,28 +481,17 @@ class AITranslatorWindow(QWidget):
         self.close()
 
     def _show_polish_report(self, results, entries, accepted, rejected, failed):
-        from .result_presenter import PolishApplySummary
-        from .result_view import show_polish_report
+        from .result_view import show_window_polish_report
 
-        self._report_dialog = show_polish_report(
-            self._result_presenter,
-            results,
-            entries,
-            PolishApplySummary(accepted, rejected, failed),
-            config=getattr(self, "_active_polish_config", self._config_presenter.build()),
-            esp_path=self._ctx.esp_path,
-            entry_activated=self._scope_presenter.locate_entry,
-            run_spec=getattr(self, "_active_polish_spec", None),
-        )
+        self._report_dialog = show_window_polish_report(self, results, entries, accepted, rejected, failed)
 
     def on_open_history(self):
-        """打开历史报告查看对话框。"""
-        from ._report_history_dialog import _ReportHistoryDialog
+        from .result_view import open_report_history
 
-        dialog = _ReportHistoryDialog(parent=self)
-        show_and_activate(dialog)
+        open_report_history(self, self._theme_view)
 
     def closeEvent(self, event):
         self._config_binding.close()
         self._run_controller.close()
+        self._theme_binding.close()
         super().closeEvent(event)

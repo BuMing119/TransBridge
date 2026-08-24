@@ -9,28 +9,25 @@ class OperationCoordinator:
 
     def update_operation_menu_state(self):
         has_collection = self._host.context.collection is not None
-        project = self._host.context.current_project
-        has_project = project is not None
-
-        mine_ids = self._host.context.mine_project_ids
-        is_member = not bool(mine_ids) or (has_project and project.get("id") in mine_ids)
 
         menu = self._host.operation_menu
-        menu.upload.setEnabled(has_collection and has_project and is_member)
-        menu.download.setEnabled(has_collection and has_project and is_member)
+        # Keep visible sync commands discoverable and hoverable. The canonical
+        # intent router blocks unavailable operations and explains what is missing.
+        menu.upload.setEnabled(True)
+        menu.download.setEnabled(True)
         menu.write.setEnabled(has_collection)
 
         slots = self._host.context.slots
         multi = len(slots) > 1
         menu.batch_upload.setVisible(multi)
-        menu.batch_upload.setEnabled(has_project and is_member)
+        menu.batch_upload.setEnabled(True)
         menu.batch_download.setVisible(multi)
-        menu.batch_download.setEnabled(has_project and is_member)
+        menu.batch_download.setEnabled(True)
         menu.batch_write.setVisible(multi)
         menu.batch_write.setEnabled(True)
 
     def upload(self):
-        if not self._host.context.collection or not self._host.context.current_project:
+        if not self._host.context.collection:
             return
         facade = getattr(self._host, "operation_plan_facade", None)
         if self._supports(facade, "upload"):
@@ -46,7 +43,7 @@ class OperationCoordinator:
         self._host.upload_card.batch_upload()
 
     def download(self):
-        if not self._host.context.collection or not self._host.context.current_project:
+        if not self._host.context.collection:
             return
         facade = getattr(self._host, "operation_plan_facade", None)
         if self._supports(facade, "download"):

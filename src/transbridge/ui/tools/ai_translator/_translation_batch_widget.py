@@ -7,6 +7,8 @@ from collections import deque
 from PyQt6.QtGui import QFont, QTextCursor
 from PyQt6.QtWidgets import QFrame, QLabel, QTextEdit, QVBoxLayout
 
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState
+
 
 class _BatchWidget(QFrame):
     """Single-batch log that collapses to a summary after completion."""
@@ -25,7 +27,11 @@ class _BatchWidget(QFrame):
         layout.setContentsMargins(6, 4, 6, 4)
         layout.setSpacing(2)
         self._header_label = QLabel(self._title)
-        self._header_label.setStyleSheet("font-weight: bold; font-size: 11px;")
+        header_font = self._header_label.font()
+        header_font.setBold(True)
+        header_font.setPointSize(9)
+        self._header_label.setFont(header_font)
+        self._header_label.setAccessibleName("AI 翻译批次状态")
         layout.addWidget(self._header_label)
         self._text = QTextEdit()
         self._text.setReadOnly(True)
@@ -33,7 +39,7 @@ class _BatchWidget(QFrame):
         self._text.setFixedHeight(160)
         layout.addWidget(self._text)
         self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setStyleSheet("QFrame { border: 1px solid #ddd; border-radius: 4px; margin: 2px; }")
+        ComponentStyle.apply_static(self, ComponentKind.CARD)
 
     def append_line(self, line: str) -> None:
         stripped = line.strip()
@@ -104,18 +110,14 @@ class _BatchWidget(QFrame):
         if parts:
             summary += " — " + " | ".join(parts)
         self._header_label.setText(summary)
+        self._header_label.setAccessibleDescription("批次已完成")
         self._text.hide()
-        self.setStyleSheet(
-            "QFrame { border: 1px solid #bdbdbd; border-radius: 4px; "
-            "margin: 2px; background: #f5f5f5; }"
-            "QLabel { color: #424242; }"
-        )
+        ComponentStyle.apply_state(self, SemanticState.SUCCESS)
 
     def force_collapse(self):
         if self._phase != "done":
             self._header_label.setText(f"⚠ {self._title}（未完成）")
+            self._header_label.setAccessibleDescription("批次未完成")
             self._text.hide()
             self._phase = "done"
-            self.setStyleSheet(
-                "QFrame { border: 1px solid #ffe082; border-radius: 4px; margin: 2px; background: #fffde7; }"
-            )
+            ComponentStyle.apply_state(self, SemanticState.WARNING)

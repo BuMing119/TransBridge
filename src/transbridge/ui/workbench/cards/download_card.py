@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 )
 
 from transbridge.paratranz.workflow.downloader import ParaTranzDownloader
+from transbridge.ui.foundation.adapters import ThemeView
 
 from ...workers import ApiWorker
 from .base import OpCard
@@ -49,7 +50,7 @@ class _SlotSelectDialog(QDialog):
         layout = QVBoxLayout(self)
 
         hint = QLabel("选择要操作的插件：")
-        hint.setStyleSheet("color: #555;")
+        hint.setAccessibleName("下载选择说明")
         layout.addWidget(hint)
 
         # 全选/全不选 按钮
@@ -65,7 +66,6 @@ class _SlotSelectDialog(QDialog):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { border: 1px solid #ddd; border-radius: 3px; }")
 
         container = QWidget()
         container_layout = QVBoxLayout(container)
@@ -88,7 +88,7 @@ class _SlotSelectDialog(QDialog):
 
         # 状态标签
         self._status_label = QLabel(f"已选 {len(slots)} 个插件")
-        self._status_label.setStyleSheet("color: #666; font-size: 12px;")
+        self._status_label.setAccessibleName("下载文件选择状态")
         layout.addWidget(self._status_label)
 
         # 按钮
@@ -145,7 +145,6 @@ class _BatchResultDialog(QDialog):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { border: 1px solid #ddd; border-radius: 3px; }")
 
         container = QWidget()
         container_layout = QVBoxLayout(container)
@@ -154,7 +153,6 @@ class _BatchResultDialog(QDialog):
 
         for item in items:
             lbl = QLabel(item)
-            lbl.setStyleSheet("color: #333;")
             container_layout.addWidget(lbl)
         container_layout.addStretch()
 
@@ -163,7 +161,7 @@ class _BatchResultDialog(QDialog):
 
         # 提示信息
         footer = QLabel(f"共 {len(items)} 个项目")
-        footer.setStyleSheet("color: #666; font-size: 12px;")
+        footer.setAccessibleName("批量下载确认汇总")
         layout.addWidget(footer)
 
         # 按钮
@@ -194,7 +192,6 @@ class _BatchConfirmDialog(QDialog):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { border: 1px solid #ddd; border-radius: 3px; }")
 
         container = QWidget()
         container_layout = QVBoxLayout(container)
@@ -203,7 +200,6 @@ class _BatchConfirmDialog(QDialog):
 
         for item in items:
             lbl = QLabel(item)
-            lbl.setStyleSheet("color: #333;")
             container_layout.addWidget(lbl)
         container_layout.addStretch()
 
@@ -212,7 +208,7 @@ class _BatchConfirmDialog(QDialog):
 
         # 提示信息
         footer = QLabel(f"共 {len(items)} 个项目")
-        footer.setStyleSheet("color: #666; font-size: 12px;")
+        footer.setAccessibleName("批量下载结果汇总")
         layout.addWidget(footer)
 
         # 按钮
@@ -358,12 +354,13 @@ class _FileSelectDialog(QDialog):
 
 
 class DownloadCard(OpCard):
-    def __init__(self, ctx, run_worker, parent=None):
+    def __init__(self, ctx, run_worker, parent=None, *, theme_view: ThemeView | None = None):
         super().__init__(
             "从 ParaTranz 下载合并",
             "从当前已选项目拉取译文，按 key 合并到本地集合（stage >= 1 的词条）。",
             "下载合并",
             parent,
+            theme_view=theme_view,
         )
         self._ctx = ctx
         self._presenter = OperationCardPresenter(ctx)
@@ -383,9 +380,11 @@ class DownloadCard(OpCard):
         if len(slots) <= 1:
             return
 
-        project = self._ctx.current_project
+        from transbridge.ui.paratranz.target_context import bound_paratranz_project
+
+        project = bound_paratranz_project(self._ctx)
         if not project:
-            QMessageBox.warning(self, "未选择项目", "请先在 ParaTranz 管理面板中选择目标项目。")
+            QMessageBox.warning(self, "未绑定项目", "请先为当前本地工程选择 ParaTranz 同步目标。")
             return
 
         # 弹出插件选择对话框
@@ -518,7 +517,9 @@ class DownloadCard(OpCard):
         if self._dispatch_planned("download", self._ctx):
             return
         collection = self._ctx.collection
-        project = self._ctx.current_project
+        from transbridge.ui.paratranz.target_context import bound_paratranz_project
+
+        project = bound_paratranz_project(self._ctx)
         if not collection or not project:
             return
         project_id = project.get("id")

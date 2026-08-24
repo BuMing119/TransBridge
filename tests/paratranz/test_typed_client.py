@@ -23,6 +23,7 @@ from transbridge.paratranz.api.paratranz_export_api import ParatranzExportAPI
 from transbridge.paratranz.api.paratranz_files_api import ParatranzFilesAPI
 from transbridge.paratranz.paratranz_client import ParatranzClient, RetryPolicy
 from transbridge.paratranz.service import ParaTranzService
+from transbridge.paratranz.project_catalog import ParaTranzCatalogKey, ParaTranzProjectCatalog
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -292,6 +293,32 @@ def test_service_maps_tool_operations_to_real_endpoint_methods() -> None:
     created = service.upsert_entry(11, entry)
     assert created.remote_id == 8
     strings.create_string.assert_called_once_with(11, entry.to_remote_payload(), cancellation=None)
+
+
+def test_project_catalog_reads_all_pages_and_isolates_cache_by_configuration() -> None:
+    projects = MagicMock()
+    strings = MagicMock()
+    history = MagicMock()
+    exports = MagicMock()
+    first_page = [{"id": index + 1, "name": f"Project {index + 1}"} for index in range(200)]
+    projects.list_projects.side_effect = [first_page, [{"id": 201, "name": "Project 201"}], [{"id": 9, "name": "Other"}]]
+    service = ParaTranzService(projects, strings, history, exports)
+    times = iter((10.0, 10.1, 10.2, 10.3, 10.4))
+    catalog = ParaTranzProjectCatalog(ttl_seconds=30, clock=lambda: next(times))
+    first_key = ParaTranzCatalogKey("https://paratranz.cn/api", 7, 1)
+    second_key = ParaTranzCatalogKey("https://example.test", 8, 2)
+
+    first = catalog.list_my_projects(service, first_key)
+    cached = catalog.list_my_projects(service, first_key)
+    second = catalog.list_my_projects(service, second_key)
+
+    assert len(first.projects) == 201
+    assert cached is first
+    assert [item.project_id for item in second.projects] == [9]
+    assert projects.list_projects.call_count == 3
+    assert projects.list_projects.call_args_list[0].kwargs["page"] == 1
+    assert projects.list_projects.call_args_list[1].kwargs["page"] == 2
+    assert all(call.kwargs["uid"] == "my" for call in projects.list_projects.call_args_list)
 
 
 def test_binary_download_uses_typed_retry_and_cancellation_boundary(tmp_path) -> None:

@@ -91,8 +91,18 @@ class OperationPlanPresenter:
     def preflight(self, session_id: str, *, owner_id: str) -> OperationPreflightResult:
         with self._lock:
             session = self._resolve(session_id, owner_id)
-            result = session.mapper.preflight(session.draft)
-            if result.kind is not session.mapper.kind or result.request_digest != session.plan.request_digest:
+            revision = session.revision
+            mapper = session.mapper
+            draft = session.draft
+            request_digest = session.plan.request_digest
+        # Remote preflight may block; never retain the presenter lock while it
+        # calls the feature boundary.  Edit/cancel can invalidate this result.
+        result = mapper.preflight(draft)
+        with self._lock:
+            session = self._resolve(session_id, owner_id)
+            if session.revision != revision or session.draft is not draft:
+                raise OperationPlanError("PREFLIGHT_STALE", "operation plan changed while preflight was running")
+            if result.kind is not mapper.kind or result.request_digest != request_digest:
                 raise OperationPlanError("PREFLIGHT_IDENTITY_MISMATCH", "preflight does not match the edited plan")
             token = None
             if result.ready:
@@ -119,10 +129,15 @@ class OperationPlanPresenter:
             )
             if not decision.allowed:
                 raise OperationPlanError(decision.code, decision.reason)
-            # Remove before invoking the feature submitter: duplicate UI events
-            # cannot create a second network/file task even if submit raises.
+            kind = session.mapper.kind
+            draft = session.draft
+        # The one-shot token is consumed before this call, so duplicate UI
+        # events cannot submit twice. Keep the session if submission fails so
+        # the user can return, edit, and run a fresh preflight.
+        result = self._submitter.submit(kind, draft, preflight, owner_id)
+        with self._lock:
             self._sessions.pop(session_id, None)
-        return self._submitter.submit(session.mapper.kind, session.draft, preflight, owner_id)
+        return result
 
     def cancel(self, session_id: str, *, owner_id: str) -> None:
         """Discard UI state only; it deliberately invokes no feature port."""

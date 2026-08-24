@@ -34,6 +34,7 @@ class AppContext(QObject):
     project_list_changed = pyqtSignal()  # 请求刷新项目列表（ParaTranz）
     workspace_changed = pyqtSignal()  # 持久化项目列表变动
     project_changed = pyqtSignal()  # 翻译项目/Variant 目录投影变动
+    paratranz_binding_changed = pyqtSignal(object)  # 当前本地工程的 ParaTranz 绑定投影
     variant_changed = pyqtSignal(str)  # 旧模式为名称，V2 模式为稳定 Variant ID
     dirty_changed = pyqtSignal()  # 版本数据被修改（触发自动保存防抖）
     # Story 03: ViewModel 扩展
@@ -46,6 +47,7 @@ class AppContext(QObject):
         *,
         project_projection: ProjectionStore | None = None,
         project_commands=None,
+        project_remote_bindings=None,
         runtime_context=None,
     ):
         super().__init__(parent)
@@ -79,15 +81,18 @@ class AppContext(QObject):
         self.paratranz_project_id: int | None = None  # Story 15: 当前选中的 ParaTranz 项目 ID（会话内有效）
         self._project_projection = project_projection
         self._project_commands = project_commands
+        self._project_remote_bindings = project_remote_bindings
         self._runtime_context = runtime_context
         self._projection_subscription: ProjectionSubscription | None = None
         self._projection_dirty = False
         self._projection_revision: int | None = None
+        self._project_revision: int | None = None
         self._active_project_id: str | None = None
         self._project_name: str | None = None
         self._project_sources: tuple[dict[str, object], ...] = ()
         self._project_variants: tuple[dict[str, object], ...] = ()
         self._active_variant_id: str | None = None
+        self._paratranz_binding: dict[str, object] | None = None
 
         if self._project_projection is not None:
             self._projection_subscription = self._project_projection.subscribe(self._on_project_projection)
@@ -427,6 +432,55 @@ class AppContext(QObject):
         return self._active_project_id
 
     @property
+    def project_revision(self) -> int | None:
+        return self._project_revision
+
+    @property
+    def paratranz_binding(self) -> dict[str, object] | None:
+        return None if self._paratranz_binding is None else dict(self._paratranz_binding)
+
+    def resolve_paratranz_target(
+        self,
+        *,
+        explicit_project_id: int | None = None,
+        explicit_project_name: str = "",
+        explicit_verified: bool = False,
+    ):
+        from transbridge.application.projects import ParaTranzTargetResolver
+
+        user_id = None
+        if self._current_user is not None:
+            user_id = self._current_user.get("id")
+        if user_id is None:
+            user_id = getattr(self._config, "user_id", None)
+        return ParaTranzTargetResolver().resolve(
+            binding=self._paratranz_binding,
+            binding_revision=self._project_revision,
+            explicit_project_id=explicit_project_id,
+            explicit_project_name=explicit_project_name,
+            endpoint=str(getattr(self._config, "base_url", "")),
+            account_user_id=user_id,
+            explicit_verified=explicit_verified,
+        )
+
+    def set_paratranz_binding(self, binding):
+        if self._project_remote_bindings is None or self._runtime_context is None:
+            raise RuntimeError("authoritative Project remote binding adapter is unavailable")
+        return self._project_remote_bindings.set_paratranz_binding(
+            binding,
+            self._runtime_context,
+            expected_project_revision=self._project_revision,
+        )
+
+    def clear_paratranz_binding(self):
+        if self._project_remote_bindings is None or self._runtime_context is None:
+            raise RuntimeError("authoritative Project remote binding adapter is unavailable")
+        return self._project_remote_bindings.clear_paratranz_binding(
+            self._runtime_context,
+            expected_project_revision=self._project_revision,
+        )
+
+    @property
     def project_name(self) -> str | None:
         if self._project_projection is not None:
             return self._project_name
@@ -504,14 +558,17 @@ class AppContext(QObject):
             self._project_variants,
         )
         old_variant = self._active_variant_id
+        old_binding = self._paratranz_binding
         if snapshot is None:
             self._projection_dirty = False
             self._projection_revision = None
+            self._project_revision = None
             self._active_project_id = None
             self._project_name = None
             self._project_sources = ()
             self._project_variants = ()
             self._active_variant_id = None
+            self._paratranz_binding = None
             self._label_library = {}
             self._entry_labels = {}
         else:
@@ -519,6 +576,8 @@ class AppContext(QObject):
             self._projection_dirty = snapshot.dirty
             self._projection_revision = snapshot.revision
             project_id = values.get("project_id")
+            project_revision = values.get("project_revision")
+            self._project_revision = None if project_revision is None else int(project_revision)
             self._active_project_id = None if project_id is None else str(project_id)
             project_name = values.get("project_name")
             self._project_name = None if project_name is None else str(project_name)
@@ -526,6 +585,8 @@ class AppContext(QObject):
             self._project_variants = tuple(dict(value) for value in values.get("variants", ()))
             variant_id = values.get("variant_id") or values.get("active_variant_id")
             self._active_variant_id = None if variant_id is None else str(variant_id)
+            binding = values.get("paratranz_binding")
+            self._paratranz_binding = None if not isinstance(binding, dict) else dict(binding)
             library = values.get("label_library") or {}
             self._label_library = {str(key): dict(value) for key, value in library.items()}
             labels: dict[str, set[str]] = {}
@@ -551,6 +612,13 @@ class AppContext(QObject):
             self.project_changed.emit()
         if old_variant != self._active_variant_id and self._active_variant_id is not None:
             self.variant_changed.emit(self._active_variant_id)
+        if old_binding != self._paratranz_binding:
+            # One-way compatibility projection during migration.  New target
+            # resolution never reads this session field as an authority.
+            self.paratranz_project_id = (
+                None if self._paratranz_binding is None else int(self._paratranz_binding["project_id"])
+            )
+            self.paratranz_binding_changed.emit(self.paratranz_binding)
 
     # ── C10: 跨线程安全状态变更 ─────────────────────────────────
 

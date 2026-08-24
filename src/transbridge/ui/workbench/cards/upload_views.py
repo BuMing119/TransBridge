@@ -47,7 +47,6 @@ class BatchConfirmDialog(QDialog):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { border: 1px solid #ddd; border-radius: 3px; }")
 
         container = QWidget()
         container_layout = QVBoxLayout(container)
@@ -56,7 +55,6 @@ class BatchConfirmDialog(QDialog):
 
         for item in items:
             lbl = QLabel(item)
-            lbl.setStyleSheet("color: #333;")
             container_layout.addWidget(lbl)
         container_layout.addStretch()
 
@@ -65,7 +63,7 @@ class BatchConfirmDialog(QDialog):
 
         # 提示信息
         footer = QLabel(f"共 {len(items)} 个项目")
-        footer.setStyleSheet("color: #666; font-size: 12px;")
+        footer.setAccessibleName("批量上传确认汇总")
         layout.addWidget(footer)
 
         # 按钮
@@ -94,7 +92,7 @@ class SlotSelectDialog(QDialog):
         layout = QVBoxLayout(self)
 
         hint = QLabel("选择要操作的插件：")
-        hint.setStyleSheet("color: #555;")
+        hint.setAccessibleName("上传选择说明")
         layout.addWidget(hint)
 
         # 全选/全不选 按钮
@@ -110,7 +108,6 @@ class SlotSelectDialog(QDialog):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { border: 1px solid #ddd; border-radius: 3px; }")
 
         container = QWidget()
         container_layout = QVBoxLayout(container)
@@ -133,7 +130,7 @@ class SlotSelectDialog(QDialog):
 
         # 状态标签
         self._status_label = QLabel(f"已选 {len(slots)} 个插件")
-        self._status_label.setStyleSheet("color: #666; font-size: 12px;")
+        self._status_label.setAccessibleName("上传选择状态")
         layout.addWidget(self._status_label)
 
         # 按钮
@@ -190,7 +187,6 @@ class BatchResultDialog(QDialog):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { border: 1px solid #ddd; border-radius: 3px; }")
 
         container = QWidget()
         container_layout = QVBoxLayout(container)
@@ -199,7 +195,6 @@ class BatchResultDialog(QDialog):
 
         for item in items:
             lbl = QLabel(item)
-            lbl.setStyleSheet("color: #333;")
             container_layout.addWidget(lbl)
         container_layout.addStretch()
 
@@ -208,7 +203,7 @@ class BatchResultDialog(QDialog):
 
         # 提示信息
         footer = QLabel(f"共 {len(items)} 个项目")
-        footer.setStyleSheet("color: #666; font-size: 12px;")
+        footer.setAccessibleName("批量上传结果汇总")
         layout.addWidget(footer)
 
         # 按钮
@@ -241,7 +236,6 @@ class ConflictResolveDialog(QDialog):
 
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #ccc;")
         layout.addWidget(sep)
 
         # 滚动区域
@@ -308,14 +302,14 @@ class UploadModeDialog(QDialog):
         self._rb_cat = QRadioButton("分类上传（推荐）")
         self._rb_cat.setChecked(True)
         cat_desc = QLabel("按词条类型拆分为多个文件分别上传。")
-        cat_desc.setStyleSheet("color: #555; margin-left: 20px;")
+        cat_desc.setStyleSheet("margin-left: 20px;")
 
         self._chk_backup = QCheckBox("同时导出本地备份")
         self._chk_backup.setStyleSheet("margin-left: 20px;")
 
         self._rb_plain = QRadioButton("普通上传")
         plain_desc = QLabel("全部词条合并为单个 JSON 文件上传。")
-        plain_desc.setStyleSheet("color: #555; margin-left: 20px;")
+        plain_desc.setStyleSheet("margin-left: 20px;")
 
         fn_row = QHBoxLayout()
         fn_label = QLabel("文件名：")
@@ -338,11 +332,10 @@ class UploadModeDialog(QDialog):
         # ── 已存在文件处理方式 ──────────────────────────────────
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #ccc;")
         layout.addWidget(sep)
 
         section_label = QLabel("已存在文件处理方式（仅对 ParaTranz 中已有同名文件时生效）：")
-        section_label.setStyleSheet("color: #555; font-size: 12px;")
+        section_label.setAccessibleName("上传目标分组")
         layout.addWidget(section_label)
 
         # 主选项组
@@ -438,18 +431,17 @@ class BatchUploadModeDialog(QDialog):
 
         # 说明文字
         hint = QLabel("每个插件将作为单个 JSON 文件上传（不分类）。")
-        hint.setStyleSheet("color: #555;")
+        hint.setAccessibleName("上传模式说明")
         layout.addWidget(hint)
 
         # 分隔线
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #ccc;")
         layout.addWidget(sep)
 
         # 已存在文件处理方式
         section_label = QLabel("已存在文件处理方式（仅对 ParaTranz 中已有同名文件时生效）：")
-        section_label.setStyleSheet("color: #555; font-size: 12px;")
+        section_label.setAccessibleName("批量上传目标分组")
         layout.addWidget(section_label)
 
         # 主选项组
@@ -522,7 +514,7 @@ class FileSelectionDialog(QDialog):
         layout.setSpacing(6)
 
         hint = QLabel(f"共 {len(file_infos)} 个分类文件，请选择要上传的文件（默认全选）：")
-        hint.setStyleSheet("color: #555;")
+        hint.setAccessibleName("文件选择说明")
         layout.addWidget(hint)
 
         # 全选 / 全不选 按钮行

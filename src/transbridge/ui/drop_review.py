@@ -12,6 +12,8 @@ from PyQt6.QtWidgets import (
 )
 
 from .drop_router import DropResolution, DropResolutionStatus
+from .foundation.accessibility import configure_accessible_widget, update_accessible_state
+from .foundation.components import ComponentKind, ComponentStyle, SemanticState, configure_dialog
 
 
 class DropReviewDialog(QDialog):
@@ -22,8 +24,9 @@ class DropReviewDialog(QDialog):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        configure_dialog(self)
         self.setWindowTitle("检查拖放内容")
-        self.setAccessibleName("拖放候选计划")
+        configure_accessible_widget(self, name="拖放候选计划", description="确认安全候选计划后再打开目标功能")
         self.setModal(True)
         self._resolution = DropResolution.cancelled()
         self._decision_pending = False
@@ -31,10 +34,12 @@ class DropReviewDialog(QDialog):
         self._headline = QLabel(self)
         self._headline.setAccessibleName("拖放识别结果")
         self._headline.setWordWrap(True)
+        ComponentStyle.apply_static(self._headline, ComponentKind.NOTIFICATION)
         self._details = QLabel(self)
         self._details.setAccessibleName("对象范围与恢复说明")
         self._details.setWordWrap(True)
         self._details.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByKeyboard)
+        ComponentStyle.apply_static(self._details, ComponentKind.LABEL)
 
         self._buttons = QDialogButtonBox(self)
         self._confirm = self._buttons.addButton("打开候选计划", QDialogButtonBox.ButtonRole.AcceptRole)
@@ -42,6 +47,9 @@ class DropReviewDialog(QDialog):
         self._confirm.setAccessibleName("确认并打开候选计划")
         self._cancel.setAccessibleName("取消拖放候选计划")
         self._confirm.setDefault(True)
+        ComponentStyle.apply_static(self._confirm, ComponentKind.BUTTON)
+        ComponentStyle.apply_state(self._confirm, SemanticState.PRIMARY)
+        ComponentStyle.apply_static(self._cancel, ComponentKind.BUTTON)
         self._buttons.accepted.connect(self.accept)
         self._buttons.rejected.connect(self.reject)
 
@@ -66,6 +74,8 @@ class DropReviewDialog(QDialog):
                 "\n恢复方式：取消不会执行网络、覆盖、解压或发布操作。"
             )
             self._confirm.setEnabled(True)
+            self._headline.setProperty("tbStatusId", "candidate")
+            ComponentStyle.apply_state(self._headline, SemanticState.INFO)
             self._confirm.setFocus(Qt.FocusReason.OtherFocusReason)
         else:
             diagnostic = resolution.diagnostics[0] if resolution.diagnostics else None
@@ -76,8 +86,12 @@ class DropReviewDialog(QDialog):
                 else f"{diagnostic.code}：{diagnostic.message}\n恢复方式：{diagnostic.recovery}"
             )
             self._confirm.setEnabled(False)
+            self._headline.setProperty("tbStatusId", "unavailable")
+            ComponentStyle.apply_state(self._headline, SemanticState.WARNING)
             self._cancel.setText("关闭")
             self._cancel.setFocus(Qt.FocusReason.OtherFocusReason)
+        update_accessible_state(self._headline, self._headline.text())
+        update_accessible_state(self._details, self._details.text())
 
     def accept(self) -> None:
         if not self._decision_pending or self._resolution.status is not DropResolutionStatus.CANDIDATE:

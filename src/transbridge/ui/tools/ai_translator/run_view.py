@@ -3,11 +3,23 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QLabel, QProgressBar, QPushButton, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QProgressBar, QPushButton, QVBoxLayout, QWidget
+
+from transbridge.ui.foundation.adapters import ThemeView
+from transbridge.ui.foundation.components import ElidedLabel
+
+from ._theme_support import AiThemeBinding, set_widget_brush
 
 
 class AiMixedProgressWindow(QWidget):
-    def __init__(self, worker: object, activity: object, parent=None) -> None:
+    def __init__(
+        self,
+        worker: object,
+        activity: object,
+        parent=None,
+        *,
+        theme_view: ThemeView | None = None,
+    ) -> None:
         super().__init__(parent, Qt.WindowType.Window)
         self._worker = worker
         self._activity = activity
@@ -15,7 +27,8 @@ class AiMixedProgressWindow(QWidget):
         self.setWindowTitle("AI 混合运行 — 进行中")
         self.resize(440, 150)
         layout = QVBoxLayout(self)
-        self._status = QLabel("准备中…")
+        self._status = ElidedLabel("准备中…")
+        self._set_status("准备中…")
         self._progress = QProgressBar()
         self._progress.setRange(0, 0)
         self._stop = QPushButton("停止")
@@ -27,6 +40,7 @@ class AiMixedProgressWindow(QWidget):
         worker.finished.connect(self._on_finished)
         worker.error.connect(self._on_error)
         worker.cancelled.connect(self._on_cancelled)
+        self._theme_binding = AiThemeBinding(self, theme_view, self._apply_theme)
 
     def is_running(self) -> bool:
         return bool(self._worker.isRunning())
@@ -48,34 +62,56 @@ class AiMixedProgressWindow(QWidget):
         if total:
             self._progress.setRange(0, total)
             self._progress.setValue(current)
-        self._status.setText(str(getattr(value, "stage", "执行中")))
+        self._set_status(str(getattr(value, "stage", "执行中")))
 
     def _request_stop(self) -> None:
         self._activity.request_cancel()
         self._worker.cancel()
         self._stop.setEnabled(False)
-        self._status.setText("正在等待安全停止点")
+        self._set_status("正在等待安全停止点")
 
     def _on_finished(self, _result: object) -> None:
         self._stop.setEnabled(False)
-        self._status.setText("已完成")
+        self._set_status("已完成")
         self._progress.setRange(0, 1)
         self._progress.setValue(1)
 
     def _on_error(self, message: str) -> None:
         self._stop.setEnabled(False)
-        self._status.setText(f"失败：{message}")
+        self._set_status(f"失败：{message}")
 
     def _on_cancelled(self) -> None:
         self._stop.setEnabled(False)
-        self._status.setText("已停止")
+        self._set_status("已停止")
+
+    def _set_status(self, text: str) -> None:
+        self._status.set_full_text(text)
+        self._status.setToolTip(text)
+        self._status.setAccessibleDescription(text)
 
     def closeEvent(self, event) -> None:
         if self.is_running():
             self.hide()
             event.ignore()
             return
+        self._theme_binding.close()
         event.accept()
+
+    def _apply_theme(self, binding: AiThemeBinding) -> None:
+        text = self._status.full_text
+        if text.startswith("失败"):
+            key = "failed"
+        elif text == "已完成":
+            key = "completed"
+        elif text == "已停止":
+            key = "cancelled"
+        else:
+            key = "running"
+        set_widget_brush(self._status, binding.task(key))
+
+    @property
+    def theme_revision(self) -> int:
+        return self._theme_binding.revision
 
 
 __all__ = ["AiMixedProgressWindow"]

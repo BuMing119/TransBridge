@@ -1,11 +1,23 @@
 """词条相关小对话框：创建词条、批量设置状态、同步译文确认。"""
 
-from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
-    QLabel, QLineEdit, QTextEdit, QComboBox, QPushButton,
-    QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
-)
 from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QFormLayout,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QTextEdit,
+    QVBoxLayout,
+)
+
+from transbridge.ui.foundation.components import ComponentStyle, SemanticState
 
 from ._strings_common import _STAGE_LABELS
 
@@ -119,8 +131,7 @@ class _BatchStageDialog(QDialog):
 class _SyncTranslationDialog(QDialog):
     """发现相同原文的低状态词条时，弹出此对话框询问是否批量同步。"""
 
-    def __init__(self, matches: list, original: str, translation: str,
-                 new_stage: int, parent=None):
+    def __init__(self, matches: list, original: str, translation: str, new_stage: int, parent=None):
         super().__init__(parent)
         self._matches = matches
         self.setWindowTitle("发现相同原文的词条")
@@ -140,12 +151,10 @@ class _SyncTranslationDialog(QDialog):
 
         orig_short = original[:60] + "…" if len(original) > 60 else original
         trans_short = translation[:40] + "…" if len(translation) > 40 else translation
-        detail = QLabel(
-            f"原文：「{orig_short}」\n"
-            f"同步为：「{trans_short}」  →  {stage_text}"
-        )
+        detail = QLabel(f"原文：「{orig_short}」\n同步为：「{trans_short}」  →  {stage_text}")
         detail.setWordWrap(True)
-        detail.setStyleSheet("color: #555; margin: 2px 0;")
+        detail.setAccessibleName("同步译文摘要")
+        ComponentStyle.apply_state(detail, SemanticState.INFO)
         layout.addWidget(detail)
 
         # 全选 / 全不选
@@ -217,9 +226,9 @@ class _SyncTranslationDialog(QDialog):
 
     def _update_count(self):
         count = sum(
-            1 for row in range(self._table.rowCount())
-            if self._table.item(row, 0) and
-               self._table.item(row, 0).checkState() == Qt.CheckState.Checked
+            1
+            for row in range(self._table.rowCount())
+            if self._table.item(row, 0) and self._table.item(row, 0).checkState() == Qt.CheckState.Checked
         )
         total = self._table.rowCount()
         self._sync_btn.setText(f"同步 {count} 条")
@@ -230,6 +239,5 @@ class _SyncTranslationDialog(QDialog):
         return [
             self._matches[row].get("id")
             for row in range(self._table.rowCount())
-            if self._table.item(row, 0) and
-               self._table.item(row, 0).checkState() == Qt.CheckState.Checked
+            if self._table.item(row, 0) and self._table.item(row, 0).checkState() == Qt.CheckState.Checked
         ]

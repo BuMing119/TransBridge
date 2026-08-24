@@ -31,6 +31,14 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from transbridge.ui.foundation.adapters import ThemeView
+from transbridge.ui.foundation.components import (
+    ComponentKind,
+    ComponentStyle,
+    ElidedLabel,
+    SemanticState,
+    reserve_text_width,
+)
 from transbridge.ui.tools.ai_translator.config_dialogs import render_paratranz_source
 from transbridge.ui.tools.ai_translator.view_controls import TranslatorControls
 
@@ -54,7 +62,14 @@ class AITranslatorViewCallbacks(Protocol):
 class AITranslatorView:
     """Owns all configuration-window widgets; callbacks carry user intents only."""
 
-    def __init__(self, parent: QWidget, callbacks: AITranslatorViewCallbacks) -> None:
+    def __init__(
+        self,
+        parent: QWidget,
+        callbacks: AITranslatorViewCallbacks,
+        *,
+        theme_view: ThemeView | None = None,
+    ) -> None:
+        self.theme_view = theme_view
         self.controls = TranslatorControls(self)
         main_layout = QVBoxLayout(parent)
         main_layout.setSpacing(8)
@@ -302,19 +317,24 @@ class AITranslatorView:
         self._history_btn = QPushButton("历史报告")
         self._history_btn.clicked.connect(callbacks.on_open_history)
         btn_row.addWidget(self._history_btn)
-        btn_row.addStretch()
-        self._preflight_label = QLabel("正在检查运行条件…")
+        self._preflight_label = ElidedLabel("正在检查运行条件…")
         self._preflight_label.setObjectName("aiPreflightReason")
-        self._preflight_label.setStyleSheet("color: #9A6700; font-size: 11px;")
-        self._preflight_label.setWordWrap(True)
-        btn_row.addWidget(self._preflight_label)
+        preflight_font = self._preflight_label.font()
+        preflight_font.setPointSize(9)
+        self._preflight_label.setFont(preflight_font)
+        self._preflight_label.setAccessibleName("AI 运行条件")
+        ComponentStyle.apply_state(self._preflight_label, SemanticState.WARNING)
+        self._preflight_label.setToolTip(self._preflight_label.full_text)
+        self._preflight_label.setAccessibleDescription(self._preflight_label.full_text)
+        btn_row.addWidget(self._preflight_label, 1)
         self._start_btn = QPushButton("▶ 开始翻译")
-        self._start_btn.setStyleSheet(
-            "QPushButton { background: #1976D2; color: white; font-weight: bold;"
-            " padding: 6px 16px; border-radius: 4px; }"
-            "QPushButton:hover { background: #1565C0; }"
-            "QPushButton:disabled { background: #bbb; }"
-        )
+        start_font = self._start_btn.font()
+        start_font.setBold(True)
+        self._start_btn.setFont(start_font)
+        self._start_btn.setAccessibleName("开始 AI 运行")
+        ComponentStyle.apply_static(self._start_btn, ComponentKind.BUTTON)
+        ComponentStyle.apply_state(self._start_btn, SemanticState.PRIMARY)
+        reserve_text_width(self._start_btn, ("▶ 开始翻译", "▶ 开始润色", "▶ 开始执行"))
         self._start_btn.clicked.connect(callbacks.on_start)
         btn_row.addWidget(self._start_btn)
         main_layout.addLayout(btn_row)

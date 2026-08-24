@@ -7,21 +7,26 @@ from collections.abc import Callable
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QLabel, QMainWindow, QStatusBar
 
+from transbridge.ui.foundation.components import ElidedLabel, SemanticState, StatusBadge, reserve_text_width
 from transbridge.ui.presentation import CallbackSubscription, SubscriptionGroup
 from transbridge.ui.workers import get_api_status_bus
 
 
-class ApiStatusIndicator(QLabel):
+class ApiStatusIndicator(StatusBadge):
     _SPINNER = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 
     def __init__(self, parent=None) -> None:
-        super().__init__(parent)
+        super().__init__(parent=parent)
         self._active = 0
         self._last_ok = True
         self._spin_index = 0
         self._timer = QTimer(self)
         self._timer.setInterval(80)
         self._timer.timeout.connect(self._tick)
+        reserve_text_width(
+            self,
+            tuple(f"{spinner} 请求中" for spinner in self._SPINNER) + ("● 正常", "⚠ 异常"),
+        )
         self._refresh()
 
     def on_request_started(self) -> None:
@@ -46,11 +51,19 @@ class ApiStatusIndicator(QLabel):
 
     def _refresh(self) -> None:
         if self._active:
-            self.setText(f'<span style="color:#888">{self._SPINNER[self._spin_index]} 请求中</span>')
+            status_id = "requesting"
+            text = f"{self._SPINNER[self._spin_index]} 请求中"
+            semantic_state = SemanticState.INFO
         elif self._last_ok:
-            self.setText('<span style="color:green">● 正常</span>')
+            status_id = "healthy"
+            text = "● 正常"
+            semantic_state = SemanticState.SUCCESS
         else:
-            self.setText('<span style="color:red">● 异常</span>')
+            status_id = "failed"
+            text = "⚠ 异常"
+            semantic_state = SemanticState.ERROR
+        self.setProperty("tbStatusId", status_id)
+        self.set_status(text, semantic_state)
 
 
 class StatusPresenter:
@@ -60,8 +73,10 @@ class StatusPresenter:
         self._subscriptions = SubscriptionGroup()
         status_bar = QStatusBar(window)
         window.setStatusBar(status_bar)
-        self.user_label = QLabel("未登录")
-        self.project_label = QLabel("未选择项目")
+        self.user_label = ElidedLabel("未登录")
+        self.user_label.setFixedWidth(150)
+        self.project_label = ElidedLabel("未选择项目")
+        self.project_label.setFixedWidth(260)
         self.api_indicator = ApiStatusIndicator(window)
         self.message_label = QLabel("就绪")
         status_bar.addPermanentWidget(self.user_label)
@@ -96,15 +111,21 @@ class StatusPresenter:
     def render_user(self, user) -> None:
         if user:
             name = user.get("nickname") or user.get("username") or "已登录"
-            self.user_label.setText(f"用户: {name}")
+            text = f"用户: {name}"
+            self.user_label.set_full_text(text)
+            self.user_label.setToolTip(text)
         else:
-            self.user_label.setText("未登录")
+            self.user_label.set_full_text("未登录")
+            self.user_label.setToolTip("未登录")
 
     def render_project(self, project) -> None:
         if project:
-            self.project_label.setText(f"项目: {project.get('name', '')} (id={project.get('id', '')})")
+            text = f"项目: {project.get('name', '')} (id={project.get('id', '')})"
+            self.project_label.set_full_text(text)
+            self.project_label.setToolTip(text)
         else:
-            self.project_label.setText("未选择项目")
+            self.project_label.set_full_text("未选择项目")
+            self.project_label.setToolTip("未选择项目")
 
     def close(self) -> None:
         self._subscriptions.close()

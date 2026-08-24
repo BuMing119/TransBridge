@@ -31,7 +31,6 @@ def build_postprocess_view(view: TranslatorViewOwner) -> None:
     # 分隔线
     line1 = QFrame()
     line1.setFrameShape(QFrame.Shape.HLine)
-    line1.setStyleSheet("color: #ccc;")
     pp_layout.addWidget(line1)
 
     # 阶段1: 检测
@@ -56,7 +55,6 @@ def build_postprocess_view(view: TranslatorViewOwner) -> None:
     # 分隔线
     line2 = QFrame()
     line2.setFrameShape(QFrame.Shape.HLine)
-    line2.setStyleSheet("color: #ccc;")
     pp_layout.addWidget(line2)
 
     # 阶段2: 修复与润色
@@ -106,7 +104,6 @@ def build_postprocess_view(view: TranslatorViewOwner) -> None:
     # 分隔线
     line3 = QFrame()
     line3.setFrameShape(QFrame.Shape.HLine)
-    line3.setStyleSheet("color: #ccc;")
     pp_layout.addWidget(line3)
 
     # 阶段3: 裁决
@@ -125,7 +122,7 @@ def build_postprocess_view(view: TranslatorViewOwner) -> None:
 
     # 备注说明
     pp_note = QLabel("<i>提示：润色会在修复后执行，最终译文优先采用润色结果</i>")
-    pp_note.setStyleSheet("color: #888; font-size: 11px;")
+    pp_note.setAccessibleName("后处理提示")
     pp_layout.addWidget(pp_note)
 
     # Tab 3: 后处理

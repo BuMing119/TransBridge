@@ -13,6 +13,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from transbridge.application.projects.models import (
     LifecycleActivation,
+    LifecycleProjectUpdate,
     LifecycleSave,
     LifecycleSnapshot,
 )
@@ -21,6 +22,7 @@ from transbridge.application.projects.provisioning import ProjectProvisioningCom
 
 class LifecycleMutationKind(StrEnum):
     SAVE = "save"
+    PROJECT_UPDATE = "project-update"
     ACTIVATE = "activate"
     SNAPSHOT = "snapshot"
     PROVISION = "provision"
@@ -37,6 +39,8 @@ class LifecycleTransactionStorePort(Protocol):
     def begin(self, transaction_id: str) -> None: ...
 
     def stage_save(self, transaction_id: str, save: LifecycleSave) -> None: ...
+
+    def stage_project_update(self, transaction_id: str, update: LifecycleProjectUpdate) -> None: ...
 
     def stage_activate(self, transaction_id: str, activation: LifecycleActivation) -> None: ...
 
@@ -79,6 +83,9 @@ class RepositoryLifecycleUnitOfWork:
 
     def stage_save(self, save: LifecycleSave) -> None:
         self._stage(LifecycleMutationKind.SAVE, self._store.stage_save, save)
+
+    def stage_project_update(self, update: LifecycleProjectUpdate) -> None:
+        self._stage(LifecycleMutationKind.PROJECT_UPDATE, self._store.stage_project_update, update)
 
     def stage_activate(self, activation: LifecycleActivation) -> None:
         self._stage(LifecycleMutationKind.ACTIVATE, self._store.stage_activate, activation)

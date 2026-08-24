@@ -1,12 +1,4 @@
-"""Public chat facade and feature composition root.
-
-Legacy color reference moved to the feature views.
-
-  语义色:
-    主色/成功:        #4CAF50  (绿色, 发送按钮/AI头像/聚焦边框)
-    主色浅色(disabled):#A5D6A7
-    危险/失败:         #D32F2F  (红色左边框, 系统消息)
-"""
+"""Public chat facade and feature composition root."""
 
 from __future__ import annotations
 
@@ -29,6 +21,7 @@ from .plan_card import PlanCard
 from .session_binding import ConversationBinding, SessionBinding
 from .streaming_presenter import StreamingPresenter
 from .task_binding import TaskBinding
+from .theme_support import SmartAssistantTheme
 from .tool_card import BatchToolCard, ToolCard
 
 logger = logging.getLogger(__name__)
@@ -40,9 +33,11 @@ class ChatWidget(QWidget):
     MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
     MAX_VISIBLE_WIDGETS = 100  # M52: 消息区最大控件数，超出时从头部移除最旧控件
 
-    def __init__(self, ctx, parent=None):
+    def __init__(self, ctx, parent=None, *, theme: SmartAssistantTheme | None = None):
         super().__init__(parent)
         self._ctx = ctx
+        self._theme = theme or SmartAssistantTheme()
+        self.setAccessibleName("智能助手聊天")
 
         # 全局字体
         from PyQt6.QtGui import QFont
@@ -156,6 +151,7 @@ class ChatWidget(QWidget):
                 send=self._on_send,
                 toggle_auto=self._input_actions.toggle_auto,
                 auto_mode=self._auto_mode,
+                theme=self._theme,
             )
             self._input_view.build_toolbar(self._main_layout)
             self._upload_label = self._input_view.upload_label
@@ -223,6 +219,26 @@ class ChatWidget(QWidget):
         if self._input_view is not None:
             self._input_view.set_text(text)
 
+    def apply_theme(self, theme: SmartAssistantTheme) -> None:
+        """Refresh presentation only; conversation, streaming and task state stay authoritative."""
+        self._theme = theme
+        if self._message_list is not None:
+            self._message_list.apply_theme(theme)
+        if self._input_view is not None:
+            self._input_view.apply_theme(theme)
+        if self._confirmation_view is not None:
+            self._confirmation_view.apply_theme(theme)
+        if self._back_to_bottom_btn is not None:
+            theme.apply_semantic(self._back_to_bottom_btn, "primary", background=True)
+
+    def _presentation_theme(self) -> SmartAssistantTheme:
+        """Compatibility fallback for legacy tests/facades created without __init__."""
+        theme = getattr(self, "_theme", None)
+        if theme is None:
+            theme = SmartAssistantTheme()
+            self._theme = theme
+        return theme
+
     @property
     def context(self):
         """Compatibility read port for Panel-level project naming."""
@@ -253,7 +269,7 @@ class ChatWidget(QWidget):
             return
         self._orchestrator.cancel_current_round()
         if self._message_list is not None:
-            self._message_list.add_bubble(MessageBubble(text, "user"))
+            self._message_list.add_bubble(MessageBubble(text, "user", theme=self._presentation_theme()))
         self._conversation.add_user(text)
         # m22: LLM 推理在后台 QThread 中异步执行，本方法立即返回
         QTimer.singleShot(
@@ -267,7 +283,7 @@ class ChatWidget(QWidget):
             if not getattr(self, "_shutdown_complete", False):
                 QTimer.singleShot(50, lambda: self.add_user_bubble(text))
             return
-        self._message_list.add_bubble(MessageBubble(text, "user"))
+        self._message_list.add_bubble(MessageBubble(text, "user", theme=self._presentation_theme()))
 
     def add_assistant_bubble(self, text: str) -> None:
         """Add an assistant bubble through the stable public facade."""
@@ -275,7 +291,7 @@ class ChatWidget(QWidget):
             if not getattr(self, "_shutdown_complete", False):
                 QTimer.singleShot(50, lambda: self.add_assistant_bubble(text))
             return
-        self._message_list.add_bubble(MessageBubble(text, "assistant"))
+        self._message_list.add_bubble(MessageBubble(text, "assistant", theme=self._presentation_theme()))
 
     def add_system_message(self, text: str) -> None:
         """FR7.16: 融入式系统消息 — 轻量横条标签替代居中灰色文本。"""
@@ -340,7 +356,7 @@ class ChatWidget(QWidget):
         self._orchestrator.cancel_current_round()
 
         if self._message_list is not None:
-            self._message_list.add_bubble(MessageBubble(text, "user"))
+            self._message_list.add_bubble(MessageBubble(text, "user", theme=self._presentation_theme()))
         self._input.clear()
         self._conversation.add_user(text)
 

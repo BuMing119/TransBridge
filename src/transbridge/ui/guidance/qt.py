@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
-from PyQt6.QtWidgets import QComboBox, QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
+from PyQt6.QtWidgets import QComboBox, QFrame, QHBoxLayout, QPushButton, QVBoxLayout
 
 from transbridge.config.ui_preferences import GuidanceMode
 from transbridge.converter.translation_entry import STAGE_QUESTIONABLE, STAGE_UNTRANSLATED
+from transbridge.ui.foundation.accessibility import configure_accessible_widget, update_accessible_state
+from transbridge.ui.foundation.components import (
+    ComponentKind,
+    ComponentStyle,
+    ElidedLabel,
+    SemanticState,
+    reserve_text_width,
+)
 
 from .controller import GuidanceController
 from .models import GuidanceContextIdentity, GuidanceKind, GuidanceProjection
@@ -26,31 +34,47 @@ class GuidanceBanner(QFrame):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("guidance-banner")
-        self.setAccessibleName("当前任务引导")
+        configure_accessible_widget(self, name="当前任务引导", description="说明当前状态和建议的下一步")
+        ComponentStyle.apply_static(self, ComponentKind.NOTIFICATION)
         self._revision = -1
         self._recovery_intent = ""
         root = QHBoxLayout(self)
+        root.setContentsMargins(10, 4, 10, 4)
+        root.setSpacing(6)
         copy = QVBoxLayout()
-        self._headline = QLabel()
+        copy.setSpacing(0)
+        self._headline = ElidedLabel()
         self._headline.setObjectName("guidance-headline")
         self._headline.setAccessibleName("建议的下一步")
-        self._reason = QLabel()
-        self._reason.setWordWrap(True)
+        ComponentStyle.apply_static(self._headline, ComponentKind.LABEL)
+        self._reason = ElidedLabel()
         self._reason.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._reason.setAccessibleName("建议原因")
+        ComponentStyle.apply_static(self._reason, ComponentKind.LABEL)
         copy.addWidget(self._headline)
         copy.addWidget(self._reason)
         root.addLayout(copy, 1)
         self._primary = QPushButton()
         self._primary.setAccessibleName("执行建议的下一步")
+        ComponentStyle.apply_static(self._primary, ComponentKind.BUTTON)
         self._primary.clicked.connect(lambda: self.primary_requested.emit(self._revision))
+        reserve_text_width(
+            self._primary,
+            ("选择插件开始翻译", "导入已有译文", "开始 AI 翻译", "修复服务配置", "仅重试失败项"),
+        )
         root.addWidget(self._primary)
         self._recovery = QPushButton()
         self._recovery.setAccessibleName("打开备用或恢复入口")
+        ComponentStyle.apply_static(self._recovery, ComponentKind.BUTTON)
         self._recovery.clicked.connect(lambda: self.recovery_requested.emit(self._recovery_intent))
+        reserve_text_width(
+            self._recovery,
+            ("打开已有本地工程", "改为选择插件开始", "查看相关任务与结果", "上传至 ParaTranz", "查看错误、日志与结果"),
+        )
         root.addWidget(self._recovery)
         self._mode = QComboBox()
         self._mode.setAccessibleName("引导详细程度")
+        ComponentStyle.apply_static(self._mode, ComponentKind.INPUT)
         self._mode.addItem("自动", GuidanceMode.AUTO.value)
         self._mode.addItem("详细", GuidanceMode.GUIDED.value)
         self._mode.addItem("紧凑", GuidanceMode.COMPACT.value)
@@ -58,18 +82,40 @@ class GuidanceBanner(QFrame):
         root.addWidget(self._mode)
         self._collapse = QPushButton("收起")
         self._collapse.setAccessibleName("收起或展开引导")
+        ComponentStyle.apply_static(self._collapse, ComponentKind.BUTTON)
         self._collapse.clicked.connect(self.collapse_requested)
+        reserve_text_width(self._collapse, ("展开", "收起"))
         root.addWidget(self._collapse)
         self._close = QPushButton("隐藏")
         self._close.setAccessibleName("隐藏当前引导")
+        ComponentStyle.apply_static(self._close, ComponentKind.BUTTON)
         self._close.clicked.connect(self.hide_requested)
         root.addWidget(self._close)
 
     def render(self, value: GuidancePresentation) -> None:
         state = value.state
         self._revision = state.revision
-        self._headline.setText(state.headline)
-        self._reason.setText("\n".join(value.explanation_lines))
+        self._headline.set_full_text(state.headline)
+        self._headline.setToolTip(state.headline)
+        explanation = " · ".join(value.explanation_lines)
+        self._reason.set_full_text(f"ⓘ  {explanation}" if explanation else "")
+        self._reason.setToolTip("\n".join(value.explanation_lines))
+        status_text = f"{state.headline}。{state.reason}"
+        update_accessible_state(self, status_text)
+        update_accessible_state(self._headline, state.headline)
+        update_accessible_state(self._reason, state.reason)
+        semantic_state = {
+            GuidanceKind.FAILED: SemanticState.ERROR,
+            GuidanceKind.PARTIAL_FAILURE: SemanticState.WARNING,
+            GuidanceKind.MISSING_CONFIGURATION: SemanticState.WARNING,
+            GuidanceKind.REVIEW_PENDING: SemanticState.WARNING,
+            GuidanceKind.PUBLISH_PENDING: SemanticState.SUCCESS,
+        }.get(state.kind, SemanticState.INFO)
+        self.setProperty("tbStatusId", state.kind.value)
+        ComponentStyle.apply_state(self, semantic_state)
+        ComponentStyle.apply_state(
+            self._primary, SemanticState.PRIMARY if state.primary_intent.enabled else SemanticState.DISABLED
+        )
         self._primary.setText(state.primary_intent.label)
         self._primary.setEnabled(state.primary_intent.enabled)
         primary_reason = state.primary_intent.enabled_reason or state.reason
@@ -82,23 +128,29 @@ class GuidanceBanner(QFrame):
         recovery_reason = recovery.enabled_reason or state.reason
         self._recovery.setToolTip(recovery_reason)
         self._recovery.setAccessibleDescription(recovery_reason)
+        ComponentStyle.apply_state(
+            self._recovery,
+            SemanticState.INFO if recovery.enabled else SemanticState.DISABLED,
+        )
         self._mode.blockSignals(True)
         index = self._mode.findData(value.configured_mode.value)
         self._mode.setCurrentIndex(max(0, index))
         self._mode.blockSignals(False)
         hidden = value.visibility is GuidanceVisibility.HIDDEN
         collapsed = value.visibility is GuidanceVisibility.COLLAPSED
+        streamlined = value.configured_mode is GuidanceMode.AUTO
+        self._headline.setVisible(not hidden and not streamlined)
         self._reason.setVisible(not hidden and not collapsed)
-        self._primary.setVisible(not hidden)
-        self._recovery.setVisible(not hidden and not collapsed)
-        self._mode.setVisible(not hidden and not collapsed)
+        self._primary.setVisible(not hidden and not streamlined)
+        self._recovery.setVisible(not hidden and not collapsed and not streamlined)
+        self._mode.setVisible(not hidden and not collapsed and not streamlined)
         self._collapse.setText("展开" if collapsed or hidden else "收起")
         try:
             self._collapse.clicked.disconnect()
         except TypeError:
             pass
         self._collapse.clicked.connect(self.restore_requested if collapsed or hidden else self.collapse_requested)
-        self._close.setVisible(not hidden)
+        self._close.setVisible(not hidden and not streamlined)
 
     def _emit_mode(self) -> None:
         value = self._mode.currentData()

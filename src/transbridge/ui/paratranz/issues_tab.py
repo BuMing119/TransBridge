@@ -2,15 +2,28 @@
 IssuesTab: 讨论（Issues）标签页，左侧列表 + 右侧详情。
 """
 
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
-    QListWidget, QListWidgetItem, QGroupBox, QLabel,
-    QPushButton, QTextEdit, QTabBar, QMessageBox,
-    QDialog, QFormLayout, QLineEdit,
-)
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import (
+    QDialog,
+    QFormLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMessageBox,
+    QPushButton,
+    QSplitter,
+    QTabBar,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
 from transbridge.paratranz.api.paratranz_issues_api import ParatranzIssuesAPI
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, ElidedLabel
+
 from ..workers import ApiWorker
 
 
@@ -63,7 +76,6 @@ class NewIssueDialog(QDialog):
 
 
 class IssuesTab(QWidget):
-
     def __init__(self, ctx, parent=None):
         super().__init__(parent)
         self._ctx = ctx
@@ -117,9 +129,14 @@ class IssuesTab(QWidget):
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(4, 0, 0, 0)
 
-        self._title_lbl = QLabel("（选择一个讨论查看详情）")
-        self._title_lbl.setWordWrap(True)
-        self._title_lbl.setStyleSheet("font-size: 14px; font-weight: bold;")
+        self._title_lbl = ElidedLabel("（选择一个讨论查看详情）")
+        title_font = QFont(self._title_lbl.font())
+        title_font.setPointSizeF(max(11.0, title_font.pointSizeF() + 1.0))
+        title_font.setWeight(QFont.Weight.DemiBold)
+        self._title_lbl.setFont(title_font)
+        self._title_lbl.setFixedHeight(self._title_lbl.fontMetrics().height() + 4)
+        self._title_lbl.setAccessibleName("讨论标题")
+        ComponentStyle.apply_static(self._title_lbl, ComponentKind.LABEL)
         right_layout.addWidget(self._title_lbl)
 
         self._content_view = QTextEdit()
@@ -158,6 +175,11 @@ class IssuesTab(QWidget):
         for w in (self._reply_input, self._reply_btn, self._close_btn):
             w.setEnabled(enabled)
 
+    def _set_title(self, title: str) -> None:
+        self._title_lbl.set_full_text(title)
+        self._title_lbl.setToolTip(title)
+        self._title_lbl.setAccessibleDescription(title)
+
     def _on_status_changed(self, idx: int):
         self._status_filter = idx
         self.load_issues()
@@ -165,7 +187,7 @@ class IssuesTab(QWidget):
     def _on_project_changed(self, project):
         self._project_id = project.get("id") if project else None
         self._list.clear()
-        self._title_lbl.setText("（选择一个讨论查看详情）")
+        self._set_title("（选择一个讨论查看详情）")
         self._content_view.clear()
         self._replies_view.clear()
         self._set_detail_enabled(False)
@@ -178,10 +200,10 @@ class IssuesTab(QWidget):
 
             if issue_mode == 2 and not is_admin:
                 self._access_ok = False
-                self._title_lbl.setText("⚠ 讨论权限为私密，仅管理员可见")
+                self._set_title("⚠ 讨论权限为私密，仅管理员可见")
             elif issue_mode == 1 and not is_member:
                 self._access_ok = False
-                self._title_lbl.setText("⚠ 讨论权限为内部，仅项目成员可见")
+                self._set_title("⚠ 讨论权限为内部，仅项目成员可见")
 
             self._new_btn.setEnabled(self._access_ok)
             if self._access_ok:
@@ -226,7 +248,7 @@ class IssuesTab(QWidget):
         if not issue:
             return
         self._current_issue = issue
-        self._title_lbl.setText(issue.get("title", "—"))
+        self._set_title(str(issue.get("title", "—")))
         self._content_view.setPlainText(issue.get("content", "") or "")
         self._replies_view.clear()
         self._set_detail_enabled(True)
@@ -280,9 +302,7 @@ class IssuesTab(QWidget):
         def _on_done(_):
             self._reply_input.clear()
             # 重新加载详情
-            self._on_issue_clicked(
-                self._list.selectedItems()[0] if self._list.selectedItems() else None
-            )
+            self._on_issue_clicked(self._list.selectedItems()[0] if self._list.selectedItems() else None)
 
         w = ApiWorker(_reply)
         w.result.connect(_on_done)

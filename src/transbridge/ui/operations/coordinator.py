@@ -6,12 +6,15 @@ from collections.abc import Callable, Mapping
 
 from PyQt6.QtWidgets import QMessageBox
 
+from transbridge.ui.workers import ApiWorker
+
 from .plan_dialog import OperationPlanDialog
 from .plan_presenter import OperationPlanError, OperationPlanPresenter
 from .plan_view import OperationKind
 
 OperationDraftFactory = Callable[[object, bool, Mapping[str, object]], object]
 OperationEditFactory = Callable[[object, tuple[tuple[str, str], ...]], object]
+OperationDiscardFactory = Callable[[object], None]
 
 
 class OperationPlanCoordinator:
@@ -24,14 +27,19 @@ class OperationPlanCoordinator:
         *,
         owner_id: Callable[[object], str],
         edit_factories: Mapping[OperationKind, OperationEditFactory] | None = None,
+        discard_factories: Mapping[OperationKind, OperationDiscardFactory] | None = None,
+        preflight_worker_factory=ApiWorker,
         dialog_factory=OperationPlanDialog,
     ) -> None:
         self._presenter = presenter
         self._draft_factories = dict(draft_factories)
         self._owner_id = owner_id
         self._edit_factories = dict(edit_factories or {})
+        self._discard_factories = dict(discard_factories or {})
+        self._preflight_worker_factory = preflight_worker_factory
         self._dialog_factory = dialog_factory
         self._owned_windows: dict[str, object] = {}
+        self._preflight_workers: dict[str, object] = {}
 
     @property
     def active_window_count(self) -> int:
@@ -58,6 +66,7 @@ class OperationPlanCoordinator:
         plan = self._presenter.open(kind, draft_holder[0], owner_id=owner_id)
         dialog = self._dialog_factory(plan, parent)
         self._owned_windows[plan.session_id] = dialog
+        released = False
 
         def release() -> None:
             self._owned_windows.pop(plan.session_id, None)
@@ -66,16 +75,54 @@ class OperationPlanCoordinator:
             edit = self._edit_factories.get(kind)
             if edit is None or not fields:
                 return
-            draft_holder[0] = edit(draft_holder[0], tuple(fields))
+            previous = draft_holder[0]
+            draft_holder[0] = edit(previous, tuple(fields))
+            if draft_holder[0] is not previous:
+                self._discard_factories.get(kind, lambda _draft: None)(previous)
             edited = self._presenter.edit(plan.session_id, draft_holder[0], owner_id=owner_id)
             dialog.render_plan(edited)
 
         def preflight(_session_id, fields) -> None:
             try:
                 apply_edits(fields)
-                dialog.render_preflight(self._presenter.preflight(plan.session_id, owner_id=owner_id))
             except (RuntimeError, TypeError, ValueError) as exc:
                 QMessageBox.warning(dialog, "预检失败", str(exc))
+                return
+            if kind not in {OperationKind.UPLOAD, OperationKind.DOWNLOAD}:
+                try:
+                    dialog.render_preflight(self._presenter.preflight(plan.session_id, owner_id=owner_id))
+                except (RuntimeError, TypeError, ValueError) as exc:
+                    QMessageBox.warning(dialog, "预检失败", str(exc))
+                return
+            if plan.session_id in self._preflight_workers:
+                QMessageBox.information(dialog, "正在预检", "远端预检仍在进行，请稍候。")
+                return
+
+            worker = self._preflight_worker_factory(
+                lambda: self._presenter.preflight(plan.session_id, owner_id=owner_id)
+            )
+            self._preflight_workers[plan.session_id] = worker
+
+            def on_result(result) -> None:
+                if self._owned_windows.get(plan.session_id) is dialog:
+                    dialog.render_preflight(result)
+
+            def on_error(message) -> None:
+                if self._owned_windows.get(plan.session_id) is dialog:
+                    QMessageBox.warning(dialog, "预检失败", str(message))
+
+            def on_finished() -> None:
+                self._preflight_workers.pop(plan.session_id, None)
+                if self._owned_windows.get(plan.session_id) is not dialog:
+                    self._discard_factories.get(kind, lambda _draft: None)(draft_holder[0])
+                delete_later = getattr(worker, "deleteLater", None)
+                if callable(delete_later):
+                    delete_later()
+
+            worker.result.connect(on_result)
+            worker.error.connect(on_error)
+            worker.finished.connect(on_finished)
+            worker.start()
 
         def return_to_edit(_session_id, fields) -> None:
             try:
@@ -93,10 +140,15 @@ class OperationPlanCoordinator:
             release()
 
         def cancel() -> None:
+            nonlocal released
+            if released:
+                return
+            released = True
             try:
                 self._presenter.cancel(plan.session_id, owner_id=owner_id)
             except OperationPlanError:
                 pass
+            self._discard_factories.get(kind, lambda _draft: None)(draft_holder[0])
             release()
 
         def destroyed(*_args) -> None:

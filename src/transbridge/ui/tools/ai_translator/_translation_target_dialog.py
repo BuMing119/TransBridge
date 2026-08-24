@@ -10,19 +10,25 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PyQt6.QtWidgets import (
-    QDialog, QDialogButtonBox, QVBoxLayout, QHBoxLayout,
-    QLabel, QRadioButton, QButtonGroup, QWidget,
+    QButtonGroup,
+    QDialog,
+    QDialogButtonBox,
+    QHBoxLayout,
+    QRadioButton,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt6.QtCore import Qt
+
+from transbridge.ui.foundation.components import ElidedLabel
 
 if TYPE_CHECKING:
-    from transbridge.ui.context import AppContext, CollectionSlot
+    from transbridge.ui.context import AppContext
 
 
 class _TranslationTargetDialog(QDialog):
     """翻译目标选择对话框：翻译当前插件 / 批量翻译已加载插件。"""
 
-    def __init__(self, ctx: "AppContext", parent=None):
+    def __init__(self, ctx: AppContext, parent=None):
         super().__init__(parent)
         self._ctx = ctx
         self.setWindowTitle("选择翻译目标")
@@ -44,9 +50,9 @@ class _TranslationTargetDialog(QDialog):
         current_info = QWidget()
         current_layout = QHBoxLayout(current_info)
         current_layout.setContentsMargins(20, 0, 0, 0)
-        self._current_label = QLabel()
-        self._current_label.setStyleSheet("color: #666; font-size: 12px;")
-        current_layout.addWidget(self._current_label)
+        self._current_label = ElidedLabel()
+        self._current_label.setAccessibleName("当前翻译内容")
+        current_layout.addWidget(self._current_label, 1)
         layout.addWidget(current_info)
 
         # 间隔
@@ -59,9 +65,9 @@ class _TranslationTargetDialog(QDialog):
         batch_info = QWidget()
         batch_layout = QHBoxLayout(batch_info)
         batch_layout.setContentsMargins(20, 0, 0, 0)
-        self._batch_label = QLabel()
-        self._batch_label.setStyleSheet("color: #666; font-size: 12px;")
-        batch_layout.addWidget(self._batch_label)
+        self._batch_label = ElidedLabel()
+        self._batch_label.setAccessibleName("批量翻译范围")
+        batch_layout.addWidget(self._batch_label, 1)
         layout.addWidget(batch_info)
 
         # 按钮组
@@ -70,9 +76,7 @@ class _TranslationTargetDialog(QDialog):
         self._btn_group.addButton(self._rb_batch, 1)
 
         # 按钮
-        btn_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
+        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         btn_box.button(QDialogButtonBox.StandardButton.Ok).setText("下一步")
         btn_box.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
         btn_box.accepted.connect(self.accept)
@@ -87,15 +91,12 @@ class _TranslationTargetDialog(QDialog):
         active_slot = self._ctx.active_slot
         if active_slot:
             total = len(active_slot.collection) if active_slot.collection else 0
-            untranslated = sum(
-                1 for e in (active_slot.collection or [])
-                if not e.translation or e.stage == 0
-            )
+            untranslated = sum(1 for e in (active_slot.collection or []) if not e.translation or e.stage == 0)
             name = active_slot.label or Path(active_slot.esp_path or "").stem
-            self._current_label.setText(f"{name} — {total} 条（未翻 {untranslated} 条）")
+            self._set_label_text(self._current_label, f"{name} — {total} 条（未翻 {untranslated} 条）")
             self._rb_current.setEnabled(True)
         else:
-            self._current_label.setText("未加载插件")
+            self._set_label_text(self._current_label, "未加载插件")
             self._rb_current.setEnabled(False)
             self._rb_batch.setChecked(True)
 
@@ -107,16 +108,14 @@ class _TranslationTargetDialog(QDialog):
             for slot in slots.values():
                 if slot.collection:
                     total_entries += len(slot.collection)
-                    total_untranslated += sum(
-                        1 for e in slot.collection
-                        if not e.translation or e.stage == 0
-                    )
-            self._batch_label.setText(
-                f"共 {total_plugins} 个插件，{total_entries} 条（未翻 {total_untranslated} 条）"
+                    total_untranslated += sum(1 for e in slot.collection if not e.translation or e.stage == 0)
+            self._set_label_text(
+                self._batch_label,
+                f"共 {total_plugins} 个插件，{total_entries} 条（未翻 {total_untranslated} 条）",
             )
             self._rb_batch.setEnabled(True)
         else:
-            self._batch_label.setText("无已加载插件")
+            self._set_label_text(self._batch_label, "无已加载插件")
             self._rb_batch.setEnabled(False)
 
         # 如果只有一个插件，禁用批量选项
@@ -127,3 +126,9 @@ class _TranslationTargetDialog(QDialog):
     def is_batch_mode(self) -> bool:
         """返回是否选择批量翻译模式。"""
         return self._rb_batch.isChecked()
+
+    @staticmethod
+    def _set_label_text(label: ElidedLabel, text: str) -> None:
+        label.set_full_text(text)
+        label.setToolTip(text)
+        label.setAccessibleDescription(text)

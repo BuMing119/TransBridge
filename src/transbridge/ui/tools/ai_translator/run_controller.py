@@ -10,6 +10,8 @@ from uuid import uuid4
 
 from transbridge.application.contracts import JobRef
 from transbridge.application.tasks import OwnerRef, TaskRuntime
+from transbridge.ui.foundation.adapters import ThemeView
+from transbridge.ui.foundation.components import ElidedLabel
 from transbridge.ui.windowing import show_and_activate
 
 from .run_spec import AiRunSpec, FrozenExecutionConfig, build_run_spec
@@ -274,6 +276,7 @@ def start_translation_run(
     *,
     progress_created: Callable[[object], None],
     entry_activated: Callable[[str], None],
+    theme_view: ThemeView | None = None,
 ) -> object:
     """Compose and start the existing single-plugin translation runtime."""
     from transbridge.ai_translator.translator import AutoTranslator, ProgressCheckpoint, TranslatorConfig
@@ -290,9 +293,12 @@ def start_translation_run(
         esp_path=ctx.esp_path,
         overwrite=request.spec.overwrite,
     )
-    project_id = ctx.current_project.get("id") if ctx.current_project else None
+    from transbridge.ui.paratranz.target_context import bound_paratranz_project
+
+    remote_project = bound_paratranz_project(ctx)
+    project_id = None if remote_project is None else remote_project["id"]
     paratranz_client = None
-    if ctx.current_project:
+    if remote_project:
         from transbridge.paratranz.api.paratranz_terms_api import ParatranzTermsAPI
 
         paratranz_client = ParatranzTermsAPI(ctx.config)
@@ -316,6 +322,7 @@ def start_translation_run(
         ctx,
         entry_activated=entry_activated,
         activity=activity,
+        theme_view=theme_view,
     )
     progress_created(progress)
     worker.start()
@@ -335,6 +342,7 @@ def start_mixed_run(
     error: Callable,
     parent: object | None = None,
     progress_created: Callable[[object], None] | None = None,
+    theme_view: ThemeView | None = None,
 ) -> object:
     from ._mixed_worker import _MixedWorker
     from .run_view import AiMixedProgressWindow
@@ -349,7 +357,7 @@ def start_mixed_run(
     )
     run_id = request.run_id
     activity = controller.create_activity(request)
-    progress = AiMixedProgressWindow(worker, activity, parent=parent)
+    progress = AiMixedProgressWindow(worker, activity, parent=parent, theme_view=theme_view)
     controller.attach(run_id, worker=worker, activity=activity)
     if progress_created is not None:
         progress_created(progress)
@@ -433,9 +441,10 @@ def show_polish_progress(
     *,
     on_results: Callable[[object], None],
     preview: bool,
+    theme_view: ThemeView | None = None,
 ) -> None:
     """Own the modal progress widgets and their guarded worker bindings."""
-    from PyQt6.QtWidgets import QDialog, QLabel, QMessageBox, QProgressBar, QVBoxLayout
+    from PyQt6.QtWidgets import QDialog, QMessageBox, QProgressBar, QVBoxLayout
 
     from .task_adapter import AiLegacyRunState
 
@@ -446,7 +455,10 @@ def show_polish_progress(
     progress = QProgressBar()
     progress.setRange(0, len(entries))
     layout.addWidget(progress)
-    status = QLabel("准备中…")
+    status = ElidedLabel("准备中…")
+    status.setAccessibleName("AI 润色运行状态")
+    status.setToolTip("准备中…")
+    status.setAccessibleDescription("准备中…")
     layout.addWidget(status)
     run_id = request.run_id
     activity = controller.create_activity(request)
@@ -458,7 +470,9 @@ def show_polish_progress(
             lambda current, total, message: (
                 progress.setValue(current),
                 progress.setMaximum(total),
-                status.setText(message),
+                status.set_full_text(message),
+                status.setToolTip(message),
+                status.setAccessibleDescription(message),
             ),
         )
     )
@@ -471,7 +485,7 @@ def show_polish_progress(
         else:
             from ._polish_preview_dialog import _PolishPreviewDialog
 
-            preview_dialog = _PolishPreviewDialog(entries, results, parent=parent)
+            preview_dialog = _PolishPreviewDialog(entries, results, parent=parent, theme_view=theme_view)
             if preview_dialog.exec() == QDialog.DialogCode.Accepted:
                 on_results((results, preview_dialog.get_results()))
         worker.deleteLater()

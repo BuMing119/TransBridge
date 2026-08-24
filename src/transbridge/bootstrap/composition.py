@@ -87,6 +87,7 @@ def build_runtime(
         "persistence_v2": persistence,
         "project_lifecycle": persistence.project_lifecycle,
         "project_provisioning": persistence.project_provisioning,
+        "project_remote_bindings": persistence.project_remote_bindings,
         "project_catalog": persistence.project_catalog,
         "gui_project_commands": persistence.gui_project_commands,
         "current_project_opener": persistence.current_project_opener,

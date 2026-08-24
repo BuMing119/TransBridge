@@ -5,14 +5,35 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from PyQt6.QtCore import QRect, QSize, Qt
-from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtGui import QBrush, QFont, QPalette
 from PyQt6.QtWidgets import QApplication, QStyle, QStyledItemDelegate
+
+from transbridge.ui.foundation.adapters import DomainBrushes
 
 from ._strings_common import _KEY_ROLE
 
 
 class NavItemDelegate(QStyledItemDelegate):
     """Render an original string and a smaller, muted key on two rows."""
+
+    def __init__(self, parent=None, *, domain_brushes: DomainBrushes | None = None) -> None:
+        super().__init__(parent)
+        self._normal_brush = QBrush()
+        self._key_brush = QBrush()
+        self._selected_brush = QBrush()
+        self.apply_domain_brushes(domain_brushes)
+
+    def apply_domain_brushes(self, domain_brushes: DomainBrushes | None) -> None:
+        """Compile brushes outside paint; a theme revision only swaps this cache."""
+
+        palette = QApplication.palette()
+        self._selected_brush = QBrush(palette.brush(QPalette.ColorRole.HighlightedText))
+        if domain_brushes is None:
+            self._normal_brush = QBrush(palette.brush(QPalette.ColorRole.Text))
+            self._key_brush = QBrush(palette.brush(QPalette.ColorRole.PlaceholderText))
+        else:
+            self._normal_brush = QBrush(domain_brushes.translation("source").foreground)
+            self._key_brush = QBrush(domain_brushes.label("neutral").foreground)
 
     def paint(self, painter, option, index) -> None:
         display_option = option.__class__(option)
@@ -27,16 +48,7 @@ class NavItemDelegate(QStyledItemDelegate):
         split = rect.height() * 6 // 10
         original_rect = QRect(rect.x(), rect.y(), rect.width(), split)
         key_rect = QRect(rect.x(), rect.y() + split, rect.width(), rect.height() - split)
-        palette = option.palette
-        if selected:
-            painter.fillRect(option.rect, palette.text())
-            text_color = palette.base().color()
-            key_color = QColor(palette.base().color())
-            key_color.setAlpha(180)
-        else:
-            text_color = palette.text().color()
-            key_color = QColor("#888888")
-        painter.setPen(text_color)
+        painter.setPen(self._selected_brush if selected else self._normal_brush)
         painter.setFont(option.font)
         painter.drawText(
             original_rect,
@@ -46,7 +58,7 @@ class NavItemDelegate(QStyledItemDelegate):
         key_font = QFont(option.font)
         key_font.setPointSize(max(option.font.pointSize() - 1, 8))
         painter.setFont(key_font)
-        painter.setPen(key_color)
+        painter.setPen(self._selected_brush if selected else self._key_brush)
         painter.drawText(
             key_rect,
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,

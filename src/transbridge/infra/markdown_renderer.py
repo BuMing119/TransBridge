@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import dataclass
 import html
 import re
-from typing import Sequence
 from urllib.parse import urlparse
 
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QDesktopServices, QFont
 from PyQt6.QtWidgets import (
     QFrame,
-    QHBoxLayout,
     QHeaderView,
     QLabel,
     QMessageBox,
@@ -31,17 +31,36 @@ _LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 _HR_RE = re.compile(r"^(?:---|\*\*\*|___)\s*$")
 _TABLE_SEP_RE = re.compile(r"^\|?[\s:]*-{3,20}[\s:]*(?:\|[\s:]*-{3,20}[\s:]*)*\|?\s*$")
 _ORDERED_LIST_RE = re.compile(r"^(\d+)\.\s+(.*)")
+_DEFAULT_INLINE_CODE_STYLE = "padding:1px 4px; border-radius:3px; font-family:Consolas,monospace; font-size:12px;"
+_DEFAULT_CODE_BLOCK_STYLESHEET = "QTextEdit { border-radius: 6px; padding: 8px; }"
+_DEFAULT_HORIZONTAL_RULE_STYLESHEET = "QFrame { margin: 8px 0; }"
 
 
-def _apply_inline(text: str) -> str:
+@dataclass(frozen=True, slots=True)
+class MarkdownRenderTheme:
+    """Immutable CSS projection supplied by the UI layer, never ThemeService."""
+
+    fingerprint: str
+    stylesheet: str = ""
+    inline_code_style: str = _DEFAULT_INLINE_CODE_STYLE
+    code_block_stylesheet: str = _DEFAULT_CODE_BLOCK_STYLESHEET
+    horizontal_rule_stylesheet: str = _DEFAULT_HORIZONTAL_RULE_STYLESHEET
+    link_color: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.fingerprint, str) or not self.fingerprint.strip():
+            raise ValueError("Markdown render theme requires a fingerprint")
+
+
+def _apply_inline(text: str, theme: MarkdownRenderTheme | None = None) -> str:
     """Convert Markdown inline formatting to HTML (safe for QLabel rich text)."""
     # Escape HTML entities first
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     # Inline code (before other patterns so backticks inside bold aren't split)
+    inline_style = _DEFAULT_INLINE_CODE_STYLE if theme is None else theme.inline_code_style
     text = _INLINE_CODE_RE.sub(
-        r'<code style="background-color:#f0f0f0; padding:1px 4px; '
-        r'border-radius:3px; font-family:Consolas,monospace; font-size:12px;">\1</code>',
+        rf'<code style="{inline_style}">\1</code>',
         text,
     )
     # Bold
@@ -50,6 +69,8 @@ def _apply_inline(text: str) -> str:
     text = _ITALIC_RE.sub(r"<i>\1\2</i>", text)
     # Links — M9: 校验 URL 协议，仅允许 http/https 和内部锚点
     text = _LINK_RE.sub(_sanitize_link_url, text)
+    if theme is not None and theme.link_color:
+        text = text.replace('<a href="', f'<a style="color:{theme.link_color};" href="')
 
     return text
 
@@ -93,9 +114,10 @@ def _make_label(
     alignment: Qt.AlignmentFlag | None = None,
     word_wrap: bool = True,
     max_width: int | None = None,
+    theme: MarkdownRenderTheme | None = None,
 ) -> QLabel:
     """Create a QLabel with rich text and heading-appropriate styling."""
-    html = _apply_inline(text)
+    html = _apply_inline(text, theme)
 
     if heading_level == 1:
         html = f"<h1>{html}</h1>"
@@ -114,8 +136,7 @@ def _make_label(
     label.setTextFormat(Qt.TextFormat.RichText)
     label.setWordWrap(word_wrap)
     label.setTextInteractionFlags(
-        Qt.TextInteractionFlag.TextSelectableByMouse
-        | Qt.TextInteractionFlag.LinksAccessibleByMouse
+        Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.LinksAccessibleByMouse
     )
     label.setOpenExternalLinks(False)
     label.linkActivated.connect(_safe_open_url)
@@ -128,21 +149,13 @@ def _make_label(
     return label
 
 
-def _make_code_block(lines: Sequence[str], language: str = "") -> QTextEdit:
-    """Create a read-only QTextEdit with dark background for code."""
+def _make_code_block(lines: Sequence[str], language: str = "", theme: MarkdownRenderTheme | None = None) -> QTextEdit:
+    """Create a read-only QTextEdit using injected or palette-default styling."""
     widget = QTextEdit()
     widget.setReadOnly(True)
     widget.setPlainText("\n".join(lines))
     widget.setFont(QFont("Consolas", 11))
-    widget.setStyleSheet(
-        "QTextEdit {"
-        "  background-color: #1E1E1E;"
-        "  color: #D4D4D4;"
-        "  border: 1px solid #333;"
-        "  border-radius: 6px;"
-        "  padding: 8px;"
-        "}"
-    )
+    widget.setStyleSheet(_DEFAULT_CODE_BLOCK_STYLESHEET if theme is None else theme.code_block_stylesheet)
     widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
     # Auto-height: fit to content
     widget.document().setDocumentMargin(4)
@@ -153,15 +166,17 @@ def _make_code_block(lines: Sequence[str], language: str = "") -> QTextEdit:
     return widget
 
 
-def _make_hr() -> QFrame:
+def _make_hr(theme: MarkdownRenderTheme | None = None) -> QFrame:
     """Create a horizontal rule."""
     line = QFrame()
     line.setFrameShape(QFrame.Shape.HLine)
-    line.setStyleSheet("QFrame { color: #ddd; margin: 8px 0; }")
+    line.setStyleSheet(_DEFAULT_HORIZONTAL_RULE_STYLESHEET if theme is None else theme.horizontal_rule_stylesheet)
     return line
 
 
-def _make_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> QTableWidget:
+def _make_table(
+    headers: Sequence[str], rows: Sequence[Sequence[str]], theme: MarkdownRenderTheme | None = None
+) -> QTableWidget:
     """Create a read-only QTableWidget for Markdown tables."""
     ncols = len(headers)
     nrows = len(rows)
@@ -170,14 +185,14 @@ def _make_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> QTable
     table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
 
     for j, h in enumerate(headers):
-        item = QTableWidgetItem(_apply_inline(h.strip()))
+        item = QTableWidgetItem(_apply_inline(h.strip(), theme))
         item.setFont(QFont("", -1, QFont.Weight.Bold))
         table.setHorizontalHeaderItem(j, item)
 
     for i, row in enumerate(rows):
         for j, cell in enumerate(row):
             if j < ncols:
-                table.setItem(i, j, QTableWidgetItem(_apply_inline(cell.strip())))
+                table.setItem(i, j, QTableWidgetItem(_apply_inline(cell.strip(), theme)))
 
     table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
     table.verticalHeader().setVisible(False)
@@ -187,7 +202,7 @@ def _make_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> QTable
     return table
 
 
-def _make_list(items: Sequence[str], ordered: bool) -> QWidget:
+def _make_list(items: Sequence[str], ordered: bool, theme: MarkdownRenderTheme | None = None) -> QWidget:
     """Create a bulleted or numbered list widget."""
     container = QWidget()
     layout = QVBoxLayout(container)
@@ -196,7 +211,7 @@ def _make_list(items: Sequence[str], ordered: bool) -> QWidget:
 
     for i, item_text in enumerate(items):
         prefix = f"{i + 1}." if ordered else "•"
-        label = _make_label(f"{prefix} {item_text}")
+        label = _make_label(f"{prefix} {item_text}", theme=theme)
         layout.addWidget(label)
 
     return container
@@ -204,9 +219,11 @@ def _make_list(items: Sequence[str], ordered: bool) -> QWidget:
 
 # ── Block types ────────────────────────────────────────────────
 
+
 class _Block:
     """Base block. Subclasses render themselves to QWidget."""
-    def render(self) -> QWidget:
+
+    def render(self, theme: MarkdownRenderTheme | None = None) -> QWidget:
         raise NotImplementedError
 
 
@@ -215,16 +232,16 @@ class _HeadingBlock(_Block):
         self.level = level
         self.text = text
 
-    def render(self) -> QWidget:
-        return _make_label(self.text, heading_level=self.level)
+    def render(self, theme: MarkdownRenderTheme | None = None) -> QWidget:
+        return _make_label(self.text, heading_level=self.level, theme=theme)
 
 
 class _ParagraphBlock(_Block):
     def __init__(self, text: str):
         self.text = text
 
-    def render(self) -> QWidget:
-        return _make_label(self.text)
+    def render(self, theme: MarkdownRenderTheme | None = None) -> QWidget:
+        return _make_label(self.text, theme=theme)
 
 
 class _CodeBlock(_Block):
@@ -232,8 +249,8 @@ class _CodeBlock(_Block):
         self.lines = list(lines)
         self.language = language
 
-    def render(self) -> QWidget:
-        return _make_code_block(self.lines, self.language)
+    def render(self, theme: MarkdownRenderTheme | None = None) -> QWidget:
+        return _make_code_block(self.lines, self.language, theme)
 
 
 class _ListBlock(_Block):
@@ -241,8 +258,8 @@ class _ListBlock(_Block):
         self.items = list(items)
         self.ordered = ordered
 
-    def render(self) -> QWidget:
-        return _make_list(self.items, self.ordered)
+    def render(self, theme: MarkdownRenderTheme | None = None) -> QWidget:
+        return _make_list(self.items, self.ordered, theme)
 
 
 class _TableBlock(_Block):
@@ -250,16 +267,17 @@ class _TableBlock(_Block):
         self.headers = list(headers)
         self.rows = [list(r) for r in rows]
 
-    def render(self) -> QWidget:
-        return _make_table(self.headers, self.rows)
+    def render(self, theme: MarkdownRenderTheme | None = None) -> QWidget:
+        return _make_table(self.headers, self.rows, theme)
 
 
 class _HRBlock(_Block):
-    def render(self) -> QWidget:
-        return _make_hr()
+    def render(self, theme: MarkdownRenderTheme | None = None) -> QWidget:
+        return _make_hr(theme)
 
 
 # ── Tokenizer ───────────────────────────────────────────────────
+
 
 def _tokenize(text: str) -> list[_Block]:
     """Convert raw Markdown text into a list of renderable blocks."""
@@ -309,9 +327,7 @@ def _tokenize(text: str) -> list[_Block]:
             i += 2  # skip header and separator
             rows: list[list[str]] = []
             while i < n and "|" in lines[i]:
-                rows.append(
-                    [c.strip() for c in lines[i].strip().strip("|").split("|")]
-                )
+                rows.append([c.strip() for c in lines[i].strip().strip("|").split("|")])
                 i += 1
             # Pad row cells to match header count
             for row in rows:
@@ -393,21 +409,25 @@ _MAX_BLOCK_COUNT = 300
 class MarkdownRenderer:
     """Render Markdown text to a QWidget using only PyQt6 components."""
 
-    def render(self, text: str) -> QWidget:
+    def __init__(self, theme: MarkdownRenderTheme | None = None) -> None:
+        self._theme = _validate_theme(theme)
+
+    def render(self, text: str, *, theme: MarkdownRenderTheme | None = None) -> QWidget:
         """Parse *text* and return a QWidget with the rendered content."""
+        effective_theme = self._theme if theme is None else _validate_theme(theme)
         # C30: Skip expensive tokenization + widget creation for huge inputs
         if len(text) > _MAX_INPUT_LENGTH:
-            return self._fallback(text)
+            return self._fallback(text, effective_theme)
 
         try:
             blocks = _tokenize(text)
         except Exception:
             # Fallback: plain text label
-            return self._fallback(text)
+            return self._fallback(text, effective_theme)
 
         # M20: Guard against excessive QWidget creation from many small blocks
         if len(blocks) > _MAX_BLOCK_COUNT:
-            return self._fallback(text)
+            return self._fallback(text, effective_theme)
 
         if not blocks:
             label = QLabel("")
@@ -416,6 +436,7 @@ class MarkdownRenderer:
             layout = QVBoxLayout(container)
             layout.setContentsMargins(0, 0, 0, 0)
             layout.addWidget(label)
+            _apply_theme(container, effective_theme)
             return container
 
         try:
@@ -425,16 +446,17 @@ class MarkdownRenderer:
             layout.setSpacing(4)
 
             for block in blocks:
-                widget = block.render()
+                widget = block.render(effective_theme)
                 if widget:
                     layout.addWidget(widget)
 
             layout.addStretch()
+            _apply_theme(container, effective_theme)
             return container
         except Exception:
-            return self._fallback(text)
+            return self._fallback(text, effective_theme)
 
-    def _fallback(self, text: str) -> QWidget:
+    def _fallback(self, text: str, theme: MarkdownRenderTheme | None = None) -> QWidget:
         """Degrade to plain text when parsing/rendering fails."""
         label = QLabel(text)
         label.setTextFormat(Qt.TextFormat.PlainText)
@@ -444,4 +466,16 @@ class MarkdownRenderer:
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(label)
+        _apply_theme(container, theme)
         return container
+
+
+def _validate_theme(theme: MarkdownRenderTheme | None) -> MarkdownRenderTheme | None:
+    if theme is not None and not isinstance(theme, MarkdownRenderTheme):
+        raise TypeError("theme must be MarkdownRenderTheme or None")
+    return theme
+
+
+def _apply_theme(widget: QWidget, theme: MarkdownRenderTheme | None) -> None:
+    if theme is not None and theme.stylesheet:
+        widget.setStyleSheet(theme.stylesheet)

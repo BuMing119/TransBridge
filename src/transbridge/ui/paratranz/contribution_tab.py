@@ -2,17 +2,27 @@
 ContributionTab: 贡献统计标签页。
 """
 
+from PyQt6.QtCore import QDate
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout,
-    QTableWidget, QTableWidgetItem, QHeaderView,
-    QPushButton, QLabel, QComboBox, QSpinBox, QLineEdit,
-    QGroupBox, QMessageBox,
+    QComboBox,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QSpinBox,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt6.QtCore import Qt, QDate
-from PyQt6.QtGui import QColor
 
 from transbridge.paratranz.api.paratranz_contribution_api import ParatranzScoresAPI
+from transbridge.ui.foundation.components import reserve_text_width
+
 from ..workers import ApiWorker
+from ._layout_stability import configure_stable_table_columns
 
 
 def _extract_list(data) -> list:
@@ -35,7 +45,6 @@ def _infer_operation(base: float) -> str:
 
 
 class ContributionTab(QWidget):
-
     def __init__(self, ctx, parent=None):
         super().__init__(parent)
         self._ctx = ctx
@@ -59,8 +68,7 @@ class ContributionTab(QWidget):
 
         filter_row.addWidget(QLabel("类型:"))
         self._op_combo = QComboBox()
-        for val, name in (("", "全部"), ("translate", "翻译"),
-                          ("edit", "编辑"), ("review", "审核")):
+        for val, name in (("", "全部"), ("translate", "翻译"), ("edit", "编辑"), ("review", "审核")):
             self._op_combo.addItem(name, val)
         filter_row.addWidget(self._op_combo)
 
@@ -72,6 +80,7 @@ class ContributionTab(QWidget):
 
         # 时间段筛选
         from PyQt6.QtWidgets import QDateEdit
+
         filter_row2 = QHBoxLayout()
         filter_row2.addWidget(QLabel("开始日期:"))
         self._start_date = QDateEdit()
@@ -114,12 +123,12 @@ class ContributionTab(QWidget):
 
         # 明细表格
         self._table = QTableWidget(0, 6)
-        self._table.setHorizontalHeaderLabels(
-            ["时间", "用户 ID", "操作类型", "基准值", "乘数", "贡献值"]
+        self._table.setHorizontalHeaderLabels(["时间", "用户 ID", "操作类型", "基准值", "乘数", "贡献值"])
+        configure_stable_table_columns(
+            self._table,
+            fixed_widths={0: 160, 1: 100, 3: 100, 4: 100, 5: 110},
+            stretch_columns=(2,),
         )
-        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        for i in range(1, 6):
-            self._table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.itemSelectionChanged.connect(self._update_summary)
         layout.addWidget(self._table, stretch=1)
@@ -129,6 +138,10 @@ class ContributionTab(QWidget):
         summary_layout = QHBoxLayout(summary_box)
         self._lbl_total_scores = QLabel("总贡献值：—")
         self._lbl_count = QLabel("条数：—")
+        self._lbl_count.setFixedWidth(reserve_text_width(self._lbl_count, ("条数：—", "条数：999999")))
+        self._lbl_total_scores.setMinimumWidth(
+            reserve_text_width(self._lbl_total_scores, ("总贡献值：—", "总贡献值：-9999999999.99"))
+        )
         summary_layout.addWidget(self._lbl_count)
         summary_layout.addWidget(self._lbl_total_scores)
         summary_layout.addStretch()
@@ -153,15 +166,14 @@ class ContributionTab(QWidget):
         self._gen += 1
         gen = self._gen
 
-        start = (self._start_date.date().toString("yyyy-MM-dd") + "T00:00:00Z"
-                 if self._start_enabled.isChecked() else None)
-        end = (self._end_date.date().toString("yyyy-MM-dd") + "T23:59:59Z"
-               if self._end_enabled.isChecked() else None)
+        start = (
+            self._start_date.date().toString("yyyy-MM-dd") + "T00:00:00Z" if self._start_enabled.isChecked() else None
+        )
+        end = self._end_date.date().toString("yyyy-MM-dd") + "T23:59:59Z" if self._end_enabled.isChecked() else None
 
         def _fetch():
             api = ParatranzScoresAPI(token=config.token, config=config)
-            return _extract_list(api.get_scores(pid, page=page, uid=uid, operation=op,
-                                                start=start, end=end))
+            return _extract_list(api.get_scores(pid, page=page, uid=uid, operation=op, start=start, end=end))
 
         def _on_done(scores):
             if self._gen != gen:

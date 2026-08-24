@@ -5,9 +5,9 @@
 """
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QDialog,
+    QFrame,
     QLabel,
     QMenu,
     QProgressBar,
@@ -18,18 +18,20 @@ from PyQt6.QtWidgets import (
 )
 
 from transbridge.converter.translation_entry import (
-    STAGE_HIDDEN,
-    STAGE_LOCKED,
+    STAGE_TRANSLATED,
+    STAGE_UNTRANSLATED,
     TranslationEntry,
 )
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.ui.foundation.adapters import ThemeView
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle
 from transbridge.ui.workbench.entry_menu import build_entry_menu
 from transbridge.ui.workbench.filters_presenter import (
     FiltersPresenter,
     FilterState,
     entry_category,
 )
-from transbridge.ui.workbench.filters_view import TAG_ACTIVE, TAG_NORMAL, FiltersView
+from transbridge.ui.workbench.filters_view import FiltersView
 from transbridge.ui.workbench.labels_presenter import LabelsPresenter
 from transbridge.ui.workbench.labels_view import (
     PRESET_COLORS,
@@ -41,8 +43,6 @@ from transbridge.ui.workbench.translation_table import (
     COL_KEY as _COL_KEY,
     COL_MARK as _COL_MARK,
     COL_TRANSLATION as _COL_TRANS,
-    NUM_COLUMNS as _NUM_COLS,
-    ROW_BG_GREEN as _ROW_BG_GREEN,
     TranslationTable,
 )
 from transbridge.ui.workbench.workflow_actions_view import (
@@ -73,9 +73,10 @@ _LabelManagerDialog = LabelManagerDialog
 class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
     intent_requested = pyqtSignal(str)
 
-    def __init__(self, ctx, parent=None):
+    def __init__(self, ctx, parent=None, *, theme_view: ThemeView | None = None):
         super().__init__(parent)
         self._ctx = ctx
+        self._theme_view = theme_view
         self._labels_presenter = LabelsPresenter(self._commit_labels)
         self._entries: list[TranslationEntry] = []  # 全部词条
         self._category_filters: set[str] = set()  # 多选分类标签
@@ -103,17 +104,21 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
     def _init_ui(self):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(4)
+        outer.setSpacing(8)
 
         # 进度条
         self._progress = QProgressBar()
         self._progress.setRange(0, 100)
         self._progress.setValue(0)
         self._progress.setFixedHeight(8)
+        progress_policy = self._progress.sizePolicy()
+        progress_policy.setRetainSizeWhenHidden(True)
+        self._progress.setSizePolicy(progress_policy)
+        ComponentStyle.apply_static(self._progress, ComponentKind.PROGRESS)
         outer.addWidget(self._progress)
 
         # 可点击的紧凑摘要；它只改变 FilterState，不直接操作数据。
-        self._summary_view = StatisticsSummaryView(self)
+        self._summary_view = StatisticsSummaryView(self, theme_view=self._theme_view)
         self._summary_view.filter_requested.connect(self._on_summary_filter_requested)
         outer.addWidget(self._summary_view)
 
@@ -121,6 +126,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
             on_changed=self._on_filters_changed,
             on_manage_labels=self._on_manage_labels,
             parent=self,
+            theme_view=self._theme_view,
         )
         outer.addWidget(self._filters_view)
         # Compatibility aliases while external consumers migrate to the public
@@ -142,6 +148,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
             on_progress=self._on_render_progress,
             on_batch=self._update_count_label,
             parent=self,
+            theme_view=self._theme_view,
         )
         self._table_presenter = TablePresenter(self._table)
         self._table.itemDoubleClicked.connect(self._on_double_clicked)
@@ -150,15 +157,23 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._on_context_menu)
 
-        outer.addWidget(self._table, stretch=1)
-
         self._workflow_actions = WorkflowActionsView(self)
         self._workflow_actions.intent_requested.connect(self.intent_requested.emit)
-        outer.addWidget(self._workflow_actions)
+        self._table_surface = QFrame(self)
+        self._table_surface.setObjectName("tbTableSurface")
+        table_layout = QVBoxLayout(self._table_surface)
+        table_layout.setContentsMargins(0, 0, 0, 0)
+        table_layout.setSpacing(0)
+        table_layout.addWidget(self._workflow_actions)
+        table_layout.addWidget(self._table, stretch=1)
+        outer.addWidget(self._table_surface, stretch=1)
 
         # 底部计数。表格通过 Qt 事件循环自动增量渲染直至全部完成。
         self._count_lbl = QLabel("已选 0 条 / 共 0 条")
-        self._count_lbl.setStyleSheet("color: #888; font-size: 11px;")
+        count_font = self._count_lbl.font()
+        count_font.setPointSize(9)
+        self._count_lbl.setFont(count_font)
+        self._count_lbl.setAccessibleName("Workbench 词条计数")
         outer.addWidget(self._count_lbl)
 
         # 操作进度区域（解析/上传/下载/写回共用）
@@ -227,7 +242,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
             self._label_filters.clear()
             self._focus_labeled = False
             self._filters_view.focus_labeled = False
-            self._focus_btn.setStyleSheet(self._TAG_NORMAL)
+            self._filters_view.sync_focus_style()
             self._focus_btn.setEnabled(False)
             self._tags_widget.hide()
             self._stage_tags_widget.hide()
@@ -262,9 +277,6 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
 
     # ── 标签样式 ────────────────────────────────────────────────────────────
 
-    _TAG_NORMAL = TAG_NORMAL
-    _TAG_ACTIVE = TAG_ACTIVE
-
     # ── 分类筛选标签 ────────────────────────────────────────────────────────
 
     def _build_category_tags(self):
@@ -286,7 +298,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
     # ── 标签筛选与管理 ─────────────────────────────────────────────────────
 
     def _on_manage_labels(self):
-        dlg = _LabelManagerDialog(self._label_library, self)
+        dlg = _LabelManagerDialog(self._label_library, self, theme_view=self._theme_view)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             new_library = dlg.get_label_library()
             removed = set(self._label_library) - set(new_library)
@@ -324,17 +336,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
     # ── 表格填充 ──────────────────────────────────────────────────────────────
 
     def _populate_table(self):
-        self._filters_presenter.update(
-            FilterState(
-                categories=frozenset(self._category_filters),
-                stages=frozenset(self._stage_filters),
-                labels=frozenset(self._label_filters),
-                search_key=self._search_key.text(),
-                search_original=self._search_orig.text(),
-                search_translation=self._search_trans.text(),
-                focus_labeled=self._focus_labeled,
-            )
-        )
+        self._filters_presenter.update(self._filters_view.state())
         self._render_entries = tuple(self._filters_presenter.apply(self._entries, self._entry_labels))
         self._filtered_total = len(self._render_entries)
         projection = getattr(self._ctx, "project_projection", None)
@@ -353,9 +355,11 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
 
     def _on_render_progress(self, current: int, total: int) -> None:
         if total:
+            self._progress.setVisible(current < total)
             self._progress.setRange(0, total)
             self._progress.setValue(current)
             return
+        self._progress.hide()
         self._progress.setRange(0, 100)
         self._progress.setValue(100)
 
@@ -392,7 +396,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
             self._table.editItem(item)
 
     def _on_item_changed(self, item: QTableWidgetItem):
-        """译文编辑后更新 entry 和行背景色。"""
+        """译文编辑后原地同步 entry、状态文字与行视觉。"""
         if item.column() != _COL_TRANS:
             return
         # Projection commands notify synchronously. A subscriber may rebuild the
@@ -405,8 +409,10 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         new_text = item.text().strip()
         if new_text == "（无译文）":
             new_text = ""
+        old_translation = entry.translation
+        old_stage = entry.stage
+        stage = STAGE_TRANSLATED if new_text and entry.stage == STAGE_UNTRANSLATED else entry.stage
         if getattr(self._ctx, "uses_authoritative_projection", False):
-            stage = 2 if new_text and entry.stage < 2 else entry.stage
             result = self._ctx.update_projected_entry(
                 entry.key,
                 translation=new_text,
@@ -416,36 +422,13 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
                 self._populate_table()
                 return
         entry.translation = new_text if new_text else ""
-        if entry.translation and entry.stage < 2:
-            entry.stage = 2
-        row, current_item = self._find_rendered_translation_item(original_row, entry.id)
-        if current_item is None:
-            return
-        # 刷新该行显示（颜色 + 文本）
-        if entry.stage == STAGE_HIDDEN:
-            row_bg = QColor("#F5F5F5")
-        elif entry.stage == STAGE_LOCKED:
-            row_bg = QColor("#FFEBEE")
-        elif entry.translation:
-            row_bg = _ROW_BG_GREEN
-        else:
-            row_bg = None
-        self._table.blockSignals(True)
-        if entry.translation:
-            current_item.setForeground(QColor("#4CAF50"))
-            current_item.setText(entry.translation[:80] if len(entry.translation) > 80 else entry.translation)
-        else:
-            current_item.setForeground(QColor("#9E9E9E"))
-            current_item.setText("（无译文）")
-        # 刷新该行所有列的背景色
-        for c in range(_NUM_COLS):
-            ci = self._table.item(row, c)
-            if ci:
-                if row_bg:
-                    ci.setBackground(row_bg)
-                else:
-                    ci.setData(Qt.ItemDataRole.BackgroundRole, None)
-        self._table.blockSignals(False)
+        entry.stage = stage
+        self._refresh_changed_entry(
+            entry,
+            preferred_row=original_row,
+            old_stage=old_stage,
+            translation_filter_may_change=old_translation != entry.translation,
+        )
 
     def _find_rendered_translation_item(
         self,
@@ -476,7 +459,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
             on_label_toggle=self._on_label_toggle,
             on_manage_labels=self._on_manage_labels,
             on_create_label=self._on_quick_create_label,
-            on_stage_change=self._on_stage_change,
+            on_stage_change=lambda selected, stage: self._on_stage_change(selected, stage, preferred_row=row),
             parent=self,
         )
 
@@ -494,14 +477,44 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         self._build_label_tags()
         self._populate_table()
 
-    def _on_stage_change(self, entry: TranslationEntry, stage_val: int):
+    def _on_stage_change(self, entry: TranslationEntry, stage_val: int, *, preferred_row: int = -1):
+        if entry.stage == stage_val:
+            return
+        old_stage = entry.stage
+        preferred_row = self._table.find_entry_row(preferred_row, entry.id)
         if getattr(self._ctx, "uses_authoritative_projection", False):
             result = self._ctx.update_projected_entry(entry.key, stage=stage_val)
             if not result.is_success:
                 return
         entry.stage = stage_val
+        self._refresh_changed_entry(entry, preferred_row=preferred_row, old_stage=old_stage)
+
+    def _refresh_changed_entry(
+        self,
+        entry: TranslationEntry,
+        *,
+        preferred_row: int,
+        old_stage: int,
+        translation_filter_may_change: bool = False,
+    ) -> None:
+        """Refresh counters and one row; re-filter only when membership may change."""
+
+        self._summary = StatisticsSummary.from_entries(self._entries)
+        self._summary_view.set_summary(self._summary)
         self._build_stage_tags()
-        self._populate_table()
+        stage_membership_changed = bool(self._stage_filters) and (
+            (old_stage in self._stage_filters) != (entry.stage in self._stage_filters)
+        )
+        needs_refilter = stage_membership_changed or (
+            translation_filter_may_change
+            and bool(self._search_trans.text().strip() or self._filters_view.search_all.text().strip())
+        )
+        if needs_refilter:
+            self._populate_table()
+            return
+        self._table.update_rendered_entry(entry, preferred_row)
+        self._update_count_label()
+        self._update_workflow_actions()
 
     def _on_quick_create_label(self, entry):
         from PyQt6.QtWidgets import QInputDialog
@@ -560,7 +573,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         # 清除所有筛选以便目标行可见
         self._filters_view.apply_state(FilterState())
         self._focus_labeled = False
-        self._focus_btn.setStyleSheet(self._TAG_NORMAL)
+        self._filters_view.sync_focus_style()
 
         # 更新标签UI
         self._build_category_tags()

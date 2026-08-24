@@ -1,0 +1,362 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: TransBridge UI 1\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"X-TransBridge-Catalog-Schema: 1\n"
+"X-TransBridge-Catalog-Version: source-1\n"
+
+#: ui/shell/menu_builder.py
+msgid "文件"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "项目"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "翻译版本"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "翻译"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "同步与发布"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "视图"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "设置"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "帮助"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "新建本地翻译工程…"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "打开本地翻译工程…"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "保存当前工程"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "刷新工程列表"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "新建翻译版本…"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "复制当前翻译版本…"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "创建历史还原点…"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "载入历史还原点…"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "导出 .transbridge…"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "导入 .transbridge…"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "选择插件开始翻译…"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "导入已有译文…"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "AI 自动翻译…"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "翻译词典…"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "检查翻译问题"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "管理当前翻译内容"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "上传当前内容至 ParaTranz…"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "批量上传至 ParaTranz…"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "从 ParaTranz 下载并合并…"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "批量下载并合并…"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "写回当前文件…"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "批量写回文件…"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "FOMOD 安装包翻译…"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "智能助手面板"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "外观与通用设置…"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "服务与 API 配置…"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "ParaTranz 账户信息"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "ParaTranz 私信"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "功能与术语帮助"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "关于 TransBridge"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "退出"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "查看任务与结果"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "重新检查并重试任务"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "选择应用主题、语言与无障碍选项"
+msgstr ""
+
+#: ui/shell/menu_builder.py
+msgid "配置 ParaTranz 与 AI 服务连接"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "通用设置"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "选择主题模式并在应用前检查隔离预览"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "所选主题当前不可用，请选择其他主题。"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "所选主题已不可用，当前设置保持不变。"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "主题已应用到本次会话，但无法保存供下次启动使用。"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "无法恢复已保存主题；当前会话继续使用刚才的主题。"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "无法读取已保存设置；当前会话主题仍可正常使用。"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "已保存的主题当前不可用，正在使用安全回退主题。"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "通用设置内容"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "内容过长时可滚动，操作按钮保持可见"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "外观"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "主题模式"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "选择跟随系统、浅色或深色"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "跟随系统"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "浅色"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "深色"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "模式"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "主题提供者"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "选择可用的主题提供者"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "主题"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "主题提供者信息"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "提供者"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "当前生效配色"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "预览配色"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "语言设置将在重启应用后生效；无障碍功能保持系统默认键盘行为。"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "语言与无障碍说明"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "打开服务与 API 配置"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "打开独立的服务配置窗口"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "设置结果"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "应用"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "恢复默认"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "取消"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "应用主题设置"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "恢复默认主题设置"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "取消主题设置"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "不可用"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "（系统）"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "无法生成所选主题的预览。"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "所选主题当前不可用，预览已使用安全回退主题。"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "主题未保存"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "保留本次会话"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "恢复已保存主题"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "主题服务当前不可用，请重新打开设置后重试。"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "主题只能从主窗口应用，请稍后重试。"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "无法应用所选主题；当前主题保持不变。"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "主题不可用，已恢复默认主题"
+msgstr ""

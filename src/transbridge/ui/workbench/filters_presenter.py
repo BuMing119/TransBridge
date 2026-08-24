@@ -81,6 +81,7 @@ class FilterState:
     categories: frozenset[str] = frozenset()
     stages: frozenset[int] = frozenset()
     labels: frozenset[str] = frozenset()
+    search_all: str = ""
     search_key: str = ""
     search_original: str = ""
     search_translation: str = ""
@@ -93,6 +94,7 @@ class FilterState:
             categories=frozenset(value.get("category", []) or []),
             stages=frozenset(value.get("stage", []) or []),
             labels=frozenset(value.get("label", []) or []),
+            search_all=str(value.get("search_all", "") or ""),
             search_key=str(value.get("search_key", "") or ""),
             search_original=str(value.get("search_orig", "") or ""),
             search_translation=str(value.get("search_trans", "") or ""),
@@ -104,6 +106,7 @@ class FilterState:
             "category": list(self.categories),
             "stage": list(self.stages),
             "label": list(self.labels),
+            "search_all": self.search_all,
             "search_key": self.search_key,
             "search_orig": self.search_original,
             "search_trans": self.search_translation,
@@ -137,11 +140,23 @@ class FiltersPresenter:
         entry_labels: Mapping[str, set[str]],
     ) -> list[TranslationEntry]:
         state = self._state
+        all_kw = state.search_all.lower()
         key_kw = state.search_key.lower()
         original_kw = state.search_original.lower()
         translation_kw = state.search_translation.lower()
         result: list[TranslationEntry] = []
         for entry in entries:
+            if (
+                all_kw
+                and all_kw
+                not in "\n".join((
+                    entry.key or "",
+                    entry.original or "",
+                    entry.translation or "",
+                    entry.context or "",
+                )).lower()
+            ):
+                continue
             if state.categories and entry_category(entry) not in state.categories:
                 continue
             if state.stages and entry.stage not in state.stages:

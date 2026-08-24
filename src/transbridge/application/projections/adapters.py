@@ -9,6 +9,7 @@ from transbridge.application.projects import (
     ActiveProject,
     LifecycleEvent,
     ProjectLifecycleService,
+    project_paratranz_binding,
     variant_catalog,
 )
 from transbridge.application.sessions import SessionLifecycleService, SessionSnapshot
@@ -24,6 +25,7 @@ def project_projection(active: ActiveProject | None) -> ProjectionSnapshot | Non
     variant = None if active.variant is None else active.variant.snapshot()
     values: dict[str, Any] = dict(summary)
     variants = variant_catalog(active.project)
+    paratranz_binding = project_paratranz_binding(active.project)
     values.update({
         "project_name": str(active.project.envelope.data.get("name", "")),
         "sources": [dict(value) for value in active.project.envelope.data.get("sources", ())],
@@ -31,6 +33,7 @@ def project_projection(active: ActiveProject | None) -> ProjectionSnapshot | Non
         "variants": [item.to_dict() for item in variants],
         "entries": [] if variant is None else [entry.to_dict() for entry in variant.entries],
         "label_library": ({} if variant is None else variant.to_dto().envelope.data.get("label_library", {})),
+        "paratranz_binding": None if paratranz_binding is None else paratranz_binding.to_dict(),
     })
     aggregate_revision = active.project.envelope.revision
     persisted_revision = active.persisted_project_revision

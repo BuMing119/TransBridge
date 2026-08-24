@@ -2,11 +2,28 @@
 
 from __future__ import annotations
 
+import logging
+
 from PyQt6.QtCore import Qt
 
 from transbridge.paratranz.api.paratranz_user_api import ParatranzUserAPI
 from transbridge.ui.paratranz.config_dialog import ConfigDialog
 from transbridge.ui.workers import ApiWorker
+
+_logger = logging.getLogger(__name__)
+
+
+def _fetch_current_user(config):
+    api = ParatranzUserAPI(token=config.token, config=config)
+    try:
+        user = api.get_my_user()
+        try:
+            return api.with_avatar_payload(user)
+        except Exception:
+            _logger.warning("ParaTranz user loaded, but the avatar download failed", exc_info=True)
+            return user
+    finally:
+        api.close()
 
 
 class ToolWindows:
@@ -19,7 +36,7 @@ class ToolWindows:
         config = context.config
 
         def fetch():
-            return ParatranzUserAPI(token=config.token, config=config).get_my_user()
+            return _fetch_current_user(config)
 
         def done(user) -> None:
             context.current_user = user
@@ -42,6 +59,23 @@ class ToolWindows:
         if self._host.context.config.token and not self._host.context.current_user:
             self.load_current_user()
 
+    def show_ui_settings(self) -> None:
+        foundation = getattr(self._host, "ui_foundation", None)
+        if foundation is None:
+            self._host.show_message("通用设置当前不可用，请稍后重试。")
+            return
+        from transbridge.ui.settings_dialog import SettingsDialog
+
+        dialog = SettingsDialog(
+            foundation.theme,
+            foundation.config,
+            self._host,
+            registry=foundation.registry,
+            locale_service=foundation.locale,
+        )
+        dialog.service_settings_requested.connect(self.show_config)
+        dialog.exec()
+
     def show_user(self) -> None:
         if not self._host.context.current_user:
             self._host.show_message("请先配置 API Token")
@@ -49,6 +83,7 @@ class ToolWindows:
         from transbridge.ui.paratranz.user_dialog import UserInfoDialog
 
         UserInfoDialog(self._host.context, self._host).exec()
+        self.load_current_user()
 
     def show_mails(self) -> None:
         if not self._host.context.current_user:
@@ -96,6 +131,7 @@ class ToolWindows:
                 session_commands=self._host.session_commands,
                 session_projection=self._host.session_projection,
                 runtime_context=self._host.runtime_context,
+                theme_view=getattr(self._host, "theme_view", None),
             )
             self.assistant_panel = panel
             panel.visibility_changed.connect(self.on_assistant_visibility_changed)

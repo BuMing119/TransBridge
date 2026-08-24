@@ -1,7 +1,7 @@
 # Story-06：Shell、开始中心与 Workbench 关键路径迁移
 
 - **所属 Plan**：[高性能统一 UI 基础框架](../plan.md)
-- **状态**：草稿
+- **状态**：已完成（2026-08-24）
 - **优先级**：P0
 - **前置依赖**：S04 公共组件/适配器、S05 设置入口
 - **下游依赖**：S07、S08、S09
@@ -12,13 +12,13 @@
 
 ## 原始验收标准
 
-- [ ] MainWindow 壳、菜单/状态栏、Start Center、Guidance、Task Center、Command Palette/Context Help 与当前 Workbench/Step2/project bar/workflow slices 使用语义/业务令牌。
-- [ ] Step1/Step3、project prompt overlay 与旧 operation cards 先经过 production reachability 审计；不可达兼容模块只登记 owner/删除门禁，不得为了主题迁移重新接回当前界面。
-- [ ] Stage、标签、隐藏/锁定、已翻译/未翻译、focus/filter 等状态在浅/深主题均清晰，关键状态具有文字/图标/边框等非纯颜色信息。
-- [ ] Step2 大表格主题切换保持 row identity、选择、滚动位置、编辑内容和增量 render generation；不得全量重建业务数据。
-- [ ] 迁移文件不再出现裸主题颜色；仍保留的结构 QSS 有审计豁免原因。
-- [ ] 主窗口 geometry 的历史 `QSettings` 与 UI preference 权威状态分离，主题不得从 QSettings 读取。
-- [ ] 窗口打开 P95 和主题切换 heartbeat 满足 NFR1.4。
+- [x] MainWindow 壳、菜单/状态栏、Start Center、Guidance、Task Center、Command Palette/Context Help 与当前 Workbench/Step2/project bar/workflow slices 使用语义/业务令牌。
+- [x] Step1/Step3、project prompt overlay 与旧 operation cards 先经过 production reachability 审计；不可达兼容模块只登记 owner/删除门禁，不得为了主题迁移重新接回当前界面。
+- [x] Stage、标签、隐藏/锁定、已翻译/未翻译、focus/filter 等状态在浅/深主题均清晰，关键状态具有文字/图标/边框等非纯颜色信息。
+- [x] Step2 大表格主题切换保持 row identity、选择、滚动位置、编辑内容和增量 render generation；不得全量重建业务数据。
+- [x] 迁移文件不再出现裸主题颜色；仍保留的结构 QSS 有审计豁免原因。
+- [x] 主窗口 geometry 的历史 `QSettings` 与 UI preference 权威状态分离，主题不得从 QSettings 读取。
+- [x] 窗口打开 P95 和主题切换 heartbeat 满足 NFR1.4。
 
 ## 受影响数据流
 

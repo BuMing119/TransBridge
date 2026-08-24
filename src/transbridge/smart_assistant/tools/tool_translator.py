@@ -6,14 +6,45 @@ Story 03A: 重构为 TranslationController 类。
 """
 from __future__ import annotations
 
+import logging
 import os
 import threading
-import logging
 
 from .base import ToolResult, require_collection, require_runtime_context
 from .task_manager import TaskManager
 
 logger = logging.getLogger(__name__)
+
+
+def _paratranz_term_project_id(ctx) -> int | None:
+    """Return only a binding that is safe to use with the current account/endpoint."""
+
+    from transbridge.application.projects import (
+        ParaTranzTargetResolver,
+        ParaTranzTargetStatus,
+    )
+
+    resolve = getattr(ctx, "resolve_paratranz_target", None)
+    if callable(resolve):
+        target = resolve()
+    else:
+        config = getattr(ctx, "config", None)
+        endpoint = getattr(config, "base_url", None)
+        if not isinstance(endpoint, str) or not endpoint.startswith(("http://", "https://")):
+            endpoint = "https://paratranz.cn"
+        user = getattr(ctx, "current_user", None)
+        account_id = user.get("id") if isinstance(user, dict) else getattr(config, "user_id", None)
+        if not isinstance(account_id, int) or isinstance(account_id, bool) or account_id <= 0:
+            account_id = None
+        target = ParaTranzTargetResolver().resolve(
+            binding=getattr(ctx, "paratranz_binding", None),
+            binding_revision=getattr(ctx, "project_revision", None),
+            endpoint=endpoint,
+            account_user_id=account_id,
+        )
+    if target.status not in {ParaTranzTargetStatus.UNVERIFIED, ParaTranzTargetStatus.AVAILABLE}:
+        return None
+    return target.project_id
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -95,6 +126,7 @@ class TranslationController:
         _entry_ids = list(entry_ids) if entry_ids else None
 
         def _run():
+            paratranz_client = None
             try:
                 from transbridge.ai_translator.translator import AutoTranslator, TranslatorConfig
                 from transbridge.paratranz.config_manager import LLMConfig
@@ -103,15 +135,12 @@ class TranslationController:
                 cfg = TranslatorConfig(llm_config=llm_cfg, esp_path=ctx.esp_path, overwrite=False)
 
                 # Story 24: 传入 paratranz_client 和 project_id，使 PT 术语来源生效
-                paratranz_client = None
-                project_id = None
+                project_id = _paratranz_term_project_id(ctx)
                 if hasattr(ctx, 'config') and ctx.config and getattr(ctx.config, 'token', None):
-                    from transbridge.paratranz import ParatranzClient
-                    paratranz_client = ParatranzClient(ctx.config)
-                    project_id = getattr(ctx, 'paratranz_project_id', None)
-                    if not project_id:
-                        current = getattr(ctx, 'current_project', {}) or {}
-                        project_id = current.get("id")
+                    if project_id is not None:
+                        from transbridge.paratranz import ParatranzClient
+
+                        paratranz_client = ParatranzClient(ctx.config)
 
                 translator = AutoTranslator(cfg, paratranz_client, project_id)
 
@@ -152,6 +181,12 @@ class TranslationController:
                 tm.set_status(task_id, "failed")
                 tm.update_progress(task_id, {"error": str(exc)})
                 tm.notify_failed(task_id, str(exc))
+            finally:
+                if paratranz_client is not None:
+                    try:
+                        paratranz_client.close()
+                    except Exception:  # noqa: BLE001 - cleanup must not hide the task result
+                        logger.exception("关闭 AI 翻译 ParaTranz 客户端失败")
 
         thread = tm.start_thread(task_id, _run)  # M2: 复用 TaskManager.start_thread
         # m6: 无全局线程池，每次翻译/润色/后处理创建独立 Thread。并发上限由 TaskManager 调用方控制。
@@ -258,6 +293,7 @@ class TranslationController:
                 tm.set_status(task_id, "completed")
 
                 import time
+
                 from transbridge.smart_assistant.tools.tool_proofreader import set_last_report
                 polished_count = sum(1 for r in results.values() if r.polished_translation and r.confidence > 0)
                 set_last_report({

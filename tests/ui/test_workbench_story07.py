@@ -106,7 +106,7 @@ def test_context_actions_expose_reasons_and_view_emits_one_stable_intent() -> No
 def test_label_management_is_separate_from_label_filter_and_advanced_is_progressive() -> None:
     view = FiltersView(on_changed=lambda: None, on_manage_labels=lambda: None)
 
-    assert view.manage_labels_button.parent() is view
+    assert view.manage_labels_button.parent() is view.search_widget
     assert view.category_widget.isHidden()
     view.set_content_visible(True)
     assert view.category_widget.isHidden()

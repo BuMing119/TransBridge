@@ -16,6 +16,7 @@ from .models import (
     LifecycleActivation,
     LifecycleEvent,
     LifecycleLease,
+    LifecycleProjectUpdate,
     LifecycleSave,
     LifecycleSnapshot,
     PreparedTransition,
@@ -44,6 +45,17 @@ from .provisioning import (
     ProjectSourceRequest,
 )
 from .recent_catalog import ProjectCatalogEntry, ProjectCatalogQuery, ProjectCatalogSnapshot
+from .remote_binding import (
+    ParaTranzProjectBinding,
+    ParaTranzTargetResolver,
+    ParaTranzTargetSource,
+    ParaTranzTargetStatus,
+    ProjectRemoteBindingService,
+    ResolvedParaTranzTarget,
+    normalize_paratranz_endpoint,
+    project_paratranz_binding,
+    project_with_paratranz_binding,
+)
 
 __all__ = [
     "ActiveProject",
@@ -54,6 +66,7 @@ __all__ = [
     "LifecycleActivation",
     "LifecycleEvent",
     "LifecycleLease",
+    "LifecycleProjectUpdate",
     "LifecycleLeasePort",
     "LifecycleSave",
     "LifecycleSnapshot",
@@ -77,6 +90,7 @@ __all__ = [
     "ProjectSourcePreparationPort",
     "ProjectSourceRequest",
     "ProjectLifecycleService",
+    "ProjectRemoteBindingService",
     "GuiProjectCommandFacade",
     "TransitionTarget",
     "VariantDescriptor",
@@ -84,4 +98,12 @@ __all__ = [
     "project_with_active_variant",
     "project_without_variant",
     "variant_catalog",
+    "ParaTranzProjectBinding",
+    "ParaTranzTargetResolver",
+    "ParaTranzTargetSource",
+    "ParaTranzTargetStatus",
+    "ResolvedParaTranzTarget",
+    "normalize_paratranz_endpoint",
+    "project_paratranz_binding",
+    "project_with_paratranz_binding",
 ]

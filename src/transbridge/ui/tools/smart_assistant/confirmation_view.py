@@ -7,6 +7,7 @@ from PyQt6.QtCore import QCoreApplication, QObject, Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import QMessageBox
 
 from .plan_card import PlanCard
+from .theme_support import SmartAssistantTheme
 from .tool_card import BatchToolCard, ToolCard
 
 
@@ -36,6 +37,7 @@ class ConfirmationView:
         batch_executed: Callable[[list], None],
         batch_ignored: Callable[[list], None],
         engine: Callable[[], object | None],
+        theme: SmartAssistantTheme | None = None,
     ) -> None:
         self._parent = parent
         self._add_widget = add_widget
@@ -46,6 +48,7 @@ class ConfirmationView:
         self._batch_executed = batch_executed
         self._batch_ignored = batch_ignored
         self._engine = engine
+        self._theme = theme or SmartAssistantTheme()
         self._closed = False
         self._bridge = _MainThreadBridge(parent)
         self._pending_events: set[threading.Event] = set()
@@ -54,7 +57,7 @@ class ConfirmationView:
     def add_tool_card(self, step: dict) -> ToolCard | None:
         if self._closed:
             return None
-        card = ToolCard(step)
+        card = ToolCard(step, theme=self._theme)
         card.executed.connect(self._tool_executed)
         card.ignored.connect(self._tool_ignored)
         self._add_widget(card)
@@ -63,7 +66,7 @@ class ConfirmationView:
     def add_plan_card(self, steps: list) -> PlanCard | None:
         if self._closed:
             return None
-        card = PlanCard(steps)
+        card = PlanCard(steps, theme=self._theme)
         card.confirmed.connect(self._plan_confirmed)
         card.cancelled.connect(self._plan_cancelled)
         self._add_widget(card)
@@ -72,11 +75,14 @@ class ConfirmationView:
     def add_batch_tool_card(self, steps: list) -> BatchToolCard | None:
         if self._closed:
             return None
-        card = BatchToolCard(steps)
+        card = BatchToolCard(steps, theme=self._theme)
         card.all_executed.connect(self._batch_executed)
         card.all_ignored.connect(self._batch_ignored)
         self._add_widget(card)
         return card
+
+    def apply_theme(self, theme: SmartAssistantTheme) -> None:
+        self._theme = theme
 
     def dispatch(self, callback: Callable[[], None]) -> None:
         """Queue a non-blocking presentation callback on the GUI thread."""

@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
 
 from transbridge.parser.eet_parser import EET_XmlParser
 from transbridge.parser.xt import XT_XmlParser
+from transbridge.ui.foundation.adapters import ThemeView
 from transbridge.writer.eet_xml_writer import EETWriter
 from transbridge.writer.plugin_writer import PluginWriter
 from transbridge.writer.xt_xml_writer import XTWriter
@@ -34,12 +35,13 @@ class BatchWriteResult:
 
 
 class WriteCard(OpCard):
-    def __init__(self, ctx, run_worker, parent=None):
+    def __init__(self, ctx, run_worker, parent=None, *, theme_view: ThemeView | None = None):
         super().__init__(
             "写回插件/XML",
             "将集合中的译文写回 ESP 插件或 EET/XT XML 文件。",
             "写回",
             parent,
+            theme_view=theme_view,
         )
         self._output_dir_override: Path | None = None  # S08: 全版本写回时覆盖输出目录
         self._ctx = ctx

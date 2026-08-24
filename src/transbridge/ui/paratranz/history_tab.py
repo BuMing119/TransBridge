@@ -2,16 +2,29 @@
 HistoryTab: 历史记录标签页，含词条变更历史和文件上传历史两个子标签。
 """
 
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
-    QTableWidget, QTableWidgetItem, QHeaderView,
-    QPushButton, QLabel, QComboBox, QSpinBox, QLineEdit, QMessageBox,
-    QDialog, QSplitter, QTextEdit,
-)
 from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QSpinBox,
+    QSplitter,
+    QTableWidget,
+    QTableWidgetItem,
+    QTabWidget,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
 from transbridge.paratranz.api.paratranz_history_api import ParatranzHistoryAPI
+
 from ..workers import ApiWorker
+from ._layout_stability import configure_stable_table_columns
 
 
 def _extract_list(data) -> list:
@@ -25,7 +38,6 @@ def _extract_list(data) -> list:
 
 
 class HistoryTab(QWidget):
-
     def __init__(self, ctx, parent=None):
         super().__init__(parent)
         self._ctx = ctx
@@ -52,8 +64,7 @@ class HistoryTab(QWidget):
         filter_row = QHBoxLayout()
         filter_row.addWidget(QLabel("类型:"))
         self._type_combo = QComboBox()
-        for val, name in (("", "全部"), ("text", "词条"), ("term", "术语"),
-                          ("import", "导入"), ("comment", "评论")):
+        for val, name in (("", "全部"), ("text", "词条"), ("term", "术语"), ("import", "导入"), ("comment", "评论")):
             self._type_combo.addItem(name, val)
         filter_row.addWidget(self._type_combo)
 
@@ -82,14 +93,20 @@ class HistoryTab(QWidget):
         layout.addLayout(filter_row)
 
         self._hist_table = QTableWidget(0, 7)
-        self._hist_table.setHorizontalHeaderLabels(
-            ["时间", "操作者", "操作类型", "词条键名", "修改字段", "修改前", "修改后"]
+        self._hist_table.setHorizontalHeaderLabels([
+            "时间",
+            "操作者",
+            "操作类型",
+            "词条键名",
+            "修改字段",
+            "修改前",
+            "修改后",
+        ])
+        configure_stable_table_columns(
+            self._hist_table,
+            fixed_widths={0: 150, 1: 140, 2: 110, 3: 220, 4: 100},
+            stretch_columns=(5, 6),
         )
-        self._hist_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        for i in (1, 2, 3, 4):
-            self._hist_table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
-        self._hist_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
-        self._hist_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
         self._hist_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._hist_table.itemDoubleClicked.connect(self._on_hist_row_double_clicked)
         layout.addWidget(self._hist_table, stretch=1)
@@ -107,13 +124,12 @@ class HistoryTab(QWidget):
         layout.addLayout(rev_toolbar)
 
         self._rev_table = QTableWidget(0, 7)
-        self._rev_table.setHorizontalHeaderLabels(
-            ["时间", "文件", "操作类型", "操作者 ID", "新增", "更新", "删除"]
+        self._rev_table.setHorizontalHeaderLabels(["时间", "文件", "操作类型", "操作者 ID", "新增", "更新", "删除"])
+        configure_stable_table_columns(
+            self._rev_table,
+            fixed_widths={0: 150, 2: 110, 3: 110, 4: 80, 5: 80, 6: 80},
+            stretch_columns=(1,),
         )
-        self._rev_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self._rev_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        for i in (2, 3, 4, 5, 6):
-            self._rev_table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
         self._rev_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         layout.addWidget(self._rev_table, stretch=1)
         return w
@@ -142,8 +158,7 @@ class HistoryTab(QWidget):
 
         def _fetch():
             api = ParatranzHistoryAPI(token=config.token, config=config)
-            return _extract_list(api.get_project_history(pid, page=page, uid=uid,
-                                                          tid=tid, history_type=history_type))
+            return _extract_list(api.get_project_history(pid, page=page, uid=uid, tid=tid, history_type=history_type))
 
         def _on_done(records):
             if self._hist_gen != gen:

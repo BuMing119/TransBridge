@@ -6,25 +6,30 @@ Story-19: 左侧 CollectionStatsPanel 已移除，分类统计以标签组形式
 
 from pathlib import Path
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QShowEvent
 from PyQt6.QtWidgets import (
     QComboBox,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QMenu,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
+from transbridge.ui.foundation.adapters import ThemeView
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle
 from transbridge.ui.guidance.qt import GuidanceBanner
 from transbridge.ui.windowing import show_and_activate
 
 from ._project_bar import ProjectBar
+from .remote_target_view import RemoteTargetView
 from .step2 import Step2PreviewWidget
 from .workflow_presenter import WorkbenchHierarchyViewState, WorkbenchWorkflowPresenter
 
@@ -38,32 +43,44 @@ def _track_ai_progress(tool_windows: dict, progress_win) -> None:
 class WorkbenchWidget(QWidget):
     intent_requested = pyqtSignal(str)
 
-    def __init__(self, ctx, parent=None):
+    def __init__(self, ctx, parent=None, *, theme_view: ThemeView | None = None):
         super().__init__(parent)
+        self.setObjectName("tbWorkbench")
         self.setAccessibleName("翻译工作台")
         self._initial_focus_set = False
         self._ctx = ctx
+        self._theme_view = theme_view
         self._tool_windows: dict = {}
         self._workflow_presenter = WorkbenchWorkflowPresenter()
         self._init_ui()
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(4)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(8)
 
-        # ── 项目工具栏 ─────────────────────────────────────
-        self._project_bar = ProjectBar(self._ctx)
-        layout.addWidget(self._project_bar)
+        context_card = QFrame(self)
+        context_card.setAccessibleName("当前翻译上下文")
+        ComponentStyle.apply_static(context_card, ComponentKind.CARD)
+        context_layout = QHBoxLayout(context_card)
+        context_layout.setContentsMargins(10, 6, 10, 6)
+        context_layout.setSpacing(12)
 
-        # ── 集合管理工具栏 ─────────────────────────────────
+        # ── 项目与翻译内容上下文 ───────────────────────────
+        self._project_bar = ProjectBar(self._ctx, theme_view=self._theme_view)
+        context_layout.addWidget(self._project_bar, 1)
+
+        self._remote_target = RemoteTargetView(self._ctx, self)
+        context_layout.addWidget(self._remote_target, 1)
+
         self._collection_bar = self._build_collection_bar()
-        layout.addWidget(self._collection_bar)
+        context_layout.addWidget(self._collection_bar, 1)
+        layout.addWidget(context_card)
 
         self._guidance_banner = GuidanceBanner(self)
         layout.addWidget(self._guidance_banner)
 
-        self._step2 = Step2PreviewWidget(self._ctx)
+        self._step2 = Step2PreviewWidget(self._ctx, theme_view=self._theme_view)
         self._step2.intent_requested.connect(self.intent_requested.emit)
         layout.addWidget(self._step2)
 
@@ -145,6 +162,7 @@ class WorkbenchWidget(QWidget):
                 self._step2,
                 parent=self,
                 task_runtime=task_runtime,
+                theme_view=self._theme_view,
             )
             if win is None:
                 return
@@ -177,13 +195,17 @@ class WorkbenchWidget(QWidget):
         self._collection_combo = QComboBox()
         self._collection_combo.setAccessibleName("当前翻译内容")
         self._collection_combo.setMinimumWidth(180)
-        self._collection_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self._collection_combo.setMinimumContentsLength(16)
+        self._collection_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        ComponentStyle.apply_static(self._collection_combo, ComponentKind.INPUT)
+        self._collection_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self._collection_combo.currentIndexChanged.connect(self._on_collection_switch)
         row.addWidget(self._collection_combo, stretch=1)
 
         self._btn_import = QPushButton("导入已有译文…")
         self._btn_import.setAccessibleName("导入已有译文")
         self._btn_import.setFlat(True)
+        ComponentStyle.apply_static(self._btn_import, ComponentKind.BUTTON)
         self._btn_import.setToolTip("从 JSON 文件导入翻译集合")
         self._btn_import.clicked.connect(self._on_import_json)
         row.addWidget(self._btn_import)
@@ -192,6 +214,7 @@ class WorkbenchWidget(QWidget):
         self._manage_button.setAccessibleName("管理当前翻译内容")
         self._manage_button.setText("管理 ▾")
         self._manage_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        ComponentStyle.apply_static(self._manage_button, ComponentKind.BUTTON)
         manage_menu = QMenu(self._manage_button)
         self._btn_new = manage_menu.addAction("准备新的翻译内容")
         self._btn_new.setToolTip("清空当前选择，准备加载新数据")
@@ -225,6 +248,11 @@ class WorkbenchWidget(QWidget):
                             sources=(source,),
                         )
                         self._collection_combo.addItem(state.content_label, state.identity)
+                        self._collection_combo.setItemData(
+                            self._collection_combo.count() - 1,
+                            state.content_label,
+                            Qt.ItemDataRole.ToolTipRole,
+                        )
                 else:
                     self._collection_combo.addItem("（无翻译内容）")
                 self._collection_combo.setEnabled(False)
@@ -237,6 +265,7 @@ class WorkbenchWidget(QWidget):
             for i, (key, slot) in enumerate(slots.items()):
                 label = self._content_display_label(key, slot)
                 self._collection_combo.addItem(label, key)
+                self._collection_combo.setItemData(i, label, Qt.ItemDataRole.ToolTipRole)
                 if key == active:
                     active_idx = i
             self._collection_combo.setCurrentIndex(active_idx)

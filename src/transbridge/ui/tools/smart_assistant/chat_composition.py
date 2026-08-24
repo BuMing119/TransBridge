@@ -16,6 +16,7 @@ from .message_list_view import MessageListView
 from .session_binding import ConversationBinding, SessionBinding
 from .streaming_presenter import StreamingPresenter
 from .task_binding import TaskBinding, sanitize_error_message
+from .theme_support import CHIP_STRUCTURE_STYLE
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +83,7 @@ def initialize_runtime(facade) -> None:
         obs_collector=facade._obs_collector,
         memory_store=facade._memory_store,
         on_system_message=facade.add_system_message,
-        on_streaming_bubble_factory=lambda: MessageBubble("...", "assistant"),
+        on_streaming_bubble_factory=lambda: MessageBubble("...", "assistant", theme=facade._theme),
         on_streaming_flush=lambda text, bubble, dirty: (
             facade._streaming_presenter.flush(text, bubble) if facade._streaming_presenter is not None else None
         ),
@@ -158,11 +159,9 @@ def initialize_message_area(facade) -> None:
     facade._scroll.setWidget(facade._msg_container)
     facade._main_layout.addWidget(facade._scroll, stretch=1)
     facade._back_to_bottom_btn = QPushButton("[v] 回到底部", facade._scroll)
-    facade._back_to_bottom_btn.setStyleSheet(
-        "QPushButton { background: rgba(0,0,0,0.55); color: white; border: none;"
-        " border-radius: 14px; padding: 5px 12px; font-size: 11px; }"
-        "QPushButton:hover { background: rgba(0,0,0,0.7); }"
-    )
+    facade._back_to_bottom_btn.setAccessibleName("回到消息底部")
+    facade._back_to_bottom_btn.setStyleSheet(CHIP_STRUCTURE_STYLE)
+    facade._theme.apply_semantic(facade._back_to_bottom_btn, "primary", background=True)
     facade._back_to_bottom_btn.setCursor(Qt.CursorShape.PointingHandCursor)
     facade._back_to_bottom_btn.setVisible(False)
     facade._back_to_bottom_btn.raise_()
@@ -172,6 +171,7 @@ def initialize_message_area(facade) -> None:
         back_to_bottom_button=facade._back_to_bottom_btn,
         timer_parent=facade,
         max_visible_widgets=facade.MAX_VISIBLE_WIDGETS,
+        theme=facade._theme,
     )
     facade._streaming_presenter = StreamingPresenter(facade._message_list)
     facade._plan_execution = PlanExecutionBinding(
@@ -199,6 +199,7 @@ def initialize_message_area(facade) -> None:
         batch_executed=facade._confirmation_actions.execute_batch,
         batch_ignored=facade._confirmation_actions.ignore_batch,
         engine=lambda: facade._plan_execution.engine,
+        theme=facade._theme,
     )
     facade._session_binding = SessionBinding(
         conversation=facade._conversation,

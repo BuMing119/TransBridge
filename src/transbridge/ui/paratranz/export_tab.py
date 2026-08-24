@@ -3,18 +3,26 @@ ExportTab: 导出管理标签页，显示最近导出信息、触发新导出、
 """
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
-    QLabel, QPushButton, QFormLayout, QMessageBox, QFileDialog, QProgressBar,
+    QFileDialog,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt6.QtCore import Qt
 
 from transbridge.paratranz.api.paratranz_export_api import ParatranzExportAPI
 from transbridge.paratranz.workflow.artifact import ArtifactWorkflow
+from transbridge.ui.foundation.components import ElidedLabel
+
 from ..workers import ApiWorker
 
 
 class ExportTab(QWidget):
-
     def __init__(self, ctx, parent=None):
         super().__init__(parent)
         self._ctx = ctx
@@ -50,15 +58,23 @@ class ExportTab(QWidget):
         action_box = QGroupBox("操作")
         action_layout = QVBoxLayout(action_box)
 
+        self._status_slot = QWidget()
+        status_layout = QVBoxLayout(self._status_slot)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.setSpacing(2)
+
         self._progress_bar = QProgressBar()
         self._progress_bar.setRange(0, 0)
         self._progress_bar.setFixedHeight(14)
         self._progress_bar.hide()
-        action_layout.addWidget(self._progress_bar)
+        status_layout.addWidget(self._progress_bar)
 
-        self._status_lbl = QLabel("")
-        self._status_lbl.setWordWrap(True)
-        action_layout.addWidget(self._status_lbl)
+        self._status_lbl = ElidedLabel("")
+        status_layout.addWidget(self._status_lbl)
+        self._status_slot.setFixedHeight(
+            self._progress_bar.sizeHint().height() + status_layout.spacing() + self._status_lbl.sizeHint().height()
+        )
+        action_layout.addWidget(self._status_slot)
 
         btn_row = QHBoxLayout()
         self._trigger_btn = QPushButton("触发新导出")
@@ -106,10 +122,9 @@ class ExportTab(QWidget):
         self._trigger_btn.setEnabled(bool(self._project_id) and is_admin)
 
     def _set_empty(self):
-        for lbl in (self._lbl_time, self._lbl_total, self._lbl_translated,
-                    self._lbl_reviewed, self._lbl_duration):
+        for lbl in (self._lbl_time, self._lbl_total, self._lbl_translated, self._lbl_reviewed, self._lbl_duration):
             lbl.setText("—")
-        self._status_lbl.setText("")
+        self._set_status("")
         self._set_buttons_enabled(False)
 
     def _set_buttons_enabled(self, enabled: bool):
@@ -141,7 +156,7 @@ class ExportTab(QWidget):
 
     def _on_artifacts_loaded(self, artifact):
         if not artifact:
-            self._status_lbl.setText("暂无导出记录")
+            self._set_status("暂无导出记录")
             return
         self._lbl_time.setText(str(artifact.get("createdAt", "—"))[:19])
         self._lbl_total.setText(str(artifact.get("total", "—")))
@@ -152,17 +167,18 @@ class ExportTab(QWidget):
 
     def _set_busy(self, busy: bool, msg: str = ""):
         self._progress_bar.setVisible(busy)
-        self._status_lbl.setText(msg)
+        self._set_status(msg)
         if not busy:
-            self._trigger_btn.setEnabled(
-                bool(self._project_id) and self._ctx.is_admin())
-            self._download_btn.setEnabled(
-                bool(self._project_id) and self._download_allowed)
+            self._trigger_btn.setEnabled(bool(self._project_id) and self._ctx.is_admin())
+            self._download_btn.setEnabled(bool(self._project_id) and self._download_allowed)
+
+    def _set_status(self, message: str) -> None:
+        self._status_lbl.set_full_text(message)
+        self._status_lbl.setToolTip(message)
+        self._status_lbl.setAccessibleDescription(message)
 
     def _trigger_export(self):
-        save_path, _ = QFileDialog.getSaveFileName(
-            self, "选择保存位置", "export.zip", "ZIP 文件 (*.zip)"
-        )
+        save_path, _ = QFileDialog.getSaveFileName(self, "选择保存位置", "export.zip", "ZIP 文件 (*.zip)")
         if not save_path:
             return
 
@@ -174,7 +190,7 @@ class ExportTab(QWidget):
         self._set_busy(True, "正在触发导出，请稍候…")
 
         def _progress(msg: str):
-            self._status_lbl.setText(msg)
+            self._set_status(msg)
 
         def _do():
             workflow = ArtifactWorkflow(config)
@@ -194,9 +210,7 @@ class ExportTab(QWidget):
         self._workers.append(w)
 
     def _download_artifacts(self):
-        save_path, _ = QFileDialog.getSaveFileName(
-            self, "保存导出包", "export.zip", "ZIP 文件 (*.zip)"
-        )
+        save_path, _ = QFileDialog.getSaveFileName(self, "保存导出包", "export.zip", "ZIP 文件 (*.zip)")
         if not save_path:
             return
         config = self._ctx.config

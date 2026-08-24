@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -69,6 +70,36 @@ class TestGetProjectInfo(unittest.TestCase):
         self.assertIn("project_id", r.message)
 
     @patch(_PT_PROJECT_API_PATH)
+    def test_invalid_explicit_project_id_does_not_fall_back_to_binding(self, mock_api):
+        self.ctx.paratranz_binding = {
+            "project_id": 42,
+            "project_name": "Bound",
+            "endpoint": "https://paratranz.cn",
+        }
+
+        for value in ("not-an-id", 1.5, False, -1):
+            with self.subTest(project_id=value):
+                r = self.func({"project_id": value}, self.ctx)
+                self.assertFalse(r.success)
+                self.assertIn("正整数", r.message)
+        mock_api.assert_not_called()
+
+    @patch(_PT_PROJECT_API_PATH)
+    def test_endpoint_mismatch_blocks_bound_target_before_network(self, mock_api):
+        self.ctx.config.base_url = "https://other.example/api"
+        self.ctx.paratranz_binding = {
+            "project_id": 42,
+            "project_name": "Bound",
+            "endpoint": "https://paratranz.cn",
+        }
+
+        r = self.func({}, self.ctx)
+
+        self.assertFalse(r.success)
+        self.assertIn("服务地址", r.message)
+        mock_api.assert_not_called()
+
+    @patch(_PT_PROJECT_API_PATH)
     def test_get_project_info_with_id(self, mock_api):
         mock_client = MagicMock()
         mock_client.get_project.return_value = {
@@ -80,6 +111,18 @@ class TestGetProjectInfo(unittest.TestCase):
         self.assertTrue(r.success)
         self.assertEqual(r.data["name"], "MyMod")
         self.assertEqual(r.data["member_count"], 2)
+        mock_client.close.assert_called_once_with()
+
+    @patch(_PT_PROJECT_API_PATH)
+    def test_client_is_closed_when_project_lookup_fails(self, mock_api):
+        mock_client = MagicMock()
+        mock_client.get_project.side_effect = RuntimeError("offline")
+        mock_api.return_value = mock_client
+
+        r = self.func({"project_id": 123}, self.ctx)
+
+        self.assertFalse(r.success)
+        mock_client.close.assert_called_once_with()
 
 
 # ============================================================
@@ -235,7 +278,11 @@ class TestGetParatranzProject(unittest.TestCase):
 
     @patch(_PT_PROJECT_API_PATH)
     def test_with_selected_project(self, mock_api):
-        self.ctx.paratranz_project_id = 42
+        self.ctx.paratranz_binding = {
+            "project_id": 42,
+            "project_name": "SkyrimCN",
+            "endpoint": "https://paratranz.cn",
+        }
         mock_client = MagicMock()
         mock_client.get_project.return_value = {
             "id": 42, "name": "SkyrimCN", "visibility": "public",
@@ -263,10 +310,15 @@ class TestSwitchParatranzProject(unittest.TestCase):
             "id": 99, "name": "TestMod", "visibility": "private",
         }
         mock_api.return_value = mock_client
+        captured = []
+        self.ctx.active_project_id = "local-project"
+        self.ctx.set_paratranz_binding = lambda binding: (
+            captured.append(binding) or SimpleNamespace(is_success=True, diagnostics=())
+        )
 
         r = self.func({"project_id": 99}, self.ctx)
         self.assertTrue(r.success)
-        self.assertEqual(self.ctx.paratranz_project_id, 99)
+        self.assertEqual(captured[0].project_id, 99)
 
     @patch(_PT_PROJECT_API_PATH)
     def test_switch_project_api_failure(self, mock_api):
@@ -275,6 +327,34 @@ class TestSwitchParatranzProject(unittest.TestCase):
         r = self.func({"project_id": 999}, self.ctx)
         self.assertFalse(r.success)
         self.assertIn("失败", r.message)
+
+
+class TestTranslatorParaTranzTarget(unittest.TestCase):
+    def test_term_source_rejects_mismatched_binding_status(self):
+        from transbridge.application.projects import ParaTranzTargetStatus
+        from transbridge.smart_assistant.tools.tool_translator import _paratranz_term_project_id
+
+        ctx = SimpleNamespace(
+            resolve_paratranz_target=lambda: SimpleNamespace(
+                project_id=42,
+                status=ParaTranzTargetStatus.ACCOUNT_MISMATCH,
+            )
+        )
+
+        self.assertIsNone(_paratranz_term_project_id(ctx))
+
+    def test_term_source_accepts_available_binding_status(self):
+        from transbridge.application.projects import ParaTranzTargetStatus
+        from transbridge.smart_assistant.tools.tool_translator import _paratranz_term_project_id
+
+        ctx = SimpleNamespace(
+            resolve_paratranz_target=lambda: SimpleNamespace(
+                project_id=42,
+                status=ParaTranzTargetStatus.AVAILABLE,
+            )
+        )
+
+        self.assertEqual(_paratranz_term_project_id(ctx), 42)
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from threading import RLock
 
 from .filesystem import (
     PersistenceFilesystemPort,
@@ -18,6 +19,7 @@ from .models import (
     LoadedRecord,
     LoadResult,
     MigrationReport,
+    PersistenceV2Error,
     ProjectDto,
     QuarantineRef,
     QuarantineResult,
@@ -250,6 +252,40 @@ class JsonRepository[RefT, DtoT]:
 class ProjectRepository(JsonRepository[ProjectRef, ProjectDto]):
     def __init__(self, root: str, filesystem: PersistenceFilesystemPort) -> None:
         super().__init__(root, filesystem, kind=EntityKind.PROJECT, dto_type=ProjectDto)
+        self._mutation_lock = RLock()
+
+    def save(self, ref: ProjectRef, value: ProjectDto) -> LoadedRecord:
+        with self._mutation_lock:
+            return super().save(ref, value)
+
+    def save_if_revision(
+        self,
+        ref: ProjectRef,
+        value: ProjectDto,
+        *,
+        expected_revision: int,
+    ) -> LoadedRecord:
+        """Replace one Project only when its persisted revision still matches."""
+
+        with self._mutation_lock:
+            current = super().load(ref)
+            if not isinstance(current, LoadedRecord):
+                raise ProjectRevisionConflict(expected_revision, None)
+            actual_revision = current.value.envelope.revision
+            if actual_revision != expected_revision:
+                raise ProjectRevisionConflict(expected_revision, actual_revision)
+            return super().save(ref, value)
+
+    def delete(self, ref: ProjectRef) -> None:
+        with self._mutation_lock:
+            super().delete(ref)
+
+
+class ProjectRevisionConflict(PersistenceV2Error):
+    def __init__(self, expected_revision: int, actual_revision: int | None) -> None:
+        super().__init__("persisted Project revision changed before conditional save")
+        self.expected_revision = expected_revision
+        self.actual_revision = actual_revision
 
 
 class VariantRepository(JsonRepository[VariantRef, VariantDto]):
@@ -288,6 +324,7 @@ def _safe_reason(error: SchemaValidationError) -> str:
 __all__ = [
     "JsonRepository",
     "ProjectRepository",
+    "ProjectRevisionConflict",
     "SessionRepository",
     "VariantRepository",
 ]

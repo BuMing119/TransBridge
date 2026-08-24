@@ -1,0 +1,10 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: TransBridge UI 1\n"
+"Language: zh-CN\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+"X-TransBridge-Catalog-Schema: 1\n"
+"X-TransBridge-Catalog-Version: source-1\n"
+
+# Source-locale entries intentionally use msgid fallback semantics.

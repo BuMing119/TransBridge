@@ -3,15 +3,31 @@ ProjectListPanel: ParaTranz 管理模式左侧项目列表面板。
 支持「全部项目」/ 「我参与的」视图切换、关键词搜索、新建项目。
 """
 
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTabBar, QLineEdit,
-    QPushButton, QListWidget, QListWidgetItem, QDialog,
-    QFormLayout, QLabel, QComboBox,
-    QTextEdit, QMessageBox,
-)
-from PyQt6.QtCore import pyqtSignal, Qt
+from datetime import datetime
 
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QFormLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMessageBox,
+    QPushButton,
+    QTabBar,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
+
+from transbridge.application.projects import ParaTranzProjectBinding
 from transbridge.paratranz.api.paratranz_project_api import ParatranzProjectAPI
+from transbridge.paratranz.project_catalog import ParaTranzCatalogKey, ParaTranzProjectCatalog
+from transbridge.paratranz.service import ParaTranzService
+
 from ..workers import ApiWorker
 
 
@@ -26,7 +42,6 @@ def _extract_list(data) -> list:
 
 
 class NewProjectDialog(QDialog):
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("新建项目")
@@ -104,7 +119,6 @@ class NewProjectDialog(QDialog):
 
 
 class ProjectListPanel(QWidget):
-
     project_chosen = pyqtSignal(dict)
 
     def __init__(self, ctx, parent=None):
@@ -113,6 +127,9 @@ class ProjectListPanel(QWidget):
         self._all_projects: list[dict] = []
         self._workers: list[ApiWorker] = []
         self._gen = 0
+        self._bind_gen = 0
+        self._config_revision = 0
+        self._catalog = ParaTranzProjectCatalog()
         self.setMinimumWidth(200)
         self.setMaximumWidth(300)
         self._init_ui()
@@ -141,10 +158,16 @@ class ProjectListPanel(QWidget):
         refresh_btn = QPushButton("刷新")
         refresh_btn.setFixedHeight(26)
         refresh_btn.clicked.connect(self.load_projects)
+        self._bind_btn = QPushButton("设为当前工程同步目标")
+        self._bind_btn.setFixedHeight(26)
+        self._bind_btn.setEnabled(False)
+        self._bind_btn.setToolTip("只有点击此按钮才会修改本地工程绑定；浏览项目不会改变同步目标")
+        self._bind_btn.clicked.connect(self._bind_selected_project)
         new_btn = QPushButton("新建")
         new_btn.setFixedHeight(26)
         new_btn.clicked.connect(self._create_project)
         toolbar.addWidget(refresh_btn)
+        toolbar.addWidget(self._bind_btn)
         toolbar.addStretch()
         toolbar.addWidget(new_btn)
         layout.addLayout(toolbar)
@@ -180,7 +203,15 @@ class ProjectListPanel(QWidget):
 
         def _fetch():
             api = ParatranzProjectAPI(token=config.token, config=config)
-            return _extract_list(api.list_projects(page=1, page_size=200, uid=uid))
+            projects = []
+            page = 1
+            while True:
+                current = _extract_list(api.list_projects(page=page, page_size=200, uid=uid))
+                projects.extend(current)
+                if len(current) < 200:
+                    break
+                page += 1
+            return projects
 
         def _on_done(projects):
             if self._gen != gen:
@@ -218,7 +249,100 @@ class ProjectListPanel(QWidget):
         project = item.data(Qt.ItemDataRole.UserRole)
         if project:
             self._ctx.current_project = project
+            self._bind_btn.setEnabled(self._ctx.active_project_id is not None)
             self.project_chosen.emit(project)
+
+    def _bind_selected_project(self):
+        item = self._list.currentItem()
+        project = None if item is None else item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(project, dict) or self._ctx.active_project_id is None:
+            return
+        project_id = project.get("id")
+        if isinstance(project_id, bool) or not isinstance(project_id, int):
+            QMessageBox.warning(self, "无法绑定", "所选 ParaTranz 项目缺少有效 ID。")
+            return
+        user_id = None if self._ctx.current_user is None else self._ctx.current_user.get("id")
+        if user_id is None:
+            user_id = getattr(self._ctx.config, "user_id", None)
+        if isinstance(user_id, bool) or not isinstance(user_id, int) or user_id <= 0:
+            QMessageBox.warning(self, "无法绑定", "未获取到当前 ParaTranz 账号，请先重新验证 Token。")
+            return
+        config = self._ctx.config
+        if not config.token:
+            QMessageBox.warning(self, "无法绑定", "尚未配置 ParaTranz Token。")
+            return
+        endpoint = str(config.base_url)
+        local_project_id = self._ctx.active_project_id
+        local_project_revision = self._ctx.project_revision
+        config_revision = self._config_revision
+        self._bind_gen += 1
+        bind_gen = self._bind_gen
+        self._bind_btn.setEnabled(False)
+        self._list.setEnabled(False)
+        self._status.setText("正在验证当前账号的项目成员身份…")
+
+        def _validate_membership():
+            service = ParaTranzService.from_config(config)
+            try:
+                key = ParaTranzCatalogKey(endpoint, user_id, config_revision)
+                snapshot = self._catalog.list_my_projects(service, key, refresh=True)
+                return next((value for value in snapshot.projects if value.project_id == project_id), None)
+            finally:
+                service.close()
+
+        def _on_validated(remote_project):
+            if bind_gen != self._bind_gen:
+                return
+            if self._config_revision != config_revision:
+                QMessageBox.warning(self, "绑定已取消", "ParaTranz 连接配置在验证期间发生变化，请重新选择。")
+                return
+            if self._ctx.active_project_id != local_project_id or self._ctx.project_revision != local_project_revision:
+                QMessageBox.warning(self, "绑定已取消", "当前本地工程在验证期间发生变化，请重新选择。")
+                return
+            if remote_project is None:
+                QMessageBox.warning(self, "无法绑定", "当前 ParaTranz 账号不是所选项目的成员。")
+                return
+            now = datetime.now().astimezone().isoformat()
+            binding = ParaTranzProjectBinding(
+                project_id,
+                remote_project.name,
+                endpoint,
+                user_id,
+                now,
+                now,
+            )
+            try:
+                result = self._ctx.set_paratranz_binding(binding)
+            except RuntimeError as exc:
+                QMessageBox.critical(self, "绑定失败", str(exc))
+                return
+            if not result.is_success:
+                message = result.diagnostics[0].message if result.diagnostics else "未知错误"
+                QMessageBox.critical(self, "绑定失败", message)
+                return
+            self._ctx.mine_project_ids = {*getattr(self._ctx, "mine_project_ids", ()), project_id}
+            QMessageBox.information(self, "绑定成功", "已将所选项目设为当前本地工程的默认同步目标。")
+
+        def _on_validation_error(error: str):
+            if bind_gen == self._bind_gen:
+                QMessageBox.warning(self, "无法验证项目成员身份", f"ParaTranz 验证失败：{error}")
+
+        worker = ApiWorker(_validate_membership, route_http_errors=False)
+        worker.result.connect(_on_validated)
+        worker.error.connect(_on_validation_error)
+        worker.finished.connect(lambda: self._binding_worker_finished(worker, bind_gen))
+        self._workers.append(worker)
+        worker.start()
+
+    def _binding_worker_finished(self, worker: ApiWorker, bind_gen: int) -> None:
+        if worker in self._workers:
+            self._workers.remove(worker)
+        worker.deleteLater()
+        if bind_gen != self._bind_gen:
+            return
+        self._list.setEnabled(True)
+        self._bind_btn.setEnabled(self._list.currentItem() is not None and self._ctx.active_project_id is not None)
+        self._status.setText(f"共 {len(self._all_projects)} 个项目")
 
     def _create_project(self):
         dlg = NewProjectDialog(self)
@@ -232,7 +356,7 @@ class ProjectListPanel(QWidget):
             return api.create_project(data)
 
         def _on_done(p):
-            name = p.get('name', data.get('name', '')) if isinstance(p, dict) else data.get('name', '')
+            name = p.get("name", data.get("name", "")) if isinstance(p, dict) else data.get("name", "")
             QMessageBox.information(self, "成功", f"项目「{name}」已创建")
             self._ctx.project_list_changed.emit()
 
@@ -250,4 +374,9 @@ class ProjectListPanel(QWidget):
             self._tab_bar.setCurrentIndex(1)  # 触发 currentChanged -> load_projects
 
     def _on_config_changed(self, _):
+        self._config_revision += 1
+        self._bind_gen += 1
+        self._catalog.clear()
+        self._list.setEnabled(True)
+        self._bind_btn.setEnabled(False)
         self.load_projects()

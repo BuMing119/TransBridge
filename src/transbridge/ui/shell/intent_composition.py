@@ -70,6 +70,7 @@ class ShellIntentComposition:
             export_transbridge=callback(IntentId.PROJECT_EXPORT),
             import_transbridge=callback(IntentId.PROJECT_IMPORT),
             refresh_projects=callback(IntentId.PROJECT_REFRESH),
+            show_appearance=callback(IntentId.SETTINGS_APPEARANCE),
             show_config=callback(IntentId.SETTINGS_SERVICES),
             open_ai_translator=callback(IntentId.TRANSLATION_AI),
             toggle_smart_assistant=callback(IntentId.VIEW_SMART_ASSISTANT),
@@ -183,12 +184,12 @@ class ShellIntentComposition:
             availability=self._has_cloud_context,
         )
         register(
-            IntentId.SYNC_DOWNLOAD, _call(host.operation_coordinator.download), availability=self._has_cloud_project
+            IntentId.SYNC_DOWNLOAD, _call(host.operation_coordinator.download), availability=self._has_cloud_context
         )
         register(
             IntentId.SYNC_DOWNLOAD_BATCH,
             _call(host.operation_coordinator.batch_download),
-            availability=self._has_cloud_project,
+            availability=self._has_cloud_context,
         )
         register(IntentId.PUBLISH_WRITE, _call(host.operation_coordinator.write), availability=self._has_collection)
         register(
@@ -199,9 +200,10 @@ class ShellIntentComposition:
         register(IntentId.PUBLISH_FOMOD, self._open_fomod)
         register(IntentId.WORKBENCH_MANAGE, self._manage_content, availability=self._has_project)
         register(IntentId.VIEW_SMART_ASSISTANT, _call(host.tool_windows.toggle_smart_assistant))
+        register(IntentId.SETTINGS_APPEARANCE, _call(host.tool_windows.show_ui_settings))
         register(IntentId.SETTINGS_SERVICES, _call(host.tool_windows.show_config))
-        register(IntentId.SETTINGS_ACCOUNT, _call(host.tool_windows.show_user), availability=self._has_cloud_project)
-        register(IntentId.SETTINGS_MESSAGES, _call(host.tool_windows.show_mails), availability=self._has_cloud_project)
+        register(IntentId.SETTINGS_ACCOUNT, _call(host.tool_windows.show_user), availability=self._has_current_user)
+        register(IntentId.SETTINGS_MESSAGES, _call(host.tool_windows.show_mails), availability=self._has_current_user)
         register(IntentId.TASK_OPEN_ACTIVITY, _call(self._show_task_center), availability=self._has_task_runtime)
         register(IntentId.TASK_RETRY, _call(self._show_task_center), availability=self._retry_from_task_center)
         register(IntentId.HELP_CONTEXT, _call(self._show_context_help))
@@ -262,14 +264,23 @@ class ShellIntentComposition:
         return enabled, None if enabled else "当前没有待检查词条"
 
     def _has_cloud_project(self) -> tuple[bool, str | None]:
-        enabled = self._host.context.current_project is not None
-        return enabled, None if enabled else "请先选择 ParaTranz 云端项目"
+        project = self._host.context.current_project
+        if project is None:
+            return False, "请先选择 ParaTranz 云端项目"
+        mine_ids = getattr(self._host.context, "mine_project_ids", ())
+        if mine_ids and project.get("id") not in mine_ids:
+            return False, "当前账户不是该 ParaTranz 项目的成员"
+        return True, None
+
+    def _has_current_user(self) -> tuple[bool, str | None]:
+        enabled = self._host.context.current_user is not None
+        return enabled, None if enabled else "请先配置 API Token 并验证 ParaTranz 账户"
 
     def _has_cloud_context(self) -> tuple[bool, str | None]:
-        cloud, _ = self._has_cloud_project()
-        content, _ = self._has_collection()
-        enabled = cloud and content
-        return enabled, None if enabled else "请先选择云端项目和本地翻译内容"
+        content, content_reason = self._has_collection()
+        if not content:
+            return False, content_reason
+        return True, None
 
     def _has_task_runtime(self) -> tuple[bool, str | None]:
         enabled = self._host.app_runtime is not None and self._host.runtime_context is not None

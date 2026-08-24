@@ -9,8 +9,10 @@ import os
 from threading import RLock
 from typing import Any
 
+from transbridge.application.contracts import DomainError, ErrorCategory
 from transbridge.application.projects import (
     LifecycleActivation,
+    LifecycleProjectUpdate,
     LifecycleSave,
     LifecycleSnapshot,
     ProjectProvisioningCommit,
@@ -20,12 +22,19 @@ from transbridge.application.sessions import SessionSnapshot
 from .baselines import BaselineRegistry
 from .filesystem import PersistenceFilesystemPort
 from .ids import ProjectId, ProjectRef, SessionRef
-from .repository import ProjectRepository, VariantRepository
+from .repository import ProjectRepository, ProjectRevisionConflict, VariantRepository
 
 
 @dataclass(slots=True)
 class _ProjectTransaction:
-    mutation: LifecycleSave | LifecycleActivation | LifecycleSnapshot | ProjectProvisioningCommit | None = None
+    mutation: (
+        LifecycleSave
+        | LifecycleProjectUpdate
+        | LifecycleActivation
+        | LifecycleSnapshot
+        | ProjectProvisioningCommit
+        | None
+    ) = None
 
 
 class ProjectLifecycleTransactionStore:
@@ -53,6 +62,9 @@ class ProjectLifecycleTransactionStore:
 
     def stage_save(self, transaction_id: str, save: LifecycleSave) -> None:
         self._stage(transaction_id, save)
+
+    def stage_project_update(self, transaction_id: str, update: LifecycleProjectUpdate) -> None:
+        self._stage(transaction_id, update)
 
     def stage_activate(self, transaction_id: str, activation: LifecycleActivation) -> None:
         self._stage(transaction_id, activation)
@@ -90,6 +102,25 @@ class ProjectLifecycleTransactionStore:
                 self._projects.save(project_ref, mutation.project)
                 if mutation.variant is not None and mutation.formal_variant_ref is not None:
                     self._variants.save(mutation.formal_variant_ref, mutation.variant.to_dto())
+            elif isinstance(mutation, LifecycleProjectUpdate):
+                project_ref = ProjectRef(ProjectId(mutation.project.envelope.identity))
+                try:
+                    self._projects.save_if_revision(
+                        project_ref,
+                        mutation.project,
+                        expected_revision=mutation.expected_persisted_project_revision,
+                    )
+                except ProjectRevisionConflict as exc:
+                    raise DomainError(
+                        ErrorCategory.CONFLICT,
+                        "PROJECT_UPDATE_PERSISTED_STALE",
+                        "The persisted Project changed before the update could commit.",
+                        details={
+                            "expected_revision": exc.expected_revision,
+                            "actual_revision": exc.actual_revision,
+                        },
+                        cause=exc,
+                    ) from exc
             elif isinstance(mutation, LifecycleActivation):
                 if mutation.candidate_project is not None and mutation.write_candidate_project:
                     project_ref = ProjectRef(ProjectId(mutation.candidate_project.envelope.identity))

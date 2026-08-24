@@ -14,23 +14,37 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PyQt6.QtWidgets import (
-    QDialog, QDialogButtonBox, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QListWidget, QListWidgetItem,
-    QCheckBox, QWidget, QAbstractItemView, QGroupBox,
-)
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QBrush
+from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QVBoxLayout,
+)
+
+from transbridge.ui.foundation.adapters import ThemeView
+from transbridge.ui.foundation.components import ComponentStyle, ElidedLabel, SemanticState
+
+from ._theme_support import AiThemeBinding, set_widget_brush
 
 if TYPE_CHECKING:
-    from transbridge.ui.context import AppContext, CollectionSlot
     from transbridge.paratranz.config_manager import LLMConfig
+    from transbridge.ui.context import AppContext, CollectionSlot
+
+_ROLE_HAS_UNTRANSLATED = int(Qt.ItemDataRole.UserRole) + 1
 
 
 class _BatchTranslationDialog(QDialog):
     """批量翻译对话框：插件排序 + 勾选 + 覆盖选项 + 配置显示。"""
 
-    def __init__(self, ctx: "AppContext", parent=None):
+    def __init__(self, ctx: AppContext, parent=None, *, theme_view: ThemeView | None = None):
         super().__init__(parent)
         self._ctx = ctx
         self.setWindowTitle("批量翻译")
@@ -39,10 +53,11 @@ class _BatchTranslationDialog(QDialog):
         self.setMaximumHeight(620)
 
         self._slot_keys: list[str] = []  # 保持顺序
-        self._llm_config: "LLMConfig | None" = None
+        self._llm_config: LLMConfig | None = None
         self._init_ui()
         self._load_config()
         self._populate_list()
+        self._theme_binding = AiThemeBinding(self, theme_view, self._apply_theme)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -53,8 +68,8 @@ class _BatchTranslationDialog(QDialog):
         cfg_layout = QVBoxLayout(cfg_box)
         cfg_layout.setSpacing(4)
 
-        self._config_label = QLabel()
-        self._config_label.setStyleSheet("font-size: 11px; color: #555;")
+        self._config_label = ElidedLabel()
+        self._config_label.setAccessibleName("批量翻译 LLM 配置状态")
         cfg_layout.addWidget(self._config_label)
 
         cfg_btn_row = QHBoxLayout()
@@ -69,7 +84,6 @@ class _BatchTranslationDialog(QDialog):
 
         # ── 插件列表区 ────────────────────────────────────────────────────────
         hint = QLabel("拖拽调整翻译顺序（从上到下依次翻译）：")
-        hint.setStyleSheet("color: #555;")
         layout.addWidget(hint)
 
         # 操作按钮
@@ -87,10 +101,6 @@ class _BatchTranslationDialog(QDialog):
         self._list = QListWidget()
         self._list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self._list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self._list.setStyleSheet(
-            "QListWidget { border: 1px solid #ddd; border-radius: 3px; }"
-            "QListWidget::item { padding: 6px; }"
-        )
         layout.addWidget(self._list)
 
         # 覆盖选项
@@ -99,13 +109,11 @@ class _BatchTranslationDialog(QDialog):
 
         # 状态标签
         self._status_label = QLabel()
-        self._status_label.setStyleSheet("color: #666; font-size: 12px;")
+        self._status_label.setAccessibleName("批量翻译选择状态")
         layout.addWidget(self._status_label)
 
         # 按钮
-        btn_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
+        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self._ok_btn = btn_box.button(QDialogButtonBox.StandardButton.Ok)
         self._ok_btn.setText("开始翻译")
         btn_box.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
@@ -131,10 +139,7 @@ class _BatchTranslationDialog(QDialog):
             total = len(slot.collection) if slot.collection else 0
             untranslated = 0
             if slot.collection:
-                untranslated = sum(
-                    1 for e in slot.collection
-                    if not e.translation or e.stage == 0
-                )
+                untranslated = sum(1 for e in slot.collection if not e.translation or e.stage == 0)
 
             name = slot.label or Path(key).stem
             display_text = f"{name}    {total} 条（未翻 {untranslated} 条）"
@@ -142,14 +147,12 @@ class _BatchTranslationDialog(QDialog):
             item = QListWidgetItem(display_text)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             # 默认勾选有未翻译条目的插件
-            item.setCheckState(
-                Qt.CheckState.Checked if untranslated > 0 else Qt.CheckState.Unchecked
-            )
+            item.setCheckState(Qt.CheckState.Checked if untranslated > 0 else Qt.CheckState.Unchecked)
             item.setData(Qt.ItemDataRole.UserRole, key)  # 存储 slot key
+            item.setData(_ROLE_HAS_UNTRANSLATED, untranslated > 0)
 
             # 如果已全部翻译，显示灰色
             if untranslated == 0 and total > 0:
-                item.setForeground(QBrush(QColor("#999")))
                 item.setToolTip("该插件已全部翻译")
 
             self._list.addItem(item)
@@ -172,9 +175,7 @@ class _BatchTranslationDialog(QDialog):
         """仅选未翻译。"""
         for i in range(self._list.count()):
             item = self._list.item(i)
-            # 根据 foreground 颜色判断是否已全部翻译
-            fg = item.foreground()
-            if fg.color().name() == "#999999":
+            if not bool(item.data(_ROLE_HAS_UNTRANSLATED)):
                 item.setCheckState(Qt.CheckState.Unchecked)
             else:
                 item.setCheckState(Qt.CheckState.Checked)
@@ -193,17 +194,13 @@ class _BatchTranslationDialog(QDialog):
                 slot = self._ctx.slots.get(key)
                 if slot and slot.collection:
                     total_entries += len(slot.collection)
-                    total_untranslated += sum(
-                        1 for e in slot.collection
-                        if not e.translation or e.stage == 0
-                    )
+                    total_untranslated += sum(1 for e in slot.collection if not e.translation or e.stage == 0)
 
-        self._status_label.setText(
-            f"已选 {checked} 个插件，共 {total_entries} 条（未翻 {total_untranslated} 条）"
-        )
+        self._status_label.setText(f"已选 {checked} 个插件，共 {total_entries} 条（未翻 {total_untranslated} 条）")
+        self._status_label.setAccessibleDescription(self._status_label.text())
         self._ok_btn.setEnabled(checked > 0)
 
-    def get_selected_slots(self) -> list["CollectionSlot"]:
+    def get_selected_slots(self) -> list[CollectionSlot]:
         """返回按列表顺序排列的选中 slot 列表。"""
         result = []
         for i in range(self._list.count()):
@@ -222,6 +219,7 @@ class _BatchTranslationDialog(QDialog):
     def _load_config(self):
         """加载 LLM 配置并更新显示。"""
         from transbridge.paratranz.config_manager import LLMConfig
+
         self._llm_config = LLMConfig.load_from_file()
         self._update_config_label()
 
@@ -232,28 +230,40 @@ class _BatchTranslationDialog(QDialog):
             masked_key = f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else "(未设置)"
             model = self._llm_config.model or "(未设置)"
             concurrent = self._llm_config.max_concurrent
-            self._config_label.setText(
-                f"模型: {model}  |  API Key: {masked_key}  |  并发: {concurrent}"
-            )
+            self._set_config_text(f"模型: {model}  |  API Key: {masked_key}  |  并发: {concurrent}")
             # 检查配置完整性
             if not self._llm_config.api_key or not self._llm_config.model:
-                self._config_label.setStyleSheet("font-size: 11px; color: #F44336;")
+                ComponentStyle.apply_state(self._config_label, SemanticState.ERROR)
                 self._ok_btn.setToolTip("请先配置 API Key 和模型名")
             else:
-                self._config_label.setStyleSheet("font-size: 11px; color: #555;")
+                ComponentStyle.apply_state(self._config_label, SemanticState.SUCCESS)
                 self._ok_btn.setToolTip("")
         else:
-            self._config_label.setText("未加载配置")
-            self._config_label.setStyleSheet("font-size: 11px; color: #F44336;")
+            self._set_config_text("未加载配置")
+            ComponentStyle.apply_state(self._config_label, SemanticState.ERROR)
+
+    def _set_config_text(self, text: str) -> None:
+        self._config_label.set_full_text(text)
+        self._config_label.setToolTip(text)
+        self._config_label.setAccessibleDescription(text)
+
+    def _apply_theme(self, binding: AiThemeBinding) -> None:
+        valid = bool(self._llm_config and self._llm_config.api_key and self._llm_config.model)
+        set_widget_brush(self._config_label, binding.report("success" if valid else "error"))
+
+    @property
+    def theme_revision(self) -> int:
+        return self._theme_binding.revision
 
     def _on_edit_config(self):
         """打开配置编辑对话框。"""
         from transbridge.ui.tools.ai_translator._batch_config_dialog import _BatchConfigDialog
+
         dlg = _BatchConfigDialog(self._llm_config, parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._llm_config = dlg.get_config()
             self._update_config_label()
 
-    def get_llm_config(self) -> "LLMConfig | None":
+    def get_llm_config(self) -> LLMConfig | None:
         """返回当前 LLM 配置。"""
         return self._llm_config

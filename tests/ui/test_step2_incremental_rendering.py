@@ -9,10 +9,15 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt6.QtWidgets import QApplication
 
 from transbridge.application.projections import ProjectionSnapshot, ProjectionStore
-from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.converter.translation_entry import (
+    STAGE_QUESTIONABLE,
+    STAGE_TRANSLATED,
+    TranslationEntry,
+)
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui import context as context_module
 from transbridge.ui.workbench.step2 import Step2PreviewWidget
+from transbridge.ui.workbench.translation_table import COL_CONTEXT, COL_TRANSLATION
 
 
 class _Config:
@@ -126,12 +131,12 @@ def test_translation_edit_survives_synchronous_table_rebuild(monkeypatch) -> Non
     widget.refresh(collection)
     app.processEvents()
 
-    edited_item = widget._table.item(0, 3)
+    edited_item = widget._table.item(0, COL_TRANSLATION)
     edited_item.setText("Translated")
     app.processEvents()
 
     assert collection.get_by_id("0").translation == "Translated"
-    assert widget._table.item(0, 3).text() == "Translated"
+    assert widget._table.item(0, COL_TRANSLATION).text() == "Translated"
     context.close_projection()
 
 
@@ -157,10 +162,34 @@ def test_translation_projection_update_does_not_restart_full_render(monkeypatch)
     app.processEvents()
     generation = widget._render_generation
 
-    widget._table.item(0, 3).setText("Translated")
+    widget._table.item(0, COL_TRANSLATION).setText("Translated")
     app.processEvents()
 
     assert widget._render_generation == generation
     assert collection.get_by_id("0").translation == "Translated"
-    assert widget._table.item(0, 3).text() == "Translated"
+    assert collection.get_by_id("0").stage == STAGE_TRANSLATED
+    assert widget._table.item(0, COL_TRANSLATION).text() == "Translated"
+    assert "已翻译" in widget._table.item(0, COL_CONTEXT).text()
     context.close_projection()
+
+
+def test_stage_change_updates_one_row_without_restarting_render(monkeypatch) -> None:
+    app = _application()
+    monkeypatch.setattr(context_module.ParatranzConfig, "create_or_load", lambda: _Config())
+    collection = _entries(3)
+    widget = Step2PreviewWidget(context_module.AppContext())
+    widget.refresh(collection)
+    app.processEvents()
+    table = widget._table
+    entry = collection.get_by_id("1")
+    generation = widget._render_generation
+    row_items = tuple(table.item(1, column) for column in range(table.columnCount()))
+
+    widget._on_stage_change(entry, STAGE_QUESTIONABLE)
+    app.processEvents()
+
+    assert widget._render_generation == generation
+    assert tuple(table.item(1, column) for column in range(table.columnCount())) == row_items
+    assert entry.stage == STAGE_QUESTIONABLE
+    assert "有疑问" in table.item(1, COL_CONTEXT).text()
+    assert widget._summary.needs_review == 1

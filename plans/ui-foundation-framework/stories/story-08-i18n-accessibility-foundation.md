@@ -1,7 +1,7 @@
 # Story-08：i18n 与无障碍基础合同
 
 - **所属 Plan**：[高性能统一 UI 基础框架](../plan.md)
-- **状态**：草稿
+- **状态**：已完成（2026-08-24）
 - **优先级**：P1
 - **前置依赖**：S04 公共组件、S06 关键路径组件
 - **下游依赖**：S09 最终审计
@@ -14,13 +14,13 @@ FR26 已为开始中心、Workbench、AI、Operation Plan、Task Center、Comman
 
 ## 原始验收标准
 
-- [ ] `LocaleService` 使用统一 gettext catalog、source locale、fallback 和配置持久化；首期 locale 切换明确重启生效。
-- [ ] 缺失 catalog/msgid 回退源语言并聚合诊断，不在 paint/刷新热路径重复日志。
-- [ ] 公共组件不固化中文，关键路径（应用菜单、设置、主题错误/回退）完成 msgid 接入。
-- [ ] 公共组件设置 accessible name/description、合理 focus policy、可见焦点和键盘顺序；仅颜色状态有等价文本/图标。
-- [ ] 关键文字/背景和 focus/selection 组合通过对比度检查，字体与 DPI 缩放不截断关键设置控件。
-- [ ] 最低 PyQt6 6.5 路线不依赖 Qt 6.10 accessibility hints；未来 hints 有显式适配接口。
-- [ ] `tests/ui/test_accessibility_contracts.py` 与 FR26 J01～J09 accessibility/focus 断言在 light/dark/system matrix 下继续通过；主题/locale 切换不新增快捷键 owner 或改变危险操作确认语义。
+- [x] `LocaleService` 使用统一 gettext catalog、source locale、fallback 和配置持久化；首期 locale 切换明确重启生效。
+- [x] 缺失 catalog/msgid 回退源语言并聚合诊断，不在 paint/刷新热路径重复日志。
+- [x] 公共组件不固化中文，关键路径（应用菜单、设置、主题错误/回退）完成 msgid 接入。
+- [x] 公共组件设置 accessible name/description、合理 focus policy、可见焦点和键盘顺序；仅颜色状态有等价文本/图标。
+- [x] 关键文字/背景和 focus/selection 组合通过对比度检查，字体与 DPI 缩放不截断关键设置控件。
+- [x] 最低 PyQt6 6.5 路线不依赖 Qt 6.10 accessibility hints；未来 hints 有显式适配接口。
+- [x] `tests/ui/test_accessibility_contracts.py` 与 FR26 J01～J09 accessibility/focus 断言在 light/dark/system matrix 下继续通过；主题/locale 切换不新增快捷键 owner 或改变危险操作确认语义。
 
 ## Locale 合同
 

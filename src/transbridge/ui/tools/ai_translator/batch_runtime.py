@@ -6,6 +6,7 @@ from collections.abc import Callable
 import json
 import os
 
+from transbridge.ui.foundation.adapters import ThemeView
 from transbridge.ui.windowing import show_and_activate
 
 from .run_spec import preflight_ai_run
@@ -17,6 +18,7 @@ def open_batch_translation(
     entry_activated: Callable[[str], None],
     *,
     task_runtime=None,
+    theme_view: ThemeView | None = None,
 ):
     from PyQt6.QtWidgets import QMessageBox
 
@@ -25,7 +27,7 @@ def open_batch_translation(
     from ._batch_translation_worker import _BatchTranslationWorker
     from .run_controller import RunController
 
-    dialog = _BatchTranslationDialog(ctx, parent)
+    dialog = _BatchTranslationDialog(ctx, parent, theme_view=theme_view)
     if dialog.exec() != dialog.DialogCode.Accepted:
         return None
     slots = dialog.get_selected_slots()
@@ -39,7 +41,10 @@ def open_batch_translation(
     if not preflight.ready:
         QMessageBox.warning(parent, "批量翻译", preflight.reason or "运行条件未满足。")
         return None
-    if not ctx.current_project and TermSourceInspector.all_empty(config, esp_path):
+    from transbridge.ui.paratranz.target_context import bound_paratranz_project
+
+    remote_project = bound_paratranz_project(ctx)
+    if not remote_project and TermSourceInspector.all_empty(config, esp_path):
         answer = QMessageBox.question(
             parent,
             "术语库为空",
@@ -49,7 +54,7 @@ def open_batch_translation(
         )
         if answer != QMessageBox.StandardButton.Yes:
             return None
-    project_id = ctx.current_project.get("id") if ctx.current_project else None
+    project_id = None if remote_project is None else remote_project["id"]
     client = None
     if project_id is not None:
         from transbridge.paratranz.api.paratranz_terms_api import ParatranzTermsAPI
@@ -80,6 +85,7 @@ def open_batch_translation(
             ctx,
             entry_activated=entry_activated,
             activity=activity,
+            theme_view=theme_view,
         )
     except Exception as exc:
         activity.fail(str(exc))

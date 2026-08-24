@@ -13,11 +13,44 @@ from transbridge.ui.coordinators.operation_coordinator import OperationCoordinat
 from transbridge.ui.coordinators.parse_coordinator import ParseCoordinator
 from transbridge.ui.coordinators.project_coordinator import ProjectCoordinator
 from transbridge.ui.main_window import MainWindow
+from transbridge.ui.shell import tool_windows as tool_windows_module
 from transbridge.ui.shell.menu_builder import MenuBuilder, MenuCallbacks
 from transbridge.ui.shell.tool_windows import ToolWindows
 from transbridge.ui.workbench import widget as workbench_module
 
 _APP = QApplication.instance() or QApplication([])
+
+
+def test_current_user_fetch_downloads_avatar_in_existing_api_worker(monkeypatch) -> None:
+    events: list[object] = []
+
+    class _UserApi:
+        def __init__(self, *, token, config) -> None:
+            events.append(("init", token, config))
+
+        def get_my_user(self):
+            events.append("user")
+            return {"id": 7, "avatar": "https://paratranz.cn/media/avatar.png"}
+
+        def with_avatar_payload(self, user):
+            events.append(("avatar", user))
+            return {**user, "_avatar_bytes": b"image"}
+
+        def close(self) -> None:
+            events.append("close")
+
+    monkeypatch.setattr(tool_windows_module, "ParatranzUserAPI", _UserApi)
+    config = SimpleNamespace(token="token")
+
+    user = tool_windows_module._fetch_current_user(config)
+
+    assert user["_avatar_bytes"] == b"image"
+    assert events == [
+        ("init", "token", config),
+        "user",
+        ("avatar", {"id": 7, "avatar": "https://paratranz.cn/media/avatar.png"}),
+        "close",
+    ]
 
 
 def _callbacks(calls: list[str]) -> MenuCallbacks:
@@ -42,6 +75,7 @@ def _callbacks(calls: list[str]) -> MenuCallbacks:
         export_transbridge=callback("project.export"),
         import_transbridge=callback("project.import"),
         refresh_projects=callback("paratranz.refresh"),
+        show_appearance=callback("settings.appearance"),
         show_config=callback("config.open"),
         open_ai_translator=callback("translation.ai"),
         toggle_smart_assistant=callback("assistant.toggle"),
@@ -66,6 +100,7 @@ def test_current_navigation_routes_each_public_intent_once() -> None:
     handles.fomod.trigger()
     handles.smart_assistant.trigger()
     handles.view_assistant.trigger()
+    handles.appearance.trigger()
     assert calls == [
         "translation.parse",
         "translation.ai",
@@ -73,6 +108,7 @@ def test_current_navigation_routes_each_public_intent_once() -> None:
         "publish.fomod",
         "assistant.toggle",
         "assistant.toggle",
+        "settings.appearance",
     ]
     window.close()
 
@@ -206,6 +242,44 @@ def test_current_ai_intent_routes_through_workbench_public_port() -> None:
     ToolWindows(host).open_ai_translator()
 
     assert calls == ["ai_translator"]
+
+
+def test_ui_settings_uses_injected_foundation_and_existing_service_config_callback(monkeypatch) -> None:
+    calls: list[object] = []
+
+    class _Signal:
+        def connect(self, callback) -> None:
+            calls.append(("connect", callback))
+
+    class _Dialog:
+        def __init__(self, theme, config, parent, *, registry, locale_service) -> None:
+            calls.append(("construct", theme, config, parent, registry, locale_service))
+            self.service_settings_requested = _Signal()
+
+        def exec(self) -> None:
+            calls.append("exec")
+
+    monkeypatch.setattr("transbridge.ui.settings_dialog.SettingsDialog", _Dialog)
+    foundation = SimpleNamespace(theme="theme", config="config", registry="registry", locale="locale")
+    host = SimpleNamespace(ui_foundation=foundation)
+    tools = ToolWindows(host)
+    tools.show_config = lambda: calls.append("services")  # type: ignore[method-assign]
+
+    tools.show_ui_settings()
+
+    assert calls[0] == ("construct", "theme", "config", host, "registry", "locale")
+    assert calls[1][0] == "connect"
+    calls[1][1]()
+    assert calls[2:] == ["exec", "services"]
+
+
+def test_ui_settings_without_foundation_reports_stable_unavailability() -> None:
+    messages: list[str] = []
+    host = SimpleNamespace(ui_foundation=None, show_message=messages.append)
+
+    ToolWindows(host).show_ui_settings()
+
+    assert messages == ["通用设置当前不可用，请稍后重试。"]
 
 
 def test_current_ai_run_hands_focus_to_progress_context(monkeypatch) -> None:

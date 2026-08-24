@@ -37,6 +37,8 @@ class OperationPlanFeature(Protocol):
 
     def edit_draft(self, draft: object, fields: tuple[tuple[str, str], ...]) -> object: ...
 
+    def discard_draft(self, draft: object) -> None: ...
+
     def submit(
         self,
         draft: object,
@@ -61,6 +63,7 @@ class OperationFeatureAdapter:
     task_submitter: Callable[[object, OperationPreflightResult, OwnerRef, TaskRuntime], object]
     draft_editor: Callable[[object, tuple[tuple[str, str], ...]], object] = lambda draft, _fields: draft
     capability: Callable[[object, bool], bool] = lambda _context, _batch: True
+    draft_discarder: Callable[[object], None] = lambda _draft: None
 
     def __post_init__(self) -> None:
         if self.mapper.kind is not self.kind:
@@ -74,6 +77,9 @@ class OperationFeatureAdapter:
 
     def edit_draft(self, draft: object, fields: tuple[tuple[str, str], ...]) -> object:
         return self.draft_editor(draft, fields)
+
+    def discard_draft(self, draft: object) -> None:
+        self.draft_discarder(draft)
 
     def submit(
         self,
@@ -123,6 +129,7 @@ class OperationPlanFacade:
             {kind: feature.create_draft for kind, feature in self._features.items()},
             owner_id=self._bind_owner,
             edit_factories={kind: feature.edit_draft for kind, feature in self._features.items()},
+            discard_factories={kind: feature.discard_draft for kind, feature in self._features.items()},
             dialog_factory=dialog_factory,
         )
 

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QKeyEvent
+from PyQt6.QtGui import QFont, QKeyEvent
 from PyQt6.QtWidgets import (
     QCheckBox,
     QFormLayout,
@@ -26,6 +26,26 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from transbridge.ui.foundation.accessibility import configure_accessible_widget, update_accessible_state
+from transbridge.ui.foundation.components import (
+    ComponentKind,
+    ComponentStyle,
+    SemanticState,
+    make_primary_button,
+)
+
+
+def _configure_heading(label: QLabel, *, point_size: float, accessible_name: str) -> QLabel:
+    """Use scalable Qt font metrics while leaving all colour roles to QPalette."""
+
+    font = QFont(label.font())
+    font.setPointSizeF(point_size)
+    font.setWeight(QFont.Weight.DemiBold)
+    label.setFont(font)
+    ComponentStyle.apply_static(label, ComponentKind.LABEL)
+    configure_accessible_widget(label, name=accessible_name)
+    return label
 
 
 class StartDestinationState(StrEnum):
@@ -105,7 +125,7 @@ class StartCenterWidget(QWidget):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setAccessibleName("开始中心")
+        configure_accessible_widget(self, name="开始中心", description="选择或恢复本地翻译工程")
         self._state_revision = -1
         self._draft_revision = -1
         self._pages = QStackedWidget(self)
@@ -122,12 +142,11 @@ class StartCenterWidget(QWidget):
         layout = QVBoxLayout(page)
         title = QLabel("开始翻译", page)
         title.setObjectName("startCenterTitle")
-        title.setStyleSheet("font-size: 24px; font-weight: 600")
-        title.setAccessibleName("开始翻译")
+        _configure_heading(title, point_size=18.0, accessible_name="开始翻译")
         layout.addWidget(title)
         layout.addWidget(QLabel("选择一个 ESP / ESM / ESL，工程名称和常用设置会自动准备。", page))
 
-        self.choose_plugin_button = QPushButton("选择插件开始翻译", page)
+        self.choose_plugin_button = make_primary_button("选择插件开始翻译", page)
         self.choose_plugin_button.setObjectName("startCenterPrimaryAction")
         self.choose_plugin_button.setAccessibleName("选择插件开始翻译")
         self.choose_plugin_button.clicked.connect(self.choose_plugin_requested)
@@ -136,7 +155,8 @@ class StartCenterWidget(QWidget):
         self._status_label = QLabel(page)
         self._status_label.setWordWrap(True)
         self._status_label.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self._status_label.setAccessibleName("开始中心状态")
+        configure_accessible_widget(self._status_label, name="开始中心状态")
+        ComponentStyle.apply_static(self._status_label, ComponentKind.NOTIFICATION)
         layout.addWidget(self._status_label)
 
         self._return_button = QPushButton("返回当前工程", page)
@@ -147,6 +167,7 @@ class StartCenterWidget(QWidget):
         layout.addWidget(QLabel("继续工作", page))
         self._recent_list = QListWidget(page)
         self._recent_list.setAccessibleName("最近本地翻译工程")
+        ComponentStyle.apply_static(self._recent_list, ComponentKind.TABLE)
         self._recent_list.itemActivated.connect(
             lambda item: self.open_recent_requested.emit(str(item.data(Qt.ItemDataRole.UserRole)))
         )
@@ -155,6 +176,7 @@ class StartCenterWidget(QWidget):
         layout.addWidget(QLabel("可恢复任务", page))
         self._recovery_list = QListWidget(page)
         self._recovery_list.setAccessibleName("可恢复任务")
+        ComponentStyle.apply_static(self._recovery_list, ComponentKind.TABLE)
         self._recovery_list.itemActivated.connect(
             lambda item: self.recovery_details_requested.emit(str(item.data(Qt.ItemDataRole.UserRole)))
         )
@@ -181,16 +203,18 @@ class StartCenterWidget(QWidget):
         page = QWidget(self)
         layout = QVBoxLayout(page)
         title = QLabel("创建本地翻译工程", page)
-        title.setStyleSheet("font-size: 22px; font-weight: 600")
+        _configure_heading(title, point_size=16.0, accessible_name="创建本地翻译工程")
         layout.addWidget(title)
         form = QFormLayout()
         self._source_label = QLabel(page)
         self._name_edit = QLineEdit(page)
         self._name_edit.setAccessibleName("本地翻译工程名称")
+        ComponentStyle.apply_static(self._name_edit, ComponentKind.INPUT)
         self._name_edit.textEdited.connect(self.project_name_changed)
         self._name_edit.returnPressed.connect(self._activate_draft_primary)
         self._variant_edit = QLineEdit(page)
         self._variant_edit.setAccessibleName("默认翻译版本名称")
+        ComponentStyle.apply_static(self._variant_edit, ComponentKind.INPUT)
         self._variant_edit.textEdited.connect(self.variant_name_changed)
         self._variant_edit.returnPressed.connect(self._activate_draft_primary)
         self._migration_label = QLabel("不导入", page)
@@ -220,18 +244,20 @@ class StartCenterWidget(QWidget):
         self._draft_summary = QLabel(page)
         self._draft_summary.setWordWrap(True)
         self._draft_summary.setAccessibleName("工程创建方案摘要")
+        ComponentStyle.apply_static(self._draft_summary, ComponentKind.NOTIFICATION)
         layout.addWidget(self._draft_summary)
         self._draft_error = QLabel(page)
         self._draft_error.setWordWrap(True)
         self._draft_error.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._draft_error.setAccessibleName("工程创建错误")
+        ComponentStyle.apply_static(self._draft_error, ComponentKind.NOTIFICATION)
         layout.addWidget(self._draft_error)
 
         actions = QHBoxLayout()
         self._draft_back = QPushButton("返回", page)
         self._draft_back.setAccessibleName("返回开始中心")
         self._draft_back.clicked.connect(self.return_to_landing_requested)
-        self._draft_primary = QPushButton(page)
+        self._draft_primary = make_primary_button("", page)
         self._draft_primary.setAccessibleName("检查或提交工程创建方案")
         self._draft_primary.clicked.connect(self._emit_draft_primary)
         actions.addWidget(self._draft_back)
@@ -256,7 +282,17 @@ class StartCenterWidget(QWidget):
         else:
             status = "尚无可恢复工程，请选择插件开始翻译。"
         self._status_label.setText(status)
-        self._status_label.setAccessibleDescription(status)
+        update_accessible_state(self._status_label, status)
+        semantic_state = {
+            StartDestinationState.RESTORING_LAST: SemanticState.INFO,
+            StartDestinationState.START_CENTER_RECOVERY_FAILED: SemanticState.ERROR,
+            StartDestinationState.START_CENTER_USER_REQUESTED: (
+                SemanticState.WARNING if state.dirty else SemanticState.INFO
+            ),
+            StartDestinationState.START_CENTER_EMPTY: SemanticState.INFO,
+        }[state.destination]
+        self._status_label.setProperty("tbStatusId", state.destination.value)
+        ComponentStyle.apply_state(self._status_label, semantic_state)
         self._return_button.setVisible(
             state.destination is StartDestinationState.START_CENTER_USER_REQUESTED
             and state.active_project_name is not None
@@ -305,10 +341,15 @@ class StartCenterWidget(QWidget):
         if state.diagnostic_code:
             diagnostic = f"{state.diagnostic_code}: {state.diagnostic_message}"
         self._draft_error.setText(diagnostic)
-        self._draft_error.setAccessibleDescription(diagnostic or "当前没有工程创建错误")
+        update_accessible_state(self._draft_error, diagnostic or "当前没有工程创建错误")
+        ComponentStyle.apply_state(
+            self._draft_error,
+            SemanticState.ERROR if diagnostic else SemanticState.DEFAULT,
+        )
         prepared = bool(state.preview_token)
         self._draft_primary.setText("创建并开始翻译" if prepared else "检查创建方案")
         self._draft_primary.setProperty("commitReady", prepared)
+        ComponentStyle.apply_state(self._draft_primary, SemanticState.PRIMARY)
         self._draft_primary.setEnabled(state.can_submit and not state.in_flight)
         self._name_edit.setEnabled(not state.in_flight)
         self._variant_edit.setEnabled(not state.in_flight)

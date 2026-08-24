@@ -10,6 +10,7 @@ from .models import (
     ActiveProject,
     LifecycleActivation,
     LifecycleLease,
+    LifecycleProjectUpdate,
     LifecycleSave,
     LifecycleSnapshot,
     TransitionTarget,
@@ -38,6 +39,8 @@ class LifecycleLeasePort(Protocol):
 @runtime_checkable
 class LifecycleUnitOfWorkPort(Protocol):
     def stage_save(self, save: LifecycleSave) -> None: ...
+
+    def stage_project_update(self, update: LifecycleProjectUpdate) -> None: ...
 
     def stage_activate(self, activation: LifecycleActivation) -> None: ...
 

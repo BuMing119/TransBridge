@@ -12,6 +12,7 @@ from transbridge.converter.translation_entry_collection_export import (
     get_categorized_file_names,
 )
 from transbridge.paratranz.workflow.uploader import ParaTranzUploader
+from transbridge.ui.foundation.adapters import ThemeView
 
 from .base import OpCard
 from .presenter import OperationCardPresenter
@@ -36,12 +37,13 @@ class BatchUploadResult:
 
 
 class UploadCard(OpCard):
-    def __init__(self, ctx, run_worker, parent=None):
+    def __init__(self, ctx, run_worker, parent=None, *, theme_view: ThemeView | None = None):
         super().__init__(
             "上传到 ParaTranz",
             "将集合上传到当前已选 ParaTranz 项目，可选分类或普通上传（需先在管理模式中选中项目）。",
             "上传",
             parent,
+            theme_view=theme_view,
         )
         self._ctx = ctx
         self._presenter = OperationCardPresenter(ctx)
@@ -61,9 +63,11 @@ class UploadCard(OpCard):
         if len(slots) <= 1:
             return
 
-        project = self._ctx.current_project
+        from transbridge.ui.paratranz.target_context import bound_paratranz_project
+
+        project = bound_paratranz_project(self._ctx)
         if not project:
-            QMessageBox.warning(self, "未选择项目", "请先在 ParaTranz 管理面板中选择目标项目。")
+            QMessageBox.warning(self, "未绑定项目", "请先为当前本地工程选择 ParaTranz 同步目标。")
             return
 
         # 弹出插件选择对话框
@@ -161,7 +165,9 @@ class UploadCard(OpCard):
         if self._dispatch_planned("upload", self._ctx):
             return
         collection = self._ctx.collection
-        project = self._ctx.current_project
+        from transbridge.ui.paratranz.target_context import bound_paratranz_project
+
+        project = bound_paratranz_project(self._ctx)
         if not collection or not project:
             return
         project_id = project.get("id")

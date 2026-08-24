@@ -9,11 +9,17 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PyQt6.QtWidgets import (
-    QDialog, QDialogButtonBox, QVBoxLayout, QHBoxLayout,
-    QLabel, QLineEdit, QComboBox, QSpinBox, QPushButton,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
     QMessageBox,
+    QPushButton,
+    QSpinBox,
+    QVBoxLayout,
 )
-from PyQt6.QtCore import Qt
 
 if TYPE_CHECKING:
     from transbridge.paratranz.config_manager import LLMConfig
@@ -22,7 +28,7 @@ if TYPE_CHECKING:
 class _BatchConfigDialog(QDialog):
     """批量翻译配置对话框。"""
 
-    def __init__(self, config: "LLMConfig | None", parent=None):
+    def __init__(self, config: LLMConfig | None, parent=None):
         super().__init__(parent)
         self._config = config
         self.setWindowTitle("批量翻译配置")
@@ -81,9 +87,7 @@ class _BatchConfigDialog(QDialog):
         layout.addLayout(test_row)
 
         # 按钮
-        btn_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
+        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         btn_box.button(QDialogButtonBox.StandardButton.Ok).setText("保存")
         btn_box.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
         btn_box.accepted.connect(self._on_accept)
@@ -117,15 +121,17 @@ class _BatchConfigDialog(QDialog):
             return
         try:
             from transbridge.infra.llm_client import create_llm_client
+
             client = create_llm_client(cfg)
             reply = client.chat([{"role": "user", "content": "Say 'OK' in one word."}], max_tokens=10)
             QMessageBox.information(self, "测试连接", f"连接成功！模型回复：{reply}")
         except Exception as exc:
             QMessageBox.critical(self, "测试连接失败", str(exc))
 
-    def _build_config(self) -> "LLMConfig":
+    def _build_config(self) -> LLMConfig:
         """从控件构建配置对象，保留原有其他字段。"""
         from transbridge.paratranz.config_manager import LLMConfig
+
         # 使用传入的配置作为基础，保留其他字段
         cfg = self._config or LLMConfig()
         cfg.provider = "anthropic" if self._provider_combo.currentIndex() == 1 else "openai_compatible"
@@ -143,6 +149,6 @@ class _BatchConfigDialog(QDialog):
         self._config = cfg
         self.accept()
 
-    def get_config(self) -> "LLMConfig":
+    def get_config(self) -> LLMConfig:
         """返回修改后的配置。"""
         return self._config

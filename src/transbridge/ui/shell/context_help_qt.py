@@ -6,6 +6,8 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QCloseEvent, QKeyEvent
 from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
+from transbridge.ui.foundation.accessibility import configure_accessible_widget, update_accessible_state
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState
 from transbridge.ui.shell.context_help import ContextHelpController, ContextHelpViewState
 
 
@@ -17,7 +19,8 @@ class ContextHelpPanel(QWidget):
     def __init__(self, controller: ContextHelpController, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._controller = controller
-        self.setAccessibleName("功能与术语帮助")
+        configure_accessible_widget(self, name="功能与术语帮助", description="当前任务上下文中的功能说明")
+        ComponentStyle.apply_static(self, ComponentKind.CARD)
         self._title = QLabel(self)
         self._purpose = QLabel(self)
         self._when = QLabel(self)
@@ -28,6 +31,8 @@ class ContextHelpPanel(QWidget):
         self._when.setAccessibleName("使用时机")
         for label in (self._title, self._purpose, self._when):
             label.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            ComponentStyle.apply_static(label, ComponentKind.LABEL)
+        ComponentStyle.apply_state(self._title, SemanticState.INFO)
         layout = QVBoxLayout(self)
         layout.addWidget(self._title)
         layout.addWidget(self._purpose)
@@ -38,6 +43,9 @@ class ContextHelpPanel(QWidget):
         self._title.setText(state.topic.title)
         self._purpose.setText(f"用途：{state.topic.purpose}")
         self._when.setText(f"何时使用：{state.topic.when_to_use}")
+        update_accessible_state(self._title, state.topic.title, description="帮助主题")
+        update_accessible_state(self._purpose, state.topic.purpose, description="用途")
+        update_accessible_state(self._when, state.topic.when_to_use, description="使用时机")
         self._title.setFocus(Qt.FocusReason.OtherFocusReason)
         return state
 

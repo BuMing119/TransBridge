@@ -8,19 +8,31 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
-from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-    QTableWidget, QTableWidgetItem, QHeaderView,
-    QPushButton, QTabWidget, QFrame, QComboBox,
-    QAbstractItemView, QGridLayout,
-)
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QComboBox,
+    QDialog,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QTabWidget,
+    QVBoxLayout,
+)
+
+from transbridge.ui.foundation.adapters import ThemeView
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle
+
+from ._theme_support import AiThemeBinding
 
 if TYPE_CHECKING:
-    from transbridge.ai_translator.translator import TranslationResult
-    from transbridge.ai_translator.post_processor.base import PostProcessResult
     from transbridge.ai_translator.post_processor.polisher import PolishResult
+    from transbridge.ai_translator.translator import TranslationResult
     from transbridge.converter.translation_entry import TranslationEntry
 
 
@@ -40,17 +52,18 @@ class _TranslationReportDialog(QDialog):
     def __init__(
         self,
         # 翻译模式参数
-        translate_result: "TranslationResult | None" = None,
+        translate_result: TranslationResult | None = None,
         refine_results: dict | None = None,
         polish_results: dict | None = None,
         decisions: dict | None = None,
         # 润色模式参数
-        polish_entries: list["TranslationEntry"] | None = None,
-        polish_results_dict: dict[str, "PolishResult"] | None = None,
+        polish_entries: list[TranslationEntry] | None = None,
+        polish_results_dict: dict[str, PolishResult] | None = None,
         polish_stats: dict | None = None,
         # 通用
         report_path: str | None = None,
         parent=None,
+        theme_view: ThemeView | None = None,
     ):
         super().__init__(parent)
         self._translate_result = translate_result
@@ -61,6 +74,7 @@ class _TranslationReportDialog(QDialog):
         self._polish_results_dict = polish_results_dict or {}
         self._polish_stats = polish_stats or {}
         self._report_path = report_path
+        self._stat_labels: list[QLabel] = []
 
         self._translate_mode = translate_result is not None
         title = "翻译报告" if self._translate_mode else "润色报告"
@@ -75,6 +89,7 @@ class _TranslationReportDialog(QDialog):
         self._issue_filter: QComboBox | None = None
 
         self._init_ui()
+        self._theme_binding = AiThemeBinding(self, theme_view, self._apply_theme)
 
     # ── UI 初始化 ────────────────────────────────────────────────────────────
 
@@ -105,19 +120,23 @@ class _TranslationReportDialog(QDialog):
 
     # ── 统计卡片 ─────────────────────────────────────────────────────────────
 
-    @staticmethod
-    def _make_stat_card(label: str, value: str, color: str = "#333") -> QFrame:
+    def _make_stat_card(self, label: str, value: str, state: str = "info") -> QFrame:
         card = QFrame()
         card.setFrameShape(QFrame.Shape.StyledPanel)
-        card.setStyleSheet("QFrame { background: white; border-radius: 4px; padding: 6px; }")
+        ComponentStyle.apply_static(card, ComponentKind.CARD)
         lay = QVBoxLayout(card)
         lay.setSpacing(2)
         val_lbl = QLabel(str(value))
-        val_lbl.setStyleSheet(f"font-size: 20px; font-weight: bold; color: {color};")
+        value_font = val_lbl.font()
+        value_font.setPointSize(15)
+        value_font.setBold(True)
+        val_lbl.setFont(value_font)
+        val_lbl.setProperty("aiReportState", state)
+        val_lbl.setAccessibleName(f"{label}：{value}")
+        self._stat_labels.append(val_lbl)
         val_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         desc_lbl = QLabel(label)
         desc_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        desc_lbl.setStyleSheet("color: #666; font-size: 11px;")
         lay.addWidget(val_lbl)
         lay.addWidget(desc_lbl)
         return card
@@ -134,11 +153,11 @@ class _TranslationReportDialog(QDialog):
             pp = r.post_process_result
 
             cards1 = [
-                ("总条目", r.success_count + r.failed_count + r.skipped_count, "#333"),
-                ("成功", r.success_count, "#4CAF50"),
-                ("失败", r.failed_count, "#F44336"),
-                ("跳过", r.skipped_count, "#9E9E9E"),
-                ("新增术语", r.new_dynamic_terms, "#2196F3"),
+                ("总条目", r.success_count + r.failed_count + r.skipped_count, "info"),
+                ("成功", r.success_count, "success"),
+                ("失败", r.failed_count, "error"),
+                ("跳过", r.skipped_count, "info"),
+                ("新增术语", r.new_dynamic_terms, "info"),
             ]
             grid = QGridLayout()
             grid.setSpacing(8)
@@ -150,11 +169,11 @@ class _TranslationReportDialog(QDialog):
                 wrn = sum(1 for x in pp.issues if x.severity == "warning")
                 inf = sum(1 for x in pp.issues if x.severity == "info")
                 cards2 = [
-                    ("检查数", pp.total_checked, "#333"),
-                    ("错误", err, "#F44336"),
-                    ("警告", wrn, "#FF9800"),
-                    ("信息", inf, "#9E9E9E"),
-                    ("需审核", len(pp.needs_review), "#FF9800"),
+                    ("检查数", pp.total_checked, "info"),
+                    ("错误", err, "error"),
+                    ("警告", wrn, "warning"),
+                    ("信息", inf, "info"),
+                    ("需审核", len(pp.needs_review), "warning"),
                 ]
                 for i, (label, val, color) in enumerate(cards2):
                     grid.addWidget(self._make_stat_card(label, str(val), color), 1, i)
@@ -163,11 +182,11 @@ class _TranslationReportDialog(QDialog):
                 rejected = sum(1 for d in self._decisions.values() if getattr(d, "verdict", None) == "reject")
                 pending = sum(1 for d in self._decisions.values() if getattr(d, "verdict", None) == "pending")
                 cards3 = [
-                    ("通过", passed, "#4CAF50"),
-                    ("打回", rejected, "#F44336"),
-                    ("待审", pending, "#FF9800"),
-                    ("修复数", pp.auto_fixed, "#2196F3"),
-                    ("润色数", len(self._polish_mid_results), "#9C27B0"),
+                    ("通过", passed, "success"),
+                    ("打回", rejected, "error"),
+                    ("待审", pending, "warning"),
+                    ("修复数", pp.auto_fixed, "info"),
+                    ("润色数", len(self._polish_mid_results), "info"),
                 ]
                 for i, (label, val, color) in enumerate(cards3):
                     grid.addWidget(self._make_stat_card(label, str(val), color), 2, i)
@@ -176,11 +195,11 @@ class _TranslationReportDialog(QDialog):
         else:
             s = self._polish_stats
             cards = [
-                ("润色总数", s.get("total", 0), "#333"),
-                ("接受", s.get("accepted", 0), "#4CAF50"),
-                ("拒绝", s.get("rejected", 0), "#F44336"),
-                ("失败", s.get("failed", 0), "#9E9E9E"),
-                ("信心度均值", f"{s.get('avg_confidence', 0):.1%}", "#2196F3"),
+                ("润色总数", s.get("total", 0), "info"),
+                ("接受", s.get("accepted", 0), "success"),
+                ("拒绝", s.get("rejected", 0), "error"),
+                ("失败", s.get("failed", 0), "error"),
+                ("信心度均值", f"{s.get('avg_confidence', 0):.1%}", "info"),
             ]
             grid = QGridLayout()
             grid.setSpacing(8)
@@ -266,8 +285,10 @@ class _TranslationReportDialog(QDialog):
             if pp:
                 entry_issues = [i for i in pp.issues if i.entry_id == entry_id]
             original = entry_issues[0].original if entry_issues else ""
-            orig_trans = entry_issues[0].translation if entry_issues else (
-                ref.original_translation if ref else (pol.original_translation if pol else "")
+            orig_trans = (
+                entry_issues[0].translation
+                if entry_issues
+                else (ref.original_translation if ref else (pol.original_translation if pol else ""))
             )
 
             verdict_text = dec.verdict if dec else "-"
@@ -308,7 +329,11 @@ class _TranslationReportDialog(QDialog):
                 self._entry_table.setItem(row, 5, self._cell(changes_summary[:120]))
             else:
                 self._entry_table.setItem(row, 0, self._cell(entry.original[:80], entry.original))
-                self._entry_table.setItem(row, 1, self._cell(entry.translation[:80] if entry.translation else "", entry.translation or ""))
+                self._entry_table.setItem(
+                    row,
+                    1,
+                    self._cell(entry.translation[:80] if entry.translation else "", entry.translation or ""),
+                )
                 self._entry_table.setItem(row, 2, self._cell(""))
                 self._entry_table.setItem(row, 3, self._cell("否"))
                 conf_item = QTableWidgetItem("0%")
@@ -377,12 +402,11 @@ class _TranslationReportDialog(QDialog):
         pp = self._translate_result.post_process_result if self._translate_result else None
         issues = pp.issues if pp else []
         self._issue_table.setRowCount(len(issues))
-        severity_colors = {"error": "#F44336", "warning": "#FF9800", "info": "#9E9E9E"}
         for i, issue in enumerate(issues):
             self._issue_table.setItem(i, 0, QTableWidgetItem(issue.entry_id))
             self._issue_table.setItem(i, 1, QTableWidgetItem(issue.issue_type))
             sev_item = QTableWidgetItem(issue.severity)
-            sev_item.setForeground(QColor(severity_colors.get(issue.severity, "#333")))
+            sev_item.setData(Qt.ItemDataRole.UserRole, issue.severity)
             self._issue_table.setItem(i, 2, sev_item)
             self._issue_table.setItem(i, 3, QTableWidgetItem(issue.message))
             self._issue_table.setItem(i, 4, QTableWidgetItem(issue.suggestion))
@@ -390,6 +414,27 @@ class _TranslationReportDialog(QDialog):
         self._issue_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self._issue_table)
         return widget
+
+    def _apply_theme(self, binding: AiThemeBinding) -> None:
+        for label in self._stat_labels:
+            brush = binding.report(str(label.property("aiReportState") or "info"))
+            if brush is not None:
+                palette = label.palette()
+                palette.setColor(label.foregroundRole(), brush.foreground.color())
+                label.setPalette(palette)
+        if self._issue_table is not None and binding.domain is not None:
+            for row in range(self._issue_table.rowCount()):
+                item = self._issue_table.item(row, 2)
+                if item is not None:
+                    severity = str(item.data(Qt.ItemDataRole.UserRole) or "info")
+                    item.setForeground(binding.domain.report(severity).foreground)
+        for table in (self._entry_table, self._issue_table):
+            if table is not None:
+                table.viewport().update()
+
+    @property
+    def theme_revision(self) -> int:
+        return self._theme_binding.revision
 
     def _apply_issue_filter(self, filter_value: str):
         if self._issue_table is None:

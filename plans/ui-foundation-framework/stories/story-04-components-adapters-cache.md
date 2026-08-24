@@ -1,7 +1,7 @@
 # Story-04：公共组件、主题适配器与有界资源缓存
 
 - **所属 Plan**：[高性能统一 UI 基础框架](../plan.md)
-- **状态**：草稿
+- **状态**：已完成（2026-08-24）
 - **优先级**：P0
 - **前置依赖**：S03 ThemeService 与 Qt snapshot
 - **下游依赖**：S05～S09
@@ -12,12 +12,12 @@
 
 ## 原始验收标准
 
-- [ ] 公共组件约定覆盖按钮、输入、卡片、对话框、表格、标签、工具提示、空状态、进度、通知和焦点状态。
-- [ ] 标准组件优先使用 palette/property/font；静态结构 QSS 集中且不含主题颜色。
-- [ ] 提供 custom paint、item/delegate、Markdown/rich-text、消息气泡和业务状态色适配器；订阅句柄可释放，不因 widget 重建累积 listener。
-- [ ] 图标/派生 pixmap 按 revision/icon/size/DPR/state 缓存，默认成本上限 8 MiB，只在 GUI 主线程创建。
-- [ ] Markdown/rich-text 主题 CSS 每 revision 编译一次；内容变化不重复编译主题模板。
-- [ ] 组件销毁后切换主题不访问已删除 QObject，100 次构造/销毁 listener 数回到基线。
+- [x] 公共组件约定覆盖按钮、输入、卡片、对话框、表格、标签、工具提示、空状态、进度、通知和焦点状态。
+- [x] 标准组件优先使用 palette/property/font；静态结构 QSS 集中且不含主题颜色。
+- [x] 提供 custom paint、item/delegate、Markdown/rich-text、消息气泡和业务状态色适配器；订阅句柄可释放，不因 widget 重建累积 listener。
+- [x] 图标/派生 pixmap 按 revision/icon/size/DPR/state 缓存，默认成本上限 8 MiB，只在 GUI 主线程创建。
+- [x] Markdown/rich-text 主题 CSS 每 revision 编译一次；内容变化不重复编译主题模板。
+- [x] 组件销毁后切换主题不访问已删除 QObject，100 次构造/销毁 listener 数回到基线。
 
 ## 组件与适配边界
 

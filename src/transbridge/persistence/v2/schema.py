@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from datetime import datetime
 import json
 from typing import Any
+from urllib.parse import urlsplit
 
 from jsonschema import Draft202012Validator
 
@@ -39,6 +41,25 @@ _DATA_SCHEMAS: dict[EntityKind, dict[str, Any]] = {
                 "uniqueItems": True,
             },
             "active_variant_id": {"type": ["string", "null"]},
+            "remote_bindings": {
+                "type": "object",
+                "properties": {
+                    "paratranz": {
+                        "type": "object",
+                        "required": ["project_id", "project_name", "endpoint"],
+                        "properties": {
+                            "project_id": {"type": "integer", "minimum": 1},
+                            "project_name": {"type": "string"},
+                            "endpoint": {"type": "string", "format": "uri", "minLength": 1},
+                            "account_user_id": {"type": ["integer", "null"], "minimum": 1},
+                            "bound_at": {"type": ["string", "null"], "format": "date-time"},
+                            "validated_at": {"type": ["string", "null"], "format": "date-time"},
+                        },
+                        "additionalProperties": False,
+                    }
+                },
+                "additionalProperties": True,
+            },
             "legacy": {"type": "object"},
         },
         "additionalProperties": True,
@@ -237,6 +258,7 @@ def _validate_semantics(ref: EntityRef, data: dict[str, Any]) -> None:
                 "active_variant_id must refer to a listed variant.",
                 pointer="/data/active_variant_id",
             )
+        _validate_paratranz_binding(data)
         return
 
     if ref.kind is EntityKind.VARIANT:
@@ -296,6 +318,49 @@ def _validate_semantics(ref: EntityRef, data: dict[str, Any]) -> None:
             "A Session variant reference requires a Project reference.",
             pointer="/data/variant_id",
         )
+
+
+def _validate_paratranz_binding(data: dict[str, Any]) -> None:
+    remote_bindings = data.get("remote_bindings") or {}
+    binding = remote_bindings.get("paratranz")
+    if binding is None:
+        return
+
+    endpoint = binding["endpoint"]
+    try:
+        parsed = urlsplit(endpoint)
+    except ValueError as exc:
+        raise SchemaValidationError(
+            "INVALID_PARATRANZ_ENDPOINT",
+            "ParaTranz endpoint must be an absolute HTTP(S) URL without credentials, query, or fragment.",
+            pointer="/data/remote_bindings/paratranz/endpoint",
+        ) from exc
+    if (
+        parsed.scheme.lower() not in {"http", "https"}
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise SchemaValidationError(
+            "INVALID_PARATRANZ_ENDPOINT",
+            "ParaTranz endpoint must be an absolute HTTP(S) URL without credentials, query, or fragment.",
+            pointer="/data/remote_bindings/paratranz/endpoint",
+        )
+
+    for field_name in ("bound_at", "validated_at"):
+        value = binding.get(field_name)
+        if value is None:
+            continue
+        try:
+            datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise SchemaValidationError(
+                "INVALID_PARATRANZ_TIMESTAMP",
+                f"ParaTranz {field_name} must be an ISO 8601 timestamp.",
+                pointer=f"/data/remote_bindings/paratranz/{field_name}",
+            ) from exc
 
 
 def _reject_duplicate_keys(pairs: Iterable[tuple[str, Any]]) -> dict[str, Any]:

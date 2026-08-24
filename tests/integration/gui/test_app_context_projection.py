@@ -15,6 +15,8 @@ from transbridge.ui import context as context_module
 
 class _Config:
     token = ""
+    base_url = "https://paratranz.cn"
+    user_id = 7
 
 
 _APP: QApplication | None = None
@@ -180,4 +182,58 @@ def test_project_bar_reads_v2_project_and_variant_catalog(monkeypatch) -> None:
     assert bar._variant_combo.itemText(0) == "默认"
     assert bar._variant_combo.itemData(1) == "variant-b"
     assert requested == ["variant-b"]
+    context.close_projection()
+
+
+def test_project_binding_projection_is_defensive_and_updates_compatibility_id(monkeypatch) -> None:
+    _application()
+    monkeypatch.setattr(context_module.ParatranzConfig, "create_or_load", lambda: _Config())
+    binding = {
+        "project_id": 42,
+        "project_name": "Cloud",
+        "endpoint": "https://paratranz.cn",
+        "account_user_id": 7,
+        "bound_at": None,
+        "validated_at": None,
+    }
+    store = ProjectionStore(
+        ProjectionSnapshot(
+            "project:project-a",
+            5,
+            5,
+            {
+                "project_id": "project-a",
+                "project_revision": 4,
+                "variant_id": "variant-a",
+                "entries": [],
+                "label_library": {},
+                "paratranz_binding": binding,
+            },
+        )
+    )
+    context = context_module.AppContext(project_projection=store)
+    observed = context.paratranz_binding
+    observed["project_name"] = "mutated"
+
+    assert context.paratranz_binding["project_name"] == "Cloud"
+    assert context.project_revision == 4
+    assert context.paratranz_project_id == 42
+
+    store.rebuild(
+        ProjectionSnapshot(
+            "project:project-a",
+            6,
+            6,
+            {
+                "project_id": "project-a",
+                "project_revision": 5,
+                "variant_id": "variant-a",
+                "entries": [],
+                "label_library": {},
+                "paratranz_binding": None,
+            },
+        )
+    )
+    assert context.paratranz_binding is None
+    assert context.paratranz_project_id is None
     context.close_projection()

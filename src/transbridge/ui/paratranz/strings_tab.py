@@ -3,28 +3,45 @@ StringsTab: 词条管理标签页，支持筛选、浏览及批量操作。
 双击词条后弹出 StringDetailDialog 进行查看和编辑。
 """
 
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout,
-    QTableWidget, QTableWidgetItem, QHeaderView,
-    QPushButton, QLabel, QComboBox, QSpinBox,
-    QMessageBox,
-)
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import (
+    QComboBox,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QSpinBox,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 
-from transbridge.paratranz.api.paratranz_strings_api import ParatranzStringsAPI
 from transbridge.paratranz.api.paratranz_files_api import ParatranzFilesAPI
+from transbridge.paratranz.api.paratranz_strings_api import ParatranzStringsAPI
+from transbridge.ui.foundation.adapters import DomainBrushes, ThemeView
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState
+
 from ..workers import ApiWorker
-from ._strings_common import _STAGE_LABELS, _STAGE_COLORS, _extract_list
+from ._layout_stability import configure_stable_table_columns
+from ._strings_common import _STAGE_LABELS, _extract_list
 from .string_detail_dialog import StringDetailDialog
-from .string_dialogs import _CreateStringDialog, _BatchStageDialog
+from .string_dialogs import _BatchStageDialog, _CreateStringDialog
 
 
 class StringsTab(QWidget):
-
-    def __init__(self, ctx, parent=None):
+    def __init__(
+        self,
+        ctx,
+        parent=None,
+        *,
+        theme_view: ThemeView | None = None,
+        domain_brushes: DomainBrushes | None = None,
+    ):
         super().__init__(parent)
         self._ctx = ctx
+        self._theme_view = theme_view
+        self._domain_brushes = domain_brushes
         self._workers: list[ApiWorker] = []
         self._strings: list[dict] = []
         self._files: list[dict] = []
@@ -76,10 +93,13 @@ class StringsTab(QWidget):
         self._batch_stage_btn = QPushButton("批量设置状态")
         self._batch_stage_btn.clicked.connect(self._batch_set_stage)
         self._batch_del_btn = QPushButton("批量删除")
-        self._batch_del_btn.setStyleSheet("color: red;")
+        self._batch_del_btn.setAccessibleName("批量删除所选词条")
+        ComponentStyle.apply_static(self._batch_del_btn, ComponentKind.BUTTON)
+        ComponentStyle.apply_state(self._batch_del_btn, SemanticState.ERROR)
         self._batch_del_btn.clicked.connect(self._batch_delete)
         hint = QLabel("双击词条可查看详情/编辑")
-        hint.setStyleSheet("color: #888; font-size: 11px;")
+        hint.setAccessibleName("词条操作提示")
+        ComponentStyle.apply_state(hint, SemanticState.INFO)
         toolbar.addWidget(self._create_btn)
         for btn in (self._batch_stage_btn, self._batch_del_btn):
             btn.setEnabled(False)
@@ -90,17 +110,18 @@ class StringsTab(QWidget):
 
         # 词条列表
         self._table = QTableWidget(0, 7)
-        self._table.setHorizontalHeaderLabels(
-            ["键名", "原文", "译文", "状态", "所属文件", "操作者", "更新时间"]
+        self._table.setHorizontalHeaderLabels(["键名", "原文", "译文", "状态", "所属文件", "操作者", "更新时间"])
+        configure_stable_table_columns(
+            self._table,
+            fixed_widths={0: 220, 3: 90, 4: 160, 5: 120, 6: 110},
+            stretch_columns=(1, 2),
         )
-        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        for i in (3, 4, 5, 6):
-            self._table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+        self._table.setAccessibleName("ParaTranz 词条列表")
+        self._table.setAccessibleDescription("词条状态同时显示为文字；双击所选行可查看或编辑详情。")
+        ComponentStyle.apply_static(self._table, ComponentKind.TABLE)
         self._table.itemSelectionChanged.connect(self._on_selection_changed)
         self._table.itemDoubleClicked.connect(self._on_double_clicked)
         layout.addWidget(self._table, stretch=1)
@@ -157,8 +178,7 @@ class StringsTab(QWidget):
 
         def _fetch():
             api = ParatranzStringsAPI(token=config.token, config=config)
-            return _extract_list(api.list_strings(pid, page=page, page_size=page_size,
-                                                   file=file_id, stage=stage))
+            return _extract_list(api.list_strings(pid, page=page, page_size=page_size, file=file_id, stage=stage))
 
         def _on_done(strings):
             if self._strings_gen != gen:
@@ -191,9 +211,30 @@ class StringsTab(QWidget):
             for col, val in enumerate(cells):
                 item = QTableWidgetItem(val)
                 item.setData(Qt.ItemDataRole.UserRole, s)
-                if col == 3:
-                    item.setForeground(QColor(_STAGE_COLORS.get(stage, "#000000")))
                 self._table.setItem(row, col, item)
+            self._apply_stage_brush(row, stage)
+
+    def apply_domain_brushes(self, domain_brushes: DomainBrushes) -> None:
+        """Refresh only visual roles; row items, selection and loaded strings stay intact."""
+
+        self._domain_brushes = domain_brushes
+        for row in range(self._table.rowCount()):
+            item = self._table.item(row, 3)
+            payload = None if item is None else item.data(Qt.ItemDataRole.UserRole)
+            stage = payload.get("stage", 0) if isinstance(payload, dict) else 0
+            self._apply_stage_brush(row, stage)
+        self._table.viewport().update()
+
+    def _apply_stage_brush(self, row: int, stage: int) -> None:
+        item = self._table.item(row, 3)
+        if item is None:
+            return
+        item.setToolTip(f"状态：{_STAGE_LABELS.get(stage, str(stage))}")
+        if self._domain_brushes is None:
+            return
+        brush = self._domain_brushes.stage(stage)
+        item.setForeground(brush.foreground)
+        item.setBackground(brush.background)
 
     def _on_selection_changed(self):
         rows = {i.row() for i in self._table.selectedItems()}
@@ -211,9 +252,17 @@ class StringsTab(QWidget):
         page = self._page_spin.value()
         page_size = self._page_size_combo.currentData()
         dlg = StringDetailDialog(
-            self._strings, row, self._ctx, self._project_id,
-            file_id=file_id, stage=stage, page=page, page_size=page_size,
+            self._strings,
+            row,
+            self._ctx,
+            self._project_id,
+            file_id=file_id,
+            stage=stage,
+            page=page,
+            page_size=page_size,
             parent=self,
+            theme_view=self._theme_view,
+            domain_brushes=self._domain_brushes,
         )
         dlg.strings_updated.connect(self.load_strings)
         dlg.exec()
@@ -245,7 +294,8 @@ class StringsTab(QWidget):
         rows = list({i.row() for i in self._table.selectedItems()})
         ids = [self._table.item(r, 0).data(Qt.ItemDataRole.UserRole).get("id") for r in rows]
         reply = QMessageBox.question(
-            self, "确认删除",
+            self,
+            "确认删除",
             f"确定要删除选中的 {len(ids)} 条词条吗？",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )

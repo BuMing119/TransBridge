@@ -1,10 +1,18 @@
 """P1 ParaTranz 平台工具 (paratranz namespace)。Story 11 + Story 15（项目查询与切换）。"""
 from __future__ import annotations
 
+from contextvars import ContextVar
+from datetime import datetime
+from functools import wraps
 import logging
 
 from transbridge.application.io.identity import EntryRevision, SourceNamespace
 from transbridge.application.ports.paratranz import ParaTranzEntry, ParaTranzProject
+from transbridge.application.projects import (
+    ParaTranzProjectBinding,
+    ParaTranzTargetResolver,
+    ParaTranzTargetStatus,
+)
 from transbridge.application.sync import (
     ConflictPolicy,
     CreateSyncPlanRequest,
@@ -19,27 +27,101 @@ from .base import ToolResult, require_collection
 
 logger = logging.getLogger(__name__)
 
+_ACTIVE_CLIENTS: ContextVar[tuple[object, ...]] = ContextVar("paratranz_tool_clients", default=())
+_EXECUTABLE_TARGET_STATES = frozenset(
+    {
+        ParaTranzTargetStatus.UNVERIFIED,
+        ParaTranzTargetStatus.AVAILABLE,
+    }
+)
+
+
+def _close_paratranz_clients(func):
+    """Close every service created during one synchronous Assistant tool call."""
+
+    @wraps(func)
+    def wrapped(*args, **kwargs):
+        token = _ACTIVE_CLIENTS.set(())
+        try:
+            return func(*args, **kwargs)
+        finally:
+            clients = _ACTIVE_CLIENTS.get()
+            _ACTIVE_CLIENTS.reset(token)
+            for client in reversed(clients):
+                try:
+                    client.close()
+                except Exception:  # noqa: BLE001 - cleanup must not replace the tool result
+                    logger.exception("关闭 ParaTranz Assistant 客户端失败")
+
+    return wrapped
+
+
+def _new_paratranz_client(ctx):
+    from transbridge.paratranz.service import ParaTranzService
+
+    client = ParaTranzService.from_config(ctx.config)
+    _ACTIVE_CLIENTS.set((*_ACTIVE_CLIENTS.get(), client))
+    return client
+
 
 def _get_paratranz_client(ctx, project_id=None):
     """获取 typed ParaTranz port 并解析 project_id。
 
     Returns:
-        (client, pid): ParaTranzPort 实例和解析后的 project_id（可能为 None）。
+        (client, pid, error): ParaTranzPort、解析后的 project_id 和稳定错误信息。
     """
-    from transbridge.paratranz.service import ParaTranzService
-
-    client = ParaTranzService.from_config(ctx.config)
-    # 优先显式传入的 project_id，其次 ctx.paratranz_project_id（Story 15），最后 ctx.current_project
-    pid = (
-        project_id
-        or getattr(ctx, "paratranz_project_id", None)
-        or (ctx.current_project.get("id") if ctx.current_project else None)
-    )
-    return client, pid
+    explicit_provided = project_id not in (None, "")
+    if explicit_provided:
+        if isinstance(project_id, bool):
+            return None, None, "project_id 必须是正整数；未使用工程默认绑定。"
+        if isinstance(project_id, int):
+            explicit_project_id = project_id
+        elif isinstance(project_id, str) and project_id.strip().isdecimal():
+            explicit_project_id = int(project_id.strip())
+        else:
+            return None, None, "project_id 必须是正整数；未使用工程默认绑定。"
+        if explicit_project_id <= 0:
+            return None, None, "project_id 必须是正整数；未使用工程默认绑定。"
+    else:
+        explicit_project_id = None
+    resolve = getattr(ctx, "resolve_paratranz_target", None)
+    if callable(resolve):
+        target = resolve(
+            explicit_project_id=explicit_project_id,
+            explicit_verified=explicit_project_id is not None,
+        )
+    else:
+        target = ParaTranzTargetResolver().resolve(
+            binding=getattr(ctx, "paratranz_binding", None),
+            binding_revision=getattr(ctx, "project_revision", None),
+            explicit_project_id=explicit_project_id,
+            endpoint=_config_endpoint(ctx),
+            account_user_id=_account_user_id(ctx),
+            explicit_verified=explicit_project_id is not None,
+        )
+    if target.status not in _EXECUTABLE_TARGET_STATES:
+        error = (
+            None
+            if target.status is ParaTranzTargetStatus.UNBOUND
+            else target.reason or "ParaTranz 同步目标不可用。"
+        )
+        return None, None, error
+    return _new_paratranz_client(ctx), target.project_id, None
 
 
 def _cancellation(ctx):
     return getattr(ctx, "cancellation_token", None)
+
+
+def _config_endpoint(ctx) -> str:
+    value = getattr(getattr(ctx, "config", None), "base_url", None)
+    return value if isinstance(value, str) and value.startswith(("http://", "https://")) else "https://paratranz.cn"
+
+
+def _account_user_id(ctx) -> int | None:
+    user = getattr(ctx, "current_user", None)
+    value = user.get("id") if isinstance(user, dict) else getattr(getattr(ctx, "config", None), "user_id", None)
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
 
 
 def _project_mapping(project):
@@ -99,11 +181,12 @@ def _sync_planning_use_case(ctx, client):
     return ParaTranzSyncPlanningUseCase(ParaTranzRemoteSnapshotAdapter(client))
 
 
+@_close_paratranz_clients
 def _tool_list_projects(args: dict, ctx) -> ToolResult:
     """列出 ParaTranz 项目。uid="my" 查看我的项目，不传则查看全部。"""
     uid = args.get("uid", "my")
     try:
-        client, _ = _get_paratranz_client(ctx)
+        client = _new_paratranz_client(ctx)
         projects = client.list_projects(uid=uid, cancellation=_cancellation(ctx))
         # 兼容 API 返回 list 或 {"projects": [...]} 两种格式
         if isinstance(projects, dict):
@@ -129,9 +212,12 @@ def _tool_list_projects(args: dict, ctx) -> ToolResult:
         return ToolResult.fail(f"获取项目列表失败: {exc}")
 
 
+@_close_paratranz_clients
 def _tool_get_project_info(args: dict, ctx) -> ToolResult:
     """获取项目详细信息。"""
-    client, pid = _get_paratranz_client(ctx, args.get("project_id"))
+    client, pid, target_error = _get_paratranz_client(ctx, args.get("project_id"))
+    if target_error:
+        return ToolResult.fail(target_error, error_category="input", error_code="PARATRANZ_TARGET_INVALID")
     if not pid:
         return ToolResult.fail("请指定 project_id")
     try:
@@ -151,10 +237,13 @@ def _tool_get_project_info(args: dict, ctx) -> ToolResult:
         return ToolResult.fail(f"获取项目信息失败: {exc}")
 
 
+@_close_paratranz_clients
 @require_collection
 def _tool_compare_with_remote(args: dict, ctx, collection) -> ToolResult:
     """对比本地与远程差异。"""
-    client, pid = _get_paratranz_client(ctx, args.get("project_id"))
+    client, pid, target_error = _get_paratranz_client(ctx, args.get("project_id"))
+    if target_error:
+        return ToolResult.fail(target_error, error_category="input", error_code="PARATRANZ_TARGET_INVALID")
     if not pid:
         return ToolResult.fail("请指定 project_id")
     try:
@@ -197,11 +286,14 @@ def _tool_compare_with_remote(args: dict, ctx, collection) -> ToolResult:
         return ToolResult.fail(f"对比失败: {exc}")
 
 
+@_close_paratranz_clients
 @require_collection
 def _tool_plan_sync(args: dict, ctx, collection) -> ToolResult:
     """Build an inspectable, side-effect-free ParaTranz synchronization plan."""
 
-    client, pid = _get_paratranz_client(ctx, args.get("project_id"))
+    client, pid, target_error = _get_paratranz_client(ctx, args.get("project_id"))
+    if target_error:
+        return ToolResult.fail(target_error, error_category="input", error_code="PARATRANZ_TARGET_INVALID")
     if not pid:
         return ToolResult.fail("请指定 project_id")
     try:
@@ -253,6 +345,7 @@ def _tool_plan_sync(args: dict, ctx, collection) -> ToolResult:
         )
 
 
+@_close_paratranz_clients
 @require_collection
 def _tool_upload_entries(args: dict, ctx, collection) -> ToolResult:
     """上传条目到 ParaTranz。
@@ -261,7 +354,9 @@ def _tool_upload_entries(args: dict, ctx, collection) -> ToolResult:
     对于大批量条目（>100条），逐个 API 调用可能导致耗时较长且易触发限流。
     已知限制，后续可优化为批量上传接口。
     """
-    client, pid = _get_paratranz_client(ctx, args.get("project_id"))
+    client, pid, target_error = _get_paratranz_client(ctx, args.get("project_id"))
+    if target_error:
+        return ToolResult.fail(target_error, error_category="input", error_code="PARATRANZ_TARGET_INVALID")
     if not pid:
         return ToolResult.fail("请指定 project_id")
     try:
@@ -305,9 +400,12 @@ def _tool_upload_entries(args: dict, ctx, collection) -> ToolResult:
         return ToolResult.fail(f"上传失败: {exc}")
 
 
+@_close_paratranz_clients
 def _tool_download_entries(args: dict, ctx) -> ToolResult:
     """下载条目（单阶段 O7: 下载完成后自动附加对比摘要）。"""
-    client, pid = _get_paratranz_client(ctx, args.get("project_id"))
+    client, pid, target_error = _get_paratranz_client(ctx, args.get("project_id"))
+    if target_error:
+        return ToolResult.fail(target_error, error_category="input", error_code="PARATRANZ_TARGET_INVALID")
     if not pid:
         return ToolResult.fail("请指定 project_id")
     try:
@@ -360,9 +458,12 @@ def _tool_download_entries(args: dict, ctx) -> ToolResult:
         return ToolResult.fail(f"下载失败: {exc}")
 
 
+@_close_paratranz_clients
 def _tool_export_artifact(args: dict, ctx) -> ToolResult:
     """导出 ParaTranz 工件。"""
-    client, pid = _get_paratranz_client(ctx, args.get("project_id"))
+    client, pid, target_error = _get_paratranz_client(ctx, args.get("project_id"))
+    if target_error:
+        return ToolResult.fail(target_error, error_category="input", error_code="PARATRANZ_TARGET_INVALID")
     if not pid:
         return ToolResult.fail("请指定 project_id")
     try:
@@ -392,9 +493,12 @@ def _tool_export_artifact(args: dict, ctx) -> ToolResult:
         return ToolResult.fail(f"导出失败: {exc}")
 
 
+@_close_paratranz_clients
 def _tool_get_upload_history(args: dict, ctx) -> ToolResult:
     """获取上传历史。"""
-    client, pid = _get_paratranz_client(ctx, args.get("project_id"))
+    client, pid, target_error = _get_paratranz_client(ctx, args.get("project_id"))
+    if target_error:
+        return ToolResult.fail(target_error, error_category="input", error_code="PARATRANZ_TARGET_INVALID")
     if not pid:
         return ToolResult.fail("请指定 project_id")
     try:
@@ -412,14 +516,15 @@ def _tool_get_upload_history(args: dict, ctx) -> ToolResult:
 
 # ── Story 15: 项目查询与切换 ───────────────────────────────────
 
+@_close_paratranz_clients
 def _tool_get_paratranz_project(args: dict, ctx) -> ToolResult:
-    """获取当前选中的 ParaTranz 项目。"""
-    # 降级: paratranz_project_id → current_project → None
-    pid = getattr(ctx, 'paratranz_project_id', None) or (ctx.current_project.get("id") if ctx.current_project else None)
+    """获取当前本地工程绑定的 ParaTranz 项目。"""
+    client, pid, target_error = _get_paratranz_client(ctx)
+    if target_error:
+        return ToolResult.fail(target_error, error_category="input", error_code="PARATRANZ_TARGET_INVALID")
     if not pid:
-        return ToolResult.ok("未选择 ParaTranz 项目", data={"selected_project": None})
+        return ToolResult.ok("当前本地工程未绑定 ParaTranz 项目", data={"selected_project": None})
     try:
-        client, _ = _get_paratranz_client(ctx, pid)
         info = _project_mapping(client.get_project(pid, cancellation=_cancellation(ctx)))
         return ToolResult.ok(
             f"当前 ParaTranz 项目: {info.get('name')} (id={pid})",
@@ -432,17 +537,36 @@ def _tool_get_paratranz_project(args: dict, ctx) -> ToolResult:
         return ToolResult.fail(f"获取项目信息失败: {exc}")
 
 
+@_close_paratranz_clients
 def _tool_switch_paratranz_project(args: dict, ctx) -> ToolResult:
-    """切换当前选中的 ParaTranz 项目。"""
+    """显式设置当前本地工程的 ParaTranz 默认同步目标。"""
     project_id = args["project_id"]
     try:
-        client, _ = _get_paratranz_client(ctx, project_id)
+        client, _, target_error = _get_paratranz_client(ctx, project_id)
+        if target_error:
+            return ToolResult.fail(target_error, error_category="input", error_code="PARATRANZ_TARGET_INVALID")
         info = _project_mapping(
             client.get_project(project_id, cancellation=_cancellation(ctx))
         )  # 验证有效性
-        ctx.paratranz_project_id = project_id
+        set_binding = getattr(ctx, "set_paratranz_binding", None)
+        if not callable(set_binding) or not getattr(ctx, "active_project_id", None):
+            return ToolResult.fail("请先打开本地工程，再设置 ParaTranz 同步目标")
+        now = datetime.now().astimezone().isoformat()
+        result = set_binding(
+            ParaTranzProjectBinding(
+                int(project_id),
+                str(info.get("name") or f"项目 #{project_id}"),
+                _config_endpoint(ctx),
+                _account_user_id(ctx),
+                now,
+                now,
+            )
+        )
+        if not result.is_success:
+            message = result.diagnostics[0].message if result.diagnostics else "本地工程绑定失败"
+            return ToolResult.fail(message)
         return ToolResult.ok(
-            f"已切换到项目: {info.get('name')} (id={project_id})",
+            f"已绑定当前工程到项目: {info.get('name')} (id={project_id})",
             data={"id": info.get("id"), "name": info.get("name"), "visibility": info.get("visibility")}
         )
     except TaskCancelled:
@@ -459,13 +583,13 @@ _PARAM_SCHEMAS = {
         "uid": {"type": "str", "required": False, "description": "传 \"my\" 查看我的项目（默认），传 \"\" 查看全部项目"},
     },
     "get_project_info": {
-        "project_id": {"type": "str", "required": False, "description": "项目ID（不传则使用当前选中项目）"},
+        "project_id": {"type": "str", "required": False, "description": "项目ID（不传则使用当前工程绑定）"},
     },
     "compare_with_remote": {
-        "project_id": {"type": "str", "required": False, "description": "项目ID（不传则使用当前选中项目）"},
+        "project_id": {"type": "str", "required": False, "description": "项目ID（不传则使用当前工程绑定）"},
     },
     "plan_sync": {
-        "project_id": {"type": "str", "required": False, "description": "项目ID（不传则使用当前选中项目）"},
+        "project_id": {"type": "str", "required": False, "description": "项目ID（不传则使用当前工程绑定）"},
         "operation": {"type": "str", "required": False, "description": "upload/download/bidirectional，默认 upload"},
         "conflict_policy": {
             "type": "str",
@@ -483,18 +607,18 @@ _PARAM_SCHEMAS = {
         "page_size": {"type": "int", "required": False, "description": "计划展示页大小，默认 100"},
     },
     "upload_entries": {
-        "project_id": {"type": "str", "required": False, "description": "项目ID（不传则使用当前选中项目）"},
+        "project_id": {"type": "str", "required": False, "description": "项目ID（不传则使用当前工程绑定）"},
         "force_overwrite": {"type": "bool", "required": False, "description": "是否强制覆盖已存在的条目，默认 false"},
         "entry_ids": {"type": "list", "required": False, "description": "要上传的条目ID列表，默认全部"},
     },
     "download_entries": {
-        "project_id": {"type": "str", "required": False, "description": "项目ID（不传则使用当前选中项目）"},
+        "project_id": {"type": "str", "required": False, "description": "项目ID（不传则使用当前工程绑定）"},
     },
     "export_artifact": {
-        "project_id": {"type": "str", "required": False, "description": "项目ID（不传则使用当前选中项目）"},
+        "project_id": {"type": "str", "required": False, "description": "项目ID（不传则使用当前工程绑定）"},
     },
     "get_upload_history": {
-        "project_id": {"type": "str", "required": False, "description": "项目ID（不传则使用当前选中项目）"},
+        "project_id": {"type": "str", "required": False, "description": "项目ID（不传则使用当前工程绑定）"},
         "limit": {"type": "int", "required": False, "description": "返回条数上限，默认 20"},
     },
     "switch_paratranz_project": {
@@ -511,10 +635,10 @@ def _register_paratranz_tools():
         {"name": "list_projects", "display_name": "列出项目", "description": "①列出ParaTranz项目。②参数: uid(\"my\"=仅我的项目/默认, \"\"=全部项目)。只读。③返回: {projects:[{id,name,visibility}]}。规则: 查看单项目详情用get_project_info。",
          "execute": _tool_list_projects, "permission": "read",
          "parameters": _PARAM_SCHEMAS.get("list_projects", {})},
-        {"name": "get_project_info", "display_name": "项目信息", "description": "①获取项目详细信息。②参数: project_id(可选, 不传则用当前选中项目)。只读。③返回: {id,name,visibility,member_count}。规则: vs get_paratranz_project: 用此工具查看特定项目详情或member_count; 用get_paratranz_project做快速当前项目查询(零参数, 无选中不报错)。",
+        {"name": "get_project_info", "display_name": "项目信息", "description": "①获取项目详细信息。②参数: project_id(可选, 不传则用当前工程绑定)。只读。③返回: {id,name,visibility,member_count}。规则: vs get_paratranz_project: 用此工具查看特定项目详情或member_count; 用get_paratranz_project快速查询工程绑定。",
          "execute": _tool_get_project_info, "permission": "read",
          "parameters": _PARAM_SCHEMAS.get("get_project_info", {})},
-        {"name": "compare_with_remote", "display_name": "对比远程", "description": "①对比本地翻译(ctx.collection)与远程差异。②参数: project_id(可选)。只读。③返回: {only_local,only_remote,different,same,details:[{key,status}](最多20条)}。status: only_local/different。规则: 用get_paratranz_project确认当前项目; 需已加载本地集合。",
+        {"name": "compare_with_remote", "display_name": "对比远程", "description": "①对比本地翻译(ctx.collection)与远程差异。②参数: project_id(可选)。只读。③返回: {only_local,only_remote,different,same,details:[{key,status}](最多20条)}。status: only_local/different。规则: 用get_paratranz_project确认工程绑定; 需已加载本地集合。",
          "execute": _tool_compare_with_remote, "permission": "read",
          "parameters": _PARAM_SCHEMAS.get("compare_with_remote", {})},
         {"name": "plan_sync", "display_name": "规划同步",
@@ -534,10 +658,10 @@ def _register_paratranz_tools():
          "execute": _tool_get_upload_history, "permission": "read",
          "parameters": _PARAM_SCHEMAS.get("get_upload_history", {})},
         # Story 15: 项目查询与切换
-        {"name": "get_paratranz_project", "display_name": "PT当前项目", "description": "①获取当前选中项目。②无参数, 只读。③返回: {id,name,visibility}或无选中时{selected_project:null}。规则: vs get_project_info: 用此工具做快速检查(零参数, 无选中不报错); 查看特定项目详情或member_count用get_project_info。",
+        {"name": "get_paratranz_project", "display_name": "PT同步目标", "description": "①获取当前本地工程绑定的 ParaTranz 同步目标。②无参数, 只读。③返回: {id,name,visibility}或未绑定时{selected_project:null}。规则: 查看特定项目详情或member_count用get_project_info。",
          "execute": _tool_get_paratranz_project, "permission": "read",
          "parameters": _PARAM_SCHEMAS.get("get_paratranz_project", {})},
-        {"name": "switch_paratranz_project", "display_name": "切换PT项目", "description": "①切换当前PT项目, 后续操作的默认project_id自动更新。②参数: project_id(必填, int, 来自list_projects)。写权限。③返回: {id,name,visibility}。规则: 前置条件: 通过get_app_state检查paratranz_configured; 切换前先调list_projects获取可选ID; 本地数据(翻译集合/筛选条件)跨切换保持不变。",
+        {"name": "switch_paratranz_project", "display_name": "绑定PT同步目标", "description": "①把 ParaTranz 项目显式绑定为当前本地工程的默认同步目标。②参数: project_id(必填, int, 来自list_projects)。写权限。③返回: {id,name,visibility}。规则: 必须已有本地工程；管理页浏览不会改绑定；本地翻译数据跨绑定保持不变。",
          "execute": _tool_switch_paratranz_project, "permission": "write",
          "parameters": _PARAM_SCHEMAS.get("switch_paratranz_project", {})},
     ])

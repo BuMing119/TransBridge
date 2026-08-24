@@ -19,10 +19,10 @@ _logger = logging.getLogger(__name__)
 class _PolishWorker(QThread):
     progress = pyqtSignal(int, int, str)  # current, total, message
     entry_done = pyqtSignal(str, object)  # entry_id, PolishResult
-    finished_all = pyqtSignal(dict)       # {entry_id: PolishResult}
+    finished_all = pyqtSignal(dict)  # {entry_id: PolishResult}
     error = pyqtSignal(str)
 
-    def __init__(self, polisher, entries: list["TranslationEntry"]):
+    def __init__(self, polisher, entries: list[TranslationEntry]):
         super().__init__()
         self._polisher = polisher
         self._entries = entries
@@ -45,7 +45,7 @@ class _PolishWorker(QThread):
         return not self._pause_event.is_set()
 
     def run(self):
-        results: dict[str, "PolishResult"] = {}
+        results: dict[str, PolishResult] = {}
         total = len(self._entries)
 
         try:
@@ -61,7 +61,7 @@ class _PolishWorker(QThread):
                         break
                     self.progress.emit(i, total, "已恢复")
 
-                self.progress.emit(i, total, f"润色中 {i+1}/{total}: {entry.key[:60]}")
+                self.progress.emit(i, total, f"润色中 {i + 1}/{total}: {entry.key[:60]}")
 
                 try:
                     result = self._polisher.polish(entry)
@@ -70,6 +70,7 @@ class _PolishWorker(QThread):
                 except Exception as exc:
                     _logger.error("润色条目 %s 失败: %s", entry.id, exc)
                     from transbridge.ai_translator.post_processor.polisher import PolishResult
+
                     results[entry.id] = PolishResult(
                         entry_id=entry.id,
                         original_translation=entry.translation or "",

@@ -2,15 +2,27 @@
 MailsDialog: 私信（Mails）对话框，左侧对话列表 + 右侧消息流。
 """
 
-from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QSplitter,
-    QListWidget, QListWidgetItem, QLabel, QTextEdit,
-    QPushButton, QMessageBox, QScrollArea, QWidget,
-    QInputDialog,
-)
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import (
+    QDialog,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QSplitter,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
 from transbridge.paratranz.api.paratranz_mails_api import ParatranzMailsAPI
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState
+
 from ..workers import ApiWorker
 
 
@@ -34,7 +46,6 @@ def _user_name(user_obj, fallback_id) -> str:
 
 
 class MailsDialog(QDialog):
-
     def __init__(self, ctx, parent=None):
         super().__init__(parent)
         self._ctx = ctx
@@ -81,7 +92,10 @@ class MailsDialog(QDialog):
         right_layout.setContentsMargins(4, 0, 0, 0)
 
         self._conv_label = QLabel("（选择联系人查看对话）")
-        self._conv_label.setStyleSheet("font-weight: bold;")
+        conversation_font = QFont(self._conv_label.font())
+        conversation_font.setWeight(QFont.Weight.DemiBold)
+        self._conv_label.setFont(conversation_font)
+        self._conv_label.setAccessibleName("当前私信对话")
         right_layout.addWidget(self._conv_label)
 
         # 消息流（滚动区域，最新消息在底部）
@@ -228,18 +242,16 @@ class MailsDialog(QDialog):
             bubble.setWordWrap(True)
             bubble.setTextFormat(Qt.TextFormat.RichText)
             bubble.setMaximumWidth(450)
+            bubble.setAccessibleName("我发送的私信" if is_mine else "收到的私信")
+            bubble.setAccessibleDescription(f"{created}：{content}")
+            ComponentStyle.apply_static(bubble, ComponentKind.CARD)
+            ComponentStyle.apply_state(bubble, SemanticState.INFO if is_mine else SemanticState.DEFAULT)
 
             if is_mine:
-                bubble.setStyleSheet(
-                    "background:#DCF8C6; padding:6px; border-radius:6px; margin:2px;"
-                )
                 row = QHBoxLayout()
                 row.addStretch()
                 row.addWidget(bubble)
             else:
-                bubble.setStyleSheet(
-                    "background:#FFFFFF; padding:6px; border-radius:6px; margin:2px;"
-                )
                 row = QHBoxLayout()
                 row.addWidget(bubble)
                 row.addStretch()
@@ -250,9 +262,7 @@ class MailsDialog(QDialog):
             self._msg_layout.insertWidget(self._msg_layout.count() - 1, wrapper)
 
         # 滚动到底部（最新消息）
-        self._msg_scroll.verticalScrollBar().setValue(
-            self._msg_scroll.verticalScrollBar().maximum()
-        )
+        self._msg_scroll.verticalScrollBar().setValue(self._msg_scroll.verticalScrollBar().maximum())
 
     def _send_message(self):
         if self._current_uid is None:
@@ -278,9 +288,7 @@ class MailsDialog(QDialog):
         self._workers.append(w)
 
     def _new_mail(self):
-        uid_str, ok = QInputDialog.getText(
-            self, "新建私信", "输入对方用户 ID（整数）："
-        )
+        uid_str, ok = QInputDialog.getText(self, "新建私信", "输入对方用户 ID（整数）：")
         if not ok or not uid_str.strip():
             return
         try:

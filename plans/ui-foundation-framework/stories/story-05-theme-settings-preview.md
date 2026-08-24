@@ -1,7 +1,7 @@
 # Story-05：主题设置、预览与恢复 UX
 
 - **所属 Plan**：[高性能统一 UI 基础框架](../plan.md)
-- **状态**：草稿
+- **状态**：已完成（2026-08-24）
 - **优先级**：P1
 - **前置依赖**：S03 ThemeService、S04 公共组件/适配器
 - **下游依赖**：S06、S09
@@ -12,12 +12,12 @@
 
 ## 原始验收标准
 
-- [ ] 通用设置入口提供 system/light/dark、当前 effective scheme、即时预览、应用、取消和恢复默认。
-- [ ] 预览只使用隔离 preview widget/snapshot，不修改业务窗口或持久化配置；取消后无残留 revision/cache/listener。
-- [ ] 应用成功后当前和新窗口一致；重复应用当前值幂等。
-- [ ] 写入失败时用户可选择保持本次会话主题或恢复持久化主题，提示不泄漏底层路径。
-- [ ] 未知 theme ID、Provider 移除和系统 scheme unknown 有稳定回退说明。
-- [ ] 首期界面不出现导入、编辑、市场或任意皮肤入口，但展示 Provider 元数据的控件边界可复用。
+- [x] 通用设置入口提供 system/light/dark、当前 effective scheme、即时预览、应用、取消和恢复默认。
+- [x] 预览只使用隔离 preview widget/snapshot，不修改业务窗口或持久化配置；取消后无残留 revision/cache/listener。
+- [x] 应用成功后当前和新窗口一致；重复应用当前值幂等。
+- [x] 写入失败时用户可选择保持本次会话主题或恢复持久化主题，提示不泄漏底层路径。
+- [x] 未知 theme ID、Provider 移除和系统 scheme unknown 有稳定回退说明。
+- [x] 首期界面不出现导入、编辑、市场或任意皮肤入口，但展示 Provider 元数据的控件边界可复用。
 
 ## 交互状态
 

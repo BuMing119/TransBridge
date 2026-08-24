@@ -1,7 +1,7 @@
 # Story-09：扩展合同、全量审计与最终性能门禁
 
 - **所属 Plan**：[高性能统一 UI 基础框架](../plan.md)
-- **状态**：草稿
+- **状态**：已完成（2026-08-24）
 - **优先级**：P0
 - **前置依赖**：S05 设置、S06 Main/Workbench、S07 Tools/ParaTranz、S08 i18n/a11y
 - **下游依赖**：实现完成/发布候选；本 Story 不自动发布
@@ -12,14 +12,14 @@
 
 ## 原始验收标准
 
-- [ ] 使用一个仅存在于测试的第三方 Provider 证明无需改业务组件即可注册、resolve、apply 和回退；不实现动态发现或用户安装。
-- [ ] forward schema、缺 token、超资源预算、ID 冲突、非法路径、异常 provider 均原子拒绝，当前主题不变。
-- [ ] 审计阻止新裸颜色、颜色型局部 QSS、UI theme QSettings、直接 Provider 执行和无界 theme cache；豁免有 owner 与移除条件。
-- [ ] 冷初始化新增 P95 ≤75 ms、RSS ≤12 MiB；热切换 P95 ≤250 ms、heartbeat ≤200 ms；窗口打开回归 ≤5% 或 10 ms；100 次切换预热后 RSS 增长 ≤2 MiB。
-- [ ] idle 期间 Theme/Locale 无 timer、无窗口树扫描；重复选择当前主题零 apply/零 signal。
-- [ ] compatibility provider/旧 QSS 删除门禁满足，或把残留项以明确 blocker 和后续 Story 保留，不能伪称全量完成。
-- [ ] 回退到内置浅色后 GUI 核心操作可用，业务数据和统一配置不损坏。
-- [ ] FR26 J01～J09 固定旅程保持相同 canonical intent、D/M/N、默认焦点、取消点与返回上下文；主题切换期间 application command、网络/文件副作用、preflight、confirm token 与 Task Run ID 计数均不增加。
+- [x] 使用一个仅存在于测试的第三方 Provider 证明无需改业务组件即可注册、resolve、apply 和回退；不实现动态发现或用户安装。
+- [x] forward schema、缺 token、超资源预算、ID 冲突、非法路径、异常 provider 均原子拒绝，当前主题不变。
+- [x] 审计阻止新裸颜色、颜色型局部 QSS、UI theme QSettings、直接 Provider 执行和无界 theme cache；豁免有 owner 与移除条件。
+- [x] 冷初始化新增 P95 ≤75 ms、RSS ≤12 MiB；热切换 P95 ≤250 ms、heartbeat ≤200 ms；窗口打开回归 ≤5% 或 10 ms；100 次切换预热后 RSS 增长 ≤2 MiB。
+- [x] idle 期间 Theme/Locale 无 timer、无窗口树扫描；重复选择当前主题零 apply/零 signal。
+- [x] compatibility provider/旧 QSS 删除门禁满足，或把残留项以明确 blocker 和后续 Story 保留，不能伪称全量完成。
+- [x] 回退到内置浅色后 GUI 核心操作可用，业务数据和统一配置不损坏。
+- [x] FR26 J01～J09 固定旅程保持相同 canonical intent、D/M/N、默认焦点、取消点与返回上下文；主题切换期间 application command、网络/文件副作用、preflight、confirm token 与 Task Run ID 计数均不增加。
 
 ## 测试 Provider
 

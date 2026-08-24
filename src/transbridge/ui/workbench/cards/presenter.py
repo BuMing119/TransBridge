@@ -13,10 +13,6 @@ class OperationContextPort(Protocol):
     @property
     def collection(self): ...
 
-    @property
-    def current_project(self): ...
-
-
 @dataclass(frozen=True, slots=True)
 class OperationCardState:
     batch_available: bool
@@ -35,8 +31,10 @@ class OperationCardPresenter:
         return len(self._context.slots) > 1
 
     def state(self) -> OperationCardState:
+        from transbridge.ui.paratranz.target_context import bound_paratranz_project
+
         return OperationCardState(
             batch_available=self.batch_available,
             has_collection=self._context.collection is not None,
-            has_project=self._context.current_project is not None,
+            has_project=bound_paratranz_project(self._context) is not None,
         )

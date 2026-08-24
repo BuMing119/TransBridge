@@ -2,16 +2,26 @@
 MembersTab: 成员管理标签页。
 """
 
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout,
-    QTableWidget, QTableWidgetItem, QHeaderView,
-    QPushButton, QMessageBox, QDialog, QFormLayout,
-    QLineEdit, QComboBox, QTextEdit, QLabel,
-)
 from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QFormLayout,
+    QHBoxLayout,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 
 from transbridge.paratranz.api.paratranz_members_api import ParatranzMembersAPI
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState
+
 from ..workers import ApiWorker
+from ._layout_stability import configure_stable_table_columns
 
 _PERM_LABELS = {1: "翻译者", 2: "校对者", 3: "管理员", 4: "所有者"}
 
@@ -27,7 +37,6 @@ def _extract_list(data) -> list:
 
 
 class MembersTab(QWidget):
-
     def __init__(self, ctx, parent=None):
         super().__init__(parent)
         self._ctx = ctx
@@ -46,7 +55,9 @@ class MembersTab(QWidget):
         self._add_btn = QPushButton("添加成员")
         self._add_btn.clicked.connect(self._add_member)
         self._remove_btn = QPushButton("移除成员")
-        self._remove_btn.setStyleSheet("color: red;")
+        self._remove_btn.setAccessibleName("移除所选 ParaTranz 成员")
+        ComponentStyle.apply_static(self._remove_btn, ComponentKind.BUTTON)
+        ComponentStyle.apply_state(self._remove_btn, SemanticState.ERROR)
         self._remove_btn.clicked.connect(self._remove_member)
         self._remove_btn.setEnabled(False)
         for btn in (self._refresh_btn, self._add_btn, self._remove_btn):
@@ -55,21 +66,17 @@ class MembersTab(QWidget):
         layout.addLayout(toolbar)
 
         self._table = QTableWidget(0, 7)
-        self._table.setHorizontalHeaderLabels(
-            ["昵称", "用户名", "权限", "PP 贡献", "翻译数", "编辑数", "备注"]
+        self._table.setHorizontalHeaderLabels(["昵称", "用户名", "权限", "PP 贡献", "翻译数", "编辑数", "备注"])
+        configure_stable_table_columns(
+            self._table,
+            fixed_widths={0: 160, 1: 160, 2: 90, 3: 100, 4: 90, 5: 90},
+            stretch_columns=(6,),
         )
-        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        for i in (2, 3, 4, 5):
-            self._table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
-        self._table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self._table.itemSelectionChanged.connect(
-            lambda: self._remove_btn.setEnabled(
-                bool(self._table.selectedItems()) and self._ctx.is_admin()
-            )
+            lambda: self._remove_btn.setEnabled(bool(self._table.selectedItems()) and self._ctx.is_admin())
         )
         layout.addWidget(self._table, stretch=1)
 
@@ -177,7 +184,8 @@ class MembersTab(QWidget):
         user = m.get("user") or {}
         name = user.get("nickname", str(m.get("uid", ""))) if isinstance(user, dict) else ""
         reply = QMessageBox.question(
-            self, "确认移除",
+            self,
+            "确认移除",
             f"确定要移除成员「{name}」吗？",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )

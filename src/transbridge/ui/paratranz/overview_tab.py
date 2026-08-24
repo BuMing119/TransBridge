@@ -2,15 +2,28 @@
 OverviewTab: 项目概览标签页，展示基本信息与翻译进度统计。
 """
 
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox,
-    QProgressBar, QPushButton, QMessageBox, QFormLayout,
-    QDialog, QLineEdit, QTextEdit, QComboBox,
-)
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
-from transbridge.paratranz.api.paratranz_project_api import ParatranzProjectAPI
 from transbridge.paratranz.api.paratranz_files_api import ParatranzFilesAPI
+from transbridge.paratranz.api.paratranz_project_api import ParatranzProjectAPI
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, ElidedLabel, SemanticState
+
 from ..workers import ApiWorker
 
 
@@ -30,7 +43,6 @@ _JOIN_LABELS = {0: "公开加入", 1: "申请加入", 2: "测试加入", 3: "私
 
 
 class EditProjectDialog(QDialog):
-
     def __init__(self, project: dict, parent=None):
         super().__init__(parent)
         self._project = project
@@ -112,7 +124,6 @@ class EditProjectDialog(QDialog):
 
 
 class OverviewTab(QWidget):
-
     def __init__(self, ctx, parent=None):
         super().__init__(parent)
         self._ctx = ctx
@@ -127,7 +138,7 @@ class OverviewTab(QWidget):
         # 基本信息
         info_box = QGroupBox("项目信息")
         self._info_form = QFormLayout(info_box)
-        self._lbl_name = QLabel("—")
+        self._lbl_name = ElidedLabel("—")
         self._lbl_desc = QLabel("—")
         self._lbl_desc.setWordWrap(True)
         self._lbl_game = QLabel("—")
@@ -171,7 +182,10 @@ class OverviewTab(QWidget):
             val_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             name_lbl = QLabel(text)
             name_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            name_lbl.setStyleSheet("color: gray; font-size: 11px;")
+            caption_font = QFont(name_lbl.font())
+            caption_font.setPointSizeF(max(8.0, caption_font.pointSizeF() - 1.0))
+            name_lbl.setFont(caption_font)
+            ComponentStyle.apply_state(name_lbl, SemanticState.INFO)
             col.addWidget(val_lbl)
             col.addWidget(name_lbl)
             stats_grid.addLayout(col)
@@ -185,7 +199,9 @@ class OverviewTab(QWidget):
         self._edit_btn = QPushButton("编辑项目信息")
         self._edit_btn.clicked.connect(self._edit_project)
         self._del_btn = QPushButton("删除项目")
-        self._del_btn.setStyleSheet("color: red;")
+        self._del_btn.setAccessibleName("删除当前 ParaTranz 项目")
+        ComponentStyle.apply_static(self._del_btn, ComponentKind.BUTTON)
+        ComponentStyle.apply_state(self._del_btn, SemanticState.ERROR)
         self._del_btn.clicked.connect(self._delete_project)
         self._admin_row.addWidget(self._edit_btn)
         self._admin_row.addWidget(self._del_btn)
@@ -197,8 +213,17 @@ class OverviewTab(QWidget):
         self._set_empty()
 
     def _set_empty(self):
-        for lbl in (self._lbl_name, self._lbl_desc, self._lbl_game,
-                    self._lbl_privacy, self._lbl_review, self._lbl_join, self._lbl_members):
+        self._lbl_name.set_full_text("—")
+        self._lbl_name.setToolTip("")
+        self._lbl_name.setAccessibleDescription("")
+        for lbl in (
+            self._lbl_desc,
+            self._lbl_game,
+            self._lbl_privacy,
+            self._lbl_review,
+            self._lbl_join,
+            self._lbl_members,
+        ):
             lbl.setText("—")
         self._prog_bar.setValue(0)
         self._prog_bar.setFormat("请先选择项目")
@@ -213,7 +238,10 @@ class OverviewTab(QWidget):
             return
 
         p = project
-        self._lbl_name.setText(p.get("name", "—"))
+        project_name = str(p.get("name", "—"))
+        self._lbl_name.set_full_text(project_name)
+        self._lbl_name.setToolTip(project_name)
+        self._lbl_name.setAccessibleDescription(project_name)
         self._lbl_desc.setText(p.get("desc") or p.get("description") or "—")
         self._lbl_game.setText(p.get("game") or "—")
         self._lbl_privacy.setText(_PRIVACY_LABELS.get(p.get("privacy", 0), "—"))
@@ -261,7 +289,7 @@ class OverviewTab(QWidget):
 
             def _fmt(n, t):
                 if t > 0:
-                    return f"{n}\n({int(n/t*100)}%)"
+                    return f"{n}\n({int(n / t * 100)}%)"
                 return str(n)
 
             self._stat_labels["total"].setText(str(total))
@@ -317,7 +345,8 @@ class OverviewTab(QWidget):
         if not project:
             return
         reply = QMessageBox.question(
-            self, "确认删除",
+            self,
+            "确认删除",
             f"确定要删除项目「{project.get('name', '')}」吗？此操作不可撤销！",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )

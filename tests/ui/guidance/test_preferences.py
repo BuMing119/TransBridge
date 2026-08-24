@@ -7,7 +7,13 @@ import pytest
 
 from transbridge.config.paratranz_credentials import UnavailableCredentialStore
 from transbridge.config.repository import ConfigRepository
-from transbridge.config.ui_preferences import GuidanceMode, UiPreferenceRepository
+from transbridge.config.ui_preferences import (
+    DEFAULT_LOCALE,
+    DEFAULT_THEME_ID,
+    GuidanceMode,
+    ThemeMode,
+    UiPreferenceRepository,
+)
 
 
 def _repository(tmp_path: Path, *, replace_func=os.replace) -> ConfigRepository:
@@ -69,3 +75,55 @@ def test_write_failure_is_reported_and_preserves_verified_value(tmp_path: Path) 
     assert "injected preference failure" in result.message
     assert healthy.path.read_bytes() == before
     assert UiPreferenceRepository(healthy).load().guidance_mode is GuidanceMode.GUIDED
+
+
+def test_theme_and_locale_round_trip_without_overwriting_guidance(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    preferences = UiPreferenceRepository(repository)
+    preferences.save_guidance_mode(GuidanceMode.COMPACT)
+
+    theme_result = preferences.save_theme_preference(ThemeMode.DARK, "Example.Brand")
+    locale_result = preferences.save_locale("en-US")
+    loaded = preferences.load()
+
+    assert theme_result.saved
+    assert locale_result.saved
+    assert loaded.guidance_mode is GuidanceMode.COMPACT
+    assert loaded.theme_mode is ThemeMode.DARK
+    assert loaded.theme_id == "example.brand"
+    assert loaded.locale == "en-US"
+    assert repository.load().value("ui", "guidance_mode") == GuidanceMode.COMPACT.value
+
+
+def test_invalid_foundation_preferences_fall_back_with_aggregated_diagnostics(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    repository.update_sections({
+        "ui": {
+            "theme_mode": "sepia",
+            "theme_id": "../../escape",
+            "locale": "not a locale",
+        }
+    })
+
+    loaded = UiPreferenceRepository(repository).load()
+
+    assert loaded.theme_mode is ThemeMode.SYSTEM
+    assert loaded.theme_id == DEFAULT_THEME_ID
+    assert loaded.locale == DEFAULT_LOCALE
+    assert loaded.diagnostics == (
+        "ui_theme_mode_invalid",
+        "ui_theme_id_invalid",
+        "ui_locale_invalid",
+    )
+
+
+def test_invalid_theme_id_is_rejected_without_writing(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    preferences = UiPreferenceRepository(repository)
+    before = repository.load()
+
+    result = preferences.save_theme_preference(ThemeMode.LIGHT, "../escape")
+
+    assert not result.saved
+    assert result.diagnostic_code == "ui_theme_id_invalid"
+    assert repository.load().revision == before.revision

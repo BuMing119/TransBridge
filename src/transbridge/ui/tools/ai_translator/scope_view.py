@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 )
 
 from transbridge.converter.translation_entry import STAGE_LABELS
+from transbridge.ui.foundation.components import ComponentDensity, ComponentKind, ComponentStyle, SemanticState
 from transbridge.ui.tools.ai_translator.scope_presenter import ScopeEstimate, TranslationScope
 from transbridge.ui.tools.ai_translator.view_controls import TranslatorViewOwner
 
@@ -29,12 +30,6 @@ class ScopeCallbacks(Protocol):
     def on_scope_stage_clicked(self, stage: int | None) -> None: ...
     def on_scope_label_clicked(self, label_id: str | None) -> None: ...
     def on_scope_category_clicked(self, category: str | None) -> None: ...
-
-
-ACTIVE_STYLE = (
-    "QPushButton { background: #2196F3; color: white; font-weight: bold; padding: 2px 8px; border-radius: 6px; }"
-)
-INACTIVE_STYLE = "QPushButton { background: #f0f0f0; border: 1px solid #ccc; padding: 2px 8px; border-radius: 6px; }"
 
 
 def render_scope_tags(
@@ -55,7 +50,7 @@ def render_scope_tags(
             button = _new_button(view.controls.scope_stage_all_btn, lambda s=stage: callbacks.on_scope_stage_clicked(s))
             view.controls.scope_stage_btns[stage] = button
         button.setText(f"{label} {stage_counts.get(stage, 0)}")
-        button.setStyleSheet(ACTIVE_STYLE if stage in state.stage_filters else INACTIVE_STYLE)
+        _style_filter(button, stage in state.stage_filters)
 
     label_counts = Counter(label for labels in entry_labels.values() for label in labels)
     for label_id, info in label_library.items():
@@ -67,7 +62,7 @@ def render_scope_tags(
             )
             view.controls.scope_label_btns[label_id] = button
         button.setText(f"● {info.get('name', '?')} {label_counts.get(label_id, 0)}")
-        button.setStyleSheet(ACTIVE_STYLE if label_id in state.label_filters else INACTIVE_STYLE)
+        _style_filter(button, label_id in state.label_filters)
 
     category_counts = Counter(category_of(entry) for entry in entries)
     for category in categories:
@@ -79,7 +74,16 @@ def render_scope_tags(
             )
             view.controls.scope_cat_btns[category] = button
         button.setText(f"{category} {category_counts.get(category, 0)}")
-        button.setStyleSheet(ACTIVE_STYLE if category in state.category_filters else INACTIVE_STYLE)
+        _style_filter(button, category in state.category_filters)
+
+
+def _style_filter(button: QPushButton, active: bool) -> None:
+    button.setCheckable(True)
+    button.setChecked(active)
+    button.setAccessibleName(f"AI 范围筛选：{button.text()}")
+    button.setAccessibleDescription("已启用" if active else "未启用")
+    ComponentStyle.apply_static(button, ComponentKind.BADGE, ComponentDensity.COMPACT)
+    ComponentStyle.apply_state(button, SemanticState.CHECKED if active else SemanticState.DEFAULT)
 
 
 def _new_button(anchor: QPushButton, callback: Callable[[], None]) -> QPushButton:
@@ -157,7 +161,7 @@ def build_scope_view(view: TranslatorViewOwner, callbacks: ScopeCallbacks) -> No
     scope_layout.addWidget(view.controls.overwrite_check)
 
     view.controls.estimate_lbl = QLabel("预计：— 条")
-    view.controls.estimate_lbl.setStyleSheet("color: #888; font-size: 11px;")
+    view.controls.estimate_lbl.setAccessibleName("AI 翻译范围估算")
     scope_layout.addWidget(view.controls.estimate_lbl)
 
     # ── 混合模式面板 ──────────────────────────────────────────────────────
@@ -176,7 +180,7 @@ def build_scope_view(view: TranslatorViewOwner, callbacks: ScopeCallbacks) -> No
     order_row.addStretch()
     mixed_layout.addLayout(order_row)
     mixed_estimate = QLabel("预计：— 条")
-    mixed_estimate.setStyleSheet("color: #888; font-size: 11px;")
+    mixed_estimate.setAccessibleName("AI 混合运行范围估算")
     view.controls.mixed_estimate_lbl = mixed_estimate
     mixed_layout.addWidget(mixed_estimate)
 

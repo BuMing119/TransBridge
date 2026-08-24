@@ -4,17 +4,32 @@ TermsTab: 术语管理标签页。
 
 import math
 
+from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QGroupBox,
-    QTableWidget, QTableWidgetItem, QHeaderView,
-    QPushButton, QLabel, QFormLayout, QLineEdit, QTextEdit,
-    QComboBox, QCheckBox, QMessageBox, QDialog, QDialogButtonBox,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt6.QtCore import Qt, QSize
 
-from transbridge.paratranz.api.paratranz_terms_api import ParatranzTermsAPI
 from transbridge.paratranz.api.paratranz_history_api import ParatranzHistoryAPI
+from transbridge.paratranz.api.paratranz_terms_api import ParatranzTermsAPI
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState, reserve_text_width
+
 from ..workers import ApiWorker
+from ._layout_stability import configure_stable_table_columns
 
 
 def _extract_list(data) -> list:
@@ -28,7 +43,6 @@ def _extract_list(data) -> list:
 
 
 class TermFormDialog(QDialog):
-
     def __init__(self, term: dict | None = None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("添加术语" if term is None else "编辑术语")
@@ -139,7 +153,6 @@ class TermHistoryDialog(QDialog):
 
 
 class TermsTab(QWidget):
-
     _PAGE_SIZE = 50
 
     def __init__(self, ctx, parent=None):
@@ -167,7 +180,9 @@ class TermsTab(QWidget):
         self._edit_btn.clicked.connect(self._edit_term)
         self._edit_btn.setEnabled(False)
         self._del_btn = QPushButton("删除")
-        self._del_btn.setStyleSheet("color: red;")
+        self._del_btn.setAccessibleName("删除所选 ParaTranz 术语")
+        ComponentStyle.apply_static(self._del_btn, ComponentKind.BUTTON)
+        ComponentStyle.apply_state(self._del_btn, SemanticState.ERROR)
         self._del_btn.clicked.connect(self._delete_term)
         self._del_btn.setEnabled(False)
         self._history_btn = QPushButton("查看历史")
@@ -181,10 +196,11 @@ class TermsTab(QWidget):
         # 术语表
         self._table = QTableWidget(0, 6)
         self._table.setHorizontalHeaderLabels(["原文", "译文", "词性", "注释", "变体", "大小写敏感"])
-        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        for i in (2, 3, 4, 5):
-            self._table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeMode.Stretch)
+        configure_stable_table_columns(
+            self._table,
+            fixed_widths={2: 90, 3: 200, 4: 160, 5: 110},
+            stretch_columns=(0, 1),
+        )
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
@@ -198,6 +214,11 @@ class TermsTab(QWidget):
         self._prev_btn.clicked.connect(self._go_prev)
         self._page_label = QLabel("第 1 页")
         self._page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        page_label_width = reserve_text_width(
+            self._page_label,
+            ("第 1 页", "第 9999 页 / 共 999999999 条"),
+        )
+        self._page_label.setFixedWidth(page_label_width)
         self._next_btn = QPushButton("下页 >")
         self._next_btn.setEnabled(False)
         self._next_btn.clicked.connect(self._go_next)
@@ -341,7 +362,8 @@ class TermsTab(QWidget):
         if not t:
             return
         reply = QMessageBox.question(
-            self, "确认删除",
+            self,
+            "确认删除",
             f"确定要删除术语「{t.get('term', '')}」吗？",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )

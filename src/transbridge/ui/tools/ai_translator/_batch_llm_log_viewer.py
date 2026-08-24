@@ -12,12 +12,19 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QTextEdit, QLabel, QCheckBox, QTabWidget, QSplitter,
-)
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import (
+    QCheckBox,
+    QHBoxLayout,
+    QPushButton,
+    QTabWidget,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
+
+from transbridge.ui.foundation.components import ElidedLabel
 
 if TYPE_CHECKING:
     pass
@@ -51,10 +58,7 @@ class _PluginLogWidget(QWidget):
 
         try:
             # 获取所有批次日志文件，按名称排序
-            files = sorted(
-                f for f in os.listdir(self._plugin_dir)
-                if f.endswith(".log") and f.startswith("batch_")
-            )
+            files = sorted(f for f in os.listdir(self._plugin_dir) if f.endswith(".log") and f.startswith("batch_"))
         except Exception:
             return
 
@@ -128,9 +132,12 @@ class _BatchLLMLogViewer(QWidget):
 
         # 工具栏
         toolbar = QHBoxLayout()
-        path_lbl = QLabel(self._log_dir)
-        path_lbl.setStyleSheet("font-size: 10px; color: #888;")
+        path_lbl = ElidedLabel(self._log_dir)
+        path_lbl.setAccessibleName("批量 LLM 日志目录")
+        path_lbl.setAccessibleDescription(self._log_dir)
+        path_lbl.setToolTip(self._log_dir)
         path_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._path_label = path_lbl
         toolbar.addWidget(path_lbl, 1)
 
         self._auto_cb = QCheckBox("自动刷新")
@@ -158,10 +165,7 @@ class _BatchLLMLogViewer(QWidget):
         try:
             # 获取所有子目录（插件目录）
             entries = os.listdir(self._log_dir)
-            plugin_dirs = [
-                e for e in entries
-                if os.path.isdir(os.path.join(self._log_dir, e))
-            ]
+            plugin_dirs = [e for e in entries if os.path.isdir(os.path.join(self._log_dir, e))]
         except Exception:
             return
 
@@ -172,7 +176,7 @@ class _BatchLLMLogViewer(QWidget):
                 plugin_dir = os.path.join(self._log_dir, plugin_name)
 
                 widget = _PluginLogWidget(plugin_dir)
-                tab_idx = self._plugin_tabs.addTab(widget, plugin_name)
+                self._plugin_tabs.addTab(widget, plugin_name)
                 self._plugin_widgets[plugin_name] = widget
 
         # 刷新所有插件组件

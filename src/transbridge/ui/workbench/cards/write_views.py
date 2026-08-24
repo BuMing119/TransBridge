@@ -33,7 +33,7 @@ class SlotSelectDialog(QDialog):
         layout = QVBoxLayout(self)
 
         hint = QLabel("选择要操作的插件：")
-        hint.setStyleSheet("color: #555;")
+        hint.setAccessibleName("写回选择说明")
         layout.addWidget(hint)
 
         # 全选/全不选 按钮
@@ -49,7 +49,6 @@ class SlotSelectDialog(QDialog):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { border: 1px solid #ddd; border-radius: 3px; }")
 
         container = QWidget()
         container_layout = QVBoxLayout(container)
@@ -72,7 +71,7 @@ class SlotSelectDialog(QDialog):
 
         # 状态标签
         self._status_label = QLabel(f"已选 {len(slots)} 个插件")
-        self._status_label.setStyleSheet("color: #666; font-size: 12px;")
+        self._status_label.setAccessibleName("写回选择状态")
         layout.addWidget(self._status_label)
 
         # 按钮
@@ -129,7 +128,6 @@ class BatchConfirmDialog(QDialog):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { border: 1px solid #ddd; border-radius: 3px; }")
 
         container = QWidget()
         container_layout = QVBoxLayout(container)
@@ -138,7 +136,6 @@ class BatchConfirmDialog(QDialog):
 
         for item in items:
             lbl = QLabel(item)
-            lbl.setStyleSheet("color: #333;")
             container_layout.addWidget(lbl)
         container_layout.addStretch()
 
@@ -147,7 +144,7 @@ class BatchConfirmDialog(QDialog):
 
         # 提示信息
         footer = QLabel(f"共 {len(items)} 个项目")
-        footer.setStyleSheet("color: #666; font-size: 12px;")
+        footer.setAccessibleName("批量写回确认汇总")
         layout.addWidget(footer)
 
         # 按钮
@@ -180,7 +177,6 @@ class BatchResultDialog(QDialog):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { border: 1px solid #ddd; border-radius: 3px; }")
 
         container = QWidget()
         container_layout = QVBoxLayout(container)
@@ -189,7 +185,6 @@ class BatchResultDialog(QDialog):
 
         for item in items:
             lbl = QLabel(item)
-            lbl.setStyleSheet("color: #333;")
             container_layout.addWidget(lbl)
         container_layout.addStretch()
 
@@ -198,7 +193,7 @@ class BatchResultDialog(QDialog):
 
         # 提示信息
         footer = QLabel(f"共 {len(items)} 个项目")
-        footer.setStyleSheet("color: #666; font-size: 12px;")
+        footer.setAccessibleName("批量写回结果汇总")
         layout.addWidget(footer)
 
         # 按钮
@@ -229,7 +224,7 @@ class WriteTargetDialog(QDialog):
             esp_desc = QLabel("将译文写入插件副本，输出汉化版 ESP 文件。")
         else:
             esp_desc = QLabel("当前集合由 EET XML 构建，无法写回 ESP 插件。")
-        esp_desc.setStyleSheet("color: #555; margin-left: 20px;")
+        esp_desc.setStyleSheet("margin-left: 20px;")
         group.addButton(self._rb_esp)
         layout.addWidget(self._rb_esp)
         layout.addWidget(esp_desc)
@@ -238,7 +233,7 @@ class WriteTargetDialog(QDialog):
         # ── EET XML ───────────────────────────────────────────
         self._rb_eet = QRadioButton("写回 EET XML")
         eet_desc = QLabel("将译文更新到 EET XML 文件中。")
-        eet_desc.setStyleSheet("color: #555; margin-left: 20px;")
+        eet_desc.setStyleSheet("margin-left: 20px;")
         eet_path_row = QHBoxLayout()
         eet_path_lbl = QLabel("路径：")
         eet_path_lbl.setStyleSheet("margin-left: 20px;")
@@ -262,7 +257,7 @@ class WriteTargetDialog(QDialog):
         # ── XT XML ────────────────────────────────────────────
         self._rb_xt = QRadioButton("导出 XT XML")
         xt_desc = QLabel("将译文更新到 XT XML 文件中。")
-        xt_desc.setStyleSheet("color: #555; margin-left: 20px;")
+        xt_desc.setStyleSheet("margin-left: 20px;")
         xt_path_row = QHBoxLayout()
         xt_path_lbl = QLabel("路径：")
         xt_path_lbl.setStyleSheet("margin-left: 20px;")
@@ -286,7 +281,7 @@ class WriteTargetDialog(QDialog):
         # ── DSD JSON ──────────────────────────────────────────
         self._rb_dsd = QRadioButton("导出 DSD JSON")
         dsd_desc = QLabel("导出为 DSD 格式 JSON，用于 xEdit 脚本等外部工具。")
-        dsd_desc.setStyleSheet("color: #555; margin-left: 20px;")
+        dsd_desc.setStyleSheet("margin-left: 20px;")
         group.addButton(self._rb_dsd)
         layout.addWidget(self._rb_dsd)
         layout.addWidget(dsd_desc)

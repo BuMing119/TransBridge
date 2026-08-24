@@ -23,7 +23,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from transbridge.ui.foundation.adapters import ThemeView
+from transbridge.ui.foundation.components import ElidedLabel, reserve_text_width
 from transbridge.ui.windowing import show_and_activate
+
+from ._theme_support import AiThemeBinding, set_widget_brush
 
 if TYPE_CHECKING:
     from transbridge.ui.context import AppContext
@@ -31,6 +35,12 @@ if TYPE_CHECKING:
     from transbridge.ui.tools.ai_translator.task_adapter import LegacyAiTaskAdapter
 
 from transbridge.ui.tools.ai_translator._translation_batch_widget import _BatchWidget
+
+
+def _set_elided_text(label: ElidedLabel, text: str) -> None:
+    label.set_full_text(text)
+    label.setToolTip(text)
+    label.setAccessibleDescription(text)
 
 
 class _TranslationProgressWindow(QWidget):
@@ -46,12 +56,14 @@ class _TranslationProgressWindow(QWidget):
         *,
         entry_activated=None,
         activity: LegacyAiTaskAdapter | None = None,
+        theme_view: ThemeView | None = None,
     ):
         super().__init__(parent, Qt.WindowType.Window)
         self._worker = worker
         self._ctx = ctx
         self._entry_activated = entry_activated
         self._activity = activity
+        self._theme_view = theme_view
         self._result_actions = None
         from .result_actions import AiResultNavigator
 
@@ -66,6 +78,7 @@ class _TranslationProgressWindow(QWidget):
         self._report_dialog = None
         self._batch_widgets: dict[int, _BatchWidget] = {}
         self._init_ui()
+        self._theme_binding = AiThemeBinding(self, theme_view, self._apply_theme)
         self._connect_worker()
 
     def _init_ui(self):
@@ -89,20 +102,21 @@ class _TranslationProgressWindow(QWidget):
         total_row.addWidget(self._total_progress_lbl)
         prog_layout.addLayout(total_row)
 
-        self._progress_msg = QLabel("准备中…")
-        self._progress_msg.setStyleSheet("font-size: 11px; color: #555;")
+        self._progress_msg = ElidedLabel("准备中…")
+        self._progress_msg.setAccessibleName("AI 翻译运行状态")
+        _set_elided_text(self._progress_msg, "准备中…")
         prog_layout.addWidget(self._progress_msg)
 
         stats_row = QHBoxLayout()
-        self._lbl_success = QLabel("成功: 0")
-        self._lbl_success.setStyleSheet("color: #4CAF50; font-weight: bold;")
-        self._lbl_failed = QLabel("失败: 0")
-        self._lbl_failed.setStyleSheet("color: #F44336; font-weight: bold;")
-        self._lbl_terms = QLabel("新增术语: 0")
-        self._lbl_terms.setStyleSheet("color: #2196F3; font-weight: bold;")
+        self._lbl_success = ElidedLabel("成功: 0")
+        self._lbl_failed = ElidedLabel("失败: 0")
+        self._lbl_terms = ElidedLabel("新增术语: 0")
         for lbl in (self._lbl_success, self._lbl_failed, self._lbl_terms):
-            stats_row.addWidget(lbl)
-        stats_row.addStretch()
+            font = lbl.font()
+            font.setBold(True)
+            lbl.setFont(font)
+            lbl.setAccessibleName(lbl.text().split(":", 1)[0])
+            stats_row.addWidget(lbl, 1)
         prog_layout.addLayout(stats_row)
 
         layout.addWidget(prog_box)
@@ -135,6 +149,7 @@ class _TranslationProgressWindow(QWidget):
         # 按钮行
         btn_row = QHBoxLayout()
         self._pause_btn = QPushButton("⏸ 暂停")
+        reserve_text_width(self._pause_btn, ("⏸ 暂停", "▶ 继续"))
         self._pause_btn.clicked.connect(self._on_pause_resume)
         self._stop_btn = QPushButton("⏹ 停止")
         self._stop_btn.clicked.connect(self._on_stop)
@@ -162,10 +177,10 @@ class _TranslationProgressWindow(QWidget):
             self._total_progress_bar.setMaximum(total)
             self._total_progress_bar.setValue(current)
             self._total_progress_lbl.setText(f"{current} / {total}")
-        self._progress_msg.setText(message)
-        self._lbl_success.setText(f"成功: {success}")
-        self._lbl_failed.setText(f"失败: {failed}")
-        self._lbl_terms.setText(f"新增术语: {new_terms}")
+        _set_elided_text(self._progress_msg, message)
+        _set_elided_text(self._lbl_success, f"成功: {success}")
+        _set_elided_text(self._lbl_failed, f"失败: {failed}")
+        _set_elided_text(self._lbl_terms, f"新增术语: {new_terms}")
         if not message.endswith("]"):
             sb = self._round_log.verticalScrollBar()
             at_bottom = sb.value() >= sb.maximum() - 4
@@ -237,19 +252,19 @@ class _TranslationProgressWindow(QWidget):
                 pp_summary += f"\n需审核：{len(pp.needs_review)} 条"
 
         if self._was_stopped:
-            self._progress_msg.setText("已停止")
-            self._lbl_success.setText(f"成功: {result.success_count}")
-            self._lbl_failed.setText(f"失败: {result.failed_count}")
-            self._lbl_terms.setText(f"新增术语: {result.new_dynamic_terms}")
+            _set_elided_text(self._progress_msg, "已停止")
+            _set_elided_text(self._lbl_success, f"成功: {result.success_count}")
+            _set_elided_text(self._lbl_failed, f"失败: {result.failed_count}")
+            _set_elided_text(self._lbl_terms, f"新增术语: {result.new_dynamic_terms}")
             self._round_log.append(
                 f"\n⏹ 已停止 — 成功 {result.success_count} 条，"
                 f"失败 {result.failed_count} 条，新增术语 {result.new_dynamic_terms} 个"
             )
         else:
-            self._progress_msg.setText("翻译完成")
-            self._lbl_success.setText(f"成功: {result.success_count}")
-            self._lbl_failed.setText(f"失败: {result.failed_count}")
-            self._lbl_terms.setText(f"新增术语: {result.new_dynamic_terms}")
+            _set_elided_text(self._progress_msg, "翻译完成")
+            _set_elided_text(self._lbl_success, f"成功: {result.success_count}")
+            _set_elided_text(self._lbl_failed, f"失败: {result.failed_count}")
+            _set_elided_text(self._lbl_terms, f"新增术语: {result.new_dynamic_terms}")
             self._round_log.append(
                 f"\n✅ 完成 — 成功 {result.success_count} 条，"
                 f"失败 {result.failed_count} 条，新增术语 {result.new_dynamic_terms} 个"
@@ -300,7 +315,7 @@ class _TranslationProgressWindow(QWidget):
             self._activity.fail(err)
         for w in self._batch_widgets.values():
             w.force_collapse()
-        self._progress_msg.setText(f"错误: {err}")
+        _set_elided_text(self._progress_msg, f"错误: {err}")
         self._round_log.append(f"\n❌ 全局错误: {err}")
         self._round_log.verticalScrollBar().setValue(self._round_log.verticalScrollBar().maximum())
         self._collection_synced = True
@@ -321,13 +336,13 @@ class _TranslationProgressWindow(QWidget):
             self._worker.resume()
             getattr(self._activity, "resume", lambda: None)()
             self._pause_btn.setText("⏸ 暂停")
-            self._progress_msg.setText("已继续 - 等待下一批")
+            _set_elided_text(self._progress_msg, "已继续 - 等待下一批")
             self._round_log.append("▶ 已继续")
         else:
             self._worker.pause()
             getattr(self._activity, "pause", lambda: None)()
             self._pause_btn.setText("▶ 继续")
-            self._progress_msg.setText("⏸ 已暂停（当前 API 调用将立即中断）")
+            _set_elided_text(self._progress_msg, "⏸ 已暂停（当前 API 调用将立即中断）")
             self._round_log.append("⏸ 已暂停")
             self._ctx.collection_changed.emit(self._ctx.collection)
 
@@ -343,7 +358,7 @@ class _TranslationProgressWindow(QWidget):
             self._was_stopped = True
             if self._activity is not None:
                 self._activity.request_cancel()
-            self._progress_msg.setText("⏹ 正在停止（当前 API 调用将立即中断）")
+            _set_elided_text(self._progress_msg, "⏹ 正在停止（当前 API 调用将立即中断）")
             self._round_log.append("⏹ 已请求停止")
             self._worker.stop()
             self._stop_btn.setEnabled(False)
@@ -359,6 +374,7 @@ class _TranslationProgressWindow(QWidget):
             event.ignore()
             return
         if not self._worker.isRunning():
+            self._theme_binding.close()
             event.accept()
             return
 
@@ -431,8 +447,28 @@ class _TranslationProgressWindow(QWidget):
             decisions=getattr(result, "decisions", None),
             report_path=report_path,
             parent=self,
+            theme_view=getattr(self, "_theme_view", None),
         )
         if self._entry_activated is not None:
             dialog.entry_activated.connect(self._entry_activated)
         self._report_dialog = dialog
         show_and_activate(dialog)
+
+    def _apply_theme(self, binding: AiThemeBinding) -> None:
+        message = self._progress_msg.full_text
+        if message.startswith(("错误", "失败")):
+            task_key = "failed"
+        elif "完成" in message:
+            task_key = "completed"
+        elif "暂停" in message:
+            task_key = "paused"
+        else:
+            task_key = "running"
+        set_widget_brush(self._progress_msg, binding.task(task_key))
+        set_widget_brush(self._lbl_success, binding.report("success"))
+        set_widget_brush(self._lbl_failed, binding.report("error"))
+        set_widget_brush(self._lbl_terms, binding.report("info"))
+
+    @property
+    def theme_revision(self) -> int:
+        return self._theme_binding.revision

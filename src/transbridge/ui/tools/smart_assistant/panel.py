@@ -13,9 +13,12 @@ from pathlib import Path
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QDockWidget, QSplitter, QVBoxLayout, QWidget
 
+from transbridge.ui.foundation.adapters import ThemeView
+
 from .chat_widget import ChatWidget
 from .session_list_widget import SessionListWidget
 from .task_monitor import TaskMonitorWidget
+from .theme_support import SmartAssistantTheme
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +36,11 @@ class SmartAssistantPanel(QDockWidget):
         session_commands=None,
         session_projection=None,
         runtime_context=None,
+        theme_view: ThemeView | None = None,
     ):
         super().__init__("智能助手", parent)
         self.setObjectName("SmartAssistantPanel")
+        self.setAccessibleName("智能助手")
 
         self.setAllowedAreas(
             Qt.DockWidgetArea.LeftDockWidgetArea
@@ -55,10 +60,16 @@ class SmartAssistantPanel(QDockWidget):
         self._session_projection = session_projection
         self._runtime_context = runtime_context
         self._session_subscription = None
+        self._theme_view = theme_view
+        self._theme_subscription = None
+        self._theme = SmartAssistantTheme(None if theme_view is None else theme_view.snapshot())
+        self._theme_revision = self._theme.revision
         self._disposed = False
         self._init_skills()
         self._init_session_manager()
         self._init_ui(ctx)
+        if self._theme_view is not None:
+            self._theme_subscription = self._theme_view.subscribe(self, self._on_theme_changed)
         if self._session_projection is not None:
             self._session_subscription = self._session_projection.subscribe(self._on_session_projection)
         # 延迟到 ChatWidget UI 构建完成后再恢复会话（ChatWidget._init_ui 是 QTimer 延迟的）
@@ -92,15 +103,14 @@ class SmartAssistantPanel(QDockWidget):
         # 水平分割：左侧会话列表 + 右侧（聊天区 + 任务监控）
         h_splitter = QSplitter(Qt.Orientation.Horizontal)
         h_splitter.setHandleWidth(1)
-        h_splitter.setStyleSheet("QSplitter::handle { background: #e0e0e0; }")
 
-        self._session_list = SessionListWidget()
+        self._session_list = SessionListWidget(theme=self._theme)
         self._session_list.create_session.connect(self._on_create_session)
         self._session_list.switch_session.connect(self._on_switch_session)
         self._session_list.delete_session.connect(self._on_delete_session)
         self._session_list.rename_session.connect(lambda sid, name: self._on_rename_session(sid, name))
 
-        self._chat = ChatWidget(ctx)
+        self._chat = ChatWidget(ctx, theme=self._theme)
         self._chat.configure_session_port(
             active_session_id=self._current_session_id,
             refresh_sessions=self._refresh_session_list,
@@ -111,9 +121,8 @@ class SmartAssistantPanel(QDockWidget):
         # 右侧垂直分割：聊天区 + 任务监控（7:3）
         right_splitter = QSplitter(Qt.Orientation.Vertical)
         right_splitter.setHandleWidth(1)
-        right_splitter.setStyleSheet("QSplitter::handle { background: #e0e0e0; }")
         right_splitter.addWidget(self._chat)
-        self._task_monitor = TaskMonitorWidget()
+        self._task_monitor = TaskMonitorWidget(theme=self._theme)
         self._task_monitor.task_action.connect(self._on_task_action)
         right_splitter.addWidget(self._task_monitor)
         right_splitter.setStretchFactor(0, 7)
@@ -308,6 +317,23 @@ class SmartAssistantPanel(QDockWidget):
         if self._session_subscription is not None:
             self._session_subscription.close()
             self._session_subscription = None
+        theme_subscription = getattr(self, "_theme_subscription", None)
+        if theme_subscription is not None:
+            theme_subscription.close()
+            self._theme_subscription = None
+
+    @property
+    def theme_revision(self) -> int:
+        return self._theme_revision
+
+    def _on_theme_changed(self, snapshot) -> None:
+        if self._disposed or snapshot.revision == self._theme_revision:
+            return
+        self._theme.update(snapshot)
+        self._theme_revision = snapshot.revision
+        self._session_list.apply_theme(self._theme)
+        self._chat.apply_theme(self._theme)
+        self._task_monitor.apply_theme(self._theme)
 
     def _current_session_id(self) -> str | None:
         if self._session_projection is None:

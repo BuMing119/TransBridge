@@ -29,6 +29,7 @@ _EXPORTS = {
     "MenuBuilder": "menu_builder",
     "MenuCallbacks": "menu_builder",
     "MenuHandles": "menu_builder",
+    "ProgressiveMenuBar": "progressive_menu_bar",
     "StatusPresenter": "status_presenter",
     "RecentProjectViewState": "start_center",
     "RecoveryItemViewState": "start_center",

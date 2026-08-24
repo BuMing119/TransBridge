@@ -4,18 +4,44 @@ from pathlib import Path
 import sys
 import traceback
 
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
 
 from transbridge.bootstrap import AppRuntime, bind_runtime, build_runtime
 from transbridge.paratranz.config_manager import ParatranzConfig
 
 from .context import AppContext
+from .foundation.runtime import GuiFoundation
 from .input_guard import install_accidental_wheel_guard
 from .main_window import MainWindow
 
 _LOG_FORMAT = "%(asctime)s [%(name)s] %(levelname)s: %(message)s"
 
 _logger = logging.getLogger(__name__)
+
+
+def _application_icon_path() -> Path | None:
+    """Resolve the shared window icon in source and PyInstaller layouts."""
+
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    candidate = (
+        Path(bundle_root) / "transbridge" / "ui" / "assets" / "transbridge.ico"
+        if bundle_root is not None
+        else Path(__file__).resolve().parent / "assets" / "transbridge.ico"
+    )
+    return candidate if candidate.is_file() else None
+
+
+def _apply_application_icon(application: QApplication) -> None:
+    icon_path = _application_icon_path()
+    if icon_path is None:
+        _logger.warning("Application icon is unavailable")
+        return
+    icon = QIcon(str(icon_path))
+    if icon.isNull():
+        _logger.warning("Application icon could not be loaded: %s", icon_path)
+        return
+    application.setWindowIcon(icon)
 
 
 def _setup_logging() -> None:
@@ -50,12 +76,19 @@ def main(runtime: AppRuntime | None = None) -> int:
         permissions=frozenset({"gui"}),
         metadata=(("entrypoint", "gui"),),
     )
+    ui_foundation: GuiFoundation | None = None
     try:
         app = QApplication.instance() or QApplication(sys.argv)
         app.setApplicationName("TransBridge")
         app.setOrganizationName("TransBridge")
+        _apply_application_icon(app)
         app._transbridge_runtime = app_runtime  # type: ignore[attr-defined]
         app._transbridge_wheel_guard = install_accidental_wheel_guard(app)  # type: ignore[attr-defined]
+        try:
+            ui_foundation = GuiFoundation.create(app, app_runtime.use_cases.resolve("ui_preferences"))
+        except Exception:  # noqa: BLE001 - appearance failure must not block the business GUI
+            _logger.exception("UI Foundation startup failed; continuing with the Qt default appearance")
+        app._transbridge_ui_foundation = ui_foundation  # type: ignore[attr-defined]
 
         # Legacy registry setup remains an entrypoint adapter until S04 migrates it.
         from transbridge.smart_assistant.agents import AgentRegistry
@@ -69,16 +102,20 @@ def main(runtime: AppRuntime | None = None) -> int:
         projection = AppContext(
             project_projection=app_runtime.use_cases.resolve("project_projection"),
             project_commands=app_runtime.use_cases.resolve("gui_project_commands"),
+            project_remote_bindings=app_runtime.use_cases.resolve("project_remote_bindings"),
             runtime_context=binding.context,
         )
         window = MainWindow(
             app_context=projection,
             runtime=app_runtime,
             runtime_context=binding.context,
+            ui_foundation=ui_foundation,
         )
         window.show()
         return int(app.exec())
     finally:
+        if ui_foundation is not None:
+            ui_foundation.close()
         app_runtime.close()
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from threading import RLock
 
@@ -46,9 +47,16 @@ class ParaTranzSyncTaskFailed(RuntimeError):
 class ParaTranzSyncTaskEntrypoint:
     """The executor retains sync semantics; this adapter owns only task lifecycle."""
 
-    def __init__(self, runtime: TaskRuntime, executor: ParaTranzSyncExecutor) -> None:
+    def __init__(
+        self,
+        runtime: TaskRuntime,
+        executor: ParaTranzSyncExecutor,
+        *,
+        on_finished: Callable[[], None] | None = None,
+    ) -> None:
         self._runtime = runtime
         self._executor = executor
+        self._on_finished = on_finished
         self._results: dict[str, OperationResult[dict]] = {}
         self._lock = RLock()
 
@@ -84,15 +92,19 @@ class ParaTranzSyncTaskEntrypoint:
                 cancellation=cancellation,
                 retry_token=draft.retry_token,
             )
-            result = self._executor.execute(request)
-            with self._lock:
-                self._results[ref.run_id] = result
-                while len(self._results) > 100:
-                    self._results.pop(next(iter(self._results)))
-            if result.outcome is OperationOutcome.CANCELLED:
-                raise TaskCancelled("ParaTranz synchronization cancelled")
-            if result.outcome is OperationOutcome.FAILED:
-                raise ParaTranzSyncTaskFailed(result)
+            try:
+                result = self._executor.execute(request)
+                with self._lock:
+                    self._results[ref.run_id] = result
+                    while len(self._results) > 100:
+                        self._results.pop(next(iter(self._results)))
+                if result.outcome is OperationOutcome.CANCELLED:
+                    raise TaskCancelled("ParaTranz synchronization cancelled")
+                if result.outcome is OperationOutcome.FAILED:
+                    raise ParaTranzSyncTaskFailed(result)
+            finally:
+                if self._on_finished is not None:
+                    self._on_finished()
 
         self._runtime.schedule(ref, owner, execute)
         return ref

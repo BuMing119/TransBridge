@@ -8,14 +8,20 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QTableWidget, QTableWidgetItem, QHeaderView,
-    QPushButton, QComboBox, QAbstractItemView,
+    QAbstractItemView,
+    QComboBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt6.QtCore import Qt
 
 if TYPE_CHECKING:
-    from transbridge.paratranz.config_manager import ActionRule
+    pass
 
 # ── 预设 ─────────────────────────────────────────────────────────────────────
 
@@ -77,26 +83,30 @@ class _RuleEditorWidget(QWidget):
     def get_rules(self) -> list:
         """导出为 ActionRule 列表。"""
         from transbridge.paratranz.config_manager import ActionRule
+
         result = []
         for i, r in enumerate(self._rules):
-            result.append(ActionRule(
-                rule_id=r.get("rule_id", ""),
-                priority=r["priority"],
-                status_filter=r.get("status_filter"),
-                label_filter=r.get("label_filter"),
-                category_filter=r.get("category_filter"),
-                action=r.get("action", "skip"),
-            ))
+            result.append(
+                ActionRule(
+                    rule_id=r.get("rule_id", ""),
+                    priority=r["priority"],
+                    status_filter=r.get("status_filter"),
+                    label_filter=r.get("label_filter"),
+                    category_filter=r.get("category_filter"),
+                    action=r.get("action", "skip"),
+                )
+            )
         return result
 
     def set_rules(self, rules: list) -> None:
         """从 ActionRule 列表导入。"""
-        self._rules = [r.to_dict() if hasattr(r, 'to_dict') else r for r in rules]
+        self._rules = [r.to_dict() if hasattr(r, "to_dict") else r for r in rules]
         self._refresh_table()
 
     def reset_to_default(self):
         """重置为智能默认规则。"""
         import uuid
+
         self._rules = []
         for d in _DEFAULT_RULES:
             r = dict(d)
@@ -132,9 +142,7 @@ class _RuleEditorWidget(QWidget):
             combo.addItems(["翻译", "润色", "跳过"])
             action_map = {"translate": 0, "polish": 1, "skip": 2}
             combo.setCurrentIndex(action_map.get(r.get("action", "skip"), 2))
-            combo.currentIndexChanged.connect(
-                lambda idx, row=i: self._on_action_changed(row, idx)
-            )
+            combo.currentIndexChanged.connect(lambda idx, row=i: self._on_action_changed(row, idx))
             self._table.setCellWidget(i, 3, combo)
 
     def _on_action_changed(self, row: int, idx: int):
@@ -143,6 +151,7 @@ class _RuleEditorWidget(QWidget):
 
     def _on_add(self):
         import uuid
+
         self._rules.append({
             "rule_id": uuid.uuid4().hex[:8],
             "priority": len(self._rules),

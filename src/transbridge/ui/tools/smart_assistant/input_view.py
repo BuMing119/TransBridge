@@ -9,13 +9,20 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QFileDialog,
     QHBoxLayout,
-    QLabel,
     QPushButton,
     QTextEdit,
     QVBoxLayout,
 )
 
+from transbridge.ui.foundation.components import ElidedLabel
+
 from .quick_actions import QuickActionsChips
+from .theme_support import (
+    BUTTON_STRUCTURE_STYLE,
+    CHIP_STRUCTURE_STYLE,
+    INPUT_STRUCTURE_STYLE,
+    SmartAssistantTheme,
+)
 
 
 class ChatInputView:
@@ -31,6 +38,7 @@ class ChatInputView:
         send: Callable[[], None],
         toggle_auto: Callable[[bool], None],
         auto_mode: bool,
+        theme: SmartAssistantTheme | None = None,
     ) -> None:
         self._set_input = set_input
         self._select_skill = select_skill
@@ -39,34 +47,38 @@ class ChatInputView:
         self._send = send
         self._toggle_auto = toggle_auto
         self._auto_mode = auto_mode
+        self._theme = theme or SmartAssistantTheme()
         self.input: QTextEdit | None = None
-        self.upload_label: QLabel | None = None
+        self.upload_label: ElidedLabel | None = None
         self.send_button: QPushButton | None = None
         self.auto_checkbox: QCheckBox | None = None
+        self._chips: QuickActionsChips | None = None
+        self._upload_button: QPushButton | None = None
+        self._clear_button: QPushButton | None = None
         self._closed = False
 
     def build_toolbar(self, layout: QVBoxLayout) -> None:
         toolbar = QHBoxLayout()
         toolbar.setSpacing(6)
         toolbar.setContentsMargins(4, 2, 4, 2)
-        chips = QuickActionsChips()
+        chips = QuickActionsChips(theme=self._theme)
         chips.action_clicked.connect(self._set_input)
         chips.skill_triggered.connect(self._select_skill)
         toolbar.addWidget(chips)
-        self.upload_label = QLabel("")
-        self.upload_label.setStyleSheet("color: #888; font-size: 11px;")
+        self.upload_label = ElidedLabel("")
+        self.upload_label.setAccessibleName("已上传参考文件")
         upload_button = QPushButton("上传")
+        upload_button.setAccessibleName("上传参考文件")
         upload_button.setToolTip("上传纠错表/术语参考/风格指南（Excel/CSV/Markdown/TXT/JSON/PDF/Word）")
-        upload_button.setStyleSheet(
-            "QPushButton { background-color: #f5f5f5; border: 1px solid #ddd;"
-            " border-radius: 12px; padding: 3px 10px; font-size: 11px; color: #666; }"
-            "QPushButton:hover { background-color: #e8e8e8; }"
-        )
+        upload_button.setStyleSheet(CHIP_STRUCTURE_STYLE)
         upload_button.setCursor(Qt.CursorShape.PointingHandCursor)
         upload_button.clicked.connect(self._upload)
         toolbar.addWidget(upload_button)
-        toolbar.addWidget(self.upload_label)
+        toolbar.addWidget(self.upload_label, 1)
         layout.addLayout(toolbar)
+        self._chips = chips
+        self._upload_button = upload_button
+        self.apply_theme(self._theme)
 
     def build_editor(self, layout: QVBoxLayout, event_filter) -> None:
         editor = QTextEdit()
@@ -76,11 +88,7 @@ class ChatInputView:
         editor.document().setMaximumBlockCount(500)
         editor.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         editor.setPlaceholderText("输入消息，Ctrl+Enter 发送  |  输入 /obs 切换观测信息显示")
-        editor.setStyleSheet(
-            "QTextEdit { border: 1px solid #ddd; border-radius: 8px; padding: 6px 10px;"
-            " font-size: 13px; background: #fff; margin: 0 4px; }"
-            "QTextEdit:focus { border-color: #4CAF50; }"
-        )
+        editor.setStyleSheet(INPUT_STRUCTURE_STYLE)
         editor.installEventFilter(event_filter)
         layout.addWidget(editor)
         self.input = editor
@@ -89,42 +97,45 @@ class ChatInputView:
         row.setContentsMargins(4, 0, 4, 2)
         row.setSpacing(8)
         clear_button = QPushButton("清空对话")
-        clear_button.setStyleSheet(
-            "QPushButton { background-color: #f5f5f5; border: 1px solid #ddd;"
-            " border-radius: 8px; padding: 5px 12px; font-size: 12px; color: #666; }"
-            "QPushButton:hover { background-color: #e8e8e8; }"
-        )
+        clear_button.setAccessibleName("清空对话")
+        clear_button.setStyleSheet(BUTTON_STRUCTURE_STYLE)
         clear_button.setCursor(Qt.CursorShape.PointingHandCursor)
         clear_button.clicked.connect(self._clear)
         row.addWidget(clear_button)
 
         checkbox = QCheckBox("Auto")
+        checkbox.setAccessibleName("自动执行模式")
         checkbox.setToolTip("自动模式：LLM返回工具/计划时直接执行，不显示确认卡片（admin级工具始终确认）")
         checkbox.setChecked(self._auto_mode)
         checkbox.toggled.connect(self._toggle_auto)
-        checkbox.setStyleSheet(
-            "QCheckBox { font-size: 11px; color: #888; spacing: 4px; }QCheckBox:hover { color: #555; }"
-        )
         self.auto_checkbox = checkbox
         row.addWidget(checkbox)
         row.addStretch()
 
         send_button = QPushButton("发送")
         send_button.setAccessibleName("发送消息按钮")
-        send_button.setStyleSheet(
-            "QPushButton { background-color: #4CAF50; color: white; border: none;"
-            " border-radius: 8px; padding: 5px 18px; font-size: 13px; font-weight: bold; }"
-            "QPushButton:hover { background-color: #43A047; }"
-            "QPushButton:pressed { background-color: #388E3C; }"
-            "QPushButton:disabled { background-color: #A5D6A7; }"
-        )
+        send_button.setStyleSheet(BUTTON_STRUCTURE_STYLE)
         send_button.setCursor(Qt.CursorShape.PointingHandCursor)
         send_button.clicked.connect(self._send)
         send_button.setEnabled(False)
         editor.textChanged.connect(lambda: send_button.setEnabled(bool(editor.toPlainText().strip())))
         self.send_button = send_button
+        self._clear_button = clear_button
         row.addWidget(send_button)
         layout.addLayout(row)
+        self.apply_theme(self._theme)
+
+    def apply_theme(self, theme: SmartAssistantTheme) -> None:
+        self._theme = theme
+        if self._chips is not None:
+            self._chips.apply_theme(theme)
+        for widget in (self.upload_label, self._upload_button, self._clear_button, self.auto_checkbox):
+            if widget is not None:
+                theme.apply_semantic(widget, "muted", background=isinstance(widget, QPushButton))
+        if self.input is not None:
+            theme.apply_semantic(self.input, "default", background=True)
+        if self.send_button is not None:
+            theme.apply_semantic(self.send_button, "success", background=True)
 
     def set_text(self, text: str) -> None:
         if not self._closed and self.input is not None:
@@ -148,7 +159,7 @@ class UploadBinding:
         self._max_bytes = max_bytes
         self._closed = False
 
-    def select_files(self, label: QLabel | None) -> None:
+    def select_files(self, label: ElidedLabel | None) -> None:
         if self._closed:
             return
         paths, _ = QFileDialog.getOpenFileNames(
@@ -181,7 +192,10 @@ class UploadBinding:
                 self._notify(f"解析文件失败: {path.name} — {message}")
         if label is not None:
             names = ", ".join(self._documents)
-            label.setText(f"已上传: {names}" if names else "")
+            summary = f"已上传 {len(self._documents)} 个: {names}" if names else ""
+            label.set_full_text(summary)
+            label.setToolTip(names)
+            label.setAccessibleDescription(summary)
 
     def close(self) -> None:
         self._closed = True

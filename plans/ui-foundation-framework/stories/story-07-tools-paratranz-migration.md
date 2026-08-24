@@ -1,7 +1,7 @@
 # Story-07：Smart Assistant、AI Translator、操作计划与 ParaTranz/FOMOD 视觉迁移
 
 - **所属 Plan**：[高性能统一 UI 基础框架](../plan.md)
-- **状态**：草稿
+- **状态**：已完成（2026-08-24）
 - **优先级**：P0
 - **前置依赖**：S04 公共适配器、S06 Shell/Workbench 迁移模式；FR26 S08/S09 交接已完成
 - **下游依赖**：S09 最终门禁
@@ -12,13 +12,13 @@
 
 ## 原始验收标准
 
-- [ ] Smart Assistant 的 message bubble、thinking、tool/plan card、session list、task monitor、quick actions 与 Markdown 使用 Foundation snapshot。
-- [ ] AI Translator 的配置、批次、进度、预览和报告窗口使用语义/业务令牌，成功/失败/警告/差异在两种主题中可读。
-- [ ] ParaTranz tabs、dialogs、Stage 颜色和 `_NavItemDelegate` 使用同一 domain tokens；Delegate 不在每次 paint 解析颜色字符串。
-- [ ] 非模态 Operation Plan、预检/结果状态和 FOMOD panel 使用同一 semantic/domain tokens；主题变化不得重新生成 draft、confirm token、preflight、Task Run ID 或产物路径。
-- [ ] 已打开对话框与后续新建对话框在一次 revision 后一致；销毁窗口不泄漏 subscription。
-- [ ] 主题切换不影响正在运行的 Task、输入内容、选择、报告数据或网络请求。
-- [ ] 上述表面迁移后的裸颜色/QSS 清单归零或只有带理由的结构豁免。
+- [x] Smart Assistant 的 message bubble、thinking、tool/plan card、session list、task monitor、quick actions 与 Markdown 使用 Foundation snapshot。
+- [x] AI Translator 的配置、批次、进度、预览和报告窗口使用语义/业务令牌，成功/失败/警告/差异在两种主题中可读。
+- [x] ParaTranz tabs、dialogs、Stage 颜色和 `_NavItemDelegate` 使用同一 domain tokens；Delegate 不在每次 paint 解析颜色字符串。
+- [x] 非模态 Operation Plan、预检/结果状态和 FOMOD panel 使用同一 semantic/domain tokens；主题变化不得重新生成 draft、confirm token、preflight、Task Run ID 或产物路径。
+- [x] 已打开对话框与后续新建对话框在一次 revision 后一致；销毁窗口不泄漏 subscription。
+- [x] 主题切换不影响正在运行的 Task、输入内容、选择、报告数据或网络请求。
+- [x] 上述表面迁移后的裸颜色/QSS 清单归零或只有带理由的结构豁免。
 
 ## 子系统边界
 

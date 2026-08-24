@@ -1,7 +1,7 @@
 # Story-01：UI 性能基线与样式迁移清单
 
 - **所属 Plan**：[高性能统一 UI 基础框架](../plan.md)
-- **状态**：草稿
+- **状态**：已完成（2026-08-24）
 - **优先级**：P0
 - **前置依赖**：无
 - **下游依赖**：S02～S09；本 Story 的基线和清单是后续完成声明的证据源
@@ -12,12 +12,12 @@
 
 ## 原始验收标准
 
-- [ ] 代表性窗口树包含 MainWindow、Workbench、AI Translator、Smart Assistant、ParaTranz 和一个大表格/对话框组合，并固定 fixture fingerprint、字体、DPI、平台、Qt/PyQt 版本。
-- [ ] 窗口树覆盖 FR26 当前生产路径：Start Center、恢复后的 Workbench、Guidance、Task Center、Command Palette/Context Help、Operation Plan 与 FOMOD；历史 Step1/Step3 只有在可达性审计证明生产入口仍会构造时才纳入。
-- [ ] 冷进程记录启动至首个可交互窗口、RSS、UI Foundation 占位初始化耗时；热进程记录窗口打开 P50/P95、heartbeat 和 100 次空切换控制组。
-- [ ] 阈值扩展到现有 `THRESHOLDS_V1` 或明确的新 version；同一数字只有一个真源。
-- [ ] 生成机器可检查的硬编码颜色、`setStyleSheet`、自定义绘制、QSettings 与可访问属性清单，按子系统/风险分组。
-- [ ] 基线测试在无显示服务器时明确 skip/降级，不得用同步 callback 假装真实 Qt 窗口性能通过。
+- [x] 代表性窗口树包含 MainWindow、Workbench、AI Translator、Smart Assistant、ParaTranz 和一个大表格/对话框组合，并固定 fixture fingerprint、字体、DPI、平台、Qt/PyQt 版本。
+- [x] 窗口树覆盖 FR26 当前生产路径：Start Center、恢复后的 Workbench、Guidance、Task Center、Command Palette/Context Help、Operation Plan 与 FOMOD；历史 Step1/Step3 只有在可达性审计证明生产入口仍会构造时才纳入。
+- [x] 冷进程记录启动至首个可交互窗口、RSS、UI Foundation 占位初始化耗时；热进程记录窗口打开 P50/P95、heartbeat 和 100 次空切换控制组。
+- [x] 阈值扩展到现有 `THRESHOLDS_V1` 或明确的新 version；同一数字只有一个真源。
+- [x] 生成机器可检查的硬编码颜色、`setStyleSheet`、自定义绘制、QSettings 与可访问属性清单，按子系统/风险分组。
+- [x] 基线测试在无显示服务器时明确 skip/降级，不得用同步 callback 假装真实 Qt 窗口性能通过。
 
 ## 当前调用链与约束
 

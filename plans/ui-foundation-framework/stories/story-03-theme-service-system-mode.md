@@ -1,7 +1,7 @@
 # Story-03：ThemeService、Palette 应用与系统模式
 
 - **所属 Plan**：[高性能统一 UI 基础框架](../plan.md)
-- **状态**：草稿
+- **状态**：已完成（2026-08-24）
 - **优先级**：P0
 - **前置依赖**：S02 主题模型、Registry 与内置主题
 - **下游依赖**：S04～S09
@@ -12,12 +12,12 @@
 
 ## 原始验收标准
 
-- [ ] `ThemeService.start/set_preference/snapshot/close` 和 `theme_changed` 遵守 ADR-020；只有 effective fingerprint 改变才递增 revision 和发信号。
-- [ ] 使用 Fusion + `QPalette` 应用标准控件颜色，不调用 `allWidgets()`、不对所有 widget 手动 polish、不使用颜色型全局 QSS。
-- [ ] `system` 通过 Qt 6.5 `QStyleHints.colorScheme/colorSchemeChanged` 事件驱动；Unknown 稳定回退浅色；显式 light/dark 不依赖 Qt 6.8 setter。
-- [ ] `ui/app.py` 在创建业务 widget 前构造并启动 `GuiFoundation`，显式传入 `ConfigRepository`；关闭时先断开 UI 信号再关闭 AppRuntime。
-- [ ] `[ui] theme_mode/theme_id/locale` 通过统一 repository 原子更新；无效值和写失败保留最后有效状态并返回稳定错误码。
-- [ ] ThemeService 只能在 GUI 主线程应用 Qt 快照；跨线程请求安全排队或明确拒绝。
+- [x] `ThemeService.start/set_preference/snapshot/close` 和 `theme_changed` 遵守 ADR-020；只有 effective fingerprint 改变才递增 revision 和发信号。
+- [x] 使用 Fusion + `QPalette` 应用标准控件颜色，不调用 `allWidgets()`、不对所有 widget 手动 polish、不使用颜色型全局 QSS。
+- [x] `system` 通过 Qt 6.5 `QStyleHints.colorScheme/colorSchemeChanged` 事件驱动；Unknown 稳定回退浅色；显式 light/dark 不依赖 Qt 6.8 setter。
+- [x] `ui/app.py` 在创建业务 widget 前构造并启动 `GuiFoundation`，显式传入 `ConfigRepository`；关闭时先断开 UI 信号再关闭 AppRuntime。
+- [x] `[ui] theme_mode/theme_id/locale` 通过统一 repository 原子更新；无效值和写失败保留最后有效状态并返回稳定错误码。
+- [x] ThemeService 只能在 GUI 主线程应用 Qt 快照；跨线程请求安全排队或明确拒绝。
 
 ## 所有权与启动顺序
 

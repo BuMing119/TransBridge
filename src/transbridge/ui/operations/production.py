@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from datetime import datetime
 import hashlib
 from pathlib import Path
 from threading import RLock
@@ -20,6 +21,8 @@ from transbridge.application.io.operation_write import (
     HydratedWriteWorkload,
 )
 from transbridge.application.io.publish import BackupPolicy, ConflictPolicy as PublishConflictPolicy
+from transbridge.application.ports.paratranz import ExternalServiceError
+from transbridge.application.projects import ParaTranzProjectBinding
 from transbridge.application.sync import (
     AuthorizeSyncPlanRequest,
     CallbackLocalSyncUnitOfWork,
@@ -29,6 +32,7 @@ from transbridge.application.sync import (
     ParaTranzSyncPlanningUseCase,
     ParaTranzSyncTaskDraft,
     ParaTranzSyncTaskEntrypoint,
+    SyncOperation,
 )
 from transbridge.application.tasks import OwnerRef, TaskRuntime
 from transbridge.bootstrap.runtime import AppRuntime
@@ -55,6 +59,7 @@ from .production_support import (
     operation_request as _operation_request,
     replace_local_snapshots as _replace_local_snapshots,
     sync_request as _sync_request,
+    sync_request_target_is_current as _sync_request_target_is_current,
     trim_cache as _trim_cache,
 )
 from .runtime_adapter import OperationTaskAdapter, OperationTaskRequest
@@ -70,6 +75,12 @@ class _PreparedSync:
     planning: ParaTranzSyncPlanningUseCase
     plan: object
     service: object
+    project_name: str
+
+    def close(self) -> None:
+        close = getattr(self.service, "close", None)
+        if callable(close):
+            close()
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,8 +113,18 @@ def build_operation_plan_facade(
     def sync_checks(value: object) -> tuple[PreflightCheckState, ...]:
         if not isinstance(value, _SyncRequest):
             return (_blocked("SYNC_REQUEST_INVALID", "ParaTranz 请求无效"),)
+        current, reason = _sync_request_target_is_current(value)
+        if not current:
+            return (_blocked("PARATRANZ_TARGET_STALE", reason),)
+        service = None
         try:
             service = ParaTranzService.from_config(value.ui_context.config)
+            if value.target_account_user_id is None:
+                raise PermissionError("当前 ParaTranz 账号尚未验证")
+            mine = service.list_projects(uid=value.target_account_user_id)
+            remote_project = next((item for item in mine if item.project_id == value.project_id), None)
+            if remote_project is None:
+                raise PermissionError("当前账号不是目标 ParaTranz 项目的成员")
             planning = ParaTranzSyncPlanningUseCase(ParaTranzRemoteSnapshotAdapter(service))
             plan = planning.create_plan(
                 CreateSyncPlanRequest(
@@ -115,10 +136,25 @@ def build_operation_plan_facade(
                 )
             )
         except Exception as exc:  # network/permission boundary becomes a blocked check
+            if service is not None:
+                service.close()
+            if isinstance(exc, PermissionError):
+                return (_blocked("PARATRANZ_MEMBER_REQUIRED", str(exc)),)
+            if isinstance(exc, ExternalServiceError):
+                return (
+                    _blocked(
+                        f"PARATRANZ_{exc.category.value.upper()}",
+                        f"ParaTranz 预检失败：{exc.category.value}",
+                    ),
+                )
             return (_blocked("PARATRANZ_PREFLIGHT_FAILED", f"ParaTranz 预检失败：{type(exc).__name__}"),)
+        prepared = _PreparedSync(value, planning, plan, service, remote_project.name)
         with cache_lock:
-            sync_cache[id(value)] = _PreparedSync(value, planning, plan, service)
-            _trim_cache(sync_cache)
+            previous = sync_cache.pop(id(value), None)
+            sync_cache[id(value)] = prepared
+            _trim_cache(sync_cache, on_evict=lambda item: item.close())
+        if previous is not None:
+            previous.close()
         unresolved = int(getattr(plan, "conflicts", 0))
         return (
             PreflightCheckState(
@@ -169,25 +205,46 @@ def build_operation_plan_facade(
         )
         return tuple(checks)
 
-    def create_sync(kind: OperationKind, context, batch: bool, _values):
-        request, ready, reason = _sync_request(context, kind, batch)
+    def create_sync(kind: OperationKind, context, batch: bool, values):
+        request, ready, reason = _sync_request(context, kind, batch, values)
         entries = request.local_entries
         locked = sum(item.stage == 9 for item in entries)
         hidden = sum(item.stage == -1 for item in entries)
         config = getattr(context, "config", None)
         credentials = bool(config is not None and getattr(config, "token", None))
-        permission = bool(request.project_id and getattr(context, "is_member", lambda: True)())
+        permission = bool(
+            request.project_id
+            and request.target_account_user_id is not None
+            and request.target_status in {"unverified", "available"}
+        )
         local_hash = _local_hash(entries)
         return OperationPlanDraft(
             request=request,
-            target=f"ParaTranz 项目 {request.project_id}",
-            target_revision="remote:preflight-required",
+            target=(
+                f"ParaTranz 项目 #{request.project_id}（{request.target_source}）"
+                if request.project_id
+                else "ParaTranz 项目（未绑定）"
+            ),
+            target_revision=f"remote:{request.project_id}:{request.target_revision}",
             input_fingerprint=local_hash,
             scope_summary=f"{len(entries)} 个本地对象" + ("（批量）" if batch else ""),
             mode_summary="上传本地变更" if kind is OperationKind.UPLOAD else "下载并原子合并",
             conflict_summary="遇到冲突时停止",
             backup_summary="远端版本/本地快照用于回滚证据",
             estimated_impact=(("objects", len(entries)),),
+            editable_fields=(
+                EditableFieldState(
+                    "paratranz_project_id",
+                    "ParaTranz 项目 ID（仅本次）",
+                    "" if request.project_id <= 0 else str(request.project_id),
+                    required=True,
+                ),
+                EditableFieldState(
+                    "set_as_default",
+                    "设为当前工程默认（true/false）",
+                    "true" if request.persist_as_default else "false",
+                ),
+            ),
             credentials_ready=credentials,
             permission_ready=permission,
             input_ready=ready,
@@ -201,40 +258,84 @@ def build_operation_plan_facade(
             ),
         )
 
+    def edit_sync(draft, fields):
+        request = _operation_request(draft, _SyncRequest)
+        values = dict(fields)
+        raw = values.get("paratranz_project_id", "").strip()
+        if raw == str(request.project_id) and request.target_source != "explicit":
+            values = {}
+        return create_sync(
+            OperationKind.UPLOAD if request.operation is SyncOperation.UPLOAD else OperationKind.DOWNLOAD,
+            request.ui_context,
+            request.batch,
+            values,
+        )
+
+    def discard_sync(draft) -> None:
+        request = _operation_request(draft, _SyncRequest)
+        with cache_lock:
+            prepared = sync_cache.pop(id(request), None)
+        if prepared is not None:
+            prepared.close()
+
     def submit_sync(draft, _preflight, owner: OwnerRef, tasks: TaskRuntime):
         request = _operation_request(draft, _SyncRequest)
+        current, reason = _sync_request_target_is_current(request)
+        if not current:
+            discard_sync(draft)
+            raise OperationCompositionError(reason)
         with cache_lock:
             prepared = sync_cache.pop(id(request), None)
         if prepared is None:
             raise OperationCompositionError("ParaTranz 计划缺少当前预检；请返回并重新预检")
-        current = _local_snapshots(request.ui_context, request.project_id)
-        token = prepared.planning.issue_confirmation(prepared.plan, owner_id=owner.owner_id)
-        authorized = prepared.planning.authorize(
-            AuthorizeSyncPlanRequest(
-                prepared.plan,
-                owner.owner_id,
-                request.project_id,
-                request.namespace,
-                current,
-                token,
+        try:
+            if request.persist_as_default and request.target_source == "explicit":
+                now = datetime.now().astimezone().isoformat()
+                binding = ParaTranzProjectBinding(
+                    request.project_id,
+                    prepared.project_name,
+                    request.target_endpoint,
+                    request.target_account_user_id,
+                    now,
+                    now,
+                )
+                binding_result = request.ui_context.set_paratranz_binding(binding)
+                if not binding_result.is_success:
+                    message = (
+                        binding_result.diagnostics[0].message if binding_result.diagnostics else "无法保存工程默认绑定"
+                    )
+                    raise OperationCompositionError(message)
+            current = _local_snapshots(request.ui_context, request.project_id)
+            token = prepared.planning.issue_confirmation(prepared.plan, owner_id=owner.owner_id)
+            authorized = prepared.planning.authorize(
+                AuthorizeSyncPlanRequest(
+                    prepared.plan,
+                    owner.owner_id,
+                    request.project_id,
+                    request.namespace,
+                    current,
+                    token,
+                )
             )
-        )
-        local_uow = CallbackLocalSyncUnitOfWork(
-            lambda: _local_snapshots(request.ui_context, request.project_id),
-            lambda values: _replace_local_snapshots(request.ui_context, values, request.project_id),
-        )
-        snapshots = ParaTranzRemoteSnapshotAdapter(prepared.service)
-        executor = ParaTranzSyncExecutor(prepared.service, snapshots, local_uow)
-        entrypoint = ParaTranzSyncTaskEntrypoint(tasks, executor)
-        return entrypoint.submit(
-            ParaTranzSyncTaskDraft(
-                authorized,
-                request.project_id,
-                request.namespace,
-                current,
-            ),
-            owner,
-        )
+            local_uow = CallbackLocalSyncUnitOfWork(
+                lambda: _local_snapshots(request.ui_context, request.project_id),
+                lambda values: _replace_local_snapshots(request.ui_context, values, request.project_id),
+            )
+            snapshots = ParaTranzRemoteSnapshotAdapter(prepared.service)
+            executor = ParaTranzSyncExecutor(prepared.service, snapshots, local_uow)
+            entrypoint = ParaTranzSyncTaskEntrypoint(tasks, executor, on_finished=prepared.close)
+            return entrypoint.submit(
+                ParaTranzSyncTaskDraft(
+                    authorized,
+                    request.project_id,
+                    request.namespace,
+                    current,
+                ),
+                owner,
+            )
+        except Exception:
+            prepared.close()
+            raise
 
     def create_write(context, batch: bool, values):
         if batch:
@@ -321,10 +422,7 @@ def build_operation_plan_facade(
         return FomodTaskEntrypoint(tasks, _fomod_engine_factory(request.rules)).submit(checked, owner)
 
     def supports_sync(context, batch: bool) -> bool:
-        if batch or getattr(context, "collection", None) is None:
-            return False
-        project = getattr(context, "paratranz_project_id", None) or getattr(context, "current_project", None)
-        return bool(project)
+        return not batch and getattr(context, "collection", None) is not None
 
     def supports_write(context, batch: bool) -> bool:
         slot = getattr(context, "active_slot", None)
@@ -342,14 +440,18 @@ def build_operation_plan_facade(
             UploadOperationMapper(sync_checks),
             lambda context, batch, values: create_sync(OperationKind.UPLOAD, context, batch, values),
             submit_sync,
+            edit_sync,
             capability=supports_sync,
+            draft_discarder=discard_sync,
         ),
         OperationFeatureAdapter(
             OperationKind.DOWNLOAD,
             DownloadOperationMapper(sync_checks),
             lambda context, batch, values: create_sync(OperationKind.DOWNLOAD, context, batch, values),
             submit_sync,
+            edit_sync,
             capability=supports_sync,
+            draft_discarder=discard_sync,
         ),
         OperationFeatureAdapter(
             OperationKind.WRITE,

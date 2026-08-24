@@ -136,6 +136,12 @@ class LifecycleSave:
 
 
 @dataclass(frozen=True, slots=True)
+class LifecycleProjectUpdate:
+    project: ProjectDto
+    expected_persisted_project_revision: int
+
+
+@dataclass(frozen=True, slots=True)
 class LifecycleActivation:
     old_project_ref: ProjectRef | None
     old_project_revision: int | None
@@ -163,10 +169,7 @@ class LifecycleActivation:
             None if candidate is None else candidate.formal_variant_ref,
             None if candidate is None or candidate.variant is None else candidate.variant.snapshot(),
             None if candidate is None else candidate.source_ref,
-            (
-                candidate is not None
-                and candidate.project.envelope.revision != candidate.persisted_project_revision
-            ),
+            (candidate is not None and candidate.project.envelope.revision != candidate.persisted_project_revision),
             (
                 candidate is not None
                 and candidate.variant is not None
@@ -243,6 +246,7 @@ __all__ = [
     "LifecycleActivation",
     "LifecycleEvent",
     "LifecycleLease",
+    "LifecycleProjectUpdate",
     "LifecycleSave",
     "LifecycleSnapshot",
     "PreparedTransition",

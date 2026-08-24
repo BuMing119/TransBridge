@@ -1,19 +1,23 @@
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import QObject, pyqtSignal
-from PyQt6.QtGui import QShortcut
-from PyQt6.QtWidgets import QApplication, QMainWindow
+from PyQt6.QtCore import QEvent, QObject, QPoint, Qt, pyqtSignal
+from PyQt6.QtGui import QFocusEvent, QShortcut
+from PyQt6.QtTest import QTest
+from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget
 
 from transbridge.ui.shell.action_catalog import (
     DEFAULT_ACTION_CATALOG,
     ActionSection,
     IntentId,
 )
+from transbridge.ui.shell.intent_composition import ShellIntentComposition
 from transbridge.ui.shell.menu_builder import MenuBuilder, MenuCallbacks
+from transbridge.ui.shell.progressive_menu_bar import ProgressiveMenuBar
 from transbridge.ui.shell.status_presenter import StatusPresenter
 
 _APP = QApplication.instance() or QApplication([])
@@ -41,6 +45,7 @@ def _callbacks(calls: list[str]) -> MenuCallbacks:
         export_transbridge=callback("export"),
         import_transbridge=callback("import"),
         refresh_projects=callback("refresh"),
+        show_appearance=callback("appearance"),
         show_config=callback("config"),
         open_ai_translator=callback("ai"),
         toggle_smart_assistant=callback("assistant"),
@@ -61,12 +66,16 @@ def test_menu_builder_connects_each_intent_once() -> None:
     handles.parse.trigger()
     handles.upload.trigger()
     handles.smart_assistant.trigger()
+    handles.appearance.trigger()
 
-    assert calls == ["parse", "upload", "assistant"]
+    assert calls == ["parse", "upload", "assistant", "appearance"]
     assert handles.parse.shortcut().toString() == "Ctrl+O"
     assert handles.smart_assistant is handles.view_assistant
     assert handles.smart_assistant.shortcut().toString() == "Ctrl+Shift+I"
     assert handles.smart_assistant.data() == IntentId.VIEW_SMART_ASSISTANT.value
+    assert handles.appearance.data() == IntentId.SETTINGS_APPEARANCE.value
+    assert handles.appearance.text() == "外观与通用设置…"
+    assert handles.appearance.statusTip() == "选择应用主题、语言与无障碍选项"
     assert not any(shortcut.key().toString() == "Ctrl+K" for shortcut in window.findChildren(QShortcut))
     window.close()
 
@@ -83,6 +92,127 @@ def test_menu_builder_uses_task_oriented_top_level_navigation() -> None:
     window.close()
 
 
+def test_progressive_menu_bar_reveals_existing_top_level_actions_in_place() -> None:
+    window = QMainWindow()
+    window.setCentralWidget(QWidget())
+    bar = ProgressiveMenuBar(window, collapse_delay_ms=25)
+    window.setMenuBar(bar)
+    MenuBuilder(window, _callbacks([])).build()
+    bar.bind_existing_menus()
+    assert not bar.is_expanded
+    assert bar.compact_action.isVisible()
+    assert bar.compact_action.text() == "☰"
+    assert "TransBridge" not in bar.compact_action.text()
+    assert not any(action.isVisible() for action in bar.menu_actions)
+    window.resize(900, 500)
+    window.show()
+    _APP.processEvents()
+    QTest.mouseMove(window.centralWidget(), QPoint(10, 10))
+    bar.collapse()
+    assert bar.collapse_timer.isSingleShot()
+    assert bar.accessibleName() == "TransBridge 主菜单"
+
+    QTest.mouseMove(bar, bar.actionGeometry(bar.compact_action).center())
+    _APP.processEvents()
+
+    assert bar.is_expanded
+    assert not bar.compact_action.isVisible()
+    assert [action.text() for action in bar.menu_actions] == [
+        "文件",
+        "项目",
+        "翻译",
+        "同步与发布",
+        "视图",
+        "设置",
+        "帮助",
+    ]
+    assert all(action.isVisible() for action in bar.menu_actions)
+
+    bar.collapse()
+    QApplication.sendEvent(
+        bar,
+        QFocusEvent(QEvent.Type.FocusIn, Qt.FocusReason.MenuBarFocusReason),
+    )
+    assert bar.is_expanded
+    window.close()
+
+
+def test_progressive_menu_bar_keeps_one_account_action_and_collapses_after_pointer_leaves() -> None:
+    calls: list[str] = []
+    window = QMainWindow()
+    central = QWidget()
+    window.setCentralWidget(central)
+    bar = ProgressiveMenuBar(window, collapse_delay_ms=20)
+    window.setMenuBar(bar)
+    MenuBuilder(window, _callbacks(calls)).build()
+    bar.bind_existing_menus()
+    window.resize(900, 500)
+    window.show()
+    _APP.processEvents()
+
+    settings_menu = next(action.menu() for action in bar.menu_actions if action.text() == "设置")
+    account_action = next(
+        action for action in settings_menu.actions() if action.data() == IntentId.SETTINGS_ACCOUNT.value
+    )
+    bar.expand()
+    account_action.trigger()
+    assert calls == ["user"]
+
+    bar.schedule_collapse()
+    assert bar.collapse_timer.isActive()
+    settings_menu.aboutToShow.emit()
+    assert bar.is_expanded
+    assert not bar.collapse_timer.isActive()
+
+    bar.collapse()
+    bar.expand()
+    same_account_action = next(
+        action for action in settings_menu.actions() if action.data() == IntentId.SETTINGS_ACCOUNT.value
+    )
+    assert same_account_action is account_action
+
+    QTest.mouseMove(central, QPoint(10, 10))
+    bar.schedule_collapse()
+    QTest.qWait(40)
+    assert not bar.is_expanded
+    assert not bar.collapse_timer.isActive()
+    window.close()
+
+
+def test_account_entry_depends_on_logged_in_user_instead_of_selected_cloud_project() -> None:
+    composition = object.__new__(ShellIntentComposition)
+    composition._host = SimpleNamespace(
+        context=SimpleNamespace(current_user={"id": 7}, current_project=None),
+    )
+
+    assert composition._has_current_user() == (True, None)
+    composition._host.context.current_user = None
+    enabled, reason = composition._has_current_user()
+    assert not enabled
+    assert "API Token" in reason
+
+
+def test_cloud_sync_remains_discoverable_without_browse_selection_and_requires_content() -> None:
+    composition = object.__new__(ShellIntentComposition)
+    composition._host = SimpleNamespace(
+        context=SimpleNamespace(
+            collection=object(),
+            current_project=None,
+            mine_project_ids={7},
+        ),
+    )
+
+    assert composition._has_cloud_context() == (True, None)
+
+    composition._host.context.current_project = {"id": 8}
+    assert composition._has_cloud_context() == (True, None)
+
+    composition._host.context.current_project = {"id": 7}
+    assert composition._has_cloud_context() == (True, None)
+    composition._host.context.collection = None
+    assert composition._has_cloud_context() == (False, "请先选择可编辑的翻译内容")
+
+
 def test_action_catalog_has_unique_intents_shortcuts_and_disabled_reasons() -> None:
     descriptors = DEFAULT_ACTION_CATALOG.all()
 
@@ -91,6 +221,10 @@ def test_action_catalog_has_unique_intents_shortcuts_and_disabled_reasons() -> N
         item for item in descriptors if item.shortcut
     ])
     assert DEFAULT_ACTION_CATALOG.get(IntentId.TRANSLATION_AI).section is ActionSection.TRANSLATION
+    appearance = DEFAULT_ACTION_CATALOG.get(IntentId.SETTINGS_APPEARANCE)
+    assert appearance.section is ActionSection.SETTINGS
+    assert appearance.shortcut is None
+    assert "主题" in appearance.aliases
     unavailable = DEFAULT_ACTION_CATALOG.availability(
         IntentId.TRANSLATION_AI,
         enabled=False,
@@ -98,6 +232,23 @@ def test_action_catalog_has_unique_intents_shortcuts_and_disabled_reasons() -> N
     )
     assert not unavailable.enabled
     assert unavailable.reason == "当前没有可翻译内容"
+
+
+def test_menu_uses_optional_foundation_locale_without_changing_intent_identity() -> None:
+    window = QMainWindow()
+    window.ui_foundation = type(
+        "Foundation",
+        (),
+        {"locale": type("Locale", (), {"gettext": staticmethod(lambda value: f"译:{value}")})()},
+    )()
+
+    handles = MenuBuilder(window, _callbacks([])).build()
+
+    assert window.menuBar().actions()[5].text() == "译:设置"
+    assert handles.appearance.text() == "译:外观与通用设置…"
+    assert handles.appearance.statusTip() == "译:选择应用主题、语言与无障碍选项"
+    assert handles.appearance.data() == IntentId.SETTINGS_APPEARANCE.value
+    window.close()
 
 
 class _Context(QObject):

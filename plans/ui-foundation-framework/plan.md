@@ -1,8 +1,8 @@
 # 高性能统一 UI 基础框架实施计划
 
 - **Feature slug**：`ui-foundation-framework`
-- **状态**：草稿（已完成 FR25/FR26 接入对齐；FR24 代码未实现）
-- **日期**：2026-08-19；FR26 对齐：2026-08-24
+- **状态**：已完成（2026-08-24）
+- **日期**：2026-08-19；FR26 对齐及 FR24 实现：2026-08-24
 - **对应需求**：[FR24.1～FR24.11、NFR1.4](../../docs/requirements.md)
 - **架构**：[ADR-020](../../docs/adr/020-high-performance-ui-foundation.md)
 - **前置 Epic**：[ui-presentation-modularization](../ui-presentation-modularization/plan.md)（FR25 / ADR-021）
@@ -32,15 +32,15 @@
 - 重写现有业务窗口、解析/翻译流程或 application/domain 契约。
 - 引入第三方主题框架或抬高 `PyQt6>=6.5` 基线。
 
-## 当前实现事实（FR25/FR26 完成后）
+## 当前实现事实（FR24 完成后）
 
-- `src/transbridge/ui/app.py` 已负责 `AppRuntime`/`AppContext` 组合、全局滚轮误操作保护和 `MainWindow` 注入，但尚未创建 GUI Foundation；`src/transbridge/ui/foundation/` 当前不存在，因此 FR24 主题令牌、ThemeService 和视觉迁移均未实现。
+- `src/transbridge/ui/app.py` 在业务窗口前创建并启动唯一 `GuiFoundation`，向 `MainWindow` 显式注入 ThemeService、Registry、LocaleService 和统一 UI 配置；关闭顺序保持 UI Foundation 先于 AppRuntime。
 - FR25 已把 shell、Workbench、AI Translator、Smart Assistant 及操作相关 UI 拆到公开 View/Presenter/Binding/coordinator 边界；FR24 只在 View/composition root 注入主题，不向 Presenter、application use case 或历史上帝文件增加职责。
 - FR26 已完成开始中心、Action Catalog/Intent Router、Guidance、任务中心、命令搜索、AI config/scope/run/result、非模态 operation plan、安全拖放和关键可访问性合同。主题迁移必须保持这些 intent、焦点、取消、返回上下文和能力可见性。
 - `build_runtime()` 已注册 `UiPreferenceRepository`，当前 `[ui]` section 持久化 guidance mode。FR24 应扩展这一 typed adapter 保存 theme/locale，而不是建立第二个 `QSettings` 或 ConfigRepository owner；`QSettings` 仅保留窗口 geometry/state 兼容用途。
-- 当前 `WorkbenchWidget` 生产组合以 Workbench/Step2 facade、Guidance 和 workflow slices 为核心；Step1/Step3 历史文件不再是默认页面。S01 必须先做可达性审计，避免把已退出组合的兼容 UI 当成主要迁移对象。
-- 2026-08-24 交接快照仍显示 Workbench、AI Translator、Smart Assistant 与 ParaTranz 是主要颜色/QSS/自定义绘制热点；开始中心、Guidance、任务中心、命令搜索、operation plan 和 FOMOD 是 FR26 后新增的必须覆盖表面。
-- `tests/performance/` 与 FR25 比较器已有 versioned threshold registry、P95/RSS、10,000 行/20 样本/100 生命周期和 Windows 权威证据；FR26 另有 J01～J09 固定旅程。FR24 必须扩展并复跑这些证据，而不是复制阈值或只测空窗口。
+- 当前生产可达的 Shell、Workbench/Step2、AI Translator、Smart Assistant、ParaTranz、Operation Plan 与 FOMOD 已消费 Palette/ThemeView/DomainBrushes；不可达 Step1/Step3 等兼容模块保留在审计清单，不重新接回生产组合。
+- `scripts/audit_ui_foundation.py --final --include-pending-migrations` 返回 `blocker_count=0`；保留项均有结构化 owner、reason 与 removal gate，或属于不可达兼容模块。
+- `tests/performance/` 已复用 versioned threshold registry，覆盖代表窗口树、20 样本 P95、10,000 行合同、100 次主题往返、RSS/缓存/idle/noop；FR26 J01～J09 已在 light/dark/system/running-switch 矩阵复验。
 - PyQt6 最低版本 6.5 可读取并监听系统 color scheme；显式 scheme setter 不是最低基线的一部分。
 
 ## 实施原则
@@ -87,12 +87,12 @@
 
 **验收标准**：
 
-- [ ] 代表性窗口树包含 MainWindow、Workbench、AI Translator、Smart Assistant、ParaTranz 和一个大表格/对话框组合，并固定 fixture fingerprint、字体、DPI、平台、Qt/PyQt 版本。
-- [ ] 窗口树同时覆盖 FR26 的 Start Center 与已恢复工程 Workbench 两种启动目的地，以及 Guidance、Task Center、Command Palette、Operation Plan 和 FOMOD；不得用已退出生产组合的 Step1/Step3 代替当前页面。
-- [ ] 冷进程记录启动至首个可交互窗口、RSS、UI Foundation 占位初始化耗时；热进程记录窗口打开 P50/P95、heartbeat 和 100 次空切换控制组。
-- [ ] 阈值扩展到现有 `THRESHOLDS_V1` 或明确的新 version；同一数字只有一个真源。
-- [ ] 生成机器可检查的硬编码颜色、`setStyleSheet`、自定义绘制、QSettings 与可访问属性清单，按子系统/风险分组。
-- [ ] 基线测试在无显示服务器时明确 skip/降级，不得用同步 callback 假装真实 Qt 窗口性能通过。
+- [x] 代表性窗口树包含 MainWindow、Workbench、AI Translator、Smart Assistant、ParaTranz 和一个大表格/对话框组合，并固定 fixture fingerprint、字体、DPI、平台、Qt/PyQt 版本。
+- [x] 窗口树同时覆盖 FR26 的 Start Center 与已恢复工程 Workbench 两种启动目的地，以及 Guidance、Task Center、Command Palette、Operation Plan 和 FOMOD；不得用已退出生产组合的 Step1/Step3 代替当前页面。
+- [x] 冷进程记录启动至首个可交互窗口、RSS、UI Foundation 占位初始化耗时；热进程记录窗口打开 P50/P95、heartbeat 和 100 次空切换控制组。
+- [x] 阈值扩展到现有 `THRESHOLDS_V1` 或明确的新 version；同一数字只有一个真源。
+- [x] 生成机器可检查的硬编码颜色、`setStyleSheet`、自定义绘制、QSettings 与可访问属性清单，按子系统/风险分组。
+- [x] 基线测试在无显示服务器时明确 skip/降级，不得用同步 callback 假装真实 Qt 窗口性能通过。
 
 **文件落点**：
 
@@ -112,12 +112,12 @@
 
 **验收标准**：
 
-- [ ] `ThemeManifest`、`ThemeTokens`、`ThemeDefinition`、`ThemeProvider`、错误和注册结果为冻结值对象/Protocol，不 import PyQt。
-- [ ] 令牌覆盖基础、语义和业务三层；业务层至少覆盖 Stage、标签、差异、译文、任务、报告状态。
-- [ ] validator 一次性检查 schema/version、ID、token 完整性、颜色/数值、引用闭合、关键对比度、资源预算和冲突。
-- [ ] 无效 provider/theme 整体拒绝，Registry 不留下部分状态；同一 provider 重复注册结果幂等。
-- [ ] 内置 light/dark 在相同结构令牌下具有完整语义 token；兼容浅色只用于渐进回退并明确移除门禁。
-- [ ] 不允许 Provider 提供 Python widget、回调、网络资源或原始全局 QSS。
+- [x] `ThemeManifest`、`ThemeTokens`、`ThemeDefinition`、`ThemeProvider`、错误和注册结果为冻结值对象/Protocol，不 import PyQt。
+- [x] 令牌覆盖基础、语义和业务三层；业务层至少覆盖 Stage、标签、差异、译文、任务、报告状态。
+- [x] validator 一次性检查 schema/version、ID、token 完整性、颜色/数值、引用闭合、关键对比度、资源预算和冲突。
+- [x] 无效 provider/theme 整体拒绝，Registry 不留下部分状态；同一 provider 重复注册结果幂等。
+- [x] 内置 light/dark 在相同结构令牌下具有完整语义 token；兼容浅色只用于渐进回退并明确移除门禁。
+- [x] 不允许 Provider 提供 Python widget、回调、网络资源或原始全局 QSS。
 
 **文件落点**：
 
@@ -138,12 +138,12 @@
 
 **验收标准**：
 
-- [ ] `ThemeService.start/set_preference/snapshot/close` 和 `theme_changed` 遵守 ADR-020；只有 effective fingerprint 改变才递增 revision 和发信号。
-- [ ] 使用 Fusion + `QPalette` 应用标准控件颜色，不调用 `allWidgets()`、不对所有 widget 手动 polish、不使用颜色型全局 QSS。
-- [ ] `system` 通过 Qt 6.5 `QStyleHints.colorScheme/colorSchemeChanged` 事件驱动；Unknown 稳定回退浅色；显式 light/dark 不依赖 Qt 6.8 setter。
-- [ ] `ui/app.py` 在创建业务 widget 前构造并启动 `GuiFoundation`，显式传入 `ConfigRepository`；关闭时先断开 UI 信号再关闭 AppRuntime。
-- [ ] `[ui] theme_mode/theme_id/locale` 通过统一 repository 原子更新；无效值和写失败保留最后有效状态并返回稳定错误码。
-- [ ] ThemeService 只能在 GUI 主线程应用 Qt 快照；跨线程请求安全排队或明确拒绝。
+- [x] `ThemeService.start/set_preference/snapshot/close` 和 `theme_changed` 遵守 ADR-020；只有 effective fingerprint 改变才递增 revision 和发信号。
+- [x] 使用 Fusion + `QPalette` 应用标准控件颜色，不调用 `allWidgets()`、不对所有 widget 手动 polish、不使用颜色型全局 QSS。
+- [x] `system` 通过 Qt 6.5 `QStyleHints.colorScheme/colorSchemeChanged` 事件驱动；Unknown 稳定回退浅色；显式 light/dark 不依赖 Qt 6.8 setter。
+- [x] `ui/app.py` 在创建业务 widget 前构造并启动 `GuiFoundation`，显式传入 `ConfigRepository`；关闭时先断开 UI 信号再关闭 AppRuntime。
+- [x] `[ui] theme_mode/theme_id/locale` 通过统一 repository 原子更新；无效值和写失败保留最后有效状态并返回稳定错误码。
+- [x] ThemeService 只能在 GUI 主线程应用 Qt 快照；跨线程请求安全排队或明确拒绝。
 
 **文件落点**：
 
@@ -166,12 +166,12 @@
 
 **验收标准**：
 
-- [ ] 公共组件约定覆盖按钮、输入、卡片、对话框、表格、标签、工具提示、空状态、进度、通知和焦点状态。
-- [ ] 标准组件优先使用 palette/property/font；静态结构 QSS 集中且不含主题颜色。
-- [ ] 提供 custom paint、item/delegate、Markdown/rich-text、消息气泡和业务状态色适配器；订阅句柄可释放，不因 widget 重建累积 listener。
-- [ ] 图标/派生 pixmap 按 revision/icon/size/DPR/state 缓存，默认成本上限 8 MiB，只在 GUI 主线程创建。
-- [ ] Markdown/rich-text 主题 CSS 每 revision 编译一次；内容变化不重复编译主题模板。
-- [ ] 组件销毁后切换主题不访问已删除 QObject，100 次构造/销毁 listener 数回到基线。
+- [x] 公共组件约定覆盖按钮、输入、卡片、对话框、表格、标签、工具提示、空状态、进度、通知和焦点状态。
+- [x] 标准组件优先使用 palette/property/font；静态结构 QSS 集中且不含主题颜色。
+- [x] 提供 custom paint、item/delegate、Markdown/rich-text、消息气泡和业务状态色适配器；订阅句柄可释放，不因 widget 重建累积 listener。
+- [x] 图标/派生 pixmap 按 revision/icon/size/DPR/state 缓存，默认成本上限 8 MiB，只在 GUI 主线程创建。
+- [x] Markdown/rich-text 主题 CSS 每 revision 编译一次；内容变化不重复编译主题模板。
+- [x] 组件销毁后切换主题不访问已删除 QObject，100 次构造/销毁 listener 数回到基线。
 
 **文件落点**：
 
@@ -193,12 +193,12 @@
 
 **验收标准**：
 
-- [ ] 通用设置入口提供 system/light/dark、当前 effective scheme、即时预览、应用、取消和恢复默认。
-- [ ] 预览只使用隔离 preview widget/snapshot，不修改业务窗口或持久化配置；取消后无残留 revision/cache/listener。
-- [ ] 应用成功后当前和新窗口一致；重复应用当前值幂等。
-- [ ] 写入失败时用户可选择保持本次会话主题或恢复持久化主题，提示不泄漏底层路径。
-- [ ] 未知 theme ID、Provider 移除和系统 scheme unknown 有稳定回退说明。
-- [ ] 首期界面不出现导入、编辑、市场或任意皮肤入口，但展示 Provider 元数据的控件边界可复用。
+- [x] 通用设置入口提供 system/light/dark、当前 effective scheme、即时预览、应用、取消和恢复默认。
+- [x] 预览只使用隔离 preview widget/snapshot，不修改业务窗口或持久化配置；取消后无残留 revision/cache/listener。
+- [x] 应用成功后当前和新窗口一致；重复应用当前值幂等。
+- [x] 写入失败时用户可选择保持本次会话主题或恢复持久化主题，提示不泄漏底层路径。
+- [x] 未知 theme ID、Provider 移除和系统 scheme unknown 有稳定回退说明。
+- [x] 首期界面不出现导入、编辑、市场或任意皮肤入口，但展示 Provider 元数据的控件边界可复用。
 
 **文件落点**：
 
@@ -218,13 +218,13 @@
 
 **验收标准**：
 
-- [ ] MainWindow 壳、菜单/状态栏、Start Center、Guidance、Task Center、Command Palette/Context Help 与当前 Workbench/Step2/project bar/workflow slices 使用语义/业务令牌。
-- [ ] Step1/Step3 及旧 operation cards 先经过生产可达性审计；不可达的兼容模块只登记 owner/删除门禁，不为了“全量迁移”重新接回当前界面。
-- [ ] Stage、标签、隐藏/锁定、已翻译/未翻译、focus/filter 等状态在浅/深主题均清晰，关键状态具有文字/图标/边框等非纯颜色信息。
-- [ ] Step2 大表格主题切换保持 row identity、选择、滚动位置、编辑内容和增量 render generation；不得全量重建业务数据。
-- [ ] 迁移文件不再出现裸主题颜色；仍保留的结构 QSS 有审计豁免原因。
-- [ ] 主窗口 geometry 的历史 `QSettings` 与 UI preference 权威状态分离，主题不得从 QSettings 读取。
-- [ ] 窗口打开 P95 和主题切换 heartbeat 满足 NFR1.4。
+- [x] MainWindow 壳、菜单/状态栏、Start Center、Guidance、Task Center、Command Palette/Context Help 与当前 Workbench/Step2/project bar/workflow slices 使用语义/业务令牌。
+- [x] Step1/Step3 及旧 operation cards 先经过生产可达性审计；不可达的兼容模块只登记 owner/删除门禁，不为了“全量迁移”重新接回当前界面。
+- [x] Stage、标签、隐藏/锁定、已翻译/未翻译、focus/filter 等状态在浅/深主题均清晰，关键状态具有文字/图标/边框等非纯颜色信息。
+- [x] Step2 大表格主题切换保持 row identity、选择、滚动位置、编辑内容和增量 render generation；不得全量重建业务数据。
+- [x] 迁移文件不再出现裸主题颜色；仍保留的结构 QSS 有审计豁免原因。
+- [x] 主窗口 geometry 的历史 `QSettings` 与 UI preference 权威状态分离，主题不得从 QSettings 读取。
+- [x] 窗口打开 P95 和主题切换 heartbeat 满足 NFR1.4。
 
 **文件落点**：
 
@@ -246,13 +246,13 @@
 
 **验收标准**：
 
-- [ ] Smart Assistant 的 message bubble、thinking、tool/plan card、session list、task monitor、quick actions 与 Markdown 使用 Foundation snapshot。
-- [ ] AI Translator 的配置、批次、进度、预览和报告窗口使用语义/业务令牌，成功/失败/警告/差异在两种主题中可读。
-- [ ] ParaTranz tabs、dialogs、Stage 颜色和 `_NavItemDelegate` 使用同一 domain tokens；Delegate 不在每次 paint 解析颜色字符串。
-- [ ] 非模态 Operation Plan、结果/预检状态与 FOMOD panel 使用同一语义/业务令牌；主题变化不得重新生成 draft、confirm token、preflight 或 Run ID。
-- [ ] 已打开对话框与后续新建对话框在一次 revision 后一致；销毁窗口不泄漏 subscription。
-- [ ] 主题切换不影响正在运行的 Task、输入内容、选择、报告数据或网络请求。
-- [ ] 上述表面迁移后的裸颜色/QSS 清单归零或只有带理由的结构豁免。
+- [x] Smart Assistant 的 message bubble、thinking、tool/plan card、session list、task monitor、quick actions 与 Markdown 使用 Foundation snapshot。
+- [x] AI Translator 的配置、批次、进度、预览和报告窗口使用语义/业务令牌，成功/失败/警告/差异在两种主题中可读。
+- [x] ParaTranz tabs、dialogs、Stage 颜色和 `_NavItemDelegate` 使用同一 domain tokens；Delegate 不在每次 paint 解析颜色字符串。
+- [x] 非模态 Operation Plan、结果/预检状态与 FOMOD panel 使用同一语义/业务令牌；主题变化不得重新生成 draft、confirm token、preflight 或 Run ID。
+- [x] 已打开对话框与后续新建对话框在一次 revision 后一致；销毁窗口不泄漏 subscription。
+- [x] 主题切换不影响正在运行的 Task、输入内容、选择、报告数据或网络请求。
+- [x] 上述表面迁移后的裸颜色/QSS 清单归零或只有带理由的结构豁免。
 
 **文件落点**：
 
@@ -276,13 +276,13 @@
 
 **验收标准**：
 
-- [ ] `LocaleService` 使用统一 gettext catalog、source locale、fallback 和配置持久化；首期 locale 切换明确重启生效。
-- [ ] 缺失 catalog/msgid 回退源语言并聚合诊断，不在 paint/刷新热路径重复日志。
-- [ ] 公共组件不固化中文，关键路径（应用菜单、设置、主题错误/回退）完成 msgid 接入。
-- [ ] 公共组件设置 accessible name/description、合理 focus policy、可见焦点和键盘顺序；仅颜色状态有等价文本/图标。
-- [ ] 保留并扩展 FR26 已通过的 `tests/ui/test_accessibility_contracts.py`，主题/locale 接入不得改变 Enter/Esc、默认焦点、危险操作和命令搜索快捷键合同。
-- [ ] 关键文字/背景和 focus/selection 组合通过对比度检查，字体与 DPI 缩放不截断关键设置控件。
-- [ ] 最低 PyQt6 6.5 路线不依赖 Qt 6.10 accessibility hints；未来 hints 有显式适配接口。
+- [x] `LocaleService` 使用统一 gettext catalog、source locale、fallback 和配置持久化；首期 locale 切换明确重启生效。
+- [x] 缺失 catalog/msgid 回退源语言并聚合诊断，不在 paint/刷新热路径重复日志。
+- [x] 公共组件不固化中文，关键路径（应用菜单、设置、主题错误/回退）完成 msgid 接入。
+- [x] 公共组件设置 accessible name/description、合理 focus policy、可见焦点和键盘顺序；仅颜色状态有等价文本/图标。
+- [x] 保留并扩展 FR26 已通过的 `tests/ui/test_accessibility_contracts.py`，主题/locale 接入不得改变 Enter/Esc、默认焦点、危险操作和命令搜索快捷键合同。
+- [x] 关键文字/背景和 focus/selection 组合通过对比度检查，字体与 DPI 缩放不截断关键设置控件。
+- [x] 最低 PyQt6 6.5 路线不依赖 Qt 6.10 accessibility hints；未来 hints 有显式适配接口。
 
 **文件落点**：
 
@@ -303,14 +303,14 @@
 
 **验收标准**：
 
-- [ ] 使用一个仅存在于测试的第三方 Provider 证明无需改业务组件即可注册、resolve、apply 和回退；不实现动态发现或用户安装。
-- [ ] forward schema、缺 token、超资源预算、ID 冲突、非法路径、异常 provider 均原子拒绝，当前主题不变。
-- [ ] 审计阻止新裸颜色、颜色型局部 QSS、UI theme QSettings、直接 Provider 执行和无界 theme cache；豁免有 owner 与移除条件。
-- [ ] 冷初始化新增 P95 ≤75 ms、RSS ≤12 MiB；热切换 P95 ≤250 ms、heartbeat ≤200 ms；窗口打开回归 ≤5% 或 10 ms；100 次切换预热后 RSS 增长 ≤2 MiB。
-- [ ] idle 期间 Theme/Locale 无 timer、无窗口树扫描；重复选择当前主题零 apply/零 signal。
-- [ ] compatibility provider/旧 QSS 删除门禁满足，或把残留项以明确 blocker 和后续 Story 保留，不能伪称全量完成。
-- [ ] 回退到内置浅色后 GUI 核心操作可用，业务数据和统一配置不损坏。
-- [ ] FR26 J01～J09 固定旅程保持相同 canonical intent、D/M/N、焦点、取消点与返回上下文；主题切换期间 application command、网络/文件副作用和 Task Run ID 计数均不增加。
+- [x] 使用一个仅存在于测试的第三方 Provider 证明无需改业务组件即可注册、resolve、apply 和回退；不实现动态发现或用户安装。
+- [x] forward schema、缺 token、超资源预算、ID 冲突、非法路径、异常 provider 均原子拒绝，当前主题不变。
+- [x] 审计阻止新裸颜色、颜色型局部 QSS、UI theme QSettings、直接 Provider 执行和无界 theme cache；豁免有 owner 与移除条件。
+- [x] 冷初始化新增 P95 ≤75 ms、RSS ≤12 MiB；热切换 P95 ≤250 ms、heartbeat ≤200 ms；窗口打开回归 ≤5% 或 10 ms；100 次切换预热后 RSS 增长 ≤2 MiB。
+- [x] idle 期间 Theme/Locale 无 timer、无窗口树扫描；重复选择当前主题零 apply/零 signal。
+- [x] compatibility provider/旧 QSS 删除门禁满足，或把残留项以明确 blocker 和后续 Story 保留，不能伪称全量完成。
+- [x] 回退到内置浅色后 GUI 核心操作可用，业务数据和统一配置不损坏。
+- [x] FR26 J01～J09 固定旅程保持相同 canonical intent、D/M/N、焦点、取消点与返回上下文；主题切换期间 application command、网络/文件副作用和 Task Run ID 计数均不增加。
 
 **文件落点**：
 
@@ -373,5 +373,5 @@ S05 + S06 + S07 + S08 -> S09 final gates
 - 源语言暂定 `zh-CN`，gettext locale 变更首期重启生效；若要求全量即时语言切换，需要新增独立 Story。
 - “跟随系统”表示跟随 light/dark scheme，不承诺复制操作系统全部品牌色或窗口装饰。
 - 结构令牌在内置浅/深主题间一致；未来改变密度/结构的主题包需要组件级重布局能力和新的性能门禁。
-- NFR1.4 数值是初始预算；只有 S01/S09 的可复现证据和用户重新确认才能调整。
-- ADR 与 Plan 在用户最终确认前保持“提议/草稿”；FR25/FR26 前置已经满足，剩余门禁仅是用户确认 FR24 方案与 S01 可复现基线。
+- NFR1.4 数值已由 S01/S09 的固定窗口树、20 样本 P95 和 100 次生命周期证据验证，本次未调整阈值。
+- ADR、Plan 与 S01～S09 已按最终 QA 证据标记完成；后续扩展主题、全量历史文案迁移和不可达兼容 UI 清理由独立需求承接。

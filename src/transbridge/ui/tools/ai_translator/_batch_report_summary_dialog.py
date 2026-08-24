@@ -5,12 +5,22 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
-from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-    QTableWidget, QTableWidgetItem, QHeaderView,
-    QPushButton, QAbstractItemView,
-)
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QDialog,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+)
+
+from transbridge.ui.foundation.adapters import ThemeView
+
+from ._theme_support import AiThemeBinding
 
 if TYPE_CHECKING:
     pass
@@ -26,16 +36,20 @@ class _BatchReportSummaryDialog(QDialog):
 
     open_plugin_report = pyqtSignal(int)  # plugin_index
 
-    def __init__(self, plugin_results: list[dict], parent=None):
+    def __init__(self, plugin_results: list[dict], parent=None, *, theme_view: ThemeView | None = None):
         super().__init__(parent)
         self._plugin_results = plugin_results
         self.setWindowTitle("批量翻译报告汇总")
         self.resize(750, 420)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel(f"共 {len(plugin_results)} 个插件，"
-                                f"成功 {sum(1 for p in plugin_results if p['status'] == 'success')}，"
-                                f"失败 {sum(1 for p in plugin_results if p['status'] == 'failed')}"))
+        layout.addWidget(
+            QLabel(
+                f"共 {len(plugin_results)} 个插件，"
+                f"成功 {sum(1 for p in plugin_results if p['status'] == 'success')}，"
+                f"失败 {sum(1 for p in plugin_results if p['status'] == 'failed')}"
+            )
+        )
 
         # 表格
         col_headers = ["插件名", "状态", "成功", "失败", "跳过", "需审核"]
@@ -50,7 +64,9 @@ class _BatchReportSummaryDialog(QDialog):
         for i, p in enumerate(plugin_results):
             self._table.setItem(i, 0, QTableWidgetItem(p.get("esp_stem", "?")))
             icon = STATUS_ICONS.get(p.get("status", "failed"), "?")
-            self._table.setItem(i, 1, QTableWidgetItem(f"{icon} {p.get('status', '?')}"))
+            status_item = QTableWidgetItem(f"{icon} {p.get('status', '?')}")
+            status_item.setData(Qt.ItemDataRole.UserRole, p.get("status", "failed"))
+            self._table.setItem(i, 1, status_item)
             self._table.setItem(i, 2, QTableWidgetItem(str(p.get("success", 0))))
             self._table.setItem(i, 3, QTableWidgetItem(str(p.get("failed", 0))))
             self._table.setItem(i, 4, QTableWidgetItem(str(p.get("skipped", 0))))
@@ -69,6 +85,22 @@ class _BatchReportSummaryDialog(QDialog):
         btn_close.clicked.connect(self.accept)
         bar.addWidget(btn_close)
         layout.addLayout(bar)
+        self._theme_binding = AiThemeBinding(self, theme_view, self._apply_theme)
+
+    def _apply_theme(self, binding: AiThemeBinding) -> None:
+        if binding.domain is None:
+            return
+        report_key = {"success": "success", "stopped": "warning", "failed": "error"}
+        for row in range(self._table.rowCount()):
+            item = self._table.item(row, 1)
+            if item is not None:
+                key = report_key.get(str(item.data(Qt.ItemDataRole.UserRole)), "info")
+                item.setForeground(binding.domain.report(key).foreground)
+        self._table.viewport().update()
+
+    @property
+    def theme_revision(self) -> int:
+        return self._theme_binding.revision
 
     def _on_double_click(self, row: int, col: int):
         """双击行 → 发射信号打开该插件的详细报告。"""

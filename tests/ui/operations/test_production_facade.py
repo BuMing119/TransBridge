@@ -95,7 +95,14 @@ def test_production_builder_installs_all_four_features_without_remote_work() -> 
         collection=TranslationEntryCollection(),
         current_project={"id": 1},
         paratranz_project_id=1,
-        config=SimpleNamespace(token="configured"),
+        config=SimpleNamespace(
+            token="configured",
+            base_url="https://paratranz.cn",
+            user_id=7,
+            config_revision=1,
+        ),
+        current_user={"id": 7},
+        active_project_id="local-project",
         dirty=False,
         is_member=lambda: True,
     )
@@ -109,7 +116,9 @@ def test_production_builder_installs_all_four_features_without_remote_work() -> 
     assert retained() is not None
     retained().destroyed.emit()
     assert facade.active_plan_count == 0
-    cancelled = facade.begin_upload(context)
+    cancelled = facade.begin_upload(context, paratranz_project_id="42", set_as_default=True)
+    fields = {field.field_id: field.value for field in cancelled.plan.editable_fields}
+    assert fields == {"paratranz_project_id": "42", "set_as_default": "true"}
     cancelled.rejected.emit()
     assert facade.active_plan_count == 0
     assert facade.tasks is runtime.tasks

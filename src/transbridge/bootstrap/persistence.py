@@ -15,6 +15,7 @@ from transbridge.application.projects import (
     GuiProjectCommandFacade,
     ProjectLifecycleService,
     ProjectProvisioningService,
+    ProjectRemoteBindingService,
     ProjectSourcePreparationPort,
 )
 from transbridge.application.sessions import GuiSessionCommandFacade, SessionLifecycleService
@@ -54,6 +55,7 @@ class PersistenceV2Services:
     legacy_identities: LegacyIdentityRegistry
     project_lifecycle: ProjectLifecycleService
     project_provisioning: ProjectProvisioningService
+    project_remote_bindings: ProjectRemoteBindingService
     project_catalog: V2ProjectCatalog
     gui_project_commands: GuiProjectCommandFacade
     current_project_opener: CurrentProjectOpener
@@ -111,6 +113,7 @@ def build_persistence_v2_services(
         id_factory=id_factory,
         token_factory=id_factory,
     )
+    project_remote_bindings = ProjectRemoteBindingService(project_lifecycle)
     project_catalog = V2ProjectCatalog(resolved_root, adapter, projects)
     gui_project_commands = GuiProjectCommandFacade(
         project_lifecycle,
@@ -160,6 +163,7 @@ def build_persistence_v2_services(
         identities,
         project_lifecycle,
         project_provisioning,
+        project_remote_bindings,
         project_catalog,
         gui_project_commands,
         current_project_opener,

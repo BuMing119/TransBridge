@@ -4,13 +4,23 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-    QTableWidget, QTableWidgetItem, QHeaderView,
-    QPushButton, QAbstractItemView,
-)
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QDialog,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+)
+
+from transbridge.ui.foundation.adapters import ThemeView
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState
+
+from ._theme_support import AiThemeBinding
 
 if TYPE_CHECKING:
     from transbridge.ai_translator.post_processor.polisher import PolishResult
@@ -32,7 +42,14 @@ class _PolishPreviewDialog(QDialog):
     每行可接受（使用润色结果）或拒绝（保留原译文）。
     """
 
-    def __init__(self, entries: list["TranslationEntry"], results: dict[str, "PolishResult"], parent=None):
+    def __init__(
+        self,
+        entries: list[TranslationEntry],
+        results: dict[str, PolishResult],
+        parent=None,
+        *,
+        theme_view: ThemeView | None = None,
+    ):
         super().__init__(parent)
         self._entries = entries
         self._results = results
@@ -41,6 +58,7 @@ class _PolishPreviewDialog(QDialog):
         self.resize(900, 550)
         self._init_ui()
         self._populate()
+        self._theme_binding = AiThemeBinding(self, theme_view, self._apply_theme)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -82,11 +100,8 @@ class _PolishPreviewDialog(QDialog):
         bottom.addWidget(cancel_btn)
 
         self._apply_btn = QPushButton("确认应用")
-        self._apply_btn.setStyleSheet(
-            "QPushButton { background: #1976D2; color: white; font-weight: bold;"
-            " padding: 6px 16px; border-radius: 4px; }"
-            "QPushButton:hover { background: #1565C0; }"
-        )
+        ComponentStyle.apply_static(self._apply_btn, ComponentKind.BUTTON)
+        ComponentStyle.apply_state(self._apply_btn, SemanticState.PRIMARY)
         self._apply_btn.clicked.connect(self._on_apply)
         bottom.addWidget(self._apply_btn)
         layout.addLayout(bottom)
@@ -126,12 +141,6 @@ class _PolishPreviewDialog(QDialog):
         self._table.setItem(row, _COL_CURRENT, items[_COL_CURRENT])
         self._table.setItem(row, _COL_POLISHED, items[_COL_POLISHED])
 
-        if failed:
-            for col in range(3):
-                self._table.item(row, col).setBackground(QColor("#ffebee"))
-        else:
-            self._table.item(row, _COL_POLISHED).setBackground(QColor("#fff8e1"))
-
         # 点击润色列切换接受/拒绝
         if not failed:
             self._table.cellClicked.connect(self._on_cell_clicked)
@@ -145,29 +154,28 @@ class _PolishPreviewDialog(QDialog):
         current_status = self._row_status.get(row, _STATUS_PENDING)
         if current_status == _STATUS_ACCEPTED:
             self._row_status[row] = _STATUS_REJECTED
-            self._table.item(row, _COL_POLISHED).setBackground(QColor("#ffebee"))
             self._table.item(row, _COL_POLISHED).setData(Qt.ItemDataRole.UserRole, _STATUS_REJECTED)
         else:
             self._row_status[row] = _STATUS_ACCEPTED
-            self._table.item(row, _COL_POLISHED).setBackground(QColor("#e8f5e9"))
             self._table.item(row, _COL_POLISHED).setData(Qt.ItemDataRole.UserRole, _STATUS_ACCEPTED)
 
+        self._refresh_row(row)
         self._update_stats()
 
     def _on_accept_all(self):
         for row in range(self._table.rowCount()):
             if self._row_status.get(row) != _STATUS_REJECTED:
                 self._row_status[row] = _STATUS_ACCEPTED
-                self._table.item(row, _COL_POLISHED).setBackground(QColor("#e8f5e9"))
                 self._table.item(row, _COL_POLISHED).setData(Qt.ItemDataRole.UserRole, _STATUS_ACCEPTED)
+                self._refresh_row(row)
         self._update_stats()
 
     def _on_reject_all(self):
         for row in range(self._table.rowCount()):
             self._row_status[row] = _STATUS_REJECTED
-            self._table.item(row, _COL_POLISHED).setBackground(QColor("#ffebee"))
             if self._table.item(row, _COL_POLISHED):
                 self._table.item(row, _COL_POLISHED).setData(Qt.ItemDataRole.UserRole, _STATUS_REJECTED)
+            self._refresh_row(row)
         self._update_stats()
 
     def _update_stats(self):
@@ -176,13 +184,39 @@ class _PolishPreviewDialog(QDialog):
         pending = sum(1 for s in self._row_status.values() if s == _STATUS_PENDING)
         total = len(self._row_status)
         self._stats_lbl.setText(f"接受: {accepted}  |  拒绝: {rejected}  |  待处理: {pending}  |  共 {total} 条")
+        self._stats_lbl.setAccessibleName("润色选择状态")
+        self._stats_lbl.setAccessibleDescription(self._stats_lbl.text())
+
+    def _apply_theme(self, binding: AiThemeBinding) -> None:
+        for row in range(self._table.rowCount()):
+            self._refresh_row(row, binding)
+
+    def _refresh_row(self, row: int, binding: AiThemeBinding | None = None) -> None:
+        binding = binding or getattr(self, "_theme_binding", None)
+        if binding is None or binding.domain is None:
+            return
+        key = {
+            _STATUS_ACCEPTED: "added",
+            _STATUS_REJECTED: "removed",
+            _STATUS_PENDING: "changed",
+        }.get(self._row_status.get(row), "unchanged")
+        brush = binding.domain.diff(key).background
+        item = self._table.item(row, _COL_POLISHED)
+        if item is not None:
+            item.setBackground(brush)
+
+    @property
+    def theme_revision(self) -> int:
+        return self._theme_binding.revision
 
     def _on_apply(self):
         pending = sum(1 for s in self._row_status.values() if s == _STATUS_PENDING)
         if pending > 0:
             from PyQt6.QtWidgets import QMessageBox
+
             reply = QMessageBox.question(
-                self, "待处理条目",
+                self,
+                "待处理条目",
                 f"还有 {pending} 条未处理，未处理的条目将保留原译文。\n\n确定继续？",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,

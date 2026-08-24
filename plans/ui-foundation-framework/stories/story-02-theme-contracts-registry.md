@@ -1,7 +1,7 @@
 # Story-02：语义令牌、Provider、Registry 与内置主题
 
 - **所属 Plan**：[高性能统一 UI 基础框架](../plan.md)
-- **状态**：草稿
+- **状态**：已完成（2026-08-24）
 - **优先级**：P0
 - **前置依赖**：S01 性能基线与迁移清单
 - **下游依赖**：S03 ThemeService、S04 公共组件、S09 扩展合同
@@ -12,12 +12,12 @@
 
 ## 原始验收标准
 
-- [ ] `ThemeManifest`、`ThemeTokens`、`ThemeDefinition`、`ThemeProvider`、错误和注册结果为冻结值对象/Protocol，不 import PyQt。
-- [ ] 令牌覆盖基础、语义和业务三层；业务层至少覆盖 Stage、标签、差异、译文、任务、报告状态。
-- [ ] validator 一次性检查 schema/version、ID、token 完整性、颜色/数值、引用闭合、关键对比度、资源预算和冲突。
-- [ ] 无效 provider/theme 整体拒绝，Registry 不留下部分状态；同一 provider 重复注册结果幂等。
-- [ ] 内置 light/dark 在相同结构令牌下具有完整语义 token；兼容浅色只用于渐进回退并明确移除门禁。
-- [ ] 不允许 Provider 提供 Python widget、回调、网络资源或原始全局 QSS。
+- [x] `ThemeManifest`、`ThemeTokens`、`ThemeDefinition`、`ThemeProvider`、错误和注册结果为冻结值对象/Protocol，不 import PyQt。
+- [x] 令牌覆盖基础、语义和业务三层；业务层至少覆盖 Stage、标签、差异、译文、任务、报告状态。
+- [x] validator 一次性检查 schema/version、ID、token 完整性、颜色/数值、引用闭合、关键对比度、资源预算和冲突。
+- [x] 无效 provider/theme 整体拒绝，Registry 不留下部分状态；同一 provider 重复注册结果幂等。
+- [x] 内置 light/dark 在相同结构令牌下具有完整语义 token；兼容浅色只用于渐进回退并明确移除门禁。
+- [x] 不允许 Provider 提供 Python widget、回调、网络资源或原始全局 QSS。
 
 ## 数据模型与接口
 

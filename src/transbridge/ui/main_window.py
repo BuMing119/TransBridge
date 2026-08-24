@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QMainWindow, QMessageBox, QStackedWidget, QTabWidget
+from PyQt6.QtWidgets import QMainWindow, QMessageBox, QStackedWidget
 
 from transbridge import __version__
 
@@ -10,9 +10,13 @@ from .coordinators import (
     ProjectTransferCoordinator,
     VariantCoordinator,
 )
+from .foundation.adapters import ThemeView
+from .foundation.components import ComponentKind, ComponentStyle
 from .shell.action_catalog import IntentId
 from .shell.intent_composition import ShellIntentComposition
 from .shell.menu_builder import MenuBuilder
+from .shell.navigation_rail import WorkspaceShell
+from .shell.progressive_menu_bar import ProgressiveMenuBar
 from .shell.start_center import StartCenterWidget
 from .shell.start_center_controller import StartCenterController
 from .shell.status_presenter import ApiStatusIndicator, StatusPresenter
@@ -72,8 +76,10 @@ class MainWindow(QMainWindow):
     central_stack = _composition_port("_central_stack")
     guided_project_coordinator = _composition_port("_guided_project_coordinator")
     start_center_controller = _composition_port("_start_center_controller")
+    ui_foundation = _composition_port("_ui_foundation")
+    theme_view = _composition_port("_theme_view")
 
-    def __init__(self, app_context=None, runtime=None, runtime_context=None):
+    def __init__(self, app_context=None, runtime=None, runtime_context=None, ui_foundation=None):
         super().__init__()
         self.setWindowTitle("TransBridge")
         self.resize(1280, 820)
@@ -91,6 +97,12 @@ class MainWindow(QMainWindow):
             app_context.setParent(self)
         self._app_runtime = runtime
         self._runtime_context = runtime_context
+        self._ui_foundation = ui_foundation
+        self._theme_view = (
+            None
+            if ui_foundation is None
+            else ThemeView(ui_foundation.theme, domain_brush_cache=ui_foundation.domain_brush_cache)
+        )
         self._project_commands = None if runtime is None else runtime.use_cases.resolve("gui_project_commands")
         self._current_project_opener = None if runtime is None else runtime.use_cases.resolve("current_project_opener")
         self._session_commands = None if runtime is None else runtime.use_cases.resolve("gui_session_commands")
@@ -119,15 +131,21 @@ class MainWindow(QMainWindow):
         self._intent_composition = ShellIntentComposition(self)
 
         self._setup_op_cards()
+        progressive_menu = ProgressiveMenuBar(self)
+        self.setMenuBar(progressive_menu)
         self._menu_builder = MenuBuilder(
             self,
             self._intent_composition.menu_callbacks(),
         )
         self._menu = self._menu_builder.build()
+        ComponentStyle.apply_static(progressive_menu, ComponentKind.MENU)
+        progressive_menu.bind_existing_menus()
         self._init_central()
         self._init_start_center_controller()
         self._status_presenter = StatusPresenter(self, self._ctx)
         self._status_presenter.start()
+        self._mode_tabs.navigation.set_user(self._ctx.current_user)
+        self._ctx.user_changed.connect(self._mode_tabs.navigation.set_user)
         self._intent_composition.start()
         self._user_label = self._status_presenter.user_label
         self._project_label = self._status_presenter.project_label
@@ -158,6 +176,8 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         if self._window_lifecycle.close_event(event):
             self._intent_composition.close()
+            if self._theme_view is not None:
+                self._theme_view.close()
             super().closeEvent(event)
 
     # ── Operation cards (hidden, logic-only) ───────────────────
@@ -167,11 +187,26 @@ class MainWindow(QMainWindow):
         from .workbench.cards.upload_card import UploadCard
         from .workbench.cards.write_card import WriteCard
 
-        self._card_upload = UploadCard(self._ctx, self._operation_coordinator.run_worker, parent=self)
+        self._card_upload = UploadCard(
+            self._ctx,
+            self._operation_coordinator.run_worker,
+            parent=self,
+            theme_view=self._theme_view,
+        )
         self._card_upload.setVisible(False)
-        self._card_download = DownloadCard(self._ctx, self._operation_coordinator.run_worker, parent=self)
+        self._card_download = DownloadCard(
+            self._ctx,
+            self._operation_coordinator.run_worker,
+            parent=self,
+            theme_view=self._theme_view,
+        )
         self._card_download.setVisible(False)
-        self._card_write = WriteCard(self._ctx, self._operation_coordinator.run_worker, parent=self)
+        self._card_write = WriteCard(
+            self._ctx,
+            self._operation_coordinator.run_worker,
+            parent=self,
+            theme_view=self._theme_view,
+        )
         self._card_write.setVisible(False)
         if self._operation_plan_facade is not None:
             self._card_upload.bind_operation_plan_facade(self._operation_plan_facade)
@@ -184,11 +219,11 @@ class MainWindow(QMainWindow):
         from .paratranz.widget import ParaTranzWidget
 
         self._central_stack = QStackedWidget(self)
-        self._mode_tabs = QTabWidget()
-        self._mode_tabs.setTabPosition(QTabWidget.TabPosition.North)
+        self._mode_tabs = WorkspaceShell(self, theme_view=self._theme_view)
+        self._mode_tabs.intent_requested.connect(self._intent_composition.dispatch)
 
-        self._workbench = WorkbenchWidget(self._ctx)
-        self._pt_widget = ParaTranzWidget(self._ctx)
+        self._workbench = WorkbenchWidget(self._ctx, theme_view=self._theme_view)
+        self._pt_widget = ParaTranzWidget(self._ctx, theme_view=self._theme_view)
 
         # 连接 ProjectBar 信号
         pb = self._workbench.project_bar

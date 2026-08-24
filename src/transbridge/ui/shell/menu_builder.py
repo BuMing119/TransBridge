@@ -32,6 +32,7 @@ class MenuCallbacks:
     export_transbridge: VoidCallback
     import_transbridge: VoidCallback
     refresh_projects: VoidCallback
+    show_appearance: VoidCallback
     show_config: VoidCallback
     open_ai_translator: VoidCallback
     toggle_smart_assistant: VoidCallback
@@ -68,6 +69,7 @@ class MenuHandles:
     view_assistant: QAction
     dictionary: QAction
     fomod: QAction
+    appearance: QAction
 
 
 class MenuBuilder:
@@ -82,6 +84,9 @@ class MenuBuilder:
         self._window = window
         self._callbacks = callbacks
         self._catalog = catalog
+        locale = getattr(getattr(window, "ui_foundation", None), "locale", None)
+        candidate = getattr(locale, "gettext", None)
+        self._gettext: Callable[[str], str] = candidate if callable(candidate) else lambda value: value
 
     @staticmethod
     def _action(menu: QMenu, text: str, callback: VoidCallback, shortcut: str | None = None) -> QAction:
@@ -98,28 +103,31 @@ class MenuBuilder:
         callback: VoidCallback,
     ) -> QAction:
         descriptor = self._catalog.get(intent_id)
-        action = self._action(menu, descriptor.label, callback, descriptor.shortcut)
+        action = self._action(menu, self._gettext(descriptor.label), callback, descriptor.shortcut)
         action.setData(intent_id.value)
         action.setProperty("intent_id", intent_id.value)
         action.setCheckable(descriptor.checkable)
+        status_tip = self._gettext(descriptor.status_tip or descriptor.label)
+        action.setStatusTip(status_tip)
+        action.setToolTip(status_tip)
         return action
 
     def build(self) -> MenuHandles:
         callbacks = self._callbacks
         bar = self._window.menuBar()
 
-        file_menu = bar.addMenu("文件")
+        file_menu = bar.addMenu(self._gettext("文件"))
         import_transbridge = self._intent_action(file_menu, IntentId.PROJECT_IMPORT, callbacks.import_transbridge)
         export_transbridge = self._intent_action(file_menu, IntentId.PROJECT_EXPORT, callbacks.export_transbridge)
         file_menu.addSeparator()
         self._intent_action(file_menu, IntentId.APP_EXIT, callbacks.exit_app or self._window.close)
 
-        project_menu = bar.addMenu("项目")
+        project_menu = bar.addMenu(self._gettext("项目"))
         self._intent_action(project_menu, IntentId.PROJECT_CREATE, callbacks.new_project)
         self._intent_action(project_menu, IntentId.PROJECT_OPEN, callbacks.open_project)
         self._intent_action(project_menu, IntentId.PROJECT_SAVE, callbacks.manual_save)
         project_menu.addSeparator()
-        variant_menu = project_menu.addMenu("翻译版本")
+        variant_menu = project_menu.addMenu(self._gettext("翻译版本"))
         new_variant = self._intent_action(variant_menu, IntentId.PROJECT_VARIANT_CREATE, callbacks.new_variant)
         copy_variant = self._intent_action(variant_menu, IntentId.PROJECT_VARIANT_COPY, callbacks.copy_variant)
         variant_menu.addSeparator()
@@ -128,14 +136,14 @@ class MenuBuilder:
         project_menu.addSeparator()
         self._intent_action(project_menu, IntentId.PROJECT_REFRESH, callbacks.refresh_projects)
 
-        translation_menu = bar.addMenu("翻译")
+        translation_menu = bar.addMenu(self._gettext("翻译"))
         parse = self._intent_action(translation_menu, IntentId.SOURCE_PARSE, callbacks.parse)
         migrate = self._intent_action(translation_menu, IntentId.SOURCE_MIGRATE, callbacks.migrate)
         translation_menu.addSeparator()
         ai_translator = self._intent_action(translation_menu, IntentId.TRANSLATION_AI, callbacks.open_ai_translator)
         dictionary = self._intent_action(translation_menu, IntentId.TRANSLATION_DICTIONARY, callbacks.open_dictionary)
 
-        sync_menu = bar.addMenu("同步与发布")
+        sync_menu = bar.addMenu(self._gettext("同步与发布"))
         upload = self._intent_action(sync_menu, IntentId.SYNC_UPLOAD, callbacks.upload)
         batch_upload = self._intent_action(sync_menu, IntentId.SYNC_UPLOAD_BATCH, callbacks.batch_upload)
         sync_menu.addSeparator()
@@ -147,7 +155,7 @@ class MenuBuilder:
         sync_menu.addSeparator()
         fomod = self._intent_action(sync_menu, IntentId.PUBLISH_FOMOD, callbacks.open_fomod)
 
-        view_menu = bar.addMenu("视图")
+        view_menu = bar.addMenu(self._gettext("视图"))
         self._intent_action(view_menu, IntentId.TASK_OPEN_ACTIVITY, callbacks.show_task_activity)
         smart_assistant = self._intent_action(
             view_menu,
@@ -157,13 +165,15 @@ class MenuBuilder:
         # Compatibility handles deliberately point to one authoritative QAction.
         view_assistant = smart_assistant
 
-        settings_menu = bar.addMenu("设置")
+        settings_menu = bar.addMenu(self._gettext("设置"))
+        appearance = self._intent_action(settings_menu, IntentId.SETTINGS_APPEARANCE, callbacks.show_appearance)
+        settings_menu.addSeparator()
         self._intent_action(settings_menu, IntentId.SETTINGS_SERVICES, callbacks.show_config)
         settings_menu.addSeparator()
         self._intent_action(settings_menu, IntentId.SETTINGS_ACCOUNT, callbacks.show_user)
         self._intent_action(settings_menu, IntentId.SETTINGS_MESSAGES, callbacks.show_mails)
 
-        help_menu = bar.addMenu("帮助")
+        help_menu = bar.addMenu(self._gettext("帮助"))
         self._intent_action(help_menu, IntentId.HELP_CONTEXT, callbacks.show_context_help)
         self._intent_action(help_menu, IntentId.HELP_ABOUT, callbacks.show_about)
 
@@ -190,4 +200,5 @@ class MenuBuilder:
             view_assistant=view_assistant,
             dictionary=dictionary,
             fomod=fomod,
+            appearance=appearance,
         )

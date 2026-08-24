@@ -15,6 +15,7 @@ from transbridge.application.projects import (
 )
 from transbridge.application.projects.models import (
     LifecycleActivation,
+    LifecycleProjectUpdate,
     LifecycleSave,
     LifecycleSnapshot,
 )
@@ -136,6 +137,9 @@ class _TransactionStore:
     def stage_save(self, transaction_id: str, save: LifecycleSave) -> None:
         self._stage(transaction_id, "save", save)
 
+    def stage_project_update(self, transaction_id: str, update: LifecycleProjectUpdate) -> None:
+        self._stage(transaction_id, "project-update", update)
+
     def stage_activate(self, transaction_id: str, activation: LifecycleActivation) -> None:
         self._stage(transaction_id, "activate", activation)
 
@@ -153,6 +157,10 @@ class _TransactionStore:
             save = value
             assert isinstance(save, LifecycleSave)
             self.saved_revisions.append(-1 if save.variant is None else save.variant.revision)
+        elif kind == "project-update":
+            update = value
+            assert isinstance(update, LifecycleProjectUpdate)
+            self.saved_revisions.append(update.project.envelope.revision)
         elif kind == "activate":
             activation = value
             assert isinstance(activation, LifecycleActivation)
@@ -237,6 +245,50 @@ def test_activation_capture_writes_only_dirty_candidate_records() -> None:
 
     assert not activation.write_candidate_project
     assert activation.write_candidate_variant
+
+
+def test_project_update_commits_only_project_and_preserves_dirty_variant() -> None:
+    project_ref, variant_ref = _refs("project-a", "variant-a")
+    active = _active(project_ref, variant_ref, revision=8, persisted_revision=7)
+    harness = _harness(active, {})
+    old_variant = harness.service.active.variant
+    data = dict(active.project.envelope.data)
+    data["remote_bindings"] = {
+        "paratranz": {
+            "project_id": 42,
+            "project_name": "Cloud",
+            "endpoint": "https://paratranz.cn",
+        }
+    }
+    updated = ProjectDto(SchemaEnvelope(2, project_ref.kind, project_ref.identity.value, 1, data))
+
+    result = harness.service.commit_project_update(updated, 0, _context())
+
+    assert result.outcome is OperationOutcome.COMPLETED
+    assert harness.store.calls[1][0] == "stage-project-update"
+    assert harness.service.active.variant is old_variant
+    assert harness.service.active.variant.revision == 8
+    assert harness.service.active.persisted_variant_revision == 7
+    assert harness.service.active.persisted_project_revision == 1
+
+
+def test_project_update_failure_rolls_back_without_projection_or_active_change() -> None:
+    project_ref, variant_ref = _refs("project-a", "variant-a")
+    active = _active(project_ref, variant_ref)
+    events = []
+    harness = _harness(active, {}, event=events.append)
+    harness.store.fail_commit = True
+    data = dict(active.project.envelope.data)
+    data["remote_bindings"] = {}
+    updated = ProjectDto(SchemaEnvelope(2, project_ref.kind, project_ref.identity.value, 1, data))
+
+    result = harness.service.commit_project_update(updated, 0, _context())
+
+    assert result.outcome is OperationOutcome.FAILED
+    assert harness.service.active is active
+    assert harness.service.generation == 0
+    assert events == []
+    assert any(call[0] == "rollback" for call in harness.store.calls)
 
 
 def test_cancel_dirty_transition_has_zero_save_load_or_pointer_side_effects() -> None:

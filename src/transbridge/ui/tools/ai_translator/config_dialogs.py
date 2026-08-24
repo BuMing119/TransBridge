@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from PyQt6.QtGui import QBrush, QColor
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QPalette
 from PyQt6.QtWidgets import QListWidget, QMessageBox, QWidget
 
 from transbridge.ui.tools.ai_translator.config_presenter import ConnectionTestResult
@@ -14,10 +15,10 @@ def render_paratranz_source(priority_list: QListWidget, current_project: object 
         if "paratranz" not in item.text():
             continue
         if current_project is None:
-            item.setForeground(QBrush(QColor("#999999")))
+            item.setForeground(priority_list.palette().brush(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text))
             item.setToolTip("未选择 ParaTranz 项目，此来源将被跳过")
         else:
-            item.setForeground(QBrush(QColor()))
+            item.setData(Qt.ItemDataRole.ForegroundRole, None)
             item.setToolTip("")
         break
 

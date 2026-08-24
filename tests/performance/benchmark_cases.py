@@ -79,6 +79,12 @@ class Thresholds:
     ui_modularization_max_regression_ratio: float = 0.05
     ui_modularization_absolute_regression_s: float = 0.010
     ui_lifecycle_iterations: int = 100
+    # FR24 UI Foundation budgets (NFR1.4).  These values are reused by the
+    # baseline fixture now and by the final Foundation comparator in S09.
+    ui_foundation_init_p95_s: float = 0.075
+    ui_foundation_rss_bytes: int = 12 * 1024 * 1024
+    ui_foundation_switch_p95_s: float = 0.250
+    ui_foundation_post_warmup_rss_bytes: int = 2 * 1024 * 1024
     # Archive policy budget (see fileops/archive_policy).
     archive_max_files: int = 1000
     archive_max_bytes: int = 512 * 1024 * 1024
@@ -263,6 +269,48 @@ def _build_registry() -> tuple[BenchmarkCase, ...]:
             note=(
                 "FR25 100 create/destroy cycles; subscriptions, timers, workers and "
                 "steady RSS must return to the warmed tolerance"
+            ),
+        ),
+        BenchmarkCase(
+            case_id="ui-foundation-cold-init",
+            kind="ui-foundation",
+            tier=HardwareTier.WINDOWS_S05,
+            warmup=0,
+            repetitions=20,
+            threshold_p95=threshold.ui_foundation_init_p95_s,
+            resource_budget_bytes=threshold.ui_foundation_rss_bytes,
+            note=(
+                "FR24 isolated-process delta over the frozen no-Foundation window tree; "
+                "S01 records baseline metadata and S09 evaluates the <=75ms/12MiB delta"
+            ),
+        ),
+        BenchmarkCase(
+            case_id="ui-foundation-window-open",
+            kind="ui-foundation",
+            tier=HardwareTier.WINDOWS_S05,
+            warmup=2,
+            repetitions=20,
+            note=("FR24 representative-window P50/P95; uses the existing FR25 wider-of-5%-or-10ms relative budget"),
+        ),
+        BenchmarkCase(
+            case_id="ui-foundation-theme-switch",
+            kind="ui-foundation",
+            tier=HardwareTier.WINDOWS_S05,
+            warmup=2,
+            repetitions=20,
+            threshold_p95=threshold.ui_foundation_switch_p95_s,
+            note="FR24 real Qt event-loop theme switch P95<=250ms and shared heartbeat<=200ms",
+        ),
+        BenchmarkCase(
+            case_id="ui-foundation-noop-switch",
+            kind="ui-foundation",
+            tier=HardwareTier.WINDOWS_S05,
+            warmup=2,
+            repetitions=threshold.ui_lifecycle_iterations,
+            resource_budget_bytes=threshold.ui_foundation_post_warmup_rss_bytes,
+            note=(
+                "S01 100-cycle no-palette-change control; S09 replaces the operation with warmed "
+                "light/dark round trips and keeps RSS growth <=2MiB"
             ),
         ),
         BenchmarkCase(

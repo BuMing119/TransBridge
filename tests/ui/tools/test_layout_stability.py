@@ -1,0 +1,223 @@
+from __future__ import annotations
+
+import os
+from types import SimpleNamespace
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtWidgets import QApplication, QVBoxLayout, QWidget
+import pytest
+
+from transbridge.ui.tools.ai_translator._batch_llm_log_viewer import _BatchLLMLogViewer
+from transbridge.ui.tools.ai_translator._batch_translation_dialog import _BatchTranslationDialog
+from transbridge.ui.tools.ai_translator._batch_translation_progress_window import _BatchTranslationProgressWindow
+from transbridge.ui.tools.ai_translator._llm_log_viewer import _LLMLogViewer
+from transbridge.ui.tools.ai_translator._translation_progress_window import _TranslationProgressWindow
+from transbridge.ui.tools.ai_translator._translation_target_dialog import _TranslationTargetDialog
+from transbridge.ui.tools.ai_translator.config_view import AITranslatorView
+from transbridge.ui.tools.ai_translator.run_view import AiMixedProgressWindow
+from transbridge.ui.tools.smart_assistant.input_view import ChatInputView
+from transbridge.ui.tools.smart_assistant.task_monitor import _TaskCard
+from transbridge.ui.tools.smart_assistant.tool_card import ToolCard
+
+
+@pytest.fixture(scope="module")
+def qapp():
+    return QApplication.instance() or QApplication([])
+
+
+def _assert_horizontal_stable(qapp, widget, action_widget, mutate, *, width: int) -> None:
+    widget.resize(width, max(300, widget.sizeHint().height()))
+    widget.show()
+    qapp.processEvents()
+    before = (widget.minimumSizeHint().width(), action_widget.x(), action_widget.width())
+
+    mutate()
+    qapp.processEvents()
+
+    assert (widget.minimumSizeHint().width(), action_widget.x(), action_widget.width()) == before
+    widget.close()
+
+
+class _Callbacks:
+    def __getattr__(self, _name):
+        return lambda *_args, **_kwargs: None
+
+
+class _TranslationWorker(QObject):
+    progress = pyqtSignal(int, int, str, int, int, int)
+    log = pyqtSignal(int, str)
+    result = pyqtSignal(object)
+    error = pyqtSignal(str)
+    finished = pyqtSignal()
+
+    def isRunning(self) -> bool:  # noqa: N802 - Qt compatibility
+        return False
+
+
+class _BatchWorker(QObject):
+    plugin_started = pyqtSignal(str, int, int)
+    plugin_finished = pyqtSignal(str, object)
+    plugin_progress = pyqtSignal(int, int, str, int, int, int)
+    log = pyqtSignal(int, str)
+    all_finished = pyqtSignal(object)
+    error = pyqtSignal(str)
+    finished = pyqtSignal()
+
+    def isRunning(self) -> bool:  # noqa: N802 - Qt compatibility
+        return False
+
+
+class _MixedWorker(QObject):
+    progress = pyqtSignal(object)
+    finished = pyqtSignal(object)
+    error = pyqtSignal(str)
+    cancelled = pyqtSignal()
+
+    def isRunning(self) -> bool:  # noqa: N802 - Qt compatibility
+        return False
+
+    def cancel(self) -> None:
+        pass
+
+
+class _Activity:
+    task_activity = None
+
+    def request_cancel(self) -> None:
+        pass
+
+
+def test_ai_footer_long_reason_does_not_move_start_button(qapp) -> None:
+    parent = QWidget()
+    view = AITranslatorView(parent, _Callbacks())
+    text = "运行条件失败：" + "超长原因" * 200
+
+    def mutate() -> None:
+        view.controls.preflight_label.set_full_text(text)
+        view.controls.preflight_label.setToolTip(text)
+        view.controls.preflight_label.setAccessibleDescription(text)
+
+    _assert_horizontal_stable(qapp, parent, view.controls.start_btn, mutate, width=680)
+    assert view.controls.preflight_label.toolTip() == text
+    assert view.controls.preflight_label.accessibleDescription() == text
+
+
+def test_smart_assistant_dynamic_text_keeps_action_columns_stable(qapp) -> None:
+    def noop(*_args, **_kwargs) -> None:
+        pass
+
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    input_view = ChatInputView(
+        set_input=noop,
+        select_skill=noop,
+        upload=noop,
+        clear=noop,
+        send=noop,
+        toggle_auto=noop,
+        auto_mode=False,
+    )
+    input_view.build_toolbar(layout)
+    upload_text = "已上传 50 个: " + ", ".join(f"参考文件-{index}-{'x' * 80}.md" for index in range(50))
+    _assert_horizontal_stable(
+        qapp,
+        host,
+        input_view._upload_button,
+        lambda: input_view.upload_label.set_full_text(upload_text),
+        width=900,
+    )
+
+    card = ToolCard({"tool": "translate"})
+    result = "工具失败：" + "详细错误" * 200
+    _assert_horizontal_stable(qapp, card, card._exec_btn, lambda: card.set_result(False, result), width=500)
+    assert card._result_label.toolTip().endswith(result)
+    assert result in card._result_label.accessibleDescription()
+
+    task = _TaskCard(
+        "task-1",
+        {"status": "running", "progress": {"message": "准备中"}, "metadata": {"name": "普通任务"}},
+    )
+    task_name = "后台任务-" + "很长的任务名称" * 200
+    _assert_horizontal_stable(
+        qapp,
+        task,
+        task._action_buttons[0][0],
+        lambda: task._name_label.set_full_text(task_name),
+        width=900,
+    )
+
+
+def test_target_and_batch_config_long_names_do_not_change_dialog_minimum_width(qapp) -> None:
+    class Context:
+        def __init__(self, name: str) -> None:
+            self.active_slot = SimpleNamespace(label=name, esp_path="", collection=[])
+            self.slots = {"slot": self.active_slot}
+
+    short = _TranslationTargetDialog(Context("短插件"))
+    long_name = "插件-" + "非常长" * 300
+    long = _TranslationTargetDialog(Context(long_name))
+    assert long.minimumSizeHint().width() == short.minimumSizeHint().width()
+    assert long._current_label.full_text.startswith(long_name)
+    assert long._current_label.toolTip() == long._current_label.full_text
+    short.close()
+    long.close()
+
+    batch = _BatchTranslationDialog(SimpleNamespace(slots={}))
+    before = batch.minimumSizeHint().width()
+    config_text = "模型: " + "model/" * 300
+    batch._set_config_text(config_text)
+    qapp.processEvents()
+    assert batch.minimumSizeHint().width() == before
+    assert batch._config_label.toolTip() == config_text
+    batch.close()
+
+
+@pytest.mark.parametrize("viewer_type", [_LLMLogViewer, _BatchLLMLogViewer])
+def test_log_viewer_long_path_keeps_toolbar_stable(qapp, viewer_type) -> None:
+    short = viewer_type("C:/logs")
+    long_path = "C:/" + "/very-long-directory" * 200
+    long = viewer_type(long_path)
+    short.resize(900, 640)
+    long.resize(900, 640)
+    short.show()
+    long.show()
+    qapp.processEvents()
+
+    assert long.minimumSizeHint().width() == short.minimumSizeHint().width()
+    assert long._auto_cb.x() == short._auto_cb.x()
+    assert long._path_label.full_text == long_path
+    assert long._path_label.toolTip() == long_path
+    short.close()
+    long.close()
+
+
+def test_progress_statuses_do_not_change_window_or_action_geometry(qapp) -> None:
+    single = _TranslationProgressWindow(_TranslationWorker(), SimpleNamespace())
+    message = "翻译进度：" + "长状态" * 300
+    _assert_horizontal_stable(
+        qapp,
+        single,
+        single._llm_log_btn,
+        lambda: single._on_progress(1, 10, message, 1, 0, 0),
+        width=560,
+    )
+    assert single._progress_msg.toolTip() == message
+
+    batch = _BatchTranslationProgressWindow(_BatchWorker(), SimpleNamespace())
+    plugin_name = "插件-" + "长名称" * 300
+    _assert_horizontal_stable(
+        qapp,
+        batch,
+        batch._llm_log_btn,
+        lambda: batch._on_plugin_started(plugin_name, 1, 2),
+        width=560,
+    )
+    assert batch._plugin_msg.toolTip() == plugin_name
+
+    mixed = AiMixedProgressWindow(_MixedWorker(), _Activity())
+    error = "失败：" + "服务错误" * 300
+    _assert_horizontal_stable(qapp, mixed, mixed._stop, lambda: mixed._on_error(error), width=440)
+    assert error in mixed._status.full_text
+    assert mixed._status.toolTip() == mixed._status.full_text

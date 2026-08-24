@@ -1,6 +1,6 @@
 # ADR-020：高性能 UI 基础框架、语义令牌与版本化主题扩展
 
-- **状态**：提议
+- **状态**：已接受并实现（2026-08-24）
 - **日期**：2026-08-19；FR25/FR26 接入修订：2026-08-24
 - **对应需求**：[FR24.1～FR24.11、NFR1.4](../requirements.md)
 - **关联 ADR**：[ADR-008](008-smart-assistant-code-layering.md)、[ADR-016](016-modular-monolith-application-composition.md)、[ADR-019](019-unified-task-runtime.md)、[ADR-021](021-ui-presentation-modularization.md)

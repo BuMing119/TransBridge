@@ -3,7 +3,7 @@ StringDetailDialog：词条详情/编辑对话框。
 左侧可折叠筛选 + 可分页词条导航列表，右侧编辑区。
 """
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, Qt, pyqtSignal
 from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import (
     QButtonGroup,
@@ -26,6 +26,9 @@ from PyQt6.QtWidgets import (
 )
 
 from transbridge.paratranz.api.paratranz_strings_api import ParatranzStringsAPI
+from transbridge.ui.foundation.adapters import DomainBrushes, ThemeSubscription, ThemeView
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle
+from transbridge.ui.foundation.theme_service import ThemeSnapshot
 
 from ..workers import ApiWorker
 from ._strings_common import _KEY_ROLE, _STAGE_LABELS, _extract_list
@@ -50,6 +53,9 @@ class StringDetailDialog(QDialog):
         page: int = 1,
         page_size: int = 50,
         parent=None,
+        *,
+        theme_view: ThemeView | None = None,
+        domain_brushes: DomainBrushes | None = None,
     ):
         super().__init__(parent)
         self._strings = list(strings)
@@ -63,12 +69,18 @@ class StringDetailDialog(QDialog):
         self._page = page
         self._page_size = page_size
         self._workers: list[ApiWorker] = []
+        self._theme_view = theme_view
+        self._domain_brushes = domain_brushes
+        self._theme_subscription: ThemeSubscription | None = None
         self._lifecycle = StringDialogLifecycle(self, workers=lambda: tuple(self._workers))
         self._modified = False
         self._nav_gen = 0
         self.setWindowTitle("词条详情")
         self.resize(980, 600)
         self._init_ui()
+        if theme_view is not None:
+            self._apply_theme(theme_view.snapshot())
+            self._theme_subscription = theme_view.subscribe(self, self._apply_theme)
         self._apply_nav_filter()  # 初始化导航列表
         self._show(current_index)
 
@@ -104,7 +116,10 @@ class StringDetailDialog(QDialog):
 
         # ── 导航列表 ──
         self._nav_list = QListWidget()
-        self._nav_list.setItemDelegate(NavItemDelegate(self._nav_list))
+        self._nav_delegate = NavItemDelegate(self._nav_list, domain_brushes=self._domain_brushes)
+        self._nav_list.setItemDelegate(self._nav_delegate)
+        self._nav_list.setAccessibleName("词条导航")
+        ComponentStyle.apply_static(self._nav_list, ComponentKind.TABLE)
         self._nav_list.itemClicked.connect(self._on_nav_clicked)
         nav_layout.addWidget(self._nav_list, stretch=1)
 
@@ -236,6 +251,19 @@ class StringDetailDialog(QDialog):
         right_layout.addLayout(btn_row)
 
         return right
+
+    def _apply_theme(self, snapshot: ThemeSnapshot) -> None:
+        self._domain_brushes = DomainBrushes(snapshot)
+        delegate = getattr(self, "_nav_delegate", None)
+        if delegate is not None:
+            delegate.apply_domain_brushes(self._domain_brushes)
+            self._nav_list.viewport().update()
+
+    def changeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if event.type() == QEvent.Type.PaletteChange and self._theme_view is None:
+            self._nav_delegate.apply_domain_brushes(None)
+            self._nav_list.viewport().update()
+        super().changeEvent(event)
 
     def _on_filter_toggle(self, checked: bool):
         self._filter_toggle.setText("▼ 筛选条件" if checked else "▶ 筛选条件")
@@ -514,6 +542,10 @@ class StringDetailDialog(QDialog):
         self._workers.append(w)
 
     def closeEvent(self, event: QCloseEvent):
+        subscription = getattr(self, "_theme_subscription", None)
+        if subscription is not None:
+            subscription.close()
+            self._theme_subscription = None
         lifecycle = getattr(self, "_lifecycle", None)
         if lifecycle is None:
             lifecycle = self._lifecycle = StringDialogLifecycle(

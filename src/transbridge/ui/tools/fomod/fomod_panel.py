@@ -29,6 +29,13 @@ from PyQt6.QtWidgets import (
 )
 
 from transbridge.fileops import DEFAULT_PRESET, PRESETS
+from transbridge.ui.foundation.accessibility import configure_accessible_widget, update_accessible_state
+from transbridge.ui.foundation.components import (
+    ComponentKind,
+    ComponentStyle,
+    SemanticState,
+    configure_dialog,
+)
 
 
 class _PipelineWorker(QThread):
@@ -69,11 +76,13 @@ class _PipelineWorker(QThread):
 class FomodPanel(QDialog):
     def __init__(self, ctx=None, parent=None, *, operation_plan_facade=None):
         super().__init__(parent)
+        configure_dialog(self)
         self._ctx = ctx
         self._worker = None
         self._operation_plan_facade = operation_plan_facade
         self._suggested_output = ""
         self.setWindowTitle("FOMOD 安装包翻译")
+        configure_accessible_widget(self, name="FOMOD 安装包翻译", description="配置归档输入、输出和翻译选项")
         self.resize(600, 560)
         self._build_ui()
 
@@ -85,6 +94,7 @@ class FomodPanel(QDialog):
         fg = QVBoxLayout(file_group)
         self._new_edit = QLineEdit()
         self._new_edit.setPlaceholderText("新版 FOMOD 归档（.7z/.zip/.rar）")
+        configure_accessible_widget(self._new_edit, name="新版 FOMOD 归档")
         new_row = QHBoxLayout()
         new_row.addWidget(self._new_edit)
         new_btn = QPushButton("选择新版")
@@ -94,6 +104,7 @@ class FomodPanel(QDialog):
 
         self._old_edit = QLineEdit()
         self._old_edit.setPlaceholderText("旧版中文成品（可选，有则自动复用翻译）")
+        configure_accessible_widget(self._old_edit, name="旧版中文 FOMOD 归档")
         old_row = QHBoxLayout()
         old_row.addWidget(self._old_edit)
         old_btn = QPushButton("选择旧版")
@@ -156,6 +167,7 @@ class FomodPanel(QDialog):
         # 输出路径
         self._out_edit = QLineEdit()
         self._out_edit.setPlaceholderText("输出中文安装包路径")
+        configure_accessible_widget(self._out_edit, name="FOMOD 输出归档")
         out_row = QHBoxLayout()
         out_row.addWidget(self._out_edit)
         out_btn = QPushButton("选择输出")
@@ -170,8 +182,13 @@ class FomodPanel(QDialog):
         self._progress = QProgressBar()
         self._progress.setRange(0, 0)
         self._progress.setVisible(False)
+        configure_accessible_widget(self._progress, name="FOMOD 翻译进度", state_text="尚未开始")
+        ComponentStyle.apply_static(self._progress, ComponentKind.PROGRESS)
         rg.addWidget(self._progress)
         self._run_btn = QPushButton("开始翻译")
+        ComponentStyle.apply_static(self._run_btn, ComponentKind.BUTTON)
+        ComponentStyle.apply_state(self._run_btn, SemanticState.PRIMARY)
+        self._run_btn.setAccessibleName("开始 FOMOD 翻译")
         self._run_btn.clicked.connect(self._run)
         rg.addWidget(self._run_btn)
         layout.addWidget(run_group)
@@ -182,12 +199,25 @@ class FomodPanel(QDialog):
         self._result_text = QTextEdit()
         self._result_text.setReadOnly(True)
         self._result_text.setPlaceholderText("结果摘要将显示在这里")
+        configure_accessible_widget(self._result_text, name="FOMOD 翻译结果", state_text="尚无结果")
+        ComponentStyle.apply_static(self._result_text, ComponentKind.NOTIFICATION)
         resg.addWidget(self._result_text)
         layout.addWidget(result_group)
 
         close_btn = QPushButton("关闭")
         close_btn.clicked.connect(self.close)
         layout.addWidget(close_btn)
+        for editor in (
+            self._new_edit,
+            self._old_edit,
+            self._keep_ext_edit,
+            self._strip_ext_edit,
+            self._out_edit,
+            self._preset_combo,
+            self._fmt_combo,
+            self._lang_combo,
+        ):
+            ComponentStyle.apply_static(editor, ComponentKind.INPUT)
 
     def prefill_new_archive(self, path: str) -> None:
         """Populate a reviewed safe-drop path without starting the pipeline."""
@@ -264,6 +294,9 @@ class FomodPanel(QDialog):
         self._progress.setVisible(True)
         self._result_text.clear()
         self._result_text.append("正在执行...")
+        update_accessible_state(self._result_text, "正在执行")
+        self._result_text.setProperty("tbStatusId", "running")
+        ComponentStyle.apply_state(self._result_text, SemanticState.INFO)
         fmt = self._fmt_combo.currentData()
         lang = self._lang_combo.currentData()
         ai = self._ai_check.isChecked()
@@ -318,8 +351,14 @@ class FomodPanel(QDialog):
             f"输出: {d.get('archive_path', '')}\n"
         )
         self._result_text.setPlainText(summary)
+        update_accessible_state(self._result_text, "翻译完成", description=summary)
+        self._result_text.setProperty("tbStatusId", "completed")
+        ComponentStyle.apply_state(self._result_text, SemanticState.SUCCESS)
 
     def _on_failed(self, msg):
         self._progress.setVisible(False)
         self._run_btn.setEnabled(True)
         self._result_text.setPlainText(f"执行失败: {msg}")
+        update_accessible_state(self._result_text, "执行失败", description=str(msg))
+        self._result_text.setProperty("tbStatusId", "failed")
+        ComponentStyle.apply_state(self._result_text, SemanticState.ERROR)

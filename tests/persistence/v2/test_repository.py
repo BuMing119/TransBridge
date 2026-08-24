@@ -10,6 +10,8 @@ from typing import Any
 
 import pytest
 
+from transbridge.application.contracts import DomainError, ErrorCategory
+from transbridge.application.projects.models import LifecycleProjectUpdate
 from transbridge.persistence.v2 import (
     SCHEMA_VERSION,
     FutureSchemaResult,
@@ -21,6 +23,7 @@ from transbridge.persistence.v2 import (
     QuarantineResult,
     ReadOnlyWriteRefused,
     SchemaEnvelope,
+    SchemaValidationError,
     SessionDto,
     SessionId,
     SessionRef,
@@ -30,6 +33,7 @@ from transbridge.persistence.v2 import (
     VariantRef,
     VariantRepository,
 )
+from transbridge.persistence.v2.lifecycle_transactions import ProjectLifecycleTransactionStore
 
 from .fakes import MemoryFilesystem
 
@@ -118,6 +122,153 @@ def test_v2_round_trip_uses_staging_replace(repository, ref, dto) -> None:
     assert loaded.value == dto
     assert any(operation == "replace" and path == repo.path_for(ref) for operation, path in filesystem.calls)
     assert not any(".tmp" in path for path in filesystem.files)
+
+
+def test_project_remote_binding_schema_round_trip() -> None:
+    filesystem = MemoryFilesystem()
+    ref = ProjectRef(ProjectId("project-1"))
+    repo = ProjectRepository(ROOT, filesystem)
+    project = _project_dto()
+    data = dict(project.envelope.data)
+    data["remote_bindings"] = {
+        "paratranz": {
+            "project_id": 42,
+            "project_name": "Cloud",
+            "endpoint": "https://paratranz.cn",
+            "account_user_id": 7,
+            "bound_at": "2026-08-24T10:00:00+08:00",
+            "validated_at": None,
+        }
+    }
+    bound = ProjectDto(
+        SchemaEnvelope(
+            project.envelope.schema_version,
+            project.envelope.entity_type,
+            project.envelope.identity,
+            project.envelope.revision + 1,
+            data,
+        )
+    )
+
+    repo.save(ref, bound)
+    loaded = repo.load(ref)
+
+    assert isinstance(loaded, LoadedRecord)
+    assert loaded.value.envelope.data["remote_bindings"] == data["remote_bindings"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("endpoint", "not-a-uri"),
+        ("bound_at", "not-a-date"),
+    ),
+)
+def test_project_remote_binding_schema_rejects_invalid_formats(field: str, value: str) -> None:
+    filesystem = MemoryFilesystem()
+    ref = ProjectRef(ProjectId("project-1"))
+    repo = ProjectRepository(ROOT, filesystem)
+    project = _project_dto()
+    binding = {
+        "project_id": 42,
+        "project_name": "Cloud",
+        "endpoint": "https://paratranz.cn",
+        "bound_at": "2026-08-24T10:00:00+08:00",
+    }
+    binding[field] = value
+    data = dict(project.envelope.data)
+    data["remote_bindings"] = {"paratranz": binding}
+    invalid = ProjectDto(
+        SchemaEnvelope(
+            project.envelope.schema_version,
+            project.envelope.entity_type,
+            project.envelope.identity,
+            project.envelope.revision + 1,
+            data,
+        )
+    )
+
+    with pytest.raises(SchemaValidationError):
+        repo.save(ref, invalid)
+
+
+def test_project_lifecycle_update_rejects_stale_persisted_revision() -> None:
+    filesystem = MemoryFilesystem()
+    ref = ProjectRef(ProjectId("project-1"))
+    projects = ProjectRepository(ROOT, filesystem)
+    variants = VariantRepository(ROOT, filesystem)
+    current = _project_dto(revision=4)
+    projects.save(ref, current)
+    data = dict(current.envelope.data)
+    data["remote_bindings"] = {
+        "paratranz": {
+            "project_id": 42,
+            "project_name": "Cloud",
+            "endpoint": "https://paratranz.cn",
+        }
+    }
+    update = LifecycleProjectUpdate(
+        ProjectDto(
+            SchemaEnvelope(
+                current.envelope.schema_version,
+                current.envelope.entity_type,
+                current.envelope.identity,
+                current.envelope.revision + 1,
+                data,
+            )
+        ),
+        expected_persisted_project_revision=3,
+    )
+    store = ProjectLifecycleTransactionStore(ROOT, filesystem, projects, variants)
+    store.begin("tx-stale-binding")
+    store.stage_project_update("tx-stale-binding", update)
+
+    with pytest.raises(DomainError) as error:
+        store.commit("tx-stale-binding")
+
+    assert error.value.category is ErrorCategory.CONFLICT
+    assert error.value.code == "PROJECT_UPDATE_PERSISTED_STALE"
+    loaded = projects.load(ref)
+    assert isinstance(loaded, LoadedRecord)
+    assert loaded.value == current
+
+
+def test_project_lifecycle_update_commits_matching_persisted_revision() -> None:
+    filesystem = MemoryFilesystem()
+    ref = ProjectRef(ProjectId("project-1"))
+    projects = ProjectRepository(ROOT, filesystem)
+    variants = VariantRepository(ROOT, filesystem)
+    current = _project_dto(revision=4)
+    projects.save(ref, current)
+    data = dict(current.envelope.data)
+    data["remote_bindings"] = {
+        "paratranz": {
+            "project_id": 42,
+            "project_name": "Cloud",
+            "endpoint": "https://paratranz.cn",
+        }
+    }
+    updated = ProjectDto(
+        SchemaEnvelope(
+            current.envelope.schema_version,
+            current.envelope.entity_type,
+            current.envelope.identity,
+            current.envelope.revision + 1,
+            data,
+        )
+    )
+    store = ProjectLifecycleTransactionStore(ROOT, filesystem, projects, variants)
+    store.begin("tx-current-binding")
+    store.stage_project_update(
+        "tx-current-binding",
+        LifecycleProjectUpdate(updated, expected_persisted_project_revision=4),
+    )
+
+    store.commit("tx-current-binding")
+
+    loaded = projects.load(ref)
+    assert isinstance(loaded, LoadedRecord)
+    assert loaded.value == updated
 
 
 @pytest.mark.parametrize(

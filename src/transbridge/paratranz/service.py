@@ -89,11 +89,24 @@ class ParaTranzService:
         uid: str | int | None = None,
         cancellation: CancellationPort | None = None,
     ) -> tuple[ParaTranzProject, ...]:
-        payload = self._projects.list_projects(page=1, page_size=200, uid=uid, cancellation=cancellation)
-        return tuple(
-            self._typed(ParaTranzProject.from_mapping, item, "project")
-            for item in self._items(payload, "projects", "results")
-        )
+        items: list[Mapping[str, Any]] = []
+        page = 1
+        page_size = 200
+        while True:
+            if cancellation is not None:
+                cancellation.raise_if_cancelled()
+            payload = self._projects.list_projects(
+                page=page,
+                page_size=page_size,
+                uid=uid,
+                cancellation=cancellation,
+            )
+            current = self._items(payload, "projects", "results", "data", "items")
+            items.extend(current)
+            if len(current) < page_size:
+                break
+            page += 1
+        return tuple(self._typed(ParaTranzProject.from_mapping, item, "project") for item in items)
 
     def get_project(
         self,

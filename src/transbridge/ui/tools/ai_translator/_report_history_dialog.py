@@ -5,17 +5,28 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 import os
 import re
-from datetime import datetime
 
-from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-    QTableWidget, QTableWidgetItem, QHeaderView,
-    QPushButton, QAbstractItemView, QMenu, QMessageBox,
-)
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QAction
+from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QDialog,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+)
+
+from transbridge.ui.foundation.adapters import ThemeView
+
+from ._theme_support import AiThemeBinding
 
 
 def _parse_report_filename(filename: str) -> dict:
@@ -83,7 +94,7 @@ def _format_size(size: int) -> str:
 class _ReportHistoryDialog(QDialog):
     """历史报告查看对话框。"""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, theme_view: ThemeView | None = None):
         super().__init__(parent)
         self.setWindowTitle("历史报告")
         self.resize(750, 480)
@@ -107,7 +118,7 @@ class _ReportHistoryDialog(QDialog):
         # 空状态提示
         self._empty_label = QLabel("暂无历史报告")
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty_label.setStyleSheet("color: #999; font-size: 14px; padding: 60px;")
+        self._empty_label.setAccessibleName("历史报告空状态")
         self._empty_label.hide()
         layout.addWidget(self._empty_label)
 
@@ -129,6 +140,11 @@ class _ReportHistoryDialog(QDialog):
         self._table.itemSelectionChanged.connect(
             lambda: self._btn_delete.setEnabled(len(self._table.selectedItems()) > 0)
         )
+        self._theme_binding = AiThemeBinding(self, theme_view)
+
+    @property
+    def theme_revision(self) -> int:
+        return self._theme_binding.revision
 
     def _populate(self):
         self._reports = _scan_reports()
@@ -181,7 +197,9 @@ class _ReportHistoryDialog(QDialog):
         if not rows:
             return
         reply = QMessageBox.question(
-            self, "删除报告", f"确定要删除 {len(rows)} 份报告吗？",
+            self,
+            "删除报告",
+            f"确定要删除 {len(rows)} 份报告吗？",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
@@ -193,7 +211,8 @@ class _ReportHistoryDialog(QDialog):
         path = self._reports[row]["path"]
         if confirm:
             reply = QMessageBox.question(
-                self, "删除报告",
+                self,
+                "删除报告",
                 f"确定要删除报告「{self._reports[row]['filename']}」吗？",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )

@@ -1,16 +1,21 @@
 from PyQt6.QtWidgets import QGroupBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
+from transbridge.ui.foundation.adapters import ThemeView
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle
+
 
 class OpCard(QGroupBox):
     """单个操作卡片：标题 + 说明 + 操作按钮 + 可选批量按钮。"""
 
-    def __init__(self, title: str, desc: str, btn_text: str, parent=None):
+    def __init__(self, title: str, desc: str, btn_text: str, parent=None, *, theme_view: ThemeView | None = None):
         super().__init__(title, parent)
+        self._theme_view = theme_view
         self._operation_plan_facade = None
+        ComponentStyle.apply_static(self, ComponentKind.CARD)
         layout = QVBoxLayout(self)
         lbl = QLabel(desc)
         lbl.setWordWrap(True)
-        lbl.setStyleSheet("color: #555;")
+        lbl.setAccessibleName(f"{title}说明")
         layout.addWidget(lbl)
         layout.addStretch()
 

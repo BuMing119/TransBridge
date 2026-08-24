@@ -59,6 +59,7 @@ class IntentId(StrEnum):
     PUBLISH_WRITE_BATCH = "publish.write-batch"
     PUBLISH_FOMOD = "publish.fomod"
     VIEW_SMART_ASSISTANT = "view.smart-assistant"
+    SETTINGS_APPEARANCE = "settings.appearance"
     SETTINGS_SERVICES = "settings.services"
     SETTINGS_ACCOUNT = "settings.account"
     SETTINGS_MESSAGES = "settings.messages"
@@ -86,6 +87,7 @@ class ActionDescriptor:
     shortcut: str | None = None
     checkable: bool = False
     aliases: tuple[str, ...] = ()
+    status_tip: str = ""
 
     def __post_init__(self) -> None:
         if not self.label.strip():
@@ -252,7 +254,19 @@ DEFAULT_ACTION_CATALOG = ActionCatalog((
         checkable=True,
         aliases=("聊天", "助手"),
     ),
-    ActionDescriptor(IntentId.SETTINGS_SERVICES, "服务与 API 配置…", ActionSection.SETTINGS),
+    ActionDescriptor(
+        IntentId.SETTINGS_APPEARANCE,
+        "外观与通用设置…",
+        ActionSection.SETTINGS,
+        aliases=("主题", "浅色", "深色", "语言", "无障碍"),
+        status_tip="选择应用主题、语言与无障碍选项",
+    ),
+    ActionDescriptor(
+        IntentId.SETTINGS_SERVICES,
+        "服务与 API 配置…",
+        ActionSection.SETTINGS,
+        status_tip="配置 ParaTranz 与 AI 服务连接",
+    ),
     ActionDescriptor(IntentId.SETTINGS_ACCOUNT, "ParaTranz 账户信息", ActionSection.SETTINGS),
     ActionDescriptor(IntentId.SETTINGS_MESSAGES, "ParaTranz 私信", ActionSection.SETTINGS),
     ActionDescriptor(IntentId.HELP_CONTEXT, "功能与术语帮助", ActionSection.HELP),

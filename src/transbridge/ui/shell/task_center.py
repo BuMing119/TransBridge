@@ -17,6 +17,8 @@ from PyQt6.QtWidgets import (
 
 from transbridge.application.contracts import JobRef
 from transbridge.application.tasks import OwnerRef, TaskRuntime
+from transbridge.ui.foundation.accessibility import configure_accessible_widget, update_accessible_state
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState
 from transbridge.ui.presentation.task_projection import TaskProjectionBinding
 
 
@@ -27,7 +29,7 @@ class TaskCenterPanel(QWidget):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setAccessibleName("任务活动中心")
+        configure_accessible_widget(self, name="任务活动中心", description="查看任务状态和可用控制操作")
         self._states = {}
         self._initial_focus_set = False
         root = QVBoxLayout(self)
@@ -39,6 +41,8 @@ class TaskCenterPanel(QWidget):
         self._history.setAccessibleName("任务历史")
         self._recovery = QListWidget()
         self._recovery.setAccessibleName("可恢复任务")
+        for task_list in (self._current, self._history, self._recovery):
+            ComponentStyle.apply_static(task_list, ComponentKind.TABLE)
         self._tabs.addTab(self._current, "当前")
         self._tabs.addTab(self._history, "历史")
         self._tabs.addTab(self._recovery, "恢复")
@@ -47,6 +51,8 @@ class TaskCenterPanel(QWidget):
         self._reason.setWordWrap(True)
         self._reason.setAccessibleName("任务操作与恢复说明")
         self._reason.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        ComponentStyle.apply_static(self._reason, ComponentKind.NOTIFICATION)
+        ComponentStyle.apply_state(self._reason, SemanticState.INFO)
         root.addWidget(self._reason)
         actions = QHBoxLayout()
         self._pause = QPushButton("暂停")
@@ -56,8 +62,10 @@ class TaskCenterPanel(QWidget):
         self._resume.setAccessibleName("继续所选任务")
         self._cancel.setAccessibleName("停止所选任务")
         for button in (self._pause, self._resume, self._cancel):
+            ComponentStyle.apply_static(button, ComponentKind.BUTTON)
             button.setEnabled(False)
             actions.addWidget(button)
+        ComponentStyle.apply_state(self._cancel, SemanticState.WARNING)
         root.addLayout(actions)
         self._current.currentItemChanged.connect(lambda *_: self._update_actions())
         self._pause.clicked.connect(lambda: self._emit_selected(self.pause_requested))
@@ -99,6 +107,9 @@ class TaskCenterPanel(QWidget):
 
     def show_error(self, message: str) -> None:
         self._reason.setText(message)
+        update_accessible_state(self._reason, message)
+        self._reason.setProperty("tbStatusId", "error")
+        ComponentStyle.apply_state(self._reason, SemanticState.ERROR)
 
     def _update_actions(self) -> None:
         item = self._current.currentItem()
@@ -117,6 +128,9 @@ class TaskCenterPanel(QWidget):
             recovery = "停止只请求取消；已完成结果会保留，是否可恢复取决于任务声明的能力。"
             explanation = f"当前对象：{title}（Run ID {state.run_id}）。{capability}{recovery}"
             self._reason.setText(explanation)
+            update_accessible_state(self._reason, explanation)
+            self._reason.setProperty("tbStatusId", state.state.value)
+            ComponentStyle.apply_state(self._reason, SemanticState.INFO)
             self._cancel.setToolTip(f"请求停止“{title}”。{recovery}")
             self._cancel.setAccessibleDescription(f"当前对象：{title}。{recovery}")
             self._pause.setAccessibleDescription(f"暂停当前对象：{title}")

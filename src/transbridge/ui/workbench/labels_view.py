@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -16,6 +16,11 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QVBoxLayout,
 )
+
+from transbridge.ui.foundation.adapters import ThemeView
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState
+
+from ._theme_support import readable_user_color
 
 PRESET_COLORS = (
     "#2196F3",
@@ -32,15 +37,18 @@ PRESET_COLORS = (
 class LabelManagerDialog(QDialog):
     """Edit a detached label-library value; persistence remains with the caller."""
 
-    def __init__(self, label_library: dict, parent=None):
+    def __init__(self, label_library: dict, parent=None, *, theme_view: ThemeView | None = None):
         super().__init__(parent)
         self._labels = {label_id: dict(info) for label_id, info in label_library.items()}
         self._selected_id: str | None = None
         self._selected_color = PRESET_COLORS[0]
+        self._color_buttons: dict[str, QPushButton] = {}
         self.setWindowTitle("管理标签")
         self.resize(420, 320)
         self._init_ui()
         self._refresh_list()
+        if theme_view is not None:
+            theme_view.subscribe(self, self._apply_theme)
 
     def _init_ui(self) -> None:
         layout = QHBoxLayout(self)
@@ -61,10 +69,11 @@ class LabelManagerDialog(QDialog):
         for color in PRESET_COLORS:
             button = QPushButton()
             button.setFixedSize(24, 24)
-            button.setStyleSheet(
-                f"background: {color}; border-radius: 12px; border: 2px solid "
-                f"{'#333' if color == self._selected_color else 'transparent'};"
-            )
+            button.setCheckable(True)
+            button.setAccessibleName(f"标签颜色 {color}")
+            ComponentStyle.apply_static(button, ComponentKind.BUTTON)
+            self._color_buttons[color] = button
+            self._apply_color_button(button, color)
             button.clicked.connect(lambda checked, value=color: self._on_color_pick(value))
             color_row.addWidget(button)
         right.addLayout(color_row)
@@ -96,7 +105,7 @@ class LabelManagerDialog(QDialog):
         for label_id, info in self._labels.items():
             item = QListWidgetItem(f"● {info['name']}")
             item.setData(Qt.ItemDataRole.UserRole, label_id)
-            item.setForeground(QColor(info["color"]))
+            item.setForeground(readable_user_color(info.get("color"), self._list.palette()))
             self._list.addItem(item)
 
     def _on_select(self, row: int) -> None:
@@ -111,9 +120,11 @@ class LabelManagerDialog(QDialog):
         self._name_edit.setText(info["name"])
         self._selected_color = info["color"]
         self._delete_button.setEnabled(True)
+        self._refresh_color_buttons()
 
     def _on_color_pick(self, color: str) -> None:
         self._selected_color = color
+        self._refresh_color_buttons()
         if self._selected_id:
             self._labels[self._selected_id]["color"] = color
             self._refresh_list()
@@ -137,3 +148,31 @@ class LabelManagerDialog(QDialog):
 
     def get_label_library(self) -> dict:
         return self._labels
+
+    def _apply_color_button(self, button: QPushButton, color: str) -> None:
+        palette = button.palette()
+        candidate = QColor(color)
+        if candidate.isValid():
+            palette.setColor(QPalette.ColorRole.Button, candidate)
+        palette.setColor(
+            QPalette.ColorRole.ButtonText,
+            readable_user_color(
+                color,
+                palette,
+                background_role=QPalette.ColorRole.Button,
+                foreground_role=QPalette.ColorRole.ButtonText,
+            ),
+        )
+        button.setPalette(palette)
+        selected = color == self._selected_color
+        button.setChecked(selected)
+        button.setAccessibleDescription("已选择" if selected else "未选择")
+        ComponentStyle.apply_state(button, SemanticState.CHECKED if selected else SemanticState.DEFAULT)
+
+    def _refresh_color_buttons(self) -> None:
+        for color, button in self._color_buttons.items():
+            self._apply_color_button(button, color)
+
+    def _apply_theme(self, _snapshot) -> None:
+        self._refresh_list()
+        self._refresh_color_buttons()

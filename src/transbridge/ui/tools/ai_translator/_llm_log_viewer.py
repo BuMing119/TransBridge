@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import os
 
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QTextEdit, QLabel, QCheckBox, QTabWidget,
-)
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import (
+    QCheckBox,
+    QHBoxLayout,
+    QPushButton,
+    QTabWidget,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
+
+from transbridge.ui.foundation.components import ElidedLabel
 
 
 class _LLMLogViewer(QWidget):
@@ -36,9 +43,12 @@ class _LLMLogViewer(QWidget):
 
         # 工具栏
         toolbar = QHBoxLayout()
-        path_lbl = QLabel(self._log_dir)
-        path_lbl.setStyleSheet("font-size: 10px; color: #888;")
+        path_lbl = ElidedLabel(self._log_dir)
+        path_lbl.setAccessibleName("LLM 日志目录")
+        path_lbl.setAccessibleDescription(self._log_dir)
+        path_lbl.setToolTip(self._log_dir)
         path_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._path_label = path_lbl
         toolbar.addWidget(path_lbl, 1)
 
         self._auto_cb = QCheckBox("自动刷新")

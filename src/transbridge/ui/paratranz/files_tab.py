@@ -4,16 +4,29 @@ FilesTab: 文件管理标签页，列表 + 文件详情 + 上传/更新/下载�
 
 from pathlib import Path
 
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QGroupBox,
-    QTableWidget, QTableWidgetItem, QHeaderView,
-    QPushButton, QLabel, QProgressBar, QFileDialog, QMessageBox,
-    QDialog, QFormLayout, QLineEdit, QCheckBox,
-)
 from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (
+    QFileDialog,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QSizePolicy,
+    QSplitter,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 
 from transbridge.paratranz.api.paratranz_files_api import ParatranzFilesAPI
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, ElidedLabel, SemanticState
+
 from ..workers import ApiWorker
+from ._layout_stability import configure_stable_table_columns
 
 
 def _fmt_pct(translated, total):
@@ -23,7 +36,6 @@ def _fmt_pct(translated, total):
 
 
 class FilesTab(QWidget):
-
     def __init__(self, ctx, parent=None):
         super().__init__(parent)
         self._ctx = ctx
@@ -50,26 +62,40 @@ class FilesTab(QWidget):
         self._download_btn = QPushButton("下载翻译")
         self._download_btn.clicked.connect(self._download_translation)
         self._delete_btn = QPushButton("删除文件")
-        self._delete_btn.setStyleSheet("color: red;")
+        self._delete_btn.setAccessibleName("删除所选 ParaTranz 文件")
+        ComponentStyle.apply_static(self._delete_btn, ComponentKind.BUTTON)
+        ComponentStyle.apply_state(self._delete_btn, SemanticState.ERROR)
         self._delete_btn.clicked.connect(self._delete_file)
 
-        for btn in (self._refresh_btn, self._upload_btn, self._reupload_btn,
-                    self._import_btn, self._download_btn, self._delete_btn):
+        for btn in (
+            self._refresh_btn,
+            self._upload_btn,
+            self._reupload_btn,
+            self._import_btn,
+            self._download_btn,
+            self._delete_btn,
+        ):
             toolbar.addWidget(btn)
         toolbar.addStretch()
         layout.addLayout(toolbar)
 
         # 进度行
-        progress_row = QHBoxLayout()
+        self._progress_slot = QWidget()
+        progress_row = QHBoxLayout(self._progress_slot)
+        progress_row.setContentsMargins(0, 0, 0, 0)
         self._progress_bar = QProgressBar()
         self._progress_bar.setRange(0, 0)  # 不确定模式
         self._progress_bar.setFixedHeight(14)
         self._progress_bar.hide()
-        self._progress_lbl = QLabel("")
+        self._progress_lbl = ElidedLabel("")
+        self._progress_lbl.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self._progress_lbl.hide()
-        progress_row.addWidget(self._progress_bar)
-        progress_row.addWidget(self._progress_lbl)
-        layout.addLayout(progress_row)
+        progress_row.addWidget(self._progress_bar, stretch=1)
+        progress_row.addWidget(self._progress_lbl, stretch=2)
+        self._progress_slot.setFixedHeight(
+            max(self._progress_bar.sizeHint().height(), self._progress_lbl.sizeHint().height())
+        )
+        layout.addWidget(self._progress_slot)
 
         # 主分割区
         splitter = QSplitter(Qt.Orientation.Vertical)
@@ -77,12 +103,21 @@ class FilesTab(QWidget):
 
         # 上半：文件列表
         self._table = QTableWidget(0, 8)
-        self._table.setHorizontalHeaderLabels(
-            ["文件名", "总词条", "已翻译", "有疑问", "已检查", "已审核", "进度", "最后修改"]
+        self._table.setHorizontalHeaderLabels([
+            "文件名",
+            "总词条",
+            "已翻译",
+            "有疑问",
+            "已检查",
+            "已审核",
+            "进度",
+            "最后修改",
+        ])
+        configure_stable_table_columns(
+            self._table,
+            fixed_widths={1: 90, 2: 90, 3: 90, 4: 90, 5: 90, 6: 80, 7: 110},
+            stretch_columns=(0,),
         )
-        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for i in range(1, 8):
-            self._table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
@@ -196,7 +231,8 @@ class FilesTab(QWidget):
             self._det_updated.setText(str(f.get("updatedAt", "—"))[:19])
 
     def _show_progress(self, msg: str):
-        self._progress_lbl.setText(msg)
+        self._progress_lbl.set_full_text(msg)
+        self._progress_lbl.setToolTip(msg)
         self._progress_bar.show()
         self._progress_lbl.show()
         self._set_op_buttons_enabled(False)
@@ -204,17 +240,16 @@ class FilesTab(QWidget):
     def _hide_progress(self):
         self._progress_bar.hide()
         self._progress_lbl.hide()
-        self._progress_lbl.setText("")
+        self._progress_lbl.set_full_text("")
+        self._progress_lbl.setToolTip("")
         f = self._selected_file()
         self._update_buttons(f is not None)
 
     def _set_op_buttons_enabled(self, enabled: bool):
-        for btn in (self._upload_btn, self._reupload_btn,
-                    self._import_btn, self._download_btn, self._delete_btn):
+        for btn in (self._upload_btn, self._reupload_btn, self._import_btn, self._download_btn, self._delete_btn):
             btn.setEnabled(enabled)
 
-    def _run_file_op(self, fn, *, progress_msg: str, success_msg: str, error_title: str,
-                     on_success=None):
+    def _run_file_op(self, fn, *, progress_msg: str, success_msg: str, error_title: str, on_success=None):
         self._show_progress(progress_msg)
 
         def _on_done(result):
@@ -244,9 +279,13 @@ class FilesTab(QWidget):
             api = ParatranzFilesAPI(token=config.token, config=config)
             return api.upload_file(pid, path)
 
-        self._run_file_op(_upload, progress_msg="正在上传文件…",
-                          success_msg="文件已上传", error_title="上传失败",
-                          on_success=lambda _: self.load_files())
+        self._run_file_op(
+            _upload,
+            progress_msg="正在上传文件…",
+            success_msg="文件已上传",
+            error_title="上传失败",
+            on_success=lambda _: self.load_files(),
+        )
 
     def _reupload(self):
         f = self._selected_file()
@@ -263,9 +302,13 @@ class FilesTab(QWidget):
             api = ParatranzFilesAPI(token=config.token, config=config)
             return api.reupload_file(pid, fid, path)
 
-        self._run_file_op(_reupload, progress_msg="正在更新原文…",
-                          success_msg="原文已更新", error_title="更新失败",
-                          on_success=lambda _: self.load_files())
+        self._run_file_op(
+            _reupload,
+            progress_msg="正在更新原文…",
+            success_msg="原文已更新",
+            error_title="更新失败",
+            on_success=lambda _: self.load_files(),
+        )
 
     def _import_translation(self):
         f = self._selected_file()
@@ -282,17 +325,20 @@ class FilesTab(QWidget):
             api = ParatranzFilesAPI(token=config.token, config=config)
             return api.update_file_translation(pid, fid, path)
 
-        self._run_file_op(_import, progress_msg="正在导入译文…",
-                          success_msg="译文已导入", error_title="导入失败",
-                          on_success=lambda _: self.load_files())
+        self._run_file_op(
+            _import,
+            progress_msg="正在导入译文…",
+            success_msg="译文已导入",
+            error_title="导入失败",
+            on_success=lambda _: self.load_files(),
+        )
 
     def _download_translation(self):
         f = self._selected_file()
         if not f:
             return
         save_path, _ = QFileDialog.getSaveFileName(
-            self, "保存译文文件", f.get("name", "translation") + ".json",
-            "JSON 文件 (*.json)"
+            self, "保存译文文件", f.get("name", "translation") + ".json", "JSON 文件 (*.json)"
         )
         if not save_path:
             return
@@ -302,6 +348,7 @@ class FilesTab(QWidget):
 
         def _download():
             import json
+
             api = ParatranzFilesAPI(token=config.token, config=config)
             data = api.get_file_translation(pid, fid)
             Path(save_path).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -328,7 +375,8 @@ class FilesTab(QWidget):
         if not f:
             return
         reply = QMessageBox.question(
-            self, "确认删除",
+            self,
+            "确认删除",
             f"确定要删除文件「{f.get('name', '')}」吗？",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )

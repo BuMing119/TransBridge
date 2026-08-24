@@ -228,14 +228,18 @@ class TestStatusMappings:
             assert status in _STATUS_LABELS
 
     @pytest.mark.parametrize(
-        "status,expected",
+        "status,expected_label",
         [
-            ("running", "#4CAF50"),
-            ("completed", "#2196F3"),
-            ("failed", "#D32F2F"),
-            ("cancelled", "#9E9E9E"),
-            ("paused", "#FF9800"),
+            ("running", "运行中"),
+            ("completed", "已完成"),
+            ("failed", "失败"),
+            ("cancelled", "已取消"),
+            ("paused", "已暂停"),
         ],
     )
-    def test_status_colors(self, status, expected):
-        assert _STATUS_COLORS[status] == expected
+    def test_status_uses_domain_state_and_non_color_label(self, qapp, status, expected_label):
+        assert _STATUS_COLORS[status] == status
+        card = _TaskCard("state", _make_task("state", status))
+        assert card.property("tbDomainState") == f"task.{status}"
+        assert card._status_label.text() == expected_label
+        assert expected_label in card.accessibleName()

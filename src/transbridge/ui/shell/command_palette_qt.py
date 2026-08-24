@@ -16,6 +16,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from transbridge.ui.foundation.accessibility import configure_accessible_widget, update_accessible_state
+from transbridge.ui.foundation.components import (
+    ComponentKind,
+    ComponentStyle,
+    SemanticState,
+    configure_dialog,
+)
 from transbridge.ui.shell.command_palette import (
     CommandPaletteController,
     CommandSearchSnapshot,
@@ -30,21 +37,27 @@ class CommandPaletteDialog(QDialog):
     def __init__(self, controller: CommandPaletteController, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._controller = controller
+        configure_dialog(self)
         self.setWindowTitle("查找命令")
-        self.setAccessibleName("命令搜索窗口")
+        configure_accessible_widget(self, name="命令搜索窗口", description="搜索并打开一个可用命令")
         self.setModal(False)
 
         self._search = QLineEdit(self)
         self._search.setPlaceholderText("查找功能、最近工程或翻译内容")
         self._search.setAccessibleName("命令搜索")
+        ComponentStyle.apply_static(self._search, ComponentKind.INPUT)
         self._results = QListWidget(self)
         self._results.setAccessibleName("命令搜索结果")
+        ComponentStyle.apply_static(self._results, ComponentKind.TABLE)
         self._reason = QLabel(self)
         self._reason.setWordWrap(True)
         self._reason.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._reason.setAccessibleName("命令可用性说明")
+        ComponentStyle.apply_static(self._reason, ComponentKind.NOTIFICATION)
+        ComponentStyle.apply_state(self._reason, SemanticState.INFO)
         close_button = QPushButton("关闭", self)
         close_button.setAccessibleName("关闭命令搜索")
+        ComponentStyle.apply_static(close_button, ComponentKind.BUTTON)
 
         layout = QVBoxLayout(self)
         layout.addWidget(self._search)
@@ -87,12 +100,19 @@ class CommandPaletteDialog(QDialog):
             self._results.setCurrentRow(0)
 
     def _on_current_changed(self, current: QListWidgetItem | None, _previous: QListWidgetItem | None) -> None:
-        self._reason.setText(current.toolTip() if current is not None else "")
+        reason = current.toolTip() if current is not None else ""
+        self._reason.setText(reason)
+        update_accessible_state(self._reason, reason or "当前命令可用")
+        ComponentStyle.apply_state(self._reason, SemanticState.WARNING if reason else SemanticState.INFO)
 
     def _on_item_activated(self, item: QListWidgetItem) -> None:
         activation = self._controller.activate(str(item.data(Qt.ItemDataRole.UserRole)))
         if activation.request is None:
-            self._reason.setText(activation.blocked_reason or "当前不可用")
+            reason = activation.blocked_reason or "当前不可用"
+            self._reason.setText(reason)
+            update_accessible_state(self._reason, reason)
+            self._reason.setProperty("tbStatusId", "blocked")
+            ComponentStyle.apply_state(self._reason, SemanticState.WARNING)
             self._reason.setFocus(Qt.FocusReason.OtherFocusReason)
             return
         self.intent_requested.emit(activation.request)

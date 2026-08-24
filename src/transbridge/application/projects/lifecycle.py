@@ -29,6 +29,7 @@ from .models import (
     LifecycleActivation,
     LifecycleEvent,
     LifecycleLease,
+    LifecycleProjectUpdate,
     LifecycleSave,
     LifecycleSnapshot,
     PreparedTransition,
@@ -428,6 +429,104 @@ class ProjectLifecycleService:
                     context,
                 )
             return OperationResult.completed(self._active.summary(), run_id=context.run_id)
+
+    def commit_project_update(
+        self,
+        project,
+        expected_project_revision: int,
+        context: RequestContext,
+    ) -> OperationResult[dict[str, Any]]:
+        """Atomically replace only the active Project document.
+
+        Variant dirty state is intentionally preserved; changing remote metadata
+        must not implicitly save or discard translation edits.
+        """
+
+        with self._lock:
+            active = self._active
+            if active is None:
+                return _failed(
+                    "ACTIVE_PROJECT_REQUIRED",
+                    "An active Project is required.",
+                    ErrorCategory.PREREQUISITE,
+                    context,
+                )
+            if context.project_id is not None and context.project_id != active.project_ref.identity.value:
+                return _failed(
+                    "PROJECT_CONTEXT_MISMATCH",
+                    "The request context targets a different Project.",
+                    ErrorCategory.PERMISSION,
+                    context,
+                )
+            if expected_project_revision != active.project.envelope.revision:
+                return _failed(
+                    "PROJECT_UPDATE_STALE",
+                    "The active Project changed before the update was committed.",
+                    ErrorCategory.CONFLICT,
+                    context,
+                )
+            if project.envelope.identity != active.project.envelope.identity:
+                return _failed(
+                    "PROJECT_UPDATE_IDENTITY_MISMATCH",
+                    "The updated Project does not match the active Project.",
+                    ErrorCategory.CONFLICT,
+                    context,
+                )
+            if project.envelope.revision != expected_project_revision + 1:
+                return _failed(
+                    "PROJECT_UPDATE_REVISION_INVALID",
+                    "The updated Project must advance its revision exactly once.",
+                    ErrorCategory.CONFLICT,
+                    context,
+                )
+
+            update = LifecycleProjectUpdate(project, active.persisted_project_revision)
+            uow = None
+            try:
+                uow = self._unit_of_work.begin()
+                uow.stage_project_update(update)
+                uow.commit()
+            except Exception as exc:  # noqa: BLE001 - rollback is part of the application contract
+                _rollback(uow)
+                return _from_exception(exc, "PROJECT_UPDATE_COMMIT_FAILED", context)
+
+            old = active
+            self._active = replace(
+                active,
+                project=project,
+                persisted_project_revision=project.envelope.revision,
+            )
+            self._generation += 1
+            diagnostics: list[Diagnostic] = []
+            event = LifecycleEvent(
+                "active-project-updated",
+                self._generation,
+                old.summary(),
+                self._active.summary(),
+            )
+            if self._event_publisher is not None:
+                try:
+                    self._event_publisher(event)
+                except Exception:  # noqa: BLE001 - committed data remains authoritative
+                    diagnostics.append(
+                        Diagnostic(
+                            "PROJECTION_EVENT_FAILED",
+                            "The Project update committed, but a projection callback failed.",
+                            DiagnosticSeverity.WARNING,
+                        )
+                    )
+            from .remote_binding import project_paratranz_binding
+
+            binding = project_paratranz_binding(project)
+            return OperationResult.completed(
+                {
+                    "project_id": self._active.project_ref.identity.value,
+                    "project_revision": project.envelope.revision,
+                    "paratranz_binding": None if binding is None else binding.to_dict(),
+                },
+                diagnostics=tuple(diagnostics),
+                run_id=context.run_id,
+            )
 
     def save_snapshot(self, name: str, context: RequestContext) -> OperationResult[dict[str, Any]]:
         with self._lock:
