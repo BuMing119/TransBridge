@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 import logging
 import os
+from pathlib import Path
 import threading
 import traceback
-from datetime import datetime
-from pathlib import Path
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -21,15 +21,16 @@ class _TranslationWorker(QThread):
     result = pyqtSignal(object)
     error = pyqtSignal(str)
 
-    def __init__(self, translator, collection, target_entries, checkpoint=None):
+    def __init__(self, translator, collection, target_entries, checkpoint=None, *, esp_path: str):
         super().__init__()
         self._translator = translator
         self._collection = collection
         self._target_entries = target_entries
         self._checkpoint = checkpoint
+        self._esp_path = esp_path
         self._stop_event = threading.Event()
         self._pause_event = threading.Event()
-        self._pause_event.set()   # 初始为运行状态
+        self._pause_event.set()  # 初始为运行状态
         self._stream_log_dir: str | None = None
 
     @property
@@ -37,10 +38,15 @@ class _TranslationWorker(QThread):
         """LLM 流式响应日志目录，run() 启动后可用。"""
         return self._stream_log_dir
 
+    @property
+    def esp_stem(self) -> str:
+        return Path(self._esp_path).stem
+
     def _make_stream_log_dir(self) -> str:
         from transbridge.paratranz.config_manager import ParatranzConfig
+
         log_base = os.path.join(ParatranzConfig.get_data_dir(), "log")
-        esp_stem = Path(self._translator._cfg.esp_path).stem
+        esp_stem = self.esp_stem
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_dir = os.path.join(log_base, f"{esp_stem}_{timestamp}")
         os.makedirs(log_dir, exist_ok=True)
@@ -48,7 +54,7 @@ class _TranslationWorker(QThread):
 
     def stop(self):
         self._stop_event.set()
-        self._pause_event.set()   # 确保 wait() 不阻塞
+        self._pause_event.set()  # 确保 wait() 不阻塞
 
     def pause(self):
         self._pause_event.clear()

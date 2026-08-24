@@ -6,7 +6,6 @@ AppContext: 全局应用上下文，持有配置、当前用户、当前项目�
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
 import threading
 from typing import TYPE_CHECKING
 
@@ -14,6 +13,9 @@ from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal, pyqtSlot
 
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.paratranz.config_manager import ParatranzConfig
+from transbridge.ui.projection_types import CollectionSlot
+
+__all__ = ["AppContext", "CollectionSlot"]
 
 if TYPE_CHECKING:
     from transbridge.application.projections import ProjectionSnapshot, ProjectionStore, ProjectionSubscription
@@ -22,39 +24,21 @@ if TYPE_CHECKING:
     from transbridge.persistence.workspace import WorkspaceState
 
 
-@dataclass
-class CollectionSlot:
-    """单个翻译集合槽位，绑定一次解析的所有上下文。"""
-    label: str                                      # ComboBox 显示名（文件 stem）
-    collection: TranslationEntryCollection
-    esp_path: str | None = None
-    eet_path: str | None = None
-    xt_path: str | None = None
-    strings_path: str | None = None                 # Strings 目录路径（用于导入翻译）
-    strings_lang: str = "chinese"                   # strings 文件语言标签
-    sst_path: str | None = None                     # SST 二进制文件路径（用于迁移译文）
-    migrate_count: int = 0
-    plugin: object = None                           # 解析出的 Plugin 实例
-    strings_lookup: object = None                  # PluginStringsLookup 实例（本地化插件）
-    source_snapshot: object = None                 # V2 写回所需的不可变来源快照
-    format_id: object = None                       # V2 FormatId；兼容期保持可选
-
-
 class AppContext(QObject):
-    config_changed = pyqtSignal(object)       # ParatranzConfig
-    user_changed = pyqtSignal(object)         # dict | None
-    project_selected = pyqtSignal(object)     # dict | None
-    collection_changed = pyqtSignal(object)   # TranslationEntryCollection | None
-    collection_list_changed = pyqtSignal()    # 集合列表有增删
-    navigate_to = pyqtSignal(int)             # 请求切换主 tab（0=工作台, 1=ParaTranz 管理）
-    project_list_changed = pyqtSignal()       # 请求刷新项目列表（ParaTranz）
-    workspace_changed = pyqtSignal()          # 持久化项目列表变动
-    project_changed = pyqtSignal()            # 翻译项目/Variant 目录投影变动
-    variant_changed = pyqtSignal(str)         # 旧模式为名称，V2 模式为稳定 Variant ID
-    dirty_changed = pyqtSignal()              # 版本数据被修改（触发自动保存防抖）
+    config_changed = pyqtSignal(object)  # ParatranzConfig
+    user_changed = pyqtSignal(object)  # dict | None
+    project_selected = pyqtSignal(object)  # dict | None
+    collection_changed = pyqtSignal(object)  # TranslationEntryCollection | None
+    collection_list_changed = pyqtSignal()  # 集合列表有增删
+    navigate_to = pyqtSignal(int)  # 请求切换主 tab（0=工作台, 1=ParaTranz 管理）
+    project_list_changed = pyqtSignal()  # 请求刷新项目列表（ParaTranz）
+    workspace_changed = pyqtSignal()  # 持久化项目列表变动
+    project_changed = pyqtSignal()  # 翻译项目/Variant 目录投影变动
+    variant_changed = pyqtSignal(str)  # 旧模式为名称，V2 模式为稳定 Variant ID
+    dirty_changed = pyqtSignal()  # 版本数据被修改（触发自动保存防抖）
     # Story 03: ViewModel 扩展
-    filter_changed = pyqtSignal(dict)         # 筛选状态变更
-    label_data_changed = pyqtSignal()         # 标签数据变更
+    filter_changed = pyqtSignal(dict)  # 筛选状态变更
+    label_data_changed = pyqtSignal()  # 标签数据变更
 
     def __init__(
         self,
@@ -70,7 +54,7 @@ class AppContext(QObject):
         self._current_project: dict | None = None
 
         # 多集合注册表
-        self._slots: dict[str, CollectionSlot] = {}   # key = esp/eet 全路径
+        self._slots: dict[str, CollectionSlot] = {}  # key = esp/eet 全路径
         self._active_key: str | None = None
 
         self.mine_project_ids: set = set()  # 「我参与的」视图最近一次加载的项目 ID 集合
@@ -83,13 +67,16 @@ class AppContext(QObject):
 
         # Story 03: ViewModel 扩展
         self._filter_state: dict = dict(self.DEFAULT_FILTER_STATE)
-        self._label_library: dict[str, dict] = {}        # B1: 标签库 {label_id: {name, color}}
-        self._entry_labels: dict[str, set[str]] = {}     # B1: 条目标签 {entry_id: {label_id, ...}}
-        self._translation_scope: dict = {                # E8: 翻译作用域
-            "stages": [], "labels": [], "categories": [], "action": "include",
+        self._label_library: dict[str, dict] = {}  # B1: 标签库 {label_id: {name, color}}
+        self._entry_labels: dict[str, set[str]] = {}  # B1: 条目标签 {entry_id: {label_id, ...}}
+        self._translation_scope: dict = {  # E8: 翻译作用域
+            "stages": [],
+            "labels": [],
+            "categories": [],
+            "action": "include",
         }
-        self._selected_ids: set[str] = set()            # H2: Agent 选择集合（独立于标签系统）
-        self.paratranz_project_id: int | None = None     # Story 15: 当前选中的 ParaTranz 项目 ID（会话内有效）
+        self._selected_ids: set[str] = set()  # H2: Agent 选择集合（独立于标签系统）
+        self.paratranz_project_id: int | None = None  # Story 15: 当前选中的 ParaTranz 项目 ID（会话内有效）
         self._project_projection = project_projection
         self._project_commands = project_commands
         self._runtime_context = runtime_context
@@ -103,9 +90,7 @@ class AppContext(QObject):
         self._active_variant_id: str | None = None
 
         if self._project_projection is not None:
-            self._projection_subscription = self._project_projection.subscribe(
-                self._on_project_projection
-            )
+            self._projection_subscription = self._project_projection.subscribe(self._on_project_projection)
 
         self.__init_safe_mutate()
 
@@ -553,10 +538,7 @@ class AppContext(QObject):
         if old_label_library != self._label_library or old_entry_labels != self._entry_labels:
             self.label_data_changed.emit()
         dirty_content_changed = (
-            snapshot is not None
-            and old_revision is not None
-            and snapshot.revision != old_revision
-            and snapshot.dirty
+            snapshot is not None and old_revision is not None and snapshot.revision != old_revision and snapshot.dirty
         )
         if old_dirty != self._projection_dirty or dirty_content_changed:
             self.dirty_changed.emit()
@@ -587,9 +569,8 @@ class AppContext(QObject):
             callback()
         except Exception:
             import logging
-            logging.getLogger(__name__).exception(
-                "[AppContext] safe_mutate 回调执行异常"
-            )
+
+            logging.getLogger(__name__).exception("[AppContext] safe_mutate 回调执行异常")
 
     def safe_mutate(self, callback) -> None:
         """将回调调度到主线程执行，确保对共享状态（TranslationEntry、entry_labels 等）

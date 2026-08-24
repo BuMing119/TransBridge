@@ -7,13 +7,13 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+from datetime import datetime
 import logging
 import os
+from pathlib import Path
 import threading
 import traceback
-from datetime import datetime
-from pathlib import Path
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -21,23 +21,25 @@ from PyQt6.QtCore import QThread, pyqtSignal
 _logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from transbridge.ui.context import CollectionSlot
-    from transbridge.paratranz.config_manager import LLMConfig
     from transbridge.ai_translator.translator import TranslationResult
+    from transbridge.paratranz.config_manager import LLMConfig
+    from transbridge.ui.context import CollectionSlot
 
 
 @dataclass
 class PluginTranslationResult:
     """单个插件的翻译结果。"""
+
     plugin_name: str
     success: bool
-    result: "TranslationResult | None" = None
+    result: TranslationResult | None = None
     error: str | None = None
 
 
 @dataclass
 class BatchTranslationSummary:
     """批量翻译总结。"""
+
     total_plugins: int
     success_plugins: int
     failed_plugins: int
@@ -64,11 +66,12 @@ class _BatchTranslationWorker(QThread):
 
     def __init__(
         self,
-        slots: list["CollectionSlot"],
-        llm_config: "LLMConfig",
+        slots: list[CollectionSlot],
+        llm_config: LLMConfig,
         overwrite: bool,
         paratranz_client=None,
         project_id: int | None = None,
+        run_id: str | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -77,12 +80,13 @@ class _BatchTranslationWorker(QThread):
         self._overwrite = overwrite
         self._paratranz_client = paratranz_client
         self._project_id = project_id
+        self._run_id = run_id
 
         self._stop_event = threading.Event()
         self._pause_event = threading.Event()
         self._pause_event.set()  # 初始为运行状态
 
-        self._current_slot: "CollectionSlot | None" = None
+        self._current_slot: CollectionSlot | None = None
         self._stream_log_dir: str | None = None
 
         # 共享的 in-flight 术语缓存：插件间实时共享新发现的术语
@@ -114,6 +118,7 @@ class _BatchTranslationWorker(QThread):
     def _make_stream_log_dir(self) -> str:
         """创建日志目录。"""
         from transbridge.paratranz.config_manager import ParatranzConfig
+
         log_base = os.path.join(ParatranzConfig.get_data_dir(), "log")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_dir = os.path.join(log_base, f"batch_{timestamp}")
@@ -179,12 +184,15 @@ class _BatchTranslationWorker(QThread):
 
     def _translate_single_slot(
         self,
-        slot: "CollectionSlot",
+        slot: CollectionSlot,
         plugin_name: str,
-    ) -> "TranslationResult | None":
+    ) -> TranslationResult | None:
         """翻译单个插件。"""
         from transbridge.ai_translator.translator import (
-            AutoTranslator, TranslatorConfig, ProgressCheckpoint, TranslationResult
+            AutoTranslator,
+            ProgressCheckpoint,
+            TranslationResult,
+            TranslatorConfig,
         )
 
         if not slot.collection or not slot.esp_path:
@@ -204,6 +212,7 @@ class _BatchTranslationWorker(QThread):
             self._project_id,
             shared_in_flight_terms=self._shared_in_flight_terms,
             shared_in_flight_lock=self._shared_in_flight_lock,
+            run_id_factory=(None if self._run_id is None else lambda: f"{self._run_id}:{plugin_name}"),
         )
 
         # 检查断点
@@ -214,10 +223,7 @@ class _BatchTranslationWorker(QThread):
             target_ids = None  # 全部翻译
         else:
             # 仅翻译未翻译的条目
-            target_ids = [
-                e.key for e in slot.collection
-                if not e.translation or e.stage == 0
-            ]
+            target_ids = [e.key for e in slot.collection if not e.translation or e.stage == 0]
             if not target_ids:
                 # 无需翻译
                 return TranslationResult(success_count=0, skipped_count=len(slot.collection))
@@ -255,6 +261,7 @@ class _BatchTranslationWorker(QThread):
             for fh in _file_handles.values():
                 fh.close()
             import traceback
+
             err_msg = f"❌ 插件 {plugin_name} 翻译异常: {e}"
             self.log.emit(-1, err_msg)
             self.log.emit(-1, traceback.format_exc())

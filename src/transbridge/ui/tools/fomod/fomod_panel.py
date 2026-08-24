@@ -4,19 +4,36 @@
 翻译机制（来源优先级、键对齐、词典兜底）黑盒，不暴露。
 用法：panel = FomodPanel(ctx, parent); panel.exec()
 """
+
 from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
 
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QFileDialog, QTextEdit, QProgressBar, QMessageBox, QComboBox, QGroupBox, QCheckBox,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QFileDialog,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QTextEdit,
+    QVBoxLayout,
 )
 
-from transbridge.fileops import PRESETS, DEFAULT_PRESET
+from transbridge.fileops import DEFAULT_PRESET, PRESETS
 
 
 class _PipelineWorker(QThread):
     """后台执行 FomodPipeline.run。"""
+
     done = pyqtSignal(object)
     failed = pyqtSignal(str)
 
@@ -32,11 +49,13 @@ class _PipelineWorker(QThread):
 
     def run(self):
         try:
-            from transbridge.fomod import FomodPipeline
             from transbridge.config.llm import LLMConfig
+            from transbridge.fomod import FomodPipeline
+
             pipeline = FomodPipeline(rules=self._rules, llm_config=LLMConfig.load_from_file())
             result = pipeline.run(
-                self._new, self._out,
+                self._new,
+                self._out,
                 old_archive=self._old or None,
                 fmt=self._fmt,
                 target_lang=self._lang,
@@ -48,10 +67,12 @@ class _PipelineWorker(QThread):
 
 
 class FomodPanel(QDialog):
-    def __init__(self, ctx=None, parent=None):
+    def __init__(self, ctx=None, parent=None, *, operation_plan_facade=None):
         super().__init__(parent)
         self._ctx = ctx
         self._worker = None
+        self._operation_plan_facade = operation_plan_facade
+        self._suggested_output = ""
         self.setWindowTitle("FOMOD 安装包翻译")
         self.resize(600, 560)
         self._build_ui()
@@ -114,6 +135,7 @@ class FomodPanel(QDialog):
         self._fmt_combo = QComboBox()
         self._fmt_combo.addItem("zip", "zip")
         self._fmt_combo.addItem("7z", "7z")
+        self._fmt_combo.currentIndexChanged.connect(self._refresh_suggested_output)
         opts_row.addWidget(self._fmt_combo)
         opts_row.addSpacing(16)
         opts_row.addWidget(QLabel("目标语言:"))
@@ -167,10 +189,17 @@ class FomodPanel(QDialog):
         close_btn.clicked.connect(self.close)
         layout.addWidget(close_btn)
 
+    def prefill_new_archive(self, path: str) -> None:
+        """Populate a reviewed safe-drop path without starting the pipeline."""
+
+        self._new_edit.setText(path)
+        self._refresh_suggested_output()
+
     def _pick_new(self):
         p, _ = QFileDialog.getOpenFileName(self, "选择新版 FOMOD", "", "归档 (*.7z *.zip *.rar)")
         if p:
             self._new_edit.setText(p)
+            self._refresh_suggested_output()
 
     def _pick_old(self):
         p, _ = QFileDialog.getOpenFileName(self, "选择旧版中文成品", "", "归档 (*.7z *.zip *.rar)")
@@ -180,11 +209,27 @@ class FomodPanel(QDialog):
     def _pick_out(self):
         p, _ = QFileDialog.getSaveFileName(self, "选择输出", "", "归档 (*.zip *.7z)")
         if p:
+            self._suggested_output = ""
             self._out_edit.setText(p)
+
+    def _refresh_suggested_output(self) -> None:
+        """Suggest a safe sibling artifact so the common path needs no second picker."""
+
+        current = self._out_edit.text().strip()
+        if current and current != self._suggested_output:
+            return
+        source_text = self._new_edit.text().strip()
+        if not source_text:
+            return
+        source = Path(source_text)
+        output_format = str(self._fmt_combo.currentData() or "zip")
+        self._suggested_output = str(source.with_name(f"{source.stem}-translated.{output_format}"))
+        self._out_edit.setText(self._suggested_output)
 
     def _collect_rules(self):
         """从 GUI 收集 FilterRules：预设套 + 自定义扩展名。"""
         from transbridge.fileops import FilterRules
+
         rules = FilterRules.from_preset(self._preset_combo.currentText())
         # 自定义保留
         keep_txt = self._keep_ext_edit.text().strip()
@@ -223,6 +268,37 @@ class FomodPanel(QDialog):
         lang = self._lang_combo.currentData()
         ai = self._ai_check.isChecked()
         rules = self._collect_rules()
+        facade = self._operation_plan_facade or getattr(self._ctx, "operation_plan_facade", None)
+        if facade is not None and hasattr(facade, "begin_fomod"):
+            from transbridge.application.fomod import FomodTaskDraft
+
+            config_payload = {
+                "target_locale": lang,
+                "ai_enabled": ai,
+                "preset": self._preset_combo.currentText(),
+                "keep": sorted(rules.keep_exts),
+                "strip": sorted(rules.strip_exts),
+            }
+            config_hash = hashlib.sha256(
+                json.dumps(config_payload, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            self._progress.setVisible(False)
+            self._run_btn.setEnabled(True)
+            facade.begin_fomod(
+                self._ctx,
+                draft=FomodTaskDraft(
+                    new,
+                    out,
+                    lang,
+                    config_hash,
+                    output_format=fmt,
+                    old_archive=old,
+                    ai_enabled=ai,
+                ),
+                rules=rules,
+                parent=self,
+            )
+            return
         self._worker = _PipelineWorker(new, old, out, fmt, lang, ai, rules)
         self._worker.done.connect(self._on_done)
         self._worker.failed.connect(self._on_failed)

@@ -3,81 +3,35 @@ StringDetailDialog：词条详情/编辑对话框。
 左侧可折叠筛选 + 可分页词条导航列表，右侧编辑区。
 """
 
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QDialog, QSplitter, QFrame,
-    QListWidget, QListWidgetItem, QStyledItemDelegate, QApplication, QStyle,
-    QPushButton, QLabel, QComboBox, QTextEdit,
-    QFormLayout, QCheckBox, QRadioButton, QButtonGroup, QMessageBox,
-    QProgressDialog,
+    QButtonGroup,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QFormLayout,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QMessageBox,
+    QPushButton,
+    QRadioButton,
+    QSplitter,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt6.QtCore import Qt, QSize, QRect, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QCloseEvent
 
 from transbridge.paratranz.api.paratranz_strings_api import ParatranzStringsAPI
+
 from ..workers import ApiWorker
-from ._strings_common import _STAGE_LABELS, _KEY_ROLE, _extract_list
+from ._strings_common import _KEY_ROLE, _STAGE_LABELS, _extract_list
+from .string_dialog_lifecycle import StringDialogLifecycle
 from .string_dialogs import _SyncTranslationDialog
-
-
-class _NavItemDelegate(QStyledItemDelegate):
-    """导航列表项：上行原文（正常大小），下行键名（缩小 + 淡化）。
-    根据高亮背景亮度自动切换文字颜色，确保选中状态下可读。"""
-
-    def paint(self, painter, option, index):
-        opt = option.__class__(option)
-        self.initStyleOption(opt, index)
-        opt.text = ""
-        QApplication.style().drawControl(
-            QStyle.ControlElement.CE_ItemViewItem, opt, painter
-        )
-
-        painter.save()
-        selected = bool(option.state & QStyle.StateFlag.State_Selected)
-        r = option.rect.adjusted(6, 4, -6, -4)
-        orig = index.data(Qt.ItemDataRole.DisplayRole) or ""
-        key = index.data(_KEY_ROLE) or ""
-
-        split = r.height() * 6 // 10
-        orig_rect = QRect(r.x(), r.y(), r.width(), split)
-        key_rect = QRect(r.x(), r.y() + split, r.width(), r.height() - split)
-
-        palette = option.palette
-        if selected:
-            painter.fillRect(option.rect, palette.text())
-            text_color = palette.base().color()
-            key_color  = QColor(palette.base().color())
-            key_color.setAlpha(180)
-        else:
-            text_color = palette.text().color()
-            key_color  = QColor("#888888")
-
-        # 原文（正常）
-        painter.setPen(text_color)
-        painter.setFont(option.font)
-        painter.drawText(
-            orig_rect,
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-            painter.fontMetrics().elidedText(
-                orig, Qt.TextElideMode.ElideRight, orig_rect.width()
-            ),
-        )
-
-        # 键名（缩小 + 淡化）
-        key_font = QFont(option.font)
-        key_font.setPointSize(max(option.font.pointSize() - 1, 8))
-        painter.setFont(key_font)
-        painter.setPen(key_color)
-        painter.drawText(
-            key_rect,
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-            painter.fontMetrics().elidedText(
-                key, Qt.TextElideMode.ElideRight, key_rect.width()
-            ),
-        )
-        painter.restore()
-
-    def sizeHint(self, option, index):
-        return QSize(option.rect.width() if option.rect.width() > 0 else 200, 52)
+from .string_navigation import NavItemDelegate, filtered_indices, sync_candidates
 
 
 class StringDetailDialog(QDialog):
@@ -85,9 +39,18 @@ class StringDetailDialog(QDialog):
 
     strings_updated = pyqtSignal()  # 保存或同步成功后发射，通知外部刷新
 
-    def __init__(self, strings: list, current_index: int, ctx, project_id: int,
-                 file_id=None, stage=None, page: int = 1, page_size: int = 50,
-                 parent=None):
+    def __init__(
+        self,
+        strings: list,
+        current_index: int,
+        ctx,
+        project_id: int,
+        file_id=None,
+        stage=None,
+        page: int = 1,
+        page_size: int = 50,
+        parent=None,
+    ):
         super().__init__(parent)
         self._strings = list(strings)
         self._current_idx = current_index
@@ -100,17 +63,14 @@ class StringDetailDialog(QDialog):
         self._page = page
         self._page_size = page_size
         self._workers: list[ApiWorker] = []
-        self._close_pending = False
-        self._close_progress: QProgressDialog | None = None
+        self._lifecycle = StringDialogLifecycle(self, workers=lambda: tuple(self._workers))
         self._modified = False
         self._nav_gen = 0
         self.setWindowTitle("词条详情")
         self.resize(980, 600)
         self._init_ui()
-        self._apply_nav_filter()       # 初始化导航列表
+        self._apply_nav_filter()  # 初始化导航列表
         self._show(current_index)
-
-    # ─────────────────────────────────────────────────────── UI 构建 ──
 
     def _init_ui(self):
         layout = QHBoxLayout(self)
@@ -144,7 +104,7 @@ class StringDetailDialog(QDialog):
 
         # ── 导航列表 ──
         self._nav_list = QListWidget()
-        self._nav_list.setItemDelegate(_NavItemDelegate(self._nav_list))
+        self._nav_list.setItemDelegate(NavItemDelegate(self._nav_list))
         self._nav_list.itemClicked.connect(self._on_nav_clicked)
         nav_layout.addWidget(self._nav_list, stretch=1)
 
@@ -176,8 +136,13 @@ class StringDetailDialog(QDialog):
         layout.addWidget(QLabel("翻译状态："))
         self._stage_checks: dict[int, QCheckBox] = {}
         stages = [
-            (0, "未翻译"), (1, "已翻译"), (2, "有疑问"),
-            (3, "已检查"), (5, "已审核"), (9, "已锁定"), (-1, "已隐藏"),
+            (0, "未翻译"),
+            (1, "已翻译"),
+            (2, "有疑问"),
+            (3, "已检查"),
+            (5, "已审核"),
+            (9, "已锁定"),
+            (-1, "已隐藏"),
         ]
         row1 = QHBoxLayout()
         row2 = QHBoxLayout()
@@ -272,8 +237,6 @@ class StringDetailDialog(QDialog):
 
         return right
 
-    # ─────────────────────────────────────────────────── 筛选逻辑 ──
-
     def _on_filter_toggle(self, checked: bool):
         self._filter_toggle.setText("▼ 筛选条件" if checked else "▶ 筛选条件")
         self._filter_panel.setVisible(checked)
@@ -282,11 +245,11 @@ class StringDetailDialog(QDialog):
         """stage 复选框变化时，更新 API stage 参数并从服务端第 1 页重新加载。"""
         selected = {v for v, cb in self._stage_checks.items() if cb.isChecked()}
         if len(selected) == 1:
-            self._current_api_stage = next(iter(selected))   # 单选 → 服务端过滤
+            self._current_api_stage = next(iter(selected))  # 单选 → 服务端过滤
         elif len(selected) == 0:
-            self._current_api_stage = self._stage            # 无选 → 恢复主列表原始过滤
+            self._current_api_stage = self._stage  # 无选 → 恢复主列表原始过滤
         else:
-            self._current_api_stage = None                   # 多选 → 加载全部，前端再筛
+            self._current_api_stage = None  # 多选 → 加载全部，前端再筛
         self._load_page(1)
 
     def _clear_filter(self):
@@ -303,22 +266,12 @@ class StringDetailDialog(QDialog):
         selected_stages = {v for v, cb in self._stage_checks.items() if cb.isChecked()}
         modifier_id = self._modifier_group.checkedId()
         my_uid = (self._ctx.current_user or {}).get("id")
-
-        result = []
-        for i, s in enumerate(self._strings):
-            # 翻译状态筛选（无勾选则全显示）
-            if selected_stages and s.get("stage", 0) not in selected_stages:
-                continue
-            # 修改者筛选
-            if modifier_id in (1, 2) and my_uid is not None:
-                user = s.get("user") or {}
-                uid = user.get("uid") or user.get("id")
-                if modifier_id == 1 and uid != my_uid:
-                    continue
-                if modifier_id == 2 and uid == my_uid:
-                    continue
-            result.append(i)
-        return result
+        return filtered_indices(
+            self._strings,
+            selected_stages=selected_stages,
+            modifier_id=modifier_id,
+            current_user_id=my_uid,
+        )
 
     def _apply_nav_filter(self):
         """重新计算筛选结果并刷新导航列表。"""
@@ -352,8 +305,6 @@ class StringDetailDialog(QDialog):
             self._trans_edit.setPlainText("")
             self._prev_btn.setEnabled(False)
             self._next_btn.setEnabled(False)
-
-    # ──────────────────────────────────────────────────── 导航 ──
 
     def _on_nav_clicked(self, item: QListWidgetItem):
         nav_row = self._nav_list.row(item)
@@ -421,10 +372,15 @@ class StringDetailDialog(QDialog):
 
         def _fetch():
             api = ParatranzStringsAPI(token=config.token, config=config)
-            return _extract_list(api.list_strings(
-                self._pid, page=page, page_size=self._page_size,
-                file=self._file_id, stage=self._current_api_stage,
-            ))
+            return _extract_list(
+                api.list_strings(
+                    self._pid,
+                    page=page,
+                    page_size=self._page_size,
+                    file=self._file_id,
+                    stage=self._current_api_stage,
+                )
+            )
 
         def _on_done(strings):
             if self._nav_gen != gen:
@@ -465,7 +421,8 @@ class StringDetailDialog(QDialog):
         def _do():
             api = ParatranzStringsAPI(token=config.token, config=config)
             return api.update_string(
-                self._pid, s.get("id"),
+                self._pid,
+                s.get("id"),
                 {"translation": new_translation, "stage": new_stage},
             )
 
@@ -495,15 +452,8 @@ class StringDetailDialog(QDialog):
 
     def _find_sync_candidates(self, saved_string: dict, new_translation: str, new_stage: int):
         """保存成功后，在本地已加载词条中搜索相同原文的低状态条目，有匹配则提示同步。"""
-        current_id = saved_string.get("id")
         current_original = saved_string.get("original", "")
-
-        matches = [
-            item for item in self._strings
-            if (item.get("original") == current_original
-                and item.get("id") != current_id
-                and 0 <= item.get("stage", 0) < new_stage)
-        ]
+        matches = sync_candidates(self._strings, saved_string, new_stage)
 
         self._save_btn.setEnabled(True)
         self._save_btn.setText("保存")
@@ -513,9 +463,7 @@ class StringDetailDialog(QDialog):
             QMessageBox.information(self, "成功", "保存成功")
             return
 
-        dlg = _SyncTranslationDialog(
-            matches, current_original, new_translation, new_stage, self
-        )
+        dlg = _SyncTranslationDialog(matches, current_original, new_translation, new_stage, self)
         if dlg.exec():
             selected_ids = dlg.get_selected_ids()
             if selected_ids:
@@ -557,10 +505,7 @@ class StringDetailDialog(QDialog):
             self._save_btn.setEnabled(True)
             self._save_btn.setText("保存")
             self._apply_nav_filter()
-            QMessageBox.warning(
-                self, "同步失败",
-                f"当前词条已保存成功，但批量同步失败：\n{e}"
-            )
+            QMessageBox.warning(self, "同步失败", f"当前词条已保存成功，但批量同步失败：\n{e}")
 
         w = ApiWorker(_sync)
         w.result.connect(_on_done)
@@ -569,39 +514,13 @@ class StringDetailDialog(QDialog):
         self._workers.append(w)
 
     def closeEvent(self, event: QCloseEvent):
-        """后台任务完成后再关闭，同时保持 Qt 事件循环可响应。"""
-        running = [worker for worker in self._workers if worker.isRunning()]
-        if not running:
-            event.accept()
-            return
-
-        event.ignore()
-        if self._close_pending:
-            return
-        self._close_pending = True
-        self.setEnabled(False)
-        self._close_progress = QProgressDialog(
-            "正在等待后台同步完成…",
-            "",
-            0,
-            0,
-            self,
-        )
-        self._close_progress.setCancelButton(None)
-        self._close_progress.setWindowTitle("正在关闭")
-        self._close_progress.setWindowModality(Qt.WindowModality.WindowModal)
-        self._close_progress.show()
-        for worker in running:
-            worker.finished.connect(self._finish_close_if_idle)
-
-    def _finish_close_if_idle(self) -> None:
-        if any(worker.isRunning() for worker in self._workers):
-            return
-        if self._close_progress is not None:
-            self._close_progress.close()
-            self._close_progress = None
-        self._close_pending = False
-        self.close()
+        lifecycle = getattr(self, "_lifecycle", None)
+        if lifecycle is None:
+            lifecycle = self._lifecycle = StringDialogLifecycle(
+                self,
+                workers=lambda: tuple(getattr(self, "_workers", ())),
+            )
+        lifecycle.close_event(event)
 
     def was_modified(self) -> bool:
         return self._modified

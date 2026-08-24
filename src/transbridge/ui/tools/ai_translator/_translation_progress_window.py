@@ -2,148 +2,35 @@
 
 from __future__ import annotations
 
-from collections import deque
 from typing import TYPE_CHECKING
 
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
-    QProgressBar, QPushButton, QRadioButton, QButtonGroup,
-    QMessageBox, QDialog, QDialogButtonBox, QTextEdit,
-    QScrollArea, QFrame,
-)
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont, QTextCursor
+from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import (
+    QButtonGroup,
+    QDialog,
+    QDialogButtonBox,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QRadioButton,
+    QScrollArea,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
+
+from transbridge.ui.windowing import show_and_activate
 
 if TYPE_CHECKING:
     from transbridge.ui.context import AppContext
     from transbridge.ui.tools.ai_translator._translation_worker import _TranslationWorker
+    from transbridge.ui.tools.ai_translator.task_adapter import LegacyAiTaskAdapter
 
-
-class _BatchWidget(QFrame):
-    """单个批次的日志子组件。完成后自动折叠为单行摘要。"""
-
-    def __init__(self, batch_idx: int, parent=None):
-        super().__init__(parent)
-        self._batch_idx = batch_idx
-        self._phase = 'init'   # 'init' | 'header' | 'trans' | 'footer' | 'done'
-        self._title = f'任务{batch_idx}'
-        self._footer_lines: list[str] = []
-        self._trans_cursors: deque = deque()
-        self._setup_ui()
-
-    def _setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 4, 6, 4)
-        layout.setSpacing(2)
-
-        self._header_label = QLabel(self._title)
-        self._header_label.setStyleSheet("font-weight: bold; font-size: 11px;")
-        layout.addWidget(self._header_label)
-
-        self._text = QTextEdit()
-        self._text.setReadOnly(True)
-        self._text.setFont(QFont("Consolas", 8))
-        self._text.setFixedHeight(160)
-        layout.addWidget(self._text)
-
-        self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setStyleSheet("QFrame { border: 1px solid #ddd; border-radius: 4px; margin: 2px; }")
-
-    def append_line(self, line: str) -> None:
-        stripped = line.strip()
-
-        if '开始翻译：' in line:
-            self._phase = 'header'
-            return
-
-        if self._phase == 'header':
-            clean = line.lstrip('\n')
-            cs = clean.strip()
-            if cs.startswith('任务') and '：' in cs:
-                self._title = cs
-                self._header_label.setText(cs)
-            elif cs == '-----------------------':
-                self._phase = 'trans'
-            return
-
-        if self._phase == 'trans':
-            if stripped == '-----------------------':
-                self._phase = 'footer'
-                return
-            if ' -> ' in line:
-                self._text.append(line)
-                doc = self._text.document()
-                block = doc.findBlockByNumber(doc.blockCount() - 1)
-                cursor = QTextCursor(block)
-                self._trans_cursors.append(cursor)
-                if len(self._trans_cursors) > 10:
-                    oldest = self._trans_cursors.popleft()
-                    oldest.movePosition(QTextCursor.MoveOperation.StartOfBlock)
-                    oldest.movePosition(
-                        QTextCursor.MoveOperation.Down,
-                        QTextCursor.MoveMode.KeepAnchor,
-                    )
-                    oldest.removeSelectedText()
-            else:
-                self._text.append(line)
-            return
-
-        if self._phase == 'footer':
-            if stripped == '已完成：':
-                self._footer_lines = []
-                return
-            self._footer_lines.append(stripped)
-            self._text.append(line)
-            if stripped.startswith('新增术语数：'):
-                self._phase = 'done'
-                self._collapse()
-            return
-
-        # 'init' or 'done': 直接追加
-        self._text.append(line)
-
-    def _collapse(self):
-        """折叠为单行摘要。"""
-        total_time = ''
-        entries_count = ''
-        new_terms = ''
-        for fl in self._footer_lines:
-            if fl.startswith('总时长：'):
-                total_time = fl.replace('总时长：', '').strip()
-            elif fl.startswith('翻译词条数：'):
-                entries_count = fl.replace('翻译词条数：', '').strip()
-            elif fl.startswith('新增术语数：'):
-                new_terms = fl.replace('新增术语数：', '').strip()
-
-        summary = f"✅ {self._title}"
-        parts = []
-        if entries_count:
-            parts.append(f"{entries_count} 条")
-        if total_time:
-            parts.append(total_time)
-        if new_terms and new_terms != '0':
-            parts.append(f"新增术语 {new_terms}")
-        if parts:
-            summary += " — " + " | ".join(parts)
-
-        self._header_label.setText(summary)
-        self._text.hide()
-        self.setStyleSheet(
-            "QFrame { border: 1px solid #bdbdbd; border-radius: 4px; "
-            "margin: 2px; background: #f5f5f5; }"
-            "QLabel { color: #424242; }"
-        )
-
-    def force_collapse(self):
-        """强制折叠（翻译被中断时调用）。"""
-        if self._phase != 'done':
-            self._header_label.setText(f"⚠ {self._title}（未完成）")
-            self._text.hide()
-            self._phase = 'done'
-            self.setStyleSheet(
-                "QFrame { border: 1px solid #ffe082; border-radius: 4px; "
-                "margin: 2px; background: #fffde7; }"
-            )
+from transbridge.ui.tools.ai_translator._translation_batch_widget import _BatchWidget
 
 
 class _TranslationProgressWindow(QWidget):
@@ -151,10 +38,24 @@ class _TranslationProgressWindow(QWidget):
 
     translation_completed = pyqtSignal()
 
-    def __init__(self, worker: "_TranslationWorker", ctx: "AppContext", parent=None):
+    def __init__(
+        self,
+        worker: _TranslationWorker,
+        ctx: AppContext,
+        parent=None,
+        *,
+        entry_activated=None,
+        activity: LegacyAiTaskAdapter | None = None,
+    ):
         super().__init__(parent, Qt.WindowType.Window)
         self._worker = worker
         self._ctx = ctx
+        self._entry_activated = entry_activated
+        self._activity = activity
+        self._result_actions = None
+        from .result_actions import AiResultNavigator
+
+        self._result_navigator = AiResultNavigator()
         self.setWindowTitle("AI 自动翻译 — 进行中")
         self.resize(560, 600)
         self._background_mode = False
@@ -162,6 +63,7 @@ class _TranslationProgressWindow(QWidget):
         self._was_stopped = False
         self._close_after_stop = False
         self._log_viewer = None
+        self._report_dialog = None
         self._batch_widgets: dict[int, _BatchWidget] = {}
         self._init_ui()
         self._connect_worker()
@@ -253,8 +155,9 @@ class _TranslationProgressWindow(QWidget):
 
     # ── 槽 ────────────────────────────────────────────────────────────────────
 
-    def _on_progress(self, current: int, total: int, message: str,
-                     success: int, failed: int, new_terms: int):
+    def _on_progress(self, current: int, total: int, message: str, success: int, failed: int, new_terms: int):
+        if self._activity is not None:
+            self._activity.progress(current, total, message)
         if total > 0:
             self._total_progress_bar.setMaximum(total)
             self._total_progress_bar.setValue(current)
@@ -294,22 +197,25 @@ class _TranslationProgressWindow(QWidget):
 
         # 仅在用户已在底部时才跟随滚动（等 layout 更新后再读 maximum）
         if at_bottom:
-            QTimer.singleShot(0, lambda: self._scroll.verticalScrollBar().setValue(
-                self._scroll.verticalScrollBar().maximum()
-            ))
+            QTimer.singleShot(
+                0, lambda: self._scroll.verticalScrollBar().setValue(self._scroll.verticalScrollBar().maximum())
+            )
 
     def _on_open_log_viewer(self):
         """打开/激活 LLM 流式日志查看窗口。"""
         from transbridge.ui.tools.ai_translator._llm_log_viewer import _LLMLogViewer
+
         path = self._worker.stream_log_dir
         if not path:
             return
         if self._log_viewer is None or not self._log_viewer.isVisible():
             self._log_viewer = _LLMLogViewer(path, parent=None)
-        self._log_viewer.show()
-        self._log_viewer.raise_()
+        show_and_activate(self._log_viewer)
 
     def _on_result(self, result):
+        if self._activity is not None:
+            self._was_stopped |= str(self._activity.activity.state) == "cancelling"
+            self._activity.finish(cancelled=self._was_stopped)
         self._total_progress_bar.setMaximum(100)
         self._total_progress_bar.setValue(100)
         self._total_progress_lbl.setText("完成")
@@ -320,7 +226,7 @@ class _TranslationProgressWindow(QWidget):
 
         # 构建后处理摘要（如果有）
         pp_summary = ""
-        if hasattr(result, 'post_process_result') and result.post_process_result:
+        if hasattr(result, "post_process_result") and result.post_process_result:
             pp = result.post_process_result
             error_count = sum(1 for i in pp.issues if i.severity == "error")
             warning_count = sum(1 for i in pp.issues if i.severity == "warning")
@@ -364,16 +270,23 @@ class _TranslationProgressWindow(QWidget):
         report_path = None
         try:
             from transbridge.ai_translator.post_processor.report_generator import ReportGenerator
+
             gen = ReportGenerator(esp_stem)
             report_path = gen.generate_translate_report(
                 result,
-                refine_results=getattr(result, 'refine_results', None),
-                polish_results=getattr(result, 'polish_results', None),
-                decisions=getattr(result, 'decisions', None),
+                refine_results=getattr(result, "refine_results", None),
+                polish_results=getattr(result, "polish_results", None),
+                decisions=getattr(result, "decisions", None),
             )
             result.report_path = report_path
         except Exception:
             pass  # 报告生成失败不阻塞流程
+        if self._activity is not None:
+            from .result_actions import result_action_state
+
+            spec = self._activity.activity.spec
+            artifact = self._result_navigator.register_report(spec, report_path)
+            self._result_actions = result_action_state(spec, result=result, report=artifact)
 
         # ── 弹出报告对话框（替代 QMessageBox）──
         if not self._background_mode and not self._was_stopped:
@@ -383,6 +296,8 @@ class _TranslationProgressWindow(QWidget):
             self._show_report_dialog(result, report_path)
 
     def _on_error(self, err: str):
+        if self._activity is not None:
+            self._activity.fail(err)
         for w in self._batch_widgets.values():
             w.force_collapse()
         self._progress_msg.setText(f"错误: {err}")
@@ -404,11 +319,13 @@ class _TranslationProgressWindow(QWidget):
     def _on_pause_resume(self):
         if self._worker.is_paused:
             self._worker.resume()
+            getattr(self._activity, "resume", lambda: None)()
             self._pause_btn.setText("⏸ 暂停")
             self._progress_msg.setText("已继续 - 等待下一批")
             self._round_log.append("▶ 已继续")
         else:
             self._worker.pause()
+            getattr(self._activity, "pause", lambda: None)()
             self._pause_btn.setText("▶ 继续")
             self._progress_msg.setText("⏸ 已暂停（当前 API 调用将立即中断）")
             self._round_log.append("⏸ 已暂停")
@@ -416,13 +333,16 @@ class _TranslationProgressWindow(QWidget):
 
     def _on_stop(self):
         reply = QMessageBox.question(
-            self, "停止翻译",
+            self,
+            "停止翻译",
             "确定要停止翻译吗？\n已翻译的内容不会丢失，可通过断点续传继续。",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
             self._was_stopped = True
+            if self._activity is not None:
+                self._activity.request_cancel()
             self._progress_msg.setText("⏹ 正在停止（当前 API 调用将立即中断）")
             self._round_log.append("⏹ 已请求停止")
             self._worker.stop()
@@ -456,9 +376,7 @@ class _TranslationProgressWindow(QWidget):
         dlg_layout.addWidget(rb_stop)
         dlg_layout.addWidget(rb_bg)
 
-        btns = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         btns.accepted.connect(dlg.accept)
         btns.rejected.connect(dlg.reject)
         dlg_layout.addWidget(btns)
@@ -468,6 +386,9 @@ class _TranslationProgressWindow(QWidget):
             return
 
         if rb_stop.isChecked():
+            self._was_stopped = True
+            if self._activity is not None:
+                self._activity.request_cancel()
             self._worker.stop()
             self._close_after_stop = True
             self.setEnabled(False)
@@ -485,33 +406,33 @@ class _TranslationProgressWindow(QWidget):
 
     def _get_esp_stem(self) -> str:
         """获取当前翻译的 ESP stem（用于报告目录）。"""
-        try:
-            from pathlib import Path
-            return Path(self._worker._translator._cfg.esp_path).stem
-        except Exception:
-            return "unknown"
+        return self._worker.esp_stem
+
+    @property
+    def activity(self):
+        return None if self._activity is None else self._activity.activity
+
+    @property
+    def task_activity(self):
+        return None if self._activity is None else self._activity.task_activity
+
+    @property
+    def result_actions(self):
+        return self._result_actions
 
     def _show_report_dialog(self, result, report_path: str | None):
         """弹出翻译报告对话框。"""
         from ._translation_report_dialog import _TranslationReportDialog
+
         dialog = _TranslationReportDialog(
             translate_result=result,
-            refine_results=getattr(result, 'refine_results', None),
-            polish_results=getattr(result, 'polish_results', None),
-            decisions=getattr(result, 'decisions', None),
+            refine_results=getattr(result, "refine_results", None),
+            polish_results=getattr(result, "polish_results", None),
+            decisions=getattr(result, "decisions", None),
             report_path=report_path,
+            parent=self,
         )
-        main_win = self._find_main_window()
-        if main_win and hasattr(main_win, '_on_report_entry_activated'):
-            dialog.entry_activated.connect(main_win._on_report_entry_activated)
-        dialog.show()
-
-    @staticmethod
-    def _find_main_window():
-        """向上查找 MainWindow 父窗口。"""
-        from transbridge.ui.main_window import MainWindow
-        import sys
-        for widget in QWidget.topLevelWidgets():
-            if isinstance(widget, MainWindow):
-                return widget
-        return None
+        if self._entry_activated is not None:
+            dialog.entry_activated.connect(self._entry_activated)
+        self._report_dialog = dialog
+        show_and_activate(dialog)

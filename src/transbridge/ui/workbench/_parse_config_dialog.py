@@ -6,13 +6,24 @@
 
 from dataclasses import dataclass, field
 
-from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
-    QLineEdit, QPushButton, QFileDialog, QComboBox,
-    QButtonGroup, QRadioButton, QLabel, QDialogButtonBox,
-    QCheckBox, QFrame, QWidget,
-)
 from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (
+    QButtonGroup,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QFormLayout,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QRadioButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 @dataclass
@@ -160,8 +171,15 @@ class ParseConfigDialog(QDialog):
 
         self._strings_lang = QComboBox()
         self._strings_lang.addItems([
-            "chinese", "english", "german", "french", "spanish",
-            "italian", "japanese", "polish", "russian",
+            "chinese",
+            "english",
+            "german",
+            "french",
+            "spanish",
+            "italian",
+            "japanese",
+            "polish",
+            "russian",
         ])
         self._strings_lang.setFixedWidth(100)
         strings_row.addWidget(self._strings_lang)
@@ -186,9 +204,7 @@ class ParseConfigDialog(QDialog):
         layout.addWidget(line)
 
         # ── 按钮 ──
-        btn_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
+        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         label = "开始解析" if self._mode == "parse" else "应用迁移"
         self._ok_btn = btn_box.button(QDialogButtonBox.StandardButton.Ok)
         self._ok_btn.setText(label)
@@ -203,15 +219,14 @@ class ParseConfigDialog(QDialog):
 
     def _on_source_mode_changed(self):
         esp_mode = self._rb_esp.isChecked()
-        if hasattr(self, '_esp_row'):
+        if hasattr(self, "_esp_row"):
             self._esp_row.setVisible(esp_mode)
 
     # ── File browsers ──────────────────────────────────────────
 
     def _browse_esp(self):
         paths, _ = QFileDialog.getOpenFileNames(
-            self, "选择插件文件（可多选）", "",
-            "ESP/ESM/ESL 文件 (*.esp *.esm *.esl);;所有文件 (*)"
+            self, "选择插件文件（可多选）", "", "ESP/ESM/ESL 文件 (*.esp *.esm *.esl);;所有文件 (*)"
         )
         if paths:
             self._esp_paths = paths
@@ -222,23 +237,18 @@ class ParseConfigDialog(QDialog):
             self._esp_input.setToolTip("\n".join(paths))
 
     def _browse_eet(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "选择 EET XML 文件", "", "XML 文件 (*.xml);;所有文件 (*)"
-        )
+        path, _ = QFileDialog.getOpenFileName(self, "选择 EET XML 文件", "", "XML 文件 (*.xml);;所有文件 (*)")
         if path:
             self._eet_input.setText(path)
 
     def _browse_xt(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "选择 XT XML 文件", "", "XML 文件 (*.xml);;所有文件 (*)"
-        )
+        path, _ = QFileDialog.getOpenFileName(self, "选择 XT XML 文件", "", "XML 文件 (*.xml);;所有文件 (*)")
         if path:
             self._xt_input.setText(path)
 
     def _browse_translated_plugin(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "选择已翻译插件文件", "",
-            "ESP/ESM/ESL 文件 (*.esp *.esm *.esl);;所有文件 (*)"
+            self, "选择已翻译插件文件", "", "ESP/ESM/ESL 文件 (*.esp *.esm *.esl);;所有文件 (*)"
         )
         if path:
             self._tp_input.setText(path)
@@ -252,7 +262,7 @@ class ParseConfigDialog(QDialog):
 
     def _validate_and_accept(self):
         if self._mode == "parse":
-            is_eet = hasattr(self, '_rb_eet_only') and self._rb_eet_only.isChecked()
+            is_eet = hasattr(self, "_rb_eet_only") and self._rb_eet_only.isChecked()
             if is_eet:
                 if not self._eet_input.text().strip():
                     return  # TODO: show error
@@ -267,11 +277,11 @@ class ParseConfigDialog(QDialog):
         config = ParseConfig()
         if self._mode == "parse":
             config.esp_paths = list(self._esp_paths) if self._esp_paths else []
-            if not config.esp_paths and hasattr(self, '_esp_input'):
+            if not config.esp_paths and hasattr(self, "_esp_input"):
                 txt = self._esp_input.text().strip()
                 if txt and not txt.startswith("已选择"):
                     config.esp_paths = [txt]
-            is_eet = hasattr(self, '_rb_eet_only') and self._rb_eet_only.isChecked()
+            is_eet = hasattr(self, "_rb_eet_only") and self._rb_eet_only.isChecked()
             config.source_mode = "eet" if is_eet else "esp"
         config.eet_path = self._eet_input.text().strip() or None
         config.xt_path = self._xt_input.text().strip() or None
@@ -281,3 +291,20 @@ class ParseConfigDialog(QDialog):
         config.strings_apply_all = self._strings_apply_all.isChecked()
         config.skip_empty = self._skip_empty.currentText() == "是"
         return config
+
+    def prefill_migration_source(self, path: str, kind: str) -> bool:
+        """Prefill one reviewed drop without executing the migration."""
+
+        if self._mode != "migrate":
+            return False
+        if kind == "eet":
+            self._eet_input.setText(path)
+        elif kind == "xt":
+            self._xt_input.setText(path)
+        elif kind == "plugin":
+            self._tp_input.setText(path)
+        elif kind == "strings-directory":
+            self._strings_input.setText(path)
+        else:
+            return False
+        return True

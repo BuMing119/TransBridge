@@ -1,379 +1,39 @@
-from pathlib import Path
 from dataclasses import dataclass, field
+from pathlib import Path
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QDialog, QDialogButtonBox, QVBoxLayout, QHBoxLayout,
-    QRadioButton, QLabel, QLineEdit, QPushButton, QFileDialog, QMessageBox,
-    QButtonGroup, QScrollArea, QWidget, QCheckBox,
+    QDialog,
+    QFileDialog,
+    QMessageBox,
 )
 
-from transbridge.writer.plugin_writer import PluginWriter
-from transbridge.writer.eet_xml_writer import EETWriter
-from transbridge.writer.xt_xml_writer import XTWriter
 from transbridge.parser.eet_parser import EET_XmlParser
 from transbridge.parser.xt import XT_XmlParser
+from transbridge.writer.eet_xml_writer import EETWriter
+from transbridge.writer.plugin_writer import PluginWriter
+from transbridge.writer.xt_xml_writer import XTWriter
+
 from .base import OpCard
+from .presenter import OperationCardPresenter
+from .write_views import (
+    BatchConfirmDialog as _BatchConfirmDialog,
+    BatchResultDialog as _BatchResultDialog,
+    SlotSelectDialog as _SlotSelectDialog,
+    WriteTargetDialog as _WriteTargetDialog,
+)
 
 
 @dataclass
 class BatchWriteResult:
     """批量写回结果汇总。"""
+
     success_count: int = 0
     failed_count: int = 0
     total_entries: int = 0
     details: list[str] = field(default_factory=list)
 
 
-class _SlotSelectDialog(QDialog):
-    """插件槽位选择对话框，用于批量操作时选择要操作的插件。"""
-
-    def __init__(self, title: str, slots: dict, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(title)
-        self.setMinimumWidth(360)
-        self.setMinimumHeight(200)
-        self.setMaximumHeight(400)
-
-        layout = QVBoxLayout(self)
-
-        hint = QLabel("选择要操作的插件：")
-        hint.setStyleSheet("color: #555;")
-        layout.addWidget(hint)
-
-        # 全选/全不选 按钮
-        btn_row = QHBoxLayout()
-        self._btn_all = QPushButton("全选")
-        self._btn_none = QPushButton("全不选")
-        btn_row.addWidget(self._btn_all)
-        btn_row.addWidget(self._btn_none)
-        btn_row.addStretch()
-        layout.addLayout(btn_row)
-
-        # 滚动区域
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { border: 1px solid #ddd; border-radius: 3px; }")
-
-        container = QWidget()
-        container_layout = QVBoxLayout(container)
-        container_layout.setContentsMargins(8, 8, 8, 8)
-        container_layout.setSpacing(4)
-
-        self._checkboxes: dict[str, QCheckBox] = {}
-        for key, slot in slots.items():
-            label = slot.label or Path(key).stem
-            cb = QCheckBox(label)
-            cb.setChecked(True)
-            cb.setStyleSheet("QCheckBox { spacing: 4px; }")
-            cb._slot_key = key
-            container_layout.addWidget(cb)
-            self._checkboxes[key] = cb
-        container_layout.addStretch()
-
-        scroll.setWidget(container)
-        layout.addWidget(scroll)
-
-        # 状态标签
-        self._status_label = QLabel(f"已选 {len(slots)} 个插件")
-        self._status_label.setStyleSheet("color: #666; font-size: 12px;")
-        layout.addWidget(self._status_label)
-
-        # 按钮
-        btn_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        self._ok_btn = btn_box.button(QDialogButtonBox.StandardButton.Ok)
-        self._ok_btn.setText("确认")
-        btn_box.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
-        btn_box.accepted.connect(self.accept)
-        btn_box.rejected.connect(self.reject)
-        layout.addWidget(btn_box)
-
-        # 连接信号
-        self._btn_all.clicked.connect(self._select_all)
-        self._btn_none.clicked.connect(self._select_none)
-        for cb in self._checkboxes.values():
-            cb.stateChanged.connect(self._update_status)
-
-    def _select_all(self):
-        for cb in self._checkboxes.values():
-            cb.setChecked(True)
-
-    def _select_none(self):
-        for cb in self._checkboxes.values():
-            cb.setChecked(False)
-
-    def _update_status(self):
-        count = sum(1 for cb in self._checkboxes.values() if cb.isChecked())
-        self._status_label.setText(f"已选 {count} 个插件")
-        self._ok_btn.setEnabled(count > 0)
-
-    def selected_slots(self) -> list:
-        """返回选中的 slot key 列表。"""
-        return [cb._slot_key for cb in self._checkboxes.values() if cb.isChecked()]
-
-
-class _BatchConfirmDialog(QDialog):
-    """批量操作确认对话框，带滚动区域。"""
-
-    def __init__(self, title: str, header: str, items: list[str], parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(title)
-        self.setMinimumWidth(400)
-        self.setMinimumHeight(200)
-        self.setMaximumHeight(400)
-
-        layout = QVBoxLayout(self)
-
-        # 标题说明
-        header_lbl = QLabel(header)
-        header_lbl.setWordWrap(True)
-        layout.addWidget(header_lbl)
-
-        # 滚动区域
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { border: 1px solid #ddd; border-radius: 3px; }")
-
-        container = QWidget()
-        container_layout = QVBoxLayout(container)
-        container_layout.setContentsMargins(8, 8, 8, 8)
-        container_layout.setSpacing(2)
-
-        for item in items:
-            lbl = QLabel(item)
-            lbl.setStyleSheet("color: #333;")
-            container_layout.addWidget(lbl)
-        container_layout.addStretch()
-
-        scroll.setWidget(container)
-        layout.addWidget(scroll)
-
-        # 提示信息
-        footer = QLabel(f"共 {len(items)} 个项目")
-        footer.setStyleSheet("color: #666; font-size: 12px;")
-        layout.addWidget(footer)
-
-        # 按钮
-        btn_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Yes | QDialogButtonBox.StandardButton.No
-        )
-        btn_box.button(QDialogButtonBox.StandardButton.Yes).setText("确认")
-        btn_box.button(QDialogButtonBox.StandardButton.No).setText("取消")
-        btn_box.accepted.connect(self.accept)
-        btn_box.rejected.connect(self.reject)
-        layout.addWidget(btn_box)
-
-
-class _BatchResultDialog(QDialog):
-    """批量操作结果对话框，带滚动区域。"""
-
-    def __init__(self, title: str, header: str, items: list[str], parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(title)
-        self.setMinimumWidth(400)
-        self.setMinimumHeight(200)
-        self.setMaximumHeight(400)
-
-        layout = QVBoxLayout(self)
-
-        # 标题说明
-        header_lbl = QLabel(header)
-        header_lbl.setWordWrap(True)
-        layout.addWidget(header_lbl)
-
-        # 滚动区域
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { border: 1px solid #ddd; border-radius: 3px; }")
-
-        container = QWidget()
-        container_layout = QVBoxLayout(container)
-        container_layout.setContentsMargins(8, 8, 8, 8)
-        container_layout.setSpacing(2)
-
-        for item in items:
-            lbl = QLabel(item)
-            lbl.setStyleSheet("color: #333;")
-            container_layout.addWidget(lbl)
-        container_layout.addStretch()
-
-        scroll.setWidget(container)
-        layout.addWidget(scroll)
-
-        # 提示信息
-        footer = QLabel(f"共 {len(items)} 个项目")
-        footer.setStyleSheet("color: #666; font-size: 12px;")
-        layout.addWidget(footer)
-
-        # 按钮
-        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
-        btn_box.button(QDialogButtonBox.StandardButton.Ok).setText("确定")
-        btn_box.accepted.connect(self.accept)
-        layout.addWidget(btn_box)
-
-
-class _WriteTargetDialog(QDialog):
-    """写回目标选择对话框。"""
-
-    def __init__(self, eet_path: str | None, xt_path: str | None,
-                 has_esp: bool = True, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("选择写回目标")
-        self.setMinimumWidth(420)
-
-        layout = QVBoxLayout(self)
-        layout.setSpacing(4)
-
-        group = QButtonGroup(self)
-
-        # ── ESP ───────────────────────────────────────────────
-        self._rb_esp = QRadioButton("写回 ESP 插件")
-        self._rb_esp.setChecked(has_esp)
-        self._rb_esp.setEnabled(has_esp)
-        if has_esp:
-            esp_desc = QLabel("将译文写入插件副本，输出汉化版 ESP 文件。")
-        else:
-            esp_desc = QLabel("当前集合由 EET XML 构建，无法写回 ESP 插件。")
-        esp_desc.setStyleSheet("color: #555; margin-left: 20px;")
-        group.addButton(self._rb_esp)
-        layout.addWidget(self._rb_esp)
-        layout.addWidget(esp_desc)
-        layout.addSpacing(6)
-
-        # ── EET XML ───────────────────────────────────────────
-        self._rb_eet = QRadioButton("写回 EET XML")
-        eet_desc = QLabel("将译文更新到 EET XML 文件中。")
-        eet_desc.setStyleSheet("color: #555; margin-left: 20px;")
-        eet_path_row = QHBoxLayout()
-        eet_path_lbl = QLabel("路径：")
-        eet_path_lbl.setStyleSheet("margin-left: 20px;")
-        eet_path_lbl.setFixedWidth(40)
-        self._eet_input = QLineEdit(eet_path or "")
-        self._eet_input.setPlaceholderText("选择 EET XML 文件…")
-        self._eet_input.setEnabled(False)
-        self._eet_browse = QPushButton("浏览")
-        self._eet_browse.setFixedWidth(50)
-        self._eet_browse.setEnabled(False)
-        self._eet_browse.clicked.connect(self._browse_eet)
-        eet_path_row.addWidget(eet_path_lbl)
-        eet_path_row.addWidget(self._eet_input)
-        eet_path_row.addWidget(self._eet_browse)
-        group.addButton(self._rb_eet)
-        layout.addWidget(self._rb_eet)
-        layout.addWidget(eet_desc)
-        layout.addLayout(eet_path_row)
-        layout.addSpacing(6)
-
-        # ── XT XML ────────────────────────────────────────────
-        self._rb_xt = QRadioButton("导出 XT XML")
-        xt_desc = QLabel("将译文更新到 XT XML 文件中。")
-        xt_desc.setStyleSheet("color: #555; margin-left: 20px;")
-        xt_path_row = QHBoxLayout()
-        xt_path_lbl = QLabel("路径：")
-        xt_path_lbl.setStyleSheet("margin-left: 20px;")
-        xt_path_lbl.setFixedWidth(40)
-        self._xt_input = QLineEdit(xt_path or "")
-        self._xt_input.setPlaceholderText("选择 XT XML 文件…")
-        self._xt_input.setEnabled(False)
-        self._xt_browse = QPushButton("浏览")
-        self._xt_browse.setFixedWidth(50)
-        self._xt_browse.setEnabled(False)
-        self._xt_browse.clicked.connect(self._browse_xt)
-        xt_path_row.addWidget(xt_path_lbl)
-        xt_path_row.addWidget(self._xt_input)
-        xt_path_row.addWidget(self._xt_browse)
-        group.addButton(self._rb_xt)
-        layout.addWidget(self._rb_xt)
-        layout.addWidget(xt_desc)
-        layout.addLayout(xt_path_row)
-        layout.addSpacing(6)
-
-        # ── DSD JSON ──────────────────────────────────────────
-        self._rb_dsd = QRadioButton("导出 DSD JSON")
-        dsd_desc = QLabel("导出为 DSD 格式 JSON，用于 xEdit 脚本等外部工具。")
-        dsd_desc.setStyleSheet("color: #555; margin-left: 20px;")
-        group.addButton(self._rb_dsd)
-        layout.addWidget(self._rb_dsd)
-        layout.addWidget(dsd_desc)
-        layout.addSpacing(8)
-
-        btn_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        self._ok_btn = btn_box.button(QDialogButtonBox.StandardButton.Ok)
-        self._ok_btn.setText("确认写回")
-        btn_box.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
-        btn_box.accepted.connect(self.accept)
-        btn_box.rejected.connect(self.reject)
-        layout.addWidget(btn_box)
-
-        self._rb_eet.toggled.connect(self._on_mode_changed)
-        self._rb_xt.toggled.connect(self._on_mode_changed)
-        self._eet_input.textChanged.connect(self._update_ok)
-        self._xt_input.textChanged.connect(self._update_ok)
-
-        # 无 ESP 时默认选中 EET
-        if not has_esp:
-            self._rb_eet.setChecked(True)
-            self._on_mode_changed()
-
-    def _on_mode_changed(self):
-        eet = self._rb_eet.isChecked()
-        xt = self._rb_xt.isChecked()
-        self._eet_input.setEnabled(eet)
-        self._eet_browse.setEnabled(eet)
-        self._xt_input.setEnabled(xt)
-        self._xt_browse.setEnabled(xt)
-        self._update_ok()
-
-    def _update_ok(self):
-        if self._rb_eet.isChecked():
-            self._ok_btn.setEnabled(bool(self._eet_input.text().strip()))
-        elif self._rb_xt.isChecked():
-            self._ok_btn.setEnabled(bool(self._xt_input.text().strip()))
-        else:
-            self._ok_btn.setEnabled(True)
-
-    def _browse_eet(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "选择 EET XML 文件", self._eet_input.text(), "XML 文件 (*.xml);;所有文件 (*)"
-        )
-        if path:
-            self._eet_input.setText(path)
-
-    def _browse_xt(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "选择 XT XML 文件", self._xt_input.text(), "XML 文件 (*.xml);;所有文件 (*)"
-        )
-        if path:
-            self._xt_input.setText(path)
-
-    @property
-    def target(self) -> str:
-        if self._rb_eet.isChecked():
-            return "eet"
-        if self._rb_xt.isChecked():
-            return "xt"
-        if self._rb_dsd.isChecked():
-            return "dsd"
-        return "esp"
-
-    @property
-    def eet_path(self) -> str:
-        return self._eet_input.text().strip()
-
-    @property
-    def xt_path(self) -> str:
-        return self._xt_input.text().strip()
-
-
 class WriteCard(OpCard):
-
     def __init__(self, ctx, run_worker, parent=None):
         super().__init__(
             "写回插件/XML",
@@ -383,20 +43,22 @@ class WriteCard(OpCard):
         )
         self._output_dir_override: Path | None = None  # S08: 全版本写回时覆盖输出目录
         self._ctx = ctx
+        self._presenter = OperationCardPresenter(ctx)
         self._run_worker = run_worker
-        self.btn.clicked.connect(self._do_write)
-        self.batch_btn.clicked.connect(self._do_batch_write)
+        self.btn.clicked.connect(self.write)
+        self.batch_btn.clicked.connect(self.batch_write)
         # eet_btn / xt_btn 作为 step3 按钮状态管理的占位符，与 self.btn 相同
         self.eet_btn = self.btn
         self.xt_btn = self.btn
 
     def update_batch_visibility(self):
         """更新批量按钮可见性（由 step3 调用）。"""
-        slots = self._ctx.slots
-        self.set_batch_visible(len(slots) > 1)
+        self.set_batch_visible(self._presenter.batch_available)
 
-    def _do_batch_write(self):
+    def batch_write(self):
         """批量写回入口。"""
+        if self._dispatch_planned("write", self._ctx, batch=True):
+            return
         slots = self._ctx.slots
         if len(slots) <= 1:
             return
@@ -434,16 +96,13 @@ class WriteCard(OpCard):
             return
 
         # 选择输出目录
-        output_dir = QFileDialog.getExistingDirectory(
-            self, "选择批量写回输出目录"
-        )
+        output_dir = QFileDialog.getExistingDirectory(self, "选择批量写回输出目录")
         if not output_dir:
             return
         output_dir = Path(output_dir)
 
         def _batch_write():
             results = BatchWriteResult()
-            total = len(selected_slots)
 
             for i, slot in enumerate(selected_slots):
                 slot_name = slot.label or Path(slot.esp_path).stem
@@ -467,7 +126,6 @@ class WriteCard(OpCard):
                     results.total_entries += count
 
                     # 构建详情信息
-                    esp_saved = write_result.get("esp_saved", True)
                     strings_written = write_result.get("strings_written", [])
                     if strings_written:
                         strings_info = f", strings: {len(strings_written)} 个文件"
@@ -488,9 +146,7 @@ class WriteCard(OpCard):
                 f"写入词条总数：{result.total_entries} 条\n"
                 f"输出目录：{output_dir}"
             )
-            dlg = _BatchResultDialog(
-                "批量写回完成", header, result.details, parent=self
-            )
+            dlg = _BatchResultDialog("批量写回完成", header, result.details, parent=self)
             dlg.exec()
 
         self._run_worker(
@@ -501,7 +157,9 @@ class WriteCard(OpCard):
             progress_msg="正在批量写回…",
         )
 
-    def _do_write(self):
+    def write(self):
+        if self._dispatch_planned("write", self._ctx):
+            return
         collection = self._ctx.collection
         if not collection:
             return
@@ -509,7 +167,14 @@ class WriteCard(OpCard):
         dlg = _WriteTargetDialog(
             self._ctx.eet_path,
             self._ctx.xt_path,
-            has_esp=self._ctx.plugin is not None,
+            has_esp=(
+                self._ctx.plugin is not None
+                or (
+                    self._ctx.active_slot is not None
+                    and self._ctx.active_slot.source_snapshot is not None
+                    and getattr(self._ctx.active_slot.format_id, "value", None) == "plugin.sse"
+                )
+            ),
             parent=self,
         )
         if dlg.exec() != QDialog.DialogCode.Accepted:
@@ -520,14 +185,15 @@ class WriteCard(OpCard):
         variants = proj.variants if proj else []
         if len(variants) > 1:
             ret = QMessageBox.question(
-                self, "写回模式",
+                self,
+                "写回模式",
                 f"当前项目有 {len(variants)} 个版本。\n\n"
                 "「是」——分别写回所有版本到独立子目录\n"
                 "「否」——仅写回当前版本「{self._ctx.active_variant}」",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
-            write_all = (ret == QMessageBox.StandardButton.Yes)
+            write_all = ret == QMessageBox.StandardButton.Yes
         else:
             write_all = False
 
@@ -551,9 +217,7 @@ class WriteCard(OpCard):
         """遍历所有版本，分别写回到 {output_dir}/{variant_name}/。"""
         from PyQt6.QtWidgets import QFileDialog
 
-        base_dir = QFileDialog.getExistingDirectory(
-            self, "选择输出根目录（每个版本将写入独立子目录）"
-        )
+        base_dir = QFileDialog.getExistingDirectory(self, "选择输出根目录（每个版本将写入独立子目录）")
         if not base_dir:
             return
 
@@ -573,6 +237,7 @@ class WriteCard(OpCard):
             if vname != current_variant:
                 vs_path = proj.variant_dir(vname) / "current.json"
                 from transbridge.persistence import VariantStore
+
                 vs = VariantStore.load(vs_path)
                 vs.apply_to(list(collection))
             else:
@@ -599,18 +264,14 @@ class WriteCard(OpCard):
         if current_vs:
             current_vs.apply_to(list(collection))
 
-        QMessageBox.information(
-            self, "批量写回完成",
-            "\n".join(results)
-        )
+        QMessageBox.information(self, "批量写回完成", "\n".join(results))
 
     # ── Write ESP ─────────────────────────────────────────────
 
     def _write_esp(self, collection):
         esp_path = self._ctx.esp_path
         if not esp_path:
-            QMessageBox.warning(self, "未找到插件路径",
-                                "请先在步骤1中解析插件文件，再执行写回操作。")
+            QMessageBox.warning(self, "未找到插件路径", "请先在步骤1中解析插件文件，再执行写回操作。")
             return
 
         plugin = getattr(self._ctx, "plugin", None)
@@ -619,8 +280,11 @@ class WriteCard(OpCard):
         is_localized = strings_lookup is not None
 
         if plugin is None:
-            QMessageBox.warning(self, "插件未加载",
-                                "未找到已解析的插件实例，请重新在步骤1中解析插件文件。")
+            QMessageBox.warning(
+                self,
+                "写回服务未接入",
+                "当前翻译内容来自权威建项 hydration，必须通过操作计划写回；不会重新解析源插件或直接写正式文件。",
+            )
             return
 
         src = Path(esp_path)
@@ -631,7 +295,8 @@ class WriteCard(OpCard):
                 output_dir = str(self._output_dir_override)
             else:
                 output_dir = QFileDialog.getExistingDirectory(
-                    self, "选择 Strings 文件输出目录",
+                    self,
+                    "选择 Strings 文件输出目录",
                     str(src.parent),
                 )
             if not output_dir:
@@ -645,7 +310,9 @@ class WriteCard(OpCard):
             else:
                 default_name = src.stem + "_translated" + src.suffix
                 esp_output_path_str, _ = QFileDialog.getSaveFileName(
-                    self, "保存汉化插件", str(src.parent / default_name),
+                    self,
+                    "保存汉化插件",
+                    str(src.parent / default_name),
                     "ESP/ESM 文件 (*.esp *.esm);;所有文件 (*)",
                 )
                 if not esp_output_path_str:
@@ -668,23 +335,24 @@ class WriteCard(OpCard):
                 if esp_saved:
                     # 混合模式：ESP + strings 文件
                     QMessageBox.information(
-                        self, "写回完成",
-                        f"已写入 {count} 条译文。\n\n"
-                        f"ESP 文件：{out_path}\n\n"
-                        f"Strings 文件：{strings_dir}",
+                        self,
+                        "写回完成",
+                        f"已写入 {count} 条译文。\n\nESP 文件：{out_path}\n\nStrings 文件：{strings_dir}",
                     )
                 else:
                     # 纯本地化模式：只有 strings 文件
                     strings_list = "\n".join(f"  • {p.name}" for p in strings_written)
                     QMessageBox.information(
-                        self, "写回完成",
+                        self,
+                        "写回完成",
                         f"已写入 {count} 条译文到 Strings 文件。\n\n"
                         f"输出目录：{strings_dir}\n\n"
                         f"生成的文件：\n{strings_list}",
                     )
             else:
                 QMessageBox.information(
-                    self, "写回完成",
+                    self,
+                    "写回完成",
                     f"已写入 {count} 条译文，保存至：\n{out_path}",
                 )
 
@@ -703,9 +371,11 @@ class WriteCard(OpCard):
             save_path = str(self._output_dir_override / Path(src_path).name)
         else:
             save_path, _ = QFileDialog.getSaveFileName(
-                self, "保存 EET XML", src_path,
-            "XML 文件 (*.xml);;所有文件 (*)",
-        )
+                self,
+                "保存 EET XML",
+                src_path,
+                "XML 文件 (*.xml);;所有文件 (*)",
+            )
         if not save_path:
             return
 
@@ -719,7 +389,8 @@ class WriteCard(OpCard):
         def _on_done(result):
             count, out_path = result
             QMessageBox.information(
-                self, "写回完成",
+                self,
+                "写回完成",
                 f"已更新 {count} 条译文，保存至：\n{out_path}",
             )
 
@@ -738,7 +409,9 @@ class WriteCard(OpCard):
             save_path = str(self._output_dir_override / Path(src_path).name)
         else:
             save_path, _ = QFileDialog.getSaveFileName(
-                self, "保存 XT XML", src_path,
+                self,
+                "保存 XT XML",
+                src_path,
                 "XML 文件 (*.xml);;所有文件 (*)",
             )
         if not save_path:
@@ -754,7 +427,8 @@ class WriteCard(OpCard):
         def _on_done(result):
             count, out_path = result
             QMessageBox.information(
-                self, "写回完成",
+                self,
+                "写回完成",
                 f"已更新 {count} 条译文，保存至：\n{out_path}",
             )
 
@@ -779,7 +453,8 @@ class WriteCard(OpCard):
             default_dir = ""
 
         save_path, _ = QFileDialog.getSaveFileName(
-            self, "导出 DSD JSON",
+            self,
+            "导出 DSD JSON",
             str(Path(default_dir) / default_name) if default_dir else default_name,
             "JSON 文件 (*.json);;所有文件 (*)",
         )
@@ -796,12 +471,14 @@ class WriteCard(OpCard):
             count, out_path = result
             if count == 0:
                 QMessageBox.warning(
-                    self, "导出完成",
+                    self,
+                    "导出完成",
                     f"没有已翻译的条目，导出文件为空。\n\n保存至：{out_path}",
                 )
             else:
                 QMessageBox.information(
-                    self, "导出完成",
+                    self,
+                    "导出完成",
                     f"已导出 {count} 条译文到 DSD JSON。\n\n保存至：{out_path}",
                 )
 

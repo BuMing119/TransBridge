@@ -4,13 +4,14 @@ SmartAssistantPanel 颜色面板:
   本文件无硬编码颜色值。所有视觉样式委托给 ChatWidget 和 MessageBubble。
   背景/边框由 QDockWidget 系统主题控制。
 """
+
 from __future__ import annotations
 
 import logging
 from pathlib import Path
 
-from PyQt6.QtWidgets import QDockWidget, QWidget, QVBoxLayout, QSplitter
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtWidgets import QDockWidget, QSplitter, QVBoxLayout, QWidget
 
 from .chat_widget import ChatWidget
 from .session_list_widget import SessionListWidget
@@ -37,14 +38,14 @@ class SmartAssistantPanel(QDockWidget):
         self.setObjectName("SmartAssistantPanel")
 
         self.setAllowedAreas(
-            Qt.DockWidgetArea.LeftDockWidgetArea |
-            Qt.DockWidgetArea.RightDockWidgetArea |
-            Qt.DockWidgetArea.BottomDockWidgetArea
+            Qt.DockWidgetArea.LeftDockWidgetArea
+            | Qt.DockWidgetArea.RightDockWidgetArea
+            | Qt.DockWidgetArea.BottomDockWidgetArea
         )
         self.setFeatures(
-            QDockWidget.DockWidgetFeature.DockWidgetClosable |
-            QDockWidget.DockWidgetFeature.DockWidgetMovable |
-            QDockWidget.DockWidgetFeature.DockWidgetFloatable
+            QDockWidget.DockWidgetFeature.DockWidgetClosable
+            | QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
         )
         self.setMinimumWidth(900)
         self.setMinimumHeight(300)
@@ -54,15 +55,15 @@ class SmartAssistantPanel(QDockWidget):
         self._session_projection = session_projection
         self._runtime_context = runtime_context
         self._session_subscription = None
+        self._disposed = False
         self._init_skills()
         self._init_session_manager()
         self._init_ui(ctx)
         if self._session_projection is not None:
-            self._session_subscription = self._session_projection.subscribe(
-                self._on_session_projection
-            )
+            self._session_subscription = self._session_projection.subscribe(self._on_session_projection)
         # 延迟到 ChatWidget UI 构建完成后再恢复会话（ChatWidget._init_ui 是 QTimer 延迟的）
         from PyQt6.QtCore import QTimer
+
         QTimer.singleShot(0, self._restore_last_session)
 
     # ── 初始化 ──────────────────────────────────────────────────
@@ -70,6 +71,7 @@ class SmartAssistantPanel(QDockWidget):
     def _init_skills(self):
         from transbridge.config.paths import get_data_dir
         from transbridge.smart_assistant.skills import SkillRegistry
+
         SkillRegistry.reload(Path(get_data_dir()) / "skills")
 
     def _init_session_manager(self):
@@ -78,6 +80,7 @@ class SmartAssistantPanel(QDockWidget):
             return
         from transbridge.config.paths import get_data_dir
         from transbridge.smart_assistant.session_manager import SessionManager
+
         self._session_mgr = SessionManager(get_data_dir())
 
     def _init_ui(self, ctx):
@@ -95,10 +98,13 @@ class SmartAssistantPanel(QDockWidget):
         self._session_list.create_session.connect(self._on_create_session)
         self._session_list.switch_session.connect(self._on_switch_session)
         self._session_list.delete_session.connect(self._on_delete_session)
-        self._session_list.rename_session.connect(
-            lambda sid, name: self._on_rename_session(sid, name))
+        self._session_list.rename_session.connect(lambda sid, name: self._on_rename_session(sid, name))
 
         self._chat = ChatWidget(ctx)
+        self._chat.configure_session_port(
+            active_session_id=self._current_session_id,
+            refresh_sessions=self._refresh_session_list,
+        )
         if self._session_mgr is not None:
             self._chat.set_session_manager(self._session_mgr)
 
@@ -184,8 +190,11 @@ class SmartAssistantPanel(QDockWidget):
             logger.warning("V2 Session rename requires an explicit aggregate command")
             return
         from PyQt6.QtWidgets import QInputDialog
+
         new_name, ok = QInputDialog.getText(
-            self, "重命名会话", "新名称:",
+            self,
+            "重命名会话",
+            "新名称:",
             text=current_name,
         )
         if ok and new_name.strip():
@@ -234,10 +243,10 @@ class SmartAssistantPanel(QDockWidget):
 
     def _get_project_name(self) -> str:
         try:
-            ctx = self._chat._ctx
-            if hasattr(ctx, 'active_project') and ctx.active_project:
-                return getattr(ctx.active_project, 'name', '')
-            if hasattr(ctx, 'esp_path') and ctx.esp_path:
+            ctx = self._chat.context
+            if hasattr(ctx, "active_project") and ctx.active_project:
+                return getattr(ctx.active_project, "name", "")
+            if hasattr(ctx, "esp_path") and ctx.esp_path:
                 return Path(ctx.esp_path).stem
         except Exception:
             pass
@@ -248,6 +257,7 @@ class SmartAssistantPanel(QDockWidget):
     def _on_task_action(self, task_id: str, action: str):
         """处理 TaskMonitorWidget 发出的操作信号。"""
         from transbridge.smart_assistant.tools.task_manager import TaskManager
+
         tm = TaskManager()
         if action == "cleanup_completed":
             for tid in tm.list_all():
@@ -263,7 +273,7 @@ class SmartAssistantPanel(QDockWidget):
         elif action == "resume":
             tm.resume(task_id)
         # 操作后立即刷新
-        self._chat._refresh_task_monitor()
+        self._chat.refresh_task_monitor()
 
     # ── 事件 ──────────────────────────────────────────────────
 
@@ -276,6 +286,7 @@ class SmartAssistantPanel(QDockWidget):
         super().hideEvent(event)
 
     def closeEvent(self, event):
+        """The dock close button hides this reusable panel."""
         if self._session_commands is not None:
             self._persist_authoritative_chat()
         elif self._active_session_id:
@@ -283,11 +294,20 @@ class SmartAssistantPanel(QDockWidget):
                 self._chat.save_current_session(self._active_session_id)
             except Exception:
                 logger.debug("关闭时保存会话失败", exc_info=True)
-        self._chat.shutdown(wait_for_worker=False)
+        super().closeEvent(event)
+
+    @property
+    def is_disposed(self) -> bool:
+        return self._disposed
+
+    def dispose(self, *, wait_for_worker: bool = True) -> None:
+        if self._disposed:
+            return
+        self._disposed = True
+        self._chat.shutdown(wait_for_worker=wait_for_worker)
         if self._session_subscription is not None:
             self._session_subscription.close()
             self._session_subscription = None
-        super().closeEvent(event)
 
     def _current_session_id(self) -> str | None:
         if self._session_projection is None:
@@ -312,8 +332,7 @@ class SmartAssistantPanel(QDockWidget):
             return
         from transbridge.persistence.v2 import SessionId, SessionRef
 
-        backend = self._chat._conversation.to_dict().get("messages", [])
-        controller = self._chat._controller.to_recovery_snapshot()
+        backend, controller = self._chat.recovery_snapshot()
         result = self._session_commands.save_conversation(
             SessionRef(SessionId(session_id)),
             list(backend),

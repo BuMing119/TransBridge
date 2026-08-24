@@ -1,21 +1,34 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from PyQt6.QtWidgets import (
-    QDialog, QDialogButtonBox, QVBoxLayout, QHBoxLayout,
-    QWidget, QLabel, QPushButton, QListWidget, QListWidgetItem,
-    QStackedWidget, QMessageBox, QScrollArea, QCheckBox,
-)
 from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from transbridge.paratranz.workflow.downloader import ParaTranzDownloader
+
 from ...workers import ApiWorker
 from .base import OpCard
+from .presenter import OperationCardPresenter
 
 
 @dataclass
 class BatchDownloadResult:
     """批量下载结果汇总。"""
+
     success_count: int = 0
     skipped_count: int = 0  # 未找到同名文件
     failed_count: int = 0
@@ -79,9 +92,7 @@ class _SlotSelectDialog(QDialog):
         layout.addWidget(self._status_label)
 
         # 按钮
-        btn_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
+        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self._ok_btn = btn_box.button(QDialogButtonBox.StandardButton.Ok)
         self._ok_btn.setText("确认")
         btn_box.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
@@ -205,9 +216,7 @@ class _BatchConfirmDialog(QDialog):
         layout.addWidget(footer)
 
         # 按钮
-        btn_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Yes | QDialogButtonBox.StandardButton.No
-        )
+        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Yes | QDialogButtonBox.StandardButton.No)
         btn_box.button(QDialogButtonBox.StandardButton.Yes).setText("确认")
         btn_box.button(QDialogButtonBox.StandardButton.No).setText("取消")
         btn_box.accepted.connect(self.accept)
@@ -261,9 +270,7 @@ class _FileSelectDialog(QDialog):
         self._status_label = QLabel("")
         layout.addWidget(self._status_label)
 
-        btn_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
+        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self._ok_btn = btn_box.button(QDialogButtonBox.StandardButton.Ok)
         self._ok_btn.setText("确认合并")
         self._ok_btn.setEnabled(False)
@@ -276,6 +283,7 @@ class _FileSelectDialog(QDialog):
 
     def _load_files(self):
         from transbridge.paratranz.api.paratranz_files_api import ParatranzFilesAPI
+
         config = self._config
         project_id = self._project_id
 
@@ -350,7 +358,6 @@ class _FileSelectDialog(QDialog):
 
 
 class DownloadCard(OpCard):
-
     def __init__(self, ctx, run_worker, parent=None):
         super().__init__(
             "从 ParaTranz 下载合并",
@@ -359,17 +366,19 @@ class DownloadCard(OpCard):
             parent,
         )
         self._ctx = ctx
+        self._presenter = OperationCardPresenter(ctx)
         self._run_worker = run_worker
-        self.btn.clicked.connect(self._do_download)
-        self.batch_btn.clicked.connect(self._do_batch_download)
+        self.btn.clicked.connect(self.download)
+        self.batch_btn.clicked.connect(self.batch_download)
 
     def update_batch_visibility(self):
         """更新批量按钮可见性（由 step3 调用）。"""
-        slots = self._ctx.slots
-        self.set_batch_visible(len(slots) > 1)
+        self.set_batch_visible(self._presenter.batch_available)
 
-    def _do_batch_download(self):
+    def batch_download(self):
         """批量下载入口。"""
+        if self._dispatch_planned("download", self._ctx, batch=True):
+            return
         slots = self._ctx.slots
         if len(slots) <= 1:
             return
@@ -426,7 +435,11 @@ class DownloadCard(OpCard):
         # 确认对话框
         slot_names = [s.label or Path(s.esp_path).stem for s in selected_slots]
         items = [f"• {name}.json (含分割文件)" for name in slot_names]
-        header = f"即将从项目「{project_name}」下载\n每个插件将下载同名 JSON 文件及其分割文件（如 _1, _2）并合并。\n未找到同名文件的插件将被跳过。"
+        header = (
+            f"即将从项目「{project_name}」下载\n"
+            "每个插件将下载同名 JSON 文件及其分割文件（如 _1, _2）并合并。\n"
+            "未找到同名文件的插件将被跳过。"
+        )
 
         dlg = _BatchConfirmDialog("确认批量下载", header, items, parent=self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
@@ -465,7 +478,8 @@ class DownloadCard(OpCard):
 
                 try:
                     result = downloader.download_to_collection(
-                        project_id, slot.collection,
+                        project_id,
+                        slot.collection,
                         file_ids=file_ids,
                     )
                     results.success_count += 1
@@ -500,7 +514,9 @@ class DownloadCard(OpCard):
             progress_msg="正在批量下载…",
         )
 
-    def _do_download(self):
+    def download(self):
+        if self._dispatch_planned("download", self._ctx):
+            return
         collection = self._ctx.collection
         project = self._ctx.current_project
         if not collection or not project:
@@ -517,13 +533,14 @@ class DownloadCard(OpCard):
         def _download_factory(progress_cb):
             downloader = ParaTranzDownloader(config)
             return downloader.download_to_collection(
-                project_id, collection,
-                file_ids=file_ids, progress_callback=progress_cb)
+                project_id, collection, file_ids=file_ids, progress_callback=progress_cb
+            )
 
         def _on_done(result):
             self._ctx.collection_changed.emit(self._ctx.collection)
             QMessageBox.information(
-                self, "下载合并完成",
+                self,
+                "下载合并完成",
                 f"已合并：{result.merged} 条\n"
                 f"未匹配：{result.skipped_no_match} 条\n"
                 f"跳过（stage 不足）：{result.skipped_low_stage} 条",

@@ -10,6 +10,7 @@ from transbridge.bootstrap import AppRuntime, bind_runtime, build_runtime
 from transbridge.paratranz.config_manager import ParatranzConfig
 
 from .context import AppContext
+from .input_guard import install_accidental_wheel_guard
 from .main_window import MainWindow
 
 _LOG_FORMAT = "%(asctime)s [%(name)s] %(levelname)s: %(message)s"
@@ -54,6 +55,7 @@ def main(runtime: AppRuntime | None = None) -> int:
         app.setApplicationName("TransBridge")
         app.setOrganizationName("TransBridge")
         app._transbridge_runtime = app_runtime  # type: ignore[attr-defined]
+        app._transbridge_wheel_guard = install_accidental_wheel_guard(app)  # type: ignore[attr-defined]
 
         # Legacy registry setup remains an entrypoint adapter until S04 migrates it.
         from transbridge.smart_assistant.agents import AgentRegistry

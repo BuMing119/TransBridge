@@ -6,21 +6,45 @@ Story-19: 左侧 CollectionStatsPanel 已移除，分类统计以标签组形式
 
 from pathlib import Path
 
+from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtGui import QShowEvent
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QComboBox, QPushButton, QFileDialog, QMessageBox,
+    QComboBox,
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
 )
 
-from .step2 import Step2PreviewWidget
+from transbridge.ui.guidance.qt import GuidanceBanner
+from transbridge.ui.windowing import show_and_activate
+
 from ._project_bar import ProjectBar
+from .step2 import Step2PreviewWidget
+from .workflow_presenter import WorkbenchHierarchyViewState, WorkbenchWorkflowPresenter
+
+
+def _track_ai_progress(tool_windows: dict, progress_win) -> None:
+    tool_windows["ai_translator_progress"] = progress_win
+    tool_windows.pop("ai_translator", None)
+    show_and_activate(progress_win, deferred=True)
 
 
 class WorkbenchWidget(QWidget):
+    intent_requested = pyqtSignal(str)
 
     def __init__(self, ctx, parent=None):
         super().__init__(parent)
+        self.setAccessibleName("翻译工作台")
+        self._initial_focus_set = False
         self._ctx = ctx
         self._tool_windows: dict = {}
+        self._workflow_presenter = WorkbenchWorkflowPresenter()
         self._init_ui()
 
     def _init_ui(self):
@@ -36,11 +60,60 @@ class WorkbenchWidget(QWidget):
         self._collection_bar = self._build_collection_bar()
         layout.addWidget(self._collection_bar)
 
+        self._guidance_banner = GuidanceBanner(self)
+        layout.addWidget(self._guidance_banner)
+
         self._step2 = Step2PreviewWidget(self._ctx)
+        self._step2.intent_requested.connect(self.intent_requested.emit)
         layout.addWidget(self._step2)
 
         self._ctx.collection_list_changed.connect(self._rebuild_collection_combo)
         self._rebuild_collection_combo()
+
+    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - Qt override
+        super().showEvent(event)
+        if self._initial_focus_set:
+            return
+        self._initial_focus_set = True
+        self._collection_combo.setFocus()
+
+    @property
+    def project_bar(self) -> ProjectBar:
+        """Public shell integration point; callers need not reach into layout state."""
+        return self._project_bar
+
+    @property
+    def preview(self) -> Step2PreviewWidget:
+        """Return the stable Step2 facade, not its private table implementation."""
+        return self._step2
+
+    @property
+    def hierarchy_state(self) -> WorkbenchHierarchyViewState:
+        return self._project_bar.hierarchy_state
+
+    @property
+    def guidance_banner(self) -> GuidanceBanner:
+        return self._guidance_banner
+
+    def collect_labels(self) -> tuple[dict[str, set[str]], dict[str, dict]]:
+        return self._step2.collect_labels()
+
+    def selected_entry_ids(self) -> tuple[str, ...]:
+        return self._step2.selected_entry_ids()
+
+    def selected_row_entry_ids(self) -> tuple[str, ...]:
+        return self._step2.selected_row_entry_ids()
+
+    def filtered_entries(self):
+        return self._step2.filtered_entries()
+
+    def locate_entry(self, entry_id: str) -> None:
+        self._step2.locate_entry(entry_id)
+
+    def open_management_menu(self) -> None:
+        """Open the secondary management surface for the canonical intent."""
+
+        self._manage_button.showMenu()
 
     # ── Step2 progress proxy ──────────────────────────────────
 
@@ -58,17 +131,21 @@ class WorkbenchWidget(QWidget):
 
     # ── Tool windows ──────────────────────────────────────────
 
-    def open_tool(self, tool_id: str):
+    def open_tool(self, tool_id: str, *, task_runtime=None):
         if tool_id == "ai_translator":
             progress_win = self._tool_windows.get("ai_translator_progress")
             if progress_win is not None and progress_win.is_running():
-                progress_win.show()
-                progress_win.raise_()
-                progress_win.activateWindow()
+                show_and_activate(progress_win)
                 return
 
             from transbridge.ui.tools.ai_translator.ai_translator_window import AITranslatorWindow
-            win = AITranslatorWindow.open_for_translation(self._ctx, self._step2, parent=self)
+
+            win = AITranslatorWindow.open_for_translation(
+                self._ctx,
+                self._step2,
+                parent=self,
+                task_runtime=task_runtime,
+            )
             if win is None:
                 return
 
@@ -76,18 +153,16 @@ class WorkbenchWidget(QWidget):
                 win.progress_window_created.connect(self._on_progress_window_created)
                 self._tool_windows["ai_translator"] = win
             else:
-                self._tool_windows["ai_translator_progress"] = win
+                _track_ai_progress(self._tool_windows, win)
             return
 
         if tool_id in self._tool_windows:
-            win = self._tool_windows[tool_id]
-            win.show()
-            win.raise_()
-            win.activateWindow()
+            show_and_activate(self._tool_windows[tool_id])
 
     def _on_progress_window_created(self, progress_win):
-        self._tool_windows["ai_translator_progress"] = progress_win
-        self._tool_windows.pop("ai_translator", None)
+        # The signal is emitted while the configuration window is still active.
+        # Defer activation until that window's start handler has closed it.
+        _track_ai_progress(self._tool_windows, progress_win)
 
     # ── Collection toolbar ───────────────────────────────────
 
@@ -97,33 +172,36 @@ class WorkbenchWidget(QWidget):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(6)
 
-        row.addWidget(QLabel("集合:"))
+        row.addWidget(QLabel("翻译内容 ·"))
 
         self._collection_combo = QComboBox()
+        self._collection_combo.setAccessibleName("当前翻译内容")
         self._collection_combo.setMinimumWidth(180)
-        self._collection_combo.setSizeAdjustPolicy(
-            QComboBox.SizeAdjustPolicy.AdjustToContents
-        )
+        self._collection_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self._collection_combo.currentIndexChanged.connect(self._on_collection_switch)
         row.addWidget(self._collection_combo, stretch=1)
 
-        self._btn_new = QPushButton("+ 新建")
-        self._btn_new.setFlat(True)
-        self._btn_new.setToolTip("清空当前选择，准备加载新数据")
-        self._btn_new.clicked.connect(self._on_new_slot)
-        row.addWidget(self._btn_new)
-
-        self._btn_import = QPushButton("导入JSON")
+        self._btn_import = QPushButton("导入已有译文…")
+        self._btn_import.setAccessibleName("导入已有译文")
         self._btn_import.setFlat(True)
         self._btn_import.setToolTip("从 JSON 文件导入翻译集合")
         self._btn_import.clicked.connect(self._on_import_json)
         row.addWidget(self._btn_import)
 
-        self._btn_remove = QPushButton("✕ 移除")
-        self._btn_remove.setFlat(True)
-        self._btn_remove.setToolTip("移除当前集合（不删除文件）")
-        self._btn_remove.clicked.connect(self._on_remove_slot)
-        row.addWidget(self._btn_remove)
+        self._manage_button = QToolButton()
+        self._manage_button.setAccessibleName("管理当前翻译内容")
+        self._manage_button.setText("管理 ▾")
+        self._manage_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        manage_menu = QMenu(self._manage_button)
+        self._btn_new = manage_menu.addAction("准备新的翻译内容")
+        self._btn_new.setToolTip("清空当前选择，准备加载新数据")
+        self._btn_new.triggered.connect(self._on_new_slot)
+        manage_menu.addSeparator()
+        self._btn_remove = manage_menu.addAction("移除当前翻译内容…")
+        self._btn_remove.setToolTip("移除当前翻译内容（不删除源文件）")
+        self._btn_remove.triggered.connect(self._on_remove_slot)
+        self._manage_button.setMenu(manage_menu)
+        row.addWidget(self._manage_button)
 
         return bar
 
@@ -136,7 +214,19 @@ class WorkbenchWidget(QWidget):
         try:
             self._collection_combo.clear()
             if not slots:
-                self._collection_combo.addItem("（无集合）")
+                sources = getattr(self._ctx, "project_sources", ())
+                if sources:
+                    for source in sources:
+                        state = self._workflow_presenter.hierarchy(
+                            project_id=getattr(self._ctx, "active_project_id", None),
+                            project_name=getattr(self._ctx, "project_name", None),
+                            variant_id=getattr(self._ctx, "active_variant_id", None),
+                            variant_name=self._active_variant_name(),
+                            sources=(source,),
+                        )
+                        self._collection_combo.addItem(state.content_label, state.identity)
+                else:
+                    self._collection_combo.addItem("（无翻译内容）")
                 self._collection_combo.setEnabled(False)
                 self._btn_remove.setEnabled(False)
                 return
@@ -145,13 +235,29 @@ class WorkbenchWidget(QWidget):
             self._btn_remove.setEnabled(True)
             active_idx = 0
             for i, (key, slot) in enumerate(slots.items()):
-                label = slot.label or (Path(key).stem if key else "?")
+                label = self._content_display_label(key, slot)
                 self._collection_combo.addItem(label, key)
                 if key == active:
                     active_idx = i
             self._collection_combo.setCurrentIndex(active_idx)
         finally:
             self._collection_combo.blockSignals(False)
+
+    @staticmethod
+    def _content_display_label(key: str, slot) -> str:
+        name = slot.label or (Path(key).name if key else "未命名内容")
+        if getattr(slot, "plugin", None) is not None or getattr(slot, "esp_path", None):
+            return f"插件 · {name}"
+        if getattr(slot, "strings_path", None):
+            return f"本地化字符串 · {name}"
+        return f"翻译内容 · {name}"
+
+    def _active_variant_name(self) -> str | None:
+        active = getattr(self._ctx, "active_variant_id", None)
+        for value in getattr(self._ctx, "project_variants", ()):
+            if str(value.get("id")) == str(active):
+                return str(value.get("name") or active)
+        return None
 
     def _on_collection_switch(self, index: int):
         key = self._collection_combo.itemData(index)
@@ -168,9 +274,7 @@ class WorkbenchWidget(QWidget):
         from transbridge.ui.context import CollectionSlot
         from transbridge.ui.workers import ApiWorker
 
-        path, _ = QFileDialog.getOpenFileName(
-            self, "导入 JSON 文件", "", "JSON 文件 (*.json);;所有文件 (*)"
-        )
+        path, _ = QFileDialog.getOpenFileName(self, "导入 JSON 文件", "", "JSON 文件 (*.json);;所有文件 (*)")
         if not path:
             return
 
@@ -185,7 +289,8 @@ class WorkbenchWidget(QWidget):
             slot = CollectionSlot(label=label, collection=collection)
             if path in self._ctx.slots:
                 ret = QMessageBox.question(
-                    self, "集合已存在",
+                    self,
+                    "集合已存在",
                     f"集合「{label}」已存在，是否覆盖？\n选择「否」将保留原有集合。",
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 )
@@ -209,8 +314,11 @@ class WorkbenchWidget(QWidget):
         slot = self._ctx.slots.get(active)
         label = slot.label if slot else active
         ret = QMessageBox.question(
-            self, "移除集合",
-            f"确定要移除集合「{label}」吗？\n已解析的数据将从内存中清除。",
+            self,
+            "移除集合",
+            f"确定要移除翻译内容「{label}」吗？\n"
+            "范围：仅从当前工作台移除已解析数据，不删除源文件。\n"
+            "恢复方式：之后可重新导入同一来源。",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if ret == QMessageBox.StandardButton.Yes:

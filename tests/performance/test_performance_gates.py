@@ -144,6 +144,7 @@ def test_gate_medium_parse_rss_le_1gib() -> None:
         "from transbridge.application.contracts import RequestContext",
         "import tests.performance.benchmark_cases as c",
         "p=Path('qa-tmp-s03')/'medium-rss.xml'",
+        "p.parent.mkdir(parents=True,exist_ok=True)",
         "p.write_bytes(c.medium_eet_corpus(entries=10000))",
         "uc=TranslationIoUseCase()",
         "req=ParseRequest(SourceDescriptor(str(p),p.name,p.stat().st_size),RequestContext('perf','s03'),FormatId.XML_EET)",

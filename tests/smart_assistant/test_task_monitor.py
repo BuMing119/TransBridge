@@ -2,16 +2,19 @@
 
 FR14 Story 01: TaskMonitorWidget 核心组件测试。
 """
+
 from __future__ import annotations
 
 import time
 
-import pytest
 from PyQt6.QtWidgets import QApplication, QPushButton
-from PyQt6.QtCore import Qt
+import pytest
 
 from transbridge.ui.tools.smart_assistant.task_monitor import (
-    TaskMonitorWidget, _TaskCard, _STATUS_COLORS, _STATUS_LABELS,
+    _STATUS_COLORS,
+    _STATUS_LABELS,
+    TaskMonitorWidget,
+    _TaskCard,
 )
 
 
@@ -33,9 +36,11 @@ def monitor(qapp):
 
 def _make_task(task_id, status, current=0, total=0, meta_type="翻译", age=30):
     return {
-        "task_id": task_id, "status": status,
+        "task_id": task_id,
+        "status": status,
         "progress": {"current": current, "total": total},
-        "metadata": {"type": meta_type}, "created_at": time.time() - age,
+        "metadata": {"type": meta_type},
+        "created_at": time.time() - age,
     }
 
 
@@ -130,6 +135,18 @@ class TestTaskCard:
         assert "暂停" in btn_texts
         assert "取消" in btn_texts
 
+    def test_action_uses_explicit_callback_without_parent_lookup(self, qapp):
+        actions = []
+        card = _TaskCard(
+            "t1",
+            _make_task("t1", "running"),
+            action_callback=lambda task_id, action: actions.append((task_id, action)),
+        )
+
+        card._emit_action("cancel")
+
+        assert actions == [("t1", "cancel")]
+
     def test_completed_card_has_clear(self, qapp):
         """已完成任务：无进度条、有清除按钮、状态标签正确。"""
         card = _TaskCard("t2", _make_task("t2", "completed", meta_type="后处理"))
@@ -166,8 +183,10 @@ class TestTaskCard:
     def test_metadata_name_fallback(self, qapp):
         """metadata.type 缺失时回退到 metadata.name。"""
         task = {
-            "task_id": "tx", "status": "running",
-            "progress": {}, "metadata": {"name": "后处理流水线"},
+            "task_id": "tx",
+            "status": "running",
+            "progress": {},
+            "metadata": {"name": "后处理流水线"},
             "created_at": time.time(),
         }
         card = _TaskCard("tx", task)
@@ -177,8 +196,11 @@ class TestTaskCard:
     def test_default_name_when_no_metadata(self, qapp):
         """metadata 完全缺失时用默认名称。"""
         task = {
-            "task_id": "tx", "status": "running",
-            "progress": {}, "metadata": {}, "created_at": time.time(),
+            "task_id": "tx",
+            "status": "running",
+            "progress": {},
+            "metadata": {},
+            "created_at": time.time(),
         }
         card = _TaskCard("tx", task)
         card.show()
@@ -205,12 +227,15 @@ class TestStatusMappings:
             assert status in _STATUS_COLORS
             assert status in _STATUS_LABELS
 
-    @pytest.mark.parametrize("status,expected", [
-        ("running", "#4CAF50"),
-        ("completed", "#2196F3"),
-        ("failed", "#D32F2F"),
-        ("cancelled", "#9E9E9E"),
-        ("paused", "#FF9800"),
-    ])
+    @pytest.mark.parametrize(
+        "status,expected",
+        [
+            ("running", "#4CAF50"),
+            ("completed", "#2196F3"),
+            ("failed", "#D32F2F"),
+            ("cancelled", "#9E9E9E"),
+            ("paused", "#FF9800"),
+        ],
+    )
     def test_status_colors(self, status, expected):
         assert _STATUS_COLORS[status] == expected

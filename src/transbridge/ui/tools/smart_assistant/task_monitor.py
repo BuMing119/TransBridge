@@ -2,17 +2,25 @@
 
 ADR-008: 纯 UI 组件，零后端依赖。通过 refresh() 接收 TaskManager 快照数据。
 """
+
 from __future__ import annotations
 
+from collections.abc import Callable
 import logging
 import time
-from typing import Any
 
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame,
-    QProgressBar, QScrollArea, QSizePolicy,
-)
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QProgressBar,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,12 +45,21 @@ _STATUS_LABELS: dict[str, str] = {
 
 # ── 单任务卡片 ─────────────────────────────────────────────────
 
+
 class _TaskCard(QFrame):
     """单个后台任务的卡片组件。"""
 
-    def __init__(self, task_id: str, task_data: dict, parent=None):
+    def __init__(
+        self,
+        task_id: str,
+        task_data: dict,
+        parent=None,
+        *,
+        action_callback: Callable[[str, str], None] | None = None,
+    ):
         super().__init__(parent)
         self._task_id = task_id
+        self._action_callback = action_callback or (lambda _task_id, _action: None)
         self.setObjectName("TaskCard")
         self.setStyleSheet(
             "#TaskCard { background: #FAFAFA; border: 1px solid #E0E0E0;"
@@ -72,8 +89,7 @@ class _TaskCard(QFrame):
         label_text = _STATUS_LABELS.get(status, status)
         self._status_label = QLabel(label_text)
         self._status_label.setStyleSheet(
-            f"font-size: 10px; color: white; background: {color};"
-            f" border-radius: 3px; padding: 1px 6px;"
+            f"font-size: 10px; color: white; background: {color}; border-radius: 3px; padding: 1px 6px;"
         )
 
         top_row.addWidget(self._name_label)
@@ -163,13 +179,8 @@ class _TaskCard(QFrame):
         layout.addLayout(btn_layout)
 
     def _emit_action(self, action: str):
-        """发射任务操作信号。"""
-        parent = self.parent()
-        while parent is not None:
-            if isinstance(parent, TaskMonitorWidget):
-                parent.task_action.emit(self._task_id, action)
-                return
-            parent = parent.parent()
+        """Forward the intent through the explicitly injected action port."""
+        self._action_callback(self._task_id, action)
 
     @staticmethod
     def _btn_style(color: str) -> str:
@@ -212,6 +223,7 @@ class _TaskCard(QFrame):
 
 # ── 主控件 ─────────────────────────────────────────────────────
 
+
 class TaskMonitorWidget(QWidget):
     """后台任务监控面板。
 
@@ -240,8 +252,7 @@ class TaskMonitorWidget(QWidget):
         # ── 标题栏 ──────────────────────────────────────────────
         title_bar = QFrame()
         title_bar.setStyleSheet(
-            "QFrame { background: #F5F5F5; border-top: 1px solid #E0E0E0;"
-            " border-bottom: 1px solid #E0E0E0; }"
+            "QFrame { background: #F5F5F5; border-top: 1px solid #E0E0E0; border-bottom: 1px solid #E0E0E0; }"
         )
         title_layout = QHBoxLayout(title_bar)
         title_layout.setContentsMargins(8, 2, 8, 2)
@@ -252,16 +263,14 @@ class TaskMonitorWidget(QWidget):
         self._collapse_btn = QPushButton("▼")
         self._collapse_btn.setFixedSize(20, 20)
         self._collapse_btn.setStyleSheet(
-            "QPushButton { border: none; font-size: 10px; color: #888; }"
-            "QPushButton:hover { color: #333; }"
+            "QPushButton { border: none; font-size: 10px; color: #888; }QPushButton:hover { color: #333; }"
         )
         self._collapse_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._collapse_btn.clicked.connect(self._toggle_collapse)
 
         self._clear_all_btn = QPushButton("清除已完成")
         self._clear_all_btn.setStyleSheet(
-            "QPushButton { font-size: 10px; color: #888; border: none; }"
-            "QPushButton:hover { color: #D32F2F; }"
+            "QPushButton { font-size: 10px; color: #888; border: none; }QPushButton:hover { color: #D32F2F; }"
         )
         self._clear_all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._clear_all_btn.clicked.connect(lambda: self.task_action.emit("__all__", "cleanup_completed"))
@@ -317,7 +326,11 @@ class TaskMonitorWidget(QWidget):
             if status in ("running", "paused"):
                 active_count += 1
 
-            card = _TaskCard(tid, t)
+            card = _TaskCard(
+                tid,
+                t,
+                action_callback=lambda task_id, action: self.task_action.emit(task_id, action),
+            )
             self._list_layout.insertWidget(self._list_layout.count() - 1, card)
 
         # 更新标题
@@ -328,8 +341,7 @@ class TaskMonitorWidget(QWidget):
         inactive = len(tasks) - active_count
         self._clear_all_btn.setVisible(inactive > 0)
 
-    def update_task(self, task_id: str, status: str | None = None,
-                    progress: dict | None = None) -> None:
+    def update_task(self, task_id: str, status: str | None = None, progress: dict | None = None) -> None:
         """增量更新单个任务。用于避免全量刷新的闪烁。"""
         # 简单实现：直接全量刷新（任务数少，性能足够）
         pass

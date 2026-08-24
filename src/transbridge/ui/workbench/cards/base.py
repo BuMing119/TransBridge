@@ -1,5 +1,4 @@
-from PyQt6.QtWidgets import QGroupBox, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
-from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QGroupBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
 
 class OpCard(QGroupBox):
@@ -7,6 +6,7 @@ class OpCard(QGroupBox):
 
     def __init__(self, title: str, desc: str, btn_text: str, parent=None):
         super().__init__(title, parent)
+        self._operation_plan_facade = None
         layout = QVBoxLayout(self)
         lbl = QLabel(desc)
         lbl.setWordWrap(True)
@@ -36,3 +36,20 @@ class OpCard(QGroupBox):
     def set_batch_visible(self, visible: bool):
         """设置批量按钮可见性。"""
         self._batch_btn.setVisible(visible)
+
+    def bind_operation_plan_facade(self, facade) -> None:
+        """Composition hook; cards retain their old public intent facade."""
+        self._operation_plan_facade = facade
+
+    def _dispatch_planned(self, intent: str, context, *, batch: bool = False) -> bool:
+        facade = self._operation_plan_facade
+        if facade is None:
+            return False
+        handler = getattr(facade, f"begin_{intent}", None)
+        if not callable(handler):
+            return False
+        supports = getattr(facade, "supports", None)
+        if callable(supports) and not supports(intent, context, batch=batch):
+            return False
+        handler(context, batch=batch)
+        return True

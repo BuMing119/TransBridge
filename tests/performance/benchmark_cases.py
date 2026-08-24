@@ -74,6 +74,11 @@ class Thresholds:
     checkpoint_100k_save_p95_ms: float = 100.0
     checkpoint_100k_load_p95_ms: float = 100.0
     session_500_rss_growth_ratio: float = 0.15  # <= 15% growth
+    # FR25 UI modularization relative budgets. A before/after result may use
+    # the wider of the relative or absolute allowance.
+    ui_modularization_max_regression_ratio: float = 0.05
+    ui_modularization_absolute_regression_s: float = 0.010
+    ui_lifecycle_iterations: int = 100
     # Archive policy budget (see fileops/archive_policy).
     archive_max_files: int = 1000
     archive_max_bytes: int = 512 * 1024 * 1024
@@ -225,6 +230,40 @@ def _build_registry() -> tuple[BenchmarkCase, ...]:
             repetitions=20,
             threshold_p95=threshold.ui_progress_p95_ms / 1000.0,
             note="progress-update delivery probe; boundary only, not a fake GUI pass",
+        ),
+        BenchmarkCase(
+            case_id="ui-modularization-window-open",
+            kind="ui-modularization",
+            tier=HardwareTier.WINDOWS_S05,
+            warmup=2,
+            repetitions=20,
+            note=(
+                "FR25 fixed-window before/after P95 and RSS case; maximum regression "
+                "is the wider of 5% or 10ms; authoritative on visible Windows GUI"
+            ),
+        ),
+        BenchmarkCase(
+            case_id="ui-modularization-interaction",
+            kind="ui-modularization",
+            tier=HardwareTier.WINDOWS_S05,
+            warmup=2,
+            repetitions=20,
+            threshold_p95=threshold.ui_heartbeat_p95_ms / 1000.0,
+            note=(
+                "FR25 filter/render/progress/stream interaction case; compares to S01 "
+                "baseline and keeps GUI heartbeat <=200ms"
+            ),
+        ),
+        BenchmarkCase(
+            case_id="ui-modularization-lifecycle",
+            kind="ui-modularization",
+            tier=HardwareTier.WINDOWS_S05,
+            warmup=1,
+            repetitions=threshold.ui_lifecycle_iterations,
+            note=(
+                "FR25 100 create/destroy cycles; subscriptions, timers, workers and "
+                "steady RSS must return to the warmed tolerance"
+            ),
         ),
         BenchmarkCase(
             case_id="cancel-100",

@@ -101,7 +101,7 @@ def test_authoritative_save_runs_off_gui_thread_and_reports_completion() -> None
             pass
 
     class Workbench:
-        _project_bar = ProjectBar()
+        project_bar = ProjectBar()
 
         def __init__(self) -> None:
             self.enabled = True
@@ -171,7 +171,7 @@ def test_automatic_save_is_silent_and_does_not_disable_workbench() -> None:
             raise AssertionError("automatic save must not flash the manual-save affordance")
 
     class Workbench:
-        _project_bar = ProjectBar()
+        project_bar = ProjectBar()
 
         def __init__(self) -> None:
             self.enabled = True
@@ -230,8 +230,8 @@ def test_autosave_debounce_restarts_after_each_dirty_edit() -> None:
         variant_store=None,
     )
     window = SimpleNamespace(
-        _ctx=context,
-        _save_current_project_async=lambda **kwargs: saves.append(kwargs["automatic"]) or True,
+        context=context,
+        save_current_project_async=lambda **kwargs: saves.append(kwargs["automatic"]) or True,
     )
     manager = _AutoSaveManager(window, debounce_ms=80)
 
@@ -316,8 +316,6 @@ def test_string_dialog_close_waits_asynchronously_with_progress() -> None:
     dialog = StringDetailDialog.__new__(StringDetailDialog)
     QDialog.__init__(dialog)
     dialog._workers = [worker]
-    dialog._close_pending = False
-    dialog._close_progress = None
     worker.start()
     _wait_until(worker.isRunning)
 
@@ -328,12 +326,12 @@ def test_string_dialog_close_waits_asynchronously_with_progress() -> None:
 
     assert elapsed < 0.1
     assert not event.isAccepted()
-    assert dialog._close_pending
-    assert dialog._close_progress is not None
+    assert dialog._lifecycle._close_pending
+    assert dialog._lifecycle._close_progress is not None
 
     release.set()
-    _wait_until(lambda: not dialog._close_pending)
-    assert dialog._close_progress is None
+    _wait_until(lambda: not dialog._lifecycle._close_pending)
+    assert dialog._lifecycle._close_progress is None
 
 
 def test_gui_close_handlers_do_not_block_on_thread_waits() -> None:
@@ -363,7 +361,14 @@ def test_gui_close_handlers_do_not_block_on_thread_waits() -> None:
 
 
 def test_project_import_has_no_fixed_500_mib_limit() -> None:
-    source = (Path(__file__).parents[2] / "src/transbridge/ui/main_window.py").read_text(encoding="utf-8")
+    ui_root = Path(__file__).parents[2] / "src/transbridge/ui"
+    source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            ui_root / "main_window.py",
+            ui_root / "coordinators/project_transfer_coordinator.py",
+        )
+    )
     assert "500 * 1024 * 1024" not in source
     assert "shutil.disk_usage(destination.parent).free" in source
 
