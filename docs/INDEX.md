@@ -41,6 +41,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [ADR-017](adr/017-translation-io-kernel-v2.md) | Translation I/O Kernel V2、双层身份与原子发布 | ✅ 已接受（2026-08-18） |
 | [ADR-018](adr/018-project-session-persistence-v2.md) | Project/Variant/Session 状态所有权与持久化 V2 | ✅ 已接受（2026-08-18） |
 | [ADR-019](adr/019-unified-task-runtime.md) | Unified Task Runtime、互斥终态与幂等恢复 | ✅ 已接受（2026-08-18） |
+| [ADR-021](adr/021-ui-presentation-modularization.md) | UI 展示层模块化：View/Presenter 边界、显式窄依赖、规模门禁（FR25） | ✅ 已接受并实施（2026-08-19） |
 
 > 详细架构文档见 [dev/ARCHITECTURE.md](dev/ARCHITECTURE.md)（模块依赖、数据流、全局状态管理、设计决策）。
 
@@ -61,6 +62,14 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [paratranz-sync-service-v2](../plans/paratranz-sync-service-v2/plan.md) | 实现完成，综合 QA 通过 | 4 |
 | [fomod-pipeline-v2](../plans/fomod-pipeline-v2/plan.md) | 实现完成，综合 QA 通过 | 5 |
 | [release-hardening-v2](../plans/release-hardening-v2/plan.md) | 实现完成，综合 QA 通过 | 5 |
+
+### UI 演进
+
+| Epic / Feature | 状态 | Story 数 |
+|----------------|------|---------|
+| [ui-presentation-modularization](../plans/ui-presentation-modularization/plan.md) | FR25 已完成 | 8 |
+| [guided-ui-workflows](../plans/guided-ui-workflows/plan.md) | FR26 已完成；[S10 QA](test-reports/guided-ui-workflows-s10-qa-2026-08-24.md) | 13 |
+| [ui-foundation-framework](../plans/ui-foundation-framework/plan.md) | FR24 待实现；FR25/FR26 接入、Story 与终验门禁已对齐 | 9 |
 
 ### 历史交付记录
 
@@ -84,8 +93,8 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [file-parsing](../plans/file-parsing/plan.md) | ✔️ 已实现 | 11 |
 | [file-writing](../plans/file-writing/plan.md) | ✔️ 已实现 | 7 |
 | [paratranz-integration](../plans/paratranz-integration/plan.md) | ✔️ 已实现 | 8 |
-| [ai-translation](../plans/ai-translation/plan.md) | ✔️ 已实现 | 14 |
-| [ai-post-process](../plans/ai-post-process/plan.md) | ✔️ 已实现 | 13 |
+| [ai-translation](../plans/ai-translation/plan.md) | ✔️ 已实现（Story 15 已完成） | 15 |
+| [ai-post-process](../plans/ai-post-process/plan.md) | ✔️ 已实现（Story 14 已完成） | 14 |
 | [ui-workbench](../plans/ui-workbench/plan.md) | ✔️ 已实现 | 22 |
 | [batch-operations](../plans/batch-operations/plan.md) | ✔️ 已实现 | 7 |
 | [vector-term-retrieval](../plans/vector-term-retrieval/plan.md) | ✔️ 已实现 | — |
@@ -134,6 +143,8 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 
 | Epic | 最新增量 | 日期 |
 |------|---------|------|
+| ai-translation | [S15: 翻译提示词分层与Provider Prompt Cache编码](changelogs/ai-translation/story-15-prompt-cache-structure/2026-08-19-001-翻译提示词分层与Provider缓存编码.md) | 2026-08-19 |
+| ai-post-process | [S14: 后处理提示词契约修复与阶段级缓存 QA](changelogs/ai-post-process/story-14-prompt-contract-stage-cache/2026-08-19-002-QA审查通过.md) · [编码](changelogs/ai-post-process/story-14-prompt-contract-stage-cache/2026-08-19-001-后处理提示词契约修复与阶段级缓存编码.md) | 2026-08-19 |
 | ai-post-process | [S09: 编码实现与Story文档](changelogs/ai-post-process/story-09-standalone-polish/2026-05-07-002-编码实现与Story文档.md) | 2026-05-07 |
 | ai-post-process | [修复: _replace 崩溃](changelogs/ai-post-process/fix/2026-05-11-001-修复check_quality的_replace调用错误.md) | 2026-05-11 |
 | ui-workbench | [S15-S19 文件菜单重构系列](changelogs/ui-workbench/) | 2026-05-06 |
@@ -210,6 +221,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 
 | 时间 | 范围 | 结果 |
 |------|------|------|
+| 2026-08-19 | ai-translation Story-15 + ai-post-process Story-14 (翻译缓存 + 后处理契约修复) | ✅ 通过 — 受影响模块 98/98、ai-translation 全集 83/83 通过（9 tmp 预存），无 Blocker/Critical/Major，[报告](test-reports/ai-prompt-cache-contract-qa-2026-08-19.md) |
 | 2026-05-09 | ai-post-process Story-10~13 (报告系统) | ✅ 通过 — 19项覆盖，0 Blocker |
 | 2026-05-10 | agent-upgrade Phase 2 (Agent框架升级) | ✅ 通过 — 15项覆盖，0 Blocker，安全加固完成（AST沙箱+路径防御） |
 | 2026-05-11 | agent-tool-expansion QA 审查 (Agent工具扩展) | ⚠ 需修复 — 89测试通过，发现28项问题(2B+6C+8M+12m)，已全部修复 |
@@ -241,6 +253,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | 2026-08-13 | unit-test-staleness QA — 预存测试失败根因定位 | ⚠ 需修复 — 19 失败（非 2 预存）：17 数据模型漂移 + 2 护栏默认拒绝，全部测试侧，零真实代码缺陷，[报告](test-reports/unit-test-staleness-qa-2026-08-13.md) |
 | 2026-08-13 | embedding 语义检索断连修复 QA | ✅ 通过 — 5 新测试 + 540/540 全绿，无 Blocker/Critical/Major，[报告](test-reports/ai-translation-qa-2026-08-13.md) |
 | 2026-08-13 | FR5.12 embedding 语义检索优化 QA | ✅ 通过 — 10 新测试 + 550/550 全绿，1 Critical（加载 _row_map 未重建）已修复，[报告](test-reports/fr5.12-embedding-optimization-qa-2026-08-13.md) |
+| 2026-08-19 | ai-translation Story-15 + ai-post-process Story-14 编码实现：翻译提示词分层+Provider Prompt Cache、后处理提示词契约修复+阶段级缓存；受影响模块 98 tests 通过，QA 通过 → changelog s15-001 / s14-001-002 | /bm-pilot（并行子代理） |
 | 2026-08-14 | translation-memory 词典粒度重构 QA | ✅ 通过 — 27/27 翻译记忆测试全绿（零 Blocker/Critical/Major），全量测试的 28 failed+50 errors 为沙箱 tmp_path 预存问题（非本次引入），[报告](test-reports/translation-memory-granularity-refactor-qa-2026-08-14.md) |
 
 ---
