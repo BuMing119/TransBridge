@@ -47,6 +47,9 @@
 
 | Epic | 状态 | Stories | 文档 |
 |------|------|---------|------|
+| smart-assistant-workspace-redesign | 已完成（2026-08-25，综合 QA 通过） | 3/3 | [plan](smart-assistant-workspace-redesign/plan.md) |
+| project-catalog-self-healing | 已完成（2026-08-25，综合 QA 通过） | 3/3 | [plan](project-catalog-self-healing/plan.md) |
+| start-center-launch-hub | S01～S06 已完成（2026-08-25，自动化 QA 通过） | 6/6 | [plan](start-center-launch-hub/plan.md) |
 | ui-layout-stability | 已完成（2026-08-24，UI 全量回归通过） | 5/5 | [plan](ui-layout-stability/plan.md) |
 | paratranz-project-binding | 已完成（2026-08-24，综合 QA 通过） | 5/5 | [plan](paratranz-project-binding/plan.md) |
 | core-data-model | ✔️ | 5/5 | [plan](core-data-model/plan.md) · [s01](core-data-model/stories/story-01-translation-entry.md) [s02](core-data-model/stories/story-02-collection.md) [s03](core-data-model/stories/story-03-context-categories.md) [s04](core-data-model/stories/story-04-dsd-json.md) [s05](core-data-model/stories/story-05-categorized-export.md) |
