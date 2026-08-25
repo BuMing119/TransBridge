@@ -10,6 +10,7 @@ from pathlib import PurePath
 from transbridge.converter.translation_entry import (
     STAGE_CHECKED,
     STAGE_HIDDEN,
+    STAGE_LABELS,
     STAGE_LOCKED,
     STAGE_QUESTIONABLE,
     STAGE_REVIEWED,
@@ -52,6 +53,25 @@ class WorkbenchHierarchyViewState:
 
 
 @dataclass(frozen=True, slots=True)
+class StatisticsMetric:
+    key: str
+    label: str
+    value: int
+    description: str
+
+
+_COMPLETED_STAGE_SEQUENCE = (STAGE_TRANSLATED, STAGE_CHECKED, STAGE_REVIEWED, STAGE_LOCKED)
+_COMPLETED_STAGES = frozenset(_COMPLETED_STAGE_SEQUENCE)
+_SUMMARY_STAGE_FILTERS = {
+    "untranslated": frozenset((STAGE_UNTRANSLATED,)),
+    "review": frozenset((STAGE_QUESTIONABLE,)),
+    "completed": _COMPLETED_STAGES,
+    "hidden": frozenset((STAGE_HIDDEN,)),
+    "total": frozenset(),
+}
+
+
+@dataclass(frozen=True, slots=True)
 class StatisticsSummary:
     total: int
     untranslated: int
@@ -75,26 +95,46 @@ class StatisticsSummary:
                 untranslated += 1
             elif entry.stage == STAGE_QUESTIONABLE:
                 needs_review += 1
-            elif not entry.translation:
-                untranslated += 1
-            else:
+            elif entry.stage in _COMPLETED_STAGES:
                 completed += 1
+            else:
+                # Unknown external stages remain visible and actionable instead of
+                # disappearing from the partition. Canonical stages always take
+                # their meaning from ``stage``, never from whether text is empty.
+                untranslated += 1
         return cls(len(entries), untranslated, needs_review, completed, hidden)
 
+    def metrics(self) -> tuple[StatisticsMetric, ...]:
+        """Return summary cards using the canonical translation-stage vocabulary."""
+
+        completed_labels = "、".join(STAGE_LABELS[stage] for stage in _COMPLETED_STAGE_SEQUENCE)
+        return (
+            StatisticsMetric("total", "全部", self.total, "全部翻译状态"),
+            StatisticsMetric(
+                "untranslated",
+                STAGE_LABELS[STAGE_UNTRANSLATED],
+                self.untranslated,
+                f"翻译状态：{STAGE_LABELS[STAGE_UNTRANSLATED]}",
+            ),
+            StatisticsMetric(
+                "review",
+                STAGE_LABELS[STAGE_QUESTIONABLE],
+                self.needs_review,
+                f"翻译状态：{STAGE_LABELS[STAGE_QUESTIONABLE]}",
+            ),
+            StatisticsMetric(
+                "completed",
+                STAGE_LABELS[STAGE_TRANSLATED],
+                self.completed,
+                f"包括翻译状态：{completed_labels}",
+            ),
+        )
+
     def filter_state(self, key: str, current: FilterState) -> FilterState:
-        stages: frozenset[int]
-        if key == "untranslated":
-            stages = frozenset((STAGE_UNTRANSLATED,))
-        elif key == "review":
-            stages = frozenset((STAGE_QUESTIONABLE,))
-        elif key == "completed":
-            stages = frozenset((STAGE_TRANSLATED, STAGE_CHECKED, STAGE_REVIEWED, STAGE_LOCKED))
-        elif key == "hidden":
-            stages = frozenset((STAGE_HIDDEN,))
-        elif key == "total":
-            stages = frozenset()
-        else:
-            raise KeyError(key)
+        try:
+            stages = _SUMMARY_STAGE_FILTERS[key]
+        except KeyError:
+            raise KeyError(key) from None
         return FilterState(
             categories=current.categories,
             stages=stages,
@@ -207,7 +247,7 @@ class WorkbenchWorkflowPresenter:
                 IntentId.TRANSLATION_REVIEW,
                 "检查",
                 has_context and needs_review > 0,
-                None if has_context and needs_review > 0 else "当前没有待检查词条",
+                None if has_context and needs_review > 0 else f"当前没有“{STAGE_LABELS[STAGE_QUESTIONABLE]}”状态的词条",
             ),
             ContextActionViewState(
                 IntentId.PUBLISH_WRITE,
@@ -268,6 +308,7 @@ class WorkbenchWorkflowPresenter:
 
 __all__ = [
     "ContextActionViewState",
+    "StatisticsMetric",
     "StatisticsSummary",
     "WorkbenchContentKind",
     "WorkbenchContextIdentity",

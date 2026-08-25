@@ -27,6 +27,7 @@ def compile_application_stylesheet(snapshot: ThemeSnapshot) -> str:
     selection_text = _CssColor("highlighted-text")
     disabled_text = _CssColor("text")
     disabled_surface = _CssColor("button")
+    on_accent = surface
     success = _CssColor("link-visited")
     info = _CssColor("link")
     warning = _CssColor("dark")
@@ -74,8 +75,8 @@ QToolButton[tbNavItem="true"] {{
     border: 0;
     border-left: 3px solid transparent;
     border-radius: {radius}px;
-    min-height: 36px;
-    padding: 4px 10px;
+    min-height: 48px;
+    padding: 4px 12px;
     text-align: left;
 }}
 QToolButton[tbNavItem="true"]:hover {{
@@ -97,10 +98,21 @@ QToolButton[tbNavIntent="true"]:pressed {{
     background: {nav_selected.canonical};
     border-left-color: {focus.canonical};
 }}
-QFrame#tbNavigationUser {{
+QPushButton#tbNavigationUser {{
+    color: {text.canonical};
     background: transparent;
     border: 0;
     border-top: 1px solid {subtle_border.canonical};
+    border-radius: {radius}px;
+    padding: 0;
+    text-align: left;
+}}
+QPushButton#tbNavigationUser:hover, QPushButton#tbNavigationUser:focus {{
+    background: {control_hover.canonical};
+    border-top-color: {focus.canonical};
+}}
+QPushButton#tbNavigationUser:pressed {{
+    background: {nav_selected.canonical};
 }}
 QLabel[tbSecondary="true"] {{ color: {muted.canonical}; }}
 QLabel[tbAvatar="true"] {{
@@ -183,6 +195,122 @@ QPushButton[tbSemanticState="primary"]:pressed, QToolButton[tbSemanticState="pri
     color: {focus.canonical};
     background: {nav_selected.canonical};
     border-color: {focus.canonical};
+}}
+
+QLabel#startCenterTitle {{
+    color: {text.canonical};
+    font-size: 26pt;
+    font-weight: 600;
+}}
+QLabel#startCenterSubtitle {{
+    color: {muted.canonical};
+    font-size: 12pt;
+}}
+QLabel[tbStartPanelHeading="true"] {{
+    color: {text.canonical};
+    font-size: 15pt;
+    font-weight: 600;
+}}
+QPushButton[tbStartAction="true"] {{
+    min-height: 112px;
+    padding: 0;
+    text-align: left;
+}}
+QPushButton[tbStartAction="true"] QLabel[tbStartActionTitle="true"] {{
+    font-size: 14pt;
+    font-weight: 600;
+}}
+QPushButton[tbStartAction="true"] QLabel[tbStartActionDescription="true"] {{
+    font-size: 10.5pt;
+}}
+QPushButton[tbStartAction="true"] QLabel[tbStartActionArrow="true"] {{
+    font-size: 22pt;
+}}
+QPushButton[tbStartAction="true"] QLabel[tbStartActionIcon="true"] {{
+    background: {header_surface.canonical};
+    border-radius: {radius}px;
+}}
+QPushButton[tbProjectOpenMode="true"] {{
+    min-height: 88px;
+    max-height: 88px;
+    padding: 0;
+    text-align: left;
+}}
+QPushButton[tbProjectOpenMode="true"] QLabel[tbProjectOpenModeTitle="true"] {{
+    font-size: 12pt;
+    font-weight: 600;
+}}
+QPushButton[tbProjectOpenMode="true"] QLabel[tbProjectOpenModeDescription="true"] {{
+    font-size: 9.5pt;
+}}
+QPushButton#startCenterPrimaryAction {{
+    color: {on_accent.canonical};
+    background: {focus.canonical};
+    border-color: {focus.canonical};
+    min-height: 120px;
+}}
+QPushButton#startCenterPrimaryAction:hover,
+QPushButton#startCenterPrimaryAction:pressed {{
+    color: {on_accent.canonical};
+    background: {focus.canonical};
+    border-color: {focus.canonical};
+}}
+QPushButton#startCenterPrimaryAction QLabel[tbStartActionIcon="true"] {{ background: transparent; }}
+QPushButton#startCenterPrimaryAction:disabled {{
+    color: {disabled_text.canonical};
+    background: {disabled_surface.canonical};
+    border-color: {subtle_border.canonical};
+}}
+QPushButton#startCenterPrimaryAction:disabled QLabel {{ color: {disabled_text.canonical}; }}
+QPushButton[tbStartAdvanced="true"] {{
+    color: {focus.canonical};
+    background: transparent;
+    border: 0;
+    padding: 4px 0;
+}}
+QPushButton[tbStartAdvanced="true"]:hover {{
+    color: {focus.canonical};
+    background: {control_hover.canonical};
+    border: 0;
+}}
+QLabel[tbStartProjectName="true"] {{
+    color: {text.canonical};
+    font-size: 13.5pt;
+    font-weight: 600;
+}}
+QLabel[tbStartProjectPath="true"] {{
+    color: {muted.canonical};
+    font-size: 10.5pt;
+}}
+QLabel[tbStartEmptyTitle="true"] {{
+    color: {text.canonical};
+    font-size: 14pt;
+    font-weight: 600;
+}}
+QLabel[tbStartEmptyDescription="true"] {{
+    color: {muted.canonical};
+    font-size: 11pt;
+}}
+QListWidget#startCenterProjectList {{
+    background: transparent;
+    border: 0;
+    outline: 0;
+}}
+QListWidget#startCenterProjectList::item {{
+    border: 0;
+    border-bottom: 1px solid {header_surface.canonical};
+    padding: 0;
+}}
+QListWidget#startCenterProjectList::item:selected {{
+    background: {control_hover.canonical};
+}}
+QWidget[tbProjectActive="true"] {{
+    background: {control_hover.canonical};
+    border-left: 3px solid {focus.canonical};
+}}
+QWidget[tbProjectAvailable="false"] QLabel[tbStartProjectName="true"],
+QWidget[tbProjectAvailable="false"] QLabel[tbStartProjectPath="true"] {{
+    color: {muted.canonical};
 }}
 
 QLineEdit[tbComponentKind="input"], QComboBox[tbComponentKind="input"],

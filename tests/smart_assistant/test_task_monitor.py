@@ -48,9 +48,12 @@ class TestTaskMonitorWidget:
     """TaskMonitorWidget 主控件测试。"""
 
     def test_initial_empty_state(self, monitor):
-        """初始状态：标题显示 0 个任务，空状态标签可见。"""
+        """初始状态：标题显示 0 个任务，空状态保留但任务区默认折叠。"""
         assert "后台任务 (0)" in monitor._title_label.text()
-        assert monitor._empty_label.isVisible()
+        assert not monitor._empty_label.isHidden()
+        assert monitor._collapsed
+        assert not monitor._scroll.isVisible()
+        assert monitor.maximumHeight() == 36
 
     def test_refresh_with_tasks(self, monitor):
         """refresh() 渲染任务卡片并更新标题和按钮。"""
@@ -62,7 +65,9 @@ class TestTaskMonitorWidget:
 
         assert not monitor._empty_label.isVisible()
         assert "后台任务 (2)" in monitor._title_label.text()
-        # 有已完成任务 → 清除按钮可见
+        # 折叠时不抢占空间；展开后已完成任务可清理。
+        assert not monitor._clear_all_btn.isVisible()
+        monitor._toggle_collapse()
         assert monitor._clear_all_btn.isVisible()
 
     def test_refresh_empty_clears_cards(self, monitor):
@@ -72,28 +77,32 @@ class TestTaskMonitorWidget:
 
         monitor.refresh([])
         assert "后台任务 (0)" in monitor._title_label.text()
-        assert monitor._empty_label.isVisible()
+        assert not monitor._empty_label.isHidden()
 
     def test_reset_clears_everything(self, monitor):
         """reset() 清空所有任务。"""
         monitor.refresh([_make_task("t1", "running")])
         monitor.reset()
-        assert monitor._empty_label.isVisible()
+        assert not monitor._empty_label.isHidden()
 
     def test_collapse_toggle(self, monitor):
         """折叠按钮切换 scroll 可见性。"""
+        assert not monitor._scroll.isVisible()
+        assert monitor._collapsed
+        assert monitor.maximumHeight() == 36
+
+        monitor._toggle_collapse()
         assert monitor._scroll.isVisible()
         assert not monitor._collapsed
+        assert monitor.minimumHeight() == 140
+        assert monitor.maximumHeight() == 300
+        assert not monitor._collapse_btn.icon().isNull()
 
         monitor._toggle_collapse()
         assert not monitor._scroll.isVisible()
         assert monitor._collapsed
-        assert monitor._collapse_btn.text() == "▶"
-
-        monitor._toggle_collapse()
-        assert monitor._scroll.isVisible()
-        assert not monitor._collapsed
-        assert monitor._collapse_btn.text() == "▼"
+        assert monitor.minimumHeight() == 36
+        assert monitor.maximumHeight() == 36
 
     def test_clear_all_button_emits_signal(self, monitor):
         """'清除已完成'按钮发射 cleanup_completed 信号。"""

@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 )
 
 from transbridge.ui.foundation.components import ElidedLabel, reserve_text_width
+from transbridge.ui.foundation.tabler_icons import tabler_icon
 
 from .theme_support import BUTTON_STRUCTURE_STYLE, CARD_STRUCTURE_STYLE, SmartAssistantTheme
 
@@ -159,11 +160,14 @@ class TaskMonitorWidget(QWidget):
         self._theme = theme or SmartAssistantTheme()
         self._tasks: dict[str, dict] = {}
         self._cards: list[_TaskCard] = []
-        self._collapsed = False
+        self._collapsed = True
         self.setAccessibleName("后台任务监控")
-        self.setMinimumHeight(100)
-        self.setMaximumHeight(300)
+        # 允许底部 Dock 较矮时退化为仅显示标题栏，避免把聊天输入区挤出
+        # 可见范围；正常高度下 QSplitter 仍按 sizeHint 分配完整任务区域。
+        self.setMinimumHeight(36)
+        self.setMaximumHeight(36)
         self._init_ui()
+        self._apply_collapsed_state()
         self.apply_theme(self._theme)
 
     def _init_ui(self) -> None:
@@ -171,11 +175,12 @@ class TaskMonitorWidget(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
         self._title_bar = QFrame()
+        self._title_bar.setFixedHeight(36)
         title_layout = QHBoxLayout(self._title_bar)
         title_layout.setContentsMargins(8, 2, 8, 2)
         self._title_label = QLabel("后台任务 (0)")
-        self._collapse_btn = QPushButton("▼")
-        self._collapse_btn.setAccessibleName("折叠后台任务")
+        self._collapse_btn = QPushButton()
+        self._collapse_btn.setAccessibleName("展开后台任务")
         self._clear_all_btn = QPushButton("清除已完成")
         self._clear_all_btn.setAccessibleName("清除已完成任务")
         for button in (self._collapse_btn, self._clear_all_btn):
@@ -203,9 +208,11 @@ class TaskMonitorWidget(QWidget):
     def apply_theme(self, theme: SmartAssistantTheme) -> None:
         self._theme = theme
         for widget in (self, self._title_bar, self._scroll, self._list_widget):
-            theme.apply_semantic(widget, "muted", background=True)
+            theme.apply_surface(widget, alternate=True)
         for widget in (self._title_label, self._empty_label, self._collapse_btn):
             theme.apply_semantic(widget, "muted")
+        icon_name = "chevron-right" if self._collapsed else "chevron-left"
+        self._collapse_btn.setIcon(tabler_icon(self._collapse_btn, icon_name, 15))
         theme.apply_semantic(self._clear_all_btn, "error")
         for card in self._cards:
             card.apply_theme(theme)
@@ -232,7 +239,7 @@ class TaskMonitorWidget(QWidget):
             self._list_layout.insertWidget(self._list_layout.count() - 1, card)
         self._title_label.setText(f"后台任务 ({len(tasks)})")
         self._empty_label.setVisible(not tasks)
-        self._clear_all_btn.setVisible(len(tasks) - active_count > 0)
+        self._clear_all_btn.setVisible(not self._collapsed and len(tasks) - active_count > 0)
 
     def update_task(self, task_id: str, status: str | None = None, progress: dict | None = None) -> None:
         pass
@@ -242,11 +249,17 @@ class TaskMonitorWidget(QWidget):
 
     def _toggle_collapse(self) -> None:
         self._collapsed = not self._collapsed
+        self._apply_collapsed_state()
+        self.apply_theme(self._theme)
+
+    def _apply_collapsed_state(self) -> None:
         self._scroll.setVisible(not self._collapsed)
-        self._clear_all_btn.setVisible(not self._collapsed)
-        self._collapse_btn.setText("▶" if self._collapsed else "▼")
+        completed_count = sum(task.get("status") not in ("running", "paused") for task in self._tasks.values())
+        self._clear_all_btn.setVisible(not self._collapsed and completed_count > 0)
         self._collapse_btn.setAccessibleName("展开后台任务" if self._collapsed else "折叠后台任务")
-        self.setMaximumHeight(28 if self._collapsed else 300)
+        self.setMinimumHeight(36 if self._collapsed else 140)
+        self.setMaximumHeight(36 if self._collapsed else 300)
+        self.updateGeometry()
 
 
 __all__ = ["TaskMonitorWidget"]

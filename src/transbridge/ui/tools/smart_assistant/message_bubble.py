@@ -5,9 +5,11 @@ from __future__ import annotations
 import threading
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from transbridge.infra.markdown_renderer import MarkdownRenderer
+from transbridge.ui.foundation.tabler_icons import tabler_icon
 
 from .theme_support import SmartAssistantTheme
 
@@ -25,20 +27,20 @@ def _get_renderer() -> MarkdownRenderer:
 
 
 class AvatarLabel(QLabel):
-    _ROLE_LETTERS = {"user": "U", "assistant": "A"}
-
     def __init__(self, role: str, parent=None, *, theme: SmartAssistantTheme | None = None):
         super().__init__(parent)
         self._role = role
-        self.setText(self._ROLE_LETTERS.get(role, "?"))
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setFixedSize(24, 24)
+        self.setFixedSize(30, 30)
         self.setAccessibleName("用户头像" if role == "user" else "助手头像")
-        self.setStyleSheet("QLabel { border-radius: 12px; font-size: 11px; font-weight: bold; }")
+        self.setStyleSheet("QLabel { border-radius: 15px; }")
         self.apply_theme(theme or SmartAssistantTheme())
 
     def apply_theme(self, theme: SmartAssistantTheme) -> None:
-        theme.apply_semantic(self, "primary" if self._role == "assistant" else "muted", background=True)
+        theme.apply_surface(self, alternate=self._role == "user")
+        icon_name = "sparkles" if self._role == "assistant" else "user"
+        semantic = "accent" if self._role == "assistant" else "navigation"
+        self.setPixmap(tabler_icon(self, icon_name, 18, semantic=semantic).pixmap(18, 18))
 
 
 class MessageBubble(QWidget):
@@ -59,21 +61,50 @@ class MessageBubble(QWidget):
         self._role = role
         self._theme = theme or SmartAssistantTheme()
         self.setObjectName(f"Message_{role}")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         self.setAccessibleName("用户消息" if role == "user" else "助手消息")
         self.setAccessibleDescription(text)
         outer = QHBoxLayout(self)
-        outer.setContentsMargins(0, 8, 0, 8)
-        outer.setSpacing(10)
+        outer.setContentsMargins(0, 12, 0, 12)
+        outer.setSpacing(12)
         self._avatar = AvatarLabel(role, theme=self._theme)
-        outer.addWidget(self._avatar, alignment=Qt.AlignmentFlag.AlignTop)
+
+        self._content_column = QWidget()
+        column_width_policy = QSizePolicy.Policy.Preferred if role == "user" else QSizePolicy.Policy.Expanding
+        self._content_column.setSizePolicy(column_width_policy, QSizePolicy.Policy.Maximum)
+        column_layout = QVBoxLayout(self._content_column)
+        column_layout.setContentsMargins(0, 0, 0, 0)
+        column_layout.setSpacing(6)
+        self._role_label = QLabel("TransBridge 智能助手" if role == "assistant" else "你")
+        self._role_label.setFont(QFont("Microsoft YaHei", 9, QFont.Weight.DemiBold))
+        self._role_label.setVisible(role == "assistant")
+        column_layout.addWidget(self._role_label)
+
         self._content_wrapper = QWidget()
+        wrapper_width_policy = QSizePolicy.Policy.Preferred if role == "user" else QSizePolicy.Policy.Expanding
+        self._content_wrapper.setSizePolicy(wrapper_width_policy, QSizePolicy.Policy.Maximum)
         self._content_wrapper.setProperty("tbSurface", "message")
         wrapper_layout = QVBoxLayout(self._content_wrapper)
-        wrapper_layout.setContentsMargins(8 if role == "user" else 0, 2, 8 if role == "user" else 0, 2)
+        wrapper_layout.setContentsMargins(
+            14 if role == "user" else 0,
+            10 if role == "user" else 0,
+            14 if role == "user" else 0,
+            10 if role == "user" else 0,
+        )
         wrapper_layout.setSpacing(0)
         self._content = self._render_content(text)
+        self._content.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         wrapper_layout.addWidget(self._content)
-        outer.addWidget(self._content_wrapper, stretch=1)
+        self._content_wrapper.setMaximumWidth(540 if role == "user" else 760)
+        column_layout.addWidget(self._content_wrapper)
+
+        if role == "user":
+            outer.addStretch(1)
+            outer.addWidget(self._content_column)
+            outer.addWidget(self._avatar, alignment=Qt.AlignmentFlag.AlignTop)
+        else:
+            outer.addWidget(self._avatar, alignment=Qt.AlignmentFlag.AlignTop)
+            outer.addWidget(self._content_column, stretch=1)
         self.apply_theme(self._theme)
 
     @property
@@ -90,12 +121,14 @@ class MessageBubble(QWidget):
             label.setWordWrap(True)
             label.setTextFormat(Qt.TextFormat.PlainText)
             return label
-        return _get_renderer().render(text, theme=self._theme.markdown_theme())
+        return _get_renderer().render(text, theme=self._theme.markdown_theme(alternate=self._role == "user"))
 
     def apply_theme(self, theme: SmartAssistantTheme) -> None:
         self._theme = theme
         self._avatar.apply_theme(theme)
-        theme.apply_semantic(self._content_wrapper, "muted" if self._role == "user" else "default", background=True)
+        theme.apply_semantic(self._role_label, "default")
+        theme.apply_surface(self._content_column)
+        theme.apply_surface(self._content_wrapper, alternate=self._role == "user")
         self._replace_content(self._text)
 
     def set_text(self, text: str) -> None:
@@ -112,8 +145,8 @@ class MessageBubble(QWidget):
             wrapper_layout.removeWidget(old_content)
             old_content.deleteLater()
         self._content = self._render_content(text)
-        theme_state = "muted" if self._role == "user" else "default"
-        self._theme.apply_semantic(self._content, theme_state)
+        self._content.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        self._theme.apply_surface(self._content, alternate=self._role == "user")
         wrapper_layout.addWidget(self._content)
 
 

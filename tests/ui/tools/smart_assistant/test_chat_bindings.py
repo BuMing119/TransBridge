@@ -4,16 +4,21 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PyQt6.QtCore import QRect, Qt
 from PyQt6.QtWidgets import (
     QApplication,
     QDockWidget,
+    QMainWindow,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
+from transbridge.ui.shell.overlay_geometry import workspace_overlay_rect
 from transbridge.ui.shell.tool_windows import ToolWindows
+from transbridge.ui.tools.smart_assistant import panel as panel_module
 from transbridge.ui.tools.smart_assistant.chat_widget import ChatWidget
 from transbridge.ui.tools.smart_assistant.message_bubble import MessageBubble
 from transbridge.ui.tools.smart_assistant.message_list_view import MessageListView
@@ -23,6 +28,17 @@ from transbridge.ui.tools.smart_assistant.streaming_presenter import StreamingPr
 from transbridge.ui.tools.smart_assistant.task_binding import TaskBinding
 
 _APP = QApplication.instance() or QApplication([])
+
+
+def test_assistant_overlay_rect_caps_large_hosts_and_fits_small_hosts() -> None:
+    large = workspace_overlay_rect(QRect(0, 0, 2560, 1440))
+    small = workspace_overlay_rect(QRect(0, 0, 800, 500))
+
+    assert (large.width(), large.height()) == (1280, 820)
+    assert large.center() == QRect(0, 0, 2560, 1440).center()
+    assert (small.width(), small.height()) == (752, 452)
+    assert small.left() == 24
+    assert small.top() == 24
 
 
 def _message_list() -> tuple[MessageListView, QVBoxLayout]:
@@ -318,6 +334,181 @@ class _PanelStub:
 
     def dispose(self, *, wait_for_worker: bool) -> None:
         self.is_disposed = True
+
+
+class _ResponsiveChatStub(QWidget):
+    def __init__(self, ctx, parent=None, *, theme=None) -> None:
+        super().__init__(parent)
+        self.context = ctx
+
+    def configure_session_port(self, **_kwargs) -> None:
+        pass
+
+    def set_session_manager(self, _manager) -> None:
+        pass
+
+    def set_task_monitor(self, _monitor) -> None:
+        pass
+
+    def shutdown(self, *, wait_for_worker: bool) -> None:
+        pass
+
+
+class _PanelSessionManager:
+    def list_sessions(self) -> list[dict]:
+        return []
+
+
+def test_smart_assistant_panel_uses_responsive_dock_constraints(monkeypatch) -> None:
+    taskbar_identities = []
+    cleared_taskbar_identities = []
+    monkeypatch.setattr(panel_module, "ChatWidget", _ResponsiveChatStub)
+    monkeypatch.setattr(
+        panel_module,
+        "set_window_app_user_model_id",
+        lambda panel, app_id: taskbar_identities.append((panel, app_id)) or True,
+    )
+    monkeypatch.setattr(
+        panel_module,
+        "clear_window_app_user_model_id",
+        lambda panel: cleared_taskbar_identities.append(panel) or True,
+    )
+    monkeypatch.setattr(SmartAssistantPanel, "_init_skills", lambda self: None)
+    monkeypatch.setattr(
+        SmartAssistantPanel,
+        "_init_session_manager",
+        lambda self: setattr(self, "_session_mgr", _PanelSessionManager()),
+    )
+    monkeypatch.setattr(SmartAssistantPanel, "_restore_last_session", lambda self: None)
+    monkeypatch.setattr(SmartAssistantPanel, "_configured_model_name", staticmethod(lambda: "test-model"))
+
+    panel = SmartAssistantPanel(object())
+    container = panel.widget()
+    horizontal_splitter = container.layout().itemAt(0).widget()
+    right_splitter = horizontal_splitter.widget(1)
+
+    assert panel.minimumWidth() == 400
+    assert panel.minimumHeight() == 220
+    assert panel.parent() is None
+    assert panel.windowFlags() & Qt.WindowType.Window
+    assert panel.allowedAreas() == Qt.DockWidgetArea.NoDockWidgetArea
+    assert panel.features() == QDockWidget.DockWidgetFeature.DockWidgetClosable
+    assert container.minimumWidth() == 0
+    assert container.sizePolicy().verticalPolicy() is QSizePolicy.Policy.Ignored
+    assert panel._task_monitor.minimumHeight() == 36
+    assert panel._task_monitor.maximumHeight() == 36
+    assert panel._task_monitor._collapsed is True
+    assert panel.objectName() == "SmartAssistantPanel"
+    assert "border: none" in panel.styleSheet()
+    assert panel.titleBarWidget().accessibleName() == "智能助手标题栏"
+    assert "border: 2px solid palette(text)" in panel.titleBarWidget().styleSheet()
+    assert container.objectName() == "smartAssistantBody"
+    assert "border-left: 2px solid palette(text)" in container.styleSheet()
+    assert "border-bottom: 2px solid palette(text)" in container.styleSheet()
+    assert panel.titleBarWidget()._model._value.full_text == "test-model"
+    assert "已配置" in panel.titleBarWidget()._status.text()
+    assert panel.titleBarWidget()._minimize_button.accessibleName() == "最小化智能助手"
+    assert not panel.titleBarWidget()._minimize_button.icon().isNull()
+    assert right_splitter.sizes()[0] > right_splitter.sizes()[1]
+    assert panel.isVisible() is False
+    assert taskbar_identities == [(panel, "TransBridge.SmartAssistant")]
+    panel.setFloating(True)
+    panel.show()
+    _APP.processEvents()
+    panel.hide()
+    panel.show()
+    panel.titleBarWidget()._minimize_button.click()
+    _APP.processEvents()
+    assert panel.isMinimized()
+    assert taskbar_identities == [(panel, "TransBridge.SmartAssistant")]
+    panel.showNormal()
+    panel.dispose(wait_for_worker=False)
+    assert cleared_taskbar_identities == [panel]
+
+
+class _OverlayPanelStub(QDockWidget):
+    instances = []
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__("assistant", args[1])
+        self.is_disposed = False
+        self.visibility_changed = _Signal()
+        self.setMinimumSize(400, 220)
+        self.__class__.instances.append(self)
+
+    def dispose(self, *, wait_for_worker: bool) -> None:
+        self.is_disposed = True
+
+
+def test_tool_windows_shows_assistant_as_centered_workspace_without_resizing_central_widget(monkeypatch) -> None:
+    _OverlayPanelStub.instances.clear()
+    monkeypatch.setattr(
+        "transbridge.ui.tools.smart_assistant.SmartAssistantPanel",
+        _OverlayPanelStub,
+    )
+    host = QMainWindow()
+    host.context = object()
+    host.session_commands = None
+    host.session_projection = None
+    host.runtime_context = None
+    central = QWidget()
+    host.setCentralWidget(central)
+    host.resize(1280, 720)
+    host.show()
+    _APP.processEvents()
+    host_size = host.size()
+    central_geometry = central.geometry()
+    windows = ToolWindows(host)
+
+    windows.toggle_smart_assistant()
+    _APP.processEvents()
+    panel = windows.assistant_panel
+    first_overlay_geometry = panel.geometry()
+
+    assert panel.isFloating()
+    assert panel.parent() is None
+    assert panel.windowFlags() & Qt.WindowType.Window
+    assert host.size() == host_size
+    assert central.geometry() == central_geometry
+    assert panel.size() == workspace_overlay_rect(host.rect()).size()
+    assert panel.width() == 998
+    assert panel.height() == 600
+    assert panel.frameGeometry().top() >= host.mapToGlobal(host.rect().topLeft()).y()
+    assert panel.frameGeometry().bottom() <= host.mapToGlobal(host.rect().bottomRight()).y()
+
+    panel.showMinimized()
+    _APP.processEvents()
+    assert panel.isMinimized()
+    windows.toggle_smart_assistant()
+    _APP.processEvents()
+    assert panel.isVisible()
+    assert not panel.isMinimized()
+
+    windows.toggle_smart_assistant()
+    windows.toggle_smart_assistant()
+    _APP.processEvents()
+
+    assert panel.isVisible()
+    assert panel.isFloating()
+    assert panel.geometry() == first_overlay_geometry
+    assert central.geometry() == central_geometry
+
+    windows.toggle_smart_assistant()
+    host.resize(1600, 900)
+    _APP.processEvents()
+    resized_central_geometry = central.geometry()
+    windows.toggle_smart_assistant()
+    _APP.processEvents()
+
+    assert panel.size() == workspace_overlay_rect(host.rect()).size()
+    assert panel.width() == 1248
+    assert panel.height() == 738
+    assert central.geometry() == resized_central_geometry
+    windows.dispose(wait_for_worker=False)
+    _APP.processEvents()
+    assert panel.is_disposed is True
+    assert windows.assistant_panel is None
+    host.close()
 
 
 def test_tool_windows_reuses_hidden_panel_but_recreates_disposed_panel(monkeypatch) -> None:

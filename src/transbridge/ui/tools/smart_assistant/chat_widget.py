@@ -222,6 +222,12 @@ class ChatWidget(QWidget):
     def apply_theme(self, theme: SmartAssistantTheme) -> None:
         """Refresh presentation only; conversation, streaming and task state stay authoritative."""
         self._theme = theme
+        theme.apply_surface(self)
+        if self._scroll is not None:
+            theme.apply_surface(self._scroll)
+        msg_container = getattr(self, "_msg_container", None)
+        if msg_container is not None:
+            theme.apply_surface(msg_container)
         if self._message_list is not None:
             self._message_list.apply_theme(theme)
         if self._input_view is not None:
@@ -386,8 +392,19 @@ class ChatWidget(QWidget):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
+        self._update_reading_width()
         if self._message_list is not None:
             self._message_list.reposition_later()
+
+    def _update_reading_width(self) -> None:
+        """Keep messages in a readable centre column on wide desktop windows."""
+        scroll = self._scroll
+        layout = getattr(self, "_msg_layout", None)
+        if scroll is None or layout is None:
+            return
+        viewport_width = max(0, scroll.viewport().width())
+        horizontal_margin = max(20, (viewport_width - 840) // 2)
+        layout.setContentsMargins(horizontal_margin, 20, horizontal_margin, 20)
 
     # ── 会话持久化 (FR13 Story 03) ──────────────────────────
 

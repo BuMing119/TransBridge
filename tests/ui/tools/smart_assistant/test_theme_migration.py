@@ -5,13 +5,14 @@ from pathlib import Path
 import re
 
 from PyQt6.QtCore import QObject, pyqtSignal
-from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6.QtGui import QPalette
+from PyQt6.QtWidgets import QApplication, QLabel, QSizePolicy, QWidget
 import pytest
 
 from transbridge.ui.foundation.adapters import ThemeView
 from transbridge.ui.foundation.builtins import DEFAULT_THEME_ID, create_builtin_registry
 from transbridge.ui.foundation.model import ThemeScheme
-from transbridge.ui.foundation.qt_palette import compile_palette
+from transbridge.ui.foundation.qt_palette import compile_palette, qcolor
 from transbridge.ui.foundation.theme_service import ThemeSnapshot
 from transbridge.ui.tools.smart_assistant.message_bubble import MessageBubble
 from transbridge.ui.tools.smart_assistant.panel import SmartAssistantPanel
@@ -125,6 +126,72 @@ def test_theme_refresh_preserves_message_session_task_and_thinking_state(qapp) -
     assert "running" in tasks._cards[0].accessibleDescription()
 
 
+def test_message_markdown_uses_explicit_readable_surface_colours(qapp) -> None:
+    snapshot = _snapshot(ThemeScheme.LIGHT, 1)
+    theme = SmartAssistantTheme(snapshot)
+    assistant = MessageBubble("**助手正文**", "assistant", theme=theme)
+    user = MessageBubble("用户正文", "user", theme=theme)
+
+    primary = qcolor(snapshot.tokens.semantic.text_primary).name().lower()
+    surface = qcolor(snapshot.tokens.semantic.surface).name().lower()
+    surface_alt = qcolor(snapshot.tokens.semantic.surface_alt).name().lower()
+    assert primary in assistant._content.styleSheet().lower()
+    assert surface in assistant._content.styleSheet().lower()
+    assert primary in user._content.styleSheet().lower()
+    assert surface_alt in user._content.styleSheet().lower()
+
+    assistant_labels = assistant._content.findChildren(QLabel)
+    user_labels = user._content.findChildren(QLabel)
+    assert assistant_labels
+    assert user_labels
+    assert all(primary in label.styleSheet().lower() for label in assistant_labels)
+    assert all(primary in label.styleSheet().lower() for label in user_labels)
+    assert all(primary in label.text().lower() for label in assistant_labels)
+    assert all(primary in label.text().lower() for label in user_labels)
+    assert assistant._content.layout().count() == 1
+    assert user._content.layout().count() == 1
+    assert assistant.sizePolicy().verticalPolicy() is QSizePolicy.Policy.Maximum
+    assert user.sizePolicy().verticalPolicy() is QSizePolicy.Policy.Maximum
+    assert assistant._content_column.sizePolicy().horizontalPolicy() is QSizePolicy.Policy.Expanding
+    assert assistant.layout().stretch(1) == 1
+    assert user._content_column.sizePolicy().horizontalPolicy() is QSizePolicy.Policy.Preferred
+    assistant.resize(840, 200)
+    assistant.show()
+    qapp.processEvents()
+    assert assistant._content_wrapper.width() >= 700
+    assistant.hide()
+
+    fallback = MessageBubble("无 ThemeView 时也必须可读", "assistant", theme=SmartAssistantTheme())
+    palette = qapp.palette()
+    assert palette.color(QPalette.ColorRole.Text).name().lower() in fallback._content.styleSheet().lower()
+    assert palette.color(QPalette.ColorRole.Base).name().lower() in fallback._content.styleSheet().lower()
+    assert all(
+        palette.color(QPalette.ColorRole.Text).name().lower() in label.styleSheet().lower()
+        for label in fallback._content.findChildren(QLabel)
+    )
+    assert all(
+        palette.color(QPalette.ColorRole.Text).name().lower() in label.text().lower()
+        for label in fallback._content.findChildren(QLabel)
+    )
+
+
+def test_session_list_search_and_collapse_are_functional(qapp) -> None:
+    sessions = SessionListWidget(theme=SmartAssistantTheme(_snapshot(ThemeScheme.LIGHT, 1)))
+    sessions.set_sessions([
+        {"session_id": "s1", "name": "检查地名翻译", "message_count": 3},
+        {"session_id": "s2", "name": "术语一致性", "message_count": 8},
+    ])
+    sessions._search_input.setText("术语")
+    qapp.processEvents()
+    assert set(sessions._rows) == {"s2"}
+
+    sessions.set_collapsed(True)
+    assert sessions.maximumWidth() == 48
+    assert not sessions._scroll.isVisible()
+    sessions.set_collapsed(False)
+    assert sessions.maximumWidth() == 260
+
+
 def test_quick_actions_and_status_widgets_have_non_colour_metadata(qapp) -> None:
     chips = QuickActionsChips()
     assert chips.accessibleName() == "快捷操作"
@@ -132,6 +199,18 @@ def test_quick_actions_and_status_widgets_have_non_colour_metadata(qapp) -> None
     thinking = ThinkingIndicator()
     assert thinking.accessibleName()
     assert thinking.accessibleDescription()
+
+
+def test_quick_actions_reduce_secondary_tools_at_narrow_width(qapp) -> None:
+    chips = QuickActionsChips()
+    chips.show()
+    chips.resize(220, 32)
+    qapp.processEvents()
+    assert [button.isVisible() for button in chips._buttons] == [True, True, False, False, False]
+
+    chips.resize(500, 32)
+    qapp.processEvents()
+    assert all(button.isVisible() for button in chips._buttons)
 
 
 def test_smart_assistant_source_has_no_raw_visual_colours() -> None:

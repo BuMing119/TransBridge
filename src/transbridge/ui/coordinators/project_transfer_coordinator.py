@@ -227,11 +227,11 @@ class ProjectTransferCoordinator:
     def _on_report_entry_activated(self, entry_id: str):
         """报告对话框中双击条目后跳转到Step2定位。"""
         if not self._host.context.collection:
-            self._host.statusBar().showMessage("请先加载翻译集合", 5000)
+            self._host.show_message("请先加载翻译集合")
             return
         entry = self._host.context.collection.get(entry_id)
         if entry is None:
-            self._host.statusBar().showMessage(f"条目不存在或已被删除: {entry_id}", 5000)
+            self._host.show_message(f"条目不存在或已被删除: {entry_id}")
             return
         # 切换到工作台 tab
         self._host.mode_tabs.setCurrentIndex(0)  # 工作台在 index 0

@@ -23,16 +23,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="application mode (default: gui)",
     )
     parser.add_argument("--project-id", help="explicit Project context for a headless command")
+    parser.add_argument("--open-project", help="Project file to open explicitly in GUI mode")
     parser.add_argument("--pretty", action="store_true", help="pretty-print a headless result")
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.open_project and args.command != "gui":
+        build_parser().error("--open-project is only valid with the gui command")
     if args.command == "gui":
         from .entrypoints.gui import main as gui_main
 
-        return gui_main()
+        return gui_main(initial_project_path=args.open_project)
     if args.command == "mcp":
         from .entrypoints.mcp import main as mcp_main
 

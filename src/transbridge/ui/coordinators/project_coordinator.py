@@ -22,7 +22,7 @@ class ProjectCoordinator:
     def __init__(self, host) -> None:
         self._host = host
 
-    def init_workspace(self):
+    def init_workspace(self, *, initial_project_path: str | None = None):
         """启动时读取 workspace.json，恢复上次项目+版本。"""
         ws_path = workspace_path()
         ws = WorkspaceState.load(ws_path)
@@ -33,6 +33,21 @@ class ProjectCoordinator:
                 self._show_start_center_failure(
                     "PROJECT_OPENER_UNAVAILABLE",
                     "当前工程打开服务不可用。",
+                )
+                return
+            if initial_project_path:
+                if hasattr(self._host, "show_start_center_restoring"):
+                    self._host.show_start_center_restoring()
+                self._start_current_project_open(
+                    lambda: self._host.current_project_opener.prepare_path(
+                        initial_project_path,
+                        self._host.runtime_context,
+                    ),
+                    dirty_decision=None,
+                    success_verb="已打开",
+                    show_error_dialog=False,
+                    on_success=lambda _opened: self._show_workbench(),
+                    on_failure=self._show_start_center_failure,
                 )
                 return
             if not getattr(self._host.current_project_opener, "has_active_reference", True):
@@ -50,6 +65,10 @@ class ProjectCoordinator:
                 on_success=lambda _opened: self._show_workbench(),
                 on_failure=self._show_start_center_failure,
             )
+            return
+
+        if initial_project_path:
+            self.open_project_path(initial_project_path)
             return
 
         active = ws.active_project
@@ -264,7 +283,13 @@ class ProjectCoordinator:
         if self._host.save_worker is not None and self._host.save_worker.isRunning():
             self._host.show_message("项目仍在保存，请稍候再打开其他项目。")
             return
+        foreground_worker = getattr(self._host, "foreground_worker", None)
+        if foreground_worker is not None and foreground_worker.isRunning():
+            self._host.show_message("已有前台任务正在运行，请稍候再打开其他项目。")
+            return
         self._host.workbench.show_step2_progress(0, "正在校验项目源文件…")
+        if hasattr(self._host, "show_project_open_progress"):
+            self._host.show_project_open_progress("正在校验并加载本地工程…")
 
         def _show_failure(code: str, message: str) -> None:
             if on_failure is None:
@@ -304,11 +329,14 @@ class ProjectCoordinator:
         worker = ApiWorker(_prepare_and_activate)
         worker.result.connect(_on_opened)
         worker.error.connect(_on_prepare_error)
-        worker.finished.connect(
-            lambda: (
-                setattr(self._host, "project_open_worker", None) if self._host.project_open_worker is worker else None
-            )
-        )
+
+        def _on_finished() -> None:
+            if hasattr(self._host, "hide_project_open_progress"):
+                self._host.hide_project_open_progress()
+            if self._host.project_open_worker is worker:
+                self._host.project_open_worker = None
+
+        worker.finished.connect(_on_finished)
         self._host.project_open_worker = worker
         worker.start()
         self._host.workers.append(worker)
@@ -361,18 +389,20 @@ class ProjectCoordinator:
 
         def _on_done(result):
             collection, plugin = result
-            self._host.workbench.hide_step2_progress()
-            # 应用已缓存的翻译数据（必须在 add_slot 之前，否则 collection_changed 触发时表格仍为空）
-            if self._host.context.variant_store:
-                self._host.context.variant_store.apply_to(list(collection))
-            label = PathLib(esp_path).stem
-            slot = CollectionSlot(
-                label=label,
-                collection=collection,
-                esp_path=esp_path,
-                plugin=plugin,
-            )
-            self._host.context.add_slot(esp_path, slot)
+            try:
+                # 应用已缓存的翻译数据（必须在 add_slot 之前，否则 collection_changed 触发时表格仍为空）
+                if self._host.context.variant_store:
+                    self._host.context.variant_store.apply_to(list(collection))
+                label = PathLib(esp_path).stem
+                slot = CollectionSlot(
+                    label=label,
+                    collection=collection,
+                    esp_path=esp_path,
+                    plugin=plugin,
+                )
+                self._host.context.add_slot(esp_path, slot)
+            finally:
+                self._host.workbench.hide_step2_progress()
 
         def _on_error(msg: str):
             self._host.workbench.hide_step2_progress()

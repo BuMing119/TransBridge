@@ -6,7 +6,8 @@ from types import SimpleNamespace
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtTest import QTest
+from PyQt6.QtWidgets import QApplication, QLabel
 
 from transbridge.application.contracts import DomainError, ErrorCategory, OperationResult
 from transbridge.application.io import EntryKey, SourceNamespace
@@ -16,8 +17,10 @@ from transbridge.ui.coordinators.guided_project_coordinator import (
 )
 from transbridge.ui.coordinators.project_coordinator import ProjectCoordinator
 from transbridge.ui.shell.action_catalog import IntentId
+from transbridge.ui.shell.project_open_choice_dialog import ProjectOpenChoiceDialog
 from transbridge.ui.shell.start_center import (
     RecentProjectViewState,
+    RecoveryItemViewState,
     StartCenterViewState,
     StartCenterWidget,
     StartDestinationState,
@@ -150,10 +153,13 @@ def test_start_center_renders_one_primary_action_and_unavailable_recent_reason()
         )
     )
 
-    assert widget.choose_plugin_button.text() == "选择插件开始翻译"
+    assert widget.choose_plugin_button.accessibleName() == "翻译游戏插件"
     assert widget._recent_list.count() == 1
-    assert "工程记录不存在或不可访问" in widget._recent_list.item(0).text()
-    assert not widget._recent_list.item(0).flags() & Qt.ItemFlag.ItemIsEnabled
+    item = widget._recent_list.item(0)
+    assert item.text() == ""
+    assert "工程记录不存在或不可访问" in item.data(Qt.ItemDataRole.AccessibleTextRole)
+    assert item.toolTip() == "工程记录不存在或不可访问"
+    assert not item.flags() & Qt.ItemFlag.ItemIsEnabled
     widget.close()
 
 
@@ -197,7 +203,7 @@ def test_return_to_start_center_only_changes_shell_display_context() -> None:
     controller.show(user_requested=True)
 
     assert shown == [view]
-    assert "仍保持打开；有未保存修改" in view._status_label.text()
+    assert "仍保持打开，有未保存修改" in view._status_label.text()
     view.close()
 
 
@@ -220,13 +226,334 @@ def test_start_center_buttons_forward_one_canonical_intent() -> None:
     view.choose_plugin_button.click()
     view._open_button.click()
     view._empty_button.click()
+    view._fomod_button.click()
+    view._task_center_button.click()
 
     assert requests == [
         (IntentId.SOURCE_PARSE, None),
         (IntentId.PROJECT_OPEN, None),
         (IntentId.PROJECT_CREATE, None),
+        (IntentId.PUBLISH_FOMOD, None),
+        (IntentId.TASK_OPEN_ACTIVITY, None),
     ]
     view.close()
+
+
+def test_start_center_project_rows_and_recovery_summary_keep_real_action_semantics() -> None:
+    widget = StartCenterWidget()
+    returned = []
+    opened = []
+    task_center = []
+    widget.return_to_current_requested.connect(lambda: returned.append(True))
+    widget.open_recent_requested.connect(opened.append)
+    widget.task_center_requested.connect(lambda: task_center.append(True))
+    widget.render(
+        StartCenterViewState(
+            StartDestinationState.START_CENTER_USER_REQUESTED,
+            revision=1,
+            active_project_name="ActiveMod",
+            recent_projects=(
+                RecentProjectViewState("active", "ActiveMod", "D:/active.json", True, active=True),
+                RecentProjectViewState("other", "OtherMod", "D:/other.json", True),
+                RecentProjectViewState("missing", "MissingMod", "D:/missing.json", False, "工程记录不存在"),
+            ),
+            recovery_items=(
+                RecoveryItemViewState("ready", "插件翻译", True, ""),
+                RecoveryItemViewState("blocked", "旧任务", False, "来源文件已移动"),
+            ),
+        )
+    )
+
+    active_item = widget._project_list.item(0)
+    other_item = widget._project_list.item(1)
+    missing_item = widget._project_list.item(2)
+    widget.resize(1_440, 900)
+    widget.show()
+    _APP.processEvents()
+
+    QTest.mouseClick(
+        widget._project_list.viewport(),
+        Qt.MouseButton.LeftButton,
+        pos=widget._project_list.visualItemRect(active_item).center(),
+    )
+    QTest.mouseClick(
+        widget._project_list.viewport(),
+        Qt.MouseButton.LeftButton,
+        pos=widget._project_list.visualItemRect(other_item).center(),
+    )
+    project_dialog = widget._projects_panel._project_dialog
+    assert project_dialog is not None
+    assert project_dialog.isVisible()
+    assert project_dialog.isModal()
+    assert project_dialog.windowTitle() == "打开工程"
+    assert project_dialog.current_window_button.accessibleName() == "在当前窗口打开"
+    assert project_dialog.new_window_button.accessibleName() == "在新窗口打开"
+    project_dialog.current_window_button.click()
+    QTest.mouseClick(
+        widget._project_list.viewport(),
+        Qt.MouseButton.LeftButton,
+        pos=widget._project_list.visualItemRect(missing_item).center(),
+    )
+    widget._task_center_button.click()
+
+    assert returned == [True]
+    assert opened == ["D:/other.json"]
+    assert active_item.text() == other_item.text() == missing_item.text() == ""
+    assert other_item.data(Qt.ItemDataRole.AccessibleTextRole) == "OtherMod，可打开"
+    assert not missing_item.flags() & Qt.ItemFlag.ItemIsEnabled
+    assert "工程记录不存在" in missing_item.data(Qt.ItemDataRole.AccessibleTextRole)
+    assert not widget._recovery_banner.isHidden()
+    assert widget._landing_page._recovery_label.text() == "有 1 个任务可以继续"
+    assert task_center == [True]
+    widget.close()
+
+
+def test_start_center_project_rows_support_keyboard_activation() -> None:
+    widget = StartCenterWidget()
+    opened = []
+    widget.open_recent_requested.connect(opened.append)
+    widget.render(
+        StartCenterViewState(
+            StartDestinationState.START_CENTER_EMPTY,
+            revision=1,
+            recent_projects=(RecentProjectViewState("other", "OtherMod", "D:/other.json", True),),
+        )
+    )
+    widget.show()
+    _APP.processEvents()
+
+    widget._project_list.setCurrentRow(0)
+    widget._project_list.setFocus()
+    QTest.keyClick(widget._project_list, Qt.Key.Key_Return)
+    project_dialog = widget._projects_panel._project_dialog
+    assert project_dialog is not None
+    assert project_dialog.isVisible()
+    project_dialog.current_window_button.click()
+
+    assert opened == ["D:/other.json"]
+    widget.close()
+
+
+def test_empty_project_draft_exposes_icon_back_action_in_the_header() -> None:
+    widget = StartCenterWidget()
+    returned = []
+    widget.return_to_landing_requested.connect(lambda: returned.append(True))
+
+    assert widget._draft_back.text() == ""
+    assert not widget._draft_back.icon().isNull()
+    assert widget._draft_back.toolTip() == "返回开始"
+    assert widget._draft_back.accessibleName() == "返回开始中心"
+
+    widget._draft_back.click()
+
+    assert returned == [True]
+    widget.close()
+
+
+def test_start_center_empty_and_restoring_states_do_not_leave_dead_sections_or_conflicting_actions() -> None:
+    widget = StartCenterWidget()
+    widget.render(StartCenterViewState(StartDestinationState.START_CENTER_EMPTY, revision=1))
+
+    assert widget._project_list.isHidden()
+    assert not widget._projects_empty.isHidden()
+    assert widget._recovery_banner.isHidden()
+
+    widget.render(StartCenterViewState(StartDestinationState.RESTORING_LAST, revision=2))
+
+    assert not widget.choose_plugin_button.isEnabled()
+    assert not widget._open_button.isEnabled()
+    assert not widget._empty_button.isEnabled()
+    assert not widget._project_list.isEnabled()
+    assert not widget._fomod_button.isEnabled()
+    widget.close()
+
+
+def test_start_center_project_dialog_can_launch_a_new_window_and_show_thin_opening_progress() -> None:
+    widget = StartCenterWidget()
+    launched = []
+    widget.open_recent_in_new_window_requested.connect(launched.append)
+    widget.render(
+        StartCenterViewState(
+            StartDestinationState.START_CENTER_EMPTY,
+            revision=1,
+            recent_projects=(RecentProjectViewState("other", "OtherMod", "D:/other.json", True),),
+        )
+    )
+    widget.show()
+    _APP.processEvents()
+
+    item = widget._project_list.item(0)
+    QTest.mouseClick(
+        widget._project_list.viewport(),
+        Qt.MouseButton.LeftButton,
+        pos=widget._project_list.visualItemRect(item).center(),
+    )
+    project_dialog = widget._projects_panel._project_dialog
+    assert project_dialog is not None
+    project_dialog.new_window_button.click()
+
+    assert launched == ["D:/other.json"]
+    widget.set_project_opening("正在校验并加载本地工程…")
+    assert not widget._project_open_progress.isHidden()
+    assert widget._project_open_progress_bar.minimum() == 0
+    assert widget._project_open_progress_bar.maximum() == 0
+    assert widget._project_open_progress_bar.height() == 4
+    assert not widget._project_list.isEnabled()
+    assert not widget.choose_plugin_button.isEnabled()
+    assert not widget._open_button.isEnabled()
+    assert not widget._fomod_button.isEnabled()
+
+    widget.set_project_opening(None)
+    assert widget._project_open_progress.isHidden()
+    assert widget._project_list.isEnabled()
+    assert widget.choose_plugin_button.isEnabled()
+    widget.close()
+
+
+def test_project_open_dialog_mode_cards_keep_two_line_geometry_under_application_skin() -> None:
+    from transbridge.config.ui_preferences import DEFAULT_THEME_ID, ThemeMode
+    from transbridge.ui.foundation.builtins import create_builtin_registry
+    from transbridge.ui.foundation.theme_service import ThemeService
+
+    class Preferences:
+        @staticmethod
+        def load():
+            return SimpleNamespace(theme_mode=ThemeMode.LIGHT, theme_id=DEFAULT_THEME_ID, diagnostics=())
+
+        @staticmethod
+        def save_theme_preference(_mode, _theme_id):
+            return SimpleNamespace(saved=True, diagnostic_code=None, message="")
+
+    service = ThemeService(_APP, create_builtin_registry(), Preferences())  # type: ignore[arg-type]
+    service.start()
+    dialog = ProjectOpenChoiceDialog("OtherMod", "D:/projects/other.json")
+    try:
+        dialog.show()
+        _APP.processEvents()
+
+        for button in (dialog.current_window_button, dialog.new_window_button):
+            assert button.height() >= 88
+            labels = [
+                label
+                for label in button.findChildren(QLabel)
+                if label.property("tbProjectOpenModeTitle") or label.property("tbProjectOpenModeDescription")
+            ]
+            assert len(labels) == 2
+            assert all(label.geometry().top() >= 0 for label in labels)
+            assert all(label.geometry().bottom() < button.height() for label in labels)
+    finally:
+        dialog.close()
+        service.close()
+
+
+def test_start_center_controller_switches_pages_inside_the_persistent_workspace_shell() -> None:
+    shown = []
+    indices = []
+    view = StartCenterWidget()
+    host = SimpleNamespace(
+        context=SimpleNamespace(project_name=None, dirty=False, workspace=None),
+        app_runtime=None,
+        runtime_context=None,
+        mode_tabs=SimpleNamespace(setCurrentWidget=shown.append, setCurrentIndex=indices.append),
+    )
+    controller = StartCenterController(host, view)
+
+    controller.show_empty()
+    controller.show_workbench()
+
+    assert shown == [view]
+    assert indices == [0]
+    view.close()
+
+
+def test_start_center_controller_launches_new_window_without_switching_current_context() -> None:
+    messages = []
+    launches = []
+    context = SimpleNamespace(project_name="ActiveMod", dirty=True)
+    view = StartCenterWidget()
+    host = SimpleNamespace(
+        context=context,
+        project_commands=None,
+        runtime_context=None,
+        show_message=messages.append,
+    )
+    controller = StartCenterController(
+        host,
+        view,
+        project_window_launcher=lambda path: launches.append(path) or True,
+    )
+    controller.start()
+
+    view.open_recent_in_new_window_requested.emit("D:/other.json")
+
+    assert launches == ["D:/other.json"]
+    assert messages == ["已请求在新窗口打开工程。"]
+    assert context.project_name == "ActiveMod"
+    assert context.dirty is True
+    view.close()
+
+
+def test_start_center_controller_reports_new_window_launch_failure() -> None:
+    messages = []
+    view = StartCenterWidget()
+    host = SimpleNamespace(
+        context=SimpleNamespace(project_name="ActiveMod"),
+        project_commands=None,
+        runtime_context=None,
+        show_message=messages.append,
+    )
+    controller = StartCenterController(host, view, project_window_launcher=lambda _path: False)
+    controller.start()
+
+    view.open_recent_in_new_window_requested.emit("D:/other.json")
+
+    assert messages == ["PROJECT_WINDOW_LAUNCH_FAILED: 操作系统未能启动新窗口。"]
+    view.close()
+
+
+def test_creation_capability_remains_disabled_after_landing_rerender() -> None:
+    view = StartCenterWidget()
+    host = SimpleNamespace(
+        project_commands=None,
+        runtime_context=None,
+        context=SimpleNamespace(project_name=None),
+    )
+    controller = StartCenterController(host, view)
+    controller.start()
+
+    view.render(StartCenterViewState(StartDestinationState.START_CENTER_EMPTY, revision=1))
+
+    assert not view.choose_plugin_button.isEnabled()
+    assert not view._empty_button.isEnabled()
+    assert view._open_button.isEnabled()
+    assert view.choose_plugin_button.toolTip() == "建项服务不可用"
+    view.close()
+
+
+def test_recovery_projection_failure_is_distinguishable_from_an_empty_catalog() -> None:
+    class Registry:
+        def resolve(self, name):
+            assert name == "task_recovery"
+            raise RuntimeError("catalog unavailable")
+
+    runtime_context = SimpleNamespace(
+        metadata={},
+        owner_id="owner",
+        project_id=None,
+        variant_id=None,
+        session_id="session",
+        permissions=(),
+    )
+    host = SimpleNamespace(
+        app_runtime=SimpleNamespace(use_cases=Registry()),
+        runtime_context=runtime_context,
+    )
+    controller = StartCenterController.__new__(StartCenterController)
+    controller._host = host
+    controller._recovery_diagnostic_message = ""
+
+    assert controller._recovery_projection() == ()
+    assert controller._recovery_diagnostic_message == "任务恢复状态暂时不可用。"
 
 
 def test_recent_projects_prefer_v2_read_only_catalog() -> None:

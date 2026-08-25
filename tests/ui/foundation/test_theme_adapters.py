@@ -6,14 +6,14 @@ from pathlib import Path
 import re
 
 from PyQt6.QtCore import QCoreApplication, QEvent, QObject, pyqtSignal
-from PyQt6.QtWidgets import QApplication, QTextEdit, QWidget
+from PyQt6.QtWidgets import QApplication, QLabel, QTextEdit, QWidget
 import pytest
 
 from transbridge.infra.markdown_renderer import MarkdownRenderer
 from transbridge.ui.foundation.adapters import DomainBrushes, RichTextThemeAdapter, ThemeView
 from transbridge.ui.foundation.builtins import DEFAULT_THEME_ID, create_builtin_registry
 from transbridge.ui.foundation.model import ThemeScheme
-from transbridge.ui.foundation.qt_palette import compile_palette
+from transbridge.ui.foundation.qt_palette import compile_palette, qcolor
 from transbridge.ui.foundation.theme_service import ThemeSnapshot
 
 
@@ -169,9 +169,15 @@ def test_rich_text_theme_compiles_once_per_fingerprint_and_renderer_accepts_inje
     assert adapter.compile_count == 1
     assert adapter.theme(dark).fingerprint == dark.fingerprint
     assert adapter.compile_count == 2
+    expected_text = qcolor(light.tokens.semantic.text_primary).name().lower()
+    assert expected_text in first.stylesheet.lower()
+    assert re.search(r"#[0-9a-fA-F]{8}\b", first.stylesheet) is None
 
     themed = MarkdownRenderer(first).render("`inline`\n\n```python\nprint('ok')\n```")
+    labels = themed.findChildren(QLabel)
     code = themed.findChild(QTextEdit)
+    assert labels
+    assert all(expected_text in label.text().lower() for label in labels)
     assert code is not None
     assert first.code_block_stylesheet == code.styleSheet()
     assert first.stylesheet == themed.styleSheet()

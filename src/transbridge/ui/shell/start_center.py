@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QKeyEvent
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -19,8 +19,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QPushButton,
     QStackedWidget,
     QVBoxLayout,
@@ -29,11 +27,15 @@ from PyQt6.QtWidgets import (
 
 from transbridge.ui.foundation.accessibility import configure_accessible_widget, update_accessible_state
 from transbridge.ui.foundation.components import (
+    ComponentDensity,
     ComponentKind,
     ComponentStyle,
     SemanticState,
     make_primary_button,
 )
+from transbridge.ui.foundation.tabler_icons import tabler_icon
+
+from .start_center_landing import StartCenterLanding
 
 
 def _configure_heading(label: QLabel, *, point_size: float, accessible_name: str) -> QLabel:
@@ -96,6 +98,7 @@ class StartCenterViewState:
     dirty: bool = False
     diagnostic_code: str = ""
     diagnostic_message: str = ""
+    recovery_diagnostic_message: str = ""
 
     def __post_init__(self) -> None:
         if self.revision < 0:
@@ -111,7 +114,9 @@ class StartCenterWidget(QWidget):
     choose_plugin_requested = pyqtSignal()
     open_project_requested = pyqtSignal()
     open_recent_requested = pyqtSignal(str)
+    open_recent_in_new_window_requested = pyqtSignal(str)
     recovery_details_requested = pyqtSignal(str)
+    task_center_requested = pyqtSignal()
     create_empty_requested = pyqtSignal()
     open_fomod_requested = pyqtSignal()
     return_to_current_requested = pyqtSignal()
@@ -134,77 +139,75 @@ class StartCenterWidget(QWidget):
         self._pages.addWidget(self._landing_page)
         self._pages.addWidget(self._draft_page)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(36, 28, 36, 28)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._pages)
 
     def _build_landing_page(self) -> QWidget:
-        page = QWidget(self)
-        layout = QVBoxLayout(page)
-        title = QLabel("开始翻译", page)
-        title.setObjectName("startCenterTitle")
-        _configure_heading(title, point_size=18.0, accessible_name="开始翻译")
-        layout.addWidget(title)
-        layout.addWidget(QLabel("选择一个 ESP / ESM / ESL，工程名称和常用设置会自动准备。", page))
+        page = StartCenterLanding(self)
+        page.choose_plugin_requested.connect(self.choose_plugin_requested)
+        page.open_project_requested.connect(self.open_project_requested)
+        page.open_recent_requested.connect(self.open_recent_requested)
+        page.open_recent_in_new_window_requested.connect(self.open_recent_in_new_window_requested)
+        page.create_empty_requested.connect(self.create_empty_requested)
+        page.open_fomod_requested.connect(self.open_fomod_requested)
+        page.return_to_current_requested.connect(self.return_to_current_requested)
+        page.task_center_requested.connect(self.task_center_requested)
 
-        self.choose_plugin_button = make_primary_button("选择插件开始翻译", page)
-        self.choose_plugin_button.setObjectName("startCenterPrimaryAction")
-        self.choose_plugin_button.setAccessibleName("选择插件开始翻译")
-        self.choose_plugin_button.clicked.connect(self.choose_plugin_requested)
-        layout.addWidget(self.choose_plugin_button, alignment=Qt.AlignmentFlag.AlignHCenter)
-
-        self._status_label = QLabel(page)
-        self._status_label.setWordWrap(True)
-        self._status_label.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        configure_accessible_widget(self._status_label, name="开始中心状态")
-        ComponentStyle.apply_static(self._status_label, ComponentKind.NOTIFICATION)
-        layout.addWidget(self._status_label)
-
-        self._return_button = QPushButton("返回当前工程", page)
-        self._return_button.setAccessibleName("返回当前本地翻译工程")
-        self._return_button.clicked.connect(self.return_to_current_requested)
-        layout.addWidget(self._return_button)
-
-        layout.addWidget(QLabel("继续工作", page))
-        self._recent_list = QListWidget(page)
-        self._recent_list.setAccessibleName("最近本地翻译工程")
-        ComponentStyle.apply_static(self._recent_list, ComponentKind.TABLE)
-        self._recent_list.itemActivated.connect(
-            lambda item: self.open_recent_requested.emit(str(item.data(Qt.ItemDataRole.UserRole)))
-        )
-        layout.addWidget(self._recent_list)
-
-        layout.addWidget(QLabel("可恢复任务", page))
-        self._recovery_list = QListWidget(page)
-        self._recovery_list.setAccessibleName("可恢复任务")
-        ComponentStyle.apply_static(self._recovery_list, ComponentKind.TABLE)
-        self._recovery_list.itemActivated.connect(
-            lambda item: self.recovery_details_requested.emit(str(item.data(Qt.ItemDataRole.UserRole)))
-        )
-        layout.addWidget(self._recovery_list)
-
-        secondary = QHBoxLayout()
-        self._open_button = QPushButton("打开本地工程", page)
-        self._open_button.setAccessibleName("打开已有本地翻译工程")
-        self._open_button.clicked.connect(self.open_project_requested)
-        self._empty_button = QPushButton("创建空工程", page)
-        self._empty_button.setAccessibleName("创建空的本地翻译工程")
-        self._empty_button.clicked.connect(self.create_empty_requested)
-        self._fomod_button = QPushButton("FOMOD 安装包翻译", page)
-        self._fomod_button.setAccessibleName("打开 FOMOD 安装包翻译")
-        self._fomod_button.clicked.connect(self.open_fomod_requested)
-        secondary.addWidget(self._open_button)
-        secondary.addWidget(self._empty_button)
-        secondary.addWidget(self._fomod_button)
-        secondary.addStretch(1)
-        layout.addLayout(secondary)
+        # Compatibility names retained for existing coordinators and focused
+        # UI contracts while the landing page owns their visual composition.
+        self.choose_plugin_button = page.choose_plugin_button
+        self._open_button = page._open_button
+        self._empty_button = page._empty_button
+        self._fomod_button = page._fomod_button
+        self._status_label = page._status_label
+        self._return_button = page._return_button
+        self._recent_list = page._project_list
+        self._project_list = page._project_list
+        self._projects_empty = page._projects_empty
+        self._recovery_banner = page._recovery_banner
+        self._task_center_button = page._task_center_button
+        self._content = page._content
+        self._task_panel = page._task_panel
+        self._projects_panel = page._projects_panel
+        self._project_open_progress = page._projects_panel.progress_container
+        self._project_open_progress_bar = page._projects_panel.progress_bar
         return page
+
+    def set_creation_available(self, available: bool, reason: str = "") -> None:
+        """Apply the guided-project capability without losing it on rerender."""
+
+        self._landing_page.set_creation_available(available, reason)
+
+    def set_project_opening(self, message: str | None) -> None:
+        """Show or clear start-center feedback for a current-window switch."""
+
+        self._landing_page.set_project_opening(message)
 
     def _build_draft_page(self) -> QWidget:
         page = QWidget(self)
         layout = QVBoxLayout(page)
+        layout.setContentsMargins(32, 24, 32, 32)
+        layout.setSpacing(20)
+
+        header = QHBoxLayout()
+        header.setSpacing(12)
+        self._draft_back = QPushButton(page)
+        self._draft_back.setObjectName("startCenterDraftBack")
+        self._draft_back.setIcon(tabler_icon(self._draft_back, "arrow-left", 20))
+        self._draft_back.setIconSize(QSize(20, 20))
+        self._draft_back.setFixedSize(40, 40)
+        self._draft_back.setFlat(True)
+        self._draft_back.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._draft_back.setToolTip("返回开始")
+        ComponentStyle.apply_static(self._draft_back, ComponentKind.BUTTON, ComponentDensity.COMPACT)
+        configure_accessible_widget(self._draft_back, name="返回开始中心", description="返回开始页面")
+        self._draft_back.clicked.connect(self.return_to_landing_requested)
+        header.addWidget(self._draft_back)
         title = QLabel("创建本地翻译工程", page)
         _configure_heading(title, point_size=16.0, accessible_name="创建本地翻译工程")
-        layout.addWidget(title)
+        header.addWidget(title)
+        header.addStretch(1)
+        layout.addLayout(header)
         form = QFormLayout()
         self._source_label = QLabel(page)
         self._name_edit = QLineEdit(page)
@@ -254,13 +257,9 @@ class StartCenterWidget(QWidget):
         layout.addWidget(self._draft_error)
 
         actions = QHBoxLayout()
-        self._draft_back = QPushButton("返回", page)
-        self._draft_back.setAccessibleName("返回开始中心")
-        self._draft_back.clicked.connect(self.return_to_landing_requested)
         self._draft_primary = make_primary_button("", page)
         self._draft_primary.setAccessibleName("检查或提交工程创建方案")
         self._draft_primary.clicked.connect(self._emit_draft_primary)
-        actions.addWidget(self._draft_back)
         actions.addStretch(1)
         actions.addWidget(self._draft_primary)
         layout.addLayout(actions)
@@ -272,53 +271,7 @@ class StartCenterWidget(QWidget):
             return
         self._state_revision = state.revision
         self._pages.setCurrentWidget(self._landing_page)
-        if state.destination is StartDestinationState.RESTORING_LAST:
-            status = "正在恢复上次工程…"
-        elif state.destination is StartDestinationState.START_CENTER_RECOVERY_FAILED:
-            status = f"{state.diagnostic_code}: {state.diagnostic_message}"
-        elif state.destination is StartDestinationState.START_CENTER_USER_REQUESTED:
-            suffix = "；有未保存修改" if state.dirty else ""
-            status = f"工程“{state.active_project_name or '当前工程'}”仍保持打开{suffix}。"
-        else:
-            status = "尚无可恢复工程，请选择插件开始翻译。"
-        self._status_label.setText(status)
-        update_accessible_state(self._status_label, status)
-        semantic_state = {
-            StartDestinationState.RESTORING_LAST: SemanticState.INFO,
-            StartDestinationState.START_CENTER_RECOVERY_FAILED: SemanticState.ERROR,
-            StartDestinationState.START_CENTER_USER_REQUESTED: (
-                SemanticState.WARNING if state.dirty else SemanticState.INFO
-            ),
-            StartDestinationState.START_CENTER_EMPTY: SemanticState.INFO,
-        }[state.destination]
-        self._status_label.setProperty("tbStatusId", state.destination.value)
-        ComponentStyle.apply_state(self._status_label, semantic_state)
-        self._return_button.setVisible(
-            state.destination is StartDestinationState.START_CENTER_USER_REQUESTED
-            and state.active_project_name is not None
-        )
-        self._render_recent(state.recent_projects)
-        self._render_recovery(state.recovery_items)
-        self.choose_plugin_button.setFocus(Qt.FocusReason.OtherFocusReason)
-
-    def _render_recent(self, recent: tuple[RecentProjectViewState, ...]) -> None:
-        self._recent_list.clear()
-        for project in recent:
-            suffix = "" if project.available else f" — {project.reason}"
-            item = QListWidgetItem(f"{project.name}{suffix}")
-            item.setData(Qt.ItemDataRole.UserRole, project.path)
-            item.setFlags(item.flags() if project.available else item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
-            self._recent_list.addItem(item)
-        self._recent_list.setVisible(bool(recent))
-
-    def _render_recovery(self, recovery: tuple[RecoveryItemViewState, ...]) -> None:
-        self._recovery_list.clear()
-        for candidate in recovery:
-            suffix = "可继续" if candidate.recoverable else candidate.reason
-            item = QListWidgetItem(f"{candidate.title} — {suffix}")
-            item.setData(Qt.ItemDataRole.UserRole, candidate.storage_key)
-            self._recovery_list.addItem(item)
-        self._recovery_list.setVisible(bool(recovery))
+        self._landing_page.render(state)
 
     def render_draft(self, state) -> None:
         """Render a GuidedProjectDraftState via its narrow public fields."""

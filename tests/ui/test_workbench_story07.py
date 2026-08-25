@@ -9,7 +9,16 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 
 from transbridge.application.projects import DirtyDecision
-from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.converter.translation_entry import (
+    STAGE_CHECKED,
+    STAGE_HIDDEN,
+    STAGE_LOCKED,
+    STAGE_QUESTIONABLE,
+    STAGE_REVIEWED,
+    STAGE_TRANSLATED,
+    STAGE_UNTRANSLATED,
+    TranslationEntry,
+)
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui import context as context_module
 from transbridge.ui.shell.action_catalog import IntentId
@@ -17,7 +26,7 @@ from transbridge.ui.workbench.filters_presenter import FiltersPresenter, FilterS
 from transbridge.ui.workbench.filters_view import FiltersView
 from transbridge.ui.workbench.save_presenter import SavePhase, SaveStatePresenter, SaveTarget
 from transbridge.ui.workbench.step2 import Step2PreviewWidget
-from transbridge.ui.workbench.workflow_actions_view import WorkflowActionsView
+from transbridge.ui.workbench.workflow_actions_view import StatisticsSummaryView, WorkflowActionsView
 from transbridge.ui.workbench.workflow_presenter import (
     StatisticsSummary,
     WorkbenchContentKind,
@@ -82,6 +91,43 @@ def test_summary_click_filter_preserves_other_filter_state_and_entry_identity() 
     assert result[0] is entries[1]
 
 
+def test_summary_uses_canonical_stage_meaning_even_when_translation_text_is_empty() -> None:
+    entries = [
+        _entry(0, STAGE_UNTRANSLATED, "意外存在的文本"),
+        _entry(1, STAGE_TRANSLATED, ""),
+        _entry(2, STAGE_QUESTIONABLE, ""),
+        _entry(3, STAGE_CHECKED, ""),
+        _entry(4, STAGE_REVIEWED, ""),
+        _entry(5, STAGE_LOCKED, ""),
+        _entry(6, STAGE_HIDDEN, ""),
+    ]
+    summary = StatisticsSummary.from_entries(entries)
+    presenter = FiltersPresenter()
+
+    assert summary == StatisticsSummary(total=7, untranslated=1, needs_review=1, completed=4, hidden=1)
+
+    expected_stages = {
+        "untranslated": {STAGE_UNTRANSLATED},
+        "review": {STAGE_QUESTIONABLE},
+        "completed": {STAGE_TRANSLATED, STAGE_CHECKED, STAGE_REVIEWED, STAGE_LOCKED},
+        "hidden": {STAGE_HIDDEN},
+    }
+    for key, stages in expected_stages.items():
+        presenter.update(summary.filter_state(key, FilterState()))
+        assert {entry.stage for entry in presenter.apply(entries, {})} == stages
+
+
+def test_summary_cards_explain_how_grouped_counts_map_to_translation_stages() -> None:
+    view = StatisticsSummaryView()
+    view.set_summary(StatisticsSummary(total=12, untranslated=2, needs_review=3, completed=6, hidden=1))
+
+    assert view._buttons["review"]._label.text() == "有疑问"
+    assert view._buttons["review"].toolTip() == "翻译状态：有疑问，共 3 条；点击筛选"
+    assert view._buttons["completed"]._label.text() == "已翻译"
+    assert view._buttons["completed"].toolTip() == "包括翻译状态：已翻译、已检查、已审核、已锁定，共 6 条；点击筛选"
+    view.close()
+
+
 def test_context_actions_expose_reasons_and_view_emits_one_stable_intent() -> None:
     states = WorkbenchWorkflowPresenter.actions(
         has_context=True,
@@ -98,7 +144,7 @@ def test_context_actions_expose_reasons_and_view_emits_one_stable_intent() -> No
     view._buttons[IntentId.TRANSLATION_AI].click()
 
     assert review.enabled is False
-    assert review.reason == "当前没有待检查词条"
+    assert review.reason == "当前没有“有疑问”状态的词条"
     assert emitted == [IntentId.TRANSLATION_AI.value]
     view.close()
 

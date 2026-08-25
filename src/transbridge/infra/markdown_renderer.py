@@ -117,24 +117,33 @@ def _make_label(
     theme: MarkdownRenderTheme | None = None,
 ) -> QLabel:
     """Create a QLabel with rich text and heading-appropriate styling."""
-    html = _apply_inline(text, theme)
+    rich_text = _apply_inline(text, theme)
 
     if heading_level == 1:
-        html = f"<h1>{html}</h1>"
+        rich_text = f"<h1>{rich_text}</h1>"
     elif heading_level == 2:
-        html = f"<h2>{html}</h2>"
+        rich_text = f"<h2>{rich_text}</h2>"
     elif heading_level == 3:
-        html = f"<h3>{html}</h3>"
+        rich_text = f"<h3>{rich_text}</h3>"
     elif heading_level == 4:
-        html = f"<h4>{html}</h4>"
+        rich_text = f"<h4>{rich_text}</h4>"
     elif heading_level == 5:
-        html = f"<h5>{html}</h5>"
+        rich_text = f"<h5>{rich_text}</h5>"
     elif heading_level == 6:
-        html = f"<h6>{html}</h6>"
+        rich_text = f"<h6>{rich_text}</h6>"
 
-    label = QLabel(html)
+    if theme is not None and theme.stylesheet:
+        inline_theme = html.escape(theme.stylesheet, quote=True)
+        rich_text = f'<div style="{inline_theme}">{rich_text}</div>'
+
+    # Rich-text QLabel resolves document colours when setText() runs. Apply the
+    # injected theme first so it cannot capture a stale application palette.
+    label = QLabel()
+    _apply_theme(label, theme)
+    label.setText(rich_text)
     label.setTextFormat(Qt.TextFormat.RichText)
     label.setWordWrap(word_wrap)
+    label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
     label.setTextInteractionFlags(
         Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.LinksAccessibleByMouse
     )
@@ -433,6 +442,7 @@ class MarkdownRenderer:
             label = QLabel("")
             label.setTextFormat(Qt.TextFormat.PlainText)
             container = QWidget()
+            container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
             layout = QVBoxLayout(container)
             layout.setContentsMargins(0, 0, 0, 0)
             layout.addWidget(label)
@@ -441,6 +451,7 @@ class MarkdownRenderer:
 
         try:
             container = QWidget()
+            container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
             layout = QVBoxLayout(container)
             layout.setContentsMargins(0, 0, 0, 0)
             layout.setSpacing(4)
@@ -450,7 +461,6 @@ class MarkdownRenderer:
                 if widget:
                     layout.addWidget(widget)
 
-            layout.addStretch()
             _apply_theme(container, effective_theme)
             return container
         except Exception:
@@ -458,11 +468,14 @@ class MarkdownRenderer:
 
     def _fallback(self, text: str, theme: MarkdownRenderTheme | None = None) -> QWidget:
         """Degrade to plain text when parsing/rendering fails."""
-        label = QLabel(text)
+        label = QLabel()
+        _apply_theme(label, theme)
+        label.setText(text)
         label.setTextFormat(Qt.TextFormat.PlainText)
         label.setWordWrap(True)
         label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         container = QWidget()
+        container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(label)

@@ -14,6 +14,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import QApplication, QDialog
 
+from transbridge.application.contracts import OperationResult
+from transbridge.ui.coordinators.project_coordinator import ProjectCoordinator
 from transbridge.ui.main_window import MainWindow, _AutoSaveManager
 from transbridge.ui.paratranz import config_dialog as config_dialog_module
 from transbridge.ui.paratranz.config_dialog import ConfigDialog
@@ -155,6 +157,60 @@ def test_authoritative_save_runs_off_gui_thread_and_reports_completion() -> None
     assert completions == [True]
     assert harness._workbench.enabled
     assert not harness._workbench.progress_visible
+
+
+def test_current_window_project_open_shows_and_clears_start_center_progress() -> None:
+    started = threading.Event()
+    release = threading.Event()
+    progress: list[str | None] = []
+    messages: list[str] = []
+
+    class Workbench:
+        def __init__(self) -> None:
+            self.progress_visible = False
+
+        def show_step2_progress(self, _total: int, _message: str) -> None:
+            self.progress_visible = True
+
+        def hide_step2_progress(self) -> None:
+            self.progress_visible = False
+
+    class Opener:
+        def prepare_path(self, path, _context):
+            started.set()
+            release.wait(1)
+            return OperationResult.completed(SimpleNamespace(path=path))
+
+        def activate(self, _prepared, _context, *, dirty_decision):
+            assert dirty_decision is None
+            return OperationResult.completed({"name": "OtherMod", "sources": []})
+
+    host = SimpleNamespace(
+        context=SimpleNamespace(uses_authoritative_projection=True, dirty=False),
+        current_project_opener=Opener(),
+        runtime_context=object(),
+        project_open_worker=None,
+        save_worker=None,
+        foreground_worker=None,
+        workers=[],
+        workbench=Workbench(),
+        show_message=messages.append,
+        show_workbench=lambda: messages.append("workbench"),
+        show_project_open_progress=progress.append,
+        hide_project_open_progress=lambda: progress.append(None),
+    )
+
+    ProjectCoordinator(host).open_project_path("D:/projects/other.json")
+
+    assert started.wait(1)
+    assert progress == ["正在校验并加载本地工程…"]
+    assert host.workbench.progress_visible
+    release.set()
+    _wait_until(lambda: host.project_open_worker is None)
+
+    assert progress == ["正在校验并加载本地工程…", None]
+    assert not host.workbench.progress_visible
+    assert messages == ["项目「OtherMod」已打开", "workbench"]
 
 
 def test_automatic_save_is_silent_and_does_not_disable_workbench() -> None:

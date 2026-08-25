@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QMainWindow, QMessageBox, QStackedWidget
+from PyQt6.QtWidgets import QMainWindow, QMessageBox
 
 from transbridge import __version__
 
@@ -79,7 +79,14 @@ class MainWindow(QMainWindow):
     ui_foundation = _composition_port("_ui_foundation")
     theme_view = _composition_port("_theme_view")
 
-    def __init__(self, app_context=None, runtime=None, runtime_context=None, ui_foundation=None):
+    def __init__(
+        self,
+        app_context=None,
+        runtime=None,
+        runtime_context=None,
+        ui_foundation=None,
+        initial_project_path: str | None = None,
+    ):
         super().__init__()
         self.setWindowTitle("TransBridge")
         self.resize(1280, 820)
@@ -166,7 +173,7 @@ class MainWindow(QMainWindow):
 
         self._window_lifecycle = WindowLifecycle(self)
         self._window_lifecycle.restore_state()
-        self._project_coordinator.init_workspace()
+        self._project_coordinator.init_workspace(initial_project_path=initial_project_path)
 
         # 自动保存 — 编辑操作触发防抖
         self._window_lifecycle.start()
@@ -218,7 +225,6 @@ class MainWindow(QMainWindow):
     def _init_central(self):
         from .paratranz.widget import ParaTranzWidget
 
-        self._central_stack = QStackedWidget(self)
         self._mode_tabs = WorkspaceShell(self, theme_view=self._theme_view)
         self._mode_tabs.intent_requested.connect(self._intent_composition.dispatch)
 
@@ -239,9 +245,11 @@ class MainWindow(QMainWindow):
         self._mode_tabs.addTab(self._workbench, "工作台")
         self._mode_tabs.addTab(self._pt_widget, "ParaTranz 管理")
         self._start_center = StartCenterWidget(self)
-        self._central_stack.addWidget(self._start_center)
-        self._central_stack.addWidget(self._mode_tabs)
-        self.setCentralWidget(self._central_stack)
+        self._mode_tabs.addTab(self._start_center, "开始")
+        # Compatibility port for callers that still need the underlying page
+        # stack; WorkspaceShell remains the one visible application shell.
+        self._central_stack = self._mode_tabs.pages
+        self.setCentralWidget(self._mode_tabs)
 
     def _init_start_center_controller(self) -> None:
         self._start_center_controller = StartCenterController(
@@ -250,6 +258,9 @@ class MainWindow(QMainWindow):
             dispatch=self._intent_composition.dispatch,
         )
         self._start_center_controller.start()
+        self._mode_tabs.start_requested.connect(
+            lambda: self._start_center_controller.show(user_requested=bool(self._ctx.project_name))
+        )
         self._guided_project_coordinator = self._start_center_controller.guided_project
 
     def show_start_center_restoring(self) -> None:
@@ -266,6 +277,12 @@ class MainWindow(QMainWindow):
 
     def show_workbench(self) -> None:
         self._start_center_controller.show_workbench()
+
+    def show_project_open_progress(self, message: str) -> None:
+        self._start_center.set_project_opening(message)
+
+    def hide_project_open_progress(self) -> None:
+        self._start_center.set_project_opening(None)
 
     # ── Status bar ────────────────────────────────────────────
 

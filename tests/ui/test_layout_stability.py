@@ -13,6 +13,7 @@ from transbridge.ui.guidance.models import GuidanceContextIdentity, GuidanceKind
 from transbridge.ui.guidance.presentation import present_guidance
 from transbridge.ui.guidance.qt import GuidanceBanner
 from transbridge.ui.guidance.state_machine import build_guidance_state
+from transbridge.ui.shell.start_center import StartCenterViewState, StartCenterWidget, StartDestinationState
 from transbridge.ui.shell.status_presenter import StatusPresenter
 from transbridge.ui.workbench._project_bar import ProjectBar
 from transbridge.ui.workbench.filters_view import FiltersView
@@ -209,7 +210,7 @@ def test_long_filter_label_is_bounded_and_keeps_full_tooltip() -> None:
 def test_status_bar_dynamic_text_has_fixed_geometry_budget() -> None:
     window = QMainWindow()
     presenter = StatusPresenter(window, _StatusContext())
-    window.resize(1_000, 500)
+    window.resize(640, 500)
     window.show()
     _APP.processEvents()
     before = (
@@ -220,6 +221,7 @@ def test_status_bar_dynamic_text_has_fixed_geometry_budget() -> None:
 
     presenter.render_user({"nickname": "超长用户名" * 50})
     presenter.render_project({"name": "超长项目名" * 50, "id": 123})
+    presenter.show_message("特别长的全局状态消息" * 50)
     presenter.api_indicator.on_request_started()
     _APP.processEvents()
 
@@ -230,5 +232,39 @@ def test_status_bar_dynamic_text_has_fixed_geometry_budget() -> None:
     ) == before
     assert presenter.user_label.full_text.startswith("用户: 超长用户名")
     assert presenter.project_label.full_text.startswith("项目: 超长项目名")
+    assert not presenter.user_label.isVisibleTo(window)
+    assert not presenter.project_label.isVisibleTo(window)
+    assert presenter.message_label.full_text.startswith("特别长的全局状态消息")
+    assert presenter.message_label.toolTip() == presenter.message_label.full_text
+    assert not presenter.message_label.isVisibleTo(window)
+    assert not presenter.api_indicator.isVisibleTo(window)
+    assert not presenter.status_bar.isVisibleTo(window)
+    assert not presenter.status_bar.isSizeGripEnabled()
+    assert presenter._message_toast.isVisibleTo(window)
+    assert presenter._message_toast.geometry().top() == 20
+    assert presenter._message_toast.geometry().right() <= window.rect().right() - 20
     presenter.close()
     window.close()
+
+
+def test_start_center_content_is_bounded_top_aligned_and_responsive() -> None:
+    view = StartCenterWidget()
+    view.resize(1_920, 1_080)
+    view.render(StartCenterViewState(StartDestinationState.START_CENTER_EMPTY, revision=1))
+    view.show()
+    _APP.processEvents()
+
+    landing = view._landing_page
+    content = view._content
+    assert content.width() <= 1_400
+    assert abs(content.geometry().center().x() - landing.rect().center().x()) <= 2
+    assert content.y() <= 36
+    assert view._task_panel.y() == view._projects_panel.y()
+    assert view._task_panel.geometry().right() < view._projects_panel.geometry().left()
+
+    view.resize(720, 900)
+    _APP.processEvents()
+
+    assert view._projects_panel.y() > view._task_panel.y()
+    assert view._content.width() <= landing.width()
+    view.close()

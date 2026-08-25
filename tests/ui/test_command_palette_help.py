@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QShortcut
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QDockWidget, QMainWindow, QSizePolicy, QWidget
 
 from transbridge.ui.shell.action_catalog import (
     DEFAULT_ACTION_CATALOG,
@@ -22,6 +24,8 @@ from transbridge.ui.shell.command_palette import (
 from transbridge.ui.shell.command_palette_qt import CommandPaletteDialog
 from transbridge.ui.shell.context_help import DEFAULT_CONTEXT_HELP, ContextHelpController
 from transbridge.ui.shell.context_help_qt import ContextHelpPanel
+from transbridge.ui.shell.intent_composition import ShellIntentComposition
+from transbridge.ui.shell.overlay_geometry import workspace_overlay_rect
 
 _APP = QApplication.instance() or QApplication([])
 
@@ -241,6 +245,54 @@ def test_qt_views_have_accessible_search_help_and_explicit_close_lifecycle() -> 
     assert panel._when.text().startswith("何时使用：")
     panel.close()
     assert help_controller.current is None
+
+
+def test_context_help_is_reused_as_readable_overlay_without_resizing_main_content() -> None:
+    host = QMainWindow()
+    host.context = SimpleNamespace(collection=object(), active_project_id="project:demo")
+    central = QWidget()
+    host.setCentralWidget(central)
+    host.resize(1280, 720)
+    host.show()
+    _APP.processEvents()
+    central_geometry = central.geometry()
+
+    composition = ShellIntentComposition.__new__(ShellIntentComposition)
+    composition._host = host
+    composition._help_dock = None
+    composition._help_overlay_host_geometry = None
+    composition._show_context_help()
+    _APP.processEvents()
+
+    dock = composition._help_dock
+    panel = dock.widget()
+    assert dock.parent() is host
+    assert dock.isFloating()
+    assert dock.windowFlags() & Qt.WindowType.Window
+    assert dock.allowedAreas() == Qt.DockWidgetArea.NoDockWidgetArea
+    assert dock.features() == QDockWidget.DockWidgetFeature.DockWidgetClosable
+    assert host.dockWidgetArea(dock) == Qt.DockWidgetArea.NoDockWidgetArea
+    assert central.geometry() == central_geometry
+    assert dock.size() == workspace_overlay_rect(host.rect()).size()
+    assert panel._title.text() == "插件"
+    assert panel._purpose.sizePolicy().verticalPolicy() is QSizePolicy.Policy.Maximum
+    assert panel._when.y() - panel._purpose.geometry().bottom() <= panel.layout().spacing() + 1
+
+    panel.close_requested.emit()
+    _APP.processEvents()
+    assert not dock.isVisible()
+    host.context.collection = None
+    host.context.active_project_id = None
+    composition._show_context_help()
+    _APP.processEvents()
+    assert composition._help_dock is dock
+    assert panel._title.text() == "本地翻译工程"
+    assert dock.isVisible()
+    assert central.geometry() == central_geometry
+
+    dock.close()
+    dock.deleteLater()
+    host.close()
 
 
 def test_model_and_controller_modules_do_not_import_qt() -> None:

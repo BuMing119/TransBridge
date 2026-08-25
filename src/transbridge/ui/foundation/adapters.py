@@ -301,7 +301,11 @@ def _required_color(value: object) -> RgbaColor:
 
 
 def _css_color(value: object) -> str:
-    return _required_color(value).canonical
+    color = _required_color(value)
+    if color.alpha == 255:
+        return f"#{color.red:02X}{color.green:02X}{color.blue:02X}"
+    alpha = color.alpha / 255
+    return f"rgba({color.red}, {color.green}, {color.blue}, {alpha:.3f})"
 
 
 __all__ = [

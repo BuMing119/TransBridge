@@ -52,7 +52,7 @@ def test_start_center_default_focus_enter_and_escape_are_local_navigation() -> N
 
     assert widget.accessibleName() == "开始中心"
     assert widget.focusWidget() is widget.choose_plugin_button
-    assert widget._recent_list.accessibleName() == "最近本地翻译工程"
+    assert widget._recent_list.accessibleName() == "本地工程"
 
     prepared: list[bool] = []
     returned: list[bool] = []

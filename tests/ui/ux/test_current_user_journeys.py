@@ -118,7 +118,7 @@ def test_startup_does_not_block_local_restore_on_optional_token() -> None:
 
     assert "if self._ctx.config.token:" in source
     assert "self._tool_windows.show_config()" not in source
-    assert "self._project_coordinator.init_workspace()" in source
+    assert "self._project_coordinator.init_workspace(initial_project_path=initial_project_path)" in source
 
 
 def test_v2_new_project_routes_to_start_center_without_legacy_creation() -> None:
@@ -160,6 +160,40 @@ def test_current_authoritative_startup_attempts_automatic_restore(monkeypatch) -
     assert prepare_calls == [runtime_context]
     assert captured["result"] == "prepared"
     assert captured["success_verb"] == "已恢复"
+    assert captured["show_error_dialog"] is False
+
+
+def test_explicit_startup_project_takes_precedence_over_active_reference(monkeypatch) -> None:
+    workspace = SimpleNamespace()
+    monkeypatch.setattr(project_module.WorkspaceState, "load", lambda _path: workspace)
+    runtime_context = object()
+    prepare_paths: list[tuple[str, object]] = []
+    opener = SimpleNamespace(
+        has_active_reference=True,
+        prepare_path=lambda path, context: prepare_paths.append((path, context)) or "prepared-explicit",
+        prepare_active=lambda _context: (_ for _ in ()).throw(AssertionError("active pointer must be skipped")),
+    )
+    context = SimpleNamespace(uses_authoritative_projection=True, workspace=None)
+    host = SimpleNamespace(
+        context=context,
+        current_project_opener=opener,
+        runtime_context=runtime_context,
+        show_message=lambda _message: None,
+    )
+    captured: dict[str, object] = {}
+    coordinator = ProjectCoordinator(host)
+
+    def capture(prepare, **kwargs) -> None:
+        captured["result"] = prepare()
+        captured.update(kwargs)
+
+    coordinator._start_current_project_open = capture  # type: ignore[method-assign]
+    coordinator.init_workspace(initial_project_path="D:/projects/selected.json")
+
+    assert context.workspace is workspace
+    assert prepare_paths == [("D:/projects/selected.json", runtime_context)]
+    assert captured["result"] == "prepared-explicit"
+    assert captured["success_verb"] == "已打开"
     assert captured["show_error_dialog"] is False
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QCloseEvent, QKeyEvent
-from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from transbridge.ui.foundation.accessibility import configure_accessible_widget, update_accessible_state
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState
@@ -26,6 +26,8 @@ class ContextHelpPanel(QWidget):
         self._when = QLabel(self)
         self._purpose.setWordWrap(True)
         self._when.setWordWrap(True)
+        for label in (self._title, self._purpose, self._when):
+            label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         self._title.setAccessibleName("帮助主题")
         self._purpose.setAccessibleName("用途说明")
         self._when.setAccessibleName("使用时机")
@@ -34,9 +36,12 @@ class ContextHelpPanel(QWidget):
             ComponentStyle.apply_static(label, ComponentKind.LABEL)
         ComponentStyle.apply_state(self._title, SemanticState.INFO)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
         layout.addWidget(self._title)
         layout.addWidget(self._purpose)
         layout.addWidget(self._when)
+        layout.addStretch(1)
 
     def show_topic(self, topic_id: str, *, context_identity: str) -> ContextHelpViewState:
         state = self._controller.show(topic_id, context_identity=context_identity)

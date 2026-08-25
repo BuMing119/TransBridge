@@ -36,6 +36,8 @@ def test_theme_service_installs_one_compiled_skin_and_restores_previous_style(
     light = qapp.styleSheet()
     assert 'QToolButton[tbNavItem="true"]:checked' in light
     assert 'QToolButton[tbNavIntent="true"]:hover' in light
+    assert "QPushButton#tbNavigationUser:hover" in light
+    assert "QPushButton#tbNavigationUser:focus" in light
     assert 'QLabel[tbAvatar="true"]' in light
     assert 'QLabel[tbConnectionState="online"]' in light
     assert 'QMenuBar[tbComponentKind="menu"]' in light

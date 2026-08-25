@@ -22,6 +22,7 @@ def qapp():
         "layout-dashboard",
         "language",
         "plus",
+        "minus",
         "list-details",
         "circle-dashed",
         "clock-hour-3",
@@ -29,6 +30,12 @@ def qapp():
         "settings",
         "help-circle",
         "info-circle",
+        "home",
+        "folder",
+        "package",
+        "arrow-left",
+        "chevron-right",
+        "alert-triangle",
     ),
 )
 def test_bundled_tabler_icon_renders_transparent_vector_pixmap(icon_id: str) -> None:

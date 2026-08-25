@@ -11,6 +11,17 @@ import sys
 from transbridge.entrypoints.mcp import RedactingLogFilter
 
 
+def test_gui_cli_forwards_explicit_project_path(monkeypatch) -> None:
+    from transbridge import cli
+    from transbridge.entrypoints import gui
+
+    received = []
+    monkeypatch.setattr(gui, "main", lambda *, initial_project_path=None: received.append(initial_project_path) or 0)
+
+    assert cli.main(["gui", "--open-project", "D:/data/projects/project.json"]) == 0
+    assert received == ["D:/data/projects/project.json"]
+
+
 def test_cli_capability_command_is_headless_and_json_serializable() -> None:
     project_root = Path(__file__).parents[3]
     script = (

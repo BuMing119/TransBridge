@@ -1,8 +1,7 @@
 # TODO: i18n — 窗口标题"智能助手"为硬编码中文，待国际化改造
 """
 SmartAssistantPanel 颜色面板:
-  本文件无硬编码颜色值。所有视觉样式委托给 ChatWidget 和 MessageBubble。
-  背景/边框由 QDockWidget 系统主题控制。
+  本文件无硬编码颜色值。所有颜色来自 Qt palette 与 SmartAssistantTheme。
 """
 
 from __future__ import annotations
@@ -11,20 +10,26 @@ import logging
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QDockWidget, QSplitter, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QDockWidget, QFrame, QSizePolicy, QSplitter, QVBoxLayout
 
 from transbridge.ui.foundation.adapters import ThemeView
+from transbridge.ui.windows_taskbar import clear_window_app_user_model_id, set_window_app_user_model_id
 
 from .chat_widget import ChatWidget
+from .panel_header import AssistantPanelHeader
 from .session_list_widget import SessionListWidget
 from .task_monitor import TaskMonitorWidget
-from .theme_support import SmartAssistantTheme
+from .theme_support import BODY_STRUCTURE_STYLE, PANEL_STRUCTURE_STYLE, SmartAssistantTheme
 
 logger = logging.getLogger(__name__)
 
 
 class SmartAssistantPanel(QDockWidget):
-    """智能助手面板，停靠在 MainWindow 底部/侧边（类似 IDE 终端）。"""
+    """智能助手浮动覆盖面板；不允许重新停靠并压缩主工作台。"""
+
+    MINIMUM_DOCK_WIDTH = 400
+    MINIMUM_DOCK_HEIGHT = 220
+    TASKBAR_APP_USER_MODEL_ID = "TransBridge.SmartAssistant"
 
     visibility_changed = pyqtSignal(bool)
 
@@ -39,21 +44,18 @@ class SmartAssistantPanel(QDockWidget):
         theme_view: ThemeView | None = None,
     ):
         super().__init__("智能助手", parent)
+        flags = self.windowFlags()
+        flags &= ~Qt.WindowType.WindowType_Mask
+        self.setWindowFlags(flags | Qt.WindowType.Window)
         self.setObjectName("SmartAssistantPanel")
+        self.setStyleSheet(PANEL_STRUCTURE_STYLE)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setAccessibleName("智能助手")
 
-        self.setAllowedAreas(
-            Qt.DockWidgetArea.LeftDockWidgetArea
-            | Qt.DockWidgetArea.RightDockWidgetArea
-            | Qt.DockWidgetArea.BottomDockWidgetArea
-        )
-        self.setFeatures(
-            QDockWidget.DockWidgetFeature.DockWidgetClosable
-            | QDockWidget.DockWidgetFeature.DockWidgetMovable
-            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
-        )
-        self.setMinimumWidth(900)
-        self.setMinimumHeight(300)
+        self.setAllowedAreas(Qt.DockWidgetArea.NoDockWidgetArea)
+        self.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetClosable)
+        self.setMinimumWidth(self.MINIMUM_DOCK_WIDTH)
+        self.setMinimumHeight(self.MINIMUM_DOCK_HEIGHT)
 
         self._active_session_id: str | None = None
         self._session_commands = session_commands
@@ -65,6 +67,12 @@ class SmartAssistantPanel(QDockWidget):
         self._theme = SmartAssistantTheme(None if theme_view is None else theme_view.snapshot())
         self._theme_revision = self._theme.revision
         self._disposed = False
+        self._taskbar_identity_applied = False
+        self._header = AssistantPanelHeader(theme=self._theme)
+        self._header.close_requested.connect(self.close)
+        self._header.minimize_requested.connect(self._minimize_panel)
+        self._header.set_model_name(self._configured_model_name())
+        self.setTitleBarWidget(self._header)
         self._init_skills()
         self._init_session_manager()
         self._init_ui(ctx)
@@ -72,6 +80,9 @@ class SmartAssistantPanel(QDockWidget):
             self._theme_subscription = self._theme_view.subscribe(self, self._on_theme_changed)
         if self._session_projection is not None:
             self._session_subscription = self._session_projection.subscribe(self._on_session_projection)
+        # Prepare the native HWND before its first ShowWindow call. Windows
+        # decides taskbar eligibility when the top-level window first appears.
+        self._prepare_taskbar_identity()
         # 延迟到 ChatWidget UI 构建完成后再恢复会话（ChatWidget._init_ui 是 QTimer 延迟的）
         from PyQt6.QtCore import QTimer
 
@@ -95,7 +106,9 @@ class SmartAssistantPanel(QDockWidget):
         self._session_mgr = SessionManager(get_data_dir())
 
     def _init_ui(self, ctx):
-        container = QWidget()
+        container = QFrame()
+        container.setObjectName("smartAssistantBody")
+        container.setStyleSheet(BODY_STRUCTURE_STYLE)
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -127,6 +140,7 @@ class SmartAssistantPanel(QDockWidget):
         right_splitter.addWidget(self._task_monitor)
         right_splitter.setStretchFactor(0, 7)
         right_splitter.setStretchFactor(1, 3)
+        right_splitter.setSizes([760, 36])
 
         # 将 TaskMonitorWidget 引用传给 ChatWidget 用于刷新
         self._chat.set_task_monitor(self._task_monitor)
@@ -135,13 +149,40 @@ class SmartAssistantPanel(QDockWidget):
         h_splitter.addWidget(right_splitter)
         h_splitter.setStretchFactor(0, 0)  # 会话列表不拉伸
         h_splitter.setStretchFactor(1, 1)  # 右侧自适应拉伸
-        h_splitter.setSizes([220, 800])
+        h_splitter.setSizes([240, 960])
 
         layout.addWidget(h_splitter, stretch=1)
+        self._body = container
+        self._theme.apply_surface(container)
         self.setWidget(container)
-        # 设置面板默认宽度：侧边栏 220 + 聊天区 800 = 1020px
-        container.setMinimumWidth(1020)
+        # Dock 在已显示的主窗口中动态加入。忽略内容的纵向 sizeHint，避免
+        # QMainWindow 为保留工作台高度而把新增 Dock 撑到屏幕之外；明确的
+        # Dock 最小高度仍保证输入区和任务标题可达。
+        container_policy = container.sizePolicy()
+        container_policy.setVerticalPolicy(QSizePolicy.Policy.Ignored)
+        container.setSizePolicy(container_policy)
         self._refresh_session_list()
+
+    @staticmethod
+    def _configured_model_name() -> str:
+        """Read only the public model identifier; credentials never enter the title bar."""
+        try:
+            from transbridge.config.repository import default_config_repository
+
+            model = default_config_repository().load().value("llm", "model", "")
+        except Exception:
+            logger.debug("读取智能助手模型名称失败", exc_info=True)
+            return "模型未配置"
+        return str(model).strip() or "模型未配置"
+
+    def _minimize_panel(self) -> None:
+        if not self.isFloating():
+            self.setFloating(True)
+        self.showMinimized()
+
+    def _prepare_taskbar_identity(self) -> None:
+        if not getattr(self, "_taskbar_identity_applied", False):
+            self._taskbar_identity_applied = set_window_app_user_model_id(self, self.TASKBAR_APP_USER_MODEL_ID)
 
     def _restore_last_session(self):
         """启动时恢复上次活跃会话。若无会话则自动创建默认会话。"""
@@ -287,6 +328,10 @@ class SmartAssistantPanel(QDockWidget):
     # ── 事件 ──────────────────────────────────────────────────
 
     def showEvent(self, event):
+        # A distinct window-level AppUserModelID prevents Windows from grouping
+        # this top-level window under the main TransBridge taskbar button.
+        if not getattr(self, "_taskbar_identity_applied", False):
+            self._prepare_taskbar_identity()
         self.visibility_changed.emit(True)
         super().showEvent(event)
 
@@ -295,7 +340,7 @@ class SmartAssistantPanel(QDockWidget):
         super().hideEvent(event)
 
     def closeEvent(self, event):
-        """The dock close button hides this reusable panel."""
+        """The window close button hides this reusable panel."""
         if self._session_commands is not None:
             self._persist_authoritative_chat()
         elif self._active_session_id:
@@ -313,6 +358,9 @@ class SmartAssistantPanel(QDockWidget):
         if self._disposed:
             return
         self._disposed = True
+        if getattr(self, "_taskbar_identity_applied", False):
+            clear_window_app_user_model_id(self)
+            self._taskbar_identity_applied = False
         self._chat.shutdown(wait_for_worker=wait_for_worker)
         if self._session_subscription is not None:
             self._session_subscription.close()
@@ -331,6 +379,10 @@ class SmartAssistantPanel(QDockWidget):
             return
         self._theme.update(snapshot)
         self._theme_revision = snapshot.revision
+        self._header.apply_theme(self._theme)
+        body = getattr(self, "_body", None)
+        if body is not None:
+            self._theme.apply_surface(body)
         self._session_list.apply_theme(self._theme)
         self._chat.apply_theme(self._theme)
         self._task_monitor.apply_theme(self._theme)

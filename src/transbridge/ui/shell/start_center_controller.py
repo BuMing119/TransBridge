@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from PyQt6.QtWidgets import QFileDialog
@@ -9,6 +10,7 @@ from PyQt6.QtWidgets import QFileDialog
 from transbridge.ui.coordinators.guided_project_coordinator import GuidedProjectCoordinator
 from transbridge.ui.shell.action_catalog import IntentId
 
+from .project_window_launcher import launch_project_in_new_window
 from .start_center import (
     RecentProjectViewState,
     RecoveryItemViewState,
@@ -17,15 +19,19 @@ from .start_center import (
     StartDestinationState,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class StartCenterController:
     """Wire shell intents to public application/UI ports without business logic."""
 
-    def __init__(self, host, view: StartCenterWidget, *, dispatch=None) -> None:
+    def __init__(self, host, view: StartCenterWidget, *, dispatch=None, project_window_launcher=None) -> None:
         self._host = host
         self._view = view
         self._revision = 0
         self._intent_dispatch = dispatch
+        self._project_window_launcher = project_window_launcher or launch_project_in_new_window
+        self._recovery_diagnostic_message = ""
         self.guided_project: GuidedProjectCoordinator | None = None
 
     def start(self) -> None:
@@ -34,14 +40,14 @@ class StartCenterController:
         view.choose_plugin_requested.connect(lambda: self._submit(IntentId.SOURCE_PARSE))
         view.open_project_requested.connect(lambda: self._submit(IntentId.PROJECT_OPEN))
         view.open_recent_requested.connect(lambda path: self._submit(IntentId.PROJECT_OPEN, {"path": path}))
+        view.open_recent_in_new_window_requested.connect(self._open_recent_in_new_window)
         view.create_empty_requested.connect(lambda: self._submit(IntentId.PROJECT_CREATE))
         view.open_fomod_requested.connect(lambda: self._submit(IntentId.PUBLISH_FOMOD))
+        view.task_center_requested.connect(lambda: self._submit(IntentId.TASK_OPEN_ACTIVITY))
         view.return_to_current_requested.connect(self.show_workbench)
         view.return_to_landing_requested.connect(lambda: self.show(user_requested=bool(host.context.project_name)))
-        view.recovery_details_requested.connect(self._show_recovery_details)
         if host.project_commands is None or host.runtime_context is None:
-            view.choose_plugin_button.setEnabled(False)
-            view.choose_plugin_button.setToolTip("建项服务不可用")
+            view.set_creation_available(False, "建项服务不可用")
             return
         self.guided_project = GuidedProjectCoordinator(
             host.project_commands,
@@ -79,6 +85,10 @@ class StartCenterController:
         self._render(destination)
 
     def show_workbench(self) -> None:
+        mode_tabs = getattr(self._host, "mode_tabs", None)
+        if mode_tabs is not None and hasattr(mode_tabs, "setCurrentIndex"):
+            mode_tabs.setCurrentIndex(0)
+            return
         self._host.central_stack.setCurrentWidget(self._host.mode_tabs)
 
     def choose_source(self) -> None:
@@ -95,6 +105,18 @@ class StartCenterController:
         """Public PROJECT_CREATE intent target for guided empty projects."""
 
         self._begin_project(None)
+
+    def _open_recent_in_new_window(self, path: str) -> None:
+        try:
+            started = self._project_window_launcher(path)
+        except Exception as exc:  # noqa: BLE001 - process adapters can fail at the OS boundary
+            logger.exception("Failed to launch a Project in a detached GUI process")
+            self._host.show_message(f"PROJECT_WINDOW_LAUNCH_FAILED: {exc}")
+            return
+        if not started:
+            self._host.show_message("PROJECT_WINDOW_LAUNCH_FAILED: 操作系统未能启动新窗口。")
+            return
+        self._host.show_message("已请求在新窗口打开工程。")
 
     def _submit(self, intent_id: IntentId, payload=None) -> object:
         if self._intent_dispatch is not None:
@@ -230,9 +252,14 @@ class StartCenterController:
             dirty=context.dirty,
             diagnostic_code=diagnostic_code,
             diagnostic_message=diagnostic_message,
+            recovery_diagnostic_message=self._recovery_diagnostic_message,
         )
         self._view.render(state)
-        self._host.central_stack.setCurrentWidget(self._view)
+        mode_tabs = getattr(self._host, "mode_tabs", None)
+        if mode_tabs is not None and hasattr(mode_tabs, "setCurrentWidget"):
+            mode_tabs.setCurrentWidget(self._view)
+        else:
+            self._host.central_stack.setCurrentWidget(self._view)
 
     def _recent_project_projection(self) -> tuple[RecentProjectViewState, ...]:
         runtime = self._host.app_runtime
@@ -272,6 +299,7 @@ class StartCenterController:
         runtime = self._host.app_runtime
         context = self._host.runtime_context
         if runtime is None or context is None:
+            self._recovery_diagnostic_message = ""
             return ()
         try:
             from transbridge.application.tasks import OwnerRef
@@ -287,7 +315,10 @@ class StartCenterController:
             )
             values = runtime.use_cases.resolve("task_recovery").list(actor)
         except Exception:
+            logger.exception("Failed to project recoverable tasks for the start center")
+            self._recovery_diagnostic_message = "任务恢复状态暂时不可用。"
             return ()
+        self._recovery_diagnostic_message = ""
         return tuple(
             RecoveryItemViewState(
                 storage_key=item.storage_key,

@@ -145,20 +145,23 @@ def initialize_runtime(facade) -> None:
 def initialize_message_area(facade) -> None:
     """Compose the message View, presenters and bindings."""
     facade._main_layout = QVBoxLayout(facade)
-    facade._main_layout.setContentsMargins(0, 0, 0, 0)
-    facade._main_layout.setSpacing(4)
+    facade._main_layout.setContentsMargins(14, 12, 14, 12)
+    facade._main_layout.setSpacing(12)
     facade._scroll = QScrollArea()
     facade._scroll.setAccessibleName("消息滚动区域")
     facade._scroll.setWidgetResizable(True)
     facade._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     facade._msg_container = QWidget()
     facade._msg_layout = QVBoxLayout(facade._msg_container)
-    facade._msg_layout.setContentsMargins(4, 4, 4, 4)
-    facade._msg_layout.setSpacing(4)
+    facade._msg_layout.setContentsMargins(20, 20, 20, 20)
+    facade._msg_layout.setSpacing(6)
     facade._msg_layout.addStretch()
     facade._scroll.setWidget(facade._msg_container)
     facade._main_layout.addWidget(facade._scroll, stretch=1)
-    facade._back_to_bottom_btn = QPushButton("[v] 回到底部", facade._scroll)
+    facade._theme.apply_surface(facade)
+    facade._theme.apply_surface(facade._scroll)
+    facade._theme.apply_surface(facade._msg_container)
+    facade._back_to_bottom_btn = QPushButton("回到底部", facade._scroll)
     facade._back_to_bottom_btn.setAccessibleName("回到消息底部")
     facade._back_to_bottom_btn.setStyleSheet(CHIP_STRUCTURE_STYLE)
     facade._theme.apply_semantic(facade._back_to_bottom_btn, "primary", background=True)
@@ -173,6 +176,7 @@ def initialize_message_area(facade) -> None:
         max_visible_widgets=facade.MAX_VISIBLE_WIDGETS,
         theme=facade._theme,
     )
+    facade._update_reading_width()
     facade._streaming_presenter = StreamingPresenter(facade._message_list)
     facade._plan_execution = PlanExecutionBinding(
         context=facade._ctx,

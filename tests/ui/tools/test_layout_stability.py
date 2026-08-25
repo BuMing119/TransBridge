@@ -149,6 +149,34 @@ def test_smart_assistant_dynamic_text_keeps_action_columns_stable(qapp) -> None:
     )
 
 
+def test_smart_assistant_input_is_one_bounded_composer_card(qapp) -> None:
+    def noop(*_args, **_kwargs) -> None:
+        pass
+
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    input_view = ChatInputView(
+        set_input=noop,
+        select_skill=noop,
+        upload=noop,
+        clear=noop,
+        send=noop,
+        toggle_auto=noop,
+        auto_mode=False,
+    )
+    input_view.build_toolbar(layout)
+    input_view.build_editor(layout, host)
+
+    assert layout.count() == 1
+    assert layout.itemAt(0).widget() is input_view._card
+    assert input_view.input.maximumHeight() == 112
+    assert input_view.input.sizePolicy().verticalPolicy().name == "Fixed"
+    assert input_view.auto_checkbox.isCheckable()
+    assert input_view.send_button.text() == "发送"
+    assert input_view.send_button.width() == 76
+    assert not input_view.send_button.icon().isNull()
+
+
 def test_target_and_batch_config_long_names_do_not_change_dialog_minimum_width(qapp) -> None:
     class Context:
         def __init__(self, name: str) -> None:

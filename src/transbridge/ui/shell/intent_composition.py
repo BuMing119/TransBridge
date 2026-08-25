@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QRect, Qt
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import QDockWidget, QMessageBox
 
@@ -27,6 +27,7 @@ from .context_help import DEFAULT_CONTEXT_HELP, ContextHelpController
 from .context_help_qt import ContextHelpPanel
 from .intent_router import IntentDispatchResult, IntentRouter
 from .menu_builder import MenuCallbacks
+from .overlay_geometry import workspace_overlay_rect
 from .task_center import TaskCenterController, TaskCenterPanel
 
 
@@ -43,9 +44,11 @@ class ShellIntentComposition:
         self._palette: CommandPaletteDialog | None = None
         self._shortcut: QShortcut | None = None
         self._help_dock: QDockWidget | None = None
+        self._help_overlay_host_geometry: QRect | None = None
         self._guidance: GuidanceBinding | None = None
         self._task_dock: QDockWidget | None = None
         self._task_center: TaskCenterController | None = None
+        self._task_overlay_host_geometry: QRect | None = None
         self._drop_binding: SafeDropBinding | None = None
         self._drop_review: DropReviewDialog | None = None
         self._register_handlers()
@@ -131,10 +134,18 @@ class ShellIntentComposition:
             self._palette.close()
         if self._help_dock is not None:
             self._help_dock.close()
+            self._help_dock.deleteLater()
+            self._help_dock = None
+            self._help_overlay_host_geometry = None
         if self._guidance is not None:
             self._guidance.close()
         if self._task_center is not None:
             self._task_center.close()
+        if self._task_dock is not None:
+            self._task_dock.close()
+            self._task_dock.deleteLater()
+            self._task_dock = None
+            self._task_overlay_host_geometry = None
         if self._drop_binding is not None:
             self._drop_binding.close()
         if self._drop_review is not None:
@@ -338,23 +349,35 @@ class ShellIntentComposition:
     def _show_context_help(self) -> None:
         if self._help_dock is None:
             controller = ContextHelpController(DEFAULT_CONTEXT_HELP)
-            panel = ContextHelpPanel(controller, self._host)
+            panel = ContextHelpPanel(controller)
             dock = QDockWidget("功能与术语帮助", self._host)
             dock.setObjectName("context-help")
+            flags = dock.windowFlags()
+            flags &= ~Qt.WindowType.WindowType_Mask
+            dock.setWindowFlags(flags | Qt.WindowType.Window)
+            dock.setAllowedAreas(Qt.DockWidgetArea.NoDockWidgetArea)
+            dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetClosable)
             dock.setWidget(panel)
-            self._host.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
             panel.close_requested.connect(dock.hide)
             self._help_dock = dock
         panel = self._help_dock.widget()
         topic = "plugin" if self._host.context.collection is not None else "local-project"
         context_id = self._host.context.active_project_id or "start-center"
         panel.show_topic(topic, context_identity=str(context_id))
+
+        host_geometry = QRect(self._host.frameGeometry())
+        if self._help_overlay_host_geometry != host_geometry:
+            overlay_rect = workspace_overlay_rect(self._host.rect())
+            self._help_dock.resize(overlay_rect.size())
+            self._help_dock.move(self._host.mapToGlobal(overlay_rect.topLeft()))
+            self._help_overlay_host_geometry = host_geometry
         self._help_dock.show()
         self._help_dock.raise_()
+        self._help_dock.activateWindow()
 
     def _show_task_center(self) -> None:
         if self._task_dock is None:
-            panel = TaskCenterPanel(self._host)
+            panel = TaskCenterPanel()
             controller = TaskCenterController(
                 self._host.app_runtime,
                 self._host.runtime_context,
@@ -363,15 +386,27 @@ class ShellIntentComposition:
             )
             dock = QDockWidget("任务活动", self._host)
             dock.setObjectName("task-activity")
+            flags = dock.windowFlags()
+            flags &= ~Qt.WindowType.WindowType_Mask
+            dock.setWindowFlags(flags | Qt.WindowType.Window)
+            dock.setAllowedAreas(Qt.DockWidgetArea.NoDockWidgetArea)
+            dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetClosable)
             dock.setWidget(panel)
-            self._host.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, dock)
             self._task_dock = dock
             self._task_center = controller
             controller.start()
         else:
             self._task_center.refresh_catalogs()
+
+        host_geometry = QRect(self._host.frameGeometry())
+        if self._task_overlay_host_geometry != host_geometry:
+            overlay_rect = workspace_overlay_rect(self._host.rect())
+            self._task_dock.resize(overlay_rect.size())
+            self._task_dock.move(self._host.mapToGlobal(overlay_rect.topLeft()))
+            self._task_overlay_host_geometry = host_geometry
         self._task_dock.show()
         self._task_dock.raise_()
+        self._task_dock.activateWindow()
 
     def _on_drop_resolution(self, resolution) -> None:
         if resolution.status not in {

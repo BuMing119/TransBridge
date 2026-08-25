@@ -58,6 +58,10 @@ class _SummaryItem(QPushButton):
         self._value.setText(str(value))
         self.setAccessibleName(f"{label} {value}")
 
+    def set_description(self, description: str) -> None:
+        self.setToolTip(description)
+        self.setAccessibleDescription(description)
+
 
 class StatisticsSummaryView(QWidget):
     filter_requested = pyqtSignal(str)
@@ -72,8 +76,8 @@ class StatisticsSummaryView(QWidget):
         icons = {
             "total": "list-details",
             "untranslated": "circle-dashed",
-            "review": "clock-hour-3",
-            "completed": "circle-check",
+            "review": "alert-triangle",
+            "completed": "language",
         }
         for key in ("total", "untranslated", "review", "completed"):
             button = _SummaryItem(key, icons[key], self)
@@ -90,15 +94,11 @@ class StatisticsSummaryView(QWidget):
             button.refresh_icon()
 
     def set_summary(self, summary: StatisticsSummary) -> None:
-        values = {
-            "total": ("全部", summary.total),
-            "untranslated": ("未翻译", summary.untranslated),
-            "review": ("待检查", summary.needs_review),
-            "completed": ("已完成", summary.completed),
-        }
-        for key, (label, value) in values.items():
-            self._buttons[key].set_content(label, value)
-            self._buttons[key].setEnabled(summary.total > 0)
+        for metric in summary.metrics():
+            button = self._buttons[metric.key]
+            button.set_content(metric.label, metric.value)
+            button.set_description(f"{metric.description}，共 {metric.value} 条；点击筛选")
+            button.setEnabled(summary.total > 0)
 
 
 class WorkflowActionsView(QWidget):
