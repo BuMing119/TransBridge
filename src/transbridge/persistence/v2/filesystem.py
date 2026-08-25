@@ -20,6 +20,8 @@ class PersistenceFilesystemPort(Protocol):
 
     def read_bytes(self, path: str) -> bytes: ...
 
+    def list_files(self, directory: str) -> tuple[str, ...]: ...
+
     def make_dirs(self, path: str) -> None: ...
 
     def write_bytes(self, path: str, data: bytes) -> None: ...
@@ -43,6 +45,14 @@ class OsPersistenceFilesystem:
 
     def read_bytes(self, path: str) -> bytes:
         return Path(path).read_bytes()
+
+    def list_files(self, directory: str) -> tuple[str, ...]:
+        try:
+            entries = Path(directory).iterdir()
+            files = (self.canonicalize(str(entry)) for entry in entries if entry.is_file())
+            return tuple(sorted(files, key=os.path.normcase))
+        except FileNotFoundError:
+            return ()
 
     def make_dirs(self, path: str) -> None:
         Path(path).mkdir(parents=True, exist_ok=True)

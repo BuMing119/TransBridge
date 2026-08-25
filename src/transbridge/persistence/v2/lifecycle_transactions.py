@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
-import json
 import os
 from threading import RLock
 from typing import Any
@@ -18,10 +17,13 @@ from transbridge.application.projects import (
     ProjectProvisioningCommit,
 )
 from transbridge.application.sessions import SessionSnapshot
+from transbridge.persistence.project_catalog_document import build_project_catalog, parse_project_catalog
 
+from .atomic_documents import AtomicDocumentStore
 from .baselines import BaselineRegistry
 from .filesystem import PersistenceFilesystemPort
 from .ids import ProjectId, ProjectRef, SessionRef
+from .models import SchemaValidationError
 from .repository import ProjectRepository, ProjectRevisionConflict, VariantRepository
 
 
@@ -46,7 +48,7 @@ class ProjectLifecycleTransactionStore:
         variants: VariantRepository,
         baselines: BaselineRegistry | None = None,
     ) -> None:
-        self._documents = _AtomicDocuments(root, filesystem)
+        self._documents = AtomicDocumentStore(root, filesystem)
         self._filesystem = filesystem
         self._projects = projects
         self._variants = variants
@@ -244,14 +246,12 @@ class ProjectLifecycleTransactionStore:
     def _read_project_catalog(self) -> dict[str, Any]:
         path = self._documents.path("project-catalog.json")
         if not self._filesystem.exists(path):
-            return {"schema_version": 1, "projects": {}}
+            return build_project_catalog(())
         try:
-            value = json.loads(self._filesystem.read_bytes(path).decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            records = parse_project_catalog(self._filesystem.read_bytes(path))
+        except (OSError, SchemaValidationError, TypeError, ValueError) as exc:
             raise RuntimeError("Project catalog is invalid") from exc
-        if value.get("schema_version") != 1 or not isinstance(value.get("projects"), dict):
-            raise RuntimeError("Project catalog schema is invalid")
-        return value
+        return build_project_catalog(records)
 
     def _restore_document(self, path: str, previous: bytes | None, token: str) -> None:
         try:
@@ -279,7 +279,7 @@ class _SessionTransaction:
 
 class SessionLifecycleTransactionStore:
     def __init__(self, root: str, filesystem: PersistenceFilesystemPort) -> None:
-        self._documents = _AtomicDocuments(root, filesystem)
+        self._documents = AtomicDocumentStore(root, filesystem)
         self._transactions: dict[str, _SessionTransaction] = {}
         self._lock = RLock()
 
@@ -322,48 +322,6 @@ class SessionLifecycleTransactionStore:
     def rollback(self, transaction_id: str) -> None:
         with self._lock:
             self._transactions.pop(transaction_id, None)
-
-
-class _AtomicDocuments:
-    def __init__(self, root: str, filesystem: PersistenceFilesystemPort) -> None:
-        if not os.path.isabs(root):
-            raise ValueError("lifecycle persistence root must be absolute")
-        self._filesystem = filesystem
-        self._root = filesystem.canonicalize(root)
-
-    def write_json(self, relative_path: str, document: dict[str, Any], token: str) -> None:
-        destination = self.path(relative_path)
-        payload = json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
-        self.write_bytes(destination, payload, token)
-
-    def path(self, relative_path: str) -> str:
-        return self._guard(os.path.join(self._root, relative_path))
-
-    def write_bytes(self, destination: str, payload: bytes, token: str) -> None:
-        destination = self._guard(destination)
-        suffix = hashlib.sha256(token.encode()).hexdigest()
-        stage = self._guard(os.path.join(self._root, ".staging", f"lifecycle-{suffix}.tmp"))
-        self._filesystem.make_dirs(os.path.dirname(destination))
-        self._filesystem.make_dirs(os.path.dirname(stage))
-        self._filesystem.remove(stage, missing_ok=True)
-        try:
-            self._filesystem.write_bytes(stage, payload)
-            if self._filesystem.read_bytes(stage) != payload:
-                raise OSError("lifecycle staging verification failed")
-            self._filesystem.replace(stage, destination)
-        except Exception:
-            self._filesystem.remove(stage, missing_ok=True)
-            raise
-
-    def _guard(self, path: str) -> str:
-        canonical = self._filesystem.canonicalize(path)
-        try:
-            common = os.path.commonpath((self._root, canonical))
-        except ValueError as exc:
-            raise ValueError("lifecycle path is on a different root") from exc
-        if os.path.normcase(common) != os.path.normcase(self._root):
-            raise ValueError("lifecycle path escapes persistence root")
-        return canonical
 
 
 __all__ = ["ProjectLifecycleTransactionStore", "SessionLifecycleTransactionStore"]

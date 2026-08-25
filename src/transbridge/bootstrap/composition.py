@@ -89,6 +89,7 @@ def build_runtime(
         "project_provisioning": persistence.project_provisioning,
         "project_remote_bindings": persistence.project_remote_bindings,
         "project_catalog": persistence.project_catalog,
+        "project_catalog_repair_report": persistence.project_catalog_repair_report,
         "gui_project_commands": persistence.gui_project_commands,
         "current_project_opener": persistence.current_project_opener,
         "session_lifecycle": persistence.session_lifecycle,

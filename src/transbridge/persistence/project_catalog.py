@@ -8,7 +8,6 @@ must never mutate user data.
 from __future__ import annotations
 
 import os
-from typing import Any
 
 from transbridge.application.contracts import (
     Diagnostic,
@@ -21,6 +20,8 @@ from transbridge.persistence.v2.ids import ProjectId, ProjectRef
 from transbridge.persistence.v2.models import SCHEMA_VERSION, SchemaValidationError
 from transbridge.persistence.v2.repository import ProjectRepository
 from transbridge.persistence.v2.schema import parse_json_bytes, validate_v2, version_of
+
+from .project_catalog_document import parse_project_catalog, project_display_name
 
 
 class V2ProjectCatalog:
@@ -44,8 +45,6 @@ class V2ProjectCatalog:
         catalog, catalog_diagnostic = self._read_catalog()
         if catalog_diagnostic is not None:
             return ProjectCatalogSnapshot(diagnostics=(catalog_diagnostic,))
-        if not catalog:
-            return ProjectCatalogSnapshot()
 
         active_id, active_diagnostic = self._read_active_project_id()
         diagnostics = [active_diagnostic] if active_diagnostic is not None else []
@@ -58,6 +57,12 @@ class V2ProjectCatalog:
             )
 
         entries = [self._entry(project_id, name, active_id) for project_id, name in catalog]
+        if active_id is not None and active_id not in {item.project_id for item in entries}:
+            recovered, recovery_diagnostic = self._recover_active_entry(active_id)
+            if recovered is not None:
+                entries.append(recovered)
+            if recovery_diagnostic is not None:
+                diagnostics.append(recovery_diagnostic)
         entries.sort(key=lambda item: (not item.active, item.name.casefold(), item.project_id))
         return ProjectCatalogSnapshot(tuple(entries), tuple(diagnostics))
 
@@ -65,27 +70,12 @@ class V2ProjectCatalog:
         try:
             if not self._filesystem.exists(self._catalog_path):
                 return (), None
-            document = parse_json_bytes(self._filesystem.read_bytes(self._catalog_path))
-            projects = document.get("projects")
-            if document.get("schema_version") != 1 or not isinstance(projects, dict):
-                raise ValueError("invalid Project catalog envelope")
-            items: list[tuple[str, str]] = []
-            names: set[str] = set()
-            for raw_id, raw_entry in projects.items():
-                if not isinstance(raw_id, str) or not isinstance(raw_entry, dict):
-                    raise ValueError("invalid Project catalog entry")
-                project_id = ProjectId(raw_id).value
-                name = _display_name(raw_entry.get("name"))
-                normalized_name = name.casefold()
-                if normalized_name in names:
-                    raise ValueError("duplicate Project catalog name")
-                names.add(normalized_name)
-                items.append((project_id, name))
-            return tuple(items), None
+            records = parse_project_catalog(self._filesystem.read_bytes(self._catalog_path))
+            return tuple((record.project_id, record.name) for record in records), None
         except (OSError, KeyError, SchemaValidationError, TypeError, ValueError):
             return (), _diagnostic(
                 "PROJECT_CATALOG_INVALID",
-                "工程目录无法读取或格式已损坏；当前未显示最近工程。",
+                "工程目录无法读取或格式已损坏；当前未显示本地工程。",
             )
 
     def _read_active_project_id(self) -> tuple[str | None, Diagnostic | None]:
@@ -104,7 +94,7 @@ class V2ProjectCatalog:
         except (OSError, KeyError, SchemaValidationError, TypeError, ValueError):
             return None, _diagnostic(
                 "ACTIVE_PROJECT_POINTER_INVALID",
-                "当前工程指针无法读取；最近工程仍可手动打开。",
+                "当前工程指针无法读取；本地工程仍可手动打开。",
             )
 
     def _entry(self, project_id: str, name: str, active_id: str | None) -> ProjectCatalogEntry:
@@ -120,6 +110,32 @@ class V2ProjectCatalog:
             reason=reason,
         )
 
+    def _recover_active_entry(
+        self,
+        project_id: str,
+    ) -> tuple[ProjectCatalogEntry | None, Diagnostic | None]:
+        """Recover one valid active record when the read-only index is incomplete."""
+
+        ref = ProjectRef(ProjectId(project_id))
+        path = self._projects.path_for(ref)
+        try:
+            if not self._filesystem.exists(path):
+                raise FileNotFoundError(path)
+            document = parse_json_bytes(self._filesystem.read_bytes(path))
+            if version_of(document) != SCHEMA_VERSION:
+                raise SchemaValidationError(
+                    "ACTIVE_PROJECT_SCHEMA_UNSUPPORTED",
+                    "Active Project schema is unsupported.",
+                )
+            project = validate_v2(document, ref)
+            name = project_display_name(project.envelope.data.get("name"))
+            return ProjectCatalogEntry(project_id, name, path, True, True), None
+        except (OSError, KeyError, SchemaValidationError, TypeError, ValueError):
+            return None, _diagnostic(
+                "ACTIVE_PROJECT_RECORD_UNAVAILABLE",
+                "当前工程记录无法安全加入本地工程列表。",
+            )
+
     def _unavailable_reason(self, ref: ProjectRef, path: str) -> str | None:
         try:
             if not self._filesystem.exists(path):
@@ -133,15 +149,6 @@ class V2ProjectCatalog:
             return "工程记录暂时无法读取。"
         except SchemaValidationError:
             return "工程记录已损坏。"
-
-
-def _display_name(value: Any) -> str:
-    if not isinstance(value, str):
-        raise ValueError("Project catalog name must be text")
-    name = value.strip()
-    if not name or len(name) > 80 or any(character in name for character in "\r\n\t"):
-        raise ValueError("Project catalog name is invalid")
-    return name
 
 
 def _diagnostic(code: str, message: str) -> Diagnostic:

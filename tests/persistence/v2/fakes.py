@@ -13,6 +13,7 @@ class MemoryFilesystem:
         self.fail_replace_destinations: set[str] = set()
         self.fail_write_paths: set[str] = set()
         self.fail_read_paths: set[str] = set()
+        self.fail_list_paths: set[str] = set()
         self.calls: list[tuple[str, str]] = []
 
     def canonicalize(self, path: str) -> str:
@@ -38,6 +39,14 @@ class MemoryFilesystem:
         if canonical in self.fail_read_paths:
             raise OSError("injected read fault")
         return self.files[canonical]
+
+    def list_files(self, directory: str) -> tuple[str, ...]:
+        canonical = self.canonicalize(directory)
+        self.calls.append(("list", canonical))
+        if canonical in self.fail_list_paths:
+            raise OSError("injected list fault")
+        files = (path for path in self.files if os.path.normcase(os.path.dirname(path)) == os.path.normcase(canonical))
+        return tuple(sorted(files, key=os.path.normcase))
 
     def make_dirs(self, path: str) -> None:
         canonical = self.canonicalize(path)

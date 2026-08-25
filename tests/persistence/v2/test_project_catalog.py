@@ -69,6 +69,30 @@ def test_catalog_lists_active_first_with_repository_derived_paths() -> None:
     assert not {"write", "replace", "remove", "mkdir"} & {operation for operation, _path in filesystem.calls}
 
 
+def test_missing_catalog_recovers_valid_active_project_without_writes() -> None:
+    root = os.path.abspath("missing-catalog-root")
+    filesystem = MemoryFilesystem()
+    catalog, repository = _catalog(root, filesystem)
+    active = ProjectRef(ProjectId("project-active"))
+    filesystem.seed(repository.path_for(active), _document("project-active", "现有工程"))
+    _seed_json(
+        filesystem,
+        os.path.join(root, "active-project.json"),
+        {"schema_version": 1, "project_id": "project-active", "variant_id": None},
+    )
+    filesystem.calls.clear()
+
+    snapshot = catalog.list_projects()
+
+    assert len(snapshot.projects) == 1
+    assert snapshot.projects[0].project_id == "project-active"
+    assert snapshot.projects[0].name == "现有工程"
+    assert snapshot.projects[0].active and snapshot.projects[0].available
+    assert snapshot.projects[0].path == repository.path_for(active)
+    assert snapshot.diagnostics[0].code == "ACTIVE_PROJECT_NOT_IN_CATALOG"
+    assert not {"write", "replace", "remove", "mkdir"} & {operation for operation, _path in filesystem.calls}
+
+
 def test_missing_and_corrupt_project_records_remain_visible_but_unavailable() -> None:
     root = os.path.abspath("unavailable-root")
     filesystem = MemoryFilesystem()

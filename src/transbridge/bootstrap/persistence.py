@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 import os
 from pathlib import Path
 
@@ -21,6 +22,11 @@ from transbridge.application.projects import (
 from transbridge.application.sessions import GuiSessionCommandFacade, SessionLifecycleService
 from transbridge.persistence.current_project import CurrentProjectOpener
 from transbridge.persistence.project_catalog import V2ProjectCatalog
+from transbridge.persistence.project_catalog_repair import (
+    ProjectCatalogRepairReport,
+    ProjectCatalogRepairService,
+    ProjectCatalogRepairStatus,
+)
 from transbridge.persistence.project_lifecycle_loader import V2ProjectCandidateLoader
 from transbridge.persistence.project_lifecycle_uow import RepositoryLifecycleUnitOfWorkFactory
 from transbridge.persistence.project_provisioning import TranslationIoProjectSourcePreparer
@@ -42,6 +48,8 @@ from transbridge.persistence.v2.lifecycle_transactions import (
 )
 from transbridge.persistence.v2.session_catalog import SessionCatalogRepository
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(slots=True)
 class PersistenceV2Services:
@@ -57,6 +65,7 @@ class PersistenceV2Services:
     project_provisioning: ProjectProvisioningService
     project_remote_bindings: ProjectRemoteBindingService
     project_catalog: V2ProjectCatalog
+    project_catalog_repair_report: ProjectCatalogRepairReport
     gui_project_commands: GuiProjectCommandFacade
     current_project_opener: CurrentProjectOpener
     session_lifecycle: SessionLifecycleService
@@ -87,6 +96,22 @@ def build_persistence_v2_services(
     session_catalog = SessionCatalogRepository(resolved_root, adapter)
     baselines = BaselineRegistry()
     identities = LegacyIdentityRegistry()
+    project_catalog_repair = ProjectCatalogRepairService(resolved_root, adapter, projects)
+    project_catalog_repair_report = project_catalog_repair.repair_if_missing()
+    if project_catalog_repair_report.status is ProjectCatalogRepairStatus.REBUILT:
+        logger.info(
+            "Rebuilt missing Project catalog from %d verified records; skipped=%d",
+            project_catalog_repair_report.recovered_count,
+            project_catalog_repair_report.skipped_count,
+        )
+    if project_catalog_repair_report.diagnostics:
+        logger.warning(
+            "Project catalog startup repair diagnostics: status=%s recovered=%d skipped=%d diagnostics=%s",
+            project_catalog_repair_report.status.value,
+            project_catalog_repair_report.recovered_count,
+            project_catalog_repair_report.skipped_count,
+            tuple(diagnostic.code for diagnostic in project_catalog_repair_report.diagnostics),
+        )
 
     project_projection = ProjectionStore()
     project_publisher = ProjectProjectionPublisher(project_projection)
@@ -153,24 +178,25 @@ def build_persistence_v2_services(
     )
 
     return PersistenceV2Services(
-        resolved_root,
-        adapter,
-        projects,
-        variants,
-        sessions,
-        session_catalog,
-        baselines,
-        identities,
-        project_lifecycle,
-        project_provisioning,
-        project_remote_bindings,
-        project_catalog,
-        gui_project_commands,
-        current_project_opener,
-        session_lifecycle,
-        gui_session_commands,
-        project_projection,
-        session_projection,
+        root=resolved_root,
+        filesystem=adapter,
+        projects=projects,
+        variants=variants,
+        sessions=sessions,
+        session_catalog=session_catalog,
+        baselines=baselines,
+        legacy_identities=identities,
+        project_lifecycle=project_lifecycle,
+        project_provisioning=project_provisioning,
+        project_remote_bindings=project_remote_bindings,
+        project_catalog=project_catalog,
+        project_catalog_repair_report=project_catalog_repair_report,
+        gui_project_commands=gui_project_commands,
+        current_project_opener=current_project_opener,
+        session_lifecycle=session_lifecycle,
+        gui_session_commands=gui_session_commands,
+        project_projection=project_projection,
+        session_projection=session_projection,
     )
 
 

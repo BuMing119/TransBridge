@@ -65,3 +65,18 @@ def test_real_temp_filesystem_migrates_fixture_with_verified_backup(tmp_path: Pa
     assert loaded.migrated is True
     assert loaded.migration_report is not None
     assert filesystem.read_bytes(loaded.migration_report.backup_path) == FIXTURE.read_bytes()
+
+
+def test_real_filesystem_lists_only_direct_files_in_stable_order(tmp_path: Path) -> None:
+    filesystem = OsPersistenceFilesystem()
+    directory = tmp_path / "projects"
+    nested = directory / "nested"
+    nested.mkdir(parents=True)
+    (directory / "b.json").write_text("{}", encoding="utf-8")
+    (directory / "a.json").write_text("{}", encoding="utf-8")
+    (nested / "ignored.json").write_text("{}", encoding="utf-8")
+
+    files = filesystem.list_files(str(directory))
+
+    assert files == tuple(sorted((str(directory / "a.json"), str(directory / "b.json")), key=os.path.normcase))
+    assert filesystem.list_files(str(tmp_path / "missing")) == ()
