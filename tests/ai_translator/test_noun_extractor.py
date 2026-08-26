@@ -1,11 +1,15 @@
+import pytest
+
 from transbridge.ai_translator.noun_extractor import NounExtractor
 
 
 class _Client:
     def __init__(self, *, error: Exception | None = None) -> None:
         self.error = error
+        self.max_tokens: list[int] = []
 
     def chat(self, messages, max_tokens):
+        self.max_tokens.append(max_tokens)
         if self.error is not None:
             raise self.error
         return "fixture-response"
@@ -46,3 +50,22 @@ def test_extract_degrades_to_empty_when_llm_call_fails() -> None:
     extractor = NounExtractor(_Client(error=RuntimeError("offline")), _Builder([]))
 
     assert extractor.extract([{"original": "Riverwood", "translation": "溪木镇"}]) == []
+
+
+def test_extract_does_not_apply_a_client_side_output_token_limit() -> None:
+    client = _Client()
+    extractor = NounExtractor(client, _Builder([]))
+
+    extractor.extract([{"original": "Riverwood", "translation": "溪木镇"}])
+
+    assert client.max_tokens == [0]
+
+
+def test_extract_can_propagate_llm_failure_for_batch_orchestration() -> None:
+    extractor = NounExtractor(_Client(error=RuntimeError("unauthorized")), _Builder([]))
+
+    with pytest.raises(RuntimeError, match="unauthorized"):
+        extractor.extract(
+            [{"original": "Riverwood", "translation": "溪木镇"}],
+            raise_on_error=True,
+        )

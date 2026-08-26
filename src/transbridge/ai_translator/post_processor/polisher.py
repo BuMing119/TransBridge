@@ -9,9 +9,10 @@ import json
 from pathlib import Path
 import re
 import tomllib
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 import warnings
 
+from .base import output_token_limit, validate_max_output_tokens
 from .prompt_contract import (
     PromptTemplateContractError,
     build_postprocess_messages,
@@ -25,6 +26,36 @@ if TYPE_CHECKING:
     from ..term_database import TermDatabaseManager
 
 
+def _normalize_polish_changes(value: object) -> list[dict[str, Any]]:
+    """Coerce provider variations into the mapping shape used downstream.
+
+    Some compatible providers return ``changes`` as ``["style", "fluency"]``
+    even though the prompt requests objects.  Keeping those raw strings lets a
+    single item crash an entire arbitration batch when it calls ``change.get``.
+    Preserve the useful label as ``aspect`` while normalizing the contract at
+    the result boundary.
+    """
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        items = [value]
+    elif isinstance(value, str):
+        items = [value]
+    else:
+        try:
+            items = list(value)
+        except TypeError:
+            return []
+
+    normalized: list[dict[str, Any]] = []
+    for item in items:
+        if isinstance(item, dict):
+            normalized.append(dict(item))
+        elif isinstance(item, str) and (label := item.strip()):
+            normalized.append({"aspect": label, "before": "", "after": "", "reason": ""})
+    return normalized
+
+
 @dataclass
 class PolishResult:
     """润色结果。"""
@@ -36,6 +67,9 @@ class PolishResult:
     confidence: float = 0.0  # 润色信心度
     needs_arbitration: bool = False  # 是否需要裁决
     note: str = ""  # 额外说明
+
+    def __post_init__(self) -> None:
+        self.changes = _normalize_polish_changes(self.changes)
 
 
 # ── 内置默认提示词 ─────────────────────────────────────────────────────────
@@ -230,6 +264,7 @@ class LLMPolisher:
         game_profile: str = "skyrim_se",
         target_lang: str = "zh_CN",
         polish_level: str = "moderate",  # light/moderate/aggressive
+        max_output_tokens: int | None = None,
     ):
         """
         初始化润色器。
@@ -244,6 +279,7 @@ class LLMPolisher:
         self._llm = llm_client
         self._term_manager = term_manager
         self._polish_level = polish_level
+        self._max_output_tokens = validate_max_output_tokens(max_output_tokens)
         self._prompts = self._load_prompts(game_profile, target_lang)
 
     def _load_prompts(self, game_profile: str, target_lang: str) -> dict:
@@ -322,7 +358,10 @@ class LLMPolisher:
         messages = self._build_polish_prompt(entry)
 
         try:
-            response = self._llm.chat(messages=messages, max_tokens=2000)
+            response = self._llm.chat(
+                messages=messages,
+                max_tokens=output_token_limit(self._max_output_tokens, 2000),
+            )
             return self._parse_polish_response(entry, response)
         except Exception as e:
             # LLM调用失败，返回原始译文
@@ -352,7 +391,10 @@ class LLMPolisher:
         messages = self._build_batch_polish_prompt(entries)
 
         try:
-            response = self._llm.chat(messages=messages, max_tokens=4000)
+            response = self._llm.chat(
+                messages=messages,
+                max_tokens=output_token_limit(self._max_output_tokens, 4000),
+            )
             return self._parse_batch_polish_response(entries, response)
         except Exception as e:
             # 批量失败，降级为逐个处理

@@ -3,6 +3,7 @@
 Test A: run_postprocess 参数验证（空集合/entry_ids/scope/API key 检查）
 Test C: start_polish 参数验证（scope 校验 / intensity 映射）
 """
+
 from __future__ import annotations
 
 import threading
@@ -10,23 +11,23 @@ import unittest
 from unittest.mock import patch
 
 from tests.conftest import (
+    MockAppContext,
     make_entry,
     make_llm_config,
     make_test_collection,
-    MockAppContext,
 )
-
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.smart_assistant.tools.base import ExecutionContext
 
-
 # ── Test A: run_postprocess Parameter Validation ──────────────────────────
+
 
 class TestRunPostprocessParamValidation(unittest.TestCase):
     """验收标准: run_postprocess 参数校验正确拒绝无效输入。"""
 
     def setUp(self):
         from transbridge.smart_assistant.tools.tool_proofreader import _tool_run_postprocess
+
         self.func = _tool_run_postprocess
 
     def test_a1_empty_collection_returns_fail(self):
@@ -57,16 +58,12 @@ class TestRunPostprocessParamValidation(unittest.TestCase):
         ctx = MockAppContext(collection=collection)
         ec = ExecutionContext(app_context=ctx)
 
-        with patch(
-            "transbridge.paratranz.config_manager.LLMConfig.load_from_file"
-        ) as mock_load:
+        with patch("transbridge.paratranz.config_manager.LLMConfig.load_from_file") as mock_load:
             mock_cfg = make_llm_config(api_key="")
             mock_load.return_value = mock_cfg
 
             with patch.object(threading.Thread, "start", return_value=None):
-                result = self.func(
-                    {"entry_ids": ["entry_000", "nonexistent_999"]}, ec
-                )
+                result = self.func({"entry_ids": ["entry_001", "nonexistent_999"]}, ec)
         self.assertTrue(result.success)
         self.assertIn("task_id", result.data)
         self.assertEqual(result.data["entry_count"], 1)
@@ -76,14 +73,12 @@ class TestRunPostprocessParamValidation(unittest.TestCase):
         ctx = MockAppContext(collection=collection)
         ec = ExecutionContext(app_context=ctx)
 
-        with patch(
-            "transbridge.paratranz.config_manager.LLMConfig.load_from_file"
-        ) as mock_load:
+        with patch("transbridge.paratranz.config_manager.LLMConfig.load_from_file") as mock_load:
             mock_cfg = make_llm_config(api_key="")
             mock_load.return_value = mock_cfg
 
             with patch.object(threading.Thread, "start", return_value=None):
-                result = self.func({"entry_ids": ["entry_000", "entry_002"]}, ec)
+                result = self.func({"entry_ids": ["entry_001", "entry_002"]}, ec)
         self.assertTrue(result.success)
         self.assertIn("task_id", result.data)
         self.assertEqual(result.data["entry_count"], 2)
@@ -92,13 +87,14 @@ class TestRunPostprocessParamValidation(unittest.TestCase):
         collection = make_test_collection(10)
         ctx = MockAppContext(collection=collection)
         ctx.translation_scope = {
-            "stages": [0], "labels": [], "categories": [], "action": "include",
+            "stages": [1],
+            "labels": [],
+            "categories": [],
+            "action": "include",
         }
         ec = ExecutionContext(app_context=ctx)
 
-        with patch(
-            "transbridge.paratranz.config_manager.LLMConfig.load_from_file"
-        ) as mock_load:
+        with patch("transbridge.paratranz.config_manager.LLMConfig.load_from_file") as mock_load:
             mock_cfg = make_llm_config(api_key="")
             mock_load.return_value = mock_cfg
 
@@ -112,7 +108,10 @@ class TestRunPostprocessParamValidation(unittest.TestCase):
         collection = make_test_collection(5)
         ctx = MockAppContext(collection=collection)
         ctx.translation_scope = {
-            "stages": [99], "labels": [], "categories": [], "action": "include",
+            "stages": [99],
+            "labels": [],
+            "categories": [],
+            "action": "include",
         }
         ec = ExecutionContext(app_context=ctx)
 
@@ -121,39 +120,36 @@ class TestRunPostprocessParamValidation(unittest.TestCase):
         self.assertIn("没有可处理的条目", result.message)
 
     def test_a8_default_phases_list(self):
-        expected_default = [
-            "consistency", "format", "quality_gate",
-            "refinement", "polish", "arbitration",
-        ]
-        self.assertEqual(len(expected_default), 6)
-        for phase in ["consistency", "format", "quality_gate",
-                      "refinement", "polish", "arbitration"]:
-            self.assertIn(phase, expected_default)
+        collection = make_test_collection(5)
+        ec = ExecutionContext(app_context=MockAppContext(collection=collection))
+
+        with patch.object(threading.Thread, "start", return_value=None):
+            result = self.func({}, ec)
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.data["strategy"], "combined")
+        self.assertEqual(result.data["phases"], ["proofread"])
 
     def test_a9_custom_phases_in_data(self):
-        args_with_phases = {"entry_ids": ["entry_000"], "phases": ["consistency", "polish"]}
-        phases = args_with_phases.get(
-            "phases",
-            ["consistency", "format", "quality_gate", "refinement", "polish", "arbitration"],
-        )
-        self.assertEqual(phases, ["consistency", "polish"])
+        collection = make_test_collection(5)
+        ec = ExecutionContext(app_context=MockAppContext(collection=collection))
 
-        args_without_phases = {"entry_ids": ["entry_000"]}
-        phases = args_without_phases.get(
-            "phases",
-            ["consistency", "format", "quality_gate", "refinement", "polish", "arbitration"],
-        )
-        self.assertEqual(len(phases), 6)
-        self.assertIn("consistency", phases)
+        with patch.object(threading.Thread, "start", return_value=None):
+            result = self.func(
+                {"entry_ids": ["entry_001"], "phases": ["consistency", "polish"]},
+                ec,
+            )
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.data["strategy"], "strict")
+        self.assertEqual(result.data["phases"], ["consistency", "polish"])
 
     def test_a10_unknown_phase_name_no_crash(self):
         collection = make_test_collection(3)
         ctx = MockAppContext(collection=collection)
         ec = ExecutionContext(app_context=ctx)
 
-        result = self.func(
-            {"entry_ids": ["entry_000"], "phases": ["unknown_phase", "garbage"]}, ec
-        )
+        result = self.func({"entry_ids": ["entry_000"], "phases": ["unknown_phase", "garbage"]}, ec)
         self.assertFalse(result.success)
         self.assertIn("无效的阶段名", result.message)
 
@@ -162,25 +158,25 @@ class TestRunPostprocessParamValidation(unittest.TestCase):
         ctx = MockAppContext(collection=collection)
         ec = ExecutionContext(app_context=ctx)
 
-        with patch(
-            "transbridge.paratranz.config_manager.LLMConfig.load_from_file"
-        ) as mock_load:
+        with patch("transbridge.paratranz.config_manager.LLMConfig.load_from_file") as mock_load:
             mock_cfg = make_llm_config(api_key="")
             mock_load.return_value = mock_cfg
 
             with patch.object(threading.Thread, "start", return_value=None):
-                result = self.func({"entry_ids": ["entry_000"]}, ec)
+                result = self.func({"entry_ids": ["entry_001"]}, ec)
         self.assertTrue(result.success)
         self.assertIn("task_id", result.data)
 
 
 # ── Test C: start_polish Parameter Validation ─────────────────────────────
 
+
 class TestStartPolishParamValidation(unittest.TestCase):
     """验收标准: start_polish 参数校验 + intensity 映射一致。"""
 
     def setUp(self):
         from transbridge.smart_assistant.tools.tool_translator import _tool_start_polish
+
         self.func = _tool_start_polish
 
     def test_c1_invalid_scope_rejected(self):
@@ -225,10 +221,7 @@ class TestStartPolishParamValidation(unittest.TestCase):
         self.assertEqual(result.data["scope"], "has_issues")
 
     def test_c5_scope_no_matching_entries_returns_fail(self):
-        entries = [
-            make_entry(f"e{i}", original=f"orig {i}", translation="", stage=0)
-            for i in range(3)
-        ]
+        entries = [make_entry(f"e{i}", original=f"orig {i}", translation="", stage=0) for i in range(3)]
         collection = TranslationEntryCollection(entries)
         ctx = MockAppContext(collection=collection)
         ec = ExecutionContext(app_context=ctx)
@@ -273,9 +266,7 @@ class TestStartPolishParamValidation(unittest.TestCase):
         ec = ExecutionContext(app_context=ctx)
 
         with patch.object(threading.Thread, "start", return_value=None):
-            result = self.func(
-                {"entry_ids": ["entry_000", "entry_001"], "scope": "all"}, ec
-            )
+            result = self.func({"entry_ids": ["entry_000", "entry_001"], "scope": "all"}, ec)
         self.assertTrue(result.success)
         self.assertEqual(result.data["entry_count"], 2)
 
@@ -288,6 +279,35 @@ class TestStartPolishParamValidation(unittest.TestCase):
             result = self.func({}, ec)
         self.assertTrue(result.success)
         self.assertEqual(result.data["scope"], "all")
+
+    def test_c11_combined_is_the_default_strategy(self):
+        collection = make_test_collection(5)
+        ctx = MockAppContext(collection=collection)
+        ec = ExecutionContext(app_context=ctx)
+
+        with patch.object(threading.Thread, "start", return_value=None):
+            result = self.func({"scope": "all"}, ec)
+        self.assertTrue(result.success)
+        self.assertEqual(result.data["strategy"], "combined")
+
+    def test_c12_strict_strategy_is_accepted(self):
+        collection = make_test_collection(5)
+        ctx = MockAppContext(collection=collection)
+        ec = ExecutionContext(app_context=ctx)
+
+        with patch.object(threading.Thread, "start", return_value=None):
+            result = self.func({"scope": "all", "strategy": "strict"}, ec)
+        self.assertTrue(result.success)
+        self.assertEqual(result.data["strategy"], "strict")
+
+    def test_c13_invalid_strategy_is_rejected(self):
+        collection = make_test_collection(5)
+        ctx = MockAppContext(collection=collection)
+        ec = ExecutionContext(app_context=ctx)
+
+        result = self.func({"scope": "all", "strategy": "unknown"}, ec)
+        self.assertFalse(result.success)
+        self.assertIn("无效 strategy", result.message)
 
     def test_c11_no_collection_rejected_by_decorator(self):
         ctx = MockAppContext(collection=None)

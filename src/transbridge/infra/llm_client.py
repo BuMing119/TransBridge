@@ -69,10 +69,18 @@ def _anthropic_system_text(system_blocks: list[dict]) -> str:
     )
 
 
+def _require_anthropic_max_tokens(max_tokens: int) -> None:
+    if isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or max_tokens <= 0:
+        raise ValueError(
+            "Anthropic API requires a positive max_tokens value; "
+            "configure a value greater than 0 in the AI translator's '输出 Token' setting."
+        )
+
+
 class LLMClient(ABC):
     @abstractmethod
     def chat(self, messages: list[dict], max_tokens: int = 0) -> str:
-        """发送消息并返回模型回复文本。max_tokens=0 表示不限制（由模型默认）。"""
+        """发送消息并返回模型回复文本。供应商支持时，max_tokens=0 表示不限制。"""
 
     def chat_stream(self, messages: list[dict], max_tokens: int, chunk_callback) -> str:
         """流式调用，每收到一个 chunk 即调用 chunk_callback(text)，最终返回完整文本。
@@ -280,6 +288,7 @@ class AnthropicClient(LLMClient):
     def chat(self, messages: list[dict], max_tokens: int = 0) -> str:
         from transbridge.infra.prompt_cache import build_anthropic_system_blocks
 
+        _require_anthropic_max_tokens(max_tokens)
         with self._lock:
             client = self._client
             self._active_requests += 1
@@ -292,7 +301,7 @@ class AnthropicClient(LLMClient):
             )
             kwargs: dict = dict(
                 model=self._model,
-                max_tokens=max_tokens if max_tokens > 0 else 8192,
+                max_tokens=max_tokens,
                 messages=user_messages,
             )
             if system_blocks:
@@ -338,6 +347,7 @@ class AnthropicClient(LLMClient):
     def chat_stream(self, messages: list[dict], max_tokens: int, chunk_callback) -> str:
         from transbridge.infra.prompt_cache import build_anthropic_system_blocks
 
+        _require_anthropic_max_tokens(max_tokens)
         with self._lock:
             client = self._client
             self._active_requests += 1
@@ -349,7 +359,7 @@ class AnthropicClient(LLMClient):
             )
             kwargs: dict = dict(
                 model=self._model,
-                max_tokens=max_tokens if max_tokens > 0 else 8192,
+                max_tokens=max_tokens,
                 messages=user_messages,
             )
             if system_blocks:

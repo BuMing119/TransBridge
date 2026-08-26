@@ -164,12 +164,26 @@ class _TranslationProgressWindow(QWidget):
 
     def _connect_worker(self):
         self._worker.progress.connect(self._on_progress)
+        stage_progress = getattr(self._worker, "stage_progress", None)
+        if stage_progress is not None:
+            stage_progress.connect(self._on_stage_progress)
         self._worker.log.connect(self._on_log)
         self._worker.result.connect(self._on_result)
         self._worker.error.connect(self._on_error)
         self._worker.finished.connect(self._on_worker_finished)
 
     # ── 槽 ────────────────────────────────────────────────────────────────────
+
+    def _on_stage_progress(self, stage: str, current: int, total: int, message: str) -> None:
+        label = "术语抽取" if stage == "terms" else stage
+        safe_total = max(1, total)
+        self._total_progress_bar.setMaximum(safe_total)
+        self._total_progress_bar.setValue(max(0, min(current, safe_total)))
+        self._total_progress_lbl.setText(f"{current} / {total}")
+        _set_elided_text(self._progress_msg, f"{label}：{message}")
+        self._round_log.append(f"[{label}] {message}")
+        if self._activity is not None:
+            self._activity.progress(current, safe_total, f"{label}：{message}")
 
     def _on_progress(self, current: int, total: int, message: str, success: int, failed: int, new_terms: int):
         if self._activity is not None:
@@ -329,7 +343,7 @@ class _TranslationProgressWindow(QWidget):
             self._worker.pause()
             getattr(self._activity, "pause", lambda: None)()
             self._pause_btn.setText("▶ 继续")
-            _set_elided_text(self._progress_msg, "⏸ 已暂停（当前 API 调用将立即中断）")
+            _set_elided_text(self._progress_msg, "⏸ 已暂停（当前 API 调用将在安全点中断）")
             self._round_log.append("⏸ 已暂停")
             self._ctx.collection_changed.emit(self._ctx.collection)
 
@@ -345,7 +359,7 @@ class _TranslationProgressWindow(QWidget):
             self._was_stopped = True
             if self._activity is not None:
                 self._activity.request_cancel()
-            _set_elided_text(self._progress_msg, "⏹ 正在停止（当前 API 调用将立即中断）")
+            _set_elided_text(self._progress_msg, "⏹ 正在停止（当前 API 调用将在安全点中断）")
             self._round_log.append("⏹ 已请求停止")
             self._worker.stop()
             self._stop_btn.setEnabled(False)

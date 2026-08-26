@@ -20,6 +20,8 @@ class NounExtractor:
     def extract(
         self,
         translated_pairs: list[dict],
+        *,
+        raise_on_error: bool = False,
     ) -> list[TermEntry]:
         """
         调用 LLM 抽取专有名词，返回 TermEntry 列表（source='auto_dialogue'）。
@@ -39,9 +41,13 @@ class NounExtractor:
 
         try:
             messages = self._builder.build_extraction_prompt(translated_pairs)
-            response = self._client.chat(messages, max_tokens=1000)
+            # ``0`` means that OpenAI-compatible providers use their own
+            # completion limit instead of the former hard-coded 1000 tokens.
+            response = self._client.chat(messages, max_tokens=0)
             raw_items = self._builder.parse_extraction_response(response)
         except Exception:
+            if raise_on_error:
+                raise
             return []
 
         results: list[TermEntry] = []

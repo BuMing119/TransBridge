@@ -264,6 +264,24 @@ def test_parse_polish_response_fields_unchanged():
     assert result.note == "polished"
 
 
+def test_parse_polish_response_normalizes_string_change_labels():
+    llm = _CapturingLLM()
+    polisher = _make_polisher(llm, terms=_StubTermManager({}))
+
+    response = json.dumps({
+        "polished_translation": "勇者与巨龙",
+        "changes": ["style", "fluency"],
+        "confidence": 0.85,
+    })
+
+    result = polisher._parse_polish_response(_entry("e1", "dragon", "龙"), response)
+
+    assert result.changes == [
+        {"aspect": "style", "before": "", "after": "", "reason": ""},
+        {"aspect": "fluency", "before": "", "after": "", "reason": ""},
+    ]
+
+
 def test_llm_failure_returns_original_translation():
     class _BoomLLM:
         def chat(self, messages, max_tokens=0):

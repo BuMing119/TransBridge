@@ -6,6 +6,7 @@ from .candidate_checkpoint import (
     TranslationCheckpoint,
     TranslationCheckpointPort,
 )
+from .combined_proofread import CombinedProofreadStage, TermResolver
 from .commit import CommitTranslations, CommitTranslationsRequest
 from .completion_report import build_translation_report_snapshot
 from .http_llm import OpenAiTranslationHttpPort
@@ -54,6 +55,7 @@ from .postprocess_report import (
 )
 from .postprocess_stages import (
     CheckerStage,
+    LlmClientPostProcessPort,
     LlmPostProcessStage,
     OpenAiPostProcessHttpPort,
     PostProcessLlmError,
@@ -86,8 +88,10 @@ __all__ = [
     "CandidateSet",
     "CandidateTranslation",
     "CheckerStage",
+    "LlmClientPostProcessPort",
     "CommitTranslations",
     "CommitTranslationsRequest",
+    "CombinedProofreadStage",
     "ContextBatch",
     "ContextPlan",
     "ContextPlanner",
@@ -139,6 +143,7 @@ __all__ = [
     "TranslationServiceError",
     "TranslationWorkload",
     "TranslationWorkloadRequest",
+    "TermResolver",
     "build_http_postprocess_stages",
     "build_mixed_report_snapshot",
     "build_polish_report_snapshot",

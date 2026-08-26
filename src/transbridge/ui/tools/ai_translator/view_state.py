@@ -12,6 +12,7 @@ from typing import Literal
 from .view_controls import TranslatorViewOwner
 
 ViewMode = Literal["translate", "polish", "mixed"]
+UiMode = Literal["translate", "polish", "mixed", "custom"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +21,7 @@ class ScopeOptions:
     rules: list | None
     overwrite: bool
     max_tokens: int
+    max_concurrent: int
 
 
 class TranslatorViewPort:
@@ -29,12 +31,21 @@ class TranslatorViewPort:
         self._view = view
 
     @property
-    def mode(self) -> ViewMode:
+    def selected_mode(self) -> UiMode:
+        if self._view.controls.mode_custom.isChecked():
+            return "custom"
         if self._view.controls.mode_mixed.isChecked():
             return "mixed"
         if self._view.controls.mode_polish.isChecked():
             return "polish"
         return "translate"
+
+    @property
+    def mode(self) -> ViewMode:
+        if self.selected_mode == "custom":
+            value = self._view.controls.custom_base_mode_combo.currentData()
+            return value if value in {"translate", "polish", "mixed"} else "polish"
+        return self.selected_mode
 
     @property
     def overwrite(self) -> bool:
@@ -59,6 +70,7 @@ class TranslatorViewPort:
             rules=self.rules if mode == "mixed" else None,
             overwrite=self.overwrite,
             max_tokens=self._view.controls.tokens_spin.value(),
+            max_concurrent=self._view.controls.concurrent_spin.value(),
         )
 
     def update_provider_controls(self) -> None:
@@ -66,10 +78,14 @@ class TranslatorViewPort:
 
     def update_mode_controls(self) -> None:
         mode = self.mode
+        selected_mode = self.selected_mode
+        self._view.controls.custom_profile_group.setVisible(selected_mode == "custom")
         self._view.controls.overwrite_check.setVisible(mode == "translate")
         self._view.controls.scope_stack.setCurrentIndex(1 if mode == "mixed" else 0)
         self._view.controls.start_btn.setText(
-            {
+            "▶ 开始执行"
+            if selected_mode == "custom"
+            else {
                 "translate": "▶ 开始翻译",
                 "polish": "▶ 开始润色",
                 "mixed": "▶ 开始执行",
@@ -92,6 +108,8 @@ class TranslatorViewPort:
 
     def update_post_process_controls(self) -> None:
         enabled = self._view.controls.pp_enable_check.isChecked()
+        strict = enabled and self._view.controls.pp_strategy_combo.currentIndex() == 1
+        self._view.controls.pp_strategy_combo.setEnabled(enabled)
         for widget in (
             self._view.controls.pp_consistency_check,
             self._view.controls.pp_format_check,
@@ -100,13 +118,15 @@ class TranslatorViewPort:
             self._view.controls.pp_arbitration_check,
             self._view.controls.pp_polish_check,
         ):
-            widget.setEnabled(enabled)
+            widget.setEnabled(strict)
         self._view.controls.pp_strict_mode_check.setEnabled(
-            enabled and self._view.controls.pp_arbitration_check.isChecked()
+            strict and self._view.controls.pp_arbitration_check.isChecked()
         )
         self.update_polish_controls()
 
     def update_polish_controls(self) -> None:
-        enabled = self._view.controls.pp_enable_check.isChecked() and self._view.controls.pp_polish_check.isChecked()
-        self._view.controls.pp_polish_scope_combo.setEnabled(enabled)
+        workflow_enabled = self._view.controls.pp_enable_check.isChecked()
+        strict = workflow_enabled and self._view.controls.pp_strategy_combo.currentIndex() == 1
+        enabled = workflow_enabled and (not strict or self._view.controls.pp_polish_check.isChecked())
+        self._view.controls.pp_polish_scope_combo.setEnabled(strict and enabled)
         self._view.controls.pp_polish_level_combo.setEnabled(enabled)

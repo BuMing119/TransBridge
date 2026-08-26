@@ -2,12 +2,12 @@
 
 Test B: from_llm_config 字段映射 + phases → 开关转换。
 """
+
 from __future__ import annotations
 
 import unittest
 
 from tests.conftest import make_llm_config
-
 from transbridge.ai_translator.post_processor.post_processor import PostProcessorConfig
 
 
@@ -53,14 +53,13 @@ class TestPostProcessorConfigEquivalence(unittest.TestCase):
 
     def test_b2_from_llm_config_uses_defaults_when_none(self):
         try:
-            config = PostProcessorConfig.from_llm_config(None)
+            PostProcessorConfig.from_llm_config(None)
         except Exception:
             pass
         self.assertTrue(callable(PostProcessorConfig.from_llm_config))
 
     def test_b3_phases_to_config_switch_mapping(self):
-        all_phases = ["consistency", "format", "quality_gate",
-                      "refinement", "polish", "arbitration"]
+        all_phases = ["consistency", "format", "quality_gate", "refinement", "polish", "arbitration"]
         config = PostProcessorConfig()
 
         phase_to_attr = {

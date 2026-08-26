@@ -16,6 +16,7 @@ import os
 import re
 import threading
 from typing import TYPE_CHECKING
+import unicodedata
 
 from transbridge.ai_translator.term_formats import (
     TermEntry,
@@ -36,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 # 匹配术语开头的英文冠词（The / A / An），用于冠词规范化匹配
 _ARTICLE_RE = re.compile(r"^(?:the|a|an)\s+", re.IGNORECASE)
+_TERM_WHITESPACE_RE = re.compile(r"\s+")
 
 # 缓存文件名
 CACHE_FILES = {
@@ -45,6 +47,14 @@ CACHE_FILES = {
     "excel": "excel_terms.json",
     "merged": "merged_terms.json",
 }
+
+
+def _normalized_term_text(value: str) -> str:
+    return _TERM_WHITESPACE_RE.sub(" ", unicodedata.normalize("NFKC", value)).strip()
+
+
+def _normalized_primary_term(value: str) -> str:
+    return _normalized_term_text(value).casefold()
 
 
 @dataclass
@@ -300,17 +310,24 @@ class TermDatabaseManager:
 
     def has_term(self, term: str) -> bool:
         """检查 term 是否已存在于任意来源（大小写不敏感）。"""
-        if not self._merged_terms:
-            self._merged_terms = self._load_all_with_metadata()
-        term_lower = term.lower()
-        for entry in self._merged_terms:
-            if entry.term.lower() == term_lower:
-                return True
-        # 同时检查翻译过程中动态追加的新条目（_merged_terms 仅缓存初始状态）
-        for entry in self.get_dynamic_db().as_list():
-            if entry.term.lower() == term_lower:
-                return True
-        return False
+        return self.resolve_term(term) is not None
+
+    def resolve_term(self, term: str) -> TermEntry | None:
+        """返回当前来源优先级下生效的同名术语；没有匹配时返回 ``None``。
+
+        该窄接口供冲突裁决读取权威译法，避免调用方依赖内部合并缓存。
+        首版只解析主术语的规范化同名匹配，不把 variant 当作候选冲突。
+        """
+        term_key = _normalized_primary_term(term)
+        if not term_key:
+            return None
+        resolved: TermEntry | None = None
+        for entry in self._effective_terms():
+            if _normalized_primary_term(entry.term) == term_key:
+                # _effective_terms() follows the same low-to-high source order
+                # used to build exact-match maps, so later entries are authoritative.
+                resolved = entry
+        return resolved
 
     def _effective_terms(self) -> list[TermEntry]:
         """返回合并后的术语列表，并补充翻译过程中动态追加的新条目。"""
@@ -653,25 +670,26 @@ class TermDatabaseManager:
         for entry in self._effective_terms():
             # 主术语
             if entry.case_sensitive:
-                cs_map[entry.term] = (entry.term, entry.translation)
+                cs_map[_normalized_term_text(entry.term)] = (entry.term, entry.translation)
             else:
-                ci_map[entry.term.lower()] = (entry.term, entry.translation)
+                ci_map[_normalized_primary_term(entry.term)] = (entry.term, entry.translation)
             # 变体
             for variant in entry.variants:
                 if not variant:
                     continue
                 if entry.case_sensitive:
-                    cs_map[variant] = (entry.term, entry.translation)
+                    cs_map[_normalized_term_text(variant)] = (entry.term, entry.translation)
                 else:
-                    ci_map[variant.lower()] = (entry.term, entry.translation)
+                    ci_map[_normalized_primary_term(variant)] = (entry.term, entry.translation)
 
         result: dict[str, str] = {}
         for original in originals:
-            if original in cs_map:
-                main_term, trans = cs_map[original]
+            normalized_original = _normalized_term_text(original)
+            if normalized_original in cs_map:
+                main_term, trans = cs_map[normalized_original]
                 result[main_term] = trans
-            elif original.lower() in ci_map:
-                main_term, trans = ci_map[original.lower()]
+            elif (normalized_folded := normalized_original.casefold()) in ci_map:
+                main_term, trans = ci_map[normalized_folded]
                 result[main_term] = trans
         return result
 

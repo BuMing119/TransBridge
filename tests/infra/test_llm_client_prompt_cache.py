@@ -337,6 +337,15 @@ class TestOpenAINonOfficial(_OfflineTokenizerTestCase):
             self.assertNotIn(PROMPT_CACHE_METADATA_KEY, m)
             self.assertNotIn("prompt_cache_breakpoint", m)
 
+    def test_zero_max_tokens_is_omitted_for_compatible_providers(self):
+        client = _make_openai_client(base_url="https://gateway.example/v1", model="provider-default-model")
+        client._client.chat.completions.create.return_value = _fake_response("ok")
+
+        self.assertEqual(client.chat(_plain_messages(), max_tokens=0), "ok")
+
+        call_kwargs = client._client.chat.completions.create.call_args.kwargs
+        self.assertNotIn("max_tokens", call_kwargs)
+
 
 class TestOpenAICacheRejectionRetry(_OfflineTokenizerTestCase):
     """缓存参数被拒时：一次降级（去掉缓存参数干净重试），第二次失败上抛。"""
@@ -401,6 +410,24 @@ class TestOpenAICacheRejectionRetry(_OfflineTokenizerTestCase):
 
 
 class TestAnthropic(_OfflineTokenizerTestCase):
+    def test_chat_requires_a_configured_positive_output_limit_before_provider_call(self):
+        client = _make_anthropic_client()
+
+        for limit in (0, -1):
+            with self.subTest(limit=limit):
+                with self.assertRaisesRegex(ValueError, "Anthropic API requires a positive max_tokens"):
+                    client.chat(_plain_messages(), max_tokens=limit)
+
+        client._client.messages.create.assert_not_called()
+
+    def test_stream_requires_a_configured_positive_output_limit_before_provider_call(self):
+        client = _make_anthropic_client()
+
+        with self.assertRaisesRegex(ValueError, "'输出 Token'.*greater than 0|greater than 0.*'输出 Token'"):
+            client.chat_stream(_plain_messages(), max_tokens=0, chunk_callback=lambda _chunk: None)
+
+        client._client.messages.stream.assert_not_called()
+
     def test_short_prefix_uses_system_blocks_without_cache_control(self):
         client = _make_anthropic_client()
         messages = _stable_prefix_messages(system_text="short stable prefix")

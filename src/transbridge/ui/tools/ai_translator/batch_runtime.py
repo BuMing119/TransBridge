@@ -80,6 +80,7 @@ def open_batch_translation(
             paratranz_client=client,
             project_id=project_id,
             run_id=request.run_id,
+            request_budget=request.request_budget,
         )
         activity.bind_worker(worker)
         progress = _BatchTranslationProgressWindow(

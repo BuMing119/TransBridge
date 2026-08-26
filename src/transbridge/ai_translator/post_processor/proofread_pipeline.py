@@ -7,6 +7,8 @@ from dataclasses import dataclass, field, replace
 import threading
 
 from transbridge.application.translation.ai_execution_profile import AiExecutionProfile
+from transbridge.application.translation.combined_proofread import CombinedProofreadStage
+from transbridge.application.translation.postprocess import PostProcessCandidate
 
 from .base import PostProcessIssue, PostProcessResult
 from .post_processor import PostProcessor, PostProcessorConfig
@@ -36,9 +38,16 @@ class ProofreadResult:
 class ProofreadPipeline:
     """Runs existing post-process stages on copies and returns commit candidates."""
 
-    def __init__(self, processor: PostProcessor, profile: AiExecutionProfile) -> None:
+    def __init__(
+        self,
+        processor: PostProcessor,
+        profile: AiExecutionProfile,
+        *,
+        combined_stage: CombinedProofreadStage | None = None,
+    ) -> None:
         self._processor = processor
         self.profile = profile
+        self._combined_stage = combined_stage
 
     @classmethod
     def create(
@@ -47,10 +56,17 @@ class ProofreadPipeline:
         profile: AiExecutionProfile,
         llm_client: object,
         term_manager: object | None = None,
+        model: str = "",
+        max_tokens_per_batch: int = 2000,
+        max_output_tokens: int = 0,
+        token_counter: object | None = None,
     ) -> ProofreadPipeline:
         config = PostProcessorConfig(
             game_profile=profile.game_profile,
             target_lang=profile.target_lang,
+            model=model,
+            max_tokens_per_batch=max_tokens_per_batch,
+            max_output_tokens=max_output_tokens,
             enable_consistency_check=profile.enable_consistency_check,
             enable_format_validation=profile.enable_format_validation,
             enable_quality_gate=profile.enable_quality_gate,
@@ -65,30 +81,181 @@ class ProofreadPipeline:
             strict_arbitration=profile.strict_arbitration,
             arbitration_batch_size=profile.arbitration_batch_size,
         )
-        processor = PostProcessor(config)
+        processor = PostProcessor(config, token_counter=token_counter)
         processor.register_default_checkers(term_manager=term_manager, llm_client=llm_client)
-        return cls(processor, profile)
+        combined_stage = None
+        if profile.enable_combined_proofread and llm_client is not None:
+
+            def resolve_terms(candidate: PostProcessCandidate) -> dict:
+                if term_manager is None or not candidate.original:
+                    return {}
+                try:
+                    return dict(term_manager.match_terms([candidate.original]))
+                except Exception:
+                    return {}
+
+            combined_stage = CombinedProofreadStage(
+                llm_client,
+                term_resolver=resolve_terms,
+                target_locale=profile.target_lang,
+                game_profile=profile.game_profile,
+                polish_level=profile.polish_level,
+                model=model,
+                max_tokens_per_batch=max_tokens_per_batch,
+                max_output_tokens=max_output_tokens,
+            )
+        return cls(processor, profile, combined_stage=combined_stage)
 
     def process(
         self,
         entries: Iterable[object],
         *,
         progress_callback: Callable[[str, int, int, str], None] | None = None,
+        log_callback: Callable[[str], None] | None = None,
         stop_event: threading.Event | None = None,
         pause_event: threading.Event | None = None,
         max_workers: int = 1,
     ) -> dict[str, ProofreadResult]:
         originals = tuple(entries)
+        if self.profile.enable_combined_proofread:
+            return self._process_combined(
+                originals,
+                progress_callback=progress_callback,
+                log_callback=log_callback,
+                stop_event=stop_event,
+                pause_event=pause_event,
+                max_workers=max_workers,
+            )
         working = [replace(entry) for entry in originals]
         result = self._processor.process_entries(
             working,
             progress_callback=progress_callback,
+            log_callback=log_callback,
             stop_event=stop_event,
             pause_event=pause_event,
             max_workers=max_workers,
             apply_changes=False,
         )
         return self._project(originals, result)
+
+    def _process_combined(
+        self,
+        entries: tuple[object, ...],
+        *,
+        progress_callback: Callable[[str, int, int, str], None] | None,
+        log_callback: Callable[[str], None] | None,
+        stop_event: threading.Event | None,
+        pause_event: threading.Event | None,
+        max_workers: int,
+    ) -> dict[str, ProofreadResult]:
+        total = len(entries)
+        if progress_callback:
+            progress_callback("proofread", 0, total, f"开始校对润色 {total} 个条目...")
+        if self._combined_stage is None:
+            return {
+                str(entry.id): self._combined_result(entry, valid=False, note="未配置可用的校对润色模型")
+                for entry in entries
+            }
+        while pause_event is not None and not pause_event.is_set():
+            if stop_event is not None and stop_event.is_set():
+                return {
+                    str(entry.id): self._combined_result(entry, valid=False, note="校对润色已停止") for entry in entries
+                }
+            pause_event.wait(0.05)
+        if stop_event is not None and stop_event.is_set():
+            return {
+                str(entry.id): self._combined_result(entry, valid=False, note="校对润色已停止") for entry in entries
+            }
+        candidates = tuple(
+            PostProcessCandidate(
+                run_id="proofread-preview",
+                entry_key=entry.identity,
+                before_revision=entry.revision,
+                original=entry.original or "",
+                before_text=entry.translation or "",
+                text=entry.translation or "",
+                stage=entry.stage,
+                context=entry.context or "",
+            )
+            for entry in entries
+        )
+
+        def on_batch(completed: int, count: int, message: str) -> None:
+            if progress_callback:
+                progress_callback("proofread", completed, count, message)
+
+        monitor_done = threading.Event()
+
+        def monitor() -> None:
+            while not monitor_done.wait(0.05):
+                stopped = stop_event is not None and stop_event.is_set()
+                if stopped:
+                    self._combined_stage.cancel()
+                    return
+
+        monitor_thread = threading.Thread(target=monitor, daemon=True)
+        monitor_thread.start()
+        try:
+            runner = getattr(self._combined_stage, "run", None)
+            if callable(runner):
+                outcome = runner(candidates, max_workers=max_workers, progress_callback=on_batch)
+            else:  # compatibility with the initial stage implementation
+                outcome = self._combined_stage(candidates)
+        finally:
+            monitor_done.set()
+        notes_by_key: dict[object, list[str]] = {}
+        global_notes: list[str] = []
+        for diagnostic in outcome.diagnostics:
+            details = dict(diagnostic.details)
+            key_data = details.get("entry_key")
+            if isinstance(key_data, dict):
+                from transbridge.application.io import EntryKey
+
+                try:
+                    key = EntryKey.from_dict(key_data)
+                except (KeyError, TypeError, ValueError):
+                    global_notes.append(diagnostic.message)
+                else:
+                    notes_by_key.setdefault(key, []).append(diagnostic.message)
+            else:
+                global_notes.append(diagnostic.message)
+            if log_callback:
+                log_callback(f"[{diagnostic.code}] {diagnostic.message}")
+        by_key = {candidate.entry_key: candidate for candidate in outcome.candidates}
+        projected = {}
+        for entry in entries:
+            candidate = by_key.get(entry.identity)
+            valid = candidate is not None and "proofread" in candidate.phases
+            note = "；".join((*global_notes, *notes_by_key.get(entry.identity, ())))
+            projected[str(entry.id)] = self._combined_result(
+                entry,
+                valid=valid,
+                translation=candidate.text if valid and candidate is not None else None,
+                note=note,
+            )
+        if progress_callback:
+            progress_callback("proofread", total, total, f"校对润色完成 {total}/{total}")
+        return projected
+
+    @staticmethod
+    def _combined_result(
+        entry: object,
+        *,
+        valid: bool,
+        translation: str | None = None,
+        note: str = "",
+    ) -> ProofreadResult:
+        final_translation = translation if valid and translation is not None else entry.translation or ""
+        return ProofreadResult(
+            entry_id=str(entry.id),
+            entry_key=str(entry.key),
+            original_translation=entry.translation or "",
+            polished_translation=final_translation,
+            confidence=1.0 if valid else 0.0,
+            needs_arbitration=False,
+            note=note,
+            verdict="pass" if valid else "failed",
+        )
 
     def _project(self, entries: tuple[object, ...], result: PostProcessResult) -> dict[str, ProofreadResult]:
         issues_by_id: dict[str, list[PostProcessIssue]] = {}

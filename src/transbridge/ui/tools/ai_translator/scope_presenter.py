@@ -145,6 +145,8 @@ class ScopePresenter:
         rules: list | None,
         overwrite: bool,
         max_tokens: int,
+        model: str = "",
+        max_concurrent: int = 1,
     ) -> ScopeEstimate:
         collection = self._collection_provider()
         if collection is None:
@@ -156,20 +158,33 @@ class ScopePresenter:
             translate_count = sum(action == "translate" for action in actions.values())
             polish_count = sum(action == "polish" for action in actions.values())
             suffix = "（两者均为0，请调整规则）" if not translate_count and not polish_count else ""
-            return ScopeEstimate("mixed", f"预计：翻译 {translate_count} 条 + 润色 {polish_count} 条{suffix}")
+            return ScopeEstimate(
+                "mixed",
+                f"预计：翻译 {translate_count} 条 + 润色 {polish_count} 条；全流程共享并发 {max_concurrent}{suffix}",
+            )
         candidates = self.candidates()
         if mode == "polish":
-            return ScopeEstimate("standard", f"润色范围：{len(candidates)} 条已翻译词条")
+            return ScopeEstimate(
+                "standard",
+                f"润色范围：{len(candidates)} 条已翻译词条；全流程共享并发 {max_concurrent}",
+            )
         if not overwrite:
             candidates = [entry for entry in candidates if not entry.translation or entry.stage == 0]
         if not candidates:
             return ScopeEstimate("standard", "预计：0 条（无匹配条目，请调整作用域）")
         from transbridge.ai_translator.batch_planner import BatchPlanner
 
-        plan = BatchPlanner(max_tokens_per_batch=max_tokens).plan(candidates)
+        plan = BatchPlanner(max_tokens_per_batch=max_tokens, model=model).plan(candidates)
+        batches = plan.all_batches()
+        token_counts = [batch.content_tokens for batch in batches]
+        average_tokens = sum(token_counts) // len(token_counts) if token_counts else 0
+        max_batch_tokens = max(token_counts, default=0)
+        oversized = f"；超限 {len(plan.oversized)} 条" if plan.oversized else ""
         return ScopeEstimate(
             "standard",
-            f"预计：{plan.total_entries()} 条"
+            f"预计：{len(candidates)} 条 / {len(batches)} 个请求；"
+            f"内容 Token 平均 {average_tokens}、最大 {max_batch_tokens}；"
+            f"共享并发 {max_concurrent}{oversized}"
             f"（第一轮: {sum(len(batch.entries) for batch in plan.round1)}"
             f"  第二轮: {sum(len(batch.entries) for batch in plan.round2)}"
             f"  第三轮: {sum(len(batch.entries) for batch in plan.round3)}）",

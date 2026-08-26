@@ -192,7 +192,7 @@ class TranslationController:
                     except Exception:  # noqa: BLE001 - cleanup must not hide the task result
                         logger.exception("关闭 AI 翻译 ParaTranz 客户端失败")
 
-        thread = tm.start_thread(task_id, _run)  # M2: 复用 TaskManager.start_thread
+        tm.start_thread(task_id, _run)  # M2: 复用 TaskManager.start_thread
         # m6: 无全局线程池，每次翻译/润色/后处理创建独立 Thread。并发上限由 TaskManager 调用方控制。
 
         return ToolResult.ok(
@@ -210,9 +210,14 @@ class TranslationController:
         entry_ids = args.get("entry_ids")
         intensity = args.get("intensity", "medium")
         scope = args.get("scope", "all")
+        strategy = args.get("strategy", "combined")
 
         if scope not in ("all", "passed", "has_issues"):
             return ToolResult.fail(f"无效 scope: {scope}，可选: all, passed, has_issues")
+        if intensity not in ("light", "medium", "heavy"):
+            return ToolResult.fail(f"无效 intensity: {intensity}，可选: light, medium, heavy")
+        if strategy not in ("combined", "strict"):
+            return ToolResult.fail(f"无效 strategy: {strategy}，可选: combined, strict")
 
         if entry_ids is None:
             # 按 scope 筛选条目
@@ -242,20 +247,23 @@ class TranslationController:
         stop_event = threading.Event()
         tm = TaskManager()
         task_id = tm.register(stop_event=stop_event, metadata={
-            "intensity": intensity, "scope": scope, "type": "polish",
+            "intensity": intensity, "scope": scope, "strategy": strategy, "type": "polish",
         })
 
         def _run():
+            llm_runtime = None
             try:
-                from transbridge.ai_translator.post_processor.polisher import LLMPolisher
-                from transbridge.infra.llm_client import create_llm_client
                 from transbridge.paratranz.config_manager import LLMConfig as _LLMCfg
 
-                llm_cfg = _LLMCfg.load_from_file()
-                llm_client = create_llm_client(llm_cfg)
+                from ._polish_execution import execute_polish
+                from ._polish_llm_runtime import create_polish_llm_runtime
 
-                _level_map = {"light": "light", "medium": "moderate", "heavy": "aggressive"}
-                polish_level = _level_map.get(intensity, "moderate")
+                llm_cfg = _LLMCfg.load_from_file()
+                llm_runtime = create_polish_llm_runtime(
+                    llm_cfg,
+                    esp_path=getattr(ctx, "esp_path", None) or "",
+                    stop_event=stop_event,
+                )
 
                 from transbridge.ai_translator.term_database import TermDatabaseManager
                 term_mgr = TermDatabaseManager(
@@ -264,46 +272,38 @@ class TranslationController:
                 )
                 term_mgr.load_all()
 
-                polisher = LLMPolisher(
-                    llm_client=llm_client,
+                total = len(targets)
+                summary = execute_polish(
+                    strategy=strategy,
+                    intensity=intensity,
+                    llm_config=llm_cfg,
+                    llm_client=llm_runtime.client,
                     term_manager=term_mgr,
-                    game_profile=llm_cfg.game_profile,
-                    target_lang=llm_cfg.target_lang,
-                    polish_level=polish_level,
+                    targets=targets,
+                    collection=collection,
+                    stop_event=stop_event,
+                    progress_callback=lambda _stage, current, count, message: tm.update_progress(
+                        task_id,
+                        {"current": current, "total": count, "message": message},
+                    ),
+                    log_callback=lambda line: llm_runtime.log_store.write_line("workflow", line),
                 )
 
-                from transbridge.converter.translation_entry import TranslationEntry
-                results = {}
-                total = len(targets)
-                for i, entry in enumerate(targets):
-                    if stop_event.is_set():
-                        raise InterruptedError("任务已被用户停止")
-                    try:
-                        result = polisher.polish(entry)
-                        results[entry.key] = result
-                        if result.polished_translation and result.confidence > 0:
-                            updated = TranslationEntry(
-                                id=entry.id, key=entry.key,
-                                original=entry.original,
-                                translation=result.polished_translation,
-                                stage=entry.stage,
-                                context=entry.context,
-                            )
-                            collection.add(updated, overwrite=True)
-                    except Exception as exc:
-                        logger.warning("润色条目 %s 失败: %s", getattr(entry, 'key', '?'), exc)
-                    tm.update_progress(task_id, {"current": i + 1, "total": total})
+                if stop_event.is_set():
+                    raise InterruptedError("任务已被用户停止")
 
                 tm.set_status(task_id, "completed")
 
                 import time
 
                 from transbridge.smart_assistant.tools.tool_proofreader import set_last_report
-                polished_count = sum(1 for r in results.values() if r.polished_translation and r.confidence > 0)
+                polish_level = {"light": "light", "medium": "moderate", "heavy": "aggressive"}[intensity]
                 set_last_report({
                     "phase": "polish",
+                    "strategy": strategy,
                     "entry_count": len(entry_ids),
-                    "polished_count": polished_count,
+                    "polished_count": summary.polished_count,
+                    "failed_count": summary.failed_count,
                     "polish_level": polish_level,
                     "scope": scope,
                     "total": total,
@@ -313,6 +313,9 @@ class TranslationController:
                 tm.notify_completed(task_id, {
                     "status": "completed",
                     "entry_count": len(entry_ids),
+                    "polished_count": summary.polished_count,
+                    "failed_count": summary.failed_count,
+                    "strategy": strategy,
                 })
                 ctx.safe_mutate(lambda: ctx.notify_collection_modified())
             except InterruptedError:
@@ -322,12 +325,21 @@ class TranslationController:
                 logger.exception("润色任务异常: %s", exc)
                 tm.set_status(task_id, "failed")
                 tm.notify_failed(task_id, str(exc))
+            finally:
+                if llm_runtime is not None:
+                    llm_runtime.close()
 
         thread = tm.start_thread(task_id, _run)  # M2: 复用 TaskManager.start_thread
 
         return ToolResult.ok(
-            f"润色任务已启动 (scope={scope}, intensity={intensity}, {len(entry_ids)}条)",
-            data={"task_id": task_id, "intensity": intensity, "scope": scope, "entry_count": len(entry_ids)},
+            f"润色任务已启动 (strategy={strategy}, scope={scope}, intensity={intensity}, {len(entry_ids)}条)",
+            data={
+                "task_id": task_id,
+                "strategy": strategy,
+                "intensity": intensity,
+                "scope": scope,
+                "entry_count": len(entry_ids),
+            },
         )
 
     # ── 停止/暂停/恢复 ──────────────────────────────────────────────
@@ -666,6 +678,11 @@ _PARAM_SCHEMAS = {
         "entry_ids": {"type": "list", "required": False, "description": "要润色的条目ID列表（与 scope 至少提供一个）"},
         "scope": {"type": "str", "required": False, "description": "润色范围: all(全部有译文)/passed(已通过检查,stage=1/3/4/5/6)/has_issues(待审核,stage=2)，默认 all"},
         "intensity": {"type": "str", "required": False, "description": "润色强度: light/medium/heavy，默认 medium"},
+        "strategy": {
+            "type": "str",
+            "required": False,
+            "description": "校改策略: combined(默认,一次校对润色)/strict(兼容多阶段)",
+        },
     },
     "stop_task": {
         "task_id": {"type": "str", "required": False, "description": "要操作的任务ID（不传则操作所有运行中任务）"},
@@ -713,7 +730,7 @@ def _register_translator_tools():
         {"name": "start_translation", "display_name": "启动翻译", "description": "①启动AI翻译后台任务。②参数: mode=translate(默认)/polish/mixed(mixed同translate), entry_ids=key列表(可选,不传则用set_scope作用域,默认stage=0未翻译)。③返回: {task_id, mode}。④规则: 前置需API key已配,先调get_translation_config确认配置;允许并行多任务。",
          "execute": _tool_start_translation, "permission": "write", "is_long_running": True,
          "require_confirmation": True, "parameters": _PARAM_SCHEMAS.get("start_translation", {})},
-        {"name": "start_polish", "display_name": "启动润色", "description": "①启动AI润色后台任务。②参数: entry_ids或scope至少传一(同时传entry_ids优先), scope=all(全部有译文)/passed(stage=1/3/4/5/6)/has_issues(2), intensity=light/medium/heavy(默认medium)。③返回: {task_id, intensity, scope, entry_count}。④规则: 前置需API key已配,先调get_translation_config确认。",
+        {"name": "start_polish", "display_name": "启动润色", "description": "①启动AI校对润色后台任务。②参数: entry_ids或scope至少传一(同时传entry_ids优先), scope=all(全部有译文)/passed(stage=1/3/4/5/6)/has_issues(2), intensity=light/medium/heavy(默认medium), strategy=combined(默认,一次校对润色)/strict(兼容多阶段)。③返回: {task_id, strategy, intensity, scope, entry_count}。④规则: 前置需API key已配,先调get_translation_config确认。",
          "execute": _tool_start_polish, "permission": "write", "is_long_running": True,
          "require_confirmation": True, "parameters": _PARAM_SCHEMAS.get("start_polish", {})},
         {"name": "stop_task", "display_name": "停止/暂停/恢复", "description": "①控制后台任务(停止/暂停/恢复)。②参数: task_id(可选,不传则操作所有活跃任务), action=stop(默认,不可恢复)/pause(等当前批次完成)/resume。③单个: {task_id, action},全部: {affected_task_ids, action}。④规则: stop不可逆;活跃=仅running+paused;需用户确认。",

@@ -312,3 +312,19 @@ def test_quick_decide_low_refine_confidence_non_strict_pending():
     decision = arbiter.arbitrate(ctx)
     assert decision.verdict == "pending"
     assert "信心度低" in decision.reason
+
+
+def test_batch_arbitration_tolerates_legacy_string_changes():
+    llm = _CapturingLLM(
+        '[{"entry_id":"e1","verdict":"pass","reason":"ok","confidence":0.9,"suggested_action":"accept"}]'
+    )
+    arbiter = _make_arbiter(llm)
+    polish = _polish_result("e1")
+    polish.changes = ["style", "fluency"]
+    context = _ctx(entry=_entry("e1", "dragon", _INITIAL), polish=polish)
+
+    decisions = arbiter.arbitrate_batch([context])
+
+    assert decisions["e1"].verdict == "pass"
+    assert len(llm.calls) == 1
+    assert "[style]" in _user_of(llm.calls[0])["content"]

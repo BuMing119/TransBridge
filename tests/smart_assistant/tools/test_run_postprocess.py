@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-import hashlib
+import json
 from pathlib import Path
 import tempfile
 import time
@@ -14,7 +14,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from tests.conftest import MockAppContext, make_test_collection
+from tests.conftest import MockAppContext, make_entry, make_test_collection
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
 
 # ============================================================
@@ -60,14 +61,121 @@ class TestRunPostprocessValidation(unittest.TestCase):
             self.assertTrue(r.success)  # 不应崩溃，内部钳位到 8
 
     def test_default_phases_when_none(self):
-        """phases 不传时应默认为全部 6 阶段。"""
+        """无参数调用默认只运行一次 combined 校对润色。"""
         ctx = MockAppContext(make_test_collection(3))
         with patch("transbridge.smart_assistant.tools.tool_proofreader.threading.Thread"):
             r = self.func({}, ctx)
             self.assertTrue(r.success)
-            self.assertEqual(
-                r.data["phases"], ["consistency", "format", "quality_gate", "refinement", "polish", "arbitration"]
+            self.assertEqual(r.data["phases"], ["proofread"])
+            self.assertEqual(r.data["strategy"], "combined")
+            self.assertEqual(r.data["profile"], "builtin:polish")
+
+    def test_combined_rejects_strict_phases(self):
+        ctx = MockAppContext(make_test_collection(5))
+
+        result = self.func({"strategy": "combined", "phases": ["polish"]}, ctx)
+
+        self.assertFalse(result.success)
+        self.assertIn("combined", result.message)
+
+    def test_runtime_limit_overrides_are_frozen_in_task_metadata(self):
+        ctx = MockAppContext(make_test_collection(5))
+        with patch("transbridge.smart_assistant.tools.tool_proofreader.threading.Thread"):
+            result = self.func(
+                {
+                    "scope": "all",
+                    "max_concurrent": 7,
+                    "max_tokens_per_batch": 3200,
+                    "max_output_tokens": 900,
+                    "max_terms_per_batch": 80,
+                },
+                ctx,
             )
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            result.data["limits"],
+            {
+                "max_concurrent": 7,
+                "max_tokens_per_batch": 3200,
+                "max_output_tokens": 900,
+                "max_terms_per_batch": 80,
+            },
+        )
+
+    def test_named_custom_profile_supplies_strategy_stages_intensity_and_limits(self):
+        from transbridge.application.translation.custom_workflow_profile import (
+            CustomWorkflowProfile,
+            CustomWorkflowProfileDocument,
+        )
+        from transbridge.config.llm import LLMConfig
+
+        profile = CustomWorkflowProfile.create(
+            "成本优先",
+            base_mode="polish",
+            strategy="strict",
+            workflow={
+                "enable_post_process": True,
+                "pp_enable_consistency_check": True,
+                "pp_enable_format_validation": False,
+                "pp_enable_quality_gate": False,
+                "pp_enable_refinement": False,
+                "pp_enable_polish": True,
+                "pp_polish_level": "light",
+                "pp_enable_arbitration": False,
+            },
+            limits={
+                "max_concurrent": 4,
+                "max_tokens_per_batch": 2400,
+                "max_output_tokens": 600,
+                "max_terms_per_batch": 30,
+            },
+        )
+        repository = SimpleNamespace(
+            load=lambda: CustomWorkflowProfileDocument(profile.id, (profile,)),
+        )
+        ctx = MockAppContext(make_test_collection(5))
+        with (
+            patch(
+                "transbridge.config.ai_workflow_profiles.AiWorkflowProfileRepository",
+                return_value=repository,
+            ),
+            patch(
+                "transbridge.smart_assistant.tools._common.load_llm_config",
+                return_value=LLMConfig(),
+            ),
+            patch("transbridge.smart_assistant.tools.tool_proofreader.threading.Thread"),
+        ):
+            result = self.func({"profile": "成本优先", "scope": "all"}, ctx)
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.data["profile"], "custom:成本优先")
+        self.assertEqual(result.data["profile_id"], profile.id)
+        self.assertEqual(result.data["strategy"], "strict")
+        self.assertEqual(result.data["stages"], ["consistency", "polish"])
+        self.assertEqual(result.data["intensity"], "light")
+        self.assertEqual(result.data["limits"]["max_concurrent"], 4)
+
+    def test_tool_schema_exposes_preset_and_budget_parameters(self):
+        from transbridge.smart_assistant.tool_registry import ToolRegistry
+
+        spec = ToolRegistry.get("run_postprocess")
+
+        self.assertIsNotNone(spec)
+        self.assertTrue(
+            {
+                "profile",
+                "strategy",
+                "phases",
+                "entry_ids",
+                "scope",
+                "intensity",
+                "max_concurrent",
+                "max_tokens_per_batch",
+                "max_output_tokens",
+                "max_terms_per_batch",
+            }.issubset(spec.parameters["properties"])
+        )
 
 
 class TestRunPostprocessProductionPath(unittest.TestCase):
@@ -87,41 +195,118 @@ class TestRunPostprocessProductionPath(unittest.TestCase):
 
         self.assertEqual(_count_committed_fixes(candidates), 1)
 
-    def test_candidate_pipeline_commits_once_and_publishes_canonical_report(self):
-        from transbridge.application.translation import PostProcessLlmResponse
+    def test_default_combined_batches_entries_and_reports_effective_profile(self):
+        from transbridge.config.llm import LLMConfig
         from transbridge.smart_assistant.tools.task_manager import TaskManager
-        from transbridge.smart_assistant.tools.tool_proofreader import _tool_run_postprocess
+        from transbridge.smart_assistant.tools.tool_proofreader import _tool_run_postprocess, get_last_report
 
-        class ControlledPort:
-            def apply(self, phase, request):
-                values = []
-                for candidate in request.candidates:
-                    if phase.value == "arbitrate":
-                        value = "pass"
-                    else:
-                        value = f"{phase.value}:{candidate.text}"
-                    values.append((candidate.entry_key, value))
-                digest = hashlib.sha256(str(values).encode()).hexdigest()
-                return PostProcessLlmResponse(tuple(values), digest)
+        class CombinedClient:
+            def __init__(self):
+                self.calls = 0
+                self.max_tokens = []
 
-        collection = make_test_collection(2)
-        ctx = MockAppContext(collection)
-        config = SimpleNamespace(
-            api_key="fixture",
-            target_lang="zh_CN",
-            game_profile="skyrim_se",
-            base_url="http://fixture.invalid/v1",
-            model="fixture-model",
+            def chat(self, messages, max_tokens=0):
+                self.calls += 1
+                self.max_tokens.append(max_tokens)
+                payload = json.loads(messages[-1]["content"])
+                return json.dumps({
+                    "results": [
+                        {
+                            "entry_key": entry["entry_key"],
+                            "final_translation": f"fixed:{entry['current_translation']}",
+                        }
+                        for entry in payload["entries"]
+                    ]
+                })
+
+        client = CombinedClient()
+        runtime = SimpleNamespace(
+            client=client,
+            log_store=SimpleNamespace(log_dir="combined-log"),
+            close=lambda: None,
         )
-        processor = SimpleNamespace(_checkers=[])
+        term_manager = SimpleNamespace(load_all=lambda: None, match_terms=lambda _texts: {})
+        collection = TranslationEntryCollection([
+            make_entry("entry_001", original="One", translation="Old one", stage=1),
+            make_entry("entry_002", original="Two", translation="Old two", stage=1),
+        ])
+        ctx = MockAppContext(collection)
+        config = LLMConfig(api_key="fixture", model="fixture-model", max_tokens_per_batch=10_000)
         with (
             tempfile.TemporaryDirectory() as data_dir,
             patch("transbridge.smart_assistant.tools._common.load_llm_config", return_value=config),
             patch(
-                "transbridge.smart_assistant.tools.tool_proofreader.ProofreaderController._build_postprocessor",
-                return_value=(processor, None, None, None),
+                "transbridge.smart_assistant.tools._postprocess_tool_runtime.create_workflow_llm_runtime",
+                return_value=runtime,
             ),
-            patch("transbridge.application.translation.OpenAiPostProcessHttpPort", return_value=ControlledPort()),
+            patch(
+                "transbridge.ai_translator.term_database.TermDatabaseManager",
+                return_value=term_manager,
+            ),
+            patch("transbridge.paratranz.config_manager.ParatranzConfig.get_data_dir", return_value=data_dir),
+            patch(
+                "transbridge.paratranz.config_manager.LLMConfig.get_ai_translator_dir",
+                return_value=str(Path(data_dir) / "ai_translator" / "Demo"),
+            ),
+        ):
+            ctx.esp_path = str(Path(data_dir) / "Demo.esp")
+            result = _tool_run_postprocess({}, ctx)
+            self.assertTrue(result.success, result.message)
+            task_id = result.data["task_id"]
+            deadline = time.monotonic() + 5
+            while TaskManager().get_status(task_id)["status"] not in {"completed", "failed", "cancelled"}:
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(0.01)
+            report = get_last_report()
+
+        self.assertEqual(TaskManager().get_status(task_id)["status"], "completed")
+        self.assertEqual(client.calls, 1)
+        self.assertEqual(client.max_tokens, [0])
+        self.assertTrue(all(entry.translation.startswith("fixed:") for entry in collection))
+        self.assertEqual(report["profile"], "builtin:polish")
+        self.assertEqual(report["strategy"], "combined")
+        self.assertEqual(report["stages"], ["proofread"])
+        self.assertEqual(report["scope"], "all")
+        self.assertEqual(report["log_dir"], "combined-log")
+
+    def test_candidate_pipeline_commits_once_and_publishes_canonical_report(self):
+        from transbridge.config.llm import LLMConfig
+        from transbridge.smart_assistant.tools.task_manager import TaskManager
+        from transbridge.smart_assistant.tools.tool_proofreader import _tool_run_postprocess
+
+        class ControlledClient:
+            def chat(self, messages, max_tokens=0):
+                payload = json.loads(messages[-1]["content"])
+                phase = payload["phase"]
+                results = []
+                for entry in payload["entries"]:
+                    value = "pass" if phase == "arbitrate" else f"{phase}:{entry['current']}"
+                    results.append({"entry_key": entry["entry_key"], "value": value})
+                return json.dumps({"results": results})
+
+        collection = TranslationEntryCollection([
+            make_entry("entry_001", original="One", translation="Old one", stage=1),
+            make_entry("entry_002", original="Two", translation="Old two", stage=1),
+        ])
+        ctx = MockAppContext(collection)
+        config = LLMConfig(
+            api_key="fixture",
+            model="fixture-model",
+            max_concurrent=2,
+            max_output_tokens=100,
+        )
+        runtime = SimpleNamespace(
+            client=ControlledClient(),
+            log_store=SimpleNamespace(log_dir="fixture-log"),
+            close=lambda: None,
+        )
+        with (
+            tempfile.TemporaryDirectory() as data_dir,
+            patch("transbridge.smart_assistant.tools._common.load_llm_config", return_value=config),
+            patch(
+                "transbridge.smart_assistant.tools._postprocess_tool_runtime.create_workflow_llm_runtime",
+                return_value=runtime,
+            ),
             patch("transbridge.paratranz.config_manager.ParatranzConfig.get_data_dir", return_value=data_dir),
             patch(
                 "transbridge.paratranz.config_manager.LLMConfig.get_ai_translator_dir",
@@ -133,6 +318,7 @@ class TestRunPostprocessProductionPath(unittest.TestCase):
                 {"phases": ["refinement", "polish", "arbitration"]},
                 ctx,
             )
+            self.assertTrue(result.success, result.message)
             task_id = result.data["task_id"]
             deadline = time.monotonic() + 5
             while TaskManager().get_status(task_id)["status"] not in {"completed", "failed", "cancelled"}:
@@ -151,6 +337,9 @@ class TestRunPostprocessProductionPath(unittest.TestCase):
             self.assertTrue(all(Path(path).parent.name == "reports" for path in report["report_files"]))
             self.assertTrue(all(Path(path).is_file() for path in report["report_files"]))
             self.assertEqual(report["report_diagnostics"], [])
+            self.assertEqual(report["strategy"], "strict")
+            self.assertEqual(report["stages"], ["refinement", "polish", "arbitration"])
+            self.assertEqual(report["log_dir"], "fixture-log")
 
         status = TaskManager().get_status(task_id)
         self.assertEqual(status["status"], "completed")

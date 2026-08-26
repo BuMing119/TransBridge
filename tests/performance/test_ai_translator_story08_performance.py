@@ -14,7 +14,7 @@ class Entry:
 
 def test_10k_scope_freeze_stays_off_the_interactive_hot_path() -> None:
     entries = [Entry(str(index)) for index in range(10_000)]
-    config = SimpleNamespace(api_key="secret", model="model", provider="openai_compatible")
+    config = SimpleNamespace(api_key="secret", model="model", provider="openai_compatible", max_concurrent=3)
     controller = RunController(owner_id="performance")
 
     started = perf_counter()
@@ -26,7 +26,7 @@ def test_10k_scope_freeze_stays_off_the_interactive_hot_path() -> None:
 
 
 def test_100_run_owner_lifecycles_are_bounded() -> None:
-    config = SimpleNamespace(api_key="secret", model="model")
+    config = SimpleNamespace(api_key="secret", model="model", max_concurrent=3)
     started = perf_counter()
     for index in range(100):
         controller = RunController(owner_id=f"owner-{index}")

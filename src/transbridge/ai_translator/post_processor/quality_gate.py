@@ -21,7 +21,12 @@ import tomllib
 from typing import TYPE_CHECKING
 import warnings
 
-from .base import BaseChecker, PostProcessIssue
+from .base import (
+    BaseChecker,
+    PostProcessIssue,
+    output_token_limit,
+    validate_max_output_tokens,
+)
 from .prompt_contract import (
     PromptTemplateContractError,
     build_postprocess_messages,
@@ -197,6 +202,7 @@ class QualityGateChecker(BaseChecker):
         batch_size: int = 10,
         game_profile: str = "skyrim_se",
         target_lang: str = "zh_CN",
+        max_output_tokens: int | None = None,
     ):
         """
         初始化。
@@ -211,6 +217,7 @@ class QualityGateChecker(BaseChecker):
         self._llm = llm_client
         self._term_manager = term_manager
         self._batch_size = batch_size
+        self._max_output_tokens = validate_max_output_tokens(max_output_tokens)
         self._prompts = self._load_prompts(game_profile, target_lang)
 
     def _load_prompts(self, game_profile: str, target_lang: str) -> dict:
@@ -345,7 +352,10 @@ class QualityGateChecker(BaseChecker):
         )
 
         try:
-            response = self._llm.chat(messages=messages, max_tokens=500)
+            response = self._llm.chat(
+                messages=messages,
+                max_tokens=output_token_limit(self._max_output_tokens, 500),
+            )
             return self._parse_response(response)
         except Exception as e:
             # LLM调用失败，返回uncertain
@@ -376,7 +386,10 @@ class QualityGateChecker(BaseChecker):
         )
 
         try:
-            response = self._llm.chat(messages=messages, max_tokens=2000)
+            response = self._llm.chat(
+                messages=messages,
+                max_tokens=output_token_limit(self._max_output_tokens, 2000),
+            )
             return self._parse_batch_response(valid_entries, response)
         except Exception as e:
             # 批量检测失败，降级为逐个检测

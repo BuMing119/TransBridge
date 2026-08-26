@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from transbridge.ai_translator.post_processor.base import PostProcessIssue
 from transbridge.ai_translator.post_processor.llm_arbiter import ArbiterDecision, ArbitrationContext, LLMArbiter
 from transbridge.ai_translator.post_processor.llm_refiner import RefineResult
@@ -7,6 +9,7 @@ from transbridge.ai_translator.post_processor.polisher import LLMPolisher, Polis
 from transbridge.ai_translator.post_processor.post_processor import PostProcessor, PostProcessorConfig
 from transbridge.ai_translator.post_processor.proofread_pipeline import ProofreadPipeline
 from transbridge.application.translation.ai_execution_profile import AiExecutionProfile
+from transbridge.application.translation.token_batching import ContentTokenCount
 from transbridge.config.llm import LLMConfig
 from transbridge.converter.translation_entry import TranslationEntry
 
@@ -20,6 +23,15 @@ def _entry() -> TranslationEntry:
         stage=1,
         context="DIAL:FULL",
     )
+
+
+class _CharacterCounter:
+    def __init__(self) -> None:
+        self.seen: list[str] = []
+
+    def count(self, text: str) -> ContentTokenCount:
+        self.seen.append(text)
+        return ContentTokenCount(len(text), False, "characters")
 
 
 def test_proofread_pipeline_repairs_before_polish_without_mutating_formal_entry() -> None:
@@ -90,7 +102,9 @@ def test_proofread_pipeline_repairs_before_polish_without_mutating_formal_entry(
     processor._refiner = Refiner()
     processor._polisher = Polisher()
     processor._arbiter = Arbiter()
-    pipeline = ProofreadPipeline(processor, AiExecutionProfile.from_config("polish", LLMConfig()))
+    strict_config = LLMConfig()
+    strict_config.pp_strategy = "strict"
+    pipeline = ProofreadPipeline(processor, AiExecutionProfile.from_config("polish", strict_config))
 
     results = pipeline.process([entry])
 
@@ -102,7 +116,237 @@ def test_proofread_pipeline_repairs_before_polish_without_mutating_formal_entry(
     assert results[entry.id].issues[0].entry_id == entry.id
 
 
-def test_polish_preset_defaults_to_full_proofreading_but_saved_values_win() -> None:
+@pytest.mark.parametrize(
+    ("max_tokens", "max_items", "expected_sizes"),
+    [
+        (100, 2, [2, 2, 1]),
+        (5, 10, [1, 1, 1, 1, 1]),
+    ],
+)
+def test_quality_gate_batches_obey_token_and_item_limits(max_tokens, max_items, expected_sizes) -> None:
+    from transbridge.ai_translator.post_processor.quality_gate import QualityGateChecker
+
+    entries = [TranslationEntry(str(index), str(index), "aa", "bb", 1, "c") for index in range(5)]
+    observed: list[list[str]] = []
+    quality_gate = object.__new__(QualityGateChecker)
+    quality_gate.check_batch = lambda batch: observed.append([entry.id for entry in batch]) or []
+    processor = PostProcessor(
+        PostProcessorConfig(
+            enable_consistency_check=False,
+            enable_format_validation=False,
+            enable_quality_gate=True,
+            quality_gate_batch_size=max_items,
+            enable_refinement=False,
+            enable_polish=False,
+            enable_llm_arbitration=False,
+            max_tokens_per_batch=max_tokens,
+        ),
+        token_counter=_CharacterCounter(),
+    )
+    processor.register_checker(quality_gate)
+
+    processor.process_entries(entries, max_workers=1, apply_changes=False)
+
+    assert [len(batch) for batch in observed] == expected_sizes
+
+
+def test_refine_and_polish_replan_from_stage_specific_business_content() -> None:
+    entries = [TranslationEntry(str(index), str(index), "a", "b", 1, "") for index in range(2)]
+    counter = _CharacterCounter()
+    refine_batches: list[list[str]] = []
+    polish_inputs: list[str] = []
+
+    class Checker:
+        def check(self, entry):
+            return [
+                PostProcessIssue(
+                    entry_id=entry.id,
+                    issue_type="x",
+                    severity="warning",
+                    message="m",
+                    original=entry.original,
+                    translation=entry.translation,
+                )
+            ]
+
+    class Refiner:
+        def refine_batch(self, batch, issues_map):
+            refine_batches.append([entry.id for entry in batch])
+            return {
+                entry.id: RefineResult(
+                    entry_id=entry.id,
+                    original_translation=entry.translation,
+                    refined_translation="R" * 9,
+                    confidence=0.95,
+                )
+                for entry in batch
+            }
+
+    class Polisher:
+        def polish_batch(self, batch):
+            polish_inputs.extend(entry.translation for entry in batch)
+            return {
+                entry.id: PolishResult(
+                    entry_id=entry.id,
+                    original_translation=entry.translation,
+                    polished_translation=f"{entry.translation}!",
+                    confidence=0.9,
+                )
+                for entry in batch
+            }
+
+    processor = PostProcessor(
+        PostProcessorConfig(
+            enable_consistency_check=False,
+            enable_format_validation=False,
+            enable_quality_gate=False,
+            enable_refinement=True,
+            refinement_batch_size=10,
+            enable_polish=True,
+            polish_batch_size=10,
+            enable_llm_arbitration=False,
+            max_tokens_per_batch=11,
+        ),
+        token_counter=counter,
+    )
+    processor.register_checker(Checker())
+    processor._refiner = Refiner()
+    processor._polisher = Polisher()
+
+    processor.process_entries(entries, max_workers=1, apply_changes=False)
+
+    assert [len(batch) for batch in refine_batches] == [1, 1]
+    assert polish_inputs == ["R" * 9, "R" * 9]
+    assert "R" * 9 in counter.seen
+
+
+def test_arbitration_filters_quick_decisions_before_token_batching() -> None:
+    huge = TranslationEntry("quick", "quick", "x" * 100, "old", 1, "")
+    needs_llm = [
+        TranslationEntry("llm-a", "llm-a", "a", "b", 1, ""),
+        TranslationEntry("llm-b", "llm-b", "c", "d", 1, ""),
+    ]
+    observed: list[list[str]] = []
+
+    class Arbiter:
+        def _quick_decide(self, context):
+            if context.entry.id != "quick":
+                return None
+            return ArbiterDecision("quick", "pass", "规则通过", 1.0, "接受")
+
+        def arbitrate_batch(self, contexts):
+            observed.append([context.entry.id for context in contexts])
+            return {
+                context.entry.key: ArbiterDecision(context.entry.key, "pass", "模型通过", 0.9, "接受")
+                for context in contexts
+            }
+
+    processor = PostProcessor(
+        PostProcessorConfig(
+            enable_consistency_check=False,
+            enable_format_validation=False,
+            enable_quality_gate=False,
+            enable_refinement=False,
+            enable_polish=False,
+            enable_llm_arbitration=True,
+            max_tokens_per_batch=3,
+        ),
+        token_counter=_CharacterCounter(),
+    )
+    processor._arbiter = Arbiter()
+
+    result = processor.process_entries([huge, *needs_llm], max_workers=1, apply_changes=False)
+
+    assert observed == [["llm-a"], ["llm-b"]]
+    assert set(result.decisions) == {"quick", "llm-a", "llm-b"}
+
+
+def test_oversized_quality_gate_item_fails_before_llm_call() -> None:
+    from transbridge.ai_translator.post_processor.quality_gate import QualityGateChecker
+
+    calls: list[list] = []
+    quality_gate = object.__new__(QualityGateChecker)
+    quality_gate.check_batch = lambda batch: calls.append(batch) or []
+    processor = PostProcessor(
+        PostProcessorConfig(
+            enable_consistency_check=False,
+            enable_format_validation=False,
+            enable_quality_gate=True,
+            enable_refinement=False,
+            enable_polish=False,
+            enable_llm_arbitration=False,
+            max_tokens_per_batch=4,
+        ),
+        token_counter=_CharacterCounter(),
+    )
+    processor.register_checker(quality_gate)
+
+    with pytest.raises(ValueError, match="质量检测阶段.*Token"):
+        processor.process_entries(
+            [TranslationEntry("one", "one", "aa", "bb", 1, "c")],
+            max_workers=1,
+            apply_changes=False,
+        )
+
+    assert calls == []
+
+
+def test_postprocessor_config_forwards_model_and_content_token_limit() -> None:
+    config = PostProcessorConfig.from_llm_config(LLMConfig(model="fixture-model", max_tokens_per_batch=321))
+
+    assert config.model == "fixture-model"
+    assert config.max_tokens_per_batch == 321
+
+    profile = AiExecutionProfile.from_config("polish", LLMConfig())
+    pipeline = ProofreadPipeline.create(
+        profile=profile,
+        llm_client=None,
+        model="profile-model",
+        max_tokens_per_batch=654,
+        token_counter=_CharacterCounter(),
+    )
+    assert pipeline._processor._config.model == "profile-model"
+    assert pipeline._processor._config.max_tokens_per_batch == 654
+
+
+def test_combined_pipeline_marks_only_technically_invalid_entries_as_failed() -> None:
+    import json
+
+    valid = _entry()
+    missing = TranslationEntry(
+        id="missing-id",
+        key="missing-key",
+        original="Keep %s",
+        translation="保留 %s",
+        stage=1,
+        context="DIAL:FULL",
+    )
+
+    class Client:
+        @staticmethod
+        def chat_prepared(messages_factory, max_tokens=0):
+            payload = json.loads(messages_factory()[1]["content"])
+            first = payload["entries"][0]
+            return json.dumps(
+                {"results": [{"entry_key": first["entry_key"], "final_translation": "不要打开大门。"}]},
+                ensure_ascii=False,
+            )
+
+    profile = AiExecutionProfile.from_config("polish", LLMConfig(pp_strategy="combined"))
+    results = ProofreadPipeline.create(
+        profile=profile,
+        llm_client=Client(),
+        max_tokens_per_batch=10_000,
+    ).process([valid, missing])
+
+    assert results[valid.id].verdict == "pass"
+    assert results[valid.id].polished_translation == "不要打开大门。"
+    assert results[missing.id].verdict == "failed"
+    assert results[missing.id].polished_translation == missing.translation
+    assert results[missing.id].needs_arbitration is False
+
+
+def test_factory_presets_default_to_combined_and_saved_values_win() -> None:
     from transbridge.application.translation.ai_execution_profile import (
         apply_profile_settings,
         ensure_workflow_profiles,
@@ -112,6 +356,7 @@ def test_polish_preset_defaults_to_full_proofreading_but_saved_values_win() -> N
     config = LLMConfig(pp_enable_polish=False)
     profiles = ensure_workflow_profiles(config)
 
+    assert {profiles[name]["pp_strategy"] for name in ("translate", "polish", "mixed")} == {"combined"}
     assert profiles["translate"]["pp_enable_polish"] is False
     assert profiles["polish"]["pp_enable_polish"] is True
     apply_profile_settings(config, "polish")
@@ -121,6 +366,25 @@ def test_polish_preset_defaults_to_full_proofreading_but_saved_values_win() -> N
     assert config.pp_enable_refinement is True
     apply_profile_settings(config, "polish")
     assert config.pp_enable_refinement is False
+
+
+def test_saved_legacy_profile_without_strategy_keeps_strict_stage_semantics() -> None:
+    from transbridge.application.translation.ai_execution_profile import ensure_workflow_profiles
+
+    config = LLMConfig(
+        workflow_profiles={
+            "polish": {
+                "pp_enable_quality_gate": True,
+                "pp_enable_refinement": True,
+                "pp_enable_polish": True,
+                "pp_enable_arbitration": True,
+            }
+        }
+    )
+
+    profiles = ensure_workflow_profiles(config)
+
+    assert profiles["polish"]["pp_strategy"] == "strict"
 
 
 def test_workflow_profiles_json_round_trip_and_rejects_invalid_root() -> None:
@@ -205,7 +469,8 @@ def test_failed_polish_stage_never_becomes_an_accepted_candidate() -> None:
         )
     )
     processor._polisher = FailedPolisher()
-    pipeline = ProofreadPipeline(processor, AiExecutionProfile.from_config("polish", LLMConfig()))
+    strict_config = LLMConfig(pp_strategy="strict")
+    pipeline = ProofreadPipeline(processor, AiExecutionProfile.from_config("polish", strict_config))
 
     result = pipeline.process([_entry()])["legacy-id"]
 
@@ -242,7 +507,8 @@ def test_missing_arbitration_decision_is_never_accepted() -> None:
     )
     processor._polisher = Polisher()
     processor._arbiter = MissingArbiter()
-    result = ProofreadPipeline(processor, AiExecutionProfile.from_config("polish", LLMConfig())).process([_entry()])[
+    strict_config = LLMConfig(pp_strategy="strict")
+    result = ProofreadPipeline(processor, AiExecutionProfile.from_config("polish", strict_config)).process([_entry()])[
         "legacy-id"
     ]
 
@@ -364,6 +630,7 @@ def test_local_only_proofread_does_not_require_llm_credentials() -> None:
         LLMConfig(
             api_key="",
             model="",
+            pp_strategy="strict",
             pp_enable_consistency_check=True,
             pp_enable_format_validation=True,
             pp_enable_quality_gate=False,

@@ -72,6 +72,7 @@ class _BatchTranslationWorker(QThread):
         paratranz_client=None,
         project_id: int | None = None,
         run_id: str | None = None,
+        request_budget: object | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -81,6 +82,11 @@ class _BatchTranslationWorker(QThread):
         self._paratranz_client = paratranz_client
         self._project_id = project_id
         self._run_id = run_id
+        if request_budget is None:
+            from transbridge.application.translation.ai_request_budget import AiRequestBudget
+
+            request_budget = AiRequestBudget(int(getattr(llm_config, "max_concurrent", 1)))
+        self._request_budget = request_budget
 
         self._stop_event = threading.Event()
         self._pause_event = threading.Event()
@@ -205,6 +211,15 @@ class _BatchTranslationWorker(QThread):
             overwrite=self._overwrite,
         )
 
+        # Keep per-call request/response/error logs beside the existing batch
+        # stream logs so the current viewer can expose both without recursion.
+        plugin_log_dir = os.path.join(self._stream_log_dir, plugin_name)
+        os.makedirs(plugin_log_dir, exist_ok=True)
+        from .workflow_log_store import WorkflowLogStore
+        from .workflow_logging_client import WorkflowLoggingLLMClient
+
+        log_store = WorkflowLogStore(slot.esp_path, workflow="batch_translation", log_dir=plugin_log_dir)
+
         # 创建翻译器（使用共享的 in-flight 缓存）
         translator = AutoTranslator(
             translator_cfg,
@@ -213,6 +228,17 @@ class _BatchTranslationWorker(QThread):
             shared_in_flight_terms=self._shared_in_flight_terms,
             shared_in_flight_lock=self._shared_in_flight_lock,
             run_id_factory=(None if self._run_id is None else lambda: f"{self._run_id}:{plugin_name}"),
+            request_budget=self._request_budget,
+            llm_client_wrapper=lambda client: WorkflowLoggingLLMClient(
+                client,
+                log_store,
+                channel_prefix="translate_call",
+            ),
+            term_llm_client_wrapper=lambda client: WorkflowLoggingLLMClient(
+                client,
+                log_store,
+                channel_prefix="term_call",
+            ),
         )
 
         # 检查断点
@@ -226,11 +252,8 @@ class _BatchTranslationWorker(QThread):
             target_ids = [e.key for e in slot.collection if not e.translation or e.stage == 0]
             if not target_ids:
                 # 无需翻译
+                log_store.close()
                 return TranslationResult(success_count=0, skipped_count=len(slot.collection))
-
-        # 日志目录
-        plugin_log_dir = os.path.join(self._stream_log_dir, plugin_name)
-        os.makedirs(plugin_log_dir, exist_ok=True)
 
         _file_handles: dict[int, object] = {}
 
@@ -255,6 +278,7 @@ class _BatchTranslationWorker(QThread):
             )
             for fh in _file_handles.values():
                 fh.close()
+            log_store.close()
             try:
                 from .reporting import render_translation_report
 
@@ -270,6 +294,7 @@ class _BatchTranslationWorker(QThread):
         except Exception as e:
             for fh in _file_handles.values():
                 fh.close()
+            log_store.close()
             import traceback
 
             err_msg = f"❌ 插件 {plugin_name} 翻译异常: {e}"

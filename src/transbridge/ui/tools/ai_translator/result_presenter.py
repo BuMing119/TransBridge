@@ -35,9 +35,13 @@ class ResultPresenter:
         if translate:
             lines.append(f"翻译: 成功 {translate.success_count}, 失败 {translate.failed_count}")
         if polish:
-            lines.append(f"润色: 成功 {polish.success_count}, 失败 {polish.failed_count}")
+            pending_count = int(getattr(polish, "pending_count", 0))
+            lines.append(
+                f"润色: 成功 {polish.success_count}, 失败 {polish.failed_count}"
+                + (f"，待审 {pending_count}" if pending_count else "")
+            )
             details = getattr(polish, "details", None)
-            failed = [detail for detail in details or () if not detail["success"]]
+            failed = [detail for detail in details or () if detail.get("verdict") in {"error", "failed", "reject"}]
             if failed:
                 lines.append(f"润色失败条目 ({len(failed)}):")
                 lines.extend(f"  - {detail['key']}: {detail.get('error', '未知错误')[:50]}" for detail in failed[:5])

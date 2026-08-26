@@ -75,7 +75,8 @@ class _BatchConfigDialog(QDialog):
         self._concurrent_spin = QSpinBox()
         self._concurrent_spin.setRange(1, 50)
         self._concurrent_spin.setValue(20)
-        layout.addLayout(_row("并发数:", self._concurrent_spin))
+        self._concurrent_spin.setToolTip("本次批量 AI 工作流共享的最大在途 LLM 请求数")
+        layout.addLayout(_row("最大并发请求数（任务共享）:", self._concurrent_spin))
 
         # 测试按钮
         test_btn = QPushButton("测试连接")

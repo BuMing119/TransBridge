@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from PyQt6 import sip
-from PyQt6.QtCore import QCoreApplication, QEvent
+from PyQt6.QtCore import QCoreApplication, QEvent, QObject, QThread, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QWidget
 import pytest
 
@@ -28,6 +28,7 @@ from transbridge.ui.tools.ai_translator.result_view import show_polish_report
 from transbridge.ui.tools.ai_translator.run_controller import (
     RunAlreadyActiveError,
     RunController,
+    start_mixed_run,
 )
 from transbridge.ui.tools.ai_translator.scope_presenter import ScopePresenter, Step2ScopeAdapter
 
@@ -45,6 +46,10 @@ class Entry:
     dsd_type: str | None = None
     dsd_index: int | None = None
     editor_id: str | None = None
+
+
+def _run_config(max_concurrent: object = 2) -> SimpleNamespace:
+    return SimpleNamespace(max_concurrent=max_concurrent)
 
 
 class WorkbenchPort:
@@ -93,6 +98,34 @@ def test_scope_presenter_combines_dimensions_without_copying_entries() -> None:
     assert presenter.candidates()[0] is keep
 
 
+def test_scope_estimate_exposes_request_tokens_oversized_and_shared_concurrency() -> None:
+    entries = [
+        TranslationEntry("one", "one", "short", "", 0, "NPC_:FULL"),
+        TranslationEntry("long", "long", "x" * 100, "", 0, "NPC_:FULL"),
+    ]
+    presenter = ScopePresenter(
+        collection_provider=lambda: entries,
+        label_projection_provider=lambda: {},
+        category_of=lambda _entry: "人名",
+        workbench=WorkbenchPort(),
+    )
+    presenter.reset_default(polish=False)
+
+    estimate = presenter.estimate(
+        mode="translate",
+        rules=None,
+        overwrite=False,
+        max_tokens=20,
+        model="unknown-compatible-model",
+        max_concurrent=7,
+    )
+
+    assert "2 条 / 1 个请求" in estimate.text
+    assert "内容 Token 平均" in estimate.text
+    assert "共享并发 7" in estimate.text
+    assert "超限 1 条" in estimate.text
+
+
 def test_step2_adapter_prefers_public_filtered_entries() -> None:
     step2 = WorkbenchPort([Entry("one")])
     adapter = Step2ScopeAdapter(step2)
@@ -116,17 +149,17 @@ def test_run_controller_rejects_reentry_and_releases_terminal_resources() -> Non
             self.closed += 1
 
     controller = RunController(owner_id="window")
-    first = controller.begin("translate", object(), [Entry("one")])
+    first = controller.begin("translate", _run_config(), [Entry("one")])
     observed: list[str] = []
     worker = Worker()
     progress = Progress()
     controller.attach(first.run_id, worker=worker, progress=progress)
 
     with pytest.raises(RunAlreadyActiveError):
-        controller.begin("polish", object(), [Entry("two")])
+        controller.begin("polish", _run_config(), [Entry("two")])
 
     controller.terminal_guard(first.run_id, observed.append)("done")
-    second = controller.begin("polish", object(), [Entry("two")])
+    second = controller.begin("polish", _run_config(), [Entry("two")])
     controller.guard(first.run_id, observed.append)("late")
     controller.close()
     controller.guard(second.run_id, observed.append)("closed")
@@ -135,13 +168,57 @@ def test_run_controller_rejects_reentry_and_releases_terminal_resources() -> Non
     assert progress.closed == 1
 
 
+def test_run_controller_owns_one_frozen_request_budget_per_run() -> None:
+    config = _run_config(max_concurrent=3)
+    controller = RunController(owner_id="window")
+
+    first = controller.begin("translate", config, [Entry("one")])
+    first_budget = first.request_budget
+    first_copy = first.config
+    second_copy = first.config
+    config.max_concurrent = 7
+
+    assert first_budget.max_in_flight == 3
+    assert first.request_budget is first_budget
+    assert first_copy is not second_copy
+    first_copy.max_concurrent = 99
+    assert first.request_budget is first_budget
+    assert first.request_budget.max_in_flight == 3
+    assert second_copy.max_concurrent == 3
+
+    controller.finish(first.run_id)
+    second = controller.begin("translate", config, [Entry("two")])
+
+    assert second.request_budget is not first_budget
+    assert second.request_budget.max_in_flight == 7
+
+
+@pytest.mark.parametrize("max_concurrent", [0, -1, None, "3", 1.5, True])
+def test_run_controller_rejects_invalid_max_concurrent(max_concurrent: object) -> None:
+    controller = RunController(owner_id="window")
+
+    with pytest.raises(ValueError, match=r"config\.max_concurrent must be a positive integer"):
+        controller.begin("translate", _run_config(max_concurrent), [Entry("one")])
+
+    assert controller.active_request is None
+
+
+def test_run_controller_rejects_missing_max_concurrent() -> None:
+    controller = RunController(owner_id="window")
+
+    with pytest.raises(ValueError, match=r"config\.max_concurrent must be a positive integer"):
+        controller.begin("translate", object(), [Entry("one")])
+
+    assert controller.active_request is None
+
+
 def test_run_controller_close_cancels_worker_and_closes_progress() -> None:
     worker = SimpleNamespace(cancelled=0)
     worker.cancel = lambda: setattr(worker, "cancelled", worker.cancelled + 1)
     progress = SimpleNamespace(closed=0)
     progress.close = lambda: setattr(progress, "closed", progress.closed + 1)
     controller = RunController()
-    request = controller.begin("mixed", object(), [])
+    request = controller.begin("mixed", _run_config(), [])
     controller.attach(request.run_id, worker=worker, progress=progress)
 
     controller.close()
@@ -151,27 +228,197 @@ def test_run_controller_close_cancels_worker_and_closes_progress() -> None:
     assert controller.is_running is False
 
 
-def test_mixed_translate_uses_its_cancel_event(monkeypatch) -> None:
+def test_run_controller_releases_destroyed_qt_resources_before_close() -> None:
+    app = QApplication.instance() or QApplication([])
+    worker = QThread()
+    progress = QWidget()
+    controller = RunController()
+    request = controller.begin("mixed", _run_config(), [])
+    controller.attach(request.run_id, worker=worker, progress=progress)
+
+    worker.deleteLater()
+    progress.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
+
+    assert sip.isdeleted(worker)
+    assert sip.isdeleted(progress)
+    assert controller.is_running is False
+    controller.close()
+
+
+def test_mixed_cancelled_signal_releases_active_run_and_allows_restart(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+
+    class Worker(QObject):
+        progress = pyqtSignal(object)
+        log = pyqtSignal(str)
+        finished = pyqtSignal(object)
+        error = pyqtSignal(str)
+        cancelled = pyqtSignal()
+
+        progress_stages = (("translate", "翻译"),)
+        execution_order = "serial"
+        stream_log_dir = ""
+        stream_log_error = ""
+
+        def __init__(self, **_kwargs) -> None:
+            super().__init__()
+            self.cancel_calls = 0
+
+        def start(self) -> None:
+            pass
+
+        def cancel(self) -> None:
+            self.cancel_calls += 1
+
+        def isRunning(self) -> bool:  # noqa: N802 - Qt compatibility
+            return False
+
+    from transbridge.ui.tools.ai_translator import _mixed_worker as worker_module, run_controller as controller_module
+
+    monkeypatch.setattr(worker_module, "_MixedWorker", Worker)
+    monkeypatch.setattr(controller_module, "show_and_activate", lambda *_args, **_kwargs: None)
+    config = SimpleNamespace(
+        api_key="secret",
+        model="model",
+        provider="openai_compatible",
+        max_concurrent=2,
+        mixed_execution_order="serial",
+    )
+    controller = RunController(owner_id="window")
+    request = controller.begin("mixed", config, [Entry("one")])
+    progress = start_mixed_run(
+        controller,
+        request,
+        SimpleNamespace(),
+        config,
+        [Entry("one")],
+        [],
+        finished=lambda _result: None,
+        error=lambda _message: None,
+    )
+
+    progress._request_stop()
+    progress._worker.cancelled.emit()
+    app.processEvents()
+
+    assert controller.active_request is None
+    restarted = controller.begin("mixed", config, [Entry("two")])
+    assert restarted.run_id != request.run_id
+    controller.finish(restarted.run_id)
+
+
+def test_mixed_translate_uses_its_cancel_event(monkeypatch, tmp_path) -> None:
     observed = {}
+    constructor_options = {}
+    progress_updates = []
+    logs = []
 
     class Translator:
-        def __init__(self, _config, **_kwargs) -> None:
-            pass
+        def __init__(self, _config, **kwargs) -> None:
+            constructor_options.update(kwargs)
 
         def translate(self, **kwargs):
             observed.update(kwargs)
+            kwargs["stage_progress_callback"]("terms", 2, 5, "已完成术语抽取 2/5 批，本批新增候选 3 个")
+            kwargs["progress_callback"](1, 2, "已完成第一批", 1, 0, 3)
+            kwargs["log_callback"](1, "批次响应完成")
+            kwargs["stream_callback"](1, "raw batch response")
             return SimpleNamespace(success_count=0, failed_count=0)
 
     import transbridge.ai_translator.translator as translator_module
 
     monkeypatch.setattr(translator_module, "AutoTranslator", Translator)
     monkeypatch.setattr(translator_module, "TranslatorConfig", lambda **kwargs: kwargs)
+    monkeypatch.setattr(
+        "transbridge.ui.tools.ai_translator.workflow_log_store.ParatranzConfig.get_data_dir",
+        lambda: str(tmp_path),
+    )
     ctx = SimpleNamespace(collection=[Entry("one")], esp_path="plugin.esp")
     worker = _MixedWorker(object(), [Entry("one")], [], ctx=ctx)
+    worker.progress.connect(progress_updates.append)
+    worker.log.connect(logs.append)
 
     worker._do_translate()
+    worker._log_store.close()
 
     assert observed["stop_event"] is worker._cancelled
+    assert observed["pause_event"] is worker._pause_event
+    assert callable(constructor_options["llm_client_wrapper"])
+    assert callable(constructor_options["term_llm_client_wrapper"])
+    assert worker.progress_stages[:2] == (("terms", "术语抽取"), ("translate", "翻译"))
+    assert [update.stage for update in progress_updates] == ["terms", "translate"]
+    assert progress_updates[0].current == 2
+    assert progress_updates[0].total == 5
+    assert progress_updates[0].success == 2
+    assert progress_updates[0].failed == 0
+    assert progress_updates[0].pending == 3
+    assert progress_updates[0].new_terms == 3
+    assert progress_updates[1].current == 1
+    assert progress_updates[1].new_terms == 3
+    assert logs == ["[翻译批次 1] 批次响应完成"]
+    assert (Path(worker.stream_log_dir) / "stage_terms.log").read_text(encoding="utf-8") == (
+        "2/5 已完成术语抽取 2/5 批，本批新增候选 3 个\n"
+    )
+    assert (Path(worker.stream_log_dir) / "batch_001.log").read_text(encoding="utf-8") == "raw batch response"
+
+
+def test_translation_progress_window_consumes_term_stage_signal() -> None:
+    class Worker(QObject):
+        progress = pyqtSignal(int, int, str, int, int, int)
+        stage_progress = pyqtSignal(str, int, int, str)
+        log = pyqtSignal(int, str)
+        result = pyqtSignal(object)
+        error = pyqtSignal(str)
+        finished = pyqtSignal()
+
+        stream_log_dir = ""
+        is_paused = False
+
+        def isRunning(self) -> bool:  # noqa: N802 - Qt compatibility
+            return False
+
+    app = QApplication.instance() or QApplication([])
+    worker = Worker()
+    window = _TranslationProgressWindow(worker, SimpleNamespace())
+
+    worker.stage_progress.emit("terms", 3, 8, "正在处理第 3 批")
+    app.processEvents()
+
+    assert (window._total_progress_bar.maximum(), window._total_progress_bar.value()) == (8, 3)
+    assert window._total_progress_lbl.text() == "3 / 8"
+    assert window._progress_msg.full_text == "术语抽取：正在处理第 3 批"
+
+    worker.progress.emit(1, 4, "正在翻译第 1 批", 1, 0, 2)
+    app.processEvents()
+
+    assert (window._total_progress_bar.maximum(), window._total_progress_bar.value()) == (4, 1)
+    assert window._total_progress_lbl.text() == "1 / 4"
+    assert window._progress_msg.full_text == "正在翻译第 1 批"
+    assert window._lbl_terms.full_text == "新增术语: 2"
+
+    window.close()
+
+
+def test_result_presenter_separates_pending_from_failed_polish_results() -> None:
+    polish = SimpleNamespace(
+        success_count=1,
+        failed_count=1,
+        pending_count=1,
+        details=(
+            {"key": "accepted", "success": True, "verdict": "pass", "error": ""},
+            {"key": "pending", "success": False, "verdict": "pending", "error": "needs review"},
+            {"key": "rejected", "success": False, "verdict": "reject", "error": "bad output"},
+        ),
+    )
+
+    summary = ResultPresenter.mixed_summary({"polish": polish})
+
+    assert "润色: 成功 1, 失败 1，待审 1" in summary
+    assert "润色失败条目 (1):" in summary
+    assert "rejected" in summary
+    assert "pending" not in summary
 
 
 def test_result_presenter_commits_only_accepted_polish_results() -> None:
@@ -283,7 +530,7 @@ def test_term_column_conversion_and_facade_dependency_boundary() -> None:
         assert "BatchPlanner" not in view_source
 
 
-def test_facade_constructs_and_keeps_three_mode_entrypoints(monkeypatch) -> None:
+def test_facade_constructs_and_keeps_four_mode_entrypoints(monkeypatch) -> None:
     app = QApplication.instance() or QApplication([])
     monkeypatch.setattr(config_module.LLMConfig, "load_from_file", lambda: LLMConfig())
     ctx = SimpleNamespace(
@@ -301,6 +548,9 @@ def test_facade_constructs_and_keeps_three_mode_entrypoints(monkeypatch) -> None
     assert controls.start_btn.text() == "▶ 开始润色"
     controls.mode_mixed.click()
     assert controls.start_btn.text() == "▶ 开始执行"
+    controls.mode_custom.click()
+    assert controls.start_btn.text() == "▶ 开始执行"
+    assert not controls.custom_profile_group.isHidden()
     controls.mode_translate.click()
     assert controls.start_btn.text() == "▶ 开始翻译"
 

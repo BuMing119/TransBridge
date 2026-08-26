@@ -28,6 +28,17 @@ def build_postprocess_view(view: TranslatorViewOwner) -> None:
     view.controls.pp_enable_check.setToolTip("启用后将对翻译结果进行质量检查、修复和润色，可能增加额外耗时和API调用")
     pp_layout.addWidget(view.controls.pp_enable_check)
 
+    strategy_row = QHBoxLayout()
+    strategy_row.addWidget(QLabel("处理策略:"))
+    view.controls.pp_strategy_combo = QComboBox()
+    view.controls.pp_strategy_combo.addItems(["标准（一次校对润色）", "严格（独立多阶段）"])
+    view.controls.pp_strategy_combo.setToolTip(
+        "标准：一次请求同时纠错、处理术语并优化表达\n严格：按下方开关分别执行检测、修复、润色和裁决"
+    )
+    strategy_row.addWidget(view.controls.pp_strategy_combo)
+    strategy_row.addStretch()
+    pp_layout.addLayout(strategy_row)
+
     # 分隔线
     line1 = QFrame()
     line1.setFrameShape(QFrame.Shape.HLine)
@@ -121,7 +132,7 @@ def build_postprocess_view(view: TranslatorViewOwner) -> None:
     pp_layout.addWidget(view.controls.pp_strict_mode_check)
 
     # 备注说明
-    pp_note = QLabel("<i>提示：润色会在修复后执行，最终译文优先采用润色结果</i>")
+    pp_note = QLabel("<i>标准策略仅执行一次校对润色；下方独立阶段只在严格策略中生效</i>")
     pp_note.setAccessibleName("后处理提示")
     pp_layout.addWidget(pp_note)
 

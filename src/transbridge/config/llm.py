@@ -69,6 +69,7 @@ class LLMConfig:
     bm25_weight: float = 0.5
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     enable_post_process: bool = True
+    pp_strategy: str = "combined"
     pp_enable_consistency_check: bool = True
     pp_enable_format_validation: bool = True
     pp_enable_quality_gate: bool = True
@@ -123,6 +124,7 @@ class LLMConfig:
         ("max_terms_per_batch", "max_terms_per_batch", "int"),
         ("bm25_weight", "bm25_weight", "float"),
         ("enable_post_process", "enable_post_process", "bool"),
+        ("pp_strategy", "pp_strategy", "str"),
         ("pp_enable_consistency_check", "pp_enable_consistency_check", "bool"),
         ("pp_enable_format_validation", "pp_enable_format_validation", "bool"),
         ("pp_enable_quality_gate", "pp_enable_quality_gate", "bool"),

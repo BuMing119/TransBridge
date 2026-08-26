@@ -35,6 +35,73 @@ def _term(
     )
 
 
+def test_resolve_term_returns_effective_entry_case_insensitively():
+    expected = _term("Riverwood", "溪木镇")
+    manager = _manager([expected])
+
+    assert manager.resolve_term(" riverWOOD ") is expected
+    assert manager.has_term("RIVERWOOD") is True
+    assert manager.resolve_term("Unknown") is None
+
+
+def test_resolve_term_does_not_treat_variant_as_primary_conflict():
+    manager = _manager([_term("Whiterun", "白漫城", variants=["White Run"])])
+
+    assert manager.resolve_term("White Run") is None
+
+
+def test_resolve_term_uses_nfkc_whitespace_casefold_and_last_effective_entry_wins():
+    lower_priority = TermEntry(
+        term="Ｒｉｖｅｒ\u3000 Wood",
+        translation="低优先译法",
+        source="json",
+        context="global-low",
+    )
+    authoritative = TermEntry(
+        term="river wood",
+        translation="高优先译法",
+        source="dynamic",
+        context="project-high",
+    )
+    manager = _manager([lower_priority, authoritative])
+
+    resolved = manager.resolve_term("  RIVER\t\nWOOD  ")
+
+    assert resolved is authoritative
+    assert resolved.source == "dynamic"
+    assert resolved.context == "project-high"
+    assert manager.exact_match(["  RIVER\t\nWOOD  "]) == {"river wood": "高优先译法"}
+
+
+def test_resolve_term_last_wins_for_case_variants_without_using_variants():
+    earlier = _term("DragonBorn", "旧译", variants=["Last Dovahkiin"])
+    later = _term("dragonborn", "龙裔", variants=["The Dragonborn"])
+    manager = _manager([earlier, later])
+
+    assert manager.resolve_term("DRAGONBORN") is later
+    assert manager.resolve_term("The Dragonborn") is None
+    assert manager.exact_match(["DRAGONBORN"]) == {"dragonborn": "龙裔"}
+
+
+def test_resolve_term_last_wins_follows_configured_source_priority(monkeypatch):
+    lower_priority = TermEntry("Ｒｉｖｅｒｗｏｏｄ", "低优先译法", "json")
+    authoritative = TermEntry("riverwood", "项目译法", "dynamic")
+    manager = object.__new__(TermDatabaseManager)
+    manager._config = SimpleNamespace(term_priority=["dynamic", "json"])
+    manager._load_log = []
+    monkeypatch.setattr(manager, "_load_json", lambda: [lower_priority])
+    monkeypatch.setattr(manager, "_load_dynamic", lambda: [authoritative])
+    monkeypatch.setattr(manager, "_save_source_cache", lambda *_args: None)
+    monkeypatch.setattr(manager, "save_merged_cache", lambda *_args: None)
+
+    effective = manager._load_all_with_metadata()
+    monkeypatch.setattr(manager, "_effective_terms", lambda: effective)
+
+    assert effective == [lower_priority, authoritative]
+    assert manager.resolve_term("RIVERWOOD") is authoritative
+    assert manager.exact_match(["RIVERWOOD"]) == {"riverwood": "项目译法"}
+
+
 def test_scoped_matches_preserve_flat_compatibility_and_explicit_ownership():
     manager = _manager([
         _term("Dragonborn", "龙裔"),

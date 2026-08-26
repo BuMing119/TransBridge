@@ -223,7 +223,7 @@ def test_mixed_result_actions_register_the_real_excel_artifact(tmp_path: Path) -
     controller = RunController(owner_id="mixed-owner")
     request = controller.begin(
         "mixed",
-        SimpleNamespace(api_key="secret", provider="fixture", model="fixture"),
+        SimpleNamespace(api_key="secret", provider="fixture", model="fixture", max_concurrent=3),
         [SimpleNamespace(id="entry", key="entry", original="source", translation="draft", stage=2)],
     )
 

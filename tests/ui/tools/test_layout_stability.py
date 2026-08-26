@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -87,6 +88,16 @@ class _Activity:
 
     def request_cancel(self) -> None:
         pass
+
+
+def test_output_token_zero_label_is_conditional_on_provider_support(qapp) -> None:
+    parent = QWidget()
+    view = AITranslatorView(parent, _Callbacks())
+
+    view._output_tokens_spin.setValue(0)
+
+    assert view._output_tokens_spin.specialValueText() == "不限制（供应商支持时）"
+    parent.close()
 
 
 def test_ai_footer_long_reason_does_not_move_start_button(qapp) -> None:
@@ -214,11 +225,39 @@ def test_log_viewer_long_path_keeps_toolbar_stable(qapp, viewer_type) -> None:
     qapp.processEvents()
 
     assert long.minimumSizeHint().width() == short.minimumSizeHint().width()
-    assert long._auto_cb.x() == short._auto_cb.x()
+    if viewer_type is _LLMLogViewer:
+        assert long._refresh_btn.x() == short._refresh_btn.x()
+    else:
+        assert long._auto_cb.x() == short._auto_cb.x()
     assert long._path_label.full_text == long_path
     assert long._path_label.toolTip() == long_path
     short.close()
     long.close()
+
+
+def test_llm_log_viewer_refreshes_list_manually_and_loads_only_selection(qapp, tmp_path: Path) -> None:
+    (tmp_path / "proofread_call_001.log").write_text("first log", encoding="utf-8")
+    (tmp_path / "workflow.log").write_text("workflow log", encoding="utf-8")
+    viewer = _LLMLogViewer(str(tmp_path))
+    viewer.show()
+    qapp.processEvents()
+
+    assert viewer._log_selector.count() == 2
+    assert viewer._text_edit.toPlainText() == "workflow log"
+
+    viewer._log_selector.setCurrentIndex(0)
+    qapp.processEvents()
+    assert viewer._text_edit.toPlainText() == "first log"
+
+    (tmp_path / "proofread_call_002.log").write_text("second log", encoding="utf-8")
+    qapp.processEvents()
+    assert viewer._log_selector.count() == 2
+
+    viewer._refresh_btn.click()
+    qapp.processEvents()
+    assert viewer._log_selector.count() == 3
+    assert viewer._text_edit.toPlainText() == "first log"
+    viewer.close()
 
 
 def test_progress_statuses_do_not_change_window_or_action_geometry(qapp) -> None:

@@ -10,6 +10,20 @@ if TYPE_CHECKING:
     from ...converter.translation_entry import TranslationEntry
 
 
+def validate_max_output_tokens(value: int | None) -> int | None:
+    """Validate an optional output limit while preserving legacy defaults."""
+
+    if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 0):
+        raise ValueError("max_output_tokens must be a non-negative integer or None")
+    return value
+
+
+def output_token_limit(configured: int | None, legacy_default: int) -> int:
+    """Use an explicit run setting, including zero, or a legacy stage default."""
+
+    return legacy_default if configured is None else configured
+
+
 @dataclass
 class PostProcessIssue:
     """后处理发现的问题。"""
@@ -43,9 +57,9 @@ class PostProcessResult:
     needs_review: list[str] = field(default_factory=list)
 
     # ── 中间数据（用于报告生成）──
-    refine_results: dict | None = None     # {entry_id: RefineResult}
-    polish_results: dict | None = None     # {entry_id: PolishResult}
-    decisions: dict | None = None          # {entry_id: ArbiterDecision}
+    refine_results: dict | None = None  # {entry_id: RefineResult}
+    polish_results: dict | None = None  # {entry_id: PolishResult}
+    decisions: dict | None = None  # {entry_id: ArbiterDecision}
 
     def add_issue(self, issue: PostProcessIssue) -> None:
         """添加问题。"""

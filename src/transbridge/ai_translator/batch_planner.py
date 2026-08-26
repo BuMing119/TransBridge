@@ -10,17 +10,25 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import sys
 from typing import TYPE_CHECKING
 
+from transbridge.application.translation.token_batching import OversizedContentItem, StableContentBatcher
+from transbridge.infra.token_counting import TiktokenContentTokenCounter
+
 if TYPE_CHECKING:
+    from transbridge.application.translation.token_batching import ContentTokenCounter
     from transbridge.converter.translation_entry import TranslationEntry
 
 
 @dataclass
 class Batch:
-    entries: list["TranslationEntry"]
-    batch_type: str            # "人名" | "地名" | "对话" | ...
-    quest_formid: str = ""     # 仅对话批次有值
+    entries: list[TranslationEntry]
+    batch_type: str  # "人名" | "地名" | "对话" | ...
+    quest_formid: str = ""  # 仅对话批次有值
+    content_tokens: int = 0
+    content_tokens_estimated: bool = False
+    fingerprint: str = ""
 
 
 @dataclass
@@ -28,6 +36,7 @@ class BatchPlan:
     round1: list[Batch] = field(default_factory=list)
     round2: list[Batch] = field(default_factory=list)
     round3: list[Batch] = field(default_factory=list)
+    oversized: list[OversizedContentItem] = field(default_factory=list)
 
     def all_batches(self) -> list[Batch]:
         return self.round1 + self.round2 + self.round3
@@ -44,10 +53,25 @@ class BatchPlan:
 
 
 class BatchPlanner:
-    def __init__(self, max_tokens_per_batch: int = 2000):
+    def __init__(
+        self,
+        max_tokens_per_batch: int = 2000,
+        *,
+        model: str = "",
+        token_counter: ContentTokenCounter | None = None,
+    ) -> None:
+        if (
+            isinstance(max_tokens_per_batch, bool)
+            or not isinstance(max_tokens_per_batch, int)
+            or max_tokens_per_batch <= 0
+        ):
+            raise ValueError("max_tokens_per_batch must be a positive integer")
         self._max_tokens = max_tokens_per_batch
+        self._counter = token_counter or TiktokenContentTokenCounter(model)
 
-    def plan(self, entries: list["TranslationEntry"], max_workers: int = 0) -> BatchPlan:
+    def plan(self, entries: list[TranslationEntry], max_workers: int | None = None) -> BatchPlan:
+        # Compatibility only: concurrency controls request scheduling, never batch boundaries.
+        del max_workers
         from transbridge.application.translation import (
             ActionPlanner,
             ActionRuleSpec,
@@ -70,84 +94,33 @@ class BatchPlanner:
             planning_entries,
             [ActionRuleSpec("legacy-batch-planner", 0, TranslationAction.TRANSLATE)],
         )
-        char_limit = self._compute_adaptive_char_limit(entries, max_workers)
-        context_plan = ContextPlanner(char_limit).plan(planning_entries, action_plan)
+        # ContextPlanner remains the canonical Round/category/quest classifier.
+        # A practically unbounded char limit makes it return one ordered group;
+        # business-content Token batching is then the sole split authority here.
+        context_plan = ContextPlanner(sys.maxsize).plan(planning_entries, action_plan)
         by_key = {entry.identity: entry for entry in entries}
         plan = BatchPlan()
         for context_batch in context_plan.batches:
-            batch = Batch(
-                entries=[by_key[key] for key in context_batch.keys],
-                batch_type=context_batch.category,
-                quest_formid=context_batch.quest_id,
+            grouped_entries = [by_key[key] for key in context_batch.keys]
+            token_plan = StableContentBatcher(self._counter, self._max_tokens).plan(
+                grouped_entries,
+                key=lambda entry: entry.identity,
+                content=lambda entry: entry.original or "",
             )
-            if context_batch.round_number == 1:
-                plan.round1.append(batch)
-            elif context_batch.round_number == 2:
-                plan.round2.append(batch)
-            else:
-                plan.round3.append(batch)
+            plan.oversized.extend(token_plan.oversized)
+            for content_batch in token_plan.batches:
+                batch = Batch(
+                    entries=list(content_batch.items),
+                    batch_type=context_batch.category,
+                    quest_formid=context_batch.quest_id,
+                    content_tokens=content_batch.content_tokens,
+                    content_tokens_estimated=content_batch.is_estimate,
+                    fingerprint=content_batch.fingerprint,
+                )
+                if context_batch.round_number == 1:
+                    plan.round1.append(batch)
+                elif context_batch.round_number == 2:
+                    plan.round2.append(batch)
+                else:
+                    plan.round3.append(batch)
         return plan
-
-    def _compute_adaptive_char_limit(self, entries: list, max_workers: int) -> int:
-        """计算自适应字符限制，确保批次数 >= max_workers * 2。
-
-        当总条目数较少时，缩小批次大小以增加批次数，提高并发效率。
-        限制范围：[600, self._max_tokens * 3]
-        """
-        entry_count = len(entries)
-        if max_workers <= 0 or entry_count <= 0:
-            return self._max_tokens * 3
-
-        # 目标：批次数 >= max_workers * 2
-        target_batches = max_workers * 2
-
-        # 如果条目数本身就很少，无需调整
-        if entry_count <= target_batches:
-            return self._max_tokens * 3
-
-        # 计算实际总字符数
-        total_chars = sum(len(e.original or "") + len(e.key or "") for e in entries)
-
-        # 目标：每批字符数 = 总字符数 / 目标批次数
-        # 留10%余量确保达到目标批次数
-        adaptive_limit = int((total_chars / target_batches) * 0.9)
-
-        # 限制在合理范围 [600, _max_tokens * 3]
-        # 最小600字符约等于10-15条短文本，既保证并发又不会创建过多小批次
-        max_char_limit = self._max_tokens * 3
-        effective_limit = max(600, min(max_char_limit, adaptive_limit))
-
-        return effective_limit
-
-    def _split_by_tokens(self, entries: list["TranslationEntry"], char_limit: int | None = None) -> list[list["TranslationEntry"]]:
-        """简单按字符数估算 token 数，超过阈值则切分。"""
-        if not entries:
-            return []
-        if char_limit is None:
-            # 约 1 token ≈ 4 chars（英文）；留余量乘 1.5 安全系数
-            char_limit = self._max_tokens * 3
-
-        batches: list[list["TranslationEntry"]] = []
-        current: list["TranslationEntry"] = []
-        current_chars = 0
-
-        for entry in entries:
-            entry_chars = len(entry.original or "") + len(entry.key or "")
-            if current and current_chars + entry_chars > char_limit:
-                batches.append(current)
-                current = []
-                current_chars = 0
-            current.append(entry)
-            current_chars += entry_chars
-
-        if current:
-            batches.append(current)
-        return batches
-
-    @staticmethod
-    def _get_quest_formid(entry: "TranslationEntry") -> str:
-        """从 entry.context 解析 quest_formid（如 INFO:NAM1|00012345 → 00012345）。"""
-        ctx = entry.context or ""
-        if "|" in ctx:
-            return ctx.split("|", 1)[1]
-        return ""

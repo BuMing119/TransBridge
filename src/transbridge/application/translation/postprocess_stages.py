@@ -18,6 +18,8 @@ from urllib import error, request
 
 from transbridge.application.contracts import Diagnostic, DiagnosticSeverity, ErrorCategory
 from transbridge.application.io import EntryKey
+from transbridge.application.translation.token_batching import StableContentBatcher
+from transbridge.infra.token_counting import TiktokenContentTokenCounter
 
 from .postprocess import PostProcessCandidate, PostProcessStageOutcome
 from .workload_models import canonical_hash
@@ -98,9 +100,11 @@ class OpenAiPostProcessHttpPort:
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "Idempotency-Key": canonical_hash(
-                {"phase": phase.value, "run_id": req.run_id, "keys": [key.to_dict() for key in _keys(req)]}
-            ),
+            "Idempotency-Key": canonical_hash({
+                "phase": phase.value,
+                "run_id": req.run_id,
+                "keys": [key.to_dict() for key in _keys(req)],
+            }),
         }
         credential = self._credential()
         if credential:
@@ -136,6 +140,35 @@ class OpenAiPostProcessHttpPort:
             raise PostProcessLlmError(
                 "POSTPROCESS_RESPONSE_MALFORMED",
                 "The post-process service returned malformed JSON.",
+                response_sha256=response_sha256,
+            ) from None
+        return PostProcessLlmResponse(values, response_sha256)
+
+
+class LlmClientPostProcessPort:
+    """Run post-process requests through the configured, run-limited LLM client."""
+
+    def __init__(self, client: Any, *, max_output_tokens: int = 4000) -> None:
+        self._client = client
+        self._max_output_tokens = max_output_tokens
+
+    def apply(self, phase: PostProcessLlmPhase, req: PostProcessLlmRequest) -> PostProcessLlmResponse:
+        messages = _payload(phase, req)["messages"]
+        try:
+            content = self._client.chat(messages, max_tokens=self._max_output_tokens)
+        except Exception as exc:
+            raise PostProcessLlmError(
+                "POSTPROCESS_LLM_CALL_FAILED",
+                f"The post-process model call failed: {type(exc).__name__}",
+            ) from exc
+        encoded = str(content).encode("utf-8")
+        response_sha256 = hashlib.sha256(encoded).hexdigest()
+        try:
+            values = _values(json.loads(content))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raise PostProcessLlmError(
+                "POSTPROCESS_RESPONSE_MALFORMED",
+                "The post-process model returned malformed JSON.",
                 response_sha256=response_sha256,
             ) from None
         return PostProcessLlmResponse(values, response_sha256)
@@ -217,14 +250,45 @@ def _values(payload: Any) -> tuple[tuple[EntryKey, str], ...]:
 class CheckerStage:
     """Candidate DTO adapter around one legacy BaseChecker."""
 
-    def __init__(self, phase: str, checker: Any) -> None:
+    def __init__(
+        self,
+        phase: str,
+        checker: Any,
+        *,
+        model: str = "",
+        max_tokens_per_batch: int | None = None,
+    ) -> None:
         self.phase = phase
         self._checker = checker
+        self._batcher = (
+            StableContentBatcher(TiktokenContentTokenCounter(model), max_tokens_per_batch, max_items=1)
+            if max_tokens_per_batch is not None
+            else None
+        )
 
     def __call__(self, candidates: tuple[PostProcessCandidate, ...]) -> PostProcessStageOutcome:
         diagnostics: list[Diagnostic] = []
-        issues = 0
+        oversized_keys: set[EntryKey] = set()
+        if self._batcher is not None:
+            plan = self._batcher.plan(
+                candidates,
+                key=lambda candidate: candidate.entry_key,
+                content=lambda candidate: (candidate.original, candidate.text, candidate.context),
+            )
+            oversized_keys = {item.entry_key for item in plan.oversized}
+            diagnostics.extend(
+                Diagnostic(
+                    "POSTPROCESS_CONTENT_TOKEN_LIMIT",
+                    item.message,
+                    category=ErrorCategory.INPUT,
+                    severity=DiagnosticSeverity.ERROR,
+                    details=(("entry_key", item.entry_key.to_dict()),),
+                )
+                for item in plan.oversized
+            )
         for candidate in candidates:
+            if candidate.entry_key in oversized_keys:
+                continue
             view = _EntryView(candidate)
             try:
                 found = self._checker.check(view)
@@ -239,7 +303,6 @@ class CheckerStage:
                     )
                 )
                 continue
-            issues += len(found)
             for issue in found:
                 diagnostics.append(
                     Diagnostic(
@@ -247,9 +310,7 @@ class CheckerStage:
                         issue.message,
                         category=ErrorCategory.INPUT,
                         severity=(
-                            DiagnosticSeverity.ERROR
-                            if issue.severity == "error"
-                            else DiagnosticSeverity.WARNING
+                            DiagnosticSeverity.ERROR if issue.severity == "error" else DiagnosticSeverity.WARNING
                         ),
                         details=(("entry_key", candidate.entry_key.to_dict()),),
                     )
@@ -269,6 +330,8 @@ class LlmPostProcessStage:
         game_profile: str = "skyrim_se",
         base_url: str = "http://127.0.0.1",
         model: str = "fixture-model",
+        max_tokens_per_batch: int | None = None,
+        max_items: int | None = None,
     ) -> None:
         self.phase = phase.value
         self._phase = phase
@@ -277,20 +340,56 @@ class LlmPostProcessStage:
         self._game_profile = game_profile
         self._base_url = base_url
         self._model = model
+        self._batcher = (
+            StableContentBatcher(TiktokenContentTokenCounter(model), max_tokens_per_batch, max_items=max_items)
+            if max_tokens_per_batch is not None
+            else None
+        )
 
     def __call__(self, candidates: tuple[PostProcessCandidate, ...]) -> PostProcessStageOutcome:
         if not candidates:
             return PostProcessStageOutcome(self.phase, candidates)
+        if self._batcher is None:
+            return self._apply_batch(candidates)
+        plan = self._batcher.plan(
+            candidates,
+            key=lambda candidate: candidate.entry_key,
+            content=lambda candidate: (candidate.original, candidate.text, candidate.context),
+        )
+        diagnostics = [
+            Diagnostic(
+                "POSTPROCESS_CONTENT_TOKEN_LIMIT",
+                item.message,
+                category=ErrorCategory.INPUT,
+                severity=DiagnosticSeverity.ERROR,
+                details=(("entry_key", item.entry_key.to_dict()),),
+            )
+            for item in plan.oversized
+        ]
+        updated: list[PostProcessCandidate] = []
+        for batch in plan.batches:
+            outcome = self._apply_batch(batch.items)
+            updated.extend(outcome.candidates)
+            diagnostics.extend(outcome.diagnostics)
+        return PostProcessStageOutcome(self.phase, tuple(updated), tuple(diagnostics))
+
+    def _apply_batch(self, candidates: tuple[PostProcessCandidate, ...]) -> PostProcessStageOutcome:
         request = PostProcessLlmRequest(
-            self._phase, candidates[0].run_id, candidates,
-            target_locale=self._target_locale, game_profile=self._game_profile,
-            base_url=self._base_url, model=self._model,
+            self._phase,
+            candidates[0].run_id,
+            candidates,
+            target_locale=self._target_locale,
+            game_profile=self._game_profile,
+            base_url=self._base_url,
+            model=self._model,
         )
         try:
             response = self._port.apply(self._phase, request)
         except PostProcessLlmError as exc:
             diagnostic = Diagnostic(
-                exc.code, exc.safe_message, category=ErrorCategory.EXTERNAL,
+                exc.code,
+                exc.safe_message,
+                category=ErrorCategory.EXTERNAL,
                 severity=DiagnosticSeverity.ERROR,
             )
             return PostProcessStageOutcome(self.phase, candidates, (diagnostic,))
@@ -364,19 +463,28 @@ def build_http_postprocess_stages(
     """Refine -> polish -> arbitrate chain over one controlled LLM port."""
     return (
         LlmPostProcessStage(
-            PostProcessLlmPhase.REFINE, port,
-            target_locale=target_locale, game_profile=game_profile,
-            base_url=base_url, model=model,
+            PostProcessLlmPhase.REFINE,
+            port,
+            target_locale=target_locale,
+            game_profile=game_profile,
+            base_url=base_url,
+            model=model,
         ),
         LlmPostProcessStage(
-            PostProcessLlmPhase.POLISH, port,
-            target_locale=target_locale, game_profile=game_profile,
-            base_url=base_url, model=model,
+            PostProcessLlmPhase.POLISH,
+            port,
+            target_locale=target_locale,
+            game_profile=game_profile,
+            base_url=base_url,
+            model=model,
         ),
         LlmPostProcessStage(
-            PostProcessLlmPhase.ARBITRATE, port,
-            target_locale=target_locale, game_profile=game_profile,
-            base_url=base_url, model=model,
+            PostProcessLlmPhase.ARBITRATE,
+            port,
+            target_locale=target_locale,
+            game_profile=game_profile,
+            base_url=base_url,
+            model=model,
         ),
     )
 

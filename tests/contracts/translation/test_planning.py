@@ -216,6 +216,7 @@ def test_auto_translator_passes_prompt_profile_and_target_language(
         game_profile="fallout4",
         target_lang="ja_JP",
         max_tokens_per_batch=500,
+        max_concurrent=1,
     )
 
     AutoTranslator(TranslatorConfig(config, "fixture.esp"))

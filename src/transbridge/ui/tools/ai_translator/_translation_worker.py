@@ -17,17 +17,19 @@ _logger = logging.getLogger(__name__)
 class _TranslationWorker(QThread):
     # current, total, message, success, failed, new_terms
     progress = pyqtSignal(int, int, str, int, int, int)
+    stage_progress = pyqtSignal(str, int, int, str)
     log = pyqtSignal(int, str)  # (batch_idx, line) 详细日志行；batch_idx=-1 表示轮次级消息
     result = pyqtSignal(object)
     error = pyqtSignal(str)
 
-    def __init__(self, translator, collection, target_entries, checkpoint=None, *, esp_path: str):
+    def __init__(self, translator, collection, target_entries, checkpoint=None, *, esp_path: str, log_store=None):
         super().__init__()
         self._translator = translator
         self._collection = collection
         self._target_entries = target_entries
         self._checkpoint = checkpoint
         self._esp_path = esp_path
+        self._log_store = log_store
         self._stop_event = threading.Event()
         self._pause_event = threading.Event()
         self._pause_event.set()  # 初始为运行状态
@@ -43,6 +45,8 @@ class _TranslationWorker(QThread):
         return Path(self._esp_path).stem
 
     def _make_stream_log_dir(self) -> str:
+        if self._log_store is not None and self._log_store.is_available:
+            return self._log_store.log_dir
         from transbridge.paratranz.config_manager import ParatranzConfig
 
         log_base = os.path.join(ParatranzConfig.get_data_dir(), "log")
@@ -68,8 +72,8 @@ class _TranslationWorker(QThread):
 
     def run(self):
         self._stream_log_dir = self._make_stream_log_dir()
+        _file_handles: dict[int, object] = {}
         try:
-            _file_handles: dict[int, object] = {}
 
             def _stream_cb(batch_idx: int, chunk: str):
                 if batch_idx not in _file_handles:
@@ -88,9 +92,10 @@ class _TranslationWorker(QThread):
                 checkpoint=self._checkpoint,
                 log_callback=lambda idx, line: self.log.emit(idx, line),
                 stream_callback=_stream_cb,
+                stage_progress_callback=lambda stage, current, total, message: self.stage_progress.emit(
+                    stage, current, total, message
+                ),
             )
-            for fh in _file_handles.values():
-                fh.close()
             try:
                 from .reporting import render_translation_report
 
@@ -105,3 +110,8 @@ class _TranslationWorker(QThread):
         except Exception as exc:
             _logger.error("翻译Worker异常:\n%s", traceback.format_exc())
             self.error.emit(str(exc))
+        finally:
+            for fh in _file_handles.values():
+                fh.close()
+            if self._log_store is not None:
+                self._log_store.close()

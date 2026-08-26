@@ -21,8 +21,9 @@ from PyQt6.QtWidgets import (
 
 from transbridge.converter.translation_entry import STAGE_LABELS
 from transbridge.ui.foundation.components import ComponentDensity, ComponentKind, ComponentStyle, SemanticState
-from transbridge.ui.tools.ai_translator.scope_presenter import ScopeEstimate, TranslationScope
+from transbridge.ui.tools.ai_translator.scope_presenter import ScopeEstimate, ScopePresenter, TranslationScope
 from transbridge.ui.tools.ai_translator.view_controls import TranslatorViewOwner
+from transbridge.ui.tools.ai_translator.view_state import ScopeOptions
 
 
 class ScopeCallbacks(Protocol):
@@ -99,6 +100,18 @@ def _new_button(anchor: QPushButton, callback: Callable[[], None]) -> QPushButto
 def render_scope_estimate(view: TranslatorViewOwner, estimate: ScopeEstimate) -> None:
     label = view.controls.mixed_estimate_lbl if estimate.target == "mixed" else view.controls.estimate_lbl
     label.setText(estimate.text)
+
+
+def refresh_scope_estimate(view: TranslatorViewOwner, presenter: ScopePresenter, options: ScopeOptions) -> None:
+    estimate = presenter.estimate(
+        mode=options.mode,
+        rules=options.rules,
+        overwrite=options.overwrite,
+        max_tokens=options.max_tokens,
+        model=view.controls.model_edit.text().strip(),
+        max_concurrent=options.max_concurrent,
+    )
+    render_scope_estimate(view, estimate)
 
 
 def build_scope_view(view: TranslatorViewOwner, callbacks: ScopeCallbacks) -> None:

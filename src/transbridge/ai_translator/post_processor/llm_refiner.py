@@ -14,6 +14,7 @@ import tomllib
 from typing import TYPE_CHECKING
 import warnings
 
+from .base import output_token_limit, validate_max_output_tokens
 from .prompt_contract import (
     PromptTemplateContractError,
     build_postprocess_messages,
@@ -219,6 +220,7 @@ class LLMRefiner:
         term_manager: "TermDatabaseManager | None" = None,
         game_profile: str = "skyrim_se",
         target_lang: str = "zh_CN",
+        max_output_tokens: int | None = None,
     ):
         """
         初始化修复者。
@@ -231,6 +233,7 @@ class LLMRefiner:
         """
         self._llm = llm_client
         self._term_manager = term_manager
+        self._max_output_tokens = validate_max_output_tokens(max_output_tokens)
         self._prompts = self._load_prompts(game_profile, target_lang)
 
     def _load_prompts(self, game_profile: str, target_lang: str) -> dict:
@@ -317,7 +320,10 @@ class LLMRefiner:
         messages = self._build_refinement_prompt(entry, issues)
 
         try:
-            response = self._llm.chat(messages=messages, max_tokens=2000)
+            response = self._llm.chat(
+                messages=messages,
+                max_tokens=output_token_limit(self._max_output_tokens, 2000),
+            )
             return self._parse_refinement_response(entry, response)
         except Exception as e:
             # LLM调用失败，返回原始译文并标记
@@ -352,7 +358,10 @@ class LLMRefiner:
         messages = self._build_batch_refinement_prompt(entries, issues_map)
 
         try:
-            response = self._llm.chat(messages=messages, max_tokens=4000)
+            response = self._llm.chat(
+                messages=messages,
+                max_tokens=output_token_limit(self._max_output_tokens, 4000),
+            )
             return self._parse_batch_refinement_response(entries, response)
         except Exception:
             # 批量失败，降级为逐个处理

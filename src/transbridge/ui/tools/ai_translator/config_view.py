@@ -83,15 +83,22 @@ class AITranslatorView:
         self._mode_translate = QRadioButton("翻译")
         self._mode_polish = QRadioButton("润色")
         self._mode_mixed = QRadioButton("混合")
+        self._mode_custom = QRadioButton("自定义")
         self._mode_group.addButton(self._mode_translate)
         self._mode_group.addButton(self._mode_polish)
         self._mode_group.addButton(self._mode_mixed)
+        self._mode_group.addButton(self._mode_custom)
         self._mode_translate.setChecked(True)
         mode_box.addWidget(self._mode_translate)
         mode_box.addWidget(self._mode_polish)
         mode_box.addWidget(self._mode_mixed)
+        mode_box.addWidget(self._mode_custom)
         mode_box.addStretch()
         main_layout.addLayout(mode_box)
+        from .custom_profile_view import build_custom_profile_view
+
+        self._custom_profile_group = build_custom_profile_view(self)
+        main_layout.addWidget(self._custom_profile_group)
         # ── LLM 配置区 ────────────────────────────────────────────────────────
         llm_box = QGroupBox("LLM 配置")
         llm_layout = QVBoxLayout(llm_box)
@@ -126,19 +133,21 @@ class AITranslatorView:
         self._concurrent_spin = QSpinBox()
         self._concurrent_spin.setRange(1, 50)
         self._concurrent_spin.setValue(20)
-        llm_layout.addLayout(_row("并发数:", self._concurrent_spin))
+        self._concurrent_spin.setToolTip("本次 AI 工作流共享的最大在途 LLM 请求数；不是单个请求的条目数")
+        llm_layout.addLayout(_row("最大并发请求数（任务共享）:", self._concurrent_spin))
 
         self._tokens_spin = QSpinBox()
         self._tokens_spin.setRange(200, 32000)
         self._tokens_spin.setSingleStep(200)
         self._tokens_spin.setValue(2500)
-        llm_layout.addLayout(_row("拆批 Token:", self._tokens_spin))
+        self._tokens_spin.setToolTip("每个 LLM 请求中业务内容的 Token 上限；每个请求包含的条目数不固定")
+        llm_layout.addLayout(_row("每请求业务内容 Token 上限:", self._tokens_spin))
 
         self._output_tokens_spin = QSpinBox()
         self._output_tokens_spin.setRange(0, 65536)
         self._output_tokens_spin.setSingleStep(256)
         self._output_tokens_spin.setValue(0)
-        self._output_tokens_spin.setSpecialValueText("不限制（模型默认）")
+        self._output_tokens_spin.setSpecialValueText("不限制（供应商支持时）")
         llm_layout.addLayout(_row("输出 Token:", self._output_tokens_spin))
 
         self._max_terms_spin = QSpinBox()
@@ -357,6 +366,7 @@ class AITranslatorView:
         self._mode_translate.toggled.connect(callbacks.on_mode_changed)
         self._mode_polish.toggled.connect(callbacks.on_mode_changed)
         self._mode_mixed.toggled.connect(callbacks.on_mode_changed)
+        self._mode_custom.toggled.connect(callbacks.on_mode_changed)
         self._overwrite_check.toggled.connect(callbacks.update_estimate)
 
 
@@ -390,6 +400,7 @@ class WindowConfigView:
         h.excel_orig_col_edit.setText(cfg.excel_original_col)
         h.excel_trans_col_edit.setText(cfg.excel_translation_col)
         h.pp_enable_check.setChecked(cfg.enable_post_process)
+        h.pp_strategy_combo.setCurrentIndex(1 if getattr(cfg, "pp_strategy", "combined") == "strict" else 0)
         h.pp_consistency_check.setChecked(cfg.pp_enable_consistency_check)
         h.pp_format_check.setChecked(cfg.pp_enable_format_validation)
         h.pp_quality_gate_check.setChecked(cfg.pp_enable_quality_gate)
@@ -402,6 +413,8 @@ class WindowConfigView:
         h.pp_arbitration_check.setChecked(cfg.pp_enable_arbitration)
         h.pp_strict_mode_check.setChecked(cfg.pp_strict_arbitration)
         h.polish_preview_check.setChecked(cfg.polish_preview_enabled)
+        h.order_combo.setCurrentIndex(1 if getattr(cfg, "mixed_execution_order", "serial") == "parallel" else 0)
+        h.rule_editor.set_rules(list(getattr(cfg, "action_rules", [])))
         h.embed_provider_combo.setCurrentIndex(0 if cfg.embedding.provider == "local" else 1)
         h.embed_local_model_edit.setText(cfg.embedding.local_model_path)
         h.embed_model_edit.setText(cfg.embedding.model)
@@ -442,6 +455,7 @@ class WindowConfigView:
         cfg.excel_original_col = h.excel_orig_col_edit.text().strip() or "A"
         cfg.excel_translation_col = h.excel_trans_col_edit.text().strip() or "B"
         cfg.enable_post_process = h.pp_enable_check.isChecked()
+        cfg.pp_strategy = "strict" if h.pp_strategy_combo.currentIndex() == 1 else "combined"
         cfg.pp_enable_consistency_check = h.pp_consistency_check.isChecked()
         cfg.pp_enable_format_validation = h.pp_format_check.isChecked()
         cfg.pp_enable_quality_gate = h.pp_quality_gate_check.isChecked()
@@ -456,6 +470,8 @@ class WindowConfigView:
         cfg.pp_enable_arbitration = h.pp_arbitration_check.isChecked()
         cfg.pp_strict_arbitration = h.pp_strict_mode_check.isChecked()
         cfg.polish_preview_enabled = h.polish_preview_check.isChecked()
+        cfg.mixed_execution_order = "parallel" if h.order_combo.currentIndex() == 1 else "serial"
+        cfg.action_rules = h.rule_editor.get_rules()
         cfg.embedding.provider = "local" if h.embed_provider_combo.currentIndex() == 0 else "openai"
         cfg.embedding.local_model_path = h.embed_local_model_edit.text().strip()
         cfg.embedding.model = h.embed_model_edit.text().strip()
@@ -516,6 +532,7 @@ class ConfigAutosaveBinding:
             h.excel_trans_col_edit.textChanged,
             h.priority_list.model().rowsMoved,
             h.pp_enable_check.toggled,
+            h.pp_strategy_combo.currentIndexChanged,
             h.pp_consistency_check.toggled,
             h.pp_format_check.toggled,
             h.pp_quality_gate_check.toggled,
@@ -534,6 +551,7 @@ class ConfigAutosaveBinding:
         ):
             signal.connect(self.schedule)
         h.pp_enable_check.toggled.connect(self._callbacks.on_pp_enable_changed)
+        h.pp_strategy_combo.currentIndexChanged.connect(self._callbacks.on_pp_enable_changed)
         h.pp_polish_check.toggled.connect(self._callbacks.on_polish_changed)
 
     def schedule(self, *_args: object) -> None:

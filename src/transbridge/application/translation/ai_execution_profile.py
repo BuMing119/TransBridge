@@ -9,8 +9,10 @@ import json
 from typing import Literal
 
 AiWorkflowPreset = Literal["translate", "polish", "mixed"]
+PostProcessStrategy = Literal["combined", "strict"]
 
 _PROFILE_FIELDS = (
+    "pp_strategy",
     "enable_post_process",
     "pp_enable_consistency_check",
     "pp_enable_format_validation",
@@ -28,6 +30,7 @@ _PROFILE_FIELDS = (
     "pp_arbitration_batch_size",
 )
 _DEFAULT_SETTINGS: dict[str, object] = {
+    "pp_strategy": "combined",
     "enable_post_process": True,
     "pp_enable_consistency_check": True,
     "pp_enable_format_validation": True,
@@ -55,6 +58,7 @@ class AiExecutionProfile:
     target_lang: str
     enable_translation: bool
     enable_post_process: bool
+    postprocess_strategy: PostProcessStrategy
     enable_consistency_check: bool
     enable_format_validation: bool
     enable_quality_gate: bool
@@ -73,12 +77,15 @@ class AiExecutionProfile:
     @classmethod
     def from_config(cls, preset: AiWorkflowPreset, config: object) -> AiExecutionProfile:
         enabled = bool(getattr(config, "enable_post_process", True))
+        strategy_value = str(getattr(config, "pp_strategy", "combined"))
+        strategy: PostProcessStrategy = strategy_value if strategy_value in {"combined", "strict"} else "combined"
         return cls(
             preset=preset,
             game_profile=str(getattr(config, "game_profile", "skyrim_se")),
             target_lang=str(getattr(config, "target_lang", "zh_CN")),
             enable_translation=preset in {"translate", "mixed"},
             enable_post_process=enabled,
+            postprocess_strategy=strategy,
             enable_consistency_check=enabled and bool(getattr(config, "pp_enable_consistency_check", True)),
             enable_format_validation=enabled and bool(getattr(config, "pp_enable_format_validation", True)),
             enable_quality_gate=enabled and bool(getattr(config, "pp_enable_quality_gate", True)),
@@ -100,6 +107,9 @@ class AiExecutionProfile:
         values: list[str] = []
         if self.enable_translation:
             values.append("翻译")
+        if self.enable_combined_proofread:
+            values.append("校对润色")
+            return tuple(values)
         if self.enable_consistency_check or self.enable_format_validation or self.enable_quality_gate:
             values.append("检测")
         if self.enable_refinement:
@@ -116,6 +126,8 @@ class AiExecutionProfile:
 
     @property
     def has_proofread_work(self) -> bool:
+        if self.enable_combined_proofread:
+            return True
         return any((
             self.enable_consistency_check,
             self.enable_format_validation,
@@ -126,7 +138,13 @@ class AiExecutionProfile:
 
     @property
     def requires_llm(self) -> bool:
+        if self.enable_combined_proofread:
+            return True
         return any((self.enable_quality_gate, self.enable_refinement, self.enable_polish, self.enable_arbitration))
+
+    @property
+    def enable_combined_proofread(self) -> bool:
+        return self.enable_post_process and self.postprocess_strategy == "combined"
 
     @property
     def digest(self) -> str:
@@ -139,12 +157,12 @@ def ensure_workflow_profiles(config: object) -> dict[str, dict[str, object]]:
 
     existing = getattr(config, "workflow_profiles", {})
     profiles = {
-        str(name): _validated_settings(settings)
+        str(name): _validated_settings(settings, legacy_without_strategy="pp_strategy" not in settings)
         for name, settings in existing.items()
         if name in {"translate", "polish", "mixed"} and isinstance(settings, Mapping)
     }
     legacy = capture_profile_settings(config)
-    profiles.setdefault("translate", legacy)
+    profiles.setdefault("translate", _factory_settings(legacy, enable_polish=False))
     profiles.setdefault("polish", _factory_settings(legacy, enable_polish=True))
     profiles.setdefault("mixed", _factory_settings(legacy, enable_polish=True))
     setattr(config, "workflow_profiles", profiles)
@@ -170,6 +188,7 @@ def apply_profile_settings(config: object, preset: AiWorkflowPreset) -> object:
 def _factory_settings(legacy: Mapping[str, object], *, enable_polish: bool) -> dict[str, object]:
     settings = dict(legacy)
     settings.update({
+        "pp_strategy": "combined",
         "enable_post_process": True,
         "pp_enable_consistency_check": True,
         "pp_enable_format_validation": True,
@@ -181,8 +200,14 @@ def _factory_settings(legacy: Mapping[str, object], *, enable_polish: bool) -> d
     return settings
 
 
-def _validated_settings(settings: Mapping[str, object]) -> dict[str, object]:
+def _validated_settings(
+    settings: Mapping[str, object],
+    *,
+    legacy_without_strategy: bool = False,
+) -> dict[str, object]:
     validated = dict(_DEFAULT_SETTINGS)
+    if legacy_without_strategy:
+        validated["pp_strategy"] = "strict"
     for field in _PROFILE_FIELDS:
         if field not in settings:
             continue
@@ -196,12 +221,15 @@ def _validated_settings(settings: Mapping[str, object]) -> dict[str, object]:
             validated[field] = value
         elif field == "pp_polish_level" and value in {"light", "moderate", "aggressive"}:
             validated[field] = value
+        elif field == "pp_strategy" and value in {"combined", "strict"}:
+            validated[field] = value
     return validated
 
 
 __all__ = [
     "AiExecutionProfile",
     "AiWorkflowPreset",
+    "PostProcessStrategy",
     "apply_profile_settings",
     "capture_profile_settings",
     "ensure_workflow_profiles",

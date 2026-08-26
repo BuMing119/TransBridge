@@ -15,6 +15,7 @@ from transbridge.ui.tools.ai_translator.config_view import (
     ConfigAutosaveBinding,
     WindowConfigView,
 )
+from transbridge.ui.tools.ai_translator.custom_profile_controller import CustomProfileController
 from transbridge.ui.tools.ai_translator.legacy_checkpoint import check_translation_checkpoint
 from transbridge.ui.tools.ai_translator.polish_runtime import create_polish_worker
 from transbridge.ui.tools.ai_translator.quick_run_presenter import AiQuickRunPresenter
@@ -74,9 +75,8 @@ class AITranslatorWindow(QWidget):
         self._view_port = TranslatorViewPort(self._view)
         from transbridge.ui.paratranz.target_context import bound_paratranz_project
 
-        self._config_presenter = ConfigPresenter(
-            WindowConfigView(self._view, self, lambda: bound_paratranz_project(self._ctx))
-        )
+        config_view = WindowConfigView(self._view, self, lambda: bound_paratranz_project(self._ctx))
+        self._config_presenter = ConfigPresenter(config_view)
         self._config_binding = ConfigAutosaveBinding(
             self._view,
             self,
@@ -88,6 +88,9 @@ class AITranslatorWindow(QWidget):
         self._result_presenter = ResultPresenter()
         self._theme_binding = AiThemeBinding(self, theme_view, lambda binding: apply_window_theme(self, binding))
         self._config_presenter.load()
+        self._custom_profiles = CustomProfileController(
+            self, self._view, self._view_port, self._config_presenter, self.on_mode_changed
+        )
         self._config_binding.start()
         self.update_quick_run()
 
@@ -133,7 +136,10 @@ class AITranslatorWindow(QWidget):
 
     def on_mode_changed(self):
         mode = self._view_port.mode
-        self._config_presenter.switch_preset(mode)
+        if self._view_port.selected_mode == "custom":
+            self._custom_profiles.activate_selected()
+        else:
+            self._config_presenter.switch_preset(mode)
         self._view_port.update_mode_controls()
         if mode != "mixed":
             self._reset_scope_to_default(mode == "polish")
@@ -196,18 +202,13 @@ class AITranslatorWindow(QWidget):
         self._view_port.update_polish_controls()
 
     def update_estimate(self):
-        from .scope_view import render_scope_estimate
+        from .scope_view import refresh_scope_estimate
 
-        options = self._view_port.scope_options()
-        estimate = self._scope_presenter.estimate(
-            mode=options.mode,
-            rules=options.rules,
-            overwrite=options.overwrite,
-            max_tokens=options.max_tokens,
-        )
-        render_scope_estimate(self._view, estimate)
+        refresh_scope_estimate(self._view, self._scope_presenter, self._view_port.scope_options())
 
     def update_quick_run(self):
+        if self._custom_profiles.block_unavailable_start():
+            return
         mode = self._view_port.mode
         cfg = self._config_presenter.build()
         execution_profile = self._config_presenter.execution_profile()
@@ -268,18 +269,14 @@ class AITranslatorWindow(QWidget):
         if self._view_port.mode == "polish":
             self._on_polish_start()
             return
-
         collection = self._ctx.collection
         if not collection:
             QMessageBox.warning(self, "翻译", "请先加载词条集合。")
             return
-
         cfg = self._config_presenter.build()
-
         candidates = self._build_scope_candidates()
         if not require_ready(self, "translate", cfg, candidates):
             return
-
         from transbridge.ui.paratranz.target_context import bound_paratranz_project
 
         if not bound_paratranz_project(self._ctx) and TermSourceInspector.all_empty(cfg, self._ctx.esp_path):
@@ -292,7 +289,6 @@ class AITranslatorWindow(QWidget):
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
-
         cfg = self._config_presenter.save()
         checkpoint_run_id = check_translation_checkpoint(
             self,
@@ -336,7 +332,6 @@ class AITranslatorWindow(QWidget):
         if not collection:
             QMessageBox.warning(self, "混合模式", "请先加载词条集合。")
             return
-
         rules = self._view_port.rules
         entries = list(collection)
         mixed_scope = self._scope_presenter.partition_mixed(rules, entries)
@@ -345,7 +340,6 @@ class AITranslatorWindow(QWidget):
         if not translate_entries and not polish_entries:
             QMessageBox.warning(self, "混合模式", "当前筛选条件下无匹配条目，请调整规则。")
             return
-
         cfg = self._config_presenter.build()
         cfg.mixed_execution_order = self._view_port.execution_order
         cfg.action_rules = rules
@@ -407,7 +401,6 @@ class AITranslatorWindow(QWidget):
         QMessageBox.information(self, "混合模式", self._result_presenter.mixed_summary(result))
 
     def _on_polish_start(self):
-        """润色模式：选中已翻译词条 → LLMPolisher → 可选预览 → 写入。"""
         collection = self._ctx.collection
         if not collection:
             QMessageBox.warning(self, "润色", "请先加载词条集合。")
@@ -431,7 +424,12 @@ class AITranslatorWindow(QWidget):
         if request is None:
             return
         try:
-            worker = create_polish_worker(self._ctx, request.config, entries_with_translation)
+            worker = create_polish_worker(
+                self._ctx,
+                request.config,
+                entries_with_translation,
+                request_budget=request.request_budget,
+            )
         except Exception as exc:
             self._run_controller.create_activity(request).fail(str(exc))
             self._run_controller.finish(request.run_id)
@@ -449,7 +447,7 @@ class AITranslatorWindow(QWidget):
             def on_results(results):
                 self._on_polish_finished_direct(results, entries_with_translation, collection)
 
-        show_polish_progress(
+        progress = show_polish_progress(
             self._run_controller,
             request,
             self,
@@ -459,6 +457,7 @@ class AITranslatorWindow(QWidget):
             preview=preview_enabled,
             theme_view=self._theme_view,
         )
+        self.progress_window_created.emit(progress)
 
     def _on_polish_preview_ready(self, payload, entries, collection):
         results, decisions = payload

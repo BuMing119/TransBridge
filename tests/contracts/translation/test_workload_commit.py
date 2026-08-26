@@ -749,9 +749,10 @@ def test_mixed_worker_passes_active_collection_and_source_path_to_auto_translato
     captured = {}
 
     class FakeAutoTranslator:
-        def __init__(self, config, *, run_id_factory=None) -> None:
+        def __init__(self, config, *, run_id_factory=None, request_budget=None, **_options) -> None:
             captured["esp_path"] = config.esp_path
             captured["run_id"] = run_id_factory()
+            captured["request_budget"] = request_budget
 
         def translate(self, *, collection, target_entry_ids, **kwargs):
             captured["collection"] = collection
@@ -772,9 +773,8 @@ def test_mixed_worker_passes_active_collection_and_source_path_to_auto_translato
     result = worker._do_translate()
 
     assert result.success_count == 1
-    assert captured == {
-        "esp_path": "mixed.esp",
-        "run_id": "mixed-parent-run",
-        "collection": collection,
-        "target_entry_ids": ["mixed"],
-    }
+    assert captured["esp_path"] == "mixed.esp"
+    assert captured["run_id"] == "mixed-parent-run"
+    assert captured["collection"] is collection
+    assert captured["target_entry_ids"] == ["mixed"]
+    assert captured["request_budget"] is worker._request_budget

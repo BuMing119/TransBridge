@@ -16,6 +16,10 @@ import threading
 import time
 from typing import TYPE_CHECKING
 
+from transbridge.application.io.identity import EntryKey, SourceNamespace
+from transbridge.application.translation.token_batching import StableContentBatcher
+from transbridge.infra.token_counting import TiktokenContentTokenCounter
+
 from .base import BaseChecker, PostProcessIssue, PostProcessResult
 from .checkpoint import PostProcessCheckpoint
 from .consistency_checker import ConsistencyChecker
@@ -62,6 +66,9 @@ class PostProcessorConfig:
     # ── 通用配置 ──────────────────────────────────────────────────────────
     game_profile: str = "skyrim_se"
     target_lang: str = "zh_CN"
+    model: str = ""
+    max_tokens_per_batch: int = 2000
+    max_output_tokens: int | None = None
 
     # 遗留配置（向后兼容）
     auto_fix: bool = False
@@ -81,6 +88,9 @@ class PostProcessorConfig:
         return cls(
             game_profile=llm_config.game_profile,
             target_lang=llm_config.target_lang,
+            model=llm_config.model,
+            max_tokens_per_batch=llm_config.max_tokens_per_batch,
+            max_output_tokens=llm_config.max_output_tokens,
             # 阶段1: 检测
             enable_consistency_check=llm_config.pp_enable_consistency_check,
             enable_format_validation=llm_config.pp_enable_format_validation,
@@ -111,6 +121,63 @@ class PostProcessExecutionResult:
     errors: int = 0
 
 
+def _stable_entry_key(value: object) -> EntryKey:
+    identity = getattr(value, "identity", None)
+    if isinstance(identity, EntryKey):
+        return identity
+    local_key = str(getattr(value, "key", None) or getattr(value, "id", ""))
+    return EntryKey(SourceNamespace.legacy(), local_key)
+
+
+def _quality_gate_content(entry: object) -> tuple[str, ...]:
+    return (
+        str(getattr(entry, "original", "") or ""),
+        str(getattr(entry, "translation", "") or ""),
+        str(getattr(entry, "context", "") or ""),
+    )
+
+
+def _issue_content(issue: object) -> tuple[str, ...]:
+    return tuple(str(getattr(issue, field, "") or "") for field in ("issue_type", "severity", "message", "suggestion"))
+
+
+def _refinement_content(entry: object, issues_by_entry: dict[str, list[PostProcessIssue]]) -> tuple[str, ...]:
+    fields = list(_quality_gate_content(entry))
+    for issue in issues_by_entry.get(str(getattr(entry, "id", "")), ()):
+        fields.extend(_issue_content(issue))
+    return tuple(fields)
+
+
+def _polish_content(entry: object) -> tuple[str, ...]:
+    return _quality_gate_content(entry)
+
+
+def _arbitration_content(context: object) -> tuple[str, ...]:
+    entry = getattr(context, "entry")
+    refine = getattr(context, "refine_result", None)
+    polish = getattr(context, "polish_result", None)
+    fields = [
+        str(getattr(entry, "original", "") or ""),
+        str(getattr(entry, "translation", "") or ""),
+        str(getattr(refine, "refined_translation", "") or ""),
+        str(getattr(polish, "polished_translation", "") or ""),
+        str(getattr(entry, "context", "") or ""),
+        str(getattr(context, "quality_gate_verdict", "") or ""),
+    ]
+    for issue in getattr(context, "original_issues", ()):
+        fields.extend(_issue_content(issue))
+    for fix in getattr(refine, "fixes_applied", ()) if refine is not None else ():
+        fields.extend(
+            str(getattr(fix, field, "") or "") for field in ("issue_type", "original_problem", "fix_description")
+        )
+    for change in getattr(polish, "changes", ()) if polish is not None else ():
+        if isinstance(change, dict):
+            fields.extend(str(change.get(field, "") or "") for field in ("aspect", "before", "after", "reason"))
+        else:
+            fields.append(str(change))
+    return tuple(fields)
+
+
 class PostProcessor:
     """
     后处理主控器。
@@ -123,7 +190,7 @@ class PostProcessor:
     5. 执行：根据裁决结果更新条目
     """
 
-    def __init__(self, config: PostProcessorConfig | None = None):
+    def __init__(self, config: PostProcessorConfig | None = None, *, token_counter=None):
         """
         初始化后处理器。
 
@@ -136,6 +203,7 @@ class PostProcessor:
         self._polisher = None
         self._arbiter = None
         self._llm_client: LLMClient | None = None
+        self._token_counter = token_counter or TiktokenContentTokenCounter(self._config.model)
 
     def register_checker(self, checker: BaseChecker) -> None:
         """
@@ -145,6 +213,25 @@ class PostProcessor:
             checker: 检查器实例
         """
         self._checkers.append(checker)
+
+    def _plan_batches(
+        self,
+        items: list,
+        *,
+        stage: str,
+        max_items: int,
+        key: Callable[[object], EntryKey],
+        content: Callable[[object], str | tuple[str, ...]],
+    ) -> list[list]:
+        plan = StableContentBatcher(
+            self._token_counter,
+            self._config.max_tokens_per_batch,
+            max_items=max_items,
+        ).plan(items, key=key, content=content)
+        if plan.oversized:
+            details = "；".join(item.message for item in plan.oversized)
+            raise ValueError(f"{stage}阶段存在超过单请求业务内容 Token 上限的条目：{details}")
+        return [list(batch.items) for batch in plan.batches]
 
     def register_default_checkers(
         self,
@@ -174,6 +261,7 @@ class PostProcessor:
                     batch_size=self._config.quality_gate_batch_size,
                     game_profile=self._config.game_profile,
                     target_lang=self._config.target_lang,
+                    max_output_tokens=self._config.max_output_tokens,
                 )
             )
 
@@ -186,6 +274,7 @@ class PostProcessor:
                 term_manager=term_manager,
                 game_profile=self._config.game_profile,
                 target_lang=self._config.target_lang,
+                max_output_tokens=self._config.max_output_tokens,
             )
 
         # ── 阶段2b: 润色者（LLMPolisher）───────────────────────────────────
@@ -198,6 +287,7 @@ class PostProcessor:
                 game_profile=self._config.game_profile,
                 target_lang=self._config.target_lang,
                 polish_level=self._config.polish_level,
+                max_output_tokens=self._config.max_output_tokens,
             )
 
         # ── 阶段3: 裁决者（LLMArbiter）────────────────────────────────────
@@ -209,6 +299,7 @@ class PostProcessor:
                 game_profile=self._config.game_profile,
                 target_lang=self._config.target_lang,
                 strict_mode=self._config.strict_arbitration,
+                max_output_tokens=self._config.max_output_tokens,
             )
 
     def process(self, collection: "TranslationEntryCollection") -> PostProcessResult:
@@ -342,8 +433,13 @@ class PostProcessor:
                     break
 
             if qg_checker and not _should_stop():
-                qg_batch_size = self._config.quality_gate_batch_size
-                qg_batches = [entries[i : i + qg_batch_size] for i in range(0, len(entries), qg_batch_size)]
+                qg_batches = self._plan_batches(
+                    entries,
+                    stage="质量检测",
+                    max_items=self._config.quality_gate_batch_size,
+                    key=_stable_entry_key,
+                    content=_quality_gate_content,
+                )
                 qg_completed = 0
                 issue_lock = threading.Lock()
 
@@ -404,8 +500,13 @@ class PostProcessor:
 
                 if total > 0:
                     _progress("refine", 0, total, f"开始修复 {total} 个条目...")
-                    batch_size = self._config.refinement_batch_size
-                    batches = [entries_to_refine[i : i + batch_size] for i in range(0, total, batch_size)]
+                    batches = self._plan_batches(
+                        entries_to_refine,
+                        stage="修复",
+                        max_items=self._config.refinement_batch_size,
+                        key=_stable_entry_key,
+                        content=lambda entry: _refinement_content(entry, issues_by_entry),
+                    )
                     refined_count = 0
                     result_lock = threading.Lock()
 
@@ -474,8 +575,13 @@ class PostProcessor:
 
                 if total > 0:
                     _progress("polish", 0, total, f"开始润色 {total} 个条目...")
-                    batch_size = self._config.polish_batch_size
-                    batches = [entries_to_polish[i : i + batch_size] for i in range(0, total, batch_size)]
+                    batches = self._plan_batches(
+                        entries_to_polish,
+                        stage="润色",
+                        max_items=self._config.polish_batch_size,
+                        key=_stable_entry_key,
+                        content=_polish_content,
+                    )
                     polished_count = 0
                     result_lock = threading.Lock()
 
@@ -557,9 +663,26 @@ class PostProcessor:
                     )
                     contexts.append(ctx)
 
-                batch_size = self._config.arbitration_batch_size
-                batches = [contexts[i : i + batch_size] for i in range(0, len(contexts), batch_size)]
-                arbitrate_count = 0
+                quick_decide = getattr(self._arbiter, "_quick_decide", None)
+                needs_llm = []
+                quick_decisions = {}
+                for context in contexts:
+                    quick = quick_decide(context) if callable(quick_decide) else None
+                    if quick is None:
+                        needs_llm.append(context)
+                    else:
+                        quick_decisions[context.entry.key] = quick
+                decisions.update(_canonical_results(quick_decisions))
+                batches = self._plan_batches(
+                    needs_llm,
+                    stage="裁决",
+                    max_items=self._config.arbitration_batch_size,
+                    key=lambda context: _stable_entry_key(context.entry),
+                    content=_arbitration_content,
+                )
+                arbitrate_count = len(quick_decisions)
+                if arbitrate_count:
+                    _progress("arbitrate", arbitrate_count, total, f"规则快速裁决 {arbitrate_count}/{total}")
                 result_lock = threading.Lock()
 
                 def _arbitrate_worker(batch):

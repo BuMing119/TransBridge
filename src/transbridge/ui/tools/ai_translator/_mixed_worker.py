@@ -2,10 +2,15 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 import threading
 from uuid import uuid4
 
 from PyQt6.QtCore import QThread, pyqtSignal
+
+from .workflow_log_store import WorkflowLogStore
+from .workflow_logging_client import WorkflowLoggingLLMClient
+from .workflow_progress import WorkflowProgressTracker, stages_for_profile
 
 
 class MixedProgress:
@@ -28,12 +33,14 @@ class MixedPolishResult:
     failed_count: int
     details: tuple[dict, ...]
     candidates: dict
+    pending_count: int = 0
 
 
 class _MixedWorker(QThread):
     """后台线程：串行/并行执行翻译+润色。"""
 
-    progress = pyqtSignal(MixedProgress)
+    progress = pyqtSignal(object)
+    log = pyqtSignal(str)
     finished = pyqtSignal(dict)  # {"translate": result, "polish": result}
     error = pyqtSignal(str)
     cancelled = pyqtSignal()
@@ -48,6 +55,7 @@ class _MixedWorker(QThread):
         *,
         run_id: str | None = None,
         run_spec: object | None = None,
+        request_budget: object | None = None,
     ):
         super().__init__()
         self._cfg = cfg
@@ -57,10 +65,68 @@ class _MixedWorker(QThread):
         self._ctx = ctx
         self._run_id = run_id or f"mixed-{uuid4().hex}"
         self._run_spec = run_spec
+        if request_budget is None:
+            from transbridge.application.translation.ai_request_budget import AiRequestBudget
+
+            request_budget = AiRequestBudget(int(getattr(cfg, "max_concurrent", 1)))
+        self._request_budget = request_budget
         self._cancelled = threading.Event()
+        self._pause_event = threading.Event()
+        self._pause_event.set()
+        self._stats_lock = threading.Lock()
+        self._translate_success = 0
+        self._translate_failed = 0
+        self._new_terms = 0
+        self._term_completed = 0
+        self._term_failed = 0
+        self._term_candidates = 0
+        esp_path = str(getattr(ctx, "esp_path", "") or "")
+        self._log_store = WorkflowLogStore(esp_path, workflow="mixed")
+
+        profile = getattr(run_spec, "execution_profile", None)
+        if profile is None:
+            from transbridge.application.translation.ai_execution_profile import AiExecutionProfile
+
+            profile = AiExecutionProfile.from_config("mixed", cfg)
+        self._profile = profile
+        progress_stages = stages_for_profile(
+            profile,
+            include_translation=bool(translate_entries),
+            include_term_extraction=bool(translate_entries) and bool(getattr(cfg, "retrieval_enabled", True)),
+        )
+        if not polish_entries:
+            progress_stages = tuple(stage for stage in progress_stages if stage[0] in {"terms", "translate"})
+        self._tracker = WorkflowProgressTracker(progress_stages, sequential=execution_order != "parallel")
 
     def cancel(self):
         self._cancelled.set()
+        self._pause_event.set()
+
+    @property
+    def execution_order(self) -> str:
+        return self._order
+
+    @property
+    def progress_stages(self) -> tuple[tuple[str, str], ...]:
+        return self._tracker.stages
+
+    @property
+    def stream_log_dir(self) -> str:
+        return self._log_store.log_dir if self._log_store.is_available else ""
+
+    @property
+    def stream_log_error(self) -> str:
+        return self._log_store.last_error
+
+    def pause(self):
+        self._pause_event.clear()
+
+    def resume(self):
+        self._pause_event.set()
+
+    @property
+    def is_paused(self) -> bool:
+        return not self._pause_event.is_set()
 
     def run(self):
         result = {"translate": None, "polish": None}
@@ -75,55 +141,29 @@ class _MixedWorker(QThread):
                 self.error.emit(str(exc))
             else:
                 self.cancelled.emit()
-            return
-        if not self._cancelled.is_set():
-            self.finished.emit(result)
         else:
-            self.cancelled.emit()
+            if not self._cancelled.is_set():
+                self._emit_terminal_progress(result)
+                self.finished.emit(result)
+            else:
+                self.cancelled.emit()
+        finally:
+            self._log_store.close()
 
     def _run_serial(self) -> dict:
         result = {}
         # 阶段 1：翻译
         if self._translate_entries:
-            prog = MixedProgress()
-            prog.stage = "translate"
-            prog.translate_total = len(self._translate_entries)
-            self.progress.emit(prog)
             t_result = self._do_translate()
             result["translate"] = t_result
-            prog.translate_done = prog.translate_total
-            prog.translate_success = t_result.success_count if t_result else 0
-            prog.translate_failed = t_result.failed_count if t_result else 0
-            self.progress.emit(prog)
 
         if self._cancelled.is_set():
             return result
 
         # 阶段 2：润色
         if self._polish_entries:
-            prog = MixedProgress()
-            prog.stage = "polish"
-            prog.polish_total = len(self._polish_entries)
-            # 继承翻译阶段的计数
-            if result.get("translate"):
-                prog.translate_total = len(self._translate_entries)
-                prog.translate_done = prog.translate_total
-                prog.translate_success = result["translate"].success_count
-            self.progress.emit(prog)
             p_result = self._do_polish()
             result["polish"] = p_result
-
-        prog = MixedProgress()
-        prog.stage = "done"
-        if result.get("translate"):
-            prog.translate_total = len(self._translate_entries)
-            prog.translate_done = prog.translate_total
-            prog.translate_success = result["translate"].success_count
-        if result.get("polish"):
-            prog.polish_total = len(self._polish_entries)
-            prog.polish_done = prog.polish_total
-            prog.polish_success = result["polish"].success_count
-        self.progress.emit(prog)
         return result
 
     def _run_parallel(self) -> dict:
@@ -156,17 +196,6 @@ class _MixedWorker(QThread):
             while t.is_alive():
                 t.join(0.1)
 
-        prog = MixedProgress()
-        prog.stage = "done"
-        if result.get("translate"):
-            prog.translate_total = len(self._translate_entries)
-            prog.translate_done = prog.translate_total
-            prog.translate_success = result["translate"].success_count
-        if result.get("polish"):
-            prog.polish_total = len(self._polish_entries)
-            prog.polish_done = prog.polish_total
-            prog.polish_success = result["polish"].success_count
-        self.progress.emit(prog)
         return result
 
     def _do_translate(self):
@@ -182,12 +211,27 @@ class _MixedWorker(QThread):
                 overwrite=False,
             ),
             run_id_factory=lambda: self._run_id,
+            request_budget=self._request_budget,
+            llm_client_wrapper=lambda client: WorkflowLoggingLLMClient(
+                client,
+                self._log_store,
+                channel_prefix="translation_call",
+            ),
+            term_llm_client_wrapper=lambda client: WorkflowLoggingLLMClient(
+                client,
+                self._log_store,
+                channel_prefix="term_llm",
+            ),
         )
         result = translator.translate(
             collection=self._ctx.collection,
             target_entry_ids=[e.key for e in self._translate_entries],
-            progress_callback=lambda *a: None,
+            progress_callback=self._on_translate_progress,
             stop_event=self._cancelled,
+            pause_event=self._pause_event,
+            log_callback=self._on_translate_log,
+            stream_callback=lambda batch_index, chunk: self._log_store.write_chunk(f"batch_{batch_index:03d}", chunk),
+            stage_progress_callback=self._on_translate_stage_progress,
         )
         return result
 
@@ -195,7 +239,6 @@ class _MixedWorker(QThread):
         """Create proofreading candidates; the UI result boundary commits pass results."""
         from transbridge.ai_translator.post_processor.proofread_pipeline import ProofreadPipeline
         from transbridge.ai_translator.term_database import TermDatabaseManager
-        from transbridge.application.translation.ai_execution_profile import AiExecutionProfile
         from transbridge.infra.llm_client import create_llm_client
 
         term_manager = None
@@ -217,15 +260,36 @@ class _MixedWorker(QThread):
                 project_id,
             )
             term_manager.load_all()
-        profile = AiExecutionProfile.from_config("mixed", self._cfg)
+        profile = self._profile
+        llm_client = create_llm_client(self._cfg) if profile.requires_llm else None
+        if llm_client is not None:
+            from transbridge.infra.limited_llm_client import LimitedLLMClient
+
+            llm_client = LimitedLLMClient(
+                llm_client,
+                self._request_budget,
+                cancel_event=self._cancelled,
+                pause_event=self._pause_event,
+            )
+            llm_client = WorkflowLoggingLLMClient(
+                llm_client,
+                self._log_store,
+                channel_prefix="proofread_call",
+            )
         pipeline = ProofreadPipeline.create(
             profile=profile,
-            llm_client=create_llm_client(self._cfg) if profile.requires_llm else None,
+            llm_client=llm_client,
             term_manager=term_manager,
+            model=self._cfg.model,
+            max_tokens_per_batch=self._cfg.max_tokens_per_batch,
+            max_output_tokens=self._cfg.max_output_tokens,
         )
         candidates = pipeline.process(
             self._polish_entries,
+            progress_callback=self._on_polish_progress,
+            log_callback=self._on_polish_log,
             stop_event=self._cancelled,
+            pause_event=self._pause_event,
             max_workers=self._cfg.max_concurrent,
         )
         details = tuple(
@@ -243,7 +307,125 @@ class _MixedWorker(QThread):
             if (candidate := candidates.get(entry.id)) is not None
         )
         success = sum(1 for detail in details if detail["success"])
-        return MixedPolishResult(success, len(details) - success, details, candidates)
+        failed = sum(1 for detail in details if detail["verdict"] in {"error", "failed", "reject"})
+        pending = len(details) - success - failed
+        return MixedPolishResult(success, failed, details, candidates, pending)
+
+    def _on_translate_progress(
+        self,
+        current: int,
+        total: int,
+        message: str,
+        success: int,
+        failed: int,
+        new_terms: int,
+    ) -> None:
+        """Project AutoTranslator batch progress into the shared workflow view."""
+        with self._stats_lock:
+            self._translate_success = success
+            self._translate_failed = failed
+            self._new_terms = new_terms
+        update = self._tracker.update(
+            "translate",
+            current,
+            total,
+            message,
+            success=success,
+            failed=failed,
+            new_terms=new_terms,
+        )
+        if update is not None:
+            self.progress.emit(update)
+
+    def _on_translate_log(self, batch_index: int, line: str) -> None:
+        """Flatten translation's indexed logs for the unified text log."""
+        self._log_store.write_line("workflow", line)
+        if batch_index < 0:
+            self.log.emit(line)
+        else:
+            self.log.emit(f"[翻译批次 {batch_index}] {line}")
+
+    def _on_translate_stage_progress(self, stage: str, current: int, total: int, message: str) -> None:
+        """Project translation preparation, especially existing-term extraction."""
+        self._log_store.write_line(f"stage_{stage}", f"{current}/{total} {message}")
+        with self._stats_lock:
+            if stage == "terms":
+                if message.startswith("已完成术语抽取") and current > self._term_completed:
+                    if match := re.search(r"本批新增候选\s+(\d+)\s+个", message):
+                        self._term_candidates += int(match.group(1))
+                    self._term_completed = current
+                if "失败" in message:
+                    self._term_failed = 1
+                success = self._term_completed
+                failed = self._term_failed
+                pending = max(0, total - success - failed)
+                new_terms = self._term_candidates
+            else:
+                success = self._translate_success
+                failed = self._translate_failed
+                pending = None
+                new_terms = self._new_terms
+        update = self._tracker.update(
+            stage,
+            current,
+            total,
+            message,
+            success=success,
+            failed=failed,
+            pending=pending,
+            new_terms=new_terms,
+        )
+        if update is not None:
+            self.progress.emit(update)
+
+    def _on_polish_log(self, line: str) -> None:
+        self._log_store.write_line("workflow", line)
+        self.log.emit(line)
+
+    def _on_polish_progress(self, phase: str, current: int, total: int, message: str) -> None:
+        """Forward all proofreading stages, including concurrently completed batches."""
+        self._log_store.write_line(f"stage_{phase}", f"{current}/{total} {message}")
+        with self._stats_lock:
+            success = self._translate_success
+            failed = self._translate_failed
+            new_terms = self._new_terms
+        update = self._tracker.update(
+            phase,
+            current,
+            total,
+            message,
+            success=success,
+            failed=failed,
+            new_terms=new_terms,
+        )
+        if update is not None:
+            self.progress.emit(update)
+
+    def _emit_terminal_progress(self, result: dict) -> None:
+        """Publish authoritative aggregate statistics at the terminal boundary."""
+        translate_result = result.get("translate")
+        polish_result = result.get("polish")
+        translate_success = int(getattr(translate_result, "success_count", 0))
+        translate_failed = int(getattr(translate_result, "failed_count", 0))
+        new_terms = int(getattr(translate_result, "new_dynamic_terms", 0))
+
+        candidates = getattr(polish_result, "candidates", {}) or {}
+        polish_success = sum(1 for candidate in candidates.values() if candidate.accepted)
+        polish_failed = sum(
+            1 for candidate in candidates.values() if candidate.verdict in {"error", "failed", "reject"}
+        )
+        pending = len(candidates) - polish_success - polish_failed
+        issues = sum(len(getattr(candidate, "issues", ()) or ()) for candidate in candidates.values())
+        self.progress.emit(
+            self._tracker.finish(
+                "混合运行完成",
+                success=translate_success + polish_success,
+                failed=translate_failed + polish_failed,
+                pending=pending,
+                issues=issues,
+                new_terms=new_terms,
+            )
+        )
 
     def _finalize_report(self, result: dict) -> dict:
         """Build and render the one canonical report before crossing the worker boundary."""

@@ -12,6 +12,7 @@ import tomllib
 from typing import TYPE_CHECKING, Literal
 import warnings
 
+from .base import output_token_limit, validate_max_output_tokens
 from .prompt_contract import (
     PromptTemplateContractError,
     build_postprocess_messages,
@@ -278,6 +279,7 @@ class LLMArbiter:
         game_profile: str = "skyrim_se",
         target_lang: str = "zh_CN",
         strict_mode: bool = False,  # 严格模式：uncertain->reject
+        max_output_tokens: int | None = None,
     ):
         """
         初始化裁决者。
@@ -290,6 +292,7 @@ class LLMArbiter:
         """
         self._llm = llm_client
         self._strict_mode = strict_mode
+        self._max_output_tokens = validate_max_output_tokens(max_output_tokens)
         self._prompts = self._load_prompts(game_profile, target_lang)
 
     def _load_prompts(self, game_profile: str, target_lang: str) -> dict:
@@ -374,7 +377,10 @@ class LLMArbiter:
         # 复杂情况使用LLM裁决
         try:
             messages = self._build_arbitration_prompt(ctx)
-            response = self._llm.chat(messages=messages, max_tokens=1000)
+            response = self._llm.chat(
+                messages=messages,
+                max_tokens=output_token_limit(self._max_output_tokens, 1000),
+            )
             return self._parse_arbitration_response(ctx.entry.id, response)
         except Exception as e:
             # LLM调用失败，基于规则做保守判定
@@ -411,7 +417,10 @@ class LLMArbiter:
         if needs_llm:
             try:
                 messages = self._build_batch_arbitration_prompt(needs_llm)
-                response = self._llm.chat(messages=messages, max_tokens=3000)
+                response = self._llm.chat(
+                    messages=messages,
+                    max_tokens=output_token_limit(self._max_output_tokens, 3000),
+                )
                 batch_decisions = self._parse_batch_arbitration_response(needs_llm, response)
                 decisions.update(batch_decisions)
             except Exception as e:
@@ -633,8 +642,11 @@ class LLMArbiter:
                 if polish.changes:
                     lines.append("润色改动：")
                     for change in polish.changes[:3]:  # 最多显示3个改动
-                        aspect = change.get("aspect", "未知")
-                        lines.append(f"  - [{aspect}] {change.get('before', '')} -> {change.get('after', '')}")
+                        if isinstance(change, dict):
+                            aspect = change.get("aspect", "未知")
+                            lines.append(f"  - [{aspect}] {change.get('before', '')} -> {change.get('after', '')}")
+                        else:
+                            lines.append(f"  - [{change}]")
 
             lines.append(f"原质量关卡判定：{ctx.quality_gate_verdict or 'N/A'}")
 
@@ -688,10 +700,16 @@ class LLMArbiter:
         if polish.changes:
             lines.append("润色改动:")
             for change in polish.changes:
-                aspect = change.get("aspect", "未知")
-                before = change.get("before", "")
-                after = change.get("after", "")
-                reason = change.get("reason", "")
+                if isinstance(change, dict):
+                    aspect = change.get("aspect", "未知")
+                    before = change.get("before", "")
+                    after = change.get("after", "")
+                    reason = change.get("reason", "")
+                else:
+                    aspect = str(change)
+                    before = ""
+                    after = ""
+                    reason = ""
                 lines.append(f"  - [{aspect}] {before} -> {after}")
                 if reason:
                     lines.append(f"    理由: {reason}")

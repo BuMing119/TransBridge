@@ -62,7 +62,7 @@ class _WorkerControls:
 
 
 def _config(**updates: object) -> SimpleNamespace:
-    values = {"api_key": "secret", "model": "model", "provider": "openai_compatible"}
+    values = {"api_key": "secret", "model": "model", "provider": "openai_compatible", "max_concurrent": 3}
     values.update(updates)
     return SimpleNamespace(**values)
 
