@@ -8,6 +8,7 @@ in the corresponding presenters/controllers.
 from __future__ import annotations
 
 from collections.abc import Callable
+import logging
 from typing import Protocol
 
 from PyQt6.QtCore import Qt, QTimer
@@ -41,6 +42,8 @@ from transbridge.ui.foundation.components import (
 )
 from transbridge.ui.tools.ai_translator.config_dialogs import render_paratranz_source
 from transbridge.ui.tools.ai_translator.view_controls import TranslatorControls
+
+logger = logging.getLogger(__name__)
 
 
 class AITranslatorViewCallbacks(Protocol):
@@ -234,6 +237,7 @@ class AITranslatorView:
             "dynamic（动态词库）",
             "paratranz（ParaTranz 术语）",
             "json（本地 JSON）",
+            "csv（本地 CSV）",
             "excel（本地 Excel）",
         ]:
             self._priority_list.addItem(QListWidgetItem(source_name))
@@ -249,6 +253,17 @@ class AITranslatorView:
         json_browse.clicked.connect(lambda: callbacks.browse_file(self._json_path_edit, "JSON 文件 (*.json)"))
         json_row.addWidget(json_browse)
         term_layout.addLayout(json_row)
+
+        csv_row = QHBoxLayout()
+        csv_row.addWidget(QLabel("本地 CSV:"))
+        self._csv_path_edit = QLineEdit()
+        self._csv_path_edit.setPlaceholderText("可选")
+        csv_row.addWidget(self._csv_path_edit)
+        csv_browse = QPushButton("浏览")
+        csv_browse.setFixedWidth(52)
+        csv_browse.clicked.connect(lambda: callbacks.browse_file(self._csv_path_edit, "CSV 文件 (*.csv)"))
+        csv_row.addWidget(csv_browse)
+        term_layout.addLayout(csv_row)
 
         excel_row = QHBoxLayout()
         excel_row.addWidget(QLabel("本地 Excel:"))
@@ -370,6 +385,7 @@ class WindowConfigView:
         h.output_tokens_spin.setValue(cfg.max_output_tokens)
         h.max_terms_spin.setValue(cfg.max_terms_per_batch)
         h.json_path_edit.setText(cfg.local_json_path)
+        h.csv_path_edit.setText(getattr(cfg, "local_csv_path", ""))
         h.excel_path_edit.setText(cfg.local_excel_path)
         h.excel_orig_col_edit.setText(cfg.excel_original_col)
         h.excel_trans_col_edit.setText(cfg.excel_translation_col)
@@ -395,6 +411,7 @@ class WindowConfigView:
             "dynamic": "dynamic（动态词库）",
             "paratranz": "paratranz（ParaTranz 术语）",
             "json": "json（本地 JSON）",
+            "csv": "csv（本地 CSV）",
             "excel": "excel（本地 Excel）",
         }
         if cfg.term_priority:
@@ -420,6 +437,7 @@ class WindowConfigView:
         cfg.max_output_tokens = h.output_tokens_spin.value()
         cfg.max_terms_per_batch = h.max_terms_spin.value()
         cfg.local_json_path = h.json_path_edit.text().strip()
+        cfg.local_csv_path = h.csv_path_edit.text().strip()
         cfg.local_excel_path = h.excel_path_edit.text().strip()
         cfg.excel_original_col = h.excel_orig_col_edit.text().strip() or "A"
         cfg.excel_translation_col = h.excel_trans_col_edit.text().strip() or "B"
@@ -447,6 +465,7 @@ class WindowConfigView:
             "dynamic（动态词库）": "dynamic",
             "paratranz（ParaTranz 术语）": "paratranz",
             "json（本地 JSON）": "json",
+            "csv（本地 CSV）": "csv",
             "excel（本地 Excel）": "excel",
         }
         cfg.term_priority = [
@@ -472,7 +491,7 @@ class ConfigAutosaveBinding:
         self._save_callback = save_callback
         self._timer = QTimer(parent)
         self._timer.setSingleShot(True)
-        self._timer.timeout.connect(save_callback)
+        self._timer.timeout.connect(self._save_safely)
         self._started = False
 
     def start(self) -> None:
@@ -491,6 +510,7 @@ class ConfigAutosaveBinding:
             h.output_tokens_spin.valueChanged,
             h.max_terms_spin.valueChanged,
             h.json_path_edit.textChanged,
+            h.csv_path_edit.textChanged,
             h.excel_path_edit.textChanged,
             h.excel_orig_col_edit.textChanged,
             h.excel_trans_col_edit.textChanged,
@@ -521,4 +541,12 @@ class ConfigAutosaveBinding:
         self._timer.start(2000)
 
     def close(self) -> None:
-        self._timer.stop()
+        if self._timer.isActive():
+            self._timer.stop()
+            self._save_safely()
+
+    def _save_safely(self) -> None:
+        try:
+            self._save_callback()
+        except Exception as exc:
+            logger.warning("AI configuration autosave failed: %s", exc, exc_info=True)

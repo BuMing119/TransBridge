@@ -52,8 +52,9 @@ class LLMConfig:
     max_tokens_per_batch: int = 2000
     max_output_tokens: int = 0
     temperature: float = 0.0
-    term_priority: list[str] = field(default_factory=lambda: ["dynamic", "paratranz", "json", "excel"])
+    term_priority: list[str] = field(default_factory=lambda: ["dynamic", "paratranz", "json", "csv", "excel"])
     local_json_path: str = ""
+    local_csv_path: str = ""
     local_excel_path: str = ""
     excel_original_col: str = "A"
     excel_translation_col: str = "B"
@@ -107,6 +108,7 @@ class LLMConfig:
         ("max_output_tokens", "max_output_tokens", "int"),
         ("temperature", "temperature", "float"),
         ("local_json_path", "local_json_path", "str"),
+        ("local_csv_path", "local_csv_path", "str"),
         ("local_excel_path", "local_excel_path", "str"),
         ("excel_original_col", "excel_original_col", "str"),
         ("excel_translation_col", "excel_translation_col", "str"),
@@ -250,6 +252,8 @@ class LLMConfig:
         priorities = snapshot.value("llm", "term_priority", "") or ""
         if priorities:
             obj.term_priority = [part.strip() for part in priorities.split(",") if part.strip()]
+            if obj.term_priority == ["dynamic", "paratranz", "json", "excel"]:
+                obj.term_priority.insert(3, "csv")
         obj.action_rules = cls._load_action_rules(snapshot.value("llm", "action_rules", "") or "")
         obj.api_key = _resolve_secret(store, obj.credential_ref, environment, "TRANSBRIDGE_LLM_API_KEY")
         obj.embedding.api_key = _resolve_secret(

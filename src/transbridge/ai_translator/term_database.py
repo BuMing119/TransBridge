@@ -3,12 +3,12 @@
 
 提供：
 - DynamicTermDatabase：按 ESP stem 绑定，持久化到 data/ai_translator/{stem}/{stem}_terms.json
-- TermDatabaseManager：加载四来源（dynamic/paratranz/json/excel），按优先级合并，支持缓存
+- TermDatabaseManager：加载 dynamic/paratranz/json/csv/excel，按优先级合并，支持缓存
 """
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 import json
 import logging
@@ -16,6 +16,17 @@ import os
 import re
 import threading
 from typing import TYPE_CHECKING
+
+from transbridge.ai_translator.term_formats import (
+    TermEntry,
+    dump_terms_json,
+    load_terms_csv,
+    load_terms_excel,
+    load_terms_json,
+    term_entries_from_data,
+    term_entry_from_mapping,
+    term_entry_to_canonical_dict,
+)
 
 if TYPE_CHECKING:
     from transbridge.converter.translation_entry import TranslationEntry
@@ -30,20 +41,10 @@ _ARTICLE_RE = re.compile(r"^(?:the|a|an)\s+", re.IGNORECASE)
 CACHE_FILES = {
     "paratranz": "paratranz_terms.json",
     "json": "json_terms.json",
+    "csv": "csv_terms.json",
     "excel": "excel_terms.json",
     "merged": "merged_terms.json",
 }
-
-
-@dataclass
-class TermEntry:
-    term: str
-    translation: str
-    source: str  # auto_name | auto_dialogue | manual | paratranz | json | excel
-    context: str = ""
-    created_at: str = ""
-    case_sensitive: bool = False  # 仅 paratranz 来源可能为 True
-    variants: list[str] = field(default_factory=list)  # 术语变体列表（单复数、缩写等）
 
 
 @dataclass
@@ -74,15 +75,16 @@ class DynamicTermDatabase:
             self._entries = []
             return
         try:
-            with open(self._path, encoding="utf-8") as f:
-                raw = json.load(f)
-            self._entries = [TermEntry(**item) for item in raw]
-        except Exception:
+            self._entries = load_terms_json(self._path, source=None)
+            for entry in self._entries:
+                if not entry.source:
+                    entry.source = "dynamic"
+        except Exception as exc:
+            logger.warning("加载动态术语库失败 %s: %s", self._path, exc)
             self._entries = []
 
     def save(self) -> None:
-        with open(self._path, "w", encoding="utf-8") as f:
-            json.dump([asdict(e) for e in self._entries], f, ensure_ascii=False, indent=2)
+        dump_terms_json(self._path, self._entries)
 
     def add(self, term: str, translation: str, source: str, context: str = "") -> None:
         for e in self._entries:
@@ -119,7 +121,7 @@ class DynamicTermDatabase:
 
 class TermDatabaseManager:
     """
-    加载四来源术语，按 priority 顺序合并（后加载的优先级高的覆盖低的），
+    加载多来源术语，按 priority 顺序合并（后加载的优先级高的覆盖低的），
     返回统一术语列表。
 
     支持向量语义检索：
@@ -184,7 +186,7 @@ class TermDatabaseManager:
         data = {
             "cached_at": datetime.now().isoformat(),
             "count": len(entries),
-            "entries": [asdict(e) for e in entries],
+            "entries": [term_entry_to_canonical_dict(e) for e in entries],
         }
         try:
             with open(cache_path, "w", encoding="utf-8") as f:
@@ -200,7 +202,7 @@ class TermDatabaseManager:
         try:
             with open(cache_path, encoding="utf-8") as f:
                 data = json.load(f)
-            entries = [TermEntry(**item) for item in data.get("entries", [])]
+            entries = term_entries_from_data(data.get("entries", []), source=None)
             logger.debug(f"从缓存加载 {source} 术语: {len(entries)} 条")
             return entries
         except Exception as e:
@@ -214,7 +216,7 @@ class TermDatabaseManager:
             "cached_at": datetime.now().isoformat(),
             "count": len(entries),
             "sources": self._config.term_priority if self._config else [],
-            "entries": [asdict(e) for e in entries],
+            "entries": [term_entry_to_canonical_dict(e) for e in entries],
         }
         try:
             with open(cache_path, "w", encoding="utf-8") as f:
@@ -248,7 +250,7 @@ class TermDatabaseManager:
         try:
             with open(cache_path, encoding="utf-8") as f:
                 data = json.load(f)
-            entries = [TermEntry(**item) for item in data.get("entries", [])]
+            entries = term_entries_from_data(data.get("entries", []), source=None)
             logger.info(f"从缓存加载合并术语库: {len(entries)} 条")
             return entries
         except Exception as e:
@@ -261,6 +263,7 @@ class TermDatabaseManager:
             "dynamic": self._load_dynamic,
             "paratranz": self._load_paratranz,
             "json": self._load_json,
+            "csv": self._load_csv,
             "excel": self._load_excel,
         }
         term_map: dict[str, TermEntry] = {}
@@ -682,22 +685,19 @@ class TermDatabaseManager:
         page = 1
         while True:
             data = self._paratranz_client.list_terms(self._project_id, page=page, page_size=100)
-            items = data.get("results", []) if isinstance(data, dict) else []
+            items = []
+            if isinstance(data, dict):
+                items = next(
+                    (data[key] for key in ("results", "terms", "items", "data") if isinstance(data.get(key), list)),
+                    [],
+                )
             if not items:
                 break
             for item in items:
-                term = item.get("term", "")
-                translation = item.get("translation", "")
-                if term and translation:
-                    results.append(
-                        TermEntry(
-                            term=term,
-                            translation=translation,
-                            source="paratranz",
-                            case_sensitive=bool(item.get("caseSensitive", False)),
-                            variants=item.get("variants") or [],
-                        )
-                    )
+                if isinstance(item, dict):
+                    entry = term_entry_from_mapping(item, source="paratranz")
+                    if entry is not None:
+                        results.append(entry)
             if len(items) < 100:
                 break
             page += 1
@@ -707,54 +707,21 @@ class TermDatabaseManager:
         path = self._config.local_json_path
         if not path or not os.path.exists(path):
             return []
-        with open(path, encoding="utf-8") as f:
-            raw = json.load(f)
-        results = []
-        if isinstance(raw, list):
-            for item in raw:
-                term = item.get("term", "") or item.get("original", "")
-                translation = item.get("translation", "")
-                if term and translation:
-                    results.append(
-                        TermEntry(
-                            term=term,
-                            translation=translation,
-                            source="json",
-                            variants=item.get("variants") or [],
-                        )
-                    )
-        elif isinstance(raw, dict):
-            for term, translation in raw.items():
-                if term and translation:
-                    results.append(TermEntry(term=str(term), translation=str(translation), source="json"))
-        return results
+        return load_terms_json(path, source="json")
+
+    def _load_csv(self) -> list[TermEntry]:
+        path = getattr(self._config, "local_csv_path", "")
+        if not path or not os.path.exists(path):
+            return []
+        return load_terms_csv(path, source="csv")
 
     def _load_excel(self) -> list[TermEntry]:
         path = self._config.local_excel_path
         if not path or not os.path.exists(path):
             return []
-        import openpyxl
-
-        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-        ws = wb.active
-        col_orig = _col_letter_to_index(self._config.excel_original_col)
-        col_trans = _col_letter_to_index(self._config.excel_translation_col)
-        results = []
-        for row in ws.iter_rows(min_row=2, values_only=True):
-            try:
-                term = str(row[col_orig]) if row[col_orig] is not None else ""
-                translation = str(row[col_trans]) if row[col_trans] is not None else ""
-                if term and translation:
-                    results.append(TermEntry(term=term, translation=translation, source="excel"))
-            except (IndexError, TypeError):
-                continue
-        return results
-
-
-def _col_letter_to_index(letter: str) -> int:
-    """将列字母（A/B/AA 等）转换为 0 起始的列索引。"""
-    letter = letter.upper().strip()
-    idx = 0
-    for ch in letter:
-        idx = idx * 26 + (ord(ch) - ord("A") + 1)
-    return idx - 1
+        return load_terms_excel(
+            path,
+            source="excel",
+            original_column=self._config.excel_original_col,
+            translation_column=self._config.excel_translation_col,
+        )

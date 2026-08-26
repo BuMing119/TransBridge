@@ -27,6 +27,7 @@ class TranslatorControls:
         "excel_orig_col_edit",
         "excel_path_edit",
         "excel_trans_col_edit",
+        "csv_path_edit",
         "json_path_edit",
         "max_terms_spin",
         "mixed_estimate_lbl",

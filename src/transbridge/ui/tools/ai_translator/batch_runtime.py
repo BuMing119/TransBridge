@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-import json
+import logging
 import os
 
 from transbridge.ui.foundation.adapters import ThemeView
 from transbridge.ui.windowing import show_and_activate
 
 from .run_spec import preflight_ai_run
+
+logger = logging.getLogger(__name__)
 
 
 def open_batch_translation(
@@ -107,28 +109,29 @@ class TermSourceInspector:
             database.load()
             if database.as_list():
                 return False
-        if config.local_json_path and os.path.exists(config.local_json_path):
-            try:
-                with open(config.local_json_path, encoding="utf-8") as stream:
-                    if json.load(stream):
-                        return False
-            except Exception:
-                pass
-        if config.local_excel_path and os.path.exists(config.local_excel_path):
-            try:
-                import openpyxl
+        from transbridge.ai_translator.term_formats import load_terms_csv, load_terms_excel, load_terms_json
 
-                workbook = openpyxl.load_workbook(config.local_excel_path, read_only=True, data_only=True)
-                sheet = workbook.active
-                original = TermSourceInspector.column_index(config.excel_original_col or "A")
-                translation = TermSourceInspector.column_index(config.excel_translation_col or "B")
-                for row in sheet.iter_rows(min_row=2, values_only=True):
-                    source = row[original] if original < len(row) else None
-                    target = row[translation] if translation < len(row) else None
-                    if source and target:
-                        return False
-            except Exception:
-                pass
+        sources = (
+            ("JSON", getattr(config, "local_json_path", ""), load_terms_json),
+            ("CSV", getattr(config, "local_csv_path", ""), load_terms_csv),
+            (
+                "Excel",
+                getattr(config, "local_excel_path", ""),
+                lambda path: load_terms_excel(
+                    path,
+                    original_column=getattr(config, "excel_original_col", "A") or "A",
+                    translation_column=getattr(config, "excel_translation_col", "B") or "B",
+                ),
+            ),
+        )
+        for source_name, path, loader in sources:
+            if not path or not os.path.exists(path):
+                continue
+            try:
+                if loader(path):
+                    return False
+            except Exception as exc:
+                logger.warning("检查%s术语来源失败 %s: %s", source_name, path, exc)
         return True
 
     @staticmethod

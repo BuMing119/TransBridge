@@ -53,6 +53,29 @@ def _repository(tmp_path: Path, store: MemoryStore | None = None) -> ConfigRepos
     )
 
 
+def test_term_csv_source_persists_and_old_default_priority_migrates(tmp_path: Path) -> None:
+    store = MemoryStore()
+    repository = _repository(tmp_path, store)
+    repository.update_sections({
+        "llm": {
+            "provider": "openai",
+            "base_url": "https://example.test/v1",
+            "model": "m1",
+            "term_priority": "dynamic,paratranz,json,excel",
+        }
+    })
+
+    config = LLMConfig.load_from_file(repository=repository, credential_store=store, environment={})
+    assert config.term_priority == ["dynamic", "paratranz", "json", "csv", "excel"]
+
+    config.local_csv_path = "terms.csv"
+    config.save_to_file(repository=repository, credential_store=store)
+    reloaded = LLMConfig.load_from_file(repository=repository, credential_store=store, environment={})
+
+    assert reloaded.local_csv_path == "terms.csv"
+    assert reloaded.term_priority == ["dynamic", "paratranz", "json", "csv", "excel"]
+
+
 def test_endpoint_identity_is_atomic_and_revisioned(tmp_path: Path) -> None:
     repository = _repository(tmp_path)
     first = repository.update_sections({

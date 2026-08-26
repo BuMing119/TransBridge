@@ -89,8 +89,12 @@ class TranslationController:
                     if pc.token:
                         has_term_source = True
                         break
-                elif src in ("json", "excel"):
-                    path = llm_cfg.local_json_path if src == "json" else llm_cfg.local_excel_path
+                elif src in ("json", "csv", "excel"):
+                    path = {
+                        "json": llm_cfg.local_json_path,
+                        "csv": getattr(llm_cfg, "local_csv_path", ""),
+                        "excel": llm_cfg.local_excel_path,
+                    }[src]
                     if path and os.path.exists(path):
                         has_term_source = True
                         break
@@ -471,6 +475,7 @@ class TranslationController:
             "game_profile": llm.game_profile,
             "term_priority": llm.term_priority,
             "local_json_path": llm.local_json_path or None,
+            "local_csv_path": getattr(llm, "local_csv_path", "") or None,
             "local_excel_path": llm.local_excel_path or None,
             "post_process": post_process,
             "term_database": term_db_info,
@@ -522,6 +527,7 @@ class TranslationController:
         """设置术语数据库配置"""
         term_sources = args.get("term_sources")
         json_path = args.get("json_path")
+        csv_path = args.get("csv_path")
         excel_path = args.get("excel_path")
 
         from ._common import load_llm_config
@@ -529,7 +535,7 @@ class TranslationController:
         changed = []
 
         if term_sources is not None:
-            valid = ["dynamic", "paratranz", "json", "excel"]
+            valid = ["dynamic", "paratranz", "json", "csv", "excel"]
             invalid = [s for s in term_sources if s not in valid]
             if invalid:
                 return ToolResult.fail(f"无效的术语来源: {invalid}。可选: {valid}")
@@ -539,6 +545,10 @@ class TranslationController:
         if json_path is not None:
             llm.local_json_path = json_path
             changed.append(f"json_path={json_path}")
+
+        if csv_path is not None:
+            llm.local_csv_path = csv_path
+            changed.append(f"csv_path={csv_path}")
 
         if excel_path is not None:
             llm.local_excel_path = excel_path
@@ -685,8 +695,9 @@ _PARAM_SCHEMAS = {
     # Story 24: 术语配置
     "set_term_config": {
         "term_sources": {"type": "list", "required": False,
-            "description": "术语来源优先级列表。可选: dynamic/paratranz/json/excel"},
+            "description": "术语来源优先级列表。可选: dynamic/paratranz/json/csv/excel"},
         "json_path": {"type": "str", "required": False, "description": "本地 JSON 术语库文件路径"},
+        "csv_path": {"type": "str", "required": False, "description": "本地 CSV 术语库文件路径"},
         "excel_path": {"type": "str", "required": False, "description": "本地 Excel 术语库文件路径"},
     },
 }
@@ -723,10 +734,20 @@ def _register_translator_tools():
          "parameters": _PARAM_SCHEMAS.get("set_scope", {})},
         {"name": "get_scope_preview", "display_name": "作用域预览", "description": "①预览当前作用域匹配条目统计。②无参数。③返回: {matched, total, scope{stages,labels,categories,action}}。④规则: 仅返回计数非条目列表;默认作用域=全部未翻译(stage=0);先调set_scope再调本工具确认范围。",
          "execute": _tool_get_scope_preview, "permission": "read",
-         "parameters": _PARAM_SCHEMAS.get("get_scope_preview", {})},        {"name": "set_term_config", "display_name": "术语配置",
-         "description": "①设置术语来源优先级与本地路径。②参数: term_sources优先级列表(dynamic/paratranz/json/excel,顺序决定优先级), json_path, excel_path。dynamic=AI翻译中自动提取,始终可用。③返回: {changed}。④规则: 先调get_translation_config查看当前配置;空列表禁用所有来源;无效来源名被拒绝。",
-         "execute": _tool_set_term_config, "permission": "write",
-         "parameters": _PARAM_SCHEMAS.get("set_term_config", {})},
+         "parameters": _PARAM_SCHEMAS.get("get_scope_preview", {})},
+        {
+            "name": "set_term_config",
+            "display_name": "术语配置",
+            "description": (
+                "①设置术语来源优先级与本地路径。②参数: term_sources优先级列表"
+                "(dynamic/paratranz/json/csv/excel,顺序决定优先级), json_path, csv_path, excel_path。"
+                "dynamic=AI翻译中自动提取,始终可用。③返回: {changed}。④规则: 先调get_translation_config"
+                "查看当前配置;空列表禁用所有来源;无效来源名被拒绝。"
+            ),
+            "execute": _tool_set_term_config,
+            "permission": "write",
+            "parameters": _PARAM_SCHEMAS.get("set_term_config", {}),
+        },
 
     ])
 
