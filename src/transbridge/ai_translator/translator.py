@@ -54,7 +54,7 @@ def _select_stage_candidates(candidates: list, *, overwrite: bool) -> list:
 
 def _select_post_process_candidates(entries: list, target_entry_ids: list[str] | None) -> list:
     """Keep post-processing inside the same automatic-edit policy as translation."""
-    target_set = set(target_entry_ids) if target_entry_ids else None
+    target_set = None if target_entry_ids is None else set(target_entry_ids)
     return [
         entry
         for entry in entries
@@ -66,7 +66,7 @@ def _select_post_process_candidates(entries: list, target_entry_ids: list[str] |
 
 if TYPE_CHECKING:
     from transbridge.ai_translator.batch_planner import Batch
-    from transbridge.ai_translator.post_processor import PostProcessResult
+    from transbridge.application.translation import ReportSnapshot
     from transbridge.converter.translation_entry_collection import TranslationEntryCollection
     from transbridge.paratranz.config_manager import LLMConfig
 
@@ -85,11 +85,13 @@ class TranslationResult:
     skipped_count: int = 0
     new_dynamic_terms: int = 0
     failed_entries: list[str] = field(default_factory=list)
-    post_process_result: PostProcessResult | None = None  # 后处理结果
+    post_process_result: ReportSnapshot | None = None  # canonical 翻译/后处理报告快照
     refine_results: dict | None = None  # {entry_id: RefineResult}，后处理修复中间数据
     polish_results: dict | None = None  # {entry_id: PolishResult}，后处理润色中间数据
     decisions: dict | None = None  # {entry_id: ArbiterDecision}，后处理裁决中间数据
     report_path: str | None = None  # 生成的 Excel 报告路径
+    report_paths: tuple[str, ...] = ()  # 同一快照派生的全部报告路径
+    report_diagnostics: tuple[str, ...] = ()  # 报告渲染诊断，不混入翻译失败条目
 
 
 @dataclass
@@ -773,6 +775,11 @@ class AutoTranslator:
                 f"{diagnostic.code}: {diagnostic.message}" for diagnostic in commit.diagnostics
             )
 
+        report_scope_ids = {entry.entry_key.local_key for entry in translation_inputs}
+        for completed_batch in completed_fps:
+            report_scope_ids.update(completed_batch)
+        report_entries = _select_post_process_candidates(list(collection), sorted(report_scope_ids))
+
         # ── 后处理：质量检查 ─────────────────────────────────────────────────────
         if (
             not stop_event.is_set()
@@ -808,10 +815,8 @@ class AutoTranslator:
                 llm_client=self._llm,
             )
 
-            # 只对成功翻译的条目进行后处理
-            # 收集本次翻译成功的条目
-            all_entries = list(collection)
-            entries_to_check = _select_post_process_candidates(all_entries, target_entry_ids)
+            # 只对成功翻译且仍符合自动编辑策略的条目进行后处理。
+            entries_to_check = report_entries
 
             if entries_to_check:
                 stages = []
@@ -852,7 +857,7 @@ class AutoTranslator:
                     stage_names=tuple(stage_names),
                     checkpoint_port=FilesystemPostProcessCheckpointPort(checkpoint_root / "postprocess"),
                 )
-                post_run_id = f"{run_id}:postprocess"
+                post_run_id = run_id
                 inputs = tuple(
                     TranslationInput(
                         entry.identity,
@@ -882,13 +887,13 @@ class AutoTranslator:
                     },
                 )
                 pp_result = execution.report_result.value
+                result.post_process_result = execution.report_snapshot
                 if pp_result is None:
                     codes = ", ".join(item.code for item in execution.report_result.diagnostics)
                     result.failed_entries.append(f"后处理失败: {codes or 'POSTPROCESS_FAILED'}")
                 else:
                     _log(f"质量检查完成：检查 {pp_result.input_count} 条")
                     _log(f"  发现问题：{pp_result.issue_count} 个")
-                    result.post_process_result = pp_result
                     if execution.commit_result is not None and execution.commit_result.outcome not in {
                         OperationOutcome.COMPLETED,
                         OperationOutcome.PARTIAL,
@@ -902,6 +907,16 @@ class AutoTranslator:
 
         elif not stop_event.is_set() and result.success_count > 0:
             _log("\n── 质量检查已跳过（用户设置）──")
+
+        from transbridge.application.translation import build_translation_report_snapshot
+
+        result.post_process_result = build_translation_report_snapshot(
+            result,
+            report_entries,
+            run_id=run_id,
+            cancelled=stop_event.is_set(),
+            before_text_by_key={entry.entry_key: entry.translation for entry in translation_inputs},
+        )
 
         if not stop_event.is_set():
             # 翻译与后处理均完成，删除翻译断点
