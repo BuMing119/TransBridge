@@ -1,253 +1,91 @@
-# AI 翻译后处理报告
+# AI 翻译与校对润色报告
 
-## 职责
+## 目标
 
-在 AI 翻译的五阶段后处理（检测 → 修复 → 润色 → 裁决 → 执行）全部结束后，自动生成一份结构化 Excel 报告文档，帮助用户了解译文质量状况、定位需要人工复核的条目，并追踪各阶段的修改细节。
+AI 翻译、后处理、智能助手校对和独立润色都以应用层 `ReportSnapshot` 作为唯一报告事实来源。Qt 对话框、JSON、CSV、Excel 和历史报告只是该快照的投影，不得从 `TranslationResult`、legacy `PostProcessResult` 或 `PolishResult` 临时重新统计。
 
----
+这项约束保证同一次运行的 `run_id`、终态、计数、词条候选、诊断和阶段信息在所有展示方式中一致。报告渲染失败不会回滚已经提交的翻译或润色结果。
 
-## 报告结构
+## Canonical 数据模型
 
-报告采用多 Sheet Excel（`.xlsx`）格式，项目已内置 `openpyxl` 依赖，无需额外安装。
+核心定义位于 `src/transbridge/application/translation/`：
 
-### Sheet 1: Summary（汇总）
+- `postprocess.py`：`ReportSnapshot`、`PostProcessCandidate`、`PostProcessStageOutcome`。
+- `completion_report.py`：将 AI 翻译计数和可选后处理快照合成为最终翻译报告。
+- `polish_report.py`：将独立校对润色结果和用户接受/拒绝决定投影为 `ReportSnapshot`。
+- `postprocess_report.py`：JSON、CSV、Excel renderer 和三格式 bundle 渲染。
 
-| 字段 | 说明 |
-|------|------|
-| `total_checked` | 检查后处理的总条目数 |
-| `issue_count` | 发现问题总数 |
-| `error_count` | error 级别问题数 |
-| `warning_count` | warning 级别问题数 |
-| `info_count` | info 级别问题数 |
-| `passed` | 裁决通过条目数 |
-| `rejected` | 裁决打回条目数 |
-| `pending` | 裁决待审条目数 |
-| `refined_count` | 经历 LLM 修复的条目数 |
-| `polished_count` | 经历 LLM 润色的条目数 |
-| `config_snapshot` | 后处理配置快照（各阶段开关、润色范围/级别、严格模式等） |
-| `timestamp` | 报告生成时间 |
-| `esp_stem` | 来源插件名 |
+`ReportSnapshot` 至少记录：
 
-### Sheet 2: Entries（条目明细）
+- schema、run_id 和 COMPLETED/PARTIAL/FAILED/CANCELLED 终态；
+- 输入、接受、问题、失败计数；
+- 每条目的稳定 EntryKey、revision、原文、处理前译文、最终候选、stage、接受状态、上下文和阶段链；
+- typed diagnostics、阶段 outcome、耗时和有效运行规格摘要。
 
-| 字段 | 说明 |
-|------|------|
-| `entry_id` | 条目唯一 ID |
-| `original` | 原文 |
-| `initial_translation` | 后处理前的初始译文 |
-| `refined_translation` | LLM 修复后的译文（如有） |
-| `polished_translation` | LLM 润色后的译文（如有） |
-| `final_translation` | 实际写回的最终译文 |
-| `stage` | 最终 stage（0=打回，1=通过，2=待审） |
-| `verdict` | 裁决结果：pass / reject / pending |
-| `verdict_reason` | 裁决理由 |
-| `confidence` | 裁决信心度（0-1） |
-| `issue_count` | 该条目检测出的问题数量 |
-| `issue_types` | 问题类型列表（逗号分隔） |
+独立校对润色通过 candidate 的 `report_details` 保留 `result_status`、confidence、changes、note、needs_arbitration、verdict、refined_translation 和原始问题投影。该字段必须可安全序列化为 JSON，不得包含 Prompt、API Key、Authorization header 或完整模型消息。
 
-### Sheet 3: Issues（问题明细）
+## 生成流程
 
-| 字段 | 说明 |
-|------|------|
-| `entry_id` | 关联条目 ID |
-| `issue_type` | 问题类型（如 `term_mismatch`、`placeholder_missing`、`low_quality` 等） |
-| `severity` | error / warning / info |
-| `message` | 问题描述 |
-| `suggestion` | 修复建议 |
-| `original` | 原文快照 |
-| `translation` | 译文快照 |
+### AI 自动翻译
 
-### Sheet 4: Refinements（修复明细，可选）
+1. `AutoTranslator` 完成候选提交和可选后处理。
+2. `build_translation_report_snapshot()` 合并翻译计数、失败/取消诊断和后处理快照。
+3. 单文件或批量 worker 在后台调用统一 bundle renderer。
+4. 完成窗口与详细报告对话框直接消费相同快照和 worker 返回的产物路径。
 
-| 字段 | 说明 |
-|------|------|
-| `entry_id` | 关联条目 ID |
-| `refined_translation` | 修复后的译文 |
-| `confidence` | 修复信心度 |
-| `fixes_applied` | 应用的修复项说明 |
-| `note` | 修复器附加说明 |
+未启用后处理时仍生成报告；此时 stage outcomes 可以为空。批量运行按真实 ESP stem 为每个插件生成独立快照和产物。
 
-### Sheet 5: Polish（润色明细，可选）
+### 智能助手后处理
 
-| 字段 | 说明 |
-|------|------|
-| `entry_id` | 关联条目 ID |
-| `polished_translation` | 润色后的译文 |
-| `confidence` | 润色信心度 |
-| `changes` | 改动说明（维度/改动前/改动后/理由） |
-| `note` | 润色器附加说明 |
+`run_postprocess` 使用 `PostProcessExecutionService` 返回的 canonical snapshot，并调用相同的 bundle renderer。最近报告摘要保存所有产物路径，`report_file` 优先指向 Excel。不得再通过 `SimpleNamespace` 伪造翻译结果或调用 legacy 报告生成器。
 
----
+### 独立校对润色
 
-## 文件生成机制
+润色 worker 返回逐条候选后，由唯一提交边界记录 accepted/rejected/failed entry IDs。`build_polish_report_snapshot()` 将原始候选、最终用户决定和有效执行档案合并；报告对话框只读取该快照。预览对话框仍只负责逐条接受/拒绝，不拥有第二套报表数据模型。
 
-### 生成位置
+## 产物
 
-```
+每份快照默认生成：
+
+- JSON：完整 canonical snapshot，供审计和程序读取；
+- CSV：一行一个候选，并携带 JSON 形式的 report details；
+- Excel：供人工检查。
+
+Excel 固定包含：
+
+- `Summary`：schema、run_id、终态、计数和有效运行规格；
+- `Entries`：原文、处理前/最终译文、stage、接受状态、阶段、上下文，以及润色状态、信心度、裁决、修复候选、变更说明和备注；
+- `Diagnostics`：entry ID、诊断代码、严重度、分类、消息和 retryable；
+- `Stages`：阶段、耗时、候选数和诊断数。
+
+插件报告保存到：
+
+```text
 data/ai_translator/{esp_stem}/reports/
 ```
 
-使用与 AI 翻译数据相同的插件隔离目录，便于管理和追溯。
+文件名使用内容摘要：
 
-### 文件命名
-
-```
-{esp_stem}_post_process_report_{YYYYMMDD_HHMMSS}.xlsx
+```text
+postprocess-report-{sha256前16位}.{json|csv|xlsx}
 ```
 
-示例：`MyMod_post_process_report_20260413_143052.xlsx`
+每种格式保留最近 20 份。相同内容可以复用同一摘要文件，轮转失败只记录警告，不影响报告结果。
 
-### 自动清理（Rotate）
+## UI 与历史
 
-报告生成器会自动保留最近 20 份报告，删除更早的历史文件，防止目录无限膨胀。
+`_TranslationReportDialog` 只接收 `ReportSnapshot`，根据 snapshot schema/source 显示翻译或润色字段。汇总、条目筛选、诊断筛选、双击定位和打开 Excel 均不重新计算业务结果。
 
----
+历史窗口扫描配置数据目录下各插件的 `reports` 目录。新报告使用摘要文件名；旧 `{esp}_{mode}_report_{timestamp}.xlsx` 文件仍可被识别和打开。历史兼容只负责读取既有文件，不允许新生产入口继续生成 legacy 格式。
 
-## 核心类与接口
+## 失败语义
 
-### PostProcessReportGenerator
+- renderer 失败返回 `REPORT_RENDER_FAILED`，其他成功格式继续保留；
+- 已提交的业务结果不因报告失败回滚；
+- 独立润色的用户拒绝是有效完成结果，不等同于运行失败；
+- 缺失结果、无有效候选或阶段异常进入 failed count 和诊断；
+- Prompt、凭据和模型内部消息不得进入快照或产物。
 
-**路径**: `src/transbridge/ai_translator/post_processor/report_generator.py`
+## Legacy 边界
 
-**职责**: 读取 `PostProcessResult` 及五阶段中间数据，写入 `.xlsx` 报告。
-
-```python
-class PostProcessReportGenerator:
-    def generate(
-        self,
-        result: PostProcessResult,
-        esp_stem: str,
-    ) -> str:
-        """
-        生成后处理报告。
-
-        Args:
-            result: 后处理结果（包含 issues、execution_result、
-                    refine_results、polish_results、decisions）
-            esp_stem: 插件文件名（不含扩展名），用于确定输出目录和文件名
-
-        Returns:
-            生成的报告文件绝对路径
-        """
-```
-
----
-
-## 与现有系统的集成
-
-### 数据流
-
-```
-AutoTranslator.translate()
-    │
-    ▼
-后处理完成 → PostProcessor.process_entries()
-    │
-    ▼
- enrich PostProcessResult with:
-    - refine_results
-    - polish_results
-    - decisions
-    │
-    ▼
- PostProcessReportGenerator.generate()
-    │
-    ▼
- 写入 .xlsx 到 data/ai_translator/{esp_stem}/reports/
-    │
-    ▼
- 报告路径 → TranslationResult.pp_report_path
-    │
-    ▼
- UI 进度窗口展示 "打开报告" 按钮
-```
-
-### 关键修改点
-
-| 文件 | 修改内容 |
-|------|----------|
-| `post_processor/base.py` | `PostProcessResult` 新增可选字段 `refine_results`、`polish_results`、`decisions`，用于在离开 `process_entries()` 后仍保留中间数据 |
-| `post_processor/post_processor.py` | 在 `process_entries()` 返回前将中间字典附加到 `result` |
-| `ai_translator/translator.py` | `TranslationResult` 新增 `pp_report_path: str \| None = None`；后处理完成后调用报告生成器 |
-| `ui/tools/ai_translator/_translation_progress_window.py` | 翻译完成弹窗增加 "打开报告" 按钮 |
-| `ui/tools/ai_translator/_batch_translation_progress_window.py` | 批量完成弹窗展示报告列表，支持打开单个报告或报告目录 |
-
----
-
-## UI 交互流程
-
-### 单插件翻译
-
-翻译完成后弹出 `QMessageBox`：
-
-```
-┌─────────────────────────────────┐
-│  翻译完成                        │
-├─────────────────────────────────┤
-│ 成功：XXX 条                     │
-│ 失败：YYY 条                     │
-│ 质量检查：ZZ 错误，WW 警告        │
-│                                 │
-│ 后处理报告已生成。                │
-├─────────────────────────────────┤
-│ [打开报告]        [确定]         │
-└─────────────────────────────────┘
-```
-
-点击 **"打开报告"** 后，使用 `QDesktopServices.openUrl()`（或 `os.startfile` on Windows）打开生成的 Excel 文件。
-
-### 批量翻译
-
-全部插件翻译结束后：
-- 若只有一个插件生成了报告：与单插件模式相同，直接提供 "打开报告" 按钮。
-- 若有多个插件生成了报告：弹出列表对话框（复用 `_BatchResultDialog` 风格），列出每个插件及其报告路径，用户可单独打开某一份报告，或选择 "打开报告目录" 一键定位文件夹。
-
----
-
-## 使用场景示例
-
-### 场景 1：快速定位需复核条目
-
-1. 打开 `Entries` Sheet。
-2. 按 `verdict` 列筛选 `pending` 和 `reject`。
-3. 查看 `verdict_reason` 和 `issue_types`，快速了解为何被打回或待审。
-
-### 场景 2：检查术语一致性
-
-1. 打开 `Issues` Sheet。
-2. 按 `issue_type` 筛选 `term_mismatch`。
-3. 查看 `suggestion` 列，确认标准译法。
-
-### 场景 3：审阅润色效果
-
-1. 打开 `Entries` Sheet。
-2. 筛选 `polished_translation` 非空行。
-3. 对比 `initial_translation` 和 `polished_translation`，评估润色质量。
-
----
-
-## 依赖关系
-
-```
-report_generator
-    │
-    ├─► openpyxl（项目已有依赖）
-    │
-    ├─► post_processor/base（PostProcessResult）
-    │
-    ├─► post_processor/llm_refiner（RefineResult）
-    │
-    ├─► post_processor/polisher（PolishResult）
-    │
-    ├─► post_processor/llm_arbiter（ArbiterDecision）
-    │
-    └─► ai_translator/translator（TranslationResult）
-```
-
----
-
-## 相关文档
-
-- [post_processor.md](post_processor.md) - 后处理模块详解
-- [ai_translator.md](ai_translator.md) - AI 翻译模块
-- [INDEX.md](INDEX.md) - 文档索引
+`src/transbridge/ai_translator/post_processor/report_generator.py` 的五工作表翻译投影和三工作表润色投影已由 canonical renderer 取代。后处理 checker、refiner、polisher、arbiter 和兼容 `PostProcessResult` 仍可作为算法适配层存在；它们不得重新成为 UI、Excel 或历史报告的数据源。

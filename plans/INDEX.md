@@ -1,5 +1,13 @@
 # 方案索引 (Plans Index)
 
+## 当前实施
+
+| Epic | 状态 | Stories | 文档 |
+|---|---|---:|---|
+| existing-translation-terminology | 已完成（2026-08-26，相关 QA 通过） | 2/2 | [plan](existing-translation-terminology/plan.md) |
+| terminology-format-compatibility | 已完成（2026-08-26，相关 QA 通过） | 3/3 | [plan](terminology-format-compatibility/plan.md) |
+| ai-workflow-presets | 已完成（2026-08-26，综合 QA 通过） | 3/3 | [plan](ai-workflow-presets/plan.md) |
+
 ## 综合整改 V2（37/37 Story 实现完成，综合 QA 通过）
 
 > 下列 7 个 Plan 按 R-001～R-050 的去重根因组织，共 37 个 Story；已完成实现、逐 Story 证据、综合 QA 与最终索引门禁。
