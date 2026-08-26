@@ -513,6 +513,27 @@ class AutoTranslator:
             else:
                 _log(f"  术语来源 [{source}]: {count} 条")
 
+        if getattr(self._cfg.llm_config, "retrieval_enabled", True):
+            from transbridge.ai_translator.existing_term_extractor import (
+                ExistingTermSeeder,
+                should_seed_existing_terms,
+            )
+
+            if should_seed_existing_terms(all_entries, candidates):
+                try:
+                    seed_result = ExistingTermSeeder(self._term_mgr, self._extractor).seed(all_entries)
+                except Exception as exc:
+                    _log(f"⚠ 存量译文术语初始化失败，继续使用已有术语库: {exc}")
+                else:
+                    result.new_dynamic_terms += seed_result.added_count
+                    _log(
+                        "  存量译文术语: "
+                        f"名称 {seed_result.direct_added}，"
+                        f"文本 {seed_result.text_added}，"
+                        f"冲突 {seed_result.conflicts}，"
+                        f"已有 {seed_result.skipped_existing}"
+                    )
+
         def _save_checkpoint():
             with lock:
                 cp = ProgressCheckpoint(

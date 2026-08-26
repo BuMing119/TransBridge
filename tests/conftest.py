@@ -264,6 +264,7 @@ def make_llm_config(**overrides):
     cfg.pp_arbitration_batch_size = overrides.get("pp_arbitration_batch_size", 10)
     cfg.term_priority = overrides.get("term_priority", ["dynamic"])
     cfg.local_json_path = overrides.get("local_json_path", "")
+    cfg.local_csv_path = overrides.get("local_csv_path", "")
     cfg.local_excel_path = overrides.get("local_excel_path", "")
     cfg.enable_semantic_match = overrides.get("enable_semantic_match", False)
     cfg.semantic_similarity_threshold = overrides.get("semantic_similarity_threshold", 0.7)
