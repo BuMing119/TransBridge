@@ -10,9 +10,11 @@ from PyQt6.QtCore import QCoreApplication, QEvent
 from PyQt6.QtWidgets import QApplication
 import pytest
 
+from transbridge.application.translation import build_polish_report_snapshot
 from transbridge.config.paratranz_credentials import UnavailableCredentialStore
 from transbridge.config.repository import ConfigRepository
 from transbridge.config.ui_preferences import ThemeMode, UiPreferenceRepository
+from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.paratranz.config_manager import LLMConfig
 from transbridge.ui.foundation.adapters import ThemeView
 from transbridge.ui.foundation.builtins import DEFAULT_THEME_ID, create_builtin_registry
@@ -57,8 +59,29 @@ def test_theme_revision_preserves_run_scope_inputs_report_and_subscription_lifec
     service, theme_view = _theme(qapp, tmp_path)
     baseline_subscriptions = theme_view.active_subscription_count
     window = AITranslatorWindow(context, workbench, theme_view=theme_view)
-    report_stats = {"total": 3, "accepted": 2, "rejected": 1, "failed": 0, "avg_confidence": 0.8}
-    report = _TranslationReportDialog(polish_stats=report_stats, theme_view=theme_view)
+    report_entry = TranslationEntry(
+        id="report-entry",
+        key="REPORT",
+        original="Source",
+        translation="旧译文",
+        stage=1,
+        context="INFO:FULL",
+    )
+    report_result = SimpleNamespace(
+        original_translation="旧译文",
+        polished_translation="新译文",
+        confidence=0.8,
+        changes=(),
+        note="",
+        needs_arbitration=False,
+    )
+    report_snapshot = build_polish_report_snapshot(
+        {report_entry.id: report_result},
+        [report_entry],
+        accepted_entry_ids=(report_entry.id,),
+        run_id="theme-report-run",
+    )
+    report = _TranslationReportDialog(report_snapshot, theme_view=theme_view)
     window._view.controls.model_edit.setText("unsaved-model-draft")
     scope_before = window._scope_presenter.state
     request = window._run_controller.begin(
@@ -68,7 +91,7 @@ def test_theme_revision_preserves_run_scope_inputs_report_and_subscription_lifec
         esp_path=None,
     )
     run_spec = request.spec
-    report_identity = id(report._polish_stats)
+    report_identity = id(report._snapshot)
     subscriptions = theme_view.active_subscription_count
 
     changed = service.set_preference(ThemePreference(ThemeMode.DARK, DEFAULT_THEME_ID), persist=False)
@@ -82,8 +105,8 @@ def test_theme_revision_preserves_run_scope_inputs_report_and_subscription_lifec
     assert window._run_controller.active_request is request
     assert request.run_id == run_spec.run_id
     assert request.spec is run_spec
-    assert id(report._polish_stats) == report_identity
-    assert report._polish_stats == report_stats
+    assert id(report._snapshot) == report_identity
+    assert report._snapshot is report_snapshot
     assert window._view.controls.preflight_label.accessibleName() == "AI 运行条件"
     assert theme_view.active_subscription_count == subscriptions
 

@@ -1,6 +1,9 @@
-"""混合模式 Worker：统一调度翻译 + 润色。"""
+"""混合模式 Worker：统一调度翻译 + 校改润色候选。"""
 
+from dataclasses import dataclass
+from pathlib import Path
 import threading
+from uuid import uuid4
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -19,6 +22,14 @@ class MixedProgress:
     stage: str = ""  # "translate" | "polish" | "done"
 
 
+@dataclass(frozen=True, slots=True)
+class MixedPolishResult:
+    success_count: int
+    failed_count: int
+    details: tuple[dict, ...]
+    candidates: dict
+
+
 class _MixedWorker(QThread):
     """后台线程：串行/并行执行翻译+润色。"""
 
@@ -27,13 +38,25 @@ class _MixedWorker(QThread):
     error = pyqtSignal(str)
     cancelled = pyqtSignal()
 
-    def __init__(self, cfg, translate_entries, polish_entries, execution_order="serial", ctx=None):
+    def __init__(
+        self,
+        cfg,
+        translate_entries,
+        polish_entries,
+        execution_order="serial",
+        ctx=None,
+        *,
+        run_id: str | None = None,
+        run_spec: object | None = None,
+    ):
         super().__init__()
         self._cfg = cfg
         self._translate_entries = translate_entries
         self._polish_entries = polish_entries
         self._order = execution_order
         self._ctx = ctx
+        self._run_id = run_id or f"mixed-{uuid4().hex}"
+        self._run_spec = run_spec
         self._cancelled = threading.Event()
 
     def cancel(self):
@@ -46,6 +69,7 @@ class _MixedWorker(QThread):
                 result = self._run_parallel()
             else:
                 result = self._run_serial()
+            result = self._finalize_report(result)
         except Exception as exc:
             if not self._cancelled.is_set():
                 self.error.emit(str(exc))
@@ -156,7 +180,8 @@ class _MixedWorker(QThread):
                 llm_config=self._cfg,
                 esp_path=self._ctx.esp_path,
                 overwrite=False,
-            )
+            ),
+            run_id_factory=lambda: self._run_id,
         )
         result = translator.translate(
             collection=self._ctx.collection,
@@ -167,40 +192,133 @@ class _MixedWorker(QThread):
         return result
 
     def _do_polish(self):
-        """执行润色（复用 LLMPolisher）。"""
-        from transbridge.ai_translator.post_processor.polisher import LLMPolisher
+        """Create proofreading candidates; the UI result boundary commits pass results."""
+        from transbridge.ai_translator.post_processor.proofread_pipeline import ProofreadPipeline
+        from transbridge.ai_translator.term_database import TermDatabaseManager
+        from transbridge.application.translation.ai_execution_profile import AiExecutionProfile
+        from transbridge.infra.llm_client import create_llm_client
 
-        polisher = LLMPolisher(self._cfg)
-        details = []
-        for entry in self._polish_entries:
-            if self._cancelled.is_set():
-                break
-            try:
-                r = polisher.polish_single(entry)
-                details.append({
-                    "entry_id": entry.id,
-                    "key": entry.key,
-                    "original": entry.original,
-                    "translation": entry.translation,
-                    "polished": r.polished_text if hasattr(r, "polished_text") else str(r),
-                    "success": True,
-                })
-            except Exception as exc:
-                details.append({
-                    "entry_id": entry.id,
-                    "key": entry.key,
-                    "original": entry.original,
-                    "translation": entry.translation,
-                    "success": False,
-                    "error": str(exc),
-                })
-        ok = sum(1 for d in details if d["success"])
-        fail = len(details) - ok
+        term_manager = None
+        if self._ctx is not None and self._ctx.esp_path:
+            from transbridge.ui.paratranz.target_context import bound_paratranz_project
 
-        class PolishResult:
-            def __init__(self, success, failed, details):
-                self.success_count = success
-                self.failed_count = failed
-                self.details = details
+            remote_project = bound_paratranz_project(self._ctx)
+            paratranz_client = None
+            project_id = None
+            if remote_project:
+                from transbridge.paratranz.api.paratranz_terms_api import ParatranzTermsAPI
 
-        return PolishResult(ok, fail, details)
+                paratranz_client = ParatranzTermsAPI(self._ctx.config)
+                project_id = remote_project["id"]
+            term_manager = TermDatabaseManager(
+                self._cfg,
+                self._ctx.esp_path,
+                paratranz_client,
+                project_id,
+            )
+            term_manager.load_all()
+        profile = AiExecutionProfile.from_config("mixed", self._cfg)
+        pipeline = ProofreadPipeline.create(
+            profile=profile,
+            llm_client=create_llm_client(self._cfg) if profile.requires_llm else None,
+            term_manager=term_manager,
+        )
+        candidates = pipeline.process(
+            self._polish_entries,
+            stop_event=self._cancelled,
+            max_workers=self._cfg.max_concurrent,
+        )
+        details = tuple(
+            {
+                "entry_id": entry.id,
+                "key": entry.key,
+                "original": entry.original,
+                "translation": entry.translation,
+                "polished": candidate.polished_translation,
+                "verdict": candidate.verdict,
+                "success": candidate.accepted,
+                "error": "" if candidate.accepted else candidate.note or candidate.verdict,
+            }
+            for entry in self._polish_entries
+            if (candidate := candidates.get(entry.id)) is not None
+        )
+        success = sum(1 for detail in details if detail["success"])
+        return MixedPolishResult(success, len(details) - success, details, candidates)
+
+    def _finalize_report(self, result: dict) -> dict:
+        """Build and render the one canonical report before crossing the worker boundary."""
+        profile = getattr(self._run_spec, "execution_profile", None)
+        if self._polish_entries and bool(getattr(profile, "preview_enabled", False)):
+            deferred = dict(result)
+            deferred["snapshot"] = None
+            deferred["artifacts"] = None
+            return deferred
+
+        from transbridge.application.translation.completion_report import build_translation_report_snapshot
+        from transbridge.application.translation.mixed_report import build_mixed_report_snapshot
+        from transbridge.application.translation.polish_report import build_polish_report_snapshot
+
+        from .reporting import render_snapshot_report
+
+        translate_result = result.get("translate")
+        translation_snapshot = None
+        if translate_result is not None:
+            translation_snapshot = getattr(translate_result, "post_process_result", None)
+            if translation_snapshot is None:
+                translation_snapshot = build_translation_report_snapshot(
+                    translate_result,
+                    self._translate_entries,
+                    run_id=self._run_id,
+                    cancelled=self._cancelled.is_set(),
+                )
+
+        polish_result = result.get("polish")
+        polish_snapshot = None
+        if polish_result is not None:
+            candidates = polish_result.candidates
+            accepted = tuple(entry_id for entry_id, value in candidates.items() if value.accepted)
+            rejected = tuple(
+                entry_id for entry_id, value in candidates.items() if not value.accepted and value.confidence > 0
+            )
+            failed = tuple(
+                str(entry.id) for entry in self._polish_entries if str(entry.id) not in set(accepted) | set(rejected)
+            )
+            polish_snapshot = build_polish_report_snapshot(
+                candidates,
+                self._polish_entries,
+                accepted_entry_ids=accepted,
+                rejected_entry_ids=rejected,
+                failed_entry_ids=failed,
+                run_id=self._run_id,
+                polish_level=getattr(self._cfg, "pp_polish_level", None),
+                run_spec_summary=self._run_summary(),
+            )
+
+        snapshot = build_mixed_report_snapshot(
+            translation_snapshot,
+            polish_snapshot,
+            run_id=self._run_id,
+            execution_order=self._order,
+            run_spec_summary=self._run_summary(),
+        )
+        esp_stem = Path(self._ctx.esp_path).stem if self._ctx is not None and self._ctx.esp_path else "unknown"
+        finalized = dict(result)
+        finalized["snapshot"] = snapshot
+        finalized["artifacts"] = render_snapshot_report(snapshot, esp_stem)
+        return finalized
+
+    def _run_summary(self) -> dict[str, object]:
+        spec = self._run_spec
+        if spec is None:
+            return {"run_mode": "mixed"}
+        profile = getattr(spec, "execution_profile", None)
+        return {
+            "run_mode": "mixed",
+            "input_fingerprint": str(getattr(spec, "input_fingerprint", "")),
+            "config_digest": str(getattr(spec, "config_digest", "")),
+            "execution_profile": {
+                "stages": list(getattr(profile, "stages", ())),
+                "summary": str(getattr(profile, "summary", "")),
+                "digest": str(getattr(profile, "digest", "")),
+            },
+        }

@@ -452,18 +452,26 @@ class LLMArbiter:
                     confidence=0.9,
                     suggested_action="打回重翻",
                 )
-            else:
-                return ArbiterDecision(
-                    entry_id=entry.key,
-                    verdict="pending",
-                    reason=f"修复失败: {refine.note}，需人工处理",
-                    confidence=0.8,
-                    suggested_action="人工审核",
-                )
+            return ArbiterDecision(
+                entry_id=entry.key,
+                verdict="pending",
+                reason=f"修复失败: {refine.note}，需人工处理",
+                confidence=0.8,
+                suggested_action="人工审核",
+            )
+
+        if polish and polish.confidence == 0 and polish.note:
+            return ArbiterDecision(
+                entry_id=entry.key,
+                verdict="reject" if self._strict_mode else "pending",
+                reason=f"润色失败: {polish.note}",
+                confidence=0.0,
+                suggested_action="打回重翻" if self._strict_mode else "人工审核",
+            )
 
         # 情况3：修复信心度很高（>0.9）且无error级别问题 -> 快速通过
         error_issues = [i for i in issues if i.severity == "error"]
-        if refine and refine.confidence > 0.9 and not error_issues:
+        if refine and not polish and refine.confidence > 0.9 and not error_issues:
             # 检查是否修复了所有问题
             fixed_types = {f.issue_type for f in refine.fixes_applied}
             remaining_issues = [i for i in issues if i.issue_type not in fixed_types]
@@ -744,7 +752,7 @@ class LLMArbiter:
         response: str,
     ) -> dict[str, ArbiterDecision]:
         """解析批量裁决响应。"""
-        entry_map = {ctx.entry.key: ctx.entry for ctx in contexts}
+        context_map = {alias: ctx for ctx in contexts for alias in {str(ctx.entry.id), str(ctx.entry.key)}}
         decisions = {}
 
         try:
@@ -756,9 +764,11 @@ class LLMArbiter:
                 data = json.loads(response)
 
             for item in data:
-                entry_id = item.get("entry_id", "")
-                if entry_id not in entry_map:
+                response_id = str(item.get("entry_id", ""))
+                ctx = context_map.get(response_id)
+                if ctx is None:
                     continue
+                entry_id = str(ctx.entry.id)
 
                 verdict = item.get("verdict", "pending").lower()
                 if verdict not in ("pass", "reject", "pending"):
@@ -773,9 +783,14 @@ class LLMArbiter:
                     alternatives=item.get("alternatives", []),
                 )
 
-        except json.JSONDecodeError:
+            for ctx in contexts:
+                entry_id = str(ctx.entry.id)
+                if entry_id not in decisions:
+                    decisions[entry_id] = self._fallback_decision(ctx, "批量响应缺少该条目")
+
+        except (AttributeError, TypeError, json.JSONDecodeError):
             # JSON解析失败，所有条目使用fallback
             for ctx in contexts:
-                decisions[ctx.entry.key] = self._fallback_decision(ctx, "批量响应解析失败")
+                decisions[ctx.entry.id] = self._fallback_decision(ctx, "批量响应解析失败")
 
         return decisions

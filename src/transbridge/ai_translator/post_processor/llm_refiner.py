@@ -520,7 +520,7 @@ class LLMRefiner:
         response: str,
     ) -> dict[str, RefineResult]:
         """解析批量修复响应。"""
-        entry_map = {e.key: e for e in entries}
+        entry_map = {alias: entry for entry in entries for alias in {str(entry.id), str(entry.key)}}
         results = {}
 
         try:
@@ -532,10 +532,11 @@ class LLMRefiner:
                 data = json.loads(response)
 
             for item in data:
-                entry_id = item.get("entry_id", "")
-                entry = entry_map.get(entry_id)
+                response_id = str(item.get("entry_id", ""))
+                entry = entry_map.get(response_id)
                 if not entry:
                     continue
+                entry_id = str(entry.id)
 
                 # 解析fixes_applied
                 fixes = []
@@ -558,7 +559,18 @@ class LLMRefiner:
                     note=item.get("note", ""),
                 )
 
-        except json.JSONDecodeError:
+            for entry in entries:
+                if entry.id not in results:
+                    results[entry.id] = RefineResult(
+                        entry_id=entry.id,
+                        original_translation=entry.translation or "",
+                        refined_translation=entry.translation or "",
+                        confidence=0.0,
+                        needs_arbitration=True,
+                        note="批量修复响应缺少该条目",
+                    )
+
+        except (AttributeError, TypeError, json.JSONDecodeError):
             # JSON解析失败，标记所有为失败
             for entry in entries:
                 results[entry.id] = RefineResult(

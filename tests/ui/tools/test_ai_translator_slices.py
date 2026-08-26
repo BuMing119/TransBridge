@@ -155,7 +155,7 @@ def test_mixed_translate_uses_its_cancel_event(monkeypatch) -> None:
     observed = {}
 
     class Translator:
-        def __init__(self, _config) -> None:
+        def __init__(self, _config, **_kwargs) -> None:
             pass
 
         def translate(self, **kwargs):
@@ -194,6 +194,9 @@ def test_result_presenter_commits_only_accepted_polish_results() -> None:
 
     assert summary.accepted == 1
     assert summary.rejected == 1
+    assert summary.accepted_entry_ids == ("accepted",)
+    assert summary.rejected_entry_ids == ("rejected",)
+    assert summary.failed_entry_ids == ()
     assert [(entry.id, entry.translation) for entry in collection.updated] == [("accepted", "new")]
 
 
@@ -362,9 +365,15 @@ def test_polish_report_activation_is_deferred_until_config_callback_returns(monk
             super().__init__()
             self.entry_activated = Signal()
 
+        def set_report_render_result(self, _artifacts) -> None:
+            pass
+
+        def set_report_render_error(self, _message) -> None:
+            pass
+
     class Presenter:
         def build_polish_report(self, *args, **kwargs):
-            return SimpleNamespace(stats={}, report_path=None)
+            return SimpleNamespace(snapshot=None, report_path=None)
 
     monkeypatch.setattr(report_module, "_TranslationReportDialog", ReportDialog)
     app = QApplication.instance() or QApplication([])

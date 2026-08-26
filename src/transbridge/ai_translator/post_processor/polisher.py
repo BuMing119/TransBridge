@@ -488,7 +488,7 @@ class LLMPolisher:
         response: str,
     ) -> dict[str, PolishResult]:
         """解析批量润色响应。"""
-        entry_map = {e.key: e for e in entries}
+        entry_map = {alias: entry for entry in entries for alias in {str(entry.id), str(entry.key)}}
         results = {}
 
         try:
@@ -500,10 +500,11 @@ class LLMPolisher:
                 data = json.loads(response)
 
             for item in data:
-                entry_id = item.get("entry_id", "")
-                entry = entry_map.get(entry_id)
+                response_id = str(item.get("entry_id", ""))
+                entry = entry_map.get(response_id)
                 if not entry:
                     continue
+                entry_id = str(entry.id)
 
                 results[entry_id] = PolishResult(
                     entry_id=entry_id,
@@ -515,7 +516,18 @@ class LLMPolisher:
                     note=item.get("note", ""),
                 )
 
-        except json.JSONDecodeError:
+            for entry in entries:
+                if entry.id not in results:
+                    results[entry.id] = PolishResult(
+                        entry_id=entry.id,
+                        original_translation=entry.translation or "",
+                        polished_translation=entry.translation or "",
+                        confidence=0.0,
+                        needs_arbitration=True,
+                        note="批量润色响应缺少该条目",
+                    )
+
+        except (AttributeError, TypeError, json.JSONDecodeError):
             # JSON解析失败，所有条目标记为失败
             for entry in entries:
                 results[entry.id] = PolishResult(

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from copy import deepcopy
+from dataclasses import dataclass, field, fields
 import hmac
 import json
 import os
@@ -83,6 +84,7 @@ class LLMConfig:
     pp_strict_arbitration: bool = False
     pp_arbitration_batch_size: int = 10
     action_rules: list[Any] = field(default_factory=list)
+    workflow_profiles: dict[str, dict[str, object]] = field(default_factory=dict)
     mixed_execution_order: str = "serial"
     guardrails_enable_admin_confirm: bool = True
     guardrails_enable_input_validation: bool = True
@@ -158,6 +160,14 @@ class LLMConfig:
         ("mcp_write_tool_policy", "write_tool_policy", "str"),
     )
 
+    def copy_for_execution(self) -> LLMConfig:
+        """Return a detached value snapshot without repository locks or providers."""
+
+        values = {item.name: deepcopy(getattr(self, item.name)) for item in fields(self) if item.init}
+        copied = type(self)(**values)
+        copied.config_revision = self.config_revision
+        return copied
+
     def save_to_file(
         self,
         *,
@@ -188,14 +198,14 @@ class LLMConfig:
             "TRANSBRIDGE_MCP_AUTH_TOKEN",
         )
         llm: dict[str, Any | None] = {
-            "provider": self.provider,
-            "base_url": self.base_url,
-            "model": self.model,
             "credential_ref": self.credential_ref.target_name,
             "embedding_credential_ref": self.embedding.credential_ref.target_name,
             "term_priority": ",".join(self.term_priority),
             "action_rules": self._serialize_action_rules() or None,
+            "workflow_profiles": self._serialize_workflow_profiles() or None,
         }
+        if all(str(value).strip() for value in (self.provider, self.base_url, self.model)):
+            llm.update({"provider": self.provider, "base_url": self.base_url, "model": self.model})
         llm.update({key: getattr(self, attr) for attr, key, _kind in self._CONFIG_FIELDS})
         llm.update({key: getattr(self.embedding, attr) for attr, key, _kind in self._EMBEDDING_FIELDS})
         snapshot = repo.update_sections({
@@ -255,6 +265,10 @@ class LLMConfig:
             if obj.term_priority == ["dynamic", "paratranz", "json", "excel"]:
                 obj.term_priority.insert(3, "csv")
         obj.action_rules = cls._load_action_rules(snapshot.value("llm", "action_rules", "") or "")
+        obj.workflow_profiles = cls._load_workflow_profiles(snapshot.value("llm", "workflow_profiles", "") or "")
+        from transbridge.application.translation.ai_execution_profile import apply_profile_settings
+
+        apply_profile_settings(obj, "translate")
         obj.api_key = _resolve_secret(store, obj.credential_ref, environment, "TRANSBRIDGE_LLM_API_KEY")
         obj.embedding.api_key = _resolve_secret(
             store,
@@ -291,6 +305,27 @@ class LLMConfig:
             return [ActionRule.from_dict(item) for item in data if isinstance(item, dict)]
         except (ImportError, json.JSONDecodeError, TypeError, ValueError):
             return []
+
+    def _serialize_workflow_profiles(self) -> str:
+        if not self.workflow_profiles:
+            return ""
+        return json.dumps(self.workflow_profiles, ensure_ascii=False, allow_nan=False, sort_keys=True)
+
+    @staticmethod
+    def _load_workflow_profiles(raw: str) -> dict[str, dict[str, object]]:
+        if not raw:
+            return {}
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        return {
+            str(name): dict(settings)
+            for name, settings in data.items()
+            if name in {"translate", "polish", "mixed"} and isinstance(settings, dict)
+        }
 
     @staticmethod
     def get_ai_translator_dir(esp_stem: str) -> str:

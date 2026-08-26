@@ -16,11 +16,11 @@ from transbridge.ui.tools.ai_translator.config_view import (
     WindowConfigView,
 )
 from transbridge.ui.tools.ai_translator.legacy_checkpoint import check_translation_checkpoint
+from transbridge.ui.tools.ai_translator.polish_runtime import create_polish_worker
 from transbridge.ui.tools.ai_translator.quick_run_presenter import AiQuickRunPresenter
 from transbridge.ui.tools.ai_translator.result_presenter import ResultPresenter
 from transbridge.ui.tools.ai_translator.run_controller import (
     RunController,
-    create_polish_worker,
     show_polish_progress,
     start_mixed_run,
     start_translation_run,
@@ -132,8 +132,8 @@ class AITranslatorWindow(QWidget):
         self._view_port.update_provider_controls()
 
     def on_mode_changed(self):
-        """模式切换时调整UI。"""
         mode = self._view_port.mode
+        self._config_presenter.switch_preset(mode)
         self._view_port.update_mode_controls()
         if mode != "mixed":
             self._reset_scope_to_default(mode == "polish")
@@ -210,6 +210,7 @@ class AITranslatorWindow(QWidget):
     def update_quick_run(self):
         mode = self._view_port.mode
         cfg = self._config_presenter.build()
+        execution_profile = self._config_presenter.execution_profile()
         candidates = preflight_candidates(self, mode)
         preflight = preflight_ai_run(
             mode,
@@ -232,7 +233,9 @@ class AITranslatorWindow(QWidget):
             active_run_id=None if active is None else active.run_id,
         )
         self._view.controls.start_btn.setEnabled(state.enabled)
-        preflight_text = state.scope_summary if state.enabled else state.enabled_reason or "暂不可运行"
+        preflight_text = state.status_text(execution_profile.summary)
+        if mode == "polish" and not execution_profile.enable_polish:
+            self._view.controls.start_btn.setText("▶ 开始执行")
         self._view.controls.preflight_label.set_full_text(preflight_text)
         self._view.controls.preflight_label.setToolTip(preflight_text)
         self._view.controls.preflight_label.setAccessibleDescription(
@@ -329,7 +332,6 @@ class AITranslatorWindow(QWidget):
         self.close()
 
     def _on_mixed_start(self):
-        """混合模式：规则匹配 → 拆分为翻译/润色条目 → MixedWorker（占位，S12实现）。"""
         collection = self._ctx.collection
         if not collection:
             QMessageBox.warning(self, "混合模式", "请先加载词条集合。")
@@ -340,7 +342,6 @@ class AITranslatorWindow(QWidget):
         mixed_scope = self._scope_presenter.partition_mixed(rules, entries)
         translate_entries = list(mixed_scope.translate_entries)
         polish_entries = list(mixed_scope.polish_entries)
-
         if not translate_entries and not polish_entries:
             QMessageBox.warning(self, "混合模式", "当前筛选条件下无匹配条目，请调整规则。")
             return
@@ -348,6 +349,11 @@ class AITranslatorWindow(QWidget):
         cfg = self._config_presenter.build()
         cfg.mixed_execution_order = self._view_port.execution_order
         cfg.action_rules = rules
+        if not self._config_presenter.execution_profile().has_proofread_work:
+            polish_entries = []
+        if not translate_entries and not polish_entries:
+            QMessageBox.warning(self, "混合模式", "当前预设未启用可执行的处理阶段。")
+            return
         run_entries = []
         seen_entry_ids: set[str] = set()
         for entry in translate_entries + polish_entries:
@@ -360,6 +366,7 @@ class AITranslatorWindow(QWidget):
         cfg = self._config_presenter.save()
         cfg.mixed_execution_order = self._view_port.execution_order
         cfg.action_rules = rules
+        self._active_mixed_polish_entries = polish_entries
         request = try_begin_run(
             self._run_controller,
             "mixed",
@@ -372,8 +379,10 @@ class AITranslatorWindow(QWidget):
         )
         if request is None:
             return
-
-        start_mixed_run(
+        self._active_mixed_preview = request.spec.execution_profile.preview_enabled
+        self._active_mixed_spec = request.spec
+        self._active_mixed_config = request.config
+        self._active_mixed_progress = start_mixed_run(
             self._run_controller,
             request,
             self._ctx,
@@ -391,6 +400,10 @@ class AITranslatorWindow(QWidget):
         self._view.controls.preflight_label.setAccessibleDescription(started_text)
 
     def _on_mixed_finished(self, result: dict):
+        from .result_view import apply_window_mixed_result
+
+        if apply_window_mixed_result(self, result):
+            self._ctx.collection_changed.emit(self._ctx.collection)
         QMessageBox.information(self, "混合模式", self._result_presenter.mixed_summary(result))
 
     def _on_polish_start(self):
@@ -399,10 +412,7 @@ class AITranslatorWindow(QWidget):
         if not collection:
             QMessageBox.warning(self, "润色", "请先加载词条集合。")
             return
-
         cfg = self._config_presenter.build()
-
-        # 按作用域获取有译文的条目
         candidates = self._build_scope_candidates()
         entries_with_translation = [e for e in candidates if e.translation]
         if not require_ready(self, "polish", cfg, entries_with_translation):
@@ -420,7 +430,6 @@ class AITranslatorWindow(QWidget):
         )
         if request is None:
             return
-
         try:
             worker = create_polish_worker(self._ctx, request.config, entries_with_translation)
         except Exception as exc:
@@ -459,31 +468,25 @@ class AITranslatorWindow(QWidget):
     def _on_polish_finished_direct(self, results, entries, collection):
         summary = self._result_presenter.apply_direct(collection, entries, results)
         self._ctx.collection_changed.emit(collection)
-        self._show_polish_report(
-            results,
-            entries,
-            summary.accepted,
-            summary.rejected,
-            summary.failed,
-        )
+        self._show_polish_report(results, entries, summary)
         self.close()
 
     def _apply_polish_results(self, entries, polish_decisions, collection):
-        summary = self._result_presenter.apply_decisions(collection, entries, polish_decisions)
-        self._ctx.collection_changed.emit(collection)
-        self._show_polish_report(
-            self._last_polish_results if hasattr(self, "_last_polish_results") else {},
+        results = self._last_polish_results if hasattr(self, "_last_polish_results") else {}
+        summary = self._result_presenter.apply_decisions(
+            collection,
             entries,
-            summary.accepted,
-            summary.rejected,
-            summary.failed,
+            polish_decisions,
+            results=results,
         )
+        self._ctx.collection_changed.emit(collection)
+        self._show_polish_report(results, entries, summary)
         self.close()
 
-    def _show_polish_report(self, results, entries, accepted, rejected, failed):
+    def _show_polish_report(self, results, entries, summary):
         from .result_view import show_window_polish_report
 
-        self._report_dialog = show_window_polish_report(self, results, entries, accepted, rejected, failed)
+        self._report_dialog = show_window_polish_report(self, results, entries, summary)
 
     def on_open_history(self):
         from .result_view import open_report_history

@@ -24,6 +24,7 @@ class AiMixedProgressWindow(QWidget):
         self._worker = worker
         self._activity = activity
         self._result_actions = None
+        self._report_diagnostics: tuple[str, ...] = ()
         self.setWindowTitle("AI 混合运行 — 进行中")
         self.resize(440, 150)
         layout = QVBoxLayout(self)
@@ -55,6 +56,15 @@ class AiMixedProgressWindow(QWidget):
 
     def set_result_actions(self, state: object) -> None:
         self._result_actions = state
+
+    def set_report_diagnostics(self, diagnostics: tuple[str, ...]) -> None:
+        self._report_diagnostics = diagnostics
+        if not diagnostics:
+            return
+        self._set_status("已完成（报表生成有警告）")
+        details = "\n".join(diagnostics)
+        self._status.setToolTip(details)
+        self._status.setAccessibleDescription(details)
 
     def _on_progress(self, value: object) -> None:
         current = int(getattr(value, "translate_done", 0)) + int(getattr(value, "polish_done", 0))
@@ -101,7 +111,7 @@ class AiMixedProgressWindow(QWidget):
         text = self._status.full_text
         if text.startswith("失败"):
             key = "failed"
-        elif text == "已完成":
+        elif text.startswith("已完成"):
             key = "completed"
         elif text == "已停止":
             key = "cancelled"

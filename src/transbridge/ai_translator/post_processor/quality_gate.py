@@ -424,13 +424,15 @@ class QualityGateChecker(BaseChecker):
                 data = json.loads(response)
 
             issues = []
-            entry_map = {e.key: e for e in entries}
+            entry_map = {alias: entry for entry in entries for alias in {str(entry.id), str(entry.key)}}
+            returned_entry_ids: set[str] = set()
 
             for item in data:
-                entry_id = item.get("entry_id", "")
-                entry = entry_map.get(entry_id)
+                response_id = str(item.get("entry_id", ""))
+                entry = entry_map.get(response_id)
                 if not entry:
                     continue
+                returned_entry_ids.add(str(entry.id))
 
                 verdict_str = item.get("verdict", "uncertain").lower()
                 if verdict_str == "pass":
@@ -447,9 +449,23 @@ class QualityGateChecker(BaseChecker):
                 )
                 issues.extend(self._result_to_issues(entry, result))
 
+            for entry in entries:
+                if str(entry.id) in returned_entry_ids:
+                    continue
+                issues.extend(
+                    self._result_to_issues(
+                        entry,
+                        QualityGateResult(
+                            verdict=QualityVerdict.UNCERTAIN,
+                            reason="批量质量检测响应缺少该条目",
+                            issues=["模型未返回检测结果，请人工确认质量"],
+                        ),
+                    )
+                )
+
             return issues
 
-        except json.JSONDecodeError:
+        except (AttributeError, TypeError, json.JSONDecodeError):
             # 解析失败，降级为逐个检测
             return self._fallback_batch_check(entries, response)
 

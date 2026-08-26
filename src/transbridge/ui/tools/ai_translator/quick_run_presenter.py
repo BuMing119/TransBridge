@@ -26,6 +26,11 @@ class AiQuickRunState:
         if not self.enabled and not (self.enabled_reason and self.enabled_reason.strip()):
             raise ValueError("disabled quick run requires a reason")
 
+    def status_text(self, workflow_summary: str) -> str:
+        return (
+            f"{self.scope_summary}；流程：{workflow_summary}" if self.enabled else self.enabled_reason or "暂不可运行"
+        )
+
 
 class AiQuickRunPresenter:
     def present(

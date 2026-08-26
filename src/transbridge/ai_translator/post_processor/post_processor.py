@@ -9,13 +9,14 @@
 5. 执行（Action）- 更新条目stage
 """
 
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, replace
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
-from .base import BaseChecker, PostProcessResult, PostProcessIssue
+from .base import BaseChecker, PostProcessIssue, PostProcessResult
 from .checkpoint import PostProcessCheckpoint
 from .consistency_checker import ConsistencyChecker
 from .format_validator import FormatValidator
@@ -26,9 +27,9 @@ if TYPE_CHECKING:
     from ...converter.translation_entry_collection import TranslationEntryCollection
     from ..llm_client import LLMClient
     from ..term_database import TermDatabaseManager
+    from .llm_arbiter import ArbiterDecision
     from .llm_refiner import RefineResult
     from .polisher import PolishResult
-    from .llm_arbiter import ArbiterDecision
 
 
 @dataclass
@@ -134,7 +135,7 @@ class PostProcessor:
         self._refiner = None
         self._polisher = None
         self._arbiter = None
-        self._llm_client: "LLMClient | None" = None
+        self._llm_client: LLMClient | None = None
 
     def register_checker(self, checker: BaseChecker) -> None:
         """
@@ -233,6 +234,7 @@ class PostProcessor:
         max_workers: int = 1,
         log_callback: Callable[[str], None] | None = None,
         esp_path: str | None = None,
+        apply_changes: bool = True,
     ) -> PostProcessResult:
         """
         对指定条目执行后处理（五阶段流程）。
@@ -246,11 +248,20 @@ class PostProcessor:
             max_workers: 并发线程数
             log_callback: 日志回调
             esp_path: ESP 路径（用于 checkpoint 持久化）
+            apply_changes: 是否把裁决结果写入传入条目；候选预览应传 False
 
         Returns:
             后处理结果
         """
         result = PostProcessResult(total_checked=len(entries))
+        entry_id_by_alias = {alias: entry.id for entry in entries for alias in {str(entry.id), str(entry.key)}}
+
+        def _canonical_issue(issue: PostProcessIssue) -> PostProcessIssue:
+            entry_id = entry_id_by_alias.get(str(issue.entry_id), str(issue.entry_id))
+            return issue if issue.entry_id == entry_id else replace(issue, entry_id=entry_id)
+
+        def _canonical_results(values: dict) -> dict:
+            return {entry_id_by_alias.get(str(entry_id), str(entry_id)): value for entry_id, value in values.items()}
 
         def _progress(phase: str, current: int, total: int, message: str = ""):
             if progress_callback:
@@ -300,7 +311,7 @@ class PostProcessor:
             if checkpoint and checkpoint.issues:
                 for issue_dict in checkpoint.issues:
                     issue = PostProcessCheckpoint.issue_from_dict(issue_dict)
-                    result.add_issue(issue)
+                    result.add_issue(_canonical_issue(issue))
                 issues_by_entry = self._group_issues_by_entry(result.issues)
 
             # 先执行本地检查器（ConsistencyChecker、FormatValidator 等）
@@ -319,7 +330,7 @@ class PostProcessor:
                         break
 
                 for issue in issues:
-                    result.add_issue(issue)
+                    result.add_issue(_canonical_issue(issue))
 
             issues_by_entry = self._group_issues_by_entry(result.issues)
 
@@ -362,7 +373,7 @@ class PostProcessor:
                             batch_issues = future.result()
                             with issue_lock:
                                 for issue in batch_issues:
-                                    result.add_issue(issue)
+                                    result.add_issue(_canonical_issue(issue))
                                 qg_completed += len(batch)
                                 if checkpoint:
                                     checkpoint.mark_batch_completed("detect_quality_gate", fp)
@@ -380,14 +391,15 @@ class PostProcessor:
                 return result
 
             # ── 阶段2a: 修复 ────────────────────────────────────────────────────
-            refine_results: dict[str, "RefineResult"] = {}
+            refine_results: dict[str, RefineResult] = {}
 
             if checkpoint and checkpoint.refine_results:
                 for eid, rdict in checkpoint.refine_results.items():
                     refine_results[eid] = PostProcessCheckpoint.refine_result_from_dict(rdict)
+                refine_results = _canonical_results(refine_results)
 
             if self._refiner and issues_by_entry and not _should_stop():
-                entries_to_refine = [e for e in entries if e.key in issues_by_entry]
+                entries_to_refine = [e for e in entries if e.id in issues_by_entry]
                 total = len(entries_to_refine)
 
                 if total > 0:
@@ -423,7 +435,7 @@ class PostProcessor:
                             try:
                                 batch_results = future.result()
                                 with result_lock:
-                                    refine_results.update(batch_results)
+                                    refine_results.update(_canonical_results(batch_results))
                                     refined_count += len(batch)
                                     if checkpoint:
                                         checkpoint.mark_batch_completed("refine", fp)
@@ -440,16 +452,24 @@ class PostProcessor:
                 return result
 
             # ── 阶段2b: 润色 ────────────────────────────────────────────────────
-            polish_results: dict[str, "PolishResult"] = {}
+            polish_results: dict[str, PolishResult] = {}
 
             if checkpoint and checkpoint.polish_results:
                 for eid, pdict in checkpoint.polish_results.items():
                     polish_results[eid] = PostProcessCheckpoint.polish_result_from_dict(pdict)
+                polish_results = _canonical_results(polish_results)
 
             if self._polisher and self._config.enable_polish and not _should_stop():
-                entries_to_polish = self._select_entries_for_polish(
-                    entries, issues_by_entry, refine_results
-                )
+                entries_to_polish = self._select_entries_for_polish(entries, issues_by_entry, refine_results)
+                entries_to_polish = [
+                    replace(
+                        entry,
+                        translation=refine_results[entry.id].refined_translation,
+                    )
+                    if entry.id in refine_results and refine_results[entry.id].refined_translation
+                    else entry
+                    for entry in entries_to_polish
+                ]
                 total = len(entries_to_polish)
 
                 if total > 0:
@@ -484,7 +504,7 @@ class PostProcessor:
                             try:
                                 batch_results = future.result()
                                 with result_lock:
-                                    polish_results.update(batch_results)
+                                    polish_results.update(_canonical_results(batch_results))
                                     polished_count += len(batch)
                                     if checkpoint:
                                         checkpoint.mark_batch_completed("polish", fp)
@@ -501,11 +521,12 @@ class PostProcessor:
                 return result
 
             # ── 阶段3: 裁决 ────────────────────────────────────────────────────
-            decisions: dict[str, "ArbiterDecision"] = {}
+            decisions: dict[str, ArbiterDecision] = {}
 
             if checkpoint and checkpoint.decisions:
                 for eid, ddict in checkpoint.decisions.items():
                     decisions[eid] = PostProcessCheckpoint.decision_from_dict(ddict)
+                decisions = _canonical_results(decisions)
 
             if self._arbiter and not _should_stop():
                 from .llm_arbiter import ArbitrationContext
@@ -566,13 +587,12 @@ class PostProcessor:
                         try:
                             batch_decisions = future.result()
                             with result_lock:
-                                decisions.update(batch_decisions)
+                                decisions.update(_canonical_results(batch_decisions))
                                 arbitrate_count += len(batch)
                                 if checkpoint:
                                     checkpoint.mark_batch_completed("arbitrate", fp)
                                     checkpoint.decisions = {
-                                        eid: PostProcessCheckpoint.decision_to_dict(d)
-                                        for eid, d in decisions.items()
+                                        eid: PostProcessCheckpoint.decision_to_dict(d) for eid, d in decisions.items()
                                     }
                                     _persist_checkpoint()
                             _progress("arbitrate", arbitrate_count, total, f"已裁决 {arbitrate_count}/{total}")
@@ -580,9 +600,7 @@ class PostProcessor:
                             _log(f"⚠ Arbitrate 批次异常: {e}")
 
             else:
-                decisions = self._rule_based_decide(
-                    entries, issues_by_entry, refine_results, polish_results
-                )
+                decisions = self._rule_based_decide(entries, issues_by_entry, refine_results, polish_results)
 
             if _should_stop():
                 return result
@@ -591,14 +609,21 @@ class PostProcessor:
             _progress("execute", 0, len(entries), "执行裁决结果...")
 
             execution_result = self._execute_decisions(
-                entries, refine_results, polish_results, decisions, result
+                entries,
+                refine_results,
+                polish_results,
+                decisions,
+                result,
+                apply_changes=apply_changes,
             )
 
             _progress(
                 "execute",
                 len(entries),
                 len(entries),
-                f"执行完成：通过 {execution_result.passed}，打回 {execution_result.rejected}，待审 {execution_result.pending}",
+                "执行完成："
+                f"通过 {execution_result.passed}，打回 {execution_result.rejected}，"
+                f"待审 {execution_result.pending}",
             )
 
             result.execution_result = execution_result
@@ -614,9 +639,7 @@ class PostProcessor:
             if monitor_done is not None:
                 monitor_done.set()
 
-    def _group_issues_by_entry(
-        self, issues: list[PostProcessIssue]
-    ) -> dict[str, list[PostProcessIssue]]:
+    def _group_issues_by_entry(self, issues: list[PostProcessIssue]) -> dict[str, list[PostProcessIssue]]:
         """按 entry_id 分组问题。"""
         result: dict[str, list[PostProcessIssue]] = {}
         for issue in issues:
@@ -649,23 +672,15 @@ class PostProcessor:
             return [e for e in entries if e.translation]
         elif scope == "passed":
             # 只润色无问题的条目
-            return [
-                e for e in entries
-                if e.translation and e.key not in issues_by_entry
-            ]
+            return [e for e in entries if e.translation and e.id not in issues_by_entry]
         elif scope == "has_issues":
             # 只润色有问题的条目（修复后润色）
-            return [
-                e for e in entries
-                if e.translation and e.key in issues_by_entry and e.key in refine_results
-            ]
+            return [e for e in entries if e.translation and e.id in issues_by_entry and e.id in refine_results]
         else:
             # 默认润色所有
             return [e for e in entries if e.translation]
 
-    def _get_quality_gate_verdict(
-        self, entry_id: str, issues: list[PostProcessIssue]
-    ) -> str | None:
+    def _get_quality_gate_verdict(self, entry_id: str, issues: list[PostProcessIssue]) -> str | None:
         """获取质量关卡对某个条目的判定。"""
         for issue in issues:
             if issue.entry_id == entry_id and issue.issue_type == PostProcessIssue.LOW_QUALITY:
@@ -697,9 +712,24 @@ class PostProcessor:
             polish = polish_results.get(entry.id)
 
             has_errors = any(i.severity == "error" for i in issues)
-            has_warnings = any(i.severity == "warning" for i in issues)
+            failed_stage = next(
+                (
+                    value.note
+                    for value in (refine, polish)
+                    if value and value.confidence == 0 and getattr(value, "note", "")
+                ),
+                None,
+            )
 
-            if not issues:
+            if failed_stage:
+                decisions[entry.id] = ArbiterDecision(
+                    entry_id=entry.id,
+                    verdict="reject" if self._config.strict_arbitration else "pending",
+                    reason=failed_stage,
+                    confidence=0.0,
+                    suggested_action="人工审核" if not self._config.strict_arbitration else "打回重翻",
+                )
+            elif not issues:
                 # 无问题 -> 通过
                 decisions[entry.id] = ArbiterDecision(
                     entry_id=entry.id,
@@ -754,6 +784,8 @@ class PostProcessor:
         polish_results: dict[str, "PolishResult"],
         decisions: dict[str, "ArbiterDecision"],
         result: PostProcessResult,
+        *,
+        apply_changes: bool = True,
     ) -> PostProcessExecutionResult:
         """
         执行裁决结果。
@@ -784,13 +816,15 @@ class PostProcessor:
 
             if decision.verdict == "pass":
                 # 接受最终译文
-                entry.translation = translation_to_use
-                entry.stage = 1  # 检查通过
+                if apply_changes:
+                    entry.translation = translation_to_use
+                    entry.stage = 1  # 检查通过
                 exec_result.passed += 1
 
             elif decision.verdict == "reject":
                 # 打回重翻
-                entry.stage = 0  # 未翻译
+                if apply_changes:
+                    entry.stage = 0  # 未翻译
                 exec_result.rejected += 1
 
             elif decision.verdict == "pending":
@@ -802,9 +836,7 @@ class PostProcessor:
 
     # ── 向后兼容的方法 ────────────────────────────────────────────────────
 
-    def _auto_fix(
-        self, entries: list["TranslationEntry"], issues: list
-    ) -> int:
+    def _auto_fix(self, entries: list["TranslationEntry"], issues: list) -> int:
         """
         尝试自动修复可修复的问题（遗留方法，现在由LLMRefiner处理）。
 
@@ -815,7 +847,6 @@ class PostProcessor:
         Returns:
             成功修复的问题数
         """
-        import re
         from ...converter.translation_entry import TranslationEntry
 
         fixed_count = 0
@@ -842,9 +873,7 @@ class PostProcessor:
 
             # 修复 3: 简单引号补全
             if issue.issue_type == PostProcessIssue.QUOTE_MISMATCH:
-                fixed_translation = self._fix_simple_quotes(
-                    fixed_translation, issue.original
-                )
+                fixed_translation = self._fix_simple_quotes(fixed_translation, issue.original)
 
             # 如果有修复，更新条目
             if fixed_translation != original_translation:

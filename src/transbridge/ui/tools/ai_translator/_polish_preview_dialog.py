@@ -28,7 +28,10 @@ if TYPE_CHECKING:
 
 _COL_ORIGINAL = 0
 _COL_CURRENT = 1
-_COL_POLISHED = 2
+_COL_ISSUES = 2
+_COL_REFINED = 3
+_COL_POLISHED = 4
+_COL_DECISION = 5
 
 _STATUS_ACCEPTED = "accepted"
 _STATUS_REJECTED = "rejected"
@@ -38,7 +41,7 @@ _STATUS_PENDING = "pending"
 class _PolishPreviewDialog(QDialog):
     """润色结果预览对话框。
 
-    三列对比：原文 | 原译文 | 润色结果。
+    六列展示：原文、当前译文、检测问题、纠错候选、最终候选和裁决。
     每行可接受（使用润色结果）或拒绝（保留原译文）。
     """
 
@@ -84,12 +87,13 @@ class _PolishPreviewDialog(QDialog):
 
         # ── 表格 ────────────────────────────────────────────────────────────
         self._table = QTableWidget()
-        self._table.setColumnCount(3)
-        self._table.setHorizontalHeaderLabels(["原文", "原译文", "润色结果"])
+        self._table.setColumnCount(6)
+        self._table.setHorizontalHeaderLabels(["原文", "当前译文", "检测问题", "纠错候选", "最终候选", "裁决"])
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.verticalHeader().setVisible(False)
+        self._table.cellClicked.connect(self._on_cell_clicked)
         layout.addWidget(self._table)
 
         # ── 底部按钮 ────────────────────────────────────────────────────────
@@ -114,36 +118,58 @@ class _PolishPreviewDialog(QDialog):
             result = self._results.get(entry.id)
             if result is None:
                 self._row_status[row] = _STATUS_REJECTED
-                self._add_row(row, entry.original, entry.translation or "", entry.translation or "", True)
+                self._add_row(
+                    row,
+                    entry.original,
+                    entry.translation or "",
+                    "未生成结果",
+                    "",
+                    entry.translation or "",
+                    "failed",
+                    True,
+                )
                 continue
 
-            self._row_status[row] = _STATUS_PENDING
+            failed = result.confidence <= 0
+            self._row_status[row] = _STATUS_REJECTED if failed else _STATUS_PENDING
+            issues = "\n".join(f"[{issue.severity}] {issue.message}" for issue in getattr(result, "issues", ())) or "无"
+            decision = f"{getattr(result, 'verdict', 'pending')} ({result.confidence:.2f})"
+            if result.note:
+                decision = f"{decision}\n{result.note}"
             self._add_row(
                 row,
                 entry.original or "",
                 entry.translation or "",
+                issues,
+                getattr(result, "refined_translation", None) or entry.translation or "",
                 result.polished_translation or entry.translation or "",
-                False,
+                decision,
+                failed,
             )
 
         self._update_stats()
 
-    def _add_row(self, row: int, original: str, current: str, polished: str, failed: bool):
+    def _add_row(
+        self,
+        row: int,
+        original: str,
+        current: str,
+        issues: str,
+        refined: str,
+        polished: str,
+        decision: str,
+        failed: bool,
+    ):
         items = []
-        for col, text in enumerate([original, current, polished]):
+        for col, text in enumerate([original, current, issues, refined, polished, decision]):
             item = QTableWidgetItem(text)
             item.setToolTip(text)
             if col == _COL_POLISHED and not failed:
                 item.setData(Qt.ItemDataRole.UserRole, _STATUS_PENDING)
             items.append(item)
 
-        self._table.setItem(row, _COL_ORIGINAL, items[_COL_ORIGINAL])
-        self._table.setItem(row, _COL_CURRENT, items[_COL_CURRENT])
-        self._table.setItem(row, _COL_POLISHED, items[_COL_POLISHED])
-
-        # 点击润色列切换接受/拒绝
-        if not failed:
-            self._table.cellClicked.connect(self._on_cell_clicked)
+        for col, item in enumerate(items):
+            self._table.setItem(row, col, item)
 
     def _on_cell_clicked(self, row: int, col: int):
         if col != _COL_POLISHED:

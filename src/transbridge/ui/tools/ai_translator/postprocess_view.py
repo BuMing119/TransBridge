@@ -23,7 +23,7 @@ def build_postprocess_view(view: TranslatorViewOwner) -> None:
     pp_layout.setSpacing(6)
 
     # 总开关
-    view.controls.pp_enable_check = QCheckBox("启用翻译后质量检查与优化")
+    view.controls.pp_enable_check = QCheckBox("启用质量检查与优化")
     view.controls.pp_enable_check.setChecked(True)
     view.controls.pp_enable_check.setToolTip("启用后将对翻译结果进行质量检查、修复和润色，可能增加额外耗时和API调用")
     pp_layout.addWidget(view.controls.pp_enable_check)

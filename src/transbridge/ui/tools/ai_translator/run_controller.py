@@ -354,6 +354,8 @@ def start_mixed_run(
         polish_entries=polish_entries,
         execution_order=config.mixed_execution_order,
         ctx=ctx,
+        run_id=request.run_id,
+        run_spec=request.spec,
     )
     run_id = request.run_id
     activity = controller.create_activity(request)
@@ -370,24 +372,7 @@ def start_mixed_run(
     worker.progress.connect(on_activity_progress)
 
     def project_result(result: object) -> None:
-        from types import SimpleNamespace
-
-        from .result_actions import result_action_state
-
-        failed: list[str] = []
-        translate = result.get("translate") if isinstance(result, dict) else None
-        failed.extend(str(value) for value in getattr(translate, "failed_entries", ()) if str(value))
-        polish = result.get("polish") if isinstance(result, dict) else None
-        for detail in getattr(polish, "details", ()) or ():
-            if not detail.get("success", False):
-                failed.append(str(detail.get("entry_id") or detail.get("key") or ""))
-        progress.set_result_actions(
-            result_action_state(
-                request.spec,
-                result=SimpleNamespace(failed_entries=tuple(value for value in failed if value)),
-                report=None,
-            )
-        )
+        register_mixed_result_actions(progress, request.spec, result)
 
     worker.finished.connect(project_result)
     worker.finished.connect(
@@ -410,26 +395,30 @@ def start_mixed_run(
     return progress
 
 
-def create_polish_worker(ctx: object, config: object, entries: list) -> object:
-    from transbridge.ai_translator.post_processor.polisher import LLMPolisher
-    from transbridge.ai_translator.term_database import DynamicTermDatabase, TermDatabaseManager
-    from transbridge.infra.llm_client import create_llm_client
+def register_mixed_result_actions(progress: object, spec: AiRunSpec, result: object) -> None:
+    """Project mixed failures and its durable Excel artifact onto the progress view."""
+    from types import SimpleNamespace
 
-    from ._polish_worker import _PolishWorker
+    from .result_actions import AiResultNavigator, result_action_state
 
-    term_manager = None
-    if ctx.esp_path:
-        dynamic_database = DynamicTermDatabase(ctx.esp_path)
-        dynamic_database.load()
-        term_manager = TermDatabaseManager([dynamic_database.as_list()])
-    polisher = LLMPolisher(
-        llm_client=create_llm_client(config),
-        term_manager=term_manager,
-        game_profile=config.game_profile,
-        target_lang=config.target_lang,
-        polish_level=config.pp_polish_level or "moderate",
+    failed: list[str] = []
+    translate = result.get("translate") if isinstance(result, dict) else None
+    failed.extend(str(value) for value in getattr(translate, "failed_entries", ()) if str(value))
+    polish = result.get("polish") if isinstance(result, dict) else None
+    for detail in getattr(polish, "details", ()) or ():
+        if not detail.get("success", False):
+            failed.append(str(detail.get("entry_id") or detail.get("key") or ""))
+    artifacts = result.get("artifacts") if isinstance(result, dict) else None
+    navigator = AiResultNavigator()
+    artifact = navigator.register_report(spec, getattr(artifacts, "excel_path", None))
+    progress.result_navigator = navigator
+    progress.set_result_actions(
+        result_action_state(
+            spec,
+            result=SimpleNamespace(failed_entries=tuple(value for value in failed if value)),
+            report=artifact,
+        )
     )
-    return _PolishWorker(polisher, entries)
 
 
 def show_polish_progress(

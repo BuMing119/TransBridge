@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Literal
 
 from transbridge.application.tasks import JobCapabilities, OwnerRef
+from transbridge.application.translation.ai_execution_profile import AiExecutionProfile
 from transbridge.ui.shell.action_catalog import IntentId
 
 AiRunMode = Literal["translate", "polish", "mixed", "batch"]
@@ -28,6 +29,7 @@ class AiPreflightCode(StrEnum):
     MISSING_MODEL = "missing_model"
     MISSING_DEPENDENCY = "missing_dependency"
     EMPTY_SCOPE = "empty_scope"
+    EMPTY_WORKFLOW = "empty_workflow"
     MISSING_SOURCE = "missing_source"
 
 
@@ -72,6 +74,7 @@ class AiRunSpec:
     input_ref: str
     input_fingerprint: str
     config_digest: str
+    execution_profile: AiExecutionProfile
     overwrite: bool
     capabilities: AiRunCapabilities
 
@@ -92,10 +95,10 @@ class FrozenExecutionConfig:
     __slots__ = ("_value",)
 
     def __init__(self, value: object) -> None:
-        self._value = deepcopy(value)
+        self._value = _copy_execution_value(value)
 
     def copy(self) -> object:
-        return deepcopy(self._value)
+        return _copy_execution_value(self._value)
 
 
 def capabilities_for(mode: AiRunMode) -> AiRunCapabilities:
@@ -130,7 +133,9 @@ def preflight_ai_run(
 
     available = dependency_available or (lambda name: importlib.util.find_spec(name) is not None)
     issues: list[AiPreflightIssue] = []
-    if not str(getattr(config, "api_key", "")).strip():
+    profile = AiExecutionProfile.from_config("translate" if mode == "batch" else mode, config)
+    needs_llm = mode != "polish" or profile.requires_llm
+    if needs_llm and not str(getattr(config, "api_key", "")).strip():
         issues.append(
             AiPreflightIssue(
                 AiPreflightCode.MISSING_API_KEY,
@@ -138,7 +143,7 @@ def preflight_ai_run(
                 IntentId.SETTINGS_SERVICES,
             )
         )
-    if not str(getattr(config, "model", "")).strip():
+    if needs_llm and not str(getattr(config, "model", "")).strip():
         issues.append(
             AiPreflightIssue(
                 AiPreflightCode.MISSING_MODEL,
@@ -154,6 +159,15 @@ def preflight_ai_run(
                 IntentId.TRANSLATION_AI,
             )
         )
+    if mode == "polish":
+        if not profile.has_proofread_work:
+            issues.append(
+                AiPreflightIssue(
+                    AiPreflightCode.EMPTY_WORKFLOW,
+                    "当前润色预设未启用任何质量处理阶段",
+                    IntentId.SETTINGS_SERVICES,
+                )
+            )
     if mode in {"translate", "mixed", "batch"} and not esp_path:
         issues.append(
             AiPreflightIssue(
@@ -206,6 +220,10 @@ def build_run_spec(
         input_ref=input_ref,
         input_fingerprint=_digest(input_payload),
         config_digest=_config_digest(config),
+        execution_profile=AiExecutionProfile.from_config(
+            "translate" if mode == "batch" else mode,
+            config,
+        ),
         overwrite=overwrite,
         capabilities=capabilities_for(mode),
     )
@@ -219,25 +237,37 @@ def _entry_key(entry: object) -> str:
     raise ValueError("AI run entries require a stable id or key")
 
 
+def _copy_execution_value(value: object) -> object:
+    copier = getattr(value, "copy_for_execution", None)
+    return copier() if callable(copier) else deepcopy(value)
+
+
 def _config_digest(config: object) -> str:
-    data = _safe_config_value(config)
-    if isinstance(data, dict):
-        for key in tuple(data):
-            if "key" in key.casefold() or "secret" in key.casefold():
-                data[key] = bool(data[key])
-    return _digest(data)
+    return _digest(_safe_config_value(config))
 
 
 def _safe_config_value(value: object) -> object:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     if isinstance(value, Mapping):
-        return {str(key): _safe_config_value(item) for key, item in value.items()}
+        return {
+            str(key): bool(item) if _is_secret_field(str(key)) else _safe_config_value(item)
+            for key, item in value.items()
+        }
     if isinstance(value, (list, tuple)):
         return [_safe_config_value(item) for item in value]
     if hasattr(value, "__dict__"):
-        return {str(key): _safe_config_value(item) for key, item in vars(value).items() if not str(key).startswith("_")}
+        return {
+            str(key): bool(item) if _is_secret_field(str(key)) else _safe_config_value(item)
+            for key, item in vars(value).items()
+            if not str(key).startswith("_") and str(key) != "config_revision"
+        }
     return repr(value)
+
+
+def _is_secret_field(name: str) -> bool:
+    normalized = name.casefold()
+    return any(token in normalized for token in ("api_key", "secret", "token", "password", "credential"))
 
 
 def _digest(value: object) -> str:
