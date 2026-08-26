@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from transbridge.config.paths import get_data_dir
 from transbridge.ui.foundation.adapters import ThemeView
 
 from ._theme_support import AiThemeBinding
@@ -46,13 +47,19 @@ def _parse_report_filename(filename: str) -> dict:
             result["timestamp"] = datetime.strptime(m.group(3), "%Y%m%d_%H%M%S")
         except ValueError:
             pass
+    elif re.match(r"postprocess-report-[0-9a-f]{16}$", name):
+        result["mode"] = "AI 翻译"
+    elif re.match(r"polish-report-[0-9a-f]{16}$", name):
+        result["mode"] = "润色"
+    elif re.match(r"mixed-report-[0-9a-f]{16}$", name):
+        result["mode"] = "混合"
     return result
 
 
 def _scan_reports() -> list[dict]:
     """扫描 data/ai_translator/*/reports/ 下所有 .xlsx 文件。"""
     reports = []
-    base_dir = os.path.join("data", "ai_translator")
+    base_dir = os.path.join(get_data_dir(), "ai_translator")
     if not os.path.isdir(base_dir):
         return reports
 
@@ -67,14 +74,16 @@ def _scan_reports() -> list[dict]:
             info = _parse_report_filename(fname)
             try:
                 size = os.path.getsize(full_path)
+                modified_at = datetime.fromtimestamp(os.path.getmtime(full_path))
             except OSError:
                 size = 0
+                modified_at = None
             reports.append({
                 "path": full_path,
                 "filename": fname,
-                "esp_stem": info["esp_stem"],
+                "esp_stem": esp_dir if info["esp_stem"] == "?" else info["esp_stem"],
                 "mode": info["mode"],
-                "timestamp": info["timestamp"],
+                "timestamp": info["timestamp"] or modified_at,
                 "size": size,
             })
 

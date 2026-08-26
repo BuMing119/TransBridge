@@ -27,6 +27,11 @@ from .workload_models import (
 class PostProcessExecutionResult:
     report_result: OperationResult[ReportSnapshot]
     commit_result: OperationResult[dict] | None
+    report_snapshot: ReportSnapshot | None = None
+
+    def __post_init__(self) -> None:
+        if self.report_snapshot is None and self.report_result.value is not None:
+            object.__setattr__(self, "report_snapshot", self.report_result.value)
 
     @property
     def outcome(self) -> OperationOutcome:
@@ -63,7 +68,7 @@ class PostProcessExecutionService:
     ) -> PostProcessExecutionResult:
         if context.run_id != run_id:
             raise ValueError("post-process context run_id mismatch")
-        report_result = self._workload.run(
+        workload_result = self._workload.run_with_snapshot(
             run_id,
             entries,
             is_cancelled=is_cancelled,
@@ -71,12 +76,14 @@ class PostProcessExecutionService:
             expected_revisions={entry.entry_key: entry.revision for entry in entries},
             run_spec_summary=run_spec_summary,
         )
+        report_result = workload_result.operation_result
+        report_snapshot = workload_result.report_snapshot
         report = report_result.value
         if report is None or report_result.outcome not in {
             OperationOutcome.COMPLETED,
             OperationOutcome.PARTIAL,
         }:
-            return PostProcessExecutionResult(report_result, None)
+            return PostProcessExecutionResult(report_result, None, report_snapshot)
 
         report_hash = report.fingerprint
         batch_id = canonical_hash({"run_id": run_id, "report": report_hash, "operation": "postprocess"})
@@ -101,7 +108,7 @@ class PostProcessExecutionService:
             if candidate.accepted and candidate.text != candidate.before_text
         )
         if not candidates:
-            return PostProcessExecutionResult(report_result, None)
+            return PostProcessExecutionResult(report_result, None, report_snapshot)
         candidate_set = CandidateSet(
             run_id,
             canonical_hash(run_spec_summary or {"operation": "postprocess"}),
@@ -118,4 +125,4 @@ class PostProcessExecutionService:
                 commit_checkpoint,
             )
         )
-        return PostProcessExecutionResult(report_result, commit_result)
+        return PostProcessExecutionResult(report_result, commit_result, report_snapshot)

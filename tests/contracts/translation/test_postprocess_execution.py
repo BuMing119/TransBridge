@@ -133,3 +133,27 @@ def test_partial_report_remains_partial_after_successful_candidate_commit() -> N
     assert execution.commit_result.outcome is OperationOutcome.COMPLETED
     assert execution.outcome is OperationOutcome.PARTIAL
     assert collection.apply_count == 1
+
+
+def test_failed_execution_exposes_terminal_snapshot_without_committing() -> None:
+    entry = _input()
+    collection = _collection(entry)
+
+    def explodes(candidates):
+        raise RuntimeError("boom")
+
+    execution = PostProcessExecutionService(PostProcessWorkload((explodes,), stage_policy=StagePolicy())).execute(
+        run_id="post-run",
+        entries=(entry,),
+        collection=collection,
+        context=_context(),
+        commit_guard=ImmediateCommitGuard("post-run"),
+        commit_checkpoint=InMemoryTranslationCheckpointPort(),
+    )
+
+    assert execution.report_result.outcome is OperationOutcome.FAILED
+    assert execution.report_result.value is None
+    assert execution.report_snapshot is not None
+    assert execution.report_snapshot.outcome is OperationOutcome.FAILED
+    assert execution.commit_result is None
+    assert collection.apply_count == 0

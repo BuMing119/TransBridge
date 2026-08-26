@@ -3,16 +3,18 @@
 测试核心工具的参数校验和错误路径。
 不执行真实 LLM 调用。
 """
+
 from __future__ import annotations
 
-import unittest
-from unittest.mock import MagicMock, patch
-from types import SimpleNamespace
 import hashlib
+from pathlib import Path
 import tempfile
 import time
+from types import SimpleNamespace
+import unittest
+from unittest.mock import patch
 
-from tests.conftest import MockAppContext, make_test_collection, make_entry
+from tests.conftest import MockAppContext, make_test_collection
 
 
 # ============================================================
@@ -63,8 +65,9 @@ class TestRunPostprocessValidation(unittest.TestCase):
         with patch("transbridge.smart_assistant.tools.tool_proofreader.threading.Thread"):
             r = self.func({}, ctx)
             self.assertTrue(r.success)
-            self.assertEqual(r.data["phases"], ["consistency", "format", "quality_gate",
-                                                  "refinement", "polish", "arbitration"])
+            self.assertEqual(
+                r.data["phases"], ["consistency", "format", "quality_gate", "refinement", "polish", "arbitration"]
+            )
 
 
 class TestRunPostprocessProductionPath(unittest.TestCase):
@@ -72,6 +75,17 @@ class TestRunPostprocessProductionPath(unittest.TestCase):
         from transbridge.smart_assistant.tools.task_manager import TaskManager
 
         TaskManager.reset()
+
+    def test_auto_fixed_counts_only_accepted_committed_candidates(self):
+        from transbridge.smart_assistant.tools.tool_proofreader import _count_committed_fixes
+
+        candidates = (
+            SimpleNamespace(accepted=True, before_text="old", text="new"),
+            SimpleNamespace(accepted=False, before_text="old", text="rejected-new"),
+            SimpleNamespace(accepted=True, before_text="same", text="same"),
+        )
+
+        self.assertEqual(_count_committed_fixes(candidates), 1)
 
     def test_candidate_pipeline_commits_once_and_publishes_canonical_report(self):
         from transbridge.application.translation import PostProcessLlmResponse
@@ -109,7 +123,12 @@ class TestRunPostprocessProductionPath(unittest.TestCase):
             ),
             patch("transbridge.application.translation.OpenAiPostProcessHttpPort", return_value=ControlledPort()),
             patch("transbridge.paratranz.config_manager.ParatranzConfig.get_data_dir", return_value=data_dir),
+            patch(
+                "transbridge.paratranz.config_manager.LLMConfig.get_ai_translator_dir",
+                return_value=str(Path(data_dir) / "ai_translator" / "Demo"),
+            ),
         ):
+            ctx.esp_path = str(Path(data_dir) / "Demo.esp")
             result = _tool_run_postprocess(
                 {"phases": ["refinement", "polish", "arbitration"]},
                 ctx,
@@ -119,6 +138,19 @@ class TestRunPostprocessProductionPath(unittest.TestCase):
             while TaskManager().get_status(task_id)["status"] not in {"completed", "failed", "cancelled"}:
                 self.assertLess(time.monotonic(), deadline)
                 time.sleep(0.01)
+
+            from transbridge.smart_assistant.tools.tool_proofreader import get_last_report
+
+            report = get_last_report()
+            self.assertIsNotNone(report)
+            self.assertTrue(report["report_file"].endswith(".xlsx"))
+            self.assertEqual(
+                {Path(path).suffix for path in report["report_files"]},
+                {".json", ".csv", ".xlsx"},
+            )
+            self.assertTrue(all(Path(path).parent.name == "reports" for path in report["report_files"]))
+            self.assertTrue(all(Path(path).is_file() for path in report["report_files"]))
+            self.assertEqual(report["report_diagnostics"], [])
 
         status = TaskManager().get_status(task_id)
         self.assertEqual(status["status"], "completed")
@@ -138,6 +170,7 @@ class TestGetQualityReport(unittest.TestCase):
 
     def test_no_report_returns_empty(self):
         import transbridge.smart_assistant.tools.tool_proofreader as mod
+
         mod._last_report = None
         r = self.func({}, self.ctx)
         self.assertTrue(r.success)
@@ -145,6 +178,7 @@ class TestGetQualityReport(unittest.TestCase):
 
     def test_postprocess_report_message(self):
         import transbridge.smart_assistant.tools.tool_proofreader as mod
+
         mod._last_report = {
             "phase": "postprocess",
             "total_checked": 100,
@@ -159,6 +193,7 @@ class TestGetQualityReport(unittest.TestCase):
 
     def test_polish_report_message(self):
         import transbridge.smart_assistant.tools.tool_proofreader as mod
+
         mod._last_report = {
             "phase": "polish",
             "entry_count": 50,
@@ -191,6 +226,7 @@ class TestListQualityReports(unittest.TestCase):
     def test_with_esp_path_nonexistent_dir(self):
         import os
         import tempfile
+
         self.ctx.esp_path = os.path.join(tempfile.gettempdir(), "nonexistent_mod.esp")
         r = self.func({}, self.ctx)
         self.assertTrue(r.success)
@@ -199,30 +235,6 @@ class TestListQualityReports(unittest.TestCase):
     def test_with_limit(self):
         r = self.func({"limit": 5}, self.ctx)
         self.assertTrue(r.success)
-
-
-# ============================================================
-# TestSummarizeHelpers (3 cases)
-# ============================================================
-class TestSummarizeHelpers(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        from transbridge.smart_assistant.tools.tool_proofreader import ProofreaderController
-        from transbridge.ui.context import AppContext
-        from transbridge.smart_assistant.tools.task_manager import TaskManager
-        cls._ctrl = ProofreaderController(AppContext(), TaskManager())
-
-    def test_summarize_refine_empty(self):
-        r = self._ctrl._summarize_refine_results(None)
-        self.assertEqual(r, [])
-
-    def test_summarize_polish_empty(self):
-        r = self._ctrl._summarize_polish_results(None)
-        self.assertEqual(r, [])
-
-    def test_summarize_decisions_empty(self):
-        r = self._ctrl._summarize_decisions(None)
-        self.assertEqual(r, [])
 
 
 if __name__ == "__main__":

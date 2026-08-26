@@ -136,6 +136,7 @@ def test_post_process_cannot_reintroduce_hidden_or_locked_entries() -> None:
     ]
 
     assert [entry.key for entry in _select_post_process_candidates(entries, None)] == ["translated", "questionable"]
+    assert _select_post_process_candidates(entries, []) == []
     assert [entry.key for entry in _select_post_process_candidates(entries, ["questionable", "hidden", "locked"])] == [
         "questionable"
     ]

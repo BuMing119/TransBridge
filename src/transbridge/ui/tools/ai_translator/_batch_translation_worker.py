@@ -255,6 +255,16 @@ class _BatchTranslationWorker(QThread):
             )
             for fh in _file_handles.values():
                 fh.close()
+            try:
+                from .reporting import render_translation_report
+
+                report = render_translation_report(result.post_process_result, Path(slot.esp_path).stem)
+                result.report_path = report.excel_path
+                result.report_paths = report.paths
+                result.report_diagnostics = report.diagnostics
+            except Exception:
+                _logger.exception("插件 %s 翻译完成，但报告生成失败", plugin_name)
+                result.report_diagnostics = ("REPORT_RENDER_FAILED: AI 翻译完成，但报告文件生成失败。",)
             return result
 
         except Exception as e:

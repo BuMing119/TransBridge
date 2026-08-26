@@ -91,6 +91,16 @@ class _TranslationWorker(QThread):
             )
             for fh in _file_handles.values():
                 fh.close()
+            try:
+                from .reporting import render_translation_report
+
+                report = render_translation_report(result.post_process_result, self.esp_stem)
+                result.report_path = report.excel_path
+                result.report_paths = report.paths
+                result.report_diagnostics = report.diagnostics
+            except Exception:
+                _logger.exception("AI 翻译完成，但报告生成失败")
+                result.report_diagnostics = ("REPORT_RENDER_FAILED: AI 翻译完成，但报告文件生成失败。",)
             self.result.emit(result)
         except Exception as exc:
             _logger.error("翻译Worker异常:\n%s", traceback.format_exc())

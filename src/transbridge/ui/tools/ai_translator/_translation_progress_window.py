@@ -28,6 +28,7 @@ from transbridge.ui.foundation.components import ElidedLabel, reserve_text_width
 from transbridge.ui.windowing import show_and_activate
 
 from ._theme_support import AiThemeBinding, set_widget_brush
+from .reporting import report_overview
 
 if TYPE_CHECKING:
     from transbridge.ui.context import AppContext
@@ -242,14 +243,13 @@ class _TranslationProgressWindow(QWidget):
         # 构建后处理摘要（如果有）
         pp_summary = ""
         if hasattr(result, "post_process_result") and result.post_process_result:
-            pp = result.post_process_result
-            error_count = sum(1 for i in pp.issues if i.severity == "error")
-            warning_count = sum(1 for i in pp.issues if i.severity == "warning")
-            pp_summary = f"\n\n质量检查：{pp.total_checked} 条"
-            if error_count > 0 or warning_count > 0:
-                pp_summary += f"（{error_count} 错误，{warning_count} 警告）"
-            if pp.needs_review:
-                pp_summary += f"\n需审核：{len(pp.needs_review)} 条"
+            snapshot = result.post_process_result
+            overview = report_overview(snapshot)
+            pp_summary = f"\n\n运行报告：{snapshot.input_count} 条"
+            if overview.errors > 0 or overview.warnings > 0:
+                pp_summary += f"（{overview.errors} 错误，{overview.warnings} 警告）"
+            if overview.needs_review:
+                pp_summary += f"\n需审核：{overview.needs_review} 条"
 
         if self._was_stopped:
             _set_elided_text(self._progress_msg, "已停止")
@@ -280,22 +280,9 @@ class _TranslationProgressWindow(QWidget):
         self._ctx.collection_changed.emit(self._ctx.collection)
         self.translation_completed.emit()
 
-        # ── 生成报告 ──
-        esp_stem = self._get_esp_stem()
-        report_path = None
-        try:
-            from transbridge.ai_translator.post_processor.report_generator import ReportGenerator
-
-            gen = ReportGenerator(esp_stem)
-            report_path = gen.generate_translate_report(
-                result,
-                refine_results=getattr(result, "refine_results", None),
-                polish_results=getattr(result, "polish_results", None),
-                decisions=getattr(result, "decisions", None),
-            )
-            result.report_path = report_path
-        except Exception:
-            pass  # 报告生成失败不阻塞流程
+        report_path = getattr(result, "report_path", None)
+        for diagnostic in getattr(result, "report_diagnostics", ()):
+            self._round_log.append(f"⚠ {diagnostic}")
         if self._activity is not None:
             from .result_actions import result_action_state
 
@@ -420,10 +407,6 @@ class _TranslationProgressWindow(QWidget):
         if self._close_after_stop:
             self.close()
 
-    def _get_esp_stem(self) -> str:
-        """获取当前翻译的 ESP stem（用于报告目录）。"""
-        return self._worker.esp_stem
-
     @property
     def activity(self):
         return None if self._activity is None else self._activity.activity
@@ -441,10 +424,7 @@ class _TranslationProgressWindow(QWidget):
         from ._translation_report_dialog import _TranslationReportDialog
 
         dialog = _TranslationReportDialog(
-            translate_result=result,
-            refine_results=getattr(result, "refine_results", None),
-            polish_results=getattr(result, "polish_results", None),
-            decisions=getattr(result, "decisions", None),
+            getattr(result, "post_process_result", None),
             report_path=report_path,
             parent=self,
             theme_view=getattr(self, "_theme_view", None),

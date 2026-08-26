@@ -47,7 +47,8 @@ def test_candidate_stages_receive_the_previous_candidate_and_one_snapshot_serves
 def test_stage_failure_is_typed_partial_and_never_disguised_as_success() -> None:
     def failed(candidates):
         return PostProcessStageOutcome(
-            "refine", candidates,
+            "refine",
+            candidates,
             (Diagnostic("REFINE_UNAVAILABLE", "Fixture failure.", category=ErrorCategory.INTERNAL),),
         )
 
@@ -107,6 +108,23 @@ def test_stage_exception_is_failed_and_never_disguised_as_success() -> None:
     assert any(d.code == "POSTPROCESS_STAGE_FAILED" for d in result.diagnostics)
 
 
+def test_stage_exception_keeps_a_read_only_terminal_snapshot_outside_operation_value() -> None:
+    def explodes(candidates):
+        raise RuntimeError("boom")
+
+    terminal = PostProcessWorkload((explodes,), stage_policy=StagePolicy()).run_with_snapshot(
+        "run-terminal-failed", (_entry("one"),), run_spec_summary={"model": "fixture"}
+    )
+
+    assert terminal.operation_result.outcome is OperationOutcome.FAILED
+    assert terminal.operation_result.value is None
+    assert terminal.report_snapshot.outcome is OperationOutcome.FAILED
+    assert terminal.report_snapshot.run_id == "run-terminal-failed"
+    assert terminal.report_snapshot.input_count == 1
+    assert terminal.report_snapshot.candidates[0].text == "draft"
+    assert any(d.code == "POSTPROCESS_STAGE_FAILED" for d in terminal.report_snapshot.diagnostics)
+
+
 def test_cancel_is_typed_cancelled_and_persists_progress() -> None:
     checkpoint_port = InMemoryPostProcessCheckpointPort()
     calls = {"count": 0}
@@ -127,6 +145,24 @@ def test_cancel_is_typed_cancelled_and_persists_progress() -> None:
     assert checkpoint_port.load("run-6") is not None
 
 
+def test_cancel_keeps_terminal_snapshot_without_breaking_operation_contract() -> None:
+    def stage(candidates):
+        return PostProcessStageOutcome("stage", candidates)
+
+    workload = PostProcessWorkload((stage,), stage_policy=StagePolicy())
+    terminal = workload.run_with_snapshot(
+        "run-terminal-cancelled",
+        (_entry("one"),),
+        is_cancelled=lambda: True,
+    )
+
+    assert terminal.operation_result.outcome is OperationOutcome.CANCELLED
+    assert terminal.operation_result.value is None
+    assert terminal.report_snapshot.outcome is OperationOutcome.CANCELLED
+    assert terminal.report_snapshot.accepted_count == 1
+    assert any(d.code == "POSTPROCESS_CANCELLED" for d in terminal.report_snapshot.diagnostics)
+
+
 def test_arbitration_decisions_track_accepted_counts_and_partial_visibility() -> None:
     def arbitrate(candidates):
         accepted, rejected = candidates[0], candidates[1]
@@ -135,9 +171,7 @@ def test_arbitration_decisions_track_accepted_counts_and_partial_visibility() ->
             (accepted.with_accepted(True), rejected.with_accepted(False).with_text("reject", "arbitrate")),
         )
 
-    result = PostProcessWorkload((arbitrate,), stage_policy=StagePolicy()).run(
-        "run-7", (_entry("a"), _entry("b"))
-    )
+    result = PostProcessWorkload((arbitrate,), stage_policy=StagePolicy()).run("run-7", (_entry("a"), _entry("b")))
 
     assert result.outcome is OperationOutcome.COMPLETED
     assert result.value.accepted_count == 1

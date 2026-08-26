@@ -77,7 +77,7 @@ class StatisticsSummaryView(QWidget):
             "total": "list-details",
             "untranslated": "circle-dashed",
             "review": "alert-triangle",
-            "completed": "language",
+            "completed": "circle-check",
         }
         for key in ("total", "untranslated", "review", "completed"):
             button = _SummaryItem(key, icons[key], self)

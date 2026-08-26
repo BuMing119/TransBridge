@@ -308,7 +308,12 @@ def _job_spec(spec: AiRunSpec, *, expose_controls: bool) -> JobSpec:
         display_name=f"AI {spec.mode}",
         config_digest=spec.config_digest,
         capabilities=capabilities,
-        metadata=(("generation", str(spec.generation)), ("migration", "external-qthread-adapter")),
+        metadata=(
+            ("generation", str(spec.generation)),
+            ("migration", "external-qthread-adapter"),
+            ("workflow", spec.execution_profile.summary),
+            ("workflow_digest", spec.execution_profile.digest),
+        ),
     )
 
 

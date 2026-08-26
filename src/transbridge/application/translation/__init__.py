@@ -7,8 +7,10 @@ from .candidate_checkpoint import (
     TranslationCheckpointPort,
 )
 from .commit import CommitTranslations, CommitTranslationsRequest
+from .completion_report import build_translation_report_snapshot
 from .http_llm import OpenAiTranslationHttpPort
 from .legacy_bridge import AcceptedCandidateBatch, LegacyTranslationCandidateSession
+from .mixed_report import build_mixed_report_snapshot
 from .models import (
     ActionAssignment,
     ActionPlan,
@@ -22,8 +24,10 @@ from .models import (
     TranslationRunSpec,
 )
 from .planning import ActionPlanner, ContextPlanner, build_run_spec
+from .polish_report import PolishReportEntry, PolishReportResult, build_polish_report_snapshot
 from .postprocess import (
     PostProcessCandidate,
+    PostProcessRunResult,
     PostProcessStageOutcome,
     PostProcessStagePort,
     PostProcessWorkload,
@@ -46,6 +50,7 @@ from .postprocess_report import (
     ReportRenderResult,
     default_report_renderers,
     render_report,
+    render_report_bundle,
 )
 from .postprocess_stages import (
     CheckerStage,
@@ -98,6 +103,8 @@ __all__ = [
     "OpenAiPostProcessHttpPort",
     "OpenAiTranslationHttpPort",
     "PlanningEntry",
+    "PolishReportEntry",
+    "PolishReportResult",
     "PostProcessCandidate",
     "PostProcessCheckpoint",
     "PostProcessCheckpointEntry",
@@ -109,6 +116,7 @@ __all__ = [
     "PostProcessLlmPort",
     "PostProcessLlmRequest",
     "PostProcessLlmResponse",
+    "PostProcessRunResult",
     "PostProcessStageOutcome",
     "PostProcessStagePort",
     "PostProcessWorkload",
@@ -132,8 +140,12 @@ __all__ = [
     "TranslationWorkload",
     "TranslationWorkloadRequest",
     "build_http_postprocess_stages",
+    "build_mixed_report_snapshot",
+    "build_polish_report_snapshot",
     "build_run_spec",
+    "build_translation_report_snapshot",
     "default_report_renderers",
     "render_report",
+    "render_report_bundle",
     "translation_input_fingerprint",
 ]

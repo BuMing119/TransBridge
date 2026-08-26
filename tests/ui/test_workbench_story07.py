@@ -124,6 +124,7 @@ def test_summary_cards_explain_how_grouped_counts_map_to_translation_stages() ->
     assert view._buttons["review"]._label.text() == "有疑问"
     assert view._buttons["review"].toolTip() == "翻译状态：有疑问，共 3 条；点击筛选"
     assert view._buttons["completed"]._label.text() == "已翻译"
+    assert view._buttons["completed"]._icon_id == "circle-check"
     assert view._buttons["completed"].toolTip() == "包括翻译状态：已翻译、已检查、已审核、已锁定，共 6 条；点击筛选"
     view.close()
 

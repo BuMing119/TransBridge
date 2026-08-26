@@ -36,6 +36,7 @@ from transbridge.ui.windowing import show_and_activate
 
 from ._theme_support import AiThemeBinding, set_widget_brush
 from ._translation_progress_window import _BatchWidget, _set_elided_text
+from .reporting import report_overview
 
 if TYPE_CHECKING:
     from transbridge.ui.context import AppContext
@@ -229,11 +230,9 @@ class _BatchTranslationProgressWindow(QWidget):
             # 构建后处理摘要（如果有）
             pp_info = ""
             if hasattr(result, "post_process_result") and result.post_process_result:
-                pp = result.post_process_result
-                error_count = sum(1 for i in pp.issues if i.severity == "error")
-                warning_count = sum(1 for i in pp.issues if i.severity == "warning")
-                if error_count > 0 or warning_count > 0:
-                    pp_info = f"（质量检查：{error_count} 错误，{warning_count} 警告）"
+                overview = report_overview(result.post_process_result)
+                if overview.errors > 0 or overview.warnings > 0:
+                    pp_info = f"（运行报告：{overview.errors} 错误，{overview.warnings} 警告）"
 
             log_msg = f"✅ {plugin_name} 完成 — 成功 {result.success_count} 条，失败 {result.failed_count} 条"
             if pp_info:
@@ -324,24 +323,10 @@ class _BatchTranslationProgressWindow(QWidget):
             report_path = None
             needs_review = 0
             if d.success and d.result:
-                try:
-                    from transbridge.ai_translator.post_processor.report_generator import ReportGenerator
-
-                    gen = ReportGenerator(esp_stem)
-                    report_path = gen.generate_translate_report(
-                        d.result,
-                        refine_results=getattr(d.result, "refine_results", None),
-                        polish_results=getattr(d.result, "polish_results", None),
-                        decisions=getattr(d.result, "decisions", None),
-                    )
-                    d.result.report_path = report_path
-                except Exception:
-                    pass
-                needs_review = (
-                    len(d.result.post_process_result.needs_review)
-                    if (d.result.post_process_result and d.result.post_process_result.needs_review)
-                    else 0
-                )
+                report_path = getattr(d.result, "report_path", None)
+                needs_review = report_overview(d.result.post_process_result).needs_review
+                for diagnostic in getattr(d.result, "report_diagnostics", ()):
+                    self._round_log.append(f"⚠ {esp_stem}: {diagnostic}")
 
             status = "success" if d.success else "failed"
             plugin_results.append({
@@ -372,10 +357,7 @@ class _BatchTranslationProgressWindow(QWidget):
         from ._translation_report_dialog import _TranslationReportDialog
 
         dialog = _TranslationReportDialog(
-            translate_result=result,
-            refine_results=getattr(result, "refine_results", None),
-            polish_results=getattr(result, "polish_results", None),
-            decisions=getattr(result, "decisions", None),
+            getattr(result, "post_process_result", None),
             report_path=report_path,
             parent=self,
             theme_view=getattr(self, "_theme_view", None),

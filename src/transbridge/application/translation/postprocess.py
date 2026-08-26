@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
+import math
 import time
 from typing import Any, Protocol
 
@@ -25,6 +26,7 @@ from transbridge.application.contracts import (
     OperationResult,
 )
 from transbridge.application.io import EntryKey, EntryRevision, StageOperation, StagePolicyPort
+from transbridge.application.security import SecretRedactor
 
 from .postprocess_checkpoint import (
     PostProcessCheckpoint,
@@ -32,6 +34,61 @@ from .postprocess_checkpoint import (
     checkpoint_entry_from_candidate,
 )
 from .workload_models import TranslationInput, canonical_hash, translation_input_fingerprint
+
+_REPORT_SENSITIVE_KEYS = frozenset({
+    "api_key",
+    "apikey",
+    "authorization",
+    "password",
+    "passwd",
+    "prompt",
+    "secret",
+    "token",
+})
+
+
+def _normalize_report_value(value: object) -> Any:
+    """Return a detached, JSON-safe and recursively redacted report value."""
+    redactor = SecretRedactor.default()
+    if value is None or isinstance(value, (bool, int)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, str):
+        return redactor.redact_text(value)
+    if isinstance(value, Mapping):
+        normalized: dict[str, Any] = {}
+        for key, item in value.items():
+            safe_key = redactor.redact_text(str(key))
+            if str(key).casefold() in _REPORT_SENSITIVE_KEYS:
+                normalized[safe_key] = redactor.REDACTED
+            else:
+                normalized[safe_key] = _normalize_report_value(item)
+        return normalized
+    if isinstance(value, (tuple, list)):
+        return [_normalize_report_value(item) for item in value]
+    if isinstance(value, (set, frozenset)):
+        return sorted((_normalize_report_value(item) for item in value), key=str)
+    return redactor.redact_text(str(value))
+
+
+def _normalize_report_mapping(value: Mapping[object, object]) -> dict[str, Any]:
+    normalized = _normalize_report_value(value)
+    if not isinstance(normalized, dict):  # pragma: no cover - guarded by Mapping input
+        raise TypeError("report value must normalize to an object")
+    return normalized
+
+
+def _normalize_diagnostic(diagnostic: Diagnostic) -> Diagnostic:
+    details = _normalize_report_mapping(dict(diagnostic.details))
+    return Diagnostic(
+        code=diagnostic.code,
+        message=str(_normalize_report_value(diagnostic.message)),
+        severity=diagnostic.severity,
+        category=diagnostic.category,
+        retryable=diagnostic.retryable,
+        details=tuple(sorted(details.items())),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +105,12 @@ class PostProcessCandidate:
     phases: tuple[str, ...] = ()
     accepted: bool = True
     context: str = ""
+    report_details: tuple[tuple[str, Any], ...] = ()
+
+    def __post_init__(self) -> None:
+        """Detach, redact and normalize report-only metadata for durable JSON."""
+        normalized = _normalize_report_mapping(dict(self.report_details))
+        object.__setattr__(self, "report_details", tuple(sorted(normalized.items())))
 
     def with_text(self, text: str, phase: str) -> PostProcessCandidate:
         if not text:
@@ -56,6 +119,9 @@ class PostProcessCandidate:
 
     def with_accepted(self, accepted: bool) -> PostProcessCandidate:
         return replace(self, accepted=accepted)
+
+    def with_report_details(self, details: Mapping[str, Any]) -> PostProcessCandidate:
+        return replace(self, report_details=tuple(details.items()))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -68,6 +134,7 @@ class PostProcessCandidate:
             "phases": list(self.phases),
             "accepted": self.accepted,
             "context": self.context,
+            "report_details": _normalize_report_mapping(dict(self.report_details)),
         }
 
 
@@ -81,8 +148,7 @@ class PostProcessStageOutcome:
     @property
     def failed(self) -> bool:
         return any(
-            diagnostic.category in {ErrorCategory.INTERNAL, ErrorCategory.EXTERNAL}
-            for diagnostic in self.diagnostics
+            diagnostic.category in {ErrorCategory.INTERNAL, ErrorCategory.EXTERNAL} for diagnostic in self.diagnostics
         )
 
 
@@ -109,6 +175,20 @@ class ReportSnapshot:
     timing_ms: tuple[tuple[str, int], ...] = ()
     run_spec_summary: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        """Detach and redact all metadata crossing the durable report boundary."""
+        normalized_diagnostics = tuple(_normalize_diagnostic(item) for item in self.diagnostics)
+        normalized_stages = tuple(
+            replace(
+                outcome,
+                diagnostics=tuple(_normalize_diagnostic(item) for item in outcome.diagnostics),
+            )
+            for outcome in self.stage_outcomes
+        )
+        object.__setattr__(self, "diagnostics", normalized_diagnostics)
+        object.__setattr__(self, "stage_outcomes", normalized_stages)
+        object.__setattr__(self, "run_spec_summary", _normalize_report_mapping(self.run_spec_summary))
+
     @property
     def fingerprint(self) -> str:
         return canonical_hash(self.to_dict())
@@ -125,16 +205,26 @@ class ReportSnapshot:
                     "phase": outcome.phase,
                     "duration_ms": outcome.duration_ms,
                     "entries": [candidate.to_dict() for candidate in outcome.candidates],
-                    "diagnostics": [diagnostic.to_dict() for diagnostic in outcome.diagnostics],
+                    "diagnostics": [
+                        _normalize_report_mapping(diagnostic.to_dict()) for diagnostic in outcome.diagnostics
+                    ],
                 }
                 for outcome in self.stage_outcomes
             ],
-            "diagnostics": [diagnostic.to_dict() for diagnostic in self.diagnostics],
+            "diagnostics": [_normalize_report_mapping(diagnostic.to_dict()) for diagnostic in self.diagnostics],
             "issues": self.issue_count,
             "failures": self.failure_count,
             "timing_ms": list(self.timing_ms),
-            "run_spec_summary": self.run_spec_summary,
+            "run_spec_summary": _normalize_report_mapping(self.run_spec_summary),
         }
+
+
+@dataclass(frozen=True, slots=True)
+class PostProcessRunResult:
+    """Operation contract plus an always-available terminal report snapshot."""
+
+    operation_result: OperationResult[ReportSnapshot]
+    report_snapshot: ReportSnapshot
 
 
 class PostProcessWorkload:
@@ -166,10 +256,30 @@ class PostProcessWorkload:
         resume_after_phase: str | None = None,
         run_spec_summary: Mapping[str, Any] | None = None,
     ) -> OperationResult[ReportSnapshot]:
+        """Compatibility API returning only the canonical operation contract."""
+        return self.run_with_snapshot(
+            run_id,
+            entries,
+            is_cancelled=is_cancelled,
+            owner_id=owner_id,
+            expected_revisions=expected_revisions,
+            resume_after_phase=resume_after_phase,
+            run_spec_summary=run_spec_summary,
+        ).operation_result
+
+    def run_with_snapshot(
+        self,
+        run_id: str,
+        entries: tuple[TranslationInput, ...],
+        *,
+        is_cancelled: Callable[[], bool] = lambda: False,
+        owner_id: str = "",
+        expected_revisions: Mapping[EntryKey, EntryRevision] | None = None,
+        resume_after_phase: str | None = None,
+        run_spec_summary: Mapping[str, Any] | None = None,
+    ) -> PostProcessRunResult:
         input_fingerprint = translation_input_fingerprint(entries)
-        checkpoint = self._resume_checkpoint(
-            run_id, owner_id, input_fingerprint, resume_after_phase
-        )
+        checkpoint = self._resume_checkpoint(run_id, owner_id, input_fingerprint, resume_after_phase)
 
         candidates: list[PostProcessCandidate] = []
         diagnostics: list[Diagnostic] = []
@@ -196,8 +306,13 @@ class PostProcessWorkload:
                     continue
                 candidates.append(
                     PostProcessCandidate(
-                        run_id, entry.entry_key, entry.revision, entry.original,
-                        entry.translation, entry.translation or entry.original, entry.stage,
+                        run_id,
+                        entry.entry_key,
+                        entry.revision,
+                        entry.original,
+                        entry.translation,
+                        entry.translation or entry.original,
+                        entry.stage,
                         context=entry.context,
                     )
                 )
@@ -213,17 +328,23 @@ class PostProcessWorkload:
         resume_index = self._resume_index(resume_after_phase)
         for index, stage in enumerate(self._stages):
             if resume_index is not None and index <= resume_index:
-                outcomes.append(
-                    PostProcessStageOutcome(self._stage_names[index], current)
-                )
+                outcomes.append(PostProcessStageOutcome(self._stage_names[index], current))
                 continue
             if is_cancelled():
                 result = self._result(
-                    OperationOutcome.CANCELLED, run_id, entries, current, outcomes,
-                    (*diagnostics, Diagnostic(
-                        "POSTPROCESS_CANCELLED", "Post-processing was cancelled.",
-                        category=ErrorCategory.CANCELLED,
-                    )),
+                    OperationOutcome.CANCELLED,
+                    run_id,
+                    entries,
+                    current,
+                    outcomes,
+                    (
+                        *diagnostics,
+                        Diagnostic(
+                            "POSTPROCESS_CANCELLED",
+                            "Post-processing was cancelled.",
+                            category=ErrorCategory.CANCELLED,
+                        ),
+                    ),
                     conflicts=conflicts,
                     run_spec_summary=run_spec_summary,
                 )
@@ -234,11 +355,17 @@ class PostProcessWorkload:
                 stage_outcome = stage(current)
             except Exception as exc:
                 diagnostic = Diagnostic(
-                    "POSTPROCESS_STAGE_FAILED", "A post-processing stage failed.",
-                    category=ErrorCategory.INTERNAL, details=(("error_type", type(exc).__name__),),
+                    "POSTPROCESS_STAGE_FAILED",
+                    "A post-processing stage failed.",
+                    category=ErrorCategory.INTERNAL,
+                    details=(("error_type", type(exc).__name__),),
                 )
                 result = self._result(
-                    OperationOutcome.FAILED, run_id, entries, current, outcomes,
+                    OperationOutcome.FAILED,
+                    run_id,
+                    entries,
+                    current,
+                    outcomes,
                     (*diagnostics, diagnostic),
                     conflicts=conflicts,
                     run_spec_summary=run_spec_summary,
@@ -246,9 +373,7 @@ class PostProcessWorkload:
                 self._persist(run_id, owner_id, input_fingerprint, outcomes, current)
                 return result
             duration_ms = int((time.perf_counter() - started) * 1000)
-            if stage_outcome.candidates and any(
-                item.run_id != run_id for item in stage_outcome.candidates
-            ):
+            if stage_outcome.candidates and any(item.run_id != run_id for item in stage_outcome.candidates):
                 raise ValueError("post-process stage returned a candidate for another run")
             outcome = replace(stage_outcome, duration_ms=duration_ms)
             outcomes.append(outcome)
@@ -256,8 +381,14 @@ class PostProcessWorkload:
             current = outcome.candidates
             if outcome.failed:
                 result = self._result(
-                    OperationOutcome.PARTIAL, run_id, entries, current, outcomes,
-                    tuple(diagnostics), conflicts=conflicts, stage_failed=True,
+                    OperationOutcome.PARTIAL,
+                    run_id,
+                    entries,
+                    current,
+                    outcomes,
+                    tuple(diagnostics),
+                    conflicts=conflicts,
+                    stage_failed=True,
                     run_spec_summary=run_spec_summary,
                 )
                 self._persist(run_id, owner_id, input_fingerprint, outcomes, current)
@@ -266,7 +397,11 @@ class PostProcessWorkload:
 
         result = self._result(
             OperationOutcome.PARTIAL if conflicts else OperationOutcome.COMPLETED,
-            run_id, entries, current, outcomes, tuple(diagnostics),
+            run_id,
+            entries,
+            current,
+            outcomes,
+            tuple(diagnostics),
             conflicts=conflicts,
             run_spec_summary=run_spec_summary,
         )
@@ -346,12 +481,10 @@ class PostProcessWorkload:
         conflicts: int = 0,
         stage_failed: bool = False,
         run_spec_summary: Mapping[str, Any] | None = None,
-    ) -> OperationResult[ReportSnapshot]:
+    ) -> PostProcessRunResult:
         accepted = sum(1 for candidate in candidates if candidate.accepted)
         failed_count = conflicts + (1 if stage_failed else 0)
-        if outcome is OperationOutcome.PARTIAL and (
-            accepted < 1 or failed_count < 1
-        ):
+        if outcome is OperationOutcome.PARTIAL and (accepted < 1 or failed_count < 1):
             # The operation contract forbids partial with no success or no failure.
             outcome = OperationOutcome.FAILED if failed_count >= 1 else OperationOutcome.CANCELLED
 
@@ -362,23 +495,50 @@ class PostProcessWorkload:
             or diagnostic.category is ErrorCategory.CONFLICT
         )
         skipped = len(entries) - len(candidates)
-        if outcome is OperationOutcome.CANCELLED:
-            verdict = OperationCounts(cancelled=max(1, len(candidates)), skipped=skipped)
-            return OperationResult(outcome, None, diagnostics=diagnostics, counts=verdict, run_id=run_id)
-        if outcome is OperationOutcome.FAILED:
-            verdict = OperationCounts(failed=max(1, failed_count), skipped=skipped)
-            return OperationResult(outcome, None, diagnostics=diagnostics, counts=verdict, run_id=run_id)
         snapshot = ReportSnapshot(
-            "transbridge.postprocess-report.v1", run_id, outcome, len(entries), accepted,
-            candidates, tuple(stages), diagnostics,
+            "transbridge.postprocess-report.v1",
+            run_id,
+            outcome,
+            len(entries),
+            accepted,
+            candidates,
+            tuple(stages),
+            diagnostics,
             issue_count=issue_count,
             failure_count=failed_count,
             timing_ms=tuple((stage.phase, stage.duration_ms) for stage in stages),
             run_spec_summary=dict(run_spec_summary or {}),
         )
+        if outcome is OperationOutcome.CANCELLED:
+            verdict = OperationCounts(cancelled=max(1, len(candidates)), skipped=skipped)
+            operation_result = OperationResult(
+                outcome,
+                None,
+                diagnostics=snapshot.diagnostics,
+                counts=verdict,
+                run_id=run_id,
+            )
+            return PostProcessRunResult(operation_result, snapshot)
+        if outcome is OperationOutcome.FAILED:
+            verdict = OperationCounts(failed=max(1, failed_count), skipped=skipped)
+            operation_result = OperationResult(
+                outcome,
+                None,
+                diagnostics=snapshot.diagnostics,
+                counts=verdict,
+                run_id=run_id,
+            )
+            return PostProcessRunResult(operation_result, snapshot)
         verdict = OperationCounts(
             succeeded=accepted,
             failed=failed_count,
             skipped=skipped,
         )
-        return OperationResult(outcome, snapshot, diagnostics=diagnostics, counts=verdict, run_id=run_id)
+        operation_result = OperationResult(
+            outcome,
+            snapshot,
+            diagnostics=snapshot.diagnostics,
+            counts=verdict,
+            run_id=run_id,
+        )
+        return PostProcessRunResult(operation_result, snapshot)

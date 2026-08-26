@@ -117,6 +117,8 @@ class _BatchReportSummaryDialog(QDialog):
                 os.startfile(os.path.dirname(rp))
                 return
         # fallback: 尝试打开 data/ai_translator/
-        data_dir = os.path.join("data", "ai_translator")
+        from transbridge.config.paths import get_data_dir
+
+        data_dir = os.path.join(get_data_dir(), "ai_translator")
         if os.path.isdir(data_dir):
             os.startfile(data_dir)

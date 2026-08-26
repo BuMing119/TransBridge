@@ -1,379 +1,157 @@
-"""Story 25: 报告系统测试。
+"""Canonical smart-assistant report publication and history tests."""
 
-Test D: _generate_report / _summarize_* / list_quality_reports
-Test E: _last_report 数据完整性（set/get 回环 + 无报告行为）
-"""
 from __future__ import annotations
 
-import os
+import inspect
+from pathlib import Path
 import tempfile
 import time
 import unittest
-from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import patch
 
-from tests.conftest import make_entry, MockAppContext
-
-from transbridge.ai_translator.post_processor.base import PostProcessResult
+from tests.conftest import MockAppContext
 from transbridge.smart_assistant.tools.base import ExecutionContext
 
 
 class TestReportSystem(unittest.TestCase):
-    """验收标准: 报告生成、摘要函数、文件列表功能正确。"""
-
-    @classmethod
-    def setUpClass(cls):
-        from transbridge.smart_assistant.tools.tool_proofreader import ProofreaderController
-        from transbridge.ui.context import AppContext
-        from transbridge.smart_assistant.tools.task_manager import TaskManager
-        cls.tpr = ProofreaderController(AppContext(), TaskManager())
+    """The proofreader consumes canonical snapshots and keeps old workbooks discoverable."""
 
     def setUp(self):
-        import transbridge.smart_assistant.tools.tool_proofreader as tpr_mod
-        tpr_mod.set_last_report(None)
+        import transbridge.smart_assistant.tools.tool_proofreader as proofreader
 
-    # ── _summarize_refine_results ──
+        proofreader.set_last_report(None)
 
-    def test_d1_summarize_refine_empty(self):
-        result = self.tpr._summarize_refine_results(None)
-        self.assertEqual(result, [])
+    def test_legacy_report_projection_helpers_are_removed(self):
+        from transbridge.smart_assistant.tools.tool_proofreader import ProofreaderController
 
-        result = self.tpr._summarize_refine_results({})
-        self.assertEqual(result, [])
+        source = inspect.getsource(ProofreaderController)
 
-    def test_d2_summarize_refine_normal(self):
-        mock_ref = SimpleNamespace(
-            refined_translation="修复后的译文",
-            confidence=0.85,
-        )
-        refine_results = {"entry_001": mock_ref}
+        self.assertNotIn("ReportGenerator", source)
+        self.assertFalse(hasattr(ProofreaderController, "_generate_report"))
+        self.assertFalse(hasattr(ProofreaderController, "_summarize_refine_results"))
+        self.assertFalse(hasattr(ProofreaderController, "_summarize_polish_results"))
+        self.assertFalse(hasattr(ProofreaderController, "_summarize_decisions"))
 
-        result = self.tpr._summarize_refine_results(refine_results)
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["entry_id"], "entry_001")
-        self.assertEqual(result[0]["refined_translation"], "修复后的译文")
-        self.assertEqual(result[0]["confidence"], 0.85)
+    def test_list_quality_reports_without_esp_is_empty(self):
+        from transbridge.smart_assistant.tools.tool_proofreader import _tool_list_quality_reports
 
-    def test_d3_summarize_refine_missing_attrs(self):
-        mock_ref = SimpleNamespace()
-        refine_results = {"entry_001": mock_ref}
-
-        result = self.tpr._summarize_refine_results(refine_results)
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["refined_translation"], "")
-        self.assertEqual(result[0]["confidence"], 0.0)
-
-    # ── _summarize_polish_results ──
-
-    def test_d4_summarize_polish_empty(self):
-        self.assertEqual(self.tpr._summarize_polish_results(None), [])
-        self.assertEqual(self.tpr._summarize_polish_results({}), [])
-
-    def test_d5_summarize_polish_normal(self):
-        mock_pol = SimpleNamespace(
-            polished_translation="润色后的译文",
-            confidence=0.92,
-            changes=[
-                {"aspect": "fluency", "before": "old", "after": "new"},
-                {"aspect": "tone", "before": "formal", "after": "casual"},
-            ],
-        )
-        polish_results = {"entry_001": mock_pol}
-
-        result = self.tpr._summarize_polish_results(polish_results)
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["entry_id"], "entry_001")
-        self.assertEqual(result[0]["polished_translation"], "润色后的译文")
-        self.assertEqual(result[0]["confidence"], 0.92)
-        self.assertEqual(result[0]["changes_count"], 2)
-
-    def test_d6_summarize_polish_empty_changes(self):
-        mock_pol = SimpleNamespace(
-            polished_translation="译文",
-            confidence=0.5,
-            changes=[],
-        )
-        result = self.tpr._summarize_polish_results({"e1": mock_pol})
-        self.assertEqual(result[0]["changes_count"], 0)
-
-    def test_d7_summarize_polish_none_changes(self):
-        mock_pol = SimpleNamespace(
-            polished_translation="译文",
-            confidence=0.5,
-            changes=None,
-        )
-        result = self.tpr._summarize_polish_results({"e1": mock_pol})
-        self.assertEqual(result[0]["changes_count"], 0)
-
-    # ── _summarize_decisions ──
-
-    def test_d8_summarize_decisions_empty(self):
-        self.assertEqual(self.tpr._summarize_decisions(None), [])
-        self.assertEqual(self.tpr._summarize_decisions({}), [])
-
-    def test_d9_summarize_decisions_normal(self):
-        mock_dec = SimpleNamespace(
-            verdict="pass",
-            reason="质量合格",
-            suggested_action="接受译文",
-            confidence=0.95,
-        )
-        decisions = {"entry_001": mock_dec}
-
-        result = self.tpr._summarize_decisions(decisions)
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["entry_id"], "entry_001")
-        self.assertEqual(result[0]["verdict"], "pass")
-        self.assertEqual(result[0]["reason"], "质量合格")
-        self.assertEqual(result[0]["suggested_action"], "接受译文")
-        self.assertEqual(result[0]["confidence"], 0.95)
-
-    def test_d10_summarize_decisions_missing_attrs(self):
-        mock_dec = SimpleNamespace()
-        result = self.tpr._summarize_decisions({"e1": mock_dec})
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["verdict"], "")
-        self.assertEqual(result[0]["reason"], "")
-        self.assertEqual(result[0]["suggested_action"], "")
-        self.assertEqual(result[0]["confidence"], 0.0)
-
-    # ── _generate_report ──
-
-    def test_d11_generate_report_esp_path_none_returns_none(self):
-        result = self.tpr._generate_report([], None, None, None)
-        self.assertIsNone(result)
-
-    def test_d12_generate_report_pp_result_none_returns_none(self):
-        result = self.tpr._generate_report([], None, "/fake/path.esp", MagicMock())
-        self.assertIsNone(result)
-
-    def test_d13_generate_report_simplenamespace_fields(self):
-        from pathlib import Path
-
-        pp_result = PostProcessResult(total_checked=5, issue_count=2)
-        pp_result.refine_results = {}
-        pp_result.polish_results = {}
-        pp_result.decisions = {}
-
-        entries = [make_entry("e0"), make_entry("e1")]
-        esp_path = "/tmp/test.esp"
-        esp_stem = Path(esp_path).stem
-
-        fake_result = SimpleNamespace(
-            success_count=len(entries),
-            failed_count=0,
-            skipped_count=0,
-            new_dynamic_terms=0,
-            post_process_result=pp_result,
-        )
-
-        self.assertEqual(fake_result.success_count, 2)
-        self.assertEqual(fake_result.failed_count, 0)
-        self.assertEqual(fake_result.skipped_count, 0)
-        self.assertEqual(fake_result.new_dynamic_terms, 0)
-        self.assertIs(fake_result.post_process_result, pp_result)
-
-    # ── list_quality_reports ──
-
-    def test_d14_list_quality_reports_no_esp_path(self):
-        from transbridge.smart_assistant.tools.tool_proofreader import (
-            _tool_list_quality_reports,
-        )
         ctx = MockAppContext(collection=None)
         ctx.esp_path = None
-        ec = ExecutionContext(app_context=ctx)
 
-        result = _tool_list_quality_reports({}, ec)
+        result = _tool_list_quality_reports({}, ExecutionContext(app_context=ctx))
+
         self.assertTrue(result.success)
         self.assertIn("未加载 ESP", result.message)
         self.assertEqual(result.data["files"], [])
-        self.assertNotIn("directory", result.data)
 
-    def test_d15_list_quality_reports_nonexistent_directory(self):
-        from transbridge.smart_assistant.tools.tool_proofreader import (
-            _tool_list_quality_reports,
-        )
+    def test_report_directory_without_esp_falls_back_under_data_dir(self):
+        from transbridge.smart_assistant.tools.tool_proofreader import _resolve_report_directory
+
+        with (
+            tempfile.TemporaryDirectory() as data_dir,
+            patch("transbridge.paratranz.config_manager.ParatranzConfig.get_data_dir", return_value=data_dir),
+        ):
+            report_dir = _resolve_report_directory(MockAppContext())
+
+        self.assertEqual(report_dir, Path(data_dir) / "reports" / "postprocess")
+
+    def test_list_quality_reports_includes_legacy_and_canonical_xlsx(self):
+        from transbridge.smart_assistant.tools.tool_proofreader import _tool_list_quality_reports
+
         ctx = MockAppContext(collection=None)
-        ctx.esp_path = os.path.join(tempfile.gettempdir(), "nonexistent_plugin.esp")
-        ec = ExecutionContext(app_context=ctx)
+        ctx.esp_path = "C:/games/Data/Demo.esp"
+        with tempfile.TemporaryDirectory() as data_dir:
+            ai_dir = Path(data_dir) / "ai_translator" / "Demo"
+            reports_dir = ai_dir / "reports"
+            reports_dir.mkdir(parents=True)
+            legacy = reports_dir / "translate_report_Demo_20250825_120000.xlsx"
+            canonical = reports_dir / "postprocess-report-0123456789abcdef.xlsx"
+            ignored = reports_dir / "postprocess-report-0123456789abcdef.json"
+            legacy.write_bytes(b"legacy")
+            canonical.write_bytes(b"canonical")
+            ignored.write_text("{}", encoding="utf-8")
+            legacy.touch()
+            time.sleep(0.01)
+            canonical.touch()
 
-        result = _tool_list_quality_reports({}, ec)
+            with patch(
+                "transbridge.paratranz.config_manager.LLMConfig.get_ai_translator_dir",
+                return_value=str(ai_dir),
+            ):
+                result = _tool_list_quality_reports(
+                    {"limit": 10},
+                    ExecutionContext(app_context=ctx),
+                )
+
         self.assertTrue(result.success)
-        self.assertEqual(result.data["files"], [])
-
-    def test_d16_list_quality_reports_with_limit(self):
-        from transbridge.smart_assistant.tools.tool_proofreader import (
-            _tool_list_quality_reports,
+        self.assertEqual(
+            [item["name"] for item in result.data["files"]],
+            [canonical.name, legacy.name],
         )
-        ctx = MockAppContext(collection=None)
-        ctx.esp_path = os.path.join(tempfile.gettempdir(), "test_limit.esp")
-        ec = ExecutionContext(app_context=ctx)
-
-        result = _tool_list_quality_reports({"limit": 10}, ec)
-        self.assertTrue(result.success)
-        self.assertEqual(result.data["files"], [])
 
 
 class TestLastReportIntegrity(unittest.TestCase):
-    """验收标准: _last_report get/set 回环完整，无报告时行为正确。"""
-
-    @classmethod
-    def setUpClass(cls):
-        import transbridge.smart_assistant.tools.tool_proofreader as tpr_mod
-        cls.tpr_mod = tpr_mod
+    """The in-memory summary preserves bundle artifacts and structured diagnostics."""
 
     def setUp(self):
-        self.tpr_mod.set_last_report(None)
+        import transbridge.smart_assistant.tools.tool_proofreader as proofreader
+
+        self.proofreader = proofreader
+        proofreader.set_last_report(None)
 
     def tearDown(self):
-        self.tpr_mod.set_last_report(None)
+        self.proofreader.set_last_report(None)
 
-    def test_e1_get_quality_report_no_report(self):
-        from transbridge.smart_assistant.tools.tool_proofreader import (
-            _tool_get_quality_report,
-        )
-        ctx = MockAppContext()
-        ec = ExecutionContext(app_context=ctx)
+    def test_get_quality_report_without_report(self):
+        from transbridge.smart_assistant.tools.tool_proofreader import _tool_get_quality_report
 
-        result = _tool_get_quality_report({}, ec)
+        result = _tool_get_quality_report({}, MockAppContext())
+
         self.assertTrue(result.success)
         self.assertIn("暂无质量报告", result.message)
         self.assertEqual(result.data["reports"], [])
 
-    def test_e2_last_report_structure_postprocess(self):
-        self.tpr_mod.set_last_report({
-            "phase": "postprocess",
-            "phases": ["consistency", "format", "quality_gate",
-                      "refinement", "polish", "arbitration"],
-            "total_checked": 50,
-            "issue_count": 5,
-            "auto_fixed": 3,
-            "needs_review": ["entry_005", "entry_012"],
-            "verdict_stats": {"passed": 45, "rejected": 2, "pending": 3},
-            "issues": [
-                {
-                    "entry_id": "entry_001",
-                    "issue_type": "term_mismatch",
-                    "severity": "warning",
-                    "message": "术语不一致",
-                    "original": "Hello",
-                    "translation": "你好",
-                    "suggestion": "建议使用: 您好",
-                },
-            ],
-            "refine_results": [
-                {"entry_id": "entry_001", "refined_translation": "您好", "confidence": 0.9},
-            ],
-            "polish_results": [],
-            "decisions": [
-                {"entry_id": "entry_001", "verdict": "pass",
-                 "reason": "修复后合格", "suggested_action": "接受", "confidence": 0.9},
-            ],
-            "report_file": "/fake/path/report.xlsx",
-            "timestamp": time.time(),
-        })
+    def test_get_quality_report_preserves_canonical_bundle_metadata(self):
+        from transbridge.smart_assistant.tools.tool_proofreader import _tool_get_quality_report
 
-        from transbridge.smart_assistant.tools.tool_proofreader import (
-            _tool_get_quality_report,
-        )
-        ctx = MockAppContext()
-        ec = ExecutionContext(app_context=ctx)
-
-        result = _tool_get_quality_report({}, ec)
-        self.assertTrue(result.success)
-        self.assertEqual(len(result.data["reports"]), 1)
-        report = result.data["reports"][0]
-
-        self.assertEqual(report["phase"], "postprocess")
-        self.assertEqual(report["total_checked"], 50)
-        self.assertEqual(report["issue_count"], 5)
-        self.assertEqual(report["auto_fixed"], 3)
-        self.assertEqual(report["needs_review"], ["entry_005", "entry_012"])
-        self.assertEqual(
-            report["verdict_stats"],
-            {"passed": 45, "rejected": 2, "pending": 3},
-        )
-        self.assertEqual(len(report["issues"]), 1)
-        self.assertEqual(len(report["refine_results"]), 1)
-        self.assertEqual(len(report["decisions"]), 1)
-        self.assertEqual(report["report_file"], "/fake/path/report.xlsx")
-        self.assertIn("timestamp", report)
-
-    def test_e3_get_quality_report_message_format(self):
-        self.tpr_mod.set_last_report({
+        report = {
             "phase": "postprocess",
             "phases": ["consistency"],
             "total_checked": 10,
             "issue_count": 2,
             "auto_fixed": 1,
-            "needs_review": [],
-            "verdict_stats": {"passed": 8, "rejected": 1, "pending": 1},
+            "needs_review": ["entry-2"],
+            "verdict_stats": {"passed": 8, "rejected": 2, "pending": 0},
             "issues": [],
-            "refine_results": [],
-            "polish_results": [],
-            "decisions": [],
-            "report_file": None,
-            "timestamp": time.time(),
-        })
-
-        from transbridge.smart_assistant.tools.tool_proofreader import (
-            _tool_get_quality_report,
-        )
-        ctx = MockAppContext()
-        ec = ExecutionContext(app_context=ctx)
-
-        result = _tool_get_quality_report({}, ec)
-        self.assertTrue(result.success)
-        self.assertIn("检查10条", result.message)
-        self.assertIn("发现问题2个", result.message)
-        self.assertIn("自动修复1个", result.message)
-        self.assertIn("通过8", result.message)
-        self.assertIn("打回1", result.message)
-        self.assertIn("待审1", result.message)
-
-    def test_e4_last_report_polish_structure(self):
-        polish_report = {
-            "phase": "polish",
-            "entry_count": 20,
-            "polish_level": "moderate",
-            "scope": "all",
-            "total": 20,
+            "report_file": "/reports/postprocess-report-id.xlsx",
+            "report_files": [
+                "/reports/postprocess-report-id.json",
+                "/reports/postprocess-report-id.csv",
+                "/reports/postprocess-report-id.xlsx",
+            ],
+            "report_diagnostics": [
+                {
+                    "code": "REPORT_RENDER_FAILED",
+                    "message": "CSV renderer failed",
+                    "severity": "error",
+                    "category": "dependency",
+                    "retryable": False,
+                    "details": {"renderer": "csv"},
+                }
+            ],
             "timestamp": time.time(),
         }
+        self.proofreader.set_last_report(report)
 
-        self.assertEqual(polish_report["phase"], "polish")
-        self.assertEqual(polish_report["entry_count"], 20)
-        self.assertEqual(polish_report["polish_level"], "moderate")
-        self.assertEqual(polish_report["scope"], "all")
-        self.assertEqual(polish_report["total"], 20)
-        self.assertIn("timestamp", polish_report)
+        result = _tool_get_quality_report({}, MockAppContext())
 
-        self.assertNotIn("total_checked", polish_report)
-        self.assertNotIn("issue_count", polish_report)
-        self.assertNotIn("auto_fixed", polish_report)
-
-    def test_e5_report_missing_optional_fields(self):
-        self.tpr_mod.set_last_report({
-            "phase": "postprocess",
-            "phases": ["consistency"],
-            "total_checked": 5,
-            "issue_count": 0,
-            "auto_fixed": 0,
-            "needs_review": [],
-            "issues": [],
-            "refine_results": [],
-            "polish_results": [],
-            "decisions": [],
-            "report_file": None,
-            "timestamp": time.time(),
-        })
-
-        from transbridge.smart_assistant.tools.tool_proofreader import (
-            _tool_get_quality_report,
-        )
-        ctx = MockAppContext()
-        ec = ExecutionContext(app_context=ctx)
-
-        result = _tool_get_quality_report({}, ec)
         self.assertTrue(result.success)
-        self.assertNotIn("裁决", result.message)
+        stored = result.data["reports"][0]
+        self.assertEqual(stored["report_file"], report["report_file"])
+        self.assertEqual(stored["report_files"], report["report_files"])
+        self.assertEqual(stored["report_diagnostics"], report["report_diagnostics"])
+        self.assertIn("报告文件", result.message)
+
+
+if __name__ == "__main__":
+    unittest.main()
