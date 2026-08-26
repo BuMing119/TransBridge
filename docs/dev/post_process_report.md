@@ -37,7 +37,9 @@ AI 翻译、后处理、智能助手校对和独立润色都以应用层 `Report
 
 ### 智能助手后处理
 
-`run_postprocess` 使用 `PostProcessExecutionService` 返回的 canonical snapshot，并调用相同的 bundle renderer。最近报告摘要保存所有产物路径，`report_file` 优先指向 Excel。不得再通过 `SimpleNamespace` 伪造翻译结果或调用 legacy 报告生成器。
+`run_postprocess` 默认读取内置 `polish` 预设并以 `combined` 执行一次校对润色；显式选择 `strict` 或沿用旧 `phases` 参数时才组装独立多阶段链。工具也可按名称/UUID读取具名自定义工作流，并允许覆盖作用域、润色强度及共享并发/Token 额度，但 Provider、模型、端点、凭据和本地术语路径仍只来自全局配置。
+
+两种策略都使用 `PostProcessExecutionService` 返回的 canonical snapshot，并调用相同的 bundle renderer。`run_spec_summary`、最近报告和任务元数据记录最终生效的 profile、strategy、stages、scope、limits 与 LLM log 目录；`report_file` 优先指向 Excel。不得再通过 `SimpleNamespace` 伪造翻译结果或调用 legacy 报告生成器。
 
 ### 独立校对润色
 

@@ -636,7 +636,7 @@ LLMClient (ABC)
 class LLMClient(ABC):
     @abstractmethod
     def chat(self, messages: list[dict], max_tokens: int = 0) -> str:
-        """发送消息并返回模型回复。max_tokens=0 表示不限制。"""
+        """发送消息并返回模型回复。供应商支持时，max_tokens=0 表示不设置应用上限。"""
 
     def chat_stream(self, messages: list[dict], max_tokens: int,
                     chunk_callback: Callable[[str], None]) -> str:
@@ -677,14 +677,14 @@ def chat(self, messages: list[dict], max_tokens: int = 0) -> str:
         else:
             user_messages.append(msg)
 
-    kwargs = dict(
-        model=self._model,
-        max_tokens=max_tokens if max_tokens > 0 else 8192,  # Anthropic 必填
-        messages=user_messages,
-    )
+    if max_tokens <= 0:
+        raise ValueError("Anthropic API requires a positive max_tokens value")
+    kwargs = dict(model=self._model, max_tokens=max_tokens, messages=user_messages)
     if system_content:
         kwargs["system"] = system_content
 ```
+
+OpenAI 兼容供应商在配置为 `0` 时省略 `max_tokens`，由模型/服务端决定输出上限。Anthropic Messages API 要求该参数为正整数，因此配置为 `0` 时在发送请求前给出明确错误，并要求用户在「输出 Token」中设置正数；不得隐式替换为固定上限。
 
 ---
 

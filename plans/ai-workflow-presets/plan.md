@@ -1,6 +1,6 @@
 # AI 工作流预设与校改润色实施计划
 
-- **状态**：已完成（2026-08-26，综合 QA 通过）
+- **状态**：已完成（2026-08-26，Story 5 相关 QA 通过）
 - **日期**：2026-08-26
 - **需求**：FR5.13、FR6.9、FR26.7.1
 - **架构**：ADR-026
@@ -104,8 +104,77 @@ Story 1 → Story 2 → Story 3。Story 2 的纯 Python 流水线可先在不接
 - 用户已经确认“用户配置优先、模式只是预设”以及“润色默认检查并修复错误翻译”，实现范围以此为准。
 - 默认非严格裁决把不确定结果留给人工审核，不自动覆盖。
 
+## Story 4：统一详细运行面板
+
+**状态**：已完成（2026-08-26）
+
+### 验收标准
+
+- 润色运行显示实际启用的检测、修复、润色、裁决与汇总阶段，并持续显示阶段进度、总进度、状态统计和详细日志。
+- 混合运行在同一窗口展示翻译及公共校改阶段；`AutoTranslator` 和 `ProofreadPipeline` 的内部进度都被连续转发，不再在子流程完成前保持 0%。
+- 用户关闭或组合阶段形成自定义流程时，面板只按冻结的 `AiExecutionProfile` 创建实际阶段，不按预设名称伪造执行状态。
+- 润色和混合均支持暂停/继续与安全停止；完成、失败、取消、预览和报告的既有所有权及提交语义保持不变。
+- 运行中可查看轮次/阶段日志以及成功、失败、待审、新增术语等当前可用统计；可从统一入口打开按翻译批次、校改阶段和 LLM 调用拆分的完整请求/响应日志；长文本不得撑宽窗口。
+
+### 文件与步骤
+
+- 扩展 `ui/tools/ai_translator/run_view.py`：提供可按有效阶段构建的统一详细运行视图，并保留 `AiMixedProgressWindow` 兼容入口。
+- 扩展 `_polish_worker.py`、`_mixed_worker.py` 与 `proofread_pipeline.py`：增加结构化阶段进度和日志转发；混合 Worker 共享暂停事件并接入翻译/校改回调。
+- 修改 `run_controller.py`：让润色、混合使用统一视图，同时保留 RunController guard、TaskRuntime activity、预览和报告回调。
+- 补充 UI slice、布局稳定、Worker 回调与流水线日志透传测试。
+
+### 测试
+
+- 聚焦运行视图测试覆盖动态阶段、进度累计、统计、日志、暂停/继续和停止。
+- Worker 测试覆盖混合翻译回调不丢失、共享暂停事件、润色阶段信号与日志。
+- 运行 AI translator UI、proofread pipeline 相关测试及 Ruff lint/format、`git diff --check`。
+
+### 风险与回退
+
+- 不修改配置序列化、报告快照或正式集合提交边界；若新视图回归，可回退展示层而不迁移数据。
+- 校改各阶段实际候选数可能不同；阶段条使用真实阶段总数，总进度按有效阶段等权折算，避免把未启用阶段计入分母。
+
 ## 完成证据
 
 - AI 翻译、后处理、UI slice 与配置等价性回归：153 passed。
 - 统一配置仓库契约：12 passed。
 - 本次变更相关 Ruff lint/format：全部通过。
+- Story 4 的 AI 工具 UI、Worker、校改流水线、混合报告与提交契约回归：169 passed。
+- 扩大 AI 回归：174 passed，7 failed；失败均为系统 Python 缺少 `xlrd`、`faiss`、`rank_bm25`，未进入本次变更调用链。
+- Story 4 涉及文件 Ruff lint/format 与 `git diff --check`：全部通过；全仓 Ruff 仍有既有 387 项 lint 和 142 个未格式化文件，本次未混入无关整改。
+
+## Story 5：术语初始化进度与失败可见性
+
+**状态**：已完成（2026-08-26）
+
+### 验收标准
+
+- 翻译和混合运行把“从已有译文抽取术语”显示为翻译前的独立阶段，展示真实总批次、已完成批次、当前批次描述和连续日志。
+- 无需初始化、已有 `existing_text` 结果或关闭术语检索时不发起 LLM 请求，并以明确的跳过消息结束准备阶段。
+- 暂停/停止在批次安全点阻止后续抽取；认证、网络或解析异常在首个失败批次终止本次抽取并记录可定位原因，不再逐批静默重试。
+- 原有名称术语直提、冲突过滤、动态术语持久化和后续翻译语义保持兼容；新增术语统计包含本次初始化结果。
+- AI 工具 UI 测试的配置仓库与系统凭据存储完全隔离，关闭自动保存窗口不得改写用户的 `data/transbridge.ini` 或真实凭据。
+
+### 文件与步骤
+
+- 扩展 `ai_translator/existing_term_extractor.py` 与 `noun_extractor.py`：报告批次进度，检查暂停/停止，并为调用方提供失败快速退出选项。
+- 扩展 `ai_translator/translator.py`：增加独立准备阶段回调，将术语加载、跳过、批次完成和失败写入统一日志，同时保持失败后继续使用已有术语库的兼容策略。
+- 扩展 `_translation_worker.py`、`_translation_progress_window.py`、`_mixed_worker.py` 与 `workflow_progress.py`：把术语阶段接入翻译和混合详细面板。
+- 在 `tests/ui/tools/conftest.py` 隔离默认 LLM 配置仓库和凭据存储，覆盖所有 AI 工具 UI 测试；补充术语批次、取消、失败快速退出及面板投影回归。
+
+### 测试
+
+- 术语 Seeder/NounExtractor 聚焦测试覆盖多批次进度、已有结果跳过、停止和异常传播。
+- AutoTranslator/Worker/UI 测试覆盖独立术语阶段、混合阶段顺序、日志与新增术语统计。
+- 在测试前后校验真实配置文件摘要不变，再运行相关 pytest、Ruff lint/format 和 `git diff --check`。
+
+### 风险与回退
+
+- `AutoTranslator.translate()` 只新增可选回调，现有调用方无需迁移；未提供回调时保持旧行为。
+- 术语抽取失败仍允许后续翻译使用已有术语库，但错误不再被吞掉；若服务端暂时不可用，本次不会保存不完整的 `existing_text` 初始化标记。
+
+### 完成证据
+
+- 术语 Seeder/NounExtractor、AI 工具 UI 与后处理流水线回归：159 passed。
+- Story 5 涉及文件 Ruff lint/format 与 `git diff --check`：全部通过。
+- UI 回归前后 `data/transbridge.ini` 的 SHA-256 与修改时间不变，确认测试自动保存未再写入真实配置。

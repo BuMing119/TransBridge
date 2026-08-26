@@ -99,7 +99,7 @@ AI 翻译功能配置，与 `ParatranzConfig` 共享同一 INI 文件的 `[llm]`
 | `model` | str | "" | 模型名称 |
 | `max_concurrent` | int | 3 | 最大并发请求数 |
 | `max_tokens_per_batch` | int | 2500 | 每批输入 token 上限（用于拆批） |
-| `max_output_tokens` | int | 0 | 输出 token 限制（0=不限制） |
+| `max_output_tokens` | int | 0 | 输出 token 限制（0=供应商支持时不设置应用上限；Anthropic 必须配置正数） |
 | `term_priority` | list | `["dynamic", "paratranz", "json", "excel"]` | 术语来源优先级 |
 | `local_json_path` | str | "" | 本地术语 JSON 文件路径 |
 | `local_excel_path` | str | "" | 本地术语 Excel 文件路径 |
