@@ -1,7 +1,7 @@
 # Skyrim STRINGS Literal Text Overlap Audit
 
-[中文说明](README.md) · [English evidence chain](EVIDENCE_CHAIN.en.md) ·
-[中文证据链](EVIDENCE_CHAIN.md)
+[Bilingual audit conclusion](AUDIT_CONCLUSION.md) · [中文说明](README.md) ·
+[English evidence chain](EVIDENCE_CHAIN.en.md) · [中文证据链](EVIDENCE_CHAIN.md)
 
 This directory contains a one-off, reproducible audit tool for literal wording overlap between two sets of Skyrim
 `.strings`, `.dlstrings`, and `.ilstrings` localization files. It reads the inputs without modifying them, aligns

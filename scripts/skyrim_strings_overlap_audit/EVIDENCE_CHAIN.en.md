@@ -1,6 +1,7 @@
 # Skyrim STRINGS Text-Overlap Evidence Chain
 
-[中文版](EVIDENCE_CHAIN.md) · [Tool documentation](README.en.md)
+[Bilingual audit conclusion](AUDIT_CONCLUSION.md) · [中文版](EVIDENCE_CHAIN.md) ·
+[Tool documentation](README.en.md)
 
 ## Purpose and limits
 

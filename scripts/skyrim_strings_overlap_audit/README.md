@@ -1,7 +1,7 @@
 # Skyrim STRINGS 中文文本重合审计
 
-[English evidence document](README.en.md) · [完整证据链](EVIDENCE_CHAIN.md) ·
-[English evidence chain](EVIDENCE_CHAIN.en.md)
+[双语审计结论](AUDIT_CONCLUSION.md) · [English evidence document](README.en.md) ·
+[完整证据链](EVIDENCE_CHAIN.md) · [English evidence chain](EVIDENCE_CHAIN.en.md)
 
 本目录提供一个一次性、可复现的审计脚本，用来比较两套《上古卷轴 5》本地化
 `.strings`、`.dlstrings`、`.ilstrings` 文件的字面重合程度。脚本只读输入，按逻辑文件名和

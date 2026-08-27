@@ -1,6 +1,6 @@
 # Skyrim STRINGS 文字重合证据链
 
-[English version](EVIDENCE_CHAIN.en.md) · [脚本说明](README.md)
+[双语审计结论](AUDIT_CONCLUSION.md) · [English version](EVIDENCE_CHAIN.en.md) · [脚本说明](README.md)
 
 ## 目的与结论边界
 
