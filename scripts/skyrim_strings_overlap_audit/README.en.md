@@ -11,7 +11,7 @@ treated as evidence of identical wording.
 ## Investigated publication and risk flag
 
 - Investigated publication: [Unofficial Chinese Translation for SAE (Nexus Mods 175184)](https://www.nexusmods.com/skyrimspecialedition/mods/175184)
-- Independent baseline: [ANK Terminology / FKmods (Nexus Mods 134478)](https://www.nexusmods.com/skyrimspecialedition/mods/134478)
+- Independent baseline: [重光ank (Nexus Mods 134478)](https://www.nexusmods.com/skyrimspecialedition/mods/134478)
 - Comparison source: [With Light (Nexus Mods 139134)](https://www.nexusmods.com/skyrimspecialedition/mods/139134)
 - Risk flag: **Suspected plagiarism or uncredited reuse; confirmation requires the authorization chain,
   publication chronology, and author statements.**
@@ -27,19 +27,19 @@ The audit selected 240 `_chinese` files from each translation set and excluded t
 - Nexus 175184 vs. With Light: among 99,010 non-empty paired texts, 59.09% were exact after normalization, 64.09%
   were exact or highly overlapping, and mean literal similarity was 75.64%. Exact matches remained 58.50% where
   both texts contained at least six characters.
-- Nexus 175184 vs. ANK/FKmods: 26.58% exact, 46.34% mean similarity, and 13.55% evidence-length exact.
-- ANK/FKmods vs. With Light: 21.66% exact, 42.10% mean similarity, and 11.20% evidence-length exact.
+- Nexus 175184 vs. 重光ank: 26.58% exact, 46.34% mean similarity, and 13.55% evidence-length exact.
+- 重光ank vs. With Light: 21.66% exact, 42.10% mean similarity, and 11.20% evidence-length exact.
 
 Across the 99,010 valid entries covered by all three sets:
 
 - all three were identical: 17,981;
 - only Nexus 175184 and With Light were identical: 40,520;
-- only Nexus 175184 and ANK/FKmods were identical: 8,335;
-- only ANK/FKmods and With Light were identical: 3,469;
+- only Nexus 175184 and 重光ank were identical: 8,335;
+- only 重光ank and With Light were identical: 3,469;
 - all three differed: 28,705.
 
 For texts between 20 and 79 characters, Nexus 175184 and With Light were 60.94% exact and 74.61% exact-or-highly
-overlapping. The corresponding ANK/FKmods and With Light figures were only 7.67% and 9.49%. The Nexus 175184 and
+overlapping. The corresponding 重光ank and With Light figures were only 7.67% and 9.49%. The Nexus 175184 and
 With Light relationship therefore materially exceeds what would ordinarily be explained by translating the same
 source text or by independent collisions on short terminology.
 

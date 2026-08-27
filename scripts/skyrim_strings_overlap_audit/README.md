@@ -10,7 +10,7 @@ String ID 对齐词条，不使用语义模型，也不会把“意思相近”�
 ## 调查对象与风险标记
 
 - 调查对象：[Unofficial Chinese Translation for SAE（Nexus Mods 175184）](https://www.nexusmods.com/skyrimspecialedition/mods/175184)
-- 独立基线：[ANK Terminology / FKmods（Nexus Mods 134478）](https://www.nexusmods.com/skyrimspecialedition/mods/134478)
+- 独立基线：[重光ank（Nexus Mods 134478）](https://www.nexusmods.com/skyrimspecialedition/mods/134478)
 - 对照来源：[With Light（Nexus Mods 139134）](https://www.nexusmods.com/skyrimspecialedition/mods/139134)
 - 风险标记：**疑似抄袭或未署名复用，需结合授权链、发布时间和作者说明进一步核实。**
 
@@ -23,21 +23,21 @@ String ID 对齐词条，不使用语义模型，也不会把“意思相近”�
 
 - Nexus 175184 与 With Light：99,010 条有效对应文本中，完全一致 59.09%，高度重合及以上
   64.09%，平均字面相似度 75.64%；至少 6 字的文本仍有 58.50% 完全一致。
-- Nexus 175184 与 ANK/FKmods：完全一致 26.58%，平均字面相似度 46.34%；至少 6 字的文本
+- Nexus 175184 与重光ank：完全一致 26.58%，平均字面相似度 46.34%；至少 6 字的文本
   完全一致 13.55%。
-- ANK/FKmods 与 With Light：完全一致 21.66%，平均字面相似度 42.10%；至少 6 字的文本
+- 重光ank 与 With Light：完全一致 21.66%，平均字面相似度 42.10%；至少 6 字的文本
   完全一致 11.20%。
 
 三方共同覆盖的 99,010 条有效文本中：
 
 - 三方完全相同：17,981 条；
 - 仅 Nexus 175184 与 With Light 相同：40,520 条；
-- 仅 Nexus 175184 与 ANK/FKmods 相同：8,335 条；
-- 仅 ANK/FKmods 与 With Light 相同：3,469 条；
+- 仅 Nexus 175184 与重光ank 相同：8,335 条；
+- 仅重光ank 与 With Light 相同：3,469 条；
 - 三方均不同：28,705 条。
 
 尤其在 20–79 字的词条中，Nexus 175184 与 With Light 的完全一致率为 60.94%，高度重合及以上
-为 74.61%；ANK/FKmods 与 With Light 的对应数字仅为 7.67% 和 9.49%。因此，Nexus 175184 与
+为 74.61%；重光ank 与 With Light 的对应数字仅为 7.67% 和 9.49%。因此，Nexus 175184 与
 With Light 的关系明显超出“翻译同一原文”或“短术语自然撞译”通常能够解释的范围。
 
 ## 比较方法

@@ -9,8 +9,8 @@ This evidence chain tests whether the wording overlap between
 [With Light (Nexus Mods 139134)](https://www.nexusmods.com/skyrimspecialedition/mods/139134) is materially above
 the overlap normally observed between two independently produced translations.
 
-The author of [ANK Terminology / FKmods (Nexus Mods 134478)](https://www.nexusmods.com/skyrimspecialedition/mods/134478)
-states that it was independently translated and did not copy With Light. This audit therefore uses “ANK/FKmods vs.
+The author of [重光ank (Nexus Mods 134478)](https://www.nexusmods.com/skyrimspecialedition/mods/134478)
+states that it was independently translated and did not copy With Light. This audit therefore uses “重光ank vs.
 With Light” as the declared non-copying negative-control baseline. The statistical tool does not independently
 prove that declaration; it measures the investigated pair against that stated baseline.
 
@@ -32,7 +32,7 @@ authorization records, and author statements remain necessary.
 
 ### Evidence 1: normal negative control between independent translations
 
-ANK/FKmods vs. With Light:
+重光ank vs. With Light:
 
 - All valid texts: 21.66% exact, 22.74% exact-or-high, and 42.10% mean similarity.
 - At least six characters: 11.20% exact, 12.56% exact-or-high, and 36.66% mean similarity.
@@ -59,16 +59,16 @@ Compared with the normal baseline:
 The excess is not confined to names, locations, or short fixed terminology; it becomes stronger in the
 20–79-character stratum.
 
-### Evidence 3: second control rejects a generally high ANK/FKmods overlap
+### Evidence 3: second control rejects a generally high 重光ank overlap
 
-Nexus 175184 vs. ANK/FKmods:
+Nexus 175184 vs. 重光ank:
 
 - All valid texts: 26.58% exact, 27.56% exact-or-high, and 46.34% mean similarity.
 - At least six characters: 13.55% exact, 14.82% exact-or-high, and 38.52% mean similarity.
 - 20–79 characters: 5.89% exact, 7.53% exact-or-high, and 35.06% mean similarity.
 
 These figures are close to the negative-control baseline and far below the Nexus 175184 vs. With Light results.
-The investigated pair therefore cannot be explained by ANK/FKmods producing similarly high overlap with any base
+The investigated pair therefore cannot be explained by 重光ank producing similarly high overlap with any base
 translation.
 
 ### Evidence 4: mutually exclusive three-way partition
@@ -77,12 +77,12 @@ Among the 99,010 valid texts covered by all three sets:
 
 - all three are identical: 17,981;
 - only Nexus 175184 and With Light are identical: 40,520;
-- only Nexus 175184 and ANK/FKmods are identical: 8,335;
-- only ANK/FKmods and With Light are identical: 3,469;
+- only Nexus 175184 and 重光ank are identical: 8,335;
+- only 重光ank and With Light are identical: 3,469;
 - all three differ: 28,705.
 
 Among the 73,574 texts of at least six characters, 37,010 match only between Nexus 175184 and With Light, while
-only 1,635 match between ANK/FKmods and With Light. For the 29,148 texts of at least 20 characters, the corresponding
+only 1,635 match between 重光ank and With Light. For the 29,148 texts of at least 20 characters, the corresponding
 counts are 15,244 and 174. This exclusive partition directly localizes the exceptional overlap to Nexus 175184 and
 With Light rather than to fixed short game text shared by all translations.
 
@@ -96,9 +96,9 @@ prepared by the reviewer and do not expose a publisher's machine layout:
 $env:PYTHONPATH = "src"
 
 python scripts\skyrim_strings_overlap_audit\compare_strings_similarity_en.py `
-  ".\inputs\nexus-134478-ank-fkmods" `
+  ".\inputs\nexus-134478-chongguang-ank" `
   ".\inputs\nexus-139134-with-light" `
-  ".\reports\ank-fkmods-vs-with-light-baseline" `
+  ".\reports\chongguang-ank-vs-with-light-baseline" `
   --left-report-source "https://www.nexusmods.com/skyrimspecialedition/mods/134478" `
   --right-report-source "https://www.nexusmods.com/skyrimspecialedition/mods/139134"
 
@@ -111,8 +111,8 @@ python scripts\skyrim_strings_overlap_audit\compare_strings_similarity_en.py `
 
 python scripts\skyrim_strings_overlap_audit\compare_strings_similarity_en.py `
   ".\inputs\nexus-175184.7z" `
-  ".\inputs\nexus-134478-ank-fkmods" `
-  ".\reports\nexus-175184-vs-ank-fkmods-control" `
+  ".\inputs\nexus-134478-chongguang-ank" `
+  ".\reports\nexus-175184-vs-chongguang-ank-control" `
   --left-report-source "https://www.nexusmods.com/skyrimspecialedition/mods/175184" `
   --right-report-source "https://www.nexusmods.com/skyrimspecialedition/mods/134478"
 ```

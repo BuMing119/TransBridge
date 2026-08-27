@@ -8,9 +8,9 @@
 与 [With Light（Nexus Mods 139134）](https://www.nexusmods.com/skyrimspecialedition/mods/139134)
 之间的文字重合，是否明显高于两套独立汉化通常出现的自然重合。
 
-[ANK Terminology / FKmods（Nexus Mods 134478）](https://www.nexusmods.com/skyrimspecialedition/mods/134478)
-（下称 ANK/FKmods）由其作者声明为独立完成、没有抄袭 With Light 的汉化，因此本次审计把
-“ANK/FKmods 与 With Light”作为正常负对照基线。统计工具不会、也不能独立证明这项作者声明；
+[重光ank（Nexus Mods 134478）](https://www.nexusmods.com/skyrimspecialedition/mods/134478)
+由其作者声明为独立完成、没有抄袭 With Light 的汉化，因此本次审计把“重光ank 与 With Light”
+作为正常负对照基线。统计工具不会、也不能独立证明这项作者声明；
 它只在此前提下测量正常基线与被调查组之间的差异。
 
 统计结果支持“Nexus 175184 与 With Light 存在异常大量相同措辞、疑似未署名复用或共同底稿”的
@@ -29,7 +29,7 @@
 
 ### 证据一：独立汉化的正常负对照
 
-ANK/FKmods 与 With Light 的比较结果：
+重光ank 与 With Light 的比较结果：
 
 - 全部有效文本：完全一致 21.66%，高度重合及以上 22.74%，平均相似度 42.10%。
 - 至少 6 字：完全一致 11.20%，高度重合及以上 12.56%，平均相似度 36.66%。
@@ -55,16 +55,16 @@ Nexus 175184 与 With Light 的比较结果：
 
 差异不只来自人名、地名或短术语；在 20–79 字文本中，异常反而更明显。
 
-### 证据三：第二控制组排除“ANK/FKmods 普遍与他人高度相同”
+### 证据三：第二控制组排除“重光ank 普遍与他人高度相同”
 
-Nexus 175184 与 ANK/FKmods 的比较结果：
+Nexus 175184 与重光ank 的比较结果：
 
 - 全部有效文本：完全一致 26.58%，高度重合及以上 27.56%，平均相似度 46.34%。
 - 至少 6 字：完全一致 13.55%，高度重合及以上 14.82%，平均相似度 38.52%。
 - 20–79 字：完全一致 5.89%，高度重合及以上 7.53%，平均相似度 35.06%。
 
 它接近正常负对照，远低于 Nexus 175184 与 With Light 的结果。因此，被调查组的高重合不能由
-“ANK/FKmods 与任何本体汉化都会得到类似高值”解释。
+“重光ank 与任何本体汉化都会得到类似高值”解释。
 
 ### 证据四：三方逐条排他分组
 
@@ -72,12 +72,12 @@ Nexus 175184 与 ANK/FKmods 的比较结果：
 
 - 三方完全相同：17,981 条；
 - 仅 Nexus 175184 与 With Light 相同：40,520 条；
-- 仅 Nexus 175184 与 ANK/FKmods 相同：8,335 条；
-- 仅 ANK/FKmods 与 With Light 相同：3,469 条；
+- 仅 Nexus 175184 与重光ank 相同：8,335 条；
+- 仅重光ank 与 With Light 相同：3,469 条；
 - 三方均不同：28,705 条。
 
 在至少 6 字的 73,574 条文本中，仅 Nexus 175184 与 With Light 相同的有 37,010 条，而仅
-ANK/FKmods 与 With Light 相同的只有 1,635 条。在 20 字及以上的 29,148 条文本中，两项分别为
+重光ank 与 With Light 相同的只有 1,635 条。在 20 字及以上的 29,148 条文本中，两项分别为
 15,244 条和 174 条。这组排他统计直接表明，高重合集中在 Nexus 175184 与 With Light 这一对，
 并非三套汉化共同继承游戏固定短文本所致。
 
@@ -90,9 +90,9 @@ ANK/FKmods 与 With Light 相同的只有 1,635 条。在 20 字及以上的 29,
 $env:PYTHONPATH = "src"
 
 python scripts\skyrim_strings_overlap_audit\compare_strings_similarity_en.py `
-  ".\inputs\nexus-134478-ank-fkmods" `
+  ".\inputs\nexus-134478-chongguang-ank" `
   ".\inputs\nexus-139134-with-light" `
-  ".\reports\ank-fkmods-vs-with-light-baseline" `
+  ".\reports\chongguang-ank-vs-with-light-baseline" `
   --left-report-source "https://www.nexusmods.com/skyrimspecialedition/mods/134478" `
   --right-report-source "https://www.nexusmods.com/skyrimspecialedition/mods/139134"
 
@@ -105,8 +105,8 @@ python scripts\skyrim_strings_overlap_audit\compare_strings_similarity_en.py `
 
 python scripts\skyrim_strings_overlap_audit\compare_strings_similarity_en.py `
   ".\inputs\nexus-175184.7z" `
-  ".\inputs\nexus-134478-ank-fkmods" `
-  ".\reports\nexus-175184-vs-ank-fkmods-control" `
+  ".\inputs\nexus-134478-chongguang-ank" `
+  ".\reports\nexus-175184-vs-chongguang-ank-control" `
   --left-report-source "https://www.nexusmods.com/skyrimspecialedition/mods/175184" `
   --right-report-source "https://www.nexusmods.com/skyrimspecialedition/mods/134478"
 ```
