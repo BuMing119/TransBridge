@@ -15,10 +15,11 @@ states that it was independently translated and did not copy With Light. This au
 With Light” as the declared non-copying negative-control baseline. The statistical tool does not independently
 prove that declaration; it measures the investigated pair against that stated baseline.
 
-The results support a finding of abnormally extensive shared wording between Nexus 175184 and With Light,
-consistent with suspected uncredited reuse or a shared translation base. Similarity alone cannot establish the
-direction of reuse, authorization status, or legal liability. Publication chronology, version history,
-authorization records, and author statements remain necessary.
+The public pages record an original upload on 15 January 2025 for With Light and 21 March 2026 for Nexus 175184.
+Combining that before-and-after relationship with the statistical results, this audit establishes a large-scale,
+systematic text-inheritance relationship. The direction supported by the available evidence is
+**With Light → Nexus 175184**. Nexus 175184 is therefore flagged as suspected plagiarism or uncredited reuse; the
+script itself cannot know whether private permission was granted.
 
 ## Samples and common method
 
@@ -31,7 +32,16 @@ authorization records, and author statements remain necessary.
 
 ## Evidence chain
 
-### Evidence 1: normal negative control between independent translations
+### Evidence 1: public chronology identifies the earlier and later works
+
+- [With Light files page](https://www.nexusmods.com/skyrimspecialedition/mods/139134?tab=files): original upload at
+  11:08 on 15 January 2025.
+- [Nexus 175184 files page](https://www.nexusmods.com/skyrimspecialedition/mods/175184?tab=files): original upload at
+  02:29 on 21 March 2026.
+- With Light was publicly available about 14 months earlier. Together with the textual evidence below, the public
+  record supports With Light as the inherited source and Nexus 175184 as the later inheriting or reusing work.
+
+### Evidence 2: normal negative control between independent translations
 
 重光ank vs. With Light:
 
@@ -42,7 +52,7 @@ authorization records, and author statements remain necessary.
 This pair supplies the audit’s normal baseline. It also demonstrates that short texts materially inflate the
 overall exact-match rate, making the longer-text strata more probative.
 
-### Evidence 2: investigated pair far above the normal baseline
+### Evidence 3: investigated pair far above the normal baseline
 
 Nexus 175184 vs. With Light:
 
@@ -60,7 +70,7 @@ Compared with the normal baseline:
 The excess is not confined to names, locations, or short fixed terminology; it becomes stronger in the
 20–79-character stratum.
 
-### Evidence 3: second control rejects a generally high 重光ank overlap
+### Evidence 4: second control rejects a generally high 重光ank overlap
 
 Nexus 175184 vs. 重光ank:
 
@@ -72,7 +82,7 @@ These figures are close to the negative-control baseline and far below the Nexus
 The investigated pair therefore cannot be explained by 重光ank producing similarly high overlap with any base
 translation.
 
-### Evidence 4: mutually exclusive three-way partition
+### Evidence 5: mutually exclusive three-way partition
 
 Among the 99,010 valid texts covered by all three sets:
 
@@ -126,5 +136,5 @@ preserves the logical filename, String ID, both source texts, and the similarity
 - Retain the original downloaded archive or source directory for each translation set without modifying it.
 - Retain all three complete report directories and record the run date, script version, and input provenance.
 - Present the negative control, investigated pair, and second control together rather than citing one percentage.
-- Preserve publication dates, version histories, page descriptions, authorization records, and statements from the
-  authors as separate evidence.
+- Preserve publication dates, version histories, page descriptions, author statements, and any account of whether
+  permission was granted.

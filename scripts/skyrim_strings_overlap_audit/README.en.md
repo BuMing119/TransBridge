@@ -13,12 +13,15 @@ treated as evidence of identical wording.
 - Investigated publication: [Unofficial Chinese Translation for SAE (Nexus Mods 175184)](https://www.nexusmods.com/skyrimspecialedition/mods/175184)
 - Independent baseline: [重光ank (Nexus Mods 134478)](https://www.nexusmods.com/skyrimspecialedition/mods/134478)
 - Comparison source: [With Light (Nexus Mods 139134)](https://www.nexusmods.com/skyrimspecialedition/mods/139134)
-- Risk flag: **Suspected plagiarism or uncredited reuse; confirmation requires the authorization chain,
-  publication chronology, and author statements.**
+- Community evidence conclusion: **Nexus 175184 shows large-scale textual inheritance or reuse from With Light and
+  is flagged as suspected plagiarism or uncredited reuse.**
 
-This flag is based on abnormally high, reproducible textual overlap. It is not a legal finding. Text comparison can
-demonstrate substantial inheritance or a shared translation base, but similarity alone cannot establish the
-direction of reuse or whether permission was granted.
+The [With Light files page](https://www.nexusmods.com/skyrimspecialedition/mods/139134?tab=files) records an original
+upload on 15 January 2025, while the [Nexus 175184 files page](https://www.nexusmods.com/skyrimspecialedition/mods/175184?tab=files)
+records an original upload on 21 March 2026. This public chronology, the exceptional overlap, the independent
+baseline, and the three-way exclusive counts jointly establish a large-scale, systematic text-inheritance
+relationship. The direction supported by the available evidence is **With Light → Nexus 175184**, not two wholly
+independent translations.
 
 ## Audit results recorded on 2026-08-27
 
@@ -83,9 +86,10 @@ python scripts\skyrim_strings_overlap_audit\compare_strings_similarity_en.py --h
 
 ## Limits of interpretation
 
-- High overlap supports further investigation of provenance, attribution, and authorization; it is not an automatic
-  legal or factual determination.
+- This report is intended for community provenance review. It identifies the text-inheritance relationship and the
+  direction supported by the available evidence.
 - Short names, locations, and fixed terms collide naturally. Give more weight to evidence-length, 20-plus-character,
   and row-level results.
-- Determining direction requires publication dates, version history, author statements, or other external evidence.
+- The script cannot know whether private permission was granted; that question should be checked against statements
+  from the With Light team and the public record from both publishers.
 - This directory is distributed under the repository root [LICENSE](../../LICENSE).

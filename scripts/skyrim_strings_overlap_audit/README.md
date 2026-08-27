@@ -12,10 +12,13 @@ String ID 对齐词条，不使用语义模型，也不会把“意思相近”�
 - 调查对象：[Unofficial Chinese Translation for SAE（Nexus Mods 175184）](https://www.nexusmods.com/skyrimspecialedition/mods/175184)
 - 独立基线：[重光ank（Nexus Mods 134478）](https://www.nexusmods.com/skyrimspecialedition/mods/134478)
 - 对照来源：[With Light（Nexus Mods 139134）](https://www.nexusmods.com/skyrimspecialedition/mods/139134)
-- 风险标记：**疑似抄袭或未署名复用，需结合授权链、发布时间和作者说明进一步核实。**
+- 社区取证结论：**Nexus 175184 存在对 With Light 的大规模文本继承或复用，疑似抄袭或未署名复用。**
 
-该标记来自异常高的可复现文字重合，而不是对法律责任的裁判。文本统计能够证明译文之间存在
-显著继承或共同底稿关系，但仅凭相似度不能确定复用方向，也不能确认复用是否获得授权。
+[With Light 文件页](https://www.nexusmods.com/skyrimspecialedition/mods/139134?tab=files)记录的最初上传时间为
+2025-01-15；[Nexus 175184 文件页](https://www.nexusmods.com/skyrimspecialedition/mods/175184?tab=files)
+记录的最初上传时间为 2026-03-21。公开时间线与异常文字重合、独立基线和三方排他统计共同表明：
+两者存在大规模、系统性的文本继承关系，现有证据支持的方向是 **With Light → Nexus 175184**，
+而不是两套彼此独立完成的汉化。
 
 ## 2026-08-27 审计结果
 
@@ -82,7 +85,7 @@ python scripts\skyrim_strings_overlap_audit\compare_strings_similarity_en.py --h
 
 ## 使用边界
 
-- 高重合是进一步核查来源、署名和授权的证据，不等同于自动完成法律或事实认定。
+- 本报告用于社区内的文字来源核查；它确认文本继承关系和现有证据支持的继承方向。
 - 短名称、人名、地名和固定术语容易自然相同，应优先查看至少 6 字、20 字以上及逐条明细。
-- 判断继承方向还需要发布时间、版本历史、作者声明或其他外部证据。
+- 脚本不知道双方私下是否取得许可；许可问题应结合 With Light 团队说明及双方公开记录判断。
 - 本目录遵循仓库根目录的 [LICENSE](../../LICENSE)。
