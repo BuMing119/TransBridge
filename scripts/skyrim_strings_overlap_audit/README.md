@@ -1,5 +1,8 @@
 # Skyrim STRINGS 中文文本重合审计
 
+[English evidence document](README.en.md) · [完整证据链](EVIDENCE_CHAIN.md) ·
+[English evidence chain](EVIDENCE_CHAIN.en.md)
+
 本目录提供一个一次性、可复现的审计脚本，用来比较两套《上古卷轴 5》本地化
 `.strings`、`.dlstrings`、`.ilstrings` 文件的字面重合程度。脚本只读输入，按逻辑文件名和
 String ID 对齐词条，不使用语义模型，也不会把“意思相近”误算为“措辞相同”。
@@ -7,6 +10,8 @@ String ID 对齐词条，不使用语义模型，也不会把“意思相近”�
 ## 调查对象与风险标记
 
 - 调查对象：[Unofficial Chinese Translation for SAE（Nexus Mods 175184）](https://www.nexusmods.com/skyrimspecialedition/mods/175184)
+- 独立基线：[ANK Terminology / FKmods（Nexus Mods 134478）](https://www.nexusmods.com/skyrimspecialedition/mods/134478)
+- 对照来源：[With Light（Nexus Mods 139134）](https://www.nexusmods.com/skyrimspecialedition/mods/139134)
 - 风险标记：**疑似抄袭或未署名复用，需结合授权链、发布时间和作者说明进一步核实。**
 
 该标记来自异常高的可复现文字重合，而不是对法律责任的裁判。文本统计能够证明译文之间存在
@@ -34,18 +39,6 @@ String ID 对齐词条，不使用语义模型，也不会把“意思相近”�
 尤其在 20–79 字的词条中，Nexus 175184 与 With Light 的完全一致率为 60.94%，高度重合及以上
 为 74.61%；ANK/FKmods 与 With Light 的对应数字仅为 7.67% 和 9.49%。因此，Nexus 175184 与
 With Light 的关系明显超出“翻译同一原文”或“短术语自然撞译”通常能够解释的范围。
-
-## 样本标识
-
-- Nexus 175184 下载包 SHA-256：
-  `bb824a657461d6351abffe9940ad5bf5810b4b879587129ee5cd6106c35272af`
-- With Light 的 240 个 Chinese 文件清单指纹：
-  `dd26252929c283083d321ee303023ea96160615a1b6d75942625b9d6b783d63e`
-- ANK/FKmods 的 240 个 Chinese 文件清单指纹：
-  `86ccd2379bd903b1495697654b81f91c1452f3b0584662bd4447d6b44ed3ccc4`
-
-清单指纹算法：按相对路径不区分大小写排序，每行写入规范化相对路径、制表符和文件 SHA-256，
-再对全部 UTF-8 行计算 SHA-256。原始汉化文本和逐条报告不进入 Git 仓库。
 
 ## 比较方法
 
@@ -79,6 +72,12 @@ CSV 使用 UTF-8 BOM，便于在 Excel 中直接查看中文。完整参数可�
 
 ```powershell
 python scripts\skyrim_strings_overlap_audit\compare_strings_similarity.py --help
+```
+
+需要全英文的 CLI、控制台输出和报告时，使用：
+
+```powershell
+python scripts\skyrim_strings_overlap_audit\compare_strings_similarity_en.py --help
 ```
 
 ## 使用边界

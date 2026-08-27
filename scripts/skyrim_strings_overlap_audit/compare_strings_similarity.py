@@ -125,9 +125,9 @@ def discover_files(root: Path, language: str) -> dict[str, StringsSourceFile]:
 
     if duplicates:
         examples = "; ".join(f"{key}: {', '.join(paths)}" for key, paths in list(duplicates.items())[:5])
-        raise ValueError(f"发现重复的逻辑 STRINGS 文件，无法安全配对：{examples}")
+        raise ValueError(f"Duplicate logical STRINGS files prevent safe pairing: {examples}")
     if not files:
-        raise ValueError(f"在 {root} 中没有找到语言后缀为 _{language} 的 STRINGS 文件")
+        raise ValueError(f"No STRINGS files with the _{language} language suffix were found under {root}")
     return files
 
 
@@ -139,7 +139,7 @@ def _validate_archive_members(names: list[str]) -> None:
         if pure.is_absolute() or ".." in pure.parts or (pure.parts and ":" in pure.parts[0]):
             unsafe.append(name)
     if unsafe:
-        raise ValueError(f"7z 包含不安全路径，已拒绝解压：{unsafe[:3]}")
+        raise ValueError(f"The 7z archive contains unsafe paths and was not extracted: {unsafe[:3]}")
 
 
 @contextmanager
@@ -150,12 +150,12 @@ def materialize_input(source: Path) -> Iterator[Path]:
     if not source.is_file():
         raise FileNotFoundError(source)
     if source.suffix.casefold() != ".7z":
-        raise ValueError(f"输入必须是目录或 .7z 文件：{source}")
+        raise ValueError(f"Input must be a directory or a .7z archive: {source}")
 
     try:
         import py7zr
     except ImportError as exc:
-        raise RuntimeError("读取 .7z 需要项目依赖 py7zr，请在项目环境中运行脚本") from exc
+        raise RuntimeError("Reading .7z archives requires py7zr; run the script in the project environment") from exc
 
     with TemporaryDirectory(prefix="transbridge-strings-compare-") as temporary:
         destination = Path(temporary)
@@ -179,7 +179,7 @@ def load_entries(source_file: StringsSourceFile) -> dict[int, str]:
     )
     if result.outcome is not OperationOutcome.COMPLETED:
         messages = "; ".join(item.message for item in result.diagnostics)
-        raise ValueError(messages or f"无法解析 {source_file.display_path}")
+        raise ValueError(messages or f"Unable to parse {source_file.display_path}")
     return {int(entry.string_id): entry.original for entry in result.entries}
 
 

@@ -10,6 +10,7 @@ from scripts.skyrim_strings_overlap_audit.compare_strings_similarity import (
     normalize_text,
     write_reports,
 )
+from scripts.skyrim_strings_overlap_audit.compare_strings_similarity_en import write_reports_english
 from transbridge.parser.strings_file import SkyrimStringsWriter
 
 
@@ -67,6 +68,12 @@ def test_compare_sources_aligns_by_file_and_string_id_and_writes_reports(tmp_pat
         "min_evidence_length": 4,
     }
     paths = write_reports(output, details, files, summary, metadata)
+    english_metadata = {
+        **metadata,
+        "left_input": "https://www.nexusmods.com/skyrimspecialedition/mods/134478",
+        "right_input": "https://www.nexusmods.com/skyrimspecialedition/mods/139134",
+    }
+    english_paths = write_reports_english(tmp_path / "report-en", details, files, summary, english_metadata)
 
     assert summary["common_files"] == 1
     assert summary["common_ids"] == 3
@@ -77,6 +84,12 @@ def test_compare_sources_aligns_by_file_and_string_id_and_writes_reports(tmp_pat
     assert summary["both_empty"] == 1
     assert {row["category"] for row in details} >= {"raw_exact", "only_left", "only_right", "both_empty"}
     assert all(path.exists() for path in paths)
+    assert all(path.exists() for path in english_paths)
+    english_summary = (tmp_path / "report-en" / "summary.md").read_text(encoding="utf-8")
+    assert english_summary.startswith("# Skyrim STRINGS Literal Text Overlap Report")
+    assert "<https://www.nexusmods.com/skyrimspecialedition/mods/134478>" in english_summary
+    assert str(tmp_path) not in english_summary
+    assert "Exact after normalization total: 1 (50.00%)" in english_summary
     with (output / "details.csv").open(encoding="utf-8-sig", newline="") as stream:
         written = list(csv.DictReader(stream))
     assert [int(row["string_id"]) for row in written] == [1, 2, 3, 4, 5]
