@@ -4,6 +4,9 @@
 
 | Epic | 状态 | Stories | 文档 |
 |---|---|---:|---|
+| ai-proofread-recovery-reporting | 已完成 | 3/3 | [plan](ai-proofread-recovery-reporting/plan.md) |
+| ai-workflow-ui-resilience | 已完成（2026-08-27，相关 QA 通过） | 3/3 | [plan](ai-workflow-ui-resilience/plan.md) |
+| llm-reasoning-control | 已完成（2026-08-27，相关 QA 通过） | 3/3 | [plan](llm-reasoning-control/plan.md) |
 | ai-compact-proofread-custom-profiles | 已完成（2026-08-27） | 5/5 | [plan](ai-compact-proofread-custom-profiles/plan.md) |
 | ai-token-batching-concurrency | Story 1～7 已完成；相关 QA 通过 | 7/7 | [plan](ai-token-batching-concurrency/plan.md) |
 | existing-translation-terminology | 已完成（2026-08-26，相关 QA 通过） | 2/2 | [plan](existing-translation-terminology/plan.md) |

@@ -1,4 +1,4 @@
-# AI 翻译与校对润色报告
+# AI 翻译与校对报告
 
 ## 目标
 
@@ -12,7 +12,7 @@ AI 翻译、后处理、智能助手校对和独立润色都以应用层 `Report
 
 - `postprocess.py`：`ReportSnapshot`、`PostProcessCandidate`、`PostProcessStageOutcome`。
 - `completion_report.py`：将 AI 翻译计数和可选后处理快照合成为最终翻译报告。
-- `polish_report.py`：将独立校对润色结果和用户接受/拒绝决定投影为 `ReportSnapshot`。
+- `polish_report.py`：将独立校对结果和用户接受/拒绝决定投影为 `ReportSnapshot`。
 - `postprocess_report.py`：JSON、CSV、Excel renderer 和三格式 bundle 渲染。
 
 `ReportSnapshot` 至少记录：
@@ -22,7 +22,7 @@ AI 翻译、后处理、智能助手校对和独立润色都以应用层 `Report
 - 每条目的稳定 EntryKey、revision、原文、处理前译文、最终候选、stage、接受状态、上下文和阶段链；
 - typed diagnostics、阶段 outcome、耗时和有效运行规格摘要。
 
-独立校对润色通过 candidate 的 `report_details` 保留 `result_status`、confidence、changes、note、needs_arbitration、verdict、refined_translation 和原始问题投影。该字段必须可安全序列化为 JSON，不得包含 Prompt、API Key、Authorization header 或完整模型消息。
+独立校对通过 candidate 的 `report_details` 保留 `result_status`、confidence、changes、note、needs_arbitration、verdict、refined_translation 和原始问题投影。该字段必须可安全序列化为 JSON，不得包含 Prompt、API Key、Authorization header 或完整模型消息。
 
 ## 生成流程
 
@@ -37,11 +37,11 @@ AI 翻译、后处理、智能助手校对和独立润色都以应用层 `Report
 
 ### 智能助手后处理
 
-`run_postprocess` 默认读取内置 `polish` 预设并以 `combined` 执行一次校对润色；显式选择 `strict` 或沿用旧 `phases` 参数时才组装独立多阶段链。工具也可按名称/UUID读取具名自定义工作流，并允许覆盖作用域、润色强度及共享并发/Token 额度，但 Provider、模型、端点、凭据和本地术语路径仍只来自全局配置。
+`run_postprocess` 默认读取内置 `polish` 预设并以 `proofread` 执行一次校对；显式选择 `strict` 或沿用旧 `phases` 参数时才组装独立多阶段链。旧 `combined` 仅在兼容输入边界接受并立即归一为 `proofread`，新配置和报告不再写出该值。工具也可按名称/UUID读取具名自定义工作流，并允许覆盖作用域、润色强度及共享并发/Token 额度，但 Provider、模型、端点、凭据和本地术语路径仍只来自全局配置。
 
 两种策略都使用 `PostProcessExecutionService` 返回的 canonical snapshot，并调用相同的 bundle renderer。`run_spec_summary`、最近报告和任务元数据记录最终生效的 profile、strategy、stages、scope、limits 与 LLM log 目录；`report_file` 优先指向 Excel。不得再通过 `SimpleNamespace` 伪造翻译结果或调用 legacy 报告生成器。
 
-### 独立校对润色
+### 独立校对
 
 润色 worker 返回逐条候选后，由唯一提交边界记录 accepted/rejected/failed entry IDs。`build_polish_report_snapshot()` 将原始候选、最终用户决定和有效执行档案合并；报告对话框只读取该快照。预览对话框仍只负责逐条接受/拒绝，不拥有第二套报表数据模型。
 
