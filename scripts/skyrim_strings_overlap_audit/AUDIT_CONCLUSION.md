@@ -24,10 +24,6 @@ With Light 相同的只有 3,469 条。只看至少 20 字的文本，两边分�
 存在大规模、系统性的继承关系。结合发布时间，继承方向指向 **With Light → Nexus 175184**。
 175184 不能被视为一套与 With Light 无关、完全独立完成的汉化。
 
-因此，这里将 175184 标记为 **疑似抄袭或未署名复用作品**。文字对比本身看不到双方有没有私下
-谈过许可；如果 With Light 明确表示没有授权，那么这些数据说明的就是：175184 大量复用了
-With Light 的译文，却没有署名。
-
 ---
 
 ## English
@@ -53,7 +49,3 @@ These facts show that the Nexus 175184–With Light overlap is not ordinary tran
 limited to a few shared terms. The two contain large-scale, systematic textual inheritance. Combined with the
 publication dates, the direction is **With Light → Nexus 175184**. Nexus 175184 cannot be treated as a wholly
 independent translation unrelated to With Light.
-
-Nexus 175184 is therefore marked here as **suspected plagiarism or uncredited reuse**. Text comparison cannot show
-whether permission was discussed privately. If With Light confirms that no permission was given, the data show that
-Nexus 175184 reused a substantial amount of With Light wording without credit.
