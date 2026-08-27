@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from transbridge.config.language_profiles import discover_language_profiles
 from transbridge.fileops import DEFAULT_PRESET, PRESETS
 from transbridge.ui.foundation.accessibility import configure_accessible_widget, update_accessible_state
 from transbridge.ui.foundation.components import (
@@ -151,10 +152,8 @@ class FomodPanel(QDialog):
         opts_row.addSpacing(16)
         opts_row.addWidget(QLabel("目标语言:"))
         self._lang_combo = QComboBox()
-        self._lang_combo.addItem("中文", "zh_CN")
-        self._lang_combo.addItem("繁体中文", "zh_TW")
-        self._lang_combo.addItem("英文", "en")
-        self._lang_combo.addItem("日文", "ja")
+        for profile in discover_language_profiles():
+            self._lang_combo.addItem(f"{profile.display_name} ({profile.locale})", profile.locale)
         opts_row.addWidget(self._lang_combo)
         cg.addLayout(opts_row)
 

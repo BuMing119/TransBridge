@@ -12,6 +12,8 @@ import tomllib
 from typing import TYPE_CHECKING, Any
 import warnings
 
+from transbridge.config.language_profiles import load_language_profile
+
 from .base import output_token_limit, validate_max_output_tokens
 from .prompt_contract import (
     PromptTemplateContractError,
@@ -75,111 +77,58 @@ class PolishResult:
 # ── 内置默认提示词 ─────────────────────────────────────────────────────────
 
 _DEFAULT_SYSTEM = (
-    "你是 $game_name 本地化润色专家，负责把 $source_lang 原文的译文润色为"
-    "更自然、更符合游戏语境的 $target_lang 表达。\n\n"
-    """你的任务：优化译文的流畅度、风格和语境适配，使其更符合游戏氛围。
+    "You are a $game_name localization polishing specialist. Polish translations of $source_lang source text into "
+    "more natural $target_lang that fits the game context.\n\n"
+    """Improve fluency, style, and contextual fit without retranslating or introducing new meaning.
 
-润色原则：
-1. 流畅度优化
-   - 消除生硬表达，使译文更自然
-   - 优化语序，符合目标语言习惯
-   - 避免冗余和重复
+Polishing rules:
+1. Improve fluency, word order, and naturalness; avoid redundancy and repetition.
+2. Match the game's genre, tone, and character voices.
+3. Consider context, preserve terminology, emotion, and tone.
+4. Preserve every source placeholder and formatting marker, and do not change meaning.
+   Close paired punctuation correctly and use provided terminology.
 
-2. 风格适配
-   - 符合游戏整体风格（奇幻/科幻/现代等）
-   - 保持角色性格一致性
-   - 对话要口语化、有情感色彩
+Polishing levels (the active level is provided by User):
+- light: correct only clear problems and preserve the existing style
+- moderate: moderately improve fluency and expression
+- aggressive: polish deeply for the strongest expression
 
-3. 语境适配
-   - 考虑上下文语境
-   - 保持术语一致性
-   - 注意情感色彩和语气的传达
-
-4. 约束条件（必须遵守）
-   - 必须保留原文的所有占位符（%s, %d, {0}等）
-   - 必须保留原文的格式标记（<br>, [pagebreak], \\n等）
-   - 不得改变原文的语义
-   - 引号、括号等必须正确闭合
-   - 术语必须使用提供的标准译法
-
-润色级别说明（当前使用的级别由 User 指定）：
-- light: 仅修正明显错误，保持原译文风格
-- moderate: 适度优化流畅度和表达
-- aggressive: 深度润色，追求最佳表达
-
-输出格式（必须严格遵循JSON）：
-{
-    "polished_translation": "润色后的译文",
-    "changes": [
-        {
-            "aspect": "fluency",
-            "before": "改动前片段",
-            "after": "改动后片段",
-            "reason": "改动理由"
-        }
-    ],
-    "confidence": 0.85,
-    "needs_arbitration": false,
-    "note": "额外说明"
-}
-
-注意：
-- confidence > 0.9 表示润色效果很好
-- confidence < 0.7 建议人工审核
-- needs_arbitration 为 true 表示润色改动较大，需要确认
-- 如果认为原译文已很好，changes 可为空，confidence 应较高
+Return only the structured polishing result. Classify every reported change as fluency, style, context, or terminology.
+Confidence ranges from 0 to 1. Request arbitration when substantial changes require confirmation.
+If the existing translation is already strong, changes may be empty and confidence should be high.
 """
 )
 
-_DEFAULT_USER = """【原文】
+_DEFAULT_USER = """[SOURCE]
 $original
 
-【当前译文】
+[CURRENT TRANSLATION]
 $current_translation
 
-【上下文】
+[CONTEXT]
 $context
 
-【相关术语表】
+[RELEVANT TERMINOLOGY]
 $terms
 
-【润色设置】
-级别: $polish_level
+[POLISHING SETTINGS]
+Level: $polish_level
 
-请对当前译文进行润色优化，按指定JSON格式输出。"""
+Polish the current translation and return only the polishing result."""
 
 _DEFAULT_BATCH_SYSTEM = (
-    "你是 $game_name 本地化润色专家，负责把 $source_lang 原文的批量译文润色为"
-    "更自然、更符合游戏语境的 $target_lang 表达。\n\n"
-    """你的任务：批量优化多个翻译条目的流畅度和风格。
+    "You are a $game_name localization polishing specialist. Polish multiple translations of $source_lang source "
+    "text into more natural $target_lang that fits the game context.\n\n"
+    """Improve fluency and style without retranslating.
 
-约束条件：
-- 必须保留所有占位符（%s, %d, {0}等）
-- 必须保留格式标记（<br>, [pagebreak]等）
-- 术语必须使用标准译法
-- 不得改变原文语义
+Preserve every placeholder and formatting marker, use standard terminology, and do not change source meaning.
 
-润色级别说明（当前使用的级别由 User 指定）：
-- light: 仅修正明显错误，保持原译文风格
-- moderate: 适度优化流畅度和表达
-- aggressive: 深度润色，追求最佳表达
+Polishing levels (the active level is provided by User): light, moderate, or aggressive.
 
-输出格式（必须严格遵循JSON数组）：
-[
-    {
-        "entry_id": "条目ID",
-        "polished_translation": "润色后的译文",
-        "changes": [],
-        "confidence": 0.85,
-        "needs_arbitration": false,
-        "note": ""
-    }
-]
-
-注意：
-- 必须包含所有条目的结果
-- confidence > 0.9 表示润色效果很好
-- 如果原译文已很好，changes 可为空"""
+Return only the structured polishing results, with one result for every input entry. Preserve each entry ID exactly.
+Classify every reported change as fluency, style, context, or terminology.
+Confidence above 0.9 means the result is strong.
+If the existing translation is already strong, changes may be empty."""
 )
 
 
@@ -288,20 +237,18 @@ class LLMPolisher:
 
         # 加载游戏和语言配置
         game_data = _load_toml(prompts_dir / "games" / f"{game_profile}.toml")
-        lang_data = _load_toml(prompts_dir / "langs" / f"{target_lang}.toml")
+        language = load_language_profile(target_lang, prompts_dir=prompts_dir)
 
-        # 加载润色专用配置
-        polish_path = prompts_dir / "polish" / f"{target_lang}.toml"
+        # 阶段提示词与目标语言解耦；语言名称通过 ctx 在渲染时注入。
+        polish_path = prompts_dir / "polish" / "default.toml"
         polish_data = _load_toml(polish_path)
 
         # 构建变量上下文
         game = game_data.get("game", {})
-        lang = lang_data.get("lang", {})
-
         ctx = {
-            "game_name": game.get("name", "上古卷轴5：天际特别版（SSE）"),
-            "source_lang": lang.get("source", "英文"),
-            "target_lang": lang.get("target", "中文"),
+            "game_name": game.get("name", "The Elder Scrolls V: Skyrim Special Edition (SSE)"),
+            "source_lang": language.source_language,
+            "target_lang": language.target_language,
         }
 
         polish_cfg = polish_data.get("polish", {})
@@ -422,7 +369,7 @@ class LLMPolisher:
         user_content = self._render_user(
             original=entry.original or "",
             current_translation=entry.translation or "",
-            context=entry.context or "未知",
+            context=entry.context or "unknown",
             terms=terms_text,
             polish_level=polish_level_desc,
         )
@@ -436,20 +383,20 @@ class LLMPolisher:
 
     def _build_batch_polish_prompt(self, entries: list["TranslationEntry"]) -> list[dict]:
         """构建批量润色Prompt（SYSTEM(FINAL) -> USER）。"""
-        lines = ["请批量润色以下翻译条目。\n"]
-        lines.append(f"润色级别: {self._get_polish_level_desc()}\n")
+        lines = ["Polish the following translation entries.\n"]
+        lines.append(f"Polishing level: {self._get_polish_level_desc()}\n")
 
         for entry in entries:
             lines.append(f"\n{'=' * 60}")
             lines.append(f"【ENTRY_ID: {entry.id}】")
-            lines.append(f"原文：{entry.original or ''}")
-            lines.append(f"当前译文：{entry.translation or ''}")
-            lines.append(f"上下文：{entry.context or '未知'}")
+            lines.append(f"Source: {entry.original or ''}")
+            lines.append(f"Current translation: {entry.translation or ''}")
+            lines.append(f"Context: {entry.context or 'unknown'}")
 
             # 获取该条目的相关术语
             terms = self._get_relevant_terms(entry)
             if terms:
-                lines.append("相关术语：")
+                lines.append("Relevant terminology:")
                 for term, trans in terms.items():
                     lines.append(f"  {term} → {trans}")
 
@@ -477,17 +424,17 @@ class LLMPolisher:
         """获取格式化的术语文本。"""
         terms = self._get_relevant_terms(entry)
         if not terms:
-            return "无"
+            return "none"
         return "\n".join(f"  {t} → {tr}" for t, tr in terms.items())
 
     def _get_polish_level_desc(self) -> str:
         """获取润色级别描述。"""
         desc_map = {
-            "light": "仅修正明显错误，保持原译文风格",
-            "moderate": "适度优化流畅度和表达",
-            "aggressive": "深度润色，追求最佳表达",
+            "light": "correct only clear problems and preserve the existing style",
+            "moderate": "moderately improve fluency and expression",
+            "aggressive": "polish deeply for the strongest expression",
         }
-        return desc_map.get(self._polish_level, "适度优化")
+        return desc_map.get(self._polish_level, "moderate polishing")
 
     def _parse_polish_response(
         self,
@@ -532,14 +479,13 @@ class LLMPolisher:
         """解析批量润色响应。"""
         entry_map = {alias: entry for entry in entries for alias in {str(entry.id), str(entry.key)}}
         results = {}
+        duplicate_entry_ids: set[str] = set()
 
         try:
-            # 提取JSON数组
-            json_match = re.search(r"\[[\s\S]*\]", response)
-            if json_match:
-                data = json.loads(json_match.group())
-            else:
-                data = json.loads(response)
+            payload = json.loads(response)
+            if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
+                raise TypeError("polish batch response must contain a results array")
+            data = payload["results"]
 
             for item in data:
                 response_id = str(item.get("entry_id", ""))
@@ -547,6 +493,9 @@ class LLMPolisher:
                 if not entry:
                     continue
                 entry_id = str(entry.id)
+                if entry_id in results:
+                    duplicate_entry_ids.add(entry_id)
+                    continue
 
                 results[entry_id] = PolishResult(
                     entry_id=entry_id,
@@ -559,6 +508,16 @@ class LLMPolisher:
                 )
 
             for entry in entries:
+                if entry.id in duplicate_entry_ids:
+                    results[entry.id] = PolishResult(
+                        entry_id=entry.id,
+                        original_translation=entry.translation or "",
+                        polished_translation=entry.translation or "",
+                        confidence=0.0,
+                        needs_arbitration=True,
+                        note="批量润色响应重复返回该条目",
+                    )
+                    continue
                 if entry.id not in results:
                     results[entry.id] = PolishResult(
                         entry_id=entry.id,

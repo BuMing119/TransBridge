@@ -4,6 +4,7 @@ import json
 import threading
 import time
 
+from transbridge.ai_translator.structured_schemas import PROOFREAD_OUTPUT_SCHEMA
 from transbridge.application.contracts import OperationOutcome, RequestContext
 from transbridge.application.io import EntryKey, EntryRevision, SourceNamespace, StagePolicy
 from transbridge.application.io.publish import ImmediateCommitGuard
@@ -11,9 +12,9 @@ from transbridge.application.translation import (
     InMemoryTranslationCheckpointPort,
     PostProcessExecutionService,
     PostProcessWorkload,
+    ProofreadStage,
     TranslationInput,
 )
-from transbridge.application.translation import ProofreadStage
 from transbridge.application.translation.ai_request_budget import AiRequestCancelledError
 from transbridge.application.translation.postprocess import PostProcessCandidate
 from transbridge.application.translation.protected_syntax import (
@@ -22,6 +23,7 @@ from transbridge.application.translation.protected_syntax import (
 )
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.infra.llm_structured_outputs import extract_structured_output_directive
 
 
 def _candidate(
@@ -115,6 +117,8 @@ def test_terms_are_resolved_after_admission_and_one_pass_accepts_unchanged_value
     assert "confidence" not in client.messages[0][1]["content"]
     assert "needs_arbitration" not in client.messages[0][1]["content"]
     assert "only necessary corrections" in client.messages[0][0]["content"]
+    _clean_messages, output_schema = extract_structured_output_directive(client.messages[0])
+    assert output_schema == PROOFREAD_OUTPUT_SCHEMA
 
     stage = ProofreadStage(client, max_tokens_per_batch=10_000)
     stage.cancel()

@@ -28,6 +28,8 @@ class AiPreflightCode(StrEnum):
     MISSING_API_KEY = "missing_api_key"
     MISSING_MODEL = "missing_model"
     MISSING_DEPENDENCY = "missing_dependency"
+    MISSING_EMBEDDING_CONFIGURATION = "missing_embedding_configuration"
+    MISSING_EMBEDDING_DEPENDENCY = "missing_embedding_dependency"
     EMPTY_SCOPE = "empty_scope"
     EMPTY_WORKFLOW = "empty_workflow"
     MISSING_SOURCE = "missing_source"
@@ -184,6 +186,96 @@ def preflight_ai_run(
                 IntentId.SETTINGS_SERVICES,
             )
         )
+    if (
+        mode in {"translate", "mixed", "batch"}
+        and bool(getattr(config, "retrieval_enabled", True))
+        and bool(getattr(config, "enable_semantic_match", True))
+    ):
+        embedding = getattr(config, "embedding", None)
+        embedding_mode = str(getattr(embedding, "mode", "disabled") or "disabled").casefold()
+        if embedding_mode in {"openai", "custom"}:
+            embedding_mode = "api"
+        if embedding_mode == "api":
+            embedding_provider = str(getattr(embedding, "provider", "") or "").strip().casefold()
+            embedding_key = str(getattr(embedding, "api_key", "")).strip()
+            embedding_model = str(getattr(embedding, "model", "")).strip()
+            embedding_url = str(getattr(embedding, "base_url", "")).strip()
+            if embedding_provider not in {"openai", "custom", "api"}:
+                issues.append(
+                    AiPreflightIssue(
+                        AiPreflightCode.MISSING_EMBEDDING_CONFIGURATION,
+                        "语义检索缺少受支持的 Embedding API 服务商",
+                        IntentId.SETTINGS_SERVICES,
+                    )
+                )
+            if not embedding_key:
+                issues.append(
+                    AiPreflightIssue(
+                        AiPreflightCode.MISSING_EMBEDDING_CONFIGURATION,
+                        "语义检索缺少 Embedding API Key",
+                        IntentId.SETTINGS_SERVICES,
+                    )
+                )
+            if not embedding_model:
+                issues.append(
+                    AiPreflightIssue(
+                        AiPreflightCode.MISSING_EMBEDDING_CONFIGURATION,
+                        "语义检索缺少 Embedding 模型名",
+                        IntentId.SETTINGS_SERVICES,
+                    )
+                )
+            if not embedding_url:
+                issues.append(
+                    AiPreflightIssue(
+                        AiPreflightCode.MISSING_EMBEDDING_CONFIGURATION,
+                        "语义检索缺少 Embedding Base URL",
+                        IntentId.SETTINGS_SERVICES,
+                    )
+                )
+            for dependency, label in (("openai", "OpenAI 客户端"), ("faiss", "FAISS")):
+                if not available(dependency):
+                    issues.append(
+                        AiPreflightIssue(
+                            AiPreflightCode.MISSING_EMBEDDING_DEPENDENCY,
+                            f"语义检索缺少 {label} 依赖",
+                            IntentId.SETTINGS_SERVICES,
+                        )
+                    )
+        elif embedding_mode == "local":
+            model_id = str(getattr(embedding, "local_model_id", "") or "").strip()
+            model_path = None
+            if model_id:
+                from transbridge.infra.embedding_model_store import EmbeddingModelStore
+
+                try:
+                    model_path = EmbeddingModelStore().installed_path(model_id)
+                except (KeyError, OSError, ValueError):
+                    model_path = None
+            if model_path is None or not model_path.is_dir() or not (model_path / "modules.json").is_file():
+                issues.append(
+                    AiPreflightIssue(
+                        AiPreflightCode.MISSING_EMBEDDING_CONFIGURATION,
+                        "当前没有可用的本地向量模型",
+                        IntentId.SETTINGS_SERVICES,
+                    )
+                )
+            for dependency, label in (("sentence_transformers", "sentence-transformers"), ("faiss", "FAISS")):
+                if not available(dependency):
+                    issues.append(
+                        AiPreflightIssue(
+                            AiPreflightCode.MISSING_EMBEDDING_DEPENDENCY,
+                            f"本地语义检索缺少 {label} 依赖",
+                            IntentId.SETTINGS_SERVICES,
+                        )
+                    )
+        elif embedding_mode != "disabled":
+            issues.append(
+                AiPreflightIssue(
+                    AiPreflightCode.MISSING_EMBEDDING_CONFIGURATION,
+                    f"不支持的 Embedding 模式：{embedding_mode}",
+                    IntentId.SETTINGS_SERVICES,
+                )
+            )
     return AiPreflightResult(tuple(issues))
 
 

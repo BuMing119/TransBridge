@@ -16,6 +16,7 @@ from transbridge.application.contracts import (
     OperationResult,
     RequestContext,
 )
+from transbridge.application.io.identity import EntryKey
 from transbridge.application.io.stage_policy import Stage
 from transbridge.persistence.v2.baselines import LegacyIdentityRegistry
 from transbridge.persistence.v2.ids import ProjectRef, VariantId, VariantRef
@@ -188,6 +189,11 @@ class GuiProjectCommandFacade:
             self._projection_rebuild()
         return result
 
+    def save_snapshot(self, name: str, context: RequestContext) -> OperationResult[dict[str, Any]]:
+        """Persist one read-only snapshot of the active formal Variant."""
+
+        return self._lifecycle.save_snapshot(name, context)
+
     def create_variant(
         self,
         name: str,
@@ -348,6 +354,29 @@ class GuiProjectCommandFacade:
             update_entries=update,
             label_library=tuple((str(key), dict(value)) for key, value in label_library.items()),
         )
+
+    def replace_entry_states(
+        self,
+        states: Mapping[EntryKey, tuple[str, int]],
+        context: RequestContext,
+    ) -> OperationResult[dict[str, Any]]:
+        """Commit a complete set of projected translation/stage changes once."""
+
+        normalized = {key: (str(translation), Stage(stage)) for key, (translation, stage) in states.items()}
+
+        def update(entries):
+            available = {entry.entry_key for entry in entries}
+            missing = set(normalized).difference(available)
+            if missing:
+                raise ValueError("one or more translated entries are not present in the active Variant")
+            return tuple(
+                replace(entry, translation=normalized[entry.entry_key][0], stage=normalized[entry.entry_key][1])
+                if entry.entry_key in normalized
+                else entry
+                for entry in entries
+            )
+
+        return self._commit_variant(context, update_entries=update)
 
     def _commit_variant(
         self,

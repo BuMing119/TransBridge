@@ -92,6 +92,15 @@ class LimitedLLMClient(LLMClient):
             self._raise_if_cancelled(generation)
             return self._delegate.chat_stream(messages, max_tokens, chunk_callback)
 
+    def chat_stream_with_tools(self, messages, max_tokens, tools, chunk_callback):
+        """Forward a native tool round while retaining shared admission control."""
+
+        self._call_state.metrics = None
+        generation = self._generation()
+        with self._acquire(generation):
+            self._raise_if_cancelled(generation)
+            return self._delegate.chat_stream_with_tools(messages, max_tokens, tools, chunk_callback)
+
     def cancel(self) -> None:
         # Advance first so waiting callers cannot start while provider
         # cancellation/recreation is in progress.

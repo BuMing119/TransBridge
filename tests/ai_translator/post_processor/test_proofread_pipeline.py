@@ -560,14 +560,14 @@ def test_batch_parsers_accept_id_aliases_and_mark_missing_items() -> None:
     quality = object.__new__(QualityGateChecker)
     issues = quality._parse_batch_response(
         entries,
-        '[{"entry_id":"legacy-id","verdict":"pass","reason":"ok","issues":[]}]',
+        '{"results":[{"entry_id":"legacy-id","verdict":"pass","reason":"ok","issues":[]}]}',
     )
     assert [issue.entry_id for issue in issues] == ["second-id"]
 
     refiner = object.__new__(LLMRefiner)
     refined = refiner._parse_batch_refinement_response(
         entries,
-        '[{"entry_id":"legacy-id","refined_translation":"不要打开。","confidence":0.9}]',
+        '{"results":[{"entry_id":"legacy-id","refined_translation":"不要打开。","confidence":0.9}]}',
     )
     assert set(refined) == {"legacy-id", "second-id"}
     assert refined["second-id"].confidence == 0.0
@@ -575,7 +575,7 @@ def test_batch_parsers_accept_id_aliases_and_mark_missing_items() -> None:
     polisher = object.__new__(LLMPolisher)
     polished = polisher._parse_batch_polish_response(
         entries,
-        '[{"entry_id":"legacy-id","polished_translation":"别打开。","confidence":0.9}]',
+        '{"results":[{"entry_id":"legacy-id","polished_translation":"别打开。","confidence":0.9}]}',
     )
     assert set(polished) == {"legacy-id", "second-id"}
     assert polished["second-id"].confidence == 0.0
@@ -585,7 +585,7 @@ def test_batch_parsers_accept_id_aliases_and_mark_missing_items() -> None:
     contexts = [ArbitrationContext(entry=entry) for entry in entries]
     decisions = arbiter._parse_batch_arbitration_response(
         contexts,
-        '[{"entry_id":"legacy-id","verdict":"pass","reason":"ok","confidence":0.9}]',
+        '{"results":[{"entry_id":"legacy-id","verdict":"pass","reason":"ok","confidence":0.9}]}',
     )
     assert set(decisions) == {"legacy-id", "second-id"}
     assert decisions["second-id"].verdict == "pending"

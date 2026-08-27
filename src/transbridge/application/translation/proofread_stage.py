@@ -8,8 +8,10 @@ from dataclasses import dataclass
 import json
 from typing import Any
 
+from transbridge.ai_translator.structured_schemas import PROOFREAD_OUTPUT_SCHEMA
 from transbridge.application.contracts import Diagnostic, DiagnosticSeverity, ErrorCategory
 from transbridge.application.translation.ai_request_budget import AiRequestCancelledError
+from transbridge.infra.llm_structured_outputs import attach_structured_output_directive
 from transbridge.infra.token_counting import TiktokenContentTokenCounter
 
 from .postprocess import PostProcessCandidate, PostProcessStageOutcome
@@ -231,7 +233,7 @@ class ProofreadStage:
     def _attempt(
         self,
         candidates: tuple[PostProcessCandidate, ...],
-        prepare_messages: Callable[[], list[dict[str, str]]],
+        prepare_messages: Callable[[], list[dict]],
     ) -> _ProofreadAttempt:
         try:
             prepared_chat = getattr(self._llm_client, "chat_prepared", None)
@@ -282,7 +284,7 @@ class ProofreadStage:
         candidates: tuple[PostProcessCandidate, ...],
         *,
         recovery: bool = False,
-    ) -> list[dict[str, str]]:
+    ) -> list[dict]:
         entries = []
         for candidate in candidates:
             resolved = self._term_resolver(candidate)
@@ -318,7 +320,11 @@ class ProofreadStage:
                 "response contract. Return only the requested entries and strictly follow the JSON contract."
             )
         user = json.dumps({"entries": entries}, ensure_ascii=False, separators=(",", ":"))
-        return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+        user_message = attach_structured_output_directive(
+            {"role": "user", "content": user},
+            PROOFREAD_OUTPUT_SCHEMA,
+        )
+        return [{"role": "system", "content": system}, user_message]
 
 
 def _validate_max_workers(value: int) -> None:
@@ -353,9 +359,7 @@ def _merge_attempt(
 ) -> BatchResult:
     first_by_key = {candidate.entry_key: candidate for candidate in first.candidates}
     recovery_by_key = {candidate.entry_key: candidate for candidate in recovery.candidates}
-    initial_failed_keys = {
-        candidate.entry_key for candidate in first.candidates if "proofread" not in candidate.phases
-    }
+    initial_failed_keys = {candidate.entry_key for candidate in first.candidates if "proofread" not in candidate.phases}
     candidates = tuple(
         recovery_by_key.get(candidate.entry_key, first_by_key.get(candidate.entry_key, candidate))
         if candidate.entry_key in initial_failed_keys
@@ -372,11 +376,7 @@ def _merge_attempt(
         for diagnostic in recovery.diagnostics
         if (_diagnostic_key(diagnostic) in initial_failed_keys or _diagnostic_key(diagnostic) is None)
     )
-    recovered_count = sum(
-        1
-        for candidate in recovery.candidates
-        if "proofread" in candidate.phases
-    )
+    recovered_count = sum(1 for candidate in recovery.candidates if "proofread" in candidate.phases)
     if recovered_count:
         final_failed = sum(1 for candidate in candidates if "proofread" not in candidate.phases)
         diagnostics.append(
@@ -458,9 +458,7 @@ def _failed_batch(
     return tuple(candidate.with_accepted(False) for candidate in candidates), (
         Diagnostic(
             "PROOFREAD_BATCH_CANCELLED" if cancelled else "PROOFREAD_BATCH_FAILED",
-            "A Proofread batch was cancelled."
-            if cancelled
-            else "A Proofread batch failed unexpectedly.",
+            "A Proofread batch was cancelled." if cancelled else "A Proofread batch failed unexpectedly.",
             category=ErrorCategory.CANCELLED if cancelled else ErrorCategory.INTERNAL,
             severity=DiagnosticSeverity.WARNING if cancelled else DiagnosticSeverity.ERROR,
             retryable=not cancelled,

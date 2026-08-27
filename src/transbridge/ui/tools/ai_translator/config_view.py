@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from transbridge.config.language_profiles import discover_language_profiles
 from transbridge.ui.foundation.adapters import ThemeView
 from transbridge.ui.foundation.components import (
     ComponentKind,
@@ -41,6 +42,7 @@ from transbridge.ui.foundation.components import (
     reserve_text_width,
 )
 from transbridge.ui.tools.ai_translator.config_dialogs import render_paratranz_source
+from transbridge.ui.tools.ai_translator.embedding_config_view import build_embedding_config_section
 from transbridge.ui.tools.ai_translator.view_controls import TranslatorControls
 
 logger = logging.getLogger(__name__)
@@ -49,7 +51,10 @@ logger = logging.getLogger(__name__)
 class AITranslatorViewCallbacks(Protocol):
     def on_provider_changed(self) -> None: ...
     def on_embed_provider_changed(self) -> None: ...
-    def on_test_connection(self) -> None: ...
+    def on_embedding_mode_activated(self) -> None: ...
+    def on_embedding_api_provider_activated(self, index: int) -> None: ...
+    def on_manage_embedding_models(self) -> None: ...
+    def on_test_connection(self, target: str = "llm") -> None: ...
     def browse_file(self, target: QLineEdit, file_filter: str) -> None: ...
     def on_view_terms(self) -> None: ...
     def on_open_history(self) -> None: ...
@@ -117,7 +122,8 @@ class AITranslatorView:
         self._provider_combo.currentIndexChanged.connect(callbacks.on_provider_changed)
         llm_layout.addLayout(_row("供应商:", self._provider_combo))
         self._target_lang_combo = QComboBox()
-        self._target_lang_combo.addItems(["zh_CN"])
+        for profile in discover_language_profiles():
+            self._target_lang_combo.addItem(f"{profile.display_name} ({profile.locale})", profile.locale)
         self._target_lang_combo.setToolTip("目标语言配置，对应 data/prompts/langs/{lang}.toml")
         llm_layout.addLayout(_row("目标语言:", self._target_lang_combo))
         self._model_edit = QLineEdit()
@@ -156,9 +162,9 @@ class AITranslatorView:
         self._max_terms_spin.setToolTip("每批次发送给 LLM 的术语表上限，防止 token 超限")
         llm_layout.addLayout(_row("术语上限:", self._max_terms_spin))
 
-        test_btn = QPushButton("测试连接")
+        test_btn = QPushButton("测试 LLM 连接")
         test_btn.setFixedWidth(100)
-        test_btn.clicked.connect(callbacks.on_test_connection)
+        test_btn.clicked.connect(lambda: callbacks.on_test_connection("llm"))
         test_row = QHBoxLayout()
         test_row.addStretch()
         test_row.addWidget(test_btn)
@@ -173,61 +179,7 @@ class AITranslatorView:
         tab_llm_layout.setSpacing(6)
         tab_llm_layout.addWidget(llm_box)
 
-        # ── Embedding 配置区 ──────────────────────────────────────────────────
-        embed_box = QGroupBox("语义检索配置（Embedding）")
-        embed_layout = QVBoxLayout(embed_box)
-        embed_layout.setSpacing(4)
-
-        self._embed_provider_combo = QComboBox()
-        self._embed_provider_combo.addItems(["本地模型（sentence-transformers）", "API 服务（OpenAI 兼容）"])
-        self._embed_provider_combo.setToolTip(
-            "本地模型：使用 sentence-transformers，无需网络，需要安装依赖\n"
-            "API 服务：使用 OpenAI/DeepSeek/阿里云等兼容 embedding 接口"
-        )
-        self._embed_provider_combo.currentIndexChanged.connect(callbacks.on_embed_provider_changed)
-        embed_layout.addLayout(_row("模式:", self._embed_provider_combo))
-
-        # 本地模型配置
-        self._embed_local_model_label = QLabel("模型名:")
-        self._embed_local_model_label.setFixedWidth(90)
-        self._embed_local_model_edit = QLineEdit()
-        self._embed_local_model_edit.setPlaceholderText("paraphrase-multilingual-MiniLM-L12-v2")
-        self._embed_local_model_edit.setToolTip("本地模型名称，首次使用会从 HuggingFace 下载")
-        local_row = QHBoxLayout()
-        local_row.addWidget(self._embed_local_model_label)
-        local_row.addWidget(self._embed_local_model_edit)
-        embed_layout.addLayout(local_row)
-
-        # API 配置（OpenAI 兼容）
-        self._embed_model_label = QLabel("API 模型:")
-        self._embed_model_label.setFixedWidth(90)
-        self._embed_model_edit = QLineEdit()
-        self._embed_model_edit.setPlaceholderText("text-embedding-3-small")
-        self._embed_model_edit.setToolTip("API embedding 模型名称")
-        model_row = QHBoxLayout()
-        model_row.addWidget(self._embed_model_label)
-        model_row.addWidget(self._embed_model_edit)
-        embed_layout.addLayout(model_row)
-
-        self._embed_apikey_label = QLabel("API Key:")
-        self._embed_apikey_label.setFixedWidth(90)
-        self._embed_apikey_edit = QLineEdit()
-        self._embed_apikey_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self._embed_apikey_edit.setPlaceholderText("留空则复用上方 LLM 的 API Key")
-        apikey_row = QHBoxLayout()
-        apikey_row.addWidget(self._embed_apikey_label)
-        apikey_row.addWidget(self._embed_apikey_edit)
-        embed_layout.addLayout(apikey_row)
-
-        self._embed_baseurl_label = QLabel("Base URL:")
-        self._embed_baseurl_label.setFixedWidth(90)
-        self._embed_baseurl_edit = QLineEdit()
-        self._embed_baseurl_edit.setPlaceholderText("留空则复用上方 LLM 的 Base URL")
-        baseurl_row = QHBoxLayout()
-        baseurl_row.addWidget(self._embed_baseurl_label)
-        baseurl_row.addWidget(self._embed_baseurl_edit)
-        embed_layout.addLayout(baseurl_row)
-
+        embed_box = build_embedding_config_section(self, callbacks, _row)
         tab_llm_layout.addWidget(embed_box)
         self._batch_btn = QPushButton("批量翻译…")
         self._batch_btn.clicked.connect(callbacks.on_batch_start)
@@ -386,7 +338,11 @@ class WindowConfigView:
     def render_config(self, cfg: object) -> None:
         h = self._view.controls
         h.provider_combo.setCurrentIndex(0 if cfg.provider != "anthropic" else 1)
-        h.target_lang_combo.setCurrentText(cfg.target_lang)
+        target_index = h.target_lang_combo.findData(cfg.target_lang)
+        if target_index < 0:
+            h.target_lang_combo.addItem(f"{cfg.target_lang}（配置不可用）", cfg.target_lang)
+            target_index = h.target_lang_combo.count() - 1
+        h.target_lang_combo.setCurrentIndex(target_index)
         h.model_edit.setText(cfg.model)
         h.apikey_edit.setText(cfg.api_key)
         h.baseurl_edit.setText(cfg.base_url)
@@ -415,7 +371,14 @@ class WindowConfigView:
         h.polish_preview_check.setChecked(cfg.polish_preview_enabled)
         h.order_combo.setCurrentIndex(1 if getattr(cfg, "mixed_execution_order", "serial") == "parallel" else 0)
         h.rule_editor.set_rules(list(getattr(cfg, "action_rules", [])))
-        h.embed_provider_combo.setCurrentIndex(0 if cfg.embedding.provider == "local" else 1)
+        embed_mode = str(getattr(cfg.embedding, "mode", "disabled") or "disabled").casefold()
+        if embed_mode not in {"disabled", "local", "api"}:
+            embed_mode = "local" if cfg.embedding.provider == "local" else "api"
+        embed_index = h.embed_provider_combo.findData(embed_mode)
+        h.embed_provider_combo.setCurrentIndex(max(embed_index, 0))
+        embed_api_provider_index = h.embed_api_provider_combo.findData(cfg.embedding.provider)
+        h.embed_api_provider_combo.setCurrentIndex(max(embed_api_provider_index, 0))
+        h.embed_local_model_id_edit.setText(getattr(cfg.embedding, "local_model_id", ""))
         h.embed_local_model_edit.setText(cfg.embedding.local_model_path)
         h.embed_model_edit.setText(cfg.embedding.model)
         h.embed_apikey_edit.setText(cfg.embedding.api_key)
@@ -441,7 +404,7 @@ class WindowConfigView:
     def update_config(self, cfg: object) -> object:
         h = self._view.controls
         cfg.provider = "anthropic" if h.provider_combo.currentIndex() == 1 else "openai_compatible"
-        cfg.target_lang = h.target_lang_combo.currentText()
+        cfg.target_lang = str(h.target_lang_combo.currentData() or "")
         cfg.model = h.model_edit.text().strip()
         cfg.api_key = h.apikey_edit.text().strip()
         cfg.base_url = h.baseurl_edit.text().strip()
@@ -472,8 +435,14 @@ class WindowConfigView:
         cfg.polish_preview_enabled = h.polish_preview_check.isChecked()
         cfg.mixed_execution_order = "parallel" if h.order_combo.currentIndex() == 1 else "serial"
         cfg.action_rules = h.rule_editor.get_rules()
-        cfg.embedding.provider = "local" if h.embed_provider_combo.currentIndex() == 0 else "openai"
-        cfg.embedding.local_model_path = h.embed_local_model_edit.text().strip()
+        embed_mode = str(h.embed_provider_combo.currentData() or "disabled")
+        cfg.embedding.mode = embed_mode
+        if embed_mode == "local":
+            cfg.embedding.provider = "local"
+        elif embed_mode == "api":
+            cfg.embedding.provider = str(h.embed_api_provider_combo.currentData() or "openai")
+        cfg.embedding.local_model_id = h.embed_local_model_id_edit.text().strip()
+        cfg.embedding.local_model_path = ""
         cfg.embedding.model = h.embed_model_edit.text().strip()
         cfg.embedding.api_key = h.embed_apikey_edit.text().strip()
         cfg.embedding.base_url = h.embed_baseurl_edit.text().strip()
@@ -541,6 +510,8 @@ class ConfigAutosaveBinding:
             h.pp_strict_mode_check.toggled,
             h.polish_preview_check.toggled,
             h.embed_provider_combo.currentIndexChanged,
+            h.embed_api_provider_combo.currentIndexChanged,
+            h.embed_local_model_id_edit.textChanged,
             h.embed_local_model_edit.textChanged,
             h.embed_model_edit.textChanged,
             h.embed_apikey_edit.textChanged,

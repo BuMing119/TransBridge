@@ -300,6 +300,7 @@ class TestRunPostprocessProductionPath(unittest.TestCase):
             log_store=SimpleNamespace(log_dir="fixture-log"),
             close=lambda: None,
         )
+        prompts_dir = Path(__file__).resolve().parents[3] / "data" / "prompts"
         with (
             tempfile.TemporaryDirectory() as data_dir,
             patch("transbridge.smart_assistant.tools._common.load_llm_config", return_value=config),
@@ -311,6 +312,22 @@ class TestRunPostprocessProductionPath(unittest.TestCase):
             patch(
                 "transbridge.paratranz.config_manager.LLMConfig.get_ai_translator_dir",
                 return_value=str(Path(data_dir) / "ai_translator" / "Demo"),
+            ),
+            patch(
+                "transbridge.ai_translator.post_processor.quality_gate._get_prompts_dir",
+                return_value=prompts_dir,
+            ),
+            patch(
+                "transbridge.ai_translator.post_processor.llm_refiner._get_prompts_dir",
+                return_value=prompts_dir,
+            ),
+            patch(
+                "transbridge.ai_translator.post_processor.polisher._get_prompts_dir",
+                return_value=prompts_dir,
+            ),
+            patch(
+                "transbridge.ai_translator.post_processor.llm_arbiter._get_prompts_dir",
+                return_value=prompts_dir,
             ),
         ):
             ctx.esp_path = str(Path(data_dir) / "Demo.esp")

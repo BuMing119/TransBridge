@@ -175,8 +175,8 @@ def _tool_get_tool_help(args: dict, ctx) -> ToolResult:
 
 _PARAM_SCHEMAS = {
     "switch_collection": {
-        "collection_name": {"type": "str", "required": False, "description": "集合名称(label)或key"},
-        "slot_index": {"type": "int", "required": False, "description": "槽位索引（0-based）"},
+        "collection_name": {"type": "str", "required": False, "description": "Collection label or key"},
+        "slot_index": {"type": "int", "required": False, "description": "Zero-based slot index"},
     },
 }
 
@@ -184,40 +184,39 @@ _PARAM_SCHEMAS = {
 def _register_default_tools():
     from ..tool_registry import ToolRegistry
     ToolRegistry.register_tools("default", [
-        {"name": "get_app_state", "display_name": "应用状态", "description": "①一站式全局状态概览，用于判断当前工作阶段。②参数: 无，只读。③返回: {active_collection, esp_file, eet_file, xt_file(仅文件名), project, variant(版本变体名如\"v1\"), filters, collection_count, has_active_collection, paratranz_configured}。规则: 文件路径仅返回文件名(安全设计); 此处\"阶段\"指项目工作阶段，与翻译条目stage字段不同。",
+        {"name": "get_app_state", "display_name": "应用状态", "description": "①Return a comprehensive global state overview for identifying the current workflow phase. ②No arguments; read-only. ③Returns {active_collection, esp_file, eet_file, xt_file(filename only), project, variant(version variant such as \"v1\"), filters, collection_count, has_active_collection, paratranz_configured}. Rules: file paths expose filenames only; workflow phase is distinct from an entry's stage field.",
          "execute": _tool_get_app_state, "permission": "read",
          "parameters": _PARAM_SCHEMAS.get("get_app_state", {})},
-        {"name": "list_collections", "display_name": "列出集合", "description": "①列出所有已加载翻译集合及基本信息。②参数: 无，只读。③返回: {collections: [{key, label, esp_name(非ESP来源为null), entry_count, is_active}]}。规则: 集合生命周期——parser action=create_slot创建, 创建时自动激活或switch_collection切换, 此处查询, UI移除; 筛选/作用域绑定到活跃集合。",
+        {"name": "list_collections", "display_name": "列出集合", "description": "①List all loaded translation collections and basic information. ②No arguments; read-only. ③Returns {collections: [{key, label, esp_name(null for non-ESP sources), entry_count, is_active}]}. Rules: parser action=create_slot creates and activates a collection; switch_collection changes it; this tool queries it; the UI removes it. Filters and scope belong to the active collection.",
          "execute": _tool_list_collections, "permission": "read",
          "parameters": _PARAM_SCHEMAS.get("list_collections", {})},
-        {"name": "switch_collection", "display_name": "切换集合", "description": "①切换活跃翻译集合，后续所有操作针对新集合。②参数: collection_name(key或label, 优先), slot_index(0-based数组位置, 从list_collections推算)。③返回: {active_collection}。规则: 同时传入时collection_name优先; 建议使用collection_name而非slot_index; write权限。",
+        {"name": "switch_collection", "display_name": "切换集合", "description": "①Switch the active translation collection; subsequent operations target the new collection. ②Arguments: preferred collection_name (key or label), or slot_index (zero-based position from list_collections). ③Returns {active_collection}. Rules: collection_name wins when both are supplied; prefer it over slot_index; write permission.",
          "execute": _tool_switch_collection, "permission": "write",
          "parameters": _PARAM_SCHEMAS.get("switch_collection", {})},
-        {"name": "get_current_filters", "display_name": "当前筛选", "description": "①返回当前筛选条件完整快照。②参数: 无，只读。③返回: {filter_state: {stage(num[]: 0=未翻译/1=已翻译/2=有疑问/3=已检查/5=已审核/9=已锁定/-1=已隐藏, 4/6/7/8为ParaTranz预留), category, label, search_query, search_field(id/key/original/translation/context/all)}, active_filter_count}。规则: category通过get_statistics的category_distribution发现; label通过list_labels发现; 修改筛选用set_filters。",
+        {"name": "get_current_filters", "display_name": "当前筛选", "description": "①Return a complete snapshot of current filters. ②No arguments; read-only. ③Returns {filter_state: {stage(num[]: 0=untranslated/1=translated/2=question/3=checked/5=reviewed/9=locked/-1=hidden; 4/6/7/8 reserved for ParaTranz), category, label, search_query, search_field(id/key/original/translation/context/all)}, active_filter_count}. Rules: discover categories via get_statistics.category_distribution and labels via list_labels; modify filters with set_filters.",
          "execute": _tool_get_current_filters, "permission": "read",
          "parameters": _PARAM_SCHEMAS.get("get_current_filters", {})},
-        {"name": "get_statistics", "display_name": "翻译统计", "description": "①全量统计(不受当前筛选影响)。②参数: 无，只读。③返回: {total, translated, untranslated, translation_rate(%), stage_distribution({\"未翻译\":120,...}), category_distribution({\"NPC_\":150,...}, top 20)}。规则: 用于概览; 筛选后的条目用get_visible_entries。",
+        {"name": "get_statistics", "display_name": "翻译统计", "description": "①Return full statistics unaffected by current filters. ②No arguments; read-only. ③Returns {total, translated, untranslated, translation_rate(%), stage_distribution({\"untranslated\":120,...}), category_distribution({\"NPC_\":150,...}, top 20)}. Rule: use for an overview; use get_visible_entries for filtered entries.",
          "execute": _tool_get_statistics, "permission": "read",
          "parameters": _PARAM_SCHEMAS.get("get_statistics", {})},
         # Story 12: 项目管理
-        {"name": "list_local_projects", "display_name": "本地项目", "description": "①列出本地工作空间中的项目。②参数: 无，只读。③返回: {projects: [{name(仅目录名, 无完整路径)}]}。规则: workspace为本地项目目录, 每子目录为一个项目; 项目CRUD仅通过UI(无工具支持)。",
+        {"name": "list_local_projects", "display_name": "本地项目", "description": "①List projects in the local workspace. ②No arguments; read-only. ③Returns {projects: [{name(directory name only, no full path)}]}. Rule: each workspace subdirectory is a project; project CRUD is available only through the UI.",
          "execute": _tool_list_local_projects, "permission": "read",
          "parameters": _PARAM_SCHEMAS.get("list_local_projects", {})},
-        {"name": "get_current_project", "display_name": "当前项目", "description": "①轻量当前项目查询。②参数: 无，只读。③返回: {name, variant, collection}。规则: vs get_app_state——此工具仅返回项目信息(更轻量); get_app_state返回完整上下文含文件路径/筛选/API状态; 文件路径不在此返回(安全设计), 需用get_app_state。",
+        {"name": "get_current_project", "display_name": "当前项目", "description": "①Return lightweight current-project information. ②No arguments; read-only. ③Returns {name, variant, collection}. Rule: unlike get_app_state, this returns only project information; use get_app_state for full context including filenames, filters, and API state.",
          "execute": _tool_get_current_project, "permission": "read",
          "parameters": _PARAM_SCHEMAS.get("get_current_project", {})},
         # 工具发现
         {"name": "get_tool_help", "display_name": "工具帮助", "description": (
-            "①获取工具的完整定义（参数Schema、返回值、规则），用于在使用工具前了解其详细参数。"
-            "②参数: tool(str,可选,工具名如'start_translation'); namespace(str,可选,命名空间如'translator',返回该空间所有工具完整定义,支持逗号分隔多个namespace)。"
-            "③返回: 指定工具或namespace的完整参数表格与规则说明。"
-            "规则: 1.推荐使用namespace批量查询,一次获取整组工具; "
-            "2.不要凭目录摘要直接调用非预加载工具,必须通过本工具获取完整定义后再调用。"
+            "①Return a tool's complete definition, including parameter schema, return value, and rules, before use."
+            "②Arguments: optional tool name such as 'start_translation'; optional namespace such as 'translator', with comma-separated namespaces supported."
+            "③Returns the complete parameter table and rules for the requested tool or namespace."
+            "Rules: prefer namespace queries to retrieve a whole group at once. Do not call a non-preloaded tool from its directory summary; retrieve its complete definition first."
         ),
          "execute": _tool_get_tool_help, "permission": "read",
          "parameters": {
-             "tool": {"type": "str", "required": False, "description": "工具名，如'start_translation'"},
-             "namespace": {"type": "str", "required": False, "description": "命名空间，如'translator'。支持逗号分隔多个，如'parser,translator'"},
+             "tool": {"type": "str", "required": False, "description": "Tool name, such as 'start_translation'"},
+             "namespace": {"type": "str", "required": False, "description": "Namespace, such as 'translator'; comma-separated values such as 'parser,translator' are supported"},
          }},
     ])
 

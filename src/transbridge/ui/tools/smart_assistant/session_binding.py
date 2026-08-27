@@ -95,7 +95,7 @@ class SessionBinding:
         data = self._manager.get_session(session_id)
         if data is None or data.get("name") != "新对话":
             return
-        candidate = parsed.get("thought", "")
+        candidate = parsed.get("summary", "") or parsed.get("thought", "")
         if not candidate:
             for message in data.get("messages", []):
                 content = message.get("content", "")

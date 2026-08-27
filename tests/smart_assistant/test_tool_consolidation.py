@@ -1,4 +1,5 @@
-"""Story 21: 合并工具测试矩阵 + schema 回归验证。"""
+"""Story 21: 合并工具测试矩阵 + 原生工具定义回归验证。"""
+
 from __future__ import annotations
 
 import unittest
@@ -210,29 +211,25 @@ class TestDeprecatedWrappers(unittest.TestCase):
             "batch_assign_label",
         ]
         for name in old_names:
-            self.assertIsNone(
-                ToolRegistry.get(name), f"{name} should not be registered"
-            )
+            self.assertIsNone(ToolRegistry.get(name), f"{name} should not be registered")
 
     def test_new_tool_names_in_registry(self):
         from transbridge.smart_assistant.tool_registry import ToolRegistry
 
         # 触发注册（模块导入）
         from transbridge.smart_assistant.tools import (  # noqa: F401
+            tool_default,
             tool_editor,
-            tool_translator,
-            tool_writer,
+            tool_paratranz,
             tool_parser,
             tool_proofreader,
-            tool_paratranz,
-            tool_default,
+            tool_translator,
+            tool_writer,
         )
 
         new_names = ["set_filters", "stop_task", "write_back", "manage_entry_labels"]
         for name in new_names:
-            self.assertIsNotNone(
-                ToolRegistry.get(name), f"{name} should be registered"
-            )
+            self.assertIsNotNone(ToolRegistry.get(name), f"{name} should be registered")
 
     def test_tool_count_is_current(self):
         """The complete FR9/FR16 catalog is explicit and contains no hidden wrappers."""
@@ -255,27 +252,26 @@ class TestDeprecatedWrappers(unittest.TestCase):
         self.assertTrue(required_fr16.issubset(active))
         self.assertEqual(len(active), 50, "unexpected active tool was added or removed")
 
-    def test_schema_no_old_names(self):
+    def test_native_tool_definitions_no_old_names(self):
+        from transbridge.smart_assistant.native_tools import build_native_tool_definitions
         from transbridge.smart_assistant.tool_registry import ToolRegistry
 
         # 触发注册（模块导入）
         from transbridge.smart_assistant.tools import (  # noqa: F401
+            tool_default,
             tool_editor,
-            tool_translator,
-            tool_writer,
+            tool_paratranz,
             tool_parser,
             tool_proofreader,
-            tool_paratranz,
-            tool_default,
+            tool_translator,
+            tool_writer,
         )
 
-        schema = ToolRegistry.build_tool_schema_for_prompt(None)
-        self.assertIsInstance(schema, str)
-        self.assertGreater(len(schema), 0, "Schema should not be empty")
+        definitions = build_native_tool_definitions(ToolRegistry.list_all_namespaces())
+        names = {definition.name for definition in definitions}
+        self.assertGreater(len(names), 0, "Native tool definitions should not be empty")
 
-        # 验证旧工具名不作为 schema 中可调用的工具条目出现
-        # （schema 格式: "- tool_name: description" 每行一个工具）
-        # 注意：新工具的描述中可能引用旧名称以帮助迁移，这不影响 LLM 行为
+        # 验证旧工具名不作为 Provider 原生工具暴露。
         old_names = [
             "filter_by_stage",
             "filter_by_category",
@@ -298,12 +294,10 @@ class TestDeprecatedWrappers(unittest.TestCase):
                 f"Deprecated tool {name} should not be registered",
             )
 
-        # 验证合并后的新工具出现在 schema 中
+        # 验证合并后的新工具出现在原生工具定义中
         new_names = ["set_filters", "stop_task", "write_back", "manage_entry_labels"]
         for name in new_names:
-            self.assertIn(
-                name, schema, f"Consolidated tool {name} should appear in LLM schema"
-            )
+            self.assertIn(name, names, f"Consolidated tool {name} should appear in native tool definitions")
 
 
 if __name__ == "__main__":

@@ -65,6 +65,15 @@ def test_extract_does_not_apply_a_client_side_output_token_limit() -> None:
     assert client.max_tokens == [0]
 
 
+def test_extract_forwards_configured_positive_output_limit_for_anthropic() -> None:
+    client = _Client()
+    extractor = NounExtractor(client, _Builder([]), max_output_tokens=2048)
+
+    extractor.extract([{"original": "Riverwood", "translation": "溪木镇"}])
+
+    assert client.max_tokens == [2048]
+
+
 def test_extract_can_propagate_llm_failure_for_batch_orchestration() -> None:
     extractor = NounExtractor(_Client(error=RuntimeError("unauthorized")), _Builder([]))
 

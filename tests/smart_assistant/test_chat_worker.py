@@ -1,12 +1,14 @@
 """Story 07: ChatWorker 测试 — 流式响应 / cancel / 错误处理。"""
+
 from __future__ import annotations
 
 import sys
 import time
 import unittest
 
-from PyQt6.QtCore import QThread
 from PyQt6.QtWidgets import QApplication
+
+from transbridge.infra.llm_tool_calling import LlmToolCall, LlmToolDefinition, LlmTurn
 
 _app = QApplication.instance()
 if _app is None:
@@ -39,6 +41,18 @@ class MockLLMClient:
         self.cancelled = True
 
 
+class MockToolLLMClient(MockLLMClient):
+    def chat_stream_with_tools(self, messages, max_tokens, tools, callback):
+        self.stream_started = True
+        for chunk in self.chunks:
+            callback(chunk)
+        return LlmTurn(
+            text="".join(self.chunks),
+            tool_calls=(LlmToolCall("call-1", "get_statistics", {}),),
+            stop_reason="tool_calls",
+        )
+
+
 class TestChatWorker(unittest.TestCase):
     """ChatWorker 流式响应和错误处理测试。"""
 
@@ -56,6 +70,7 @@ class TestChatWorker(unittest.TestCase):
 
     def test_streaming_chunks(self):
         from transbridge.smart_assistant.chat_worker import ChatWorker
+
         client = MockLLMClient(chunks=["A", "B", "C"])
         worker = ChatWorker(client, [{"role": "user", "content": "hi"}])
         self._connect_worker(worker)
@@ -71,6 +86,7 @@ class TestChatWorker(unittest.TestCase):
 
     def test_streaming_full_text(self):
         from transbridge.smart_assistant.chat_worker import ChatWorker
+
         client = MockLLMClient(chunks=["Hello", " ", "World", "!"])
         worker = ChatWorker(client, [{"role": "user", "content": "test"}])
         self._connect_worker(worker)
@@ -84,6 +100,7 @@ class TestChatWorker(unittest.TestCase):
 
     def test_error_signal_on_failure(self):
         from transbridge.smart_assistant.chat_worker import ChatWorker
+
         client = MockLLMClient(should_fail=True, fail_msg="Connection timeout")
         worker = ChatWorker(client, [{"role": "user", "content": "test"}])
         self._connect_worker(worker)
@@ -95,6 +112,7 @@ class TestChatWorker(unittest.TestCase):
 
     def test_no_finished_on_error(self):
         from transbridge.smart_assistant.chat_worker import ChatWorker
+
         client = MockLLMClient(should_fail=True, fail_msg="Server error")
         worker = ChatWorker(client, [{"role": "user", "content": "test"}])
         self._connect_worker(worker)
@@ -107,6 +125,7 @@ class TestChatWorker(unittest.TestCase):
 
     def test_cancel_stops_streaming(self):
         from transbridge.smart_assistant.chat_worker import ChatWorker
+
         # 大量 chunk 以便有机会在中间 cancel
         chunks = [f"chunk_{i}" for i in range(100)]
         client = MockLLMClient(chunks=chunks)
@@ -123,6 +142,7 @@ class TestChatWorker(unittest.TestCase):
 
     def test_empty_chunks(self):
         from transbridge.smart_assistant.chat_worker import ChatWorker
+
         client = MockLLMClient(chunks=[""])  # 至少一个空chunk确保finished触发
         worker = ChatWorker(client, [{"role": "user", "content": "test"}])
         self._connect_worker(worker)
@@ -130,6 +150,20 @@ class TestChatWorker(unittest.TestCase):
         worker.join(timeout=3)
         QApplication.processEvents()
         self.assertEqual(len(self._finished), 1)
+
+    def test_native_tool_turn_is_delivered_without_flattening(self):
+        from transbridge.smart_assistant.chat_worker import ChatWorker
+
+        client = MockToolLLMClient(chunks=[])
+        tool = LlmToolDefinition("get_statistics", "stats", {"type": "object", "properties": {}})
+        worker = ChatWorker(client, [{"role": "user", "content": "stats"}], tools=[tool])
+        self._connect_worker(worker)
+        worker.start()
+        worker.join(timeout=3)
+
+        self.assertEqual(len(self._finished), 1)
+        self.assertIsInstance(self._finished[0], LlmTurn)
+        self.assertEqual(self._finished[0].tool_calls[0].id, "call-1")
 
 
 if __name__ == "__main__":

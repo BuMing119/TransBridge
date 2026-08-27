@@ -360,6 +360,10 @@ class ChatWidget(QWidget):
 
         # 中断正在进行的流式输出
         self._orchestrator.cancel_current_round()
+        if self._plan_execution is not None:
+            self._plan_execution.abort()
+        # Native tool calls must be closed before the next user message is appended.
+        self._controller.handle_abort()
 
         if self._message_list is not None:
             self._message_list.add_bubble(MessageBubble(text, "user", theme=self._presentation_theme()))

@@ -1,4 +1,5 @@
 """Story 07: MCP 模块测试 — auth / tools/list / tools/call / 错误处理。"""
+
 from __future__ import annotations
 
 from importlib import import_module
@@ -8,6 +9,7 @@ import unittest
 class FakeToolRegistry:
     def get(self, name, namespace=None):
         from transbridge.smart_assistant.tool_registry import ToolSpec
+
         return ToolSpec(name=name, display_name=name, description="fake", parameters={})
 
 
@@ -16,11 +18,14 @@ class TestMCPAuth(unittest.TestCase):
 
     def setUp(self):
         from transbridge.smart_assistant.mcp.server import MCPServer
+
         self.server = MCPServer(FakeToolRegistry())
 
     def _make_request(self, auth=""):
         return {
-            "jsonrpc": "2.0", "id": 1, "method": "tools/list",
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/list",
             "params": {"_meta": {"authorization": auth}},
         }
 
@@ -49,26 +54,33 @@ class TestMCPToolHandling(unittest.TestCase):
     def setUp(self):
         # 确保工具已注册
         from transbridge.smart_assistant.tool_registry import ToolRegistry
+
         import_module("transbridge.smart_assistant.tools.tool_default")
         import_module("transbridge.smart_assistant.tools.tool_translator")
         self.registry = ToolRegistry
+
+    def _native_tool_names(self):
+        from transbridge.smart_assistant.native_tools import build_native_tool_definitions
+
+        namespaces = self.registry.list_all_namespaces()
+        return {definition.name for definition in build_native_tool_definitions(namespaces)}
 
     def test_tools_list_not_empty(self):
         tools = self.registry.list_all()
         self.assertGreater(len(tools), 10, "应至少有 10 个已注册工具")
 
-    def test_deprecated_tools_in_registry_but_not_prompt(self):
-        """M2: deprecated 工具仍在 registry 中（兼容旧调用），但不出现在 prompt schema 中。"""
-        schema = self.registry.build_tool_schema_for_prompt()
-        self.assertNotIn("lookup_terms", schema, "deprecated v1 工具不应出现在 prompt")
-        self.assertNotIn("translate_entries", schema)
-        self.assertNotIn("check_quality", schema)
-        self.assertNotIn("export_json", schema)
+    def test_deprecated_tools_in_registry_but_not_native_definitions(self):
+        """M2: deprecated 工具仍在 registry 中（兼容旧调用），但不暴露给 Provider。"""
+        names = self._native_tool_names()
+        self.assertNotIn("lookup_terms", names, "deprecated v1 工具不应暴露给 Provider")
+        self.assertNotIn("translate_entries", names)
+        self.assertNotIn("check_quality", names)
+        self.assertNotIn("export_json", names)
 
-    def test_non_deprecated_tools_in_prompt(self):
-        schema = self.registry.build_tool_schema_for_prompt()
-        self.assertIn("start_translation", schema)
-        self.assertIn("get_app_state", schema)
+    def test_non_deprecated_tools_in_native_definitions(self):
+        names = self._native_tool_names()
+        self.assertIn("start_translation", names)
+        self.assertIn("get_app_state", names)
 
     def test_tool_get_by_namespace(self):
         """按 namespace 查找工具可找到非 deprecated 工具。"""
@@ -79,12 +91,12 @@ class TestMCPToolHandling(unittest.TestCase):
         spec = self.registry.get("nonexistent_tool_xyz")
         self.assertIsNone(spec)
 
-    def test_deprecated_not_in_prompt(self):
-        """确保所有 4 个 deprecated v1 工具都不在 prompt 中（write_back 已转为当前工具，非 deprecated）。"""
-        schema = self.registry.build_tool_schema_for_prompt()
+    def test_deprecated_not_in_native_definitions(self):
+        """确保所有 4 个 deprecated v1 工具都不在 Provider 工具定义中。"""
+        names = self._native_tool_names()
         deprecated_names = ["lookup_terms", "translate_entries", "check_quality", "export_json"]
         for name in deprecated_names:
-            self.assertNotIn(name, schema, f"deprecated 工具 {name} 不应出现在 prompt schema")
+            self.assertNotIn(name, names, f"deprecated 工具 {name} 不应出现在 Provider 工具定义中")
 
 
 if __name__ == "__main__":

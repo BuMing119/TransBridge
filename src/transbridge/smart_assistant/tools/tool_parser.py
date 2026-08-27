@@ -267,24 +267,24 @@ def _tool_import_json(args: dict, ctx) -> ToolResult:
 
 _PARAM_SCHEMAS = {
     "parse_esp": {
-        "path": {"type": "str", "required": True, "description": "ESP/ESM 文件路径"},
-        "action": {"type": "str", "required": False, "description": "解析后操作: create_slot（创建新槽位并激活，默认）或 append（追加到当前活跃集合）"},  # noqa: E501
+        "path": {"type": "str", "required": True, "description": "Path to the ESP/ESM file"},
+        "action": {"type": "str", "required": False, "description": "Action after parsing: create_slot (create and activate a new slot; default) or append (append to the active collection)"},  # noqa: E501
     },
     "parse_eet": {
-        "path": {"type": "str", "required": True, "description": "EET XML 文件路径"},
-        "action": {"type": "str", "required": False, "description": "解析后操作: create_slot（创建新槽位并激活，默认）或 append（追加到当前活跃集合）"},  # noqa: E501
+        "path": {"type": "str", "required": True, "description": "Path to the EET XML file"},
+        "action": {"type": "str", "required": False, "description": "Action after parsing: create_slot (create and activate a new slot; default) or append (append to the active collection)"},  # noqa: E501
     },
     "parse_xt": {
-        "path": {"type": "str", "required": True, "description": "XT XML 文件路径"},
-        "action": {"type": "str", "required": False, "description": "解析后操作: create_slot（创建新槽位并激活，默认）或 append（追加到当前活跃集合）"},  # noqa: E501
+        "path": {"type": "str", "required": True, "description": "Path to the XT XML file"},
+        "action": {"type": "str", "required": False, "description": "Action after parsing: create_slot (create and activate a new slot; default) or append (append to the active collection)"},  # noqa: E501
     },
     "parse_sst": {
-        "path": {"type": "str", "required": True, "description": "SST 二进制文件路径"},
-        "action": {"type": "str", "required": False, "description": "解析后操作: create_slot（创建新槽位并激活，默认）或 append（追加到当前活跃集合）"},  # noqa: E501
+        "path": {"type": "str", "required": True, "description": "Path to the SST binary file"},
+        "action": {"type": "str", "required": False, "description": "Action after parsing: create_slot (create and activate a new slot; default) or append (append to the active collection)"},  # noqa: E501
     },
     "import_json": {
-        "path": {"type": "str", "required": True, "description": "JSON 文件路径"},
-        "action": {"type": "str", "required": False, "description": "导入后操作: create_slot（创建新槽位并激活，默认）或 append（追加到当前活跃集合）"},  # noqa: E501
+        "path": {"type": "str", "required": True, "description": "Path to the JSON file"},
+        "action": {"type": "str", "required": False, "description": "Action after import: create_slot (create and activate a new slot; default) or append (append to the active collection)"},  # noqa: E501
     },
 }
 
@@ -296,15 +296,15 @@ _PARAM_SCHEMAS = {
 def _register_parser_tools():
     from ..tool_registry import ToolRegistry
     ToolRegistry.register_tools("parser", [
-        {"name": "parse_esp", "display_name": "解析ESP", "description": "①解析ESP/ESM/ESL插件文件提取可翻译字符串。②参数: path(必填, .esp/.esm/.esl), action(可选, create_slot默认创建新槽位并激活/append追加到当前活跃集合)。③返回: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}。规则: create_slot支持后续write_back target=esp/strings推断, append前需确认has_active_collection, path仅允许RuntimeContext授权根内规范化路径, 通过get_app_state查看esp_file",  # noqa: E501
+        {"name": "parse_esp", "display_name": "解析ESP", "description": "①Parse an ESP/ESM/ESL plugin file and extract translatable strings. ②Parameters: path (required, .esp/.esm/.esl), action (optional; create_slot creates and activates a new slot by default, or append adds to the active collection). ③Returns: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}. Rules: create_slot supports later write_back target=esp/strings inference; append requires has_active_collection; path must be a normalized path within a root authorized by RuntimeContext; use get_app_state to inspect esp_file.",  # noqa: E501
          "execute": _tool_parse_esp, "parameters": _PARAM_SCHEMAS.get("parse_esp", {}), "permission": "write"},
-        {"name": "parse_eet", "display_name": "解析EET", "description": "①解析EET XML翻译文件(Elder Scrolls Translation格式, 根元素<EET>)。②参数: path(必填, EET XML), action(可选, create_slot默认/append)。③返回: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}。规则: create_slot支持后续write_back target=eet推断, append前需确认has_active_collection, path仅允许RuntimeContext授权根内规范化路径, 通过get_app_state查看eet_file",  # noqa: E501
+        {"name": "parse_eet", "display_name": "解析EET", "description": "①Parse an EET XML translation file (Elder Scrolls Translation format with an <EET> root element). ②Parameters: path (required, EET XML), action (optional; create_slot by default, or append). ③Returns: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}. Rules: create_slot supports later write_back target=eet inference; append requires has_active_collection; path must be a normalized path within a root authorized by RuntimeContext; use get_app_state to inspect eet_file.",  # noqa: E501
          "execute": _tool_parse_eet, "parameters": _PARAM_SCHEMAS.get("parse_eet", {}), "permission": "write"},
-        {"name": "parse_xt", "display_name": "解析XT", "description": "①解析XT XML翻译文件(xTranslator格式, Skyrim MOD翻译工具, 根元素<XT>)。②参数: path(必填, XT XML), action(可选, create_slot默认/append)。③返回: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}。规则: create_slot支持后续write_back target=xt推断, append前需确认has_active_collection, path仅允许RuntimeContext授权根内规范化路径, 通过get_app_state查看xt_file",  # noqa: E501
+        {"name": "parse_xt", "display_name": "解析XT", "description": "①Parse an XT XML translation file (xTranslator format for Skyrim mod translation, with an <XT> root element). ②Parameters: path (required, XT XML), action (optional; create_slot by default, or append). ③Returns: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}. Rules: create_slot supports later write_back target=xt inference; append requires has_active_collection; path must be a normalized path within a root authorized by RuntimeContext; use get_app_state to inspect xt_file.",  # noqa: E501
          "execute": _tool_parse_xt, "parameters": _PARAM_SCHEMAS.get("parse_xt", {}), "permission": "write"},
-        {"name": "parse_sst", "display_name": "解析SST", "description": "①解析SST二进制翻译文件。SSU8=单语言记录, SSU9=双语言多字符串(含插件名头部)。②参数: path(必填, .sst), action(可选, create_slot默认/append)。③返回: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}。规则: 不支持write_back(SST序列化被屏蔽, 仅可浏览/筛选/统计), append前需确认has_active_collection, path仅允许RuntimeContext授权根内规范化路径, sst_file通过get_app_state追踪",  # noqa: E501
+        {"name": "parse_sst", "display_name": "解析SST", "description": "①Parse an SST binary translation file. SSU8 contains single-language records; SSU9 contains bilingual multi-string records with a plugin-name header. ②Parameters: path (required, .sst), action (optional; create_slot by default, or append). ③Returns: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}. Rules: write_back is unsupported because SST serialization is disabled; data is available only for browsing, filtering, and statistics. append requires has_active_collection; path must be a normalized path within a root authorized by RuntimeContext; sst_file is tracked through get_app_state.",  # noqa: E501
          "execute": _tool_parse_sst, "parameters": _PARAM_SCHEMAS.get("parse_sst", {}), "permission": "write"},
-        {"name": "import_json", "display_name": "导入JSON", "description": "①从JSON文件导入翻译条目(支持标准格式[{key,original,translation,stage,context}]和DSD格式)。②参数: path(必填, .json), action(可选, create_slot默认/append)。③返回: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}。规则: 不记录文件路径供write_back推断, append前需确认has_active_collection, path仅允许RuntimeContext授权根内规范化路径",  # noqa: E501
+        {"name": "import_json", "display_name": "导入JSON", "description": "①Import translation entries from a JSON file, supporting the standard [{key,original,translation,stage,context}] format and DSD format. ②Parameters: path (required, .json), action (optional; create_slot by default, or append). ③Returns: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}. Rules: the file path is not recorded for write_back inference; append requires has_active_collection; path must be a normalized path within a root authorized by RuntimeContext.",  # noqa: E501
          "execute": _tool_import_json, "parameters": _PARAM_SCHEMAS.get("import_json", {}), "permission": "write"},
     ])
 

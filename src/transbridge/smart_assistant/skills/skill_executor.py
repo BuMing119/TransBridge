@@ -30,7 +30,7 @@ class SkillExecutor:
         try:
             # 1. 注入 Skill 的 prompt 模板作为系统指令
             if spec.prompt_template:
-                prompt_text = f"【Skill: {spec.display_name}】\n{spec.prompt_template}"
+                prompt_text = f"[Skill: {spec.name}]\n{spec.prompt_template}"
                 self._chat.add_system_message(f"🔧 已激活 Skill: {spec.display_name}")
                 # C25: 使用 ChatWidget 的公共方法 add_system_prompt，而非访问私有 _conversation
                 self._chat.add_system_prompt(prompt_text)

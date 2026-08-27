@@ -19,12 +19,16 @@ class _Conversation:
     def __init__(self) -> None:
         self.display: list[str] = []
         self.structured: list[dict] = []
+        self.tool_results: list[dict] = []
 
     def add_observation(self, tool_name: str, value: str) -> None:
         self.display.append(value)
 
     def add_structured_observation(self, tool_name: str, value: dict) -> None:
         self.structured.append(value)
+
+    def add_tool_result(self, tool_call_id: str, tool_name: str, value: dict, **metadata) -> None:
+        self.tool_results.append({"tool_call_id": tool_call_id, "tool_name": tool_name, "value": value, **metadata})
 
 
 @pytest.fixture
@@ -81,6 +85,23 @@ def test_approved_confirmation_allows_exactly_one_real_side_effect(write_tool) -
     assert effects["count"] == 1
     observations = handler.get_structured_observations()
     assert observations[-1].result["data"] == {"value": 1}
+
+
+def test_native_invocation_records_correlated_tool_result(write_tool) -> None:
+    spec, _ = write_tool
+    conversation = _Conversation()
+    handler = ToolExecutionHandler(
+        SimpleNamespace(owner_id="gui-1", plan_hash="plan-1"),
+        conversation,
+        on_confirm_permission=lambda *_: True,
+    )
+    handler._middlewares = [PermissionGuard(), InputValidationGuard(), OutputValidationGuard()]
+
+    handler.execute_step({"tool": spec.name, "args": {"value": 1}, "tool_call_id": "call-1"})
+
+    assert conversation.display == []
+    assert conversation.tool_results[0]["tool_call_id"] == "call-1"
+    assert conversation.tool_results[0]["is_error"] is False
 
 
 def test_denied_confirmation_stops_before_side_effect(write_tool) -> None:

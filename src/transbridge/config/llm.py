@@ -36,6 +36,7 @@ class EmbeddingConfig:
     model: str = "text-embedding-3-small"
     api_key: str = field(default="", repr=False)
     base_url: str = ""
+    local_model_id: str = ""
     local_model_path: str = ""
     credential_ref: CredentialRef = field(default=_EMBEDDING_REF, repr=False)
 
@@ -146,6 +147,7 @@ class LLMConfig:
         ("provider", "embedding_provider", "str"),
         ("model", "embedding_model", "str"),
         ("base_url", "embedding_base_url", "str"),
+        ("local_model_id", "embedding_local_model_id", "str"),
         ("local_model_path", "embedding_local_model_path", "str"),
     )
     _GUARDRAILS_FIELDS: ClassVar[tuple[tuple[str, str, str], ...]] = (

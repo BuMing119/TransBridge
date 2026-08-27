@@ -8,6 +8,11 @@ import pytest
 from transbridge.application.translation.ai_request_budget import AiRequestBudget
 from transbridge.infra.limited_llm_client import LimitedLLMClient
 from transbridge.infra.llm_client import AnthropicClient
+from transbridge.infra.llm_structured_outputs import (
+    LlmOutputSchema,
+    attach_structured_output_directive,
+    extract_structured_output_directive,
+)
 from transbridge.ui.tools.ai_translator.workflow_log_store import WorkflowLogStore
 from transbridge.ui.tools.ai_translator.workflow_logging_client import WorkflowLoggingLLMClient
 
@@ -52,6 +57,37 @@ def test_prepared_logging_reserves_id_and_logs_after_budget_admission(tmp_path: 
     assert "[REQUEST BUDGET]" in content
     assert content.count("[END CALL]") == 1
     assert budget.snapshot().in_flight == 0
+
+
+def test_logging_and_budget_wrappers_forward_structured_output_directive(tmp_path: Path) -> None:
+    schema = LlmOutputSchema(
+        "wrapper_result",
+        {
+            "type": "object",
+            "properties": {"value": {"type": "string"}},
+            "required": ["value"],
+            "additionalProperties": False,
+        },
+    )
+    messages = [attach_structured_output_directive({"role": "user", "content": "prompt"}, schema)]
+
+    class _Client:
+        def chat(self, received, max_tokens=0):
+            assert max_tokens == 40
+            _clean, received_schema = extract_structured_output_directive(received)
+            assert received_schema == schema
+            return '{"value":"ok"}'
+
+        def cancel(self) -> None:
+            pass
+
+    budget = AiRequestBudget(1)
+    store = WorkflowLogStore("plugin.esp", workflow="mixed", log_base=tmp_path)
+    client = WorkflowLoggingLLMClient(LimitedLLMClient(_Client(), budget), store)
+
+    assert client.chat(messages, 40) == '{"value":"ok"}'
+    assert budget.snapshot().in_flight == 0
+    assert "_transbridge_structured_output" in _content(store)
 
 
 def test_preparation_failure_keeps_call_id_logs_metrics_and_releases_budget(tmp_path: Path) -> None:

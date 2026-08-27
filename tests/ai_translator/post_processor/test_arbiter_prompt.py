@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import re
 from unittest.mock import patch
@@ -28,9 +29,9 @@ from transbridge.infra.prompt_cache import PROMPT_CACHE_METADATA_KEY
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _PROMPTS_DIR = _REPO_ROOT / "data" / "prompts"
 
-_GAME_NAME = "上古卷轴5：天际特别版（SSE）"
-_SOURCE_LANG = "英文"
-_TARGET_LANG = "中文"
+_GAME_NAME = "The Elder Scrolls V: Skyrim Special Edition (SSE)"
+_SOURCE_LANG = "English"
+_TARGET_LANG = "Simplified Chinese"
 
 # 变量不被 string.Template 当作占位符（值中包含真实的 $，用于无 PolishResult 时
 # 验证 polished_translation 仍为回退的最终译文，而不是被误解析）。
@@ -139,7 +140,7 @@ def test_system_only_arbitrates_no_rewrite_and_renders_game():
     assert _TARGET_LANG in system_text
     # 只裁决不重写
     assert "pass" in system_text and "reject" in system_text and "pending" in system_text
-    assert ("不生成" in system_text) or ("不做任何改写" in system_text) or ("绝不可以生成" in system_text)
+    assert "Never generate" in system_text
 
 
 # ───────────────────────── 单条 User 引用润色字段 ─────────────────────────
@@ -153,7 +154,7 @@ def test_single_user_references_polish_fields_when_polish_result_present():
 
     user_text = _user_of(messages)["content"]
     assert _POLISHED in user_text  # polished_translation
-    assert "润色后译文" in user_text
+    assert "[POLISHED TRANSLATION]" in user_text
     assert "润色完成" in user_text  # polish_details（含 note）
     assert "0.95" in user_text  # polisher_confidence
 
@@ -167,7 +168,7 @@ def test_single_user_uses_na_fallback_when_no_polish_result():
 
     user_text = _user_of(messages)["content"]
     # 无 PolishResult：润色详情与信心度为 N/A/无润色语义
-    assert "无润色" in user_text
+    assert "no polishing" in user_text
     assert "N/A" in user_text
     # 不残留任何未渲染占位符
     assert not re.search(r"\$[A-Za-z_][A-Za-z0-9_]*", user_text)
@@ -204,8 +205,8 @@ def test_batch_final_candidate_priority_polish_over_refine():
 
     user_text = _user_of(messages)["content"]
     # 最终译文优先级：润色 > 修复 > 初始
-    assert "最终译文：" in user_text
-    final_line = [line for line in user_text.splitlines() if line.startswith("最终译文：")][0]
+    assert "Final translation:" in user_text
+    final_line = [line for line in user_text.splitlines() if line.startswith("Final translation:")][0]
     assert _POLISHED in final_line
 
 
@@ -217,7 +218,7 @@ def test_batch_final_candidate_falls_back_to_refine_without_polish():
     messages = arbiter._build_batch_arbitration_prompt([ctx])
 
     user_text = _user_of(messages)["content"]
-    final_line = [line for line in user_text.splitlines() if line.startswith("最终译文：")][0]
+    final_line = [line for line in user_text.splitlines() if line.startswith("Final translation:")][0]
     assert _REFINED in final_line
     assert "N/A" in user_text  # 润色后译文 N/A
 
@@ -316,7 +317,7 @@ def test_quick_decide_low_refine_confidence_non_strict_pending():
 
 def test_batch_arbitration_tolerates_legacy_string_changes():
     llm = _CapturingLLM(
-        '[{"entry_id":"e1","verdict":"pass","reason":"ok","confidence":0.9,"suggested_action":"accept"}]'
+        '{"results":[{"entry_id":"e1","verdict":"pass","reason":"ok","confidence":0.9,"suggested_action":"accept"}]}'
     )
     arbiter = _make_arbiter(llm)
     polish = _polish_result("e1")
@@ -328,3 +329,18 @@ def test_batch_arbitration_tolerates_legacy_string_changes():
     assert decisions["e1"].verdict == "pass"
     assert len(llm.calls) == 1
     assert "[style]" in _user_of(llm.calls[0])["content"]
+
+
+def test_batch_duplicate_result_falls_back_to_pending():
+    context = _ctx(entry=_entry("e1", "Source", "Current"))
+    response = json.dumps({
+        "results": [
+            {"entry_id": "e1", "verdict": "pass", "reason": "ok", "confidence": 0.9},
+            {"entry_id": "e1", "verdict": "pass", "reason": "duplicate", "confidence": 0.9},
+        ]
+    })
+
+    decision = _make_arbiter(_CapturingLLM())._parse_batch_arbitration_response([context], response)["e1"]
+
+    assert decision.verdict == "pending"
+    assert "重复" in decision.reason

@@ -1,15 +1,18 @@
 """fomod 流水线后端测试：fomod_xml + builder + pipeline（精简）。"""
+
 from __future__ import annotations
 
+from pathlib import Path
 import shutil
 import uuid
-from pathlib import Path
 
 import pytest
 
-from transbridge.fomod.fomod_xml import read_fomod_xml, write_fomod_xml, translate_module_config
-from transbridge.fomod.builder import assemble_output
+from transbridge.config.language_profiles import LanguageProfile
 from transbridge.fileops import FilterRules
+from transbridge.fomod import fomod_xml as fomod_xml_module
+from transbridge.fomod.builder import assemble_output
+from transbridge.fomod.fomod_xml import read_fomod_xml, translate_module_config, write_fomod_xml
 
 
 @pytest.fixture
@@ -25,11 +28,11 @@ def workdir():
 def _sample_xml():
     return (
         '<?xml version="1.0" encoding="utf-16"?>'
-        '<config><moduleName>Test Mod</moduleName>'
+        "<config><moduleName>Test Mod</moduleName>"
         '<installSteps><installStep name="step1">'
         '<optionalFileGroups><group name="g1">'
         '<plugins><plugin name="A.esp"><description>Hello World</description></plugin>'
-        '</plugins></group></optionalFileGroups></installStep></installSteps></config>'
+        "</plugins></group></optionalFileGroups></installStep></installSteps></config>"
     )
 
 
@@ -48,9 +51,11 @@ def test_fomod_xml_utf16le_roundtrip(workdir):
 
 def test_translate_module_config_reuse_old(workdir):
     """层级键复用：旧版同 key 文本被复用。"""
+
     class FakeLLM:
         def __init__(self):
             self.calls = 0
+
         def chat(self, messages):
             self.calls += 1
             return "新译文"
@@ -66,18 +71,43 @@ def test_translate_module_config_reuse_old(workdir):
     assert llm.calls == 0
 
 
-def test_translate_module_config_no_old(workdir):
+@pytest.mark.parametrize(
+    ("target_lang", "language_name"),
+    [
+        ("zh_CN", "Simplified Chinese"),
+        ("en", "English"),
+        ("zh_TW", "Traditional Chinese"),
+        ("ja", "Japanese"),
+    ],
+)
+def test_translate_module_config_no_old(workdir, target_lang, language_name, monkeypatch):
     """无旧版 → 全部走 AI 翻译。"""
+
+    monkeypatch.setattr(
+        fomod_xml_module,
+        "load_language_profile",
+        lambda locale: LanguageProfile(locale, language_name, "English", language_name),
+    )
+
     class FakeLLM:
         def __init__(self):
-            self.calls = 0
+            self.calls = []
+
         def chat(self, messages):
-            self.calls += 1
+            self.calls.append(messages)
             return "AI译"
 
     llm = FakeLLM()
-    out = translate_module_config(_sample_xml(), None, llm)
-    assert llm.calls > 0
+    out = translate_module_config(_sample_xml(), None, llm, target_lang=target_lang)
+    expected_prefix = (
+        "You are a Skyrim mod localization assistant. "
+        f"Translate the following FOMOD installer UI text into {language_name}. "
+        "Return only the translation, without explanations, quotation marks, or any additional text:\n\n"
+    )
+    assert llm.calls == [
+        [{"role": "user", "content": expected_prefix + "Test Mod"}],
+        [{"role": "user", "content": expected_prefix + "Hello World"}],
+    ]
     assert "AI译" in out
 
 

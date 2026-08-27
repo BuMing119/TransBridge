@@ -116,9 +116,9 @@ def test_single_system_has_no_polish_machinery_or_polish_request():
     # 未解析占位符不应存在
     assert not re.search(r"\$[A-Za-z_][A-Za-z0-9_]*", system_text)
     # 角色是问题修复者；只修改 issues 直接涉及部分，无问题时返回当前译文
-    assert "修复" in system_text
-    assert "只修改" in system_text or "只修复" in system_text
-    assert "返回当前译文" in system_text
+    assert "correction" in system_text.lower()
+    assert "only" in system_text.lower()
+    assert "return the current translation unchanged" in system_text
 
 
 def test_single_user_has_no_polish_level_and_includes_issues_terms():
@@ -137,59 +137,16 @@ def test_single_user_has_no_polish_level_and_includes_issues_terms():
     assert "Dragon" in user_text and "龙" in user_text
 
 
-def _extract_json_object(text: str, start_marker: str) -> dict:
-    """从 start_marker 所在键名前最近的 '{' 起做括号平衡，提取完整 JSON 对象。"""
-    start = text.index(start_marker)
-    brace = text.rindex("{", 0, start)
-    depth = 0
-    for i in range(brace, len(text)):
-        ch = text[i]
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return json.loads(text[brace : i + 1])
-    raise AssertionError("未找到完整的 JSON 对象示例")
-
-
-def test_output_fields_only_refineresult_fields():
-    """System 输出示例只含 RefineResult 支持的字段，无 polish_changes。"""
+def test_system_does_not_duplicate_native_output_schema():
     llm = _CapturingLLM()
     refiner = _make_refiner(llm, terms=_StubTermManager({}))
     refiner.refine(_entry("e1", "dragon", "龙"), [_issue("e1")])
 
     system_text = _system_of(llm.calls[0])["content"]
-    allowed_fields = {
-        "refined_translation",
-        "fixes_applied",
-        "issue_type",
-        "original_problem",
-        "fix_description",
-        "confidence",
-        "needs_arbitration",
-        "note",
-        "entry_id",
-    }
-    parsed = _extract_json_object(system_text, '"refined_translation"')
-    assert set(parsed.keys()) <= allowed_fields
-    assert "polish_changes" not in parsed
-
-
-def test_single_system_json_example_is_valid_json():
-    """Refiner System 的 JSON 对象示例本身可用 json.loads 解析（无 '...'/伪枚举）。"""
-    llm = _CapturingLLM()
-    refiner = _make_refiner(llm, terms=_StubTermManager({}))
-    refiner.refine(_entry("e1", "dragon", "龙"), [_issue("e1")])
-
-    system_text = _system_of(llm.calls[0])["content"]
-    parsed = _extract_json_object(system_text, '"refined_translation"')
-    assert isinstance(parsed, dict)
-    assert set(parsed.keys()) >= {"refined_translation", "fixes_applied", "confidence", "needs_arbitration", "note"}
-    # 无伪 JSON
-    assert "..." not in system_text
-    assert '"pass" | "fail"' not in system_text
-    assert '"pass" | "fail" | "uncertain"' not in system_text
+    for fragment in ('"refined_translation":', '"fixes_applied":', '"confidence":', '"entry_id":'):
+        assert fragment not in system_text
+    assert "JSON object" not in system_text
+    assert "structured correction result" in system_text
 
 
 def test_toml_loads_no_polish_levels_section():
@@ -263,11 +220,11 @@ def test_no_issues_user_says_keep_unchanged_not_polish():
 
     user_text = _user_of(llm.calls[0])["content"]
     # 无检测到问题：保持当前译文，不要求润色输出 / 不使用润色级别
-    assert "无（无检测到的问题" in user_text
+    assert "none (no issue detected" in user_text
     assert "polish_level" not in user_text
     assert "polish_changes" not in user_text
     # 引导模型返回当前译文而非执行润色
-    assert "返回当前译文" in user_text
+    assert "return the current translation unchanged" in user_text
 
 
 def test_parse_refinement_response_fields_unchanged():
@@ -323,3 +280,19 @@ def test_batch_failure_degrades_to_single():
     # 批量失败降级为单条 refine()，仍产出结果
     assert "e1" in results
     assert isinstance(results["e1"], RefineResult)
+
+
+def test_batch_duplicate_result_keeps_original_for_arbitration():
+    entry = _entry("e1", "Source", "Current")
+    response = json.dumps({
+        "results": [
+            {"entry_id": "e1", "refined_translation": "First"},
+            {"entry_id": "e1", "refined_translation": "Second"},
+        ]
+    })
+
+    result = _make_refiner(_CapturingLLM())._parse_batch_refinement_response([entry], response)["e1"]
+
+    assert result.refined_translation == "Current"
+    assert result.needs_arbitration is True
+    assert "重复" in result.note

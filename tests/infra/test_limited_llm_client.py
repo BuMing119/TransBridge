@@ -11,6 +11,7 @@ from transbridge.application.translation.ai_request_budget import (
     AiRequestCancelledError,
 )
 from transbridge.infra.limited_llm_client import LimitedLLMClient
+from transbridge.infra.llm_tool_calling import LlmToolCall, LlmToolDefinition, LlmTurn
 
 
 def _wait_until(predicate, timeout: float = 2.0) -> None:
@@ -144,6 +145,34 @@ def test_stream_callback_exception_releases_lease() -> None:
     with pytest.raises(LookupError, match="callback failed"):
         client.chat_stream([], 10, fail)
     assert budget.snapshot().in_flight == 0
+
+
+def test_native_tool_stream_is_forwarded_without_falling_back_to_text() -> None:
+    expected = LlmTurn(tool_calls=(LlmToolCall("call-1", "get_statistics", {}),), stop_reason="tool_calls")
+    definition = LlmToolDefinition("get_statistics", "Return statistics", {"type": "object"})
+
+    class _ToolClient:
+        def __init__(self) -> None:
+            self.received = None
+
+        def chat_stream_with_tools(self, messages, max_tokens, tools, callback):
+            self.received = (messages, max_tokens, tools)
+            callback("checking")
+            return expected
+
+        def cancel(self) -> None:
+            pass
+
+    delegate = _ToolClient()
+    client = LimitedLLMClient(delegate, AiRequestBudget(1))
+    chunks = []
+
+    result = client.chat_stream_with_tools([{"role": "user", "content": "stats"}], 64, [definition], chunks.append)
+
+    assert result is expected
+    assert delegate.received == ([{"role": "user", "content": "stats"}], 64, [definition])
+    assert chunks == ["checking"]
+    assert client.budget.snapshot().in_flight == 0
 
 
 def test_pause_blocks_provider_start_and_cancel_invalidates_only_existing_waiters() -> None:

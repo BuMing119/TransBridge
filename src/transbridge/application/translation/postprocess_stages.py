@@ -16,9 +16,17 @@ import json
 from typing import Any, Protocol
 from urllib import error, request
 
+from transbridge.ai_translator.structured_schemas import POSTPROCESS_VALUES_OUTPUT_SCHEMA
 from transbridge.application.contracts import Diagnostic, DiagnosticSeverity, ErrorCategory
 from transbridge.application.io import EntryKey
 from transbridge.application.translation.token_batching import StableContentBatcher
+from transbridge.infra.llm_structured_outputs import (
+    LlmStructuredOutputError,
+    attach_structured_output_directive,
+    ensure_openai_structured_output_completion,
+    openai_response_format,
+    validate_structured_output,
+)
 from transbridge.infra.token_counting import TiktokenContentTokenCounter
 
 from .postprocess import PostProcessCandidate, PostProcessStageOutcome
@@ -91,8 +99,10 @@ class OpenAiPostProcessHttpPort:
         self._max_response_bytes = max_response_bytes
 
     def apply(self, phase: PostProcessLlmPhase, req: PostProcessLlmRequest) -> PostProcessLlmResponse:
+        payload = _payload(phase, req)
+        payload["response_format"] = openai_response_format(POSTPROCESS_VALUES_OUTPUT_SCHEMA)
         body = json.dumps(
-            _payload(phase, req),
+            payload,
             ensure_ascii=False,
             separators=(",", ":"),
             allow_nan=False,
@@ -134,9 +144,28 @@ class OpenAiPostProcessHttpPort:
         response_sha256 = hashlib.sha256(raw).hexdigest()
         try:
             payload = json.loads(raw.decode("utf-8"))
+            if isinstance(payload, dict) and "choices" in payload:
+                choice = payload["choices"][0]
+                message = choice["message"]
+                ensure_openai_structured_output_completion(
+                    finish_reason=choice.get("finish_reason"),
+                    refusal=message.get("refusal"),
+                )
             content = _response_content(payload)
+            validate_structured_output(
+                json.dumps(content, ensure_ascii=False, separators=(",", ":")),
+                POSTPROCESS_VALUES_OUTPUT_SCHEMA,
+            )
             values = _values(content)
-        except (KeyError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
+        except (
+            KeyError,
+            IndexError,
+            TypeError,
+            ValueError,
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+            LlmStructuredOutputError,
+        ):
             raise PostProcessLlmError(
                 "POSTPROCESS_RESPONSE_MALFORMED",
                 "The post-process service returned malformed JSON.",
@@ -154,6 +183,7 @@ class LlmClientPostProcessPort:
 
     def apply(self, phase: PostProcessLlmPhase, req: PostProcessLlmRequest) -> PostProcessLlmResponse:
         messages = _payload(phase, req)["messages"]
+        messages[-1] = attach_structured_output_directive(messages[-1], POSTPROCESS_VALUES_OUTPUT_SCHEMA)
         try:
             content = self._client.chat(messages, max_tokens=self._max_output_tokens)
         except Exception as exc:

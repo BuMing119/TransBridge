@@ -1,3 +1,9 @@
+from .language_profiles import (
+    LanguageProfile,
+    LanguageProfileError,
+    discover_language_profiles,
+    load_language_profile,
+)
 from .llm import EmbeddingConfig, LLMConfig
 from .paratranz import ParatranzConfig
 from .paths import get_config_file_path, get_data_dir, get_legacy_config_file_path
@@ -19,6 +25,10 @@ __all__ = [
     "get_legacy_config_file_path",
     "LLMConfig",
     "EmbeddingConfig",
+    "LanguageProfile",
+    "LanguageProfileError",
+    "discover_language_profiles",
+    "load_language_profile",
     "ParatranzConfig",
     "ConfigRepository",
     "ConfigSnapshot",

@@ -10,10 +10,11 @@ Embedding 客户端抽象层。
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 import logging
 import os
-from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit, urlunsplit
 
 import numpy as np
 
@@ -53,6 +54,15 @@ class EmbeddingClient(ABC):
         """初始化失败时的错误信息。"""
         return None
 
+    @property
+    def index_identity(self) -> dict[str, object]:
+        """Return a stable, secret-free identity for persisted vector indexes."""
+
+        return {
+            "backend": f"{type(self).__module__}.{type(self).__qualname__}",
+            "dimension": self.dimension,
+        }
+
 
 class LocalSentenceTransformerClient(EmbeddingClient):
     """
@@ -61,39 +71,48 @@ class LocalSentenceTransformerClient(EmbeddingClient):
     可选依赖：sentence-transformers。未安装时 available=False。
     """
 
-    def __init__(self, model_name: str = "paraphrase-multilingual-MiniLM-L12-v2",
-                 models_dir: str | None = None):
+    def __init__(
+        self,
+        model_name: str = "",
+        models_dir: str | None = None,
+        *,
+        model_identity: dict[str, object] | None = None,
+    ):
         self._model_name = model_name
         self._models_dir = models_dir  # 自定义本地模型目录，None 时使用默认路径
+        self._managed_identity = dict(model_identity or {})
         self._model = None
         self._dimension = 0
         self._available = False
         self._error_message: str | None = None
         self._load_model()
 
-    def _resolve_model_path(self) -> str:
-        """解析本地模型路径，优先使用打包模型或自定义目录，回退到 HuggingFace 在线下载。
+    def _resolve_model_path(self) -> str | None:
+        """Resolve only an already-installed local model; never trigger a remote download."""
 
-        优先级：
-        1. 自定义 models_dir（通过 __init__ 参数传入）
-        2. PyInstaller 打包环境：sys._MEIPASS
-        3. 开发模式：项目根目录下的 data/models/
-        4. 以上路径均不存在时，返回模型名称由 HuggingFace 在线下载
-        """
-        import sys
+        requested = self._model_name.strip()
+        if not requested:
+            return None
+        candidates = [requested]
         if self._models_dir:
-            base = self._models_dir
-        elif getattr(sys, "frozen", False):
-            # PyInstaller onedir：_MEIPASS 指向 EXE 所在目录
-            base = sys._MEIPASS
+            candidates.append(os.path.join(self._models_dir, requested))
         else:
-            # 开发模式：相对于项目根目录
-            base = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
-        local_path = os.path.join(base, self._model_name) if self._models_dir else os.path.join(base, "data", "models", self._model_name)
-        return local_path if os.path.isdir(local_path) else self._model_name
+            # Compatibility for installations created by the legacy implicit downloader.
+            from transbridge.config.paths import get_data_dir
+
+            candidates.append(os.path.join(get_data_dir(), "models", requested))
+        for candidate in candidates:
+            if os.path.isdir(candidate):
+                return os.path.abspath(candidate)
+        return None
 
     def _load_model(self) -> None:
         """延迟加载模型。"""
+        model_path = self._resolve_model_path()
+        if model_path is None:
+            self._error_message = "No installed local embedding model is selected"
+            logger.info(self._error_message)
+            return
         try:
             from sentence_transformers import SentenceTransformer
         except ImportError:
@@ -101,9 +120,8 @@ class LocalSentenceTransformerClient(EmbeddingClient):
             logger.warning(self._error_message)
             return
 
-        model_path = self._resolve_model_path()
         try:
-            self._model = SentenceTransformer(model_path)
+            self._model = SentenceTransformer(model_path, local_files_only=True)
             # 获取维度（通过编码一个测试字符串）
             test_embedding = self._model.encode(["test"])
             self._dimension = test_embedding.shape[1]
@@ -124,6 +142,18 @@ class LocalSentenceTransformerClient(EmbeddingClient):
     @property
     def dimension(self) -> int:
         return self._dimension
+
+    @property
+    def index_identity(self) -> dict[str, object]:
+        identity = {
+            "backend": "sentence-transformers",
+            "dimension": self.dimension,
+            "mode": "local",
+            "model": os.path.normcase(os.path.abspath(self._model_name)) if self._model_name else "",
+            "models_dir": os.path.normcase(os.path.abspath(self._models_dir)) if self._models_dir else "",
+        }
+        identity.update(self._managed_identity)
+        return identity
 
     def encode(self, texts: list[str]) -> np.ndarray:
         if not self._available or self._model is None:
@@ -165,7 +195,7 @@ class OpenAIEmbeddingClient(EmbeddingClient):
         self._api_key = api_key
         self._base_url = base_url
         self._model = model
-        self._dimension = self.MODEL_DIMENSIONS.get(model, 1536)  # 默认 1536
+        self._dimension = self.MODEL_DIMENSIONS.get(model, 0)
         self._available = False
         self._error_message: str | None = None
         self._init_client()
@@ -178,6 +208,7 @@ class OpenAIEmbeddingClient(EmbeddingClient):
 
         try:
             from openai import OpenAI
+
             self._client = OpenAI(
                 api_key=self._api_key,
                 base_url=self._base_url,
@@ -203,6 +234,16 @@ class OpenAIEmbeddingClient(EmbeddingClient):
     def dimension(self) -> int:
         return self._dimension
 
+    @property
+    def index_identity(self) -> dict[str, object]:
+        return {
+            "backend": "openai-compatible",
+            "base_url": _normalize_base_url_for_identity(self._base_url),
+            "dimension": self.MODEL_DIMENSIONS.get(self._model, "dynamic"),
+            "mode": "api",
+            "model": self._model,
+        }
+
     def encode(self, texts: list[str]) -> np.ndarray:
         if not self._available:
             raise RuntimeError(f"Embedding client not available: {self._error_message}")
@@ -213,7 +254,7 @@ class OpenAIEmbeddingClient(EmbeddingClient):
             all_embeddings = []
 
             for i in range(0, len(texts), batch_size):
-                batch = texts[i:i + batch_size]
+                batch = texts[i : i + batch_size]
                 response = self._client.embeddings.create(
                     model=self._model,
                     input=batch,
@@ -222,6 +263,8 @@ class OpenAIEmbeddingClient(EmbeddingClient):
                 all_embeddings.extend(batch_embeddings)
 
             embeddings = np.array(all_embeddings).astype("float32")
+            if embeddings.ndim == 2 and embeddings.shape[1] > 0:
+                self._dimension = int(embeddings.shape[1])
 
             # 归一化（OpenAI embedding 不一定归一化）
             norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
@@ -235,7 +278,7 @@ class OpenAIEmbeddingClient(EmbeddingClient):
             raise
 
 
-def create_embedding_client(config: "LLMConfig") -> EmbeddingClient:
+def create_embedding_client(config: LLMConfig) -> EmbeddingClient:
     """
     工厂函数，按配置创建 EmbeddingClient 实例。
 
@@ -250,26 +293,72 @@ def create_embedding_client(config: "LLMConfig") -> EmbeddingClient:
         EmbeddingClient 实例（可能 available=False）
     """
     emb = config.embedding  # EmbeddingConfig 子对象
-    provider = (emb.provider or "local").lower()
+    mode = str(getattr(emb, "mode", "disabled") or "disabled").strip().casefold()
+    provider = str(getattr(emb, "provider", "") or "").strip().casefold()
 
-    if provider == "local":
-        local_path = (emb.local_model_path or "").strip()
-        if local_path:
-            return LocalSentenceTransformerClient(model_name=local_path)
-        return LocalSentenceTransformerClient()
+    if mode == "local":
+        local_path = ""
+        managed_identity = None
+        model_id = str(getattr(emb, "local_model_id", "") or "").strip()
+        if model_id:
+            from transbridge.infra.embedding_model_store import EmbeddingModelStore
 
-    # API 服务（openai / custom）
-    api_key = emb.api_key or config.api_key
-    base_url = emb.base_url or config.base_url
-    model = emb.model or "text-embedding-3-small"
+            try:
+                store = EmbeddingModelStore()
+                installed_path = store.installed_path(model_id)
+                managed_identity = store.model_identity(model_id) if installed_path is not None else None
+            except (KeyError, OSError, ValueError):
+                installed_path = None
+            if installed_path is not None:
+                local_path = str(installed_path)
+        if managed_identity is not None:
+            return LocalSentenceTransformerClient(model_name=local_path, model_identity=managed_identity)
+        return LocalSentenceTransformerClient(model_name=local_path)
 
-    if provider in ("openai", "custom", "api"):
+    if mode == "api" and provider in ("openai", "custom", "api"):
         return OpenAIEmbeddingClient(
-            api_key=api_key,
-            base_url=base_url,
-            model=model,
+            api_key=emb.api_key,
+            base_url=emb.base_url,
+            model=emb.model,
         )
 
-    # 未知 provider，回退到本地模型
-    logger.warning(f"Unknown embedding provider '{provider}', falling back to local model")
-    return LocalSentenceTransformerClient()
+    reason = (
+        "Embedding is disabled" if mode == "disabled" else f"Unsupported embedding mode/provider: {mode}/{provider}"
+    )
+    return _UnavailableEmbeddingClient(reason)
+
+
+class _UnavailableEmbeddingClient(EmbeddingClient):
+    """Non-loading client used for disabled or invalid configurations."""
+
+    def __init__(self, reason: str) -> None:
+        self._reason = reason
+
+    def encode(self, texts: list[str]) -> np.ndarray:
+        del texts
+        raise RuntimeError(self._reason)
+
+    @property
+    def dimension(self) -> int:
+        return 0
+
+    @property
+    def available(self) -> bool:
+        return False
+
+    @property
+    def error_message(self) -> str | None:
+        return self._reason
+
+
+def _normalize_base_url_for_identity(value: str) -> str:
+    """Normalize an endpoint without retaining credentials, query strings, or fragments."""
+
+    raw = str(value or "").strip()
+    parsed = urlsplit(raw)
+    if not parsed.scheme or not parsed.hostname:
+        return raw.rstrip("/")
+    host = parsed.hostname.casefold()
+    if parsed.port is not None:
+        host = f"{host}:{parsed.port}"
+    return urlunsplit((parsed.scheme.casefold(), host, parsed.path.rstrip("/"), "", ""))

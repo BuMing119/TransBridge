@@ -10,12 +10,16 @@
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
 from transbridge.ai_translator import prompt_builder as prompt_builder_mod
 from transbridge.ai_translator.prompt_builder import PromptBuilder
+from transbridge.ai_translator.structured_schemas import TERM_EXTRACTION_OUTPUT_SCHEMA, TRANSLATION_OUTPUT_SCHEMA
+from transbridge.config.language_profiles import LanguageProfile, LanguageProfileError
 from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.infra.llm_structured_outputs import extract_structured_output_directive
 from transbridge.infra.prompt_cache import (
     PROMPT_CACHE_METADATA_KEY,
     extract_prompt_cache_directives,
@@ -25,28 +29,21 @@ from transbridge.infra.prompt_cache import (
 
 _COMMON_SYSTEM = """\
 <game_and_language_pair>
-游戏：$game_name
-源语言：$source_lang
-目标语言：$target_lang
+Game: $game_name
+Source language: $source_lang
+Target language: $target_lang
 </game_and_language_pair>
 
 <role_and_objective>
-你是专业的 $game_name 模组本地化翻译员。
+You are a professional $game_name mod localization translator.
 </role_and_objective>
 
 <general_translation_rules>
-1. 措辞自然流畅。
+1. Produce natural, fluent translations.
 2. $format_notes
 </general_translation_rules>
 
-<json_output_protocol>
-输出必须是严格的 JSON 对象，格式：{"id1": "译文1", "id2": "译文2", ...}
-</json_output_protocol>
-
-<fixed_examples>
-输入：{"001": "Hello."}
-输出：{"001": "你好。"}
-</fixed_examples>
+$fixed_examples
 """
 
 _MODE_SYSTEM = "<translation_mode>$translation_mode</translation_mode>"
@@ -58,52 +55,50 @@ _USER = """\
 $input_json
 </translation_entries>
 
-请严格按 SYSTEM 中的扁平 JSON 输出协议返回结果。
+Return one translation for every input entry and preserve each entry ID exactly.
 """
 
 _GAME_TOML = {
     "game": {
-        "name": "上古卷轴5：天际特别版（SSE）",
-        "format_notes": "保留特殊标记",
+        "name": "The Elder Scrolls V: Skyrim Special Edition (SSE)",
+        "format_notes": "Preserve special markers.",
     }
 }
-_LANG_TOML = {
-    "lang": {
-        "name": "中文（简体）",
-        "target": "中文",
-        "source": "英文",
-    }
-}
+_LANGUAGE = LanguageProfile(
+    locale="zh_CN",
+    display_name="Simplified Chinese",
+    target_language="Simplified Chinese",
+    source_language="English",
+    example_source="Hello.",
+    example_target="你好。",
+)
 
 
-def _fake_load_toml(translation: dict | None = None, *, legacy: bool = False):
-    """构造一个受控的 _load_toml，按路径返回游戏或语言数据。"""
+def _fake_load_toml(translation: dict | None = None):
+    """构造一个受控的 _load_toml，按路径返回游戏或阶段模板。"""
 
     def loader(path):
         p = str(path)
         if "games" in p:
             return _GAME_TOML
-        if "langs" in p:
-            lang = dict(_LANG_TOML)
-            if legacy:
-                lang["translation"] = {
-                    "system": "你是专业的 $game_name 翻译员。",
-                    "user": "请翻译 $batch_type：\n$input_json",
-                }
-            else:
-                lang["translation"] = {
+        if "translation" in p:
+            return {
+                "translation": {
                     "common_system": (translation or {}).get("common", _COMMON_SYSTEM),
                     "mode_system": (translation or {}).get("mode", _MODE_SYSTEM),
                     "user": (translation or {}).get("user", _USER),
                 }
-            return lang
+            }
+        if "extraction" in p:
+            return {"extraction": {}}
         return {}
 
     return loader
 
 
-def _builder(monkeypatch, translation=None, *, legacy: bool = False) -> PromptBuilder:
-    monkeypatch.setattr(prompt_builder_mod, "_load_toml", _fake_load_toml(translation, legacy=legacy))
+def _builder(monkeypatch, translation=None) -> PromptBuilder:
+    monkeypatch.setattr(prompt_builder_mod, "_load_toml", _fake_load_toml(translation))
+    monkeypatch.setattr(prompt_builder_mod, "load_language_profile", lambda *_args, **_kwargs: _LANGUAGE)
     return PromptBuilder("skyrim_se", "zh_CN")
 
 
@@ -153,21 +148,49 @@ def test_messages_carry_internal_cache_metadata(builder):
     assert msgs[2]["role"] == "user"
 
 
+def test_translation_messages_carry_native_output_schema(builder):
+    messages = builder.build_translation_prompt([_entry("k1", "Hello")], {}, "人名")
+
+    clean_messages, output_schema = extract_structured_output_directive(messages)
+
+    assert output_schema == TRANSLATION_OUTPUT_SCHEMA
+    assert all("_transbridge_structured_output" not in message for message in clean_messages)
+
+
+def test_extraction_messages_carry_native_output_schema(builder):
+    messages = builder.build_extraction_prompt([{"original": "Riverwood", "translation": "溪木镇"}])
+
+    _clean_messages, output_schema = extract_structured_output_directive(messages)
+
+    assert output_schema == TERM_EXTRACTION_OUTPUT_SCHEMA
+
+
 def test_common_system_contains_stable_sections(builder):
-    """通用 SYSTEM 含游戏语言对、角色、通用规范、JSON 协议、固定示例。"""
+    """通用 SYSTEM 含游戏语言对、角色、通用规范和固定语义示例。"""
     msgs = builder.build_translation_prompt([_entry("k1", "Hello")], {}, "人名")
     content = msgs[0]["content"]
     for marker in (
         "game_and_language_pair",
         "role_and_objective",
         "general_translation_rules",
-        "json_output_protocol",
         "fixed_examples",
-        "上古卷轴5：天际特别版（SSE）",
-        "英文",
-        "中文",
+        "The Elder Scrolls V: Skyrim Special Edition (SSE)",
+        "English",
+        "Simplified Chinese",
     ):
         assert marker in content
+
+
+def test_prompt_text_does_not_duplicate_native_output_schema(builder):
+    translation_messages = builder.build_translation_prompt([_entry("k1", "Hello")], {}, "人名")
+    extraction_messages = builder.build_extraction_prompt([{"original": "Riverwood", "translation": "溪木镇"}])
+
+    rendered = "\n".join(message["content"] for message in (*translation_messages, *extraction_messages))
+
+    for fragment in ('"results":', '"entry_id":', '"term":', "strict JSON object", "JSON output protocol"):
+        assert fragment not in rendered
+    assert "Source: Hello." in rendered
+    assert "Translation: 你好。" in rendered
 
 
 def test_common_system_excludes_dynamic_content(builder):
@@ -184,7 +207,7 @@ def test_common_system_excludes_dynamic_content(builder):
 def test_mode_system_only_declares_mode_label(builder):
     """模式 SYSTEM 只含三种模式之一，不含专属规则。"""
     mode_msg = builder.build_translation_prompt([_entry("k1", "Hello")], {}, "人名")[1]["content"]
-    assert mode_msg.strip() == "<translation_mode>实体短文本</translation_mode>"
+    assert mode_msg.strip() == "<translation_mode>entity_short_text</translation_mode>"
 
 
 # ── 模式归一化测试 ───────────────────────────────────────────────────────────
@@ -195,22 +218,27 @@ def test_mode_system_only_declares_mode_label(builder):
     ["种族与派系", "人名", "地名", "书名", "物品", "法术技能", "任务名", "互动"],
 )
 def test_entity_batch_types_map_to_entity_short(builder, batch_type):
-    assert builder._translation_mode(batch_type) == "实体短文本"
+    assert builder._translation_mode(batch_type) == "entity_short_text"
 
 
 def test_dialogue_maps_to_dialogue(builder):
-    assert builder._translation_mode("对话") == "对话"
+    assert builder._translation_mode("对话") == "dialogue"
 
 
 @pytest.mark.parametrize("batch_type", ["长文本", "未分类", "未来未知分类", ""])
 def test_unknown_maps_to_long_text(builder, batch_type):
-    assert builder._translation_mode(batch_type) == "长文本"
+    assert builder._translation_mode(batch_type) == "long_text"
 
 
-def test_user_preserves_original_batch_type(builder):
-    """动态 USER 保留原具体分类，不传归一化模式。"""
+def test_user_renders_english_batch_type_label(builder):
+    """The dynamic User prompt localizes the category without changing shared business labels."""
     msgs = builder.build_translation_prompt([_entry("k1", "Hello")], {}, "地名")
-    assert "<task_category>地名</task_category>" in msgs[2]["content"]
+    assert "<task_category>locations</task_category>" in msgs[2]["content"]
+
+
+def test_user_preserves_unknown_dynamic_batch_type(builder):
+    msgs = builder.build_translation_prompt([_entry("k1", "Hello")], {}, "未来未知分类")
+    assert "<task_category>未来未知分类</task_category>" in msgs[2]["content"]
 
 
 # ── 动态 USER 内容测试 ───────────────────────────────────────────────────────
@@ -328,29 +356,46 @@ def test_b_and_a_share_same_key(builder):
     assert a_key == b_key
 
 
-# ── 旧配置兼容与 fallback ────────────────────────────────────────────────────
+# ── 严格语言档案与模板 fallback ──────────────────────────────────────────────
 
 
-def test_legacy_system_migrated_to_common_system(monkeypatch):
-    """旧 translation.system/user 仅作迁移输入，不把动态术语重新附加回 system。"""
-    b = _builder(monkeypatch, legacy=True)
-    msgs = b.build_translation_prompt([_entry("k1", "Hello")], {"Dragon": "龙"}, "人名")
-    # 迁移后的 system 不含动态术语
-    assert "Dragon" not in msgs[0]["content"]
-    assert "mandatory_terminology" not in msgs[0]["content"]
-    # 迁移后模式层与用户层仍正常工作
-    assert msgs[1]["content"].strip() == "<translation_mode>实体短文本</translation_mode>"
-
-
-def test_fallback_defaults_when_toml_missing(monkeypatch):
-    """两个 TOML 全缺失时使用内置 fallback 常量，仍输出三层 + A/B 标记。"""
+def test_fallback_defaults_when_prompt_toml_missing(monkeypatch):
+    """阶段模板缺失时使用语言中立的内置模板。"""
     monkeypatch.setattr(prompt_builder_mod, "_load_toml", lambda path: {})
+    monkeypatch.setattr(prompt_builder_mod, "load_language_profile", lambda *_args, **_kwargs: _LANGUAGE)
     b = PromptBuilder("skyrim_se", "zh_CN")
 
     msgs = b.build_translation_prompt([_entry("k1", "Hello")], {}, "人名")
     assert [m["role"] for m in msgs] == ["system", "system", "user"]
     directives = extract_prompt_cache_directives(msgs)[1]
     assert [d["breakpoint"] for d in directives] == ["A", "B"]
+    assert "Simplified Chinese" in msgs[0]["content"]
+    assert '"results":' not in msgs[0]["content"]
+    assert '"entry_id":' not in msgs[0]["content"]
+
+
+def test_missing_language_profile_fails_instead_of_falling_back(monkeypatch):
+    monkeypatch.setattr(prompt_builder_mod, "_load_toml", lambda path: {})
+
+    def missing(*_args, **_kwargs):
+        raise LanguageProfileError("Unsupported language profile 'ja_JP'")
+
+    monkeypatch.setattr(prompt_builder_mod, "load_language_profile", missing)
+    with pytest.raises(LanguageProfileError, match="ja_JP"):
+        PromptBuilder("skyrim_se", "ja_JP")
+
+
+def test_static_prompt_scaffold_is_english(builder):
+    """Chinese is allowed in target examples and runtime data, but not in instruction scaffolding."""
+    messages = builder.build_translation_prompt(
+        [_entry("k1", "Dragon")],
+        {"Dragon": "Dragon target"},
+        "人名",
+    )
+    common = re.sub(r"<fixed_examples>[\s\S]*?</fixed_examples>", "", messages[0]["content"])
+    assert re.search(r"[\u4e00-\u9fff]", common) is None
+    assert re.search(r"[\u4e00-\u9fff]", messages[1]["content"]) is None
+    assert re.search(r"[\u4e00-\u9fff]", messages[2]["content"]) is None
 
 
 def test_terms_never_reattached_to_system(builder):
@@ -366,3 +411,29 @@ def test_terms_never_reattached_to_system(builder):
     assert "Whiterun" not in msgs[0]["content"]
     assert _translation_payload(msgs[2]["content"])["k1"]["terms"] == {"Dragon": "龙"}
     assert "Whiterun" not in msgs[2]["content"]
+
+
+def test_parse_translation_response_reads_results_envelope_and_rejects_duplicates(builder):
+    response = json.dumps({
+        "results": [
+            {"entry_id": "a", "translation": "甲"},
+            {"entry_id": "b", "translation": "乙"},
+            {"entry_id": "b", "translation": "重复"},
+            {"entry_id": "unknown", "translation": "忽略"},
+        ]
+    })
+
+    assert builder.parse_translation_response(response, {"a", "b"}) == {"a": "甲"}
+
+
+def test_extract_partial_pairs_returns_only_complete_results_items(builder):
+    complete_prefix = '{"results":[{"entry_id":"a","translation":"甲"},'
+    incomplete_item = '{"entry_id":"b","translation":"未完成'
+
+    assert builder.extract_partial_pairs(complete_prefix + incomplete_item) == {"a": "甲"}
+
+
+def test_parse_extraction_response_reads_results_envelope(builder):
+    response = json.dumps({"results": [{"term": "Riverwood", "translation": "溪木镇"}]})
+
+    assert builder.parse_extraction_response(response) == [{"term": "Riverwood", "translation": "溪木镇"}]

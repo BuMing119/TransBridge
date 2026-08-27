@@ -104,3 +104,16 @@ def test_build_version_is_supplied_from_pyproject() -> None:
     assert "pyproject.toml" in build
     assert "/DAppVersion=%APP_VERSION%" in build
     assert 'copy_metadata("transbridge")' in spec
+
+
+def test_embedding_model_catalog_is_bundled_as_editable_package_data() -> None:
+    spec = (ROOT / "transbridge.spec").read_text(encoding="utf-8")
+    build = (ROOT / "build.bat").read_text(encoding="utf-8")
+    catalog = ROOT / "src" / "transbridge" / "resources" / "embedding_models.toml"
+
+    assert catalog.is_file()
+    assert '"resources" / "embedding_models.toml"' in spec
+    assert '"transbridge/resources"' in spec
+    assert '"data" / "models"' not in spec
+    assert "SentenceTransformer" not in build
+    assert "预下载 embedding 模型" not in build

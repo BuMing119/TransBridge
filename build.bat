@@ -11,7 +11,7 @@ echo.
 cd /d "%~dp0"
 
 :: ── 步骤 1：按锁文件同步构建环境 ─────────────────────────────
-echo [1/4] 按 uv.lock 同步构建环境...
+echo [1/3] 按 uv.lock 同步构建环境...
 uv sync --frozen --group dev
 if errorlevel 1 (
     echo [错误] 构建环境与 uv.lock 不一致。请先重建环境和锁文件。
@@ -25,22 +25,8 @@ if not defined APP_VERSION (
 echo 构建版本：%APP_VERSION%
 echo.
 
-:: ── 步骤 2：预下载 embedding 模型 ────────────────────────────
-echo [2/4] 检查 embedding 模型...
-if not exist "data\models\paraphrase-multilingual-MiniLM-L12-v2" (
-    echo 正在下载模型（约 465 MB，仅首次需要）...
-    uv run python -c "from sentence_transformers import SentenceTransformer; m=SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2'); m.save('data/models/paraphrase-multilingual-MiniLM-L12-v2')"
-    if errorlevel 1 (
-        echo [错误] 模型下载失败，请检查网络。
-        pause & exit /b 1
-    )
-) else (
-    echo 模型已存在，跳过下载。
-)
-echo.
-
-:: ── 步骤 3：PyInstaller 打包 ──────────────────────────────────
-echo [3/4] 正在用 PyInstaller 打包应用...
+:: ── 步骤 2：PyInstaller 打包 ──────────────────────────────────
+echo [2/3] 正在用 PyInstaller 打包应用...
 uv run pyinstaller transbridge.spec --noconfirm
 if errorlevel 1 (
     echo [错误] PyInstaller 打包失败，请查看上方日志。
@@ -49,8 +35,8 @@ if errorlevel 1 (
 echo 打包完成，输出目录：dist\TransBridge\
 echo.
 
-:: ── 步骤 4：调用 Inno Setup 生成安装包 ───────────────────────
-echo [4/4] 正在生成安装程序...
+:: ── 步骤 3：调用 Inno Setup 生成安装包 ───────────────────────
+echo [3/3] 正在生成安装程序...
 
 :: 尝试常见的 Inno Setup 安装路径
 set ISCC=

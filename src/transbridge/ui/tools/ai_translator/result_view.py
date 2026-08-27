@@ -116,6 +116,7 @@ def show_window_mixed_report(window: object, result: dict[str, object]) -> objec
         snapshot=snapshot,
         report_path=excel_path,
         report_pending=pending,
+        save_translation=_save_translation_action(window),
         theme_view=window._theme_view,
     )
     dialog.entry_activated.connect(window._scope_presenter.locate_entry)
@@ -175,6 +176,7 @@ def show_polish_report(
     esp_path: str | None,
     entry_activated: Callable[[str], None],
     run_spec: object | None = None,
+    save_translation: Callable[..., None] | None = None,
     theme_view: ThemeView | None = None,
 ) -> object:
     from ._translation_report_dialog import _TranslationReportDialog
@@ -190,6 +192,7 @@ def show_polish_report(
     dialog = _TranslationReportDialog(
         snapshot=report.snapshot,
         report_pending=True,
+        save_translation=save_translation,
         theme_view=theme_view,
     )
     dialog.entry_activated.connect(entry_activated)
@@ -248,8 +251,14 @@ def show_window_polish_report(window: object, results: Mapping, entries: list, s
         esp_path=window._ctx.esp_path,
         entry_activated=window._scope_presenter.locate_entry,
         run_spec=getattr(window, "_active_polish_spec", None),
+        save_translation=_save_translation_action(window),
         theme_view=window._theme_view,
     )
+
+
+def _save_translation_action(window: object):
+    session = getattr(window, "_version_snapshot_session", None)
+    return getattr(session, "save_translation", None) if bool(getattr(session, "can_save", False)) else None
 
 
 def open_report_history(parent: object, theme_view: ThemeView | None) -> object:

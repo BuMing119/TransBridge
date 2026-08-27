@@ -7,14 +7,29 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication
 
-from transbridge.smart_assistant.conversation_orchestrator import ConversationOrchestrator
+from transbridge.infra.llm_tool_calling import LlmToolCall, LlmTurn
+from transbridge.smart_assistant.conversation_orchestrator import (
+    ConversationOrchestrator,
+    _smart_assistant_max_tokens,
+)
 
 _APP = QApplication.instance() or QApplication([])
+
+
+def test_anthropic_assistant_uses_positive_default_max_tokens() -> None:
+    config = type("Config", (), {"provider": "anthropic", "max_output_tokens": 0})()
+    assert _smart_assistant_max_tokens(config) == 4096
+
+
+def test_configured_max_tokens_is_preserved() -> None:
+    config = type("Config", (), {"provider": "anthropic", "max_output_tokens": 900})()
+    assert _smart_assistant_max_tokens(config) == 900
 
 
 class _Conversation:
     def __init__(self) -> None:
         self.assistant_messages: list[str] = []
+        self.assistant_turns: list[LlmTurn] = []
 
     def get_messages(self) -> list[dict]:
         return [{"role": "system", "content": "ready"}]
@@ -22,11 +37,17 @@ class _Conversation:
     def add_assistant(self, text: str) -> None:
         self.assistant_messages.append(text)
 
+    def add_assistant_turn(self, turn: LlmTurn) -> None:
+        self.assistant_turns.append(turn)
+
+    def close_pending_tool_calls(self, _reason: str) -> int:
+        return 0
+
 
 class _Worker:
     instances: list[_Worker] = []
 
-    def __init__(self, client, messages, max_tokens=None) -> None:
+    def __init__(self, client, messages, max_tokens=None, tools=None) -> None:
         self.on_chunk = None
         self.on_finished = None
         self.on_error = None
@@ -66,9 +87,6 @@ def _orchestrator(monkeypatch):
         on_response_parsed=parsed.append,
     )
     value._get_llm_client = lambda: object()
-    value._get_prompt_builder = lambda: type(
-        "Parser", (), {"parse_hybrid_response": lambda self, text: {"steps": []}}
-    )()
     return value, conversation, parsed, chunks, systems
 
 
@@ -145,4 +163,41 @@ def test_stale_generation_cannot_mutate_current_stream(monkeypatch) -> None:
 
     assert value._streaming_text == "new"
     assert chunks == []
+    value.shutdown(wait=True, timeout=0.1)
+
+
+def test_native_tool_turn_is_normalized_with_call_id(monkeypatch) -> None:
+    value, conversation, parsed, _, _ = _orchestrator(monkeypatch)
+    value._generation = 1
+    value._active_generation = 1
+    value._round_messages = []
+    value._stage_c(1)
+    worker = _Worker.instances[-1]
+
+    value._on_finished(
+        1,
+        worker,
+        LlmTurn(tool_calls=(LlmToolCall("call-1", "get_statistics", {}),), stop_reason="tool_calls"),
+    )
+
+    assert conversation.assistant_turns[0].tool_calls[0].id == "call-1"
+    assert parsed[0]["steps"][0]["tool_call_id"] == "call-1"
+    value.shutdown(wait=True, timeout=0.1)
+
+
+def test_json_looking_text_is_never_executed(monkeypatch) -> None:
+    value, _, parsed, _, _ = _orchestrator(monkeypatch)
+    value._generation = 1
+    value._active_generation = 1
+    value._round_messages = []
+    value._stage_c(1)
+    worker = _Worker.instances[-1]
+
+    value._on_finished(
+        1,
+        worker,
+        LlmTurn(text='{"mode":"react","steps":[{"tool":"get_statistics","args":{}}]}'),
+    )
+
+    assert parsed[0]["steps"] == []
     value.shutdown(wait=True, timeout=0.1)

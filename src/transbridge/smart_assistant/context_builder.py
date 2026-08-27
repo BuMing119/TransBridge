@@ -20,17 +20,17 @@ class ContextBuilder:
     def build(self, ctx=None) -> str:
         ctx = ctx or self._ctx
         if ctx is None:
-            return "(未初始化 — 请先加载翻译集合)\n"
+            return "(Not initialized — load a translation collection first)\n"
         collection = ctx.collection
 
         if collection is None:
             return (
-                "当前工作环境:\n"
-                "- 未加载任何集合\n"
-                "- 请先在文件菜单中解析插件或导入 JSON"
+                "Current workspace context:\n"
+                "- No collection is loaded\n"
+                "- Parse a plugin or import JSON from the File menu first"
             )
 
-        esp_name = Path(ctx.esp_path).stem if ctx.esp_path else "未选择插件"
+        esp_name = Path(ctx.esp_path).stem if ctx.esp_path else "No plugin selected"
         total = len(collection)
 
         # M21: 单次遍历 — 合并 translated 计数与分类分布统计
@@ -43,28 +43,28 @@ class ContextBuilder:
             base = ctx_str.split("|")[0] if "|" in ctx_str else ctx_str
             rec = base.split(":")[0]
             if rec in ("INFO", "DIAL"):
-                cat_counter["对话"] += 1
+                cat_counter["Dialogue"] += 1
             else:
                 cat_counter[base] += 1
         untranslated = total - translated
 
         cat_lines = "\n".join(
-            f"  - {cat}: {cnt} 条"
+            f"  - {cat}: {cnt} entries"
             for cat, cnt in sorted(cat_counter.items(), key=lambda x: -x[1])
         )
 
         # 已上传参考文件 — C6: 仅注入摘要信息，不注入原始内容
         docs_lines = ""
         if hasattr(ctx, "_uploaded_docs") and ctx._uploaded_docs:
-            docs_lines = "已上传参考文件:\n"
+            docs_lines = "Uploaded reference files:\n"
             for name, doc in ctx._uploaded_docs.items():
                 char_count = len(doc.raw_text) if hasattr(doc, 'raw_text') else 0
-                docs_lines += f"  - {name} ({doc.format}, {char_count}字符) — 可通过对话上下文引用\n"
+                docs_lines += f"  - {name} ({doc.format}, {char_count} characters) — available by reference in the conversation context\n"
 
         return (
-            f"当前工作环境:\n"
-            f"- 插件: {esp_name}\n"
-            f"- 集合概况: 总计 {total} 条, 已翻译 {translated} 条, 待翻译 {untranslated} 条\n"
-            f"- 分类分布:\n{cat_lines}"
+            f"Current workspace context:\n"
+            f"- Plugin: {esp_name}\n"
+            f"- Collection summary: {total} total, {translated} translated, {untranslated} untranslated\n"
+            f"- Category distribution:\n{cat_lines}"
             + (f"\n{docs_lines}" if docs_lines else "")
         )

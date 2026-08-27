@@ -64,6 +64,10 @@ class _PolishWorker(QThread):
         return not self._pause_event.is_set()
 
     @property
+    def was_cancelled(self) -> bool:
+        return self._stop_event.is_set()
+
+    @property
     def stream_log_dir(self) -> str:
         return self._log_store.log_dir if self._log_store.is_available else ""
 

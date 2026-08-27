@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from PyQt6.QtWidgets import QApplication, QWidget
+import pytest
 
 from transbridge.application.tasks import JobState, TaskRuntime
 from transbridge.paratranz.config_manager import LLMConfig
@@ -85,6 +86,92 @@ def test_preflight_explains_missing_credentials_dependency_and_scope() -> None:
         AiPreflightCode.MISSING_SOURCE,
     }
     assert all(issue.fix_intent.value for issue in result.issues)
+
+
+def test_preflight_disabled_embedding_does_not_probe_vector_dependencies() -> None:
+    probed: list[str] = []
+
+    def available(name: str) -> bool:
+        probed.append(name)
+        return True
+
+    result = preflight_ai_run(
+        "translate",
+        _config(
+            retrieval_enabled=True,
+            enable_semantic_match=True,
+            embedding=SimpleNamespace(mode="disabled"),
+        ),
+        [object()],
+        esp_path="plugin.esp",
+        dependency_available=available,
+    )
+
+    assert result.ready is True
+    assert probed == ["tiktoken"]
+
+
+def test_preflight_local_embedding_reports_missing_vector_dependencies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from transbridge.infra import embedding_model_store as model_store_module
+
+    model_path = tmp_path / "model"
+    model_path.mkdir()
+    (model_path / "modules.json").write_text("{}", encoding="utf-8")
+    store = SimpleNamespace(installed_path=lambda _model_id: model_path)
+    monkeypatch.setattr(model_store_module, "EmbeddingModelStore", lambda: store)
+    result = preflight_ai_run(
+        "translate",
+        _config(
+            retrieval_enabled=True,
+            enable_semantic_match=True,
+            embedding=SimpleNamespace(mode="local", local_model_id="managed-model"),
+        ),
+        [object()],
+        esp_path="plugin.esp",
+        dependency_available=lambda name: name == "tiktoken",
+    )
+
+    assert {issue.code for issue in result.issues} == {AiPreflightCode.MISSING_EMBEDDING_DEPENDENCY}
+    assert "sentence-transformers" in result.reason
+    assert "FAISS" in result.reason
+
+
+def test_preflight_local_embedding_requires_an_installed_model() -> None:
+    result = preflight_ai_run(
+        "translate",
+        _config(
+            retrieval_enabled=True,
+            enable_semantic_match=True,
+            embedding=SimpleNamespace(mode="local", local_model_path=""),
+        ),
+        [object()],
+        esp_path="plugin.esp",
+        dependency_available=lambda _name: True,
+    )
+
+    assert [issue.code for issue in result.issues] == [AiPreflightCode.MISSING_EMBEDDING_CONFIGURATION]
+    assert "没有可用的本地向量模型" in result.reason
+
+
+def test_preflight_api_embedding_reports_missing_model_and_endpoint() -> None:
+    result = preflight_ai_run(
+        "translate",
+        _config(
+            base_url="",
+            retrieval_enabled=True,
+            enable_semantic_match=True,
+            embedding=SimpleNamespace(mode="api", provider="openai", api_key="embedding-key", model="", base_url=""),
+        ),
+        [object()],
+        esp_path="plugin.esp",
+        dependency_available=lambda _name: True,
+    )
+
+    assert [issue.code for issue in result.issues].count(AiPreflightCode.MISSING_EMBEDDING_CONFIGURATION) == 2
+    assert "Embedding 模型名" in result.reason
+    assert "Embedding Base URL" in result.reason
 
 
 def test_run_request_has_global_identity_and_copy_on_read_config() -> None:
@@ -256,6 +343,46 @@ def test_quick_run_is_default_and_advanced_settings_are_preserved_but_hidden(mon
     assert window._view.controls.preflight_label.text()
     window._view.controls.advanced_btn.click()
     assert not window._view.controls.tabs.isHidden()
+    window.close()
+    app.processEvents()
+
+
+def test_closing_missing_local_model_guide_persists_disabled_mode(monkeypatch) -> None:
+    from transbridge.ui.tools.ai_translator import embedding_model_dialog as dialog_module
+
+    observed_modes: list[str] = []
+
+    class _Guide:
+        decision = "disable"
+
+        def __init__(self, parent) -> None:
+            self._parent = parent
+
+        def exec(self) -> int:
+            observed_modes.append(str(self._parent._view.controls.embed_provider_combo.currentData()))
+            return 0
+
+    app = QApplication.instance() or QApplication([])
+    config = LLMConfig()
+    monkeypatch.setattr(config_module.LLMConfig, "load_from_file", lambda: config)
+    monkeypatch.setattr(dialog_module, "LocalEmbeddingGuideDialog", _Guide)
+    ctx = SimpleNamespace(
+        collection=None,
+        esp_path=None,
+        current_project=None,
+        label_library={},
+        entry_labels={},
+    )
+    workbench = SimpleNamespace(filtered_entries=lambda: (), locate_entry=lambda _entry_id: None)
+    window = AITranslatorWindow(ctx, workbench)
+    local_index = window._view.controls.embed_provider_combo.findData("local")
+    window._view.controls.embed_provider_combo.setCurrentIndex(local_index)
+
+    window._embedding_models.on_mode_activated()
+
+    assert window._view.controls.embed_provider_combo.currentData() == "disabled"
+    assert window._config_presenter.build().embedding.mode == "disabled"
+    assert observed_modes == ["disabled"]
     window.close()
     app.processEvents()
 

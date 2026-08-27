@@ -1,5 +1,7 @@
 """工具注册表：规范 ToolSpec、启动校验与 namespace 查询。"""
+
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass
 import re
 from typing import Any
@@ -20,7 +22,7 @@ class ToolSpec:
     display_name: str
     description: str
     parameters: dict
-    summary: str = ""          # 一句话摘要（~30-50 chars），从 description ① 段自动提取
+    summary: str = ""  # 一句话摘要（~30-50 chars），从 description ① 段自动提取
     is_long_running: bool = False
     execute: Callable[[dict, Any], Any] | None = None
     permission: str = "read"
@@ -32,7 +34,7 @@ class ToolSpec:
 
     def __post_init__(self):
         if not self.summary and self.description:
-            m = re.match(r'①(.+?)(?:②|$)', self.description)
+            m = re.match(r"①(.+?)(?:②|$)", self.description)
             if m:
                 object.__setattr__(self, "summary", m.group(1).strip()[:50])
         try:
@@ -42,6 +44,18 @@ class ToolSpec:
             object.__setattr__(self, "unavailable_reason", str(exc))
             canonical = canonicalize_parameters({})
         object.__setattr__(self, "parameters", canonical)
+
+    def to_llm_tool_definition(self):
+        """Export this registry entry through the Provider-neutral LLM contract."""
+
+        from transbridge.infra.llm_tool_calling import LlmToolDefinition
+
+        return LlmToolDefinition(
+            name=self.name,
+            description=self.description,
+            input_schema=deepcopy(self.parameters),
+            strict=False,
+        )
 
 
 class _ToolRegistry:
@@ -97,23 +111,6 @@ class _ToolRegistry:
         return {ns: list(tools.values()) for ns, tools in cls._namespaced_tools.items()}
 
     @classmethod
-    def build_tool_schema_for_prompt(cls, namespace: str | None = None) -> str:
-        """构建工具 schema 文本供 LLM prompt 注入。M2: 排除 deprecated 工具。"""
-        if namespace is not None:
-            tools = cls._namespaced_tools.get(namespace, {})
-        else:
-            tools = {}
-            for ns_tools in cls._namespaced_tools.values():
-                tools.update(ns_tools)
-        lines = ["可用工具列表："]
-        for tool in tools.values():
-            if tool.deprecated or not tool.available:
-                continue
-            lines.append(f"- {tool.name}: {tool.description}")
-            lines.append(f"  参数: {tool.parameters}")
-        return "\n".join(lines)
-
-    @classmethod
     def register_tools(cls, namespace: str, tool_defs: list[dict]) -> None:
         """C21: 批量注册工具，封装各模块重复的"定义元组→遍历→注册"样板。
 
@@ -122,23 +119,26 @@ class _ToolRegistry:
           require_confirmation=False, deprecated=False, max_output_size=102400
         """
         for td in tool_defs:
-            cls.register(ToolSpec(
-                name=td["name"],
-                display_name=td["display_name"],
-                description=td["description"],
-                parameters=td.get("parameters", {}),
-                execute=td.get("execute"),
-                permission=td.get("permission", "read"),
-                is_long_running=td.get("is_long_running", False),
-                require_confirmation=td.get("require_confirmation", False),
-                deprecated=td.get("deprecated", False),
-                max_output_size=td.get("max_output_size", 102400),
-            ), namespace=namespace)
+            cls.register(
+                ToolSpec(
+                    name=td["name"],
+                    display_name=td["display_name"],
+                    description=td["description"],
+                    parameters=td.get("parameters", {}),
+                    execute=td.get("execute"),
+                    permission=td.get("permission", "read"),
+                    is_long_running=td.get("is_long_running", False),
+                    require_confirmation=td.get("require_confirmation", False),
+                    deprecated=td.get("deprecated", False),
+                    max_output_size=td.get("max_output_size", 102400),
+                ),
+                namespace=namespace,
+            )
 
     @classmethod
     def build_tool_directory(cls) -> str:
         """构建精简工具目录（namespace 标签 + name + 一句话摘要）。~500 tokens。"""
-        lines = ["## 可用工具目录"]
+        lines = ["## Available tool directory"]
         all_ns = cls.list_all_namespaces()
         ns_order = ["default"] + sorted(ns for ns in all_ns if ns != "default")
         for ns in ns_order:
@@ -153,8 +153,7 @@ class _ToolRegistry:
         return "\n".join(lines)
 
     @classmethod
-    def build_tool_help(cls, tool: str | None = None,
-                        namespace: str | None = None) -> str:
+    def build_tool_help(cls, tool: str | None = None, namespace: str | None = None) -> str:
         """返回指定工具或 namespace 的完整 Schema（结构化参数表格）。
 
         三种模式：tool → 单工具；namespace → 整组（支持逗号分隔）；皆空 → 全局概览。
@@ -171,13 +170,12 @@ class _ToolRegistry:
         spec = cls.get(name)
         if spec is None:
             all_names = [s.name for s in cls.list_all(include_deprecated=True)]
-            matches = [n for n in all_names
-                       if _levenshtein_distance(name.lower(), n.lower()) <= 3]
+            matches = [n for n in all_names if _levenshtein_distance(name.lower(), n.lower()) <= 3]
             if matches:
-                return f"未找到 '{name}'，您是否要找: {', '.join(matches)}？"
-            return f"未找到工具 '{name}'。使用 get_tool_help() 查看可用工具列表。"
+                return f"'{name}' was not found. Did you mean: {', '.join(matches)}?"
+            return f"Tool '{name}' was not found. Use get_tool_help() to list available tools."
         if not spec.available:
-            return f"工具 '{name}' 当前不可用: {spec.unavailable_reason}"
+            return f"Tool '{name}' is currently unavailable: {spec.unavailable_reason}"
         return cls._format_tool_schema(spec)
 
     @classmethod
@@ -187,7 +185,7 @@ class _ToolRegistry:
             ns = ns.strip()
             tools = cls.list_namespace(ns)
             if not tools:
-                parts.append(f"## {ns}\n（命名空间不存在或为空）")
+                parts.append(f"## {ns}\n(Namespace does not exist or is empty.)")
                 continue
             parts.append(f"## {ns}")
             for spec in sorted(tools, key=lambda s: s.name):
@@ -198,7 +196,7 @@ class _ToolRegistry:
 
     @classmethod
     def _help_overview(cls) -> str:
-        lines = ["## 工具概览"]
+        lines = ["## Tool overview"]
         all_ns = cls.list_all_namespaces()
         ns_order = ["default"] + sorted(ns for ns in all_ns if ns != "default")
         for ns in ns_order:
@@ -218,19 +216,19 @@ class _ToolRegistry:
         properties = spec.parameters.get("properties", {})
         required_names = set(spec.parameters.get("required", ()))
         if properties:
-            lines.append("| 参数 | 类型 | 必填 | 说明 |")
+            lines.append("| Parameter | Type | Required | Description |")
             lines.append("|------|------|------|------|")
             for pname, pinfo in properties.items():
-                required = "是" if pname in required_names else "否"
+                required = "Yes" if pname in required_names else "No"
                 ptype = pinfo.get("type", "string")
                 desc = pinfo.get("description", "")
                 lines.append(f"| {pname} | {ptype} | {required} | {desc} |")
         else:
-            lines.append("（无参数）")
+            lines.append("(No parameters.)")
         if spec.is_long_running:
-            lines.append("\n**类型**: 长时间运行（异步）")
+            lines.append("\n**Type**: Long-running (asynchronous)")
         if spec.require_confirmation:
-            lines.append("\n**注意**: 此工具需要用户确认后才能执行。")
+            lines.append("\n**Note**: This tool requires user confirmation before execution.")
         return "\n".join(lines)
 
     @classmethod

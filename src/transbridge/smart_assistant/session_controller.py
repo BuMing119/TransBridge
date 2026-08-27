@@ -164,7 +164,7 @@ class SessionController:
         else:
             # 需要用户确认 → 展示确认卡片
             self._transition_to(self.State.AWAITING_CONFIRM)
-            if mode == "plan" and len(steps) > 1:
+            if mode == "plan":
                 self.on_present_plan_card(steps)
             elif len(steps) == 1:
                 self.on_present_tool_card(steps[0])
@@ -180,6 +180,9 @@ class SessionController:
     def handle_user_cancelled(self) -> None:
         """AWAITING_CONFIRM → IDLE: 用户取消操作。"""
         self._require("handle_user_cancelled", self.State.AWAITING_CONFIRM)
+        close_pending = getattr(self._conversation, "close_pending_tool_calls", None)
+        if callable(close_pending):
+            close_pending("用户取消了工具调用。")
         self._transition_to(self.State.IDLE)
         self.on_system_message("操作已取消")
 
@@ -195,8 +198,7 @@ class SessionController:
             self.on_conversation_end()
         else:
             self._react_depth += 1
-            logger.debug("ReAct 深度 %d/%d，继续下一轮 LLM",
-                         self._react_depth, self._MAX_REACT_DEPTH)
+            logger.debug("ReAct 深度 %d/%d，继续下一轮 LLM", self._react_depth, self._MAX_REACT_DEPTH)
             self._transition_to(self.State.THINKING)
             self._on_llm_round_start()
 
@@ -235,6 +237,9 @@ class SessionController:
                 self._orchestrator.cancel_current_round()
             except Exception:
                 pass
+        close_pending = getattr(self._conversation, "close_pending_tool_calls", None)
+        if callable(close_pending):
+            close_pending("会话中断，工具调用已取消。")
         self._react_depth = 0
         self._active_task = None
         self._transition_to(self.State.IDLE)
@@ -298,9 +303,7 @@ class SessionController:
         """检查步骤列表中是否有需要用户确认的工具。"""
         if self._tool_handler is None:
             return False
-        return any(
-            self._tool_handler._needs_confirm(s) for s in steps
-        )
+        return any(self._tool_handler._needs_confirm(s) for s in steps)
 
     def _dispatch_steps(self, steps: list, mode: str) -> None:
         """根据模式分发步骤执行。

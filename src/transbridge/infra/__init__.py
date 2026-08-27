@@ -1,8 +1,17 @@
-from .llm_client import LLMClient, create_llm_client
-from .embedding_client import EmbeddingClient
 from .config import LLMConfig
-from .vector_store import VectorStore
+from .embedding_client import EmbeddingClient
+from .llm_client import LLMClient, create_llm_client
+from .llm_structured_outputs import (
+    LlmOutputSchema,
+    LlmStructuredOutputError,
+    LlmStructuredOutputInvalidResponseError,
+    LlmStructuredOutputRefusalError,
+    LlmStructuredOutputTruncatedError,
+    LlmStructuredOutputUnsupportedError,
+    attach_structured_output_directive,
+)
 from .markdown_renderer import MarkdownRenderer
+from .vector_store import VectorStore
 
 __all__ = [
     "LLMClient",
@@ -11,4 +20,11 @@ __all__ = [
     "LLMConfig",
     "VectorStore",
     "MarkdownRenderer",
+    "LlmOutputSchema",
+    "LlmStructuredOutputError",
+    "LlmStructuredOutputInvalidResponseError",
+    "LlmStructuredOutputRefusalError",
+    "LlmStructuredOutputTruncatedError",
+    "LlmStructuredOutputUnsupportedError",
+    "attach_structured_output_directive",
 ]

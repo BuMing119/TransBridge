@@ -25,6 +25,7 @@ import unicodedata
 
 from transbridge.application.io.identity import EntryKey
 from transbridge.application.io.stage_policy import DEFAULT_STAGE_POLICY
+from transbridge.infra.llm_structured_outputs import LlmStructuredOutputTruncatedError
 
 
 class _CancelledByPause(BaseException):
@@ -371,29 +372,19 @@ class AutoTranslator:
     def _salvage_from_repetition_buffer(
         self, buffer: str, expected_keys: set[str], max_orig_repeat: int = 0
     ) -> dict[str, str]:
-        """当流式输出出现重复时，截断重复部分并尝试修复 JSON， salvaging 已完成的翻译对。"""
-        from transbridge.ai_translator.prompt_builder import _extract_partial_json_pairs
+        """截断重复部分，只恢复 results envelope 中已完整闭合的结果项。"""
+        from transbridge.ai_translator.prompt_builder import _extract_partial_translation_results
 
         text = "".join(buffer) if isinstance(buffer, list) else buffer
         is_abnormal, truncate_pos = self._detect_stream_repetition(text, max_orig_repeat=max_orig_repeat)
         if not is_abnormal:
             return {}
         truncated = text[:truncate_pos]
-        last_pair_match = None
-        for m in re.finditer(r'"((?:[^"\\]|\\.)*?)"\s*:\s*"((?:[^"\\]|\\.)*?)"', truncated):
-            last_pair_match = m
-        if last_pair_match:
-            repaired = truncated[: last_pair_match.end()] + "}"
-        else:
-            brace_idx = truncated.find("{")
-            repaired = truncated[: brace_idx + 1] + "}" if brace_idx != -1 else "{}"
-        try:
-            data = json.loads(repaired)
-            if isinstance(data, dict):
-                return {k: str(v) for k, v in data.items() if k in expected_keys and v}
-        except Exception:
-            pass
-        return _extract_partial_json_pairs(repaired)
+        return {
+            entry_id: translation
+            for entry_id, translation in _extract_partial_translation_results(truncated).items()
+            if entry_id in expected_keys
+        }
 
     def translate(
         self,
@@ -447,7 +438,11 @@ class AutoTranslator:
             term_client = _limited(self._raw_term_llm)
             if self._term_llm_client_wrapper is not None:
                 term_client = self._term_llm_client_wrapper(term_client)
-        self._extractor = NounExtractor(term_client, self._builder)
+        self._extractor = NounExtractor(
+            term_client,
+            self._builder,
+            max_output_tokens=self._cfg.llm_config.max_output_tokens,
+        )
 
         # 清空 in-flight 缓存（新翻译会话）
         # 仅当缓存是本实例拥有时才清空，批量翻译时使用共享缓存不应清空
@@ -1117,9 +1112,7 @@ class AutoTranslator:
             if entries_to_check:
                 stages = []
                 stage_names = []
-                strategy = normalize_postprocess_strategy(
-                    getattr(self._cfg.llm_config, "pp_strategy", "proofread")
-                )
+                strategy = normalize_postprocess_strategy(getattr(self._cfg.llm_config, "pp_strategy", "proofread"))
                 if strategy == "proofread":
 
                     def resolve_terms(candidate):
@@ -1322,6 +1315,7 @@ class AutoTranslator:
             else:
                 llm_entries.append(e)
 
+        direct_success = 0
         if direct_fill:
             _log(f"  术语精确匹配: {len(direct_fill)} 条直接填充")
             for eid, trans in direct_fill.items():
@@ -1329,13 +1323,18 @@ class AutoTranslator:
                 orig_disp = orig[:60] + "…" if len(orig) > 60 else orig
                 trans_disp = trans[:60] + "…" if len(trans) > 60 else trans
                 _log(f"{orig_disp} -> {trans_disp} [直填]")
-            self._accept_candidates(direct_fill, collection, result, lock)
+            accepted = self._accept_candidates(direct_fill, collection, result, lock)
+            if accepted is None:
+                _log("  ❌ 术语精确匹配结果未能持久化，将在后续运行中重试")
+                direct_fill = {}
+            else:
+                direct_success = accepted
 
         t_terms = time.perf_counter()
         if not llm_entries:
             if _timing_out is not None:
                 _timing_out.update({"t_terms": t_terms - t0, "t_llm": 0.0, "t_parse": 0.0})
-            return len(direct_fill)
+            return direct_success
 
         # ── LLM 翻译剩余条目 ──────────────────────────────────────────────────
         _log("  LLM 响应中...")
@@ -1422,16 +1421,21 @@ class AutoTranslator:
         effective_required_terms_by_entry: dict[str, dict[str, str]] = {}
         max_orig_repeat = max((self._max_consecutive_repeat(e.original) for e in llm_entries), default=0)
         _stream_buffer: list[str] = []
-        _stream_translations: dict[str, str] = {}  # 流式阶段已捕获并写回的翻译
+        _stream_translations: dict[str, str] = {}  # 流式阶段已完整捕获、尚待最终接纳的翻译
+        _stream_invalid_ids: set[str] = set()
 
         def _chunk_cb(chunk: str):
             _stream_buffer.append(chunk)
             if stream_callback:
                 stream_callback(chunk)
-            # 增量解析：每收到一个 chunk 就尝试从 buffer 中提取新完成的翻译对并立即写回
+            # 增量解析：即时展示完整结果项；最终响应验证或显式 salvage 后才接纳候选。
             partial = {} if repair_mode else self._builder.extract_partial_pairs("".join(_stream_buffer))
+            for eid in tuple(_stream_translations):
+                if eid not in partial:
+                    _stream_invalid_ids.add(eid)
+                    _stream_translations.pop(eid, None)
             for eid, trans in partial.items():
-                if eid not in _stream_translations and eid in expected_keys:
+                if eid not in _stream_translations and eid not in _stream_invalid_ids and eid in expected_keys:
                     entry = key_to_entry[eid]
                     # 流式阶段实时检测异常重复/回显
                     if self._is_translation_abnormal(entry.original, trans):
@@ -1439,19 +1443,69 @@ class AutoTranslator:
                     orig_disp = entry.original[:60] + "…" if len(entry.original) > 60 else entry.original
                     trans_disp = trans[:60] + "…" if len(trans) > 60 else trans
                     _log(f"{orig_disp} -> {trans_disp}")
-                    self._accept_candidates({eid: trans}, collection, result, lock)
                     _stream_translations[eid] = trans
-                    if progress_emit:
-                        progress_emit()
-                    # Round 1 术语即时写入 in-flight 缓存（供并发批次使用）
-                    ctx = entry.context.split("|")[0] if "|" in (entry.context or "") else entry.context
-                    if update_terms and ctx in AUTO_TERM_CONTEXTS:
-                        with self._in_flight_lock:
-                            self._in_flight_terms[entry.original] = trans
             # 对整个 buffer 做兜底检测（应对 JSON 尚未闭合但已明显失控的情况）
             is_abnormal, _ = self._detect_stream_repetition(_stream_buffer, max_orig_repeat=max_orig_repeat)
             if is_abnormal:
                 raise _RepetitionDetected()
+
+        def _accept_stream_salvage() -> int:
+            if not _stream_translations:
+                return 0
+            accepted = self._accept_candidates(_stream_translations, collection, result, lock)
+            if accepted is None:
+                _log("  ❌ 流式暂存结果未能持久化，将在后续运行中重试")
+                return 0
+            for eid, trans in _stream_translations.items():
+                entry = key_to_entry[eid]
+                if progress_emit:
+                    progress_emit()
+                ctx = entry.context.split("|")[0] if "|" in (entry.context or "") else entry.context
+                if update_terms and ctx in AUTO_TERM_CONTEXTS:
+                    with self._in_flight_lock:
+                        self._in_flight_terms[entry.original] = trans
+            if update_terms and batch.batch_type == "对话":
+                salvaged_entries = [key_to_entry[eid] for eid in _stream_translations]
+                self._extract_dialogue_terms(salvaged_entries, _stream_translations, result, lock, _log)
+            return accepted
+
+        def _recover_remaining_after_stream_failure(reason: str) -> int:
+            accepted = _accept_stream_salvage()
+            remaining = [e for e in llm_entries if e.key not in _stream_translations]
+            if remaining and len(llm_entries) > _min_size:
+                from transbridge.ai_translator.batch_planner import Batch as _Batch
+
+                if len(remaining) == len(llm_entries):
+                    middle = len(remaining) // 2
+                    retry_groups = (remaining[:middle], remaining[middle:])
+                else:
+                    retry_groups = (remaining,)
+                _log(f"  ↩ {len(remaining)} 条{reason}，拆分重试")
+                for retry_entries in retry_groups:
+                    sub = _Batch(
+                        entries=retry_entries,
+                        batch_type=batch.batch_type,
+                        quest_formid=batch.quest_formid,
+                    )
+                    self._run_batch(
+                        sub,
+                        collection,
+                        result,
+                        lock,
+                        log_callback,
+                        pause_event,
+                        stop_event,
+                        stream_callback,
+                        _min_size,
+                        progress_emit=progress_emit,
+                    )
+            elif remaining:
+                _log(f"  ⚠ {len(remaining)} 条{reason}（已缩至最小）")
+                with lock:
+                    for entry in remaining:
+                        result.failed_entries.append(f"{entry.id}: {reason}")
+                    result.failed_count += len(remaining)
+            return direct_success + accepted
 
         t_llm_start = time.perf_counter()
         try:
@@ -1471,68 +1525,47 @@ class AutoTranslator:
                     _stream_buffer, expected_keys, max_orig_repeat=max_orig_repeat
                 )
                 for eid, trans in salvaged.items():
-                    if eid not in _stream_translations and eid in expected_keys:
+                    if (
+                        eid not in _stream_translations
+                        and eid in expected_keys
+                        and not self._is_translation_abnormal(key_to_entry[eid].original, trans)
+                    ):
                         entry = key_to_entry[eid]
                         _log(f"  [修复] {entry.original[:60]} -> {trans[:60]}")
-                        self._accept_candidates({eid: trans}, collection, result, lock)
                         _stream_translations[eid] = trans
-                        if progress_emit:
-                            progress_emit()
-                        ctx = entry.context.split("|")[0] if "|" in (entry.context or "") else entry.context
-                        if update_terms and ctx in AUTO_TERM_CONTEXTS:
-                            with self._in_flight_lock:
-                                self._in_flight_terms[entry.original] = trans
-            remaining = [e for e in llm_entries if e.key not in _stream_translations]
-            if remaining:
-                if len(remaining) > _min_size:
-                    mid = len(remaining) // 2
-                    halves = [remaining[:mid], remaining[mid:]]
-                    _log(f"  ↩ {len(remaining)} 条拆分重试")
-                    from transbridge.ai_translator.batch_planner import Batch as _Batch
-
-                    for half in halves:
-                        sub = _Batch(entries=half, batch_type=batch.batch_type, quest_formid=batch.quest_formid)
-                        self._run_batch(
-                            sub,
-                            collection,
-                            result,
-                            lock,
-                            log_callback,
-                            pause_event,
-                            stop_event,
-                            stream_callback,
-                            _min_size,
-                            progress_emit=progress_emit,
-                        )
-                else:
-                    _log(f"  ⚠ {len(remaining)} 条因重复输出无法翻译（已缩至最小）")
-                    with lock:
-                        for e in remaining:
-                            result.failed_entries.append(f"{e.id}: 模型重复输出")
-                        result.failed_count += len(remaining)
+            accepted = _recover_remaining_after_stream_failure("因重复输出未获得有效译文")
             if _timing_out is not None:
                 _timing_out.update({
                     "t_terms": t_terms - t0,
                     "t_llm": time.perf_counter() - t_llm_start,
                     "t_parse": 0.0,
                 })
-            return len(direct_fill) + len(_stream_translations)
+            return accepted
+        except LlmStructuredOutputTruncatedError:
+            _log("⚠ Structured Outputs 响应因输出上限截断，保留完整结果项并拆分重试缺项")
+            accepted = _recover_remaining_after_stream_failure("因结构化响应截断未获得译文")
+            if _timing_out is not None:
+                _timing_out.update({
+                    "t_terms": t_terms - t0,
+                    "t_llm": time.perf_counter() - t_llm_start,
+                    "t_parse": 0.0,
+                })
+            return accepted
         except Exception as exc:
             err_msg = str(exc)
             _log(f"❌ API 调用失败（{len(llm_entries)} 条）: {err_msg}")
             with lock:
-                # 流式阶段已成功写回的条目不计入失败
-                truly_failed = [e for e in llm_entries if e.key not in _stream_translations]
-                for e in truly_failed:
+                # 非截断异常不会接纳尚未通过完整结构化响应验证的流式暂存项。
+                for e in llm_entries:
                     result.failed_entries.append(f"{e.id}: {err_msg}")
-                result.failed_count += len(truly_failed)
+                result.failed_count += len(llm_entries)
             if _timing_out is not None:
                 _timing_out.update({
                     "t_terms": t_terms - t0,
                     "t_llm": time.perf_counter() - t_llm_start,
                     "t_parse": 0.0,
                 })
-            return len(direct_fill)
+            return direct_success
 
         t_llm_elapsed = time.perf_counter() - t_llm_start
 
@@ -1586,9 +1619,12 @@ class AutoTranslator:
                 _log(f"  ↩ {len(missing)} 条未获译文，单独重试")
             from transbridge.ai_translator.batch_planner import Batch as _Batch
 
-            # 仅写回兜底阶段的结果（流式阶段已写回）
-            success = self._accept_candidates(fallback_translations, collection, result, lock)
-            if id_to_translation:
+            accepted = self._accept_candidates(id_to_translation, collection, result, lock)
+            success = 0 if accepted is None else accepted
+            for _ in _stream_translations:
+                if progress_emit:
+                    progress_emit()
+            if accepted is not None and id_to_translation:
                 auto_term_entries = [
                     e
                     for e in llm_entries
@@ -1614,20 +1650,25 @@ class AutoTranslator:
                 )
             if _timing_out is not None:
                 _timing_out.update({"t_terms": t_terms - t0, "t_llm": t_llm_elapsed, "t_parse": t_parse_elapsed})
-            return success + len(direct_fill)
+            return success + direct_success
 
         if missing:
             _log(f"  ⚠ {len(missing)} 条未获得译文（已缩至单条，无法继续拆分）")
-            if repair_mode:
-                with lock:
-                    for eid in sorted(missing):
-                        entry = key_to_entry[eid]
+            with lock:
+                for eid in sorted(missing):
+                    entry = key_to_entry[eid]
+                    if repair_mode:
                         reason = "未采用权威术语" if eid in constraint_failures else "模型未返回有效译文"
                         result.failed_entries.append(f"{entry.id}: 术语冲突重翻失败：{reason}")
-                    result.failed_count += len(missing)
+                    else:
+                        result.failed_entries.append(f"{entry.id}: 模型未返回有效译文")
+                result.failed_count += len(missing)
 
-        # 仅写回兜底阶段的结果（流式阶段已写回）
-        success = self._accept_candidates(fallback_translations, collection, result, lock)
+        accepted = self._accept_candidates(id_to_translation, collection, result, lock)
+        success = 0 if accepted is None else accepted
+        for _ in _stream_translations:
+            if progress_emit:
+                progress_emit()
 
         # 自动写入动态术语库（仅 context 属于 AUTO_TERM_CONTEXTS 的条目，直接填充的来源已在术语库中）
         auto_term_entries = [
@@ -1635,16 +1676,16 @@ class AutoTranslator:
             for e in llm_entries
             if (e.context.split("|")[0] if "|" in (e.context or "") else e.context) in AUTO_TERM_CONTEXTS
         ]
-        if update_terms and auto_term_entries:
+        if accepted is not None and update_terms and auto_term_entries:
             self._update_dynamic_terms(auto_term_entries, id_to_translation, result, lock)
 
         # 从对话批次抽取专有名词
-        if update_terms and batch.batch_type == "对话" and id_to_translation:
+        if accepted is not None and update_terms and batch.batch_type == "对话" and id_to_translation:
             self._extract_dialogue_terms(llm_entries, id_to_translation, result, lock, _log)
 
         if _timing_out is not None:
             _timing_out.update({"t_terms": t_terms - t0, "t_llm": t_llm_elapsed, "t_parse": t_parse_elapsed})
-        return success + len(direct_fill)
+        return success + direct_success
 
     def _accept_candidates(
         self,
@@ -1652,12 +1693,19 @@ class AutoTranslator:
         collection: TranslationEntryCollection,
         result: TranslationResult,
         lock: threading.Lock,
-    ) -> int:
+    ) -> int | None:
         if self._candidate_session is None:
             raise RuntimeError("translation candidate session was not initialized")
-        with lock:
-            accepted = self._candidate_session.accept(id_to_translation, collection)
-            result.success_count += accepted.accepted
+        try:
+            with lock:
+                accepted = self._candidate_session.accept(id_to_translation, collection)
+                result.success_count += accepted.accepted
+        except Exception as exc:
+            with lock:
+                for entry_id in id_to_translation:
+                    result.failed_entries.append(f"{entry_id}: 候选结果持久化失败：{exc}")
+                result.failed_count += len(id_to_translation)
+            return None
         return accepted.accepted
 
     def _update_dynamic_terms(

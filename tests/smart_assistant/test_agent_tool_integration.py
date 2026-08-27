@@ -410,6 +410,15 @@ class TestTranslationConfig(unittest.TestCase):
         result = _tool_set_translation_config({"model": "gpt-4o"}, ec)
         self.assertIsInstance(result, ToolResult)
 
+    def test_set_translation_config_rejects_missing_language_profile(self):
+        from transbridge.smart_assistant.tools.tool_translator import _tool_set_translation_config
+
+        ec = ExecutionContext(app_context=self.ctx)
+        result = _tool_set_translation_config({"target_lang": "missing_LOCALE"}, ec)
+
+        self.assertFalse(result.success)
+        self.assertIn("Unsupported language profile", result.message)
+
 
 # ── Test: 状态查询工具 ───────────────────────────────────────────────────
 

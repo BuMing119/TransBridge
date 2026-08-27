@@ -10,14 +10,14 @@ from .base import ToolResult, require_collection
 
 _PARAM_SCHEMAS = {
     "migrate_entries": {
-        "old_collection": {"type": "str", "required": False, "description": "旧集合来源（预留，缺省用当前已加载集合的前一版本）"},
+        "old_collection": {"type": "str", "required": False, "description": "Reserved old-collection source; defaults to the previous version of the loaded collection"},
     },
     "apply_dictionary": {
-        "overwrite": {"type": "bool", "required": False, "description": "是否覆盖已有译文（默认 false）"},
+        "overwrite": {"type": "bool", "required": False, "description": "Whether to overwrite existing translations; default false"},
     },
     "save_dictionary": {
-        "mod_file_id": {"type": "str", "required": False, "description": "词典的 mod_file_id（默认空串=全局）"},
-        "scope": {"type": "str", "required": False, "description": "project/global（默认 global）"},
+        "mod_file_id": {"type": "str", "required": False, "description": "Dictionary mod_file_id; empty means global"},
+        "scope": {"type": "str", "required": False, "description": "project or global; default global"},
     },
 }
 
@@ -81,18 +81,18 @@ def _register_migrator_tools():
     # migrate_entries 挂 editor namespace
     ToolRegistry.register_tools("editor", [
         {"name": "migrate_entries", "display_name": "词条键对齐迁移",
-         "description": "①按entry.key将旧集合译文对齐到新集合同名键条目。②参数: (预留)。③返回: {inherited,needs_review,missed}。④规则: 仅键精确匹配+原文变化检测，不做文本兜底；文本兜底是词典套用(apply_dictionary)的职责。",
+         "description": "①Align translations from an old collection to matching entry.key values in a new collection. ②Arguments: reserved. ③Returns {inherited,needs_review,missed}. ④Rule: exact key matching plus source-change detection only; apply_dictionary owns text fallback.",
          "execute": _tool_migrate_entries, "permission": "write",
          "parameters": _PARAM_SCHEMAS["migrate_entries"]},
     ])
     # 词典工具挂 translator namespace
     ToolRegistry.register_tools("translator", [
         {"name": "apply_dictionary", "display_name": "词典套用",
-         "description": "①将翻译记忆词典套用到当前集合填补空译文。②参数: overwrite(可选,默认false)。③返回{applied,key_hits,text_hits,misses,needs_review,conflicts}。④规则: 键索引优先+文本索引兜底。",
+         "description": "①Apply the translation-memory dictionary to fill empty translations in the current collection. ②Argument: optional overwrite, default false. ③Returns {applied,key_hits,text_hits,misses,needs_review,conflicts}. ④Rule: key lookup first, then text fallback.",
          "execute": _tool_apply_dictionary, "permission": "write",
          "parameters": _PARAM_SCHEMAS["apply_dictionary"]},
         {"name": "save_dictionary", "display_name": "存为词典",
-         "description": "①将当前集合已译条目写入翻译记忆词典。②参数: mod_file_id(可选), scope(可选project/global)。③返回{added}。④规则: 排除锁定/隐藏/空译文条目。",
+         "description": "①Save translated entries from the current collection to the translation-memory dictionary. ②Arguments: optional mod_file_id and scope=project/global. ③Returns {added}. ④Rule: excludes locked, hidden, and empty translations.",
          "execute": _tool_save_dictionary, "permission": "write",
          "parameters": _PARAM_SCHEMAS["save_dictionary"]},
     ])

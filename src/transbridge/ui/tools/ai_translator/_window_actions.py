@@ -5,7 +5,7 @@ from __future__ import annotations
 from PyQt6.QtWidgets import QMessageBox
 
 from ._theme_support import AiThemeBinding, set_widget_brush
-from .run_spec import preflight_ai_run
+from .run_spec import AiPreflightCode, preflight_ai_run
 
 
 def preflight_candidates(window: object, mode: str) -> list:
@@ -20,6 +20,15 @@ def preflight_candidates(window: object, mode: str) -> list:
 
 def require_ready(window: object, mode: str, config: object, entries: list) -> bool:
     result = preflight_ai_run(mode, config, entries, esp_path=window._ctx.esp_path)
+    embedding = getattr(config, "embedding", None)
+    missing_local_model = str(getattr(embedding, "mode", "disabled") or "disabled").casefold() == "local" and any(
+        issue.code == AiPreflightCode.MISSING_EMBEDDING_CONFIGURATION for issue in result.issues
+    )
+    if missing_local_model:
+        if not window._embedding_models.resolve_missing():
+            return False
+        config = window._config_presenter.build()
+        result = preflight_ai_run(mode, config, entries, esp_path=window._ctx.esp_path)
     if result.ready:
         return True
     QMessageBox.warning(window, "AI 运行条件未满足", result.reason or "请检查运行配置。")

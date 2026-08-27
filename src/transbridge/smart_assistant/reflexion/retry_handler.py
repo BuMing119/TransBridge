@@ -42,12 +42,12 @@ class RetryHandler:
         if self._llm is None:
             return None
         prompt = (
-            f"工具执行失败 (第 {attempt + 1}/{self.MAX_RETRIES} 次):\n"
-            f"工具: {step.get('tool', '?')}\n"
-            f"参数: {json.dumps(self._sanitize_args(step.get('args', {})), ensure_ascii=False)}\n"
-            f"错误: {error}\n\n"
-            f"请分析失败原因，决定是否调整参数重试。\n"
-            f'返回 JSON: {{"retry": true/false, "adjusted_args": {{...}}, "reason": "..."}}'
+            f"Tool execution failed (attempt {attempt + 1}/{self.MAX_RETRIES}):\n"
+            f"Tool: {step.get('tool', '?')}\n"
+            f"Arguments: {json.dumps(self._sanitize_args(step.get('args', {})), ensure_ascii=False)}\n"
+            f"Error: {error}\n\n"
+            "Analyze the cause and decide whether to retry with adjusted arguments.\n"
+            'Return JSON: {"retry": true/false, "adjusted_args": {...}, "reason": "..."}'
         )
         try:
             response = self._llm.chat([{"role": "user", "content": prompt}], max_tokens=256)

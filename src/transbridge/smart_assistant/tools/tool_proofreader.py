@@ -213,47 +213,48 @@ def _register_proofreader_tools() -> None:
                 "name": "run_postprocess",
                 "display_name": "校对 / 严格后处理",
                 "description": (
-                    "默认按内置polish预设执行校对。profile可选translate/polish/mixed、custom"
-                    "（当前选中具名配置）或具名配置名称/UUID；strategy可选proofread/strict。entry_ids优先，否则"
-                    "scope可选configured/set_scope/all/passed/has_issues。intensity可选configured/light/medium/heavy。"
-                    "strict可用phases选择consistency/format/quality_gate/refinement/polish/arbitration；旧调用只传"
-                    "phases时自动使用strict。可覆盖max_concurrent、max_tokens_per_batch、max_output_tokens和"
-                    "max_terms_per_batch；max_workers保留为旧并发别名。后台运行且需要用户确认。"
+                    "Run proofreading with the built-in polish preset by default. profile may be translate/polish/mixed, custom "
+                    "(the selected named configuration), or a named configuration name/UUID; strategy is proofread or strict. "
+                    "entry_ids takes priority; otherwise scope is configured/set_scope/all/passed/has_issues. intensity is "
+                    "configured/light/medium/heavy. In strict mode, phases may select consistency/format/quality_gate/refinement/"
+                    "polish/arbitration; legacy calls supplying only phases automatically use strict. max_concurrent, "
+                    "max_tokens_per_batch, max_output_tokens, and max_terms_per_batch may be overridden; max_workers remains a "
+                    "legacy concurrency alias. Runs in the background and requires user confirmation."
                 ),
                 "execute": _tool_run_postprocess,
                 "permission": "write",
                 "is_long_running": True,
                 "require_confirmation": True,
                 "parameters": {
-                    "profile": {"type": "str", "required": False, "description": "预设或具名工作流，默认polish"},
-                    "strategy": {"type": "str", "required": False, "description": "proofread或strict，默认proofread"},
-                    "phases": {"type": "list", "required": False, "description": "strict阶段列表；提供后自动strict"},
-                    "entry_ids": {"type": "list", "required": False, "description": "优先处理的条目key列表"},
+                    "profile": {"type": "str", "required": False, "description": "Preset or named workflow; default polish"},
+                    "strategy": {"type": "str", "required": False, "description": "proofread or strict; default proofread"},
+                    "phases": {"type": "list", "required": False, "description": "Strict-mode phases; supplying them selects strict automatically"},
+                    "entry_ids": {"type": "list", "required": False, "description": "Entry keys to process first"},
                     "scope": {
                         "type": "str",
                         "required": False,
                         "description": "configured/set_scope/all/passed/has_issues",
                     },
                     "intensity": {"type": "str", "required": False, "description": "configured/light/medium/heavy"},
-                    "max_concurrent": {"type": "int", "required": False, "description": "共享最大在途请求数(1-128)"},
+                    "max_concurrent": {"type": "int", "required": False, "description": "Shared maximum in-flight requests (1-128)"},
                     "max_tokens_per_batch": {
                         "type": "int",
                         "required": False,
-                        "description": "每请求业务内容Token上限",
+                        "description": "Maximum business-content tokens per request",
                     },
                     "max_output_tokens": {
                         "type": "int",
                         "required": False,
-                        "description": "输出Token上限；0表示供应商支持时省略",
+                        "description": "Maximum output tokens; 0 omits the value when supported by the provider",
                     },
-                    "max_terms_per_batch": {"type": "int", "required": False, "description": "每条注入术语上限"},
-                    "max_workers": {"type": "int", "required": False, "description": "兼容旧调用的并发别名(1-8)"},
+                    "max_terms_per_batch": {"type": "int", "required": False, "description": "Maximum terminology entries injected per item"},
+                    "max_workers": {"type": "int", "required": False, "description": "Legacy concurrency alias (1-8)"},
                 },
             },
             {
                 "name": "get_quality_report",
                 "display_name": "质量报告",
-                "description": "获取最近一次run_postprocess或start_polish的报告摘要；无参数。",
+                "description": "Return the latest run_postprocess or start_polish report summary; no arguments.",
                 "execute": _tool_get_quality_report,
                 "permission": "read",
                 "parameters": {},
@@ -261,10 +262,10 @@ def _register_proofreader_tools() -> None:
             {
                 "name": "list_quality_reports",
                 "display_name": "历史报告",
-                "description": "列出历史后处理Excel报告；limit可选，默认50。",
+                "description": "List historical post-processing Excel reports; optional limit, default 50.",
                 "execute": _tool_list_quality_reports,
                 "permission": "read",
-                "parameters": {"limit": {"type": "int", "required": False, "description": "返回数量上限"}},
+                "parameters": {"limit": {"type": "int", "required": False, "description": "Maximum number of reports to return"}},
             },
         ],
     )

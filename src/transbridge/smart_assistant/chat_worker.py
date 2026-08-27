@@ -1,5 +1,4 @@
 import logging
-import threading
 import time
 
 from transbridge.smart_assistant.workers.async_worker import AsyncWorker
@@ -19,11 +18,12 @@ class ChatWorker(AsyncWorker):
     需自行保证跨线程 Qt GUI 安全（使用 QTimer.singleShot 桥接）。
     """
 
-    def __init__(self, llm_client, messages: list[dict], max_tokens: int | None = None):
+    def __init__(self, llm_client, messages: list[dict], max_tokens: int | None = None, tools=None):
         super().__init__(daemon=True)
         self._client = llm_client
         self._messages = messages
         self._max_tokens = max_tokens
+        self._tools = tools
 
     def run(self) -> None:
         try:
@@ -45,9 +45,16 @@ class ChatWorker(AsyncWorker):
                     chunk_buffer.clear()
                     last_chunk_time = now
 
-            self._client.chat_stream(
-                self._messages, self._max_tokens, _chunk_cb
-            )
+            if self._tools is None:
+                result = self._client.chat_stream(self._messages, self._max_tokens, _chunk_cb)
+                finished_value = full_text if result is None else result
+            else:
+                finished_value = self._client.chat_stream_with_tools(
+                    self._messages,
+                    self._max_tokens,
+                    self._tools,
+                    _chunk_cb,
+                )
             # Flush remaining buffered chunks at end of stream
             if chunk_buffer and self.on_chunk:
                 self.on_chunk("".join(chunk_buffer))
@@ -55,16 +62,16 @@ class ChatWorker(AsyncWorker):
             if not self._cancelled.is_set():
                 # MA7: 发射 token 统计（近似估算）
                 try:
-                    input_chars = sum(len(m.get("content", "")) for m in self._messages)
+                    input_chars = sum(len(str(m.get("content", ""))) for m in self._messages)
                     estimated_input = max(1, input_chars // 3)
                     estimated_output = max(1, len(full_text) // 3)
-                    model = getattr(self._client, 'model', 'unknown')
+                    model = getattr(self._client, "model", getattr(self._client, "_model", "unknown"))
                     if self.on_token_usage:
                         self.on_token_usage(model, estimated_input, estimated_output)
                 except Exception:
                     logger.debug("Token stats estimation failed", exc_info=True)
                 if self.on_finished:
-                    self.on_finished(full_text)
+                    self.on_finished(finished_value)
         except (_CancelledByStop,):
             pass  # 静默终止
         except Exception as exc:

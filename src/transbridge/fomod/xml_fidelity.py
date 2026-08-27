@@ -16,6 +16,7 @@ import xml.etree.ElementTree as ET
 
 from transbridge.application.contracts import Diagnostic, DiagnosticSeverity
 from transbridge.application.tasks import TaskCancelled
+from transbridge.config.language_profiles import load_language_profile
 
 XML_FIDELITY_POLICY_VERSION = "fomod-xml-semantic-v2"
 
@@ -501,9 +502,10 @@ def _bom_name(bom: bytes) -> str:
 
 
 def _build_prompt(text: str, target_locale: str) -> list[dict[str, str]]:
+    target_language = load_language_profile(target_locale).target_language
     prompt = (
         "Translate this FOMOD installer UI text. Preserve placeholders and markup. "
-        f"Target locale: {target_locale}. Return only the translation.\n\n{text}"
+        f"Translate into {target_language} (locale {target_locale}). Return only the translation.\n\n{text}"
     )
     return [{"role": "user", "content": prompt}]
 

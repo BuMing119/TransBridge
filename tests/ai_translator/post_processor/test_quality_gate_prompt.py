@@ -3,7 +3,7 @@
 覆盖：
 - 单条/批量消息经 build_postprocess_messages 组装：SYSTEM(FINAL) -> USER、独立稳定 cache key、唯一 FINAL 断点。
 - 批量 User 为每个条目分别渲染现有相关术语，不跨条目合并。
-- 单条/批量 System 只允许稳定变量，JSON 示例为合法 JSON，枚举取值在示例外。
+- 单条/批量 System 只允许稳定变量，且不复制原生 Structured Outputs schema。
 - pass/fail/uncertain 解析与降级行为不变（回归）。
 """
 
@@ -160,7 +160,7 @@ def test_dynamic_user_change_keeps_cache_key_stable():
     assert key1 == key2
 
 
-# ───────────────────────── System 稳定契约与合法 JSON ───────────────────────
+# ───────────────────────── System 稳定契约 ──────────────────────────────────
 
 
 def test_single_system_has_no_unresolved_placeholder_or_dynamic_content():
@@ -175,39 +175,32 @@ def test_single_system_has_no_unresolved_placeholder_or_dynamic_content():
     assert "hello" not in system_text
     assert "你好" not in system_text
     # 只检测：System 明确不生成替代译文
-    assert "改写" in system_text
+    assert "Never generate or rewrite" in system_text
 
 
-def test_single_system_json_example_is_valid_json_and_no_pseudo_enum():
+def test_single_system_does_not_duplicate_native_output_schema():
     llm = _CapturingLLM()
     checker = _make_checker(llm, terms=_StubTermManager({}))
     checker._check_single(_entry("e1", "hello", "你好"))
     system_text = _system_of(llm.calls[0])["content"]
 
-    # 提取第一个 JSON 对象示例
-    match = re.search(r"\{[\s\S]*?\n\}", system_text)
-    assert match is not None
-    parsed = json.loads(match.group())
-    assert isinstance(parsed, dict)
-    assert set(parsed.keys()) >= {"verdict", "reason", "issues"}
-    # 示例里不能用 "a" | "b" 或 "..." 伪 JSON
-    assert '"pass" | "fail"' not in system_text
-    assert '"pass"|"fail"' not in system_text
-    assert '"..."' not in system_text
+    assert '"verdict":' not in system_text
+    assert '"reason":' not in system_text
+    assert '"issues":' not in system_text
+    assert "JSON object" not in system_text
+    assert "structured quality decision" in system_text
 
 
-def test_batch_system_json_example_is_valid_json():
+def test_batch_system_does_not_duplicate_native_output_schema():
     llm = _CapturingLLM()
     checker = _make_checker(llm, terms=_StubTermManager({}))
     checker._check_batch_internal([_entry("e1", "a", "A")])
     system_text = _system_of(llm.calls[0])["content"]
 
-    match = re.search(r"\[[\s\S]*?\n\]", system_text)
-    assert match is not None
-    parsed = json.loads(match.group())
-    assert isinstance(parsed, list)
-    assert isinstance(parsed[0], dict)
-    assert set(parsed[0].keys()) >= {"entry_id", "verdict", "reason", "issues"}
+    assert '"results":' not in system_text
+    assert '"entry_id":' not in system_text
+    assert "JSON object" not in system_text
+    assert "Preserve each entry ID exactly" in system_text
 
 
 def test_load_prompts_and_toml_files_pass_contract():
@@ -254,7 +247,7 @@ def test_batch_no_terms_uses_single_semantics():
     checker = _make_checker(llm, terms=_StubTermManager({}))
     checker._check_batch_internal([_entry("e1", "plain text", "纯文本")])
     user_text = _user_of(llm.calls[0])["content"]
-    assert "术语表：无" in user_text
+    assert "Terminology: none" in user_text
 
 
 # ───────────────────────── 解析 / 降级行为回归 ─────────────────────────────
@@ -295,9 +288,25 @@ def test_batch_parse_failure_falls_back_with_uncertain_on_fail_indicator():
     assert all(i.entry_id == "e1" for i in issues)
 
 
-def test_batch_parse_failure_without_fail_indicator_assumes_pass():
-    # 响应无法解析且无错误指示 => 按原逻辑假设通过（不产出问题条）
+def test_batch_parse_failure_without_fail_indicator_is_still_uncertain():
+    # 原生结构化输出不可解析时必须保守处理，不能把协议错误静默当作通过。
     llm = _CapturingLLM(response="not json at all")
     checker = _make_checker(llm, terms=_StubTermManager({}))
     issues = checker._check_batch_internal([_entry("e1", "a", "A")])
-    assert issues == []
+    assert issues
+    assert all(issue.entry_id == "e1" for issue in issues)
+
+
+def test_batch_duplicate_result_is_uncertain():
+    entry = _entry("e1", "a", "A")
+    response = json.dumps({
+        "results": [
+            {"entry_id": "e1", "verdict": "pass", "reason": "ok", "issues": []},
+            {"entry_id": "e1", "verdict": "pass", "reason": "duplicate", "issues": []},
+        ]
+    })
+
+    issues = _make_checker(_CapturingLLM())._parse_batch_response([entry], response)
+
+    assert issues
+    assert "重复" in issues[-1].message

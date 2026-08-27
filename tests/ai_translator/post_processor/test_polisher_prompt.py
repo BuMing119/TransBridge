@@ -22,9 +22,9 @@ from transbridge.infra.prompt_cache import PROMPT_CACHE_METADATA_KEY
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _PROMPTS_DIR = _REPO_ROOT / "data" / "prompts"
 
-_GAME_NAME = "上古卷轴5：天际特别版（SSE）"
-_SOURCE_LANG = "英文"
-_TARGET_LANG = "中文"
+_GAME_NAME = "The Elder Scrolls V: Skyrim Special Edition (SSE)"
+_SOURCE_LANG = "English"
+_TARGET_LANG = "Simplified Chinese"
 
 
 class _CapturingLLM:
@@ -152,7 +152,7 @@ def test_single_user_has_required_dynamic_fields():
     assert "NPC_:FULL" in user_text
     assert "Dragon" in user_text
     # 当前选中级别（aggressive 描述）进入动态 User
-    assert "深度润色" in user_text
+    assert "polish deeply" in user_text
 
 
 def test_terms_content_and_order_preserved():
@@ -308,3 +308,19 @@ def test_llm_failure_batch_returns_original_translation():
         assert isinstance(result, PolishResult)
         assert result.polished_translation in ("龙", "猫")
         assert result.needs_arbitration is True
+
+
+def test_batch_duplicate_result_keeps_original_for_arbitration():
+    entry = _entry("e1", "Source", "Current")
+    response = json.dumps({
+        "results": [
+            {"entry_id": "e1", "polished_translation": "First"},
+            {"entry_id": "e1", "polished_translation": "Second"},
+        ]
+    })
+
+    result = _make_polisher(_CapturingLLM())._parse_batch_polish_response([entry], response)["e1"]
+
+    assert result.polished_translation == "Current"
+    assert result.needs_arbitration is True
+    assert "重复" in result.note

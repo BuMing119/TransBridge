@@ -1,9 +1,12 @@
 """TermVectorIndex 增量索引 + BM25 融合检索测试（FR5.12 Story 2/3）。"""
+
 from __future__ import annotations
+
+import json
+from unittest.mock import patch
 
 import numpy as np
 import pytest
-from unittest.mock import patch
 
 from transbridge.ai_translator.term_database import TermEntry
 from transbridge.ai_translator.term_vector_index import (
@@ -16,8 +19,9 @@ from transbridge.config.llm import LLMConfig
 class _FakeEmbeddingClient:
     """返回确定性归一化向量的 EmbeddingClient，记录 encode 调用。"""
 
-    def __init__(self, dim: int = 8):
+    def __init__(self, dim: int = 8, identity: str = "fake-v1"):
         self._dim = dim
+        self._identity = identity
         self.encode_calls: list[list[str]] = []
 
     @property
@@ -31,6 +35,14 @@ class _FakeEmbeddingClient:
     @property
     def dimension(self) -> int:
         return self._dim
+
+    @property
+    def index_identity(self) -> dict[str, object]:
+        return {
+            "backend": "test",
+            "dimension": self._dim,
+            "model": self._identity,
+        }
 
     def encode(self, texts: list[str]) -> np.ndarray:
         self.encode_calls.append(list(texts))
@@ -55,7 +67,10 @@ def _make_terms() -> list[TermEntry]:
 @pytest.fixture
 def index(tmp_path):
     """构造 TermVectorIndex，屏蔽文件 IO。"""
-    with patch.object(TermVectorIndex, "_save_index"), patch.object(TermVectorIndex, "_try_load_index", return_value=False):
+    with (
+        patch.object(TermVectorIndex, "_save_index"),
+        patch.object(TermVectorIndex, "_try_load_index", return_value=False),
+    ):
         idx = TermVectorIndex(
             esp_path="TestMod.esp",
             embedding_client=_FakeEmbeddingClient(),
@@ -177,9 +192,67 @@ def test_load_index_rebuilds_row_map(tmp_path):
     idx2._index_path = str(tmp_path / "test_terms.faiss")
     idx2._meta_path = str(tmp_path / "test_terms_meta.json")
     assert idx2.build_index(_make_terms())
+    assert idx2._embedding_client.encode_calls == []
 
     # Critical 修复：加载后 _row_map 已重建
     assert set(idx2._row_map) == {"Dragon", "Dragons", "Whiterun", "Jarl"}
     # 融合检索向量分不丢失（不会退化为纯 BM25）
     results = idx2.search_hybrid("Dragon", top_k=3)
     assert any(r.term == "Dragon" for r in results)
+
+
+def test_embedding_identity_change_rebuilds_persisted_index(tmp_path):
+    index_path = str(tmp_path / "identity_terms.faiss")
+    meta_path = str(tmp_path / "identity_terms_meta.json")
+    first_client = _FakeEmbeddingClient(identity="model-a")
+    first = TermVectorIndex("IdentityTest.esp", first_client, similarity_threshold=0.5)
+    first._index_path = index_path
+    first._meta_path = meta_path
+    assert first.build_index(_make_terms())
+
+    second_client = _FakeEmbeddingClient(identity="model-b")
+    second = TermVectorIndex("IdentityTest.esp", second_client, similarity_threshold=0.5)
+    second._index_path = index_path
+    second._meta_path = meta_path
+
+    assert second.build_index(_make_terms())
+    assert second_client.encode_calls == [["Dragon", "Dragons", "Whiterun", "Jarl"]]
+
+
+def test_legacy_metadata_without_embedding_fingerprint_rebuilds_once(tmp_path):
+    index_path = str(tmp_path / "legacy_terms.faiss")
+    meta_path = str(tmp_path / "legacy_terms_meta.json")
+    first = TermVectorIndex("LegacyTest.esp", _FakeEmbeddingClient(), similarity_threshold=0.5)
+    first._index_path = index_path
+    first._meta_path = meta_path
+    assert first.build_index(_make_terms())
+
+    with open(meta_path, encoding="utf-8") as handle:
+        metadata = json.load(handle)
+    metadata.pop("schema_version")
+    metadata.pop("embedding_fingerprint")
+    with open(meta_path, "w", encoding="utf-8") as handle:
+        json.dump(metadata, handle)
+
+    second_client = _FakeEmbeddingClient()
+    second = TermVectorIndex("LegacyTest.esp", second_client, similarity_threshold=0.5)
+    second._index_path = index_path
+    second._meta_path = meta_path
+
+    assert second.build_index(_make_terms())
+    assert second_client.encode_calls == [["Dragon", "Dragons", "Whiterun", "Jarl"]]
+
+
+def test_index_metadata_persists_only_embedding_fingerprint(tmp_path):
+    client = _FakeEmbeddingClient(identity="secret-free-model")
+    index = TermVectorIndex("MetadataTest.esp", client, similarity_threshold=0.5)
+    index._index_path = str(tmp_path / "metadata_terms.faiss")
+    index._meta_path = str(tmp_path / "metadata_terms_meta.json")
+
+    assert index.build_index(_make_terms())
+    with open(index._meta_path, encoding="utf-8") as handle:
+        metadata = json.load(handle)
+
+    assert metadata["schema_version"] == 2
+    assert len(metadata["embedding_fingerprint"]) == 64
+    assert "secret-free-model" not in json.dumps(metadata)

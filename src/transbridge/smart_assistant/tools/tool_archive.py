@@ -11,23 +11,23 @@ from .base import ToolResult
 
 _PARAM_SCHEMAS = {
     "extract_archive": {
-        "archive_path": {"type": "str", "required": True, "description": "归档文件路径（.7z/.zip/.rar）"},
-        "dest_dir": {"type": "str", "required": True, "description": "解包目标目录"},
-        "files": {"type": "list", "required": False, "description": "仅提取的相对路径列表（分层提取，可选）"},
+        "archive_path": {"type": "str", "required": True, "description": "Archive path (.7z/.zip/.rar)"},
+        "dest_dir": {"type": "str", "required": True, "description": "Destination directory for extraction"},
+        "files": {"type": "list", "required": False, "description": "Optional relative paths to extract selectively"},
     },
     "pack_archive": {
-        "src_dir": {"type": "str", "required": True, "description": "要打包的源目录"},
-        "archive_path": {"type": "str", "required": True, "description": "输出归档路径"},
-        "fmt": {"type": "str", "required": False, "description": "打包格式 zip(默认)/7z"},
+        "src_dir": {"type": "str", "required": True, "description": "Source directory to archive"},
+        "archive_path": {"type": "str", "required": True, "description": "Output archive path"},
+        "fmt": {"type": "str", "required": False, "description": "Archive format: zip (default) or 7z"},
     },
     "diff_directories": {
-        "old_dir": {"type": "str", "required": True, "description": "旧版目录"},
-        "new_dir": {"type": "str", "required": True, "description": "新版目录"},
-        "skip_hash_exts": {"type": "list", "required": False, "description": "跳过哈希的扩展名（如 [.bsa]）"},
+        "old_dir": {"type": "str", "required": True, "description": "Old-version directory"},
+        "new_dir": {"type": "str", "required": True, "description": "New-version directory"},
+        "skip_hash_exts": {"type": "list", "required": False, "description": "Extensions to compare without hashing, such as [.bsa]"},
     },
     "filter_files": {
-        "files": {"type": "list", "required": True, "description": "文件相对路径列表"},
-        "rules_json": {"type": "str", "required": False, "description": "过滤规则 JSON 文件路径（可选，默认内置规则）"},
+        "files": {"type": "list", "required": True, "description": "Relative file paths"},
+        "rules_json": {"type": "str", "required": False, "description": "Optional filtering-rules JSON path; built-in rules are used by default"},
     },
 }
 
@@ -95,19 +95,19 @@ def _register_archive_tools():
     from ..tool_registry import ToolRegistry
     ToolRegistry.register_tools("archive", [
         {"name": "extract_archive", "display_name": "解包归档",
-         "description": "①解包7z/zip/rar归档到目标目录。②参数: archive_path, dest_dir, files(可选,仅提取列表内文件)。③返回{dest_dir, extracted_count}。④规则: 不依赖用户环境7-Zip。",
+         "description": "①Extract a 7z/zip/rar archive to a destination directory. ②Arguments: archive_path, dest_dir, and optional files for selective extraction. ③Returns {dest_dir, extracted_count}. ④Rule: does not depend on a user-installed 7-Zip.",
          "execute": _tool_extract_archive, "permission": "write",
          "parameters": _PARAM_SCHEMAS["extract_archive"]},
         {"name": "pack_archive", "display_name": "打包目录",
-         "description": "①将目录打包为zip/7z归档。②参数: src_dir, archive_path, fmt=zip(默认)/7z。③返回{archive_path}。④规则: 不产rar。",
+         "description": "①Pack a directory as a zip or 7z archive. ②Arguments: src_dir, archive_path, fmt=zip (default) or 7z. ③Returns {archive_path}. ④Rule: rar output is not supported.",
          "execute": _tool_pack_archive, "permission": "write",
          "parameters": _PARAM_SCHEMAS["pack_archive"]},
         {"name": "diff_directories", "display_name": "目录差异对比",
-         "description": "①对比新旧目录清单。②参数: old_dir, new_dir, skip_hash_exts(可选)。③返回{added,removed,changed,unchanged}。④规则: 按相对路径对齐+内容哈希。",
+         "description": "①Compare old and new directory manifests. ②Arguments: old_dir, new_dir, and optional skip_hash_exts. ③Returns {added,removed,changed,unchanged}. ④Rule: aligns relative paths and compares content hashes.",
          "execute": _tool_diff_directories, "permission": "read",
          "parameters": _PARAM_SCHEMAS["diff_directories"]},
         {"name": "filter_files", "display_name": "资源过滤",
-         "description": "①按扩展名规则分类文件为保留/剔除。②参数: files(相对路径列表), rules_json(可选规则文件)。③返回{kept,stripped}。④规则: 目录级规则优先于全局。",
+         "description": "①Classify files as kept or stripped using extension rules. ②Arguments: files (relative paths) and optional rules_json. ③Returns {kept,stripped}. ④Rule: directory-level rules take precedence over global rules.",
          "execute": _tool_filter_files, "permission": "read",
          "parameters": _PARAM_SCHEMAS["filter_files"]},
     ])

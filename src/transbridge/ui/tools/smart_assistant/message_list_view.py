@@ -97,12 +97,17 @@ class MessageListView:
             role = message.get("role", "user")
             content = message.get("content", "")
             if role == "assistant":
-                self.add_bubble(MessageBubble(content, "assistant", theme=self._theme))
+                if content:
+                    self.add_bubble(MessageBubble(content, "assistant", theme=self._theme))
             elif role == "user":
                 if content.startswith("【工具执行结果") or content.startswith("【计划执行完成】"):
                     self.add_system_message(content)
                 else:
                     self.add_bubble(MessageBubble(content, "user", theme=self._theme))
+            elif role == "tool":
+                summary = message.get("display_summary", "")
+                if summary:
+                    self.add_system_message(summary)
 
     def remove(self, widget: QWidget) -> None:
         if self._closed:

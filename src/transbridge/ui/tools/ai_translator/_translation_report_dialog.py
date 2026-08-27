@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import os
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -17,6 +18,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -49,6 +51,7 @@ class _TranslationReportDialog(QDialog):
         *,
         report_path: str | None = None,
         report_pending: bool = False,
+        save_translation: Callable[..., None] | None = None,
         parent=None,
         theme_view: ThemeView | None = None,
     ):
@@ -57,6 +60,9 @@ class _TranslationReportDialog(QDialog):
         self._report_path = report_path
         self._report_paths = (report_path,) if report_path else ()
         self._report_pending = report_pending
+        self._save_translation = save_translation
+        self._translation_saved = False
+        self._translation_save_pending = False
         self._stat_labels: list[QLabel] = []
 
         source = snapshot.run_spec_summary.get("source") if snapshot is not None else None
@@ -101,15 +107,55 @@ class _TranslationReportDialog(QDialog):
         else:
             self._set_report_status("当前没有可打开的 Excel 报告。", "warning")
         bar.addWidget(self._report_status, 1)
+        self._btn_save = QPushButton("保存翻译")
+        self._btn_save.setVisible(self._save_translation is not None)
+        self._btn_save.clicked.connect(self._on_save_translation)
+        bar.addWidget(self._btn_save)
         self._btn_excel = QPushButton("打开 Excel")
         self._btn_excel.setEnabled(self._report_path is not None and os.path.exists(self._report_path))
         self._btn_excel.clicked.connect(self._on_open_excel)
         bar.addWidget(self._btn_excel)
         bar.addStretch()
-        btn_close = QPushButton("关闭")
-        btn_close.clicked.connect(self.accept)
-        bar.addWidget(btn_close)
+        self._btn_close = QPushButton("关闭")
+        self._btn_close.clicked.connect(self.accept)
+        bar.addWidget(self._btn_close)
         parent_layout.addLayout(bar)
+
+    def _on_save_translation(self) -> None:
+        if self._save_translation is None or self._translation_saved:
+            return
+        self._translation_save_pending = True
+        self._btn_save.setEnabled(False)
+        self._btn_save.setText("正在保存…")
+        self._btn_close.setEnabled(False)
+
+        def succeeded(_result: object) -> None:
+            self._translation_save_pending = False
+            self._translation_saved = True
+            self._btn_save.setText("已保存")
+            self._btn_save.setToolTip("翻译已保存，并已创建完成后的版本快照。")
+            self._btn_close.setEnabled(True)
+            QMessageBox.information(self, "保存翻译", "翻译已保存，并已创建完成后的版本快照。")
+
+        def failed(message: str) -> None:
+            self._translation_save_pending = False
+            self._btn_save.setEnabled(True)
+            self._btn_save.setText("保存翻译")
+            self._btn_close.setEnabled(True)
+            QMessageBox.warning(self, "保存翻译失败", message)
+
+        try:
+            self._save_translation(on_success=succeeded, on_error=failed)
+        except Exception as exc:  # callback validation failures stay visible and retryable
+            failed(str(exc))
+
+    def accept(self) -> None:
+        if not self._translation_save_pending:
+            super().accept()
+
+    def reject(self) -> None:
+        if not self._translation_save_pending:
+            super().reject()
 
     def set_report_render_result(self, artifacts: TranslationReportArtifacts) -> None:
         """Expose background renderer paths and diagnostics without losing partial output."""

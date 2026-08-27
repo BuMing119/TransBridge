@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import CancelledError
 import threading
 
 from PyQt6.QtCore import QCoreApplication, QObject, Qt, QThread, pyqtSignal
@@ -184,6 +185,7 @@ class PlanExecutionBinding:
         self._system_message = system_message
         self._engine = None
         self._closed = False
+        self._generation = 0
 
     @property
     def engine(self):
@@ -200,21 +202,40 @@ class PlanExecutionBinding:
         self._dispose_engine()
         engine = ExecutionEngine(ToolRegistry, self._context, middlewares=self._middlewares())
         self._engine = engine
-        engine.on_all_finished(lambda results: confirmation_view.dispatch(lambda: self._on_all_finished(results)))
+        generation = self._generation
+        engine.on_all_finished(
+            lambda results, e=engine, g=generation: confirmation_view.dispatch(
+                lambda: self._on_all_finished(e, g, results)
+            )
+        )
         engine.on_step_requires_confirmation(confirmation_view.request_engine_decision)
         self._observability.start_conversation(f"conv_{id(steps)}")
         engine.on_step_started(self._observability.on_step_started)
         engine.on_step_finished(self._observability.on_step_finished)
         engine.on_step_retrying(self._observability.on_step_retrying)
-        engine._executor._executor.submit(engine.execute, steps)
+        future = engine._executor._executor.submit(engine.execute, steps)
+
+        def on_done(completed, e=engine, g=generation) -> None:
+            try:
+                error = completed.exception()
+            except CancelledError:
+                return
+            if error is not None:
+                confirmation_view.dispatch(lambda: self._on_execution_failed(e, g, error))
+
+        future.add_done_callback(on_done)
 
     def cancel(self) -> None:
         if self._closed:
             return
-        if self._engine is not None:
-            self._engine.cancel()
+        self._dispose_engine()
         self._hide_thinking()
         self._system_message("计划已取消")
+        controller = self._controller()
+        if getattr(getattr(controller, "state", None), "value", "") == "awaiting":
+            controller.handle_user_cancelled()
+        else:
+            controller.handle_abort()
 
     def abort(self) -> None:
         self._dispose_engine()
@@ -225,8 +246,8 @@ class PlanExecutionBinding:
         self._closed = True
         self._dispose_engine()
 
-    def _on_all_finished(self, results: list) -> None:
-        if self._closed:
+    def _on_all_finished(self, engine, generation: int, results: list) -> None:
+        if self._closed or self._engine is not engine or self._generation != generation:
             return
         lines = []
         for result in results:
@@ -234,11 +255,40 @@ class PlanExecutionBinding:
             lines.append(f"{icon} 步骤 {result.step_id} ({result.tool}): {result.message}")
         summary = "\n".join(lines)
         self._system_message(f"【计划执行完成】\n{summary}")
-        self._conversation.add_plan_result(summary)
+        structured_results = [
+            {
+                "step_id": result.step_id,
+                "tool": result.tool,
+                "success": result.success,
+                "message": result.message,
+            }
+            for result in results
+        ]
+        self._conversation.add_plan_result(
+            summary,
+            success=all(result.success for result in results),
+            results=structured_results,
+        )
         self._observability.end_conversation()
+        self._dispose_engine()
         self._controller().handle_execution_complete(results)
 
+    def _on_execution_failed(self, engine, generation: int, error: Exception) -> None:
+        if self._closed or self._engine is not engine or self._generation != generation:
+            return
+        summary = f"计划执行失败: {type(error).__name__}: {str(error)[:300]}"
+        self._system_message(summary)
+        self._conversation.add_plan_result(summary, success=False)
+        self._observability.end_conversation()
+        self._dispose_engine()
+        controller = self._controller()
+        if getattr(getattr(controller, "state", None), "value", "") == "executing":
+            controller.handle_execution_complete([])
+        else:
+            controller.handle_abort()
+
     def _dispose_engine(self) -> None:
+        self._generation += 1
         engine = self._engine
         self._engine = None
         if engine is not None:
@@ -269,25 +319,24 @@ class ConfirmationActions:
         self._hide_thinking()
         controller = self._controller()
         controller.handle_user_confirmed([step], "react")
-        controller.handle_execution_complete([])
+        if getattr(getattr(controller, "state", None), "value", "") == "executing":
+            controller.handle_execution_complete([])
 
     def ignore_tool(self, step: dict) -> None:
         tool_name = step.get("tool", "?")
         self._system_message(f"已忽略: {tool_name}")
-        self._conversation.add_observation(tool_name, "用户选择不执行此操作。")
         self._controller().handle_user_cancelled()
 
     def execute_batch(self, steps: list) -> None:
         controller = self._controller()
         controller.handle_user_confirmed(steps, "react")
         self._hide_thinking()
-        controller.handle_execution_complete([])
+        if getattr(getattr(controller, "state", None), "value", "") == "executing":
+            controller.handle_execution_complete([])
 
     def ignore_batch(self, steps: list) -> None:
         tool_names = [step.get("tool", "?") for step in steps]
         self._system_message("已跳过: " + ", ".join(tool_names))
-        for name in tool_names:
-            self._conversation.add_observation(name, "用户选择跳过此批量操作。")
         self._controller().handle_user_cancelled()
 
 

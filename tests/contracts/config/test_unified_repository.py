@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from transbridge.config.llm import LLMConfig
+from transbridge.config.llm import EmbeddingConfig, LLMConfig
 from transbridge.config.paratranz import ParatranzConfig
 from transbridge.config.paratranz_credentials import (
     CredentialRef,
@@ -74,6 +74,33 @@ def test_term_csv_source_persists_and_old_default_priority_migrates(tmp_path: Pa
 
     assert reloaded.local_csv_path == "terms.csv"
     assert reloaded.term_priority == ["dynamic", "paratranz", "json", "csv", "excel"]
+
+
+@pytest.mark.parametrize(
+    ("mode", "provider"),
+    (("disabled", "openai"), ("local", "local"), ("api", "openai")),
+)
+def test_embedding_mode_and_provider_round_trip_atomically(tmp_path: Path, mode: str, provider: str) -> None:
+    store = MemoryStore()
+    repository = _repository(tmp_path, store)
+    config = LLMConfig(
+        model="llm-model",
+        embedding=EmbeddingConfig(
+            mode=mode,
+            provider=provider,
+            model="embedding-model",
+            base_url="https://embedding.test/v1",
+            local_model_id="multilingual-minilm-l12-v2",
+        ),
+    )
+
+    config.save_to_file(repository=repository, credential_store=store)
+    reloaded = LLMConfig.load_from_file(repository=repository, credential_store=store, environment={})
+
+    assert reloaded.embedding.mode == mode
+    assert reloaded.embedding.provider == provider
+    assert reloaded.embedding.model == "embedding-model"
+    assert reloaded.embedding.local_model_id == "multilingual-minilm-l12-v2"
 
 
 def test_endpoint_identity_is_atomic_and_revisioned(tmp_path: Path) -> None:

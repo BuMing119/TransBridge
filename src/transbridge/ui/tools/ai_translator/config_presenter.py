@@ -189,9 +189,9 @@ class ConfigPresenter:
     def test_connection(self) -> ConnectionTestResult:
         config = self.build()
         if not config.api_key:
-            return ConnectionTestResult("warning", "测试连接", "请先填写 API Key。")
+            return ConnectionTestResult("warning", "测试 LLM 连接", "请先填写 LLM API Key。")
         if not config.model:
-            return ConnectionTestResult("warning", "测试连接", "请先填写模型名。")
+            return ConnectionTestResult("warning", "测试 LLM 连接", "请先填写 LLM 模型名。")
         try:
             from transbridge.infra.llm_client import create_llm_client
 
@@ -199,6 +199,46 @@ class ConfigPresenter:
                 [{"role": "user", "content": "Say 'OK' in one word."}],
                 max_tokens=10,
             )
-            return ConnectionTestResult("info", "测试连接", f"连接成功！模型回复：{reply}")
+            return ConnectionTestResult("info", "LLM 连接成功", f"模型回复：{reply}")
         except Exception as exc:
-            return ConnectionTestResult("critical", "测试连接失败", str(exc))
+            return ConnectionTestResult("critical", "LLM 连接失败", str(exc))
+
+    def test_embedding_connection(self, config: LLMConfig | None = None) -> ConnectionTestResult:
+        """Run an explicit, user-triggered Embedding capability check."""
+
+        config = self.build() if config is None else config
+        embedding = config.embedding
+        mode = str(getattr(embedding, "mode", "disabled") or "disabled").casefold()
+        if mode == "disabled":
+            return ConnectionTestResult("info", "语义检索已关闭", "当前仅使用精确和字面术语匹配。")
+        if mode == "api":
+            provider = str(getattr(embedding, "provider", "")).strip().casefold()
+            if provider not in {"openai", "custom", "api"}:
+                return ConnectionTestResult("warning", "检查语义检索", "请选择受支持的 Embedding API 服务商。")
+            if not str(getattr(embedding, "api_key", "")).strip():
+                return ConnectionTestResult("warning", "检查语义检索", "请填写独立的 Embedding API Key。")
+            if not str(getattr(embedding, "model", "")).strip():
+                return ConnectionTestResult("warning", "检查语义检索", "请填写 Embedding API 模型名。")
+            if not str(getattr(embedding, "base_url", "")).strip():
+                return ConnectionTestResult("warning", "检查语义检索", "请填写独立的 Embedding Base URL。")
+        elif mode != "local":
+            return ConnectionTestResult("warning", "检查语义检索", f"不支持的 Embedding 模式：{mode}")
+
+        try:
+            from transbridge.infra.embedding_client import create_embedding_client
+
+            client = create_embedding_client(config)
+            if not client.available:
+                return ConnectionTestResult(
+                    "critical",
+                    "语义检索不可用",
+                    client.error_message or "Embedding 客户端初始化失败。",
+                )
+            vectors = client.encode(["TransBridge semantic retrieval check"])
+            if getattr(vectors, "shape", (0, 0))[0] != 1:
+                raise RuntimeError("Embedding 服务未返回预期的一条向量")
+            dimension = int(vectors.shape[1])
+            backend = "本地模型" if mode == "local" else "API 服务"
+            return ConnectionTestResult("info", "语义检索可用", f"{backend}编码成功，向量维度 {dimension}。")
+        except Exception as exc:
+            return ConnectionTestResult("critical", "语义检索检查失败", str(exc))

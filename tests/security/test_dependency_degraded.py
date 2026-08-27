@@ -78,7 +78,7 @@ def test_find_spec_error_is_degraded_not_crash(monkeypatch: pytest.MonkeyPatch) 
 
 def test_baseline_covers_archive_and_retrieval_backends() -> None:
     import_names = {cap.import_name for cap in DEPENDENCY_BASELINE}
-    assert {"rank_bm25", "py7zr", "rarfile"} <= import_names
+    assert {"rank_bm25", "faiss", "sentence_transformers", "py7zr", "rarfile"} <= import_names
 
 
 def test_never_installed_module_naturally_degrades() -> None:

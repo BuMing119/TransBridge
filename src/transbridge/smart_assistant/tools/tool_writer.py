@@ -141,9 +141,9 @@ def _tool_write_back(args: dict, ctx, collection) -> ToolResult:
 _PARAM_SCHEMAS = {
     "write_back": {
         "target": {"type": "str", "required": True,
-                   "description": "写回目标: esp/eet/xt/strings。推断: 有ESP→esp, 有EET→eet, 有XT→xt"},
+                   "description": "Write-back target: esp/eet/xt/strings. Inference: ESP→esp, EET→eet, XT→xt"},
         "path": {"type": "str", "required": False,
-                 "description": "输出路径（不传则使用当前已解析的源路径）"},
+                 "description": "Output path; defaults to the currently parsed source path"},
     },
 }
 
@@ -153,7 +153,7 @@ def _register_writer_tools():
     from ..tool_registry import ToolRegistry
     ToolRegistry.register_tools("writer", [
         {"name": "write_back", "display_name": "写回译文",
-         "description": "①将译文写回源文件。②参数: target(必填, esp/eet/xt/strings), path(可选, 不传则用ctx已解析路径), output_dir(仅target=strings时可用)。③返回: esp→{written_count,path}, strings→{written_count,strings_files}, eet/xt→{path}。规则: 需用户确认(admin权限), 长运行操作, esp/strings目标需先parse_esp, eet/xt目标需先parse_eet/parse_xt, path仅允许RuntimeContext授权根内规范化路径, target推断可通过get_app_state查看esp_file/eet_file/xt_file",
+         "description": "①Write translations back to a source file. ②Arguments: target (required: esp/eet/xt/strings), optional path (defaults to the parsed source path), and output_dir for strings only. ③Returns esp→{written_count,path}, strings→{written_count,strings_files}, eet/xt→{path}. Rules: requires user confirmation and admin permission; long-running; esp/strings require parse_esp first; eet/xt require parse_eet/parse_xt first; path must be normalized within a RuntimeContext authorized root; inspect esp_file/eet_file/xt_file with get_app_state for target inference.",
          "execute": _tool_write_back, "permission": "admin", "require_confirmation": True,
          "is_long_running": True, "parameters": _PARAM_SCHEMAS.get("write_back", {})},
     ])

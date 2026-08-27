@@ -501,7 +501,16 @@ class TranslationController:
     def set_translation_config(self, args: dict, ctx) -> ToolResult:
         """Update one configuration snapshot; endpoint identity is atomic."""
 
+        from transbridge.config.language_profiles import LanguageProfileError, load_language_profile
+
         from ._common import load_llm_config
+
+        if "target_lang" in args:
+            try:
+                load_language_profile(args["target_lang"])
+            except LanguageProfileError as exc:
+                return ToolResult.fail(str(exc))
+
         llm = load_llm_config()
 
         changed = []
@@ -673,51 +682,51 @@ def _tool_get_scope_preview(args: dict, ctx) -> ToolResult:
 
 _PARAM_SCHEMAS = {
     "start_translation": {
-        "mode": {"type": "str", "required": False, "description": "翻译模式: translate/polish/mixed，默认 translate"},
-        "entry_ids": {"type": "list", "required": False, "description": "目标条目ID列表，默认全部未翻译"},
+        "mode": {"type": "str", "required": False, "description": "Translation mode: translate/polish/mixed; default translate"},
+        "entry_ids": {"type": "list", "required": False, "description": "Target entry IDs; defaults to all untranslated entries"},
     },
     "start_polish": {
-        "entry_ids": {"type": "list", "required": False, "description": "要润色的条目ID列表（与 scope 至少提供一个）"},
-        "scope": {"type": "str", "required": False, "description": "润色范围: all(全部有译文)/passed(已通过检查,stage=1/3/4/5/6)/has_issues(待审核,stage=2)，默认 all"},
-        "intensity": {"type": "str", "required": False, "description": "润色强度: light/medium/heavy，默认 medium"},
+        "entry_ids": {"type": "list", "required": False, "description": "Entry IDs to polish; provide this or scope"},
+        "scope": {"type": "str", "required": False, "description": "Polish scope: all (all translated), passed (stage 1/3/4/5/6), or has_issues (stage 2); default all"},
+        "intensity": {"type": "str", "required": False, "description": "Polish intensity: light/medium/heavy; default medium"},
         "strategy": {
             "type": "str",
             "required": False,
-            "description": "校对策略: proofread(默认)/strict(兼容多阶段)",
+            "description": "Proofreading strategy: proofread (default) or strict (multi-stage compatible)",
         },
     },
     "stop_task": {
-        "task_id": {"type": "str", "required": False, "description": "要操作的任务ID（不传则操作所有运行中任务）"},
-        "action": {"type": "str", "required": False, "description": "操作类型: stop(停止，默认)/pause(暂停)/resume(恢复)"},
+        "task_id": {"type": "str", "required": False, "description": "Task ID; omitted targets all active tasks"},
+        "action": {"type": "str", "required": False, "description": "Action: stop (default), pause, or resume"},
     },
     "get_task_status": {
-        "task_id": {"type": "str", "required": False, "description": "任务ID（不传则返回所有任务摘要）"},
+        "task_id": {"type": "str", "required": False, "description": "Task ID; omitted returns summaries for all tasks"},
     },
     # Story 09: 翻译配置
     "get_translation_config": {},
     "set_translation_config": {
-        "provider": {"type": "str", "required": False, "description": "须与 base_url/model 同时提供"},
-        "base_url": {"type": "str", "required": False, "description": "须与 provider/model 同时提供"},
-        "model": {"type": "str", "required": False, "description": "模型名"},
-        "temperature": {"type": "float", "required": False, "description": "生成温度"},
-        "max_tokens": {"type": "int", "required": False, "description": "最大输出 token 数"},
-        "target_lang": {"type": "str", "required": False, "description": "目标语言代码"},
-        "game_profile": {"type": "str", "required": False, "description": "游戏 profile"},
+        "provider": {"type": "str", "required": False, "description": "Must be provided together with base_url and model"},
+        "base_url": {"type": "str", "required": False, "description": "Must be provided together with provider and model"},
+        "model": {"type": "str", "required": False, "description": "Model name"},
+        "temperature": {"type": "float", "required": False, "description": "Generation temperature"},
+        "max_tokens": {"type": "int", "required": False, "description": "Maximum output tokens"},
+        "target_lang": {"type": "str", "required": False, "description": "Target language code"},
+        "game_profile": {"type": "str", "required": False, "description": "Game profile"},
     },
     "set_scope": {
-        "stages": {"type": "list", "required": False, "description": "目标 stage 列表"},
-        "labels": {"type": "list", "required": False, "description": "目标标签列表"},
-        "categories": {"type": "list", "required": False, "description": "目标分类列表"},
-        "action": {"type": "str", "required": False, "description": "作用域动作: include/exclude/only，默认 include"},
+        "stages": {"type": "list", "required": False, "description": "Target stages"},
+        "labels": {"type": "list", "required": False, "description": "Target labels"},
+        "categories": {"type": "list", "required": False, "description": "Target categories"},
+        "action": {"type": "str", "required": False, "description": "Scope action: include/exclude/only; default include"},
     },
     "get_scope_preview": {},
     # Story 24: 术语配置
     "set_term_config": {
         "term_sources": {"type": "list", "required": False,
-            "description": "术语来源优先级列表。可选: dynamic/paratranz/json/csv/excel"},
-        "json_path": {"type": "str", "required": False, "description": "本地 JSON 术语库文件路径"},
-        "csv_path": {"type": "str", "required": False, "description": "本地 CSV 术语库文件路径"},
-        "excel_path": {"type": "str", "required": False, "description": "本地 Excel 术语库文件路径"},
+            "description": "Terminology source priority list: dynamic/paratranz/json/csv/excel"},
+        "json_path": {"type": "str", "required": False, "description": "Local JSON glossary path"},
+        "csv_path": {"type": "str", "required": False, "description": "Local CSV glossary path"},
+        "excel_path": {"type": "str", "required": False, "description": "Local Excel glossary path"},
     },
 }
 
@@ -729,39 +738,39 @@ _PARAM_SCHEMAS = {
 def _register_translator_tools():
     from ..tool_registry import ToolRegistry
     ToolRegistry.register_tools("translator", [
-        {"name": "start_translation", "display_name": "启动翻译", "description": "①启动AI翻译后台任务。②参数: mode=translate(默认)/polish/mixed(mixed同translate), entry_ids=key列表(可选,不传则用set_scope作用域,默认stage=0未翻译)。③返回: {task_id, mode}。④规则: 前置需API key已配,先调get_translation_config确认配置;允许并行多任务。",
+        {"name": "start_translation", "display_name": "启动翻译", "description": "①Start an AI translation background task. ②Arguments: mode=translate (default)/polish/mixed, optional entry_ids; without entry_ids use set_scope, defaulting to stage 0. ③Returns {task_id, mode}. ④Rules: configure the API key and inspect get_translation_config first; parallel tasks are allowed.",
          "execute": _tool_start_translation, "permission": "write", "is_long_running": True,
          "require_confirmation": True, "parameters": _PARAM_SCHEMAS.get("start_translation", {})},
-        {"name": "start_polish", "display_name": "启动校对", "description": "①启动AI校对后台任务。②参数: entry_ids或scope至少传一(同时传entry_ids优先), scope=all(全部有译文)/passed(stage=1/3/4/5/6)/has_issues(2), intensity=light/medium/heavy(默认medium), strategy=proofread(默认)/strict(兼容多阶段)。③返回: {task_id, strategy, intensity, scope, entry_count}。④规则: 前置需API key已配,先调get_translation_config确认。",
+        {"name": "start_polish", "display_name": "启动校对", "description": "①Start an AI proofreading background task. ②Provide entry_ids or scope; entry_ids wins. scope=all/passed(stage 1/3/4/5/6)/has_issues(stage 2), intensity=light/medium/heavy, strategy=proofread/strict. ③Returns {task_id, strategy, intensity, scope, entry_count}. ④Rule: configure the API key and inspect get_translation_config first.",
          "execute": _tool_start_polish, "permission": "write", "is_long_running": True,
          "require_confirmation": True, "parameters": _PARAM_SCHEMAS.get("start_polish", {})},
-        {"name": "stop_task", "display_name": "停止/暂停/恢复", "description": "①控制后台任务(停止/暂停/恢复)。②参数: task_id(可选,不传则操作所有活跃任务), action=stop(默认,不可恢复)/pause(等当前批次完成)/resume。③单个: {task_id, action},全部: {affected_task_ids, action}。④规则: stop不可逆;活跃=仅running+paused;需用户确认。",
+        {"name": "stop_task", "display_name": "停止/暂停/恢复", "description": "①Stop, pause, or resume background tasks. ②Arguments: optional task_id (omitted targets all active tasks), action=stop (default and irreversible)/pause/resume. ③Returns {task_id, action} for one or {affected_task_ids, action} for all. ④Rules: active means running or paused; user confirmation is required.",
          "execute": _tool_stop_task, "permission": "write", "require_confirmation": True,
          "parameters": _PARAM_SCHEMAS.get("stop_task", {})},
-        {"name": "get_task_status", "display_name": "查询任务状态", "description": "①查询任务进度。②参数: task_id(可选)。③单个返回{task_id, status, progress{current,total,message}, created_at, metadata},全部返回{active_count, total_count, tasks[{task_id, status, metadata}]}(不含progress/created_at)。④status: running/paused/completed/cancelled/failed。",
+        {"name": "get_task_status", "display_name": "查询任务状态", "description": "①Query task progress. ②Optional task_id. ③One task returns {task_id,status,progress{current,total,message},created_at,metadata}; all tasks return {active_count,total_count,tasks[{task_id,status,metadata}]}. ④status is running/paused/completed/cancelled/failed.",
          "execute": _tool_get_task_status, "permission": "read",
          "parameters": _PARAM_SCHEMAS.get("get_task_status", {})},
         # Story 09: 翻译配置
-        {"name": "get_translation_config", "display_name": "翻译配置", "description": "①返回统一LLM配置快照(只读)。②无参数。③返回 provider/base_url_host/model/config_revision 等非秘密字段。④规则: 不返回密钥明文。",  # noqa: E501
+        {"name": "get_translation_config", "display_name": "翻译配置", "description": "①Return a read-only unified LLM configuration snapshot. ②No arguments. ③Returns non-secret fields such as provider/base_url_host/model/config_revision. ④Rule: never returns plaintext credentials.",  # noqa: E501
          "execute": _tool_get_translation_config, "permission": "read",
          "parameters": _PARAM_SCHEMAS.get("get_translation_config", {})},
-        {"name": "set_translation_config", "display_name": "设置翻译配置", "description": "①更新统一LLM配置。②provider/base_url/model 必须在一次调用中完整提供；另可设置 temperature/max_tokens/target_lang/game_profile。③返回 changed_fields/config_revision。",  # noqa: E501
+        {"name": "set_translation_config", "display_name": "设置翻译配置", "description": "①Update the unified LLM configuration. ②provider/base_url/model must be supplied together; temperature/max_tokens/target_lang/game_profile are optional. ③Returns changed_fields/config_revision.",  # noqa: E501
          "execute": _tool_set_translation_config, "permission": "write",
          "parameters": _PARAM_SCHEMAS.get("set_translation_config", {})},
-        {"name": "set_scope", "display_name": "设置作用域", "description": "①设置翻译作用域(start_translation不传entry_ids时的默认范围)。②参数: stages[阶段号], labels[标签名], categories[分类名], action=include/exclude/only。③返回作用域快照。④规则: 维度间AND维度内OR;labels/categories需先用list_labels/get_statistics确认存在;include/only当前行为相同。",
+        {"name": "set_scope", "display_name": "设置作用域", "description": "①Set the default translation scope used by start_translation without entry_ids. ②Arguments: stages, labels, categories, action=include/exclude/only. ③Returns a scope snapshot. ④Rules: AND across dimensions, OR within one; verify labels/categories with list_labels/get_statistics; include and only currently behave the same.",
          "execute": _tool_set_scope, "permission": "write",
          "parameters": _PARAM_SCHEMAS.get("set_scope", {})},
-        {"name": "get_scope_preview", "display_name": "作用域预览", "description": "①预览当前作用域匹配条目统计。②无参数。③返回: {matched, total, scope{stages,labels,categories,action}}。④规则: 仅返回计数非条目列表;默认作用域=全部未翻译(stage=0);先调set_scope再调本工具确认范围。",
+        {"name": "get_scope_preview", "display_name": "作用域预览", "description": "①Preview counts for the current scope. ②No arguments. ③Returns {matched,total,scope{stages,labels,categories,action}}. ④Rules: returns counts, not entries; default scope is untranslated stage 0; call after set_scope to confirm the range.",
          "execute": _tool_get_scope_preview, "permission": "read",
          "parameters": _PARAM_SCHEMAS.get("get_scope_preview", {})},
         {
             "name": "set_term_config",
             "display_name": "术语配置",
             "description": (
-                "①设置术语来源优先级与本地路径。②参数: term_sources优先级列表"
-                "(dynamic/paratranz/json/csv/excel,顺序决定优先级), json_path, csv_path, excel_path。"
-                "dynamic=AI翻译中自动提取,始终可用。③返回: {changed}。④规则: 先调get_translation_config"
-                "查看当前配置;空列表禁用所有来源;无效来源名被拒绝。"
+                "①Set terminology-source priority and local paths. ②Arguments: ordered term_sources "
+                "(dynamic/paratranz/json/csv/excel), json_path, csv_path, excel_path. "
+                "dynamic is always available for extraction during AI translation. ③Returns {changed}. ④Rules: inspect "
+                "get_translation_config first; an empty list disables all sources; invalid source names are rejected."
             ),
             "execute": _tool_set_term_config,
             "permission": "write",

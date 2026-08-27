@@ -7,6 +7,7 @@ The window orchestrator consumes intent-sized values and presentation updates.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 from .view_controls import TranslatorViewOwner
@@ -93,10 +94,23 @@ class TranslatorViewPort:
         )
 
     def update_embedding_controls(self) -> None:
-        is_local = self._view.controls.embed_provider_combo.currentIndex() == 0
+        mode = str(self._view.controls.embed_provider_combo.currentData() or "disabled")
+        is_local = mode == "local"
+        is_api = mode == "api"
         self._view.controls.embed_local_model_label.setVisible(is_local)
-        self._view.controls.embed_local_model_edit.setVisible(is_local)
+        self._view.controls.embed_local_status_label.setVisible(is_local)
+        self._view.controls.embed_manage_btn.setVisible(is_local)
+        raw_model_path = self._view.controls.embed_local_model_edit.text().strip()
+        model_path = Path(raw_model_path) if raw_model_path else None
+        installed = model_path is not None and model_path.is_dir() and (model_path / "modules.json").is_file()
+        self._view.controls.embed_local_status_label.setText(
+            f"{model_path.name} · 已安装并选中"
+            if installed and model_path is not None
+            else "尚未选择可用的本地向量模型"
+        )
         for widget in (
+            self._view.controls.embed_api_provider_label,
+            self._view.controls.embed_api_provider_combo,
             self._view.controls.embed_model_label,
             self._view.controls.embed_model_edit,
             self._view.controls.embed_apikey_label,
@@ -104,7 +118,10 @@ class TranslatorViewPort:
             self._view.controls.embed_baseurl_label,
             self._view.controls.embed_baseurl_edit,
         ):
-            widget.setVisible(not is_local)
+            widget.setVisible(is_api)
+        test_button = self._view.controls.embed_test_btn
+        test_button.setVisible(is_api)
+        test_button.setEnabled(is_api and not bool(test_button.property("embeddingConnectionBusy")))
 
     def update_post_process_controls(self) -> None:
         enabled = self._view.controls.pp_enable_check.isChecked()

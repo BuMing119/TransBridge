@@ -540,6 +540,27 @@ class AppContext(QObject):
             self._runtime_context,
         )
 
+    @property
+    def active_version_identity(self) -> tuple[str, str] | None:
+        """Return the stable Project/Variant identity used by long-running UI actions."""
+
+        if self._project_projection is not None:
+            if self._active_project_id is None or self._active_variant_id is None:
+                return None
+            return self._active_project_id, self._active_variant_id
+        if self._active_project is None or self._active_variant is None:
+            return None
+        project_key = str(getattr(self._active_project, "config_path", None) or self._active_project.name)
+        return project_key, self._active_variant
+
+    @property
+    def project_commands(self):
+        return self._project_commands
+
+    @property
+    def runtime_context(self):
+        return self._runtime_context
+
     def _on_project_projection(self, snapshot: ProjectionSnapshot | None) -> None:
         if QThread.currentThread() != self.thread():
             self.safe_mutate(lambda: self._apply_project_projection(snapshot))

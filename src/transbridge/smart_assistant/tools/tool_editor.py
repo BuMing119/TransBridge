@@ -13,39 +13,39 @@ _VALID_STAGES = {0, 1, 2, 3, 5, 9, -1}
 # M2: _PARAM_SCHEMAS 必须在函数定义之前（供 @validate_params 装饰器使用）
 _PARAM_SCHEMAS = {
     "get_visible_entries": {
-        "limit": {"type": "int", "required": False, "description": "返回条数上限，默认 50，最大 200"},
-        "offset": {"type": "int", "required": False, "description": "偏移量，默认 0"},
+        "limit": {"type": "int", "required": False, "description": "Maximum number of entries to return; default 50, maximum 200"},
+        "offset": {"type": "int", "required": False, "description": "Pagination offset; default 0"},
     },
     "select_entries": {
-        "entry_ids": {"type": "list", "required": True, "description": "条目 ID 列表"},
-        "action": {"type": "str", "required": False, "description": "操作: select/deselect/clear，默认 select"},
+        "entry_ids": {"type": "list", "required": True, "description": "Entry ID list"},
+        "action": {"type": "str", "required": False, "description": "Action: select/deselect/clear; default select"},
     },
     "edit_translation": {
-        "entry_id": {"type": "str", "required": True, "description": "条目 ID"},
-        "new_translation": {"type": "str", "required": True, "description": "新译文"},
-        "new_stage": {"type": "int", "required": False, "description": "新翻译阶段（可选，不传则保持原 stage）"},
+        "entry_id": {"type": "str", "required": True, "description": "Entry ID"},
+        "new_translation": {"type": "str", "required": True, "description": "New translation text"},
+        "new_stage": {"type": "int", "required": False, "description": "Optional new translation stage; omitted means unchanged"},
     },
     "set_stage": {
-        "entry_ids": {"type": "list", "required": True, "description": "条目 ID 列表"},
-        "stage": {"type": "int", "required": True, "description": "目标 stage: 0=未翻译 1=已翻译 2=有疑问 3=已检查 5=已审核 9=已锁定 -1=已隐藏"},
+        "entry_ids": {"type": "list", "required": True, "description": "Entry ID list"},
+        "stage": {"type": "int", "required": True, "description": "Target stage: 0=untranslated, 1=translated, 2=question, 3=checked, 5=reviewed, 9=locked, -1=hidden"},
     },
     # Story 08: 标签管理
     "list_labels": {},
     # Story 20: manage_entry_labels 合并 4→1
     "manage_entry_labels": {
-        "action": {"type": "str", "required": True, "description": "操作: create/assign/unassign/batch_assign"},
-        "name": {"type": "str", "required": False, "description": "标签名（create/assign/unassign 必填）"},
-        "color": {"type": "str", "required": False, "description": "颜色 hex（仅 create，默认 #409EFF）"},
-        "entry_ids": {"type": "list", "required": False, "description": "条目 ID 列表（assign/unassign 必填）"},
+        "action": {"type": "str", "required": True, "description": "Action: create/assign/unassign/batch_assign"},
+        "name": {"type": "str", "required": False, "description": "Label name; required for create/assign/unassign"},
+        "color": {"type": "str", "required": False, "description": "Hex color for create only; default #409EFF"},
+        "entry_ids": {"type": "list", "required": False, "description": "Entry ID list; required for assign/unassign"},
     },
     # Story 17: set_filters 合并 5→1
     "set_filters": {
-        "stages": {"type": "list", "required": False, "description": "stage 值列表，None=保持，[]=清除"},
-        "categories": {"type": "list", "required": False, "description": "分类名列表，None=保持，[]=清除"},
-        "labels": {"type": "list", "required": False, "description": "标签名列表，None=保持，[]=清除"},
-        "search_query": {"type": "str", "required": False, "description": "搜索关键词，None=保持，''=清除"},
-        "search_field": {"type": "str", "required": False, "description": "搜索字段: id/key/original/translation/context/all，默认 original"},
-        "clear": {"type": "bool", "required": False, "description": "是否先清除所有筛选再应用新值，默认 false"},
+        "stages": {"type": "list", "required": False, "description": "Stage values; None keeps the current value and [] clears it"},
+        "categories": {"type": "list", "required": False, "description": "Category names; None keeps the current value and [] clears it"},
+        "labels": {"type": "list", "required": False, "description": "Label names; None keeps the current value and [] clears it"},
+        "search_query": {"type": "str", "required": False, "description": "Search text; None keeps the current value and an empty string clears it"},
+        "search_field": {"type": "str", "required": False, "description": "Search field: id/key/original/translation/context/all; default original"},
+        "clear": {"type": "bool", "required": False, "description": "Clear all filters before applying new values; default false"},
     },
 }
 
@@ -426,21 +426,21 @@ def _tool_manage_entry_labels(args: dict, ctx, collection=None) -> ToolResult:
 def _register_editor_tools():
     from ..tool_registry import ToolRegistry
     ToolRegistry.register_tools("editor", [
-        {"name": "set_filters", "display_name": "设置筛选", "description": "①设置条目表格筛选条件，多维度自由组合，仅传需修改维度，未传维度保持不变。②参数: stages(可选,list,0/1/2/3/5/9/-1), categories(可选,list), labels(可选,list), search_query(可选,str), search_field(可选,id/key/original/translation/context/all), clear(可选,bool,默认false,先清空再应用)。None=保持当前值，[]=清除。③返回: 筛选状态快照{stage,category,label,search_query,search_field}，无变更时返回{unchanged:true}。规则: 修改前用get_current_filters预检当前筛选状态；后续get_visible_entries/get_statistics/batch_assign均受此筛选影响。示例: set_filters stages=[0] 只看未翻译；set_filters clear=true stages=[1] search_field=all 全新筛选",
+        {"name": "set_filters", "display_name": "设置筛选", "description": "①Set composable entry-table filters; omitted dimensions remain unchanged. ②Arguments: optional stages, categories, labels, search_query, search_field=id/key/original/translation/context/all, and clear=false. None keeps a value and [] clears it. ③Returns {stage,category,label,search_query,search_field}, or {unchanged:true}. Rules: inspect with get_current_filters first; these filters affect get_visible_entries, get_statistics, and batch_assign.",
          "execute": _tool_set_filters, "permission": "read", "parameters": _PARAM_SCHEMAS.get("set_filters", {})},
-        {"name": "get_visible_entries", "display_name": "获取可见条目", "description": "①获取当前筛选下可见条目列表(分页)。原文和译文均硬编码截断至200字符，无全文本检索通道。②参数: limit(可选,int,默认50,最大200), offset(可选,int,默认0)。③返回: {entries:[{key,id,original,translation,stage}], total_count, truncated}。规则: key字段为条目标识符，传给其他工具的entry_id/entry_ids参数；先用set_filters设筛选条件；truncated=true表示还有更多条目；统计信息用get_statistics，勿遍历全部分页",
+        {"name": "get_visible_entries", "display_name": "获取可见条目", "description": "①Return a paginated list of entries matching current filters; source and translation text are capped at 200 characters. ②Arguments: limit=50 (maximum 200), offset=0. ③Returns {entries:[{key,id,original,translation,stage}], total_count, truncated}. Rules: pass key values as entry_id/entry_ids; set filters first; use get_statistics instead of traversing every page for counts.",
          "execute": _tool_get_visible_entries, "permission": "read", "parameters": _PARAM_SCHEMAS.get("get_visible_entries", {})},
-        {"name": "select_entries", "display_name": "选择条目", "description": "①选中/取消选中条目，选择集合为独立临时存储，与标签系统隔离。②参数: action(可选,select/deselect/clear,默认select), entry_ids(select/deselect时必填,key值列表,clear时无需传)。③返回: {selected_count, selected_ids}。规则: 选择状态为临时不持久化；不影响标签(标签用manage_entry_labels)；典型流程: get_visible_entries取key→select_entries action=select→set_stage批量标记",
+        {"name": "select_entries", "display_name": "选择条目", "description": "①Select, deselect, or clear entries in temporary selection state, independent of labels. ②Arguments: action=select/deselect/clear and entry_ids for select/deselect. ③Returns {selected_count, selected_ids}. Rules: selection is not persisted and does not change labels; typical flow is get_visible_entries→select_entries→set_stage.",
          "execute": _tool_select_entries, "permission": "write", "parameters": _PARAM_SCHEMAS.get("select_entries", {})},
-        {"name": "edit_translation", "display_name": "编辑翻译", "description": "①修改单条条目的翻译文本，可同时调整翻译阶段。与set_stage区别: 本工具改译文+可选stage，单条；set_stage只改阶段，可批量。②参数: entry_id(必填,key值), new_translation(必填), new_stage(可选,0/1/2/3/5/9/-1,4/6/7/8为ParaTranz预留不可用)。不传则保持原stage。③返回: {entry_id, old_translation, new_translation, stage, stage_changed}(译文截断至100字)。错误: 条目不存在→fail；stage值非法→fail，提示合法值列表",
+        {"name": "edit_translation", "display_name": "编辑翻译", "description": "①Edit one entry's translation and optionally its stage; set_stage changes stages in batches without editing text. ②Arguments: entry_id, new_translation, optional new_stage in 0/1/2/3/5/9/-1. ③Returns {entry_id, old_translation, new_translation, stage, stage_changed}, with translation fields capped at 100 characters.",
          "execute": _tool_edit_translation, "permission": "write", "parameters": _PARAM_SCHEMAS.get("edit_translation", {})},
-        {"name": "set_stage", "display_name": "批量设置阶段", "description": "①批量设置多条条目的翻译阶段标记，不修改译文。与edit_translation区别: 本工具只改阶段、可批量；edit_translation改文本、单条。②参数: entry_ids(必填,key值列表,空列表静默返回{updated_count:0}), stage(必填,0/1/2/3/5/9/-1,4/6/7/8预留不可用)。③返回: 全部成功→{updated_count}；部分条目未找到→额外含{not_found}。规则: 流转路径0(未翻译)→1(已翻译)→2(有疑问)→3(已检查)→5(已审核)；9(已锁定)/-1(已隐藏)为特殊状态不参与常规流转。典型: get_visible_entries→select_entries→set_stage stage=3",
+        {"name": "set_stage", "display_name": "批量设置阶段", "description": "①Set the translation stage for multiple entries without changing text. ②Arguments: entry_ids and stage in 0/1/2/3/5/9/-1. ③Returns {updated_count} and, for partial matches, {not_found}. Rules: normal flow is 0 untranslated→1 translated→2 question→3 checked→5 reviewed; 9 locked and -1 hidden are special states.",
          "execute": _tool_set_stage, "permission": "write", "parameters": _PARAM_SCHEMAS.get("set_stage", {})},
         # Story 20: manage_entry_labels 合并 4→1
-        {"name": "list_labels", "display_name": "列出标签", "description": "①列出所有已定义标签及其信息和使用次数(只读)。②参数: 无。③返回: {labels:[{id,name,color,count}]}。规则: 标签库为空/未初始化时返回空列表不报错；所有标签操作(assign/unassign/batch_assign)使用name字段，id仅供内部追踪不应传给其他工具；创建/修改标签用manage_entry_labels",
+        {"name": "list_labels", "display_name": "列出标签", "description": "①List defined labels and usage counts; read-only. ②No arguments. ③Returns {labels:[{id,name,color,count}]}. Rules: an empty or uninitialized library returns an empty list; label operations use name, while id is internal; create or modify labels with manage_entry_labels.",
          "execute": _tool_list_labels, "permission": "read", "parameters": _PARAM_SCHEMAS.get("list_labels", {})},
         {"name": "manage_entry_labels", "display_name": "管理条目标签",
-         "description": "①管理条目标签(数据层)——创建标签、分配/移除条目标签、批量分配，通过action参数选择操作类型。与set_filters区别: 本工具改变条目标签关系(数据层)，set_filters控制表格显示(视图层)。②参数: action(必填,create/assign/unassign/batch_assign), name(必填,标签名), color(可选,hex,仅create,默认#409EFF), entry_ids(assign/unassign必填,key值列表)。③返回: create→{label_id,name,color}；assign→{assigned_count}；unassign→{removed_count}；batch_assign→{assigned_count,filter_total}(需用户确认，取消则assigned_count=0)。规则: label_id仅create时返回，后续assign/unassign/batch_assign使用name而非id；批量分配前先用set_filters确认范围；先list_labels确保标签存在。示例: create标签→batch_assign→set_filters按标签筛选→get_visible_entries",
+         "description": "①Manage entry-label relationships by creating labels, assigning or removing them, or batch assigning through action. Unlike set_filters, this changes data rather than table display. ②Arguments: action=create/assign/unassign/batch_assign, name, optional create color, and entry_ids for assign/unassign. ③Returns create→{label_id,name,color}, assign→{assigned_count}, unassign→{removed_count}, batch_assign→{assigned_count,filter_total}. Rules: later operations use label name, not id; confirm filters before batch assignment and use list_labels to verify existence.",
          "execute": _tool_manage_entry_labels, "permission": "write", "require_confirmation": True,
          "parameters": _PARAM_SCHEMAS.get("manage_entry_labels", {})},
     ])

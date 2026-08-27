@@ -19,6 +19,17 @@ import re
 from string import Template
 from typing import Literal
 
+from transbridge.ai_translator.structured_schemas import (
+    ARBITRATION_BATCH_OUTPUT_SCHEMA,
+    ARBITRATION_SINGLE_OUTPUT_SCHEMA,
+    POLISH_BATCH_OUTPUT_SCHEMA,
+    POLISH_SINGLE_OUTPUT_SCHEMA,
+    QUALITY_GATE_BATCH_OUTPUT_SCHEMA,
+    QUALITY_GATE_SINGLE_OUTPUT_SCHEMA,
+    REFINEMENT_BATCH_OUTPUT_SCHEMA,
+    REFINEMENT_SINGLE_OUTPUT_SCHEMA,
+)
+from transbridge.infra.llm_structured_outputs import attach_structured_output_directive
 from transbridge.infra.prompt_cache import (
     attach_prompt_cache_directive,
 )
@@ -38,6 +49,17 @@ _SYSTEM_ALLOWED_VARIABLES = frozenset({"game_name", "source_lang", "target_lang"
 
 # 未解析占位符匹配：$identifier / ${identifier}
 _UNRESOLVED_PATTERN = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)|\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+_OUTPUT_SCHEMAS = {
+    ("quality_gate", "single"): QUALITY_GATE_SINGLE_OUTPUT_SCHEMA,
+    ("quality_gate", "batch"): QUALITY_GATE_BATCH_OUTPUT_SCHEMA,
+    ("refinement", "single"): REFINEMENT_SINGLE_OUTPUT_SCHEMA,
+    ("refinement", "batch"): REFINEMENT_BATCH_OUTPUT_SCHEMA,
+    ("polish", "single"): POLISH_SINGLE_OUTPUT_SCHEMA,
+    ("polish", "batch"): POLISH_BATCH_OUTPUT_SCHEMA,
+    ("arbitration", "single"): ARBITRATION_SINGLE_OUTPUT_SCHEMA,
+    ("arbitration", "batch"): ARBITRATION_BATCH_OUTPUT_SCHEMA,
+}
 
 
 class PromptTemplateContractError(ValueError):
@@ -123,7 +145,11 @@ def build_postprocess_messages(
         profile="single_stable_prefix",
         breakpoint="FINAL",
     )
-    return [system_msg, {"role": "user", "content": user_content}]
+    user_msg = attach_structured_output_directive(
+        {"role": "user", "content": user_content},
+        _OUTPUT_SCHEMAS[(stage, shape)],
+    )
+    return [system_msg, user_msg]
 
 
 __all__ = [

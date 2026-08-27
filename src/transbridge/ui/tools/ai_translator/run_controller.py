@@ -311,6 +311,7 @@ def start_translation_run(
     *,
     progress_created: Callable[[object], None],
     entry_activated: Callable[[str], None],
+    version_snapshot_session: object | None = None,
     theme_view: ThemeView | None = None,
 ) -> object:
     """Compose and start the existing single-plugin translation runtime."""
@@ -373,6 +374,7 @@ def start_translation_run(
         ctx,
         entry_activated=entry_activated,
         activity=activity,
+        version_snapshot_session=version_snapshot_session,
         theme_view=theme_view,
     )
     progress_created(progress)

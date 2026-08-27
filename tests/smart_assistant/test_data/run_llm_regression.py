@@ -1,204 +1,274 @@
-"""Phase 3 LLM regression test - command-line, bypasses UI, calls API directly.
+"""Manual native function-calling regression test for the smart assistant.
 
 Usage:
-    cd /path/to/TransBridge
-    PYTHONPATH=src python tests/smart_assistant/test_data/run_llm_regression.py
+    uv run python tests/smart_assistant/test_data/run_llm_regression.py
+    uv run python tests/smart_assistant/test_data/run_llm_regression.py --limit 0
 
-Requires: the unified data/transbridge.ini and an approved credential provider.
-Consumes: ~50 prompts * 2 modes * ~2000 tokens = ~200K tokens.
+The harness uses the configured OpenAI-compatible or Anthropic provider through
+TransBridge's provider-neutral LLM client. It never executes business tools: it
+only returns real ``get_tool_help`` results so the model can load a namespace,
+then records the native tool calls selected by the model.
 
 Output: terminal comparison + tests/smart_assistant/test_data/result.json
 """
+
 from __future__ import annotations
 
+import argparse
 import json
-import re
 from pathlib import Path
+from typing import Any
 
 
-def load_llm_config() -> dict:
-    """Load through the production facade; never parse or expose INI secrets."""
+def load_llm_config():
+    """Load the production LLM configuration without exposing credentials."""
     from transbridge.config.llm import LLMConfig
 
-    llm = LLMConfig.load_from_file()
-    return {
-        "api_key": llm.api_key,
-        "api_base": llm.base_url,
-        "model": llm.model,
-        "provider": llm.provider,
-        "config_revision": llm.config_revision,
-    }
+    return LLMConfig.load_from_file()
 
 
-def build_old_prompt() -> str:
-    """旧版 system prompt（全量工具注入）。"""
-    from transbridge.smart_assistant.tool_registry import ToolRegistry
-    from transbridge.smart_assistant.prompts import HYBRID_SYSTEM_PROMPT
-    tools_desc = ToolRegistry.build_tool_schema_for_prompt()
-    return HYBRID_SYSTEM_PROMPT.format(context="", tools_desc=tools_desc)
-
-
-def build_new_prompt() -> str:
-    """新版 system prompt（分层加载）。"""
+def build_prompt() -> str:
+    """Build the production system prompt after registering every tool namespace."""
     from transbridge.smart_assistant.prompts import build_system_prompt
+    from transbridge.smart_assistant.tools import register_all
+
+    register_all()
     return build_system_prompt(context="")
 
 
-def call_llm(system_prompt: str, user_message: str, config: dict) -> str:
-    """调 LLM API，返回 assistant 的文本响应。"""
-    from openai import OpenAI
-
-    client = OpenAI(api_key=config["api_key"], base_url=config["api_base"])
-    response = client.chat.completions.create(
-        model=config["model"],
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
-        ],
-        temperature=0,
-        max_tokens=500,
-    )
-    return response.choices[0].message.content
+def _tool_result_message(
+    call,
+    result: dict[str, Any],
+    *,
+    is_error: bool = False,
+) -> dict[str, Any]:
+    return {
+        "role": "tool",
+        "tool_call_id": call.id,
+        "name": call.name,
+        "content": json.dumps(result, ensure_ascii=False, default=str),
+        "is_error": is_error,
+    }
 
 
-def call_llm_two_rounds(system_prompt: str, user_message: str, config: dict) -> list[str]:
-    """两轮对话：R1 让 LLM 发现工具，注入 get_tool_help 结果，R2 让 LLM 真正调用。"""
-    from openai import OpenAI
+def _namespace_for_tool(tool_name: str) -> str | None:
     from transbridge.smart_assistant.tool_registry import ToolRegistry
 
-    client = OpenAI(api_key=config["api_key"], base_url=config["api_base"])
-    messages = [
+    for namespace, specs in ToolRegistry.list_all_namespaces().items():
+        if any(spec.name == tool_name for spec in specs):
+            return namespace
+    return None
+
+
+def _requested_namespaces(arguments: dict[str, Any]) -> tuple[str, ...]:
+    raw_namespace = str(arguments.get("namespace") or "")
+    namespaces = [part.strip() for part in raw_namespace.split(",") if part.strip()]
+    if not namespaces:
+        tool_name = str(arguments.get("tool") or "").strip()
+        inferred = _namespace_for_tool(tool_name) if tool_name else None
+        if inferred:
+            namespaces.append(inferred)
+    return tuple(dict.fromkeys(namespaces))
+
+
+def collect_native_tool_calls(
+    client,
+    system_prompt: str,
+    user_message: str,
+    *,
+    max_tokens: int,
+    max_rounds: int = 3,
+) -> list:
+    """Collect native calls while servicing discovery calls without side effects."""
+    from transbridge.smart_assistant.native_tools import build_native_tool_definitions, turn_to_parsed_response
+    from transbridge.smart_assistant.tool_registry import ToolRegistry
+
+    messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_message},
     ]
+    loaded_namespaces: list[str] = []
+    observed_calls: list = []
 
-    # Round 1: LLM 决定需要哪个 namespace 的工具
-    r1 = client.chat.completions.create(
-        model=config["model"], messages=messages, temperature=0, max_tokens=500,
-    )
-    r1_text = r1.choices[0].message.content
-    r1_tools = extract_tool_calls(r1_text)
+    for _round in range(max_rounds):
+        tools = build_native_tool_definitions(loaded_namespaces)
+        turn = client.chat_stream_with_tools(messages, max_tokens, tools, lambda _chunk: None)
+        turn_to_parsed_response(turn)
+        observed_calls.extend(turn.tool_calls)
+        if not turn.tool_calls:
+            break
 
-    # 如果 R1 调了 get_tool_help，注入其返回结果
-    if "get_tool_help" in r1_tools:
-        # 从 R1 响应中解析 get_tool_help 的参数
-        ns_match = re.search(r'"namespace"\s*:\s*"(\w+)"', r1_text)
-        namespace = ns_match.group(1) if ns_match else None
-        help_result = ToolRegistry.build_tool_help(namespace=namespace)
+        messages.append(turn.to_assistant_message())
+        help_calls = [call for call in turn.tool_calls if call.name == "get_tool_help"]
+        business_calls = [call for call in turn.tool_calls if call.name != "get_tool_help"]
 
-        messages.append({"role": "assistant", "content": r1_text})
-        messages.append({"role": "user", "content": f"[get_tool_help 返回结果]\n{help_result}"})
+        for call in help_calls:
+            namespaces = _requested_namespaces(call.arguments)
+            for namespace in namespaces:
+                if namespace not in loaded_namespaces:
+                    loaded_namespaces.append(namespace)
+            help_text = ToolRegistry.build_tool_help(
+                tool=str(call.arguments.get("tool") or "").strip() or None,
+                namespace=str(call.arguments.get("namespace") or "").strip() or None,
+            )
+            messages.append(_tool_result_message(call, {"success": True, "help": help_text}))
 
-        # Round 2: LLM 用完整 Schema 调用真实工具
-        r2 = client.chat.completions.create(
-            model=config["model"], messages=messages, temperature=0, max_tokens=500,
-        )
-        r2_text = r2.choices[0].message.content
-        r2_tools = extract_tool_calls(r2_text)
-        return r1_tools + r2_tools
+        if business_calls:
+            for call in business_calls:
+                messages.append(
+                    _tool_result_message(
+                        call,
+                        {
+                            "success": False,
+                            "message": "Regression harness records business calls but does not execute them.",
+                        },
+                        is_error=True,
+                    )
+                )
+            break
 
-    return r1_tools
+        if not help_calls:
+            break
 
-
-def extract_tool_calls(response: str) -> list[str]:
-    """从 LLM 响应中提取工具调用名列表（JSON 模式 {mode, thought, steps}）。"""
-    tools = []
-    # 匹配 "tool": "xxx" 或 'tool': 'xxx'
-    for m in re.finditer(r'''["']tool["']\s*:\s*["'](\w+)["']''', response):
-        tools.append(m.group(1))
-    return tools
-
-
-def has_get_tool_help(response: str) -> bool:
-    """检查是否调用了 get_tool_help。"""
-    return "get_tool_help" in extract_tool_calls(response)
+    return observed_calls
 
 
-def main():
+def infer_first_namespace(calls: list) -> str | None:
+    """Infer the first routed namespace from native discovery, plan, or tool calls."""
+    for call in calls:
+        if call.name == "get_tool_help":
+            namespaces = _requested_namespaces(call.arguments)
+            return namespaces[0] if namespaces else None
+        if call.name == "propose_plan":
+            steps = call.arguments.get("steps")
+            if isinstance(steps, list) and steps and isinstance(steps[0], dict):
+                return _namespace_for_tool(str(steps[0].get("tool") or ""))
+        namespace = _namespace_for_tool(call.name)
+        if namespace:
+            return namespace
+    return None
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--limit", type=int, default=15, help="Prompt count; use 0 to run all prompts")
+    parser.add_argument("--max-rounds", type=int, default=3, help="Maximum provider rounds per prompt")
+    return parser.parse_args()
+
+
+def main() -> int:
+    from transbridge.infra.llm_client import create_llm_client
+    from transbridge.smart_assistant.native_tools import CORE_TOOL_NAMES
+
+    args = _parse_args()
     config = load_llm_config()
-    if not config["api_key"]:
+    if not config.api_key:
         print("错误: 未配置 LLM CredentialRef 对应的安全凭据")
         return 1
 
-    old_prompt = build_old_prompt()
-    new_prompt = build_new_prompt()
+    system_prompt = build_prompt()
+    client = create_llm_client(config)
+    max_tokens = int(config.max_output_tokens or 0)
+    if config.provider == "anthropic" and max_tokens <= 0:
+        max_tokens = 4096
 
-    # 加载测试 prompts
     prompts_file = Path(__file__).parent / "prompts.json"
-    with open(prompts_file, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    prompts = data["prompts"]
+    with prompts_file.open("r", encoding="utf-8") as stream:
+        prompts = json.load(stream)["prompts"]
+    sample = prompts if args.limit <= 0 else prompts[: args.limit]
 
-    # 只跑非跨领域的 15 条 prompt（跨领域需多轮 get_tool_help，先跳过）
-    sample = [p for p in prompts if p["namespace"] != "cross"][:15]
-    print(f"Test config: model={config['model']}, prompts={len(sample)}")
-    print(f"Old prompt token est: {len(old_prompt) // 4}")
-    print(f"New prompt token est: {len(new_prompt) // 4}")
-    print(f"Token savings: {(1 - len(new_prompt)/len(old_prompt)) * 100:.0f}%")
-    print(f"{'='*60}")
+    print(f"Test config: provider={config.provider}, model={config.model}, prompts={len(sample)}")
+    print(f"System prompt token estimate: {len(system_prompt) // 4}")
+    print("=" * 80)
 
-    results = []
+    results: list[dict[str, Any]] = []
     skip_count = 0
-    non_preloaded_count = 0
+    discovery_required_count = 0
 
-    for p in sample:
-        pid = p["id"]
-        ns = p["namespace"]
-        is_preloaded = ns == "default"
-
+    for prompt in sample:
+        prompt_id = prompt["id"]
+        expected_tool = prompt.get("expect_tool")
+        expected_namespace = prompt.get("expect_first_ns")
         try:
-            tools = call_llm_two_rounds(new_prompt, p["text"], config)
+            calls = collect_native_tool_calls(
+                client,
+                system_prompt,
+                prompt["text"],
+                max_tokens=max_tokens,
+                max_rounds=max(args.max_rounds, 1),
+            )
         except Exception as exc:
-            print(f"  [{pid:02d}] ERR: {exc}")
-            results.append({"id": pid, "error": str(exc)})
+            print(f"  [{prompt_id:02d}] ERR: {exc}")
+            results.append({"id": prompt_id, "error": str(exc)})
             continue
 
-        called_help = "get_tool_help" in tools
+        tool_names = [call.name for call in calls]
+        called_help = "get_tool_help" in tool_names
+        routed_namespace = infer_first_namespace(calls)
+        if expected_tool:
+            matched = expected_tool in tool_names
+            discovery_required = expected_tool not in CORE_TOOL_NAMES
+        else:
+            matched = routed_namespace == expected_namespace
+            discovery_required = bool(expected_namespace)
 
-        if not is_preloaded and tools:
-            non_preloaded_count += 1
+        if discovery_required:
+            discovery_required_count += 1
             if not called_help:
                 skip_count += 1
 
-        expect = p.get("expect_tool", "-")
-        match = expect in tools
-
-        status = "OK" if match else ("??" if not tools else "XX")
-
-        print(f"  [{pid:02d}] {status} | ns={ns:12s} | "
-              f"expect={expect:22s} | got={str(tools):40s} | "
-              f"help={'Y' if called_help else 'N'}")
-
+        status = "OK" if matched else ("??" if not tool_names else "XX")
+        expected = expected_tool or f"namespace:{expected_namespace}"
+        print(
+            f"  [{prompt_id:02d}] {status} | ns={prompt['namespace']:12s} | "
+            f"expect={expected:24s} | got={str(tool_names):45s} | "
+            f"route={routed_namespace or '-':12s} | help={'Y' if called_help else 'N'}"
+        )
         results.append({
-            "id": pid, "text": p["text"], "namespace": ns,
-            "expect_tool": expect, "got_tools": tools,
-            "called_get_tool_help": called_help, "match": match,
+            "id": prompt_id,
+            "text": prompt["text"],
+            "namespace": prompt["namespace"],
+            "expect_tool": expected_tool,
+            "expect_first_ns": expected_namespace,
+            "got_tools": tool_names,
+            "routed_namespace": routed_namespace,
+            "called_get_tool_help": called_help,
+            "match": matched,
         })
 
-    # 汇总
-    total = len([r for r in results if "error" not in r])
-    correct = sum(1 for r in results if r.get("match"))
-    skip_rate = skip_count / max(non_preloaded_count, 1) * 100
+    successful = [result for result in results if "error" not in result]
+    total = len(successful)
+    correct = sum(1 for result in successful if result.get("match"))
+    accuracy = correct / max(total, 1) * 100
+    skip_rate = skip_count / max(discovery_required_count, 1) * 100
 
-    print(f"\n{'='*60}")
-    print(f"工具选择准确率: {correct}/{total} ({100*correct//max(total,1)}%)")
-    print(f"跳过率 (非预加载未调 get_tool_help): {skip_count}/{non_preloaded_count} ({skip_rate:.0f}%)")
-    print(f"目标: 准确率 >=95%, 跳过率 <5%")
-    print(f"{'PASS' if correct/total >= 0.9 and skip_rate < 5 else 'WARN: needs tuning'}")
+    print("\n" + "=" * 80)
+    print(f"工具/路由准确率: {correct}/{total} ({accuracy:.0f}%)")
+    print(f"跳过率 (需要发现但未调 get_tool_help): {skip_count}/{discovery_required_count} ({skip_rate:.0f}%)")
+    print("目标: 准确率 >=90%, 跳过率 <5%")
+    passed = total > 0 and accuracy >= 90 and skip_rate < 5
+    print("PASS" if passed else "WARN: needs tuning")
 
-    # 保存结果
     out_file = Path(__file__).parent / "result.json"
-    with open(out_file, "w", encoding="utf-8") as f:
-        json.dump({"summary": {
-            "total": total, "correct": correct,
-            "accuracy": f"{100*correct//max(total,1)}%",
-            "skip_rate": f"{skip_rate:.0f}%",
-            "skip_count": skip_count,
-            "non_preloaded_count": non_preloaded_count,
-        }, "details": results}, f, ensure_ascii=False, indent=2)
+    with out_file.open("w", encoding="utf-8") as stream:
+        json.dump(
+            {
+                "summary": {
+                    "total": total,
+                    "correct": correct,
+                    "accuracy": f"{accuracy:.0f}%",
+                    "skip_rate": f"{skip_rate:.0f}%",
+                    "skip_count": skip_count,
+                    "discovery_required_count": discovery_required_count,
+                },
+                "details": results,
+            },
+            stream,
+            ensure_ascii=False,
+            indent=2,
+        )
     print(f"详细结果: {out_file}")
-
-    return 0 if correct / max(total, 1) >= 0.9 else 1
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":

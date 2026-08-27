@@ -14,6 +14,8 @@ import tomllib
 from typing import TYPE_CHECKING
 import warnings
 
+from transbridge.config.language_profiles import load_language_profile
+
 from .base import output_token_limit, validate_max_output_tokens
 from .prompt_contract import (
     PromptTemplateContractError,
@@ -31,6 +33,7 @@ if TYPE_CHECKING:
 
 # SYSTEM 只允许稳定变量；动态内容不得进入 System。
 _SYSTEM_ALLOWED_VARIABLES = frozenset({"game_name", "source_lang", "target_lang"})
+_SYSTEM_REQUIRED_VARIABLES = _SYSTEM_ALLOWED_VARIABLES
 # 单条 User 允许并必需的动态变量。
 _SINGLE_USER_ALLOWED_VARIABLES = frozenset({"original", "current_translation", "context", "issues", "terms"})
 _SINGLE_USER_REQUIRED_VARIABLES = frozenset({"original", "current_translation", "context", "issues", "terms"})
@@ -60,102 +63,62 @@ class RefineResult:
 
 # ── 内置默认提示词（只修复，不润色；JSON 示例为合法 JSON）─────────────────
 
-_DEFAULT_SYSTEM = """你是游戏本地化问题修复专家，负责修复译文中的明确检测问题。
+_DEFAULT_SYSTEM = """You are a $game_name localization correction specialist.
+Fix explicitly detected problems in translations from $source_lang into $target_lang.
 
-你只修复列出的问题所直接涉及的部分，不做任何主动润色。若未检测到问题，则原样返回当前译文。
+Change only the parts directly affected by listed issues. Do not proactively polish.
+If no issue was detected, return the current translation unchanged.
 
-修复原则：
-- 必须保留原文的所有占位符（%s, %d, {0}等）
-- 必须保留原文的格式标记（<br>, [pagebreak], \n等）
-- 术语必须使用提供的标准译法
-- 不得改变原文的语义
-- 引号、括号等必须正确闭合
-- 保留译文的原有风格和流畅度
+Correction rules:
+- Preserve every source placeholder, including %s, %d, and {0}.
+- Preserve every source formatting marker, including <br>, [pagebreak], and \n.
+- Use the provided standard terminology.
+- Do not change the source meaning.
+- Close quotation marks and brackets correctly.
+- Preserve the existing style and fluency.
 
-必须严格按JSON对象格式输出，不要添加任何其他文字：
-{
-    "refined_translation": "修复后的译文",
-    "fixes_applied": [
-        {
-            "issue_type": "问题类型",
-            "original_problem": "原问题描述",
-            "fix_description": "如何修复的"
-        }
-    ],
-    "confidence": 0.85,
-    "needs_arbitration": false,
-    "note": "额外说明"
-}
+Return only the structured correction result and no other text.
+The corrected translation must equal the current translation when there is no issue. Report only corrections actually
+applied; report no corrections when nothing changed. Confidence ranges from 0 to 1. Request arbitration when the
+correction is uncertain. An additional note may be empty.
 
-输出字段说明（示例只作格式参考，取值按实际情况填写）：
-- refined_translation：修复后的译文；无问题时与当前译文一致
-- fixes_applied：修复明细；没有修复时为空数组
-- confidence：0~1，对修复结果的信心度。confidence > 0.9 表示修复效果很好，confidence < 0.7 建议人工审核
-- needs_arbitration：true 表示修复结果不确定，需要裁决者介入
-- note：额外说明，可为空字符串
+Fix only detected issues and do not over-rewrite.
+When nothing needs correction, return the current translation unchanged and do not polish it."""
 
-注意：
-- 只修复检测到的问题，不要过度改写
-- 没有需要修复的问题时，直接返回当前译文，不主动润色"""
-
-_DEFAULT_USER = """【原文】
+_DEFAULT_USER = """[SOURCE]
 $original
 
-【当前译文】
+[CURRENT TRANSLATION]
 $current_translation
 
-【上下文】
+[CONTEXT]
 $context
 
-【检测到的问题】
+[DETECTED ISSUES]
 $issues
 
-【相关术语表】
+[RELEVANT TERMINOLOGY]
 $terms
 
-只修复检测到的问题，按指定JSON对象格式输出。注意：没有需要修复的问题时，直接返回当前译文，不主动润色。"""
+Fix only detected issues and return the correction result.
+If there is nothing to fix, return the current translation unchanged and do not polish it."""
 
-_DEFAULT_BATCH_SYSTEM = """你是游戏本地化问题修复专家，负责批量修复多个检测问题。
+_DEFAULT_BATCH_SYSTEM = """You are a $game_name localization correction specialist.
+Correct explicitly detected problems across multiple translations from $source_lang into $target_lang.
 
-你只修复列出的问题所直接涉及的部分，不做任何主动润色。若某条目未检测到问题，则对应该条目原样返回当前译文。
+For each entry, change only the parts directly affected by its listed issues. Do not proactively polish.
+If an entry has no detected issue, return its current translation unchanged.
 
-修复原则：
-- 必须保留原文的所有占位符（%s, %d, {0}等）
-- 必须保留原文的格式标记（<br>, [pagebreak], \n等）
-- 术语必须使用提供的标准译法
-- 不得改变原文的语义
-- 保留译文的原有风格和流畅度
+Preserve source placeholders and formatting markers, use provided terminology, and do not change source meaning.
+Preserve existing style and fluency.
 
-必须严格按JSON数组格式输出，不要添加任何其他文字：
-[
-    {
-        "entry_id": "条目ID",
-        "refined_translation": "修复后的译文",
-        "fixes_applied": [
-            {
-                "issue_type": "问题类型",
-                "original_problem": "原问题描述",
-                "fix_description": "如何修复的"
-            }
-        ],
-        "confidence": 0.85,
-        "needs_arbitration": false,
-        "note": "额外说明"
-    }
-]
+Return only the structured correction results and no other text. Preserve each entry ID exactly.
+For every entry, the corrected translation must equal the current translation when there is no issue. Report only
+corrections actually applied; report no corrections when nothing changed. Confidence ranges from 0 to 1. Request
+arbitration when a correction is uncertain. An additional note may be empty.
 
-输出字段说明（示例只作格式参考，取值按实际情况填写）：
-- entry_id：条目ID
-- refined_translation：修复后的译文；无问题时与当前译文一致
-- fixes_applied：修复明细；没有修复时为空数组
-- confidence：0~1，对修复结果的信心度。confidence > 0.9 表示修复效果很好
-- needs_arbitration：true 表示修复结果不确定，需要裁决者介入
-- note：额外说明，可为空字符串
-
-注意：
-- 必须包含所有条目的结果，顺序与输入一致
-- 只修复检测到的问题，不要过度改写
-- 没有需要修复的问题时，直接返回当前译文，不主动润色"""
+Include every input entry in order. Fix only detected issues and do not over-rewrite.
+Return unchanged translations for entries with nothing to fix."""
 
 
 def _get_prompts_dir() -> Path:
@@ -242,20 +205,18 @@ class LLMRefiner:
 
         # 加载游戏和语言配置
         game_data = _load_toml(prompts_dir / "games" / f"{game_profile}.toml")
-        lang_data = _load_toml(prompts_dir / "langs" / f"{target_lang}.toml")
+        language = load_language_profile(target_lang, prompts_dir=prompts_dir)
 
-        # 加载修复专用配置（不再加载 polish_levels）
-        ref_path = prompts_dir / "refinement" / f"{target_lang}.toml"
+        # 阶段提示词与目标语言解耦；语言名称通过 ctx 在渲染时注入。
+        ref_path = prompts_dir / "refinement" / "default.toml"
         ref_data = _load_toml(ref_path)
 
         # 构建变量上下文
         game = game_data.get("game", {})
-        lang = lang_data.get("lang", {})
-
         ctx = {
-            "game_name": game.get("name", "上古卷轴5：天际特别版（SSE）"),
-            "source_lang": lang.get("source", "英文"),
-            "target_lang": lang.get("target", "中文"),
+            "game_name": game.get("name", "The Elder Scrolls V: Skyrim Special Edition (SSE)"),
+            "source_lang": language.source_language,
+            "target_lang": language.target_language,
         }
 
         ref_cfg = ref_data.get("refinement", {})
@@ -265,7 +226,7 @@ class LLMRefiner:
             template=ref_cfg.get("system", ""),
             default=_DEFAULT_SYSTEM,
             allowed_variables=_SYSTEM_ALLOWED_VARIABLES,
-            required_variables=set(),
+            required_variables=_SYSTEM_REQUIRED_VARIABLES,
         )
         user = _resolve_template(
             name="refinement.single.user",
@@ -279,7 +240,7 @@ class LLMRefiner:
             template=ref_cfg.get("batch_system", ""),
             default=_DEFAULT_BATCH_SYSTEM,
             allowed_variables=_SYSTEM_ALLOWED_VARIABLES,
-            required_variables=set(),
+            required_variables=_SYSTEM_REQUIRED_VARIABLES,
         )
 
         return {
@@ -391,7 +352,7 @@ class LLMRefiner:
             {
                 "original": entry.original or "",
                 "current_translation": entry.translation or "",
-                "context": entry.context or "未知",
+                "context": entry.context or "unknown",
                 "issues": issues_text,
                 "terms": terms_text,
             },
@@ -409,31 +370,31 @@ class LLMRefiner:
         issues_map: dict[str, list["PostProcessIssue"]],
     ) -> list[dict]:
         """构建批量修复的Prompt。"""
-        lines = ["待修复条目："]
+        lines = ["Entries to correct:"]
 
         for entry in entries:
             lines.append(f"\n{'=' * 60}")
             lines.append(f"【ENTRY_ID: {entry.id}】")
-            lines.append(f"原文：{entry.original or ''}")
-            lines.append(f"当前译文：{entry.translation or ''}")
-            lines.append(f"上下文：{entry.context or '未知'}")
+            lines.append(f"Source: {entry.original or ''}")
+            lines.append(f"Current translation: {entry.translation or ''}")
+            lines.append(f"Context: {entry.context or 'unknown'}")
 
             issues = issues_map.get(entry.id, [])
             if issues:
-                lines.append("检测到的问题：")
+                lines.append("Detected issues:")
                 for issue in issues:
                     lines.append(f"  - [{issue.severity}] {issue.issue_type}: {issue.message}")
             else:
-                lines.append("检测到的问题：无（保持不变，无需修复）")
+                lines.append("Detected issues: none (keep unchanged; no correction needed)")
 
             # 获取该条目的相关术语
             terms = self._get_relevant_terms(entry)
             if terms:
-                lines.append("相关术语：")
+                lines.append("Relevant terminology:")
                 for term, trans in terms.items():
                     lines.append(f"  {term} → {trans}")
             else:
-                lines.append("相关术语：无")
+                lines.append("Relevant terminology: none")
 
         lines.append(f"\n{'=' * 60}")
 
@@ -448,14 +409,14 @@ class LLMRefiner:
     def _format_issues(self, issues: list["PostProcessIssue"]) -> str:
         """格式化问题列表为文本。"""
         if not issues:
-            return "无（无检测到的问题，返回当前译文即可）"
+            return "none (no issue detected; return the current translation unchanged)"
 
         lines = []
         for issue in issues:
             lines.append(f"- [{issue.severity}] {issue.issue_type}")
-            lines.append(f"  问题: {issue.message}")
+            lines.append(f"  Issue: {issue.message}")
             if issue.suggestion:
-                lines.append(f"  建议: {issue.suggestion}")
+                lines.append(f"  Suggestion: {issue.suggestion}")
         return "\n".join(lines)
 
     def _get_relevant_terms(self, entry: "TranslationEntry") -> dict[str, str]:
@@ -474,7 +435,7 @@ class LLMRefiner:
         """获取格式化的术语文本。"""
         terms = self._get_relevant_terms(entry)
         if not terms:
-            return "无"
+            return "none"
         return "\n".join(f"  {t} → {tr}" for t, tr in terms.items())
 
     def _parse_refinement_response(
@@ -531,14 +492,13 @@ class LLMRefiner:
         """解析批量修复响应。"""
         entry_map = {alias: entry for entry in entries for alias in {str(entry.id), str(entry.key)}}
         results = {}
+        duplicate_entry_ids: set[str] = set()
 
         try:
-            # 提取JSON数组
-            json_match = re.search(r"\[[\s\S]*\]", response)
-            if json_match:
-                data = json.loads(json_match.group())
-            else:
-                data = json.loads(response)
+            payload = json.loads(response)
+            if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
+                raise TypeError("refinement batch response must contain a results array")
+            data = payload["results"]
 
             for item in data:
                 response_id = str(item.get("entry_id", ""))
@@ -546,6 +506,9 @@ class LLMRefiner:
                 if not entry:
                     continue
                 entry_id = str(entry.id)
+                if entry_id in results:
+                    duplicate_entry_ids.add(entry_id)
+                    continue
 
                 # 解析fixes_applied
                 fixes = []
@@ -569,6 +532,16 @@ class LLMRefiner:
                 )
 
             for entry in entries:
+                if entry.id in duplicate_entry_ids:
+                    results[entry.id] = RefineResult(
+                        entry_id=entry.id,
+                        original_translation=entry.translation or "",
+                        refined_translation=entry.translation or "",
+                        confidence=0.0,
+                        needs_arbitration=True,
+                        note="批量修复响应重复返回该条目",
+                    )
+                    continue
                 if entry.id not in results:
                     results[entry.id] = RefineResult(
                         entry_id=entry.id,

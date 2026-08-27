@@ -205,9 +205,14 @@ def initialize_message_area(facade) -> None:
         engine=lambda: facade._plan_execution.engine,
         theme=facade._theme,
     )
+
+    def abort_session_activity() -> None:
+        facade._plan_execution.abort()
+        facade._controller.handle_abort()
+
     facade._session_binding = SessionBinding(
         conversation=facade._conversation,
-        abort=facade._controller.handle_abort,
+        abort=abort_session_activity,
         clear_messages=facade._message_list.clear,
         load_history=facade._message_list.load_history,
         reset_task_monitor=lambda: facade._task_binding.reset_monitor() if facade._task_binding is not None else None,

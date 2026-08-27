@@ -65,6 +65,50 @@ def test_translation_dialog_consumes_canonical_snapshot() -> None:
     app.processEvents()
 
 
+def test_translation_dialog_save_button_is_retryable_then_locks_after_success(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    callbacks: list[dict[str, object]] = []
+    messages: list[tuple[str, str]] = []
+
+    def save_translation(**values) -> None:
+        callbacks.append(values)
+
+    monkeypatch.setattr(
+        "transbridge.ui.tools.ai_translator._translation_report_dialog.QMessageBox.warning",
+        lambda _parent, title, message: messages.append((title, message)),
+    )
+    monkeypatch.setattr(
+        "transbridge.ui.tools.ai_translator._translation_report_dialog.QMessageBox.information",
+        lambda _parent, title, message: messages.append((title, message)),
+    )
+    dialog = _TranslationReportDialog(
+        _result_with_snapshot().post_process_result,
+        save_translation=save_translation,
+    )
+
+    assert not dialog._btn_save.isHidden()
+    dialog._btn_save.click()
+    assert not dialog._btn_save.isEnabled()
+    assert not dialog._btn_close.isEnabled()
+    dialog.accept()
+    assert dialog.result() == 0
+    callbacks[0]["on_error"]("磁盘忙")
+    assert dialog._btn_save.isEnabled()
+    assert dialog._btn_close.isEnabled()
+    assert dialog._btn_save.text() == "保存翻译"
+
+    dialog._btn_save.click()
+    callbacks[1]["on_success"]({"name": "AI-翻译后"})
+    assert not dialog._btn_save.isEnabled()
+    assert dialog._btn_save.text() == "已保存"
+    assert messages == [
+        ("保存翻译失败", "磁盘忙"),
+        ("保存翻译", "翻译已保存，并已创建完成后的版本快照。"),
+    ]
+    dialog.close()
+    app.processEvents()
+
+
 def test_polish_dialog_consumes_canonical_snapshot_details() -> None:
     entry = TranslationEntry(
         id="entry-polish",

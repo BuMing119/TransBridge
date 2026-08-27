@@ -350,10 +350,24 @@ class ToolExecutionHandler:
         )
         # LLM display and authoritative structured result remain separate.
         self._structured_observations.append(observation)
-        self._conversation.add_observation(tool_name, observation.display_summary)
+        tool_call_id = str(step.get("tool_call_id", ""))
+        add_tool_result = getattr(self._conversation, "add_tool_result", None)
+        if tool_call_id and callable(add_tool_result):
+            add_tool_result(
+                tool_call_id,
+                tool_name,
+                observation.to_dict(),
+                display_summary=observation.display_summary,
+                is_error=not tr.success,
+            )
+        else:
+            self._conversation.add_observation(tool_name, observation.display_summary)
         record_structured = getattr(self._conversation, "add_structured_observation", None)
         if callable(record_structured):
             record_structured(tool_name, observation.to_dict())
+
+        if tr.success and tool_name == "get_tool_help":
+            self._load_requested_tool_namespaces(step.get("args", {}))
 
         # FR12: plan 模式下不触发 ReAct 继续；通过 on_step_completed 通知 Controller
         if not skip_react_continue and mode != "plan":
@@ -363,6 +377,21 @@ class ToolExecutionHandler:
         """Return complete redacted results, independent from LLM display text."""
 
         return tuple(self._structured_observations)
+
+    def _load_requested_tool_namespaces(self, args: dict) -> None:
+        load_namespaces = getattr(self._conversation, "load_tool_namespaces", None)
+        if not callable(load_namespaces):
+            return
+        requested = {item.strip() for item in str(args.get("namespace", "")).split(",") if item.strip()}
+        tool_name = str(args.get("tool", "")).strip()
+        if tool_name:
+            from .tool_registry import ToolRegistry
+
+            for namespace, specs in ToolRegistry.list_all_namespaces().items():
+                if any(spec.name == tool_name for spec in specs):
+                    requested.add(namespace)
+                    break
+        load_namespaces(requested)
 
     # ── 自动模式批量执行 ──────────────────────────────────
     # M62: auto_execute_steps 已迁移至 ChatWidget._auto_execute_steps，

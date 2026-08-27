@@ -11,6 +11,7 @@ LLM 客户端抽象层。
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Sequence
 import logging
 import threading
 import time
@@ -22,8 +23,18 @@ from transbridge.infra.llm_reasoning_protocols import (
     AnthropicReasoningProtocolMixin,
     OpenAIReasoningProtocolMixin,
 )
+from transbridge.infra.llm_structured_outputs import (
+    anthropic_output_config,
+    ensure_anthropic_structured_output_completion,
+    ensure_openai_structured_output_completion,
+    extract_structured_output_directive,
+    openai_response_format,
+    raise_if_structured_output_unsupported,
+    validate_structured_output,
+)
 
 if TYPE_CHECKING:
+    from transbridge.infra.llm_tool_calling import LlmToolDefinition, LlmTurn
     from transbridge.paratranz.config_manager import LLMConfig
 
 logger = logging.getLogger(__name__)
@@ -82,6 +93,14 @@ def _require_anthropic_max_tokens(max_tokens: int) -> None:
         )
 
 
+def _reject_structured_output_tool_request(messages: list[dict]) -> None:
+    """Keep Structured Outputs metadata out of the independent tool-calling protocol."""
+
+    _clean_messages, output_schema = extract_structured_output_directive(messages)
+    if output_schema is not None:
+        raise ValueError("Structured Outputs and function calling cannot be combined in one LLM request")
+
+
 class LLMClient(ABC):
     @abstractmethod
     def chat(self, messages: list[dict], max_tokens: int = 0) -> str:
@@ -95,6 +114,18 @@ class LLMClient(ABC):
         if result:
             chunk_callback(result)
         return result
+
+    def chat_stream_with_tools(
+        self,
+        messages: list[dict],
+        max_tokens: int,
+        tools: Sequence[LlmToolDefinition],
+        chunk_callback: Callable[[str], None],
+    ) -> LlmTurn:
+        """Stream a tool-aware turn, degrading to text for legacy clients."""
+        from transbridge.infra.llm_tool_calling import LlmTurn
+
+        return LlmTurn(text=self.chat_stream(messages, max_tokens, chunk_callback))
 
     def cancel(self) -> None:
         """中断当前进行中的请求（关闭 HTTP 连接），并重建客户端供后续使用。
@@ -163,10 +194,18 @@ class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
         with self._lock:
             client = self._client
             self._active_requests += 1
+        output_schema = None
         try:
+            clean_messages, output_schema = extract_structured_output_directive(messages)
             # 普通与流式共用同一转换器，避免缓存参数漂移。
-            req = prepare_openai_chat_cache_request(model=self._model, base_url=self._base_url, messages=messages)
+            req = prepare_openai_chat_cache_request(
+                model=self._model,
+                base_url=self._base_url,
+                messages=clean_messages,
+            )
             kwargs: dict = dict(model=self._model, messages=req["messages"])
+            if output_schema is not None:
+                kwargs["response_format"] = openai_response_format(output_schema)
             if reasoning_patch is not None:
                 kwargs.update(reasoning_patch.standard)
             extra_body = dict(req["request_options"])
@@ -184,8 +223,10 @@ class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
                 # 缓存参数被 Provider 拒绝（401/400 含 cache 相关错误）时，
                 # 仅去掉缓存参数（干净标准消息）重试一次；第二次失败原样上抛。
                 if _is_cache_rejection(exc):
-                    clean, _ = extract_prompt_cache_directives(messages)
+                    clean, _ = extract_prompt_cache_directives(clean_messages)
                     retry_kwargs: dict = dict(model=self._model, messages=clean)
+                    if output_schema is not None:
+                        retry_kwargs["response_format"] = openai_response_format(output_schema)
                     if reasoning_patch is not None:
                         retry_kwargs.update(reasoning_patch.standard)
                         if reasoning_patch.extra_body:
@@ -200,8 +241,18 @@ class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
                     resp = client.chat.completions.create(**retry_kwargs)
                 else:
                     raise
-            return resp.choices[0].message.content or ""
-        except Exception:
+            choice = resp.choices[0]
+            content = choice.message.content or ""
+            if output_schema is None:
+                return content
+            ensure_openai_structured_output_completion(
+                finish_reason=getattr(choice, "finish_reason", None),
+                refusal=getattr(choice.message, "refusal", None),
+            )
+            return validate_structured_output(content, output_schema)
+        except Exception as exc:
+            if output_schema is not None:
+                raise_if_structured_output_unsupported(exc, provider="openai")
             logger.exception("OpenAI chat() 调用失败: model=%s, messages_count=%d", self._model, len(messages))
             raise
         finally:
@@ -210,6 +261,18 @@ class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
 
     def chat_stream(self, messages: list[dict], max_tokens: int, chunk_callback) -> str:
         return self._chat_stream(messages, max_tokens, chunk_callback, reasoning_patch=None)
+
+    def chat_stream_with_tools(
+        self,
+        messages: list[dict],
+        max_tokens: int,
+        tools: Sequence[LlmToolDefinition],
+        chunk_callback: Callable[[str], None],
+    ) -> LlmTurn:
+        from transbridge.infra.openai_tool_calling import chat_stream_with_tools
+
+        _reject_structured_output_tool_request(messages)
+        return chat_stream_with_tools(self, messages, max_tokens, tools, chunk_callback)
 
     def _chat_stream(self, messages: list[dict], max_tokens: int, chunk_callback, *, reasoning_patch) -> str:
         from transbridge.infra.prompt_cache import (
@@ -220,10 +283,18 @@ class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
         with self._lock:
             client = self._client
             self._active_requests += 1
+        output_schema = None
         try:
+            clean_messages, output_schema = extract_structured_output_directive(messages)
             # 与 chat() 共用同一转换器。
-            req = prepare_openai_chat_cache_request(model=self._model, base_url=self._base_url, messages=messages)
+            req = prepare_openai_chat_cache_request(
+                model=self._model,
+                base_url=self._base_url,
+                messages=clean_messages,
+            )
             kwargs: dict = dict(model=self._model, messages=req["messages"], stream=True)
+            if output_schema is not None:
+                kwargs["response_format"] = openai_response_format(output_schema)
             if reasoning_patch is not None:
                 kwargs.update(reasoning_patch.standard)
             extra_body = dict(req["request_options"])
@@ -234,17 +305,29 @@ class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
             if max_tokens > 0:
                 kwargs["max_tokens"] = max_tokens
             full_text = ""
+            finish_reason = None
+            refusal = None
             try:
                 with client.chat.completions.create(**kwargs) as stream:
                     for chunk in stream:
-                        delta = chunk.choices[0].delta.content or ""
+                        choice = chunk.choices[0]
+                        delta_object = choice.delta
+                        delta = delta_object.content or ""
                         if delta:
                             full_text += delta
                             chunk_callback(delta)
+                        chunk_refusal = getattr(delta_object, "refusal", None)
+                        if chunk_refusal is not None:
+                            refusal = chunk_refusal
+                        chunk_finish_reason = getattr(choice, "finish_reason", None)
+                        if chunk_finish_reason is not None:
+                            finish_reason = chunk_finish_reason
             except Exception as exc:
                 if _is_cache_rejection(exc):
-                    clean, _ = extract_prompt_cache_directives(messages)
+                    clean, _ = extract_prompt_cache_directives(clean_messages)
                     retry_kwargs: dict = dict(model=self._model, messages=clean, stream=True)
+                    if output_schema is not None:
+                        retry_kwargs["response_format"] = openai_response_format(output_schema)
                     if reasoning_patch is not None:
                         retry_kwargs.update(reasoning_patch.standard)
                         if reasoning_patch.extra_body:
@@ -258,13 +341,29 @@ class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
                     )
                     with client.chat.completions.create(**retry_kwargs) as stream:
                         for chunk in stream:
-                            delta = chunk.choices[0].delta.content or ""
+                            choice = chunk.choices[0]
+                            delta_object = choice.delta
+                            delta = delta_object.content or ""
                             if delta:
                                 full_text += delta
                                 chunk_callback(delta)
+                            chunk_refusal = getattr(delta_object, "refusal", None)
+                            if chunk_refusal is not None:
+                                refusal = chunk_refusal
+                            chunk_finish_reason = getattr(choice, "finish_reason", None)
+                            if chunk_finish_reason is not None:
+                                finish_reason = chunk_finish_reason
                 else:
                     raise
-        except Exception:
+            if output_schema is not None:
+                ensure_openai_structured_output_completion(
+                    finish_reason=finish_reason,
+                    refusal=refusal,
+                )
+                return validate_structured_output(full_text, output_schema)
+        except Exception as exc:
+            if output_schema is not None:
+                raise_if_structured_output_unsupported(exc, provider="openai")
             logger.exception("OpenAI chat_stream() 调用失败: model=%s, messages_count=%d", self._model, len(messages))
             raise
         finally:
@@ -321,11 +420,13 @@ class AnthropicClient(AnthropicReasoningProtocolMixin, LLMClient):
         with self._lock:
             client = self._client
             self._active_requests += 1
+        output_schema = None
         try:
+            clean_messages, output_schema = extract_structured_output_directive(messages)
             # 普通与流式共用同一转换器：把内部指令 system 消息转为
             # 带 ephemeral cache_control 的 content blocks + user_messages。
             system_blocks, user_messages = build_anthropic_system_blocks(
-                messages,
+                clean_messages,
                 model=self._model,
             )
             kwargs: dict = dict(
@@ -335,12 +436,14 @@ class AnthropicClient(AnthropicReasoningProtocolMixin, LLMClient):
             )
             if system_blocks:
                 kwargs["system"] = system_blocks
+            if output_schema is not None:
+                kwargs["output_config"] = anthropic_output_config(output_schema)
             try:
                 resp = client.messages.create(**kwargs)
             except Exception as exc:
                 if _is_cache_rejection(exc) and _has_anthropic_cache_control(system_blocks):
                     no_cache_blocks, no_cache_messages = build_anthropic_system_blocks(
-                        messages,
+                        clean_messages,
                         model=self._model,
                         enable_cache=False,
                     )
@@ -365,8 +468,18 @@ class AnthropicClient(AnthropicReasoningProtocolMixin, LLMClient):
                     resp = client.messages.create(**kwargs)
                 else:
                     raise
-            return resp.content[0].text if resp.content else ""
-        except Exception:
+            if output_schema is None:
+                return resp.content[0].text if resp.content else ""
+            ensure_anthropic_structured_output_completion(stop_reason=getattr(resp, "stop_reason", None))
+            content = "".join(
+                block.text
+                for block in resp.content
+                if getattr(block, "type", None) == "text" and getattr(block, "text", None)
+            )
+            return validate_structured_output(content, output_schema)
+        except Exception as exc:
+            if output_schema is not None:
+                raise_if_structured_output_unsupported(exc, provider="anthropic")
             logger.exception("Anthropic chat() 调用失败: model=%s, messages_count=%d", self._model, len(messages))
             raise
         finally:
@@ -380,10 +493,12 @@ class AnthropicClient(AnthropicReasoningProtocolMixin, LLMClient):
         with self._lock:
             client = self._client
             self._active_requests += 1
+        output_schema = None
         try:
+            clean_messages, output_schema = extract_structured_output_directive(messages)
             # 与 chat() 共用同一转换器。
             system_blocks, user_messages = build_anthropic_system_blocks(
-                messages,
+                clean_messages,
                 model=self._model,
             )
             kwargs: dict = dict(
@@ -393,17 +508,23 @@ class AnthropicClient(AnthropicReasoningProtocolMixin, LLMClient):
             )
             if system_blocks:
                 kwargs["system"] = system_blocks
+            if output_schema is not None:
+                kwargs["output_config"] = anthropic_output_config(output_schema)
 
             full_text = ""
+            stop_reason = None
             try:
                 with client.messages.stream(**kwargs) as stream:
                     for text in stream.text_stream:
                         full_text += text
                         chunk_callback(text)
+                    if output_schema is not None:
+                        final_message = stream.get_final_message()
+                        stop_reason = getattr(final_message, "stop_reason", None)
             except Exception as exc:
                 if _is_cache_rejection(exc) and _has_anthropic_cache_control(system_blocks):
                     no_cache_blocks, no_cache_messages = build_anthropic_system_blocks(
-                        messages,
+                        clean_messages,
                         model=self._model,
                         enable_cache=False,
                     )
@@ -421,6 +542,9 @@ class AnthropicClient(AnthropicReasoningProtocolMixin, LLMClient):
                         for text in stream.text_stream:
                             full_text += text
                             chunk_callback(text)
+                        if output_schema is not None:
+                            final_message = stream.get_final_message()
+                            stop_reason = getattr(final_message, "stop_reason", None)
                 elif _is_system_blocks_unsupported(exc) and system_blocks:
                     kwargs["system"] = _anthropic_system_text(system_blocks)
                     logger.warning(
@@ -431,9 +555,17 @@ class AnthropicClient(AnthropicReasoningProtocolMixin, LLMClient):
                         for text in stream.text_stream:
                             full_text += text
                             chunk_callback(text)
+                        if output_schema is not None:
+                            final_message = stream.get_final_message()
+                            stop_reason = getattr(final_message, "stop_reason", None)
                 else:
                     raise
-        except Exception:
+            if output_schema is not None:
+                ensure_anthropic_structured_output_completion(stop_reason=stop_reason)
+                return validate_structured_output(full_text, output_schema)
+        except Exception as exc:
+            if output_schema is not None:
+                raise_if_structured_output_unsupported(exc, provider="anthropic")
             logger.exception(
                 "Anthropic chat_stream() 调用失败: model=%s, messages_count=%d",
                 self._model,
@@ -444,6 +576,18 @@ class AnthropicClient(AnthropicReasoningProtocolMixin, LLMClient):
             with self._lock:
                 self._active_requests -= 1
         return full_text
+
+    def chat_stream_with_tools(
+        self,
+        messages: list[dict],
+        max_tokens: int,
+        tools: Sequence[LlmToolDefinition],
+        chunk_callback: Callable[[str], None],
+    ) -> LlmTurn:
+        from transbridge.infra.anthropic_tool_calling import chat_stream_with_tools
+
+        _reject_structured_output_tool_request(messages)
+        return chat_stream_with_tools(self, messages, max_tokens, tools, chunk_callback)
 
 
 def create_llm_client(config: LLMConfig) -> LLMClient:

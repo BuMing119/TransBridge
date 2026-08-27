@@ -12,6 +12,8 @@ import tomllib
 from typing import TYPE_CHECKING, Literal
 import warnings
 
+from transbridge.config.language_profiles import load_language_profile
+
 from .base import output_token_limit, validate_max_output_tokens
 from .prompt_contract import (
     PromptTemplateContractError,
@@ -53,130 +55,80 @@ class ArbitrationContext:
 
 # ── 内置默认提示词 ─────────────────────────────────────────────────────────
 
-_DEFAULT_SYSTEM = """你是 $game_name 本地化质量裁决官，负责对 $source_lang 原文译文的最终质量进行裁决。
+_DEFAULT_SYSTEM = """You are a $game_name localization quality arbiter.
+Make a final quality decision on $target_lang translations of $source_lang source text.
 
-你的职责：只对最终候选译文做出裁决，输出 pass / reject / pending 三者之一。
-评估对象是最终候选译文，优先级为：润色结果 > 修复结果 > 初始译文。
-你绝不可以生成新的最终译文，也不对译文做任何改写。
+Judge only the final candidate and return pass, reject, or pending.
+Candidate priority is polished result > corrected result > initial translation. Never generate or rewrite a translation.
 
-裁决标准：
+Decision criteria:
+- "pass": publishable, natural, contextually appropriate, and free of clear errors
+- "reject": a severe semantic, terminology, formatting, or style problem requires retranslation
+- "pending": uncertainty, ambiguity, creative judgment, or substantial changes require human review
+Prefer pending over accepting risk. Explain reject decisions and identify review points for pending.
+Consider refiner and polisher confidence.
 
-1. "pass": 最终译文质量合格，可以发布
-   - 修复有效，原问题已解决
-   - 最终译文流畅自然，符合游戏语境
-   - 无明显错误或风险
-   - 术语使用正确
+Return only the structured arbitration decision. Confidence above 0.9 means high certainty; below 0.7 suggests pending.
+alternatives is especially useful for reject decisions."""
 
-2. "reject": 最终译文存在严重问题，必须打回重翻
-   - 语义错误、漏翻、错翻
-   - 术语严重不一致且未修复
-   - 格式损坏无法修复
-   - 风格严重不符游戏语境
-   - 修复/润色尝试失败或产生新问题
-
-3. "pending": 最终译文质量存疑，建议人工审核
-   - 修复/润色效果不确定
-   - 存在争议或歧义
-   - 涉及创意性判断（如角色性格体现）
-   - 不确定是否准确传达原文语境
-   - 改动较大，需要确认
-
-裁决原则：
-- 宁可pending也不接受有风险的译文
-- 明确reject的情况必须给出具体理由
-- pending时需说明需要审核的具体要点
-- 考虑修复者/润色者的信心度，低信心度倾向pending
-
-输出格式（必须严格遵循JSON）。verdict 只能取 "pass"、"reject"、"pending" 三者之一：
-{
-    "verdict": "pass",
-    "reason": "详细裁决理由，说明为什么做这个决定",
-    "confidence": 0.9,
-    "suggested_action": "具体建议动作",
-    "alternatives": ["如有reject，提供备选建议或问题描述"]
-}
-
-注意：
-- confidence > 0.9 表示裁决很有把握
-- confidence < 0.7 时建议设为pending
-- alternatives 在reject时特别有用，可以告诉用户具体问题"""
-
-_DEFAULT_USER = """【原文】
+_DEFAULT_USER = """[SOURCE]
 $original
 
-【初始译文】
+[INITIAL TRANSLATION]
 $initial_translation
 
-【修复后译文】
+[CORRECTED TRANSLATION]
 $refined_translation
 
-【润色后译文】
+[POLISHED TRANSLATION]
 $polished_translation
 
-【上下文】
+[CONTEXT]
 $context
 
-【检测到的问题】
+[DETECTED ISSUES]
 $original_issues
 
-【修复详情】
+[CORRECTION DETAILS]
 $fix_details
 
-【润色详情】
+[POLISHING DETAILS]
 $polish_details
 
-【修复者信心度】
+[REFINER CONFIDENCE]
 $refiner_confidence
 
-【润色者信心度】
+[POLISHER CONFIDENCE]
 $polisher_confidence
 
-【原质量关卡判定】
+[ORIGINAL QUALITY-GATE VERDICT]
 $quality_gate_verdict
 
-请作为最终裁决官，对该条目进行裁决。
+As the final arbiter, decide this entry's outcome.
 
-请仔细分析：
-1. 原问题是否已被有效修复？
-2. 润色是否提升了译文质量？
-3. 是否存在新的问题？
-4. 是否适合直接发布，还是需要人工审核？
+Analyze whether original issues were corrected, polishing improved quality, and new problems were introduced.
+Decide whether the result is publishable or needs human review.
 
-注意：
-- 润色后译文（如有）是最终版本
-- 修复和润色可能同时存在，请综合评估最终译文质量
+When present, the polished translation is final.
+Correction and polishing may both be present; evaluate the final result as a whole.
 
-按指定JSON格式输出你的裁决结果。"""
+Return only the final arbitration decision."""
 
-_DEFAULT_BATCH_SYSTEM = """你是 $game_name 本地化质量裁决官，负责对 $source_lang 原文译文的最终质量进行批量裁决。
+_DEFAULT_BATCH_SYSTEM = """You are a $game_name localization quality arbiter.
+Make final quality decisions on multiple $target_lang translations of $source_lang source text.
 
-你的职责：只对最终候选译文做出裁决，输出 pass / reject / pending 三者之一。
-评估对象是最终候选译文，优先级为：润色结果 > 修复结果 > 初始译文。
-你绝不可以生成新的最终译文，也不对译文做任何改写。
+Judge only final candidates and return pass, reject, or pending.
+Candidate priority is polished result > corrected result > initial translation. Never generate or rewrite translations.
 
-裁决标准：
-- "pass": 最终译文质量合格，可以发布
-- "reject": 最终译文存在严重问题，必须打回重翻
-- "pending": 最终译文质量存疑，建议人工审核
+Decision criteria:
+- "pass": publishable
+- "reject": a severe problem requires retranslation
+- "pending": uncertainty requires human review
 
-裁决原则：宁可pending也不接受有风险的译文。
+Prefer pending over accepting a risky translation.
 
-输出格式（必须严格遵循JSON数组）。每项 verdict 只能取 "pass"、"reject"、"pending" 三者之一：
-[
-    {
-        "entry_id": "条目ID",
-        "verdict": "pass",
-        "reason": "详细裁决理由",
-        "confidence": 0.9,
-        "suggested_action": "建议动作",
-        "alternatives": []
-    }
-]
-
-注意：
-- 必须包含所有条目的裁决结果
-- confidence > 0.9 表示很有把握
-- confidence < 0.7 时建议设为pending"""
+Return only the structured arbitration decisions, with one decision for every input entry. Preserve each entry ID
+exactly. Confidence above 0.9 means high certainty; below 0.7 suggests pending."""
 
 
 def _get_prompts_dir() -> Path:
@@ -301,20 +253,18 @@ class LLMArbiter:
 
         # 加载游戏和语言配置
         game_data = _load_toml(prompts_dir / "games" / f"{game_profile}.toml")
-        lang_data = _load_toml(prompts_dir / "langs" / f"{target_lang}.toml")
+        language = load_language_profile(target_lang, prompts_dir=prompts_dir)
 
-        # 加载裁决专用配置
-        arb_path = prompts_dir / "arbitration" / f"{target_lang}.toml"
+        # 阶段提示词与目标语言解耦；语言名称通过 ctx 在渲染时注入。
+        arb_path = prompts_dir / "arbitration" / "default.toml"
         arb_data = _load_toml(arb_path)
 
         # 构建变量上下文
         game = game_data.get("game", {})
-        lang = lang_data.get("lang", {})
-
         ctx = {
-            "game_name": game.get("name", "上古卷轴5：天际特别版（SSE）"),
-            "source_lang": lang.get("source", "英文"),
-            "target_lang": lang.get("target", "中文"),
+            "game_name": game.get("name", "The Elder Scrolls V: Skyrim Special Edition (SSE)"),
+            "source_lang": language.source_language,
+            "target_lang": language.target_language,
         }
 
         arb_cfg = arb_data.get("arbitration", {})
@@ -580,7 +530,7 @@ class LLMArbiter:
             initial_translation=entry.translation or "",
             refined_translation=refine.refined_translation if refine else entry.translation or "",
             polished_translation=polish.polished_translation if polish else final_translation,
-            context=entry.context or "未知",
+            context=entry.context or "unknown",
             original_issues=issues_text,
             fix_details=fix_details,
             polish_details=polish_details,
@@ -601,7 +551,7 @@ class LLMArbiter:
         contexts: list[ArbitrationContext],
     ) -> list[dict]:
         """构建批量裁决Prompt。"""
-        lines = ["请批量裁决以下翻译条目的最终质量。\n"]
+        lines = ["Judge the final quality of the following translation entries.\n"]
 
         for ctx in contexts:
             entry = ctx.entry
@@ -618,37 +568,37 @@ class LLMArbiter:
 
             lines.append(f"\n{'=' * 60}")
             lines.append(f"【ENTRY_ID: {entry.id}】")
-            lines.append(f"原文：{entry.original or ''}")
-            lines.append(f"初始译文：{entry.translation or ''}")
-            lines.append(f"修复后译文：{refine.refined_translation if refine else 'N/A'}")
-            lines.append(f"润色后译文：{polish.polished_translation if polish else 'N/A'}")
-            lines.append(f"最终译文：{final_translation}")
-            lines.append(f"上下文：{entry.context or '未知'}")
+            lines.append(f"Source: {entry.original or ''}")
+            lines.append(f"Initial translation: {entry.translation or ''}")
+            lines.append(f"Corrected translation: {refine.refined_translation if refine else 'N/A'}")
+            lines.append(f"Polished translation: {polish.polished_translation if polish else 'N/A'}")
+            lines.append(f"Final translation: {final_translation}")
+            lines.append(f"Context: {entry.context or 'unknown'}")
 
             if ctx.original_issues:
-                lines.append("检测到的问题：")
+                lines.append("Detected issues:")
                 for issue in ctx.original_issues:
                     lines.append(f"  - [{issue.severity}] {issue.issue_type}: {issue.message}")
 
             if refine:
-                lines.append(f"修复信心度：{refine.confidence:.2f}")
+                lines.append(f"Refiner confidence: {refine.confidence:.2f}")
                 if refine.fixes_applied:
-                    lines.append("应用的修复：")
+                    lines.append("Applied corrections:")
                     for fix in refine.fixes_applied:
                         lines.append(f"  - {fix.issue_type}: {fix.fix_description}")
 
             if polish:
-                lines.append(f"润色信心度：{polish.confidence:.2f}")
+                lines.append(f"Polisher confidence: {polish.confidence:.2f}")
                 if polish.changes:
-                    lines.append("润色改动：")
+                    lines.append("Polishing changes:")
                     for change in polish.changes[:3]:  # 最多显示3个改动
                         if isinstance(change, dict):
-                            aspect = change.get("aspect", "未知")
+                            aspect = change.get("aspect", "unknown")
                             lines.append(f"  - [{aspect}] {change.get('before', '')} -> {change.get('after', '')}")
                         else:
                             lines.append(f"  - [{change}]")
 
-            lines.append(f"原质量关卡判定：{ctx.quality_gate_verdict or 'N/A'}")
+            lines.append(f"Original quality-gate verdict: {ctx.quality_gate_verdict or 'N/A'}")
 
         lines.append(f"\n{'=' * 60}")
 
@@ -662,7 +612,7 @@ class LLMArbiter:
     def _format_issues(self, issues: list["PostProcessIssue"]) -> str:
         """格式化问题列表。"""
         if not issues:
-            return "无"
+            return "none"
 
         lines = []
         for issue in issues:
@@ -672,36 +622,36 @@ class LLMArbiter:
     def _format_fix_details(self, refine: "RefineResult | None") -> str:
         """格式化修复详情。"""
         if not refine:
-            return "无修复"
+            return "no correction"
 
         lines = []
-        lines.append(f"修复后译文: {refine.refined_translation}")
-        lines.append(f"修复信心度: {refine.confidence:.2f}")
+        lines.append(f"Corrected translation: {refine.refined_translation}")
+        lines.append(f"Refiner confidence: {refine.confidence:.2f}")
 
         if refine.fixes_applied:
-            lines.append("应用的修复:")
+            lines.append("Applied corrections:")
             for fix in refine.fixes_applied:
                 lines.append(f"  - {fix.issue_type}: {fix.fix_description}")
 
         if refine.note:
-            lines.append(f"备注: {refine.note}")
+            lines.append(f"Note: {refine.note}")
 
         return "\n".join(lines)
 
     def _format_polish_details(self, polish: "PolishResult | None") -> str:
         """格式化润色详情。"""
         if not polish:
-            return "无润色"
+            return "no polishing"
 
         lines = []
-        lines.append(f"润色后译文: {polish.polished_translation}")
-        lines.append(f"润色信心度: {polish.confidence:.2f}")
+        lines.append(f"Polished translation: {polish.polished_translation}")
+        lines.append(f"Polisher confidence: {polish.confidence:.2f}")
 
         if polish.changes:
-            lines.append("润色改动:")
+            lines.append("Polishing changes:")
             for change in polish.changes:
                 if isinstance(change, dict):
-                    aspect = change.get("aspect", "未知")
+                    aspect = change.get("aspect", "unknown")
                     before = change.get("before", "")
                     after = change.get("after", "")
                     reason = change.get("reason", "")
@@ -712,10 +662,10 @@ class LLMArbiter:
                     reason = ""
                 lines.append(f"  - [{aspect}] {before} -> {after}")
                 if reason:
-                    lines.append(f"    理由: {reason}")
+                    lines.append(f"    Reason: {reason}")
 
         if polish.note:
-            lines.append(f"备注: {polish.note}")
+            lines.append(f"Note: {polish.note}")
 
         return "\n".join(lines)
 
@@ -746,20 +696,11 @@ class LLMArbiter:
                 alternatives=data.get("alternatives", []),
             )
 
-        except json.JSONDecodeError:
-            # JSON解析失败，尝试从文本判断
-            text_lower = response.lower()
-            if "pass" in text_lower or "通过" in text_lower:
-                verdict = "pass"
-            elif "reject" in text_lower or "打回" in text_lower or "失败" in text_lower:
-                verdict = "reject"
-            else:
-                verdict = "pending"
-
+        except (AttributeError, TypeError, json.JSONDecodeError):
             return ArbiterDecision(
                 entry_id=entry_id,
-                verdict=verdict,
-                reason=f"响应解析异常，从文本推断: {response[:200]}",
+                verdict="pending",
+                reason=f"响应解析异常: {response[:200]}",
                 confidence=0.5,
                 suggested_action="建议人工确认",
             )
@@ -772,14 +713,13 @@ class LLMArbiter:
         """解析批量裁决响应。"""
         context_map = {alias: ctx for ctx in contexts for alias in {str(ctx.entry.id), str(ctx.entry.key)}}
         decisions = {}
+        duplicate_entry_ids: set[str] = set()
 
         try:
-            # 提取JSON数组
-            json_match = re.search(r"\[[\s\S]*\]", response)
-            if json_match:
-                data = json.loads(json_match.group())
-            else:
-                data = json.loads(response)
+            payload = json.loads(response)
+            if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
+                raise TypeError("arbitration batch response must contain a results array")
+            data = payload["results"]
 
             for item in data:
                 response_id = str(item.get("entry_id", ""))
@@ -787,6 +727,9 @@ class LLMArbiter:
                 if ctx is None:
                     continue
                 entry_id = str(ctx.entry.id)
+                if entry_id in decisions:
+                    duplicate_entry_ids.add(entry_id)
+                    continue
 
                 verdict = item.get("verdict", "pending").lower()
                 if verdict not in ("pass", "reject", "pending"):
@@ -803,6 +746,9 @@ class LLMArbiter:
 
             for ctx in contexts:
                 entry_id = str(ctx.entry.id)
+                if entry_id in duplicate_entry_ids:
+                    decisions[entry_id] = self._fallback_decision(ctx, "批量响应重复返回该条目")
+                    continue
                 if entry_id not in decisions:
                     decisions[entry_id] = self._fallback_decision(ctx, "批量响应缺少该条目")
 

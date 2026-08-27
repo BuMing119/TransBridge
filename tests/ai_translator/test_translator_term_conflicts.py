@@ -11,6 +11,7 @@ from transbridge.ai_translator.existing_term_extractor import (
     ExistingTermSeedResult,
     TermConflictEvidence,
 )
+from transbridge.ai_translator.prompt_builder import _extract_partial_translation_results
 from transbridge.ai_translator.term_formats import TermEntry
 from transbridge.ai_translator.translator import (
     AutoTranslator,
@@ -23,6 +24,10 @@ from transbridge.application.translation.ai_request_budget import AiRequestBudge
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.infra.limited_llm_client import LimitedLLMClient
+from transbridge.infra.llm_structured_outputs import (
+    LlmStructuredOutputInvalidResponseError,
+    LlmStructuredOutputTruncatedError,
+)
 
 
 def _entry(key: str, *, translation: str = "", stage: int = 0) -> TranslationEntry:
@@ -366,3 +371,142 @@ def _wait_until(predicate, timeout: float = 2.0) -> None:
             return
         time.sleep(0.005)
     raise AssertionError("condition was not reached before timeout")
+
+
+class _ResultsEnvelopeBuilder(_PromptBuilder):
+    def extract_partial_pairs(self, value):
+        return _extract_partial_translation_results(value)
+
+    def parse_translation_response(self, response, expected_keys):
+        payload = json.loads(response)
+        results: dict[str, str] = {}
+        duplicates: set[str] = set()
+        for item in payload["results"]:
+            entry_id = item["entry_id"]
+            if entry_id not in expected_keys:
+                continue
+            if entry_id in results:
+                duplicates.add(entry_id)
+            else:
+                results[entry_id] = item["translation"]
+        for entry_id in duplicates:
+            results.pop(entry_id, None)
+        return results
+
+
+def _stream_recovery_translator(monkeypatch, llm):
+    from transbridge.ai_translator import prompt_builder, term_database
+
+    manager = _TermManager()
+    builder = _ResultsEnvelopeBuilder()
+    monkeypatch.setattr(term_database, "TermDatabaseManager", lambda **_kwargs: manager)
+    monkeypatch.setattr(prompt_builder, "PromptBuilder", lambda **_kwargs: builder)
+    translator = AutoTranslator(
+        _config(),
+        llm_client=llm,
+        candidate_checkpoint=InMemoryTranslationCheckpointPort(),
+    )
+    translator._llm = llm
+    accepted: list[dict[str, str]] = []
+
+    def accept(translations, _collection):
+        accepted.append(dict(translations))
+        return SimpleNamespace(accepted=len(translations))
+
+    translator._candidate_session = SimpleNamespace(accept=accept)
+    return translator, accepted
+
+
+def test_truncated_structured_stream_salvages_complete_items_and_retries_missing(monkeypatch) -> None:
+    entries = [_entry("first"), _entry("second")]
+
+    class TruncatingLlm:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def chat_stream(self, messages, _max_tokens, callback):
+            self.calls += 1
+            keys = json.loads(messages[-1]["content"])["keys"]
+            if self.calls == 1:
+                partial = json.dumps({"results": [{"entry_id": keys[0], "translation": "translated:first"}]})
+                callback(partial)
+                raise LlmStructuredOutputTruncatedError("truncated")
+            response = json.dumps({"results": [{"entry_id": key, "translation": f"translated:{key}"} for key in keys]})
+            callback(response)
+            return response
+
+        def cancel(self):
+            pass
+
+    llm = TruncatingLlm()
+    translator, accepted = _stream_recovery_translator(monkeypatch, llm)
+    result = TranslationResult()
+
+    translator._run_batch(Batch(entries, "其他"), TranslationEntryCollection(entries), result, threading.Lock())
+
+    assert llm.calls == 2
+    assert accepted == [{"first": "translated:first"}, {"second": "translated:second"}]
+    assert result.success_count == 2
+    assert result.failed_count == 0
+
+
+def test_duplicate_stream_item_is_not_accepted_before_single_entry_retry(monkeypatch) -> None:
+    entries = [_entry("first"), _entry("second")]
+
+    class DuplicateLlm:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def chat_stream(self, messages, _max_tokens, callback):
+            self.calls += 1
+            keys = json.loads(messages[-1]["content"])["keys"]
+            if self.calls == 1:
+                response = json.dumps({
+                    "results": [
+                        {"entry_id": "first", "translation": "unsafe-first"},
+                        {"entry_id": "first", "translation": "duplicate-first"},
+                        {"entry_id": "second", "translation": "translated:second"},
+                    ]
+                })
+            else:
+                response = json.dumps({
+                    "results": [{"entry_id": key, "translation": f"translated:{key}"} for key in keys]
+                })
+            callback(response)
+            return response
+
+        def cancel(self):
+            pass
+
+    llm = DuplicateLlm()
+    translator, accepted = _stream_recovery_translator(monkeypatch, llm)
+    result = TranslationResult()
+
+    translator._run_batch(Batch(entries, "其他"), TranslationEntryCollection(entries), result, threading.Lock())
+
+    assert llm.calls == 2
+    assert accepted == [{"second": "translated:second"}, {"first": "translated:first"}]
+    assert result.success_count == 2
+    assert result.failed_count == 0
+
+
+def test_invalid_structured_stream_does_not_accept_prevalidated_items(monkeypatch) -> None:
+    entries = [_entry("first"), _entry("second")]
+
+    class InvalidLlm:
+        def chat_stream(self, messages, _max_tokens, callback):
+            del messages
+            callback(json.dumps({"results": [{"entry_id": "first", "translation": "unsafe-first"}]}))
+            raise LlmStructuredOutputInvalidResponseError("invalid")
+
+        def cancel(self):
+            pass
+
+    translator, accepted = _stream_recovery_translator(monkeypatch, InvalidLlm())
+    result = TranslationResult()
+
+    translator._run_batch(Batch(entries, "其他"), TranslationEntryCollection(entries), result, threading.Lock())
+
+    assert accepted == []
+    assert result.success_count == 0
+    assert result.failed_count == 2

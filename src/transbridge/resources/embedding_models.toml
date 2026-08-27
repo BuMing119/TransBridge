@@ -1,0 +1,31 @@
+# TransBridge local Embedding model catalog.
+#
+# Add new models by appending another [[models]] table. The list order is the
+# UI display order. Keep exactly one model recommended.
+#
+# A model ID permanently identifies its repo_id, revision, and dimension.
+# When any of those fields changes, add a new ID and retain the old entry so
+# existing managed installations can still be selected or removed safely.
+
+document_type = "transbridge.embedding-model-catalog"
+schema_version = 1
+
+[[models]]
+id = "multilingual-minilm-l12-v2"
+title = "Multilingual MiniLM L12 v2"
+repo_id = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+revision = "e8f8c211226b894fcb81acc59f3b34ba3efd5f42"
+description = "Balanced multilingual model for everyday semantic retrieval."
+dimension = 384
+download_size_mb = 500
+recommended = true
+
+[[models]]
+id = "multilingual-mpnet-base-v2"
+title = "Multilingual MPNet Base v2"
+repo_id = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+revision = "4328cf26390c98c5e3c738b4460a05b95f4911f5"
+description = "Higher-quality multilingual model with greater storage and compute requirements."
+dimension = 768
+download_size_mb = 1200
+recommended = false

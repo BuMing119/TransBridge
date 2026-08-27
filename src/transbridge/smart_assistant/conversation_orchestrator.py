@@ -56,6 +56,14 @@ def _create_llm_client(config, _cache: dict | None = None):
     return client
 
 
+def _smart_assistant_max_tokens(config) -> int:
+    """Return a Provider-valid output limit for one assistant round."""
+    configured = int(getattr(config, "max_output_tokens", 0) or 0)
+    if getattr(config, "provider", "") == "anthropic" and configured <= 0:
+        return 4096
+    return configured
+
+
 class _SignalBridge(QObject):
     """Worker→主线程回调桥接器。
 
@@ -137,6 +145,7 @@ class ConversationOrchestrator(QObject):
         # Micro-stage temp state
         self._round_messages: list = []
         self._round_max_tokens: int = 0
+        self._round_tools: list = []
 
         # Streaming state
         self._streaming_text = ""
@@ -239,7 +248,12 @@ class ConversationOrchestrator(QObject):
         generation = self._generation
         self._active_generation = generation
 
-        if not any(m["role"] == "system" for m in self._conversation.get_messages()):
+        current_messages = self._conversation.get_messages()
+        system_message = next((m for m in current_messages if m.get("role") == "system"), None)
+        has_legacy_tool_prompt = system_message is not None and '"mode": "plan"' in str(
+            system_message.get("content", "")
+        )
+        if system_message is None or has_legacy_tool_prompt:
             from transbridge.smart_assistant.context_builder import ContextBuilder
             from transbridge.smart_assistant.prompts import build_system_prompt
 
@@ -256,7 +270,12 @@ class ConversationOrchestrator(QObject):
         self._react_depth += 1
         self._on_thinking_indicator_hide()
         self._round_messages = self._conversation.get_messages()
-        self._round_max_tokens = 0
+        cfg = self._cached_llm_config
+        self._round_max_tokens = _smart_assistant_max_tokens(cfg)
+        from transbridge.smart_assistant.native_tools import build_native_tool_definitions
+
+        loaded_namespaces = getattr(self._conversation, "get_loaded_tool_namespaces", lambda: ())()
+        self._round_tools = build_native_tool_definitions(loaded_namespaces)
         QTimer.singleShot(0, lambda g=generation: self._stage_b(g))
 
     def _stage_b(self, generation: int) -> None:
@@ -280,12 +299,14 @@ class ConversationOrchestrator(QObject):
         client = self._get_llm_client()
         messages = getattr(self, "_round_messages", [])
         _max = getattr(self, "_round_max_tokens", 0)
+        tools = getattr(self, "_round_tools", [])
         self._round_messages = []
         self._round_max_tokens = 0
+        self._round_tools = []
 
         _bridge = self._cb_bridge
 
-        worker = ChatWorker(client, messages, max_tokens=_max)
+        worker = ChatWorker(client, messages, max_tokens=_max, tools=tools)
         self._worker = worker
         self._workers.add(worker)
         worker.on_chunk = lambda chunk, g=generation, w=worker: _bridge._dispatch.emit(
@@ -330,7 +351,7 @@ class ConversationOrchestrator(QObject):
 
     # ── 响应处理 ───────────────────────────────────────────
 
-    def _on_finished(self, generation: int, worker, response: str) -> None:
+    def _on_finished(self, generation: int, worker, response) -> None:
         if not self._is_current(generation, worker):
             self._forget_stopped_workers()
             return
@@ -343,19 +364,32 @@ class ConversationOrchestrator(QObject):
         self._streaming_text = ""
 
         self._consecutive_errors = 0
-        pb = self._get_prompt_builder()
-        parsed = pb.parse_hybrid_response(response)
+        from transbridge.infra.llm_tool_calling import LlmToolProtocolError, LlmTurn
+        from transbridge.smart_assistant.native_tools import turn_to_parsed_response
 
-        thought = parsed.get("thought", "")
-        steps = parsed.get("steps", [])
-
-        self._conversation.add_assistant(response)
-
-        # FR7.16: 先清掉流式气泡（用户不应看到 JSON），再通知 Controller 分发
-        if thought and steps:
+        turn = response if isinstance(response, LlmTurn) else LlmTurn(text=str(response or ""))
+        try:
+            self._conversation.add_assistant_turn(turn)
+            parsed = turn_to_parsed_response(turn)
+        except LlmToolProtocolError as exc:
+            self._conversation.close_pending_tool_calls("模型返回了无效的工具调用组合。")
             if _finished_bubble is not None:
                 self._on_remove_widget(_finished_bubble)
-            self._on_thinking_indicator_show(thought)
+            self._on_error(generation, worker, f"无效的原生工具调用: {exc}")
+            return
+
+        thought = parsed.get("summary", "")
+        steps = parsed.get("steps", [])
+
+        # 工具调用的参数不显示在流式气泡中；tool-only 轮次删除空占位。
+        if steps:
+            if _finished_bubble is not None:
+                self._on_remove_widget(_finished_bubble)
+            if thought:
+                self._on_thinking_indicator_show(thought)
+        elif not turn.text and _finished_bubble is not None:
+            self._on_remove_widget(_finished_bubble)
+            self._on_system_message("模型未返回可显示内容，请重试。")
 
         # FR12 Story 02: 分发逻辑移交给 SessionController
         self._on_response_parsed(parsed)
@@ -367,7 +401,7 @@ class ConversationOrchestrator(QObject):
         # 记录记忆
         self._on_log_memory(
             self._conversation.get_messages(),
-            response[:300],
+            turn.text[:300],
         )
 
         # 清理 worker

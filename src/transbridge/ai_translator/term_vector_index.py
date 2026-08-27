@@ -11,17 +11,18 @@ Embedding 编码通过 EmbeddingClient 实现，支持本地模型和 API 服务
 
 from __future__ import annotations
 
+from collections import OrderedDict
+from dataclasses import dataclass
 import hashlib
 import json
 import logging
 import os
-from collections import OrderedDict
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
 
 from ..infra.embedding_client import EmbeddingClient
+from .term_vector_manifest import create_index_metadata, validate_index_metadata
 
 if TYPE_CHECKING:
     from .term_database import TermEntry
@@ -38,6 +39,7 @@ def _get_faiss():
     if _faiss is None:
         try:
             import faiss
+
             _faiss = faiss
         except ImportError:
             logger.warning("faiss not installed, semantic matching disabled")
@@ -55,6 +57,7 @@ def _get_bm25():
     if _bm25_okapi is None:
         try:
             from rank_bm25 import BM25Okapi
+
             _bm25_okapi = BM25Okapi
         except ImportError:
             logger.warning("rank_bm25 not installed, hybrid retrieval disabled")
@@ -76,8 +79,9 @@ DEFAULT_MAX_TERMS_PER_BATCH = 50
 @dataclass
 class VectorSearchResult:
     """语义检索结果。"""
-    term: str          # 匹配到的主术语
-    translation: str   # 主术语的译文
+
+    term: str  # 匹配到的主术语
+    translation: str  # 主术语的译文
     similarity: float  # 相似度分数 (0~1)
     matched_variant: str | None = None  # 实际匹配的变体（如果有）
 
@@ -127,6 +131,7 @@ class TermVectorIndex:
 
         # 文件路径
         from transbridge.paratranz.config_manager import LLMConfig
+
         stem = os.path.splitext(os.path.basename(esp_path))[0]
         ai_dir = LLMConfig.get_ai_translator_dir(stem)
         self._index_path = os.path.join(ai_dir, f"{stem}_terms.faiss")
@@ -149,8 +154,7 @@ class TermVectorIndex:
     def _compute_term_hash(self, terms: list[TermEntry]) -> str:
         """计算术语列表的内容 hash，包含变体。"""
         content = json.dumps(
-            [{"t": e.term, "tr": e.translation, "v": sorted(e.variants)}
-             for e in sorted(terms, key=lambda x: x.term)],
+            [{"t": e.term, "tr": e.translation, "v": sorted(e.variants)} for e in sorted(terms, key=lambda x: x.term)],
             ensure_ascii=False,
             sort_keys=True,
         )
@@ -226,8 +230,7 @@ class TermVectorIndex:
             self._index.add(embeddings)
 
             self._term_meta = [
-                {"text": text, "term": main_term, "translation": trans}
-                for text, main_term, trans in unique_entries
+                {"text": text, "term": main_term, "translation": trans} for text, main_term, trans in unique_entries
             ]
             self._term_hash = new_hash
             self._row_map = {m["text"]: i for i, m in enumerate(self._term_meta)}
@@ -370,7 +373,7 @@ class TermVectorIndex:
 
                 # BM25 top-k 行索引
                 if bm25_raw.size > 0:
-                    bm25_top_idx = set(int(i) for i in np.argsort(-bm25_raw)[:top_k * 2])
+                    bm25_top_idx = set(int(i) for i in np.argsort(-bm25_raw)[: top_k * 2])
                 else:
                     bm25_top_idx = set()
 
@@ -406,12 +409,14 @@ class TermVectorIndex:
                         continue
                     seen.add(main_term)
                     matched_text = meta["text"]
-                    out.append(VectorSearchResult(
-                        term=main_term,
-                        translation=meta["translation"],
-                        similarity=float(fused),
-                        matched_variant=matched_text if matched_text != main_term else None,
-                    ))
+                    out.append(
+                        VectorSearchResult(
+                            term=main_term,
+                            translation=meta["translation"],
+                            similarity=float(fused),
+                            matched_variant=matched_text if matched_text != main_term else None,
+                        )
+                    )
                     if len(out) >= top_k:
                         break
                 results[q] = out
@@ -434,8 +439,13 @@ class TermVectorIndex:
             with open(self._meta_path, encoding="utf-8") as f:
                 meta = json.load(f)
 
-            if meta.get("hash") != expected_hash:
-                logger.info("Term content changed, need to rebuild index")
+            valid, reason, expected_dimension = validate_index_metadata(
+                meta,
+                expected_term_hash=expected_hash,
+                client=self._embedding_client,
+            )
+            if not valid:
+                logger.info("%s, need to rebuild vector index", reason)
                 return False
 
             self._term_meta = meta.get("terms", [])
@@ -443,10 +453,15 @@ class TermVectorIndex:
 
             # 加载 FAISS 索引
             self._index = faiss.read_index(self._index_path)
+            if int(getattr(self._index, "d", 0)) != expected_dimension:
+                logger.info("Persisted vector index dimension is inconsistent, need to rebuild index")
+                self._index = None
+                return False
 
             # 重建 row_map（按 meta 顺序）；软删除状态不持久化，重载视为全量有效
             self._row_map = {m["text"]: i for i, m in enumerate(self._term_meta)}
             self._inactive_rows = set()
+            self._build_bm25()
 
             return True
 
@@ -470,11 +485,12 @@ class TermVectorIndex:
         faiss.write_index(self._index, self._index_path)
 
         # 保存元数据
-        meta = {
-            "hash": self._term_hash,
-            "dimension": self._embedding_client.dimension,
-            "terms": self._term_meta,
-        }
+        meta = create_index_metadata(
+            term_hash=self._term_hash,
+            client=self._embedding_client,
+            dimension=int(getattr(self._index, "d", 0)),
+            terms=self._term_meta,
+        )
         with open(self._meta_path, "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False, indent=2)
 
@@ -551,12 +567,14 @@ class TermVectorIndex:
                 matched_text = meta["text"]
                 matched_variant = matched_text if matched_text != main_term else None
 
-                results.append(VectorSearchResult(
-                    term=main_term,
-                    translation=meta["translation"],
-                    similarity=float(sim),
-                    matched_variant=matched_variant,
-                ))
+                results.append(
+                    VectorSearchResult(
+                        term=main_term,
+                        translation=meta["translation"],
+                        similarity=float(sim),
+                        matched_variant=matched_variant,
+                    )
+                )
 
                 if len(results) >= top_k:
                     break
@@ -646,12 +664,14 @@ class TermVectorIndex:
                     matched_text = meta["text"]
                     matched_variant = matched_text if matched_text != main_term else None
 
-                    query_results.append(VectorSearchResult(
-                        term=main_term,
-                        translation=meta["translation"],
-                        similarity=float(sim),
-                        matched_variant=matched_variant,
-                    ))
+                    query_results.append(
+                        VectorSearchResult(
+                            term=main_term,
+                            translation=meta["translation"],
+                            similarity=float(sim),
+                            matched_variant=matched_variant,
+                        )
+                    )
 
                     if len(query_results) >= top_k:
                         break

@@ -16,19 +16,22 @@ from transbridge.ui.tools.ai_translator.config_view import (
     WindowConfigView,
 )
 from transbridge.ui.tools.ai_translator.custom_profile_controller import CustomProfileController
+from transbridge.ui.tools.ai_translator.embedding_connection_controller import EmbeddingConnectionController
+from transbridge.ui.tools.ai_translator.embedding_model_controller import (
+    EmbeddingModelController,
+    EmbeddingWindowCallbacks,
+)
 from transbridge.ui.tools.ai_translator.legacy_checkpoint import check_translation_checkpoint
-from transbridge.ui.tools.ai_translator.polish_runtime import create_polish_worker
 from transbridge.ui.tools.ai_translator.quick_run_presenter import AiQuickRunPresenter
 from transbridge.ui.tools.ai_translator.result_presenter import ResultPresenter
-from transbridge.ui.tools.ai_translator.run_controller import (
-    RunController,
-    show_polish_progress,
-    start_mixed_run,
-    start_translation_run,
-    try_begin_run,
-)
+from transbridge.ui.tools.ai_translator.run_controller import RunController, try_begin_run
 from transbridge.ui.tools.ai_translator.run_spec import preflight_ai_run
 from transbridge.ui.tools.ai_translator.scope_presenter import ScopePresenter, Step2ScopeAdapter
+from transbridge.ui.tools.ai_translator.versioned_run import (
+    start_versioned_mixed,
+    start_versioned_polish,
+    start_versioned_translation,
+)
 from transbridge.ui.tools.ai_translator.view_state import TranslatorViewPort
 from transbridge.ui.windowing import show_and_activate
 from transbridge.ui.workbench.filters_presenter import ALL_CATEGORIES, entry_category
@@ -71,12 +74,25 @@ class AITranslatorWindow(QWidget):
         )
         self.setWindowTitle("AI 自动翻译")
         self.resize(680, 520)
-        self._view = AITranslatorView(self, self, theme_view=theme_view)
+        self._view_callbacks = EmbeddingWindowCallbacks(self)
+        self._view = AITranslatorView(self, self._view_callbacks, theme_view=theme_view)
         self._view_port = TranslatorViewPort(self._view)
         from transbridge.ui.paratranz.target_context import bound_paratranz_project
 
-        config_view = WindowConfigView(self._view, self, lambda: bound_paratranz_project(self._ctx))
+        config_view = WindowConfigView(self._view, self._view_callbacks, lambda: bound_paratranz_project(self._ctx))
         self._config_presenter = ConfigPresenter(config_view)
+        self._embedding_models = EmbeddingModelController(
+            self,
+            self._view,
+            self._view_port,
+            self._config_presenter,
+            self.update_quick_run,
+        )
+        self._embedding_connection = EmbeddingConnectionController(
+            self._view,
+            self._config_presenter,
+            lambda result: show_connection_test(self, result),
+        )
         self._config_binding = ConfigAutosaveBinding(
             self._view,
             self,
@@ -88,6 +104,7 @@ class AITranslatorWindow(QWidget):
         self._result_presenter = ResultPresenter()
         self._theme_binding = AiThemeBinding(self, theme_view, lambda binding: apply_window_theme(self, binding))
         self._config_presenter.load()
+        self._embedding_models.restore_managed_path()
         self._custom_profiles = CustomProfileController(
             self, self._view, self._view_port, self._config_presenter, self.on_mode_changed
         )
@@ -192,9 +209,6 @@ class AITranslatorWindow(QWidget):
     def _build_scope_candidates(self) -> list:
         return self._scope_presenter.candidates()
 
-    def on_embed_provider_changed(self):
-        self._view_port.update_embedding_controls()
-
     def on_pp_enable_changed(self):
         self._view_port.update_post_process_controls()
 
@@ -251,8 +265,12 @@ class AITranslatorWindow(QWidget):
             self._theme_binding.report("success" if state.enabled else "warning"),
         )
 
-    def on_test_connection(self):
-        show_connection_test(self, self._config_presenter.test_connection())
+    def on_test_connection(self, target: str = "llm"):
+        if target == "embedding":
+            self._embedding_connection.start()
+            return
+        result = self._config_presenter.test_connection()
+        show_connection_test(self, result)
 
     def browse_file(self, target_edit: QLineEdit, file_filter: str):
         path, _ = QFileDialog.getOpenFileName(self, "选择文件", "", file_filter)
@@ -310,22 +328,7 @@ class AITranslatorWindow(QWidget):
         )
         if request is None:
             return
-
-        try:
-            start_translation_run(
-                self._run_controller,
-                self._ctx,
-                request,
-                progress_created=self.progress_window_created.emit,
-                entry_activated=self._scope_presenter.locate_entry,
-                theme_view=self._theme_view,
-            )
-        except Exception as exc:
-            self._run_controller.create_activity(request).fail(str(exc))
-            raise
-        finally:
-            self._run_controller.finish(request.run_id)
-        self.close()
+        start_versioned_translation(self, request)
 
     def _on_mixed_start(self):
         collection = self._ctx.collection
@@ -373,29 +376,13 @@ class AITranslatorWindow(QWidget):
         )
         if request is None:
             return
-        self._active_mixed_preview = request.spec.execution_profile.preview_enabled
-        self._active_mixed_spec = request.spec
-        self._active_mixed_config = request.config
-        self._active_mixed_progress = start_mixed_run(
-            self._run_controller,
-            request,
-            self._ctx,
-            request.config,
-            translate_entries,
-            polish_entries,
-            finished=self._on_mixed_finished,
-            error=lambda message: QMessageBox.warning(self, "混合模式错误", message),
-            progress_created=self.progress_window_created.emit,
-            theme_view=self._theme_view,
-        )
-        started_text = f"已启动：翻译 {len(translate_entries)} 条，润色 {len(polish_entries)} 条"
-        self._view.controls.preflight_label.set_full_text(started_text)
-        self._view.controls.preflight_label.setToolTip(started_text)
-        self._view.controls.preflight_label.setAccessibleDescription(started_text)
+        start_versioned_mixed(self, request, translate_entries, polish_entries)
 
     def _on_mixed_finished(self, result: dict):
         from .result_view import apply_window_mixed_result, show_window_mixed_report
 
+        if self._version_snapshot_session is not None:
+            self._version_snapshot_session.mark_completed()
         if apply_window_mixed_result(self, result):
             self._ctx.collection_changed.emit(self._ctx.collection)
         self._report_dialog = show_window_mixed_report(self, result)
@@ -423,41 +410,7 @@ class AITranslatorWindow(QWidget):
         )
         if request is None:
             return
-        try:
-            worker = create_polish_worker(
-                self._ctx,
-                request.config,
-                entries_with_translation,
-                request_budget=request.request_budget,
-            )
-        except Exception as exc:
-            self._run_controller.create_activity(request).fail(str(exc))
-            self._run_controller.finish(request.run_id)
-            raise
-        preview_enabled = self._view_port.polish_preview_enabled
-        self._active_polish_config = request.config
-        self._active_polish_spec = request.spec
-        if preview_enabled:
-
-            def on_results(payload):
-                self._on_polish_preview_ready(payload, entries_with_translation, collection)
-
-        else:
-
-            def on_results(results):
-                self._on_polish_finished_direct(results, entries_with_translation, collection)
-
-        progress = show_polish_progress(
-            self._run_controller,
-            request,
-            self,
-            worker,
-            entries_with_translation,
-            on_results=on_results,
-            preview=preview_enabled,
-            theme_view=self._theme_view,
-        )
-        self.progress_window_created.emit(progress)
+        start_versioned_polish(self, request, entries_with_translation, collection)
 
     def _on_polish_preview_ready(self, payload, entries, collection):
         results, decisions = payload
@@ -494,6 +447,7 @@ class AITranslatorWindow(QWidget):
 
     def closeEvent(self, event):
         self._config_binding.close()
+        self._embedding_connection.close()
         self._run_controller.close()
         self._theme_binding.close()
         super().closeEvent(event)

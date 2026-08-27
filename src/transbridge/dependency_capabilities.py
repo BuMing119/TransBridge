@@ -26,6 +26,8 @@ class DependencyCapability:
 
 DEPENDENCY_BASELINE: tuple[DependencyCapability, ...] = (
     DependencyCapability("hybrid-term-retrieval", "rank-bm25", "rank_bm25"),
+    DependencyCapability("vector-term-retrieval", "faiss-cpu", "faiss"),
+    DependencyCapability("local-embedding", "sentence-transformers", "sentence_transformers"),
     DependencyCapability("7z-archive", "py7zr", "py7zr"),
     DependencyCapability("rar-archive", "rarfile", "rarfile"),
 )

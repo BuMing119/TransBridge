@@ -1,11 +1,13 @@
 """
 Prompt 构建器与响应解析器。
 
-提示词模板从以下两个 TOML 文件加载，支持多游戏 / 多目标语言扩展：
+提示词模板与语言档案分别从以下 TOML 文件加载：
   data/prompts/games/{game_profile}.toml   — 游戏专属信息（名称、格式标记等）
-  data/prompts/langs/{target_lang}.toml    — 目标语言专属模板（翻译风格、提示词）
+  data/prompts/langs/{target_lang}.toml    — 语言名称与可选示例
+  data/prompts/translation/default.toml    — 通用翻译提示词
+  data/prompts/extraction/default.toml     — 通用术语抽取提示词
 
-任一文件缺失或解析失败时，自动 fallback 到内置默认值（简中 + Skyrim SE）。
+提示词文件缺失或解析失败时使用通用内置模板；语言档案缺失或无效时直接报错。
 模板使用 $var 占位符（string.Template），不与 JSON 示例中的花括号冲突。
 """
 
@@ -24,18 +26,22 @@ if TYPE_CHECKING:
 
     from transbridge.converter.translation_entry import TranslationEntry
 
+from transbridge.config.language_profiles import LanguageProfile, load_language_profile
+from transbridge.infra.llm_structured_outputs import attach_structured_output_directive
 from transbridge.infra.prompt_cache import (
     attach_prompt_cache_directive,
     build_prompt_cache_key,
 )
 
+from .structured_schemas import TERM_EXTRACTION_OUTPUT_SCHEMA, TRANSLATION_OUTPUT_SCHEMA
+
 # ── 翻译模式归一化 ─────────────────────────────────────────────────────────────
 
-TranslationMode = Literal["实体短文本", "对话", "长文本"]
+TranslationMode = Literal["entity_short_text", "dialogue", "long_text"]
 
-_ENTITY_SHORT_MODE = "实体短文本"
-_DIALOGUE_MODE = "对话"
-_LONG_TEXT_MODE = "长文本"
+_ENTITY_SHORT_MODE = "entity_short_text"
+_DIALOGUE_MODE = "dialogue"
+_LONG_TEXT_MODE = "long_text"
 
 # 具体分类 → 实体短文本
 _ENTITY_SHORT_BATCH_TYPES = frozenset({
@@ -50,19 +56,37 @@ _ENTITY_SHORT_BATCH_TYPES = frozenset({
 })
 # 具体分类 → 对话
 _DIALOGUE_BATCH_TYPES = frozenset({"对话"})
+_BATCH_TYPE_PROMPT_LABELS = {
+    "种族与派系": "races and factions",
+    "人名": "character names",
+    "地名": "locations",
+    "书名": "book titles",
+    "物品": "items",
+    "法术技能": "spells and skills",
+    "任务名": "quest titles",
+    "互动": "interactions",
+    "对话": "dialogue",
+    "长文本": "long text",
+    "书籍内容": "book content",
+    "任务日志": "quest journal",
+    "其他": "other",
+}
 
 # ── 内置默认值（文件完全缺失时使用，已预先完成变量替换） ─────────────────────
 
 _DEFAULT_TRANSLATION_COMMON_SYSTEM = (
-    "你是专业的上古卷轴5：天际特别版（SSE）模组本地化翻译员。\n"
-    "翻译要求：\n"
-    "1. 措辞自然流畅，符合中文语言习惯。\n"
-    "2. 每个输入条目的 terms 仅适用于该条目；提供时必须严格遵循其中的对照翻译。\n"
-    "3. 保留原文中的特殊标记，如 <br>、[pagebreak]、\\n 换行符、%s 等格式占位符。\n"
-    "4. 不要添加任何解释或注释，只输出 JSON。\n"
-    '5. 输出必须是严格的 JSON 对象，格式：{"id1": "译文1", "id2": "译文2", ...}\n'
-    "6. 严禁将原文原封不动地作为译文输出。\n"
-    "7. 严禁生成重复字符或重复短语的无限循环内容（如连续重复同一个字超过十次）。"
+    "You are a professional mod localization translator for $game_name.\n"
+    "Translate from $source_lang into $target_lang.\n"
+    "Translation requirements:\n"
+    "1. Produce natural, fluent translations that follow $target_lang conventions.\n"
+    "2. Each entry's terms apply only to that entry; follow every provided mapping exactly.\n"
+    "3. Preserve source markers such as <br>, [pagebreak], \\n, and format placeholders such as %s.\n"
+    "4. Return only the structured translation result, with no explanations or comments.\n"
+    "5. Return exactly one translation for every input entry and preserve each entry ID exactly.\n"
+    "6. Never omit, duplicate, or invent entries.\n"
+    "7. Never echo the source text unchanged as the translation.\n"
+    "8. Never generate runaway repeated characters or phrases.\n"
+    "$fixed_examples"
 )
 _DEFAULT_TRANSLATION_MODE_SYSTEM = "<translation_mode>$translation_mode</translation_mode>"
 _DEFAULT_TRANSLATION_USER = (
@@ -72,16 +96,16 @@ _DEFAULT_TRANSLATION_USER = (
     "$input_json\n"
     "</translation_entries>\n"
     "\n"
-    "请严格按 SYSTEM 中的 JSON 输出协议返回结果。"
+    "Return one translation for every input entry and preserve each entry ID exactly."
 )
 _DEFAULT_EXTRACTION_SYSTEM = (
-    "你是上古卷轴5：天际特别版（SSE）本地化专家。"
-    "请从给定的原文-译文对中提取专有名词（人名、地名、物品名、法术名等），"
-    "只提取在同一对原文和译文中都连续、原样出现的子段，不要改写大小写、词形或标点。\n"
-    '输出格式：严格的 JSON 数组，每项为 {"term": "英文原词", "translation": "中文译词"}。\n'
-    "不要输出任何解释。"
+    "You are a localization expert for $game_name working from $source_lang into $target_lang. "
+    "Extract proper nouns from the provided source-translation pairs. Include only substrings that appear "
+    "continuously and verbatim in both texts of the same pair; do not alter case, inflection, or punctuation.\n"
+    "Return only the structured extraction result. Include each extracted source term with its translated "
+    "counterpart, and do not output any explanation."
 )
-_DEFAULT_EXTRACTION_USER = "请从以下原文-译文对中提取专有名词：\n$pairs_json"
+_DEFAULT_EXTRACTION_USER = "Extract proper nouns from the following source-translation pairs:\n$pairs_json"
 
 
 # ── TOML 加载 ────────────────────────────────────────────────────────────────
@@ -128,6 +152,41 @@ def _extract_partial_json_pairs(text: str) -> dict:
     return result
 
 
+def _extract_partial_translation_results(text: str) -> dict[str, str]:
+    """Extract complete translation items from a possibly incomplete results array."""
+
+    results_key = re.search(r'"results"\s*:\s*\[', text)
+    if results_key is None:
+        return {}
+    decoder = json.JSONDecoder()
+    index = results_key.end()
+    extracted: dict[str, str] = {}
+    duplicates: set[str] = set()
+    while index < len(text):
+        while index < len(text) and text[index] in " \t\r\n,":
+            index += 1
+        if index >= len(text) or text[index] == "]":
+            break
+        try:
+            item, end = decoder.raw_decode(text, index)
+        except json.JSONDecodeError:
+            break
+        index = end
+        if not isinstance(item, dict) or set(item) != {"entry_id", "translation"}:
+            continue
+        entry_id = item.get("entry_id")
+        translation = item.get("translation")
+        if not isinstance(entry_id, str) or not isinstance(translation, str) or not translation:
+            continue
+        if entry_id in extracted:
+            duplicates.add(entry_id)
+        else:
+            extracted[entry_id] = translation
+    for entry_id in duplicates:
+        extracted.pop(entry_id, None)
+    return extracted
+
+
 # ── PromptBuilder ────────────────────────────────────────────────────────────
 
 
@@ -143,37 +202,30 @@ class PromptBuilder:
     def __init__(self, game_profile: str = "skyrim_se", target_lang: str = "zh_CN") -> None:
         prompts_dir = _get_prompts_dir()
         game_data = _load_toml(prompts_dir / "games" / f"{game_profile}.toml")
-        lang_data = _load_toml(prompts_dir / "langs" / f"{target_lang}.toml")
+        language = load_language_profile(target_lang, prompts_dir=prompts_dir)
+        translation_data = _load_toml(prompts_dir / "translation" / "default.toml")
+        extraction_data = _load_toml(prompts_dir / "extraction" / "default.toml")
 
         game = game_data.get("game", {})
-        lang = lang_data.get("lang", {})
-        trans = lang_data.get("translation", {})
-        extr = lang_data.get("extraction", {})
+        trans = translation_data.get("translation", {})
+        extr = extraction_data.get("extraction", {})
 
         # 变量替换上下文（$var 占位符）
         self._ctx = {
-            "game_name": game.get("name", "上古卷轴5：天际特别版（SSE）"),
+            "game_name": game.get("name", "The Elder Scrolls V: Skyrim Special Edition (SSE)"),
             "format_notes": game.get(
                 "format_notes",
-                "保留原文中的特殊标记，如 <br>、[pagebreak]、\\n 换行符、%s 等格式占位符。",
+                "Preserve source markers such as <br>, [pagebreak], \\n, and format placeholders such as %s.",
             ),
-            "source_lang": lang.get("source", "英文"),
-            "target_lang": lang.get("target", "中文"),
+            "source_lang": language.source_language,
+            "target_lang": language.target_language,
+            "fixed_examples": self._format_fixed_examples(language),
         }
 
-        # 兼容旧配置：仅当缺少新键 common_system 时，把旧 translation.system 作为
-        # common_system 的迁移输入（旧 system 本就不含动态术语，可直接复用）。
-        common_system = trans.get(
-            "common_system",
-            trans.get("system", _DEFAULT_TRANSLATION_COMMON_SYSTEM),
-        ).strip()
+        common_system = trans.get("common_system", _DEFAULT_TRANSLATION_COMMON_SYSTEM).strip()
         self._translation_common_tpl = common_system
         self._translation_mode_tpl = trans.get("mode_system", _DEFAULT_TRANSLATION_MODE_SYSTEM).strip()
         self._translation_user_tpl = trans.get("user", _DEFAULT_TRANSLATION_USER).strip()
-        if "$terms_section" in self._translation_user_tpl:
-            warnings.warn(
-                "translation.user 中的 $terms_section 已弃用；逐条术语将写入 input_json，该占位符只会渲染为空串"
-            )
         self._extraction_system_tpl = extr.get("system", _DEFAULT_EXTRACTION_SYSTEM).strip()
         self._extraction_user_tpl = extr.get("user", _DEFAULT_EXTRACTION_USER).strip()
 
@@ -182,6 +234,17 @@ class PromptBuilder:
         self._translation_cache_key = build_prompt_cache_key(
             "transbridge.translation.v2",
             self._translation_common_system,
+        )
+
+    @staticmethod
+    def _format_fixed_examples(language: LanguageProfile) -> str:
+        if language.example_source is None or language.example_target is None:
+            return ""
+        return (
+            "<fixed_examples>\n"
+            f"Source: {language.example_source}\n"
+            f"Translation: {language.example_target}\n"
+            "</fixed_examples>"
         )
 
     def _render(self, template: str, **extra) -> str:
@@ -199,6 +262,11 @@ class PromptBuilder:
     def _build_mode_system(self, translation_mode: str) -> str:
         """渲染模式 SYSTEM，只声明三种模式标签之一。"""
         return self._render(self._translation_mode_tpl, translation_mode=translation_mode)
+
+    @staticmethod
+    def _prompt_batch_type(batch_type: str) -> str:
+        """Render internal Chinese categories as English without changing shared UI labels."""
+        return _BATCH_TYPE_PROMPT_LABELS.get(batch_type, batch_type)
 
     @staticmethod
     def _scope_flat_terms(
@@ -249,52 +317,59 @@ class PromptBuilder:
         input_json = json.dumps(input_payload, ensure_ascii=False, indent=2)
         user_content = self._render(
             self._translation_user_tpl,
-            batch_type=batch_type,
-            # 仓库外旧模板可能仍保留该占位符；只渲染为空，不恢复批次级术语。
-            terms_section="",
+            batch_type=self._prompt_batch_type(batch_type),
             input_json=input_json,
         )
 
+        user_msg = attach_structured_output_directive(
+            {"role": "user", "content": user_content},
+            TRANSLATION_OUTPUT_SCHEMA,
+        )
         return [
             common_system_msg,
             mode_system_msg,
-            {"role": "user", "content": user_content},
+            user_msg,
         ]
 
     def build_extraction_prompt(self, translated_pairs: list[dict]) -> list[dict]:
         pairs_json = json.dumps(translated_pairs, ensure_ascii=False, indent=2)
+        user_msg = attach_structured_output_directive(
+            {"role": "user", "content": self._render(self._extraction_user_tpl, pairs_json=pairs_json)},
+            TERM_EXTRACTION_OUTPUT_SCHEMA,
+        )
         return [
             {"role": "system", "content": self._render(self._extraction_system_tpl)},
-            {"role": "user", "content": self._render(self._extraction_user_tpl, pairs_json=pairs_json)},
+            user_msg,
         ]
 
     def parse_translation_response(self, response: str, expected_ids: set[str]) -> dict[str, str]:
-        """解析 LLM 返回的 JSON，返回 {id: translation}，容错处理。
-        当 JSON 因上下文溢出被截断时，退化到逐对提取完整键值对，避免丢弃已翻译部分。
-        """
-        text = response.strip()
-        match = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
-        if match:
-            text = match.group(1).strip()
-        start = text.find("{")
-        end = text.rfind("}")
-        if start != -1 and end != -1:
-            text = text[start : end + 1]
-        elif start != -1:
-            text = text[start:]  # 截断响应：有 { 但无 }
+        """Parse the native results envelope and keep only requested, unique entries."""
         try:
-            data = json.loads(text)
-        except Exception:
-            # JSON 不完整（典型原因：输出 token 耗尽导致截断）
-            # 用正则逐对提取已完成的键值对，只重试真正缺失的条目
-            data = _extract_partial_json_pairs(text)
-        if not isinstance(data, dict):
+            data = json.loads(response)
+        except (TypeError, ValueError, json.JSONDecodeError):
             return {}
-        return {k: str(v) for k, v in data.items() if k in expected_ids and v}
+        if not isinstance(data, dict) or not isinstance(data.get("results"), list):
+            return {}
+        parsed: dict[str, str] = {}
+        duplicates: set[str] = set()
+        for item in data["results"]:
+            if not isinstance(item, dict):
+                continue
+            entry_id = item.get("entry_id")
+            translation = item.get("translation")
+            if entry_id not in expected_ids or not isinstance(translation, str) or not translation:
+                continue
+            if entry_id in parsed:
+                duplicates.add(entry_id)
+            else:
+                parsed[entry_id] = translation
+        for entry_id in duplicates:
+            parsed.pop(entry_id, None)
+        return parsed
 
     def extract_partial_pairs(self, buffer: str) -> dict[str, str]:
         """从不完整的流式 buffer 中提取已完成的翻译对，供增量处理使用。"""
-        return _extract_partial_json_pairs(buffer)
+        return _extract_partial_translation_results(buffer)
 
     def parse_extraction_response(self, response: str) -> list[dict]:
         """解析专有名词抽取结果，返回 [{"term": ..., "translation": ...}]。"""
@@ -302,64 +377,10 @@ class PromptBuilder:
         match = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
         if match:
             text = match.group(1).strip()
-        start = text.find("[")
-        end = text.rfind("]")
-        if start != -1 and end != -1:
-            text = text[start : end + 1]
         try:
             data = json.loads(text)
-        except Exception:
+        except (TypeError, ValueError, json.JSONDecodeError):
             return []
-        if not isinstance(data, list):
+        if not isinstance(data, dict) or not isinstance(data.get("results"), list):
             return []
-        return [item for item in data if isinstance(item, dict) and "term" in item and "translation" in item]
-
-    def parse_hybrid_response(self, response: str) -> dict:
-        """解析 LLM 混合模式响应（ReAct + Plan 双模式）。
-
-        Returns: {"mode": "plan"|"react", "thought": str, "steps": [{"id", "tool", "args", "depends_on"}]}
-        """
-        text = response.strip()
-        json_match = re.search(r"```json\s*([\s\S]*?)\s*```", text)
-        raw = json_match.group(1) if json_match else text
-
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            data = self._try_fix_truncated_json(raw)
-            if data is None:
-                return {"mode": "react", "thought": response, "steps": []}
-
-        if not isinstance(data, dict):
-            return {"mode": "react", "thought": response, "steps": []}
-
-        mode = data.get("mode", "react")
-        thought = data.get("thought", "")
-        steps = data.get("steps") or []
-        tool_calls = data.get("tool_calls") or []
-
-        if tool_calls and not steps:
-            steps = [
-                {
-                    "id": i + 1,
-                    "tool": tc.get("tool", ""),
-                    "args": tc.get("args", {}),
-                    "depends_on": tc.get("depends_on", []),
-                }
-                for i, tc in enumerate(tool_calls)
-            ]
-
-        return {"mode": mode, "thought": thought, "steps": steps}
-
-    def _try_fix_truncated_json(self, text: str) -> dict | None:
-        """尝试修复因 max_tokens 截断的 JSON。"""
-        text = text.strip()
-        if not text.startswith("{"):
-            return None
-        for suffix in ("}", '"]}', '"}', "}]}"):
-            candidate = text.rstrip(",").rstrip() + suffix
-            try:
-                return json.loads(candidate)
-            except json.JSONDecodeError:
-                continue
-        return None
+        return [item for item in data["results"] if isinstance(item, dict) and "term" in item and "translation" in item]

@@ -57,6 +57,7 @@ class _TranslationProgressWindow(QWidget):
         *,
         entry_activated=None,
         activity: LegacyAiTaskAdapter | None = None,
+        version_snapshot_session: object | None = None,
         theme_view: ThemeView | None = None,
     ):
         super().__init__(parent, Qt.WindowType.Window)
@@ -64,6 +65,7 @@ class _TranslationProgressWindow(QWidget):
         self._ctx = ctx
         self._entry_activated = entry_activated
         self._activity = activity
+        self._version_snapshot_session = version_snapshot_session
         self._theme_view = theme_view
         self._result_actions = None
         from .result_actions import AiResultNavigator
@@ -292,6 +294,8 @@ class _TranslationProgressWindow(QWidget):
         if self._log_viewer is not None:
             self._log_viewer.stop_auto_refresh()
         self._ctx.collection_changed.emit(self._ctx.collection)
+        if not self._was_stopped and self._version_snapshot_session is not None:
+            self._version_snapshot_session.mark_completed()
         self.translation_completed.emit()
 
         report_path = getattr(result, "report_path", None)
@@ -440,6 +444,12 @@ class _TranslationProgressWindow(QWidget):
         dialog = _TranslationReportDialog(
             getattr(result, "post_process_result", None),
             report_path=report_path,
+            save_translation=(
+                None
+                if getattr(self, "_was_stopped", False)
+                or not bool(getattr(getattr(self, "_version_snapshot_session", None), "can_save", False))
+                else self._version_snapshot_session.save_translation
+            ),
             parent=self,
             theme_view=getattr(self, "_theme_view", None),
         )

@@ -13,9 +13,18 @@ if TYPE_CHECKING:
 
 
 class NounExtractor:
-    def __init__(self, llm_client: LLMClient, prompt_builder: PromptBuilder):
+    def __init__(
+        self,
+        llm_client: LLMClient,
+        prompt_builder: PromptBuilder,
+        *,
+        max_output_tokens: int = 0,
+    ) -> None:
+        if isinstance(max_output_tokens, bool) or not isinstance(max_output_tokens, int) or max_output_tokens < 0:
+            raise ValueError("max_output_tokens must be a non-negative integer")
         self._client = llm_client
         self._builder = prompt_builder
+        self._max_output_tokens = max_output_tokens
 
     def extract(
         self,
@@ -41,9 +50,7 @@ class NounExtractor:
 
         try:
             messages = self._builder.build_extraction_prompt(translated_pairs)
-            # ``0`` means that OpenAI-compatible providers use their own
-            # completion limit instead of the former hard-coded 1000 tokens.
-            response = self._client.chat(messages, max_tokens=0)
+            response = self._client.chat(messages, max_tokens=self._max_output_tokens)
             raw_items = self._builder.parse_extraction_response(response)
         except Exception:
             if raise_on_error:

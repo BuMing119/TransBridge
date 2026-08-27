@@ -4,11 +4,13 @@
 按名称层级键（moduleName/installStep/group/plugin/description）与旧版对齐复用译文，
 新增/变化文本走 LLM 翻译。
 """
+
 from __future__ import annotations
 
 import re
 import xml.etree.ElementTree as ET
 
+from transbridge.config.language_profiles import load_language_profile
 
 _BOM_UTF16_LE = bytes([0xFF, 0xFE])
 _BOM_UTF16_BE = bytes([0xFE, 0xFF])
@@ -63,10 +65,12 @@ def _extract_text_nodes(xml_str: str) -> list:
 
 def _build_translation_prompt(text: str, target_lang: str = "zh_CN") -> list:
     """构造 fomod 界面文本的翻译指令（短文本）。"""
-    lang_names = {"zh_CN": "中文", "en": "英文", "zh_TW": "繁体中文", "ja": "日文"}
-    lang = lang_names.get(target_lang, target_lang)
-    prompt = (f"你是 Skyrim Mod 本地化翻译助手。请把下面的 FOMOD 安装界面文本翻译成{lang}，"
-              "只输出译文，不要解释、不要引号、不要额外文字：")
+    lang = load_language_profile(target_lang).target_language
+    prompt = (
+        "You are a Skyrim mod localization assistant. "
+        f"Translate the following FOMOD installer UI text into {lang}. "
+        "Return only the translation, without explanations, quotation marks, or any additional text:"
+    )
     return [{"role": "user", "content": prompt + "\n\n" + text}]
 
 
@@ -95,8 +99,9 @@ def translate_module_config(new_xml: str, old_xml, llm, target_lang: str = "zh_C
             if key in old_map:
                 elem.text = old_map[key]
             elif llm is not None:
+                messages = _build_translation_prompt(text, target_lang)
                 try:
-                    elem.text = llm.chat(_build_translation_prompt(text, target_lang)).strip()
+                    elem.text = llm.chat(messages).strip()
                 except Exception:
                     elem.text = text
         for child in children:
