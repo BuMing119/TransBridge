@@ -530,7 +530,8 @@ def _split_by_tokens(self, entries: list[TranslationEntry]) -> list[list[Transla
 ```python
 def __init__(self, game_profile: str = "skyrim_se", target_lang: str = "zh_CN"):
     # 加载 data/prompts/games/{game_profile}.toml
-    # 加载 data/prompts/langs/{target_lang}.toml
+    # 严格加载 data/prompts/langs/{target_lang}.toml 的语言档案
+    # 加载 translation/default.toml 与 extraction/default.toml 通用模板
 ```
 
 #### 关键方法
@@ -558,28 +559,14 @@ format_notes = "保留原文中的特殊标记，如 <br>、[pagebreak]、\\n �
 source = "英文"
 target = "中文"
 
-[translation]
-system = """
-你是专业的 $game_name 模组本地化翻译员。
-翻译要求：
-1. 措辞自然流畅，符合 $target_lang 语言习惯。
-2. 人名、地名、专有名词请严格遵循术语表中的对照翻译。
-3. $format_notes
-4. 不要添加任何解释或注释，只输出 JSON。
-5. 输出必须是严格的 JSON 对象，格式：{"id1": "译文1", "id2": "译文2", ...}
-"""
-user = """
-请将以下【$batch_type】类型的词条从 $source_lang 翻译成 $target_lang。
-输入 JSON：
-$input_json
-
-请直接输出翻译结果 JSON，不要添加任何其他文字。
-"""
-
-[extraction]
-system = "..."
-user = "..."
+[example]
+source = "Hello, traveler."
+target = "你好，旅人。"
 ```
+
+语言文件只保存元数据和可选的成对示例；完整提示词分别维护在
+`data/prompts/translation/default.toml` 与 `data/prompts/extraction/default.toml`。
+语言档案缺失或无效时直接报错，不会回退到简体中文。
 
 **占位符**: 使用 `$var` 格式（`string.Template.safe_substitute`），与 JSON 花括号不冲突。
 

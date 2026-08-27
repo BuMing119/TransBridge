@@ -158,7 +158,9 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | 翻译进度 | `data/ai_translator/{esp_stem}/{esp_stem}_progress.json` | AI翻译断点续传（完成后自动删除） |
 | 翻译缓存 | `data/{esp_stem}_translation.json` | Collection序列化 |
 | 游戏配置 | `data/prompts/games/{profile}.toml` | 游戏专属Prompt配置 |
-| 语言配置 | `data/prompts/langs/{lang}.toml` | 目标语言Prompt配置 |
+| 语言档案 | `data/prompts/langs/{lang}.toml` | 源/目标语言名称与可选示例数据 |
+| 通用翻译Prompt | `data/prompts/translation/default.toml` | 各目标语言共享的翻译模板 |
+| 通用抽取Prompt | `data/prompts/extraction/default.toml` | 各目标语言共享的术语抽取模板 |
 
 ## 数据结构概览
 
@@ -298,9 +300,9 @@ manual > auto_name/auto_dialogue > paratranz > json > excel
   - 快速判定规则：无需LLM即可处理明确场景
   - 支持严格模式（uncertain→reject）和普通模式（uncertain→pending）
 - 新增提示词配置目录：
-  - `data/prompts/refinement/{lang}.toml`：修复提示词
-  - `data/prompts/polish/{lang}.toml`：润色提示词（新增）
-  - `data/prompts/arbitration/{lang}.toml`：裁决提示词
+  - `data/prompts/refinement/default.toml`：通用修复提示词
+  - `data/prompts/polish/default.toml`：通用润色提示词
+  - `data/prompts/arbitration/default.toml`：通用裁决提示词
 - 五阶段协作流程：
   - 阶段1: 检测（QualityGate + Consistency + Format）
   - 阶段2: 修复（LLMRefiner）

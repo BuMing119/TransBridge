@@ -153,6 +153,28 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
   - **FR5.13.9 请求并发与内容 Token 独立语义** — *2026-08-26 | 状态: 已实现（相关 QA 通过）*: `max_concurrent` SHALL 仅表示单次 AI 工作流同时在途的 LLM 请求硬上限，翻译、术语抽取、质量检测、修复、润色、裁决及混合并行分支 SHALL 共享该额度；`max_tokens_per_batch` SHALL 仅表示单个请求内待模型处理的业务内容 Token 上限，不得随并发数改变批次边界。正式翻译按原文计数，术语抽取按原文与译文计数，校改按阶段实际业务字段计数；单条自身超限时 SHALL 在外部请求前跳过并给出诊断。并发等待、Provider 异常、流式回调异常、暂停和取消均不得泄漏请求槽或让已取消任务迟到发起请求。
   - **FR5.13.10 具名自定义工作流** — *2026-08-27 | 状态: 已实现*: AI 窗口 SHALL 提供「自定义」业务入口，允许用户创建、选择、重命名、删除、导入和导出多个具名工作流配置。每个自定义配置 SHALL 明确基于翻译、润色或混合业务入口之一，并复用该入口的作用域、预检、Worker、报告和提交边界，不得形成第四套隐式执行引擎。配置文件 SHALL 使用带版本的 JSON 白名单格式，保存处理策略、阶段、运行额度及混合规则；模型、供应商、Base URL、API Key、Token、凭据引用和本地术语路径 SHALL 继承当前全局配置且不得进入导出文件。非法或未来版本的配置 SHALL 整体拒绝且不得部分覆盖现有配置；没有可用具名配置时 SHALL 禁止启动并给出明确原因。
 
+**FR5.14 Embedding 服务与本地模型管理** — *2026-08-27 | 状态: 已实现（相关 QA 通过） | 优先级: P0*: 系统 SHALL 将 Embedding 作为独立的可选语义检索服务，取消本地模型的隐式下载，并在应用内提供可理解、可恢复的 API 配置与预设本地模型管理体验。Embedding 不可用时，精确术语匹配、翻译、编辑、保存和写回等不依赖语义检索的能力 SHALL 继续可用。
+
+  - **FR5.14.1 独立 Embedding API 身份**: Embedding API SHALL 使用自己的 provider、model、Base URL、API Key 和凭据引用；配置保存、运行预检、客户端创建与连接检查 SHALL NOT 从主 LLM 继承、回退或复用任一对应字段。Embedding 和主 LLM 可以由同一服务商提供，但用户仍 SHALL 在 Embedding 面板中显式配置并单独验证。
+  - **FR5.14.2 API 面板产品对齐**: Embedding API 面板 SHALL 与主 LLM 配置使用一致的信息层级、服务商选择、密码输入、字段提示、高级项展开、连接检查和错误反馈。服务商预设 MAY 填充 Embedding 面板自身的默认端点或建议模型，但 SHALL NOT 读取或改写主 LLM 配置。
+  - **FR5.14.3 显式的本地模型获取**: 应用包 SHALL NOT 捆绑或强制一个默认向量模型；选择或运行本地模式 SHALL NOT 由推理客户端、预检或应用启动流程隐式访问网络。只有用户在模型管理界面明确触发下载后，系统才 MAY 获取预设模型。
+  - **FR5.14.4 预设模型管理**: 模型管理界面 SHALL 列出应用支持的预设本地模型，并展示名称、用途/特点、预估下载大小、本地状态和当前选中状态。用户 SHALL 能下载、取消、重试、选择和删除由应用管理的模型；未完成的下载 SHALL NOT 被标记为已安装或可选。
+  - **FR5.14.5 选中与运行契约**: 本地模式 SHALL 只加载已完整安装且由用户选中的模型；模型下载完成后 MAY 自动将该模型选为当前本地模型，但 SHALL NOT 自动开始翻译或索引构建任务。切换模型后，与新模型身份不匹配的旧向量索引 SHALL 按 ADR-013 安全失效并在需要时重建。
+  - **FR5.14.6 无模型引导触发**: 当用户主动切换到本地语义检索，或启动一个确实需要本地语义检索的运行，但没有已安装且可用的选中模型时，系统 SHALL 显示引导页，说明“当前语义检索服务不可用”且普通功能不受影响。系统 SHALL NOT 仅因应用启动或存在缺失模型的历史配置就无条件打扰用户。
+  - **FR5.14.7 引导页操作与关闭语义**: 引导页 SHALL 提供“关闭语义检索”和“前往模型配置”两个明确操作。选择“关闭语义检索”、右上角关闭或按 Esc SHALL 使 Embedding 模式持久化为 `disabled`，不保留“显示已开启但实际不可用”的状态；选择“前往模型配置” SHALL 定位到本地模型管理区。用户未完成下载与选择前，本地语义检索 SHALL 保持关闭。
+  - **FR5.14.8 下载、删除与失败恢复**: 模型下载 SHALL 在后台执行，展示真实可得的进度与状态，支持取消/重试，并在完成后以原子方式转为可用安装；网络中断、磁盘空间不足、校验失败或用户取消 SHALL 保留可诊断原因并不破坏已安装模型。删除当前选中模型前 SHALL 二次确认；确认删除后 SHALL 先将 Embedding 持久化为 `disabled`，再仅删除应用自身管理目录内的对应模型。
+  - **FR5.14.9 凭据与诊断安全**: Embedding API Key SHALL 继续通过独立凭据引用存储，不得明文进入 INI、日志、错误消息、模型元数据或导出产物。本地模型目录与下载临时目录 SHALL 使用可验证的应用数据根路径，删除和清理操作 SHALL 拒绝超出该边界的路径。
+
+**FR5.15 AI 翻译原生 Structured Outputs** — *2026-08-27 | 状态: 已完成 | 优先级: P0*: AI 翻译窗口的翻译、润色、混合与具名自定义入口 SHALL 对所有期望结构化结果的业务 LLM 请求使用 Provider 原生 Structured Outputs，而不是仅通过提示词要求模型返回 JSON。OpenAI-compatible 协议 SHALL 使用 Chat Completions `response_format` JSON Schema；Anthropic 协议 SHALL 使用 Messages `output_config.format` JSON Schema。
+
+  - **FR5.15.1 四入口一致覆盖**: 翻译、润色和混合入口 SHALL 使用同一套 Provider-neutral 结构化请求契约；具名自定义入口 SHALL 随其 `base_mode` 复用对应契约，不得形成独立的文本 JSON 回退路径。
+  - **FR5.15.2 全流程结构化调用**: 正式翻译、翻译流程内的专有名词抽取、默认 proofread，以及 strict 后处理中的质量检测、修复、润色和裁决，只要模型响应由应用按 JSON 结构消费，就 SHALL 提交与该响应匹配的原生 JSON Schema。连接检查和智能助手原生 function calling 不属于本条改造范围。
+  - **FR5.15.3 Provider 原生协议**: OpenAI-compatible 请求 SHALL 提交 `response_format.type=json_schema`、命名 schema 与 strict 约束；Anthropic 请求 SHALL 提交 `output_config.format.type=json_schema`。Schema SHALL 使用两种协议共同支持的 JSON Schema 子集，根节点为 object，object 明确声明 `additionalProperties`，并对业务必需字段声明 `required`。
+  - **FR5.15.4 领域语义仍由应用校验**: Provider 的语法和类型约束 SHALL NOT 替代应用对 entry key 完整性、未知或重复条目、空译文、受保护占位符、术语、裁决枚举及结果归属的验证。模型输出即使满足 JSON Schema，也只有通过现有领域校验后才能提交到翻译结果。
+  - **FR5.15.5 流式与运行护栏不回退**: 正式翻译 SHALL 保留流式增量展示、暂停、取消、并发预算、日志和缺项拆批恢复。限流、推理控制、prompt cache 和工作流日志包装器 SHALL 透明转发结构化输出契约；因缓存参数触发无缓存重试时 SHALL 保留相同 schema。
+  - **FR5.15.6 明确失败语义**: Provider 拒绝 schema、模型拒答、输出因 token 上限截断、响应缺少结构化文本或本地解析/语义校验失败时，系统 SHALL 给出可诊断失败并沿用既有安全重试、拆批或保留原译文策略。系统 SHALL NOT 对生产 OpenAI-compatible 或 Anthropic 客户端静默降级为仅靠提示词约束的文本 JSON 请求。
+  - **FR5.15.7 协议隔离**: Provider-neutral 结构化输出指令 SHALL 与智能助手的 `chat_stream_with_tools()` 保持语义和消息历史隔离；Provider 客户端 SHALL 在发出网络请求前剥离内部元数据并映射为原生 schema 参数，不得把翻译结果伪装成工具调用，也不得改变已完成的原生 function calling 行为。
+
 **FR6.1 五阶段流程**: 系统 SHALL 执行检测 → 修复 → 润色 → 裁决 → 执行的五阶段后处理流水线。
 
 **FR6.2 一致性检查**: 系统 SHALL 检测术语一致性、风格一致性等翻译质量问题。
@@ -1527,6 +1549,8 @@ ChatWidget 保留职责：UI 渲染（bubble/card/thinking indicator/system mess
 
 | 日期 | 变更内容 | 来源 |
 |------|---------|------|
+| 2026-08-27 | 新增 FR5.15：翻译、润色、混合和具名自定义工作流统一使用 OpenAI-compatible / Anthropic 原生 Structured Outputs，并保留领域校验、流式与运行护栏 | 用户要求通过 /bm-pilot 端到端升级，并明确与提示词英文化及智能助手 function calling 并行工作线隔离 |
+| 2026-08-27 | 新增并实现 FR5.14：Embedding API 完全独立于主 LLM 但保持配置产品体验一致；取消本地模型隐式下载，增加应用内预设模型管理和无模型引导闭环 | 用户确认产品边界并授权 /bm-pilot 实施，相关 QA 通过 |
 | 2026-08-25 | 新增并实现 FR28.6：开始中心本地工程可选择在当前窗口或独立新窗口打开；当前窗口切换后台执行并显示不确定进度与阶段文案，新进程显式接收 canonical Project 路径且不得改变当前窗口状态 | 用户反馈工程切换明显卡顿并要求打开方式选择与进度条，/bm-pilot 端到端实现与 UI QA |
 | 2026-08-25 | 新增并实现 FR28.5：导航底部用户身份区升级为可点击、可键盘访问的账户与服务入口；复用 ParaTranz 账户/服务配置和通用设置 intent，并为未来真实 provider 扩展保留菜单结构，不展示凭据或虚构站点状态 | 用户要求为 Nexus Mods 等后续多站点登录预留入口，/bm-pilot 端到端实现与 UI QA |
 | 2026-08-25 | 新增并实现 FR19.8：Project catalog 仅在文件缺失时扫描 canonical V2 Project 记录并原子自愈；损坏 catalog 保留现场，非法/未来记录不入目录，名称冲突阻止自动选择，只读目录查询继续无写盘副作用 | 用户要求防止误删 `project-catalog.json` 后工程消失，/bm-pilot 端到端实现与综合 QA |

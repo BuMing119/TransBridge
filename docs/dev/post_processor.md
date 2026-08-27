@@ -254,29 +254,27 @@ LLM基于以下维度判断：
 
 #### 提示词配置
 
-QualityGateChecker 的提示词从 TOML 配置文件加载，支持多语言扩展：
+QualityGateChecker 从通用 TOML 模板加载提示词，源语言和目标语言在运行时注入：
 
 ```
 data/prompts/quality_gate/
-├── zh_CN.toml    # 中文提示词
-├── en.toml       # 英文提示词（未来扩展）
-└── ja.toml       # 日文提示词（未来扩展）
+└── default.toml    # 与目标语言无关的质量检测提示词
 ```
 
-**配置文件结构** (`zh_CN.toml`):
+**配置文件结构** (`default.toml`):
 ```toml
 [single_check]
-system = """你是 $game_name 本地化质量检测员...
+system = """You are a $game_name localization quality inspector for translations from $source_lang into $target_lang...
 """
-user = """原文：$original
-译文：$translation
-上下文：$context
-术语表：$terms
+user = """Source: $original
+Translation: $translation
+Context: $context
+Terminology: $terms
 
-请判断译文质量..."""
+Judge the translation quality..."""
 
 [batch_check]
-system = """你是 $game_name 本地化质量检测员（批量模式）...
+system = """You are a $game_name localization quality inspector for multiple $target_lang translations...
 """
 ```
 
@@ -369,13 +367,13 @@ class FixApplied:
 
 #### 提示词配置
 
-配置文件路径：`data/prompts/refinement/{target_lang}.toml`
+配置文件路径：`data/prompts/refinement/default.toml`
 
 ```toml
 [refinement]
-system = """你是专业的游戏本地化修复专家..."""
-user = """【原文】..."""
-batch_system = """你是专业的游戏本地化修复专家（批量模式）..."""
+system = """You are a $game_name localization correction specialist for translations from $source_lang into $target_lang..."""
+user = """[SOURCE]..."""
+batch_system = """Correct multiple translations from $source_lang into $target_lang..."""
 ```
 
 ---
@@ -441,13 +439,13 @@ class PolishResult:
 
 #### 提示词配置
 
-配置文件路径：`data/prompts/polish/{target_lang}.toml`
+配置文件路径：`data/prompts/polish/default.toml`
 
 ```toml
 [polish]
-system = """你是专业的游戏本地化润色专家..."""
-user = """【原文】..."""
-batch_system = """你是专业的游戏本地化润色专家（批量模式）..."""
+system = """You are a $game_name localization polishing specialist for translations from $source_lang into $target_lang..."""
+user = """[SOURCE]..."""
+batch_system = """Polish multiple translations from $source_lang into $target_lang..."""
 ```
 
 ---
@@ -514,16 +512,16 @@ class ArbitrationContext:
 
 #### 提示词配置
 
-配置文件路径：`data/prompts/arbitration/{target_lang}.toml`
+配置文件路径：`data/prompts/arbitration/default.toml`
 
 ```toml
 [arbitration]
-system = """你是游戏本地化质量裁决官..."""
-user = """【原文】...
-【修复后译文】...
-【润色后译文】...（如有）
+system = """You are a $game_name localization quality arbiter for $target_lang translations of $source_lang source text..."""
+user = """[SOURCE]...
+[CORRECTED TRANSLATION]...
+[POLISHED TRANSLATION]...
 ..."""
-batch_system = """你是游戏本地化质量裁决官（批量模式）..."""
+batch_system = """Make final quality decisions on multiple $target_lang translations of $source_lang source text..."""
 ```
 
 ---
@@ -895,22 +893,26 @@ data/prompts/
 ├── games/
 │   └── {game_profile}.toml      # 游戏专属信息（名称、格式标记等）
 ├── langs/
-│   └── {target_lang}.toml       # 目标语言专属模板（翻译风格）
+│   └── {target_lang}.toml       # 语言元数据与可选示例
+├── translation/
+│   └── default.toml             # 通用翻译提示词
+├── extraction/
+│   └── default.toml             # 通用术语抽取提示词
 ├── quality_gate/
-│   └── {target_lang}.toml       # 质量检测提示词
+│   └── default.toml             # 通用质量检测提示词
 ├── refinement/                   # 修复提示词
-│   └── {target_lang}.toml
+│   └── default.toml
 ├── polish/                       # 润色提示词（新增）
-│   └── {target_lang}.toml
+│   └── default.toml
 └── arbitration/                  # 裁决提示词
-    └── {target_lang}.toml
+    └── default.toml
 ```
 
 ### 配置优先级
 
-1. **按 `target_lang` 加载提示词文件**
-   - 例：`target_lang="zh_CN"` → 加载 `data/prompts/quality_gate/zh_CN.toml`
-   - 文件不存在 → 使用内置默认值
+1. **按后处理阶段加载通用提示词文件**
+   - 例：质量检测始终加载 `data/prompts/quality_gate/default.toml`
+   - 不再读取 `{target_lang}.toml` 阶段文件；文件不存在或无效时使用 Python 内置默认值
 
 2. **模板变量替换**
    - `$game_name` 来自 `data/prompts/games/{game_profile}.toml`
@@ -921,12 +923,10 @@ data/prompts/
 
 ### 添加新语言支持
 
-1. 创建 `data/prompts/langs/{lang}.toml`（翻译提示词）
-2. 创建 `data/prompts/quality_gate/{lang}.toml`（质量检测提示词）
-3. 创建 `data/prompts/refinement/{lang}.toml`（修复提示词）
-4. 创建 `data/prompts/polish/{lang}.toml`（润色提示词）
-5. 创建 `data/prompts/arbitration/{lang}.toml`（裁决提示词）
-6. 在 LLMConfig 中设置 `target_lang="{lang}"`
+1. 创建 `data/prompts/langs/{lang}.toml`，提供 `[lang].name`、`[lang].source`、`[lang].target`，可选提供完整的 `[example].source` / `[example].target` 对。
+2. 在 LLMConfig 中设置 `target_lang="{lang}"`。
+3. 翻译、抽取和四个后处理阶段继续复用各自的 `default.toml`，通过 `$source_lang` 和 `$target_lang` 获得语言名称，无需复制模板。
+4. 语言档案缺失、损坏或字段不完整时会在调用 LLM 前失败；不会静默回退到 `zh_CN`。
 
 ---
 

@@ -4,6 +4,11 @@
 
 | Epic | 状态 | Stories | 文档 |
 |---|---|---:|---|
+| native-structured-outputs | 已完成 | 5/5 | [plan](native-structured-outputs/plan.md) |
+| english-llm-prompts | 已完成（2026-08-28，Story 01–06 聚焦 QA 通过） | 6/6 | [plan](english-llm-prompts/plan.md) |
+| embedding-model-management | 已完成（2026-08-27，相关 QA 通过） | 5/5 | [plan](embedding-model-management/plan.md) |
+| embedding-retrieval-ux-reliability | 已完成（2026-08-27，相关 QA 通过） | 3/3 | [plan](embedding-retrieval-ux-reliability/plan.md) |
+| ai-translation-version-snapshots | 已完成（2026-08-27，相关 QA 通过） | 2/2 | [plan](ai-translation-version-snapshots/plan.md) |
 | ai-proofread-recovery-reporting | 已完成 | 3/3 | [plan](ai-proofread-recovery-reporting/plan.md) |
 | ai-workflow-ui-resilience | 已完成（2026-08-27，相关 QA 通过） | 3/3 | [plan](ai-workflow-ui-resilience/plan.md) |
 | llm-reasoning-control | 已完成（2026-08-27，相关 QA 通过） | 3/3 | [plan](llm-reasoning-control/plan.md) |
