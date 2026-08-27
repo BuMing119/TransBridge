@@ -24,7 +24,7 @@ def _profile(name: str = "标准校对", **overrides: object) -> CustomWorkflowP
     values: dict[str, object] = {
         "name": name,
         "base_mode": "polish",
-        "strategy": "combined",
+        "strategy": "proofread",
         "workflow": {"enable_post_process": True, "pp_polish_level": "moderate"},
         "limits": _limits(),
     }
@@ -47,6 +47,16 @@ def test_profile_round_trip_uses_versioned_secret_free_envelope() -> None:
         assert forbidden not in text
 
 
+def test_legacy_combined_strategy_is_normalized_during_import() -> None:
+    payload = _profile().to_dict()
+    payload["strategy"] = "combined"
+
+    restored = CustomWorkflowProfile.from_dict(payload)
+
+    assert restored.strategy == "proofread"
+    assert restored.to_dict()["strategy"] == "proofread"
+
+
 @dataclass
 class _GlobalConfig:
     provider: str = "openai_compatible"
@@ -65,7 +75,7 @@ def test_apply_to_returns_detached_copy_and_only_overlays_whitelist() -> None:
     applied = _profile().apply_to(base)
 
     assert applied is not base
-    assert applied.pp_strategy == "combined"
+    assert applied.pp_strategy == "proofread"
     assert applied.enable_post_process is True
     assert applied.max_concurrent == 4
     assert applied.provider == base.provider

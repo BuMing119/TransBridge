@@ -13,7 +13,8 @@ from transbridge.application.translation import (
     PostProcessWorkload,
     TranslationInput,
 )
-from transbridge.application.translation.combined_proofread import CombinedProofreadStage
+from transbridge.application.translation import ProofreadStage
+from transbridge.application.translation.ai_request_budget import AiRequestCancelledError
 from transbridge.application.translation.postprocess import PostProcessCandidate
 from transbridge.application.translation.protected_syntax import (
     extract_protected_syntax,
@@ -44,6 +45,12 @@ def _candidate(
 
 def _result(candidate: PostProcessCandidate, value: str) -> dict[str, object]:
     return {"entry_key": candidate.entry_key.to_dict(), "final_translation": value}
+
+
+def test_former_class_and_module_name_remain_importable_as_an_alias() -> None:
+    from transbridge.application.translation.combined_proofread import CombinedProofreadStage
+
+    assert CombinedProofreadStage is ProofreadStage
 
 
 class _PreparedClient:
@@ -91,7 +98,7 @@ def test_terms_are_resolved_after_admission_and_one_pass_accepts_unchanged_value
         assert client.events == ["admitted"]
         return terms
 
-    outcome = CombinedProofreadStage(
+    outcome = ProofreadStage(
         client,
         term_resolver=resolve,
         model="unknown-model",
@@ -109,7 +116,7 @@ def test_terms_are_resolved_after_admission_and_one_pass_accepts_unchanged_value
     assert "needs_arbitration" not in client.messages[0][1]["content"]
     assert "only necessary corrections" in client.messages[0][0]["content"]
 
-    stage = CombinedProofreadStage(client, max_tokens_per_batch=10_000)
+    stage = ProofreadStage(client, max_tokens_per_batch=10_000)
     stage.cancel()
     assert client.cancelled is True
 
@@ -131,7 +138,7 @@ def test_response_mapping_rejects_only_duplicate_missing_empty_and_unknown_resul
     }
     client = _PreparedClient(lambda _messages: json.dumps(response))
 
-    outcome = CombinedProofreadStage(client, max_tokens_per_batch=10_000)((duplicate, empty, missing, valid))
+    outcome = ProofreadStage(client, max_tokens_per_batch=10_000)((duplicate, empty, missing, valid))
 
     assert [candidate.text for candidate in outcome.candidates] == ["Current", "Current", "Current", "updated"]
     assert [candidate.phases for candidate in outcome.candidates] == [(), (), (), ("proofread",)]
@@ -155,7 +162,7 @@ def test_only_placeholder_or_program_tag_damage_rejects_a_translation() -> None:
     }
     client = _PreparedClient(lambda _messages: json.dumps(response, ensure_ascii=False))
 
-    outcome = CombinedProofreadStage(client, max_tokens_per_batch=10_000)((protected, natural))
+    outcome = ProofreadStage(client, max_tokens_per_batch=10_000)((protected, natural))
 
     assert outcome.candidates[0].text == protected.text
     assert outcome.candidates[0].phases == ()
@@ -169,7 +176,7 @@ def test_malformed_response_and_call_failures_retain_the_original_candidates() -
     candidate = _candidate("one")
     malformed = _PreparedClient(lambda _messages: "```json\n{}\n```")
 
-    malformed_outcome = CombinedProofreadStage(malformed, max_tokens_per_batch=10_000)((candidate,))
+    malformed_outcome = ProofreadStage(malformed, max_tokens_per_batch=10_000)((candidate,))
 
     assert malformed_outcome.candidates[0].text == candidate.text
     assert malformed_outcome.candidates[0].accepted is False
@@ -182,13 +189,95 @@ def test_malformed_response_and_call_failures_retain_the_original_candidates() -
             messages_factory()
             raise TimeoutError("provider details stay in the trusted LLM log")
 
-    failed_outcome = CombinedProofreadStage(FailingClient(), max_tokens_per_batch=10_000)((candidate,))
+    failed_outcome = ProofreadStage(FailingClient(), max_tokens_per_batch=10_000)((candidate,))
 
     assert failed_outcome.candidates[0].text == candidate.text
     assert failed_outcome.candidates[0].accepted is False
     assert failed_outcome.failed is True
     assert failed_outcome.diagnostics[0].code == "PROOFREAD_LLM_CALL_FAILED"
     assert dict(failed_outcome.diagnostics[0].details) == {"error_type": "TimeoutError"}
+
+
+def test_wrapped_json_is_recovered_locally_without_an_extra_model_call() -> None:
+    candidate = _candidate("wrapped")
+    payload = json.dumps({"results": [_result(candidate, "updated")]})
+    responses = iter((f"<think>private reasoning</think>\n```json\n{payload}\n```",))
+    client = _PreparedClient(lambda _messages: next(responses))
+
+    outcome = ProofreadStage(client, max_tokens_per_batch=10_000)((candidate,))
+
+    assert len(client.messages) == 1
+    assert outcome.candidates[0].text == "updated"
+    assert outcome.diagnostics == ()
+
+
+def test_failed_entries_are_retried_as_a_subset_and_only_final_failures_remain() -> None:
+    first = _candidate("first")
+    recovered = _candidate("recovered")
+    calls: list[list[str]] = []
+
+    def respond(messages):
+        entries = json.loads(messages[1]["content"])["entries"]
+        keys = [entry["entry_key"]["local_key"] for entry in entries]
+        calls.append(keys)
+        if len(calls) == 1:
+            return json.dumps({"results": [_result(first, "first-updated")]})
+        return json.dumps({"results": [_result(recovered, "recovered-updated")]})
+
+    outcome = ProofreadStage(_PreparedClient(respond), max_tokens_per_batch=10_000)((first, recovered))
+
+    assert calls == [["first", "recovered"], ["recovered"]]
+    assert [candidate.text for candidate in outcome.candidates] == ["first-updated", "recovered-updated"]
+    assert all(candidate.accepted for candidate in outcome.candidates)
+    assert [diagnostic.code for diagnostic in outcome.diagnostics] == ["PROOFREAD_RECOVERY_SUCCEEDED"]
+    assert dict(outcome.diagnostics[0].details) == {"recovered_count": 1, "final_failed_count": 0}
+
+
+def test_cancelled_model_call_is_not_retried() -> None:
+    candidate = _candidate("cancelled")
+
+    class CancelledClient:
+        calls = 0
+
+        def chat_prepared(self, messages_factory, max_tokens=0):
+            self.calls += 1
+            messages_factory()
+            raise AiRequestCancelledError("cancelled")
+
+    client = CancelledClient()
+    outcome = ProofreadStage(client, max_tokens_per_batch=10_000)((candidate,))
+
+    assert client.calls == 1
+    assert outcome.candidates[0].accepted is False
+    assert [diagnostic.code for diagnostic in outcome.diagnostics] == ["PROOFREAD_LLM_CALL_CANCELLED"]
+
+
+def test_malformed_recovery_splits_once_and_counts_only_persistent_failures() -> None:
+    candidates = tuple(_candidate(str(index)) for index in range(4))
+    calls: list[list[str]] = []
+
+    def respond(messages):
+        entries = json.loads(messages[1]["content"])["entries"]
+        keys = [entry["entry_key"]["local_key"] for entry in entries]
+        calls.append(keys)
+        if len(calls) <= 2 or keys == ["2", "3"]:
+            return "{}"
+        return json.dumps({
+            "results": [
+                {"entry_key": entry["entry_key"], "final_translation": f"updated-{entry['entry_key']['local_key']}"}
+                for entry in entries
+            ]
+        })
+
+    outcome = ProofreadStage(_PreparedClient(respond), max_tokens_per_batch=10_000)(candidates)
+
+    assert calls == [["0", "1", "2", "3"], ["0", "1", "2", "3"], ["0", "1"], ["2", "3"]]
+    assert [candidate.accepted for candidate in outcome.candidates] == [True, True, False, False]
+    assert sum(1 for candidate in outcome.candidates if not candidate.accepted) == 2
+    assert {diagnostic.code for diagnostic in outcome.diagnostics} == {
+        "PROOFREAD_RECOVERY_SUCCEEDED",
+        "PROOFREAD_RESPONSE_MALFORMED",
+    }
 
 
 def test_malformed_batch_does_not_fail_the_stage_or_discard_other_batch_results() -> None:
@@ -201,7 +290,7 @@ def test_malformed_batch_does_not_fail_the_stage_or_discard_other_batch_results(
             return "{}"
         return json.dumps({"results": [_result(valid, "updated")]})
 
-    outcome = CombinedProofreadStage(
+    outcome = ProofreadStage(
         _PreparedClient(respond),
         max_tokens_per_batch=10_000,
         max_items=1,
@@ -225,7 +314,7 @@ def test_token_and_item_boundaries_keep_oversized_candidates_without_calling_the
         })
 
     client = _PreparedClient(respond)
-    outcome = CombinedProofreadStage(
+    outcome = ProofreadStage(
         client,
         model="unknown-model",
         max_tokens_per_batch=20,
@@ -277,7 +366,7 @@ class _ConcurrentClient:
 def test_batches_run_concurrently_with_constructor_default_and_explicit_worker_limit() -> None:
     candidates = tuple(_candidate(str(index)) for index in range(5))
     client = _ConcurrentClient(3)
-    stage = CombinedProofreadStage(
+    stage = ProofreadStage(
         client,
         max_tokens_per_batch=10_000,
         max_items=1,
@@ -291,7 +380,7 @@ def test_batches_run_concurrently_with_constructor_default_and_explicit_worker_l
 
     limited_client = _ConcurrentClient(2)
     progress: list[tuple[int, int, str]] = []
-    limited_stage = CombinedProofreadStage(
+    limited_stage = ProofreadStage(
         limited_client,
         max_tokens_per_batch=10_000,
         max_items=1,
@@ -305,7 +394,7 @@ def test_batches_run_concurrently_with_constructor_default_and_explicit_worker_l
     assert limited_client.peak == 2
     assert limited_outcome.diagnostics == ()
     assert [item[:2] for item in progress] == [(1, 5), (2, 5), (3, 5), (4, 5), (5, 5)]
-    assert progress[-1][2] == "校对润色已完成 5/5 条"
+    assert progress[-1][2] == "校对已完成 5/5 条"
 
 
 class _AuditedCollection(TranslationEntryCollection):
@@ -339,13 +428,14 @@ def test_workload_rejects_only_invalid_candidates_and_execution_commits_the_vali
     def respond(messages):
         request_entries = json.loads(messages[1]["content"])["entries"]
         by_key = {item["entry_key"]["local_key"]: item["entry_key"] for item in request_entries}
-        return json.dumps({
-            "results": [
-                {"entry_key": by_key["valid"], "final_translation": "valid-updated"},
-                {"entry_key": by_key["empty"], "final_translation": ""},
-                {"entry_key": by_key["protected"], "final_translation": "protected-but-broken"},
-            ]
-        })
+        results = []
+        if "valid" in by_key:
+            results.append({"entry_key": by_key["valid"], "final_translation": "valid-updated"})
+        if "empty" in by_key:
+            results.append({"entry_key": by_key["empty"], "final_translation": ""})
+        if "protected" in by_key:
+            results.append({"entry_key": by_key["protected"], "final_translation": "protected-but-broken"})
+        return json.dumps({"results": results})
 
     collection = _AuditedCollection(
         tuple(
@@ -362,7 +452,7 @@ def test_workload_rejects_only_invalid_candidates_and_execution_commits_the_vali
             for entry in entries
         )
     )
-    stage = CombinedProofreadStage(_PreparedClient(respond), max_tokens_per_batch=10_000)
+    stage = ProofreadStage(_PreparedClient(respond), max_tokens_per_batch=10_000)
     execution = PostProcessExecutionService(
         PostProcessWorkload((stage,), stage_policy=StagePolicy(), stage_names=("proofread",))
     ).execute(
@@ -410,7 +500,7 @@ def test_llm_call_failure_remains_a_workload_stage_failure() -> None:
             raise TimeoutError("provider unavailable")
 
     result = PostProcessWorkload(
-        (CombinedProofreadStage(FailingClient(), max_tokens_per_batch=10_000),),
+        (ProofreadStage(FailingClient(), max_tokens_per_batch=10_000),),
         stage_policy=StagePolicy(),
         stage_names=("proofread",),
     ).run("proofread-call-failed", (entry,))

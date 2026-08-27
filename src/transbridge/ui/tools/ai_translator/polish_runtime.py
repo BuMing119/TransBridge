@@ -47,19 +47,36 @@ def create_polish_worker(
             term_manager = TermDatabaseManager(config, ctx.esp_path, paratranz_client, project_id)
             term_manager.load_all()
         llm_client = create_llm_client(config) if profile.requires_llm else None
+        arbitration_llm_client = None
         if llm_client is not None:
             from transbridge.infra.limited_llm_client import LimitedLLMClient
+            from transbridge.infra.llm_reasoning import ReasoningIntent, with_reasoning_intent
 
+            provider_client = llm_client
+            direct_client = with_reasoning_intent(provider_client, config, ReasoningIntent.PREFER_DIRECT)
+            low_client = with_reasoning_intent(provider_client, config, ReasoningIntent.PREFER_LOW)
             llm_client = LimitedLLMClient(
-                llm_client,
+                direct_client,
                 request_budget,
                 cancel_event=stop_event,
                 pause_event=pause_event,
             )
             llm_client = WorkflowLoggingLLMClient(llm_client, log_store)
+            arbitration_llm_client = LimitedLLMClient(
+                low_client,
+                request_budget,
+                cancel_event=stop_event,
+                pause_event=pause_event,
+            )
+            arbitration_llm_client = WorkflowLoggingLLMClient(
+                arbitration_llm_client,
+                log_store,
+                channel_prefix="arbitration_call",
+            )
         return ProofreadPipeline.create(
             profile=profile,
             llm_client=llm_client,
+            arbitration_llm_client=arbitration_llm_client,
             term_manager=term_manager,
             model=config.model,
             max_tokens_per_batch=config.max_tokens_per_batch,

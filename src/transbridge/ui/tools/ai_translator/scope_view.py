@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -174,6 +175,7 @@ def build_scope_view(view: TranslatorViewOwner, callbacks: ScopeCallbacks) -> No
     scope_layout.addWidget(view.controls.overwrite_check)
 
     view.controls.estimate_lbl = QLabel("预计：— 条")
+    _configure_estimate_label(view.controls.estimate_lbl)
     view.controls.estimate_lbl.setAccessibleName("AI 翻译范围估算")
     scope_layout.addWidget(view.controls.estimate_lbl)
 
@@ -193,6 +195,7 @@ def build_scope_view(view: TranslatorViewOwner, callbacks: ScopeCallbacks) -> No
     order_row.addStretch()
     mixed_layout.addLayout(order_row)
     mixed_estimate = QLabel("预计：— 条")
+    _configure_estimate_label(mixed_estimate)
     mixed_estimate.setAccessibleName("AI 混合运行范围估算")
     view.controls.mixed_estimate_lbl = mixed_estimate
     mixed_layout.addWidget(mixed_estimate)
@@ -200,3 +203,11 @@ def build_scope_view(view: TranslatorViewOwner, callbacks: ScopeCallbacks) -> No
     view.controls.scope_stack = QStackedWidget()
     view.controls.scope_stack.addWidget(scope_box)
     view.controls.scope_stack.addWidget(mixed_panel)
+
+
+def _configure_estimate_label(label: QLabel) -> None:
+    """Keep long run estimates readable inside the horizontal-scroll-free viewport."""
+
+    label.setWordWrap(True)
+    label.setMinimumWidth(0)
+    label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)

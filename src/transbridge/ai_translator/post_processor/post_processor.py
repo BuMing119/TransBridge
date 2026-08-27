@@ -237,13 +237,15 @@ class PostProcessor:
         self,
         term_manager: "TermDatabaseManager | None" = None,
         llm_client: "LLMClient | None" = None,
+        arbitration_llm_client: "LLMClient | None" = None,
     ) -> None:
         """
         注册默认检查器集合（检测器 + 修复者 + 裁决者）。
 
         Args:
             term_manager: TermDatabaseManager 实例
-            llm_client: LLMClient 实例（修复和裁决需要）
+            llm_client: LLMClient 实例（检测、修复和润色需要）
+            arbitration_llm_client: 可选的裁决专用客户端；未提供时复用 llm_client
         """
         self._llm_client = llm_client
         # ── 阶段1: 检测器 ─────────────────────────────────────────────────
@@ -295,7 +297,7 @@ class PostProcessor:
             from .llm_arbiter import LLMArbiter
 
             self._arbiter = LLMArbiter(
-                llm_client=llm_client,
+                llm_client=arbitration_llm_client or llm_client,
                 game_profile=self._config.game_profile,
                 target_lang=self._config.target_lang,
                 strict_mode=self._config.strict_arbitration,

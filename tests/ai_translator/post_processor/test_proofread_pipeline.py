@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from transbridge.ai_translator.post_processor.base import PostProcessIssue
@@ -309,7 +311,7 @@ def test_postprocessor_config_forwards_model_and_content_token_limit() -> None:
     assert pipeline._processor._config.max_tokens_per_batch == 654
 
 
-def test_combined_pipeline_marks_only_technically_invalid_entries_as_failed() -> None:
+def test_proofread_pipeline_marks_only_final_technically_invalid_entries_as_failed() -> None:
     import json
 
     valid = _entry()
@@ -332,7 +334,7 @@ def test_combined_pipeline_marks_only_technically_invalid_entries_as_failed() ->
                 ensure_ascii=False,
             )
 
-    profile = AiExecutionProfile.from_config("polish", LLMConfig(pp_strategy="combined"))
+    profile = AiExecutionProfile.from_config("polish", LLMConfig(pp_strategy="proofread"))
     results = ProofreadPipeline.create(
         profile=profile,
         llm_client=Client(),
@@ -346,7 +348,7 @@ def test_combined_pipeline_marks_only_technically_invalid_entries_as_failed() ->
     assert results[missing.id].needs_arbitration is False
 
 
-def test_factory_presets_default_to_combined_and_saved_values_win() -> None:
+def test_factory_presets_default_to_proofread_and_saved_values_win() -> None:
     from transbridge.application.translation.ai_execution_profile import (
         apply_profile_settings,
         ensure_workflow_profiles,
@@ -356,7 +358,7 @@ def test_factory_presets_default_to_combined_and_saved_values_win() -> None:
     config = LLMConfig(pp_enable_polish=False)
     profiles = ensure_workflow_profiles(config)
 
-    assert {profiles[name]["pp_strategy"] for name in ("translate", "polish", "mixed")} == {"combined"}
+    assert {profiles[name]["pp_strategy"] for name in ("translate", "polish", "mixed")} == {"proofread"}
     assert profiles["translate"]["pp_enable_polish"] is False
     assert profiles["polish"]["pp_enable_polish"] is True
     apply_profile_settings(config, "polish")
@@ -366,6 +368,29 @@ def test_factory_presets_default_to_combined_and_saved_values_win() -> None:
     assert config.pp_enable_refinement is True
     apply_profile_settings(config, "polish")
     assert config.pp_enable_refinement is False
+
+
+def test_legacy_combined_config_normalizes_to_proofread() -> None:
+    profile = AiExecutionProfile.from_config("polish", LLMConfig(pp_strategy="combined"))
+
+    assert profile.postprocess_strategy == "proofread"
+    assert profile.enable_proofread is True
+    assert profile.enable_combined_proofread is True
+
+
+def test_legacy_strategy_is_canonicalized_at_profile_and_config_save_boundaries() -> None:
+    from transbridge.application.translation.ai_execution_profile import capture_profile_settings
+
+    config = LLMConfig(
+        pp_strategy="combined",
+        workflow_profiles={"polish": {"pp_strategy": "combined", "pp_enable_polish": True}},
+    )
+
+    assert capture_profile_settings(config)["pp_strategy"] == "proofread"
+    raw = config._serialize_workflow_profiles()
+    assert json.loads(raw)["polish"]["pp_strategy"] == "proofread"
+    assert config.workflow_profiles["polish"]["pp_strategy"] == "combined"
+    assert LLMConfig._load_workflow_profiles(raw)["polish"]["pp_strategy"] == "proofread"
 
 
 def test_saved_legacy_profile_without_strategy_keeps_strict_stage_semantics() -> None:
@@ -753,9 +778,17 @@ def test_profile_settings_can_persist_without_an_llm_endpoint(tmp_path) -> None:
     store = Store()
     path = tmp_path / "transbridge.ini"
     repository = ConfigRepository(path, legacy_path=path, credential_store=store)
-    config = LLMConfig(model="", workflow_profiles={"polish": {"pp_enable_polish": False}})
+    config = LLMConfig(
+        model="",
+        pp_strategy="combined",
+        workflow_profiles={"polish": {"pp_strategy": "combined", "pp_enable_polish": False}},
+    )
 
     config.save_to_file(repository=repository, credential_store=store)
 
+    persisted = repository.load()
+    assert persisted.value("llm", "pp_strategy") == "proofread"
+    assert json.loads(persisted.value("llm", "workflow_profiles"))["polish"]["pp_strategy"] == "proofread"
     reloaded = LLMConfig.load_from_file(repository=repository, credential_store=store)
+    assert reloaded.workflow_profiles["polish"]["pp_strategy"] == "proofread"
     assert reloaded.workflow_profiles["polish"]["pp_enable_polish"] is False

@@ -9,7 +9,11 @@ from PyQt6.QtWidgets import QApplication
 import pytest
 
 from transbridge.ai_translator.translator import TranslationResult
-from transbridge.application.translation import build_polish_report_snapshot, build_translation_report_snapshot
+from transbridge.application.translation import (
+    build_mixed_report_snapshot,
+    build_polish_report_snapshot,
+    build_translation_report_snapshot,
+)
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.paratranz.config_manager import LLMConfig
 from transbridge.ui.tools.ai_translator._batch_translation_progress_window import _BatchTranslationProgressWindow
@@ -25,6 +29,7 @@ from transbridge.ui.tools.ai_translator._translation_report_dialog import _Trans
 from transbridge.ui.tools.ai_translator._translation_worker import _TranslationWorker
 from transbridge.ui.tools.ai_translator.reporting import TranslationReportArtifacts, render_translation_report
 from transbridge.ui.tools.ai_translator.result_presenter import PolishApplySummary, ResultPresenter
+from transbridge.ui.tools.ai_translator.result_view import show_window_mixed_report
 
 
 def _result_with_snapshot() -> TranslationResult:
@@ -96,6 +101,91 @@ def test_polish_dialog_consumes_canonical_snapshot_details() -> None:
     assert "style: 旧 → 新" in dialog._entry_table.item(0, 5).text()
     assert dialog._issue_table.rowCount() == 0
 
+    dialog.close()
+    app.processEvents()
+
+
+def test_mixed_completion_opens_the_canonical_report_dialog(tmp_path) -> None:
+    source = _result_with_snapshot().post_process_result
+    snapshot = build_mixed_report_snapshot(
+        source,
+        None,
+        run_id="ui-report-run",
+        execution_order="serial",
+    )
+    excel_path = tmp_path / "mixed-report.xlsx"
+    excel_path.touch()
+    artifacts = TranslationReportArtifacts((str(excel_path),), str(excel_path), ())
+    activated: list[str] = []
+    window = SimpleNamespace(
+        _theme_view=None,
+        _scope_presenter=SimpleNamespace(locate_entry=activated.append),
+    )
+    app = QApplication.instance() or QApplication([])
+
+    dialog = show_window_mixed_report(window, {"snapshot": snapshot, "artifacts": artifacts})
+
+    assert dialog.windowTitle() == "混合运行报告"
+    assert dialog._report_path == str(excel_path)
+    assert dialog._btn_excel.isEnabled()
+    app.processEvents()
+    assert dialog.isVisible()
+    dialog.close()
+    app.processEvents()
+
+
+def test_mixed_preview_report_registers_artifact_after_background_render(tmp_path, monkeypatch) -> None:
+    from transbridge.ui.tools.ai_translator import _report_render_worker, run_controller
+
+    source = _result_with_snapshot().post_process_result
+    snapshot = build_mixed_report_snapshot(
+        source,
+        None,
+        run_id="ui-report-run",
+        execution_order="serial",
+    )
+    excel_path = tmp_path / "mixed-preview-report.xlsx"
+    excel_path.touch()
+    artifacts = TranslationReportArtifacts((str(excel_path),), str(excel_path), ("partial diagnostic",))
+    callbacks = {}
+    registrations = []
+
+    def start_report_render(_snapshot, _esp_stem, *, on_completed, on_failed):
+        callbacks.update(completed=on_completed, failed=on_failed)
+        return SimpleNamespace()
+
+    class Progress:
+        def __init__(self) -> None:
+            self.diagnostics = ()
+
+        def set_report_diagnostics(self, diagnostics) -> None:
+            self.diagnostics = diagnostics
+
+    progress = Progress()
+    spec = SimpleNamespace(run_id="ui-report-run")
+    window = SimpleNamespace(
+        _theme_view=None,
+        _scope_presenter=SimpleNamespace(locate_entry=lambda _entry_id: None),
+        _active_mixed_progress=progress,
+        _active_mixed_spec=spec,
+        _ctx=SimpleNamespace(esp_path="fixture.esp"),
+    )
+    monkeypatch.setattr(_report_render_worker, "start_report_render", start_report_render)
+    monkeypatch.setattr(
+        run_controller,
+        "register_mixed_result_actions",
+        lambda target, run_spec, result: registrations.append((target, run_spec, result["artifacts"])),
+    )
+    app = QApplication.instance() or QApplication([])
+    result = {"snapshot": snapshot, "artifacts": None}
+
+    dialog = show_window_mixed_report(window, result)
+    callbacks["completed"](artifacts)
+
+    assert result["artifacts"] is artifacts
+    assert dialog._report_path == str(excel_path)
+    assert registrations == [(progress, spec, artifacts)]
+    assert progress.diagnostics == ("partial diagnostic",)
     dialog.close()
     app.processEvents()
 

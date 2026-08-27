@@ -9,7 +9,7 @@ import json
 from typing import Literal
 
 AiWorkflowPreset = Literal["translate", "polish", "mixed"]
-PostProcessStrategy = Literal["combined", "strict"]
+PostProcessStrategy = Literal["proofread", "strict"]
 
 _PROFILE_FIELDS = (
     "pp_strategy",
@@ -30,7 +30,7 @@ _PROFILE_FIELDS = (
     "pp_arbitration_batch_size",
 )
 _DEFAULT_SETTINGS: dict[str, object] = {
-    "pp_strategy": "combined",
+    "pp_strategy": "proofread",
     "enable_post_process": True,
     "pp_enable_consistency_check": True,
     "pp_enable_format_validation": True,
@@ -77,8 +77,7 @@ class AiExecutionProfile:
     @classmethod
     def from_config(cls, preset: AiWorkflowPreset, config: object) -> AiExecutionProfile:
         enabled = bool(getattr(config, "enable_post_process", True))
-        strategy_value = str(getattr(config, "pp_strategy", "combined"))
-        strategy: PostProcessStrategy = strategy_value if strategy_value in {"combined", "strict"} else "combined"
+        strategy = normalize_postprocess_strategy(getattr(config, "pp_strategy", "proofread"))
         return cls(
             preset=preset,
             game_profile=str(getattr(config, "game_profile", "skyrim_se")),
@@ -107,8 +106,8 @@ class AiExecutionProfile:
         values: list[str] = []
         if self.enable_translation:
             values.append("翻译")
-        if self.enable_combined_proofread:
-            values.append("校对润色")
+        if self.enable_proofread:
+            values.append("校对")
             return tuple(values)
         if self.enable_consistency_check or self.enable_format_validation or self.enable_quality_gate:
             values.append("检测")
@@ -126,7 +125,7 @@ class AiExecutionProfile:
 
     @property
     def has_proofread_work(self) -> bool:
-        if self.enable_combined_proofread:
+        if self.enable_proofread:
             return True
         return any((
             self.enable_consistency_check,
@@ -138,13 +137,19 @@ class AiExecutionProfile:
 
     @property
     def requires_llm(self) -> bool:
-        if self.enable_combined_proofread:
+        if self.enable_proofread:
             return True
         return any((self.enable_quality_gate, self.enable_refinement, self.enable_polish, self.enable_arbitration))
 
     @property
+    def enable_proofread(self) -> bool:
+        return self.enable_post_process and self.postprocess_strategy == "proofread"
+
+    @property
     def enable_combined_proofread(self) -> bool:
-        return self.enable_post_process and self.postprocess_strategy == "combined"
+        """Compatibility alias for integrations compiled against the former name."""
+
+        return self.enable_proofread
 
     @property
     def digest(self) -> str:
@@ -170,7 +175,9 @@ def ensure_workflow_profiles(config: object) -> dict[str, dict[str, object]]:
 
 
 def capture_profile_settings(config: object) -> dict[str, object]:
-    return {field: getattr(config, field, _DEFAULT_SETTINGS[field]) for field in _PROFILE_FIELDS}
+    settings = {field: getattr(config, field, _DEFAULT_SETTINGS[field]) for field in _PROFILE_FIELDS}
+    settings["pp_strategy"] = normalize_postprocess_strategy(settings["pp_strategy"])
+    return settings
 
 
 def store_profile_settings(config: object, preset: AiWorkflowPreset) -> None:
@@ -188,7 +195,7 @@ def apply_profile_settings(config: object, preset: AiWorkflowPreset) -> object:
 def _factory_settings(legacy: Mapping[str, object], *, enable_polish: bool) -> dict[str, object]:
     settings = dict(legacy)
     settings.update({
-        "pp_strategy": "combined",
+        "pp_strategy": "proofread",
         "enable_post_process": True,
         "pp_enable_consistency_check": True,
         "pp_enable_format_validation": True,
@@ -221,9 +228,18 @@ def _validated_settings(
             validated[field] = value
         elif field == "pp_polish_level" and value in {"light", "moderate", "aggressive"}:
             validated[field] = value
-        elif field == "pp_strategy" and value in {"combined", "strict"}:
-            validated[field] = value
+        elif field == "pp_strategy" and value in {"proofread", "combined", "strict"}:
+            validated[field] = normalize_postprocess_strategy(value)
     return validated
+
+
+def normalize_postprocess_strategy(value: object) -> PostProcessStrategy:
+    """Normalize the former ``combined`` machine value at compatibility boundaries."""
+
+    normalized = str(value).strip().casefold()
+    if normalized == "strict":
+        return "strict"
+    return "proofread"
 
 
 __all__ = [
@@ -233,5 +249,6 @@ __all__ = [
     "apply_profile_settings",
     "capture_profile_settings",
     "ensure_workflow_profiles",
+    "normalize_postprocess_strategy",
     "store_profile_settings",
 ]

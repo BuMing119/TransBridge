@@ -127,7 +127,7 @@ class TestRunPostprocessParamValidation(unittest.TestCase):
             result = self.func({}, ec)
 
         self.assertTrue(result.success)
-        self.assertEqual(result.data["strategy"], "combined")
+        self.assertEqual(result.data["strategy"], "proofread")
         self.assertEqual(result.data["phases"], ["proofread"])
 
     def test_a9_custom_phases_in_data(self):
@@ -280,7 +280,7 @@ class TestStartPolishParamValidation(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(result.data["scope"], "all")
 
-    def test_c11_combined_is_the_default_strategy(self):
+    def test_c11_proofread_is_the_default_strategy(self):
         collection = make_test_collection(5)
         ctx = MockAppContext(collection=collection)
         ec = ExecutionContext(app_context=ctx)
@@ -288,7 +288,7 @@ class TestStartPolishParamValidation(unittest.TestCase):
         with patch.object(threading.Thread, "start", return_value=None):
             result = self.func({"scope": "all"}, ec)
         self.assertTrue(result.success)
-        self.assertEqual(result.data["strategy"], "combined")
+        self.assertEqual(result.data["strategy"], "proofread")
 
     def test_c12_strict_strategy_is_accepted(self):
         collection = make_test_collection(5)

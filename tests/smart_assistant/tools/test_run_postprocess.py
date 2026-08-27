@@ -61,22 +61,22 @@ class TestRunPostprocessValidation(unittest.TestCase):
             self.assertTrue(r.success)  # 不应崩溃，内部钳位到 8
 
     def test_default_phases_when_none(self):
-        """无参数调用默认只运行一次 combined 校对润色。"""
+        """无参数调用默认运行 Proofread 校对。"""
         ctx = MockAppContext(make_test_collection(3))
         with patch("transbridge.smart_assistant.tools.tool_proofreader.threading.Thread"):
             r = self.func({}, ctx)
             self.assertTrue(r.success)
             self.assertEqual(r.data["phases"], ["proofread"])
-            self.assertEqual(r.data["strategy"], "combined")
+            self.assertEqual(r.data["strategy"], "proofread")
             self.assertEqual(r.data["profile"], "builtin:polish")
 
-    def test_combined_rejects_strict_phases(self):
+    def test_proofread_rejects_strict_phases_and_accepts_legacy_alias(self):
         ctx = MockAppContext(make_test_collection(5))
 
         result = self.func({"strategy": "combined", "phases": ["polish"]}, ctx)
 
         self.assertFalse(result.success)
-        self.assertIn("combined", result.message)
+        self.assertIn("proofread", result.message)
 
     def test_runtime_limit_overrides_are_frozen_in_task_metadata(self):
         ctx = MockAppContext(make_test_collection(5))
@@ -195,12 +195,12 @@ class TestRunPostprocessProductionPath(unittest.TestCase):
 
         self.assertEqual(_count_committed_fixes(candidates), 1)
 
-    def test_default_combined_batches_entries_and_reports_effective_profile(self):
+    def test_default_proofread_batches_entries_and_reports_effective_profile(self):
         from transbridge.config.llm import LLMConfig
         from transbridge.smart_assistant.tools.task_manager import TaskManager
         from transbridge.smart_assistant.tools.tool_proofreader import _tool_run_postprocess, get_last_report
 
-        class CombinedClient:
+        class ProofreadClient:
             def __init__(self):
                 self.calls = 0
                 self.max_tokens = []
@@ -219,10 +219,10 @@ class TestRunPostprocessProductionPath(unittest.TestCase):
                     ]
                 })
 
-        client = CombinedClient()
+        client = ProofreadClient()
         runtime = SimpleNamespace(
             client=client,
-            log_store=SimpleNamespace(log_dir="combined-log"),
+            log_store=SimpleNamespace(log_dir="proofread-log"),
             close=lambda: None,
         )
         term_manager = SimpleNamespace(load_all=lambda: None, match_terms=lambda _texts: {})
@@ -264,10 +264,10 @@ class TestRunPostprocessProductionPath(unittest.TestCase):
         self.assertEqual(client.max_tokens, [0])
         self.assertTrue(all(entry.translation.startswith("fixed:") for entry in collection))
         self.assertEqual(report["profile"], "builtin:polish")
-        self.assertEqual(report["strategy"], "combined")
+        self.assertEqual(report["strategy"], "proofread")
         self.assertEqual(report["stages"], ["proofread"])
         self.assertEqual(report["scope"], "all")
-        self.assertEqual(report["log_dir"], "combined-log")
+        self.assertEqual(report["log_dir"], "proofread-log")
 
     def test_candidate_pipeline_commits_once_and_publishes_canonical_report(self):
         from transbridge.config.llm import LLMConfig

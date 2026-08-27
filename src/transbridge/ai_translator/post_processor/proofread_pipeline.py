@@ -7,8 +7,8 @@ from dataclasses import dataclass, field, replace
 import threading
 
 from transbridge.application.translation.ai_execution_profile import AiExecutionProfile
-from transbridge.application.translation.combined_proofread import CombinedProofreadStage
 from transbridge.application.translation.postprocess import PostProcessCandidate
+from transbridge.application.translation.proofread_stage import ProofreadStage
 
 from .base import PostProcessIssue, PostProcessResult
 from .post_processor import PostProcessor, PostProcessorConfig
@@ -43,11 +43,11 @@ class ProofreadPipeline:
         processor: PostProcessor,
         profile: AiExecutionProfile,
         *,
-        combined_stage: CombinedProofreadStage | None = None,
+        proofread_stage: ProofreadStage | None = None,
     ) -> None:
         self._processor = processor
         self.profile = profile
-        self._combined_stage = combined_stage
+        self._proofread_stage = proofread_stage
 
     @classmethod
     def create(
@@ -55,6 +55,7 @@ class ProofreadPipeline:
         *,
         profile: AiExecutionProfile,
         llm_client: object,
+        arbitration_llm_client: object | None = None,
         term_manager: object | None = None,
         model: str = "",
         max_tokens_per_batch: int = 2000,
@@ -82,9 +83,13 @@ class ProofreadPipeline:
             arbitration_batch_size=profile.arbitration_batch_size,
         )
         processor = PostProcessor(config, token_counter=token_counter)
-        processor.register_default_checkers(term_manager=term_manager, llm_client=llm_client)
-        combined_stage = None
-        if profile.enable_combined_proofread and llm_client is not None:
+        processor.register_default_checkers(
+            term_manager=term_manager,
+            llm_client=llm_client,
+            arbitration_llm_client=arbitration_llm_client,
+        )
+        proofread_stage = None
+        if profile.enable_proofread and llm_client is not None:
 
             def resolve_terms(candidate: PostProcessCandidate) -> dict:
                 if term_manager is None or not candidate.original:
@@ -94,7 +99,7 @@ class ProofreadPipeline:
                 except Exception:
                     return {}
 
-            combined_stage = CombinedProofreadStage(
+            proofread_stage = ProofreadStage(
                 llm_client,
                 term_resolver=resolve_terms,
                 target_locale=profile.target_lang,
@@ -104,7 +109,7 @@ class ProofreadPipeline:
                 max_tokens_per_batch=max_tokens_per_batch,
                 max_output_tokens=max_output_tokens,
             )
-        return cls(processor, profile, combined_stage=combined_stage)
+        return cls(processor, profile, proofread_stage=proofread_stage)
 
     def process(
         self,
@@ -117,8 +122,8 @@ class ProofreadPipeline:
         max_workers: int = 1,
     ) -> dict[str, ProofreadResult]:
         originals = tuple(entries)
-        if self.profile.enable_combined_proofread:
-            return self._process_combined(
+        if self.profile.enable_proofread:
+            return self._process_proofread(
                 originals,
                 progress_callback=progress_callback,
                 log_callback=log_callback,
@@ -138,7 +143,7 @@ class ProofreadPipeline:
         )
         return self._project(originals, result)
 
-    def _process_combined(
+    def _process_proofread(
         self,
         entries: tuple[object, ...],
         *,
@@ -150,21 +155,21 @@ class ProofreadPipeline:
     ) -> dict[str, ProofreadResult]:
         total = len(entries)
         if progress_callback:
-            progress_callback("proofread", 0, total, f"开始校对润色 {total} 个条目...")
-        if self._combined_stage is None:
+            progress_callback("proofread", 0, total, f"开始校对 {total} 个条目...")
+        if self._proofread_stage is None:
             return {
-                str(entry.id): self._combined_result(entry, valid=False, note="未配置可用的校对润色模型")
+                str(entry.id): self._proofread_result(entry, valid=False, note="未配置可用的校对模型")
                 for entry in entries
             }
         while pause_event is not None and not pause_event.is_set():
             if stop_event is not None and stop_event.is_set():
                 return {
-                    str(entry.id): self._combined_result(entry, valid=False, note="校对润色已停止") for entry in entries
+                    str(entry.id): self._proofread_result(entry, valid=False, note="校对已停止") for entry in entries
                 }
             pause_event.wait(0.05)
         if stop_event is not None and stop_event.is_set():
             return {
-                str(entry.id): self._combined_result(entry, valid=False, note="校对润色已停止") for entry in entries
+                str(entry.id): self._proofread_result(entry, valid=False, note="校对已停止") for entry in entries
             }
         candidates = tuple(
             PostProcessCandidate(
@@ -190,17 +195,17 @@ class ProofreadPipeline:
             while not monitor_done.wait(0.05):
                 stopped = stop_event is not None and stop_event.is_set()
                 if stopped:
-                    self._combined_stage.cancel()
+                    self._proofread_stage.cancel()
                     return
 
         monitor_thread = threading.Thread(target=monitor, daemon=True)
         monitor_thread.start()
         try:
-            runner = getattr(self._combined_stage, "run", None)
+            runner = getattr(self._proofread_stage, "run", None)
             if callable(runner):
                 outcome = runner(candidates, max_workers=max_workers, progress_callback=on_batch)
             else:  # compatibility with the initial stage implementation
-                outcome = self._combined_stage(candidates)
+                outcome = self._proofread_stage(candidates)
         finally:
             monitor_done.set()
         notes_by_key: dict[object, list[str]] = {}
@@ -227,18 +232,18 @@ class ProofreadPipeline:
             candidate = by_key.get(entry.identity)
             valid = candidate is not None and "proofread" in candidate.phases
             note = "；".join((*global_notes, *notes_by_key.get(entry.identity, ())))
-            projected[str(entry.id)] = self._combined_result(
+            projected[str(entry.id)] = self._proofread_result(
                 entry,
                 valid=valid,
                 translation=candidate.text if valid and candidate is not None else None,
                 note=note,
             )
         if progress_callback:
-            progress_callback("proofread", total, total, f"校对润色完成 {total}/{total}")
+            progress_callback("proofread", total, total, f"校对完成 {total}/{total}")
         return projected
 
     @staticmethod
-    def _combined_result(
+    def _proofread_result(
         entry: object,
         *,
         valid: bool,

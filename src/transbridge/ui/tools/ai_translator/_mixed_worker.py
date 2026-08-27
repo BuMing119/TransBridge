@@ -262,11 +262,16 @@ class _MixedWorker(QThread):
             term_manager.load_all()
         profile = self._profile
         llm_client = create_llm_client(self._cfg) if profile.requires_llm else None
+        arbitration_llm_client = None
         if llm_client is not None:
             from transbridge.infra.limited_llm_client import LimitedLLMClient
+            from transbridge.infra.llm_reasoning import ReasoningIntent, with_reasoning_intent
 
+            provider_client = llm_client
+            direct_client = with_reasoning_intent(provider_client, self._cfg, ReasoningIntent.PREFER_DIRECT)
+            low_client = with_reasoning_intent(provider_client, self._cfg, ReasoningIntent.PREFER_LOW)
             llm_client = LimitedLLMClient(
-                llm_client,
+                direct_client,
                 self._request_budget,
                 cancel_event=self._cancelled,
                 pause_event=self._pause_event,
@@ -276,9 +281,21 @@ class _MixedWorker(QThread):
                 self._log_store,
                 channel_prefix="proofread_call",
             )
+            arbitration_llm_client = LimitedLLMClient(
+                low_client,
+                self._request_budget,
+                cancel_event=self._cancelled,
+                pause_event=self._pause_event,
+            )
+            arbitration_llm_client = WorkflowLoggingLLMClient(
+                arbitration_llm_client,
+                self._log_store,
+                channel_prefix="arbitration_call",
+            )
         pipeline = ProofreadPipeline.create(
             profile=profile,
             llm_client=llm_client,
+            arbitration_llm_client=arbitration_llm_client,
             term_manager=term_manager,
             model=self._cfg.model,
             max_tokens_per_batch=self._cfg.max_tokens_per_batch,
@@ -354,11 +371,14 @@ class _MixedWorker(QThread):
                     if match := re.search(r"本批新增候选\s+(\d+)\s+个", message):
                         self._term_candidates += int(match.group(1))
                     self._term_completed = current
-                if "失败" in message:
+                terminal_failure = "失败" in message and current >= total
+                if terminal_failure:
+                    self._term_failed = max(1, total - self._term_completed)
+                elif "失败" in message:
                     self._term_failed = 1
                 success = self._term_completed
                 failed = self._term_failed
-                pending = max(0, total - success - failed)
+                pending = 0 if terminal_failure else max(0, total - success - failed)
                 new_terms = self._term_candidates
             else:
                 success = self._translate_success
@@ -486,7 +506,11 @@ class _MixedWorker(QThread):
         esp_stem = Path(self._ctx.esp_path).stem if self._ctx is not None and self._ctx.esp_path else "unknown"
         finalized = dict(result)
         finalized["snapshot"] = snapshot
-        finalized["artifacts"] = render_snapshot_report(snapshot, esp_stem)
+        try:
+            finalized["artifacts"] = render_snapshot_report(snapshot, esp_stem)
+        except Exception as exc:  # report persistence must not reverse a completed business run
+            finalized["artifacts"] = None
+            finalized["report_error"] = f"REPORT_RENDER_FAILED: {type(exc).__name__}: {exc}"
         return finalized
 
     def _run_summary(self) -> dict[str, object]:

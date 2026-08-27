@@ -83,7 +83,7 @@ class CustomProfileWidgetView:
             controls.custom_base_mode_combo.setCurrentIndex(base_index)
         finally:
             controls.custom_base_mode_combo.blockSignals(False)
-        strategy = "一次校对润色" if profile.strategy == "combined" else "严格多阶段"
+        strategy = "校对" if profile.strategy == "proofread" else "严格多阶段"
         controls.custom_profile_status_label.setText(f"当前：{profile.name} · {strategy}")
 
     def render_profile_error(self, message: str) -> None:

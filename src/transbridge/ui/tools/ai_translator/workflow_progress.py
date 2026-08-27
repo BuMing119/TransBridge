@@ -8,7 +8,7 @@ from threading import Lock
 _STAGE_LABELS = {
     "terms": "术语抽取",
     "translate": "翻译",
-    "proofread": "校对润色",
+    "proofread": "校对",
     "detect": "检测",
     "refine": "修复",
     "polish": "润色",
@@ -50,7 +50,7 @@ def stages_for_profile(
         if not include_translation:
             stages.extend((key, _STAGE_LABELS[key]) for key in ("detect", "refine", "polish", "arbitrate"))
     else:
-        if bool(getattr(profile, "enable_combined_proofread", False)):
+        if bool(getattr(profile, "enable_proofread", False)):
             stages.append(("proofread", _STAGE_LABELS["proofread"]))
         else:
             if any(

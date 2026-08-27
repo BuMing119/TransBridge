@@ -69,7 +69,7 @@ class LLMConfig:
     bm25_weight: float = 0.5
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     enable_post_process: bool = True
-    pp_strategy: str = "combined"
+    pp_strategy: str = "proofread"
     pp_enable_consistency_check: bool = True
     pp_enable_format_validation: bool = True
     pp_enable_quality_gate: bool = True
@@ -209,6 +209,7 @@ class LLMConfig:
         if all(str(value).strip() for value in (self.provider, self.base_url, self.model)):
             llm.update({"provider": self.provider, "base_url": self.base_url, "model": self.model})
         llm.update({key: getattr(self, attr) for attr, key, _kind in self._CONFIG_FIELDS})
+        llm["pp_strategy"] = _normalize_persisted_postprocess_strategy(self.pp_strategy)
         llm.update({key: getattr(self.embedding, attr) for attr, key, _kind in self._EMBEDDING_FIELDS})
         snapshot = repo.update_sections({
             "llm": llm,
@@ -311,7 +312,11 @@ class LLMConfig:
     def _serialize_workflow_profiles(self) -> str:
         if not self.workflow_profiles:
             return ""
-        return json.dumps(self.workflow_profiles, ensure_ascii=False, allow_nan=False, sort_keys=True)
+        payload = deepcopy(self.workflow_profiles)
+        for settings in payload.values():
+            if isinstance(settings, dict) and "pp_strategy" in settings:
+                settings["pp_strategy"] = _normalize_persisted_postprocess_strategy(settings["pp_strategy"])
+        return json.dumps(payload, ensure_ascii=False, allow_nan=False, sort_keys=True)
 
     @staticmethod
     def _load_workflow_profiles(raw: str) -> dict[str, dict[str, object]]:
@@ -323,17 +328,27 @@ class LLMConfig:
             return {}
         if not isinstance(data, dict):
             return {}
-        return {
-            str(name): dict(settings)
-            for name, settings in data.items()
-            if name in {"translate", "polish", "mixed"} and isinstance(settings, dict)
-        }
+        profiles: dict[str, dict[str, object]] = {}
+        for name, settings in data.items():
+            if name not in {"translate", "polish", "mixed"} or not isinstance(settings, dict):
+                continue
+            normalized = dict(settings)
+            if "pp_strategy" in normalized:
+                normalized["pp_strategy"] = _normalize_persisted_postprocess_strategy(normalized["pp_strategy"])
+            profiles[str(name)] = normalized
+        return profiles
 
     @staticmethod
     def get_ai_translator_dir(esp_stem: str) -> str:
         path = Path(get_data_dir()) / "ai_translator" / esp_stem
         path.mkdir(parents=True, exist_ok=True)
         return str(path)
+
+
+def _normalize_persisted_postprocess_strategy(value: object) -> str:
+    """Write the canonical strategy while accepting values from legacy callers."""
+
+    return "strict" if str(value).strip().casefold() == "strict" else "proofread"
 
 
 def _load_field(

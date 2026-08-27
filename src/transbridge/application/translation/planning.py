@@ -221,8 +221,12 @@ def _matches(rule: ActionRuleSpec, entry: PlanningEntry) -> bool:
         return False
     if rule.labels is not None and not rule.labels.intersection(entry.labels):
         return False
+    if rule.contexts is None:
+        return True
+    from transbridge.converter.context_categories import context_category
+
     context = entry.context.split("|", 1)[0]
-    return rule.contexts is None or context in rule.contexts
+    return context in rule.contexts or context_category(entry.context) in rule.contexts
 
 
 def _classify(context: str) -> tuple[int, str, str, str | None]:

@@ -210,14 +210,16 @@ class TranslationController:
         entry_ids = args.get("entry_ids")
         intensity = args.get("intensity", "medium")
         scope = args.get("scope", "all")
-        strategy = args.get("strategy", "combined")
+        strategy = args.get("strategy", "proofread")
+        if strategy == "combined":  # compatibility with saved assistant calls
+            strategy = "proofread"
 
         if scope not in ("all", "passed", "has_issues"):
             return ToolResult.fail(f"无效 scope: {scope}，可选: all, passed, has_issues")
         if intensity not in ("light", "medium", "heavy"):
             return ToolResult.fail(f"无效 intensity: {intensity}，可选: light, medium, heavy")
-        if strategy not in ("combined", "strict"):
-            return ToolResult.fail(f"无效 strategy: {strategy}，可选: combined, strict")
+        if strategy not in ("proofread", "strict"):
+            return ToolResult.fail(f"无效 strategy: {strategy}，可选: proofread, strict")
 
         if entry_ids is None:
             # 按 scope 筛选条目
@@ -681,7 +683,7 @@ _PARAM_SCHEMAS = {
         "strategy": {
             "type": "str",
             "required": False,
-            "description": "校改策略: combined(默认,一次校对润色)/strict(兼容多阶段)",
+            "description": "校对策略: proofread(默认)/strict(兼容多阶段)",
         },
     },
     "stop_task": {
@@ -730,7 +732,7 @@ def _register_translator_tools():
         {"name": "start_translation", "display_name": "启动翻译", "description": "①启动AI翻译后台任务。②参数: mode=translate(默认)/polish/mixed(mixed同translate), entry_ids=key列表(可选,不传则用set_scope作用域,默认stage=0未翻译)。③返回: {task_id, mode}。④规则: 前置需API key已配,先调get_translation_config确认配置;允许并行多任务。",
          "execute": _tool_start_translation, "permission": "write", "is_long_running": True,
          "require_confirmation": True, "parameters": _PARAM_SCHEMAS.get("start_translation", {})},
-        {"name": "start_polish", "display_name": "启动润色", "description": "①启动AI校对润色后台任务。②参数: entry_ids或scope至少传一(同时传entry_ids优先), scope=all(全部有译文)/passed(stage=1/3/4/5/6)/has_issues(2), intensity=light/medium/heavy(默认medium), strategy=combined(默认,一次校对润色)/strict(兼容多阶段)。③返回: {task_id, strategy, intensity, scope, entry_count}。④规则: 前置需API key已配,先调get_translation_config确认。",
+        {"name": "start_polish", "display_name": "启动校对", "description": "①启动AI校对后台任务。②参数: entry_ids或scope至少传一(同时传entry_ids优先), scope=all(全部有译文)/passed(stage=1/3/4/5/6)/has_issues(2), intensity=light/medium/heavy(默认medium), strategy=proofread(默认)/strict(兼容多阶段)。③返回: {task_id, strategy, intensity, scope, entry_count}。④规则: 前置需API key已配,先调get_translation_config确认。",
          "execute": _tool_start_polish, "permission": "write", "is_long_running": True,
          "require_confirmation": True, "parameters": _PARAM_SCHEMAS.get("start_polish", {})},
         {"name": "stop_task", "display_name": "停止/暂停/恢复", "description": "①控制后台任务(停止/暂停/恢复)。②参数: task_id(可选,不传则操作所有活跃任务), action=stop(默认,不可恢复)/pause(等当前批次完成)/resume。③单个: {task_id, action},全部: {affected_task_ids, action}。④规则: stop不可逆;活跃=仅running+paused;需用户确认。",

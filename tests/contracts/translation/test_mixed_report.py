@@ -151,6 +151,36 @@ def test_mixed_worker_finishes_with_snapshot_and_rendered_artifacts(monkeypatch,
     assert result["artifacts"].excel_path == "report.xlsx"
 
 
+def test_mixed_report_render_failure_does_not_reverse_the_completed_run(monkeypatch) -> None:
+    from transbridge.ui.tools.ai_translator import reporting
+    from transbridge.ui.tools.ai_translator._mixed_worker import _MixedWorker
+
+    monkeypatch.setattr(
+        reporting,
+        "render_snapshot_report",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk unavailable")),
+    )
+    worker = _MixedWorker(
+        SimpleNamespace(pp_polish_level="moderate"),
+        [],
+        [],
+        ctx=SimpleNamespace(esp_path="fixture.esp"),
+        run_id="mixed-render-failure",
+    )
+    emitted: list[dict] = []
+    errors: list[str] = []
+    worker.finished.connect(emitted.append)
+    worker.error.connect(errors.append)
+
+    worker.run()
+
+    assert errors == []
+    assert len(emitted) == 1
+    assert emitted[0]["snapshot"].schema == "transbridge.mixed-report.v1"
+    assert emitted[0]["artifacts"] is None
+    assert "OSError: disk unavailable" in emitted[0]["report_error"]
+
+
 def test_mixed_preview_rejection_is_authoritative_before_render(monkeypatch) -> None:
     from PyQt6.QtWidgets import QDialog
 
@@ -211,7 +241,7 @@ def test_mixed_preview_rejection_is_authoritative_before_render(monkeypatch) -> 
     assert result["snapshot"].run_id == "mixed-preview"
     assert result["snapshot"].accepted_count == 0
     assert dict(result["snapshot"].candidates[0].report_details)["result_status"] == "rejected"
-    assert rendered == [(result["snapshot"], "fixture")]
+    assert rendered == []
 
 
 def test_mixed_result_actions_register_the_real_excel_artifact(tmp_path: Path) -> None:

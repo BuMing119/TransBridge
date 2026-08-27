@@ -394,11 +394,11 @@ class AITranslatorWindow(QWidget):
         self._view.controls.preflight_label.setAccessibleDescription(started_text)
 
     def _on_mixed_finished(self, result: dict):
-        from .result_view import apply_window_mixed_result
+        from .result_view import apply_window_mixed_result, show_window_mixed_report
 
         if apply_window_mixed_result(self, result):
             self._ctx.collection_changed.emit(self._ctx.collection)
-        QMessageBox.information(self, "混合模式", self._result_presenter.mixed_summary(result))
+        self._report_dialog = show_window_mixed_report(self, result)
 
     def _on_polish_start(self):
         collection = self._ctx.collection

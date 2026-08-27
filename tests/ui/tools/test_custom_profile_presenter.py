@@ -51,7 +51,7 @@ def _profile(name: str, *, base_mode: str = "polish", max_concurrent: int = 7) -
     return CustomWorkflowProfile.create(
         name,
         base_mode=base_mode,  # type: ignore[arg-type]
-        strategy="combined",
+        strategy="proofread",
         workflow={"enable_post_process": True, "pp_polish_level": "light"},
         limits={
             "max_concurrent": max_concurrent,

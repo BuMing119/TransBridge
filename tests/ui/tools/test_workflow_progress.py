@@ -321,7 +321,7 @@ def test_workflow_window_opens_persisted_llm_logs(qapp: QApplication, tmp_path: 
     viewer._log_selector.setCurrentIndex(batch_index)
     assert "raw model response" in viewer._text_edit.toPlainText()
 
-    (tmp_path / "proofread_call_001.log").write_text("校对润色请求与响应", encoding="utf-8")
+    (tmp_path / "proofread_call_001.log").write_text("校对请求与响应", encoding="utf-8")
     assert viewer._log_selector.count() == 3
     viewer._refresh_btn.click()
     assert viewer._log_selector.count() == 4

@@ -190,10 +190,16 @@ class AutoTranslator:
         from transbridge.ai_translator.term_database import TermDatabaseManager
         from transbridge.application.translation.ai_request_budget import AiRequestBudget
         from transbridge.infra.llm_client import create_llm_client
+        from transbridge.infra.llm_reasoning import ReasoningIntent, with_reasoning_intent
 
-        delegate = llm_client or create_llm_client(config.llm_config)
+        raw_delegate = llm_client or create_llm_client(config.llm_config)
+        delegate = with_reasoning_intent(raw_delegate, config.llm_config, ReasoningIntent.PREFER_DIRECT)
         self._raw_llm = delegate
-        self._raw_term_llm = term_llm_client or delegate
+        self._raw_term_llm = (
+            delegate
+            if term_llm_client is None or term_llm_client is raw_delegate
+            else with_reasoning_intent(term_llm_client, config.llm_config, ReasoningIntent.PREFER_DIRECT)
+        )
         self._llm_client_wrapper = llm_client_wrapper
         self._term_llm_client_wrapper = term_llm_client_wrapper
         self._request_budget = request_budget or AiRequestBudget(getattr(config.llm_config, "max_concurrent", 1))
@@ -1091,7 +1097,6 @@ class AutoTranslator:
             from transbridge.application.io.publish import ImmediateCommitGuard
             from transbridge.application.translation import (
                 CheckerStage,
-                CombinedProofreadStage,
                 FilesystemPostProcessCheckpointPort,
                 FilesystemTranslationCheckpointPort,
                 LlmClientPostProcessPort,
@@ -1099,8 +1104,10 @@ class AutoTranslator:
                 PostProcessExecutionService,
                 PostProcessLlmPhase,
                 PostProcessWorkload,
+                ProofreadStage,
                 TranslationInput,
             )
+            from transbridge.application.translation.ai_execution_profile import normalize_postprocess_strategy
 
             from .post_processor import PostProcessor, PostProcessorConfig
 
@@ -1110,7 +1117,10 @@ class AutoTranslator:
             if entries_to_check:
                 stages = []
                 stage_names = []
-                if getattr(self._cfg.llm_config, "pp_strategy", "combined") == "combined":
+                strategy = normalize_postprocess_strategy(
+                    getattr(self._cfg.llm_config, "pp_strategy", "proofread")
+                )
+                if strategy == "proofread":
 
                     def resolve_terms(candidate):
                         if self._term_mgr is None or not candidate.original:
@@ -1118,7 +1128,7 @@ class AutoTranslator:
                         return self._term_mgr.match_terms([candidate.original])
 
                     stages.append(
-                        CombinedProofreadStage(
+                        ProofreadStage(
                             self._llm,
                             term_resolver=resolve_terms,
                             target_locale=self._cfg.llm_config.target_lang,

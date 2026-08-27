@@ -316,8 +316,145 @@ def test_seed_stops_after_the_first_text_batch_failure() -> None:
     assert len(extractor.calls) == 1
     assert extractor.raise_on_error_values == [True]
     assert manager.dynamic.saved_batches == []
-    assert progress[-1][0:2] == (0, 2)
+    assert progress[-1][0:2] == (2, 2)
     assert "失败" in progress[-1][2]
+
+
+def test_slow_term_batch_emits_provider_wait_heartbeat() -> None:
+    manager = _TermManager()
+
+    class SlowExtractor:
+        def extract(self, pairs, *, raise_on_error=False):
+            time.sleep(0.15)
+            return []
+
+    progress: list[tuple[int, int, str]] = []
+    result = ExistingTermSeeder(
+        manager,
+        SlowExtractor(),
+        text_batch_size=1,
+        stall_timeout_seconds=1,
+        heartbeat_interval_seconds=0.02,
+    ).seed(
+        [_entry("slow", "慢", "INFO:NAM1|1")],
+        progress_callback=lambda current, total, message: progress.append((current, total, message)),
+    )
+
+    assert result.error is None
+    heartbeat = next(message for _current, _total, message in progress if "仍在等待 Provider" in message)
+    assert "可能正在限流或自动重试" in heartbeat
+    assert progress[-1][0:2] == (1, 1)
+
+
+def test_stalled_term_batch_is_cancelled_and_stage_finishes_as_failed() -> None:
+    manager = _TermManager()
+
+    class CancelableExtractor:
+        def __init__(self) -> None:
+            self.release = threading.Event()
+            self.cancel_calls = 0
+
+        def extract(self, pairs, *, raise_on_error=False):
+            self.release.wait(timeout=2)
+            return []
+
+        def cancel(self) -> None:
+            self.cancel_calls += 1
+            self.release.set()
+
+    extractor = CancelableExtractor()
+    progress: list[tuple[int, int, str]] = []
+    result = ExistingTermSeeder(
+        manager,
+        extractor,
+        text_batch_size=1,
+        stall_timeout_seconds=0.05,
+        heartbeat_interval_seconds=0.01,
+    ).seed(
+        [_entry("stalled", "停滞", "INFO:NAM1|1")],
+        progress_callback=lambda current, total, message: progress.append((current, total, message)),
+    )
+
+    assert extractor.cancel_calls == 1
+    assert result.error is not None
+    assert "等待 Provider 超过" in result.error
+    assert progress[-1][0:2] == (1, 1)
+    assert "翻译将继续" in progress[-1][2]
+    assert manager.dynamic.saved_batches == []
+
+
+def test_stalled_uncancellable_provider_is_detached_without_blocking_recovery() -> None:
+    manager = _TermManager()
+
+    class UncancelableExtractor:
+        def __init__(self) -> None:
+            self.release = threading.Event()
+
+        def extract(self, pairs, *, raise_on_error=False):
+            self.release.wait(timeout=2)
+            return []
+
+    extractor = UncancelableExtractor()
+    logs: list[str] = []
+    started = time.monotonic()
+    result = ExistingTermSeeder(
+        manager,
+        extractor,
+        text_batch_size=1,
+        stall_timeout_seconds=0.05,
+        heartbeat_interval_seconds=0.01,
+    ).seed(
+        [_entry("stalled", "停滞", "INFO:NAM1|1")],
+        log_callback=logs.append,
+    )
+    elapsed = time.monotonic() - started
+    extractor.release.set()
+
+    assert elapsed < 0.5
+    assert result.error is not None
+    assert any("不支持主动取消" in message for message in logs)
+    assert manager.dynamic.saved_batches == []
+
+
+def test_stop_interrupts_an_active_term_provider_call() -> None:
+    manager = _TermManager()
+
+    class CancelableExtractor:
+        def __init__(self) -> None:
+            self.started = threading.Event()
+            self.release = threading.Event()
+            self.cancel_calls = 0
+
+        def extract(self, pairs, *, raise_on_error=False):
+            self.started.set()
+            self.release.wait(timeout=2)
+            return []
+
+        def cancel(self) -> None:
+            self.cancel_calls += 1
+            self.release.set()
+
+    extractor = CancelableExtractor()
+    stop_event = threading.Event()
+    holder: list = []
+    thread = threading.Thread(
+        target=lambda: holder.append(
+            ExistingTermSeeder(manager, extractor, text_batch_size=1).seed(
+                [_entry("active", "活动", "INFO:NAM1|1")],
+                stop_event=stop_event,
+            )
+        )
+    )
+    thread.start()
+    assert extractor.started.wait(timeout=1)
+
+    stop_event.set()
+    thread.join(timeout=1)
+
+    assert not thread.is_alive()
+    assert extractor.cancel_calls == 1
+    assert holder[0].cancelled is True
+    assert manager.dynamic.saved_batches == []
 
 
 def test_seed_batches_original_and_translation_by_content_tokens() -> None:

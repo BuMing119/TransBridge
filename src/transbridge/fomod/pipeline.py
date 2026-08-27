@@ -438,8 +438,14 @@ class FomodPipeline:
         llm = None
         if ai_enabled and self._llm_config is not None:
             from transbridge.infra.llm_client import create_llm_client
+            from transbridge.infra.llm_reasoning import ReasoningIntent, with_reasoning_intent
 
-            llm = create_llm_client(_llm_config_for_locale(self._llm_config, target_lang))
+            llm_config = _llm_config_for_locale(self._llm_config, target_lang)
+            llm = with_reasoning_intent(
+                create_llm_client(llm_config),
+                llm_config,
+                ReasoningIntent.PREFER_DIRECT,
+            )
         reports = []
         for xml_path in find_fomod_xml_files(new_dir):
             relative = xml_path.relative_to(new_dir)

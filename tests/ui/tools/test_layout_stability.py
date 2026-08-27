@@ -7,7 +7,7 @@ from types import SimpleNamespace
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QObject, pyqtSignal
-from PyQt6.QtWidgets import QApplication, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QApplication, QSizePolicy, QVBoxLayout, QWidget
 import pytest
 
 from transbridge.ui.tools.ai_translator._batch_llm_log_viewer import _BatchLLMLogViewer
@@ -113,6 +113,19 @@ def test_ai_footer_long_reason_does_not_move_start_button(qapp) -> None:
     _assert_horizontal_stable(qapp, parent, view.controls.start_btn, mutate, width=680)
     assert view.controls.preflight_label.toolTip() == text
     assert view.controls.preflight_label.accessibleDescription() == text
+
+
+def test_ai_scope_estimates_wrap_inside_horizontal_scroll_free_view(qapp) -> None:
+    parent = QWidget()
+    view = AITranslatorView(parent, _Callbacks())
+
+    for label in (view.controls.estimate_lbl, view.controls.mixed_estimate_lbl):
+        label.setText("预计：" + "很长的完整范围估算；" * 100)
+        assert label.wordWrap()
+        assert label.sizePolicy().horizontalPolicy() is QSizePolicy.Policy.Ignored
+        assert label.heightForWidth(320) > label.fontMetrics().height()
+
+    parent.close()
 
 
 def test_smart_assistant_dynamic_text_keeps_action_columns_stable(qapp) -> None:

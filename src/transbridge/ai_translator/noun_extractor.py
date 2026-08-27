@@ -71,3 +71,10 @@ class NounExtractor:
                     )
                 )
         return results
+
+    def cancel(self) -> None:
+        """Interrupt provider calls owned by the current extraction run."""
+
+        cancel = getattr(self._client, "cancel", None)
+        if callable(cancel):
+            cancel()

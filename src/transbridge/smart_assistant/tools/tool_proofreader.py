@@ -58,7 +58,7 @@ class ProofreaderController:
         self._task_mgr = task_manager
 
     def run_postprocess(self, args: dict, ctx) -> ToolResult:
-        """Start one preset-aware combined or strict post-process task."""
+        """Start one preset-aware Proofread or strict post-process task."""
 
         collection = ctx.collection
         if not collection or len(collection) == 0:
@@ -211,10 +211,10 @@ def _register_proofreader_tools() -> None:
         [
             {
                 "name": "run_postprocess",
-                "display_name": "校对润色 / 严格后处理",
+                "display_name": "校对 / 严格后处理",
                 "description": (
-                    "默认按内置polish预设执行一次combined校对润色。profile可选translate/polish/mixed、custom"
-                    "（当前选中具名配置）或具名配置名称/UUID；strategy可选combined/strict。entry_ids优先，否则"
+                    "默认按内置polish预设执行校对。profile可选translate/polish/mixed、custom"
+                    "（当前选中具名配置）或具名配置名称/UUID；strategy可选proofread/strict。entry_ids优先，否则"
                     "scope可选configured/set_scope/all/passed/has_issues。intensity可选configured/light/medium/heavy。"
                     "strict可用phases选择consistency/format/quality_gate/refinement/polish/arbitration；旧调用只传"
                     "phases时自动使用strict。可覆盖max_concurrent、max_tokens_per_batch、max_output_tokens和"
@@ -226,7 +226,7 @@ def _register_proofreader_tools() -> None:
                 "require_confirmation": True,
                 "parameters": {
                     "profile": {"type": "str", "required": False, "description": "预设或具名工作流，默认polish"},
-                    "strategy": {"type": "str", "required": False, "description": "combined或strict，默认combined"},
+                    "strategy": {"type": "str", "required": False, "description": "proofread或strict，默认proofread"},
                     "phases": {"type": "list", "required": False, "description": "strict阶段列表；提供后自动strict"},
                     "entry_ids": {"type": "list", "required": False, "description": "优先处理的条目key列表"},
                     "scope": {

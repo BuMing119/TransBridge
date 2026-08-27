@@ -13,7 +13,7 @@ from typing import Literal
 from uuid import UUID, uuid4
 
 BaseMode = Literal["translate", "polish", "mixed"]
-WorkflowStrategy = Literal["combined", "strict"]
+WorkflowStrategy = Literal["proofread", "strict"]
 
 DOCUMENT_TYPE = "transbridge.ai_workflow_profiles"
 SCHEMA_VERSION = 1
@@ -116,7 +116,7 @@ class CustomWorkflowProfile:
         name: str,
         *,
         base_mode: BaseMode,
-        strategy: WorkflowStrategy = "combined",
+        strategy: WorkflowStrategy = "proofread",
         description: str = "",
         workflow: Mapping[str, object] | None = None,
         limits: Mapping[str, object] | None = None,
@@ -180,7 +180,7 @@ class CustomWorkflowProfile:
             profile_id=profile_id,
             description=description,
             base_mode=base_mode,
-            strategy=getattr(config, "pp_strategy", "combined"),
+            strategy=_normalize_strategy(getattr(config, "pp_strategy", "proofread")),
             workflow=workflow,
             limits=limits,
             mixed=mixed,
@@ -196,7 +196,7 @@ class CustomWorkflowProfile:
         name = _bounded_text(data["name"], "profile.name", maximum=80, allow_empty=False)
         description = _bounded_text(data["description"], "profile.description", maximum=500, allow_empty=True)
         base_mode = _enum(data["base_mode"], {"translate", "polish", "mixed"}, "profile.base_mode")
-        strategy = _enum(data["strategy"], {"combined", "strict"}, "profile.strategy")
+        strategy = _normalize_strategy(_enum(data["strategy"], {"proofread", "combined", "strict"}, "profile.strategy"))
         workflow = _validate_workflow(data["workflow"])
         limits = _validate_limits(data["limits"])
         mixed = _validate_mixed(data["mixed"], base_mode=base_mode)
@@ -217,7 +217,7 @@ class CustomWorkflowProfile:
             "name": self.name,
             "description": self.description,
             "base_mode": self.base_mode,
-            "strategy": self.strategy,
+            "strategy": _normalize_strategy(self.strategy),
             "workflow": deepcopy(self.workflow),
             "limits": dict(self.limits),
             "mixed": deepcopy(self.mixed),
@@ -237,7 +237,10 @@ class CustomWorkflowProfile:
             from transbridge.paratranz.config_manager import ActionRule
 
             setattr(target, "mixed_execution_order", self.mixed["execution_order"])
-            rules = [ActionRule.from_dict(deepcopy(rule)) for rule in self.mixed["action_rules"]]  # type: ignore[arg-type]
+            rules = [
+                ActionRule.from_dict(deepcopy(rule))
+                for rule in self.mixed["action_rules"]  # type: ignore[union-attr]
+            ]
             setattr(target, "action_rules", rules)
         return target
 
@@ -439,6 +442,10 @@ def _enum(value: object, allowed: set[str] | frozenset[str], path: str) -> str:
     if not isinstance(value, str) or value not in allowed:
         raise WorkflowProfileValidationError(f"{path} must be one of {sorted(allowed)!r}")
     return value
+
+
+def _normalize_strategy(value: object) -> WorkflowStrategy:
+    return "strict" if value == "strict" else "proofread"
 
 
 def _validate_uuid(value: object, path: str) -> str:

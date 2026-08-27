@@ -7,12 +7,16 @@ class _Client:
     def __init__(self, *, error: Exception | None = None) -> None:
         self.error = error
         self.max_tokens: list[int] = []
+        self.cancel_calls = 0
 
     def chat(self, messages, max_tokens):
         self.max_tokens.append(max_tokens)
         if self.error is not None:
             raise self.error
         return "fixture-response"
+
+    def cancel(self) -> None:
+        self.cancel_calls += 1
 
 
 class _Builder:
@@ -69,3 +73,12 @@ def test_extract_can_propagate_llm_failure_for_batch_orchestration() -> None:
             [{"original": "Riverwood", "translation": "溪木镇"}],
             raise_on_error=True,
         )
+
+
+def test_cancel_is_forwarded_to_the_provider_client() -> None:
+    client = _Client()
+    extractor = NounExtractor(client, _Builder([]))
+
+    extractor.cancel()
+
+    assert client.cancel_calls == 1

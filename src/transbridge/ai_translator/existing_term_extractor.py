@@ -7,6 +7,7 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 import re
 import threading
+import time
 from typing import TYPE_CHECKING, Literal
 import unicodedata
 
@@ -29,6 +30,9 @@ if TYPE_CHECKING:
 
 EXISTING_NAME_SOURCE = "existing_name"
 EXISTING_TEXT_SOURCE = "existing_text"
+
+_DEFAULT_STALL_TIMEOUT_SECONDS = 90.0
+_DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 10.0
 
 _WHITESPACE_RE = re.compile(r"\s+")
 
@@ -108,11 +112,17 @@ class ExistingTermSeeder:
         token_counter: ContentTokenCounter | None = None,
         max_concurrent: int = 1,
         text_batch_size: int | None = None,
+        stall_timeout_seconds: float = _DEFAULT_STALL_TIMEOUT_SECONDS,
+        heartbeat_interval_seconds: float = _DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
     ) -> None:
         if text_batch_size is not None and text_batch_size <= 0:
             raise ValueError("text_batch_size must be positive when provided")
         if isinstance(max_concurrent, bool) or not isinstance(max_concurrent, int) or max_concurrent <= 0:
             raise ValueError("max_concurrent must be a positive integer")
+        if stall_timeout_seconds <= 0:
+            raise ValueError("stall_timeout_seconds must be positive")
+        if heartbeat_interval_seconds <= 0:
+            raise ValueError("heartbeat_interval_seconds must be positive")
         self._term_manager = term_manager
         self._noun_extractor = noun_extractor
         self._batcher = StableContentBatcher(
@@ -121,6 +131,8 @@ class ExistingTermSeeder:
             max_items=text_batch_size,
         )
         self._max_concurrent = max_concurrent
+        self._stall_timeout_seconds = float(stall_timeout_seconds)
+        self._heartbeat_interval_seconds = float(heartbeat_interval_seconds)
 
     def seed(
         self,
@@ -191,7 +203,7 @@ class ExistingTermSeeder:
                     else ""
                 )
                 message = f"{batch_label}术语抽取失败，已停止后续批次：{extraction_error}"
-                _notify(progress_callback, text_batches_completed, display_total, message)
+                _notify(progress_callback, display_total, display_total, message)
                 if log_callback:
                     log_callback(message)
             if text_batches_total == 0 and extraction_error is None:
@@ -298,6 +310,7 @@ class ExistingTermSeeder:
         results: dict[int, list[_TermCandidate]] = {}
         next_batch = 0
         futures: dict[Future[list[_TermCandidate]], ContentBatch[_ExistingTextPair]] = {}
+        submitted_at: dict[Future[list[_TermCandidate]], float] = {}
         cancelled = False
         extraction_error: Exception | None = None
         abort_event = threading.Event()
@@ -317,8 +330,11 @@ class ExistingTermSeeder:
                 abort_event=abort_event,
             )
             futures[future] = batch
+            submitted_at[future] = time.monotonic()
 
-        with ThreadPoolExecutor(max_workers=self._max_concurrent, thread_name_prefix="term-extract") as executor:
+        executor = ThreadPoolExecutor(max_workers=self._max_concurrent, thread_name_prefix="term-extract")
+        try:
+            next_heartbeat = time.monotonic() + self._heartbeat_interval_seconds
             while next_batch < total and len(futures) < self._max_concurrent:
                 if _stop_requested(stop_event):
                     cancelled = True
@@ -331,11 +347,40 @@ class ExistingTermSeeder:
                 if not done:
                     if _stop_requested(stop_event):
                         cancelled = True
+                        abort_event.set()
+                        self._cancel_pending_extraction(log_callback)
                         break
+                    now = time.monotonic()
+                    oldest_future = min(futures, key=submitted_at.__getitem__)
+                    oldest_batch = futures[oldest_future]
+                    oldest_wait = now - submitted_at[oldest_future]
+                    if oldest_wait >= self._stall_timeout_seconds:
+                        extraction_error = _BatchExtractionError(
+                            oldest_batch.index + 1,
+                            total,
+                            TimeoutError(
+                                f"等待 Provider 超过 {self._stall_timeout_seconds:g} 秒，"
+                                "已自动终止本轮文本术语初始化；翻译将继续"
+                            ),
+                        )
+                        abort_event.set()
+                        self._cancel_pending_extraction(log_callback)
+                        break
+                    if now >= next_heartbeat:
+                        message = (
+                            f"第 {oldest_batch.index + 1}/{total} 批仍在等待 Provider "
+                            f"（已等待 {round(oldest_wait)} 秒，剩余 {len(futures)} 批；"
+                            "可能正在限流或自动重试，可点击停止）"
+                        )
+                        _notify(progress_callback, completed, total, message)
+                        if log_callback:
+                            log_callback(message)
+                        next_heartbeat = now + self._heartbeat_interval_seconds
                     continue
 
                 for future in sorted(done, key=lambda item: futures[item].index):
                     batch = futures.pop(future)
+                    submitted_at.pop(future, None)
                     try:
                         extracted = future.result()
                     except _ExtractionCancelled:
@@ -350,10 +395,13 @@ class ExistingTermSeeder:
                     _notify(progress_callback, completed, total, message)
                     if log_callback:
                         log_callback(message)
+                    next_heartbeat = time.monotonic() + self._heartbeat_interval_seconds
 
                 if cancelled or extraction_error is not None or _stop_requested(stop_event):
                     cancelled = cancelled or _stop_requested(stop_event)
                     abort_event.set()
+                    if futures:
+                        self._cancel_pending_extraction(log_callback)
                     break
 
                 while next_batch < total and len(futures) < self._max_concurrent:
@@ -364,6 +412,15 @@ class ExistingTermSeeder:
                 abort_event.set()
                 for future in futures:
                     future.cancel()
+        finally:
+            if cancelled or extraction_error is not None:
+                # A running Future cannot be cancelled by Future.cancel().  The
+                # provider cancellation above is the primary release path; do
+                # not reintroduce an unbounded UI wait if a custom client cannot
+                # interrupt its call.
+                executor.shutdown(wait=False, cancel_futures=True)
+            else:
+                executor.shutdown(wait=True)
 
         if cancelled:
             return [], completed, True, None
@@ -374,6 +431,18 @@ class ExistingTermSeeder:
         for batch_index in range(total):
             terms.extend(results[batch_index])
         return terms, completed, False, None
+
+    def _cancel_pending_extraction(self, log_callback: Callable[[str], None] | None) -> None:
+        cancel = getattr(self._noun_extractor, "cancel", None)
+        if not callable(cancel):
+            if log_callback:
+                log_callback("术语 Provider 不支持主动取消；已从当前流程分离该请求")
+            return
+        try:
+            cancel()
+        except Exception as exc:
+            if log_callback:
+                log_callback(f"术语请求取消失败；已从当前流程分离，由 Provider 自行结束：{exc}")
 
     def _extract_one_batch(
         self,

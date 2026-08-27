@@ -5,73 +5,15 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
+from transbridge.converter.context_categories import ALL_DISPLAY_CATEGORIES, context_category
 from transbridge.converter.translation_entry import TranslationEntry
 
-_CONTEXT_TO_CATEGORY: dict[str, str] = {}
-_CATEGORY_CONTEXTS = {
-    "人名": {"NPC_:FULL", "NPC_:SHRT", "TACT:FULL"},
-    "地名": {"CELL:FULL", "DOOR:FULL", "LCTN:FULL", "REFR:FULL", "WRLD:FULL"},
-    "书名": {"BOOK:FULL"},
-    "书籍内容": {"BOOK:DESC"},
-    "互动": {"FLOR:RNAM", "FURN:FULL", "HAZD:FULL"},
-    "任务日志": {"QUST:FULL", "QUST:NNAM"},
-    "法术技能": {
-        "ENCH:FULL",
-        "EXPL:FULL",
-        "MESG:DESC",
-        "MESG:FULL",
-        "MESG:ITXT",
-        "MGEF:DNAM",
-        "MGEF:FULL",
-        "PERK:FULL",
-        "SHOU:FULL",
-        "SPEL:DESC",
-        "SPEL:FULL",
-    },
-    "物品": {
-        "ACTI:FULL",
-        "ACTI:RNAM",
-        "ALCH:FULL",
-        "AMMO:FULL",
-        "ARMO:DESC",
-        "ARMO:FULL",
-        "CONT:FULL",
-        "INGR:FULL",
-        "KEYM:FULL",
-        "MISC:FULL",
-        "SLGM:FULL",
-        "TREE:FULL",
-        "WEAP:DESC",
-        "WEAP:FULL",
-    },
-}
-for _category, _contexts in _CATEGORY_CONTEXTS.items():
-    for _context in _contexts:
-        _CONTEXT_TO_CATEGORY[_context] = _category
-
-
-ALL_CATEGORIES = (
-    "人名",
-    "地名",
-    "书名",
-    "书籍内容",
-    "物品",
-    "法术技能",
-    "对话",
-    "互动",
-    "任务日志",
-    "其他",
-)
+ALL_CATEGORIES = ALL_DISPLAY_CATEGORIES
 
 
 def entry_category(entry: TranslationEntry) -> str:
     """Return the stable display category for a translation entry."""
-    context = entry.context or ""
-    base = context.split("|", 1)[0]
-    record = base.split(":", 1)[0]
-    if record in ("INFO", "DIAL"):
-        return "对话"
-    return _CONTEXT_TO_CATEGORY.get(base, "其他")
+    return context_category(entry.context or "")
 
 
 @dataclass(frozen=True, slots=True)

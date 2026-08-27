@@ -364,6 +364,29 @@ def test_mixed_translate_uses_its_cancel_event(monkeypatch, tmp_path) -> None:
     assert (Path(worker.stream_log_dir) / "batch_001.log").read_text(encoding="utf-8") == "raw batch response"
 
 
+def test_mixed_term_failure_closes_pending_stage_stats(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "transbridge.ui.tools.ai_translator.workflow_log_store.ParatranzConfig.get_data_dir",
+        lambda: str(tmp_path),
+    )
+    worker = _MixedWorker(object(), [Entry("one")], [], ctx=SimpleNamespace(esp_path="plugin.esp"))
+    updates = []
+    worker.progress.connect(updates.append)
+
+    worker._on_translate_stage_progress(
+        "terms",
+        5,
+        5,
+        "第 2/5 批术语抽取失败，已停止后续批次：等待 Provider 超时；翻译将继续",
+    )
+    worker._log_store.close()
+
+    assert updates[-1].current == 5
+    assert updates[-1].success == 0
+    assert updates[-1].failed == 5
+    assert updates[-1].pending == 0
+
+
 def test_translation_progress_window_consumes_term_stage_signal() -> None:
     class Worker(QObject):
         progress = pyqtSignal(int, int, str, int, int, int)

@@ -6,7 +6,7 @@ from .candidate_checkpoint import (
     TranslationCheckpoint,
     TranslationCheckpointPort,
 )
-from .combined_proofread import CombinedProofreadStage, TermResolver
+from .combined_proofread import CombinedProofreadStage
 from .commit import CommitTranslations, CommitTranslationsRequest
 from .completion_report import build_translation_report_snapshot
 from .http_llm import OpenAiTranslationHttpPort
@@ -26,6 +26,7 @@ from .models import (
 )
 from .planning import ActionPlanner, ContextPlanner, build_run_spec
 from .polish_report import PolishReportEntry, PolishReportResult, build_polish_report_snapshot
+from .proofread_stage import ProofreadStage, TermResolver
 from .postprocess import (
     PostProcessCandidate,
     PostProcessRunResult,
@@ -124,6 +125,7 @@ __all__ = [
     "PostProcessStageOutcome",
     "PostProcessStagePort",
     "PostProcessWorkload",
+    "ProofreadStage",
     "ReportRenderOutcome",
     "ReportRenderResult",
     "ReportRendererPort",

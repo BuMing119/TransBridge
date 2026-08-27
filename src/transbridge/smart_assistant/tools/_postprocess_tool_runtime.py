@@ -12,7 +12,7 @@ from transbridge.application.translation.ai_execution_profile import AiWorkflowP
 
 from ._workflow_llm_runtime import create_workflow_llm_runtime
 
-PostprocessStrategy = Literal["combined", "strict"]
+PostprocessStrategy = Literal["proofread", "strict"]
 
 _BUILTIN_PROFILES = frozenset({"translate", "polish", "mixed"})
 _PHASE_ORDER = ("consistency", "format", "quality_gate", "refinement", "polish", "arbitration")
@@ -80,10 +80,11 @@ def resolve_postprocess_request(args: dict, ctx, collection) -> PostprocessToolR
     phases_supplied = "phases" in args
     requested_phases = _parse_phases(args.get("phases")) if phases_supplied else None
     strategy_arg = args.get("strategy")
-    if strategy_arg is not None and strategy_arg not in {"combined", "strict"}:
-        raise PostprocessToolArgumentError("strategy 必须是 combined 或 strict")
-    if phases_supplied and strategy_arg == "combined":
-        raise PostprocessToolArgumentError("combined 策略不接受 phases；请移除 phases 或改用 strategy=strict")
+    if strategy_arg is not None and strategy_arg not in {"proofread", "combined", "strict"}:
+        raise PostprocessToolArgumentError("strategy 必须是 proofread 或 strict")
+    normalized_arg = _normalize_strategy(strategy_arg) if strategy_arg is not None else None
+    if phases_supplied and normalized_arg == "proofread":
+        raise PostprocessToolArgumentError("proofread 策略不接受 phases；请移除 phases 或改用 strategy=strict")
 
     profile_arg_supplied = "profile" in args
     profile_ref = args.get("profile", "polish")
@@ -92,15 +93,15 @@ def resolve_postprocess_request(args: dict, ctx, collection) -> PostprocessToolR
     effective_config, profile_name, profile_id, base_mode = _resolve_profile(profile_ref.strip())
 
     if strategy_arg is not None:
-        strategy = strategy_arg
+        strategy = normalized_arg
     elif phases_supplied:
         strategy = "strict"
     elif profile_arg_supplied:
-        strategy = getattr(effective_config, "pp_strategy", "combined")
+        strategy = _normalize_strategy(getattr(effective_config, "pp_strategy", "proofread"))
     else:
-        strategy = "combined"
-    if strategy not in {"combined", "strict"}:  # defensive boundary for hand-edited legacy config
-        strategy = "combined"
+        strategy = "proofread"
+    if strategy not in {"proofread", "strict"}:  # defensive boundary for hand-edited legacy config
+        strategy = "proofread"
     setattr(effective_config, "pp_strategy", strategy)
     setattr(effective_config, "enable_post_process", True)
 
@@ -112,7 +113,7 @@ def resolve_postprocess_request(args: dict, ctx, collection) -> PostprocessToolR
     effective_intensity = _external_intensity(str(getattr(effective_config, "pp_polish_level", "moderate")))
 
     limits = _apply_limit_overrides(args, effective_config)
-    stages = ("proofread",) if strategy == "combined" else _strict_stages(effective_config, requested_phases)
+    stages = ("proofread",) if strategy == "proofread" else _strict_stages(effective_config, requested_phases)
     entries, scope = _resolve_entries(args, ctx, collection, effective_config)
     return PostprocessToolRequest(
         entries=entries,
@@ -291,6 +292,10 @@ def _strict_stages(config: object, requested: tuple[str, ...] | None) -> tuple[s
     return stages
 
 
+def _normalize_strategy(value: object) -> PostprocessStrategy:
+    return "strict" if value == "strict" else "proofread"
+
+
 def _apply_limit_overrides(args: dict, config: object) -> dict[str, int]:
     if "max_workers" in args and "max_concurrent" in args:
         raise PostprocessToolArgumentError("max_workers 是 max_concurrent 的兼容别名，不能同时提供")
@@ -368,8 +373,8 @@ def _entries_for_scope(collection, scope: str) -> tuple[object, ...]:
 
 def _build_stages(request, client, term_manager, postprocessor_type, postprocessor_config_type) -> tuple[object, ...]:
     config = request.effective_config
-    if request.strategy == "combined":
-        from transbridge.application.translation import CombinedProofreadStage
+    if request.strategy == "proofread":
+        from transbridge.application.translation import ProofreadStage
 
         max_terms = request.limits["max_terms_per_batch"]
 
@@ -378,7 +383,7 @@ def _build_stages(request, client, term_manager, postprocessor_type, postprocess
             return dict(list(matches.items())[:max_terms])
 
         return (
-            CombinedProofreadStage(
+            ProofreadStage(
                 client,
                 term_resolver=resolve_terms,
                 target_locale=str(getattr(config, "target_lang", "zh_CN")),

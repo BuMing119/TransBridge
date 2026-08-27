@@ -45,7 +45,9 @@ class ActionRule:
             if not hasattr(entry, "context") or not entry.context:
                 return False
             cat = entry.context.split("|")[0] if "|" in entry.context else entry.context
-            if cat not in self.category_filter:
+            from transbridge.converter.context_categories import context_category
+
+            if cat not in self.category_filter and context_category(entry.context) not in self.category_filter:
                 return False
         return True
 

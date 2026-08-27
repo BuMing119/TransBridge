@@ -5,27 +5,27 @@ QTableWidget 展示规则列表，支持添加/删除/上移/下移/重置默认
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMenu,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-if TYPE_CHECKING:
-    pass
+from transbridge.converter.context_categories import ALL_DISPLAY_CATEGORIES
 
 # ── 预设 ─────────────────────────────────────────────────────────────────────
 
-_ALL_CATEGORIES = ["人名", "地名", "书名", "书籍内容", "物品", "法术技能", "对话", "互动", "任务日志", "其他"]
+_ALL_CATEGORIES = ALL_DISPLAY_CATEGORIES
 _ALL_STAGES = {0: "未翻译", 1: "已翻译", 2: "有疑问", 3: "已检查", 5: "已审核", 9: "已锁定", -1: "已隐藏"}
 
 _DEFAULT_RULES: list[dict] = [
@@ -34,11 +34,70 @@ _DEFAULT_RULES: list[dict] = [
     {"priority": 2, "status_filter": [9, -1], "action": "skip"},
 ]
 
-_ACTION_LABELS = {"translate": "翻译", "polish": "润色", "skip": "跳过"}
+_ACTION_OPTIONS = (("translate", "翻译"), ("polish", "润色"), ("skip", "跳过"))
+
+
+def _options_with_compatibility_values(
+    options: list[tuple[object, str]],
+    selected: set,
+) -> list[tuple[object, str]]:
+    known = {value for value, _label in options}
+    extras = sorted(selected - known, key=str)
+    return [*options, *((value, f"兼容原始值：{value}") for value in extras)]
+
+
+class _CheckableFilterButton(QToolButton):
+    """Compact multi-select dropdown whose empty selection means no filter."""
+
+    selection_changed = pyqtSignal(object)
+
+    def __init__(self, options: list[tuple[object, str]], selected: set | None, parent=None) -> None:
+        super().__init__(parent)
+        self._menu = QMenu(self)
+        clear_action = self._menu.addAction("全部")
+        clear_action.triggered.connect(self._clear)
+        self._menu.addSeparator()
+        self._actions = []
+        selected_values = set(selected or ())
+        for value, label in options:
+            action = self._menu.addAction(label)
+            action.setCheckable(True)
+            action.setData(value)
+            action.setChecked(value in selected_values)
+            action.toggled.connect(self._selection_toggled)
+            self._actions.append(action)
+        self.setMenu(self._menu)
+        self.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._refresh_text()
+
+    @property
+    def selected(self) -> set | None:
+        values = {action.data() for action in self._actions if action.isChecked()}
+        return values or None
+
+    def _clear(self) -> None:
+        for action in self._actions:
+            action.blockSignals(True)
+            action.setChecked(False)
+            action.blockSignals(False)
+        self._refresh_text()
+        self.selection_changed.emit(None)
+
+    def _selection_toggled(self, _checked: bool) -> None:
+        self._refresh_text()
+        self.selection_changed.emit(self.selected)
+
+    def _refresh_text(self) -> None:
+        labels = [action.text() for action in self._actions if action.isChecked()]
+        full_text = "、".join(labels) if labels else "全部"
+        self.setText(f"{labels[0]}、{labels[1]} +{len(labels) - 2}" if len(labels) > 2 else full_text)
+        self.setToolTip(f"当前：{full_text}；可多选，未选择表示全部")
 
 
 class _RuleEditorWidget(QWidget):
     """规则映射表编辑器。"""
+
+    rules_changed = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -73,6 +132,9 @@ class _RuleEditorWidget(QWidget):
         self._table = QTableWidget(0, len(headers))
         self._table.setHorizontalHeaderLabels(headers)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self._table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self._table)
 
@@ -100,7 +162,13 @@ class _RuleEditorWidget(QWidget):
 
     def set_rules(self, rules: list) -> None:
         """从 ActionRule 列表导入。"""
-        self._rules = [r.to_dict() if hasattr(r, "to_dict") else r for r in rules]
+        self._rules = []
+        for value in rules:
+            rule = dict(value.to_dict() if hasattr(value, "to_dict") else value)
+            for field in ("status_filter", "label_filter", "category_filter"):
+                rule[field] = set(rule[field]) if rule.get(field) else None
+            self._rules.append(rule)
+        self._rules.sort(key=lambda rule: (rule.get("priority", 0), rule.get("rule_id", "")))
         self._refresh_table()
 
     def reset_to_default(self):
@@ -116,38 +184,60 @@ class _RuleEditorWidget(QWidget):
             r["status_filter"] = set(r.get("status_filter", []))
             self._rules.append(r)
         self._refresh_table()
+        self.rules_changed.emit()
 
     # ── 内部方法 ──────────────────────────────────────────────────────────
 
     def _refresh_table(self):
+        self._normalize_priorities()
         self._table.setRowCount(len(self._rules))
         for i, r in enumerate(self._rules):
             # 优先级
-            self._table.setItem(i, 0, QTableWidgetItem(str(r["priority"])))
+            priority_item = QTableWidgetItem(str(r["priority"]))
+            priority_item.setFlags(Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
+            self._table.setItem(i, 0, priority_item)
             # 状态筛选
-            stages = r.get("status_filter")
-            if stages:
-                names = [_ALL_STAGES.get(s, str(s)) for s in sorted(stages)]
-                self._table.setItem(i, 1, QTableWidgetItem(", ".join(names)))
-            else:
-                self._table.setItem(i, 1, QTableWidgetItem("全部"))
+            selected_stages = set(r.get("status_filter") or ())
+            stage_filter = _CheckableFilterButton(
+                _options_with_compatibility_values(list(_ALL_STAGES.items()), selected_stages),
+                selected_stages,
+                self._table,
+            )
+            stage_filter.selection_changed.connect(
+                lambda selected, row=i: self._on_filter_changed(row, "status_filter", selected)
+            )
+            self._table.setCellWidget(i, 1, stage_filter)
             # 分类筛选
-            cats = r.get("category_filter")
-            if cats:
-                self._table.setItem(i, 2, QTableWidgetItem(", ".join(sorted(cats))))
-            else:
-                self._table.setItem(i, 2, QTableWidgetItem("全部"))
+            selected_categories = set(r.get("category_filter") or ())
+            category_options = [(category, category) for category in _ALL_CATEGORIES]
+            category_filter = _CheckableFilterButton(
+                _options_with_compatibility_values(category_options, selected_categories),
+                selected_categories,
+                self._table,
+            )
+            category_filter.selection_changed.connect(
+                lambda selected, row=i: self._on_filter_changed(row, "category_filter", selected)
+            )
+            self._table.setCellWidget(i, 2, category_filter)
             # 动作（QComboBox）
             combo = QComboBox()
-            combo.addItems(["翻译", "润色", "跳过"])
-            action_map = {"translate": 0, "polish": 1, "skip": 2}
-            combo.setCurrentIndex(action_map.get(r.get("action", "skip"), 2))
-            combo.currentIndexChanged.connect(lambda idx, row=i: self._on_action_changed(row, idx))
+            for value, label in _ACTION_OPTIONS:
+                combo.addItem(label, value)
+            combo.setCurrentIndex(max(0, combo.findData(r.get("action", "skip"))))
+            combo.currentIndexChanged.connect(lambda _idx, row=i, widget=combo: self._on_action_changed(row, widget))
             self._table.setCellWidget(i, 3, combo)
 
-    def _on_action_changed(self, row: int, idx: int):
-        action_map = {0: "translate", 1: "polish", 2: "skip"}
-        self._rules[row]["action"] = action_map.get(idx, "skip")
+    def _on_filter_changed(self, row: int, field: str, selected: set | None) -> None:
+        if row >= len(self._rules):
+            return
+        self._rules[row][field] = None if selected is None else set(selected)
+        self.rules_changed.emit()
+
+    def _on_action_changed(self, row: int, combo: QComboBox) -> None:
+        if row >= len(self._rules):
+            return
+        self._rules[row]["action"] = combo.currentData() or "skip"
+        self.rules_changed.emit()
 
     def _on_add(self):
         import uuid
@@ -161,6 +251,7 @@ class _RuleEditorWidget(QWidget):
             "action": "skip",
         })
         self._refresh_table()
+        self.rules_changed.emit()
 
     def _on_delete(self):
         rows = set(i.row() for i in self._table.selectedItems())
@@ -170,6 +261,7 @@ class _RuleEditorWidget(QWidget):
             if row < len(self._rules):
                 self._rules.pop(row)
         self._refresh_table()
+        self.rules_changed.emit()
 
     def _on_move_up(self):
         row = self._table.currentRow()
@@ -177,6 +269,7 @@ class _RuleEditorWidget(QWidget):
             self._rules[row], self._rules[row - 1] = self._rules[row - 1], self._rules[row]
             self._refresh_table()
             self._table.selectRow(row - 1)
+            self.rules_changed.emit()
 
     def _on_move_down(self):
         row = self._table.currentRow()
@@ -184,3 +277,8 @@ class _RuleEditorWidget(QWidget):
             self._rules[row], self._rules[row + 1] = self._rules[row + 1], self._rules[row]
             self._refresh_table()
             self._table.selectRow(row + 1)
+            self.rules_changed.emit()
+
+    def _normalize_priorities(self) -> None:
+        for priority, rule in enumerate(self._rules):
+            rule["priority"] = priority

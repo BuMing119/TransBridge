@@ -18,6 +18,11 @@ from typing import TYPE_CHECKING
 
 import httpx
 
+from transbridge.infra.llm_reasoning_protocols import (
+    AnthropicReasoningProtocolMixin,
+    OpenAIReasoningProtocolMixin,
+)
+
 if TYPE_CHECKING:
     from transbridge.paratranz.config_manager import LLMConfig
 
@@ -103,7 +108,7 @@ class LLMClient(ABC):
         """
 
 
-class OpenAICompatibleClient(LLMClient):
+class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
     def __init__(self, api_key: str, base_url: str, model: str, max_retries: int = _DEFAULT_MAX_RETRIES):
         self._api_key = api_key
         self._base_url = base_url
@@ -147,6 +152,9 @@ class OpenAICompatibleClient(LLMClient):
             pass
 
     def chat(self, messages: list[dict], max_tokens: int = 0) -> str:
+        return self._chat(messages, max_tokens, reasoning_patch=None)
+
+    def _chat(self, messages: list[dict], max_tokens: int, *, reasoning_patch) -> str:
         from transbridge.infra.prompt_cache import (
             extract_prompt_cache_directives,
             prepare_openai_chat_cache_request,
@@ -159,10 +167,15 @@ class OpenAICompatibleClient(LLMClient):
             # 普通与流式共用同一转换器，避免缓存参数漂移。
             req = prepare_openai_chat_cache_request(model=self._model, base_url=self._base_url, messages=messages)
             kwargs: dict = dict(model=self._model, messages=req["messages"])
-            if req["request_options"]:
+            if reasoning_patch is not None:
+                kwargs.update(reasoning_patch.standard)
+            extra_body = dict(req["request_options"])
+            if reasoning_patch is not None:
+                extra_body.update(reasoning_patch.extra_body)
+            if extra_body:
                 # request_options 含 prompt_cache_options 等非标准字段，走 extra_body，
                 # 不污染标准参数。
-                kwargs["extra_body"] = req["request_options"]
+                kwargs["extra_body"] = extra_body
             if max_tokens > 0:
                 kwargs["max_tokens"] = max_tokens
             try:
@@ -173,6 +186,10 @@ class OpenAICompatibleClient(LLMClient):
                 if _is_cache_rejection(exc):
                     clean, _ = extract_prompt_cache_directives(messages)
                     retry_kwargs: dict = dict(model=self._model, messages=clean)
+                    if reasoning_patch is not None:
+                        retry_kwargs.update(reasoning_patch.standard)
+                        if reasoning_patch.extra_body:
+                            retry_kwargs["extra_body"] = dict(reasoning_patch.extra_body)
                     if max_tokens > 0:
                         retry_kwargs["max_tokens"] = max_tokens
                     logger.warning(
@@ -192,6 +209,9 @@ class OpenAICompatibleClient(LLMClient):
                 self._active_requests -= 1
 
     def chat_stream(self, messages: list[dict], max_tokens: int, chunk_callback) -> str:
+        return self._chat_stream(messages, max_tokens, chunk_callback, reasoning_patch=None)
+
+    def _chat_stream(self, messages: list[dict], max_tokens: int, chunk_callback, *, reasoning_patch) -> str:
         from transbridge.infra.prompt_cache import (
             extract_prompt_cache_directives,
             prepare_openai_chat_cache_request,
@@ -204,8 +224,13 @@ class OpenAICompatibleClient(LLMClient):
             # 与 chat() 共用同一转换器。
             req = prepare_openai_chat_cache_request(model=self._model, base_url=self._base_url, messages=messages)
             kwargs: dict = dict(model=self._model, messages=req["messages"], stream=True)
-            if req["request_options"]:
-                kwargs["extra_body"] = req["request_options"]
+            if reasoning_patch is not None:
+                kwargs.update(reasoning_patch.standard)
+            extra_body = dict(req["request_options"])
+            if reasoning_patch is not None:
+                extra_body.update(reasoning_patch.extra_body)
+            if extra_body:
+                kwargs["extra_body"] = extra_body
             if max_tokens > 0:
                 kwargs["max_tokens"] = max_tokens
             full_text = ""
@@ -220,6 +245,10 @@ class OpenAICompatibleClient(LLMClient):
                 if _is_cache_rejection(exc):
                     clean, _ = extract_prompt_cache_directives(messages)
                     retry_kwargs: dict = dict(model=self._model, messages=clean, stream=True)
+                    if reasoning_patch is not None:
+                        retry_kwargs.update(reasoning_patch.standard)
+                        if reasoning_patch.extra_body:
+                            retry_kwargs["extra_body"] = dict(reasoning_patch.extra_body)
                     if max_tokens > 0:
                         retry_kwargs["max_tokens"] = max_tokens
                     logger.warning(
@@ -244,7 +273,7 @@ class OpenAICompatibleClient(LLMClient):
         return full_text
 
 
-class AnthropicClient(LLMClient):
+class AnthropicClient(AnthropicReasoningProtocolMixin, LLMClient):
     def __init__(self, api_key: str, model: str, max_retries: int = _DEFAULT_MAX_RETRIES):
         self._api_key = api_key
         self._model = model

@@ -400,7 +400,7 @@ class WindowConfigView:
         h.excel_orig_col_edit.setText(cfg.excel_original_col)
         h.excel_trans_col_edit.setText(cfg.excel_translation_col)
         h.pp_enable_check.setChecked(cfg.enable_post_process)
-        h.pp_strategy_combo.setCurrentIndex(1 if getattr(cfg, "pp_strategy", "combined") == "strict" else 0)
+        h.pp_strategy_combo.setCurrentIndex(1 if getattr(cfg, "pp_strategy", "proofread") == "strict" else 0)
         h.pp_consistency_check.setChecked(cfg.pp_enable_consistency_check)
         h.pp_format_check.setChecked(cfg.pp_enable_format_validation)
         h.pp_quality_gate_check.setChecked(cfg.pp_enable_quality_gate)
@@ -455,7 +455,7 @@ class WindowConfigView:
         cfg.excel_original_col = h.excel_orig_col_edit.text().strip() or "A"
         cfg.excel_translation_col = h.excel_trans_col_edit.text().strip() or "B"
         cfg.enable_post_process = h.pp_enable_check.isChecked()
-        cfg.pp_strategy = "strict" if h.pp_strategy_combo.currentIndex() == 1 else "combined"
+        cfg.pp_strategy = "strict" if h.pp_strategy_combo.currentIndex() == 1 else "proofread"
         cfg.pp_enable_consistency_check = h.pp_consistency_check.isChecked()
         cfg.pp_enable_format_validation = h.pp_format_check.isChecked()
         cfg.pp_enable_quality_gate = h.pp_quality_gate_check.isChecked()
@@ -518,11 +518,8 @@ class ConfigAutosaveBinding:
         for signal in (
             h.provider_combo.currentIndexChanged,
             h.target_lang_combo.currentIndexChanged,
-            h.model_edit.textChanged,
             h.apikey_edit.textChanged,
             h.baseurl_edit.textChanged,
-            h.concurrent_spin.valueChanged,
-            h.tokens_spin.valueChanged,
             h.output_tokens_spin.valueChanged,
             h.max_terms_spin.valueChanged,
             h.json_path_edit.textChanged,
@@ -548,8 +545,16 @@ class ConfigAutosaveBinding:
             h.embed_model_edit.textChanged,
             h.embed_apikey_edit.textChanged,
             h.embed_baseurl_edit.textChanged,
+            h.order_combo.currentIndexChanged,
         ):
             signal.connect(self.schedule)
+        for signal in (
+            h.model_edit.textChanged,
+            h.concurrent_spin.valueChanged,
+            h.tokens_spin.valueChanged,
+            h.rule_editor.rules_changed,
+        ):
+            signal.connect(self.schedule_scope)
         h.pp_enable_check.toggled.connect(self._callbacks.on_pp_enable_changed)
         h.pp_strategy_combo.currentIndexChanged.connect(self._callbacks.on_pp_enable_changed)
         h.pp_polish_check.toggled.connect(self._callbacks.on_polish_changed)
@@ -557,6 +562,10 @@ class ConfigAutosaveBinding:
     def schedule(self, *_args: object) -> None:
         self._callbacks.update_quick_run()
         self._timer.start(2000)
+
+    def schedule_scope(self, *_args: object) -> None:
+        self._callbacks.update_estimate()
+        self.schedule()
 
     def close(self) -> None:
         if self._timer.isActive():

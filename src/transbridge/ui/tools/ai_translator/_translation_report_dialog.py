@@ -60,8 +60,9 @@ class _TranslationReportDialog(QDialog):
         self._stat_labels: list[QLabel] = []
 
         source = snapshot.run_spec_summary.get("source") if snapshot is not None else None
+        self._mixed_mode = source == "mixed"
         self._translate_mode = source != "polish"
-        title = "翻译报告" if self._translate_mode else "润色报告"
+        title = "混合运行报告" if self._mixed_mode else ("翻译报告" if self._translate_mode else "润色报告")
         self.setWindowTitle(title)
         self.resize(850, 600)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -175,7 +176,37 @@ class _TranslationReportDialog(QDialog):
         layout = QVBoxLayout(widget)
         layout.setSpacing(12)
 
-        if self._translate_mode:
+        if self._mixed_mode:
+            snapshot = self._snapshot
+            summary = snapshot.run_spec_summary if snapshot is not None else {}
+            translation = summary.get("translation") or {}
+            polish = summary.get("polish") or {}
+            translation_counts = translation.get("translation_counts", {})
+            polish_counts = polish.get("polish_counts", {})
+            cards = [
+                ("总条目", snapshot.input_count if snapshot is not None else 0, "info"),
+                ("翻译成功", translation_counts.get("succeeded", 0), "success"),
+                ("翻译失败", translation_counts.get("failed", 0), "error"),
+                ("校对接受", polish_counts.get("accepted", 0), "success"),
+                ("校对失败", polish_counts.get("failed", 0), "error"),
+            ]
+            grid = QGridLayout()
+            grid.setSpacing(8)
+            for i, (label, val, color) in enumerate(cards):
+                grid.addWidget(self._make_stat_card(label, str(val), color), 0, i)
+            if snapshot is not None:
+                overview = report_overview(snapshot)
+                details = [
+                    ("已接受", snapshot.accepted_count, "success"),
+                    ("需审核", overview.needs_review, "warning"),
+                    ("问题", snapshot.issue_count, "warning"),
+                    ("最终失败", snapshot.failure_count, "error"),
+                    ("终态", snapshot.outcome.value, "info"),
+                ]
+                for i, (label, val, color) in enumerate(details):
+                    grid.addWidget(self._make_stat_card(label, str(val), color), 1, i)
+            layout.addLayout(grid)
+        elif self._translate_mode:
             snapshot = self._snapshot
             summary = snapshot.run_spec_summary if snapshot is not None else {}
             counts = summary.get("translation_counts", {})

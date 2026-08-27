@@ -14,6 +14,13 @@ from transbridge.ui.windowing import show_and_activate
 from .result_presenter import PolishApplySummary, ResultPresenter
 
 
+def _qt_object_deleted(value: object) -> bool:
+    try:
+        return sip.isdeleted(value)
+    except TypeError:
+        return False
+
+
 def apply_window_mixed_result(window: object, result: Mapping[str, object]) -> bool:
     """Apply mixed polish candidates, honoring the frozen preview preference."""
 
@@ -94,35 +101,68 @@ def _render_mixed_preview_report(
     result["snapshot"] = snapshot
     result["artifacts"] = None
 
-    progress = getattr(window, "_active_mixed_progress", None)
-    progress_ref = weakref.ref(progress) if progress is not None else lambda: None
 
-    def on_rendered(artifacts: object) -> None:
-        result["artifacts"] = artifacts
-        target = progress_ref()
-        if target is None or sip.isdeleted(target):
-            return
-        from .run_controller import register_mixed_result_actions
+def show_window_mixed_report(window: object, result: dict[str, object]) -> object:
+    """Open the canonical mixed report and render preview reports in the background."""
 
-        register_mixed_result_actions(target, spec, result)
-        diagnostics = tuple(getattr(artifacts, "diagnostics", ()))
-        if diagnostics:
-            target.set_report_diagnostics(diagnostics)
+    from ._translation_report_dialog import _TranslationReportDialog
 
-    def on_failed(message: str) -> None:
-        result["report_error"] = message
-        target = progress_ref()
-        if target is not None and not sip.isdeleted(target):
-            target.set_report_diagnostics((message,))
-
-    from ._report_render_worker import start_report_render
-
-    window._mixed_report_render_worker = start_report_render(
-        snapshot,
-        Path(window._ctx.esp_path).stem if window._ctx.esp_path else "unknown",
-        on_completed=on_rendered,
-        on_failed=on_failed,
+    snapshot = result.get("snapshot")
+    artifacts = result.get("artifacts")
+    report_error = str(result.get("report_error") or "")
+    excel_path = getattr(artifacts, "excel_path", None)
+    pending = snapshot is not None and artifacts is None and not report_error
+    dialog = _TranslationReportDialog(
+        snapshot=snapshot,
+        report_path=excel_path,
+        report_pending=pending,
+        theme_view=window._theme_view,
     )
+    dialog.entry_activated.connect(window._scope_presenter.locate_entry)
+    if artifacts is not None:
+        dialog.set_report_render_result(artifacts)
+    elif report_error:
+        dialog.set_report_render_error(report_error)
+    elif snapshot is not None:
+        dialog_ref = weakref.ref(dialog)
+        progress = getattr(window, "_active_mixed_progress", None)
+        progress_ref = weakref.ref(progress) if progress is not None else lambda: None
+        spec = getattr(window, "_active_mixed_spec", None)
+
+        def on_rendered(rendered: object) -> None:
+            result["artifacts"] = rendered
+            target = dialog_ref()
+            if target is not None and not _qt_object_deleted(target):
+                target.set_report_render_result(rendered)
+            progress_target = progress_ref()
+            if progress_target is not None and not _qt_object_deleted(progress_target):
+                if spec is not None:
+                    from .run_controller import register_mixed_result_actions
+
+                    register_mixed_result_actions(progress_target, spec, result)
+                diagnostics = tuple(getattr(rendered, "diagnostics", ()))
+                if diagnostics:
+                    progress_target.set_report_diagnostics(diagnostics)
+
+        def on_failed(message: str) -> None:
+            result["report_error"] = message
+            target = dialog_ref()
+            if target is not None and not _qt_object_deleted(target):
+                target.set_report_render_error(message)
+            progress_target = progress_ref()
+            if progress_target is not None and not _qt_object_deleted(progress_target):
+                progress_target.set_report_diagnostics((message,))
+
+        from ._report_render_worker import start_report_render
+
+        dialog._report_render_worker = start_report_render(
+            snapshot,
+            Path(window._ctx.esp_path).stem if window._ctx.esp_path else "unknown",
+            on_completed=on_rendered,
+            on_failed=on_failed,
+        )
+    show_and_activate(dialog, deferred=True)
+    return dialog
 
 
 def show_polish_report(

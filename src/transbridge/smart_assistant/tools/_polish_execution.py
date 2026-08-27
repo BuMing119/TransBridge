@@ -6,7 +6,8 @@ import copy
 from dataclasses import dataclass, replace
 from typing import Literal
 
-PolishStrategy = Literal["combined", "strict"]
+# ``combined`` remains accepted only for persisted Smart Assistant calls created before Proofread became canonical.
+PolishStrategy = Literal["proofread", "combined", "strict"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,7 +46,7 @@ def execute_polish(
     profile = replace(
         profile,
         enable_post_process=True,
-        postprocess_strategy=strategy,
+        postprocess_strategy="strict" if strategy == "strict" else "proofread",
         polish_level=level_map[intensity],
     )
     pipeline = ProofreadPipeline.create(

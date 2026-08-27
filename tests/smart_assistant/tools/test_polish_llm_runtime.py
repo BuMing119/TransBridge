@@ -106,7 +106,7 @@ def _respond_with_updated_translations(messages: list[dict]) -> str:
     )
 
 
-def test_combined_strategy_batches_multiple_entries_into_one_logged_call(tmp_path: Path) -> None:
+def test_proofread_strategy_batches_multiple_entries_into_one_logged_call(tmp_path: Path) -> None:
     from transbridge.smart_assistant.tools._polish_execution import execute_polish
 
     entries = [
@@ -119,7 +119,7 @@ def test_combined_strategy_batches_multiple_entries_into_one_logged_call(tmp_pat
     runtime = _create_runtime(tmp_path, provider, config)
 
     summary = execute_polish(
-        strategy="combined",
+        strategy="proofread",
         intensity="medium",
         llm_config=config,
         llm_client=runtime.client,
@@ -138,7 +138,7 @@ def test_combined_strategy_batches_multiple_entries_into_one_logged_call(tmp_pat
     assert len(list(Path(runtime.log_store.log_dir).glob("llm_call_*.log"))) == 1
 
 
-def test_combined_strategy_retains_originals_and_logs_provider_error(tmp_path: Path) -> None:
+def test_proofread_strategy_retries_provider_error_then_retains_originals(tmp_path: Path) -> None:
     from transbridge.smart_assistant.tools._polish_execution import execute_polish
 
     entries = [
@@ -151,7 +151,7 @@ def test_combined_strategy_retains_originals_and_logs_provider_error(tmp_path: P
     runtime = _create_runtime(tmp_path, provider, config)
 
     summary = execute_polish(
-        strategy="combined",
+        strategy="proofread",
         intensity="medium",
         llm_config=config,
         llm_client=runtime.client,
@@ -162,14 +162,14 @@ def test_combined_strategy_retains_originals_and_logs_provider_error(tmp_path: P
     )
     runtime.close()
 
-    assert provider.calls == 1
+    assert provider.calls == 2
     assert summary.polished_count == 0
     assert summary.failed_count == 2
     assert collection.get("first").translation == "旧译一"
     assert collection.get("second").translation == "旧译二"
     logs = list(Path(runtime.log_store.log_dir).glob("llm_call_*.log"))
-    assert len(logs) == 1
-    assert "provider timeout" in logs[0].read_text(encoding="utf-8")
+    assert len(logs) == 2
+    assert all("provider timeout" in path.read_text(encoding="utf-8") for path in logs)
 
 
 def test_strict_strategy_is_forwarded_to_the_shared_pipeline_profile() -> None:
