@@ -51,13 +51,11 @@ class CommitTranslations:
 
     def commit(self, request: CommitTranslationsRequest) -> OperationResult[dict]:
         candidate_set = request.candidate_set
-        commit_id = canonical_hash(
-            {
-                "candidate_set": candidate_set.fingerprint,
-                "run_id": candidate_set.run_id,
-                "operation": "commit-translations-v1",
-            }
-        )
+        commit_id = canonical_hash({
+            "candidate_set": candidate_set.fingerprint,
+            "run_id": candidate_set.run_id,
+            "operation": "commit-translations-v1",
+        })
         try:
             checkpoint = request.checkpoint.load(candidate_set.run_id)
             if checkpoint is None:
@@ -150,8 +148,7 @@ class CommitTranslations:
         change_set = ChangeSet(
             candidate_set.run_id,
             tuple(
-                EntryPatch.create(candidate.entry_key, translation=candidate.text, stage=2)
-                for candidate in eligible
+                EntryPatch.create(candidate.entry_key, translation=candidate.text, stage=2) for candidate in eligible
             ),
             tuple((candidate.entry_key, candidate.before_revision) for candidate in eligible),
             provenance,

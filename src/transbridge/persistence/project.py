@@ -3,9 +3,10 @@
 对应: ADR-006 — project.json 结构
 """
 
+from datetime import datetime
 import json
 from pathlib import Path
-from datetime import datetime
+
 from ._utils import atomic_write_json, validate_name
 
 

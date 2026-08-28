@@ -1,0 +1,8 @@
+# 游戏配置：上古卷轴5 天际特别版（SSE）
+# 本文件定义游戏专属信息，由翻译提示词模板通过 $game_name / $format_notes 引用。
+
+[game]
+name = "The Elder Scrolls V: Skyrim Special Edition (SSE)"
+
+# 翻译时需保留的游戏专属格式标记说明，插入语言模板的翻译要求中
+format_notes = "Preserve special markers from the source exactly, including <br>, [pagebreak], \\n line breaks, and format placeholders such as %s."

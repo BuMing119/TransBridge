@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import asdict, dataclass, field
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .base import PostProcessIssue
+    from .llm_arbiter import ArbiterDecision
     from .llm_refiner import RefineResult
     from .polisher import PolishResult
-    from .llm_arbiter import ArbiterDecision
 
 
 @dataclass
@@ -63,13 +63,13 @@ class PostProcessCheckpoint:
         return path
 
     @classmethod
-    def load(cls, esp_path: str | Path) -> "PostProcessCheckpoint | None":
+    def load(cls, esp_path: str | Path) -> PostProcessCheckpoint | None:
         """从文件加载断点。"""
         path = cls._get_path(esp_path)
         if not path.exists():
             return None
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 data = json.load(f)
             return cls(
                 esp_stem=data.get("esp_stem", ""),
@@ -100,22 +100,22 @@ class PostProcessCheckpoint:
     # ── 序列化辅助方法 ──────────────────────────────────────────────────────
 
     @staticmethod
-    def issue_to_dict(issue: "PostProcessIssue") -> dict:
+    def issue_to_dict(issue: PostProcessIssue) -> dict:
         return asdict(issue)
 
     @staticmethod
-    def issue_from_dict(data: dict) -> "PostProcessIssue":
+    def issue_from_dict(data: dict) -> PostProcessIssue:
         from .base import PostProcessIssue
 
         return PostProcessIssue(**data)
 
     @staticmethod
-    def refine_result_to_dict(result: "RefineResult") -> dict:
+    def refine_result_to_dict(result: RefineResult) -> dict:
         return asdict(result)
 
     @staticmethod
-    def refine_result_from_dict(data: dict) -> "RefineResult":
-        from .llm_refiner import RefineResult, FixApplied
+    def refine_result_from_dict(data: dict) -> RefineResult:
+        from .llm_refiner import FixApplied, RefineResult
 
         fixes = [FixApplied(**f) for f in data.get("fixes_applied", [])]
         return RefineResult(
@@ -129,11 +129,11 @@ class PostProcessCheckpoint:
         )
 
     @staticmethod
-    def polish_result_to_dict(result: "PolishResult") -> dict:
+    def polish_result_to_dict(result: PolishResult) -> dict:
         return asdict(result)
 
     @staticmethod
-    def polish_result_from_dict(data: dict) -> "PolishResult":
+    def polish_result_from_dict(data: dict) -> PolishResult:
         from .polisher import PolishResult
 
         return PolishResult(
@@ -147,11 +147,11 @@ class PostProcessCheckpoint:
         )
 
     @staticmethod
-    def decision_to_dict(decision: "ArbiterDecision") -> dict:
+    def decision_to_dict(decision: ArbiterDecision) -> dict:
         return asdict(decision)
 
     @staticmethod
-    def decision_from_dict(data: dict) -> "ArbiterDecision":
+    def decision_from_dict(data: dict) -> ArbiterDecision:
         from .llm_arbiter import ArbiterDecision
 
         return ArbiterDecision(

@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from transbridge.converter.translation_entry import TranslationEntry
 
 from transbridge.config.language_profiles import LanguageProfile, load_language_profile
+from transbridge.config.paths import get_data_resource_dir
 from transbridge.infra.llm_structured_outputs import attach_structured_output_directive
 from transbridge.infra.prompt_cache import (
     attach_prompt_cache_directive,
@@ -113,9 +114,8 @@ _DEFAULT_EXTRACTION_USER = "Extract proper nouns from the following source-trans
 
 def _get_prompts_dir() -> Path:
     """定位 data/prompts/ 目录，兼容开发环境和 PyInstaller 打包环境。"""
-    from transbridge.paratranz.config_manager import ParatranzConfig
 
-    return Path(ParatranzConfig.get_data_dir()) / "prompts"
+    return Path(get_data_resource_dir("prompts"))
 
 
 def _load_toml(path: Path) -> dict:

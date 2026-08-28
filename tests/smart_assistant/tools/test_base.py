@@ -5,12 +5,12 @@ from __future__ import annotations
 import unittest
 from unittest.mock import MagicMock
 
-from tests.conftest import MockAppContext, make_test_collection, make_entry
+from tests.conftest import MockAppContext, make_test_collection
+from transbridge.smart_assistant.execution_engine import StepResult
+from transbridge.smart_assistant.guardrails.base import GuardResult
 
 # Module-level imports to avoid bound-method descriptor wrapping
 from transbridge.smart_assistant.tools.base import _apply_after_guards, resolve_scope_to_entry_ids
-from transbridge.smart_assistant.guardrails.base import GuardResult
-from transbridge.smart_assistant.execution_engine import StepResult
 
 
 # ============================================================
@@ -28,7 +28,9 @@ class TestApplyAfterGuards(unittest.TestCase):
         """Create a mock guard middleware with configurable after_execute behavior."""
         guard = MagicMock()
         guard.after_execute.return_value = GuardResult(
-            allowed=allowed, reason=reason, modified_result=modified_result,
+            allowed=allowed,
+            reason=reason,
+            modified_result=modified_result,
         )
         return guard
 
@@ -40,8 +42,7 @@ class TestApplyAfterGuards(unittest.TestCase):
         g2 = self._make_guard(allowed=True)
         guards = [g1, g2]
 
-        sr, rejection = _apply_after_guards(
-            guards, self.step, "test_tool", True, "ok", {"a": 1}, self.ctx)
+        sr, rejection = _apply_after_guards(guards, self.step, "test_tool", True, "ok", {"a": 1}, self.ctx)
 
         self.assertIsNone(rejection)
         self.assertIsInstance(sr, StepResult)
@@ -55,8 +56,7 @@ class TestApplyAfterGuards(unittest.TestCase):
         g1 = self._make_guard(allowed=True)
         guards = [g1]
 
-        _apply_after_guards(
-            guards, self.step, "test_tool", True, "ok", {"a": 1}, self.ctx)
+        _apply_after_guards(guards, self.step, "test_tool", True, "ok", {"a": 1}, self.ctx)
 
         g1.after_execute.assert_called_once()
         call_args = g1.after_execute.call_args[0]
@@ -71,9 +71,11 @@ class TestApplyAfterGuards(unittest.TestCase):
 
         def _make_tracking_guard(name):
             guard = MagicMock()
+
             def _after(step, result, ctx):
                 call_order.append(name)
                 return GuardResult(allowed=True)
+
             guard.after_execute = _after
             return guard
 
@@ -82,8 +84,7 @@ class TestApplyAfterGuards(unittest.TestCase):
         g3 = _make_tracking_guard("g3")
         guards = [g1, g2, g3]
 
-        _apply_after_guards(
-            guards, self.step, "test_tool", True, "ok", None, self.ctx)
+        _apply_after_guards(guards, self.step, "test_tool", True, "ok", None, self.ctx)
 
         # Onion model: g3 first, then g2, then g1
         self.assertEqual(call_order, ["g3", "g2", "g1"])
@@ -97,7 +98,8 @@ class TestApplyAfterGuards(unittest.TestCase):
         guards = [g1, g2]
 
         sr, rejection = _apply_after_guards(
-            guards, self.step, "test_tool", True, "ok", {"phone": "13800138000"}, self.ctx)
+            guards, self.step, "test_tool", True, "ok", {"phone": "13800138000"}, self.ctx
+        )
 
         self.assertEqual(rejection, "sensitive data detected")
         self.assertIsNotNone(sr)
@@ -109,8 +111,7 @@ class TestApplyAfterGuards(unittest.TestCase):
         g3 = self._make_guard(allowed=True)
         guards = [g1, g2, g3]
 
-        _apply_after_guards(
-            guards, self.step, "test_tool", True, "ok", {}, self.ctx)
+        _apply_after_guards(guards, self.step, "test_tool", True, "ok", {}, self.ctx)
 
         # Reverse order: g3 first (allowed), g2 second (rejects) -> g1 never called
         g3.after_execute.assert_called_once()
@@ -125,8 +126,7 @@ class TestApplyAfterGuards(unittest.TestCase):
         g2 = self._make_guard(allowed=True, modified_result={"sanitized": True})
         guards = [g1, g2]
 
-        sr, rejection = _apply_after_guards(
-            guards, self.step, "test_tool", True, "ok", {"raw": "data"}, self.ctx)
+        sr, rejection = _apply_after_guards(guards, self.step, "test_tool", True, "ok", {"raw": "data"}, self.ctx)
 
         self.assertIsNone(rejection)
         # g2 runs first (reverse), modifies data; g1 runs second, sees modified data
@@ -134,12 +134,15 @@ class TestApplyAfterGuards(unittest.TestCase):
 
     def test_multiple_guards_chaining_modifications(self):
         """Each guard sees the result of the previous guard's modifications."""
+
         def _append_guard(key, value):
             guard = MagicMock()
+
             def _after(step, result, ctx):
                 d = dict(result.data) if result.data else {}
                 d[key] = value
                 return GuardResult(allowed=True, modified_result=d)
+
             guard.after_execute = _after
             return guard
 
@@ -148,8 +151,7 @@ class TestApplyAfterGuards(unittest.TestCase):
         g3 = _append_guard("by_g3", 3)
         guards = [g1, g2, g3]
 
-        sr, rejection = _apply_after_guards(
-            guards, self.step, "test_tool", True, "ok", {"initial": 0}, self.ctx)
+        sr, rejection = _apply_after_guards(guards, self.step, "test_tool", True, "ok", {"initial": 0}, self.ctx)
 
         self.assertIsNone(rejection)
         # Reverse order: g3 -> g2 -> g1
@@ -160,16 +162,14 @@ class TestApplyAfterGuards(unittest.TestCase):
         g1 = self._make_guard(allowed=True)
         guards = [g1]
 
-        sr, rejection = _apply_after_guards(
-            guards, self.step, "test_tool", True, "ok", None, self.ctx)
+        sr, rejection = _apply_after_guards(guards, self.step, "test_tool", True, "ok", None, self.ctx)
 
         self.assertIsNone(rejection)
         self.assertIsNone(sr.data)
 
     def test_empty_guards_list(self):
         """Empty guards list -> returns (StepResult, None) immediately."""
-        sr, rejection = _apply_after_guards(
-            [], self.step, "test_tool", True, "ok", {"a": 1}, self.ctx)
+        sr, rejection = _apply_after_guards([], self.step, "test_tool", True, "ok", {"a": 1}, self.ctx)
 
         self.assertIsNone(rejection)
         self.assertEqual(sr.data, {"a": 1})
@@ -183,7 +183,8 @@ class TestApplyAfterGuards(unittest.TestCase):
         guards = [g1]
 
         sr, rejection = _apply_after_guards(
-            guards, self.step, "test_tool", False, "something went wrong", None, self.ctx)
+            guards, self.step, "test_tool", False, "something went wrong", None, self.ctx
+        )
 
         self.assertIsNone(rejection)
         self.assertFalse(sr.success)
@@ -200,7 +201,10 @@ class TestResolveScopeToEntryIds(unittest.TestCase):
         """Scope with stages should filter collection and return matching entry keys."""
         ctx = MockAppContext(make_test_collection(10))
         ctx.translation_scope = {
-            "stages": [0], "labels": [], "categories": [], "action": "include",
+            "stages": [0],
+            "labels": [],
+            "categories": [],
+            "action": "include",
         }
 
         result = resolve_scope_to_entry_ids(ctx, ctx.collection)
@@ -213,21 +217,26 @@ class TestResolveScopeToEntryIds(unittest.TestCase):
         """Scope with categories should filter by context prefix."""
         ctx = MockAppContext(make_test_collection(10))
         ctx.translation_scope = {
-            "stages": [], "labels": [], "categories": ["INFO"], "action": "include",
+            "stages": [],
+            "labels": [],
+            "categories": ["INFO"],
+            "action": "include",
         }
 
         result = resolve_scope_to_entry_ids(ctx, ctx.collection)
 
         self.assertIsNotNone(result)
-        expected = [e.key for e in ctx.collection
-                    if e.context and e.context.startswith("INFO:")]
+        expected = [e.key for e in ctx.collection if e.context and e.context.startswith("INFO:")]
         self.assertEqual(sorted(result), sorted(expected))
 
     def test_empty_scope_returns_none(self):
         """Empty scope (all lists empty) -> returns None."""
         ctx = MockAppContext(make_test_collection(10))
         ctx.translation_scope = {
-            "stages": [], "labels": [], "categories": [], "action": "include",
+            "stages": [],
+            "labels": [],
+            "categories": [],
+            "action": "include",
         }
 
         result = resolve_scope_to_entry_ids(ctx, ctx.collection)
@@ -237,10 +246,11 @@ class TestResolveScopeToEntryIds(unittest.TestCase):
     def test_missing_translation_scope_returns_none(self):
         """ctx without translation_scope attribute -> returns None."""
         from types import SimpleNamespace
+
         ctx_no_scope = SimpleNamespace()
         # Note: resolve_scope_to_entry_ids also accesses ctx.collection via arg,
         # but the function only uses ctx for translation_scope and entry_labels
-        setattr(ctx_no_scope, 'something_else', True)
+        setattr(ctx_no_scope, "something_else", True)
 
         result = resolve_scope_to_entry_ids(ctx_no_scope, make_test_collection(5))
 
@@ -249,6 +259,7 @@ class TestResolveScopeToEntryIds(unittest.TestCase):
     def test_none_scope_returns_none(self):
         """translation_scope attribute exists but value is falsy -> returns None."""
         from types import SimpleNamespace
+
         collection = make_test_collection(5)
         ctx = SimpleNamespace()
         ctx.collection = collection
@@ -264,7 +275,10 @@ class TestResolveScopeToEntryIds(unittest.TestCase):
         collection = make_test_collection(6)
         ctx = MockAppContext(collection)
         ctx.translation_scope = {
-            "stages": [], "labels": ["npc"], "categories": [], "action": "include",
+            "stages": [],
+            "labels": ["npc"],
+            "categories": [],
+            "action": "include",
         }
         ctx._entry_labels = {
             "entry_000": {"npc", "quest"},
@@ -281,7 +295,10 @@ class TestResolveScopeToEntryIds(unittest.TestCase):
         """Scope keys present but all empty strings/lists -> returns None."""
         ctx = MockAppContext(make_test_collection(10))
         ctx.translation_scope = {
-            "stages": [], "labels": [], "categories": [], "action": "include",
+            "stages": [],
+            "labels": [],
+            "categories": [],
+            "action": "include",
         }
 
         result = resolve_scope_to_entry_ids(ctx, ctx.collection)
@@ -292,15 +309,16 @@ class TestResolveScopeToEntryIds(unittest.TestCase):
         """Combined stages + categories scope -> intersection filter."""
         ctx = MockAppContext(make_test_collection(10))
         ctx.translation_scope = {
-            "stages": [0, 1], "labels": [], "categories": ["NPC_"], "action": "include",
+            "stages": [0, 1],
+            "labels": [],
+            "categories": ["NPC_"],
+            "action": "include",
         }
 
         result = resolve_scope_to_entry_ids(ctx, ctx.collection)
 
         self.assertIsNotNone(result)
-        expected = [e.key for e in ctx.collection
-                    if e.stage in (0, 1)
-                    and e.context and e.context.startswith("NPC_:")]
+        expected = [e.key for e in ctx.collection if e.stage in (0, 1) and e.context and e.context.startswith("NPC_:")]
         self.assertEqual(sorted(result), sorted(expected))
 
 

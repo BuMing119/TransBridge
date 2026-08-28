@@ -338,6 +338,7 @@ def test_gui_agent_mcp_and_fomod_observe_one_config_revision(tmp_path: Path, mon
 def test_agent_endpoint_update_rejects_partial_identity_and_commits_one_revision(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from transbridge.config.language_profiles import LanguageProfile
     from transbridge.smart_assistant.tools import _common
     from transbridge.smart_assistant.tools.tool_translator import TranslationController
 
@@ -352,6 +353,10 @@ def test_agent_endpoint_update_rejects_partial_identity_and_commits_one_revision
     })
     config = LLMConfig.load_from_file(repository=repository, credential_store=store)
     monkeypatch.setattr(_common, "load_llm_config", lambda: config)
+    monkeypatch.setattr(
+        "transbridge.config.language_profiles.load_language_profile",
+        lambda locale: LanguageProfile(locale, "日本語", "English", "Japanese"),
+    )
     controller = TranslationController()
 
     rejected = controller.set_translation_config({"model": "partial"}, None)

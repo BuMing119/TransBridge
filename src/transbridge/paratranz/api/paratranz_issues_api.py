@@ -1,10 +1,8 @@
-from typing import Optional
 from transbridge.paratranz.paratranz_client import ParatranzClient
 
 
 class ParatranzIssuesAPI(ParatranzClient):
-
-    def list_issues(self, project_id: int, status: Optional[int] = None):
+    def list_issues(self, project_id: int, status: int | None = None):
         """
         获取讨论列表
 
@@ -29,11 +27,7 @@ class ParatranzIssuesAPI(ParatranzClient):
             title: 讨论标题
             content: 讨论内容（支持 Markdown）
         """
-        return self._request(
-            "POST",
-            f"/projects/{project_id}/issues",
-            json={"title": title, "content": content}
-        )
+        return self._request("POST", f"/projects/{project_id}/issues", json={"title": title, "content": content})
 
     def get_issue(self, project_id: int, issue_id: int):
         """
@@ -54,26 +48,16 @@ class ParatranzIssuesAPI(ParatranzClient):
             content: 回复内容（支持 Markdown）
         """
         return self._request(
-            "POST",
-            f"/projects/{project_id}/issues/{issue_id}",
-            json={"op": "reply", "content": content}
+            "POST", f"/projects/{project_id}/issues/{issue_id}", json={"op": "reply", "content": content}
         )
 
     def subscribe_issue(self, project_id: int, issue_id: int):
         """订阅讨论"""
-        return self._request(
-            "POST",
-            f"/projects/{project_id}/issues/{issue_id}",
-            json={"op": "subscribe"}
-        )
+        return self._request("POST", f"/projects/{project_id}/issues/{issue_id}", json={"op": "subscribe"})
 
     def unsubscribe_issue(self, project_id: int, issue_id: int):
         """取消订阅讨论"""
-        return self._request(
-            "POST",
-            f"/projects/{project_id}/issues/{issue_id}",
-            json={"op": "unsubscribe"}
-        )
+        return self._request("POST", f"/projects/{project_id}/issues/{issue_id}", json={"op": "unsubscribe"})
 
     def update_issue(self, project_id: int, issue_id: int, data: dict):
         """

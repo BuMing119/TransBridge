@@ -13,7 +13,6 @@ from transbridge.smart_assistant.skills.skill_loader import SkillSpec
 from transbridge.smart_assistant.tool_registry import ToolRegistry
 from transbridge.smart_assistant.tools import register_all
 
-
 _HAN = re.compile(r"[\u3400-\u9fff]")
 
 

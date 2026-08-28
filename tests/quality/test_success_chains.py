@@ -155,9 +155,7 @@ def _run_io_chain(spec: dict[str, object], workdir: Path) -> dict[str, object]:
             reparsed = USE_CASE.parse(_parse_request(target, fmt, f"{run_id}-reparse"))
             entries = reparsed.entries
             modified_seen = bool(
-                entries
-                and translation
-                in (getattr(entries[0], "original", ""), getattr(entries[0], "translation", ""))
+                entries and translation in (getattr(entries[0], "original", ""), getattr(entries[0], "translation", ""))
             )
             result["reparse"] = summarize(reparsed)
             result["semantic"] = {

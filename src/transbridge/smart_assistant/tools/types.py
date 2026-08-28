@@ -22,6 +22,7 @@ class ToolResult:
     - success 从三态改为 bool + 独立 partial 字段 (B3)
     - 新增 get()/__getitem__ 字典兼容方法 (B2)
     """
+
     success: bool
     message: str
     data: Any = None
@@ -29,14 +30,14 @@ class ToolResult:
     truncated: bool = False
     partial: bool = False
     # C10: 错误分类字段
-    error_category: str | None = None    # "network" | "auth" | "input" | "permission" | "config" | "internal"
-    error_code: str | None = None        # e.g. "API_KEY_MISSING", "TIMEOUT"
-    recovery_action: str | None = None   # 建议的恢复操作
-    warnings: list[str] | None = None    # 非致命警告
+    error_category: str | None = None  # "network" | "auth" | "input" | "permission" | "config" | "internal"
+    error_code: str | None = None  # e.g. "API_KEY_MISSING", "TIMEOUT"
+    recovery_action: str | None = None  # 建议的恢复操作
+    warnings: list[str] | None = None  # 非致命警告
     # FR7.17: 扩展字段
-    pagination: dict[str, Any] | None = None       # {"page": 1, "total_pages": 5, "has_more": true, "total_count": 200}
-    execution_meta: dict[str, Any] | None = None   # {"duration_ms": 850, "attempt": 2}
-    tool_suggestions: list[str] | None = None      # ["get_visible_entries", "edit_translation"]
+    pagination: dict[str, Any] | None = None  # {"page": 1, "total_pages": 5, "has_more": true, "total_count": 200}
+    execution_meta: dict[str, Any] | None = None  # {"duration_ms": 850, "attempt": 2}
+    tool_suggestions: list[str] | None = None  # ["get_visible_entries", "edit_translation"]
 
     def to_observation(self, tool_name: str, max_chars: int = 2000) -> str:
         """Return only the bounded display projection of the full observation."""
@@ -49,8 +50,7 @@ class ToolResult:
 
         redactor = SecretRedactor.default()
         redacted_fields = {
-            field_name: redactor.redact(getattr(self, field_name))
-            for field_name in self.__dataclass_fields__
+            field_name: redactor.redact(getattr(self, field_name)) for field_name in self.__dataclass_fields__
         }
         redacted = replace(self, **redacted_fields)
         return StructuredObservation(
@@ -116,7 +116,7 @@ class ToolResult:
             return full
         # 非 dict 类型：直接截断
         if not isinstance(self.data, dict):
-            return full[:max_chars - 3] + "..."
+            return full[: max_chars - 3] + "..."
         # 大数据：智能摘要
         summary: dict[str, Any] = {}
         large_list_keys = {"entries", "projects", "tasks", "collections", "history", "details"}
@@ -128,8 +128,10 @@ class ToolResult:
                     sample = []
                     for item in lst[:2]:
                         if isinstance(item, dict):
-                            sample.append({k: (str(v)[:80] if isinstance(v, str) and len(str(v)) > 80 else v)
-                                           for k, v in list(item.items())[:5]})
+                            sample.append({
+                                k: (str(v)[:80] if isinstance(v, str) and len(str(v)) > 80 else v)
+                                for k, v in list(item.items())[:5]
+                            })
                         else:
                             sample.append(str(item)[:120])
                     summary[f"{list_key}_sample"] = sample
@@ -220,22 +222,30 @@ class ToolResult:
         return d[key]
 
     @classmethod
-    def ok(cls, message: str = "操作成功", data: dict | None = None,
-           warnings: list[str] | None = None) -> ToolResult:
+    def ok(cls, message: str = "操作成功", data: dict | None = None, warnings: list[str] | None = None) -> ToolResult:
         return cls(success=True, message=message, data=data, warnings=warnings)
 
     @classmethod
-    def fail(cls, message: str, failed_items: list | None = None, *,
-             error_category: str | None = None,
-             error_code: str | None = None,
-             recovery_action: str | None = None) -> ToolResult:
-        return cls(success=False, message=message, failed_items=failed_items,
-                   error_category=error_category, error_code=error_code,
-                   recovery_action=recovery_action)
+    def fail(
+        cls,
+        message: str,
+        failed_items: list | None = None,
+        *,
+        error_category: str | None = None,
+        error_code: str | None = None,
+        recovery_action: str | None = None,
+    ) -> ToolResult:
+        return cls(
+            success=False,
+            message=message,
+            failed_items=failed_items,
+            error_category=error_category,
+            error_code=error_code,
+            recovery_action=recovery_action,
+        )
 
     @classmethod
-    def partial_ok(cls, message: str, data: dict | None = None,
-                   failed_items: list | None = None) -> ToolResult:
+    def partial_ok(cls, message: str, data: dict | None = None, failed_items: list | None = None) -> ToolResult:
         """部分成功 —— success=True, partial=True (B3 变更)"""
         return cls(success=True, partial=True, message=message, data=data, failed_items=failed_items)
 
@@ -247,10 +257,10 @@ class ToolResult:
 # 通过 __setattr__ 代理将这些写入重定向到 AppContext.safe_mutate，
 # 确保变更在主线程安全执行。
 _FORWARDED_ATTRS = frozenset({
-    'translation_scope',
-    'entry_labels',
-    'label_library',
-    'filter_state',
+    "translation_scope",
+    "entry_labels",
+    "label_library",
+    "filter_state",
 })
 
 
@@ -268,6 +278,7 @@ class ExecutionContext:
     标志，使得 safe_mutate 回调内的 ctx.xxx = yyy 写入直接作用到 AppContext
     而非再次排队，避免延迟赋值导致的顺序错误。
     """
+
     app_context: Any = None
     task_manager: Any = None
     request_context: Any = None
@@ -289,16 +300,16 @@ class ExecutionContext:
         （__setattr__）写入 _FORWARDED_ATTRS 时，直接作用到 AppContext
         而非再次排队，避免延迟赋值导致的属性未就绪错误。
         """
-        app_ctx = self.__dict__.get('app_context')
+        app_ctx = self.__dict__.get("app_context")
 
         def _run() -> None:
-            object.__setattr__(self, '_in_dispatch', True)
+            object.__setattr__(self, "_in_dispatch", True)
             try:
                 fn()
             finally:
-                object.__setattr__(self, '_in_dispatch', False)
+                object.__setattr__(self, "_in_dispatch", False)
 
-        if app_ctx is not None and hasattr(app_ctx, 'safe_mutate'):
+        if app_ctx is not None and hasattr(app_ctx, "safe_mutate"):
             app_ctx.safe_mutate(_run)
         else:
             _run()
@@ -310,24 +321,22 @@ class ExecutionContext:
         用于 entry.translation / entry.stage 等 dataclass 字段被修改后
         通知 UI 更新显示。
         """
-        app_ctx = self.__dict__.get('app_context')
-        if app_ctx is not None and hasattr(app_ctx, 'collection_changed'):
+        app_ctx = self.__dict__.get("app_context")
+        if app_ctx is not None and hasattr(app_ctx, "collection_changed"):
             # 发射 collection_changed 信号，step2 表格监听此信号刷新
-            collection = app_ctx.collection if hasattr(app_ctx, 'collection') else None
+            collection = app_ctx.collection if hasattr(app_ctx, "collection") else None
             app_ctx.collection_changed.emit(collection)
 
     # ── 属性代理 ────────────────────────────────────────────────
 
     def __getattr__(self, name: str) -> Any:
-        if name.startswith('_'):
+        if name.startswith("_"):
             raise AttributeError(name)
         # 使用 object.__getattribute__ 访问 __dict__，避免与 metaclass 冲突
-        app_ctx = object.__getattribute__(self, '__dict__').get('app_context')
+        app_ctx = object.__getattribute__(self, "__dict__").get("app_context")
         if app_ctx is not None and hasattr(app_ctx, name):
             return getattr(app_ctx, name)
-        raise AttributeError(
-            f"'{type(self).__name__}' 和 'AppContext' 均无属性 '{name}'"
-        )
+        raise AttributeError(f"'{type(self).__name__}' 和 'AppContext' 均无属性 '{name}'")
 
     def __setattr__(self, name: str, value: Any) -> None:
         """C10: 转发对共享 AppContext 属性的写入到 safe_mutate。
@@ -339,30 +348,31 @@ class ExecutionContext:
         对 app_context / task_manager 等自身字段，正常写入实例 __dict__。
         """
         if name in (
-            'app_context',
-            'task_manager',
-            'request_context',
-            'owner_id',
-            'plan_hash',
-            'confirmation_authority',
-            'confirmation_token',
+            "app_context",
+            "task_manager",
+            "request_context",
+            "owner_id",
+            "plan_hash",
+            "confirmation_authority",
+            "confirmation_token",
         ):
             object.__setattr__(self, name, value)
             return
-        app_ctx = self.__dict__.get('app_context')
+        app_ctx = self.__dict__.get("app_context")
         if app_ctx is not None and name in _FORWARDED_ATTRS:
             # C10: 已在 safe_mutate 派发中（主线程）→ 直接写入 AppContext
-            if self.__dict__.get('_in_dispatch'):
+            if self.__dict__.get("_in_dispatch"):
                 setattr(app_ctx, name, value)
                 return
             # 通过 safe_mutate 调度到主线程执行 property setter
-            if hasattr(app_ctx, 'safe_mutate'):
+            if hasattr(app_ctx, "safe_mutate"):
                 app_ctx.safe_mutate(lambda n=name, v=value, a=app_ctx: setattr(a, n, v))
                 return
         object.__setattr__(self, name, value)
 
 
 # ── HITL 协议 (H5) ─────────────────────────────────────────────
+
 
 class HITLType(Enum):
     CONFIRM = "confirm"
@@ -373,6 +383,7 @@ class HITLType(Enum):
 @dataclass
 class HITLRequest:
     """人机交互请求。"""
+
     type: HITLType
     title: str
     message: str
@@ -383,5 +394,6 @@ class HITLRequest:
 @dataclass
 class HITLResponse:
     """人机交互响应。"""
+
     approved: bool
     data: dict[str, Any] | None = None

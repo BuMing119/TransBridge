@@ -3,8 +3,8 @@ from collections.abc import Callable, Iterator
 import csv
 from dataclasses import asdict, dataclass
 import json
-import xml.etree.ElementTree as ET
 from pathlib import Path
+import xml.etree.ElementTree as ET
 
 
 @dataclass(frozen=True)

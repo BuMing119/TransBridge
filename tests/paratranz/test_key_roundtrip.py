@@ -15,14 +15,14 @@
 """
 
 import json
+from pathlib import Path
 import sys
 import tempfile
 import time
-from pathlib import Path
 
-from transbridge.paratranz.config_manager import ParatranzConfig
 from transbridge.paratranz.api.paratranz_files_api import ParatranzFilesAPI
 from transbridge.paratranz.api.paratranz_strings_api import ParatranzStringsAPI
+from transbridge.paratranz.config_manager import ParatranzConfig
 
 # ===================== 修改这里 =====================
 TEST_PROJECT_ID = 17633
@@ -32,7 +32,7 @@ TEST_PROJECT_ID = 17633
 def separator(title: str) -> None:
     print(f"\n{'=' * 60}")
     print(f"  {title}")
-    print('=' * 60)
+    print("=" * 60)
 
 
 def fetch_all_strings(strings_api, project_id: int, file_id: int) -> dict[str, dict]:
@@ -42,8 +42,11 @@ def fetch_all_strings(strings_api, project_id: int, file_id: int) -> dict[str, d
 
 def make_temp_json(entries: list) -> str:
     with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".json", prefix="transbridge_test_",
-        encoding="utf-8", delete=False,
+        mode="w",
+        suffix=".json",
+        prefix="transbridge_test_",
+        encoding="utf-8",
+        delete=False,
     ) as tmp:
         json.dump(entries, tmp, ensure_ascii=False, indent=2)
         return tmp.name
@@ -61,8 +64,7 @@ def push_update(files_api, project_id: int, file_id: int, entries: list) -> bool
         Path(tmp_path).unlink(missing_ok=True)
 
 
-def check_translations(strings_api, project_id: int, file_id: int,
-                       expected: dict[str, str]) -> bool:
+def check_translations(strings_api, project_id: int, file_id: int, expected: dict[str, str]) -> bool:
     """
     验证每条词条的译文是否与期望值一致。
     expected: {key: expected_translation}
@@ -93,7 +95,7 @@ def run_test() -> None:
         print("[ERROR] 未找到 API Token")
         sys.exit(1)
 
-    files_api   = ParatranzFilesAPI(token=config.token, config=config)
+    files_api = ParatranzFilesAPI(token=config.token, config=config)
     strings_api = ParatranzStringsAPI(token=config.token, config=config)
 
     # ── 步骤 1：列出文件，自动选取第一个 ─────────────────────────────
@@ -105,14 +107,14 @@ def run_test() -> None:
         sys.exit(1)
 
     test_file = file_list[0]
-    file_id   = test_file["id"]
+    file_id = test_file["id"]
     print(f"选取文件：id={file_id}  name={test_file.get('name')!r}")
     print(f"总词条数：{test_file.get('total')}")
 
     # ── 步骤 2：下载词条，取前 3 条 ───────────────────────────────────
     separator("步骤2：下载词条，取前 3 条")
 
-    current    = fetch_all_strings(strings_api, TEST_PROJECT_ID, file_id)
+    current = fetch_all_strings(strings_api, TEST_PROJECT_ID, file_id)
     test_items = list(current.values())[:3]
 
     if not test_items:
@@ -126,12 +128,12 @@ def run_test() -> None:
 
     originals = [
         {
-            "id":          item["id"],
-            "key":         item["key"],
-            "original":    item["original"],
+            "id": item["id"],
+            "key": item["key"],
+            "original": item["original"],
             "translation": item.get("translation", ""),
-            "stage":       item.get("stage", 0),
-            "context":     item.get("context", ""),
+            "stage": item.get("stage", 0),
+            "context": item.get("context", ""),
         }
         for item in test_items
     ]
@@ -142,19 +144,16 @@ def run_test() -> None:
     # 每条词条拿到各自不同的译文，才能验证"是哪条词条被匹配更新了"
     entries_with_id = [
         {
-            "id":          item["id"],
-            "key":         item["key"],
-            "original":    item["original"],
+            "id": item["id"],
+            "key": item["key"],
+            "original": item["original"],
             "translation": f"【带id-{i}-验证用】",
-            "stage":       1,
-            "context":     item.get("context", ""),
+            "stage": 1,
+            "context": item.get("context", ""),
         }
         for i, item in enumerate(test_items)
     ]
-    expected_with_id = {
-        item["key"]: f"【带id-{i}-验证用】"
-        for i, item in enumerate(test_items)
-    }
+    expected_with_id = {item["key"]: f"【带id-{i}-验证用】" for i, item in enumerate(test_items)}
 
     ok3 = push_update(files_api, TEST_PROJECT_ID, file_id, entries_with_id)
     print(f"  推送结果：{'成功' if ok3 else '失败'}")
@@ -171,18 +170,15 @@ def run_test() -> None:
 
     entries_without_id = [
         {
-            "key":         item["key"],
-            "original":    item["original"],
+            "key": item["key"],
+            "original": item["original"],
             "translation": f"【仅key-{i}-验证用】",
-            "stage":       1,
-            "context":     item.get("context", ""),
+            "stage": 1,
+            "context": item.get("context", ""),
         }
         for i, item in enumerate(test_items)
     ]
-    expected_without_id = {
-        item["key"]: f"【仅key-{i}-验证用】"
-        for i, item in enumerate(test_items)
-    }
+    expected_without_id = {item["key"]: f"【仅key-{i}-验证用】" for i, item in enumerate(test_items)}
 
     ok4 = push_update(files_api, TEST_PROJECT_ID, file_id, entries_without_id)
     print(f"  推送结果：{'成功' if ok4 else '失败'}")

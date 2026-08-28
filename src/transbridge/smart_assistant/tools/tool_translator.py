@@ -4,6 +4,7 @@ Story 06 v2: 移除 pause_task(B5)，stop_task 必传 task_id(E7)，新增 stop_
 Story 18: stop_task 合并 2→1，task_id 改为可选（None/""=停止全部）。
 Story 03A: 重构为 TranslationController 类。
 """
+
 from __future__ import annotations
 
 import logging
@@ -51,6 +52,7 @@ def _paratranz_term_project_id(ctx) -> int | None:
 #  TranslationController — 翻译任务控制
 # ═══════════════════════════════════════════════════════════════════
 
+
 class TranslationController:
     """翻译任务控制器 — 管理翻译/润色任务的启动、停止、查询和配置。
 
@@ -74,17 +76,22 @@ class TranslationController:
         # C3: 前置条件检查
         try:
             from transbridge.paratranz.config_manager import LLMConfig
+
             llm_cfg = LLMConfig.load_from_file()
             if not llm_cfg.api_key:
-                return ToolResult.fail("API Key 未配置",
-                    error_category="config", error_code="API_KEY_MISSING",
-                    recovery_action="请在 AI 翻译设置中配置 API Key")
+                return ToolResult.fail(
+                    "API Key 未配置",
+                    error_category="config",
+                    error_code="API_KEY_MISSING",
+                    recovery_action="请在 AI 翻译设置中配置 API Key",
+                )
             # MA11: 术语数据库来源检查
             term_sources = [s for s in llm_cfg.term_priority if s != "dynamic"]
             has_term_source = bool(term_sources)
             for src in term_sources:
                 if src == "paratranz":
                     from transbridge.paratranz.config_manager import ParatranzConfig
+
                     pc = ParatranzConfig.load_from_file()
                     if pc.token:
                         has_term_source = True
@@ -101,13 +108,15 @@ class TranslationController:
             if not has_term_source:
                 logger.warning("start_translation: 未检测到术语数据库来源，翻译质量可能受影响")
         except Exception:
-            return ToolResult.fail("无法读取 LLM 配置，请检查设置",
-                error_category="config", error_code="CONFIG_LOAD_FAILED")
+            return ToolResult.fail(
+                "无法读取 LLM 配置，请检查设置", error_category="config", error_code="CONFIG_LOAD_FAILED"
+            )
 
         entry_ids = args.get("entry_ids")
         # M3: 复用 resolve_scope_to_entry_ids 消除与 tool_proofreader 的重复代码
         if not entry_ids:
             from .base import resolve_scope_to_entry_ids
+
             scoped_ids = resolve_scope_to_entry_ids(ctx, collection)
             if scoped_ids:
                 entry_ids = scoped_ids
@@ -116,6 +125,7 @@ class TranslationController:
                 # 无 entry_ids 且无 scope → 默认全部未翻译
                 ctx.translation_scope = {"stages": [0], "labels": [], "categories": [], "action": "include"}
                 from .base import filter_entries
+
                 scoped = filter_entries(collection, {"stage": [0]})
                 entry_ids = [e.key for e in scoped]
                 logger.info("start_translation: 未指定条目，默认作用域=全部未翻译(stage=0)，共 %d 条", len(entry_ids))
@@ -143,7 +153,7 @@ class TranslationController:
 
                 # Story 24: 传入 paratranz_client 和 project_id，使 PT 术语来源生效
                 project_id = _paratranz_term_project_id(ctx)
-                if hasattr(ctx, 'config') and ctx.config and getattr(ctx.config, 'token', None):
+                if hasattr(ctx, "config") and ctx.config and getattr(ctx.config, "token", None):
                     if project_id is not None:
                         from transbridge.paratranz import ParatranzClient
 
@@ -157,10 +167,16 @@ class TranslationController:
                 )
 
                 def _progress(current, total, msg, succ, fail, new_terms):
-                    tm.update_progress(task_id, {
-                        "current": current, "total": total, "message": msg,
-                        "success_count": succ, "failed_count": fail,
-                    })
+                    tm.update_progress(
+                        task_id,
+                        {
+                            "current": current,
+                            "total": total,
+                            "message": msg,
+                            "success_count": succ,
+                            "failed_count": fail,
+                        },
+                    )
                     if stop_event.is_set():
                         raise InterruptedError("任务已被用户停止")
 
@@ -170,20 +186,26 @@ class TranslationController:
                     progress_callback=_progress,
                     stop_event=stop_event,
                 )
-                tm.update_progress(task_id, {
-                    "status": "completed",
-                    "success_count": result.success_count,
-                    "failed_count": result.failed_count,
-                    "skipped_count": result.skipped_count,
-                })
+                tm.update_progress(
+                    task_id,
+                    {
+                        "status": "completed",
+                        "success_count": result.success_count,
+                        "failed_count": result.failed_count,
+                        "skipped_count": result.skipped_count,
+                    },
+                )
                 tm.set_status(task_id, "completed")
                 # B2: 通知完成
-                tm.notify_completed(task_id, {
-                    "status": "completed",
-                    "success_count": result.success_count,
-                    "failed_count": result.failed_count,
-                    "skipped_count": result.skipped_count,
-                })
+                tm.notify_completed(
+                    task_id,
+                    {
+                        "status": "completed",
+                        "success_count": result.success_count,
+                        "failed_count": result.failed_count,
+                        "skipped_count": result.skipped_count,
+                    },
+                )
                 ctx.safe_mutate(lambda: ctx.notify_collection_modified())
             except InterruptedError:
                 tm.set_status(task_id, "cancelled")
@@ -256,9 +278,15 @@ class TranslationController:
 
         stop_event = threading.Event()
         tm = TaskManager()
-        task_id = tm.register(stop_event=stop_event, metadata={
-            "intensity": intensity, "scope": scope, "strategy": strategy, "type": "polish",
-        })
+        task_id = tm.register(
+            stop_event=stop_event,
+            metadata={
+                "intensity": intensity,
+                "scope": scope,
+                "strategy": strategy,
+                "type": "polish",
+            },
+        )
         from transbridge.ai_translator.project_terminology_runtime import resolve_project_terminology
 
         terminology = resolve_project_terminology(ctx)
@@ -282,7 +310,7 @@ class TranslationController:
 
                 term_mgr = TermDatabaseManager(
                     config=llm_cfg,
-                    esp_path=getattr(ctx, 'esp_path', None) or "",
+                    esp_path=getattr(ctx, "esp_path", None) or "",
                     **terminology.term_database_kwargs(),
                 )
                 term_mgr.load_all()
@@ -312,6 +340,7 @@ class TranslationController:
                 import time
 
                 from transbridge.smart_assistant.tools.tool_proofreader import set_last_report
+
                 polish_level = {"light": "light", "medium": "moderate", "heavy": "aggressive"}[intensity]
                 set_last_report({
                     "phase": "polish",
@@ -325,13 +354,16 @@ class TranslationController:
                     "timestamp": time.time(),
                 })
 
-                tm.notify_completed(task_id, {
-                    "status": "completed",
-                    "entry_count": len(entry_ids),
-                    "polished_count": summary.polished_count,
-                    "failed_count": summary.failed_count,
-                    "strategy": strategy,
-                })
+                tm.notify_completed(
+                    task_id,
+                    {
+                        "status": "completed",
+                        "entry_count": len(entry_ids),
+                        "polished_count": summary.polished_count,
+                        "failed_count": summary.failed_count,
+                        "strategy": strategy,
+                    },
+                )
                 ctx.safe_mutate(lambda: ctx.notify_collection_modified())
             except InterruptedError:
                 tm.set_status(task_id, "cancelled")
@@ -344,7 +376,7 @@ class TranslationController:
                 if llm_runtime is not None:
                     llm_runtime.close()
 
-        thread = tm.start_thread(task_id, _run)  # M2: 复用 TaskManager.start_thread
+        tm.start_thread(task_id, _run)  # M2: 复用 TaskManager.start_thread
 
         return ToolResult.ok(
             f"润色任务已启动 (strategy={strategy}, scope={scope}, intensity={intensity}, {len(entry_ids)}条)",
@@ -388,8 +420,9 @@ class TranslationController:
             data = {"affected_task_ids": affected, "action": action}
             if failed:
                 data["failed_task_ids"] = failed
-                return ToolResult.partial_ok(f"已{self._action_label(action)} {len(affected)} 个任务，{len(failed)} 失败",
-                                            data=data)
+                return ToolResult.partial_ok(
+                    f"已{self._action_label(action)} {len(affected)} 个任务，{len(failed)} 失败", data=data
+                )
             return ToolResult.ok(f"已{self._action_label(action)}全部 {len(affected)} 个任务", data=data)
 
         if action == "pause":
@@ -401,8 +434,7 @@ class TranslationController:
 
         if ok:
             label = self._action_label(action)
-            return ToolResult.ok(f"任务 {task_id} 已{label}",
-                                data={"task_id": task_id, "action": action})
+            return ToolResult.ok(f"任务 {task_id} 已{label}", data={"task_id": task_id, "action": action})
         return ToolResult.fail(f"任务不存在或已结束: {task_id} (action={action})")
 
     def _action_label(self, action: str) -> str:
@@ -427,8 +459,7 @@ class TranslationController:
         summaries = []
         for tid in all_tasks:
             s = tm.get_status(tid)
-            summaries.append({"task_id": tid, "status": s.get("status", "unknown"),
-                              "metadata": s.get("metadata", {})})
+            summaries.append({"task_id": tid, "status": s.get("status", "unknown"), "metadata": s.get("metadata", {})})
 
         return ToolResult.ok(
             f"活跃任务: {len(active)} / 总任务: {len(all_tasks)}",
@@ -440,13 +471,13 @@ class TranslationController:
     def _get_post_process_config(self, llm) -> dict:
         """M27: 从 LLMConfig 提取后处理开关配置。"""
         return {
-            "enabled": getattr(llm, 'enable_post_process', True),
-            "consistency_check": getattr(llm, 'pp_enable_consistency_check', True),
-            "format_validation": getattr(llm, 'pp_enable_format_validation', True),
-            "quality_gate": getattr(llm, 'pp_enable_quality_gate', True),
-            "refinement": getattr(llm, 'pp_enable_refinement', True),
-            "polish": getattr(llm, 'pp_enable_polish', False),
-            "arbitration": getattr(llm, 'pp_enable_arbitration', True),
+            "enabled": getattr(llm, "enable_post_process", True),
+            "consistency_check": getattr(llm, "pp_enable_consistency_check", True),
+            "format_validation": getattr(llm, "pp_enable_format_validation", True),
+            "quality_gate": getattr(llm, "pp_enable_quality_gate", True),
+            "refinement": getattr(llm, "pp_enable_refinement", True),
+            "polish": getattr(llm, "pp_enable_polish", False),
+            "arbitration": getattr(llm, "pp_enable_arbitration", True),
         }
 
     def _get_term_db_info(self, ctx) -> dict:
@@ -454,12 +485,14 @@ class TranslationController:
         term_db_info = {"path": None, "entry_count": 0}
         try:
             from pathlib import Path
+
             esp_stem = Path(ctx.esp_path).stem if ctx.esp_path else None
             if esp_stem:
                 term_db_path = Path("data") / f"{esp_stem}_terms.json"
                 if term_db_path.exists():
                     import json
-                    with open(term_db_path, "r", encoding="utf-8") as f:
+
+                    with open(term_db_path, encoding="utf-8") as f:
                         terms = json.load(f)
                     term_db_info = {
                         "path": str(term_db_path),
@@ -472,6 +505,7 @@ class TranslationController:
     def get_translation_config(self, args: dict, ctx) -> ToolResult:
         """返回当前 LLM 翻译配置，含后处理、术语、ParaTranz 状态。"""
         from ._common import load_llm_config
+
         llm = load_llm_config()
 
         # C4: 真实的后处理配置
@@ -484,6 +518,7 @@ class TranslationController:
         pt_config = {"token_configured": False, "api_url": None}
         try:
             from transbridge.paratranz.config_manager import ParatranzConfig
+
             pt_cfg = ParatranzConfig.load_from_file()
             pt_config = {
                 "token_configured": bool(pt_cfg.token),
@@ -492,24 +527,26 @@ class TranslationController:
         except Exception as exc:
             logger.warning("ParaTranz 配置读取失败: %s", exc)
 
-        return ToolResult.ok(data={
-            "provider": llm.provider,
-            "model": llm.model,
-            "api_key_configured": bool(llm.api_key),
-            "temperature": getattr(llm, 'temperature', None),
-            "max_tokens": llm.max_output_tokens,
-            "target_lang": llm.target_lang,
-            "game_profile": llm.game_profile,
-            "term_priority": llm.term_priority,
-            "local_json_path": llm.local_json_path or None,
-            "local_csv_path": getattr(llm, "local_csv_path", "") or None,
-            "local_excel_path": llm.local_excel_path or None,
-            "post_process": post_process,
-            "term_database": term_db_info,
-            "paratranz": pt_config,
-            "config_revision": llm.config_revision,
-            "base_url_host": llm.base_url.split("://")[-1].split("/")[0] if llm.base_url else None,
-        })
+        return ToolResult.ok(
+            data={
+                "provider": llm.provider,
+                "model": llm.model,
+                "api_key_configured": bool(llm.api_key),
+                "temperature": getattr(llm, "temperature", None),
+                "max_tokens": llm.max_output_tokens,
+                "target_lang": llm.target_lang,
+                "game_profile": llm.game_profile,
+                "term_priority": llm.term_priority,
+                "local_json_path": llm.local_json_path or None,
+                "local_csv_path": getattr(llm, "local_csv_path", "") or None,
+                "local_excel_path": llm.local_excel_path or None,
+                "post_process": post_process,
+                "term_database": term_db_info,
+                "paratranz": pt_config,
+                "config_revision": llm.config_revision,
+                "base_url_host": llm.base_url.split("://")[-1].split("/")[0] if llm.base_url else None,
+            }
+        )
 
     def set_translation_config(self, args: dict, ctx) -> ToolResult:
         """Update one configuration snapshot; endpoint identity is atomic."""
@@ -531,9 +568,7 @@ class TranslationController:
         touched_endpoint = endpoint_fields.intersection(args)
         if touched_endpoint and touched_endpoint != endpoint_fields:
             return ToolResult.fail("provider/base_url/model 必须在同一次调用中完整提供")
-        for field_name in [
-            "provider", "base_url", "model", "temperature", "target_lang", "game_profile"
-        ]:
+        for field_name in ["provider", "base_url", "model", "temperature", "target_lang", "game_profile"]:
             if field_name in args:
                 setattr(llm, field_name, args[field_name])
                 changed.append(field_name)
@@ -543,8 +578,13 @@ class TranslationController:
 
         # m5: 检测并记录未知参数
         known_fields = {
-            "provider", "base_url", "model", "temperature", "max_tokens",
-            "target_lang", "game_profile",
+            "provider",
+            "base_url",
+            "model",
+            "temperature",
+            "max_tokens",
+            "target_lang",
+            "game_profile",
         }
         unknown = [k for k in args if k not in known_fields]
         if unknown:
@@ -567,6 +607,7 @@ class TranslationController:
         excel_path = args.get("excel_path")
 
         from ._common import load_llm_config
+
         llm = load_llm_config()
         changed = []
 
@@ -613,6 +654,7 @@ class TranslationController:
     def get_scope_preview(self, args: dict, ctx) -> ToolResult:
         """预览当前作用域下匹配的条目数。m25: 复用 filter_entries 统一筛选逻辑。"""
         from .base import filter_entries
+
         collection = ctx.collection
         if not collection or len(collection) == 0:
             return ToolResult.ok("当前无翻译集合", data={"matched": 0, "total": 0})
@@ -623,7 +665,7 @@ class TranslationController:
             "category": scope.get("categories"),
             "labels": scope.get("labels"),
         }
-        entry_labels = getattr(ctx, 'entry_labels', None)
+        entry_labels = getattr(ctx, "entry_labels", None)
         results = filter_entries(collection, filter_state, entry_labels=entry_labels)
         matched = len(results)
         total = len(collection)
@@ -641,6 +683,7 @@ _translator_ctrl = TranslationController()
 
 
 # ── 模块级 wrapper 函数（@require_collection 装饰在此处，因装饰器不支持实例方法） ──
+
 
 @require_runtime_context
 @require_collection
@@ -695,13 +738,31 @@ def _tool_get_scope_preview(args: dict, ctx) -> ToolResult:
 
 _PARAM_SCHEMAS = {
     "start_translation": {
-        "mode": {"type": "str", "required": False, "description": "Translation mode: translate/polish/mixed; default translate"},
-        "entry_ids": {"type": "list", "required": False, "description": "Target entry IDs; defaults to all untranslated entries"},
+        "mode": {
+            "type": "str",
+            "required": False,
+            "description": "Translation mode: translate/polish/mixed; default translate",
+        },
+        "entry_ids": {
+            "type": "list",
+            "required": False,
+            "description": "Target entry IDs; defaults to all untranslated entries",
+        },
     },
     "start_polish": {
         "entry_ids": {"type": "list", "required": False, "description": "Entry IDs to polish; provide this or scope"},
-        "scope": {"type": "str", "required": False, "description": "Polish scope: all (all translated), passed (stage 1/3/4/5/6), or has_issues (stage 2); default all"},
-        "intensity": {"type": "str", "required": False, "description": "Polish intensity: light/medium/heavy; default medium"},
+        "scope": {
+            "type": "str",
+            "required": False,
+            "description": (
+                "Polish scope: all (all translated), passed (stage 1/3/4/5/6), or has_issues (stage 2); default all"
+            ),
+        },
+        "intensity": {
+            "type": "str",
+            "required": False,
+            "description": "Polish intensity: light/medium/heavy; default medium",
+        },
         "strategy": {
             "type": "str",
             "required": False,
@@ -713,13 +774,25 @@ _PARAM_SCHEMAS = {
         "action": {"type": "str", "required": False, "description": "Action: stop (default), pause, or resume"},
     },
     "get_task_status": {
-        "task_id": {"type": "str", "required": False, "description": "Task ID; omitted returns summaries for all tasks"},
+        "task_id": {
+            "type": "str",
+            "required": False,
+            "description": "Task ID; omitted returns summaries for all tasks",
+        },
     },
     # Story 09: 翻译配置
     "get_translation_config": {},
     "set_translation_config": {
-        "provider": {"type": "str", "required": False, "description": "Must be provided together with base_url and model"},
-        "base_url": {"type": "str", "required": False, "description": "Must be provided together with provider and model"},
+        "provider": {
+            "type": "str",
+            "required": False,
+            "description": "Must be provided together with base_url and model",
+        },
+        "base_url": {
+            "type": "str",
+            "required": False,
+            "description": "Must be provided together with provider and model",
+        },
         "model": {"type": "str", "required": False, "description": "Model name"},
         "temperature": {"type": "float", "required": False, "description": "Generation temperature"},
         "max_tokens": {"type": "int", "required": False, "description": "Maximum output tokens"},
@@ -730,13 +803,20 @@ _PARAM_SCHEMAS = {
         "stages": {"type": "list", "required": False, "description": "Target stages"},
         "labels": {"type": "list", "required": False, "description": "Target labels"},
         "categories": {"type": "list", "required": False, "description": "Target categories"},
-        "action": {"type": "str", "required": False, "description": "Scope action: include/exclude/only; default include"},
+        "action": {
+            "type": "str",
+            "required": False,
+            "description": "Scope action: include/exclude/only; default include",
+        },
     },
     "get_scope_preview": {},
     # Story 24: 术语配置
     "set_term_config": {
-        "term_sources": {"type": "list", "required": False,
-            "description": "Terminology source priority list: dynamic/paratranz/json/csv/excel"},
+        "term_sources": {
+            "type": "list",
+            "required": False,
+            "description": "Terminology source priority list: dynamic/paratranz/json/csv/excel",
+        },
         "json_path": {"type": "str", "required": False, "description": "Local JSON glossary path"},
         "csv_path": {"type": "str", "required": False, "description": "Local CSV glossary path"},
         "excel_path": {"type": "str", "required": False, "description": "Local Excel glossary path"},
@@ -748,49 +828,145 @@ _PARAM_SCHEMAS = {
 #  工具注册
 # ═══════════════════════════════════════════════════════════════════
 
+
 def _register_translator_tools():
     from ..tool_registry import ToolRegistry
-    ToolRegistry.register_tools("translator", [
-        {"name": "start_translation", "display_name": "启动翻译", "description": "①Start an AI translation background task. ②Arguments: mode=translate (default)/polish/mixed, optional entry_ids; without entry_ids use set_scope, defaulting to stage 0. ③Returns {task_id, mode}. ④Rules: configure the API key and inspect get_translation_config first; parallel tasks are allowed.",
-         "execute": _tool_start_translation, "permission": "write", "is_long_running": True,
-         "require_confirmation": True, "parameters": _PARAM_SCHEMAS.get("start_translation", {})},
-        {"name": "start_polish", "display_name": "启动校对", "description": "①Start an AI proofreading background task. ②Provide entry_ids or scope; entry_ids wins. scope=all/passed(stage 1/3/4/5/6)/has_issues(stage 2), intensity=light/medium/heavy, strategy=proofread/strict. ③Returns {task_id, strategy, intensity, scope, entry_count}. ④Rule: configure the API key and inspect get_translation_config first.",
-         "execute": _tool_start_polish, "permission": "write", "is_long_running": True,
-         "require_confirmation": True, "parameters": _PARAM_SCHEMAS.get("start_polish", {})},
-        {"name": "stop_task", "display_name": "停止/暂停/恢复", "description": "①Stop, pause, or resume background tasks. ②Arguments: optional task_id (omitted targets all active tasks), action=stop (default and irreversible)/pause/resume. ③Returns {task_id, action} for one or {affected_task_ids, action} for all. ④Rules: active means running or paused; user confirmation is required.",
-         "execute": _tool_stop_task, "permission": "write", "require_confirmation": True,
-         "parameters": _PARAM_SCHEMAS.get("stop_task", {})},
-        {"name": "get_task_status", "display_name": "查询任务状态", "description": "①Query task progress. ②Optional task_id. ③One task returns {task_id,status,progress{current,total,message},created_at,metadata}; all tasks return {active_count,total_count,tasks[{task_id,status,metadata}]}. ④status is running/paused/completed/cancelled/failed.",
-         "execute": _tool_get_task_status, "permission": "read",
-         "parameters": _PARAM_SCHEMAS.get("get_task_status", {})},
-        # Story 09: 翻译配置
-        {"name": "get_translation_config", "display_name": "翻译配置", "description": "①Return a read-only unified LLM configuration snapshot. ②No arguments. ③Returns non-secret fields such as provider/base_url_host/model/config_revision. ④Rule: never returns plaintext credentials.",  # noqa: E501
-         "execute": _tool_get_translation_config, "permission": "read",
-         "parameters": _PARAM_SCHEMAS.get("get_translation_config", {})},
-        {"name": "set_translation_config", "display_name": "设置翻译配置", "description": "①Update the unified LLM configuration. ②provider/base_url/model must be supplied together; temperature/max_tokens/target_lang/game_profile are optional. ③Returns changed_fields/config_revision.",  # noqa: E501
-         "execute": _tool_set_translation_config, "permission": "write",
-         "parameters": _PARAM_SCHEMAS.get("set_translation_config", {})},
-        {"name": "set_scope", "display_name": "设置作用域", "description": "①Set the default translation scope used by start_translation without entry_ids. ②Arguments: stages, labels, categories, action=include/exclude/only. ③Returns a scope snapshot. ④Rules: AND across dimensions, OR within one; verify labels/categories with list_labels/get_statistics; include and only currently behave the same.",
-         "execute": _tool_set_scope, "permission": "write",
-         "parameters": _PARAM_SCHEMAS.get("set_scope", {})},
-        {"name": "get_scope_preview", "display_name": "作用域预览", "description": "①Preview counts for the current scope. ②No arguments. ③Returns {matched,total,scope{stages,labels,categories,action}}. ④Rules: returns counts, not entries; default scope is untranslated stage 0; call after set_scope to confirm the range.",
-         "execute": _tool_get_scope_preview, "permission": "read",
-         "parameters": _PARAM_SCHEMAS.get("get_scope_preview", {})},
-        {
-            "name": "set_term_config",
-            "display_name": "术语配置",
-            "description": (
-                "①Set terminology-source priority and local paths. ②Arguments: ordered term_sources "
-                "(dynamic/paratranz/json/csv/excel), json_path, csv_path, excel_path. "
-                "dynamic is always available for extraction during AI translation. ③Returns {changed}. ④Rules: inspect "
-                "get_translation_config first; an empty list disables all sources; invalid source names are rejected."
-            ),
-            "execute": _tool_set_term_config,
-            "permission": "write",
-            "parameters": _PARAM_SCHEMAS.get("set_term_config", {}),
-        },
 
-    ])
+    ToolRegistry.register_tools(
+        "translator",
+        [
+            {
+                "name": "start_translation",
+                "display_name": "启动翻译",
+                "description": (
+                    "①Start an AI translation background task. ②Arguments: mode=translate (default)/polish/mixed, "
+                    "optional entry_ids; without entry_ids use set_scope, defaulting to stage 0. "
+                    "③Returns {task_id, mode}. "
+                    "④Rules: configure the API key and inspect get_translation_config first; "
+                    "parallel tasks are allowed."
+                ),
+                "execute": _tool_start_translation,
+                "permission": "write",
+                "is_long_running": True,
+                "require_confirmation": True,
+                "parameters": _PARAM_SCHEMAS.get("start_translation", {}),
+            },
+            {
+                "name": "start_polish",
+                "display_name": "启动校对",
+                "description": (
+                    "①Start an AI proofreading background task. ②Provide entry_ids or scope; entry_ids wins. "
+                    "scope=all/passed(stage 1/3/4/5/6)/has_issues(stage 2), intensity=light/medium/heavy, "
+                    "strategy=proofread/strict. "
+                    "③Returns {task_id, strategy, intensity, scope, entry_count}. "
+                    "④Rule: configure "
+                    "the API key and inspect get_translation_config first."
+                ),
+                "execute": _tool_start_polish,
+                "permission": "write",
+                "is_long_running": True,
+                "require_confirmation": True,
+                "parameters": _PARAM_SCHEMAS.get("start_polish", {}),
+            },
+            {
+                "name": "stop_task",
+                "display_name": "停止/暂停/恢复",
+                "description": (
+                    "①Stop, pause, or resume background tasks. ②Arguments: optional task_id "
+                    "(omitted targets all active "
+                    "tasks), action=stop (default and irreversible)/pause/resume. "
+                    "③Returns {task_id, action} for one or "
+                    "{affected_task_ids, action} for all. ④Rules: active means running or paused; user confirmation is "
+                    "required."
+                ),
+                "execute": _tool_stop_task,
+                "permission": "write",
+                "require_confirmation": True,
+                "parameters": _PARAM_SCHEMAS.get("stop_task", {}),
+            },
+            {
+                "name": "get_task_status",
+                "display_name": "查询任务状态",
+                "description": (
+                    "①Query task progress. ②Optional task_id. ③One task returns "
+                    "{task_id,status,progress{current,total,message},created_at,metadata}; all tasks return "
+                    "{active_count,total_count,tasks[{task_id,status,metadata}]}. ④status is "
+                    "running/paused/completed/cancelled/failed."
+                ),
+                "execute": _tool_get_task_status,
+                "permission": "read",
+                "parameters": _PARAM_SCHEMAS.get("get_task_status", {}),
+            },
+            # Story 09: 翻译配置
+            {
+                "name": "get_translation_config",
+                "display_name": "翻译配置",
+                "description": (
+                    "①Return a read-only unified LLM configuration snapshot. ②No arguments. "
+                    "③Returns non-secret fields such as provider/base_url_host/model/config_revision. "
+                    "④Rule: never returns plaintext credentials."
+                ),
+                "execute": _tool_get_translation_config,
+                "permission": "read",
+                "parameters": _PARAM_SCHEMAS.get("get_translation_config", {}),
+            },
+            {
+                "name": "set_translation_config",
+                "display_name": "设置翻译配置",
+                "description": (
+                    "①Update the unified LLM configuration. ②provider/base_url/model must be supplied together; "
+                    "temperature/max_tokens/target_lang/game_profile are optional. "
+                    "③Returns changed_fields/config_revision."
+                ),
+                "execute": _tool_set_translation_config,
+                "permission": "write",
+                "parameters": _PARAM_SCHEMAS.get("set_translation_config", {}),
+            },
+            {
+                "name": "set_scope",
+                "display_name": "设置作用域",
+                "description": (
+                    "①Set the default translation scope used by start_translation without entry_ids. "
+                    "②Arguments: stages, "
+                    "labels, categories, action=include/exclude/only. ③Returns a scope snapshot. ④Rules: AND across "
+                    "dimensions, OR within one; verify labels/categories with "
+                    "list_labels/get_statistics; include and only "
+                    "currently behave the same."
+                ),
+                "execute": _tool_set_scope,
+                "permission": "write",
+                "parameters": _PARAM_SCHEMAS.get("set_scope", {}),
+            },
+            {
+                "name": "get_scope_preview",
+                "display_name": "作用域预览",
+                "description": (
+                    "①Preview counts for the current scope. ②No arguments. ③Returns "
+                    "{matched,total,scope{stages,labels,categories,action}}. "
+                    "④Rules: returns counts, not entries; default "
+                    "scope is untranslated stage 0; call after set_scope to confirm the range."
+                ),
+                "execute": _tool_get_scope_preview,
+                "permission": "read",
+                "parameters": _PARAM_SCHEMAS.get("get_scope_preview", {}),
+            },
+            {
+                "name": "set_term_config",
+                "display_name": "术语配置",
+                "description": (
+                    "①Set terminology-source priority and local paths. ②Arguments: ordered term_sources "
+                    "(dynamic/paratranz/json/csv/excel), json_path, csv_path, excel_path. "
+                    "dynamic is always available for extraction during AI translation. ③Returns {changed}. ④Rules: "
+                    "inspect get_translation_config first; an empty list disables all sources; "
+                    "invalid source names are "
+                    "rejected."
+                ),
+                "execute": _tool_set_term_config,
+                "permission": "write",
+                "parameters": _PARAM_SCHEMAS.get("set_term_config", {}),
+            },
+        ],
+    )
 
 
 _register_translator_tools()

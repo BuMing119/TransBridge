@@ -13,6 +13,7 @@ class OperationContextPort(Protocol):
     @property
     def collection(self): ...
 
+
 @dataclass(frozen=True, slots=True)
 class OperationCardState:
     batch_available: bool

@@ -1,14 +1,14 @@
 import atexit
+from collections.abc import Callable
+from datetime import datetime, timedelta
 import json
 import logging
-import threading
-from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Callable
+import threading
 
-from .models import ConversationTrace, ReActRound, ToolCallRecord, TokenStats
 from ..execution_engine import StepResult
 from ..guardrails.output_validator import sanitize_for_storage
+from .models import ConversationTrace, ReActRound, TokenStats, ToolCallRecord
 
 logger = logging.getLogger(__name__)
 
@@ -44,10 +44,10 @@ class ObservabilityCollector:
     Phase 2: 移除 QObject/pyqtSignal 继承，token_stats_updated 改为回调注入。
     调用方通过 on_token_stats_updated 参数注册回调，跨线程安全由调用方保证。
     """
+
     _MAX_TRACE_AGE_DAYS = 30
 
-    def __init__(self, storage_dir: Path | None = None, *,
-                 on_token_stats_updated: Callable | None = None):
+    def __init__(self, storage_dir: Path | None = None, *, on_token_stats_updated: Callable | None = None):
         self._storage_dir = storage_dir
         self._on_token_stats_updated = on_token_stats_updated
         self._active: ConversationTrace | None = None
@@ -71,15 +71,17 @@ class ObservabilityCollector:
             return
         if self._pending_tool:
             _sid, _tname, start_time = self._pending_tool
-            self._active.tools_called.append(ToolCallRecord(
-                timestamp=start_time.isoformat(),
-                tool_name=_tname,
-                input_summary=str(result.data)[:500] if result.data else "",
-                output_summary=result.message[:500],
-                duration_ms=result.duration_ms,
-                success=result.success,
-                retry_count=0,
-            ))
+            self._active.tools_called.append(
+                ToolCallRecord(
+                    timestamp=start_time.isoformat(),
+                    tool_name=_tname,
+                    input_summary=str(result.data)[:500] if result.data else "",
+                    output_summary=result.message[:500],
+                    duration_ms=result.duration_ms,
+                    success=result.success,
+                    retry_count=0,
+                )
+            )
             self._pending_tool = None
 
     def on_step_retrying(self, step_id: int, attempt: int) -> None:
@@ -107,13 +109,9 @@ class ObservabilityCollector:
                 with _pending_lock:
                     _pending_traces.append((trace, self._storage_dir))
                 # M16: 将同步文件 I/O 包装在后台线程中异步执行
-                threading.Thread(
-                    target=self._save_trace, args=(trace,), daemon=True
-                ).start()
+                threading.Thread(target=self._save_trace, args=(trace,), daemon=True).start()
                 # M37: 将清理操作放到后台线程，避免阻塞调用方（UI）线程
-                threading.Thread(
-                    target=self._cleanup_old, daemon=True
-                ).start()
+                threading.Thread(target=self._cleanup_old, daemon=True).start()
             except Exception as exc:
                 logger.warning("观测数据保存失败: %s", exc)
         # m15: 保存后清理活跃追踪（避免数据丢失）
@@ -157,7 +155,8 @@ class ObservabilityCollector:
                 "ObservabilityCollector: 追踪文件数已达上限 (%d)，"
                 "启用滚动清理：按修改时间排序，优先删除最旧文件。"
                 "当前过期文件数: %d",
-                _MAX_CLEANUP_FILES, len(expired_files),
+                _MAX_CLEANUP_FILES,
+                len(expired_files),
             )
         # 按修改时间升序排序，优先删除最旧文件
         expired_files.sort(key=lambda x: x[0])

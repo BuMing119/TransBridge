@@ -43,9 +43,7 @@ class ConfirmationAuthority:
         self._issued: dict[str, ConfirmationToken] = {}
         self._lock = threading.Lock()
 
-    def _signature(
-        self, token_id: str, owner_id: str, request_hash: str, expires_at: float
-    ) -> str:
+    def _signature(self, token_id: str, owner_id: str, request_hash: str, expires_at: float) -> str:
         payload = f"{token_id}\0{owner_id}\0{request_hash}\0{expires_at!r}".encode()
         return hmac.new(self._secret, payload, hashlib.sha256).hexdigest()
 
@@ -72,9 +70,7 @@ class ConfirmationAuthority:
     ) -> AuthorizationDecision:
         if token is None:
             return AuthorizationDecision(False, "CONFIRMATION_REQUIRED", "缺少操作确认")
-        expected = self._signature(
-            token.token_id, token.owner_id, token.request_hash, token.expires_at
-        )
+        expected = self._signature(token.token_id, token.owner_id, token.request_hash, token.expires_at)
         if not hmac.compare_digest(expected, token.signature):
             return AuthorizationDecision(False, "CONFIRMATION_INVALID", "确认凭据无效")
         with self._lock:

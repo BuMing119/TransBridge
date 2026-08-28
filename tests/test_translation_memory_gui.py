@@ -58,8 +58,8 @@ def test_save_dialog_manual_mod_id(qapp):
 
 
 def test_dictionary_panel_loads_empty(qapp, tm_tmp_dir):
-    from transbridge.ui.tools.dictionary_panel import DictionaryPanel
     from transbridge.ui.context import AppContext
+    from transbridge.ui.tools.dictionary_panel import DictionaryPanel
 
     ctx = AppContext()
     # 传入隔离的临时目录，避免加载真实 data/translation_memory 数据
@@ -72,9 +72,9 @@ def test_dictionary_panel_loads_empty(qapp, tm_tmp_dir):
 
 def test_panel_default_source_path_from_esp(qapp, tm_tmp_dir):
     """有 esp_path 时，面板能从当前解析文件推断 mod 名。"""
-    from transbridge.ui.tools.dictionary_panel import DictionaryPanel
-    from transbridge.ui.context import AppContext, CollectionSlot
     from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+    from transbridge.ui.context import AppContext, CollectionSlot
+    from transbridge.ui.tools.dictionary_panel import DictionaryPanel
 
     ctx = AppContext()
     slot = CollectionSlot(

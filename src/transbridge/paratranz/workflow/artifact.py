@@ -30,7 +30,6 @@ from transbridge.paratranz.config_manager import ParatranzConfig
 
 
 class ArtifactWorkflow:
-
     def __init__(self, config: ParatranzConfig):
         self._api = ParatranzExportAPI(token=config.token, config=config)
 
@@ -88,10 +87,7 @@ class ArtifactWorkflow:
             )
         )
         if result.outcome is OperationOutcome.FAILED and result.diagnostics[0].code == "ARTIFACT_POLL_TIMEOUT":
-            raise TimeoutError(
-                f"导出超时（超过 {timeout:.0f} 秒），"
-                "请稍后到 ParaTranz 网站手动下载。"
-            )
+            raise TimeoutError(f"导出超时（超过 {timeout:.0f} 秒），请稍后到 ParaTranz 网站手动下载。")
         if result.outcome not in {OperationOutcome.COMPLETED, OperationOutcome.PARTIAL}:
             code = result.diagnostics[0].code if result.diagnostics else "ARTIFACT_PUBLISH_FAILED"
             raise RuntimeError(f"ParaTranz artifact publication failed ({code})")

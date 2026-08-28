@@ -1,16 +1,16 @@
 """Story 07: ContextBuilder 测试 — 系统提示词构建与注入验证。"""
+
 from __future__ import annotations
 
 import unittest
 from unittest.mock import MagicMock
 
-from transbridge.smart_assistant.context_builder import ContextBuilder
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.smart_assistant.context_builder import ContextBuilder
 
 
-def make_mock_ctx(collection=None, esp_path="/mods/test.esp",
-                  uploaded_docs=None, active_variant="v1"):
+def make_mock_ctx(collection=None, esp_path="/mods/test.esp", uploaded_docs=None, active_variant="v1"):
     """创建最小 Mock AppContext。"""
     ctx = MagicMock()
     ctx.collection = collection
@@ -26,16 +26,19 @@ def make_mock_ctx(collection=None, esp_path="/mods/test.esp",
 
 def make_collection(entries=None):
     col = TranslationEntryCollection()
-    for e in (entries or []):
+    for e in entries or []:
         col.add(e)
     return col
 
 
-def make_entry(eid="001", original="Hello", translation="你好",
-               stage=1, context="NPC_:FULL"):
+def make_entry(eid="001", original="Hello", translation="你好", stage=1, context="NPC_:FULL"):
     return TranslationEntry(
-        id=eid, key=eid, original=original,
-        translation=translation, stage=stage, context=context,
+        id=eid,
+        key=eid,
+        original=original,
+        translation=translation,
+        stage=stage,
+        context=context,
     )
 
 

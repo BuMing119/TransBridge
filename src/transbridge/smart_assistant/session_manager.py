@@ -4,6 +4,7 @@ ADR-008 (D13-D14): 后端纯 Python，零 PyQt6 依赖。
 全局 data/sessions/ 目录，每个会话一个 JSON 文件。
 启动时目录扫描加载元数据，消息列表懒加载。
 """
+
 from __future__ import annotations
 
 from datetime import datetime

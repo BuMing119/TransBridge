@@ -8,11 +8,12 @@ from pathlib import Path
 @dataclass
 class ParsedDocument:
     """解析后的结构化文档。"""
+
     source_path: Path
-    format: str           # "excel"/"csv"/"markdown"/"pdf"/"word"/"paratranz"/"text"/"json"
+    format: str  # "excel"/"csv"/"markdown"/"pdf"/"word"/"paratranz"/"text"/"json"
     title: str = ""
     sections: list[dict] = field(default_factory=list)
-    raw_text: str = ""    # 纯文本提取（供向量嵌入）
+    raw_text: str = ""  # 纯文本提取（供向量嵌入）
     metadata: dict = field(default_factory=dict)
 
     @property
@@ -26,6 +27,7 @@ class ParsedDocument:
 
 class FileParser(ABC):
     """文件解析器抽象基类。"""
+
     supported_extensions: list[str] = []
 
     # 显式注册表：作为 cls.__subclasses__() 的补充，避免导入顺序问题

@@ -1,17 +1,15 @@
-from typing import Optional
 from transbridge.paratranz.paratranz_client import ParatranzClient
 
 
 class ParatranzHistoryAPI(ParatranzClient):
-
     def get_project_history(
         self,
         project_id: int,
         page: int = 1,
         page_size: int = 50,
-        uid: Optional[int] = None,
-        tid: Optional[int] = None,
-        history_type: Optional[str] = None
+        uid: int | None = None,
+        tid: int | None = None,
+        history_type: str | None = None,
     ):
         """
         获取项目历史记录
@@ -38,8 +36,8 @@ class ParatranzHistoryAPI(ParatranzClient):
         project_id: int,
         page: int = 1,
         page_size: int = 50,
-        file: Optional[int] = None,
-        revision_type: Optional[str] = None,
+        file: int | None = None,
+        revision_type: str | None = None,
         *,
         cancellation=None,
     ):
@@ -69,7 +67,5 @@ class ParatranzHistoryAPI(ParatranzClient):
     def get_term_history(self, project_id: int, term_id: int, page: int = 1, page_size: int = 50):
         """获取术语历史记录"""
         return self._request(
-            "GET",
-            f"/projects/{project_id}/terms/{term_id}/history",
-            params={"page": page, "pageSize": page_size}
+            "GET", f"/projects/{project_id}/terms/{term_id}/history", params={"page": page, "pageSize": page_size}
         )

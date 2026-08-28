@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 import hashlib
 import json
@@ -424,14 +424,14 @@ def _endpoint_digest(value: str) -> str:
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _is_fresh(capability: ReasoningCapability) -> bool:
     try:
         detected_at = datetime.fromisoformat(capability.detected_at)
         if detected_at.tzinfo is None:
-            detected_at = detected_at.replace(tzinfo=timezone.utc)
+            detected_at = detected_at.replace(tzinfo=UTC)
     except (TypeError, ValueError):
         return False
     ttl = (
@@ -439,7 +439,7 @@ def _is_fresh(capability: ReasoningCapability) -> bool:
         if capability.status is ReasoningCapabilityStatus.INDETERMINATE
         else _STABLE_TTL_SECONDS
     )
-    return 0 <= (datetime.now(timezone.utc) - detected_at).total_seconds() <= ttl
+    return 0 <= (datetime.now(UTC) - detected_at).total_seconds() <= ttl
 
 
 __all__ = [

@@ -9,9 +9,18 @@ logger = logging.getLogger(__name__)
 class RetryHandler:
     MAX_RETRIES = 3
     NON_RETRYABLE = [
-        "timeout", "connection", "network", "refused",
-        "unreachable", "401", "403", "429",
-        "permission", "not found", "invalid", "unknown",
+        "timeout",
+        "connection",
+        "network",
+        "refused",
+        "unreachable",
+        "401",
+        "403",
+        "429",
+        "permission",
+        "not found",
+        "invalid",
+        "unknown",
     ]
 
     def __init__(self, llm_client=None):

@@ -8,7 +8,7 @@ import re
 import tomllib
 import warnings
 
-from .paths import get_data_dir
+from .paths import get_data_resource_dir
 
 _LOCALE_PATTERN = re.compile(r"^[A-Za-z]{2,8}(?:[-_][A-Za-z0-9]{2,8})*$")
 
@@ -32,7 +32,7 @@ class LanguageProfile:
 def get_prompts_dir() -> Path:
     """Return the shared prompt-data directory."""
 
-    return Path(get_data_dir()) / "prompts"
+    return Path(get_data_resource_dir("prompts"))
 
 
 def _validate_locale(locale: str) -> str:

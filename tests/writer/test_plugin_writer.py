@@ -1,8 +1,6 @@
-
-import pytest
-import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch
+import tempfile
+from unittest.mock import Mock
 
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
@@ -50,7 +48,7 @@ def test_apply_collection_updates():
             original="Hello",
             translation="你好",
             stage=1,
-            context="INFO:NAM1"
+            context="INFO:NAM1",
         ),
         TranslationEntry(
             id="BOOK_Intro:0003|0~DESC",
@@ -58,7 +56,7 @@ def test_apply_collection_updates():
             original="Welcome",
             translation="欢迎",
             stage=1,
-            context="DESC"
+            context="DESC",
         ),
         # 这个条目不会更新，因为没有匹配的翻译
         TranslationEntry(
@@ -67,7 +65,7 @@ def test_apply_collection_updates():
             original="Unknown",
             translation="未知",
             stage=1,
-            context="INFO:NAM1"
+            context="INFO:NAM1",
         ),
     ]
     collection = TranslationEntryCollection(entries)
@@ -96,7 +94,7 @@ def test_apply_collection_skip_no_translation():
             original="Hello",
             translation="你好",
             stage=1,
-            context="INFO:NAM1"
+            context="INFO:NAM1",
         ),
         TranslationEntry(
             id="NPC_Mary:0002|0~INFO:NAM1",
@@ -104,7 +102,7 @@ def test_apply_collection_skip_no_translation():
             original="World",
             translation="",  # 没有翻译
             stage=0,
-            context="INFO:NAM1"
+            context="INFO:NAM1",
         ),
     ]
     collection = TranslationEntryCollection(entries)
@@ -133,7 +131,7 @@ def test_apply_collection_skip_same_translation():
             original="Hello",
             translation="Hello",  # 与原始文本相同
             stage=1,
-            context="INFO:NAM1"
+            context="INFO:NAM1",
         ),
         TranslationEntry(
             id="BOOK_Intro:0003|0~DESC",
@@ -141,7 +139,7 @@ def test_apply_collection_skip_same_translation():
             original="Welcome",
             translation="欢迎",
             stage=1,
-            context="DESC"
+            context="DESC",
         ),
     ]
     collection = TranslationEntryCollection(entries)

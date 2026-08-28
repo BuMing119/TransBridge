@@ -1,9 +1,7 @@
-
-import pytest
-import tempfile
-import xml.etree.ElementTree as ET
 from pathlib import Path
+import tempfile
 from unittest.mock import Mock
+import xml.etree.ElementTree as ET
 
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
@@ -13,7 +11,7 @@ from transbridge.writer.xt_xml_writer import XTWriter
 
 def create_test_xml(content):
     """创建测试用的 XML 文件并返回路径"""
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.xml', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".xml", delete=False) as f:
         f.write(content)
         return f.name
 
@@ -80,7 +78,7 @@ def test_apply_collection_updates():
             original="Hello",
             translation="你好",
             stage=1,
-            context="INFO:NAM1"
+            context="INFO:NAM1",
         ),
         TranslationEntry(
             id="BOOK_Intro:67890|1~DESC",
@@ -88,8 +86,8 @@ def test_apply_collection_updates():
             original="Welcome",
             translation="欢迎",
             stage=0,
-            context="DESC"
-        )
+            context="DESC",
+        ),
     ]
     collection = TranslationEntryCollection(entries)
 
@@ -167,7 +165,7 @@ def test_apply_collection_no_match():
             original="Hello",
             translation="你好",
             stage=1,
-            context=None
+            context=None,
         )
     ]
     collection = TranslationEntryCollection(entries)
@@ -227,7 +225,7 @@ def test_apply_collection_partial_match():
             original="Hello",
             translation="你好",
             stage=1,
-            context="INFO:NAM1"
+            context="INFO:NAM1",
         )
         # 没有提供 BOOK_Intro 的翻译
     ]
@@ -366,7 +364,7 @@ def test_apply_collection_with_none_translation():
             original="Hello",
             translation=None,  # 翻译为 None
             stage=0,
-            context="INFO:NAM1"
+            context="INFO:NAM1",
         )
     ]
     collection = TranslationEntryCollection(entries)

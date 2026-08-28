@@ -2,6 +2,7 @@
 
 FR13 Story 01: SessionManager 后端 + ConversationManager 序列化。
 """
+
 from __future__ import annotations
 
 import json
@@ -47,6 +48,7 @@ class TestSessionManagerCRUD:
 
     def test_list_sessions_sorted_by_active(self, mgr):
         import time
+
         sid1 = mgr.create_session("旧会话")
         time.sleep(0.01)  # 确保时间戳不同
         sid2 = mgr.create_session("新会话")
@@ -57,10 +59,13 @@ class TestSessionManagerCRUD:
 
     def test_get_session_returns_full_data(self, mgr):
         sid = mgr.create_session("完整测试", "TestProject")
-        mgr.save_session(sid, [
-            {"role": "system", "content": "sys"},
-            {"role": "user", "content": "hello"},
-        ])
+        mgr.save_session(
+            sid,
+            [
+                {"role": "system", "content": "sys"},
+                {"role": "user", "content": "hello"},
+            ],
+        )
         data = mgr.get_session(sid)
         assert data is not None
         assert data["name"] == "完整测试"
@@ -108,6 +113,7 @@ class TestSessionManagerCRUD:
 
     def test_get_last_active_returns_most_recent(self, mgr):
         import time
+
         mgr.create_session("旧")
         time.sleep(0.01)
         sid2 = mgr.create_session("新")
@@ -167,8 +173,7 @@ class TestSessionManagerPersistence:
             "message_count": 0,
             "messages": [],
         }
-        (sessions_dir / "good123.json").write_text(
-            json.dumps(good_data, ensure_ascii=False), encoding="utf-8")
+        (sessions_dir / "good123.json").write_text(json.dumps(good_data, ensure_ascii=False), encoding="utf-8")
 
         mgr = SessionManager(tmp_dir)
         # 损坏文件被跳过，正常文件被加载
@@ -186,8 +191,7 @@ class TestSessionManagerPersistence:
             "message_count": 0,
             "messages": [],
         }
-        (sessions_dir / "fallback.json").write_text(
-            json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        (sessions_dir / "fallback.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
         mgr = SessionManager(tmp_dir)
         assert mgr.count() == 1
@@ -217,10 +221,12 @@ class TestConversationManagerSerialization:
     def test_from_dict_replaces_messages(self):
         conv = ConversationManager()
         conv.add_user("old")
-        conv.from_dict({"messages": [
-            {"role": "system", "content": "new sys"},
-            {"role": "user", "content": "new user"},
-        ]})
+        conv.from_dict({
+            "messages": [
+                {"role": "system", "content": "new sys"},
+                {"role": "user", "content": "new user"},
+            ]
+        })
         msgs = conv.get_messages()
         assert len(msgs) == 2
         assert msgs[0]["content"] == "new sys"
@@ -234,12 +240,14 @@ class TestConversationManagerSerialization:
 
     def test_from_dict_rebuilds_turn_starts(self):
         conv = ConversationManager()
-        conv.from_dict({"messages": [
-            {"role": "user", "content": "turn1"},
-            {"role": "assistant", "content": "resp1"},
-            {"role": "user", "content": "turn2"},
-            {"role": "assistant", "content": "resp2"},
-        ]})
+        conv.from_dict({
+            "messages": [
+                {"role": "user", "content": "turn1"},
+                {"role": "assistant", "content": "resp1"},
+                {"role": "user", "content": "turn2"},
+                {"role": "assistant", "content": "resp2"},
+            ]
+        })
         # turn_starts 应该是 [0, 2]
         assert len(conv._turn_starts) == 2
         assert conv._turn_starts[0] == 0

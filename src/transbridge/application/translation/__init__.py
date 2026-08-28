@@ -26,7 +26,6 @@ from .models import (
 )
 from .planning import ActionPlanner, ContextPlanner, build_run_spec
 from .polish_report import PolishReportEntry, PolishReportResult, build_polish_report_snapshot
-from .proofread_stage import ProofreadStage, TermResolver
 from .postprocess import (
     PostProcessCandidate,
     PostProcessRunResult,
@@ -66,6 +65,7 @@ from .postprocess_stages import (
     PostProcessLlmResponse,
     build_http_postprocess_stages,
 )
+from .proofread_stage import ProofreadStage, TermResolver
 from .workload import TranslationWorkload, TranslationWorkloadRequest
 from .workload_models import (
     CandidateSet,

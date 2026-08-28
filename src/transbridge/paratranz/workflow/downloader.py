@@ -9,8 +9,8 @@ ParaTranzDownloader：从 ParaTranz 下载译文并合并到本地 TranslationEn
   5. 返回 DownloadResult（合并数、未匹配数、跳过数、总词条数）
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
@@ -21,14 +21,14 @@ from transbridge.paratranz.config_manager import ParatranzConfig
 @dataclass
 class DownloadResult:
     """下载合并操作的结果摘要"""
-    merged: int = 0              # 成功合并到本地集合的词条数
-    skipped_no_match: int = 0    # key 在本地集合中不存在的词条数
-    skipped_low_stage: int = 0   # stage 不足或译文为空，跳过的词条数
-    total_strings: int = 0       # 从 ParaTranz 拉取的词条总数
+
+    merged: int = 0  # 成功合并到本地集合的词条数
+    skipped_no_match: int = 0  # key 在本地集合中不存在的词条数
+    skipped_low_stage: int = 0  # stage 不足或译文为空，跳过的词条数
+    total_strings: int = 0  # 从 ParaTranz 拉取的词条总数
 
 
 class ParaTranzDownloader:
-
     def __init__(self, config: ParatranzConfig):
         self._api = ParatranzFilesAPI(token=config.token, config=config)
 
@@ -68,7 +68,7 @@ class ParaTranzDownloader:
         total = len(files)
 
         for i, file_info in enumerate(files):
-            file_id   = file_info["id"]
+            file_id = file_info["id"]
             file_name = file_info.get("name", str(file_id))
 
             if progress_callback:
@@ -86,8 +86,8 @@ class ParaTranzDownloader:
             for item in strings:
                 result.total_strings += 1
 
-                key         = item.get("key", "")
-                stage       = item.get("stage", 0)  # ParaTranz API stage 值直接透传（0/1/2/3/5/9/-1）
+                key = item.get("key", "")
+                stage = item.get("stage", 0)  # ParaTranz API stage 值直接透传（0/1/2/3/5/9/-1）
                 translation = item.get("translation", "")
 
                 # 跳过未达到最低状态或译文为空的词条
@@ -126,7 +126,7 @@ class ParaTranzDownloader:
                         dsd_index=entry.dsd_index,
                         editor_id=entry.editor_id,
                     ),
-                    overwrite=True  # 确保覆盖
+                    overwrite=True,  # 确保覆盖
                 )
 
                 result.merged += 1

@@ -68,7 +68,9 @@ class EETWriter:
                 continue
 
             decision = DEFAULT_STAGE_POLICY.evaluate(
-                entry.stage, entry.translation, StageOperation.PUBLISH,
+                entry.stage,
+                entry.translation,
+                StageOperation.PUBLISH,
                 original=entry.original,
             )
             if decision.blocks_publish or decision.publish_text is None:
@@ -82,11 +84,7 @@ class EETWriter:
                 Stage.REVIEWED,
                 Stage.LOCKED,
             }
-            status = (
-                "99"
-                if decision.stage in translated_stages and bool(entry.translation)
-                else "0"
-            )
+            status = "99" if decision.stage in translated_stages and bool(entry.translation) else "0"
             trad_node = esp.find("TRADUIT")
             if trad_node is not None:
                 trad_node.text = decision.publish_text

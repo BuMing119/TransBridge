@@ -43,6 +43,7 @@ def _diagnostic_code(exc: ArchivePolicyError) -> str:
 
 # --- shared policy corpus ---------------------------------------------------
 
+
 @pytest.mark.parametrize(
     ("name", "expected_code"),
     [
@@ -86,6 +87,7 @@ def test_duplicate_normalised_path_is_rejected() -> None:
 
 # --- budget corpus ----------------------------------------------------------
 
+
 def test_oversized_single_file_is_rejected() -> None:
     policy = ArchivePolicy(ArchiveBudget(max_single_file=100))
     with pytest.raises(ArchivePolicyError) as excinfo:
@@ -128,6 +130,7 @@ def test_member_depth_budget_is_rejected() -> None:
 
 
 # --- real ZIP attack files: zero-write before extraction ---------------------
+
 
 def _write_zip(path: Path, entries: list[tuple[str, bytes]]) -> None:
     with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as archive:
@@ -176,6 +179,7 @@ def test_real_zip_evaluation_happens_before_write(tmp_path: Path) -> None:
 
 
 # --- 7z / RAR capability reporting ------------------------------------------
+
 
 def _blocked_import_ctx(monkeypatch: pytest.MonkeyPatch, blocked: str) -> None:
     import builtins

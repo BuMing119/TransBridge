@@ -22,8 +22,8 @@ from transbridge.config.paratranz_credentials import UnavailableCredentialStore
 from transbridge.paratranz.api.paratranz_export_api import ParatranzExportAPI
 from transbridge.paratranz.api.paratranz_files_api import ParatranzFilesAPI
 from transbridge.paratranz.paratranz_client import ParatranzClient, RetryPolicy
-from transbridge.paratranz.service import ParaTranzService
 from transbridge.paratranz.project_catalog import ParaTranzCatalogKey, ParaTranzProjectCatalog
+from transbridge.paratranz.service import ParaTranzService
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -301,7 +301,11 @@ def test_project_catalog_reads_all_pages_and_isolates_cache_by_configuration() -
     history = MagicMock()
     exports = MagicMock()
     first_page = [{"id": index + 1, "name": f"Project {index + 1}"} for index in range(200)]
-    projects.list_projects.side_effect = [first_page, [{"id": 201, "name": "Project 201"}], [{"id": 9, "name": "Other"}]]
+    projects.list_projects.side_effect = [
+        first_page,
+        [{"id": 201, "name": "Project 201"}],
+        [{"id": 9, "name": "Other"}],
+    ]
     service = ParaTranzService(projects, strings, history, exports)
     times = iter((10.0, 10.1, 10.2, 10.3, 10.4))
     catalog = ParaTranzProjectCatalog(ttl_seconds=30, clock=lambda: next(times))

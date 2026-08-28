@@ -51,12 +51,12 @@ def make_collection(*entries: TranslationEntry) -> TranslationEntryCollection:
 def pt_string(key: str, translation: str = "", stage: int = 1, original: str = "original") -> dict:
     """构造 ParaTranz 词条格式的 dict（模拟 get_file_translation 返回值）"""
     return {
-        "id":          999,
-        "key":         key,
-        "original":    original,
+        "id": 999,
+        "key": key,
+        "original": original,
         "translation": translation,
-        "stage":       stage,
-        "context":     "NPC_:FULL",
+        "stage": stage,
+        "context": "NPC_:FULL",
     }
 
 
@@ -64,8 +64,8 @@ def pt_string(key: str, translation: str = "", stage: int = 1, original: str = "
 # ParaTranzUploader
 # ─────────────────────────────────────────────────────────────
 
-class TestParaTranzUploader:
 
+class TestParaTranzUploader:
     def _make_uploader(self) -> tuple[ParaTranzUploader, MagicMock]:
         uploader = ParaTranzUploader(make_config())
         mock_api = MagicMock()
@@ -74,6 +74,7 @@ class TestParaTranzUploader:
 
     def _patch_export(self, file_names: list[str]):
         """返回一个 patch 上下文，export 调用时在 output_dir 创建指定文件。"""
+
         def side_effect(collection, output_dir, **kwargs):
             for name in file_names:
                 (Path(output_dir) / name).write_text("[]", encoding="utf-8")
@@ -112,13 +113,13 @@ class TestParaTranzUploader:
         with self._patch_export(["人名.json", "物品.json"]):
             result = uploader.upload_collection(make_collection(), project_id=1)
 
-        assert result.created == 1   # 物品.json
-        assert result.updated == 1   # 人名.json
+        assert result.created == 1  # 物品.json
+        assert result.updated == 1  # 人名.json
         assert result.skipped == 0
         # reupload_file 收到正确的 file_id
         mock_api.reupload_file.assert_called_once()
         args = mock_api.reupload_file.call_args
-        assert args.args[1] == 101   # file_id
+        assert args.args[1] == 101  # file_id
 
     # ── 混合情况 ────────────────────────────────────────────────
 
@@ -178,7 +179,8 @@ class TestParaTranzUploader:
 
         with self._patch_export(["人名.json"]):
             uploader.upload_collection(
-                make_collection(), project_id=1,
+                make_collection(),
+                project_id=1,
                 progress_callback=lambda cur, tot, name: calls.append((cur, tot, name)),
             )
 
@@ -199,8 +201,8 @@ class TestParaTranzUploader:
 # ParaTranzDownloader
 # ─────────────────────────────────────────────────────────────
 
-class TestParaTranzDownloader:
 
+class TestParaTranzDownloader:
     def _make_downloader(self) -> tuple[ParaTranzDownloader, MagicMock]:
         downloader = ParaTranzDownloader(make_config())
         mock_api = MagicMock()
@@ -320,7 +322,7 @@ class TestParaTranzDownloader:
 
         assert result.merged == 1
         assert result.skipped_low_stage == 1
-        assert collection.get("key:001|1~NPC_:FULL").translation == ""   # 未合并
+        assert collection.get("key:001|1~NPC_:FULL").translation == ""  # 未合并
         assert collection.get("key:002|1~NPC_:FULL").translation == "已检查"
 
     # ── 多文件累计统计 ──────────────────────────────────────────
@@ -356,7 +358,8 @@ class TestParaTranzDownloader:
         calls = []
 
         downloader.download_to_collection(
-            1, make_collection(),
+            1,
+            make_collection(),
             progress_callback=lambda cur, tot, name: calls.append((cur, tot, name)),
         )
 
@@ -376,8 +379,8 @@ class TestParaTranzDownloader:
 # ArtifactWorkflow
 # ─────────────────────────────────────────────────────────────
 
-class TestArtifactWorkflow:
 
+class TestArtifactWorkflow:
     @staticmethod
     def _write_artifact(project_id, save_path):
         with zipfile.ZipFile(save_path, "w") as zf:
@@ -404,8 +407,9 @@ class TestArtifactWorkflow:
         mock_api.download_artifacts.side_effect = self._write_artifact
 
         with patch("transbridge.paratranz.workflow.artifact.time.sleep"):
-            with patch("transbridge.paratranz.workflow.artifact.time.monotonic",
-                       side_effect=[0, 0]):  # deadline=305, while 0<305 → True → break
+            with patch(
+                "transbridge.paratranz.workflow.artifact.time.monotonic", side_effect=[0, 0]
+            ):  # deadline=305, while 0<305 → True → break
                 result = workflow.trigger_and_download(1, save_path)
 
         assert result == save_path
@@ -423,14 +427,13 @@ class TestArtifactWorkflow:
         save_path = str(tmp_path / "export.zip")
 
         mock_api.get_artifacts.side_effect = [
-            None,                                       # 首次：无历史记录
+            None,  # 首次：无历史记录
             {"createdAt": "2025-01-01T01:00:00.000Z"},  # 轮询：新记录
         ]
         mock_api.download_artifacts.side_effect = self._write_artifact
 
         with patch("transbridge.paratranz.workflow.artifact.time.sleep"):
-            with patch("transbridge.paratranz.workflow.artifact.time.monotonic",
-                       side_effect=[0, 0]):
+            with patch("transbridge.paratranz.workflow.artifact.time.monotonic", side_effect=[0, 0]):
                 result = workflow.trigger_and_download(1, save_path)
 
         mock_api.download_artifacts.assert_called_once()
@@ -449,10 +452,10 @@ class TestArtifactWorkflow:
         messages = []
 
         with patch("transbridge.paratranz.workflow.artifact.time.sleep"):
-            with patch("transbridge.paratranz.workflow.artifact.time.monotonic",
-                       side_effect=[0, 0]):
+            with patch("transbridge.paratranz.workflow.artifact.time.monotonic", side_effect=[0, 0]):
                 workflow.trigger_and_download(
-                    1, str(tmp_path / "export.zip"),
+                    1,
+                    str(tmp_path / "export.zip"),
                     progress_callback=messages.append,
                 )
 
@@ -469,8 +472,7 @@ class TestArtifactWorkflow:
 
         with patch("transbridge.paratranz.workflow.artifact.time.sleep"):
             # monotonic: 第1次(deadline计算)=0, 第2次(while判断)=999 → 超出 timeout=5
-            with patch("transbridge.paratranz.workflow.artifact.time.monotonic",
-                       side_effect=[0, 999]):
+            with patch("transbridge.paratranz.workflow.artifact.time.monotonic", side_effect=[0, 999]):
                 with pytest.raises(TimeoutError, match="导出超时"):
                     workflow.trigger_and_download(
                         1,
@@ -489,15 +491,14 @@ class TestArtifactWorkflow:
         save_path = str(tmp_path / "export.zip")
 
         mock_api.get_artifacts.side_effect = [
-            {"createdAt": "2025-01-01T00:00:00.000Z"},   # 初始
-            RuntimeError("timeout"),                       # 第1次轮询失败
-            {"createdAt": "2025-01-01T01:00:00.000Z"},    # 第2次轮询成功
+            {"createdAt": "2025-01-01T00:00:00.000Z"},  # 初始
+            RuntimeError("timeout"),  # 第1次轮询失败
+            {"createdAt": "2025-01-01T01:00:00.000Z"},  # 第2次轮询成功
         ]
         mock_api.download_artifacts.side_effect = self._write_artifact
 
         with patch("transbridge.paratranz.workflow.artifact.time.sleep"):
-            with patch("transbridge.paratranz.workflow.artifact.time.monotonic",
-                       side_effect=[0, 0, 0]):
+            with patch("transbridge.paratranz.workflow.artifact.time.monotonic", side_effect=[0, 0, 0]):
                 result = workflow.trigger_and_download(1, save_path, poll_interval=0.001)
 
         mock_api.download_artifacts.assert_called_once()

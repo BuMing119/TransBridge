@@ -80,8 +80,7 @@ class TranslationEntryCollection:
                 existing = projected.get(storage_key)
                 if existing is not None:
                     warnings.warn(
-                        "TranslationEntryCollection constructor received a duplicate EntryKey; "
-                        "the last value wins",
+                        "TranslationEntryCollection constructor received a duplicate EntryKey; the last value wins",
                         DeprecationWarning,
                         stacklevel=3,
                     )
@@ -359,10 +358,7 @@ class TranslationEntryCollection:
     def legacy_mapping_report(self) -> LegacyMappingReport:
         """Return a read-only V1 id/key to EntryKey mapping and all ambiguity."""
 
-        mappings = tuple(
-            LegacyEntryMapping(entry.id, entry.key, entry.identity)
-            for entry in self._entries.values()
-        )
+        mappings = tuple(LegacyEntryMapping(entry.id, entry.key, entry.identity) for entry in self._entries.values())
         by_local_key: dict[str, list[EntryKey]] = defaultdict(list)
         for mapping in mappings:
             by_local_key[mapping.legacy_key].append(mapping.entry_key)
@@ -372,9 +368,7 @@ class TranslationEntryCollection:
             (
                 reference,
                 tuple(
-                    self._entries[storage_key].identity
-                    for storage_key in storage_keys
-                    if storage_key in self._entries
+                    self._entries[storage_key].identity for storage_key in storage_keys if storage_key in self._entries
                 ),
             )
             for reference, storage_keys in conflicts
@@ -410,10 +404,10 @@ class TranslationEntryCollection:
 
     @classmethod
     def from_eet_xml(
-            cls,
-            path: str | Path,
-            *,
-            overwrite: bool = True,
+        cls,
+        path: str | Path,
+        *,
+        overwrite: bool = True,
     ) -> TranslationEntryCollection:
         """
         从 EET XML 文件一次性导入。
@@ -440,8 +434,8 @@ class TranslationEntryCollection:
         return rest.partition("|")[0]
 
     def update_from_eet_xml(
-            self,
-            path: str | Path,
+        self,
+        path: str | Path,
     ) -> int:
         """
         从 EET XML 文件中更新已存在的翻译项。
@@ -513,11 +507,11 @@ class TranslationEntryCollection:
 
     @classmethod
     def from_plugin(
-            cls,
-            path: str | Path,
-            *,
-            skip_empty: bool = True,
-            overwrite: bool = True,
+        cls,
+        path: str | Path,
+        *,
+        skip_empty: bool = True,
+        overwrite: bool = True,
     ) -> TranslationEntryCollection:
         """
         从 Plugin 文件一次性导入。
@@ -534,8 +528,8 @@ class TranslationEntryCollection:
 
     @classmethod
     def from_entries(
-            cls,
-            entries: Iterable[TranslationEntry],
+        cls,
+        entries: Iterable[TranslationEntry],
     ) -> TranslationEntryCollection:
         """
         从已有 TranslationEntry 集合构建（通用入口）。
@@ -543,8 +537,8 @@ class TranslationEntryCollection:
         return TranslationEntryCollection(entries)
 
     def apply_xt_entries(
-            self,
-            xt_entries: Iterable[XT_Entry],
+        self,
+        xt_entries: Iterable[XT_Entry],
     ) -> int:
         """
         将 XT_Entry 批量应用到已有的 TranslationEntry 上。
@@ -611,8 +605,8 @@ class TranslationEntryCollection:
         return updated_count
 
     def apply_sst_entries(
-            self,
-            sst_entries: Iterable[SST_Entry],
+        self,
+        sst_entries: Iterable[SST_Entry],
     ) -> dict:
         """将 SST_Entry 批量应用到已有的 TranslationEntry 上。
 
@@ -653,10 +647,10 @@ class TranslationEntryCollection:
         return {"matched": matched, "updated": updated, "skipped": skipped}
 
     def update_from_translated_plugin(
-            self,
-            path: str | Path,
-            *,
-            overwrite: bool = False,
+        self,
+        path: str | Path,
+        *,
+        overwrite: bool = False,
     ) -> int:
         """
         从已翻译的 ESP/ESM 中提取译文并更新集合。
@@ -720,10 +714,10 @@ class TranslationEntryCollection:
         return updated_count
 
     def update_from_strings_lookup(
-            self,
-            strings_lookup: PluginStringsLookup,
-            *,
-            overwrite: bool = False,
+        self,
+        strings_lookup: PluginStringsLookup,
+        *,
+        overwrite: bool = False,
     ) -> int:
         """
         从 PluginStringsLookup 批量更新译文（用于导入已翻译的 strings 文件）。

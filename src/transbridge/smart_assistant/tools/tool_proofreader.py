@@ -213,12 +213,15 @@ def _register_proofreader_tools() -> None:
                 "name": "run_postprocess",
                 "display_name": "校对 / 严格后处理",
                 "description": (
-                    "Run proofreading with the built-in polish preset by default. profile may be translate/polish/mixed, custom "
-                    "(the selected named configuration), or a named configuration name/UUID; strategy is proofread or strict. "
-                    "entry_ids takes priority; otherwise scope is configured/set_scope/all/passed/has_issues. intensity is "
-                    "configured/light/medium/heavy. In strict mode, phases may select consistency/format/quality_gate/refinement/"
+                    "Run proofreading with the built-in polish preset by default. profile may be "
+                    "translate/polish/mixed, custom (the selected named configuration), or a named configuration "
+                    "name/UUID; strategy is proofread or strict. entry_ids takes priority; otherwise scope is "
+                    "configured/set_scope/all/passed/has_issues. intensity is "
+                    "configured/light/medium/heavy. In strict mode, "
+                    "phases may select consistency/format/quality_gate/refinement/"
                     "polish/arbitration; legacy calls supplying only phases automatically use strict. max_concurrent, "
-                    "max_tokens_per_batch, max_output_tokens, and max_terms_per_batch may be overridden; max_workers remains a "
+                    "max_tokens_per_batch, max_output_tokens, and max_terms_per_batch may be overridden; max_workers "
+                    "remains a "
                     "legacy concurrency alias. Runs in the background and requires user confirmation."
                 ),
                 "execute": _tool_run_postprocess,
@@ -226,9 +229,21 @@ def _register_proofreader_tools() -> None:
                 "is_long_running": True,
                 "require_confirmation": True,
                 "parameters": {
-                    "profile": {"type": "str", "required": False, "description": "Preset or named workflow; default polish"},
-                    "strategy": {"type": "str", "required": False, "description": "proofread or strict; default proofread"},
-                    "phases": {"type": "list", "required": False, "description": "Strict-mode phases; supplying them selects strict automatically"},
+                    "profile": {
+                        "type": "str",
+                        "required": False,
+                        "description": "Preset or named workflow; default polish",
+                    },
+                    "strategy": {
+                        "type": "str",
+                        "required": False,
+                        "description": "proofread or strict; default proofread",
+                    },
+                    "phases": {
+                        "type": "list",
+                        "required": False,
+                        "description": "Strict-mode phases; supplying them selects strict automatically",
+                    },
                     "entry_ids": {"type": "list", "required": False, "description": "Entry keys to process first"},
                     "scope": {
                         "type": "str",
@@ -236,7 +251,11 @@ def _register_proofreader_tools() -> None:
                         "description": "configured/set_scope/all/passed/has_issues",
                     },
                     "intensity": {"type": "str", "required": False, "description": "configured/light/medium/heavy"},
-                    "max_concurrent": {"type": "int", "required": False, "description": "Shared maximum in-flight requests (1-128)"},
+                    "max_concurrent": {
+                        "type": "int",
+                        "required": False,
+                        "description": "Shared maximum in-flight requests (1-128)",
+                    },
                     "max_tokens_per_batch": {
                         "type": "int",
                         "required": False,
@@ -247,7 +266,11 @@ def _register_proofreader_tools() -> None:
                         "required": False,
                         "description": "Maximum output tokens; 0 omits the value when supported by the provider",
                     },
-                    "max_terms_per_batch": {"type": "int", "required": False, "description": "Maximum terminology entries injected per item"},
+                    "max_terms_per_batch": {
+                        "type": "int",
+                        "required": False,
+                        "description": "Maximum terminology entries injected per item",
+                    },
                     "max_workers": {"type": "int", "required": False, "description": "Legacy concurrency alias (1-8)"},
                 },
             },
@@ -265,7 +288,9 @@ def _register_proofreader_tools() -> None:
                 "description": "List historical post-processing Excel reports; optional limit, default 50.",
                 "execute": _tool_list_quality_reports,
                 "permission": "read",
-                "parameters": {"limit": {"type": "int", "required": False, "description": "Maximum number of reports to return"}},
+                "parameters": {
+                    "limit": {"type": "int", "required": False, "description": "Maximum number of reports to return"}
+                },
             },
         ],
     )

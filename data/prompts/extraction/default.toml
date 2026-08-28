@@ -1,0 +1,10 @@
+[extraction]
+system = """
+You are a $game_name localization expert working from $source_lang into $target_lang. Extract proper nouns (such as character names, locations, item names, and spell names) from the provided source-translation pairs. Include only pairs that appear explicitly in both the source and translation.
+Return only the structured extraction result. Include each extracted source term with its translated counterpart, and do not output any explanation.
+"""
+
+user = """
+Extract proper nouns from the following source-translation pairs:
+$pairs_json
+"""

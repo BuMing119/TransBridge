@@ -1,4 +1,5 @@
 """Story 07: ExecutionEngine 测试 — Graph 执行 / 取消 / 重试 / 条件求值。"""
+
 from __future__ import annotations
 
 import sys
@@ -7,6 +8,9 @@ import time
 import unittest
 
 from PyQt6.QtWidgets import QApplication
+
+from transbridge.smart_assistant.graph_types import ActionNode, EdgeSpec, GraphSpec
+from transbridge.smart_assistant.guardrails.base import GuardResult
 
 _app = QApplication.instance()
 if _app is None:
@@ -38,6 +42,7 @@ class FakeCtx:
 
 class NoopGuard:
     """护栏中间件：放行所有步骤，用于隔离权限检查、专注测试图执行逻辑。"""
+
     def before_execute(self, step, ctx):
         return GuardResult(allowed=True)
 
@@ -45,15 +50,12 @@ class NoopGuard:
         return GuardResult(allowed=True)
 
 
-from transbridge.smart_assistant.graph_types import ActionNode, EdgeSpec, GraphSpec
-from transbridge.smart_assistant.guardrails.base import GuardResult
-
-
 class TestExecutionEngine(unittest.TestCase):
     """ExecutionEngine 核心功能测试。"""
 
     def setUp(self):
         from transbridge.smart_assistant.execution_engine import ExecutionEngine
+
         self.registry = FakeToolRegistry()
         self.ctx = FakeCtx()
         self.engine = ExecutionEngine(self.registry, self.ctx, middlewares=[NoopGuard()])
@@ -104,7 +106,7 @@ class TestExecutionEngine(unittest.TestCase):
 
     def test_cancel_stops_execution(self):
         nodes = [ActionNode(node_id=f"node_{i}", node_type="action", tool=f"tool_{i}") for i in range(10)]
-        edges = [EdgeSpec(from_node=f"node_{i}", to_node=f"node_{i+1}") for i in range(9)]
+        edges = [EdgeSpec(from_node=f"node_{i}", to_node=f"node_{i + 1}") for i in range(9)]
         graph = GraphSpec(graph_id="cancel_test", nodes=nodes, edges=edges, entry_node="node_0")
 
         def _cancel_soon():
@@ -146,11 +148,13 @@ class TestExecutionEngine(unittest.TestCase):
 
     def test_eval_condition_true(self):
         from transbridge.smart_assistant.execution_engine import StepResult
+
         r = StepResult(step_id=1, tool="test", success=True, message="ok")
         self.assertTrue(self.engine._condition_evaluator.eval_condition("result.success == True", {"node1": r}))
 
     def test_eval_condition_false(self):
         from transbridge.smart_assistant.execution_engine import StepResult
+
         r = StepResult(step_id=1, tool="test", success=False, message="failed")
         self.assertFalse(self.engine._condition_evaluator.eval_condition("result.success == True", {"node1": r}))
 
@@ -162,8 +166,9 @@ class TestExecutionEngine(unittest.TestCase):
     def test_guards_provided_from_init(self):
         """B3: 传入的 middlewares 应被用作 _guards。"""
         from unittest.mock import MagicMock
+
         mw = MagicMock()
-        mw.before_execute.return_value = type('Gr', (), {'allowed': True, 'reason': '', 'modified_args': None})()
+        mw.before_execute.return_value = type("Gr", (), {"allowed": True, "reason": "", "modified_args": None})()
         engine2 = type(self.engine)(self.registry, self.ctx, middlewares=[mw])
         self.assertEqual(len(engine2._guards), 1)
         engine2.cancel()

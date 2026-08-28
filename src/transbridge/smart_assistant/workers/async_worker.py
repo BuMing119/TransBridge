@@ -3,11 +3,12 @@
 Phase 2: 替代 QThread 继承。通过回调属性实现信号功能，
 调用方通过 QTimer.singleShot 将回调桥接到主线程以保证 Qt GUI 安全。
 """
+
 from __future__ import annotations
 
-import threading
 from abc import ABC, abstractmethod
-from typing import Callable
+from collections.abc import Callable
+import threading
 
 
 class AsyncWorker(threading.Thread, ABC):

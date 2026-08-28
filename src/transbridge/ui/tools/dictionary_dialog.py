@@ -81,9 +81,7 @@ class SaveToDictionaryDialog(QDialog):
         layout.addLayout(tag_layout)
 
         # 按钮
-        self._buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
+        self._buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self._buttons.accepted.connect(self._validate_and_accept)
         self._buttons.rejected.connect(self.reject)
         layout.addWidget(self._buttons)

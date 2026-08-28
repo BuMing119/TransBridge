@@ -21,7 +21,7 @@ class ActionNode(NodeSpec):
 
 @dataclass
 class ConditionNode(NodeSpec):
-    condition: str = ""       # "result.data['score'] < 0.7"
+    condition: str = ""  # "result.data['score'] < 0.7"
     true_node: str = ""
     false_node: str = ""
 
@@ -74,7 +74,7 @@ class Checkpoint:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "Checkpoint":
+    def from_dict(cls, d: dict[str, Any]) -> Checkpoint:
         return cls(
             graph_id=d.get("graph_id", ""),
             current_node_id=d.get("current_node_id", ""),

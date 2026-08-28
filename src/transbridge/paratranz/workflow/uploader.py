@@ -14,12 +14,12 @@ translation_mode 取值：
   "both"        — 更新原文并安全导入译文；新建文件创建后再导入译文
 """
 
-import json
-import tempfile
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
+import json
 from pathlib import Path
-from typing import Callable
+import tempfile
 
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.converter.translation_entry_collection_export import export_to_categorized_json_files
@@ -30,31 +30,33 @@ from transbridge.paratranz.config_manager import ParatranzConfig
 @dataclass
 class ConflictInfo:
     """单个文件名冲突的信息"""
-    local_name: str           # 本地文件名（如 "人名.json"）
-    candidates: list[dict]    # ParaTranz 上所有同名文件，每个包含 id, name, folder 字段
+
+    local_name: str  # 本地文件名（如 "人名.json"）
+    candidates: list[dict]  # ParaTranz 上所有同名文件，每个包含 id, name, folder 字段
 
 
 @dataclass
 class FileMaps:
     """文件列表的三种映射（避免重复 API 调用）"""
-    existing: dict[str, int]              # name → file_id
-    path_based: dict[str, int]            # full_path → file_id
+
+    existing: dict[str, int]  # name → file_id
+    path_based: dict[str, int]  # full_path → file_id
     name_to_files: dict[str, list[dict]]  # name → [file_info_list]
 
 
 @dataclass
 class UploadResult:
     """上传操作的结果摘要"""
-    created: int = 0              # 新建文件数
-    updated: int = 0              # 更新原文文件数
-    skipped: int = 0              # 因错误跳过的文件数
+
+    created: int = 0  # 新建文件数
+    updated: int = 0  # 更新原文文件数
+    skipped: int = 0  # 因错误跳过的文件数
     translation_updated: int = 0  # 成功导入译文的文件数
     files: list[str] = field(default_factory=list)  # 成功处理的文件名列表
     name_conflicts: dict[str, list[dict]] = field(default_factory=dict)  # 同名文件冲突信息
 
 
 class ParaTranzUploader:
-
     def __init__(self, config: ParatranzConfig):
         self._api = ParatranzFilesAPI(token=config.token, config=config)
 
@@ -66,6 +68,7 @@ class ParaTranzUploader:
           - name_to_files:     文件名 → [文件信息列表]（用于冲突检测）
         """
         import logging
+
         logger = logging.getLogger(__name__)
 
         file_list = self._api.list_files(project_id) or []
@@ -197,7 +200,8 @@ class ParaTranzUploader:
 
             # 检测同名文件冲突（同名但不同路径）
             conflicts: dict[str, list[dict]] = {
-                name: files for name, files in name_to_files.items()
+                name: files
+                for name, files in name_to_files.items()
                 if len(files) > 1 or (len(files) == 1 and bool(files[0].get("folder", "")))
             }
             if conflicts:
@@ -228,7 +232,9 @@ class ParaTranzUploader:
                             result.updated += 1
                         if do_trans:
                             try:
-                                self._api.update_file_translation(project_id, file_id, str(json_path), force=force_trans)
+                                self._api.update_file_translation(
+                                    project_id, file_id, str(json_path), force=force_trans
+                                )
                                 result.translation_updated += 1
                             except RuntimeError:
                                 if not do_reupload:
@@ -244,7 +250,9 @@ class ParaTranzUploader:
                                 new_file_id = resp.get("id")
                                 if new_file_id:
                                     try:
-                                        self._api.update_file_translation(project_id, new_file_id, str(json_path), force=force_trans)
+                                        self._api.update_file_translation(
+                                            project_id, new_file_id, str(json_path), force=force_trans
+                                        )
                                         result.translation_updated += 1
                                     except RuntimeError:
                                         pass
@@ -293,7 +301,8 @@ class ParaTranzUploader:
 
             # 检测同名文件冲突
             conflicts: dict[str, list[dict]] = {
-                name: files for name, files in name_to_files.items()
+                name: files
+                for name, files in name_to_files.items()
                 if len(files) > 1 or (len(files) == 1 and bool(files[0].get("folder", "")))
             }
             if conflicts:
@@ -307,7 +316,14 @@ class ParaTranzUploader:
                 progress_callback(0, 1, f"正在上传 {filename}…")
 
             self._upload_entries_recursive(
-                entries, stem, ext, project_id, existing, result, tmp_dir, counter,
+                entries,
+                stem,
+                ext,
+                project_id,
+                existing,
+                result,
+                tmp_dir,
+                counter,
                 translation_mode=translation_mode,
             )
 
@@ -346,9 +362,7 @@ class ParaTranzUploader:
         else:
             name = f"{stem}{ext}"
         json_path = Path(tmp_dir) / name
-        json_path.write_text(
-            json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        json_path.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
 
         try:
             if name in existing:
@@ -377,7 +391,9 @@ class ParaTranzUploader:
                         new_file_id = resp.get("id")
                         if new_file_id:
                             try:
-                                self._api.update_file_translation(project_id, new_file_id, str(json_path), force=force_trans)
+                                self._api.update_file_translation(
+                                    project_id, new_file_id, str(json_path), force=force_trans
+                                )
                                 result.translation_updated += 1
                             except RuntimeError:
                                 pass
@@ -391,17 +407,29 @@ class ParaTranzUploader:
                 mid = len(entries) // 2
                 # 分割后递归上传，启用序号后缀
                 self._upload_entries_recursive(
-                    entries[:mid], stem, ext, project_id, existing, result, tmp_dir, counter,
+                    entries[:mid],
+                    stem,
+                    ext,
+                    project_id,
+                    existing,
+                    result,
+                    tmp_dir,
+                    counter,
                     translation_mode=translation_mode,
                     is_split=True,
                 )
                 self._upload_entries_recursive(
-                    entries[mid:], stem, ext, project_id, existing, result, tmp_dir, counter,
+                    entries[mid:],
+                    stem,
+                    ext,
+                    project_id,
+                    existing,
+                    result,
+                    tmp_dir,
+                    counter,
                     translation_mode=translation_mode,
                     is_split=True,
                 )
             else:
                 result.skipped += 1
-                raise RuntimeError(
-                    f"上传 {name} 失败（共 {len(entries)} 条词条）：{err}"
-                ) from e
+                raise RuntimeError(f"上传 {name} 失败（共 {len(entries)} 条词条）：{err}") from e

@@ -7,6 +7,7 @@
 
 import logging
 from pathlib import Path
+
 from .base import FileParser, ParsedDocument
 
 logger = logging.getLogger(__name__)
@@ -34,17 +35,19 @@ class BinaryFileParser(FileParser):
                 for i, page in enumerate(pdf.pages):
                     text = page.extract_text()
                     if text:
-                        sections.append({"heading": f"Page {i+1}", "content": text})
+                        sections.append({"heading": f"Page {i + 1}", "content": text})
                         raw_parts.append(text)
         except Exception as e:
             logger.error("PDF 解析失败 (%s): %s", path, e, exc_info=True)
             raise RuntimeError(
-                f"PDF 文件解析失败: {path.name}。文件可能已损坏或使用了不支持的编码格式。"
-                f" 底层错误: {e}"
+                f"PDF 文件解析失败: {path.name}。文件可能已损坏或使用了不支持的编码格式。 底层错误: {e}"
             ) from e
         return ParsedDocument(
-            source_path=path, format="pdf", title=path.stem,
-            sections=sections, raw_text="\n".join(raw_parts),
+            source_path=path,
+            format="pdf",
+            title=path.stem,
+            sections=sections,
+            raw_text="\n".join(raw_parts),
             metadata={"pages": len(sections)},
         )
 
@@ -63,11 +66,12 @@ class BinaryFileParser(FileParser):
         except Exception as e:
             logger.error("DOCX 解析失败 (%s): %s", path, e, exc_info=True)
             raise RuntimeError(
-                f"Word 文档解析失败: {path.name}。文件可能已损坏或使用了不支持的格式。"
-                f" 底层错误: {e}"
+                f"Word 文档解析失败: {path.name}。文件可能已损坏或使用了不支持的格式。 底层错误: {e}"
             ) from e
         return ParsedDocument(
-            source_path=path, format="word", title=path.stem,
+            source_path=path,
+            format="word",
+            title=path.stem,
             sections=[{"heading": path.stem, "content": raw_text}],
             raw_text=raw_text,
         )

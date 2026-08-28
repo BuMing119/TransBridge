@@ -10,6 +10,7 @@ Usage:
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -17,7 +18,6 @@ import pytest
 
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
-
 
 # ── Plain Functions (usable from both pytest fixtures and unittest imports) ─
 
@@ -30,8 +30,12 @@ def make_entry(
     context: str = "NPC_:FULL",
 ) -> TranslationEntry:
     return TranslationEntry(
-        id=eid, key=eid, original=original, translation=translation,
-        stage=stage, context=context,
+        id=eid,
+        key=eid,
+        original=original,
+        translation=translation,
+        stage=stage,
+        context=context,
     )
 
 
@@ -42,22 +46,27 @@ def make_test_collection(n: int = 10) -> TranslationEntryCollection:
     for i in range(n):
         s = stage_map[i % 5]
         ctx = "NPC_:FULL" if i % 3 != 0 else "INFO:NAM1"
-        entries.append(make_entry(
-            f"entry_{i:03d}",
-            original=f"Original text {i}",
-            translation=f"Translation text {i}" if s != 0 else "",
-            stage=s,
-            context=ctx,
-        ))
+        entries.append(
+            make_entry(
+                f"entry_{i:03d}",
+                original=f"Original text {i}",
+                translation=f"Translation text {i}" if s != 0 else "",
+                stage=s,
+                context=ctx,
+            )
+        )
     return TranslationEntryCollection(entries)
 
 
 class MockSignal:
     """Minimal Qt signal mock."""
+
     def __init__(self):
         self.calls: list = []
+
     def emit(self, *args):
         self.calls.append(args)
+
     def connect(self, _fn):
         pass
 
@@ -71,13 +80,19 @@ class MockAppContext:
 
     def __init__(self, collection=None):
         self._filter_state = {
-            "stage": [], "category": [], "label": [],
-            "search_query": "", "search_field": "text",
+            "stage": [],
+            "category": [],
+            "label": [],
+            "search_query": "",
+            "search_field": "text",
         }
         self._label_library: dict[str, dict] = {}
         self._entry_labels: dict[str, set] = {}
         self._translation_scope: dict = {
-            "stages": [], "labels": [], "categories": [], "action": "include",
+            "stages": [],
+            "labels": [],
+            "categories": [],
+            "action": "include",
         }
         self._selected_ids: set = set()
 
@@ -88,6 +103,7 @@ class MockAppContext:
 
         if collection is not None:
             from transbridge.ui.context import CollectionSlot
+
             slot = CollectionSlot(label="test", collection=collection)
             self._slots = {"test_key": slot}
             self._active_key = "test_key"
@@ -187,8 +203,10 @@ class MockAppContext:
         if action not in ("include", "exclude", "only"):
             raise ValueError(f"invalid action: {action}")
         self._translation_scope = {
-            "stages": list(stages), "labels": list(v.get("labels", [])),
-            "categories": list(v.get("categories", [])), "action": action,
+            "stages": list(stages),
+            "labels": list(v.get("labels", [])),
+            "categories": list(v.get("categories", [])),
+            "action": action,
         }
 
     # ── selection ──
@@ -234,6 +252,7 @@ class MockAppContext:
 
 class MockToolSpec:
     """Minimal tool spec for guardrail/execute tests."""
+
     def __init__(self, name, permission, execute):
         self.name = name
         self.permission = permission
@@ -298,6 +317,7 @@ def make_llm_config(**overrides):
     cfg.save_to_file = MagicMock()
     cfg.load_from_file = MagicMock(return_value=cfg)
     from transbridge.config.llm import LLMConfig
+
     cfg.get_ai_translator_dir = LLMConfig.get_ai_translator_dir
     return cfg
 
@@ -336,16 +356,15 @@ def mock_app_ctx_with_collection():
 
 
 @pytest.fixture
-def tm_tmp_dir() -> "Path":
+def tm_tmp_dir() -> Path:
     """workspace 内临时目录（绕开 sandbox 对外部 %TEMP% 的写限制）。
 
     pytest 默认 tmp_path 落在 %TEMP%（workspace 外，sandbox 拒绝写入），
     改用 tests/ 下的固定临时目录，用后清理。
     """
     import shutil
-    from pathlib import Path as _Path
 
-    base = _Path(__file__).parent / "_tm_tmp"
+    base = Path(__file__).parent / "_tm_tmp"
     base.mkdir(parents=True, exist_ok=True)
     d = base / f"case_{id(object())}"
     d.mkdir(parents=True, exist_ok=True)

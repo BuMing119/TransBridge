@@ -1,4 +1,3 @@
-
 import json
 from unittest.mock import MagicMock, mock_open, patch
 
@@ -42,10 +41,7 @@ class TestTranslationEntryCollection:
             "_build_external_index",
             staticmethod(counted),
         )
-        entries = [
-            TranslationEntry(str(index), f"key-{index}", "source", "", 0, None)
-            for index in range(500)
-        ]
+        entries = [TranslationEntry(str(index), f"key-{index}", "source", "", 0, None) for index in range(500)]
 
         collection = TranslationEntryCollection(entries)
 
@@ -198,8 +194,8 @@ class TestTranslationEntryCollection:
         assert data[0]["schema_version"] == 2
         assert data[0]["id"] == "id1"
 
-    @patch('builtins.open', new_callable=mock_open)
-    @patch('pathlib.Path.write_text')
+    @patch("builtins.open", new_callable=mock_open)
+    @patch("pathlib.Path.write_text")
     def test_to_json_file(self, mock_write_text, mock_file):
         """测试保存为JSON文件"""
         collection = TranslationEntryCollection([
@@ -209,9 +205,10 @@ class TestTranslationEntryCollection:
         collection.to_json_file("test.json")
         mock_write_text.assert_called_once()
 
-    @patch.object(TranslationEntry, 'try_update_from_xt')
+    @patch.object(TranslationEntry, "try_update_from_xt")
     def test_apply_xt_entries(self, mock_try_update):
         """测试应用XT条目"""
+
         # 设置mock返回值
         def side_effect(entry, xt):
             if xt.edid == "edid1" and entry.id == "edid1:form1":
@@ -256,7 +253,7 @@ class TestTranslationEntryCollection:
         assert collection.get("edid3:form3").translation == "Translated text 3"
         assert collection.get("edid3:form3").stage == 1
 
-    @patch('transbridge.converter.translation_entry_collection.EET_XmlParser')
+    @patch("transbridge.converter.translation_entry_collection.EET_XmlParser")
     def test_from_eet_xml(self, mock_parser_class):
         """测试从EET XML文件创建集合"""
         # 创建模拟的EET条目
@@ -302,7 +299,7 @@ class TestTranslationEntryCollection:
         # 确保解析器被正确调用
         mock_parser_class.from_file.assert_called_once_with("test.xml")
 
-    @patch('transbridge.converter.translation_entry_collection.PluginParser')
+    @patch("transbridge.converter.translation_entry_collection.PluginParser")
     def test_from_plugin(self, mock_parser_class):
         """测试从Plugin文件创建集合"""
         # 创建模拟的TranslationEntry条目

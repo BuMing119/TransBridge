@@ -16,8 +16,9 @@ so all three files can safely be merged into a single lookup dict.
 """
 
 import logging
-import struct
 from pathlib import Path
+import struct
+
 from sse_bsa import bsa_archive
 
 log = logging.getLogger("SkyrimStringsFile")
@@ -27,8 +28,19 @@ log = logging.getLogger("SkyrimStringsFile")
 # In practice IDs don't overlap, so this is just documentation.
 _STRINGS_SUBTYPES: frozenset[str] = frozenset({"FULL", "SHRT"})
 _DLSTRINGS_SUBTYPES: frozenset[str] = frozenset({
-    "DESC", "CNAM", "NNAM", "DNAM", "RNAM", "ONAM", "TNAM",
-    "INAM", "ANAM", "BNAM", "ENAM", "GNAM", "ZNAM",
+    "DESC",
+    "CNAM",
+    "NNAM",
+    "DNAM",
+    "RNAM",
+    "ONAM",
+    "TNAM",
+    "INAM",
+    "ANAM",
+    "BNAM",
+    "ENAM",
+    "GNAM",
+    "ZNAM",
 })
 _ILSTRINGS_SUBTYPES: frozenset[str] = frozenset({"NAM1", "NAM2", "NAM3", "NAM4"})
 
@@ -135,9 +147,7 @@ class SkyrimStringsFile:
         data_start = 8 + count * 8
 
         if data_start > len(data):
-            raise ValueError(
-                f"Directory claims {count} entries but data is only {len(data)} bytes ({source})"
-            )
+            raise ValueError(f"Directory claims {count} entries but data is only {len(data)} bytes ({source})")
 
         length_prefixed = ext.lower() in {".dlstrings", ".ilstrings"}
         strings = _read_strings(data, count, data_start, length_prefixed)
@@ -269,7 +279,11 @@ class PluginStringsLookup:
     # Base-game plugins that store their strings in Skyrim - Interface.bsa
     # Note: _ResourcePack.esl (AE) stores strings in its own _ResourcePack.bsa
     _BASE_GAME_PLUGINS: frozenset[str] = frozenset({
-        "skyrim", "update", "hearthfires", "dragonborn", "dawnguard",
+        "skyrim",
+        "update",
+        "hearthfires",
+        "dragonborn",
+        "dawnguard",
     })
 
     @classmethod
@@ -306,8 +320,7 @@ class PluginStringsLookup:
                 continue
 
             matches = [
-                f for f in archive.glob(glob_pattern)
-                if f.lower().endswith((".strings", ".dlstrings", ".ilstrings"))
+                f for f in archive.glob(glob_pattern) if f.lower().endswith((".strings", ".dlstrings", ".ilstrings"))
             ]
             if not matches:
                 log.debug(f"No matching strings in {bsa_path.name} for pattern {glob_pattern!r}")

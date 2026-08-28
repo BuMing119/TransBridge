@@ -36,12 +36,10 @@ from transbridge.smart_assistant.tools import ExecutionContext, ToolResult, exec
 
 
 def test_legacy_parameters_become_canonical_json_schema() -> None:
-    schema = canonicalize_parameters(
-        {
-            "entry_id": {"type": "str", "required": True, "description": "entry"},
-            "limit": {"type": "int", "required": False},
-        }
-    )
+    schema = canonicalize_parameters({
+        "entry_id": {"type": "str", "required": True, "description": "entry"},
+        "limit": {"type": "int", "required": False},
+    })
 
     assert schema["type"] == "object"
     assert schema["properties"]["entry_id"]["type"] == "string"
@@ -50,12 +48,10 @@ def test_legacy_parameters_become_canonical_json_schema() -> None:
 
 
 def test_legacy_parameter_named_type_is_not_misclassified_as_root_schema() -> None:
-    schema = canonicalize_parameters(
-        {
-            "type": {"type": "str", "required": True},
-            "description": {"type": "str", "required": False},
-        }
-    )
+    schema = canonicalize_parameters({
+        "type": {"type": "str", "required": True},
+        "description": {"type": "str", "required": False},
+    })
 
     assert schema["type"] == "object"
     assert schema["properties"]["type"]["type"] == "string"
@@ -140,9 +136,7 @@ def test_registered_agent_wildcards_resolve_only_after_tools_are_loaded() -> Non
     assert editor.tools
     assert not any(name.endswith(":*") for name in editor.tools)
     assert set(editor.tools) == {
-        spec.name
-        for spec in ToolRegistry.list_namespace("editor")
-        if spec.available and not spec.deprecated
+        spec.name for spec in ToolRegistry.list_namespace("editor") if spec.available and not spec.deprecated
     }
 
 
@@ -152,16 +146,14 @@ def test_register_all_is_idempotent_after_agent_and_tool_freeze() -> None:
 
     register_all()
     before_tools = {
-        namespace: tuple(spec.name for spec in specs)
-        for namespace, specs in ToolRegistry.list_all_namespaces().items()
+        namespace: tuple(spec.name for spec in specs) for namespace, specs in ToolRegistry.list_all_namespaces().items()
     }
     before_agents = tuple(agent.agent_id for agent in AgentRegistry.list_all())
 
     register_all()
 
     after_tools = {
-        namespace: tuple(spec.name for spec in specs)
-        for namespace, specs in ToolRegistry.list_all_namespaces().items()
+        namespace: tuple(spec.name for spec in specs) for namespace, specs in ToolRegistry.list_all_namespaces().items()
     }
     assert after_tools == before_tools
     assert tuple(agent.agent_id for agent in AgentRegistry.list_all()) == before_agents
@@ -323,17 +315,19 @@ def test_confirmation_token_is_owner_request_bound_and_one_use() -> None:
     invocation = ToolInvocation("write", {"value": 1}, "owner-a", "plan-a")
     token = authority.issue(owner_id="owner-a", request_hash=invocation.request_hash)
 
-    assert authority.consume(
-        token, owner_id="owner-b", request_hash=invocation.request_hash
-    ).code == "CONFIRMATION_OWNER_CHANGED"
-    assert authority.consume(
-        token, owner_id="owner-a", request_hash=invocation.request_hash
-    ).code == "CONFIRMATION_REPLAYED"
+    assert (
+        authority.consume(token, owner_id="owner-b", request_hash=invocation.request_hash).code
+        == "CONFIRMATION_OWNER_CHANGED"
+    )
+    assert (
+        authority.consume(token, owner_id="owner-a", request_hash=invocation.request_hash).code
+        == "CONFIRMATION_REPLAYED"
+    )
 
     changed = authority.issue(owner_id="owner-a", request_hash=invocation.request_hash)
-    assert authority.consume(
-        changed, owner_id="owner-a", request_hash="different"
-    ).code == "CONFIRMATION_REQUEST_CHANGED"
+    assert (
+        authority.consume(changed, owner_id="owner-a", request_hash="different").code == "CONFIRMATION_REQUEST_CHANGED"
+    )
 
 
 def test_confirmation_timeout_is_fail_closed() -> None:
@@ -409,9 +403,7 @@ def test_redactor_is_fail_closed_for_mapping_and_custom_dataclass() -> None:
         def __init__(self, token, /):
             self.token = token
 
-    payload = MappingProxyType(
-        {"token": canary, "nested": PositionalSecret(canary)}
-    )
+    payload = MappingProxyType({"token": canary, "nested": PositionalSecret(canary)})
 
     redacted = SecretRedactor.default().redact(payload)
 

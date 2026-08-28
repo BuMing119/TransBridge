@@ -73,7 +73,7 @@ class ExecutionEngine:
 
     def __getattr__(self, name: str):
         """代理未命中属性到 GraphExecutor（向后兼容测试/内部访问）。"""
-        if name.startswith('_') and name != '_executor':
+        if name.startswith("_") and name != "_executor":
             try:
                 return getattr(self._executor, name)
             except AttributeError:

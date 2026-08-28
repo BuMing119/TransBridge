@@ -42,12 +42,8 @@ class FixtureIntegrityError(RuntimeError):
 
 # sha256 registry of every real fixture referenced by S02 success chains.
 FIXTURE_CHECKSUMS: dict[str, str] = {
-    "tests/contracts/io/fixtures/eet-small.xml": (
-        "95d6266b9fb3b6ec2b16281dc7d3b79f3d050c2ec3b6185e4b8fe173968950bc"
-    ),
-    "tests/contracts/io/fixtures/xt-small.xml": (
-        "ca024ffffd7f2dea3348a42c04e454aa2324b7d3a64dd5454882aab9ed3780dd"
-    ),
+    "tests/contracts/io/fixtures/eet-small.xml": ("95d6266b9fb3b6ec2b16281dc7d3b79f3d050c2ec3b6185e4b8fe173968950bc"),
+    "tests/contracts/io/fixtures/xt-small.xml": ("ca024ffffd7f2dea3348a42c04e454aa2324b7d3a64dd5454882aab9ed3780dd"),
     "tests/contracts/io/fixtures/paratranz_dual_id.json": (
         "410ec78fd7a22219469f9c77f26d8daa0dee559416b47de6796db301024dad08"
     ),
@@ -60,9 +56,7 @@ FIXTURE_CHECKSUMS: dict[str, str] = {
     "tests/contracts/io/fixtures/strings/integrity.ilstrings": (
         "631d767133fb75d4a1280f9df224a39647c4e9b3de5460947b36a6eed789778f"
     ),
-    "tests/parser/data/sample.esp": (
-        "1701df1f8ccf08279751b84fe064df921d9304dcb4644883b9bb396c9f1f4f9f"
-    ),
+    "tests/parser/data/sample.esp": ("1701df1f8ccf08279751b84fe064df921d9304dcb4644883b9bb396c9f1f4f9f"),
 }
 
 
@@ -83,8 +77,7 @@ def verify_fixture_checksums(
         actual = chain_sha256(path)
         if actual != expected:
             raise FixtureIntegrityError(
-                f"fixture checksum drift: {relative}\n"
-                f"  expected {expected}\n  actual   {actual}"
+                f"fixture checksum drift: {relative}\n  expected {expected}\n  actual   {actual}"
             )
 
 
@@ -130,13 +123,11 @@ def _artifact_summary(artifacts: Any) -> list[dict[str, Any]]:
             a_locale = attribute("target_locale") if attribute is not None else None
         except Exception:  # pragma: no cover - attribute may be strict
             a_locale = None
-        summary.append(
-            {
-                "kind": kind,
-                "fingerprint": fingerprint,
-                "target_locale": a_locale,
-            }
-        )
+        summary.append({
+            "kind": kind,
+            "fingerprint": fingerprint,
+            "target_locale": a_locale,
+        })
     return sorted(summary, key=lambda item: (item["kind"] or "", item["fingerprint"] or ""))
 
 
@@ -161,9 +152,7 @@ def summarize(result: Any) -> dict[str, Any]:
             "stats": _stats_dict(result.stats),
             "diagnostics": _diagnostic_codes(result.diagnostics),
             "adapter_id": result.adapter_id,
-            "source_sha256": (
-                result.source_snapshot.sha256 if result.source_snapshot is not None else None
-            ),
+            "source_sha256": (result.source_snapshot.sha256 if result.source_snapshot is not None else None),
         }
 
     if isinstance(result, PipelineResult):
@@ -263,9 +252,7 @@ def assert_entrypoint_parity(chain: SuccessChain) -> Any:
     names = [f"entrypoint-{index}" for index in range(len(outputs))]
     for name, output in zip(names[1:], outputs[1:]):
         if output != first:
-            raise AssertionError(
-                f"chain {chain.chain_id!r} entrypoints differ: {names[0]}={first} {name}={output}"
-            )
+            raise AssertionError(f"chain {chain.chain_id!r} entrypoints differ: {names[0]}={first} {name}={output}")
     return first
 
 

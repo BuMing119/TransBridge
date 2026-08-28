@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Literal
 import warnings
 
 from transbridge.config.language_profiles import load_language_profile
+from transbridge.config.paths import get_data_resource_dir
 
 from .base import output_token_limit, validate_max_output_tokens
 from .prompt_contract import (
@@ -133,9 +134,8 @@ exactly. Confidence above 0.9 means high certainty; below 0.7 suggests pending."
 
 def _get_prompts_dir() -> Path:
     """定位 data/prompts/ 目录。"""
-    from ...paratranz.config_manager import ParatranzConfig
 
-    return Path(ParatranzConfig.get_data_dir()) / "prompts"
+    return Path(get_data_resource_dir("prompts"))
 
 
 def _load_toml(path: Path) -> dict:

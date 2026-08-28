@@ -2,6 +2,7 @@
 
 FR12 Story 01: 核心状态机验证。
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -148,8 +149,7 @@ class TestStateTransitions:
     def test_user_cancelled_awaiting_to_idle(self):
         controller = SessionController()
         controller.handle_user_message("hi")
-        controller.handle_llm_response(
-            {"mode": "react", "steps": [{"id": 1, "tool": "x", "args": {}}], "thought": ""})
+        controller.handle_llm_response({"mode": "react", "steps": [{"id": 1, "tool": "x", "args": {}}], "thought": ""})
         controller.handle_user_cancelled()
         assert controller.state == SessionController.State.IDLE
 
@@ -157,8 +157,7 @@ class TestStateTransitions:
         msgs = []
         controller = SessionController(on_system_message=lambda m: msgs.append(m))
         controller.handle_user_message("hi")
-        controller.handle_llm_response(
-            {"mode": "react", "steps": [{"id": 1, "tool": "x", "args": {}}], "thought": ""})
+        controller.handle_llm_response({"mode": "react", "steps": [{"id": 1, "tool": "x", "args": {}}], "thought": ""})
         controller.handle_user_cancelled()
         assert len(msgs) == 1
 
@@ -283,16 +282,14 @@ class TestStateChangeCallback:
 
     def test_callback_fires_on_transition(self):
         transitions = []
-        controller = SessionController(
-            on_state_changed=lambda old, new, ctx: transitions.append((old, new)))
+        controller = SessionController(on_state_changed=lambda old, new, ctx: transitions.append((old, new)))
         controller.handle_user_message("hi")
         assert len(transitions) == 1
         assert transitions[0] == (SessionController.State.IDLE, SessionController.State.THINKING)
 
     def test_callback_fires_on_multiple_transitions(self):
         transitions = []
-        controller = SessionController(
-            on_state_changed=lambda old, new, ctx: transitions.append((old, new)))
+        controller = SessionController(on_state_changed=lambda old, new, ctx: transitions.append((old, new)))
         controller.handle_user_message("hi")
         step = {"id": 1, "tool": "get_statistics", "args": {}}
         controller.handle_llm_response({"mode": "react", "steps": [step], "thought": ""})

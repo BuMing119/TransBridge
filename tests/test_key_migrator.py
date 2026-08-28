@@ -9,8 +9,12 @@ from transbridge.migrator import migrate
 
 def _mk(key, original, translation="", stage=0):
     return TranslationEntry(
-        id=key, key=key, original=original, translation=translation,
-        stage=stage, context="NPC_:FULL",
+        id=key,
+        key=key,
+        original=original,
+        translation=translation,
+        stage=stage,
+        context="NPC_:FULL",
     )
 
 

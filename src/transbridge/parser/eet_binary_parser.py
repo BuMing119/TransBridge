@@ -28,10 +28,10 @@ Each LINE record:
 
 from __future__ import annotations
 
-import logging
-import struct
 from collections.abc import Iterator
+import logging
 from pathlib import Path
+import struct
 
 from transbridge.parser.eet_parser import EET_Entry
 
@@ -47,7 +47,7 @@ def _read_str(data: bytes, pos: int) -> tuple[str, int]:
     pos += 4
     if length == 0:
         return "", pos
-    s = data[pos:pos + length].decode("utf-8", errors="replace")
+    s = data[pos : pos + length].decode("utf-8", errors="replace")
     pos += length
     return s, pos
 
@@ -59,9 +59,7 @@ class EET_BinaryParser:
     Compatible with EET_XmlParser query interface (find, get_by_grup, etc.).
     """
 
-    def __init__(self, entries: list[EET_Entry],
-                 game_data: int = 0,
-                 phrases: bytes = b"") -> None:
+    def __init__(self, entries: list[EET_Entry], game_data: int = 0, phrases: bytes = b"") -> None:
         self.entries = entries
         self.game_data = game_data
         self.phrases = phrases  # raw PHRA section bytes
@@ -82,7 +80,7 @@ class EET_BinaryParser:
     # ── Factory ──
 
     @classmethod
-    def from_file(cls, path: str | Path) -> "EET_BinaryParser":
+    def from_file(cls, path: str | Path) -> EET_BinaryParser:
         """Parse an EET binary file. Auto-detects binary vs XML."""
         data = Path(path).read_bytes()
         if data[:4] == _MAGIC:
@@ -92,7 +90,7 @@ class EET_BinaryParser:
     # ── Binary parser ──
 
     @classmethod
-    def _parse_binary(cls, data: bytes) -> "EET_BinaryParser":
+    def _parse_binary(cls, data: bytes) -> EET_BinaryParser:
         version = struct.unpack_from("<I", data, 4)[0]
         if version != 2:
             raise ValueError(f"Unsupported EET binary version: {version}")
@@ -107,7 +105,7 @@ class EET_BinaryParser:
         for _ in range(section_count):
             if pos + 4 > len(data):
                 break
-            sec_name = data[pos:pos + 4].decode("ascii")
+            sec_name = data[pos : pos + 4].decode("ascii")
             pos += 4
 
             if sec_name == "GAME":
@@ -123,7 +121,7 @@ class EET_BinaryParser:
             elif sec_name == "PHRA":
                 phra_size = struct.unpack_from("<I", data, pos)[0]
                 pos += 4
-                phrases = data[pos:pos + phra_size]
+                phrases = data[pos : pos + phra_size]
                 pos += phra_size
 
             else:
@@ -152,7 +150,7 @@ class EET_BinaryParser:
             fc = struct.unpack_from("<I", data, pos + 4)[0]
             if fc != 4:
                 break
-            grup_bytes = data[pos + 8:pos + 12]
+            grup_bytes = data[pos + 8 : pos + 12]
             if not all(32 <= b < 127 for b in grup_bytes):
                 break
 
@@ -175,13 +173,13 @@ class EET_BinaryParser:
     @classmethod
     def _parse_one_record(cls, data: bytes, pos: int) -> EET_Entry | None:
         """Parse a single record at the given offset. Returns EET_Entry or None."""
-        size = struct.unpack_from("<I", data, pos)[0]
+        _size = struct.unpack_from("<I", data, pos)[0]
         pos += 4
 
         _field_count = struct.unpack_from("<I", data, pos)[0]  # always 4
         pos += 4
 
-        grup = data[pos:pos + 4].decode("ascii")
+        grup = data[pos : pos + 4].decode("ascii")
         pos += 4
 
         id_val, pos = _read_str(data, pos)
@@ -283,18 +281,20 @@ class EET_BinaryParser:
         """Export entries as dicts (compatible with EET_XmlParser.to_dicts)."""
         out = []
         for e in self.entries:
-            out.append(dict(
-                GRUP=e.grup,
-                ID=e.id,
-                EDID=e.edid,
-                CHAMP=e.champ,
-                ORIGINAL=e.original,
-                TRADUIT=e.traduit,
-                PERSO=e.perso,
-                INDEX=e.index,
-                STATUS=e.status,
-                IDSTEXTE=e.idstexte,
-                COMMENTAIRE=e.commentaire,
-                ICON=e.icon,
-            ))
+            out.append(
+                dict(
+                    GRUP=e.grup,
+                    ID=e.id,
+                    EDID=e.edid,
+                    CHAMP=e.champ,
+                    ORIGINAL=e.original,
+                    TRADUIT=e.traduit,
+                    PERSO=e.perso,
+                    INDEX=e.index,
+                    STATUS=e.status,
+                    IDSTEXTE=e.idstexte,
+                    COMMENTAIRE=e.commentaire,
+                    ICON=e.icon,
+                )
+            )
         return out

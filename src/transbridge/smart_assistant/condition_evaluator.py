@@ -16,21 +16,26 @@ class ConditionEvaluator:
 
     # AST 节点类型 → 求值处理器名称
     _AST_DISPATCH = {
-        ast.Constant: '_eval_ast_constant',
-        ast.Name: '_eval_ast_name',
-        ast.Attribute: '_eval_ast_attribute',
-        ast.Subscript: '_eval_ast_subscript',
-        ast.Compare: '_eval_ast_compare',
-        ast.BoolOp: '_eval_ast_boolop',
-        ast.UnaryOp: '_eval_ast_unaryop',
-        ast.Call: '_eval_ast_call',
+        ast.Constant: "_eval_ast_constant",
+        ast.Name: "_eval_ast_name",
+        ast.Attribute: "_eval_ast_attribute",
+        ast.Subscript: "_eval_ast_subscript",
+        ast.Compare: "_eval_ast_compare",
+        ast.BoolOp: "_eval_ast_boolop",
+        ast.UnaryOp: "_eval_ast_unaryop",
+        ast.Call: "_eval_ast_call",
     }
 
     # M4: 预定义安全类型白名单，供 isinstance 使用
     _SAFE_TYPE_WHITELIST = {
-        'str': str, 'int': int, 'float': float, 'bool': bool,
-        'list': list, 'dict': dict, 'tuple': tuple,
-        'NoneType': type(None),
+        "str": str,
+        "int": int,
+        "float": float,
+        "bool": bool,
+        "list": list,
+        "dict": dict,
+        "tuple": tuple,
+        "NoneType": type(None),
     }
 
     # ── 公开 API ────────────────────────────────────────────────
@@ -48,7 +53,7 @@ class ConditionEvaluator:
             if r is not None:
                 last_result = r
         try:
-            tree = ast.parse(str(condition), mode='eval')
+            tree = ast.parse(str(condition), mode="eval")
             return bool(self._eval_ast_node(tree.body, last_result))
         except Exception:
             logger.warning("条件求值失败: %s", condition, exc_info=True)
@@ -60,10 +65,20 @@ class ConditionEvaluator:
         """递归求值 AST 节点。depth 用于防止恶意嵌套导致栈溢出。"""
         if depth > self._MAX_EVAL_DEPTH:
             raise ValueError(f"AST 求值深度超限: {self._MAX_EVAL_DEPTH}")
-        allowed_types = (ast.Constant, ast.Name, ast.Attribute, ast.Subscript,
-                         ast.Compare, ast.BoolOp, ast.UnaryOp,
-                         ast.Load, ast.Index, ast.Tuple,
-                         ast.Call, ast.keyword)
+        allowed_types = (
+            ast.Constant,
+            ast.Name,
+            ast.Attribute,
+            ast.Subscript,
+            ast.Compare,
+            ast.BoolOp,
+            ast.UnaryOp,
+            ast.Load,
+            ast.Index,
+            ast.Tuple,
+            ast.Call,
+            ast.keyword,
+        )
         if not isinstance(node, allowed_types):
             raise ValueError(f"不允许的 AST 节点: {type(node).__name__}")
         handler_name = self._AST_DISPATCH.get(type(node))
@@ -160,7 +175,7 @@ class ConditionEvaluator:
             obj = self._eval_ast_node(node.func.value, result, depth_next)
             method_name = node.func.attr
 
-            if method_name == 'get':
+            if method_name == "get":
                 # dict.get(key, default=None)
                 default = None
                 if node.args:
@@ -170,7 +185,7 @@ class ConditionEvaluator:
                     return obj.get(key, default)
                 return default
 
-            if method_name in ('startswith', 'endswith'):
+            if method_name in ("startswith", "endswith"):
                 # str.startswith(prefix) / str.endswith(suffix)
                 if not node.args:
                     raise ValueError(f"{method_name}() 缺少参数")
@@ -187,32 +202,32 @@ class ConditionEvaluator:
             func_name = node.func.id
 
             # 单参数安全内置函数
-            if func_name in ('len', 'str', 'int', 'float', 'bool', 'any', 'all'):
+            if func_name in ("len", "str", "int", "float", "bool", "any", "all"):
                 if not node.args:
                     raise ValueError(f"{func_name}() 缺少参数")
                 arg = self._eval_ast_node(node.args[0], result, depth_next)
                 try:
-                    if func_name == 'len':
+                    if func_name == "len":
                         return len(arg)
-                    elif func_name == 'str':
+                    elif func_name == "str":
                         return str(arg)
-                    elif func_name == 'int':
+                    elif func_name == "int":
                         return int(arg)
-                    elif func_name == 'float':
+                    elif func_name == "float":
                         return float(arg)
-                    elif func_name == 'bool':
+                    elif func_name == "bool":
                         return bool(arg)
-                    elif func_name in ('any', 'all'):
-                        if not hasattr(arg, '__iter__'):
+                    elif func_name in ("any", "all"):
+                        if not hasattr(arg, "__iter__"):
                             raise ValueError(f"{func_name}() 参数必须是可迭代对象")
-                        return any(arg) if func_name == 'any' else all(arg)
+                        return any(arg) if func_name == "any" else all(arg)
                 except (TypeError, ValueError):
-                    if func_name in ('any', 'all'):
+                    if func_name in ("any", "all"):
                         return False
                     return None
 
             # isinstance(obj, type) — 仅允许白名单中的类型
-            if func_name == 'isinstance':
+            if func_name == "isinstance":
                 if len(node.args) < 2:
                     raise ValueError("isinstance() 需要两个参数")
                 obj = self._eval_ast_node(node.args[0], result, depth_next)
@@ -232,7 +247,7 @@ class ConditionEvaluator:
         """
         if isinstance(type_node, ast.Name):
             type_name = type_node.id
-            if type_name == 'None':
+            if type_name == "None":
                 return type(None)
             return self._SAFE_TYPE_WHITELIST.get(type_name)
         if isinstance(type_node, ast.Constant) and type_node.value is None:

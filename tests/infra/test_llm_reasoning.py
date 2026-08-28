@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 import json
 from pathlib import Path
 import threading
@@ -75,7 +75,7 @@ def test_expired_indeterminate_record_is_removed(tmp_path: Path) -> None:
     store = ReasoningCapabilityStore(path)
     expired = ReasoningCapability(
         ReasoningCapabilityStatus.INDETERMINATE,
-        detected_at=(datetime.now(timezone.utc) - timedelta(days=2)).isoformat(),
+        detected_at=(datetime.now(UTC) - timedelta(days=2)).isoformat(),
     )
     store.put(key, expired)
 

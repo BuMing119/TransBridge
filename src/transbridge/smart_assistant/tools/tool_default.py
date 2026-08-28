@@ -2,11 +2,12 @@
 
 Story 07: get_collection_summary deprecated(O8)，功能合并到 get_statistics。
 """
+
 from __future__ import annotations
 
+from collections import Counter
 import logging
 import os
-from collections import Counter
 
 from .base import ToolResult
 
@@ -22,31 +23,34 @@ def _tool_get_app_state(args: dict, ctx) -> ToolResult:
     # m4: 只暴露文件名，不泄露绝对路径
     # m7: 安全访问 active_project，兼容多种类型
     project_name = None
-    if hasattr(ctx, 'active_project') and ctx.active_project is not None:
-        project_name = getattr(ctx.active_project, 'name', None)
+    if hasattr(ctx, "active_project") and ctx.active_project is not None:
+        project_name = getattr(ctx.active_project, "name", None)
         if project_name is None and isinstance(ctx.active_project, dict):
-            project_name = ctx.active_project.get('name')
+            project_name = ctx.active_project.get("name")
     # C5: ParaTranz 配置状态
     pt_configured = False
     try:
         from transbridge.paratranz.config_manager import ParatranzConfig
+
         pt_cfg = ParatranzConfig.load_from_file()
-        pt_configured = bool(getattr(pt_cfg, 'token', None))
+        pt_configured = bool(getattr(pt_cfg, "token", None))
     except Exception as exc:
         logger.warning("操作失败: %s", exc)
 
-    return ToolResult.ok(data={
-        "active_collection": slot.label if slot else None,
-        "esp_file": os.path.basename(ctx.esp_path) if ctx.esp_path else None,
-        "eet_file": os.path.basename(ctx.eet_path) if ctx.eet_path else None,
-        "xt_file": os.path.basename(ctx.xt_path) if ctx.xt_path else None,
-        "project": project_name,
-        "variant": ctx.active_variant,
-        "filters": ctx.filter_state,
-        "collection_count": len(ctx.slots),
-        "has_active_collection": slot is not None and slot.collection is not None,
-        "paratranz_configured": pt_configured,
-    })
+    return ToolResult.ok(
+        data={
+            "active_collection": slot.label if slot else None,
+            "esp_file": os.path.basename(ctx.esp_path) if ctx.esp_path else None,
+            "eet_file": os.path.basename(ctx.eet_path) if ctx.eet_path else None,
+            "xt_file": os.path.basename(ctx.xt_path) if ctx.xt_path else None,
+            "project": project_name,
+            "variant": ctx.active_variant,
+            "filters": ctx.filter_state,
+            "collection_count": len(ctx.slots),
+            "has_active_collection": slot is not None and slot.collection is not None,
+            "paratranz_configured": pt_configured,
+        }
+    )
 
 
 def _tool_list_collections(args: dict, ctx) -> ToolResult:
@@ -134,15 +138,16 @@ def _tool_get_statistics(args: dict, ctx) -> ToolResult:
 
 # ── 项目管理 (Story 12) ───────────────────────────────────────
 
+
 def _tool_list_local_projects(args: dict, ctx) -> ToolResult:
     """列出本地工作空间中的项目。"""
     projects = []
     try:
         workspace = ctx.workspace
-        if workspace and hasattr(workspace, 'projects'):
+        if workspace and hasattr(workspace, "projects"):
             for p in workspace.projects:
                 # m10/m21: 仅返回项目名(basename)，不暴露绝对路径
-                projects.append({"name": getattr(p, 'name', '')})
+                projects.append({"name": getattr(p, "name", "")})
     except Exception as exc:
         logger.warning("操作失败: %s", exc)
     return ToolResult.ok(f"共 {len(projects)} 个本地项目", data={"projects": projects})
@@ -153,20 +158,24 @@ def _tool_get_current_project(args: dict, ctx) -> ToolResult:
     project = ctx.active_project
     if not project:
         return ToolResult.ok("当前无活跃项目", data={"active_project": None})
-    return ToolResult.ok(data={
-        "name": getattr(project, 'name', ''),
-        "variant": ctx.active_variant,
-        "collection": ctx.active_slot.label if ctx.active_slot else None,
-    })
+    return ToolResult.ok(
+        data={
+            "name": getattr(project, "name", ""),
+            "variant": ctx.active_variant,
+            "collection": ctx.active_slot.label if ctx.active_slot else None,
+        }
+    )
 
 
 # ── 工具发现 ──────────────────────────────────────────────
+
 
 def _tool_get_tool_help(args: dict, ctx) -> ToolResult:
     """获取工具的完整定义（参数Schema、返回值、规则）。"""
     tool_name = args.get("tool") or None
     namespace = args.get("namespace") or None
     from ..tool_registry import ToolRegistry
+
     result = ToolRegistry.build_tool_help(tool=tool_name, namespace=namespace)
     return ToolResult.ok(data={"help": result})
 
@@ -183,42 +192,147 @@ _PARAM_SCHEMAS = {
 
 def _register_default_tools():
     from ..tool_registry import ToolRegistry
-    ToolRegistry.register_tools("default", [
-        {"name": "get_app_state", "display_name": "应用状态", "description": "①Return a comprehensive global state overview for identifying the current workflow phase. ②No arguments; read-only. ③Returns {active_collection, esp_file, eet_file, xt_file(filename only), project, variant(version variant such as \"v1\"), filters, collection_count, has_active_collection, paratranz_configured}. Rules: file paths expose filenames only; workflow phase is distinct from an entry's stage field.",
-         "execute": _tool_get_app_state, "permission": "read",
-         "parameters": _PARAM_SCHEMAS.get("get_app_state", {})},
-        {"name": "list_collections", "display_name": "列出集合", "description": "①List all loaded translation collections and basic information. ②No arguments; read-only. ③Returns {collections: [{key, label, esp_name(null for non-ESP sources), entry_count, is_active}]}. Rules: parser action=create_slot creates and activates a collection; switch_collection changes it; this tool queries it; the UI removes it. Filters and scope belong to the active collection.",
-         "execute": _tool_list_collections, "permission": "read",
-         "parameters": _PARAM_SCHEMAS.get("list_collections", {})},
-        {"name": "switch_collection", "display_name": "切换集合", "description": "①Switch the active translation collection; subsequent operations target the new collection. ②Arguments: preferred collection_name (key or label), or slot_index (zero-based position from list_collections). ③Returns {active_collection}. Rules: collection_name wins when both are supplied; prefer it over slot_index; write permission.",
-         "execute": _tool_switch_collection, "permission": "write",
-         "parameters": _PARAM_SCHEMAS.get("switch_collection", {})},
-        {"name": "get_current_filters", "display_name": "当前筛选", "description": "①Return a complete snapshot of current filters. ②No arguments; read-only. ③Returns {filter_state: {stage(num[]: 0=untranslated/1=translated/2=question/3=checked/5=reviewed/9=locked/-1=hidden; 4/6/7/8 reserved for ParaTranz), category, label, search_query, search_field(id/key/original/translation/context/all)}, active_filter_count}. Rules: discover categories via get_statistics.category_distribution and labels via list_labels; modify filters with set_filters.",
-         "execute": _tool_get_current_filters, "permission": "read",
-         "parameters": _PARAM_SCHEMAS.get("get_current_filters", {})},
-        {"name": "get_statistics", "display_name": "翻译统计", "description": "①Return full statistics unaffected by current filters. ②No arguments; read-only. ③Returns {total, translated, untranslated, translation_rate(%), stage_distribution({\"untranslated\":120,...}), category_distribution({\"NPC_\":150,...}, top 20)}. Rule: use for an overview; use get_visible_entries for filtered entries.",
-         "execute": _tool_get_statistics, "permission": "read",
-         "parameters": _PARAM_SCHEMAS.get("get_statistics", {})},
-        # Story 12: 项目管理
-        {"name": "list_local_projects", "display_name": "本地项目", "description": "①List projects in the local workspace. ②No arguments; read-only. ③Returns {projects: [{name(directory name only, no full path)}]}. Rule: each workspace subdirectory is a project; project CRUD is available only through the UI.",
-         "execute": _tool_list_local_projects, "permission": "read",
-         "parameters": _PARAM_SCHEMAS.get("list_local_projects", {})},
-        {"name": "get_current_project", "display_name": "当前项目", "description": "①Return lightweight current-project information. ②No arguments; read-only. ③Returns {name, variant, collection}. Rule: unlike get_app_state, this returns only project information; use get_app_state for full context including filenames, filters, and API state.",
-         "execute": _tool_get_current_project, "permission": "read",
-         "parameters": _PARAM_SCHEMAS.get("get_current_project", {})},
-        # 工具发现
-        {"name": "get_tool_help", "display_name": "工具帮助", "description": (
-            "①Return a tool's complete definition, including parameter schema, return value, and rules, before use."
-            "②Arguments: optional tool name such as 'start_translation'; optional namespace such as 'translator', with comma-separated namespaces supported."
-            "③Returns the complete parameter table and rules for the requested tool or namespace."
-            "Rules: prefer namespace queries to retrieve a whole group at once. Do not call a non-preloaded tool from its directory summary; retrieve its complete definition first."
-        ),
-         "execute": _tool_get_tool_help, "permission": "read",
-         "parameters": {
-             "tool": {"type": "str", "required": False, "description": "Tool name, such as 'start_translation'"},
-             "namespace": {"type": "str", "required": False, "description": "Namespace, such as 'translator'; comma-separated values such as 'parser,translator' are supported"},
-         }},
-    ])
+
+    ToolRegistry.register_tools(
+        "default",
+        [
+            {
+                "name": "get_app_state",
+                "display_name": "应用状态",
+                "description": (
+                    "①Return a comprehensive global state overview for identifying the current workflow phase. ②No "
+                    "arguments; read-only. ③Returns {active_collection, esp_file, eet_file, "
+                    "xt_file(filename only), project, "
+                    'variant(version variant such as "v1"), filters, collection_count, has_active_collection, '
+                    "paratranz_configured}. Rules: file paths expose filenames only; "
+                    "workflow phase is distinct from an "
+                    "entry's stage field."
+                ),
+                "execute": _tool_get_app_state,
+                "permission": "read",
+                "parameters": _PARAM_SCHEMAS.get("get_app_state", {}),
+            },
+            {
+                "name": "list_collections",
+                "display_name": "列出集合",
+                "description": (
+                    "①List all loaded translation collections and basic information. "
+                    "②No arguments; read-only. ③Returns "
+                    "{collections: [{key, label, esp_name(null for non-ESP sources), entry_count, is_active}]}. Rules: "
+                    "parser action=create_slot creates and activates a collection; "
+                    "switch_collection changes it; this tool "
+                    "queries it; the UI removes it. Filters and scope belong to the active collection."
+                ),
+                "execute": _tool_list_collections,
+                "permission": "read",
+                "parameters": _PARAM_SCHEMAS.get("list_collections", {}),
+            },
+            {
+                "name": "switch_collection",
+                "display_name": "切换集合",
+                "description": (
+                    "①Switch the active translation collection; subsequent operations target the new collection. "
+                    "②Arguments: preferred collection_name (key or label), or slot_index (zero-based position from "
+                    "list_collections). ③Returns {active_collection}. Rules: collection_name "
+                    "wins when both are supplied; "
+                    "prefer it over slot_index; write permission."
+                ),
+                "execute": _tool_switch_collection,
+                "permission": "write",
+                "parameters": _PARAM_SCHEMAS.get("switch_collection", {}),
+            },
+            {
+                "name": "get_current_filters",
+                "display_name": "当前筛选",
+                "description": (
+                    "①Return a complete snapshot of current filters. ②No arguments; "
+                    "read-only. ③Returns {filter_state: "
+                    "{stage(num[]: 0=untranslated/1=translated/2=question/3=checked/5=reviewed/9=locked/-1=hidden; "
+                    "4/6/7/8 reserved for ParaTranz), category, label, search_query, "
+                    "search_field(id/key/original/translation/context/all)}, active_filter_count}. "
+                    "Rules: discover categories "
+                    "via get_statistics.category_distribution and labels via list_labels; "
+                    "modify filters with set_filters."
+                ),
+                "execute": _tool_get_current_filters,
+                "permission": "read",
+                "parameters": _PARAM_SCHEMAS.get("get_current_filters", {}),
+            },
+            {
+                "name": "get_statistics",
+                "display_name": "翻译统计",
+                "description": (
+                    "①Return full statistics unaffected by current filters. "
+                    "②No arguments; read-only. ③Returns {total, "
+                    'translated, untranslated, translation_rate(%), stage_distribution({"untranslated":120,...}), '
+                    'category_distribution({"NPC_":150,...}, top 20)}. '
+                    "Rule: use for an overview; use get_visible_entries "
+                    "for filtered entries."
+                ),
+                "execute": _tool_get_statistics,
+                "permission": "read",
+                "parameters": _PARAM_SCHEMAS.get("get_statistics", {}),
+            },
+            # Story 12: 项目管理
+            {
+                "name": "list_local_projects",
+                "display_name": "本地项目",
+                "description": (
+                    "①List projects in the local workspace. ②No arguments; read-only. "
+                    "③Returns {projects: [{name(directory "
+                    "name only, no full path)}]}. Rule: each workspace subdirectory "
+                    "is a project; project CRUD is available "
+                    "only through the UI."
+                ),
+                "execute": _tool_list_local_projects,
+                "permission": "read",
+                "parameters": _PARAM_SCHEMAS.get("list_local_projects", {}),
+            },
+            {
+                "name": "get_current_project",
+                "display_name": "当前项目",
+                "description": (
+                    "①Return lightweight current-project information. ②No arguments; "
+                    "read-only. ③Returns {name, variant, "
+                    "collection}. Rule: unlike get_app_state, this returns only project information; "
+                    "use get_app_state for "
+                    "full context including filenames, filters, and API state."
+                ),
+                "execute": _tool_get_current_project,
+                "permission": "read",
+                "parameters": _PARAM_SCHEMAS.get("get_current_project", {}),
+            },
+            # 工具发现
+            {
+                "name": "get_tool_help",
+                "display_name": "工具帮助",
+                "description": (
+                    "①Return a tool's complete definition, including parameter schema, return value, "
+                    "and rules, before use."
+                    "②Arguments: optional tool name such as 'start_translation'; optional "
+                    "namespace such as 'translator', "
+                    "with comma-separated namespaces supported."
+                    "③Returns the complete parameter table and rules for the requested tool or namespace."
+                    "Rules: prefer namespace queries to retrieve a whole group at once. "
+                    "Do not call a non-preloaded tool "
+                    "from its directory summary; retrieve its complete definition first."
+                ),
+                "execute": _tool_get_tool_help,
+                "permission": "read",
+                "parameters": {
+                    "tool": {"type": "str", "required": False, "description": "Tool name, such as 'start_translation'"},
+                    "namespace": {
+                        "type": "str",
+                        "required": False,
+                        "description": (
+                            "Namespace, such as 'translator'; comma-separated values such as 'parser,translator' are "
+                            "supported"
+                        ),
+                    },
+                },
+            },
+        ],
+    )
 
 
 _register_default_tools()

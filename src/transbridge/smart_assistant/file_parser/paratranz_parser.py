@@ -17,8 +17,8 @@ from .base import FileParser, ParsedDocument
 logger = logging.getLogger(__name__)
 
 # ZIP bomb 防护限制
-MAX_ZIP_SIZE = 100 * 1024 * 1024      # 100 MB 解压后总大小
-MAX_ZIP_ENTRIES = 1000                # 最大文件条目数
+MAX_ZIP_SIZE = 100 * 1024 * 1024  # 100 MB 解压后总大小
+MAX_ZIP_ENTRIES = 1000  # 最大文件条目数
 MAX_SINGLE_ENTRY_SIZE = 50 * 1024 * 1024  # 单个条目最大 50 MB
 
 
@@ -50,8 +50,11 @@ class ParatranzParser(FileParser):
         raw_text = json.dumps(entries, ensure_ascii=False, indent=2, allow_nan=False)
         sections = [{"heading": path.stem, "entries": entries}]
         return ParsedDocument(
-            source_path=path, format="paratranz", title=path.stem,
-            sections=sections, raw_text=raw_text,
+            source_path=path,
+            format="paratranz",
+            title=path.stem,
+            sections=sections,
+            raw_text=raw_text,
             metadata={
                 "entry_count": len(entries),
                 "outcome": result.outcome.value,
@@ -61,6 +64,7 @@ class ParatranzParser(FileParser):
 
     def _parse_zip(self, path: Path) -> ParsedDocument:
         import zipfile
+
         raw_parts = []
         namelist = []
         with zipfile.ZipFile(path, "r") as zf:
@@ -70,13 +74,10 @@ class ParatranzParser(FileParser):
             entry_count = len(namelist)
             if entry_count > MAX_ZIP_ENTRIES:
                 raise ValueError(
-                    f"ZIP 文件条目过多 ({entry_count})，"
-                    f"上限为 {MAX_ZIP_ENTRIES}。文件可能为恶意压缩炸弹。"
+                    f"ZIP 文件条目过多 ({entry_count})，上限为 {MAX_ZIP_ENTRIES}。文件可能为恶意压缩炸弹。"
                 )
 
-            total_uncompressed = sum(
-                info.file_size for info in zf.infolist()
-            )
+            total_uncompressed = sum(info.file_size for info in zf.infolist())
             if total_uncompressed > MAX_ZIP_SIZE:
                 raise ValueError(
                     f"ZIP 文件解压后总大小 ({total_uncompressed / 1024 / 1024:.1f} MB) 超过上限 "
@@ -99,7 +100,9 @@ class ParatranzParser(FileParser):
                     raw_parts.append(f"--- {name} ---\n{content}")
 
         return ParsedDocument(
-            source_path=path, format="paratranz", title=path.stem,
+            source_path=path,
+            format="paratranz",
+            title=path.stem,
             raw_text="\n".join(raw_parts),
             metadata={"files": namelist},
         )

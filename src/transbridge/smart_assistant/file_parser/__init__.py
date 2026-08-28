@@ -10,9 +10,9 @@
 """
 
 from .base import FileParser, ParsedDocument
-from .text_parser import TextFileParser
 from .binary_parser import BinaryFileParser
 from .paratranz_parser import ParatranzParser
+from .text_parser import TextFileParser
 
 
 def register_all() -> None:

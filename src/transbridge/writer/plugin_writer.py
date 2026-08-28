@@ -1,5 +1,5 @@
-from pathlib import Path
 import logging
+from pathlib import Path
 
 from sse_plugin_interface.datatypes import RawString
 from sse_plugin_interface.subrecord import StringSubrecord
@@ -66,8 +66,7 @@ class PluginWriter:
         subrecord_found = 0
         subrecord_not_found = 0
 
-
-        #for ps in self.plugin.extract_strings():
+        # for ps in self.plugin.extract_strings():
         for ps in self.plugin.extract_strings_with_context():
             total_strings += 1
 
@@ -91,9 +90,7 @@ class PluginWriter:
 
             collection_hits += 1
 
-            subrecord = self.plugin.find_string_subrecord(
-                ps.form_id, ps.type, ps.string, ps.index
-            )
+            subrecord = self.plugin.find_string_subrecord(ps.form_id, ps.type, ps.string, ps.index)
             if subrecord is not None:
                 subrecord.set_string(entry.translation)
                 updated_count += 1
@@ -160,7 +157,6 @@ class PluginWriter:
 
             entry: TranslationEntry | None = collection.get_by_key(entry_id)
 
-
             if not entry or not entry.translation or entry.translation == ps.string:
                 continue
 
@@ -220,4 +216,3 @@ class PluginWriter:
                 log.warning("Localised mode active but no strings were written (empty collection?)")
 
         return result
-

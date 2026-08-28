@@ -112,9 +112,7 @@ def test_protocol_patches_degrade_low_to_direct_when_no_low_contract_exists() ->
     thinking = ReasoningCapability.supported("thinking_disabled")
 
     assert openai_reasoning_patch(effort, ReasoningIntent.PREFER_LOW).standard == {"reasoning_effort": "low"}
-    assert openai_reasoning_patch(thinking, ReasoningIntent.PREFER_LOW).extra_body == {
-        "thinking": {"type": "disabled"}
-    }
+    assert openai_reasoning_patch(thinking, ReasoningIntent.PREFER_LOW).extra_body == {"thinking": {"type": "disabled"}}
     anthropic = anthropic_reasoning_capability()
     assert anthropic_reasoning_patch(anthropic, ReasoningIntent.PREFER_DIRECT).extra_body == {}
 
@@ -194,9 +192,9 @@ def test_stream_prompt_cache_retry_preserves_reasoning_control() -> None:
         stream = MagicMock()
         stream.__enter__.return_value = stream
         stream.__exit__.return_value = False
-        stream.__iter__.return_value = iter(
-            [SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="OK"))])]
-        )
+        stream.__iter__.return_value = iter([
+            SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="OK"))])
+        ])
         return stream
 
     client._client.chat.completions.create.side_effect = create

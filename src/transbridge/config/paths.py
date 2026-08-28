@@ -26,6 +26,33 @@ def get_data_dir() -> str:
     return data_dir
 
 
+def get_data_resource_dir(name: str) -> str:
+    """Resolve a versioned data resource with a frozen-bundle fallback.
+
+    Development checkouts keep editable defaults below ``data/``. Frozen
+    builds keep user state below ``%APPDATA%`` but ship immutable defaults in
+    the PyInstaller bundle. A user-provided directory takes precedence.
+    """
+
+    relative_name = str(name or "").strip()
+    if not relative_name or os.path.isabs(relative_name) or relative_name in {".", ".."}:
+        raise ValueError("data resource name must be a non-empty relative directory name")
+    if any(part in {"", ".", ".."} for part in relative_name.replace("\\", "/").split("/")):
+        raise ValueError("data resource name must not contain path traversal")
+
+    user_path = os.path.join(get_data_dir(), relative_name)
+    if os.path.isdir(user_path):
+        return user_path
+
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    if bundle_root is not None:
+        bundled_path = os.path.join(str(bundle_root), "data", relative_name)
+        if os.path.isdir(bundled_path):
+            return bundled_path
+
+    return user_path
+
+
 def get_config_file_path() -> str:
     """Return the single versioned application INI path."""
     return os.path.join(get_data_dir(), "transbridge.ini")

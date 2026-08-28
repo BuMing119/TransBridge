@@ -1,11 +1,12 @@
 """Story 07: MemoryStore + MemoryRetriever 测试 — CRUD / LRU / 异步写入 / 搜索。"""
+
 from __future__ import annotations
 
+from pathlib import Path
 import tempfile
 import unittest
-from pathlib import Path
 
-from transbridge.smart_assistant.memory.memory_store import MemoryStore, MemoryEntry
+from transbridge.smart_assistant.memory.memory_store import MemoryEntry, MemoryStore
 
 
 class TestMemoryStore(unittest.TestCase):
@@ -19,6 +20,7 @@ class TestMemoryStore(unittest.TestCase):
     def tearDown(self):
         self.store.close()
         import shutil
+
         shutil.rmtree(self._tmp, ignore_errors=True)
 
     # ── 基本 CRUD ──────────────────────────────────────────────
