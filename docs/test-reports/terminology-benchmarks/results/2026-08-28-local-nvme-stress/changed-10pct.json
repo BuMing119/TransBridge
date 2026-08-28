@@ -1,0 +1,871 @@
+{
+  "artifact_digest": "d148eafb68efee538df442cd4ced6b47ae9e0133723a24e3cecebd857d582ec3",
+  "cache_preparation": {
+    "baseline": "per-source-extraction-components-prepared-before-five-samples",
+    "baseline_component_count": 200,
+    "change_policy": "whole-source-components-selected-with-evidence-count-at-most-floor(total*0.10)",
+    "dataset_generation": "completed-before-five-formal-samples",
+    "external_network_cache": "not-used",
+    "llm_cache": "disabled",
+    "os_file_cache": "operator-recorded-not-programmatically-cleared",
+    "parity": "each-incremental-sample-compared-with-clean-full-reduction-of-changed-input",
+    "production_adapter_preflight": {
+      "bulk_logical_evidence": "deterministic-ndjson-contract-corpus",
+      "formats": [
+        "plugin.sse",
+        "xml.eet",
+        "xml.xt",
+        "strings.strings",
+        "json.paratranz"
+      ],
+      "result": "all-five-fixtures-parsed"
+    },
+    "repository": "shared-sqlite-repository"
+  },
+  "dataset": {
+    "adapter_templates": [
+      {
+        "adapter_id": "transbridge.io.plugin-sse",
+        "adapter_version": "2.0",
+        "format_id": "plugin.sse",
+        "path": "adapter-sources/sample.esp",
+        "sha256": "1701df1f8ccf08279751b84fe064df921d9304dcb4644883b9bb396c9f1f4f9f",
+        "size_bytes": 3950877,
+        "template_key": "plugin"
+      },
+      {
+        "adapter_id": "transbridge.io.eet-xml",
+        "adapter_version": "2.0",
+        "format_id": "xml.eet",
+        "path": "adapter-sources/eet-small.xml",
+        "sha256": "95d6266b9fb3b6ec2b16281dc7d3b79f3d050c2ec3b6185e4b8fe173968950bc",
+        "size_bytes": 400,
+        "template_key": "eet"
+      },
+      {
+        "adapter_id": "transbridge.io.xt-xml",
+        "adapter_version": "2.0",
+        "format_id": "xml.xt",
+        "path": "adapter-sources/xt-small.xml",
+        "sha256": "ca024ffffd7f2dea3348a42c04e454aa2324b7d3a64dd5454882aab9ed3780dd",
+        "size_bytes": 345,
+        "template_key": "xt"
+      },
+      {
+        "adapter_id": "transbridge.io.strings.strings",
+        "adapter_version": "2.0-stage-1",
+        "format_id": "strings.strings",
+        "path": "adapter-sources/integrity.strings",
+        "sha256": "47a0b1fec1a4bdfad84b7ffd67cf472e436f0e0c97a7a1531852d7845f26a678",
+        "size_bytes": 53,
+        "template_key": "strings"
+      },
+      {
+        "adapter_id": "transbridge.io.paratranz-json",
+        "adapter_version": "2.0",
+        "format_id": "json.paratranz",
+        "path": "adapter-sources/paratranz-dual-id.json",
+        "sha256": "410ec78fd7a22219469f9c77f26d8daa0dee559416b47de6796db301024dad08",
+        "size_bytes": 598,
+        "template_key": "paratranz"
+      }
+    ],
+    "artifacts": {
+      "evidence": {
+        "path": "evidence.ndjson",
+        "sha256": "1cd942cb495dad026657311bebfc9a7d530400b84e6f1f1ef107211370920e05",
+        "size_bytes": 181397570
+      },
+      "source_index": {
+        "path": "source-index.json",
+        "sha256": "8070792ca88d93ab49b4906e1961c6246343b25e3b62839d0b4f28b13c7c171f",
+        "size_bytes": 41623
+      },
+      "version_history": {
+        "path": "version-history.json",
+        "sha256": "a62d173bb589e857fe3407f32d17951654faa08222052b7bd98f5e41b40737b5",
+        "size_bytes": 7328
+      }
+    },
+    "canonical_digest": "d69bcfd8a61ef44f1e295b692d49a69534f79ae5742fa4a8884411e9a470df44",
+    "expected_counts": {
+      "candidates": 220000,
+      "conflict_groups": 20000,
+      "evidence": 1000000,
+      "sources": 200,
+      "terminology": 200000,
+      "versions": 50
+    },
+    "generator_version": "1.0",
+    "schema_version": 1,
+    "spec": {
+      "conflict_group_count": 20000,
+      "evidence_count": 1000000,
+      "name": "stress",
+      "schema_version": 1,
+      "seed": 516000,
+      "source_count": 200,
+      "terminology_count": 200000,
+      "version_count": 50
+    }
+  },
+  "environment": {
+    "cpu_model": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "disk_type": "NVMe",
+    "logical_cores": 32,
+    "measurement_tools": {
+      "clock": "time.perf_counter",
+      "psutil": "7.2.2",
+      "pytest": "9.1.1"
+    },
+    "memory_bytes": 33954381824,
+    "physical_cores": 24,
+    "python": "3.12.12",
+    "reference_device_id": "win11-local-nvme-20260828",
+    "reference_requirements_met": true,
+    "transbridge_build": "0.1.1.1",
+    "windows": {
+      "build": 26200,
+      "platform": "Windows-11-10.0.26200-SP0",
+      "release": "11",
+      "version": "10.0.26200"
+    }
+  },
+  "evidence": {
+    "eligibility_scope": "single-scenario-evidence-contract-only",
+    "gate_eligible": true,
+    "gate_ineligibility_reasons": [],
+    "profile": "formal-gate-v1",
+    "release_gate_eligible": false,
+    "scenario_contract": {
+      "completed_semantics": [
+        "baseline-prepared-before-five-formal-samples",
+        "changed-evidence-at-most-10-percent",
+        "incremental-full-rebuild-digest-parity",
+        "incremental-reuse-and-recompute-counts-recorded"
+      ],
+      "duplicate_phases_by_run": {},
+      "missing_required_phases_by_run": {},
+      "missing_required_semantics": [],
+      "observed_phases_by_run": {
+        "iteration-1": [
+          "assemble",
+          "capture",
+          "cleanup",
+          "external-io-wait",
+          "external-llm-wait",
+          "extract",
+          "parse",
+          "persist",
+          "reduce"
+        ],
+        "iteration-2": [
+          "assemble",
+          "capture",
+          "cleanup",
+          "external-io-wait",
+          "external-llm-wait",
+          "extract",
+          "parse",
+          "persist",
+          "reduce"
+        ],
+        "iteration-3": [
+          "assemble",
+          "capture",
+          "cleanup",
+          "external-io-wait",
+          "external-llm-wait",
+          "extract",
+          "parse",
+          "persist",
+          "reduce"
+        ],
+        "iteration-4": [
+          "assemble",
+          "capture",
+          "cleanup",
+          "external-io-wait",
+          "external-llm-wait",
+          "extract",
+          "parse",
+          "persist",
+          "reduce"
+        ],
+        "iteration-5": [
+          "assemble",
+          "capture",
+          "cleanup",
+          "external-io-wait",
+          "external-llm-wait",
+          "extract",
+          "parse",
+          "persist",
+          "reduce"
+        ]
+      },
+      "required_phases": [
+        "assemble",
+        "capture",
+        "cleanup",
+        "external-io-wait",
+        "external-llm-wait",
+        "extract",
+        "parse",
+        "persist",
+        "reduce"
+      ],
+      "required_semantics": [
+        "baseline-prepared-before-five-formal-samples",
+        "changed-evidence-at-most-10-percent",
+        "incremental-reuse-and-recompute-counts-recorded",
+        "incremental-full-rebuild-digest-parity"
+      ]
+    }
+  },
+  "runs": [
+    {
+      "build_duration_seconds": 254.48236540000653,
+      "external_io_wait_seconds": 0.0,
+      "external_llm_wait_seconds": 0.0,
+      "iteration": 1,
+      "local_duration_seconds": 255.40482720000728,
+      "memory_measurement": "psutil-rss-baseline/10ms-sampled-peak/post-gc-recovered",
+      "peak_memory_bytes": 5359243264,
+      "rss_baseline_bytes": 1631797248,
+      "rss_peak_bytes": 6991040512,
+      "rss_recovered_bytes": 2414026752,
+      "timings": [
+        {
+          "details": {},
+          "duration_seconds": 0.4344559000019217,
+          "external_wait": false,
+          "phase": "capture"
+        },
+        {
+          "details": {
+            "reparsed_components": 20,
+            "reused_components": 180
+          },
+          "duration_seconds": 9.490885699997307,
+          "external_wait": false,
+          "phase": "parse"
+        },
+        {
+          "details": {},
+          "duration_seconds": 2.4000037228688598e-06,
+          "external_wait": false,
+          "phase": "assemble"
+        },
+        {
+          "details": {},
+          "duration_seconds": 2.6227069000015035,
+          "external_wait": false,
+          "phase": "extract"
+        },
+        {
+          "details": {
+            "changed_evidence": 97423,
+            "recomputed_components": 20,
+            "reused_components": 180,
+            "total_evidence": 1000000
+          },
+          "duration_seconds": 114.94200229999842,
+          "external_wait": false,
+          "phase": "reduce"
+        },
+        {
+          "details": {},
+          "duration_seconds": 126.99231220000365,
+          "external_wait": false,
+          "phase": "persist"
+        },
+        {
+          "details": {
+            "requests": 0,
+            "retries": 0,
+            "status": "disabled"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-llm-wait"
+        },
+        {
+          "details": {
+            "local_disk_io": "included-in-local-phases",
+            "status": "none"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-io-wait"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.9224618000007467,
+          "external_wait": false,
+          "phase": "cleanup"
+        }
+      ]
+    },
+    {
+      "build_duration_seconds": 193.86255260001053,
+      "external_io_wait_seconds": 0.0,
+      "external_llm_wait_seconds": 0.0,
+      "iteration": 2,
+      "local_duration_seconds": 194.8706093000219,
+      "memory_measurement": "psutil-rss-baseline/10ms-sampled-peak/post-gc-recovered",
+      "peak_memory_bytes": 6221197312,
+      "rss_baseline_bytes": 2414026752,
+      "rss_peak_bytes": 8635224064,
+      "rss_recovered_bytes": 2422398976,
+      "timings": [
+        {
+          "details": {},
+          "duration_seconds": 0.5323262000019895,
+          "external_wait": false,
+          "phase": "capture"
+        },
+        {
+          "details": {
+            "reparsed_components": 20,
+            "reused_components": 180
+          },
+          "duration_seconds": 10.90765090000059,
+          "external_wait": false,
+          "phase": "parse"
+        },
+        {
+          "details": {},
+          "duration_seconds": 4.0000013541430235e-06,
+          "external_wait": false,
+          "phase": "assemble"
+        },
+        {
+          "details": {},
+          "duration_seconds": 2.9861669999954756,
+          "external_wait": false,
+          "phase": "extract"
+        },
+        {
+          "details": {
+            "changed_evidence": 97423,
+            "recomputed_components": 20,
+            "reused_components": 180,
+            "total_evidence": 1000000
+          },
+          "duration_seconds": 111.22537510000984,
+          "external_wait": false,
+          "phase": "reduce"
+        },
+        {
+          "details": {},
+          "duration_seconds": 68.21102940000128,
+          "external_wait": false,
+          "phase": "persist"
+        },
+        {
+          "details": {
+            "requests": 0,
+            "retries": 0,
+            "status": "disabled"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-llm-wait"
+        },
+        {
+          "details": {
+            "local_disk_io": "included-in-local-phases",
+            "status": "none"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-io-wait"
+        },
+        {
+          "details": {},
+          "duration_seconds": 1.008056700011366,
+          "external_wait": false,
+          "phase": "cleanup"
+        }
+      ]
+    },
+    {
+      "build_duration_seconds": 189.45970810001018,
+      "external_io_wait_seconds": 0.0,
+      "external_llm_wait_seconds": 0.0,
+      "iteration": 3,
+      "local_duration_seconds": 190.45927250001114,
+      "memory_measurement": "psutil-rss-baseline/10ms-sampled-peak/post-gc-recovered",
+      "peak_memory_bytes": 6212386816,
+      "rss_baseline_bytes": 2422398976,
+      "rss_peak_bytes": 8634785792,
+      "rss_recovered_bytes": 2428375040,
+      "timings": [
+        {
+          "details": {},
+          "duration_seconds": 0.45295140000234824,
+          "external_wait": false,
+          "phase": "capture"
+        },
+        {
+          "details": {
+            "reparsed_components": 20,
+            "reused_components": 180
+          },
+          "duration_seconds": 11.089758200003416,
+          "external_wait": false,
+          "phase": "parse"
+        },
+        {
+          "details": {},
+          "duration_seconds": 2.900007530115545e-06,
+          "external_wait": false,
+          "phase": "assemble"
+        },
+        {
+          "details": {},
+          "duration_seconds": 3.0352808000025107,
+          "external_wait": false,
+          "phase": "extract"
+        },
+        {
+          "details": {
+            "changed_evidence": 97423,
+            "recomputed_components": 20,
+            "reused_components": 180,
+            "total_evidence": 1000000
+          },
+          "duration_seconds": 108.89997480000602,
+          "external_wait": false,
+          "phase": "reduce"
+        },
+        {
+          "details": {},
+          "duration_seconds": 65.98173999998835,
+          "external_wait": false,
+          "phase": "persist"
+        },
+        {
+          "details": {
+            "requests": 0,
+            "retries": 0,
+            "status": "disabled"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-llm-wait"
+        },
+        {
+          "details": {
+            "local_disk_io": "included-in-local-phases",
+            "status": "none"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-io-wait"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.9995644000009634,
+          "external_wait": false,
+          "phase": "cleanup"
+        }
+      ]
+    },
+    {
+      "build_duration_seconds": 179.1431530000118,
+      "external_io_wait_seconds": 0.0,
+      "external_llm_wait_seconds": 0.0,
+      "iteration": 4,
+      "local_duration_seconds": 180.0655037000106,
+      "memory_measurement": "psutil-rss-baseline/10ms-sampled-peak/post-gc-recovered",
+      "peak_memory_bytes": 6206357504,
+      "rss_baseline_bytes": 2428375040,
+      "rss_peak_bytes": 8634732544,
+      "rss_recovered_bytes": 2434985984,
+      "timings": [
+        {
+          "details": {},
+          "duration_seconds": 0.43920140000409447,
+          "external_wait": false,
+          "phase": "capture"
+        },
+        {
+          "details": {
+            "reparsed_components": 20,
+            "reused_components": 180
+          },
+          "duration_seconds": 10.300899399997434,
+          "external_wait": false,
+          "phase": "parse"
+        },
+        {
+          "details": {},
+          "duration_seconds": 2.800006768666208e-06,
+          "external_wait": false,
+          "phase": "assemble"
+        },
+        {
+          "details": {},
+          "duration_seconds": 2.8031984999979613,
+          "external_wait": false,
+          "phase": "extract"
+        },
+        {
+          "details": {
+            "changed_evidence": 97423,
+            "recomputed_components": 20,
+            "reused_components": 180,
+            "total_evidence": 1000000
+          },
+          "duration_seconds": 104.12657530000433,
+          "external_wait": false,
+          "phase": "reduce"
+        },
+        {
+          "details": {},
+          "duration_seconds": 61.473275600001216,
+          "external_wait": false,
+          "phase": "persist"
+        },
+        {
+          "details": {
+            "requests": 0,
+            "retries": 0,
+            "status": "disabled"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-llm-wait"
+        },
+        {
+          "details": {
+            "local_disk_io": "included-in-local-phases",
+            "status": "none"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-io-wait"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.9223506999987876,
+          "external_wait": false,
+          "phase": "cleanup"
+        }
+      ]
+    },
+    {
+      "build_duration_seconds": 177.81451709997782,
+      "external_io_wait_seconds": 0.0,
+      "external_llm_wait_seconds": 0.0,
+      "iteration": 5,
+      "local_duration_seconds": 178.77787479996914,
+      "memory_measurement": "psutil-rss-baseline/10ms-sampled-peak/post-gc-recovered",
+      "peak_memory_bytes": 6197989376,
+      "rss_baseline_bytes": 2434985984,
+      "rss_peak_bytes": 8632975360,
+      "rss_recovered_bytes": 2442207232,
+      "timings": [
+        {
+          "details": {},
+          "duration_seconds": 0.41623709999839775,
+          "external_wait": false,
+          "phase": "capture"
+        },
+        {
+          "details": {
+            "reparsed_components": 20,
+            "reused_components": 180
+          },
+          "duration_seconds": 10.030440299990005,
+          "external_wait": false,
+          "phase": "parse"
+        },
+        {
+          "details": {},
+          "duration_seconds": 3.2999960239976645e-06,
+          "external_wait": false,
+          "phase": "assemble"
+        },
+        {
+          "details": {},
+          "duration_seconds": 2.968460399992182,
+          "external_wait": false,
+          "phase": "extract"
+        },
+        {
+          "details": {
+            "changed_evidence": 97423,
+            "recomputed_components": 20,
+            "reused_components": 180,
+            "total_evidence": 1000000
+          },
+          "duration_seconds": 103.77540600000066,
+          "external_wait": false,
+          "phase": "reduce"
+        },
+        {
+          "details": {},
+          "duration_seconds": 60.623970000000554,
+          "external_wait": false,
+          "phase": "persist"
+        },
+        {
+          "details": {
+            "requests": 0,
+            "retries": 0,
+            "status": "disabled"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-llm-wait"
+        },
+        {
+          "details": {
+            "local_disk_io": "included-in-local-phases",
+            "status": "none"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-io-wait"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.9633576999913203,
+          "external_wait": false,
+          "phase": "cleanup"
+        }
+      ]
+    }
+  ],
+  "sampling": {
+    "clock": "time.perf_counter",
+    "external_io_wait_excluded_from_local_duration": true,
+    "llm_wait_excluded_from_local_duration": true,
+    "raw_samples_retained": true,
+    "repetitions": 5
+  },
+  "scenario": "changed-10pct",
+  "schema_version": 2,
+  "summary": {
+    "all-local-total": {
+      "count": 5,
+      "max": 255.40482720000728,
+      "mean": 199.915617500004,
+      "min": 178.77787479996914,
+      "p50": 190.45927250001114,
+      "p95": 243.2979836200102,
+      "raw_samples": [
+        255.40482720000728,
+        194.8706093000219,
+        190.45927250001114,
+        180.0655037000106,
+        178.77787479996914
+      ],
+      "unit": "s"
+    },
+    "assemble": {
+      "count": 5,
+      "max": 4.0000013541430235e-06,
+      "mean": 3.0800030799582602e-06,
+      "min": 2.4000037228688598e-06,
+      "p50": 2.900007530115545e-06,
+      "p95": 3.860000288113952e-06,
+      "raw_samples": [
+        2.4000037228688598e-06,
+        4.0000013541430235e-06,
+        2.900007530115545e-06,
+        2.800006768666208e-06,
+        3.2999960239976645e-06
+      ],
+      "unit": "s"
+    },
+    "build-local-total": {
+      "count": 5,
+      "max": 254.48236540000653,
+      "mean": 198.95245924000338,
+      "min": 177.81451709997782,
+      "p50": 189.45970810001018,
+      "p95": 242.35840284000733,
+      "raw_samples": [
+        254.48236540000653,
+        193.86255260001053,
+        189.45970810001018,
+        179.1431530000118,
+        177.81451709997782
+      ],
+      "unit": "s"
+    },
+    "capture": {
+      "count": 5,
+      "max": 0.5323262000019895,
+      "mean": 0.4550344000017503,
+      "min": 0.41623709999839775,
+      "p50": 0.43920140000409447,
+      "p95": 0.5164512400020612,
+      "raw_samples": [
+        0.4344559000019217,
+        0.5323262000019895,
+        0.45295140000234824,
+        0.43920140000409447,
+        0.41623709999839775
+      ],
+      "unit": "s"
+    },
+    "cleanup": {
+      "count": 5,
+      "max": 1.008056700011366,
+      "mean": 0.9631582600006368,
+      "min": 0.9223506999987876,
+      "p50": 0.9633576999913203,
+      "p95": 1.0063582400092854,
+      "raw_samples": [
+        0.9224618000007467,
+        1.008056700011366,
+        0.9995644000009634,
+        0.9223506999987876,
+        0.9633576999913203
+      ],
+      "unit": "s"
+    },
+    "external-io-wait": {
+      "count": 5,
+      "max": 0.0,
+      "mean": 0.0,
+      "min": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "raw_samples": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "unit": "s"
+    },
+    "external-llm-wait": {
+      "count": 5,
+      "max": 0.0,
+      "mean": 0.0,
+      "min": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "raw_samples": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "unit": "s"
+    },
+    "extract": {
+      "count": 5,
+      "max": 3.0352808000025107,
+      "mean": 2.8831627199979266,
+      "min": 2.6227069000015035,
+      "p50": 2.968460399992182,
+      "p95": 3.0254580400011037,
+      "raw_samples": [
+        2.6227069000015035,
+        2.9861669999954756,
+        3.0352808000025107,
+        2.8031984999979613,
+        2.968460399992182
+      ],
+      "unit": "s"
+    },
+    "parse": {
+      "count": 5,
+      "max": 11.089758200003416,
+      "mean": 10.36392689999775,
+      "min": 9.490885699997307,
+      "p50": 10.300899399997434,
+      "p95": 11.053336740002852,
+      "raw_samples": [
+        9.490885699997307,
+        10.90765090000059,
+        11.089758200003416,
+        10.300899399997434,
+        10.030440299990005
+      ],
+      "unit": "s"
+    },
+    "peak-additional-rss": {
+      "count": 5,
+      "max": 6221197312,
+      "mean": 6039434854.4,
+      "min": 5359243264,
+      "p50": 6206357504.0,
+      "p95": 6219435212.799999,
+      "raw_samples": [
+        5359243264,
+        6221197312,
+        6212386816,
+        6206357504,
+        6197989376
+      ],
+      "unit": "bytes"
+    },
+    "persist": {
+      "count": 5,
+      "max": 126.99231220000365,
+      "mean": 76.65646543999901,
+      "min": 60.623970000000554,
+      "p50": 65.98173999998835,
+      "p95": 115.23605564000317,
+      "raw_samples": [
+        126.99231220000365,
+        68.21102940000128,
+        65.98173999998835,
+        61.473275600001216,
+        60.623970000000554
+      ],
+      "unit": "s"
+    },
+    "reduce": {
+      "count": 5,
+      "max": 114.94200229999842,
+      "mean": 108.59386670000386,
+      "min": 103.77540600000066,
+      "p50": 108.89997480000602,
+      "p95": 114.1986768600007,
+      "raw_samples": [
+        114.94200229999842,
+        111.22537510000984,
+        108.89997480000602,
+        104.12657530000433,
+        103.77540600000066
+      ],
+      "unit": "s"
+    },
+    "rss-recovered": {
+      "count": 5,
+      "growth_from_first_bytes": [
+        0,
+        8372224,
+        14348288,
+        20959232,
+        28180480
+      ],
+      "max": 2442207232,
+      "mean": 2428398796.8,
+      "min": 2414026752,
+      "p50": 2428375040.0,
+      "p95": 2440762982.4,
+      "raw_samples": [
+        2414026752,
+        2422398976,
+        2428375040,
+        2434985984,
+        2442207232
+      ],
+      "stable_growth_bytes": 28180480,
+      "unit": "bytes"
+    }
+  },
+  "workload": "project-terminology-formal-v1"
+}

@@ -49,6 +49,7 @@ class AppContext(QObject):
         project_commands=None,
         project_remote_bindings=None,
         runtime_context=None,
+        effective_terminology_factory=None,
     ):
         super().__init__(parent)
         self._config: ParatranzConfig = ParatranzConfig.create_or_load()
@@ -83,6 +84,7 @@ class AppContext(QObject):
         self._project_commands = project_commands
         self._project_remote_bindings = project_remote_bindings
         self._runtime_context = runtime_context
+        self._effective_terminology_factory = effective_terminology_factory
         self._projection_subscription: ProjectionSubscription | None = None
         self._projection_dirty = False
         self._projection_revision: int | None = None
@@ -560,6 +562,12 @@ class AppContext(QObject):
     @property
     def runtime_context(self):
         return self._runtime_context
+
+    @property
+    def effective_terminology_factory(self):
+        """Return the injected Project/Variant-scoped read-only adapter factory."""
+
+        return self._effective_terminology_factory
 
     def _on_project_projection(self, snapshot: ProjectionSnapshot | None) -> None:
         if QThread.currentThread() != self.thread():

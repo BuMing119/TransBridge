@@ -495,7 +495,9 @@ class QualityGateChecker(BaseChecker):
         if not self._term_manager or not entry.original:
             return {}
 
-        # 使用 term_manager 的子串扫描匹配获取原文中命中的术语
+        contextual = getattr(self._term_manager, "match_terms_for_entry", None)
+        if callable(contextual):
+            return contextual(entry)
         return self._term_manager.match_terms([entry.original])
 
     def _format_terms(self, terms: dict[str, str]) -> str:

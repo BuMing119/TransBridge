@@ -1,0 +1,65 @@
+{
+  "additional_checks": [],
+  "artifact_digest": "e7fc6289278cde5fcc213f2a07ffcfca777ffab0e43315f6b5bc8488f0fe76dd",
+  "profile": "fr516-ui-supplemental-v1",
+  "repetitions": 5,
+  "schema_version": 1,
+  "supplemental_metrics": {
+    "cancel-visible-feedback": {
+      "evidence": "real TerminologyTaskAdapter CANCELLING projection",
+      "median": 4.870000702794641e-05,
+      "raw_samples": [
+        7.419999747071415e-05,
+        5.230000533629209e-05,
+        4.820000322069973e-05,
+        4.870000702794641e-05,
+        4.320000880397856e-05
+      ],
+      "statistic": "maximum-of-five-raw",
+      "unit": "seconds",
+      "value": 7.419999747071415e-05
+    },
+    "main-thread-block": {
+      "evidence": "10 ms QTimer gaps while terminology command preparation runs in QThreadPool",
+      "median": 0.011694500004523434,
+      "raw_samples": [
+        0.010922400004346855,
+        0.011934499998460524,
+        0.01166899999952875,
+        0.012943499998073094,
+        0.011694500004523434
+      ],
+      "statistic": "maximum-of-five-raw",
+      "unit": "seconds",
+      "value": 0.012943499998073094
+    },
+    "progress-heartbeat": {
+      "evidence": "real ProgressHeartbeat delivery through TaskRuntime",
+      "median": 1.4994142999930773,
+      "raw_samples": [
+        1.4973833999974886,
+        1.500048899993999,
+        1.4987876000086544,
+        1.4994142999930773,
+        1.5001755999983288
+      ],
+      "statistic": "maximum-of-five-raw",
+      "unit": "seconds",
+      "value": 1.5001755999983288
+    },
+    "visible-feedback": {
+      "evidence": "real Qt terminology window",
+      "median": 3.5200006095692515e-05,
+      "raw_samples": [
+        3.860000288113952e-05,
+        3.5200006095692515e-05,
+        6.479999865405262e-05,
+        3.100000321865082e-05,
+        2.4599998141638935e-05
+      ],
+      "statistic": "maximum-of-five-raw",
+      "unit": "seconds",
+      "value": 6.479999865405262e-05
+    }
+  }
+}

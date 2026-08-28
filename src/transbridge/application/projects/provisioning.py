@@ -18,6 +18,7 @@ from typing import Any, Protocol
 
 from transbridge.application.contracts import (
     Diagnostic,
+    DiagnosticSeverity,
     DomainError,
     ErrorCategory,
     OperationResult,
@@ -25,7 +26,7 @@ from transbridge.application.contracts import (
 )
 from transbridge.application.io import EntrySnapshot, FormatId, SourceSnapshot
 from transbridge.persistence.v2.ids import ProjectId, ProjectRef, VariantId, VariantRef
-from transbridge.persistence.v2.models import ProjectDto, SchemaEnvelope
+from transbridge.persistence.v2.models import SCHEMA_VERSION, ProjectDto, SchemaEnvelope
 from transbridge.persistence.v2.variant import (
     SourceBaseline,
     VariantAggregate,
@@ -33,6 +34,7 @@ from transbridge.persistence.v2.variant import (
 )
 
 from .models import ActiveProject
+from .source_registry import migrate_legacy_source_registry
 
 
 @dataclass(frozen=True, slots=True)
@@ -323,18 +325,22 @@ class ProjectProvisioningService:
                 prepared_sources = self._prepare_sources(request, context)
                 baselines = tuple(item.baseline for item in prepared_sources)
                 descriptors = tuple(item.to_dict() for item in prepared_sources)
+                registry = migrate_legacy_source_registry(
+                    project_ref.identity.value,
+                    descriptors,
+                )
                 fingerprints = tuple(item.fingerprint for item in baselines)
                 entries = tuple(entry for item in baselines for entry in item.entries)
                 snapshot = VariantSnapshot(variant_ref, fingerprints, entries)
                 project = ProjectDto(
                     SchemaEnvelope(
-                        2,
+                        SCHEMA_VERSION,
                         project_ref.kind,
                         project_ref.identity.value,
                         0,
                         {
                             "name": request.project_name,
-                            "sources": list(descriptors),
+                            **registry.to_project_data(),
                             "variant_ids": [variant_ref.identity.value],
                             "active_variant_id": variant_ref.identity.value,
                             "variant_names": {variant_ref.identity.value: request.default_variant_name},
@@ -350,7 +356,19 @@ class ProjectProvisioningService:
                 )
                 commit = ProjectProvisioningCommit(project, snapshot, baselines, name_key)
                 token = self._new_token()
-                diagnostics = tuple(item for source in prepared_sources for item in source.diagnostics)
+                diagnostics = (
+                    *(item for source in prepared_sources for item in source.diagnostics),
+                    *(
+                        Diagnostic(
+                            code,
+                            "工程来源关系需要显式配置。",
+                            DiagnosticSeverity.WARNING,
+                            ErrorCategory.PREREQUISITE,
+                            details=(("source_id", source_id),),
+                        )
+                        for code, source_id in registry.diagnostics
+                    ),
+                )
                 preview = ProjectProvisioningPreview(
                     token,
                     request.request_fingerprint,

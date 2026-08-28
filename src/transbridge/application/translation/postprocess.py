@@ -314,6 +314,11 @@ class PostProcessWorkload:
                         entry.translation or entry.original,
                         entry.stage,
                         context=entry.context,
+                        report_details=(
+                            (("terminology_plugin_id", entry.terminology_plugin_id),)
+                            if entry.terminology_plugin_id is not None
+                            else ()
+                        ),
                     )
                 )
             elif decision.diagnostic is not None:

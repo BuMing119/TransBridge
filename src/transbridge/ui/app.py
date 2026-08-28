@@ -99,11 +99,18 @@ def main(runtime: AppRuntime | None = None, *, initial_project_path: str | None 
         AgentRegistry.init_presets()
         register_all_tools()
 
+        use_case_names = app_runtime.use_cases.names()
+        effective_terminology_factory = (
+            app_runtime.use_cases.resolve("effective_terminology_factory")
+            if "effective_terminology_factory" in use_case_names
+            else None
+        )
         projection = AppContext(
             project_projection=app_runtime.use_cases.resolve("project_projection"),
             project_commands=app_runtime.use_cases.resolve("gui_project_commands"),
             project_remote_bindings=app_runtime.use_cases.resolve("project_remote_bindings"),
             runtime_context=binding.context,
+            effective_terminology_factory=effective_terminology_factory,
         )
         window = MainWindow(
             app_context=projection,

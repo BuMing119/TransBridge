@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
 from transbridge.ui.foundation.adapters import ThemeView
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle
 from transbridge.ui.guidance.qt import GuidanceBanner
+from transbridge.ui.shell.action_catalog import IntentId
 from transbridge.ui.windowing import show_and_activate
 
 from ._project_bar import ProjectBar
@@ -216,6 +217,12 @@ class WorkbenchWidget(QWidget):
         self._manage_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         ComponentStyle.apply_static(self._manage_button, ComponentKind.BUTTON)
         manage_menu = QMenu(self._manage_button)
+        self._btn_terminology = manage_menu.addAction("构建术语库…")
+        self._btn_terminology.setToolTip("构建、检查、调整并发布当前工程的术语库")
+        self._btn_terminology.triggered.connect(
+            lambda: self.intent_requested.emit(IntentId.TERMINOLOGY_WORKBENCH.value)
+        )
+        manage_menu.addSeparator()
         self._btn_new = manage_menu.addAction("准备新的翻译内容")
         self._btn_new.setToolTip("清空当前选择，准备加载新数据")
         self._btn_new.triggered.connect(self._on_new_slot)

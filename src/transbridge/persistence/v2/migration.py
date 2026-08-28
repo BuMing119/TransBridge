@@ -6,8 +6,12 @@ from copy import deepcopy
 import hashlib
 from typing import Any
 
+from transbridge.application.projects.source_registry import migrate_legacy_source_registry
+
 from .ids import EntityKind, EntityRef, OpaqueId
 from .models import SCHEMA_VERSION, MigrationDraft, SchemaValidationError
+
+_V2_SCHEMA_VERSION = 2
 
 
 def migrate_v1(document: dict[str, Any], ref: EntityRef) -> MigrationDraft:
@@ -19,6 +23,69 @@ def migrate_v1(document: dict[str, Any], ref: EntityRef) -> MigrationDraft:
     if ref.kind is EntityKind.VARIANT:
         return _migrate_variant(source, ref)
     return _migrate_session(source, ref)
+
+
+def migrate_v2_to_v3(document: dict[str, Any], ref: EntityRef) -> MigrationDraft:
+    """Upgrade one validated-by-shape V2 document without mutating it."""
+
+    source = deepcopy(document)
+    if source.get("schema_version") != _V2_SCHEMA_VERSION:
+        raise SchemaValidationError("MIGRATION_VERSION_MISMATCH", "V2 to V3 migration requires schema_version 2.")
+    _check_v2_identity(source, ref)
+    data = source.get("data")
+    if not isinstance(data, dict):
+        raise SchemaValidationError("INVALID_V2_DATA", "V2 persistence data must be an object.")
+
+    defaults: list[str] = []
+    conflicts: tuple[str, ...] = ()
+    if ref.kind is EntityKind.PROJECT:
+        raw_sources = data.get("sources", [])
+        if not isinstance(raw_sources, list) or not all(isinstance(item, dict) for item in raw_sources):
+            raise SchemaValidationError("INVALID_V2_SOURCES", "V2 Project sources must be an array of objects.")
+        try:
+            registry = migrate_legacy_source_registry(ref.identity.value, raw_sources)
+        except (TypeError, ValueError) as exc:
+            raise SchemaValidationError("SOURCE_REGISTRY_MIGRATION_FAILED", str(exc), pointer="/data/sources") from exc
+        data.update(registry.to_project_data())
+        defaults.extend(("sources=SourceRegistration[]", "source_relations=SourceRelation[]"))
+        conflicts = tuple(f"{code}:{source_id}" for code, source_id in registry.diagnostics)
+
+    source["schema_version"] = SCHEMA_VERSION
+    return MigrationDraft(source, defaults=tuple(defaults), conflicts=conflicts)
+
+
+def migrate_to_current(document: dict[str, Any], ref: EntityRef) -> MigrationDraft:
+    """Apply the explicit migration chain and combine its audit metadata."""
+
+    source = deepcopy(document)
+    version = source.get("schema_version", 1)
+    if isinstance(version, bool) or not isinstance(version, int):
+        raise SchemaValidationError("INVALID_SCHEMA_VERSION", "schema_version must be an integer.")
+    defaults: list[str] = []
+    dropped: list[str] = []
+    conflicts: list[str] = []
+    if version == 1:
+        draft = migrate_v1(source, ref)
+        source = draft.document
+        defaults.extend(draft.defaults)
+        dropped.extend(draft.dropped_fields)
+        conflicts.extend(draft.conflicts)
+        version = _V2_SCHEMA_VERSION
+    if version == _V2_SCHEMA_VERSION:
+        draft = migrate_v2_to_v3(source, ref)
+        source = draft.document
+        defaults.extend(draft.defaults)
+        dropped.extend(draft.dropped_fields)
+        conflicts.extend(draft.conflicts)
+        version = SCHEMA_VERSION
+    if version != SCHEMA_VERSION:
+        raise SchemaValidationError("UNSUPPORTED_MIGRATION_PATH", "No migration path exists for this schema version.")
+    return MigrationDraft(
+        source,
+        defaults=tuple(defaults),
+        dropped_fields=tuple(dropped),
+        conflicts=tuple(conflicts),
+    )
 
 
 def _migrate_project(source: dict[str, Any], ref: EntityRef) -> MigrationDraft:
@@ -219,7 +286,7 @@ def _document(ref: EntityRef, source: dict[str, Any], data: dict[str, Any]) -> d
     if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
         raise SchemaValidationError("INVALID_V1_REVISION", "V1 revision must be a non-negative integer.")
     return {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": _V2_SCHEMA_VERSION,
         "entity_type": ref.kind.value,
         "id": ref.identity.value,
         "revision": revision,
@@ -241,6 +308,16 @@ def _check_legacy_identity(source: dict[str, Any], ref: EntityRef, fields: tuple
                 "V1_REFERENCE_ID_MISMATCH",
                 "V1 internal identity does not match the requested reference.",
             )
+
+
+def _check_v2_identity(source: dict[str, Any], ref: EntityRef) -> None:
+    if source.get("entity_type") != ref.kind.value:
+        raise SchemaValidationError("V2_ENTITY_TYPE_MISMATCH", "V2 entity type does not match the requested reference.")
+    if source.get("id") != ref.identity.value:
+        raise SchemaValidationError("V2_REFERENCE_ID_MISMATCH", "V2 identity does not match the requested reference.")
+    revision = source.get("revision")
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
+        raise SchemaValidationError("INVALID_V2_REVISION", "V2 revision must be a non-negative integer.")
 
 
 def _check_legacy_variant_name(source: dict[str, Any], ref: EntityRef) -> None:
@@ -271,4 +348,4 @@ def _legacy_opaque_id(value: str) -> str:
         return f"legacy-{digest}"
 
 
-__all__ = ["migrate_v1"]
+__all__ = ["migrate_to_current", "migrate_v1", "migrate_v2_to_v3"]

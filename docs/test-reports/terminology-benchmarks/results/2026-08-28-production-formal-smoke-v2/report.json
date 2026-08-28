@@ -1,0 +1,577 @@
+{
+  "artifact_digest": "e755f118d50e5ec12a84121c0eec6b483b5c36bea3675c8c4ab3a0e8bb045ecc",
+  "cache_preparation": {
+    "dataset_generation": "completed-before-five-formal-samples",
+    "external_network_cache": "not-used",
+    "llm_cache": "disabled",
+    "os_file_cache": "operator-recorded-not-programmatically-cleared",
+    "production_adapter_preflight": {
+      "bulk_logical_evidence": "deterministic-ndjson-contract-corpus",
+      "formats": [
+        "plugin.sse",
+        "xml.eet",
+        "xml.xt",
+        "strings.strings",
+        "json.paratranz"
+      ],
+      "result": "all-five-fixtures-parsed"
+    },
+    "repository": "complete-build-persisted-before-five-samples"
+  },
+  "dataset": {
+    "adapter_templates": [
+      {
+        "adapter_id": "transbridge.io.plugin-sse",
+        "adapter_version": "2.0",
+        "format_id": "plugin.sse",
+        "path": "adapter-sources/sample.esp",
+        "sha256": "1701df1f8ccf08279751b84fe064df921d9304dcb4644883b9bb396c9f1f4f9f",
+        "size_bytes": 3950877,
+        "template_key": "plugin"
+      },
+      {
+        "adapter_id": "transbridge.io.eet-xml",
+        "adapter_version": "2.0",
+        "format_id": "xml.eet",
+        "path": "adapter-sources/eet-small.xml",
+        "sha256": "95d6266b9fb3b6ec2b16281dc7d3b79f3d050c2ec3b6185e4b8fe173968950bc",
+        "size_bytes": 400,
+        "template_key": "eet"
+      },
+      {
+        "adapter_id": "transbridge.io.xt-xml",
+        "adapter_version": "2.0",
+        "format_id": "xml.xt",
+        "path": "adapter-sources/xt-small.xml",
+        "sha256": "ca024ffffd7f2dea3348a42c04e454aa2324b7d3a64dd5454882aab9ed3780dd",
+        "size_bytes": 345,
+        "template_key": "xt"
+      },
+      {
+        "adapter_id": "transbridge.io.strings.strings",
+        "adapter_version": "2.0-stage-1",
+        "format_id": "strings.strings",
+        "path": "adapter-sources/integrity.strings",
+        "sha256": "47a0b1fec1a4bdfad84b7ffd67cf472e436f0e0c97a7a1531852d7845f26a678",
+        "size_bytes": 53,
+        "template_key": "strings"
+      },
+      {
+        "adapter_id": "transbridge.io.paratranz-json",
+        "adapter_version": "2.0",
+        "format_id": "json.paratranz",
+        "path": "adapter-sources/paratranz-dual-id.json",
+        "sha256": "410ec78fd7a22219469f9c77f26d8daa0dee559416b47de6796db301024dad08",
+        "size_bytes": 598,
+        "template_key": "paratranz"
+      }
+    ],
+    "artifacts": {
+      "evidence": {
+        "path": "evidence.ndjson",
+        "sha256": "73a586bb4fb9b924b46fd7977540fb7f2ad82939f230af556a806db2f54dafff",
+        "size_bytes": 11577
+      },
+      "source_index": {
+        "path": "source-index.json",
+        "sha256": "236869d9e98df3a22517812de3d93d00f2b2780969284865d596a75f73f5239a",
+        "size_bytes": 2662
+      },
+      "version_history": {
+        "path": "version-history.json",
+        "sha256": "b376f958bdfa1fac2192ee8664573980aa09255e1579ed764d58c339ad658bc4",
+        "size_bytes": 460
+      }
+    },
+    "canonical_digest": "a1c00d72b305f1829fd3dc507bd361ebec878b7b35d1bdb69da65b5525e0ea91",
+    "expected_counts": {
+      "candidates": 20,
+      "conflict_groups": 4,
+      "evidence": 64,
+      "sources": 5,
+      "terminology": 16,
+      "versions": 3
+    },
+    "generator_version": "1.0",
+    "schema_version": 1,
+    "spec": {
+      "conflict_group_count": 4,
+      "evidence_count": 64,
+      "name": "smoke",
+      "schema_version": 1,
+      "seed": 516000,
+      "source_count": 5,
+      "terminology_count": 16,
+      "version_count": 3
+    }
+  },
+  "environment": {
+    "cpu_model": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "disk_type": "unknown",
+    "logical_cores": 32,
+    "measurement_tools": {
+      "clock": "time.perf_counter",
+      "psutil": "7.2.2",
+      "pytest": "9.1.1"
+    },
+    "memory_bytes": 33954381824,
+    "physical_cores": 24,
+    "python": "3.12.12",
+    "reference_device_id": "uncalibrated-local-production-smoke",
+    "reference_requirements_met": false,
+    "transbridge_build": "0.1.1.1",
+    "windows": {
+      "build": 26200,
+      "platform": "Windows-11-10.0.26200-SP0",
+      "release": "11",
+      "version": "10.0.26200"
+    }
+  },
+  "evidence": {
+    "gate_eligible": false,
+    "gate_ineligibility_reasons": [
+      "reference-environment-not-calibrated",
+      "reference-environment-disk-not-calibrated-ssd",
+      "dataset-scale-not-formal:smoke"
+    ],
+    "profile": "formal-gate-v1",
+    "scenario_contract": {
+      "completed_semantics": [
+        "format-capacity-and-no-truncation",
+        "quality-excel-renderer"
+      ],
+      "duplicate_phases_by_run": {},
+      "missing_required_phases_by_run": {},
+      "missing_required_semantics": [],
+      "observed_phases_by_run": {
+        "iteration-1": [
+          "cleanup",
+          "external-io-wait",
+          "external-llm-wait",
+          "report"
+        ],
+        "iteration-2": [
+          "cleanup",
+          "external-io-wait",
+          "external-llm-wait",
+          "report"
+        ],
+        "iteration-3": [
+          "cleanup",
+          "external-io-wait",
+          "external-llm-wait",
+          "report"
+        ],
+        "iteration-4": [
+          "cleanup",
+          "external-io-wait",
+          "external-llm-wait",
+          "report"
+        ],
+        "iteration-5": [
+          "cleanup",
+          "external-io-wait",
+          "external-llm-wait",
+          "report"
+        ]
+      },
+      "required_phases": [
+        "cleanup",
+        "report"
+      ],
+      "required_semantics": [
+        "quality-excel-renderer",
+        "format-capacity-and-no-truncation"
+      ]
+    }
+  },
+  "runs": [
+    {
+      "build_duration_seconds": 0,
+      "external_io_wait_seconds": 0.0,
+      "external_llm_wait_seconds": 0.0,
+      "iteration": 1,
+      "local_duration_seconds": 0.035282699987874366,
+      "memory_measurement": "psutil-rss-baseline/10ms-sampled-peak/post-gc-recovered",
+      "peak_memory_bytes": 647168,
+      "rss_baseline_bytes": 100143104,
+      "rss_peak_bytes": 100790272,
+      "rss_recovered_bytes": 100769792,
+      "timings": [
+        {
+          "details": {
+            "renderer": "terminology-quality-excel.v1",
+            "semantic_rows": 20,
+            "sha256": "a72861e96c08e861987b2a29495989bee6721a6a0e133904067fe716f86fc3da",
+            "sheet_count": 4,
+            "size_bytes": 10027
+          },
+          "duration_seconds": 0.024868699998478405,
+          "external_wait": false,
+          "phase": "report"
+        },
+        {
+          "details": {
+            "requests": 0,
+            "retries": 0,
+            "status": "disabled"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-llm-wait"
+        },
+        {
+          "details": {
+            "local_disk_io": "included-in-local-phases",
+            "status": "none"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-io-wait"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.010413999989395961,
+          "external_wait": false,
+          "phase": "cleanup"
+        }
+      ]
+    },
+    {
+      "build_duration_seconds": 0,
+      "external_io_wait_seconds": 0.0,
+      "external_llm_wait_seconds": 0.0,
+      "iteration": 2,
+      "local_duration_seconds": 0.032391499989898875,
+      "memory_measurement": "psutil-rss-baseline/10ms-sampled-peak/post-gc-recovered",
+      "peak_memory_bytes": 86016,
+      "rss_baseline_bytes": 100769792,
+      "rss_peak_bytes": 100855808,
+      "rss_recovered_bytes": 100855808,
+      "timings": [
+        {
+          "details": {
+            "renderer": "terminology-quality-excel.v1",
+            "semantic_rows": 20,
+            "sha256": "a72861e96c08e861987b2a29495989bee6721a6a0e133904067fe716f86fc3da",
+            "sheet_count": 4,
+            "size_bytes": 10027
+          },
+          "duration_seconds": 0.021116699994308874,
+          "external_wait": false,
+          "phase": "report"
+        },
+        {
+          "details": {
+            "requests": 0,
+            "retries": 0,
+            "status": "disabled"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-llm-wait"
+        },
+        {
+          "details": {
+            "local_disk_io": "included-in-local-phases",
+            "status": "none"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-io-wait"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.011274799995590001,
+          "external_wait": false,
+          "phase": "cleanup"
+        }
+      ]
+    },
+    {
+      "build_duration_seconds": 0,
+      "external_io_wait_seconds": 0.0,
+      "external_llm_wait_seconds": 0.0,
+      "iteration": 3,
+      "local_duration_seconds": 0.038413699992815964,
+      "memory_measurement": "psutil-rss-baseline/10ms-sampled-peak/post-gc-recovered",
+      "peak_memory_bytes": 28672,
+      "rss_baseline_bytes": 100855808,
+      "rss_peak_bytes": 100884480,
+      "rss_recovered_bytes": 100859904,
+      "timings": [
+        {
+          "details": {
+            "renderer": "terminology-quality-excel.v1",
+            "semantic_rows": 20,
+            "sha256": "a72861e96c08e861987b2a29495989bee6721a6a0e133904067fe716f86fc3da",
+            "sheet_count": 4,
+            "size_bytes": 10027
+          },
+          "duration_seconds": 0.024755399994319305,
+          "external_wait": false,
+          "phase": "report"
+        },
+        {
+          "details": {
+            "requests": 0,
+            "retries": 0,
+            "status": "disabled"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-llm-wait"
+        },
+        {
+          "details": {
+            "local_disk_io": "included-in-local-phases",
+            "status": "none"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-io-wait"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.013658299998496659,
+          "external_wait": false,
+          "phase": "cleanup"
+        }
+      ]
+    },
+    {
+      "build_duration_seconds": 0,
+      "external_io_wait_seconds": 0.0,
+      "external_llm_wait_seconds": 0.0,
+      "iteration": 4,
+      "local_duration_seconds": 0.04394179998780601,
+      "memory_measurement": "psutil-rss-baseline/10ms-sampled-peak/post-gc-recovered",
+      "peak_memory_bytes": 32768,
+      "rss_baseline_bytes": 100859904,
+      "rss_peak_bytes": 100892672,
+      "rss_recovered_bytes": 100868096,
+      "timings": [
+        {
+          "details": {
+            "renderer": "terminology-quality-excel.v1",
+            "semantic_rows": 20,
+            "sha256": "a72861e96c08e861987b2a29495989bee6721a6a0e133904067fe716f86fc3da",
+            "sheet_count": 4,
+            "size_bytes": 10027
+          },
+          "duration_seconds": 0.026894099995843135,
+          "external_wait": false,
+          "phase": "report"
+        },
+        {
+          "details": {
+            "requests": 0,
+            "retries": 0,
+            "status": "disabled"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-llm-wait"
+        },
+        {
+          "details": {
+            "local_disk_io": "included-in-local-phases",
+            "status": "none"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-io-wait"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.017047699991962872,
+          "external_wait": false,
+          "phase": "cleanup"
+        }
+      ]
+    },
+    {
+      "build_duration_seconds": 0,
+      "external_io_wait_seconds": 0.0,
+      "external_llm_wait_seconds": 0.0,
+      "iteration": 5,
+      "local_duration_seconds": 0.04288890001771506,
+      "memory_measurement": "psutil-rss-baseline/10ms-sampled-peak/post-gc-recovered",
+      "peak_memory_bytes": 249856,
+      "rss_baseline_bytes": 100868096,
+      "rss_peak_bytes": 101117952,
+      "rss_recovered_bytes": 101097472,
+      "timings": [
+        {
+          "details": {
+            "renderer": "terminology-quality-excel.v1",
+            "semantic_rows": 20,
+            "sha256": "a72861e96c08e861987b2a29495989bee6721a6a0e133904067fe716f86fc3da",
+            "sheet_count": 4,
+            "size_bytes": 10027
+          },
+          "duration_seconds": 0.02720890000637155,
+          "external_wait": false,
+          "phase": "report"
+        },
+        {
+          "details": {
+            "requests": 0,
+            "retries": 0,
+            "status": "disabled"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-llm-wait"
+        },
+        {
+          "details": {
+            "local_disk_io": "included-in-local-phases",
+            "status": "none"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-io-wait"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.01568000001134351,
+          "external_wait": false,
+          "phase": "cleanup"
+        }
+      ]
+    }
+  ],
+  "sampling": {
+    "clock": "time.perf_counter",
+    "external_io_wait_excluded_from_local_duration": true,
+    "llm_wait_excluded_from_local_duration": true,
+    "raw_samples_retained": true,
+    "repetitions": 5
+  },
+  "scenario": "report",
+  "schema_version": 2,
+  "summary": {
+    "all-local-total": {
+      "count": 5,
+      "max": 0.04394179998780601,
+      "mean": 0.03858371999522205,
+      "min": 0.032391499989898875,
+      "p50": 0.038413699992815964,
+      "p95": 0.04373121999378782,
+      "raw_samples": [
+        0.035282699987874366,
+        0.032391499989898875,
+        0.038413699992815964,
+        0.04394179998780601,
+        0.04288890001771506
+      ],
+      "unit": "s"
+    },
+    "cleanup": {
+      "count": 5,
+      "max": 0.017047699991962872,
+      "mean": 0.0136149599973578,
+      "min": 0.010413999989395961,
+      "p50": 0.013658299998496659,
+      "p95": 0.016774159995839,
+      "raw_samples": [
+        0.010413999989395961,
+        0.011274799995590001,
+        0.013658299998496659,
+        0.017047699991962872,
+        0.01568000001134351
+      ],
+      "unit": "s"
+    },
+    "external-io-wait": {
+      "count": 5,
+      "max": 0.0,
+      "mean": 0.0,
+      "min": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "raw_samples": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "unit": "s"
+    },
+    "external-llm-wait": {
+      "count": 5,
+      "max": 0.0,
+      "mean": 0.0,
+      "min": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "raw_samples": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "unit": "s"
+    },
+    "peak-additional-rss": {
+      "count": 5,
+      "max": 647168,
+      "mean": 208896,
+      "min": 28672,
+      "p50": 86016.0,
+      "p95": 567705.6,
+      "raw_samples": [
+        647168,
+        86016,
+        28672,
+        32768,
+        249856
+      ],
+      "unit": "bytes"
+    },
+    "report": {
+      "count": 5,
+      "max": 0.02720890000637155,
+      "mean": 0.024968759997864253,
+      "min": 0.021116699994308874,
+      "p50": 0.024868699998478405,
+      "p95": 0.027145940004265866,
+      "raw_samples": [
+        0.024868699998478405,
+        0.021116699994308874,
+        0.024755399994319305,
+        0.026894099995843135,
+        0.02720890000637155
+      ],
+      "unit": "s"
+    },
+    "rss-recovered": {
+      "count": 5,
+      "growth_from_first_bytes": [
+        0,
+        86016,
+        90112,
+        98304,
+        327680
+      ],
+      "max": 101097472,
+      "mean": 100890214.4,
+      "min": 100769792,
+      "p50": 100859904.0,
+      "p95": 101051596.8,
+      "raw_samples": [
+        100769792,
+        100855808,
+        100859904,
+        100868096,
+        101097472
+      ],
+      "stable_growth_bytes": 327680,
+      "unit": "bytes"
+    }
+  },
+  "workload": "project-terminology-formal-v1"
+}

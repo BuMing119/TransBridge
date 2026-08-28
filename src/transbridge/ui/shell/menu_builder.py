@@ -42,6 +42,7 @@ class MenuCallbacks:
     show_mails: VoidCallback
     show_about: VoidCallback
     manual_save: VoidCallback
+    open_terminology: VoidCallback = lambda: None
     show_context_help: VoidCallback = lambda: None
     show_task_activity: VoidCallback = lambda: None
     exit_app: VoidCallback | None = None
@@ -68,6 +69,7 @@ class MenuHandles:
     smart_assistant: QAction
     view_assistant: QAction
     dictionary: QAction
+    terminology: QAction
     fomod: QAction
     appearance: QAction
 
@@ -142,6 +144,11 @@ class MenuBuilder:
         translation_menu.addSeparator()
         ai_translator = self._intent_action(translation_menu, IntentId.TRANSLATION_AI, callbacks.open_ai_translator)
         dictionary = self._intent_action(translation_menu, IntentId.TRANSLATION_DICTIONARY, callbacks.open_dictionary)
+        terminology = self._intent_action(
+            translation_menu,
+            IntentId.TERMINOLOGY_WORKBENCH,
+            callbacks.open_terminology,
+        )
 
         sync_menu = bar.addMenu(self._gettext("同步与发布"))
         upload = self._intent_action(sync_menu, IntentId.SYNC_UPLOAD, callbacks.upload)
@@ -199,6 +206,7 @@ class MenuBuilder:
             smart_assistant=smart_assistant,
             view_assistant=view_assistant,
             dictionary=dictionary,
+            terminology=terminology,
             fomod=fomod,
             appearance=appearance,
         )

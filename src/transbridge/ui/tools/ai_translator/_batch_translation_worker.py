@@ -73,6 +73,7 @@ class _BatchTranslationWorker(QThread):
         project_id: int | None = None,
         run_id: str | None = None,
         request_budget: object | None = None,
+        terminology_binding: object | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -87,6 +88,7 @@ class _BatchTranslationWorker(QThread):
 
             request_budget = AiRequestBudget(int(getattr(llm_config, "max_concurrent", 1)))
         self._request_budget = request_budget
+        self._terminology_binding = terminology_binding
 
         self._stop_event = threading.Event()
         self._pause_event = threading.Event()
@@ -239,6 +241,7 @@ class _BatchTranslationWorker(QThread):
                 log_store,
                 channel_prefix="term_call",
             ),
+            **(self._terminology_binding.translator_kwargs() if self._terminology_binding is not None else {}),
         )
 
         # 检查断点

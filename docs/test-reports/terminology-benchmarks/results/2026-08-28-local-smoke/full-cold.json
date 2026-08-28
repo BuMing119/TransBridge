@@ -1,0 +1,980 @@
+{
+  "artifact_digest": "7038eb856161f9c862e7ad9dc72641a7cb5ac79338b6ac72c46ea9e588d6524b",
+  "cache_preparation": {
+    "antivirus_state": "operator-must-record-in-rc-notes",
+    "network_paths": "excluded-from-contract-corpus",
+    "os_file_cache": "not-cleared-recorded-boundary",
+    "project_result_cache": "cleared-before-each-run",
+    "python_object_cache": "released-and-gc"
+  },
+  "dataset": {
+    "adapter_templates": [
+      {
+        "adapter_id": "transbridge.io.plugin-sse",
+        "adapter_version": "2.0",
+        "format_id": "plugin.sse",
+        "path": "adapter-sources/sample.esp",
+        "sha256": "1701df1f8ccf08279751b84fe064df921d9304dcb4644883b9bb396c9f1f4f9f",
+        "size_bytes": 3950877,
+        "template_key": "plugin"
+      },
+      {
+        "adapter_id": "transbridge.io.eet-xml",
+        "adapter_version": "2.0",
+        "format_id": "xml.eet",
+        "path": "adapter-sources/eet-small.xml",
+        "sha256": "95d6266b9fb3b6ec2b16281dc7d3b79f3d050c2ec3b6185e4b8fe173968950bc",
+        "size_bytes": 400,
+        "template_key": "eet"
+      },
+      {
+        "adapter_id": "transbridge.io.xt-xml",
+        "adapter_version": "2.0",
+        "format_id": "xml.xt",
+        "path": "adapter-sources/xt-small.xml",
+        "sha256": "ca024ffffd7f2dea3348a42c04e454aa2324b7d3a64dd5454882aab9ed3780dd",
+        "size_bytes": 345,
+        "template_key": "xt"
+      },
+      {
+        "adapter_id": "transbridge.io.strings.strings",
+        "adapter_version": "2.0-stage-1",
+        "format_id": "strings.strings",
+        "path": "adapter-sources/integrity.strings",
+        "sha256": "47a0b1fec1a4bdfad84b7ffd67cf472e436f0e0c97a7a1531852d7845f26a678",
+        "size_bytes": 53,
+        "template_key": "strings"
+      },
+      {
+        "adapter_id": "transbridge.io.paratranz-json",
+        "adapter_version": "2.0",
+        "format_id": "json.paratranz",
+        "path": "adapter-sources/paratranz-dual-id.json",
+        "sha256": "410ec78fd7a22219469f9c77f26d8daa0dee559416b47de6796db301024dad08",
+        "size_bytes": 598,
+        "template_key": "paratranz"
+      }
+    ],
+    "artifacts": {
+      "evidence": {
+        "path": "evidence.ndjson",
+        "sha256": "73a586bb4fb9b924b46fd7977540fb7f2ad82939f230af556a806db2f54dafff",
+        "size_bytes": 11577
+      },
+      "source_index": {
+        "path": "source-index.json",
+        "sha256": "236869d9e98df3a22517812de3d93d00f2b2780969284865d596a75f73f5239a",
+        "size_bytes": 2662
+      },
+      "version_history": {
+        "path": "version-history.json",
+        "sha256": "b376f958bdfa1fac2192ee8664573980aa09255e1579ed764d58c339ad658bc4",
+        "size_bytes": 460
+      }
+    },
+    "canonical_digest": "a1c00d72b305f1829fd3dc507bd361ebec878b7b35d1bdb69da65b5525e0ea91",
+    "expected_counts": {
+      "candidates": 20,
+      "conflict_groups": 4,
+      "evidence": 64,
+      "sources": 5,
+      "terminology": 16,
+      "versions": 3
+    },
+    "generator_version": "1.0",
+    "schema_version": 1,
+    "spec": {
+      "conflict_group_count": 4,
+      "evidence_count": 64,
+      "name": "smoke",
+      "schema_version": 1,
+      "seed": 516000,
+      "source_count": 5,
+      "terminology_count": 16,
+      "version_count": 3
+    }
+  },
+  "environment": {
+    "cpu_model": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "disk_type": "unknown",
+    "logical_cores": 32,
+    "measurement_tools": {
+      "clock": "time.perf_counter",
+      "psutil": "7.2.2",
+      "pytest": "9.1.1"
+    },
+    "memory_bytes": 33954381824,
+    "physical_cores": 24,
+    "python": "3.12.12",
+    "reference_device_id": "uncalibrated-local-smoke",
+    "reference_requirements_met": false,
+    "transbridge_build": "0.1.1.1",
+    "windows": {
+      "build": 26200,
+      "platform": "Windows-11-10.0.26200-SP0",
+      "release": "11",
+      "version": "10.0.26200"
+    }
+  },
+  "runs": [
+    {
+      "build_duration_seconds": 0.6616798000177369,
+      "external_io_wait_seconds": 0.0,
+      "external_llm_wait_seconds": 0.0,
+      "iteration": 1,
+      "local_duration_seconds": 0.6652882000053069,
+      "memory_measurement": "peak-unavailable; psutil end-of-run RSS is retained in cleanup details",
+      "peak_memory_bytes": null,
+      "timings": [
+        {
+          "details": {},
+          "duration_seconds": 0.0002555999963078648,
+          "external_wait": false,
+          "phase": "capture"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.6528478000109317,
+          "external_wait": false,
+          "phase": "parse"
+        },
+        {
+          "details": {
+            "changed_evidence": 0,
+            "total_evidence": 64
+          },
+          "duration_seconds": 0.0002597999991849065,
+          "external_wait": false,
+          "phase": "assemble"
+        },
+        {
+          "details": {
+            "llm": "disabled"
+          },
+          "duration_seconds": 0.0011931000044569373,
+          "external_wait": false,
+          "phase": "extract"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.0019230000034440309,
+          "external_wait": false,
+          "phase": "reduce"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.005200500003411435,
+          "external_wait": false,
+          "phase": "persist"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.0025110999995376915,
+          "external_wait": false,
+          "phase": "query"
+        },
+        {
+          "details": {},
+          "duration_seconds": 8.999923011288047e-07,
+          "external_wait": false,
+          "phase": "history"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.0006894999969517812,
+          "external_wait": false,
+          "phase": "compare"
+        },
+        {
+          "details": {},
+          "duration_seconds": 5.2000104915350676e-06,
+          "external_wait": false,
+          "phase": "report"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.00037489998794626445,
+          "external_wait": false,
+          "phase": "changelog"
+        },
+        {
+          "details": {},
+          "duration_seconds": 2.680000034160912e-05,
+          "external_wait": false,
+          "phase": "cancel"
+        },
+        {
+          "details": {
+            "requests": 0,
+            "retries": 0,
+            "status": "disabled"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-llm-wait"
+        },
+        {
+          "details": {
+            "status": "none-observed"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-io-wait"
+        },
+        {
+          "details": {
+            "measurement": "psutil-rss-end-of-run",
+            "rss_end_bytes": 83369984
+          },
+          "duration_seconds": 0.0,
+          "external_wait": false,
+          "phase": "cleanup"
+        }
+      ]
+    },
+    {
+      "build_duration_seconds": 0.6415464999881806,
+      "external_io_wait_seconds": 0.0,
+      "external_llm_wait_seconds": 0.0,
+      "iteration": 2,
+      "local_duration_seconds": 0.6458286999841221,
+      "memory_measurement": "peak-unavailable; psutil end-of-run RSS is retained in cleanup details",
+      "peak_memory_bytes": null,
+      "timings": [
+        {
+          "details": {},
+          "duration_seconds": 0.00027209999097976834,
+          "external_wait": false,
+          "phase": "capture"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.6323167000082321,
+          "external_wait": false,
+          "phase": "parse"
+        },
+        {
+          "details": {
+            "changed_evidence": 0,
+            "total_evidence": 64
+          },
+          "duration_seconds": 0.0002556999970693141,
+          "external_wait": false,
+          "phase": "assemble"
+        },
+        {
+          "details": {
+            "llm": "disabled"
+          },
+          "duration_seconds": 0.0011522999993758276,
+          "external_wait": false,
+          "phase": "extract"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.0017897999932756647,
+          "external_wait": false,
+          "phase": "reduce"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.005759899999247864,
+          "external_wait": false,
+          "phase": "persist"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.0031432000105269253,
+          "external_wait": false,
+          "phase": "query"
+        },
+        {
+          "details": {},
+          "duration_seconds": 9.999930625781417e-07,
+          "external_wait": false,
+          "phase": "history"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.0007095999899320304,
+          "external_wait": false,
+          "phase": "compare"
+        },
+        {
+          "details": {},
+          "duration_seconds": 5.699999746866524e-06,
+          "external_wait": false,
+          "phase": "report"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.00039539999852422625,
+          "external_wait": false,
+          "phase": "changelog"
+        },
+        {
+          "details": {},
+          "duration_seconds": 2.7300004148855805e-05,
+          "external_wait": false,
+          "phase": "cancel"
+        },
+        {
+          "details": {
+            "requests": 0,
+            "retries": 0,
+            "status": "disabled"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-llm-wait"
+        },
+        {
+          "details": {
+            "status": "none-observed"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-io-wait"
+        },
+        {
+          "details": {
+            "measurement": "psutil-rss-end-of-run",
+            "rss_end_bytes": 94920704
+          },
+          "duration_seconds": 0.0,
+          "external_wait": false,
+          "phase": "cleanup"
+        }
+      ]
+    },
+    {
+      "build_duration_seconds": 0.6682385999883991,
+      "external_io_wait_seconds": 0.0,
+      "external_llm_wait_seconds": 0.0,
+      "iteration": 3,
+      "local_duration_seconds": 0.6824563999980455,
+      "memory_measurement": "peak-unavailable; psutil end-of-run RSS is retained in cleanup details",
+      "peak_memory_bytes": null,
+      "timings": [
+        {
+          "details": {},
+          "duration_seconds": 0.00032809999538585544,
+          "external_wait": false,
+          "phase": "capture"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.6577823999978136,
+          "external_wait": false,
+          "phase": "parse"
+        },
+        {
+          "details": {
+            "changed_evidence": 0,
+            "total_evidence": 64
+          },
+          "duration_seconds": 0.00022590000298805535,
+          "external_wait": false,
+          "phase": "assemble"
+        },
+        {
+          "details": {
+            "llm": "disabled"
+          },
+          "duration_seconds": 0.0010008999961428344,
+          "external_wait": false,
+          "phase": "extract"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.0016028999962145463,
+          "external_wait": false,
+          "phase": "reduce"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.007298399999854155,
+          "external_wait": false,
+          "phase": "persist"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.009903300000587478,
+          "external_wait": false,
+          "phase": "query"
+        },
+        {
+          "details": {},
+          "duration_seconds": 2.2000021999701858e-06,
+          "external_wait": false,
+          "phase": "history"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.002812699996866286,
+          "external_wait": false,
+          "phase": "compare"
+        },
+        {
+          "details": {},
+          "duration_seconds": 1.85999961104244e-05,
+          "external_wait": false,
+          "phase": "report"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.0014150000060908496,
+          "external_wait": false,
+          "phase": "changelog"
+        },
+        {
+          "details": {},
+          "duration_seconds": 6.600000779144466e-05,
+          "external_wait": false,
+          "phase": "cancel"
+        },
+        {
+          "details": {
+            "requests": 0,
+            "retries": 0,
+            "status": "disabled"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-llm-wait"
+        },
+        {
+          "details": {
+            "status": "none-observed"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-io-wait"
+        },
+        {
+          "details": {
+            "measurement": "psutil-rss-end-of-run",
+            "rss_end_bytes": 99319808
+          },
+          "duration_seconds": 0.0,
+          "external_wait": false,
+          "phase": "cleanup"
+        }
+      ]
+    },
+    {
+      "build_duration_seconds": 2.2534482999762986,
+      "external_io_wait_seconds": 0.0,
+      "external_llm_wait_seconds": 0.0,
+      "iteration": 4,
+      "local_duration_seconds": 2.2681709999596933,
+      "memory_measurement": "peak-unavailable; psutil end-of-run RSS is retained in cleanup details",
+      "peak_memory_bytes": null,
+      "timings": [
+        {
+          "details": {},
+          "duration_seconds": 0.0008080999978119507,
+          "external_wait": false,
+          "phase": "capture"
+        },
+        {
+          "details": {},
+          "duration_seconds": 2.217315100002452,
+          "external_wait": false,
+          "phase": "parse"
+        },
+        {
+          "details": {
+            "changed_evidence": 0,
+            "total_evidence": 64
+          },
+          "duration_seconds": 0.0006595000013476238,
+          "external_wait": false,
+          "phase": "assemble"
+        },
+        {
+          "details": {
+            "llm": "disabled"
+          },
+          "duration_seconds": 0.004056499994476326,
+          "external_wait": false,
+          "phase": "extract"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.009556099990732037,
+          "external_wait": false,
+          "phase": "reduce"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.02105299998947885,
+          "external_wait": false,
+          "phase": "persist"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.011298500001430511,
+          "external_wait": false,
+          "phase": "query"
+        },
+        {
+          "details": {},
+          "duration_seconds": 2.0999868866056204e-06,
+          "external_wait": false,
+          "phase": "history"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.002216599998064339,
+          "external_wait": false,
+          "phase": "compare"
+        },
+        {
+          "details": {},
+          "duration_seconds": 1.4999997802078724e-05,
+          "external_wait": false,
+          "phase": "report"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.0011312999995425344,
+          "external_wait": false,
+          "phase": "changelog"
+        },
+        {
+          "details": {},
+          "duration_seconds": 5.919999966863543e-05,
+          "external_wait": false,
+          "phase": "cancel"
+        },
+        {
+          "details": {
+            "requests": 0,
+            "retries": 0,
+            "status": "disabled"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-llm-wait"
+        },
+        {
+          "details": {
+            "status": "none-observed"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-io-wait"
+        },
+        {
+          "details": {
+            "measurement": "psutil-rss-end-of-run",
+            "rss_end_bytes": 105365504
+          },
+          "duration_seconds": 0.0,
+          "external_wait": false,
+          "phase": "cleanup"
+        }
+      ]
+    },
+    {
+      "build_duration_seconds": 2.2186072999902535,
+      "external_io_wait_seconds": 0.0,
+      "external_llm_wait_seconds": 0.0,
+      "iteration": 5,
+      "local_duration_seconds": 2.239153799993801,
+      "memory_measurement": "peak-unavailable; psutil end-of-run RSS is retained in cleanup details",
+      "peak_memory_bytes": null,
+      "timings": [
+        {
+          "details": {},
+          "duration_seconds": 0.0007443999929819256,
+          "external_wait": false,
+          "phase": "capture"
+        },
+        {
+          "details": {},
+          "duration_seconds": 2.1906806000042707,
+          "external_wait": false,
+          "phase": "parse"
+        },
+        {
+          "details": {
+            "changed_evidence": 0,
+            "total_evidence": 64
+          },
+          "duration_seconds": 0.0006686999986413866,
+          "external_wait": false,
+          "phase": "assemble"
+        },
+        {
+          "details": {
+            "llm": "disabled"
+          },
+          "duration_seconds": 0.0059040999913122505,
+          "external_wait": false,
+          "phase": "extract"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.005441300003440119,
+          "external_wait": false,
+          "phase": "reduce"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.015168199999607168,
+          "external_wait": false,
+          "phase": "persist"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.01647170000069309,
+          "external_wait": false,
+          "phase": "query"
+        },
+        {
+          "details": {},
+          "duration_seconds": 1.7999991541728377e-06,
+          "external_wait": false,
+          "phase": "history"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.0024166999937733635,
+          "external_wait": false,
+          "phase": "compare"
+        },
+        {
+          "details": {},
+          "duration_seconds": 1.5300000086426735e-05,
+          "external_wait": false,
+          "phase": "report"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.0015753000043332577,
+          "external_wait": false,
+          "phase": "changelog"
+        },
+        {
+          "details": {},
+          "duration_seconds": 6.570000550709665e-05,
+          "external_wait": false,
+          "phase": "cancel"
+        },
+        {
+          "details": {
+            "requests": 0,
+            "retries": 0,
+            "status": "disabled"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-llm-wait"
+        },
+        {
+          "details": {
+            "status": "none-observed"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-io-wait"
+        },
+        {
+          "details": {
+            "measurement": "psutil-rss-end-of-run",
+            "rss_end_bytes": 111153152
+          },
+          "duration_seconds": 0.0,
+          "external_wait": false,
+          "phase": "cleanup"
+        }
+      ]
+    }
+  ],
+  "sampling": {
+    "clock": "time.perf_counter",
+    "external_io_wait_excluded_from_local_duration": true,
+    "llm_wait_excluded_from_local_duration": true,
+    "raw_samples_retained": true,
+    "repetitions": 5
+  },
+  "scenario": "full-cold",
+  "schema_version": 1,
+  "summary": {
+    "all-local-total": {
+      "count": 5,
+      "max": 2.2681709999596933,
+      "mean": 1.3001796199881936,
+      "min": 0.6458286999841221,
+      "p50": 0.6824563999980455,
+      "p95": 2.2623675599665147,
+      "raw_samples": [
+        0.6652882000053069,
+        0.6458286999841221,
+        0.6824563999980455,
+        2.2681709999596933,
+        2.239153799993801
+      ],
+      "unit": "s"
+    },
+    "assemble": {
+      "count": 5,
+      "max": 0.0006686999986413866,
+      "mean": 0.0004139199998462573,
+      "min": 0.00022590000298805535,
+      "p50": 0.0002597999991849065,
+      "p95": 0.0006668599991826341,
+      "raw_samples": [
+        0.0002597999991849065,
+        0.0002556999970693141,
+        0.00022590000298805535,
+        0.0006595000013476238,
+        0.0006686999986413866
+      ],
+      "unit": "s"
+    },
+    "build-local-total": {
+      "count": 5,
+      "max": 2.2534482999762986,
+      "mean": 1.2887040999921737,
+      "min": 0.6415464999881806,
+      "p50": 0.6682385999883991,
+      "p95": 2.2464800999790895,
+      "raw_samples": [
+        0.6616798000177369,
+        0.6415464999881806,
+        0.6682385999883991,
+        2.2534482999762986,
+        2.2186072999902535
+      ],
+      "unit": "s"
+    },
+    "cancel": {
+      "count": 5,
+      "max": 6.600000779144466e-05,
+      "mean": 4.9000003491528334e-05,
+      "min": 2.680000034160912e-05,
+      "p50": 5.919999966863543e-05,
+      "p95": 6.594000733457505e-05,
+      "raw_samples": [
+        2.680000034160912e-05,
+        2.7300004148855805e-05,
+        6.600000779144466e-05,
+        5.919999966863543e-05,
+        6.570000550709665e-05
+      ],
+      "unit": "s"
+    },
+    "capture": {
+      "count": 5,
+      "max": 0.0008080999978119507,
+      "mean": 0.000481659994693473,
+      "min": 0.0002555999963078648,
+      "p50": 0.00032809999538585544,
+      "p95": 0.0007953599968459457,
+      "raw_samples": [
+        0.0002555999963078648,
+        0.00027209999097976834,
+        0.00032809999538585544,
+        0.0008080999978119507,
+        0.0007443999929819256
+      ],
+      "unit": "s"
+    },
+    "changelog": {
+      "count": 5,
+      "max": 0.0015753000043332577,
+      "mean": 0.0009783799992874264,
+      "min": 0.00037489998794626445,
+      "p50": 0.0011312999995425344,
+      "p95": 0.001543240004684776,
+      "raw_samples": [
+        0.00037489998794626445,
+        0.00039539999852422625,
+        0.0014150000060908496,
+        0.0011312999995425344,
+        0.0015753000043332577
+      ],
+      "unit": "s"
+    },
+    "cleanup": {
+      "count": 5,
+      "max": 0.0,
+      "mean": 0.0,
+      "min": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "raw_samples": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "unit": "s"
+    },
+    "compare": {
+      "count": 5,
+      "max": 0.002812699996866286,
+      "mean": 0.0017690199951175601,
+      "min": 0.0006894999969517812,
+      "p50": 0.002216599998064339,
+      "p95": 0.0027334999962477014,
+      "raw_samples": [
+        0.0006894999969517812,
+        0.0007095999899320304,
+        0.002812699996866286,
+        0.002216599998064339,
+        0.0024166999937733635
+      ],
+      "unit": "s"
+    },
+    "external-io-wait": {
+      "count": 5,
+      "max": 0.0,
+      "mean": 0.0,
+      "min": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "raw_samples": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "unit": "s"
+    },
+    "external-llm-wait": {
+      "count": 5,
+      "max": 0.0,
+      "mean": 0.0,
+      "min": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "raw_samples": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "unit": "s"
+    },
+    "extract": {
+      "count": 5,
+      "max": 0.0059040999913122505,
+      "mean": 0.0026613799971528353,
+      "min": 0.0010008999961428344,
+      "p50": 0.0011931000044569373,
+      "p95": 0.005534579991945065,
+      "raw_samples": [
+        0.0011931000044569373,
+        0.0011522999993758276,
+        0.0010008999961428344,
+        0.004056499994476326,
+        0.0059040999913122505
+      ],
+      "unit": "s"
+    },
+    "history": {
+      "count": 5,
+      "max": 2.2000021999701858e-06,
+      "mean": 1.599994720891118e-06,
+      "min": 8.999923011288047e-07,
+      "p50": 1.7999991541728377e-06,
+      "p95": 2.1799991372972726e-06,
+      "raw_samples": [
+        8.999923011288047e-07,
+        9.999930625781417e-07,
+        2.2000021999701858e-06,
+        2.0999868866056204e-06,
+        1.7999991541728377e-06
+      ],
+      "unit": "s"
+    },
+    "parse": {
+      "count": 5,
+      "max": 2.217315100002452,
+      "mean": 1.27018852000474,
+      "min": 0.6323167000082321,
+      "p50": 0.6577823999978136,
+      "p95": 2.2119882000028155,
+      "raw_samples": [
+        0.6528478000109317,
+        0.6323167000082321,
+        0.6577823999978136,
+        2.217315100002452,
+        2.1906806000042707
+      ],
+      "unit": "s"
+    },
+    "persist": {
+      "count": 5,
+      "max": 0.02105299998947885,
+      "mean": 0.010895999998319894,
+      "min": 0.005200500003411435,
+      "p50": 0.007298399999854155,
+      "p95": 0.019876039991504512,
+      "raw_samples": [
+        0.005200500003411435,
+        0.005759899999247864,
+        0.007298399999854155,
+        0.02105299998947885,
+        0.015168199999607168
+      ],
+      "unit": "s"
+    },
+    "query": {
+      "count": 5,
+      "max": 0.01647170000069309,
+      "mean": 0.00866556000255514,
+      "min": 0.0025110999995376915,
+      "p50": 0.009903300000587478,
+      "p95": 0.015437060000840573,
+      "raw_samples": [
+        0.0025110999995376915,
+        0.0031432000105269253,
+        0.009903300000587478,
+        0.011298500001430511,
+        0.01647170000069309
+      ],
+      "unit": "s"
+    },
+    "reduce": {
+      "count": 5,
+      "max": 0.009556099990732037,
+      "mean": 0.004062619997421279,
+      "min": 0.0016028999962145463,
+      "p50": 0.0019230000034440309,
+      "p95": 0.008733139993273652,
+      "raw_samples": [
+        0.0019230000034440309,
+        0.0017897999932756647,
+        0.0016028999962145463,
+        0.009556099990732037,
+        0.005441300003440119
+      ],
+      "unit": "s"
+    },
+    "report": {
+      "count": 5,
+      "max": 1.85999961104244e-05,
+      "mean": 1.196000084746629e-05,
+      "min": 5.2000104915350676e-06,
+      "p50": 1.4999997802078724e-05,
+      "p95": 1.7939996905624866e-05,
+      "raw_samples": [
+        5.2000104915350676e-06,
+        5.699999746866524e-06,
+        1.85999961104244e-05,
+        1.4999997802078724e-05,
+        1.5300000086426735e-05
+      ],
+      "unit": "s"
+    }
+  },
+  "workload": "project-terminology-production-smoke-v1"
+}

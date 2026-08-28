@@ -1,0 +1,595 @@
+{
+  "artifact_digest": "f5918082cd6208ca63745ae87a0036b8264693f025cb60adeb4d38e612dc614a",
+  "cache_preparation": {
+    "dataset_generation": "completed-before-five-formal-samples",
+    "external_network_cache": "not-used",
+    "llm_cache": "disabled",
+    "os_file_cache": "operator-recorded-not-programmatically-cleared",
+    "production_adapter_preflight": {
+      "bulk_logical_evidence": "deterministic-ndjson-contract-corpus",
+      "formats": [
+        "plugin.sse",
+        "xml.eet",
+        "xml.xt",
+        "strings.strings",
+        "json.paratranz"
+      ],
+      "result": "all-five-fixtures-parsed"
+    },
+    "repository": "complete-build-persisted-before-five-samples"
+  },
+  "dataset": {
+    "adapter_templates": [
+      {
+        "adapter_id": "transbridge.io.plugin-sse",
+        "adapter_version": "2.0",
+        "format_id": "plugin.sse",
+        "path": "adapter-sources/sample.esp",
+        "sha256": "1701df1f8ccf08279751b84fe064df921d9304dcb4644883b9bb396c9f1f4f9f",
+        "size_bytes": 3950877,
+        "template_key": "plugin"
+      },
+      {
+        "adapter_id": "transbridge.io.eet-xml",
+        "adapter_version": "2.0",
+        "format_id": "xml.eet",
+        "path": "adapter-sources/eet-small.xml",
+        "sha256": "95d6266b9fb3b6ec2b16281dc7d3b79f3d050c2ec3b6185e4b8fe173968950bc",
+        "size_bytes": 400,
+        "template_key": "eet"
+      },
+      {
+        "adapter_id": "transbridge.io.xt-xml",
+        "adapter_version": "2.0",
+        "format_id": "xml.xt",
+        "path": "adapter-sources/xt-small.xml",
+        "sha256": "ca024ffffd7f2dea3348a42c04e454aa2324b7d3a64dd5454882aab9ed3780dd",
+        "size_bytes": 345,
+        "template_key": "xt"
+      },
+      {
+        "adapter_id": "transbridge.io.strings.strings",
+        "adapter_version": "2.0-stage-1",
+        "format_id": "strings.strings",
+        "path": "adapter-sources/integrity.strings",
+        "sha256": "47a0b1fec1a4bdfad84b7ffd67cf472e436f0e0c97a7a1531852d7845f26a678",
+        "size_bytes": 53,
+        "template_key": "strings"
+      },
+      {
+        "adapter_id": "transbridge.io.paratranz-json",
+        "adapter_version": "2.0",
+        "format_id": "json.paratranz",
+        "path": "adapter-sources/paratranz-dual-id.json",
+        "sha256": "410ec78fd7a22219469f9c77f26d8daa0dee559416b47de6796db301024dad08",
+        "size_bytes": 598,
+        "template_key": "paratranz"
+      }
+    ],
+    "artifacts": {
+      "evidence": {
+        "path": "evidence.ndjson",
+        "sha256": "1cd942cb495dad026657311bebfc9a7d530400b84e6f1f1ef107211370920e05",
+        "size_bytes": 181397570
+      },
+      "source_index": {
+        "path": "source-index.json",
+        "sha256": "8070792ca88d93ab49b4906e1961c6246343b25e3b62839d0b4f28b13c7c171f",
+        "size_bytes": 41623
+      },
+      "version_history": {
+        "path": "version-history.json",
+        "sha256": "a62d173bb589e857fe3407f32d17951654faa08222052b7bd98f5e41b40737b5",
+        "size_bytes": 7328
+      }
+    },
+    "canonical_digest": "d69bcfd8a61ef44f1e295b692d49a69534f79ae5742fa4a8884411e9a470df44",
+    "expected_counts": {
+      "candidates": 220000,
+      "conflict_groups": 20000,
+      "evidence": 1000000,
+      "sources": 200,
+      "terminology": 200000,
+      "versions": 50
+    },
+    "generator_version": "1.0",
+    "schema_version": 1,
+    "spec": {
+      "conflict_group_count": 20000,
+      "evidence_count": 1000000,
+      "name": "stress",
+      "schema_version": 1,
+      "seed": 516000,
+      "source_count": 200,
+      "terminology_count": 200000,
+      "version_count": 50
+    }
+  },
+  "environment": {
+    "cpu_model": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "disk_type": "NVMe",
+    "logical_cores": 32,
+    "measurement_tools": {
+      "clock": "time.perf_counter",
+      "psutil": "7.2.2",
+      "pytest": "9.1.1"
+    },
+    "memory_bytes": 33954381824,
+    "physical_cores": 24,
+    "python": "3.12.12",
+    "reference_device_id": "win11-local-nvme-20260828",
+    "reference_requirements_met": true,
+    "transbridge_build": "0.1.1.1",
+    "windows": {
+      "build": 26200,
+      "platform": "Windows-11-10.0.26200-SP0",
+      "release": "11",
+      "version": "10.0.26200"
+    }
+  },
+  "evidence": {
+    "eligibility_scope": "single-scenario-evidence-contract-only",
+    "gate_eligible": true,
+    "gate_ineligibility_reasons": [],
+    "profile": "formal-gate-v1",
+    "release_gate_eligible": false,
+    "scenario_contract": {
+      "completed_semantics": [
+        "format-capacity-and-no-truncation",
+        "markdown-and-excel-renderers"
+      ],
+      "duplicate_phases_by_run": {},
+      "missing_required_phases_by_run": {},
+      "missing_required_semantics": [],
+      "observed_phases_by_run": {
+        "iteration-1": [
+          "changelog",
+          "cleanup",
+          "external-io-wait",
+          "external-llm-wait"
+        ],
+        "iteration-2": [
+          "changelog",
+          "cleanup",
+          "external-io-wait",
+          "external-llm-wait"
+        ],
+        "iteration-3": [
+          "changelog",
+          "cleanup",
+          "external-io-wait",
+          "external-llm-wait"
+        ],
+        "iteration-4": [
+          "changelog",
+          "cleanup",
+          "external-io-wait",
+          "external-llm-wait"
+        ],
+        "iteration-5": [
+          "changelog",
+          "cleanup",
+          "external-io-wait",
+          "external-llm-wait"
+        ]
+      },
+      "required_phases": [
+        "changelog",
+        "cleanup"
+      ],
+      "required_semantics": [
+        "markdown-and-excel-renderers",
+        "format-capacity-and-no-truncation"
+      ]
+    }
+  },
+  "runs": [
+    {
+      "build_duration_seconds": 0,
+      "external_io_wait_seconds": 0.0,
+      "external_llm_wait_seconds": 0.0,
+      "iteration": 1,
+      "local_duration_seconds": 215.2990073999972,
+      "memory_measurement": "psutil-rss-baseline/10ms-sampled-peak/post-gc-recovered",
+      "peak_memory_bytes": 4410769408,
+      "rss_baseline_bytes": 2669268992,
+      "rss_peak_bytes": 7080038400,
+      "rss_recovered_bytes": 2681425920,
+      "timings": [
+        {
+          "details": {
+            "excel_renderer": "terminology-changelog-excel.v1",
+            "excel_sha256": "73cf74dd9954aad8c1b492fff941925e8c9bdfcf739ac0c4533f1092064ac2e1",
+            "excel_sheet_count": 3,
+            "excel_size_bytes": 46002876,
+            "markdown_renderer": "terminology-changelog-markdown.v1",
+            "markdown_sha256": "1e74e93228de3e95a091852dd4a00605f616574b84e8946e852d6b7bf1515a7d",
+            "markdown_size_bytes": 224475888,
+            "semantic_changes": 200000,
+            "semantic_manifest_parity": true
+          },
+          "duration_seconds": 214.67179520000354,
+          "external_wait": false,
+          "phase": "changelog"
+        },
+        {
+          "details": {
+            "requests": 0,
+            "retries": 0,
+            "status": "disabled"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-llm-wait"
+        },
+        {
+          "details": {
+            "local_disk_io": "included-in-local-phases",
+            "status": "none"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-io-wait"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.6272121999936644,
+          "external_wait": false,
+          "phase": "cleanup"
+        }
+      ]
+    },
+    {
+      "build_duration_seconds": 0,
+      "external_io_wait_seconds": 0.0,
+      "external_llm_wait_seconds": 0.0,
+      "iteration": 2,
+      "local_duration_seconds": 216.16403249998984,
+      "memory_measurement": "psutil-rss-baseline/10ms-sampled-peak/post-gc-recovered",
+      "peak_memory_bytes": 4400308224,
+      "rss_baseline_bytes": 2681425920,
+      "rss_peak_bytes": 7081734144,
+      "rss_recovered_bytes": 2686246912,
+      "timings": [
+        {
+          "details": {
+            "excel_renderer": "terminology-changelog-excel.v1",
+            "excel_sha256": "9cda712ea25fa2d361818ecef759546f5033c60361978a30ad23d201956653fb",
+            "excel_sheet_count": 3,
+            "excel_size_bytes": 46002879,
+            "markdown_renderer": "terminology-changelog-markdown.v1",
+            "markdown_sha256": "593807664313991b259ace4e2e4180243b84d59c905787d55e64ed4b7de94549",
+            "markdown_size_bytes": 224475888,
+            "semantic_changes": 200000,
+            "semantic_manifest_parity": true
+          },
+          "duration_seconds": 215.52305139999953,
+          "external_wait": false,
+          "phase": "changelog"
+        },
+        {
+          "details": {
+            "requests": 0,
+            "retries": 0,
+            "status": "disabled"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-llm-wait"
+        },
+        {
+          "details": {
+            "local_disk_io": "included-in-local-phases",
+            "status": "none"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-io-wait"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.6409810999903129,
+          "external_wait": false,
+          "phase": "cleanup"
+        }
+      ]
+    },
+    {
+      "build_duration_seconds": 0,
+      "external_io_wait_seconds": 0.0,
+      "external_llm_wait_seconds": 0.0,
+      "iteration": 3,
+      "local_duration_seconds": 214.15255450000404,
+      "memory_measurement": "psutil-rss-baseline/10ms-sampled-peak/post-gc-recovered",
+      "peak_memory_bytes": 4393603072,
+      "rss_baseline_bytes": 2686246912,
+      "rss_peak_bytes": 7079849984,
+      "rss_recovered_bytes": 2692526080,
+      "timings": [
+        {
+          "details": {
+            "excel_renderer": "terminology-changelog-excel.v1",
+            "excel_sha256": "2f8d4178aff67bf2c19dbd38b4b9cb18a53079e19fc956f46591d0d81064ff84",
+            "excel_sheet_count": 3,
+            "excel_size_bytes": 46002879,
+            "markdown_renderer": "terminology-changelog-markdown.v1",
+            "markdown_sha256": "9fcae3389c3838bd315fe33285c4f089b26437b433ba4a5eb626f231d79808f1",
+            "markdown_size_bytes": 224475888,
+            "semantic_changes": 200000,
+            "semantic_manifest_parity": true
+          },
+          "duration_seconds": 213.5349239000061,
+          "external_wait": false,
+          "phase": "changelog"
+        },
+        {
+          "details": {
+            "requests": 0,
+            "retries": 0,
+            "status": "disabled"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-llm-wait"
+        },
+        {
+          "details": {
+            "local_disk_io": "included-in-local-phases",
+            "status": "none"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-io-wait"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.6176305999979377,
+          "external_wait": false,
+          "phase": "cleanup"
+        }
+      ]
+    },
+    {
+      "build_duration_seconds": 0,
+      "external_io_wait_seconds": 0.0,
+      "external_llm_wait_seconds": 0.0,
+      "iteration": 4,
+      "local_duration_seconds": 215.25816500000656,
+      "memory_measurement": "psutil-rss-baseline/10ms-sampled-peak/post-gc-recovered",
+      "peak_memory_bytes": 4390367232,
+      "rss_baseline_bytes": 2692526080,
+      "rss_peak_bytes": 7082893312,
+      "rss_recovered_bytes": 2698780672,
+      "timings": [
+        {
+          "details": {
+            "excel_renderer": "terminology-changelog-excel.v1",
+            "excel_sha256": "dcce44f337f244f25666ed91d7e5d2a6a3fc5fe16ef73b744be991165d6c9242",
+            "excel_sheet_count": 3,
+            "excel_size_bytes": 46002876,
+            "markdown_renderer": "terminology-changelog-markdown.v1",
+            "markdown_sha256": "2f45c84ec6bcfc8854837afb4afb0a72d8197b761647092cdfceca79fbebcc5e",
+            "markdown_size_bytes": 224475888,
+            "semantic_changes": 200000,
+            "semantic_manifest_parity": true
+          },
+          "duration_seconds": 214.61328250000952,
+          "external_wait": false,
+          "phase": "changelog"
+        },
+        {
+          "details": {
+            "requests": 0,
+            "retries": 0,
+            "status": "disabled"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-llm-wait"
+        },
+        {
+          "details": {
+            "local_disk_io": "included-in-local-phases",
+            "status": "none"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-io-wait"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.6448824999970384,
+          "external_wait": false,
+          "phase": "cleanup"
+        }
+      ]
+    },
+    {
+      "build_duration_seconds": 0,
+      "external_io_wait_seconds": 0.0,
+      "external_llm_wait_seconds": 0.0,
+      "iteration": 5,
+      "local_duration_seconds": 214.7870738999918,
+      "memory_measurement": "psutil-rss-baseline/10ms-sampled-peak/post-gc-recovered",
+      "peak_memory_bytes": 4383952896,
+      "rss_baseline_bytes": 2698780672,
+      "rss_peak_bytes": 7082733568,
+      "rss_recovered_bytes": 2702815232,
+      "timings": [
+        {
+          "details": {
+            "excel_renderer": "terminology-changelog-excel.v1",
+            "excel_sha256": "5cd3ffc01602b4b497f59efbe20e899c0376f9a9c83e33ce21ef196800c11af9",
+            "excel_sheet_count": 3,
+            "excel_size_bytes": 46002878,
+            "markdown_renderer": "terminology-changelog-markdown.v1",
+            "markdown_sha256": "632f611716316b0dd3264250a4049d8528b34113621fdd013a0a62ff1e5fe7dc",
+            "markdown_size_bytes": 224475888,
+            "semantic_changes": 200000,
+            "semantic_manifest_parity": true
+          },
+          "duration_seconds": 214.13360929999908,
+          "external_wait": false,
+          "phase": "changelog"
+        },
+        {
+          "details": {
+            "requests": 0,
+            "retries": 0,
+            "status": "disabled"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-llm-wait"
+        },
+        {
+          "details": {
+            "local_disk_io": "included-in-local-phases",
+            "status": "none"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-io-wait"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.6534645999927307,
+          "external_wait": false,
+          "phase": "cleanup"
+        }
+      ]
+    }
+  ],
+  "sampling": {
+    "clock": "time.perf_counter",
+    "external_io_wait_excluded_from_local_duration": true,
+    "llm_wait_excluded_from_local_duration": true,
+    "raw_samples_retained": true,
+    "repetitions": 5
+  },
+  "scenario": "changelog",
+  "schema_version": 2,
+  "summary": {
+    "all-local-total": {
+      "count": 5,
+      "max": 216.16403249998984,
+      "mean": 215.1321666599979,
+      "min": 214.15255450000404,
+      "p50": 215.25816500000656,
+      "p95": 215.99102747999132,
+      "raw_samples": [
+        215.2990073999972,
+        216.16403249998984,
+        214.15255450000404,
+        215.25816500000656,
+        214.7870738999918
+      ],
+      "unit": "s"
+    },
+    "changelog": {
+      "count": 5,
+      "max": 215.52305139999953,
+      "mean": 214.49533246000357,
+      "min": 213.5349239000061,
+      "p50": 214.61328250000952,
+      "p95": 215.35280016000033,
+      "raw_samples": [
+        214.67179520000354,
+        215.52305139999953,
+        213.5349239000061,
+        214.61328250000952,
+        214.13360929999908
+      ],
+      "unit": "s"
+    },
+    "cleanup": {
+      "count": 5,
+      "max": 0.6534645999927307,
+      "mean": 0.6368341999943368,
+      "min": 0.6176305999979377,
+      "p50": 0.6409810999903129,
+      "p95": 0.6517481799935922,
+      "raw_samples": [
+        0.6272121999936644,
+        0.6409810999903129,
+        0.6176305999979377,
+        0.6448824999970384,
+        0.6534645999927307
+      ],
+      "unit": "s"
+    },
+    "external-io-wait": {
+      "count": 5,
+      "max": 0.0,
+      "mean": 0.0,
+      "min": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "raw_samples": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "unit": "s"
+    },
+    "external-llm-wait": {
+      "count": 5,
+      "max": 0.0,
+      "mean": 0.0,
+      "min": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "raw_samples": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "unit": "s"
+    },
+    "peak-additional-rss": {
+      "count": 5,
+      "max": 4410769408,
+      "mean": 4395800166.4,
+      "min": 4383952896,
+      "p50": 4393603072.0,
+      "p95": 4408677171.2,
+      "raw_samples": [
+        4410769408,
+        4400308224,
+        4393603072,
+        4390367232,
+        4383952896
+      ],
+      "unit": "bytes"
+    },
+    "rss-recovered": {
+      "count": 5,
+      "growth_from_first_bytes": [
+        0,
+        4820992,
+        11100160,
+        17354752,
+        21389312
+      ],
+      "max": 2702815232,
+      "mean": 2692358963.2,
+      "min": 2681425920,
+      "p50": 2692526080.0,
+      "p95": 2702008320.0,
+      "raw_samples": [
+        2681425920,
+        2686246912,
+        2692526080,
+        2698780672,
+        2702815232
+      ],
+      "stable_growth_bytes": 21389312,
+      "unit": "bytes"
+    }
+  },
+  "workload": "project-terminology-formal-v1"
+}

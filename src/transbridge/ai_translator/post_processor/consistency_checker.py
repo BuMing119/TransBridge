@@ -3,8 +3,9 @@
 """
 
 import re
-from .base import BaseChecker, PostProcessIssue
 from typing import TYPE_CHECKING
+
+from .base import BaseChecker, PostProcessIssue
 
 if TYPE_CHECKING:
     from ...converter.translation_entry import TranslationEntry
@@ -36,12 +37,13 @@ class ConsistencyChecker(BaseChecker):
                                  用于定位术语缓存目录
         """
         # 支持传入 TermDatabaseManager 或直接的路径字符串
+        self._term_manager = esp_path_or_manager if hasattr(esp_path_or_manager, "match_terms_for_entry") else None
         if hasattr(esp_path_or_manager, "_esp_path"):
             self._esp_path = esp_path_or_manager._esp_path
         else:
             self._esp_path = esp_path_or_manager
         # 缓存加载后的术语列表
-        self._terms_cache: list["TermEntry"] = []
+        self._terms_cache: list[TermEntry] = []
         self._terms_loaded = False
 
     def _load_terms(self) -> None:
@@ -55,10 +57,11 @@ class ConsistencyChecker(BaseChecker):
 
         # 直接从硬盘加载合并缓存，无需创建 TermDatabaseManager
         from ..term_database import TermDatabaseManager
+
         self._terms_cache = TermDatabaseManager.load_merged_cache(self._esp_path)
         self._terms_loaded = True
 
-    def _get_matched_terms(self, original: str) -> dict[str, tuple[str, str]]:
+    def _get_matched_terms(self, entry: "TranslationEntry") -> dict[str, tuple[str, str]]:
         """
         获取原文中匹配的所有术语（高置信度匹配）。
 
@@ -75,8 +78,14 @@ class ConsistencyChecker(BaseChecker):
             {匹配到的形式: (主术语, 译文)} 字典
             匹配到的形式可能是主术语本身，也可能是某个变体
         """
+        if self._term_manager is not None:
+            return {
+                term: (term, translation)
+                for term, translation in self._term_manager.match_terms_for_entry(entry).items()
+            }
         self._load_terms()
         matched: dict[str, tuple[str, str]] = {}
+        original = entry.original
 
         for entry in self._terms_cache:
             # 检查主术语
@@ -94,9 +103,7 @@ class ConsistencyChecker(BaseChecker):
 
         return matched
 
-    def _is_term_match(
-        self, text: str, term: str, case_sensitive: bool = False
-    ) -> bool:
+    def _is_term_match(self, text: str, term: str, case_sensitive: bool = False) -> bool:
         """
         检查单个术语/变体是否匹配原文。
 
@@ -128,9 +135,7 @@ class ConsistencyChecker(BaseChecker):
             # 词边界子串匹配
             return self._is_word_boundary_match(text, term, False)
 
-    def _is_word_boundary_match(
-        self, text: str, term: str, case_sensitive: bool = False
-    ) -> bool:
+    def _is_word_boundary_match(self, text: str, term: str, case_sensitive: bool = False) -> bool:
         """
         检查术语在文本中是否为词边界匹配。
 
@@ -178,7 +183,7 @@ class ConsistencyChecker(BaseChecker):
 
         # 获取原文中匹配的所有术语（包括变体）
         # 返回格式: {匹配到的形式: (主术语, 译文)}
-        matched_terms = self._get_matched_terms(entry.original)
+        matched_terms = self._get_matched_terms(entry)
 
         # 按主术语去重，避免同一术语的多个变体产生重复报告
         reported_main_terms: set[str] = set()

@@ -74,6 +74,8 @@ class TranslationIoProjectSourcePreparer:
         options = dict(common_options)
         options.update(request.options)
         options.setdefault("skip_empty", False)
+        if format_hint is FormatId.PLUGIN_SSE:
+            options.setdefault("discover_sibling_strings", True)
         parsed = self._io.parse(
             ParseRequest(
                 SourceDescriptor(str(path), path.name, path.stat().st_size),
@@ -125,7 +127,9 @@ class TranslationIoProjectSourcePreparer:
         return PreparedProjectSource(
             (
                 ("source_id", namespace.value),
+                ("enabled", True),
                 ("format_id", parsed.format_id.value),
+                ("format_options", dict(sorted(options.items()))),
                 ("location", str(path)),
                 ("path", str(path)),
                 ("fingerprint", parsed.source_snapshot.sha256),

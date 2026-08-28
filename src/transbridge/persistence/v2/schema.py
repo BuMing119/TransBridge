@@ -10,6 +10,8 @@ from urllib.parse import urlsplit
 
 from jsonschema import Draft202012Validator
 
+from transbridge.application.projects.source_registry import SourceRegistrySnapshot
+
 from .ids import EntityKind, EntityRef, OpaqueId
 from .models import (
     SCHEMA_VERSION,
@@ -28,13 +30,74 @@ _COMMON_PROPERTIES = {
     "revision": {"type": "integer", "minimum": 0},
 }
 
+_SOURCE_REGISTRATION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": [
+        "source_id",
+        "enabled",
+        "format_id",
+        "location",
+        "kind",
+        "bilingual_capability",
+        "format_options",
+    ],
+    "properties": {
+        "source_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"},
+        "enabled": {"type": "boolean"},
+        "format_id": {"type": "string", "minLength": 1},
+        "location": {"type": "string", "minLength": 1},
+        "kind": {"enum": ["plugin", "translation", "localized_strings", "bilingual", "other"]},
+        "bilingual_capability": {"enum": ["none", "self_contained", "requires_relation"]},
+        "fingerprint": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "display_name": {"type": ["string", "null"], "minLength": 1},
+        "plugin_scope": {"type": ["string", "null"], "minLength": 1},
+        "format_options": {"type": "object"},
+        "legacy": {"type": "object"},
+    },
+    "additionalProperties": False,
+}
+
+_SOURCE_RELATION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": [
+        "relation_id",
+        "kind",
+        "from_source_id",
+        "to_source_id",
+        "alignment_policy",
+        "alignment_version",
+    ],
+    "properties": {
+        "relation_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"},
+        "kind": {"enum": ["translation_for", "localized_member_of"]},
+        "from_source_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"},
+        "to_source_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"},
+        "alignment_policy": {"type": "string", "minLength": 1},
+        "alignment_version": {"type": "string", "minLength": 1},
+    },
+    "additionalProperties": False,
+}
+
 _DATA_SCHEMAS: dict[EntityKind, dict[str, Any]] = {
     EntityKind.PROJECT: {
         "type": "object",
         "required": ["name", "sources", "variant_ids", "active_variant_id"],
         "properties": {
             "name": {"type": "string", "minLength": 1},
-            "sources": {"type": "array", "items": {"type": "object"}},
+            "sources": {"type": "array", "items": _SOURCE_REGISTRATION_SCHEMA},
+            "source_relations": {"type": "array", "items": _SOURCE_RELATION_SCHEMA},
+            "source_registry_diagnostics": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["code", "source_id"],
+                    "properties": {
+                        "code": {"type": "string", "minLength": 1},
+                        "source_id": {"type": "string"},
+                    },
+                    "additionalProperties": False,
+                },
+            },
             "variant_ids": {
                 "type": "array",
                 "items": {"type": "string", "minLength": 1, "maxLength": 64},
@@ -241,6 +304,12 @@ def serialize_document(document: dict[str, Any]) -> bytes:
 
 def _validate_semantics(ref: EntityRef, data: dict[str, Any]) -> None:
     if ref.kind is EntityKind.PROJECT:
+        if data["sources"] and "source_relations" not in data:
+            raise SchemaValidationError(
+                "SOURCE_RELATIONS_REQUIRED",
+                "Projects with registered sources must declare their source relation graph.",
+                pointer="/data/source_relations",
+            )
         variant_ids = data["variant_ids"]
         for index, value in enumerate(variant_ids):
             try:
@@ -259,6 +328,14 @@ def _validate_semantics(ref: EntityRef, data: dict[str, Any]) -> None:
                 pointer="/data/active_variant_id",
             )
         _validate_paratranz_binding(data)
+        try:
+            SourceRegistrySnapshot.from_project_data(data)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise SchemaValidationError(
+                "INVALID_SOURCE_REGISTRY",
+                str(exc),
+                pointer="/data/sources",
+            ) from exc
         return
 
     if ref.kind is EntityKind.VARIANT:

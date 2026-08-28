@@ -78,6 +78,7 @@ class ShellIntentComposition:
             open_ai_translator=callback(IntentId.TRANSLATION_AI),
             toggle_smart_assistant=callback(IntentId.VIEW_SMART_ASSISTANT),
             open_dictionary=callback(IntentId.TRANSLATION_DICTIONARY),
+            open_terminology=callback(IntentId.TERMINOLOGY_WORKBENCH),
             open_fomod=callback(IntentId.PUBLISH_FOMOD),
             show_user=callback(IntentId.SETTINGS_ACCOUNT),
             show_mails=callback(IntentId.SETTINGS_MESSAGES),
@@ -187,6 +188,11 @@ class ShellIntentComposition:
             IntentId.TRANSLATION_AI, _call(host.tool_windows.open_ai_translator), availability=self._has_collection
         )
         register(IntentId.TRANSLATION_DICTIONARY, _call(host.tool_windows.open_dictionary))
+        register(
+            IntentId.TERMINOLOGY_WORKBENCH,
+            _call(host.tool_windows.open_terminology),
+            availability=self._has_project,
+        )
         register(IntentId.TRANSLATION_REVIEW, self._review, availability=self._has_review)
         register(IntentId.SYNC_UPLOAD, _call(host.operation_coordinator.upload), availability=self._has_cloud_context)
         register(

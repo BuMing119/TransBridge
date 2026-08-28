@@ -342,6 +342,9 @@ def start_translation_run(
     from transbridge.ui.tools.ai_translator.workflow_logging_client import WorkflowLoggingLLMClient
 
     log_store = WorkflowLogStore(ctx.esp_path, workflow="translation")
+    from transbridge.ai_translator.project_terminology_runtime import resolve_project_terminology
+
+    terminology = resolve_project_terminology(ctx)
     translator = AutoTranslator(
         translator_config,
         paratranz_client,
@@ -358,6 +361,7 @@ def start_translation_run(
             log_store,
             channel_prefix="term_call",
         ),
+        **terminology.translator_kwargs(),
     )
     worker = _TranslationWorker(
         translator,
@@ -397,6 +401,8 @@ def start_mixed_run(
     progress_created: Callable[[object], None] | None = None,
     theme_view: ThemeView | None = None,
 ) -> object:
+    from transbridge.ai_translator.project_terminology_runtime import resolve_project_terminology
+
     from ._mixed_worker import _MixedWorker
     from .run_view import AiMixedProgressWindow
     from .task_adapter import AiLegacyRunState
@@ -410,6 +416,7 @@ def start_mixed_run(
         run_id=request.run_id,
         run_spec=request.spec,
         request_budget=request.request_budget,
+        terminology_binding=resolve_project_terminology(ctx),
     )
     run_id = request.run_id
     activity = controller.create_activity(request)

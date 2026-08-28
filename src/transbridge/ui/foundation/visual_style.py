@@ -98,6 +98,142 @@ QToolButton[tbNavIntent="true"]:pressed {{
     background: {nav_selected.canonical};
     border-left-color: {focus.canonical};
 }}
+
+QFrame#terminologyWorkbenchSurface {{
+    color: {text.canonical};
+    background: {surface.canonical};
+    border: 1px solid {subtle_border.canonical};
+    border-radius: {radius_large + 4}px;
+    font-family: "Microsoft YaHei UI";
+}}
+QFrame#terminologyWorkbenchSurface QWidget {{
+    font-family: "Microsoft YaHei UI";
+}}
+QFrame#terminologyHeader {{
+    background: {surface.canonical};
+    border: 0;
+    border-bottom: 1px solid {subtle_border.canonical};
+}}
+QLabel#terminologyBrandMark {{
+    color: {on_accent.canonical};
+    background: {error.canonical};
+    border: 0;
+    border-radius: 12px;
+    font-size: 15pt;
+    font-weight: 600;
+}}
+QLabel[tbTerminologyBrandTitle="true"] {{
+    color: {text.canonical};
+    font-size: 18pt;
+    font-weight: 650;
+}}
+QLabel[tbTerminologyProjectTitle="true"] {{
+    color: {text.canonical};
+    font-size: 12pt;
+    font-weight: 600;
+}}
+QFrame#terminologyProjectCard {{
+    background: {row_alternate.canonical};
+    border: 0;
+    border-radius: {radius_large}px;
+}}
+QFrame#terminologyTopNavigation {{
+    background: {header_surface.canonical};
+    border: 0;
+    border-bottom: 1px solid {subtle_border.canonical};
+}}
+QToolButton[tbTerminologyNav="true"] {{
+    color: {text.canonical};
+    background: transparent;
+    border: 0;
+    border-radius: {radius_large}px;
+    min-height: 54px;
+    padding: 0 18px;
+    font-size: 12pt;
+}}
+QToolButton[tbTerminologyNav="true"]:hover {{
+    color: {focus.canonical};
+    background: {control_hover.canonical};
+}}
+QToolButton[tbTerminologyNav="true"]:checked {{
+    color: {focus.canonical};
+    background: {nav_selected.canonical};
+    font-weight: 600;
+}}
+QStackedWidget#terminologyObjectPages {{
+    background: {surface.canonical};
+    border: 0;
+}}
+QLabel[tbTerminologyPageTitle="true"] {{
+    color: {text.canonical};
+    font-size: 22pt;
+    font-weight: 650;
+}}
+QLabel[tbTerminologySectionTitle="true"] {{
+    color: {text.canonical};
+    font-size: 14pt;
+    font-weight: 600;
+}}
+QLabel[tbTerminologyMetric="true"] {{
+    color: {text.canonical};
+    font-size: 20pt;
+    font-weight: 650;
+}}
+QFrame[tbTerminologyCard="true"] {{
+    color: {text.canonical};
+    background: {surface.canonical};
+    border: 1px solid {subtle_border.canonical};
+    border-radius: {radius_large}px;
+}}
+QFrame[tbTerminologySoftCard="true"] {{
+    color: {text.canonical};
+    background: {row_alternate.canonical};
+    border: 1px solid {subtle_border.canonical};
+    border-radius: {radius_large}px;
+}}
+QFrame[tbTerminologyAlert="true"] {{
+    color: {warning.canonical};
+    background: {header_surface.canonical};
+    border: 1px solid {warning.canonical};
+    border-radius: {radius_large}px;
+}}
+QFrame[tbTerminologyListRow="true"] {{
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid {header_surface.canonical};
+}}
+QPushButton[tbTerminologyPrimary="true"] {{
+    color: {on_accent.canonical};
+    background: {focus.canonical};
+    border: 1px solid {focus.canonical};
+    border-radius: {radius}px;
+    min-height: {control_height}px;
+    padding: 0 14px;
+    font-weight: 600;
+}}
+QPushButton[tbTerminologyPrimary="true"]:hover {{
+    color: {on_accent.canonical};
+    background: {selected_row.canonical};
+}}
+QPushButton[tbTerminologyPrimary="true"]:disabled {{
+    color: {disabled_text.canonical};
+    background: {disabled_surface.canonical};
+    border-color: {subtle_border.canonical};
+}}
+QPushButton[tbTerminologyFilter="true"] {{
+    color: {muted.canonical};
+    background: transparent;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    min-height: {control_height}px;
+    padding: 0 12px;
+}}
+QPushButton[tbTerminologyFilter="true"]:checked {{
+    color: {focus.canonical};
+    border-bottom-color: {focus.canonical};
+    font-weight: 600;
+}}
 QPushButton#tbNavigationUser {{
     color: {text.canonical};
     background: transparent;

@@ -6,7 +6,12 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from transbridge.application.capabilities import CapabilityRegistry, CapabilityReport
+from transbridge.application.capabilities import (
+    CapabilityId,
+    CapabilityRegistry,
+    CapabilityReport,
+    CapabilityState,
+)
 from transbridge.application.ports import ClosablePort, closeables
 from transbridge.application.tasks import (
     BoundedThreadPoolBackend,
@@ -17,6 +22,13 @@ from transbridge.application.tasks import (
     TaskHistoryRecorder,
     TaskRetryIntentRegistry,
     TaskRuntime,
+)
+from transbridge.application.terminology.changelog_queries import ChangeLogQueryService
+from transbridge.application.terminology.report_queries import TerminologyReportQueryService
+from transbridge.application.terminology.runtime import (
+    TerminologyTaskEntrypoint,
+    TerminologyWorkloadRegistry,
+    UnavailableTerminologyCommitPort,
 )
 from transbridge.application.use_cases import ValidateContextUseCase
 from transbridge.config import ConfigRepository, UiPreferenceRepository, default_config_repository
@@ -47,6 +59,20 @@ def build_runtime(
     capability_reports = capabilities.snapshot() if isinstance(capabilities, CapabilityRegistry) else capabilities or ()
     runtime_capabilities = CapabilityRegistry(capability_reports)
     runtime_use_cases = UseCaseRegistry(use_cases)
+    if "terminology_repository" in runtime_use_cases.names():
+        terminology_repository = runtime_use_cases.resolve("terminology_repository")
+        if "terminology_artifact_ledger" not in runtime_use_cases.names():
+            runtime_use_cases.register("terminology_artifact_ledger", terminology_repository)
+        if "terminology_report_queries" not in runtime_use_cases.names():
+            runtime_use_cases.register(
+                "terminology_report_queries",
+                TerminologyReportQueryService(terminology_repository),
+            )
+        if "terminology_changelog_queries" not in runtime_use_cases.names():
+            runtime_use_cases.register(
+                "terminology_changelog_queries",
+                ChangeLogQueryService(getattr(terminology_repository, "changelogs", terminology_repository)),
+            )
     if "validate_context" not in runtime_use_cases.names():
         runtime_use_cases.register("validate_context", ValidateContextUseCase(runtime_ports.secrets))
     tasks = task_runtime or TaskRuntime(
@@ -106,6 +132,74 @@ def build_runtime(
     for name, use_case in persistence_use_cases.items():
         if name not in runtime_use_cases.names():
             runtime_use_cases.register(name, use_case)
+    terminology_resource = None
+    if "terminology_repository" not in runtime_use_cases.names():
+        from .terminology import build_production_terminology
+
+        terminology = build_production_terminology(
+            root=persistence_root,
+            lifecycle=persistence.project_lifecycle,
+            task_runtime=tasks,
+            ids=runtime_ports.ids,
+            clock=runtime_ports.clock,
+            max_unstreamed_source_count=int(runtime_settings.get("terminology_max_unstreamed_source_count", 50)),
+            max_unstreamed_source_bytes=int(
+                runtime_settings.get("terminology_max_unstreamed_source_bytes", 64 * 1024 * 1024)
+            ),
+            max_unstreamed_total_bytes=int(
+                runtime_settings.get("terminology_max_unstreamed_total_bytes", 256 * 1024 * 1024)
+            ),
+        )
+        production_use_cases = {
+            "terminology_repository": terminology.repositories,
+            "terminology_repository_factory": terminology.repositories,
+            "terminology_build_input": terminology.build_inputs,
+            "terminology_workloads": terminology.workloads,
+            "terminology_tasks": terminology.tasks,
+            "terminology_commit_port": terminology.commit_port,
+            "terminology_ui_commands": terminology.commands,
+            "terminology_ui_services_factory": terminology,
+            "effective_terminology_factory": terminology,
+        }
+        for name, use_case in production_use_cases.items():
+            runtime_use_cases.register(name, use_case)
+        for capability_name in (
+            "analysis-report",
+            "draft-publish",
+            "effective",
+            "history-revert-changelog",
+        ):
+            runtime_capabilities.register(
+                CapabilityReport(
+                    CapabilityId(f"terminology.{capability_name}"),
+                    CapabilityState.AVAILABLE,
+                )
+            )
+        runtime_capabilities.register(
+            CapabilityReport(
+                CapabilityId("terminology.partial-publish"),
+                CapabilityState.UNAVAILABLE,
+                reasons=("部分完成的构建不支持发布。",),
+                missing_prerequisites=("complete-build-required",),
+            )
+        )
+        terminology_resource = terminology.repositories
+    else:
+        # Explicitly supplied repositories are a test/integration seam.  They
+        # retain the historical fail-closed fallback unless the caller also
+        # provides real runners and a business commit port.
+        if "terminology_workloads" not in runtime_use_cases.names():
+            runtime_use_cases.register("terminology_workloads", TerminologyWorkloadRegistry())
+        if "terminology_tasks" not in runtime_use_cases.names():
+            commit_port = (
+                runtime_use_cases.resolve("terminology_commit_port")
+                if "terminology_commit_port" in runtime_use_cases.names()
+                else UnavailableTerminologyCommitPort()
+            )
+            runtime_use_cases.register(
+                "terminology_tasks",
+                TerminologyTaskEntrypoint(tasks, runtime_use_cases.resolve("terminology_workloads"), commit_port),
+            )
     task_history_recorder.start()
     return AppRuntime(
         settings=runtime_settings,
@@ -114,5 +208,9 @@ def build_runtime(
         use_cases=runtime_use_cases,
         tasks=tasks,
         resources=closeables(resources),
-        internal_resources=closeables((persistence, task_history_recorder)),
+        internal_resources=closeables(
+            (persistence, task_history_recorder)
+            if terminology_resource is None
+            else (persistence, task_history_recorder, terminology_resource)
+        ),
     )

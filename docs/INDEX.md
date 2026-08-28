@@ -42,6 +42,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [ADR-018](adr/018-project-session-persistence-v2.md) | Project/Variant/Session 状态所有权与持久化 V2 | ✅ 已接受（2026-08-18） |
 | [ADR-019](adr/019-unified-task-runtime.md) | Unified Task Runtime、互斥终态与幂等恢复 | ✅ 已接受（2026-08-18） |
 | [ADR-021](adr/021-ui-presentation-modularization.md) | UI 展示层模块化：View/Presenter 边界、显式窄依赖、规模门禁（FR25） | ✅ 已接受并实施（2026-08-19） |
+| [ADR-034](adr/034-project-terminology-build-versioning-reporting.md) | 项目全来源术语构建、不可变版本与统一报告事实源（FR5.16） | 📝 提议（2026-08-28） |
 
 > 详细架构文档见 [dev/ARCHITECTURE.md](dev/ARCHITECTURE.md)（模块依赖、数据流、全局状态管理、设计决策）。
 
@@ -262,6 +263,8 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 
 | 日期 | 修改内容 | 修改人 |
 |------|---------|--------|
+| 2026-08-28 | FR5.16 项目全来源术语 Story 00～12 代码与 QA 收口：186 项功能回归、624 项跨层回归及 50,000 术语流式 Excel 路径通过；正式性能门禁保持 OFF → [changelog](changelogs/project-terminology-build-versioning-reporting/story-00-to-12-implementation/2026-08-28-001-FR5.16全Story实现与QA收口.md) | /bm-pilot → /bm-qa → /bm-chronicle |
+| 2026-08-28 | FR5.16 生产组合、GUI 闭环、正式 regular/stress/UI 基准与翻译消费收口：20 场景完成但内存和多项延迟预算失败，S12 与全部 feature stage 保持 OFF → [changelog](changelogs/project-terminology-build-versioning-reporting/story-00-to-12-implementation/2026-08-28-002-FR5.16生产接线与正式基准收口.md) | /bm-pilot → /bm-dev → /bm-qa → /bm-chronicle |
 | 2026-08-18 | unified-task-translation-runtime-v2 S06 实现完成：PostProcess 候选链 + stage/candidate hash checkpoint + canonical ReportSnapshot（JSON/CSV/Excel 渲染器），51 passed + task-s06 evidence 通过 verify → changelog story-06-001 | /bm-pilot |
 | 2026-08-18 | unified-task-translation-runtime-v2 S07 实现完成：RuntimeTaskBridge（AWAITING_TASK 生产路径）+ SessionJobGate + 只读投影与 capability 控制 + 兼容删除门禁清单，63 passed + task-s07 evidence 通过 verify → changelog story-07-001 | /bm-pilot |
 | 2026-08-18 | fomod-pipeline-v2 S05 实现完成：StagingPackPublisher 隔离构建+重开验证+原子发布+CleanupPolicy+FomodManifest，PublishStage 重构，10 passed + fomod-s05 evidence 通过 verify（全 FOMOD 84 passed）→ changelog story-05-001 | /bm-pilot |

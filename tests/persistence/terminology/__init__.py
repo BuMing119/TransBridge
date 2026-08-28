@@ -1,0 +1,1 @@
+"""SQLite terminology persistence tests."""

@@ -30,8 +30,11 @@ from transbridge.ai_translator.term_formats import (
 )
 
 if TYPE_CHECKING:
+    from transbridge.application.terminology.effective import EffectiveSnapshotStatus, TerminologyLookupContext
     from transbridge.converter.translation_entry import TranslationEntry
     from transbridge.paratranz.config_manager import LLMConfig
+
+    from .project_terminology_adapter import ProjectTerminologyAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -146,16 +149,28 @@ class TermDatabaseManager:
         esp_path: str,
         paratranz_client=None,
         project_id: int | None = None,
+        *,
+        effective_loader: ProjectTerminologyAdapter | None = None,
+        terminology_context: TerminologyLookupContext | None = None,
     ):
         self._config = config
         self._esp_path = esp_path
         self._paratranz_client = paratranz_client
         self._project_id = project_id
+        self._effective_loader = effective_loader
+        self._terminology_context = terminology_context
+        if terminology_context is not None and terminology_context.plugin_id is not None:
+            raise ValueError("TermDatabaseManager base terminology context must not select a plugin")
         self._retrieval_enabled = getattr(config, "retrieval_enabled", True)
         self._dynamic_db: DynamicTermDatabase | None = None
+        self._legacy_terms: list[TermEntry] | None = None
         self._merged_terms: list[TermEntry] = []  # 缓存合并后的术语列表
+        self._project_terminology_status: EffectiveSnapshotStatus | None = None
+        self._vector_snapshot_identity = "legacy-global"
+        self._vector_lock = threading.RLock()
         self._load_log: list[tuple[str, int, str | None]] = []  # (source, count, error)
         self._vector_index = None  # 延迟初始化
+        self._load_completed = False
 
         # 缓存目录：data/ai_translator/{stem}/cache/
         from transbridge.paratranz.config_manager import LLMConfig
@@ -175,8 +190,20 @@ class TermDatabaseManager:
         if not self._retrieval_enabled:
             self._merged_terms = []
             self._load_log = []
+            self._load_completed = True
             return {}
-        self._merged_terms = self._load_all_with_metadata()
+        self._legacy_terms = self._load_all_with_metadata()
+        self._merged_terms = list(self._legacy_terms)
+        loader = getattr(self, "_effective_loader", None)
+        context = getattr(self, "_terminology_context", None)
+        if loader is not None and context is not None:
+            projected = loader.load(context, self._legacy_terms)
+            self._merged_terms = list(projected.entries)
+            self._project_terminology_status = projected.status
+            self._vector_snapshot_identity = projected.snapshot_identity
+            diagnostic = "; ".join(projected.diagnostics) or None
+            self._load_log.append(("project-terminology", len(projected.entries), diagnostic))
+        self._load_completed = True
 
         # Disabled retrieval must not import or initialize any vector backend.
         embedding_mode = getattr(getattr(self._config, "embedding", None), "mode", "disabled")
@@ -312,33 +339,61 @@ class TermDatabaseManager:
         """检查 term 是否已存在于任意来源（大小写不敏感）。"""
         return self.resolve_term(term) is not None
 
-    def resolve_term(self, term: str) -> TermEntry | None:
+    def resolve_term(
+        self,
+        term: str,
+        context: TerminologyLookupContext | None = None,
+    ) -> TermEntry | None:
         """返回当前来源优先级下生效的同名术语；没有匹配时返回 ``None``。
 
         该窄接口供冲突裁决读取权威译法，避免调用方依赖内部合并缓存。
         首版只解析主术语的规范化同名匹配，不把 variant 当作候选冲突。
         """
+        loader = getattr(self, "_effective_loader", None)
+        base_context = getattr(self, "_terminology_context", None)
+        lookup_context = context or base_context
+        if loader is not None and lookup_context is not None:
+            return loader.resolve(term, lookup_context, self._resolve_legacy_term)
+        return self._resolve_legacy_term(term)
+
+    def _resolve_legacy_term(self, term: str) -> TermEntry | None:
         term_key = _normalized_primary_term(term)
         if not term_key:
             return None
         resolved: TermEntry | None = None
-        for entry in self._effective_terms():
+        entries = self._legacy_effective_terms() if hasattr(self, "_legacy_terms") else self._effective_terms()
+        for entry in entries:
             if _normalized_primary_term(entry.term) == term_key:
                 # _effective_terms() follows the same low-to-high source order
                 # used to build exact-match maps, so later entries are authoritative.
                 resolved = entry
         return resolved
 
-    def _effective_terms(self) -> list[TermEntry]:
+    def _legacy_effective_terms(self) -> list[TermEntry]:
+        legacy = getattr(self, "_legacy_terms", None)
+        if legacy is None:
+            legacy = self._merged_terms
+        merged_terms_set = {entry.term.lower() for entry in legacy}
+        extra = [entry for entry in self.get_dynamic_db().as_list() if entry.term.lower() not in merged_terms_set]
+        return list(legacy) + extra
+
+    def _effective_terms(self, context: TerminologyLookupContext | None = None) -> list[TermEntry]:
         """返回合并后的术语列表，并补充翻译过程中动态追加的新条目。"""
-        if not self._merged_terms:
-            self._merged_terms = self._load_all_with_metadata()
-        # 把 _dynamic_db 中在 _merged_terms 之后新增的条目追加进来
-        merged_terms_set = {e.term.lower() for e in self._merged_terms}
-        extra = [e for e in self.get_dynamic_db().as_list() if e.term.lower() not in merged_terms_set]
+        if not self._merged_terms and not getattr(self, "_load_completed", False):
+            self.load_all()
+        loader = getattr(self, "_effective_loader", None)
+        base_context = getattr(self, "_terminology_context", None)
+        lookup_context = context or base_context
+        if loader is not None and lookup_context is not None:
+            return list(loader.load(lookup_context, self._legacy_effective_terms()).entries)
+        merged_terms_set = {entry.term.lower() for entry in self._merged_terms}
+        extra = [entry for entry in self.get_dynamic_db().as_list() if entry.term.lower() not in merged_terms_set]
         return self._merged_terms + extra
 
-    def _get_term_matcher_map(self) -> dict[str, tuple[str, str, bool]]:
+    def _get_term_matcher_map(
+        self,
+        context: TerminologyLookupContext | None = None,
+    ) -> dict[str, tuple[str, str, bool]]:
         """
         构建术语匹配映射表。
 
@@ -346,7 +401,8 @@ class TermDatabaseManager:
         匹配键包括：主术语本身 + 所有变体
         """
         matcher_map: dict[str, tuple[str, str, bool]] = {}
-        for entry in self._effective_terms():
+        entries = self._effective_terms() if context is None else self._effective_terms(context)
+        for entry in entries:
             # 主术语
             matcher_map[entry.term] = (entry.term, entry.translation, entry.case_sensitive)
             # 变体映射到主术语的译文
@@ -354,6 +410,19 @@ class TermDatabaseManager:
                 if variant and variant not in matcher_map:
                     matcher_map[variant] = (entry.term, entry.translation, entry.case_sensitive)
         return matcher_map
+
+    def lookup_context_for_entry(self, entry: object) -> TerminologyLookupContext | None:
+        loader = getattr(self, "_effective_loader", None)
+        base = getattr(self, "_terminology_context", None)
+        if loader is None or base is None:
+            return None
+        return loader.context_for_entry(base, entry)
+
+    def match_terms_for_entry(self, entry: object) -> dict[str, str]:
+        original = getattr(entry, "original", "")
+        if not isinstance(original, str) or not original:
+            return {}
+        return self.match_terms([original], context=self.lookup_context_for_entry(entry))
 
     # ─────────────────────────── 向量索引 ─────────────────────────────
 
@@ -385,7 +454,11 @@ class TermDatabaseManager:
                 bm25_weight=bm25_weight,
             )
 
-            success = self._vector_index.build_index(self._merged_terms)
+            snapshot_identity = self._vector_snapshot_identity
+            success = self._vector_index.build_index(
+                self._merged_terms,
+                snapshot_identity=None if snapshot_identity == "legacy-global" else snapshot_identity,
+            )
             if success:
                 self._load_log.append(("vector_index", len(self._merged_terms), None))
             else:
@@ -397,16 +470,34 @@ class TermDatabaseManager:
             self._vector_index = None
             logger.info("Vector index disabled: faiss not installed")
 
-    def rebuild_vector_index(self) -> bool:
+    def rebuild_vector_index(self, context: TerminologyLookupContext | None = None) -> bool:
         """手动重建向量索引（术语库更新后调用）。"""
         if self._vector_index is None:
             return False
-        return self._vector_index.build_index(self._effective_terms(), force=True)
+        with self._vector_lock:
+            identity = self._snapshot_identity(context)
+            rebuilt = self._vector_index.build_index(
+                self._effective_terms(context),
+                force=True,
+                snapshot_identity=None if identity == "legacy-global" else identity,
+            )
+            if rebuilt:
+                self._vector_snapshot_identity = identity
+            return rebuilt
+
+    def _snapshot_identity(self, context: TerminologyLookupContext | None) -> str:
+        loader = getattr(self, "_effective_loader", None)
+        lookup_context = context or getattr(self, "_terminology_context", None)
+        if loader is None or lookup_context is None:
+            return "legacy-global"
+        return loader.snapshot_identity(lookup_context)
 
     def semantic_match(
         self,
         text_batch: list[str],
         top_k: int = 5,
+        *,
+        context: TerminologyLookupContext | None = None,
     ) -> dict[str, str]:
         """
         语义召回术语。
@@ -423,9 +514,15 @@ class TermDatabaseManager:
         """
         if self._vector_index is None or not self._vector_index.available:
             return {}
+        with self._vector_lock:
+            identity = self._snapshot_identity(context)
+            if identity != getattr(self, "_vector_snapshot_identity", "legacy-global"):
+                if not self.rebuild_vector_index(context):
+                    return {}
 
-        # 批量检索
-        batch_results = self._vector_index.search_batch(text_batch, top_k=top_k)
+            # The index is mutable and scope-bound; keep rebuild and search in
+            # one critical section so concurrent plugin lookups cannot cross scopes.
+            batch_results = self._vector_index.search_batch(text_batch, top_k=top_k)
 
         # 合并去重
         matched: dict[str, str] = {}
@@ -507,6 +604,13 @@ class TermDatabaseManager:
             return ScopedTermMatches(
                 flat_terms={},
                 terms_by_entry={entry.key: {} for entry in entries},
+            )
+        if self._uses_project_context():
+            return self._match_terms_scoped_contextual(
+                entries,
+                enable_semantic=enable_semantic,
+                max_terms=max_terms,
+                in_flight_terms=in_flight_terms,
             )
 
         originals = [e.original for e in entries]
@@ -599,7 +703,48 @@ class TermDatabaseManager:
             terms_by_entry=terms_by_entry,
         )
 
-    def match_terms(self, text_batch: list[str]) -> dict[str, str]:
+    def _uses_project_context(self) -> bool:
+        status = getattr(self, "_project_terminology_status", None)
+        return getattr(status, "value", None) == "ready"
+
+    def _match_terms_scoped_contextual(
+        self,
+        entries: list[TranslationEntry],
+        *,
+        enable_semantic: bool,
+        max_terms: int,
+        in_flight_terms: dict[str, str] | None,
+    ) -> ScopedTermMatches:
+        """Delegate each entry to its explicit plugin/global lookup context."""
+        terms_by_entry: dict[str, dict[str, str]] = {}
+        flat_terms: dict[str, str] = {}
+        for entry in entries:
+            context = self.lookup_context_for_entry(entry)
+            matched = self.match_terms([entry.original], context=context)
+            if enable_semantic:
+                for term, translation in self.semantic_match([entry.original], top_k=3, context=context).items():
+                    matched.setdefault(term, translation)
+            if in_flight_terms:
+                for term, translation in in_flight_terms.items():
+                    if self._match_key_applies_to_original(term, entry.original, case_sensitive=False):
+                        matched.setdefault(term, translation)
+            terms_by_entry[entry.key] = matched
+            flat_terms.update(matched)
+        if len(flat_terms) > max_terms:
+            selected = tuple(sorted(flat_terms, key=lambda term: (len(term), term.casefold())))[:max_terms]
+            flat_terms = {term: flat_terms[term] for term in selected}
+            terms_by_entry = {
+                key: {term: translation for term, translation in values.items() if term in flat_terms}
+                for key, values in terms_by_entry.items()
+            }
+        return ScopedTermMatches(flat_terms, terms_by_entry)
+
+    def match_terms(
+        self,
+        text_batch: list[str],
+        *,
+        context: TerminologyLookupContext | None = None,
+    ) -> dict[str, str]:
         """在 text_batch 的原文中扫描匹配的术语，返回 {term: translation}。
 
         匹配策略（按顺序，命中即止）：
@@ -618,7 +763,7 @@ class TermDatabaseManager:
         originals_lower = [t.lower() for t in text_batch if len(t) >= 4]
         matched: dict[str, str] = {}
 
-        matcher_map = self._get_term_matcher_map()
+        matcher_map = self._get_term_matcher_map(context)
 
         for match_key, (main_term, translation, case_sensitive) in matcher_map.items():
             # 如果主术语已匹配，跳过变体检查
@@ -659,7 +804,12 @@ class TermDatabaseManager:
 
         return matched
 
-    def exact_match(self, originals: list[str]) -> dict[str, str]:
+    def exact_match(
+        self,
+        originals: list[str],
+        *,
+        context: TerminologyLookupContext | None = None,
+    ) -> dict[str, str]:
         """对 originals 列表做精确全等匹配，返回 {original: translation}。
         区分大小写的术语要求精确相等；不区分大小写的术语忽略大小写。
         支持变体：如果原文精确匹配某个变体，返回主术语的译文。
@@ -667,7 +817,8 @@ class TermDatabaseManager:
         # 构建两张查找表（O(n) 预处理，O(1) 查询）
         cs_map: dict[str, tuple[str, str]] = {}  # 区分大小写: exact term → (main_term, translation)
         ci_map: dict[str, tuple[str, str]] = {}  # 不区分大小写: lower term → (main_term, translation)
-        for entry in self._effective_terms():
+        entries = self._effective_terms() if context is None else self._effective_terms(context)
+        for entry in entries:
             # 主术语
             if entry.case_sensitive:
                 cs_map[_normalized_term_text(entry.term)] = (entry.term, entry.translation)

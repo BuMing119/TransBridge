@@ -69,6 +69,8 @@ def _select_post_process_candidates(entries: list, target_entry_ids: list[str] |
 
 if TYPE_CHECKING:
     from transbridge.ai_translator.batch_planner import Batch
+    from transbridge.ai_translator.project_terminology_adapter import ProjectTerminologyAdapter
+    from transbridge.application.terminology.effective import TerminologyLookupContext
     from transbridge.application.translation import ReportSnapshot
     from transbridge.application.translation.ai_request_budget import AiRequestBudget
     from transbridge.converter.translation_entry import TranslationEntry
@@ -178,6 +180,8 @@ class AutoTranslator:
         llm_client_wrapper: Callable[[LLMClient], LLMClient] | None = None,
         term_llm_client_wrapper: Callable[[LLMClient], LLMClient] | None = None,
         request_budget: AiRequestBudget | None = None,
+        effective_terminology: ProjectTerminologyAdapter | None = None,
+        terminology_context: TerminologyLookupContext | None = None,
     ):
         self._cfg = config
         self._paratranz_client = paratranz_client
@@ -214,6 +218,8 @@ class AutoTranslator:
             esp_path=config.esp_path,
             paratranz_client=paratranz_client,
             project_id=project_id,
+            effective_loader=effective_terminology,
+            terminology_context=terminology_context,
         )
         self._extractor = None
         self._planner = BatchPlanner(
@@ -490,6 +496,7 @@ class AutoTranslator:
                 entry.translation,
                 entry.stage,
                 entry.context or "",
+                _terminology_plugin_id(self._term_mgr, entry),
             )
             for entry in candidates
         )
@@ -652,8 +659,15 @@ class AutoTranslator:
         fingerprint_repair_requirements: dict[EntryKey, dict[str, str]] = {}
         for entry_key, required in repair_requirements.items():
             refreshed: dict[str, str] = {}
+            repair_entry = repair_entries_by_key[entry_key]
+            context_resolver = getattr(self._term_mgr, "lookup_context_for_entry", None)
+            lookup_context = context_resolver(repair_entry) if callable(context_resolver) else None
             for term, translation in required.items():
-                canonical = self._term_mgr.resolve_term(term)
+                canonical = (
+                    self._term_mgr.resolve_term(term, lookup_context)
+                    if lookup_context is not None
+                    else self._term_mgr.resolve_term(term)
+                )
                 if canonical is None or not canonical.translation.strip():
                     refreshed[term] = translation
                 else:
@@ -693,6 +707,7 @@ class AutoTranslator:
                 entry.translation,
                 entry.stage,
                 entry.context or "",
+                _terminology_plugin_id(self._term_mgr, entry),
             )
             for entry in scoped_entries
         )
@@ -1118,7 +1133,10 @@ class AutoTranslator:
                     def resolve_terms(candidate):
                         if self._term_mgr is None or not candidate.original:
                             return {}
-                        return self._term_mgr.match_terms([candidate.original])
+                        return self._term_mgr.match_terms(
+                            [candidate.original],
+                            context=self._term_mgr.lookup_context_for_entry(candidate),
+                        )
 
                     stages.append(
                         ProofreadStage(
@@ -1212,6 +1230,7 @@ class AutoTranslator:
                         entry.translation,
                         entry.stage,
                         entry.context or "",
+                        _terminology_plugin_id(self._term_mgr, entry),
                     )
                     for entry in entries_to_check
                 )
@@ -1305,13 +1324,29 @@ class AutoTranslator:
         # ── 精确匹配：原文与术语完全相同的条目直接填充，无需发送给 LLM ──────
         # Conflict repair deliberately goes through the model so every required
         # term can be validated as one atomic single-entry response.
-        exact_orig_to_trans = {} if repair_mode else self._term_mgr.exact_match([e.original for e in entries])
         direct_fill: dict[str, str] = {}  # entry_id → translation
         llm_entries = []
         key_map_all = {e.key: e for e in entries}
+        exact_by_entry: dict[str, str] = {}
+        if not repair_mode:
+            context_resolver = getattr(self._term_mgr, "lookup_context_for_entry", None)
+            grouped: dict[object, list[TranslationEntry]] = {}
+            for entry in entries:
+                context = context_resolver(entry) if callable(context_resolver) else None
+                grouped.setdefault(context, []).append(entry)
+            for context, contextual_entries in grouped.items():
+                originals = [entry.original for entry in contextual_entries]
+                exact_matches = (
+                    self._term_mgr.exact_match(originals, context=context)
+                    if callable(context_resolver)
+                    else self._term_mgr.exact_match(originals)
+                )
+                for entry in contextual_entries:
+                    if entry.original in exact_matches:
+                        exact_by_entry[entry.key] = exact_matches[entry.original]
         for e in entries:
-            if e.original in exact_orig_to_trans:
-                direct_fill[e.key] = exact_orig_to_trans[e.original]
+            if e.key in exact_by_entry:
+                direct_fill[e.key] = exact_by_entry[e.key]
             else:
                 llm_entries.append(e)
 
@@ -1361,8 +1396,14 @@ class AutoTranslator:
                 required = (required_terms_by_entry or {}).get(entry.key, {})
                 if required:
                     resolved_required: dict[str, str] = {}
+                    context_resolver = getattr(self._term_mgr, "lookup_context_for_entry", None)
+                    lookup_context = context_resolver(entry) if callable(context_resolver) else None
                     for term, fallback_translation in required.items():
-                        canonical = self._term_mgr.resolve_term(term)
+                        canonical = (
+                            self._term_mgr.resolve_term(term, lookup_context)
+                            if lookup_context is not None
+                            else self._term_mgr.resolve_term(term)
+                        )
                         if canonical is None or not canonical.translation.strip():
                             raise ValueError(f"术语冲突重翻取消：权威术语已不存在：{term}")
                         if canonical.translation != fallback_translation:
@@ -1767,3 +1808,17 @@ class AutoTranslator:
                 self._term_mgr.get_dynamic_db().add_many_and_save(terms)
                 with lock:
                     result.new_dynamic_terms += len(new_terms)
+
+
+def _terminology_plugin_id(term_manager: object | None, entry: object) -> str | None:
+    if term_manager is None:
+        return None
+    uses_project_context = getattr(term_manager, "_uses_project_context", None)
+    if callable(uses_project_context) and not uses_project_context():
+        return None
+    lookup = getattr(term_manager, "lookup_context_for_entry", None)
+    if not callable(lookup):
+        return None
+    context = lookup(entry)
+    plugin_id = None if context is None else getattr(context, "plugin_id", None)
+    return plugin_id if isinstance(plugin_id, str) and plugin_id.strip() else None

@@ -369,6 +369,7 @@ class SsePluginAdapter(_LegacyFormatAdapter):
                 source_path,
                 skip_empty=bool(options.get("skip_empty", True)),
                 language=str(options.get("language", "english")),
+                discover_sibling_strings=bool(options.get("discover_sibling_strings", True)),
             )
             if parser.get_plugin() is None:
                 raise ValueError("plugin parser did not produce a source plugin")
@@ -379,10 +380,14 @@ class SsePluginAdapter(_LegacyFormatAdapter):
             )
         snapshot = _snapshot(request, self.format_id, content)
         try:
-            localized_sources = _localized_source_snapshots(
-                source_path,
-                str(options.get("language", "english")),
-                request,
+            localized_sources = (
+                _localized_source_snapshots(
+                    source_path,
+                    str(options.get("language", "english")),
+                    request,
+                )
+                if bool(options.get("discover_sibling_strings", True))
+                else ()
             )
         except ValueError as exc:
             return self._failed_parse(
@@ -430,6 +435,7 @@ class SsePluginAdapter(_LegacyFormatAdapter):
                 source_path,
                 skip_empty=bool(options.get("skip_empty", True)),
                 language=str(options.get("language", "english")),
+                discover_sibling_strings=bool(options.get("discover_sibling_strings", True)),
             )
             plugin = parser.get_plugin()
             if plugin is None:

@@ -1,0 +1,85 @@
+{
+  "additional_checks": [],
+  "artifact_digest": "f0e0b08aeaded79146b2db8020a0270d13ef4af478debc7d5152d0db96739d75",
+  "manifests": [
+    "2026-08-28-local-nvme-regular/full-cold.json",
+    "2026-08-28-local-nvme-regular/full-warm.json",
+    "2026-08-28-local-nvme-regular/repeat.json",
+    "2026-08-28-local-nvme-regular/changed-10pct.json",
+    "2026-08-28-local-nvme-regular/query.json",
+    "2026-08-28-local-nvme-regular/history.json",
+    "2026-08-28-local-nvme-regular/compare.json",
+    "2026-08-28-local-nvme-regular/report.json",
+    "2026-08-28-local-nvme-regular/changelog.json",
+    "2026-08-28-local-nvme-regular/cancel.json",
+    "2026-08-28-local-nvme-stress/full-cold.json",
+    "2026-08-28-local-nvme-stress/full-warm.json",
+    "2026-08-28-local-nvme-stress/repeat.json",
+    "2026-08-28-local-nvme-stress/changed-10pct.json",
+    "2026-08-28-local-nvme-stress/query.json",
+    "2026-08-28-local-nvme-stress/history.json",
+    "2026-08-28-local-nvme-stress/compare.json",
+    "2026-08-28-local-nvme-stress/report.json",
+    "2026-08-28-local-nvme-stress/changelog.json",
+    "2026-08-28-local-nvme-stress/cancel.json"
+  ],
+  "schema_version": 1,
+  "supplemental_metrics": {
+    "cancel-visible-feedback": {
+      "evidence": "real TerminologyTaskAdapter CANCELLING projection",
+      "median": 4.870000702794641e-05,
+      "raw_samples": [
+        7.419999747071415e-05,
+        5.230000533629209e-05,
+        4.820000322069973e-05,
+        4.870000702794641e-05,
+        4.320000880397856e-05
+      ],
+      "statistic": "maximum-of-five-raw",
+      "unit": "seconds",
+      "value": 7.419999747071415e-05
+    },
+    "main-thread-block": {
+      "evidence": "10 ms QTimer gaps while terminology command preparation runs in QThreadPool",
+      "median": 0.011694500004523434,
+      "raw_samples": [
+        0.010922400004346855,
+        0.011934499998460524,
+        0.01166899999952875,
+        0.012943499998073094,
+        0.011694500004523434
+      ],
+      "statistic": "maximum-of-five-raw",
+      "unit": "seconds",
+      "value": 0.012943499998073094
+    },
+    "progress-heartbeat": {
+      "evidence": "real ProgressHeartbeat delivery through TaskRuntime",
+      "median": 1.4994142999930773,
+      "raw_samples": [
+        1.4973833999974886,
+        1.500048899993999,
+        1.4987876000086544,
+        1.4994142999930773,
+        1.5001755999983288
+      ],
+      "statistic": "maximum-of-five-raw",
+      "unit": "seconds",
+      "value": 1.5001755999983288
+    },
+    "visible-feedback": {
+      "evidence": "real Qt terminology window",
+      "median": 3.5200006095692515e-05,
+      "raw_samples": [
+        3.860000288113952e-05,
+        3.5200006095692515e-05,
+        6.479999865405262e-05,
+        3.100000321865082e-05,
+        2.4599998141638935e-05
+      ],
+      "statistic": "maximum-of-five-raw",
+      "unit": "seconds",
+      "value": 6.479999865405262e-05
+    }
+  }
+}

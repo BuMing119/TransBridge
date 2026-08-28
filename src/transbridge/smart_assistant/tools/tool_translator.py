@@ -128,6 +128,9 @@ class TranslationController:
         # M4: 浅拷贝闭包捕获的可变引用，防止集合切换时读到错误数据
         _collection = collection
         _entry_ids = list(entry_ids) if entry_ids else None
+        from transbridge.ai_translator.project_terminology_runtime import resolve_project_terminology
+
+        terminology = resolve_project_terminology(ctx)
 
         def _run():
             paratranz_client = None
@@ -146,7 +149,12 @@ class TranslationController:
 
                         paratranz_client = ParatranzClient(ctx.config)
 
-                translator = AutoTranslator(cfg, paratranz_client, project_id)
+                translator = AutoTranslator(
+                    cfg,
+                    paratranz_client,
+                    project_id,
+                    **terminology.translator_kwargs(),
+                )
 
                 def _progress(current, total, msg, succ, fail, new_terms):
                     tm.update_progress(task_id, {
@@ -251,6 +259,9 @@ class TranslationController:
         task_id = tm.register(stop_event=stop_event, metadata={
             "intensity": intensity, "scope": scope, "strategy": strategy, "type": "polish",
         })
+        from transbridge.ai_translator.project_terminology_runtime import resolve_project_terminology
+
+        terminology = resolve_project_terminology(ctx)
 
         def _run():
             llm_runtime = None
@@ -268,9 +279,11 @@ class TranslationController:
                 )
 
                 from transbridge.ai_translator.term_database import TermDatabaseManager
+
                 term_mgr = TermDatabaseManager(
                     config=llm_cfg,
                     esp_path=getattr(ctx, 'esp_path', None) or "",
+                    **terminology.term_database_kwargs(),
                 )
                 term_mgr.load_all()
 

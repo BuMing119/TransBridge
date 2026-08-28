@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import PurePath
 
+from transbridge.application.projects.source_registry import select_workbench_source
 from transbridge.converter.translation_entry import (
     STAGE_CHECKED,
     STAGE_HIDDEN,
@@ -285,19 +286,7 @@ class WorkbenchWorkflowPresenter:
         sources: Sequence[Mapping[str, object]],
         active_content_id: str | None,
     ) -> Mapping[str, object]:
-        if active_content_id:
-            for source in sources:
-                identities = (
-                    source.get("source_id"),
-                    source.get("namespace"),
-                    source.get("location"),
-                )
-                if active_content_id in {str(value) for value in identities if value is not None}:
-                    return source
-        for source in sources:
-            if source.get("role") == "primary":
-                return source
-        return sources[0] if sources else {}
+        return select_workbench_source(sources, active_source_id=active_content_id)
 
     @staticmethod
     def _basename(value: str) -> str:

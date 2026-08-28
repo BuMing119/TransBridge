@@ -151,16 +151,30 @@ class TermVectorIndex:
         """初始化失败时的错误信息。"""
         return self._init_error
 
-    def _compute_term_hash(self, terms: list[TermEntry]) -> str:
+    def _compute_term_hash(self, terms: list[TermEntry], snapshot_identity: str | None = None) -> str:
         """计算术语列表的内容 hash，包含变体。"""
+        payload: object = [
+            {"t": entry.term, "tr": entry.translation, "v": sorted(entry.variants)}
+            for entry in sorted(terms, key=lambda item: item.term)
+        ]
+        if snapshot_identity is not None:
+            if not snapshot_identity.strip():
+                raise ValueError("vector snapshot identity must be absent or non-empty")
+            payload = {"snapshot_identity": snapshot_identity, "terms": payload}
         content = json.dumps(
-            [{"t": e.term, "tr": e.translation, "v": sorted(e.variants)} for e in sorted(terms, key=lambda x: x.term)],
+            payload,
             ensure_ascii=False,
             sort_keys=True,
         )
         return hashlib.md5(content.encode()).hexdigest()
 
-    def build_index(self, terms: list[TermEntry], force: bool = False) -> bool:
+    def build_index(
+        self,
+        terms: list[TermEntry],
+        force: bool = False,
+        *,
+        snapshot_identity: str | None = None,
+    ) -> bool:
         """
         构建或更新向量索引。
 
@@ -182,7 +196,7 @@ class TermVectorIndex:
             return False
 
         # 检查是否需要重建
-        new_hash = self._compute_term_hash(terms)
+        new_hash = self._compute_term_hash(terms, snapshot_identity)
         if not force and self._try_load_index(new_hash):
             self._available = True
             logger.info(f"Loaded existing vector index with {len(self._term_meta)} terms")

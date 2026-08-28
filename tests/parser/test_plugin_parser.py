@@ -1,9 +1,8 @@
-import pytest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from transbridge.parser.plugin_parser import PluginParser
 from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.parser.plugin_parser import PluginParser
 
 
 # 伪造的 PluginString 对象
@@ -61,6 +60,21 @@ def test_parse_plugin_without_skip_empty(mock_sseplugin, mock_strings_lookup):
     results = parser.parse_plugin(Path("dummy.esp"), skip_empty=False)
 
     assert len(results) == 3
+
+
+@patch("transbridge.parser.plugin_parser.PluginStringsLookup.from_plugin")
+@patch("transbridge.parser.plugin_parser.SSEPluginWithContext")
+def test_parse_plugin_can_disable_sibling_strings_discovery(mock_sseplugin, mock_strings_lookup):
+    fake_plugin = Mock()
+    fake_plugin.extract_strings_with_context.return_value = make_fake_strings()
+    mock_sseplugin.from_file.return_value = fake_plugin
+
+    parser = PluginParser()
+    results = parser.parse_plugin(Path("dummy.esp"), discover_sibling_strings=False)
+
+    assert len(results) == 2
+    mock_strings_lookup.assert_not_called()
+    fake_plugin.extract_strings_with_context.assert_called_once_with(strings_lookup=None)
 
 
 @patch("transbridge.parser.plugin_parser.PluginStringsLookup.from_plugin", return_value=None)

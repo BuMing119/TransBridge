@@ -415,7 +415,8 @@ class LLMPolisher:
             return {}
 
         try:
-            matched = self._term_manager.match_terms([entry.original])
+            contextual = getattr(self._term_manager, "match_terms_for_entry", None)
+            matched = contextual(entry) if callable(contextual) else self._term_manager.match_terms([entry.original])
             return matched
         except Exception:
             return {}

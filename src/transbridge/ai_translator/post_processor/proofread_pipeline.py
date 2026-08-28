@@ -95,6 +95,9 @@ class ProofreadPipeline:
                 if term_manager is None or not candidate.original:
                     return {}
                 try:
+                    contextual = getattr(term_manager, "match_terms_for_entry", None)
+                    if callable(contextual):
+                        return dict(contextual(candidate))
                     return dict(term_manager.match_terms([candidate.original]))
                 except Exception:
                     return {}
@@ -168,9 +171,9 @@ class ProofreadPipeline:
                 }
             pause_event.wait(0.05)
         if stop_event is not None and stop_event.is_set():
-            return {
-                str(entry.id): self._proofread_result(entry, valid=False, note="校对已停止") for entry in entries
-            }
+            return {str(entry.id): self._proofread_result(entry, valid=False, note="校对已停止") for entry in entries}
+        from transbridge.ai_translator.project_terminology_adapter import plugin_id_from_entry
+
         candidates = tuple(
             PostProcessCandidate(
                 run_id="proofread-preview",
@@ -181,6 +184,11 @@ class ProofreadPipeline:
                 text=entry.translation or "",
                 stage=entry.stage,
                 context=entry.context or "",
+                report_details=(
+                    (("terminology_plugin_id", plugin_id),)
+                    if (plugin_id := plugin_id_from_entry(entry)) is not None
+                    else ()
+                ),
             )
             for entry in entries
         )

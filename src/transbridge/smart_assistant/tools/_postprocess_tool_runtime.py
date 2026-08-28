@@ -50,6 +50,7 @@ class PostprocessToolRequest:
     scope: str
     intensity: str
     limits: dict[str, int]
+    terminology_binding: object
 
     @property
     def metadata(self) -> dict[str, object]:
@@ -115,6 +116,8 @@ def resolve_postprocess_request(args: dict, ctx, collection) -> PostprocessToolR
     limits = _apply_limit_overrides(args, effective_config)
     stages = ("proofread",) if strategy == "proofread" else _strict_stages(effective_config, requested_phases)
     entries, scope = _resolve_entries(args, ctx, collection, effective_config)
+    from transbridge.ai_translator.project_terminology_runtime import resolve_project_terminology
+
     return PostprocessToolRequest(
         entries=entries,
         effective_config=effective_config,
@@ -126,6 +129,7 @@ def resolve_postprocess_request(args: dict, ctx, collection) -> PostprocessToolR
         scope=scope,
         intensity=effective_intensity,
         limits=limits,
+        terminology_binding=resolve_project_terminology(ctx),
     )
 
 
@@ -159,7 +163,11 @@ def execute_postprocess_task(
     config = request.effective_config
     if not getattr(config, "api_key", ""):
         raise ValueError("API Key 未配置，请在 AI 翻译设置中配置 API Key")
-    term_manager = TermDatabaseManager(config=config, esp_path=getattr(ctx, "esp_path", None) or "")
+    term_manager = TermDatabaseManager(
+        config=config,
+        esp_path=getattr(ctx, "esp_path", None) or "",
+        **request.terminology_binding.term_database_kwargs(),
+    )
     term_manager.load_all()
     llm_runtime = create_workflow_llm_runtime(
         config,

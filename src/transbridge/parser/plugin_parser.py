@@ -4,6 +4,7 @@ from pathlib import Path
 
 from sse_plugin_interface.plugin import SSEPlugin
 from sse_plugin_interface.plugin_string import PluginString
+
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.parser.plugin.plugin_with_context import SSEPluginWithContext
 from transbridge.parser.strings_file import PluginStringsLookup
@@ -27,6 +28,7 @@ class PluginParser:
         progress_callback: Callable[[int, int, str], None] | None = None,
         skip_empty: bool = True,
         language: str = "english",
+        discover_sibling_strings: bool = True,
     ) -> list[TranslationEntry]:
         """
         Parse a plugin file and return all translatable strings as TranslationItem objects.
@@ -36,6 +38,8 @@ class PluginParser:
             progress_callback: Optional callback(current, total, description) for progress updates.
             skip_empty: If True, skip strings with empty original text (default: True).
             language: Language to look up for localized plugins (default: "english").
+            discover_sibling_strings: Whether to inspect the plugin's sibling
+                ``Strings`` directory (default: True for legacy compatibility).
 
         Returns:
             List of TranslationEntry objects.
@@ -50,7 +54,7 @@ class PluginParser:
             return []
 
         # Try to load external strings files for localised plugins (e.g. Skyrim.esm)
-        strings_lookup = PluginStringsLookup.from_plugin(path, language=language)
+        strings_lookup = PluginStringsLookup.from_plugin(path, language=language) if discover_sibling_strings else None
         self._strings_lookup = strings_lookup
         if strings_lookup:
             self.log.info(f"Loaded strings lookup with {len(strings_lookup)} entries for {path.name}")

@@ -73,6 +73,8 @@ def open_batch_translation(
     )
     activity = controller.create_activity(request)
     try:
+        from transbridge.ai_translator.project_terminology_runtime import resolve_project_terminology
+
         worker = _BatchTranslationWorker(
             slots=slots,
             llm_config=request.config,
@@ -81,6 +83,7 @@ def open_batch_translation(
             project_id=project_id,
             run_id=request.run_id,
             request_budget=request.request_budget,
+            terminology_binding=resolve_project_terminology(ctx),
         )
         activity.bind_worker(worker)
         progress = _BatchTranslationProgressWindow(

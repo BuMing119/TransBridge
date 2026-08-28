@@ -30,6 +30,9 @@ def create_polish_worker(
     stop_event = threading.Event()
     pause_event = threading.Event()
     pause_event.set()
+    from transbridge.ai_translator.project_terminology_runtime import resolve_project_terminology
+
+    terminology = resolve_project_terminology(ctx)
 
     def build_pipeline() -> ProofreadPipeline:
         term_manager = None
@@ -44,7 +47,13 @@ def create_polish_worker(
 
                 paratranz_client = ParatranzTermsAPI(ctx.config)
                 project_id = remote_project["id"]
-            term_manager = TermDatabaseManager(config, ctx.esp_path, paratranz_client, project_id)
+            term_manager = TermDatabaseManager(
+                config,
+                ctx.esp_path,
+                paratranz_client,
+                project_id,
+                **terminology.term_database_kwargs(),
+            )
             term_manager.load_all()
         llm_client = create_llm_client(config) if profile.requires_llm else None
         arbitration_llm_client = None

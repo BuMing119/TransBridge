@@ -30,6 +30,7 @@ class TranslationInput:
     translation: str
     stage: int
     context: str = ""
+    terminology_plugin_id: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.entry_key, EntryKey) or not isinstance(self.revision, EntryRevision):
@@ -38,9 +39,11 @@ class TranslationInput:
             raise TypeError("translation input text fields must be strings")
         if isinstance(self.stage, bool) or not isinstance(self.stage, int):
             raise TypeError("translation input stage must be an integer")
+        if self.terminology_plugin_id is not None and not self.terminology_plugin_id.strip():
+            raise ValueError("terminology plugin ID must be absent or non-empty")
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "entry_key": self.entry_key.to_dict(),
             "revision": self.revision.value,
             "original": self.original,
@@ -48,6 +51,9 @@ class TranslationInput:
             "stage": self.stage,
             "context": self.context,
         }
+        if self.terminology_plugin_id is not None:
+            payload["terminology_plugin_id"] = self.terminology_plugin_id
+        return payload
 
 
 @dataclass(frozen=True, slots=True)

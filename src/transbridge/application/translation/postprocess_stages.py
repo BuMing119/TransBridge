@@ -529,6 +529,7 @@ class _EntryView:
         self.translation = candidate.text
         self.context = candidate.context
         self.stage = candidate.stage
+        self.report_details = candidate.report_details
 
 
 def _is_sha256(value: str) -> bool:

@@ -3,6 +3,7 @@ from pathlib import Path as PathLib
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
+from transbridge.application.projects.source_registry import plugin_source_location
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.persistence import (
     PERSISTENCE_ROOT,
@@ -100,9 +101,7 @@ class ProjectCoordinator:
                 self._host.show_message(
                     f"项目「{project.name}」已恢复，版本「{project.active_variant}」，恢复 {count} 条译文"
                 )
-            for source in project.sources:
-                if source.get("type") == "esp" and source.get("path"):
-                    self.restore_parse_esp(source["path"])
+            self._restore_plugin_sources(project.sources)
             if filter_state:
                 QTimer.singleShot(3000, lambda: self._apply_saved_filter_state(filter_state))
             self._show_workbench()
@@ -245,9 +244,7 @@ class ProjectCoordinator:
             self._host.context.variant_store = variant_store
             if variant_store is not None and self._host.context.collection:
                 variant_store.apply_to(list(self._host.context.collection))
-            for source in project.sources:
-                if source.get("type") == "esp" and source.get("path"):
-                    self.restore_parse_esp(source["path"])
+            self._restore_plugin_sources(project.sources)
             self._show_workbench()
 
         def _start_legacy_open(saved: bool) -> None:
@@ -315,9 +312,7 @@ class ProjectCoordinator:
                 diagnostic = opened.diagnostics[0]
                 _show_failure(diagnostic.code, diagnostic.message)
                 return
-            for source in opened.value["sources"]:
-                if source.get("type") == "esp" and source.get("path"):
-                    self.restore_parse_esp(source["path"])
+            self._restore_plugin_sources(opened.value["sources"])
             self._host.show_message(f"项目「{opened.value['name']}」{success_verb}")
             if on_success is not None:
                 on_success(opened.value)
@@ -353,6 +348,12 @@ class ProjectCoordinator:
     def _show_workbench(self) -> None:
         if hasattr(self._host, "show_workbench"):
             self._host.show_workbench()
+
+    def _restore_plugin_sources(self, sources) -> None:
+        for source in sources:
+            location = plugin_source_location(source)
+            if location is not None:
+                self.restore_parse_esp(location)
 
     def restore_parse_esp(self, esp_path: str):
         """后台解析 ESP 源文件（启动恢复用，不阻塞 UI）。"""

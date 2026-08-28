@@ -19,7 +19,7 @@ from transbridge.application.io.identity import EntryKey, EntryRevision, Provena
 from transbridge.application.io.stage_policy import Stage
 
 from .ids import VariantRef
-from .models import SchemaEnvelope, VariantDto
+from .models import SCHEMA_VERSION, SchemaEnvelope, VariantDto
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -156,7 +156,7 @@ class VariantSnapshot:
             "entries": [entry.to_dict() for entry in self.entries],
             "snapshot_revision": self.revision,
         }
-        return VariantDto(SchemaEnvelope(2, self.ref.kind, self.ref.identity.value, self.revision, data))
+        return VariantDto(SchemaEnvelope(SCHEMA_VERSION, self.ref.kind, self.ref.identity.value, self.revision, data))
 
     @classmethod
     def from_dto(cls, dto: VariantDto, ref: VariantRef | None = None) -> VariantSnapshot:
@@ -361,11 +361,7 @@ class VariantMaterializer:
             namespace: {entry.entry_key: entry for entry in baseline.entries}
             for namespace, baseline in baseline_map.items()
         }
-        desired = {
-            entry_key: entry
-            for entries in baseline_entries.values()
-            for entry_key, entry in entries.items()
-        }
+        desired = {entry_key: entry for entries in baseline_entries.values() for entry_key, entry in entries.items()}
         for entry in snapshot.entries:
             source_entries = baseline_entries.get(entry.entry_key.namespace)
             if source_entries is None:

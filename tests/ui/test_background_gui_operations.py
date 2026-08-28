@@ -164,6 +164,7 @@ def test_current_window_project_open_shows_and_clears_start_center_progress() ->
     release = threading.Event()
     progress: list[str | None] = []
     messages: list[str] = []
+    restored_sources: list[str] = []
 
     class Workbench:
         def __init__(self) -> None:
@@ -183,7 +184,20 @@ def test_current_window_project_open_shows_and_clears_start_center_progress() ->
 
         def activate(self, _prepared, _context, *, dirty_decision):
             assert dirty_decision is None
-            return OperationResult.completed({"name": "OtherMod", "sources": []})
+            return OperationResult.completed({
+                "name": "OtherMod",
+                "sources": [
+                    {
+                        "source_id": "source-current",
+                        "enabled": True,
+                        "format_id": "plugin.sse",
+                        "location": "D:/mods/OtherMod.esp",
+                        "kind": "plugin",
+                        "bilingual_capability": "none",
+                        "format_options": {},
+                    }
+                ],
+            })
 
     host = SimpleNamespace(
         context=SimpleNamespace(uses_authoritative_projection=True, dirty=False),
@@ -200,7 +214,9 @@ def test_current_window_project_open_shows_and_clears_start_center_progress() ->
         hide_project_open_progress=lambda: progress.append(None),
     )
 
-    ProjectCoordinator(host).open_project_path("D:/projects/other.json")
+    coordinator = ProjectCoordinator(host)
+    coordinator.restore_parse_esp = restored_sources.append  # type: ignore[method-assign]
+    coordinator.open_project_path("D:/projects/other.json")
 
     assert started.wait(1)
     assert progress == ["正在校验并加载本地工程…"]
@@ -210,6 +226,7 @@ def test_current_window_project_open_shows_and_clears_start_center_progress() ->
 
     assert progress == ["正在校验并加载本地工程…", None]
     assert not host.workbench.progress_visible
+    assert restored_sources == ["D:/mods/OtherMod.esp"]
     assert messages == ["项目「OtherMod」已打开", "workbench"]
 
 

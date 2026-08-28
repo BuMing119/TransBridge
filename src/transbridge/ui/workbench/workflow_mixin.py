@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from transbridge.application.projects.source_registry import select_workbench_source
 from transbridge.ui.workbench.workflow_presenter import WorkbenchContentKind
 
 
@@ -36,7 +37,7 @@ class WorkflowPresentationMixin:
     def _content_kind(self) -> WorkbenchContentKind:
         sources = getattr(self._ctx, "project_sources", ())
         if sources:
-            source = next((item for item in sources if item.get("role") == "primary"), sources[0])
+            source = select_workbench_source(sources)
             format_id = str(source.get("format_id") or "").lower()
             return self._workflow_presenter.content_kind(format_id)
         slot = getattr(self._ctx, "active_slot", None)

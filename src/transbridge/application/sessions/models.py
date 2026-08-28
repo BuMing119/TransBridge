@@ -12,7 +12,7 @@ from typing import Any
 from transbridge.application.contracts import JobRef
 from transbridge.application.tasks.models import JobState, OwnerRef
 from transbridge.persistence.v2.ids import ProjectId, SessionId, SessionRef, VariantId, VariantRef
-from transbridge.persistence.v2.models import SchemaEnvelope, SessionDto
+from transbridge.persistence.v2.models import SCHEMA_VERSION, SchemaEnvelope, SessionDto
 
 
 class RecoveryStatus(StrEnum):
@@ -240,7 +240,7 @@ class SessionSnapshot:
             "recovery": self.recovery.value,
             "degradation_reasons": list(self.degradation_reasons),
         }
-        return SessionDto(SchemaEnvelope(2, self.ref.kind, self.ref.identity.value, self.revision, data))
+        return SessionDto(SchemaEnvelope(SCHEMA_VERSION, self.ref.kind, self.ref.identity.value, self.revision, data))
 
     @classmethod
     def from_dto(cls, dto: SessionDto, ref: SessionRef | None = None) -> SessionSnapshot:

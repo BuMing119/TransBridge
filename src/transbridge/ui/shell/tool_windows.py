@@ -34,6 +34,7 @@ class ToolWindows:
         self._host = host
         self.assistant_panel = None
         self._assistant_overlay_host_geometry: QRect | None = None
+        self._terminology_launcher = None
 
     def load_current_user(self) -> None:
         context = self._host.context
@@ -109,6 +110,13 @@ class ToolWindows:
 
         DictionaryPanel(self._host.context, self._host).exec()
 
+    def open_terminology(self) -> None:
+        if self._terminology_launcher is None:
+            from transbridge.ui.tools.terminology import TerminologyLauncher
+
+            self._terminology_launcher = TerminologyLauncher(self._host)
+        self._terminology_launcher.open()
+
     def open_fomod(self, new_archive: str | None = None) -> None:
         from transbridge.ui.tools.fomod import FomodPanel
 
@@ -159,6 +167,9 @@ class ToolWindows:
             self._assistant_overlay_host_geometry = None
 
     def dispose(self, *, wait_for_worker: bool = True) -> None:
+        if self._terminology_launcher is not None:
+            self._terminology_launcher.close()
+            self._terminology_launcher = None
         panel = self.assistant_panel
         if panel is not None:
             panel.close()

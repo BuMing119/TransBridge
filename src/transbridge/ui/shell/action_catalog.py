@@ -50,6 +50,7 @@ class IntentId(StrEnum):
     TRANSLATION_AI = "translation.ai-run"
     TRANSLATION_DICTIONARY = "translation.dictionary"
     TRANSLATION_REVIEW = "translation.review"
+    TERMINOLOGY_WORKBENCH = "terminology.workbench"
     WORKBENCH_MANAGE = "workbench.manage"
     SYNC_UPLOAD = "sync.upload"
     SYNC_UPLOAD_BATCH = "sync.upload-batch"
@@ -195,6 +196,14 @@ DEFAULT_ACTION_CATALOG = ActionCatalog((
         "检查翻译问题",
         ActionSection.TRANSLATION,
         placement=IntentPlacement.CONTEXTUAL,
+    ),
+    ActionDescriptor(
+        IntentId.TERMINOLOGY_WORKBENCH,
+        "构建术语库…",
+        ActionSection.TRANSLATION,
+        placement=IntentPlacement.PRIMARY,
+        aliases=("术语工作台", "检查异译", "术语历史", "术语报告"),
+        status_tip="构建、检查、调整并发布当前工程的项目术语库",
     ),
     ActionDescriptor(
         IntentId.WORKBENCH_MANAGE,

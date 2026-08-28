@@ -19,6 +19,7 @@ from transbridge.application.io import FormatId, ParseRequest, SourceDescriptor,
 from transbridge.application.io.identity import SourceNamespace
 from transbridge.application.projects import DirtyDecision, GuiProjectCommandFacade
 from transbridge.persistence.v2 import (
+    SCHEMA_VERSION,
     EntityKind,
     LoadedRecord,
     ProjectDto,
@@ -104,7 +105,10 @@ class CurrentProjectOpener:
         try:
             selected = Path(path).resolve(strict=True)
             document = parse_json_bytes(selected.read_bytes())
-            if version_of(document) != 2 or document.get("entity_type") != EntityKind.PROJECT.value:
+            if (
+                version_of(document) not in {2, SCHEMA_VERSION}
+                or document.get("entity_type") != EntityKind.PROJECT.value
+            ):
                 raise DomainError(
                     ErrorCategory.INPUT,
                     "PROJECT_RECORD_REQUIRED",
@@ -225,7 +229,7 @@ class CurrentProjectOpener:
 
 
 def _load_baseline(source: dict, context: RequestContext) -> SourceBaseline:
-    path = Path(str(source.get("path", ""))).resolve(strict=True)
+    path = Path(str(source.get("location") or source.get("path") or "")).resolve(strict=True)
     raw_format = source.get("format_id", FormatId.PLUGIN_SSE.value)
     try:
         format_id = FormatId(str(raw_format))

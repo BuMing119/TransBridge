@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from .ids import EntityKind, EntityRef
+from .ids import EntityKind, EntityRef, ProjectRef
 from .models import AtomicWriteError, BackupVerificationError, PathBoundaryError
 
 
@@ -91,6 +91,13 @@ class RepositoryPaths:
 
     def staging(self, ref: EntityRef, token: str, purpose: str) -> str:
         return self._path(".staging", *_scope(ref), f"{ref.identity.encoded}.{purpose}.{token}.tmp")
+
+    def project_terminology(self, ref: ProjectRef) -> str:
+        """Locate Project-owned terminology assets without exposing root joins to UI code."""
+
+        if not isinstance(ref, ProjectRef):
+            raise TypeError("terminology assets require a Project reference")
+        return self._path("projects", ref.identity.encoded, "terminology")
 
     def guard(self, path: str) -> str:
         canonical = self._filesystem.canonicalize(path)

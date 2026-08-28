@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import QApplication, QHeaderView, QLabel, QPushButton, QToo
 
 from transbridge.converter.translation_entry import STAGE_TRANSLATED, TranslationEntry
 from transbridge.ui.shell.action_catalog import IntentId
-from transbridge.ui.shell.navigation_rail import NavigationRail, WorkspaceShell
+from transbridge.ui.shell.navigation_rail import NavigationRail, WorkspaceShell, _ui_asset_path
 from transbridge.ui.workbench.filters_presenter import FiltersPresenter, FilterState
 from transbridge.ui.workbench.table_presenter import RenderSession
 from transbridge.ui.workbench.translation_table import (
@@ -86,6 +86,25 @@ def test_navigation_current_page_uses_page_ids_instead_of_visual_order() -> None
 
     navigation.set_current_page(99)
     assert paratranz.isChecked()
+    navigation.close()
+
+
+def test_navigation_renders_visible_bordered_paratranz_brand_icon() -> None:
+    navigation = NavigationRail()
+    paratranz = navigation._page_buttons[2]
+    image = paratranz.icon().pixmap(18, 18).toImage()
+
+    assert _ui_asset_path("paratranz.png") is not None
+    assert paratranz is navigation._paratranz_button
+    assert not image.isNull()
+    assert any(
+        image.pixelColor(x, y).blue() > 180 and image.pixelColor(x, y).red() < 80
+        for y in range(image.height())
+        for x in range(image.width())
+    )
+    border_pixel = image.pixelColor(9, 0)
+    assert border_pixel.alpha() > 0
+    assert border_pixel.red() < 245
     navigation.close()
 
 

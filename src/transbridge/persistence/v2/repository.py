@@ -12,7 +12,7 @@ from .filesystem import (
     verified_copy,
 )
 from .ids import EntityKind, EntityRef, ProjectRef, SessionRef, VariantRef
-from .migration import migrate_v1
+from .migration import migrate_to_current
 from .models import (
     SCHEMA_VERSION,
     FutureSchemaResult,
@@ -79,12 +79,6 @@ class JsonRepository[RefT, DtoT]:
                 return self._quarantine(ref, path, raw, digest, exc)
             return LoadedRecord(ref, value, digest)
 
-        try:
-            draft = migrate_v1(document, ref)
-            value = validate_v2(draft.document, ref)
-        except SchemaValidationError as exc:
-            return self._quarantine(ref, path, raw, digest, exc)
-
         backup_path = self._paths.backup(ref, digest, version)
         verified_copy(
             self._filesystem,
@@ -95,6 +89,12 @@ class JsonRepository[RefT, DtoT]:
             digest=digest,
             purpose="backup",
         )
+        try:
+            draft = migrate_to_current(document, ref)
+            value = validate_v2(draft.document, ref)
+        except SchemaValidationError as exc:
+            return self._quarantine(ref, path, raw, digest, exc)
+
         migrated_raw = serialize_document(draft.document)
         migrated_digest = hashlib.sha256(migrated_raw).hexdigest()
         staging_replace(
@@ -130,6 +130,8 @@ class JsonRepository[RefT, DtoT]:
         if not isinstance(value, self._dto_type):
             raise TypeError(f"{self._kind.value} repository received the wrong DTO type")
         document = value.envelope.to_dict()
+        if self._kind is EntityKind.PROJECT and version_of(document) == 2:
+            document = migrate_to_current(document, ref).document
         validated = validate_v2(document, ref)
         raw = serialize_document(document)
         digest = hashlib.sha256(raw).hexdigest()
@@ -174,7 +176,7 @@ class JsonRepository[RefT, DtoT]:
         if version < SCHEMA_VERSION:
             raise ReadOnlyWriteRefused(
                 "MIGRATION_REQUIRED",
-                "Load and migrate the legacy record before saving V2 data.",
+                "Load and migrate the legacy record before saving current-schema data.",
             )
         try:
             validate_v2(document, ref)

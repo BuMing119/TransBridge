@@ -17,6 +17,7 @@ from transbridge.application.contracts import (
 from transbridge.application.projects import ProjectCatalogEntry, ProjectCatalogSnapshot
 from transbridge.persistence.v2.filesystem import PersistenceFilesystemPort, RepositoryPaths
 from transbridge.persistence.v2.ids import ProjectId, ProjectRef
+from transbridge.persistence.v2.migration import migrate_to_current
 from transbridge.persistence.v2.models import SCHEMA_VERSION, SchemaValidationError
 from transbridge.persistence.v2.repository import ProjectRepository
 from transbridge.persistence.v2.schema import parse_json_bytes, validate_v2, version_of
@@ -122,11 +123,7 @@ class V2ProjectCatalog:
             if not self._filesystem.exists(path):
                 raise FileNotFoundError(path)
             document = parse_json_bytes(self._filesystem.read_bytes(path))
-            if version_of(document) != SCHEMA_VERSION:
-                raise SchemaValidationError(
-                    "ACTIVE_PROJECT_SCHEMA_UNSUPPORTED",
-                    "Active Project schema is unsupported.",
-                )
+            document = _project_document_for_projection(document, ref)
             project = validate_v2(document, ref)
             name = project_display_name(project.envelope.data.get("name"))
             return ProjectCatalogEntry(project_id, name, path, True, True), None
@@ -141,8 +138,7 @@ class V2ProjectCatalog:
             if not self._filesystem.exists(path):
                 return "工程记录不存在。"
             document = parse_json_bytes(self._filesystem.read_bytes(path))
-            if version_of(document) != SCHEMA_VERSION:
-                return "工程记录版本不受支持。"
+            document = _project_document_for_projection(document, ref)
             validate_v2(document, ref)
             return None
         except (OSError, KeyError):
@@ -158,6 +154,15 @@ def _diagnostic(code: str, message: str) -> Diagnostic:
         severity=DiagnosticSeverity.WARNING,
         category=ErrorCategory.PREREQUISITE,
     )
+
+
+def _project_document_for_projection(document: dict[str, object], ref: ProjectRef) -> dict[str, object]:
+    version = version_of(document)
+    if version == 2:
+        return migrate_to_current(document, ref).document
+    if version == SCHEMA_VERSION and "source_relations" in (document.get("data") or {}):
+        return document
+    raise SchemaValidationError("PROJECT_SCHEMA_UNSUPPORTED", "Project schema is unsupported for projection.")
 
 
 __all__ = ["V2ProjectCatalog"]

@@ -426,7 +426,8 @@ class LLMRefiner:
 
         # 使用术语管理器的匹配功能
         try:
-            matched = self._term_manager.match_terms([entry.original])
+            contextual = getattr(self._term_manager, "match_terms_for_entry", None)
+            matched = contextual(entry) if callable(contextual) else self._term_manager.match_terms([entry.original])
             return matched
         except Exception:
             return {}

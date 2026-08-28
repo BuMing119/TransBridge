@@ -1,0 +1,623 @@
+{
+  "artifact_digest": "3785ad918cf36225c64c0f6862819f31decb903ce8b39172cc768220aff0a07d",
+  "cache_preparation": {
+    "dataset_generation": "completed-before-five-formal-samples",
+    "external_network_cache": "not-used",
+    "llm_cache": "disabled",
+    "os_file_cache": "operator-recorded-not-programmatically-cleared",
+    "prepared_build_ref": "benchmark-build:ae7da662ccbed68a92d0b86a0c0bc45a1b4c9260b39a11c46c54adb946406390",
+    "production_adapter_preflight": {
+      "bulk_logical_evidence": "deterministic-ndjson-contract-corpus",
+      "formats": [
+        "plugin.sse",
+        "xml.eet",
+        "xml.xt",
+        "strings.strings",
+        "json.paratranz"
+      ],
+      "result": "all-five-fixtures-parsed"
+    },
+    "repository": "complete-build-persisted-before-five-samples",
+    "reuse": "exact-build-ref-query"
+  },
+  "dataset": {
+    "adapter_templates": [
+      {
+        "adapter_id": "transbridge.io.plugin-sse",
+        "adapter_version": "2.0",
+        "format_id": "plugin.sse",
+        "path": "adapter-sources/sample.esp",
+        "sha256": "1701df1f8ccf08279751b84fe064df921d9304dcb4644883b9bb396c9f1f4f9f",
+        "size_bytes": 3950877,
+        "template_key": "plugin"
+      },
+      {
+        "adapter_id": "transbridge.io.eet-xml",
+        "adapter_version": "2.0",
+        "format_id": "xml.eet",
+        "path": "adapter-sources/eet-small.xml",
+        "sha256": "95d6266b9fb3b6ec2b16281dc7d3b79f3d050c2ec3b6185e4b8fe173968950bc",
+        "size_bytes": 400,
+        "template_key": "eet"
+      },
+      {
+        "adapter_id": "transbridge.io.xt-xml",
+        "adapter_version": "2.0",
+        "format_id": "xml.xt",
+        "path": "adapter-sources/xt-small.xml",
+        "sha256": "ca024ffffd7f2dea3348a42c04e454aa2324b7d3a64dd5454882aab9ed3780dd",
+        "size_bytes": 345,
+        "template_key": "xt"
+      },
+      {
+        "adapter_id": "transbridge.io.strings.strings",
+        "adapter_version": "2.0-stage-1",
+        "format_id": "strings.strings",
+        "path": "adapter-sources/integrity.strings",
+        "sha256": "47a0b1fec1a4bdfad84b7ffd67cf472e436f0e0c97a7a1531852d7845f26a678",
+        "size_bytes": 53,
+        "template_key": "strings"
+      },
+      {
+        "adapter_id": "transbridge.io.paratranz-json",
+        "adapter_version": "2.0",
+        "format_id": "json.paratranz",
+        "path": "adapter-sources/paratranz-dual-id.json",
+        "sha256": "410ec78fd7a22219469f9c77f26d8daa0dee559416b47de6796db301024dad08",
+        "size_bytes": 598,
+        "template_key": "paratranz"
+      }
+    ],
+    "artifacts": {
+      "evidence": {
+        "path": "evidence.ndjson",
+        "sha256": "1cd942cb495dad026657311bebfc9a7d530400b84e6f1f1ef107211370920e05",
+        "size_bytes": 181397570
+      },
+      "source_index": {
+        "path": "source-index.json",
+        "sha256": "8070792ca88d93ab49b4906e1961c6246343b25e3b62839d0b4f28b13c7c171f",
+        "size_bytes": 41623
+      },
+      "version_history": {
+        "path": "version-history.json",
+        "sha256": "a62d173bb589e857fe3407f32d17951654faa08222052b7bd98f5e41b40737b5",
+        "size_bytes": 7328
+      }
+    },
+    "canonical_digest": "d69bcfd8a61ef44f1e295b692d49a69534f79ae5742fa4a8884411e9a470df44",
+    "expected_counts": {
+      "candidates": 220000,
+      "conflict_groups": 20000,
+      "evidence": 1000000,
+      "sources": 200,
+      "terminology": 200000,
+      "versions": 50
+    },
+    "generator_version": "1.0",
+    "schema_version": 1,
+    "spec": {
+      "conflict_group_count": 20000,
+      "evidence_count": 1000000,
+      "name": "stress",
+      "schema_version": 1,
+      "seed": 516000,
+      "source_count": 200,
+      "terminology_count": 200000,
+      "version_count": 50
+    }
+  },
+  "environment": {
+    "cpu_model": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "disk_type": "NVMe",
+    "logical_cores": 32,
+    "measurement_tools": {
+      "clock": "time.perf_counter",
+      "psutil": "7.2.2",
+      "pytest": "9.1.1"
+    },
+    "memory_bytes": 33954381824,
+    "physical_cores": 24,
+    "python": "3.12.12",
+    "reference_device_id": "win11-local-nvme-20260828",
+    "reference_requirements_met": true,
+    "transbridge_build": "0.1.1.1",
+    "windows": {
+      "build": 26200,
+      "platform": "Windows-11-10.0.26200-SP0",
+      "release": "11",
+      "version": "10.0.26200"
+    }
+  },
+  "evidence": {
+    "eligibility_scope": "single-scenario-evidence-contract-only",
+    "gate_eligible": true,
+    "gate_ineligibility_reasons": [],
+    "profile": "formal-gate-v1",
+    "release_gate_eligible": false,
+    "scenario_contract": {
+      "completed_semantics": [
+        "existing-result-prepared-before-five-formal-samples",
+        "no-full-reparse-or-llm-reschedule",
+        "unchanged-input-result-reused"
+      ],
+      "duplicate_phases_by_run": {},
+      "missing_required_phases_by_run": {},
+      "missing_required_semantics": [],
+      "observed_phases_by_run": {
+        "iteration-1": [
+          "capture",
+          "cleanup",
+          "external-io-wait",
+          "external-llm-wait",
+          "query"
+        ],
+        "iteration-2": [
+          "capture",
+          "cleanup",
+          "external-io-wait",
+          "external-llm-wait",
+          "query"
+        ],
+        "iteration-3": [
+          "capture",
+          "cleanup",
+          "external-io-wait",
+          "external-llm-wait",
+          "query"
+        ],
+        "iteration-4": [
+          "capture",
+          "cleanup",
+          "external-io-wait",
+          "external-llm-wait",
+          "query"
+        ],
+        "iteration-5": [
+          "capture",
+          "cleanup",
+          "external-io-wait",
+          "external-llm-wait",
+          "query"
+        ]
+      },
+      "required_phases": [
+        "capture",
+        "cleanup",
+        "external-io-wait",
+        "external-llm-wait",
+        "query"
+      ],
+      "required_semantics": [
+        "existing-result-prepared-before-five-formal-samples",
+        "unchanged-input-result-reused",
+        "no-full-reparse-or-llm-reschedule"
+      ]
+    }
+  },
+  "runs": [
+    {
+      "build_duration_seconds": 0.7661682000034489,
+      "external_io_wait_seconds": 0.0,
+      "external_llm_wait_seconds": 0.0,
+      "iteration": 1,
+      "local_duration_seconds": 26.032386499995482,
+      "memory_measurement": "psutil-rss-baseline/10ms-sampled-peak/post-gc-recovered",
+      "peak_memory_bytes": 3677884416,
+      "rss_baseline_bytes": 2669547520,
+      "rss_peak_bytes": 6347431936,
+      "rss_recovered_bytes": 2676125696,
+      "timings": [
+        {
+          "details": {
+            "input_digest": 516000
+          },
+          "duration_seconds": 0.7661682000034489,
+          "external_wait": false,
+          "phase": "capture"
+        },
+        {
+          "details": {
+            "reuse": "exact-build-ref"
+          },
+          "duration_seconds": 24.546165199993993,
+          "external_wait": false,
+          "phase": "query"
+        },
+        {
+          "details": {
+            "requests": 0,
+            "retries": 0,
+            "status": "disabled"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-llm-wait"
+        },
+        {
+          "details": {
+            "local_disk_io": "included-in-local-phases",
+            "status": "none"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-io-wait"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.7200530999980401,
+          "external_wait": false,
+          "phase": "cleanup"
+        }
+      ]
+    },
+    {
+      "build_duration_seconds": 0.7781872000050498,
+      "external_io_wait_seconds": 0.0,
+      "external_llm_wait_seconds": 0.0,
+      "iteration": 2,
+      "local_duration_seconds": 25.514091899996856,
+      "memory_measurement": "psutil-rss-baseline/10ms-sampled-peak/post-gc-recovered",
+      "peak_memory_bytes": 3674337280,
+      "rss_baseline_bytes": 2676125696,
+      "rss_peak_bytes": 6350462976,
+      "rss_recovered_bytes": 2680725504,
+      "timings": [
+        {
+          "details": {
+            "input_digest": 516000
+          },
+          "duration_seconds": 0.7781872000050498,
+          "external_wait": false,
+          "phase": "capture"
+        },
+        {
+          "details": {
+            "reuse": "exact-build-ref"
+          },
+          "duration_seconds": 24.0282686999999,
+          "external_wait": false,
+          "phase": "query"
+        },
+        {
+          "details": {
+            "requests": 0,
+            "retries": 0,
+            "status": "disabled"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-llm-wait"
+        },
+        {
+          "details": {
+            "local_disk_io": "included-in-local-phases",
+            "status": "none"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-io-wait"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.7076359999919077,
+          "external_wait": false,
+          "phase": "cleanup"
+        }
+      ]
+    },
+    {
+      "build_duration_seconds": 0.6864318000007188,
+      "external_io_wait_seconds": 0.0,
+      "external_llm_wait_seconds": 0.0,
+      "iteration": 3,
+      "local_duration_seconds": 25.233981099998346,
+      "memory_measurement": "psutil-rss-baseline/10ms-sampled-peak/post-gc-recovered",
+      "peak_memory_bytes": 3672358912,
+      "rss_baseline_bytes": 2680725504,
+      "rss_peak_bytes": 6353084416,
+      "rss_recovered_bytes": 2684866560,
+      "timings": [
+        {
+          "details": {
+            "input_digest": 516000
+          },
+          "duration_seconds": 0.6864318000007188,
+          "external_wait": false,
+          "phase": "capture"
+        },
+        {
+          "details": {
+            "reuse": "exact-build-ref"
+          },
+          "duration_seconds": 23.820977800001856,
+          "external_wait": false,
+          "phase": "query"
+        },
+        {
+          "details": {
+            "requests": 0,
+            "retries": 0,
+            "status": "disabled"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-llm-wait"
+        },
+        {
+          "details": {
+            "local_disk_io": "included-in-local-phases",
+            "status": "none"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-io-wait"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.7265714999957709,
+          "external_wait": false,
+          "phase": "cleanup"
+        }
+      ]
+    },
+    {
+      "build_duration_seconds": 0.7354727999918396,
+      "external_io_wait_seconds": 0.0,
+      "external_llm_wait_seconds": 0.0,
+      "iteration": 4,
+      "local_duration_seconds": 27.331160899979295,
+      "memory_measurement": "psutil-rss-baseline/10ms-sampled-peak/post-gc-recovered",
+      "peak_memory_bytes": 3665469440,
+      "rss_baseline_bytes": 2684866560,
+      "rss_peak_bytes": 6350336000,
+      "rss_recovered_bytes": 2686140416,
+      "timings": [
+        {
+          "details": {
+            "input_digest": 516000
+          },
+          "duration_seconds": 0.7354727999918396,
+          "external_wait": false,
+          "phase": "capture"
+        },
+        {
+          "details": {
+            "reuse": "exact-build-ref"
+          },
+          "duration_seconds": 25.864178599993465,
+          "external_wait": false,
+          "phase": "query"
+        },
+        {
+          "details": {
+            "requests": 0,
+            "retries": 0,
+            "status": "disabled"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-llm-wait"
+        },
+        {
+          "details": {
+            "local_disk_io": "included-in-local-phases",
+            "status": "none"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-io-wait"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.7315094999939902,
+          "external_wait": false,
+          "phase": "cleanup"
+        }
+      ]
+    },
+    {
+      "build_duration_seconds": 0.7486582999990787,
+      "external_io_wait_seconds": 0.0,
+      "external_llm_wait_seconds": 0.0,
+      "iteration": 5,
+      "local_duration_seconds": 24.97866820001218,
+      "memory_measurement": "psutil-rss-baseline/10ms-sampled-peak/post-gc-recovered",
+      "peak_memory_bytes": 3666280448,
+      "rss_baseline_bytes": 2686140416,
+      "rss_peak_bytes": 6352420864,
+      "rss_recovered_bytes": 2689347584,
+      "timings": [
+        {
+          "details": {
+            "input_digest": 516000
+          },
+          "duration_seconds": 0.7486582999990787,
+          "external_wait": false,
+          "phase": "capture"
+        },
+        {
+          "details": {
+            "reuse": "exact-build-ref"
+          },
+          "duration_seconds": 23.52323000000615,
+          "external_wait": false,
+          "phase": "query"
+        },
+        {
+          "details": {
+            "requests": 0,
+            "retries": 0,
+            "status": "disabled"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-llm-wait"
+        },
+        {
+          "details": {
+            "local_disk_io": "included-in-local-phases",
+            "status": "none"
+          },
+          "duration_seconds": 0.0,
+          "external_wait": true,
+          "phase": "external-io-wait"
+        },
+        {
+          "details": {},
+          "duration_seconds": 0.7067799000069499,
+          "external_wait": false,
+          "phase": "cleanup"
+        }
+      ]
+    }
+  ],
+  "sampling": {
+    "clock": "time.perf_counter",
+    "external_io_wait_excluded_from_local_duration": true,
+    "llm_wait_excluded_from_local_duration": true,
+    "raw_samples_retained": true,
+    "repetitions": 5
+  },
+  "scenario": "repeat",
+  "schema_version": 2,
+  "summary": {
+    "all-local-total": {
+      "count": 5,
+      "max": 27.331160899979295,
+      "mean": 25.818057719996432,
+      "min": 24.97866820001218,
+      "p50": 25.514091899996856,
+      "p95": 27.071406019982533,
+      "raw_samples": [
+        26.032386499995482,
+        25.514091899996856,
+        25.233981099998346,
+        27.331160899979295,
+        24.97866820001218
+      ],
+      "unit": "s"
+    },
+    "capture": {
+      "count": 5,
+      "max": 0.7781872000050498,
+      "mean": 0.7429836600000271,
+      "min": 0.6864318000007188,
+      "p50": 0.7486582999990787,
+      "p95": 0.7757834000047297,
+      "raw_samples": [
+        0.7661682000034489,
+        0.7781872000050498,
+        0.6864318000007188,
+        0.7354727999918396,
+        0.7486582999990787
+      ],
+      "unit": "s"
+    },
+    "cleanup": {
+      "count": 5,
+      "max": 0.7315094999939902,
+      "mean": 0.7185099999973318,
+      "min": 0.7067799000069499,
+      "p50": 0.7200530999980401,
+      "p95": 0.7305218999943464,
+      "raw_samples": [
+        0.7200530999980401,
+        0.7076359999919077,
+        0.7265714999957709,
+        0.7315094999939902,
+        0.7067799000069499
+      ],
+      "unit": "s"
+    },
+    "external-io-wait": {
+      "count": 5,
+      "max": 0.0,
+      "mean": 0.0,
+      "min": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "raw_samples": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "unit": "s"
+    },
+    "external-llm-wait": {
+      "count": 5,
+      "max": 0.0,
+      "mean": 0.0,
+      "min": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "raw_samples": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "unit": "s"
+    },
+    "peak-additional-rss": {
+      "count": 5,
+      "max": 3677884416,
+      "mean": 3671266099.2,
+      "min": 3665469440,
+      "p50": 3672358912.0,
+      "p95": 3677174988.7999997,
+      "raw_samples": [
+        3677884416,
+        3674337280,
+        3672358912,
+        3665469440,
+        3666280448
+      ],
+      "unit": "bytes"
+    },
+    "query": {
+      "count": 5,
+      "max": 25.864178599993465,
+      "mean": 24.356564059999073,
+      "min": 23.52323000000615,
+      "p50": 24.0282686999999,
+      "p95": 25.60057591999357,
+      "raw_samples": [
+        24.546165199993993,
+        24.0282686999999,
+        23.820977800001856,
+        25.864178599993465,
+        23.52323000000615
+      ],
+      "unit": "s"
+    },
+    "rss-recovered": {
+      "count": 5,
+      "growth_from_first_bytes": [
+        0,
+        4599808,
+        8740864,
+        10014720,
+        13221888
+      ],
+      "max": 2689347584,
+      "mean": 2683441152,
+      "min": 2676125696,
+      "p50": 2684866560.0,
+      "p95": 2688706150.3999996,
+      "raw_samples": [
+        2676125696,
+        2680725504,
+        2684866560,
+        2686140416,
+        2689347584
+      ],
+      "stable_growth_bytes": 13221888,
+      "unit": "bytes"
+    }
+  },
+  "workload": "project-terminology-formal-v1"
+}

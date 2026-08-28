@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+import sys
+
 from PyQt6.QtCore import QPoint, QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QFontMetrics, QKeyEvent, QMouseEvent, QPainter, QPainterPath, QPixmap
+from PyQt6.QtGui import QFontMetrics, QIcon, QKeyEvent, QMouseEvent, QPainter, QPainterPath, QPalette, QPixmap
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -21,6 +24,58 @@ from transbridge.ui.foundation.tabler_icons import tabler_icon
 from transbridge.ui.shell.action_catalog import IntentId
 
 _AVATAR_SIZE = 32
+_NAV_ICON_SIZE = 18
+
+
+def _ui_asset_path(name: str) -> Path | None:
+    """Resolve a UI asset in source and PyInstaller layouts."""
+
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    candidate = (
+        Path(bundle_root) / "transbridge" / "ui" / "assets" / name
+        if bundle_root is not None
+        else Path(__file__).resolve().parents[1] / "assets" / name
+    )
+    return candidate if candidate.is_file() else None
+
+
+def _outlined_asset_icon(widget: QWidget, asset_path: Path, size: int = _NAV_ICON_SIZE) -> QIcon:
+    """Outline the asset's alpha contour and preserve its original artwork."""
+
+    source = QPixmap(str(asset_path))
+    if source.isNull():
+        return QIcon()
+    render_scale = 4
+    render_size = size * render_scale
+    source = source.scaled(
+        render_size,
+        render_size,
+        Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    outlined = QPixmap(render_size, render_size)
+    outlined.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(outlined)
+    radius = render_scale
+    for y_offset in range(-radius, radius + 1):
+        for x_offset in range(-radius, radius + 1):
+            if x_offset * x_offset + y_offset * y_offset <= radius * radius:
+                painter.drawPixmap(x_offset, y_offset, source)
+    border_color = widget.palette().color(QPalette.ColorRole.WindowText)
+    border_color.setAlpha(110)
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+    painter.fillRect(outlined.rect(), border_color)
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+    painter.drawPixmap(0, 0, source)
+    painter.end()
+    return QIcon(
+        outlined.scaled(
+            size,
+            size,
+            Qt.AspectRatioMode.IgnoreAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+    )
 
 
 class NavigationButton(QToolButton):
@@ -64,7 +119,7 @@ class NavigationRail(QFrame):
         self._icon_buttons: list[tuple[QToolButton, str]] = []
         self._add_page(layout, "开始", "home", 2)
         self._add_page(layout, "工作台", "layout-dashboard", 0)
-        self._add_page(layout, "ParaTranz", "language", 1)
+        self._paratranz_button = self._add_page(layout, "ParaTranz", "language", 1)
         layout.addStretch(1)
 
         self._add_intent(layout, "设置", "settings", IntentId.SETTINGS_APPEARANCE)
@@ -143,13 +198,14 @@ class NavigationRail(QFrame):
             theme_view.subscribe(self, lambda _snapshot: self._refresh_icons())
         self.set_current_page(0)
 
-    def _add_page(self, layout: QVBoxLayout, text: str, icon_id: str, index: int) -> None:
+    def _add_page(self, layout: QVBoxLayout, text: str, icon_id: str, index: int) -> QToolButton:
         button = self._button(text, icon_id)
         button.setCheckable(True)
         button.clicked.connect(lambda _checked=False, value=index: self.page_requested.emit(value))
         self._page_group.addButton(button, index)
         self._page_buttons.append(button)
         layout.addWidget(button)
+        return button
 
     def _add_intent(self, layout: QVBoxLayout, text: str, icon_id: str, intent: IntentId) -> None:
         button = self._button(text, icon_id)
@@ -162,7 +218,7 @@ class NavigationRail(QFrame):
         button.setText(text)
         button.setProperty("tbNavItem", True)
         button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        button.setIconSize(QSize(18, 18))
+        button.setIconSize(QSize(_NAV_ICON_SIZE, _NAV_ICON_SIZE))
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
         button.setMouseTracking(True)
@@ -172,7 +228,12 @@ class NavigationRail(QFrame):
 
     def _refresh_icons(self) -> None:
         for button, icon_id in self._icon_buttons:
-            button.setIcon(tabler_icon(button, icon_id, 18))
+            if button is self._paratranz_button:
+                asset_path = _ui_asset_path("paratranz.png")
+                if asset_path is not None:
+                    button.setIcon(_outlined_asset_icon(button, asset_path))
+                    continue
+            button.setIcon(tabler_icon(button, icon_id, _NAV_ICON_SIZE))
 
     def set_current_page(self, index: int) -> None:
         button = self._page_group.button(index)

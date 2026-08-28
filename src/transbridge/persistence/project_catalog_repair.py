@@ -12,6 +12,7 @@ from transbridge.application.contracts import Diagnostic, DiagnosticSeverity, Er
 from transbridge.persistence.v2.atomic_documents import AtomicDocumentStore
 from transbridge.persistence.v2.filesystem import PersistenceFilesystemPort, RepositoryPaths
 from transbridge.persistence.v2.ids import ProjectId, ProjectRef
+from transbridge.persistence.v2.migration import migrate_to_current
 from transbridge.persistence.v2.models import SCHEMA_VERSION, PathBoundaryError, SchemaValidationError
 from transbridge.persistence.v2.repository import ProjectRepository
 from transbridge.persistence.v2.schema import parse_json_bytes, serialize_document, validate_v2, version_of
@@ -225,7 +226,12 @@ class ProjectCatalogRepairService:
             return None, _skipped_candidate("PROJECT_CATALOG_REPAIR_CANDIDATE_UNREADABLE", candidate_name)
         except (SchemaValidationError, TypeError, ValueError):
             return None, _skipped_candidate("PROJECT_CATALOG_REPAIR_CANDIDATE_INVALID", candidate_name)
-        if version != SCHEMA_VERSION:
+        if version == 2:
+            try:
+                document = migrate_to_current(document, ProjectRef(ProjectId(str(document.get("id"))))).document
+            except (SchemaValidationError, TypeError, ValueError):
+                return None, _skipped_candidate("PROJECT_CATALOG_REPAIR_SCHEMA_UNSUPPORTED", candidate_name)
+        elif version != SCHEMA_VERSION or "source_relations" not in (document.get("data") or {}):
             return None, _skipped_candidate("PROJECT_CATALOG_REPAIR_SCHEMA_UNSUPPORTED", candidate_name)
 
         try:
