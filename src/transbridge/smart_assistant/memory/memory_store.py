@@ -3,14 +3,14 @@
 M9: add() 异步写入 — 仅做内存操作后立即返回，由 MemoryWriterThread 后台刷盘。
 """
 
-import json
-import logging
-import threading
-import uuid
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime
+import json
+import logging
 from pathlib import Path
+import threading
+import uuid
 
 import numpy as np
 
@@ -32,9 +32,12 @@ class MemoryEntry:
 
     def to_dict(self) -> dict:
         return {
-            "memory_id": self.memory_id, "type": self.type,
-            "summary": self.summary, "content": self.content,
-            "source": self.source, "timestamp": self.timestamp,
+            "memory_id": self.memory_id,
+            "type": self.type,
+            "summary": self.summary,
+            "content": self.content,
+            "source": self.source,
+            "timestamp": self.timestamp,
             "metadata": self.metadata,
         }
 
@@ -52,9 +55,14 @@ class MemoryStore:
 
     MAX_ENTRIES_DEFAULT = 1000
 
-    def __init__(self, storage_dir: Path, dimension: int = 1536,
-                 embedding_mode: str = "disabled", max_entries: int = MAX_ENTRIES_DEFAULT,
-                 persist_to_disk: bool = False):
+    def __init__(
+        self,
+        storage_dir: Path,
+        dimension: int = 1536,
+        embedding_mode: str = "disabled",
+        max_entries: int = MAX_ENTRIES_DEFAULT,
+        persist_to_disk: bool = False,
+    ):
         self._mode = embedding_mode
         self._persist_to_disk = persist_to_disk
         self._dir = Path(storage_dir)
@@ -71,6 +79,7 @@ class MemoryStore:
         self._vector_store = None
         if self._mode != "disabled":
             from transbridge.infra.vector_store import VectorStore
+
             self._vector_store = VectorStore(dimension=dimension)
             if self._index_path.exists():
                 try:
@@ -80,7 +89,9 @@ class MemoryStore:
         # M9: 后台写入线程 — 仅在启用持久化时创建
         if self._persist_to_disk:
             self._writer = MemoryWriterThread(
-                self._dir, self._metadata_path, self._index_path,
+                self._dir,
+                self._metadata_path,
+                self._index_path,
                 lambda: self._metadata,
                 lambda: self._vector_store,
             )
@@ -108,9 +119,13 @@ class MemoryStore:
             self._writer.enqueue()
         return entry.memory_id
 
-    def search(self, query_vector: np.ndarray | None = None, top_k: int = 5,
-               type_filter: list[str] | None = None,
-               keywords: str | None = None) -> list[MemoryEntry]:
+    def search(
+        self,
+        query_vector: np.ndarray | None = None,
+        top_k: int = 5,
+        type_filter: list[str] | None = None,
+        keywords: str | None = None,
+    ) -> list[MemoryEntry]:
         if self._mode == "disabled" or query_vector is None or self._vector_store is None:
             return self._exact_search(type_filter, keywords)
         return self._hybrid_search(query_vector, top_k, type_filter, keywords)
@@ -199,7 +214,7 @@ class MemoryStore:
     def _load_metadata(self) -> None:
         if not self._metadata_path.exists():
             return
-        with open(self._metadata_path, "r", encoding="utf-8") as f:
+        with open(self._metadata_path, encoding="utf-8") as f:
             data = json.load(f)
         for mid, d in data.items():
             self._metadata[mid] = MemoryEntry(

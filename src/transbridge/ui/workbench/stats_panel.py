@@ -5,20 +5,23 @@ CollectionStatsPanel: 工作台左侧集合统计面板。
 
 from collections import defaultdict
 
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QLabel, QTreeWidget, QTreeWidgetItem, QGroupBox,
-)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import (
+    QGroupBox,
+    QLabel,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 
-from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.converter.context_categories import EXPORT_CATEGORIES, ROUND2_PREFIXES
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
 # 从 EXPORT_CATEGORIES 派生：context → 分类名（去掉 .json 后缀）
 _CONTEXT_TO_CATEGORY: dict[str, str] = {
-    ctx: filename.removesuffix(".json")
-    for filename, contexts in EXPORT_CATEGORIES.items()
-    for ctx in contexts
+    ctx: filename.removesuffix(".json") for filename, contexts in EXPORT_CATEGORIES.items() for ctx in contexts
 }
 
 
@@ -32,7 +35,6 @@ def _get_category(context: str) -> str:
 
 
 class CollectionStatsPanel(QWidget):
-
     def __init__(self, ctx, parent=None):
         super().__init__(parent)
         self._ctx = ctx
@@ -98,8 +100,18 @@ class CollectionStatsPanel(QWidget):
                 cat_done[cat] += 1
 
         self._tree.clear()
-        order = ["人名", "物品", "对话", "书籍_书名", "书籍_内容", "互动",
-                 "任务日志", "地名与门", "法术_龙吼_技能", "其他"]
+        order = [
+            "人名",
+            "物品",
+            "对话",
+            "书籍_书名",
+            "书籍_内容",
+            "互动",
+            "任务日志",
+            "地名与门",
+            "法术_龙吼_技能",
+            "其他",
+        ]
         for cat in order:
             if cat not in cat_total:
                 continue

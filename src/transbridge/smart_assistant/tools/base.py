@@ -13,22 +13,27 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import functools
 import logging
-from typing import Callable, Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
+
+from .types import (
+    ExecutionContext,
+    HITLRequest as HITLRequest,
+    HITLResponse as HITLResponse,
+    HITLType as HITLType,
+    ToolResult,
+)
 
 if TYPE_CHECKING:
-    from transbridge.converter.translation_entry_collection import TranslationEntryCollection
     from transbridge.converter.translation_entry import TranslationEntry
+    from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
 logger = logging.getLogger(__name__)
 
-from .types import (
-    ToolResult, ExecutionContext, HITLType, HITLRequest, HITLResponse,
-)
-
-
 # ── execute_with_guardrails (B6) ────────────────────────────────
+
 
 def _build_guard_chain() -> list | None:
     """构建标准护栏中间件链。B1: 消除 GUI/MCP 双重路径分歧。
@@ -37,25 +42,30 @@ def _build_guard_chain() -> list | None:
     返回 None 表示护栏模块不可用。
     """
     try:
-        from transbridge.smart_assistant.guardrails.permission import PermissionGuard
         from transbridge.smart_assistant.guardrails.input_validator import InputValidationGuard
         from transbridge.smart_assistant.guardrails.output_validator import OutputValidationGuard
+        from transbridge.smart_assistant.guardrails.permission import PermissionGuard
+
         return [PermissionGuard(), InputValidationGuard(), OutputValidationGuard()]
     except ImportError:
         return None
 
 
-def _apply_after_guards(guards: list, step: dict, tool_name: str, success: bool,
-                        message: str, data: dict | None, ctx):
+def _apply_after_guards(guards: list, step: dict, tool_name: str, success: bool, message: str, data: dict | None, ctx):
     """Apply after-execution guard middleware chain (onion model, reverse order).
 
     Returns (StepResult, rejection_reason_or_None).
     Extracted from execute_with_guardrails to deduplicate ToolResult/dict branches (m5).
     """
     from transbridge.smart_assistant.execution_engine import StepResult
+
     temp = StepResult(
-        step_id="", tool=tool_name, success=success,
-        message=message, data=data, duration_ms=0,
+        step_id="",
+        tool=tool_name,
+        success=success,
+        message=message,
+        data=data,
+        duration_ms=0,
     )
     for mw in reversed(guards):
         gr = mw.after_execute(step, temp, ctx)
@@ -66,8 +76,7 @@ def _apply_after_guards(guards: list, step: dict, tool_name: str, success: bool,
     return temp, None
 
 
-def execute_with_guardrails(spec, args: dict, ctx: ExecutionContext,
-                            middlewares: list | None = None) -> ToolResult:
+def execute_with_guardrails(spec, args: dict, ctx: ExecutionContext, middlewares: list | None = None) -> ToolResult:
     """统一工具执行入口，GUI 和 MCP 共享同一条中间件链。
 
     链: PermissionGuard → InputValidationGuard → 工具执行 → OutputValidationGuard
@@ -95,8 +104,8 @@ def execute_with_guardrails(spec, args: dict, ctx: ExecutionContext,
     # 3. After 中间件链（逆序 — 洋葱模型） — m5: 提取 _apply_after_guards 消除重复
     if isinstance(raw_result, ToolResult):
         step_result, rejection = _apply_after_guards(
-            guards, step, spec.name, raw_result.success,
-            raw_result.message, raw_result.data, ctx)
+            guards, step, spec.name, raw_result.success, raw_result.message, raw_result.data, ctx
+        )
         if rejection:
             return ToolResult.fail(f"输出校验拒绝: {rejection}")
         raw_result.message = step_result.message
@@ -112,8 +121,8 @@ def execute_with_guardrails(spec, args: dict, ctx: ExecutionContext,
             data=raw_result.get("data"),
         )
         step_result, rejection = _apply_after_guards(
-            guards, step, spec.name, result.success,
-            result.message, result.data, ctx)
+            guards, step, spec.name, result.success, result.message, result.data, ctx
+        )
         if rejection:
             return ToolResult.fail(f"输出校验拒绝: {rejection}")
         result.message = step_result.message
@@ -127,9 +136,10 @@ def execute_with_guardrails(spec, args: dict, ctx: ExecutionContext,
 
 # ── filter_entries (H8) ────────────────────────────────────────
 
-def filter_entries(collection: "TranslationEntryCollection",
-                    filter_state: dict,
-                    entry_labels: dict[str, set[str]] | None = None) -> list["TranslationEntry"]:
+
+def filter_entries(
+    collection: TranslationEntryCollection, filter_state: dict, entry_labels: dict[str, set[str]] | None = None
+) -> list[TranslationEntry]:
     """公共筛选函数。根据 filter_state 从 collection 中筛选条目。
 
     供 Story 04/08/10 复用，统一筛选行为。(H8)
@@ -144,18 +154,14 @@ def filter_entries(collection: "TranslationEntryCollection",
     categories = filter_state.get("category")
     if categories:
         results = [
-            e for e in results
-            if e.context and any(
-                e.context.startswith(c + ":") or e.context.startswith(c + "_")
-                for c in categories
-            )
+            e
+            for e in results
+            if e.context and any(e.context.startswith(c + ":") or e.context.startswith(c + "_") for c in categories)
         ]
 
     labels = filter_state.get("labels") or filter_state.get("label")  # M1: 兼容两种 key 名
     if labels and entry_labels:
-        results = [e for e in results if any(
-            lbl in entry_labels.get(e.key, set()) for lbl in labels
-        )]
+        results = [e for e in results if any(lbl in entry_labels.get(e.key, set()) for lbl in labels)]
 
     search_query = filter_state.get("search_query")
     search_field = filter_state.get("search_field", "original")
@@ -173,7 +179,8 @@ def filter_entries(collection: "TranslationEntryCollection",
             results = [e for e in results if q in (e.context or "").lower()]
         elif search_field == "all":
             results = [
-                e for e in results
+                e
+                for e in results
                 if q in (e.key or "").lower()
                 or q in (e.original or "").lower()
                 or q in (e.translation or "").lower()
@@ -185,7 +192,8 @@ def filter_entries(collection: "TranslationEntryCollection",
 
 # ── resolve_scope_to_entry_ids (M3) ────────────────────────────
 
-def resolve_scope_to_entry_ids(ctx, collection: "TranslationEntryCollection") -> list[str] | None:
+
+def resolve_scope_to_entry_ids(ctx, collection: TranslationEntryCollection) -> list[str] | None:
     """从 ctx.translation_scope 解析条目 ID 列表。
 
     供 start_translation / run_postprocess 等长运行工具复用，消除 scope 解析重复代码。
@@ -193,20 +201,21 @@ def resolve_scope_to_entry_ids(ctx, collection: "TranslationEntryCollection") ->
     Returns:
         条目 key 列表，若 scope 为空或无效则返回 None（调用方自行决定默认行为）。
     """
-    scope = getattr(ctx, 'translation_scope', None)
-    if not scope or not any(scope.get(k) for k in ('stages', 'labels', 'categories')):
+    scope = getattr(ctx, "translation_scope", None)
+    if not scope or not any(scope.get(k) for k in ("stages", "labels", "categories")):
         return None
     filter_state = {
         "stage": scope.get("stages"),
         "category": scope.get("categories"),
         "labels": scope.get("labels"),
     }
-    entry_labels = getattr(ctx, 'entry_labels', None)
+    entry_labels = getattr(ctx, "entry_labels", None)
     scoped = filter_entries(collection, filter_state, entry_labels=entry_labels)
     return [e.key for e in scoped]
 
 
 # ── @require_collection ─────────────────────────────────────────
+
 
 def require_collection(func: Callable) -> Callable:
     """装饰器：从 ctx 提取 collection 并检查有效性。
@@ -214,14 +223,15 @@ def require_collection(func: Callable) -> Callable:
     装饰后的函数签名: func(args: dict, ctx, collection: TranslationEntryCollection) -> ToolResult
     失败时直接返回 ToolResult(success=False)，不进入函数体。
     """
+
     @functools.wraps(func)
     def wrapper(args: dict, ctx) -> ToolResult:
-        slot = getattr(ctx, 'active_slot', None)
-        collection = getattr(slot, 'collection', None) if slot else getattr(ctx, 'collection', None)
+        slot = getattr(ctx, "active_slot", None)
+        collection = getattr(slot, "collection", None) if slot else getattr(ctx, "collection", None)
         if not collection or len(collection) == 0:
-            return ToolResult.fail("当前没有加载翻译集合",
-                error_category="input", error_code="COLLECTION_NOT_LOADED")
+            return ToolResult.fail("当前没有加载翻译集合", error_category="input", error_code="COLLECTION_NOT_LOADED")
         return func(args, ctx, collection)
+
     return wrapper
 
 
@@ -248,6 +258,7 @@ def require_runtime_context(func: Callable) -> Callable:
 
 
 # ── @validate_params ────────────────────────────────────────────
+
 
 def validate_params(schema: dict) -> Callable:
     """装饰器工厂：按 ToolSpec.parameters 格式校验 args。
@@ -290,5 +301,7 @@ def validate_params(schema: dict) -> Callable:
                 )
 
             return func(args, *rest)
+
         return wrapper
+
     return decorator

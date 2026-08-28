@@ -4,6 +4,7 @@ import numpy as np
 
 try:
     import faiss
+
     _HAS_FAISS = True
 except ImportError:
     _HAS_FAISS = False

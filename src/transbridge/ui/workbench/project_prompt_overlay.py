@@ -3,8 +3,8 @@ ProjectPromptOverlay: 当集合已加载但未选中 ParaTranz 项目时，
 覆盖在 Step3 操作区上方的引导层。
 """
 
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton
-from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
 
 
 class ProjectPromptOverlay(QWidget):
@@ -15,9 +15,7 @@ class ProjectPromptOverlay(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet(
-            "ProjectPromptOverlay { background: rgba(235, 245, 251, 230); }"
-        )
+        self.setStyleSheet("ProjectPromptOverlay { background: rgba(235, 245, 251, 230); }")
 
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)

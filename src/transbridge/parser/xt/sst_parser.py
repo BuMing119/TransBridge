@@ -1,10 +1,10 @@
 # parser/sst_parser.py — XT SST binary file parser (SSU8 + SSU9)
 import csv
+from dataclasses import dataclass, field
 import json
 import logging
-import struct
-from dataclasses import asdict, dataclass, field
 from pathlib import Path
+import struct
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +27,24 @@ def sst_string_hash(s: str) -> int:
 
 # ── SSE record type suffixes ──
 _VALID_EDID_SUFFIXES = (
-    "FULL", "NAM1", "NAM2", "DATA", "DESC", "NAME", "GOLD", "SNAM",
-    "QNAM", "CNAM", "EDID", "MODL", "MODT", "DNAM", "ITXT", "NNAM",
-    "RNAM", "SHRT",
+    "FULL",
+    "NAM1",
+    "NAM2",
+    "DATA",
+    "DESC",
+    "NAME",
+    "GOLD",
+    "SNAM",
+    "QNAM",
+    "CNAM",
+    "EDID",
+    "MODL",
+    "MODT",
+    "DNAM",
+    "ITXT",
+    "NNAM",
+    "RNAM",
+    "SHRT",
 )
 
 
@@ -71,7 +86,9 @@ class SST_Entry:
     form_id: int  # in-game string ID (FormID)
     text: str  # primary string (UTF-16LE decoded)
     index: int = 0  # per-EDID index (SSU8: (field_a & 0xFF) + 1, SSU9: unk12 lo16+1), 1-based
-    group_index: int = 0  # parent group index (SSU9: unk12 hi16), DIAL topic# for INFO, quest stage# for QUST, 0 for others
+    group_index: int = (
+        0  # parent group index (SSU9: unk12 hi16), DIAL topic# for INFO, quest stage# for QUST, 0 for others
+    )
     trail_hash: bytes = field(default_factory=bytes)  # SSU8 translated text raw bytes (UTF-16LE)
     extra: int = 0  # extra ID (SSU8 only)
     global_seq: int = 0  # global sequence number from sID (SSU8 only)
@@ -91,9 +108,9 @@ class SST_Parser:
     Supports both SSU8 and SSU9 formats.  Interface style matches XT_XmlParser.
     """
 
-    def __init__(self, entries: list[SST_Entry],
-                 raw_header: bytes = b"", magic: bytes = b"",
-                 trailing: bytes = b"") -> None:
+    def __init__(
+        self, entries: list[SST_Entry], raw_header: bytes = b"", magic: bytes = b"", trailing: bytes = b""
+    ) -> None:
         self.entries = entries
         self._raw_header = raw_header
         self._magic = magic
@@ -224,13 +241,21 @@ class SST_Parser:
             # group_index from field_a upper bytes (analogous to SSU9 unk12 hi16)
             group_idx = field_a >> 8
 
-            entries.append(SST_Entry(
-                rec=edid, form_id=form_id, text=text,
-                index=per_edid_index, group_index=group_idx,
-                global_seq=global_seq, trail_hash=trail_data, extra=extra,
-                translated_text=ssu8_translated,
-                _raw=raw_bytes, _tail=tail_bytes,
-            ))
+            entries.append(
+                SST_Entry(
+                    rec=edid,
+                    form_id=form_id,
+                    text=text,
+                    index=per_edid_index,
+                    group_index=group_idx,
+                    global_seq=global_seq,
+                    trail_hash=trail_data,
+                    extra=extra,
+                    translated_text=ssu8_translated,
+                    _raw=raw_bytes,
+                    _tail=tail_bytes,
+                )
+            )
 
         trailing = data[iter_start:] if iter_start < len(data) else b""
         return cls(entries=entries, raw_header=data[:16], magic=b"SSU8", trailing=trailing)
@@ -313,14 +338,20 @@ class SST_Parser:
             # Parse extra subrecords from tail
             subrecords = cls._parse_ssu9_extra(tail, chn_len)
 
-            entries.append(SST_Entry(
-                rec=edid, form_id=form_id, text=eng_text,
-                index=per_edid_index, group_index=unk12 >> 16,
-                f2=f2, translated_text=chn_text,
-                subrecords=subrecords,
-                _raw=data[off : off + 26 + eng_len],
-                _tail=tail,
-            ))
+            entries.append(
+                SST_Entry(
+                    rec=edid,
+                    form_id=form_id,
+                    text=eng_text,
+                    index=per_edid_index,
+                    group_index=unk12 >> 16,
+                    f2=f2,
+                    translated_text=chn_text,
+                    subrecords=subrecords,
+                    _raw=data[off : off + 26 + eng_len],
+                    _tail=tail,
+                )
+            )
 
         # 用实际第一条记录位置确定 header 边界（start 可能因多 master 名而不准）
         header_end = record_starts[0][0] if record_starts else start
@@ -406,9 +437,24 @@ class SST_Parser:
     # ── REC format helper ──
 
     _REC_SUFFIXES = (
-        "FULL", "NAM1", "NAM2", "DATA", "DESC", "NAME", "GOLD", "SNAM",
-        "QNAM", "CNAM", "EDID", "MODL", "MODT", "DNAM", "ITXT", "NNAM",
-        "RNAM", "SHRT",
+        "FULL",
+        "NAM1",
+        "NAM2",
+        "DATA",
+        "DESC",
+        "NAME",
+        "GOLD",
+        "SNAM",
+        "QNAM",
+        "CNAM",
+        "EDID",
+        "MODL",
+        "MODT",
+        "DNAM",
+        "ITXT",
+        "NNAM",
+        "RNAM",
+        "SHRT",
     )
 
     @staticmethod
@@ -422,12 +468,7 @@ class SST_Parser:
     # ── export ──
 
     def to_json(self, ensure_ascii: bool = False, indent: int = 2) -> str:
-        data = {
-            "entries": [
-                self._entry_to_dict(e)
-                for e in self.entries
-            ]
-        }
+        data = {"entries": [self._entry_to_dict(e) for e in self.entries]}
         return json.dumps(data, ensure_ascii=ensure_ascii, indent=indent)
 
     @staticmethod

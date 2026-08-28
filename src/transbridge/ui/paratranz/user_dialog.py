@@ -3,17 +3,26 @@ UserInfoDialog: 当前用户信息查看与编辑对话框。
 """
 
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
-    QLabel, QLineEdit, QTextEdit, QPushButton, QTableWidget,
-    QTableWidgetItem, QHeaderView, QMessageBox,
+    QDialog,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
 )
 
 from transbridge.paratranz.api.paratranz_user_api import ParatranzUserAPI
+
 from ..workers import ApiWorker
 
 
 class UserInfoDialog(QDialog):
-
     def __init__(self, ctx, parent=None):
         super().__init__(parent)
         self._ctx = ctx

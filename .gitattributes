@@ -1,0 +1,2 @@
+tests/contracts/io/fixtures/*.xml text eol=lf
+tests/contracts/io/fixtures/*.json text eol=lf

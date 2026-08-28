@@ -168,9 +168,7 @@ class ProofreadPipeline:
                 }
             pause_event.wait(0.05)
         if stop_event is not None and stop_event.is_set():
-            return {
-                str(entry.id): self._proofread_result(entry, valid=False, note="校对已停止") for entry in entries
-            }
+            return {str(entry.id): self._proofread_result(entry, valid=False, note="校对已停止") for entry in entries}
         candidates = tuple(
             PostProcessCandidate(
                 run_id="proofread-preview",

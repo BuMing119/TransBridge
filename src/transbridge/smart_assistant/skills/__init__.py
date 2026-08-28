@@ -5,12 +5,14 @@
   推荐调用 register_all(directory) 一次性完成加载与注册，无需手动操作内部类。
 """
 
+from pathlib import Path
+
+from .skill_executor import SkillExecutor
 from .skill_loader import SkillSpec
 from .skill_registry import SkillRegistry
-from .skill_executor import SkillExecutor
 
 
-def register_all(directory: "Path") -> None:
+def register_all(directory: Path) -> None:
     """显式注册所有 Skill（推荐 API）。
 
     扫描 directory 下所有 .toml 文件，加载并注册到 SkillRegistry。

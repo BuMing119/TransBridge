@@ -1,9 +1,7 @@
-
 from transbridge.paratranz.paratranz_client import ParatranzClient
 
 
 class ParatranzStringsAPI(ParatranzClient):
-
     def list_strings(
         self,
         project_id: int,

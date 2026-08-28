@@ -22,21 +22,17 @@ _SECRET_PATTERNS = (
 )
 _FILE_PATH_PATTERNS = (
     re.compile(r"[A-Za-z]:[\\/][^\s\[\]\(\){}<>:;\"']+"),
-    re.compile(
-        r"/(?:home|etc|opt|var|tmp|usr|root|Users|Applications|Library)(?:/[^\s\[\]\(\){}<>:;\"']+)+"
-    ),
+    re.compile(r"/(?:home|etc|opt|var|tmp|usr|root|Users|Applications|Library)(?:/[^\s\[\]\(\){}<>:;\"']+)+"),
 )
-_SENSITIVE_KEYS = frozenset(
-    {
-        "api_key",
-        "apikey",
-        "authorization",
-        "passwd",
-        "password",
-        "secret",
-        "token",
-    }
-)
+_SENSITIVE_KEYS = frozenset({
+    "api_key",
+    "apikey",
+    "authorization",
+    "passwd",
+    "password",
+    "secret",
+    "token",
+})
 
 
 class SecretRedactor:

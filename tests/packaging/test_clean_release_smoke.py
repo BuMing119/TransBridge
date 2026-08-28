@@ -35,14 +35,9 @@ def test_installed_core_packages_expose_license_metadata() -> None:
         dist = metadata.distribution(distribution)
         classifiers = " ".join(dist.metadata.get_all("Classifier", ()))
         has_field = bool(
-            dist.metadata.get("License")
-            or dist.metadata.get("License-Expression")
-            or "license" in classifiers.lower()
+            dist.metadata.get("License") or dist.metadata.get("License-Expression") or "license" in classifiers.lower()
         )
-        has_file = any(
-            "license" in str(part).lower() or "copying" in str(part).lower()
-            for part in (dist.files or ())
-        )
+        has_file = any("license" in str(part).lower() or "copying" in str(part).lower() for part in (dist.files or ()))
         if not (has_field or has_file):
             missing.append(distribution)
     assert missing == [], f"distributions without any license evidence: {missing}"
@@ -50,9 +45,7 @@ def test_installed_core_packages_expose_license_metadata() -> None:
 
 def test_artifact_checksums_are_recorded_when_present() -> None:
     """Pre-built release artifacts travel with a recorded SHA-256 preamble."""
-    candidates = list((ROOT / "installer" / "output").glob("*.exe")) + list(
-        (ROOT / "dist").glob("*.whl")
-    )
+    candidates = list((ROOT / "installer" / "output").glob("*.exe")) + list((ROOT / "dist").glob("*.whl"))
     if not candidates:
         pytest.skip("no built release artifacts present; clean build expected on S05 venue")
     for artifact in candidates:
@@ -86,8 +79,8 @@ def test_version_single_source_and_upgradeable_appid() -> None:
     project = _load_toml(ROOT / "pyproject.toml")["project"]
     installer = (ROOT / "installer" / "setup.iss").read_text(encoding="utf-8")
     assert "#define AppVersion" not in installer, "AppVersion must come from pyproject, not setup.iss"
-    assert 'AppId={{' in installer
-    assert 'AppVersion={#AppVersion}' in installer
+    assert "AppId={{" in installer
+    assert "AppVersion={#AppVersion}" in installer
     assert transbridge.__version__ == project["version"]
 
 

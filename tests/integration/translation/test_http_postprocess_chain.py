@@ -130,8 +130,6 @@ def test_controlled_http_transport_failure_is_partial_with_typed_diagnostic() ->
         _stop(server, thread)
 
     assert result.outcome is OperationOutcome.PARTIAL
-    assert any(
-        d.code == "POSTPROCESS_TRANSPORT_UNAVAILABLE" for d in result.diagnostics
-    )
+    assert any(d.code == "POSTPROCESS_TRANSPORT_UNAVAILABLE" for d in result.diagnostics)
     assert result.value is not None
     assert result.counts.failed == 1

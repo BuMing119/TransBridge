@@ -91,10 +91,10 @@ class SmartAssistantPanel(QDockWidget):
     # ── 初始化 ──────────────────────────────────────────────────
 
     def _init_skills(self):
-        from transbridge.config.paths import get_data_dir
+        from transbridge.config.paths import get_data_resource_dir
         from transbridge.smart_assistant.skills import SkillRegistry
 
-        SkillRegistry.reload(Path(get_data_dir()) / "skills")
+        SkillRegistry.reload(Path(get_data_resource_dir("skills")))
 
     def _init_session_manager(self):
         if self._session_commands is not None:

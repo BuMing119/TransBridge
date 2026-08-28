@@ -208,11 +208,22 @@ with tempfile.TemporaryDirectory(prefix="fr24-foundation-") as directory:
             (right - left) * 1000.0 for left, right in zip(heartbeat_ticks, heartbeat_ticks[1:])
         ]
 
+        icon_provider = IconProvider()
+        # Reach the bounded Qt/process-allocator high-water mark before taking
+        # the post-warmup RSS baseline. Empirical calibration on Windows shows
+        # that the two-entry caches are stable well before 500 switches even
+        # though RSS pages can continue to be committed during shorter runs.
+        lifecycle_warmup_iterations = max(500, iterations)
+        for index in range(lifecycle_warmup_iterations):
+            preference = light if index % 2 == 0 else dark
+            result = foundation.theme.set_preference(preference, persist=False)
+            assert result.snapshot is not None
+            icon_provider.pixmap("activity", 16, 1.0, "normal", result.snapshot)
+            app.processEvents()
         gc.collect()
         app.processEvents()
         gc.collect()
         rss_warmed = rss_bytes()
-        icon_provider = IconProvider()
         for index in range(iterations):
             preference = light if index % 2 == 0 else dark
             result = foundation.theme.set_preference(preference, persist=False)
@@ -306,6 +317,7 @@ report = {
         "heartbeat_max_ms": max(heartbeat_gaps_ms, default=0.0),
     },
     "lifecycle": {
+        "warmup_iterations": lifecycle_warmup_iterations,
         "iterations": iterations,
         "rss_warmed_bytes": rss_warmed,
         "rss_after_bytes": rss_after,

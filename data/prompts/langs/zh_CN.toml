@@ -1,0 +1,10 @@
+# Language metadata only. Prompt instructions live in stage-level default.toml files.
+
+[lang]
+name = "中文（简体）"
+target = "Simplified Chinese"
+source = "English"
+
+[example]
+source = "Hello, traveler."
+target = "你好，旅人。"

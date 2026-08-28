@@ -1,7 +1,6 @@
 """持久化工具：原子写入 + 名称校验。"""
 
 import json
-import re
 from pathlib import Path
 
 

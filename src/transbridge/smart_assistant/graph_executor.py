@@ -61,6 +61,7 @@ class GraphExecutor:
             from transbridge.config.llm import LLMConfig
             from transbridge.infra.llm_client import create_llm_client
             from transbridge.smart_assistant.reflexion.retry_handler import RetryHandler
+
             llm_cfg = LLMConfig.load_from_file()
             self._retry_handler = RetryHandler(llm_client=create_llm_client(llm_cfg))
         except ImportError:
@@ -70,6 +71,7 @@ class GraphExecutor:
             self._guards = list(middlewares)
         else:
             from transbridge.smart_assistant.tools.base import _build_guard_chain
+
             self._guards = _build_guard_chain() or []
         self._pending_decisions: dict[str, str] = {}
         # m9: Condition 替代忙等轮询
@@ -109,7 +111,7 @@ class GraphExecutor:
 
     def shutdown(self):
         """关闭线程池，释放线程资源。"""
-        if hasattr(self, '_executor') and self._executor:
+        if hasattr(self, "_executor") and self._executor:
             try:
                 self._executor.shutdown(wait=True, cancel_futures=True)
             except RuntimeError:
@@ -118,8 +120,10 @@ class GraphExecutor:
 
     def _default_checkpoint_dir(self):
         from pathlib import Path
+
         project_dir = getattr(self._ctx, "project_path", None) or Path(ParatranzConfig.get_data_dir())
         return Path(project_dir) / "checkpoints"
+
     # ── 回调注册 (ADR-008) ────────────────────────────────────
 
     def on_step_started(self, callback: Callable) -> None:
@@ -211,9 +215,9 @@ class GraphExecutor:
 
     # ── 护栏链 ────────────────────────────────────────────────
 
-    def _run_guard_chain(self, step: dict, exec_ctx, step_id: int,
-                         tool_name: str, start_time: float,
-                         agent_instance_id: str) -> tuple[StepResult | None, dict]:
+    def _run_guard_chain(
+        self, step: dict, exec_ctx, step_id: int, tool_name: str, start_time: float, agent_instance_id: str
+    ) -> tuple[StepResult | None, dict]:
         """执行 before 护栏中间件链。
 
         Returns:
@@ -227,7 +231,8 @@ class GraphExecutor:
                 if guard_result.requires_confirmation:
                     perm_label = "管理级" if guard_result.requires_confirmation == "admin" else "写入级"
                     node_id = f"step_{step_id}"
-                    self._emit(self._on_step_requires_confirmation,
+                    self._emit(
+                        self._on_step_requires_confirmation,
                         node_id,
                         f"工具 '{tool_name}' 需要{perm_label}权限确认。是否继续？",
                         ["继续", "跳过"],
@@ -236,8 +241,10 @@ class GraphExecutor:
                     if decision is None:
                         return (
                             StepResult(
-                                step_id=step_id, tool=tool_name,
-                                success=False, message="已取消",
+                                step_id=step_id,
+                                tool=tool_name,
+                                success=False,
+                                message="已取消",
                                 duration_ms=int((time.monotonic() - start_time) * 1000),
                                 agent_instance_id=agent_instance_id,
                             ),
@@ -246,7 +253,8 @@ class GraphExecutor:
                     if decision != "继续":
                         return (
                             StepResult(
-                                step_id=step_id, tool=tool_name,
+                                step_id=step_id,
+                                tool=tool_name,
                                 success=False,
                                 message=f"用户拒绝{perm_label}操作: {tool_name}",
                                 duration_ms=int((time.monotonic() - start_time) * 1000),
@@ -257,7 +265,8 @@ class GraphExecutor:
                 else:
                     return (
                         StepResult(
-                            step_id=step_id, tool=tool_name,
+                            step_id=step_id,
+                            tool=tool_name,
                             success=False,
                             message=f"护栏拒绝: {guard_result.reason}",
                             duration_ms=int((time.monotonic() - start_time) * 1000),
@@ -278,14 +287,16 @@ class GraphExecutor:
         # C8: 虚拟起始节点 — 不触发回调也不查工具注册表
         if tool_name == "__builtin__noop":
             return StepResult(
-                step_id=step_id, tool="__builtin__noop",
-                success=True, message="",
+                step_id=step_id,
+                tool="__builtin__noop",
+                success=True,
+                message="",
             )
         args = step.get("args", {})
         agent_instance = step.get("_instance")
         agent_instance_id = step.get("agent_instance_id", "")
         namespace = None
-        if agent_instance is not None and hasattr(agent_instance, 'agent_spec'):
+        if agent_instance is not None and hasattr(agent_instance, "agent_spec"):
             namespace = agent_instance.agent_spec.namespace
 
         self._emit(self._on_step_started, step_id, tool_name)
@@ -294,8 +305,10 @@ class GraphExecutor:
         spec = self._registry.get(tool_name, namespace=namespace)
         if spec is None:
             return StepResult(
-                step_id=step_id, tool=tool_name,
-                success=False, message=f"未知工具: {tool_name}",
+                step_id=step_id,
+                tool=tool_name,
+                success=False,
+                message=f"未知工具: {tool_name}",
                 duration_ms=int((time.monotonic() - start) * 1000),
                 agent_instance_id=agent_instance_id,
             )
@@ -303,24 +316,25 @@ class GraphExecutor:
         # Before 中间件链
         from transbridge.smart_assistant.tools.base import ExecutionContext
         from transbridge.smart_assistant.tools.task_manager import TaskManager
+
         raw_ctx = agent_instance.ctx if agent_instance is not None else self._ctx
         exec_ctx = ExecutionContext(app_context=raw_ctx, task_manager=TaskManager())
 
-        early_result, current_step = self._run_guard_chain(
-            step, exec_ctx, step_id, tool_name, start, agent_instance_id)
+        early_result, current_step = self._run_guard_chain(step, exec_ctx, step_id, tool_name, start, agent_instance_id)
         if early_result is not None:
             return early_result
 
         # 工具执行（带 Reflexion 重试）
         raw_result, exec_error = self._execute_tool_with_retry(
-            current_step, spec, exec_ctx, start, tool_name,
-            agent_instance_id, args)
+            current_step, spec, exec_ctx, start, tool_name, agent_instance_id, args
+        )
 
         if exec_error is not None:
             return exec_error
 
         final_result = StepResult(
-            step_id=step_id, tool=tool_name,
+            step_id=step_id,
+            tool=tool_name,
             success=raw_result.get("success", True),
             message=raw_result.get("message", ""),
             data=raw_result.get("data"),
@@ -340,9 +354,9 @@ class GraphExecutor:
 
         return final_result
 
-    def _execute_tool_with_retry(self, current_step: dict, spec, exec_ctx,
-                                   start: float, tool_name: str,
-                                   agent_instance_id: str, args: dict):
+    def _execute_tool_with_retry(
+        self, current_step: dict, spec, exec_ctx, start: float, tool_name: str, agent_instance_id: str, args: dict
+    ):
         """执行工具调用并处理 Reflexion 重试循环。
 
         Returns:
@@ -354,8 +368,10 @@ class GraphExecutor:
         while True:
             if self._cancelled.is_set():
                 return None, StepResult(
-                    step_id=step_id, tool=tool_name,
-                    success=False, message="已取消",
+                    step_id=step_id,
+                    tool=tool_name,
+                    success=False,
+                    message="已取消",
                     duration_ms=int((time.monotonic() - start) * 1000),
                     agent_instance_id=agent_instance_id,
                 )
@@ -363,21 +379,26 @@ class GraphExecutor:
                 raw_result = spec.execute(current_step.get("args", args), exec_ctx)
                 return raw_result, None
             except Exception as exc:
-                if (self._retry_handler is None or
-                        not self._retry_handler.should_retry(str(exc)) or
-                        attempt >= self._retry_handler.MAX_RETRIES):
+                if (
+                    self._retry_handler is None
+                    or not self._retry_handler.should_retry(str(exc))
+                    or attempt >= self._retry_handler.MAX_RETRIES
+                ):
                     return None, StepResult(
-                        step_id=step_id, tool=tool_name,
-                        success=False, message=f"执行异常: {exc}",
+                        step_id=step_id,
+                        tool=tool_name,
+                        success=False,
+                        message=f"执行异常: {exc}",
                         duration_ms=int((time.monotonic() - start) * 1000),
                         agent_instance_id=agent_instance_id,
                     )
-                adjusted = self._retry_handler.analyze_and_adjust(
-                    current_step, str(exc), attempt)
+                adjusted = self._retry_handler.analyze_and_adjust(current_step, str(exc), attempt)
                 if adjusted is None:
                     return None, StepResult(
-                        step_id=step_id, tool=tool_name,
-                        success=False, message=f"执行异常: {exc}",
+                        step_id=step_id,
+                        tool=tool_name,
+                        success=False,
+                        message=f"执行异常: {exc}",
                         duration_ms=int((time.monotonic() - start) * 1000),
                         agent_instance_id=agent_instance_id,
                     )
@@ -387,8 +408,7 @@ class GraphExecutor:
 
     # ── Graph 编排扩展 (S09/S10) ──────────────────────────────
 
-    def _dispatch_node(self, node, node_map: dict, results: dict,
-                       _visited: set | None = None, _depth: int = 0):
+    def _dispatch_node(self, node, node_map: dict, results: dict, _visited: set | None = None, _depth: int = 0):
         """调度单个图节点：根据节点类型执行相应逻辑。
 
         C9: _visited 防止环路导致的无限递归，_depth 作为硬上限兜底。
@@ -400,8 +420,9 @@ class GraphExecutor:
 
         # C9: 递归深度硬上限
         if _depth > self._MAX_DISPATCH_DEPTH:
-            logger.warning("调度深度超限 (%d)，节点 %s 终止递归",
-                           self._MAX_DISPATCH_DEPTH, getattr(node, 'node_id', '?'))
+            logger.warning(
+                "调度深度超限 (%d)，节点 %s 终止递归", self._MAX_DISPATCH_DEPTH, getattr(node, "node_id", "?")
+            )
             return None
 
         # C9: 环路检测 — 已访问节点跳过
@@ -416,9 +437,12 @@ class GraphExecutor:
         if isinstance(node, ActionNode):
             step = {
                 "id": self._stable_step_id(node.node_id),
-                "tool": node.tool, "args": node.args,
-                "retry": node.retry, "agent": node.agent,
-                "agent_instance_id": "", "_instance": None,
+                "tool": node.tool,
+                "args": node.args,
+                "retry": node.retry,
+                "agent": node.agent,
+                "agent_instance_id": "",
+                "_instance": None,
             }
             return self._run_single(step)
         elif isinstance(node, ConditionNode):
@@ -430,8 +454,7 @@ class GraphExecutor:
                 self._branch_decisions[node.node_id] = next_id
                 self._inject_checkpoint_fault("branch_decision")
             if next_id and next_id in node_map:
-                return self._dispatch_node(node_map[next_id], node_map, results,
-                                          _visited, _depth + 1)
+                return self._dispatch_node(node_map[next_id], node_map, results, _visited, _depth + 1)
             return None
         elif isinstance(node, LoopNode):
             last_result = None
@@ -446,25 +469,22 @@ class GraphExecutor:
                 # C9: 每轮迭代使用 _visited 副本，允许跨迭代重入但阻断单次内环路
                 iter_visited = set(_visited)
                 for sub_node in node.sub_nodes:
-                    r = self._dispatch_node(sub_node, node_map, results,
-                                            iter_visited, _depth + 1)
+                    r = self._dispatch_node(sub_node, node_map, results, iter_visited, _depth + 1)
                     if r is not None:
                         results[sub_node.node_id] = r
                         last_result = r
                 self._loop_counters[node.node_id] = i + 1
                 self._inject_checkpoint_fault("loop_iteration_completed")
                 if last_result and self._condition_evaluator.eval_condition(
-                        node.exit_condition,
-                        {nid: results.get(nid) for nid in results}):
+                    node.exit_condition, {nid: results.get(nid) for nid in results}
+                ):
                     break
             return last_result
         elif isinstance(node, HumanConfirmNode):
             decision = self._hitl_results.get(node.node_id)
             if decision is None:
-                self._emit(self._on_step_requires_confirmation,
-                    node.node_id, node.prompt, node.choices)
-                decision = self._await_decision(
-                    node.node_id, default=node.default_choice)
+                self._emit(self._on_step_requires_confirmation, node.node_id, node.prompt, node.choices)
+                decision = self._await_decision(node.node_id, default=node.default_choice)
             if decision is None:
                 return None
             self._hitl_results[node.node_id] = decision
@@ -490,9 +510,9 @@ class GraphExecutor:
 
     # ── BFS 层级迭代 ──────────────────────────────────────────
 
-    def _bfs_one_level(self, pending: list, node_map: dict, visited: set,
-                       graph, results: dict, completed: set,
-                       total: int) -> list:
+    def _bfs_one_level(
+        self, pending: list, node_map: dict, visited: set, graph, results: dict, completed: set, total: int
+    ) -> list:
         """执行一层 BFS：并行执行当前层所有节点，返回下一层待处理节点 ID 列表。"""
         # 构建当前层节点列表
         level_nodes = []
@@ -505,10 +525,7 @@ class GraphExecutor:
             return []
 
         # 并行执行当前层
-        futures = {
-            self._executor.submit(self._dispatch_node, node, node_map, results): node
-            for node in level_nodes
-        }
+        futures = {self._executor.submit(self._dispatch_node, node, node_map, results): node for node in level_nodes}
         for future in as_completed(futures):
             if self._cancelled.is_set():
                 break
@@ -520,8 +537,9 @@ class GraphExecutor:
             except Exception as exc:
                 r = StepResult(
                     step_id=self._stable_step_id(node.node_id),
-                    tool=getattr(node, 'tool', '?'),
-                    success=False, message=f"异常: {exc}",
+                    tool=getattr(node, "tool", "?"),
+                    success=False,
+                    message=f"异常: {exc}",
                 )
             if r is not None:
                 results[node.node_id] = r
@@ -570,8 +588,7 @@ class GraphExecutor:
             self._hitl_results = {}
         else:
             results = {
-                node_id: self._deserialize_step_result(json.loads(value))
-                for node_id, value in checkpoint.graph_results
+                node_id: self._deserialize_step_result(json.loads(value)) for node_id, value in checkpoint.graph_results
             }
             completed = set(checkpoint.frontier.completed)
             pending = list(dict.fromkeys((*checkpoint.frontier.running, *checkpoint.frontier.ready)))
@@ -616,8 +633,7 @@ class GraphExecutor:
                 )
                 self._checkpoint_revision = revision
 
-            pending = self._bfs_one_level(
-                pending, node_map, visited, graph, results, completed, total)
+            pending = self._bfs_one_level(pending, node_map, visited, graph, results, completed, total)
 
             self._active_checkpoint_ready = tuple(dict.fromkeys(pending))
             self._active_checkpoint_running = ()
@@ -719,9 +735,7 @@ class GraphExecutor:
         normalized_ready = tuple(node_id for node_id in dict.fromkeys(ready) if node_id not in completed_ids)
         ready_ids = set(normalized_ready)
         normalized_running = tuple(
-            node_id
-            for node_id in dict.fromkeys(running)
-            if node_id not in completed_ids and node_id not in ready_ids
+            node_id for node_id in dict.fromkeys(running) if node_id not in completed_ids and node_id not in ready_ids
         )
         record = CheckpointRecord(
             run_id=run_id,
@@ -740,8 +754,7 @@ class GraphExecutor:
             hitl_results=tuple(sorted(self._hitl_results.items())),
             graph_results=tuple(
                 sorted(
-                    (node_id, CheckpointManager.serialize_step_result(result))
-                    for node_id, result in results.items()
+                    (node_id, CheckpointManager.serialize_step_result(result)) for node_id, result in results.items()
                 )
             ),
         )
@@ -781,17 +794,22 @@ class GraphExecutor:
             edges = []
             for i, s in enumerate(steps):
                 nid = f"step_{s['id']}"
-                nodes.append(ActionNode(
-                    node_id=nid, node_type="action",
-                    tool=s.get("tool", "?"), args=s.get("args", {}),
-                    agent=s.get("agent"), retry=s.get("retry", True),
-                ))
+                nodes.append(
+                    ActionNode(
+                        node_id=nid,
+                        node_type="action",
+                        tool=s.get("tool", "?"),
+                        args=s.get("args", {}),
+                        agent=s.get("agent"),
+                        retry=s.get("retry", True),
+                    )
+                )
                 if i > 0:
-                    edges.append(EdgeSpec(
-                        from_node=f"step_{steps[i - 1]['id']}", to_node=nid))
+                    edges.append(EdgeSpec(from_node=f"step_{steps[i - 1]['id']}", to_node=nid))
             graph = GraphSpec(
                 graph_id=self._stable_graph_id("linear", steps),
-                nodes=nodes, edges=edges,
+                nodes=nodes,
+                edges=edges,
                 entry_node=nodes[0].node_id if nodes else "",
             )
             return self.execute_graph(graph)
@@ -804,11 +822,16 @@ class GraphExecutor:
         for s in steps:
             nid = f"step_{s['id']}"
             node_ids.add(nid)
-            nodes.append(ActionNode(
-                node_id=nid, node_type="action",
-                tool=s.get("tool", "?"), args=s.get("args", {}),
-                agent=s.get("agent"), retry=s.get("retry", True),
-            ))
+            nodes.append(
+                ActionNode(
+                    node_id=nid,
+                    node_type="action",
+                    tool=s.get("tool", "?"),
+                    args=s.get("args", {}),
+                    agent=s.get("agent"),
+                    retry=s.get("retry", True),
+                )
+            )
 
         # 2. 解析 depends_on 并构建边 + 入度表
         adjacency: dict[str, list[str]] = {nid: [] for nid in node_ids}
@@ -822,8 +845,7 @@ class GraphExecutor:
             for dep_id in deps:
                 dep_nid = f"step_{dep_id}"
                 if dep_nid not in node_ids:
-                    logger.warning(
-                        "步骤 %s 依赖未知步骤 %s，忽略该依赖", s["id"], dep_id)
+                    logger.warning("步骤 %s 依赖未知步骤 %s，忽略该依赖", s["id"], dep_id)
                     continue
                 edges.append(EdgeSpec(from_node=dep_nid, to_node=nid))
                 adjacency.setdefault(dep_nid, []).append(nid)
@@ -843,8 +865,7 @@ class GraphExecutor:
 
         if len(sorted_nodes) != len(nodes):
             remaining = [nid for nid, deg in temp_deg.items() if deg > 0]
-            raise ValueError(
-                f"检测到步骤间循环依赖，涉及节点: {remaining}")
+            raise ValueError(f"检测到步骤间循环依赖，涉及节点: {remaining}")
 
         # 4. level-0 节点（无入边，可并行执行）
         level_0 = [nid for nid, deg in in_degree.items() if deg == 0]
@@ -852,8 +873,10 @@ class GraphExecutor:
         # 5. 虚拟 __start__ 节点统一入口，使 BFS 能同时发现所有 level-0 节点
         start_nid = "__start__"
         start_node = ActionNode(
-            node_id=start_nid, node_type="action",
-            tool="__builtin__noop", args={},
+            node_id=start_nid,
+            node_type="action",
+            tool="__builtin__noop",
+            args={},
         )
         nodes.insert(0, start_node)
         for nid in level_0:
@@ -861,7 +884,8 @@ class GraphExecutor:
 
         graph = GraphSpec(
             graph_id=self._stable_graph_id("dag", steps),
-            nodes=nodes, edges=edges,
+            nodes=nodes,
+            edges=edges,
             entry_node=start_nid,
         )
         raw_results = self.execute_graph(graph)

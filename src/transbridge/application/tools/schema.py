@@ -107,15 +107,11 @@ def canonicalize_parameters(raw: Mapping[str, Any] | None) -> dict[str, Any]:
         unknown = set(declaration) - _LEGACY_ALLOWED_KEYS
         if unknown:
             names = ", ".join(sorted(unknown))
-            raise LegacySchemaConversionError(
-                f"unsupported legacy keywords for {name}: {names}"
-            )
+            raise LegacySchemaConversionError(f"unsupported legacy keywords for {name}: {names}")
         legacy_type = declaration.get("type", "str")
         json_type = _LEGACY_TYPES.get(str(legacy_type).lower())
         if json_type is None:
-            raise LegacySchemaConversionError(
-                f"unsupported legacy type for {name}: {legacy_type}"
-            )
+            raise LegacySchemaConversionError(f"unsupported legacy type for {name}: {legacy_type}")
         prop: dict[str, Any] = {"type": json_type}
         if description := declaration.get("description"):
             prop["description"] = description
@@ -128,9 +124,7 @@ def canonicalize_parameters(raw: Mapping[str, Any] | None) -> dict[str, Any]:
             if isinstance(items, str):
                 item_type = _LEGACY_TYPES.get(items.lower())
                 if item_type is None:
-                    raise LegacySchemaConversionError(
-                        f"unsupported legacy item type for {name}: {items}"
-                    )
+                    raise LegacySchemaConversionError(f"unsupported legacy item type for {name}: {items}")
                 prop["items"] = {"type": item_type}
             elif isinstance(items, Mapping):
                 prop["items"] = deepcopy(dict(items))
@@ -164,9 +158,7 @@ def _json_pointer(path: Any) -> str:
     return "/" + "/".join(parts) if parts else "/"
 
 
-def validate_arguments(
-    schema: Mapping[str, Any], arguments: Any
-) -> list[ArgumentValidationError]:
+def validate_arguments(schema: Mapping[str, Any], arguments: Any) -> list[ArgumentValidationError]:
     """Return deterministic JSON Pointer diagnostics for invalid arguments."""
 
     validator = Draft202012Validator(schema)

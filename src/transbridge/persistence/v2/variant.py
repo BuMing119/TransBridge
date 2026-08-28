@@ -361,11 +361,7 @@ class VariantMaterializer:
             namespace: {entry.entry_key: entry for entry in baseline.entries}
             for namespace, baseline in baseline_map.items()
         }
-        desired = {
-            entry_key: entry
-            for entries in baseline_entries.values()
-            for entry_key, entry in entries.items()
-        }
+        desired = {entry_key: entry for entries in baseline_entries.values() for entry_key, entry in entries.items()}
         for entry in snapshot.entries:
             source_entries = baseline_entries.get(entry.entry_key.namespace)
             if source_entries is None:

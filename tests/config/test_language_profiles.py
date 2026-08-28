@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 import tomllib
 
 import pytest
 
+from transbridge.config import paths as config_paths
 from transbridge.config.language_profiles import (
     LanguageProfileError,
     discover_language_profiles,
@@ -73,3 +75,17 @@ def test_repository_language_file_contains_metadata_not_stage_prompts() -> None:
     assert set(data) == {"lang", "example"}
     assert (_REPO_PROMPTS / "translation" / "default.toml").is_file()
     assert (_REPO_PROMPTS / "extraction" / "default.toml").is_file()
+
+
+def test_data_resource_dir_uses_frozen_bundle_when_user_resource_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user_data = tmp_path / "user-data"
+    bundle_root = tmp_path / "bundle"
+    bundled_prompts = bundle_root / "data" / "prompts"
+    bundled_prompts.mkdir(parents=True)
+
+    monkeypatch.setattr(config_paths, "get_data_dir", lambda: str(user_data))
+    monkeypatch.setattr(sys, "_MEIPASS", str(bundle_root), raising=False)
+
+    assert Path(config_paths.get_data_resource_dir("prompts")) == bundled_prompts

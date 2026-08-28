@@ -12,9 +12,38 @@ logger = logging.getLogger(__name__)
 
 # M16: 放宽注入检测 — 移除常见翻译文本中的误伤模式，保留真正危险的模式
 _SAFE_HTML_TAGS = {
-    "font", "b", "i", "u", "br", "p", "h1", "h2", "h3", "h4", "h5", "h6",
-    "div", "span", "img", "a", "table", "tr", "td", "th", "ul", "ol", "li",
-    "em", "strong", "s", "sub", "sup", "hr", "pre", "code", "blockquote",
+    "font",
+    "b",
+    "i",
+    "u",
+    "br",
+    "p",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "div",
+    "span",
+    "img",
+    "a",
+    "table",
+    "tr",
+    "td",
+    "th",
+    "ul",
+    "ol",
+    "li",
+    "em",
+    "strong",
+    "s",
+    "sub",
+    "sup",
+    "hr",
+    "pre",
+    "code",
+    "blockquote",
 }
 
 _INJECTION_PATTERNS = [
@@ -28,11 +57,23 @@ _INJECTION_PATTERNS = [
     (re.compile(r"<iframe[\s>]", re.IGNORECASE), "XSS iframe"),
     (re.compile(r"<embed[\s>]", re.IGNORECASE), "XSS embed"),
     (re.compile(r"<object[\s>]", re.IGNORECASE), "XSS object"),
-    (re.compile(r"\bon(?:error|load|focus|click|mouseover|mouseout|submit|change|keydown|keyup)=\s*", re.IGNORECASE), "XSS事件处理器"),
+    (
+        re.compile(r"\bon(?:error|load|focus|click|mouseover|mouseout|submit|change|keydown|keyup)=\s*", re.IGNORECASE),
+        "XSS事件处理器",
+    ),
     (re.compile(r"javascript\s*:", re.IGNORECASE), "XSS javascript协议"),
     # 命令注入
-    (re.compile(r"(?:;|\||&&|`)\s*(?:python|perl|ruby|php|node|nc|ncat|ssh|scp|wget|curl|telnet|socat|powershell|cmd|bash|sh|wmic|cscript|mshta|regsvr32|bitsadmin)\b", re.IGNORECASE), "命令注入"),
-    (re.compile(r"(?:Invoke-Expression|iex|Start-Process|EncodedCommand|IEX|Invoke-WebRequest)", re.IGNORECASE), "PowerShell注入"),
+    (
+        re.compile(
+            r"(?:;|\||&&|`)\s*(?:python|perl|ruby|php|node|nc|ncat|ssh|scp|wget|curl|telnet|socat|powershell|cmd|bash|sh|wmic|cscript|mshta|regsvr32|bitsadmin)\b",
+            re.IGNORECASE,
+        ),
+        "命令注入",
+    ),
+    (
+        re.compile(r"(?:Invoke-Expression|iex|Start-Process|EncodedCommand|IEX|Invoke-WebRequest)", re.IGNORECASE),
+        "PowerShell注入",
+    ),
     (re.compile(r"`[^`]*`"), "反引号命令注入"),
 ]
 
@@ -137,9 +178,7 @@ class InputValidationGuard(GuardMiddleware):
                 yield from cls._iter_path_values(item, f"{prefix}[{index}]", path_hint)
         elif isinstance(value, str) and path_hint:
             leaf = prefix.rsplit(".", 1)[-1].split("[", 1)[0].lower()
-            for_creation = any(
-                marker in leaf for marker in ("output", "destination", "dest", "save")
-            )
+            for_creation = any(marker in leaf for marker in ("output", "destination", "dest", "save"))
             yield prefix, value, for_creation
 
     @staticmethod
@@ -165,7 +204,7 @@ class InputValidationGuard(GuardMiddleware):
             logger.warning("InputValidation: 参数 '%s' 嵌套深度 (%d) 超过上限 (%d)", key, depth, self._max_depth)
             return GuardResult(False, f"参数嵌套深度超过上限 ({self._max_depth})")
         if isinstance(value, str):
-            if len(value.encode('utf-8', errors='replace')) > self._max_size:
+            if len(value.encode("utf-8", errors="replace")) > self._max_size:
                 return GuardResult(False, f"参数 '{key}' 超过大小限制 ({self._max_size} bytes)")
             for pattern, label in _INJECTION_PATTERNS:
                 if pattern.search(value):

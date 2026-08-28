@@ -17,17 +17,17 @@ from transbridge.parser.xt import SST_Entry, XT_Entry
 
 def _normalize_text(s: str) -> str:
     """规范化文本空白：统一换行符为 \\n，去除首尾空白。"""
-    return s.replace('\r\n', '\n').replace('\r', '\n').strip()
+    return s.replace("\r\n", "\n").replace("\r", "\n").strip()
 
 
 # Stage constants — aligned with ParaTranz platform
-STAGE_UNTRANSLATED = 0    # 未翻译
-STAGE_TRANSLATED = 1      # 已翻译
-STAGE_QUESTIONABLE = 2    # 有疑问
-STAGE_CHECKED = 3         # 已检查
-STAGE_REVIEWED = 5        # 已审核（未开启二次校对的项目审核词条时直接设为此状态）
-STAGE_LOCKED = 9          # 已锁定（仅管理员可解锁，词条强制按译文导出）
-STAGE_HIDDEN = -1         # 已隐藏（词条强制按原文导出）
+STAGE_UNTRANSLATED = 0  # 未翻译
+STAGE_TRANSLATED = 1  # 已翻译
+STAGE_QUESTIONABLE = 2  # 有疑问
+STAGE_CHECKED = 3  # 已检查
+STAGE_REVIEWED = 5  # 已审核（未开启二次校对的项目审核词条时直接设为此状态）
+STAGE_LOCKED = 9  # 已锁定（仅管理员可解锁，词条强制按译文导出）
+STAGE_HIDDEN = -1  # 已隐藏（词条强制按原文导出）
 
 STAGE_LABELS: dict[int, str] = {
     0: "未翻译",
@@ -62,9 +62,9 @@ class TranslationEntry:
     form_id_with_plugin: str | None = None  # 完整的 FormID|BaseRecordPlugin 格式，用于导出新JSON格式
 
     # DSD 兼容字段（解析时直接保存，用于 DSD 格式双向转换）
-    dsd_type: str = ""           # DSD 类型格式："NPC_ FULL" / "INFO NAM1"（空格分隔）
-    dsd_index: int = 1           # 原始索引
-    editor_id: str = ""          # 原始 editor_id
+    dsd_type: str = ""  # DSD 类型格式："NPC_ FULL" / "INFO NAM1"（空格分隔）
+    dsd_index: int = 1  # 原始索引
+    editor_id: str = ""  # 原始 editor_id
 
     # V2 identity envelope. ``id`` and ``key`` above remain read-compatible facades.
     entry_key: EntryKey | None = None
@@ -157,9 +157,24 @@ class TranslationEntry:
 
     # REC 后缀均为 4 字符（FULL/NAM1/DESC/DNAM/ITXT/NNAM/RNAM/SHRT 等）
     _REC_SUFFIXES = (
-        "FULL", "NAM1", "NAM2", "DATA", "DESC", "NAME", "GOLD", "SNAM",
-        "QNAM", "CNAM", "EDID", "MODL", "MODT", "DNAM", "ITXT", "NNAM",
-        "RNAM", "SHRT",
+        "FULL",
+        "NAM1",
+        "NAM2",
+        "DATA",
+        "DESC",
+        "NAME",
+        "GOLD",
+        "SNAM",
+        "QNAM",
+        "CNAM",
+        "EDID",
+        "MODL",
+        "MODT",
+        "DNAM",
+        "ITXT",
+        "NNAM",
+        "RNAM",
+        "SHRT",
     )
 
     @staticmethod
@@ -243,9 +258,9 @@ class TranslationEntry:
 
     @classmethod
     def try_update_from_xt(
-            cls,
-            entry: "TranslationEntry",
-            xt: XT_Entry,
+        cls,
+        entry: "TranslationEntry",
+        xt: XT_Entry,
     ) -> "TranslationEntry | None":
         """
         尝试用 XT_Entry 更新已有的 TranslationEntry。
@@ -286,11 +301,7 @@ class TranslationEntry:
 
         # ---------- 3. 判断是否满足“更新 translation 的条件” ----------
 
-        should_update = (
-                entry.stage == 0
-                and not entry.translation
-                and bool(xt.dest)
-        )
+        should_update = entry.stage == 0 and not entry.translation and bool(xt.dest)
 
         if not should_update:
             return entry
@@ -334,11 +345,7 @@ class TranslationEntry:
 
         # ---------- 4. 判断是否满足更新条件 ----------
 
-        should_update = (
-            entry.stage == STAGE_UNTRANSLATED
-            and not entry.translation
-            and bool(sst.translated_text)
-        )
+        should_update = entry.stage == STAGE_UNTRANSLATED and not entry.translation and bool(sst.translated_text)
 
         if not should_update:
             return entry
@@ -412,9 +419,7 @@ class TranslationEntry:
     # ==================== DSD 格式转换 ====================
 
     # DSD 索引类型集合（需要 index 字段的类型）
-    DSD_INDEX_TYPES = frozenset({
-        "INFO NAM1", "QUST NNAM", "MESG ITXT", "PERK EPF2", "PERK EPFD"
-    })
+    DSD_INDEX_TYPES = frozenset({"INFO NAM1", "QUST NNAM", "MESG ITXT", "PERK EPF2", "PERK EPFD"})
 
     def to_dsd_dict(self) -> dict[str, Any]:
         """
@@ -487,5 +492,3 @@ class TranslationEntry:
             dsd_index=index,
             editor_id=editor_id,
         )
-
-

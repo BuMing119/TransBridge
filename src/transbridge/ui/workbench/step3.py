@@ -5,19 +5,23 @@
 """
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
-    QPushButton, QProgressBar,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QProgressBar,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
 )
 
 from ..workers import ApiWorker
-from .project_prompt_overlay import ProjectPromptOverlay
-from .cards.upload_card import UploadCard
 from .cards.download_card import DownloadCard
+from .cards.upload_card import UploadCard
 from .cards.write_card import WriteCard
+from .project_prompt_overlay import ProjectPromptOverlay
 
 
 class Step3OpsWidget(QWidget):
-
     def __init__(self, ctx, parent=None):
         super().__init__(parent)
         self._ctx = ctx
@@ -58,9 +62,7 @@ class Step3OpsWidget(QWidget):
         warning_row.setContentsMargins(8, 4, 4, 4)
         warning_row.setSpacing(4)
         self._warning_label = QLabel()
-        self._warning_label.setStyleSheet(
-            "color: #7d4e00; font-size: 12px; border: none; background: transparent;"
-        )
+        self._warning_label.setStyleSheet("color: #7d4e00; font-size: 12px; border: none; background: transparent;")
         self._warning_label.setWordWrap(True)
         warning_row.addWidget(self._warning_label, stretch=1)
         close_btn = QPushButton("×")
@@ -101,6 +103,7 @@ class Step3OpsWidget(QWidget):
 
     def _update_overlay_geometry(self):
         from PyQt6.QtCore import QPoint
+
         card_pos = self._card_upload.mapTo(self, QPoint(0, 0))
         write_pos = self._card_write.mapTo(self, QPoint(0, 0))
         overlay_y = card_pos.y() if card_pos.y() > 0 else 0
@@ -121,9 +124,7 @@ class Step3OpsWidget(QWidget):
         if project:
             name = project.get("name", "未知项目")
             self._project_indicator.setText(f"操作目标：{name}")
-            self._project_indicator.setStyleSheet(
-                "color: #1a5276; font-size: 12px; font-weight: bold;"
-            )
+            self._project_indicator.setStyleSheet("color: #1a5276; font-size: 12px; font-weight: bold;")
         else:
             self._project_indicator.setText("操作目标：未选择项目")
             self._project_indicator.setStyleSheet("color: #888; font-size: 12px;")
@@ -184,8 +185,9 @@ class Step3OpsWidget(QWidget):
 
     # ── Worker helper ─────────────────────────────────────────
 
-    def _run_worker(self, fn=None, *, fn_factory=None, on_result, on_error,
-                    progress_total: int = 0, progress_msg: str = ""):
+    def _run_worker(
+        self, fn=None, *, fn_factory=None, on_result, on_error, progress_total: int = 0, progress_msg: str = ""
+    ):
         btn_states = {
             self._card_upload.btn: self._card_upload.btn.isEnabled(),
             self._card_download.btn: self._card_download.btn.isEnabled(),
@@ -204,8 +206,10 @@ class Step3OpsWidget(QWidget):
 
         if fn_factory is not None:
             _cb_ref = [None]
+
             def _wrapped():
                 return fn_factory(_cb_ref[0])
+
             w = ApiWorker(_wrapped)
             _cb_ref[0] = w.make_progress_callback()
         else:

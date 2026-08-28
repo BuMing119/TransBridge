@@ -6,7 +6,7 @@
 
 import numpy as np
 
-from .memory_store import MemoryStore, MemoryEntry
+from .memory_store import MemoryEntry, MemoryStore
 
 
 class MemoryRetriever:
@@ -20,8 +20,7 @@ class MemoryRetriever:
         self._store = store
         self._embedding_client = embedding_client  # m29: 外部注入，非本模块创建
 
-    def retrieve(self, query: str, top_k: int = 5,
-                 type_filter: list[str] | None = None) -> list[MemoryEntry]:
+    def retrieve(self, query: str, top_k: int = 5, type_filter: list[str] | None = None) -> list[MemoryEntry]:
         query_vector = None
         if self._embedding_client:
             try:

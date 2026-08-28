@@ -1,18 +1,16 @@
-from typing import Optional
 from transbridge.paratranz.paratranz_client import ParatranzClient
 
 
 class ParatranzScoresAPI(ParatranzClient):
-
     def get_scores(
         self,
         project_id: int,
         page: int = 1,
         page_size: int = 50,
-        uid: Optional[int] = None,
-        operation: Optional[str] = None,
-        start: Optional[str] = None,
-        end: Optional[str] = None
+        uid: int | None = None,
+        operation: str | None = None,
+        start: str | None = None,
+        end: str | None = None,
     ):
         """
         获取成员贡献列表（分页）

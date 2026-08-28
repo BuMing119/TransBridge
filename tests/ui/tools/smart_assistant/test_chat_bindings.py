@@ -329,6 +329,9 @@ class _PanelStub:
     def hide(self) -> None:
         pass
 
+    def setWindowIcon(self, icon) -> None:
+        self.window_icon = icon
+
     def deleteLater(self) -> None:
         self.deleted = True
 

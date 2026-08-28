@@ -3,6 +3,7 @@
 Story 12 v2: 权限 write→read(H6), 文件扩展名白名单(E1)。
 Story 24: 副作用补全 — action 参数 (create_slot/append) + HITL 确认。
 """
+
 from __future__ import annotations
 
 import os
@@ -46,12 +47,13 @@ def _validate_path(path: str, *, check_exists: bool = True, check_extension: boo
 
 # ── Story 24: 副作用辅助函数 ──────────────────────────────────────
 
-def _to_collection(result) -> "TranslationEntryCollection":
+
+def _to_collection(result) -> TranslationEntryCollection:
     """将各类解析器返回值归一化为 TranslationEntryCollection。"""
     TranslationEntryCollection = _collection_type()
     if isinstance(result, TranslationEntryCollection):
         return result
-    if hasattr(result, 'entries'):
+    if hasattr(result, "entries"):
         # ESP PluginParser 返回 plugin 对象，entries 属性为条目列表
         return TranslationEntryCollection(result.entries)
     # 列表/可迭代对象（EET/XT/SST/Strings 解析结果）
@@ -68,7 +70,7 @@ def _collection_type():
 def _create_slot(
     path: str,
     label: str,
-    collection: "TranslationEntryCollection",
+    collection: TranslationEntryCollection,
     ctx,
     *,
     source_snapshot=None,
@@ -87,8 +89,7 @@ def _create_slot(
     # 检查同名 slot 是否已存在
     if path in ctx.slots:
         return ToolResult.fail(
-            f"集合「{label}」已存在。如需覆盖请先在界面中手动移除，"
-            f"或使用 action=append 将条目追加到当前活跃集合。"
+            f"集合「{label}」已存在。如需覆盖请先在界面中手动移除，或使用 action=append 将条目追加到当前活跃集合。"
         )
 
     slot = CollectionSlot(
@@ -111,18 +112,17 @@ def _create_slot(
     )
 
 
-def _append_to_collection(collection: "TranslationEntryCollection", ctx) -> ToolResult:
+def _append_to_collection(collection: TranslationEntryCollection, ctx) -> ToolResult:
     """将解析出的条目追加到当前活跃集合。
 
     Args:
         collection: 解析得到的翻译条目集合
         ctx: 执行上下文
     """
-    active_slot = getattr(ctx, 'active_slot', None)
+    active_slot = getattr(ctx, "active_slot", None)
     if active_slot is None or active_slot.collection is None:
         return ToolResult.fail(
-            "当前无活跃集合，无法追加。请先使用 action=create_slot 创建集合，"
-            "或通过 switch_collection 切换到已有集合。"
+            "当前无活跃集合，无法追加。请先使用 action=create_slot 创建集合，或通过 switch_collection 切换到已有集合。"
         )
 
     existing = active_slot.collection
@@ -132,8 +132,7 @@ def _append_to_collection(collection: "TranslationEntryCollection", ctx) -> Tool
         added_count += 1
 
     return ToolResult.ok(
-        f"已追加 {added_count} 条条目到当前集合「{active_slot.label}」，"
-        f"集合总计 {len(existing)} 条",
+        f"已追加 {added_count} 条条目到当前集合「{active_slot.label}」，集合总计 {len(existing)} 条",
         data={
             "action": "append",
             "added_count": added_count,
@@ -222,14 +221,13 @@ def _parse_file(file_type: str, args: dict, ctx) -> ToolResult:
             source_snapshot = parsed.source_snapshot
         else:
             import importlib
+
             mod = importlib.import_module(dispatch["module"])
             cls = getattr(mod, dispatch["class"])
             result = cls().parse(path)
             collection = _to_collection(result)
     except Exception as exc:
-        return ToolResult.fail(
-            f"解析 {dispatch['label']} 失败: {_sanitize_error(str(exc), path)}"
-        )
+        return ToolResult.fail(f"解析 {dispatch['label']} 失败: {_sanitize_error(str(exc), path)}")
 
     label = Path(path).stem
     if action == "create_slot":
@@ -247,17 +245,22 @@ def _parse_file(file_type: str, args: dict, ctx) -> ToolResult:
 
 # ── Parser 工具函数 ──────────────────────────────────────────────
 
+
 def _tool_parse_esp(args: dict, ctx) -> ToolResult:
     return _parse_file("esp", args, ctx)
+
 
 def _tool_parse_eet(args: dict, ctx) -> ToolResult:
     return _parse_file("eet", args, ctx)
 
+
 def _tool_parse_xt(args: dict, ctx) -> ToolResult:
     return _parse_file("xt", args, ctx)
 
+
 def _tool_parse_sst(args: dict, ctx) -> ToolResult:
     return _parse_file("sst", args, ctx)
+
 
 def _tool_import_json(args: dict, ctx) -> ToolResult:
     return _parse_file("json", args, ctx)
@@ -268,23 +271,58 @@ def _tool_import_json(args: dict, ctx) -> ToolResult:
 _PARAM_SCHEMAS = {
     "parse_esp": {
         "path": {"type": "str", "required": True, "description": "Path to the ESP/ESM file"},
-        "action": {"type": "str", "required": False, "description": "Action after parsing: create_slot (create and activate a new slot; default) or append (append to the active collection)"},  # noqa: E501
+        "action": {
+            "type": "str",
+            "required": False,
+            "description": (
+                "Action after parsing: create_slot (create and activate a new slot; default) or append "
+                "(append to the active collection)"
+            ),
+        },
     },
     "parse_eet": {
         "path": {"type": "str", "required": True, "description": "Path to the EET XML file"},
-        "action": {"type": "str", "required": False, "description": "Action after parsing: create_slot (create and activate a new slot; default) or append (append to the active collection)"},  # noqa: E501
+        "action": {
+            "type": "str",
+            "required": False,
+            "description": (
+                "Action after parsing: create_slot (create and activate a new slot; default) or append "
+                "(append to the active collection)"
+            ),
+        },
     },
     "parse_xt": {
         "path": {"type": "str", "required": True, "description": "Path to the XT XML file"},
-        "action": {"type": "str", "required": False, "description": "Action after parsing: create_slot (create and activate a new slot; default) or append (append to the active collection)"},  # noqa: E501
+        "action": {
+            "type": "str",
+            "required": False,
+            "description": (
+                "Action after parsing: create_slot (create and activate a new slot; default) or append "
+                "(append to the active collection)"
+            ),
+        },
     },
     "parse_sst": {
         "path": {"type": "str", "required": True, "description": "Path to the SST binary file"},
-        "action": {"type": "str", "required": False, "description": "Action after parsing: create_slot (create and activate a new slot; default) or append (append to the active collection)"},  # noqa: E501
+        "action": {
+            "type": "str",
+            "required": False,
+            "description": (
+                "Action after parsing: create_slot (create and activate a new slot; default) or append "
+                "(append to the active collection)"
+            ),
+        },
     },
     "import_json": {
         "path": {"type": "str", "required": True, "description": "Path to the JSON file"},
-        "action": {"type": "str", "required": False, "description": "Action after import: create_slot (create and activate a new slot; default) or append (append to the active collection)"},  # noqa: E501
+        "action": {
+            "type": "str",
+            "required": False,
+            "description": (
+                "Action after import: create_slot (create and activate a new slot; default) or append "
+                "(append to the active collection)"
+            ),
+        },
     },
 }
 
@@ -295,18 +333,52 @@ _PARAM_SCHEMAS = {
 # 参见: plans/agent-tool-expansion/stories/story-24-parser-side-effects.md
 def _register_parser_tools():
     from ..tool_registry import ToolRegistry
-    ToolRegistry.register_tools("parser", [
-        {"name": "parse_esp", "display_name": "解析ESP", "description": "①Parse an ESP/ESM/ESL plugin file and extract translatable strings. ②Parameters: path (required, .esp/.esm/.esl), action (optional; create_slot creates and activates a new slot by default, or append adds to the active collection). ③Returns: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}. Rules: create_slot supports later write_back target=esp/strings inference; append requires has_active_collection; path must be a normalized path within a root authorized by RuntimeContext; use get_app_state to inspect esp_file.",  # noqa: E501
-         "execute": _tool_parse_esp, "parameters": _PARAM_SCHEMAS.get("parse_esp", {}), "permission": "write"},
-        {"name": "parse_eet", "display_name": "解析EET", "description": "①Parse an EET XML translation file (Elder Scrolls Translation format with an <EET> root element). ②Parameters: path (required, EET XML), action (optional; create_slot by default, or append). ③Returns: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}. Rules: create_slot supports later write_back target=eet inference; append requires has_active_collection; path must be a normalized path within a root authorized by RuntimeContext; use get_app_state to inspect eet_file.",  # noqa: E501
-         "execute": _tool_parse_eet, "parameters": _PARAM_SCHEMAS.get("parse_eet", {}), "permission": "write"},
-        {"name": "parse_xt", "display_name": "解析XT", "description": "①Parse an XT XML translation file (xTranslator format for Skyrim mod translation, with an <XT> root element). ②Parameters: path (required, XT XML), action (optional; create_slot by default, or append). ③Returns: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}. Rules: create_slot supports later write_back target=xt inference; append requires has_active_collection; path must be a normalized path within a root authorized by RuntimeContext; use get_app_state to inspect xt_file.",  # noqa: E501
-         "execute": _tool_parse_xt, "parameters": _PARAM_SCHEMAS.get("parse_xt", {}), "permission": "write"},
-        {"name": "parse_sst", "display_name": "解析SST", "description": "①Parse an SST binary translation file. SSU8 contains single-language records; SSU9 contains bilingual multi-string records with a plugin-name header. ②Parameters: path (required, .sst), action (optional; create_slot by default, or append). ③Returns: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}. Rules: write_back is unsupported because SST serialization is disabled; data is available only for browsing, filtering, and statistics. append requires has_active_collection; path must be a normalized path within a root authorized by RuntimeContext; sst_file is tracked through get_app_state.",  # noqa: E501
-         "execute": _tool_parse_sst, "parameters": _PARAM_SCHEMAS.get("parse_sst", {}), "permission": "write"},
-        {"name": "import_json", "display_name": "导入JSON", "description": "①Import translation entries from a JSON file, supporting the standard [{key,original,translation,stage,context}] format and DSD format. ②Parameters: path (required, .json), action (optional; create_slot by default, or append). ③Returns: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}. Rules: the file path is not recorded for write_back inference; append requires has_active_collection; path must be a normalized path within a root authorized by RuntimeContext.",  # noqa: E501
-         "execute": _tool_import_json, "parameters": _PARAM_SCHEMAS.get("import_json", {}), "permission": "write"},
-    ])
+
+    ToolRegistry.register_tools(
+        "parser",
+        [
+            {
+                "name": "parse_esp",
+                "display_name": "解析ESP",
+                "description": "①Parse an ESP/ESM/ESL plugin file and extract translatable strings. ②Parameters: path (required, .esp/.esm/.esl), action (optional; create_slot creates and activates a new slot by default, or append adds to the active collection). ③Returns: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}. Rules: create_slot supports later write_back target=esp/strings inference; append requires has_active_collection; path must be a normalized path within a root authorized by RuntimeContext; use get_app_state to inspect esp_file.",  # noqa: E501
+                "execute": _tool_parse_esp,
+                "parameters": _PARAM_SCHEMAS.get("parse_esp", {}),
+                "permission": "write",
+            },
+            {
+                "name": "parse_eet",
+                "display_name": "解析EET",
+                "description": "①Parse an EET XML translation file (Elder Scrolls Translation format with an <EET> root element). ②Parameters: path (required, EET XML), action (optional; create_slot by default, or append). ③Returns: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}. Rules: create_slot supports later write_back target=eet inference; append requires has_active_collection; path must be a normalized path within a root authorized by RuntimeContext; use get_app_state to inspect eet_file.",  # noqa: E501
+                "execute": _tool_parse_eet,
+                "parameters": _PARAM_SCHEMAS.get("parse_eet", {}),
+                "permission": "write",
+            },
+            {
+                "name": "parse_xt",
+                "display_name": "解析XT",
+                "description": "①Parse an XT XML translation file (xTranslator format for Skyrim mod translation, with an <XT> root element). ②Parameters: path (required, XT XML), action (optional; create_slot by default, or append). ③Returns: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}. Rules: create_slot supports later write_back target=xt inference; append requires has_active_collection; path must be a normalized path within a root authorized by RuntimeContext; use get_app_state to inspect xt_file.",  # noqa: E501
+                "execute": _tool_parse_xt,
+                "parameters": _PARAM_SCHEMAS.get("parse_xt", {}),
+                "permission": "write",
+            },
+            {
+                "name": "parse_sst",
+                "display_name": "解析SST",
+                "description": "①Parse an SST binary translation file. SSU8 contains single-language records; SSU9 contains bilingual multi-string records with a plugin-name header. ②Parameters: path (required, .sst), action (optional; create_slot by default, or append). ③Returns: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}. Rules: write_back is unsupported because SST serialization is disabled; data is available only for browsing, filtering, and statistics. append requires has_active_collection; path must be a normalized path within a root authorized by RuntimeContext; sst_file is tracked through get_app_state.",  # noqa: E501
+                "execute": _tool_parse_sst,
+                "parameters": _PARAM_SCHEMAS.get("parse_sst", {}),
+                "permission": "write",
+            },
+            {
+                "name": "import_json",
+                "display_name": "导入JSON",
+                "description": "①Import translation entries from a JSON file, supporting the standard [{key,original,translation,stage,context}] format and DSD format. ②Parameters: path (required, .json), action (optional; create_slot by default, or append). ③Returns: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}. Rules: the file path is not recorded for write_back inference; append requires has_active_collection; path must be a normalized path within a root authorized by RuntimeContext.",  # noqa: E501
+                "execute": _tool_import_json,
+                "parameters": _PARAM_SCHEMAS.get("import_json", {}),
+                "permission": "write",
+            },
+        ],
+    )
 
 
 _register_parser_tools()

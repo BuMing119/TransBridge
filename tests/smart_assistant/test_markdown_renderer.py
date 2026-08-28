@@ -1,4 +1,5 @@
 """Story 07: MarkdownRenderer 测试 — 格式渲染与容错降级。"""
+
 from __future__ import annotations
 
 import unittest
@@ -10,6 +11,7 @@ class TestMarkdownRendererTokenize(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         from transbridge.infra import markdown_renderer as _mr
+
         cls._mr = _mr
         cls._HeadingBlock = _mr._HeadingBlock
         cls._CodeBlock = _mr._CodeBlock
@@ -110,20 +112,24 @@ class TestMarkdownRendererRender(unittest.TestCase):
 
     def test_render_returns_widget(self):
         from PyQt6.QtWidgets import QApplication, QWidget
+
         app = QApplication.instance()
         if app is None:
             raise unittest.SkipTest("无 QApplication 实例，跳过渲染测试")
         from transbridge.infra.markdown_renderer import MarkdownRenderer
+
         r = MarkdownRenderer()
         widget = r.render("## 测试标题\n测试内容")
         self.assertIsInstance(widget, QWidget)
 
     def test_render_fallback_on_junk(self):
         from PyQt6.QtWidgets import QApplication, QWidget
+
         app = QApplication.instance()
         if app is None:
             raise unittest.SkipTest("无 QApplication 实例，跳过渲染测试")
         from transbridge.infra.markdown_renderer import MarkdownRenderer
+
         r = MarkdownRenderer()
         widget = r.render("\x00\x01\x02")
         self.assertIsInstance(widget, QWidget)

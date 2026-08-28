@@ -6,6 +6,41 @@
 
 import importlib
 import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .agents import AgentInstance, AgentRegistry, AgentSpec
+    from .chat_worker import ChatWorker
+    from .checkpoint_manager import CheckpointManager
+    from .condition_evaluator import ConditionEvaluator
+    from .context_builder import ContextBuilder
+    from .conversation_manager import ConversationManager
+    from .conversation_orchestrator import ConversationOrchestrator
+    from .execution_engine import ExecutionEngine
+    from .graph_executor import StepResult
+    from .graph_types import ActionNode, ConditionNode, GraphSpec, HumanConfirmNode, LoopNode
+    from .guardrails import (
+        GuardMiddleware,
+        GuardResult,
+        InputValidationGuard,
+        OutputValidationGuard,
+        PermissionGuard,
+    )
+    from .mcp import MCPAdapter, MCPServer
+    from .observability import ConversationTrace, ObservabilityCollector, TokenStats
+    from .prompts import build_system_prompt
+    from .session_controller import SessionController
+    from .session_manager import SessionManager
+    from .tool_registry import ToolRegistry, ToolSpec
+    from .tools import (
+        ExecutionContext,
+        HITLRequest,
+        HITLResponse,
+        HITLType,
+        ToolResult,
+        execute_with_guardrails,
+        filter_entries,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +135,5 @@ def __getattr__(name: str):
             return getattr(mod, name)
         except ImportError:
             logger.warning("惰性加载模块失败: %s (符号=%s)", _SYMBOL_MODULES[name], name)
-            raise AttributeError(
-                f"module {__name__!r} has no attribute {name!r}"
-            ) from None
+            raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from None
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

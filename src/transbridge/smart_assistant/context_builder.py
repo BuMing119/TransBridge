@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
 from collections import Counter
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from transbridge.ui.context import AppContext
@@ -14,7 +14,7 @@ class ContextBuilder:
     C1: 移除对 ui/ 的直接依赖。调用方通过构造函数或 build() 参数传入 AppContext。
     """
 
-    def __init__(self, ctx: "AppContext | None" = None):
+    def __init__(self, ctx: AppContext | None = None):
         self._ctx = ctx
 
     def build(self, ctx=None) -> str:
@@ -49,8 +49,7 @@ class ContextBuilder:
         untranslated = total - translated
 
         cat_lines = "\n".join(
-            f"  - {cat}: {cnt} entries"
-            for cat, cnt in sorted(cat_counter.items(), key=lambda x: -x[1])
+            f"  - {cat}: {cnt} entries" for cat, cnt in sorted(cat_counter.items(), key=lambda x: -x[1])
         )
 
         # 已上传参考文件 — C6: 仅注入摘要信息，不注入原始内容
@@ -58,13 +57,15 @@ class ContextBuilder:
         if hasattr(ctx, "_uploaded_docs") and ctx._uploaded_docs:
             docs_lines = "Uploaded reference files:\n"
             for name, doc in ctx._uploaded_docs.items():
-                char_count = len(doc.raw_text) if hasattr(doc, 'raw_text') else 0
-                docs_lines += f"  - {name} ({doc.format}, {char_count} characters) — available by reference in the conversation context\n"
+                char_count = len(doc.raw_text) if hasattr(doc, "raw_text") else 0
+                docs_lines += (
+                    f"  - {name} ({doc.format}, {char_count} characters) — "
+                    "available by reference in the conversation context\n"
+                )
 
         return (
             f"Current workspace context:\n"
             f"- Plugin: {esp_name}\n"
             f"- Collection summary: {total} total, {translated} translated, {untranslated} untranslated\n"
-            f"- Category distribution:\n{cat_lines}"
-            + (f"\n{docs_lines}" if docs_lines else "")
+            f"- Category distribution:\n{cat_lines}" + (f"\n{docs_lines}" if docs_lines else "")
         )

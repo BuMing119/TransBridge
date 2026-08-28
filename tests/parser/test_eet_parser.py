@@ -1,7 +1,8 @@
-import pytest
-from pathlib import Path
 from xml.etree.ElementTree import Element
-from transbridge.parser.eet_parser import EET_Entry, EET_XmlParser, _text_or_empty, _int_or_none
+
+import pytest
+
+from transbridge.parser.eet_parser import EET_Entry, EET_XmlParser, _int_or_none, _text_or_empty
 
 
 class TestHelperFunctions:
@@ -55,6 +56,7 @@ class TestEETEntry:
         elem = Element("ESP")
         elem.text = ""
         from xml.etree.ElementTree import fromstring
+
         elem = fromstring(xml_str)
 
         entry = EET_Entry.from_xml(elem)
@@ -85,9 +87,10 @@ class TestEETEntry:
             status=2,
             idstexte=3,
             commentaire="Comment",
-            icon=4
+            icon=4,
         )
         assert entry.key == ("Group1", "ID1", "EDID1", "Champ1")
+
 
 @pytest.fixture
 def sample_xml():
@@ -139,13 +142,10 @@ def sample_xml():
     """
 
 
-
 class TestEETXmlParser:
     """测试 EET_XmlParser 类"""
 
     @pytest.fixture
-
-
     def test_from_string(self, sample_xml):
         parser = EET_XmlParser.from_string(sample_xml)
         assert len(parser.entries) == 3

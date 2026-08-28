@@ -5,7 +5,7 @@
 
 import json
 from pathlib import Path
-from datetime import datetime
+
 from ._utils import atomic_write_json
 
 

@@ -16,7 +16,7 @@ class TestTranslationEntry:
             original="original_text",
             translation="translated_text",
             stage=1,
-            context="test_context"
+            context="test_context",
         )
         assert entry.id == "test_id"
         assert entry.key == "test_key"
@@ -40,7 +40,7 @@ class TestTranslationEntry:
             status=0,
             idstexte=100,
             commentaire="Test comment",
-            icon=None
+            icon=None,
         )
 
         entry = TranslationEntry.create_from_eet_entry(eet_entry)
@@ -65,7 +65,7 @@ class TestTranslationEntry:
             status=99,  # 设置为 99
             idstexte=100,
             commentaire="Test comment",
-            icon=None
+            icon=None,
         )
 
         entry_99 = TranslationEntry.create_from_eet_entry(eet_entry_status_99)
@@ -117,16 +117,12 @@ class TestTranslationEntry:
             original="Original text",
             translation="",
             stage=0,
-            context="INFO:NAM1"
+            context="INFO:NAM1",
         )
 
         # 测试 list_id == 0，匹配的情况
         xt_entry_0 = XT_Entry(
-            list_id=0,
-            edid="TestEdid",
-            rec="INFO:NAM1",
-            source="Original text",
-            dest="Translated text"
+            list_id=0, edid="TestEdid", rec="INFO:NAM1", source="Original text", dest="Translated text"
         )
 
         updated_entry = TranslationEntry.try_update_from_xt(entry, xt_entry_0)
@@ -142,15 +138,11 @@ class TestTranslationEntry:
             original="Another original",
             translation="",
             stage=0,
-            context="DIAL:NAME"
+            context="DIAL:NAME",
         )
 
         xt_entry_1 = XT_Entry(
-            list_id=1,
-            edid="[FormID2]",
-            rec="DIAL:NAME",
-            source="Another original",
-            dest="Another translation"
+            list_id=1, edid="[FormID2]", rec="DIAL:NAME", source="Another original", dest="Another translation"
         )
 
         updated_entry2 = TranslationEntry.try_update_from_xt(entry2, xt_entry_1)
@@ -161,11 +153,7 @@ class TestTranslationEntry:
 
         # 测试不匹配的情况 (edid 不匹配)
         xt_entry_mismatch = XT_Entry(
-            list_id=0,
-            edid="MismatchEdid",
-            rec="INFO:NAM1",
-            source="Original text",
-            dest="Translated text"
+            list_id=0, edid="MismatchEdid", rec="INFO:NAM1", source="Original text", dest="Translated text"
         )
 
         result = TranslationEntry.try_update_from_xt(entry, xt_entry_mismatch)
@@ -173,11 +161,7 @@ class TestTranslationEntry:
 
         # 测试不匹配的情况 (rec 不匹配)
         xt_entry_mismatch_rec = XT_Entry(
-            list_id=0,
-            edid="TestEdid",
-            rec="MISMATCH:REC",
-            source="Original text",
-            dest="Translated text"
+            list_id=0, edid="TestEdid", rec="MISMATCH:REC", source="Original text", dest="Translated text"
         )
 
         result = TranslationEntry.try_update_from_xt(entry, xt_entry_mismatch_rec)
@@ -185,11 +169,7 @@ class TestTranslationEntry:
 
         # 测试不匹配的情况 (source 不匹配)
         xt_entry_mismatch_source = XT_Entry(
-            list_id=0,
-            edid="TestEdid",
-            rec="INFO:NAM1",
-            source="Mismatch source",
-            dest="Translated text"
+            list_id=0, edid="TestEdid", rec="INFO:NAM1", source="Mismatch source", dest="Translated text"
         )
 
         result = TranslationEntry.try_update_from_xt(entry, xt_entry_mismatch_source)
@@ -202,15 +182,11 @@ class TestTranslationEntry:
             original="Original text",
             translation="",
             stage=1,  # stage 不为 0
-            context="INFO:NAM1"
+            context="INFO:NAM1",
         )
 
         xt_entry_match = XT_Entry(
-            list_id=0,
-            edid="TestEdid",
-            rec="INFO:NAM1",
-            source="Original text",
-            dest="Translated text"
+            list_id=0, edid="TestEdid", rec="INFO:NAM1", source="Original text", dest="Translated text"
         )
 
         result = TranslationEntry.try_update_from_xt(entry_stage_1, xt_entry_match)
@@ -223,7 +199,7 @@ class TestTranslationEntry:
             original="Original text",
             translation="Existing translation",  # 已有翻译
             stage=0,
-            context="INFO:NAM1"
+            context="INFO:NAM1",
         )
 
         result = TranslationEntry.try_update_from_xt(entry_with_translation, xt_entry_match)
@@ -235,7 +211,7 @@ class TestTranslationEntry:
             edid="TestEdid",
             rec="INFO:NAM1",
             source="Original text",
-            dest=""  # dest 为空
+            dest="",  # dest 为空
         )
 
         result = TranslationEntry.try_update_from_xt(entry, xt_entry_empty_dest)
@@ -249,7 +225,7 @@ class TestTranslationEntry:
             original="original_text",
             translation="translated_text",
             stage=1,
-            context="test_context"
+            context="test_context",
         )
 
         result = entry.to_dict()
@@ -282,7 +258,7 @@ class TestTranslationEntry:
             "original": "original_text",
             "translation": "translated_text",
             "stage": 1,
-            "context": "test_context"
+            "context": "test_context",
         }
 
         entry = TranslationEntry.from_dict(data)

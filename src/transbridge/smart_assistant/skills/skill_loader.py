@@ -1,9 +1,9 @@
 """Skill 定义加载器：TOML 文件 → SkillSpec。"""
 
-import logging
-import tomllib
 from dataclasses import dataclass, field
+import logging
 from pathlib import Path
+import tomllib
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +14,7 @@ MAX_PROMPT_TEMPLATE_LENGTH = 4096
 @dataclass
 class SkillSpec:
     """用户自定义 Skill 的运行时表示。"""
+
     name: str
     display_name: str
     description: str = ""
@@ -54,7 +55,8 @@ class SkillLoader:
             if len(prompt_template) > MAX_PROMPT_TEMPLATE_LENGTH:
                 logger.warning(
                     "Skill '%s' prompt_template 过长 (%d 字符)，已截断至 %d",
-                    meta.get('name', path.stem), len(prompt_template),
+                    meta.get("name", path.stem),
+                    len(prompt_template),
                     MAX_PROMPT_TEMPLATE_LENGTH,
                 )
                 prompt_template = prompt_template[:MAX_PROMPT_TEMPLATE_LENGTH]

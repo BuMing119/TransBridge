@@ -4,7 +4,13 @@
 不再访问 UI 层的私有成员。SkillExecutor 不感知 ChatWidget 的内部实现细节。
 """
 
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from transbridge.ui.tools.smart_assistant.chat_widget import ChatWidget
 
 from .skill_loader import SkillSpec
 
@@ -14,7 +20,7 @@ logger = logging.getLogger(__name__)
 class SkillExecutor:
     """注入 Skill prompt → 限制工具 → 触发 LLM。"""
 
-    def __init__(self, chat_widget: "ChatWidget"):
+    def __init__(self, chat_widget: ChatWidget):
         # chat_widget 类型使用前向引用字符串以避免循环导入。
         self._chat = chat_widget
 

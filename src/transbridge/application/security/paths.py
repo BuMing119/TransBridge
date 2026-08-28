@@ -27,10 +27,7 @@ class PathAuthorizationPolicy:
     """Authorizes resolved paths against explicit canonical root grants."""
 
     def __init__(self, grants: Iterable[PathGrant]) -> None:
-        self._grants = tuple(
-            PathGrant(Path(grant.root).resolve(strict=True), grant.allow_create)
-            for grant in grants
-        )
+        self._grants = tuple(PathGrant(Path(grant.root).resolve(strict=True), grant.allow_create) for grant in grants)
 
     def authorize(
         self,

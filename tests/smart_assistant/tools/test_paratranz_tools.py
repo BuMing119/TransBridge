@@ -3,6 +3,7 @@
 测试 9 个 PT 工具的基本行为：参数校验、错误路径、无网络时失败处理。
 不测试实际网络调用。
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -21,6 +22,7 @@ _PT_PROJECT_API_PATH = "transbridge.paratranz.service.ParaTranzService.from_conf
 class TestListProjects(unittest.TestCase):
     def setUp(self):
         from transbridge.smart_assistant.tools.tool_paratranz import _tool_list_projects
+
         self.func = _tool_list_projects
         self.ctx = MockAppContext()
 
@@ -61,6 +63,7 @@ class TestListProjects(unittest.TestCase):
 class TestGetProjectInfo(unittest.TestCase):
     def setUp(self):
         from transbridge.smart_assistant.tools.tool_paratranz import _tool_get_project_info
+
         self.func = _tool_get_project_info
         self.ctx = MockAppContext()
 
@@ -103,7 +106,10 @@ class TestGetProjectInfo(unittest.TestCase):
     def test_get_project_info_with_id(self, mock_api):
         mock_client = MagicMock()
         mock_client.get_project.return_value = {
-            "id": 123, "name": "MyMod", "visibility": "public", "members": [1, 2],
+            "id": 123,
+            "name": "MyMod",
+            "visibility": "public",
+            "members": [1, 2],
         }
         mock_api.return_value = mock_client
 
@@ -132,6 +138,7 @@ class TestGetProjectInfo(unittest.TestCase):
 class TestCompareWithRemote(unittest.TestCase):
     def setUp(self):
         from transbridge.smart_assistant.tools.tool_paratranz import _tool_compare_with_remote
+
         self.func = _tool_compare_with_remote
         self.ctx = MockAppContext(make_test_collection(5))
 
@@ -158,6 +165,7 @@ class TestCompareWithRemote(unittest.TestCase):
 class TestUploadEntries(unittest.TestCase):
     def setUp(self):
         from transbridge.smart_assistant.tools.tool_paratranz import _tool_upload_entries
+
         self.func = _tool_upload_entries
         self.ctx = MockAppContext(make_test_collection(3))
 
@@ -182,6 +190,7 @@ class TestUploadEntries(unittest.TestCase):
 class TestDownloadEntries(unittest.TestCase):
     def setUp(self):
         from transbridge.smart_assistant.tools.tool_paratranz import _tool_download_entries
+
         self.func = _tool_download_entries
         self.ctx = MockAppContext(make_test_collection(3))
 
@@ -193,8 +202,7 @@ class TestDownloadEntries(unittest.TestCase):
     def test_download_entries(self, mock_api):
         mock_client = MagicMock()
         mock_client.list_entries.return_value = [
-            {"key": "NPC_:0001", "original": "Hello", "translation": "你好",
-             "context": "NPC_:FULL", "stage": 1},
+            {"key": "NPC_:0001", "original": "Hello", "translation": "你好", "context": "NPC_:FULL", "stage": 1},
         ]
         mock_api.return_value = mock_client
 
@@ -209,6 +217,7 @@ class TestDownloadEntries(unittest.TestCase):
 class TestExportArtifact(unittest.TestCase):
     def setUp(self):
         from transbridge.smart_assistant.tools.tool_paratranz import _tool_export_artifact
+
         self.func = _tool_export_artifact
         self.ctx = MockAppContext()
 
@@ -242,6 +251,7 @@ class TestExportArtifact(unittest.TestCase):
 class TestGetUploadHistory(unittest.TestCase):
     def setUp(self):
         from transbridge.smart_assistant.tools.tool_paratranz import _tool_get_upload_history
+
         self.func = _tool_get_upload_history
         self.ctx = MockAppContext()
 
@@ -268,6 +278,7 @@ class TestGetUploadHistory(unittest.TestCase):
 class TestGetParatranzProject(unittest.TestCase):
     def setUp(self):
         from transbridge.smart_assistant.tools.tool_paratranz import _tool_get_paratranz_project
+
         self.func = _tool_get_paratranz_project
         self.ctx = MockAppContext()
 
@@ -285,7 +296,9 @@ class TestGetParatranzProject(unittest.TestCase):
         }
         mock_client = MagicMock()
         mock_client.get_project.return_value = {
-            "id": 42, "name": "SkyrimCN", "visibility": "public",
+            "id": 42,
+            "name": "SkyrimCN",
+            "visibility": "public",
         }
         mock_api.return_value = mock_client
 
@@ -300,6 +313,7 @@ class TestGetParatranzProject(unittest.TestCase):
 class TestSwitchParatranzProject(unittest.TestCase):
     def setUp(self):
         from transbridge.smart_assistant.tools.tool_paratranz import _tool_switch_paratranz_project
+
         self.func = _tool_switch_paratranz_project
         self.ctx = MockAppContext()
 
@@ -307,7 +321,9 @@ class TestSwitchParatranzProject(unittest.TestCase):
     def test_switch_project_success(self, mock_api):
         mock_client = MagicMock()
         mock_client.get_project.return_value = {
-            "id": 99, "name": "TestMod", "visibility": "private",
+            "id": 99,
+            "name": "TestMod",
+            "visibility": "private",
         }
         mock_api.return_value = mock_client
         captured = []

@@ -7,21 +7,22 @@ context information such as NPC sex, race, and class.
 
 import logging
 
-from .item import (
-    BaseContext,
-    DialContext,
-    InfoContext,
-    NPCContext,
-)
-from transbridge.parser.utils.fromid_trans import formid_bytes_to_complete, formid_bytes_to_hex
 from sse_plugin_interface.datatypes import RawString
 from sse_plugin_interface.group import Group
 from sse_plugin_interface.plugin import SSEPlugin
 from sse_plugin_interface.record import Record
 from sse_plugin_interface.subrecord import TRDT, StringSubrecord
 
-from .plugin_string_with_context import PluginStringWithContext
 from transbridge.parser.strings_file import PluginStringsLookup
+from transbridge.parser.utils.fromid_trans import formid_bytes_to_complete, formid_bytes_to_hex
+
+from .item import (
+    BaseContext,
+    DialContext,
+    InfoContext,
+    NPCContext,
+)
+from .plugin_string_with_context import PluginStringWithContext
 
 
 class SSEPluginWithContext(SSEPlugin):
@@ -389,8 +390,7 @@ class SSEPluginWithContext(SSEPlugin):
                         resolved = strings_lookup.get(string)
                         if resolved is None:
                             self.log.debug(
-                                f"Unresolved string ID {string:#010x} "
-                                f"in {record.type} {subrecord.type} ({formid})"
+                                f"Unresolved string ID {string:#010x} in {record.type} {subrecord.type} ({formid})"
                             )
                             continue
                         string_text = resolved
@@ -416,7 +416,11 @@ class SSEPluginWithContext(SSEPlugin):
         for child in group.children:
             if isinstance(child, Group):
                 child_strings = self.extract_group_strings_with_context(
-                    child, extract_localized, dial_context, dial_context_map, dlbr_map,
+                    child,
+                    extract_localized,
+                    dial_context,
+                    dial_context_map,
+                    dlbr_map,
                     strings_lookup,
                 )
                 strings.update(child_strings)
@@ -449,7 +453,9 @@ class SSEPluginWithContext(SSEPlugin):
         for group in self._SSEPlugin__groups:
             current_group: list[PluginStringWithContext] = list(
                 self.extract_group_strings_with_context(
-                    group, extract_localized, dlbr_map=dlbr_map,
+                    group,
+                    extract_localized,
+                    dlbr_map=dlbr_map,
                     strings_lookup=strings_lookup,
                 ).keys()
             )

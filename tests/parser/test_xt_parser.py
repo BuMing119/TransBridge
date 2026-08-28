@@ -1,10 +1,12 @@
-import json
 import csv
-import tempfile
+import json
 from pathlib import Path
-import pytest
-from xml.etree.ElementTree import Element, SubElement, tostring
+import tempfile
 import xml.etree.ElementTree as ET
+from xml.etree.ElementTree import Element, SubElement
+
+import pytest
+
 from transbridge.parser.xt import XT_Entry, XT_XmlParser
 
 
@@ -58,8 +60,8 @@ def create_test_xml_file():
     # 使用 ElementTree 的 tostring 方法，并添加 XML 声明
     tree = ET.ElementTree(root)
     # 使用二进制模式打开文件
-    with tempfile.NamedTemporaryFile(mode='wb', suffix='.xml', delete=False) as f:
-        tree.write(f, encoding='utf-8', xml_declaration=True)
+    with tempfile.NamedTemporaryFile(mode="wb", suffix=".xml", delete=False) as f:
+        tree.write(f, encoding="utf-8", xml_declaration=True)
         return f.name
 
 
@@ -71,7 +73,6 @@ def test_xml_file():
     yield xml_path
     # 测试结束后删除临时文件
     Path(xml_path).unlink()
-
 
 
 # 测试 XT_Entry 数据类
@@ -87,13 +88,7 @@ class TestXTEntry:
         assert XT_Entry._to_int("  ") is None  # 只有空格
 
     def test_entry_creation(self):
-        entry = XT_Entry(
-            list_id=1,
-            edid="test_edid",
-            rec="test_rec",
-            source="test_source",
-            dest="test_dest"
-        )
+        entry = XT_Entry(list_id=1, edid="test_edid", rec="test_rec", source="test_source", dest="test_dest")
         assert entry.list_id == 1
         assert entry.edid == "test_edid"
         assert entry.rec == "test_rec"
@@ -211,14 +206,14 @@ class TestXTXmlParser:
         """测试导出为 JSON 文件"""
         parser = XT_XmlParser.from_file(test_xml_file)
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json_path = f.name
 
         try:
             parser.to_json_file(json_path)
 
             # 读取导出的 JSON 文件并验证
-            with open(json_path, 'r', encoding='utf-8') as f:
+            with open(json_path, encoding="utf-8") as f:
                 data = json.load(f)
 
             # 检查参数
@@ -237,14 +232,14 @@ class TestXTXmlParser:
         """测试导出为 CSV 文件"""
         parser = XT_XmlParser.from_file(test_xml_file)
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
             csv_path = f.name
 
         try:
             parser.to_csv_file(csv_path)
 
             # 读取导出的 CSV 文件并验证
-            with open(csv_path, 'r', encoding='utf-8', newline='') as f:
+            with open(csv_path, encoding="utf-8", newline="") as f:
                 reader = csv.DictReader(f)
                 rows = list(reader)
 

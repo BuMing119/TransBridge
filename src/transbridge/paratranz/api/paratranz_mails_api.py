@@ -2,7 +2,6 @@ from transbridge.paratranz.paratranz_client import ParatranzClient
 
 
 class ParatranzMailsAPI(ParatranzClient):
-
     def list_mails(self, page: int = 1, page_size: int = 50):
         """获取私信列表（分页）"""
         return self._request("GET", "/mails", params={"page": page, "pageSize": page_size})

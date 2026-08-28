@@ -198,7 +198,10 @@ def build_representative_window_tree(
     )
     stack.enter_context(patch("transbridge.ui.shell.window_lifecycle.WindowLifecycle.start", lambda _self: None))
     stack.enter_context(
-        patch("transbridge.ui.coordinators.project_coordinator.ProjectCoordinator.init_workspace", lambda _self: None)
+        patch(
+            "transbridge.ui.coordinators.project_coordinator.ProjectCoordinator.init_workspace",
+            lambda _self, *, initial_project_path=None: None,
+        )
     )
 
     try:

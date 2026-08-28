@@ -4,6 +4,7 @@ Story 04 v2: 合并原 Story 04（筛选搜索）和 Story 05（编辑选择）�
 新增 set_stage(H3) + _selected_ids(H2) + new_stage参数(H4) + filter_entries复用(H8)。
 Story 03B: 重构为 EditorController 类。
 """
+
 from __future__ import annotations
 
 from .base import ToolResult, filter_entries, require_collection, require_runtime_context, validate_params
@@ -13,7 +14,11 @@ _VALID_STAGES = {0, 1, 2, 3, 5, 9, -1}
 # M2: _PARAM_SCHEMAS 必须在函数定义之前（供 @validate_params 装饰器使用）
 _PARAM_SCHEMAS = {
     "get_visible_entries": {
-        "limit": {"type": "int", "required": False, "description": "Maximum number of entries to return; default 50, maximum 200"},
+        "limit": {
+            "type": "int",
+            "required": False,
+            "description": "Maximum number of entries to return; default 50, maximum 200",
+        },
         "offset": {"type": "int", "required": False, "description": "Pagination offset; default 0"},
     },
     "select_entries": {
@@ -23,11 +28,21 @@ _PARAM_SCHEMAS = {
     "edit_translation": {
         "entry_id": {"type": "str", "required": True, "description": "Entry ID"},
         "new_translation": {"type": "str", "required": True, "description": "New translation text"},
-        "new_stage": {"type": "int", "required": False, "description": "Optional new translation stage; omitted means unchanged"},
+        "new_stage": {
+            "type": "int",
+            "required": False,
+            "description": "Optional new translation stage; omitted means unchanged",
+        },
     },
     "set_stage": {
         "entry_ids": {"type": "list", "required": True, "description": "Entry ID list"},
-        "stage": {"type": "int", "required": True, "description": "Target stage: 0=untranslated, 1=translated, 2=question, 3=checked, 5=reviewed, 9=locked, -1=hidden"},
+        "stage": {
+            "type": "int",
+            "required": True,
+            "description": (
+                "Target stage: 0=untranslated, 1=translated, 2=question, 3=checked, 5=reviewed, 9=locked, -1=hidden"
+            ),
+        },
     },
     # Story 08: 标签管理
     "list_labels": {},
@@ -40,17 +55,42 @@ _PARAM_SCHEMAS = {
     },
     # Story 17: set_filters 合并 5→1
     "set_filters": {
-        "stages": {"type": "list", "required": False, "description": "Stage values; None keeps the current value and [] clears it"},
-        "categories": {"type": "list", "required": False, "description": "Category names; None keeps the current value and [] clears it"},
-        "labels": {"type": "list", "required": False, "description": "Label names; None keeps the current value and [] clears it"},
-        "search_query": {"type": "str", "required": False, "description": "Search text; None keeps the current value and an empty string clears it"},
-        "search_field": {"type": "str", "required": False, "description": "Search field: id/key/original/translation/context/all; default original"},
-        "clear": {"type": "bool", "required": False, "description": "Clear all filters before applying new values; default false"},
+        "stages": {
+            "type": "list",
+            "required": False,
+            "description": "Stage values; None keeps the current value and [] clears it",
+        },
+        "categories": {
+            "type": "list",
+            "required": False,
+            "description": "Category names; None keeps the current value and [] clears it",
+        },
+        "labels": {
+            "type": "list",
+            "required": False,
+            "description": "Label names; None keeps the current value and [] clears it",
+        },
+        "search_query": {
+            "type": "str",
+            "required": False,
+            "description": "Search text; None keeps the current value and an empty string clears it",
+        },
+        "search_field": {
+            "type": "str",
+            "required": False,
+            "description": "Search field: id/key/original/translation/context/all; default original",
+        },
+        "clear": {
+            "type": "bool",
+            "required": False,
+            "description": "Clear all filters before applying new values; default false",
+        },
     },
 }
 
 
 # ── EditorController ──────────────────────────────────────────
+
 
 class EditorController:
     """编辑器控制器：统一管理 editor 命名空间的工具逻辑。"""
@@ -118,16 +158,16 @@ class EditorController:
         offset = max(args.get("offset", 0), 0)
 
         filter_state = ctx.filter_state
-        entry_labels = getattr(ctx, 'entry_labels', None)  # M1 联动: 传入 entry_labels
+        entry_labels = getattr(ctx, "entry_labels", None)  # M1 联动: 传入 entry_labels
         # M7: 每次分页从零过滤整个 collection，翻 N 页则扫描 N 次。后续可引入缓存层。
         results = filter_entries(collection, filter_state, entry_labels=entry_labels)
         total = len(results)
 
-        page = results[offset:offset + limit]
+        page = results[offset : offset + limit]
         entries = [
             {
-                "key": e.key,        # 主标识（LLM 请用此值传给 entry_id/entry_ids 参数）
-                "id": e.id,          # 辅助标识（跨 ParaTranz 同步可能变化）
+                "key": e.key,  # 主标识（LLM 请用此值传给 entry_id/entry_ids 参数）
+                "id": e.id,  # 辅助标识（跨 ParaTranz 同步可能变化）
                 "original": e.original[:200] if e.original else "",
                 "translation": e.translation[:200] if e.translation else "",
                 "stage": e.stage,
@@ -169,7 +209,7 @@ class EditorController:
             return ToolResult.fail(f"无效操作: {action}，可选: select, deselect, clear")
 
         count = ctx.select_entries(entry_ids, action)
-        selected = list(ctx.selected_ids) if hasattr(ctx, 'selected_ids') else []
+        selected = list(ctx.selected_ids) if hasattr(ctx, "selected_ids") else []
         action_names = {"select": "选中", "deselect": "取消选中", "clear": "清空选择"}
         return ToolResult.ok(
             f"{action_names.get(action, action)}完成，当前已选 {count} 条",
@@ -262,7 +302,7 @@ class EditorController:
         M51: 先构建 name→id 查找字典，O(n) 一次建表后 O(1) 查询。
         M27: 消除 assign/remove/batch 三处重复查找循环。
         """
-        label_lib = getattr(ctx, 'label_library', None) or {}
+        label_lib = getattr(ctx, "label_library", None) or {}
         # M51: 构建 name→id 字典避免每次线性扫描
         name_to_id: dict[str, str] = {v.get("name", ""): k for k, v in label_lib.items() if v.get("name")}
         return name_to_id.get(label_name)
@@ -270,12 +310,12 @@ class EditorController:
     def list_labels(self, args: dict, ctx) -> ToolResult:
         """列出所有已定义的标签。"""
         # m28: 区分"未初始化"和"空标签库"两种情况
-        if not hasattr(ctx, 'label_library') or ctx.label_library is None:
+        if not hasattr(ctx, "label_library") or ctx.label_library is None:
             return ToolResult.ok("标签库未初始化，请先创建标签", data={"labels": []})
         label_lib = ctx.label_library
         if not label_lib:
             return ToolResult.ok("标签库为空，请先创建标签", data={"labels": []})
-        entry_labels = getattr(ctx, 'entry_labels', {})
+        entry_labels = getattr(ctx, "entry_labels", {})
         labels = []
         for lid, info in label_lib.items():
             count = sum(1 for ids in entry_labels.values() if lid in ids)
@@ -296,13 +336,16 @@ class EditorController:
                 return ToolResult.fail("标签名不能为空")
             color = args.get("color", "#409EFF")
             import uuid
+
             lid = uuid.uuid4().hex[:8]
+
             def _mutate():
-                if not hasattr(ctx, 'label_library') or ctx.label_library is None:
+                if not hasattr(ctx, "label_library") or ctx.label_library is None:
                     ctx.label_library = {}
                 ctx.label_library[lid] = {"name": name, "color": color}
-                if hasattr(ctx, 'label_data_changed'):
+                if hasattr(ctx, "label_data_changed"):
                     ctx.label_data_changed.emit()
+
             ctx.safe_mutate(_mutate)
             return ToolResult.ok(f"已创建标签: {name}", data={"label_id": lid, "name": name, "color": color})
 
@@ -321,54 +364,61 @@ class EditorController:
             entry_ids = args.get("entry_ids", [])
             if not entry_ids:
                 return ToolResult.fail("请提供 entry_ids")
+
             def _mutate():
-                if not hasattr(ctx, 'entry_labels') or ctx.entry_labels is None:
+                if not hasattr(ctx, "entry_labels") or ctx.entry_labels is None:
                     ctx.entry_labels = {}
                 for eid in entry_ids:
                     if eid not in ctx.entry_labels:
                         ctx.entry_labels[eid] = set()
                     ctx.entry_labels[eid].add(lid)
-                if hasattr(ctx, 'label_data_changed'):
+                if hasattr(ctx, "label_data_changed"):
                     ctx.label_data_changed.emit()
+
             ctx.safe_mutate(_mutate)
-            return ToolResult.ok(f"已为 {len(entry_ids)} 条条目分配标签 '{label_name}'",
-                                data={"assigned_count": len(entry_ids)})
+            return ToolResult.ok(
+                f"已为 {len(entry_ids)} 条条目分配标签 '{label_name}'", data={"assigned_count": len(entry_ids)}
+            )
 
         elif action == "unassign":
             entry_ids = args.get("entry_ids", [])
             if not entry_ids:
                 return ToolResult.fail("请提供 entry_ids")
-            entry_labels_read = getattr(ctx, 'entry_labels', None) or {}
+            entry_labels_read = getattr(ctx, "entry_labels", None) or {}
             removed = sum(1 for eid in entry_ids if eid in entry_labels_read and lid in entry_labels_read[eid])
+
             def _mutate():
-                el = getattr(ctx, 'entry_labels', None) or {}
+                el = getattr(ctx, "entry_labels", None) or {}
                 for eid in entry_ids:
                     if eid in el and lid in el[eid]:
                         el[eid].discard(lid)
-                if hasattr(ctx, 'label_data_changed'):
+                if hasattr(ctx, "label_data_changed"):
                     ctx.label_data_changed.emit()
+
             ctx.safe_mutate(_mutate)
-            return ToolResult.ok(f"已从 {removed} 条条目移除标签 '{label_name}'",
-                                data={"removed_count": removed})
+            return ToolResult.ok(f"已从 {removed} 条条目移除标签 '{label_name}'", data={"removed_count": removed})
 
         elif action == "batch_assign":
             filter_state = ctx.filter_state
-            entry_labels_read = getattr(ctx, 'entry_labels', None) or {}
+            entry_labels_read = getattr(ctx, "entry_labels", None) or {}
             entries = filter_entries(collection, filter_state, entry_labels=entry_labels_read)
             _filtered_ids = [e.key for e in entries]
+
             def _mutate():
-                if not hasattr(ctx, 'entry_labels') or ctx.entry_labels is None:
+                if not hasattr(ctx, "entry_labels") or ctx.entry_labels is None:
                     ctx.entry_labels = {}
                 for eid in _filtered_ids:
                     if eid not in ctx.entry_labels:
                         ctx.entry_labels[eid] = set()
                     ctx.entry_labels[eid].add(lid)
-                if hasattr(ctx, 'label_data_changed'):
+                if hasattr(ctx, "label_data_changed"):
                     ctx.label_data_changed.emit()
+
             ctx.safe_mutate(_mutate)
             return ToolResult.ok(
                 f"已为筛选范围内 {len(entries)} 条条目批量分配标签 '{label_name}'",
-                data={"assigned_count": len(entries), "filter_total": len(entries)})
+                data={"assigned_count": len(entries), "filter_total": len(entries)},
+            )
 
 
 # ── 无状态 controller + 模块级兼容 wrapper ───────────────────────
@@ -425,25 +475,123 @@ def _tool_manage_entry_labels(args: dict, ctx, collection=None) -> ToolResult:
 
 def _register_editor_tools():
     from ..tool_registry import ToolRegistry
-    ToolRegistry.register_tools("editor", [
-        {"name": "set_filters", "display_name": "设置筛选", "description": "①Set composable entry-table filters; omitted dimensions remain unchanged. ②Arguments: optional stages, categories, labels, search_query, search_field=id/key/original/translation/context/all, and clear=false. None keeps a value and [] clears it. ③Returns {stage,category,label,search_query,search_field}, or {unchanged:true}. Rules: inspect with get_current_filters first; these filters affect get_visible_entries, get_statistics, and batch_assign.",
-         "execute": _tool_set_filters, "permission": "read", "parameters": _PARAM_SCHEMAS.get("set_filters", {})},
-        {"name": "get_visible_entries", "display_name": "获取可见条目", "description": "①Return a paginated list of entries matching current filters; source and translation text are capped at 200 characters. ②Arguments: limit=50 (maximum 200), offset=0. ③Returns {entries:[{key,id,original,translation,stage}], total_count, truncated}. Rules: pass key values as entry_id/entry_ids; set filters first; use get_statistics instead of traversing every page for counts.",
-         "execute": _tool_get_visible_entries, "permission": "read", "parameters": _PARAM_SCHEMAS.get("get_visible_entries", {})},
-        {"name": "select_entries", "display_name": "选择条目", "description": "①Select, deselect, or clear entries in temporary selection state, independent of labels. ②Arguments: action=select/deselect/clear and entry_ids for select/deselect. ③Returns {selected_count, selected_ids}. Rules: selection is not persisted and does not change labels; typical flow is get_visible_entries→select_entries→set_stage.",
-         "execute": _tool_select_entries, "permission": "write", "parameters": _PARAM_SCHEMAS.get("select_entries", {})},
-        {"name": "edit_translation", "display_name": "编辑翻译", "description": "①Edit one entry's translation and optionally its stage; set_stage changes stages in batches without editing text. ②Arguments: entry_id, new_translation, optional new_stage in 0/1/2/3/5/9/-1. ③Returns {entry_id, old_translation, new_translation, stage, stage_changed}, with translation fields capped at 100 characters.",
-         "execute": _tool_edit_translation, "permission": "write", "parameters": _PARAM_SCHEMAS.get("edit_translation", {})},
-        {"name": "set_stage", "display_name": "批量设置阶段", "description": "①Set the translation stage for multiple entries without changing text. ②Arguments: entry_ids and stage in 0/1/2/3/5/9/-1. ③Returns {updated_count} and, for partial matches, {not_found}. Rules: normal flow is 0 untranslated→1 translated→2 question→3 checked→5 reviewed; 9 locked and -1 hidden are special states.",
-         "execute": _tool_set_stage, "permission": "write", "parameters": _PARAM_SCHEMAS.get("set_stage", {})},
-        # Story 20: manage_entry_labels 合并 4→1
-        {"name": "list_labels", "display_name": "列出标签", "description": "①List defined labels and usage counts; read-only. ②No arguments. ③Returns {labels:[{id,name,color,count}]}. Rules: an empty or uninitialized library returns an empty list; label operations use name, while id is internal; create or modify labels with manage_entry_labels.",
-         "execute": _tool_list_labels, "permission": "read", "parameters": _PARAM_SCHEMAS.get("list_labels", {})},
-        {"name": "manage_entry_labels", "display_name": "管理条目标签",
-         "description": "①Manage entry-label relationships by creating labels, assigning or removing them, or batch assigning through action. Unlike set_filters, this changes data rather than table display. ②Arguments: action=create/assign/unassign/batch_assign, name, optional create color, and entry_ids for assign/unassign. ③Returns create→{label_id,name,color}, assign→{assigned_count}, unassign→{removed_count}, batch_assign→{assigned_count,filter_total}. Rules: later operations use label name, not id; confirm filters before batch assignment and use list_labels to verify existence.",
-         "execute": _tool_manage_entry_labels, "permission": "write", "require_confirmation": True,
-         "parameters": _PARAM_SCHEMAS.get("manage_entry_labels", {})},
-    ])
+
+    ToolRegistry.register_tools(
+        "editor",
+        [
+            {
+                "name": "set_filters",
+                "display_name": "设置筛选",
+                "description": (
+                    "①Set composable entry-table filters; omitted dimensions remain unchanged. "
+                    "②Arguments: optional stages, "
+                    "categories, labels, search_query, "
+                    "search_field=id/key/original/translation/context/all, and clear=false. "
+                    "None keeps a value and [] clears it. "
+                    "③Returns {stage,category,label,search_query,search_field}, or "
+                    "{unchanged:true}. Rules: inspect with get_current_filters first; these filters affect "
+                    "get_visible_entries, get_statistics, and batch_assign."
+                ),
+                "execute": _tool_set_filters,
+                "permission": "read",
+                "parameters": _PARAM_SCHEMAS.get("set_filters", {}),
+            },
+            {
+                "name": "get_visible_entries",
+                "display_name": "获取可见条目",
+                "description": (
+                    "①Return a paginated list of entries matching current filters; "
+                    "source and translation text are capped at "
+                    "200 characters. ②Arguments: limit=50 (maximum 200), offset=0. ③Returns "
+                    "{entries:[{key,id,original,translation,stage}], total_count, truncated}. "
+                    "Rules: pass key values as "
+                    "entry_id/entry_ids; set filters first; use get_statistics instead of "
+                    "traversing every page for counts."
+                ),
+                "execute": _tool_get_visible_entries,
+                "permission": "read",
+                "parameters": _PARAM_SCHEMAS.get("get_visible_entries", {}),
+            },
+            {
+                "name": "select_entries",
+                "display_name": "选择条目",
+                "description": (
+                    "①Select, deselect, or clear entries in temporary selection state, "
+                    "independent of labels. ②Arguments: "
+                    "action=select/deselect/clear and entry_ids for select/deselect. "
+                    "③Returns {selected_count, selected_ids}. "
+                    "Rules: selection is not persisted and does not change labels; typical flow is "
+                    "get_visible_entries→select_entries→set_stage."
+                ),
+                "execute": _tool_select_entries,
+                "permission": "write",
+                "parameters": _PARAM_SCHEMAS.get("select_entries", {}),
+            },
+            {
+                "name": "edit_translation",
+                "display_name": "编辑翻译",
+                "description": (
+                    "①Edit one entry's translation and optionally its stage; set_stage "
+                    "changes stages in batches without "
+                    "editing text. ②Arguments: entry_id, new_translation, optional new_stage in 0/1/2/3/5/9/-1. "
+                    "③Returns {entry_id, old_translation, new_translation, stage, stage_changed}, "
+                    "with translation fields "
+                    "capped at 100 characters."
+                ),
+                "execute": _tool_edit_translation,
+                "permission": "write",
+                "parameters": _PARAM_SCHEMAS.get("edit_translation", {}),
+            },
+            {
+                "name": "set_stage",
+                "display_name": "批量设置阶段",
+                "description": (
+                    "①Set the translation stage for multiple entries without changing text. "
+                    "②Arguments: entry_ids and stage "
+                    "in 0/1/2/3/5/9/-1. ③Returns {updated_count} and, for partial matches, "
+                    "{not_found}. Rules: normal flow "
+                    "is 0 untranslated→1 translated→2 question→3 checked→5 reviewed; "
+                    "9 locked and -1 hidden are special "
+                    "states."
+                ),
+                "execute": _tool_set_stage,
+                "permission": "write",
+                "parameters": _PARAM_SCHEMAS.get("set_stage", {}),
+            },
+            # Story 20: manage_entry_labels 合并 4→1
+            {
+                "name": "list_labels",
+                "display_name": "列出标签",
+                "description": (
+                    "①List defined labels and usage counts; read-only. ②No arguments. ③Returns "
+                    "{labels:[{id,name,color,count}]}. Rules: an empty or uninitialized "
+                    "library returns an empty list; label "
+                    "operations use name, while id is internal; create or modify labels with manage_entry_labels."
+                ),
+                "execute": _tool_list_labels,
+                "permission": "read",
+                "parameters": _PARAM_SCHEMAS.get("list_labels", {}),
+            },
+            {
+                "name": "manage_entry_labels",
+                "display_name": "管理条目标签",
+                "description": (
+                    "①Manage entry-label relationships by creating labels, assigning or removing them, "
+                    "or batch assigning "
+                    "through action. Unlike set_filters, this changes data rather than table display. ②Arguments: "
+                    "action=create/assign/unassign/batch_assign, name, optional create color, and entry_ids for "
+                    "assign/unassign. ③Returns create→{label_id,name,color}, assign→{assigned_count}, "
+                    "unassign→{removed_count}, batch_assign→{assigned_count,filter_total}. "
+                    "Rules: later operations use label "
+                    "name, not id; confirm filters before batch assignment and use list_labels to verify existence."
+                ),
+                "execute": _tool_manage_entry_labels,
+                "permission": "write",
+                "require_confirmation": True,
+                "parameters": _PARAM_SCHEMAS.get("manage_entry_labels", {}),
+            },
+        ],
+    )
 
 
 _register_editor_tools()

@@ -2,9 +2,14 @@
 !/.claude/skills/
 !/.claude/settings.json
 /out/
-/data/
+/data/*
+!/data/prompts/
+!/data/prompts/**
+!/data/skills/
+!/data/skills/translate_with_terms.toml
 /.venv/
-/installer/
+/installer/*
+!/installer/setup.iss
 
 # 构建产物 & IDE
 __pycache__/
@@ -12,6 +17,7 @@ __pycache__/
 /build/
 /dist/
 *.spec
+!transbridge.spec
 .pytest_cache/
 /简历/
 

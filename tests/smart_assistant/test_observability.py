@@ -1,12 +1,13 @@
 """Story 07: ObservabilityCollector 测试 — token 统计 / 追踪持久化 / 过期清理。"""
+
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import sys
 import tempfile
 import time
 import unittest
-from pathlib import Path
 
 from PyQt6.QtWidgets import QApplication
 
@@ -20,6 +21,7 @@ class TestObservabilityCollector(unittest.TestCase):
 
     def setUp(self):
         from transbridge.smart_assistant.observability.collector import ObservabilityCollector
+
         self._tmp = tempfile.mkdtemp()
         self.collector = ObservabilityCollector(storage_dir=Path(self._tmp))
 
@@ -27,6 +29,7 @@ class TestObservabilityCollector(unittest.TestCase):
         # 等待 daemon 线程完成异步文件写入（_save_trace 在后台线程中运行）
         time.sleep(0.3)
         import shutil
+
         shutil.rmtree(self._tmp, ignore_errors=True)
 
     # ── 会话生命周期 ────────────────────────────────────────────
@@ -70,10 +73,16 @@ class TestObservabilityCollector(unittest.TestCase):
         self.collector.start_conversation("conv_save_test")
         self.collector.on_step_started(1, "test_tool")
         from transbridge.smart_assistant.execution_engine import StepResult
-        self.collector.on_step_finished(StepResult(
-            step_id=1, tool="test_tool", success=True,
-            message="OK", duration_ms=42,
-        ))
+
+        self.collector.on_step_finished(
+            StepResult(
+                step_id=1,
+                tool="test_tool",
+                success=True,
+                message="OK",
+                duration_ms=42,
+            )
+        )
         self.collector.end_conversation()
         # 等待 daemon 线程完成异步文件写入
         time.sleep(0.5)
@@ -82,6 +91,7 @@ class TestObservabilityCollector(unittest.TestCase):
 
     def test_cleanup_old_traces(self):
         import time
+
         self.collector.start_conversation("conv_old")
         self.collector.end_conversation()
         # 等待 daemon 线程完成异步文件写入
@@ -100,10 +110,16 @@ class TestObservabilityCollector(unittest.TestCase):
         self.collector.start_conversation("conv_tools")
         self.collector.on_step_started(1, "translate")
         from transbridge.smart_assistant.execution_engine import StepResult
-        self.collector.on_step_finished(StepResult(
-            step_id=1, tool="translate", success=True,
-            message="翻译完成", duration_ms=500,
-        ))
+
+        self.collector.on_step_finished(
+            StepResult(
+                step_id=1,
+                tool="translate",
+                success=True,
+                message="翻译完成",
+                duration_ms=500,
+            )
+        )
         self.assertEqual(len(self.collector._active.tools_called), 1)
         self.assertEqual(self.collector._active.tools_called[0].tool_name, "translate")
 
@@ -111,10 +127,16 @@ class TestObservabilityCollector(unittest.TestCase):
         self.collector.start_conversation("conv_retry")
         self.collector.on_step_started(1, "flakey_tool")
         from transbridge.smart_assistant.execution_engine import StepResult
-        self.collector.on_step_finished(StepResult(
-            step_id=1, tool="flakey_tool", success=False,
-            message="timeout", duration_ms=100,
-        ))
+
+        self.collector.on_step_finished(
+            StepResult(
+                step_id=1,
+                tool="flakey_tool",
+                success=False,
+                message="timeout",
+                duration_ms=100,
+            )
+        )
         self.collector.on_step_retrying(1, 1)
         self.collector.on_step_retrying(1, 2)
         self.assertEqual(self.collector._active.tools_called[-1].retry_count, 2)

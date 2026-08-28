@@ -1,9 +1,10 @@
 import os
-import pytest
 from pathlib import Path
 
-from transbridge.parser.plugin_parser import PluginParser
+import pytest
+
 from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.parser.plugin_parser import PluginParser
 
 
 def _esp_path() -> Path:
@@ -24,6 +25,7 @@ def test_parse_real_esp_smoke():
     parser = PluginParser()
 
     progress_calls = []
+
     def progress_callback(current: int, total: int, desc: str):
         progress_calls.append((current, total, desc))
 
@@ -38,7 +40,7 @@ def test_parse_real_esp_smoke():
 
     # 3) 关键字段不变量：id/key/original 格式
     for it in items[:200]:  # 只抽样前 200 条，避免太慢
-        assert isinstance(it.id, str) and ":" in it.id          # editor_id:form_id
+        assert isinstance(it.id, str) and ":" in it.id  # editor_id:form_id
         assert isinstance(it.key, str) and len(it.key) > 0
         assert it.translation == ""
         assert it.stage == 0

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from sse_plugin_interface.plugin import SSEPlugin
 from sse_plugin_interface.plugin_string import PluginString
+
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.parser.plugin.plugin_with_context import SSEPluginWithContext
 from transbridge.parser.strings_file import PluginStringsLookup

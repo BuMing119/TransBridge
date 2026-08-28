@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QComboBox,
@@ -139,8 +139,7 @@ class DictionaryPanel(QDialog):
                 self._dict_combo.setCurrentIndex(idx)
         self._dict_combo.blockSignals(False)
         # 重建词典标签下拉
-        tags = {t for d in self._manager.dictionaries.values()
-                for e in d.entries.values() for t in e.tags}
+        tags = {t for d in self._manager.dictionaries.values() for e in d.entries.values() for t in e.tags}
         self._tag_combo.blockSignals(True)
         self._tag_combo.clear()
         self._tag_combo.addItem("(全部)", "")
@@ -159,8 +158,7 @@ class DictionaryPanel(QDialog):
         tag_filter = self._tag_combo.currentData()
         self._table.setRowCount(0)
 
-        dicts = ([self._manager.dictionaries[key]]
-                 if key is not None else list(self._manager.dictionaries.values()))
+        dicts = [self._manager.dictionaries[key]] if key is not None else list(self._manager.dictionaries.values())
 
         rows = 0
         for d in dicts:
@@ -209,6 +207,7 @@ class DictionaryPanel(QDialog):
             return
 
         from transbridge.ui.tools.dictionary_dialog import SaveToDictionaryDialog
+
         dlg = SaveToDictionaryDialog(
             self,
             source_path=self._default_source_path(),
@@ -228,8 +227,11 @@ class DictionaryPanel(QDialog):
 
         try:
             added = self._manager.save_from_collection(
-                collection, mod_file_id=mod_file_id, scope=scope,
-                entry_ids=entry_ids, tags=tags,
+                collection,
+                mod_file_id=mod_file_id,
+                scope=scope,
+                entry_ids=entry_ids,
+                tags=tags,
             )
             self._manager.save()
             self._rebuild_combo()
@@ -289,6 +291,7 @@ class DictionaryPanel(QDialog):
         # 冲突仲裁
         if result.conflicts:
             from transbridge.ui.tools.conflict_dialog import DictionaryConflictDialog
+
             dlg = DictionaryConflictDialog(result.conflicts, self)
             if dlg.exec() == QDialog.DialogCode.Accepted:
                 for entry_id, chosen in dlg.result():
@@ -304,9 +307,7 @@ class DictionaryPanel(QDialog):
     # ------------------------------------------------------------------
 
     def _on_import_dict(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self, "导入词典", "", "词典文件 (*.tbdict)"
-        )
+        path, _ = QFileDialog.getOpenFileName(self, "导入词典", "", "词典文件 (*.tbdict)")
         if not path:
             return
         try:
@@ -315,9 +316,7 @@ class DictionaryPanel(QDialog):
             QMessageBox.critical(self, "导入失败", str(exc))
             return
         if not ok:
-            ret = QMessageBox.question(
-                self, "同名词典", "存在同名词典，是否覆盖？"
-            )
+            ret = QMessageBox.question(self, "同名词典", "存在同名词典，是否覆盖？")
             if ret == QMessageBox.StandardButton.Yes:
                 try:
                     self._manager.import_dict(Path(path), overwrite=True)

@@ -3,12 +3,12 @@
 Extracted from memory_store.py (Story 04: 模块精简收尾)。
 """
 
+from collections import deque
 import json
 import logging
 import os
-import threading
-from collections import deque
 from pathlib import Path
+import threading
 
 from transbridge.smart_assistant.guardrails.output_validator import sanitize_for_storage
 
@@ -37,8 +37,7 @@ class MemoryWriterThread(threading.Thread):
       文件并保留 dirty flag 以触发重试。
     """
 
-    def __init__(self, storage_dir: Path, metadata_path: Path, index_path: Path,
-                 get_metadata_cb, get_vector_store_cb):
+    def __init__(self, storage_dir: Path, metadata_path: Path, index_path: Path, get_metadata_cb, get_vector_store_cb):
         super().__init__(daemon=True)
         self._queue: deque = deque()
         self._cv = threading.Condition()

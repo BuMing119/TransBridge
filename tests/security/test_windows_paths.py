@@ -73,6 +73,7 @@ def test_relative_path_without_working_directory_is_denied(tmp_path: Path) -> No
 
 # --- UNC ---------------------------------------------------------------
 
+
 @pytest.mark.skipif(os.name != "nt", reason="UNC server paths are Windows-only")
 def test_unc_path_is_never_within_a_local_drive_grant(tmp_path: Path) -> None:
     root = _make_grant(tmp_path / "grant")
@@ -87,6 +88,7 @@ def test_unc_path_is_never_within_a_local_drive_grant(tmp_path: Path) -> None:
 
 
 # --- Unicode -----------------------------------------------------------
+
 
 @pytest.mark.parametrize(
     "name",
@@ -109,16 +111,17 @@ def test_unicode_paths_are_authorized_within_grant(tmp_path: Path, name: str) ->
     assert decision.code == "PATH_ALLOWED"
 
 
-@pytest.mark.skipif(os.name == "nt", reason="<>\" are illegal in Windows file names")
+@pytest.mark.skipif(os.name == "nt", reason='<>" are illegal in Windows file names')
 def test_illegal_windows_filename_chars_are_rejected_only_by_filesystem(tmp_path: Path) -> None:
     root = _make_grant(tmp_path / "grant")
-    target = root / '<file>"\'&.txt'
+    target = root / "<file>\"'&.txt"
     target.write_text("safe", encoding="utf-8")
 
     assert _policy(root).authorize(target).allowed
 
 
 # --- long paths ----------------------------------------------------------
+
 
 def test_long_path_under_grant_is_authorized(tmp_path: Path) -> None:
     root = _make_grant(tmp_path / "grant")
@@ -156,6 +159,7 @@ def test_nonexistent_target_parent_uses_canonical_parent(tmp_path: Path) -> None
 
 # --- case ----------------------------------------------------------------
 
+
 @pytest.mark.skipif(os.name != "nt", reason="case-insensitive filesystem is a Windows property")
 def test_case_variant_resolves_within_grant(tmp_path: Path) -> None:
     root = _make_grant(tmp_path / "grant")
@@ -182,6 +186,7 @@ def test_case_variant_outside_grant_is_still_denied(tmp_path: Path) -> None:
 
 
 # --- symlink / junction ----------------------------------------------------
+
 
 def test_symlink_escape_is_denied(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = _make_grant(tmp_path / "grant")
@@ -234,6 +239,7 @@ def test_junction_escape_is_denied(tmp_path: Path) -> None:
 
 
 # --- canonical directory target zero-write -------------------------------
+
 
 def _hostile_write(dest: Path) -> None:
     dest.mkdir(parents=True, exist_ok=True)

@@ -2,15 +2,15 @@
 
 验证新旧并行路径：Controller 状态转换是否正确追踪实际对话流程。
 """
+
 from __future__ import annotations
 
-import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from transbridge.smart_assistant.session_controller import SessionController
 
-
 # ── 模拟 Orchestrator 响应解析的简化版 ──
+
 
 def _fake_parsed_response(mode="react", steps=None, thought=""):
     return {"mode": mode, "steps": steps or [], "thought": thought}
@@ -23,8 +23,7 @@ class TestFullConversationFlow:
         """创建模拟 ChatWidget 注入回调后的 Controller。"""
         orch = MagicMock()
         handler = MagicMock()
-        handler._needs_confirm = lambda s: s.get("tool") in (
-            "write_to_file", "start_translation")
+        handler._needs_confirm = lambda s: s.get("tool") in ("write_to_file", "start_translation")
 
         state_log = []
         sys_msgs = []
@@ -71,8 +70,7 @@ class TestFullConversationFlow:
 
         # Step 2: LLM 返回单工具调用
         step = {"id": 1, "tool": "get_statistics", "args": {}}
-        controller.handle_llm_response(_fake_parsed_response(
-            mode="react", steps=[step], thought="检查当前翻译进度"))
+        controller.handle_llm_response(_fake_parsed_response(mode="react", steps=[step], thought="检查当前翻译进度"))
         assert controller.state == SessionController.State.AWAITING_CONFIRM
         assert len(tool_cards) == 1
 
@@ -100,8 +98,7 @@ class TestFullConversationFlow:
             {"id": 1, "tool": "parse_file", "args": {"path": "test.esp"}},
             {"id": 2, "tool": "start_translation", "args": {}, "depends_on": [1]},
         ]
-        controller.handle_llm_response(_fake_parsed_response(
-            mode="plan", steps=steps, thought="先解析再翻译"))
+        controller.handle_llm_response(_fake_parsed_response(mode="plan", steps=steps, thought="先解析再翻译"))
         assert controller.state == SessionController.State.AWAITING_CONFIRM
         assert len(plan_cards) == 1
 
@@ -127,8 +124,7 @@ class TestFullConversationFlow:
             {"id": 1, "tool": "get_app_state", "args": {}},
             {"id": 2, "tool": "get_statistics", "args": {}},
         ]
-        controller.handle_llm_response(_fake_parsed_response(
-            mode="react", steps=steps, thought="先看全局状态再看统计"))
+        controller.handle_llm_response(_fake_parsed_response(mode="react", steps=steps, thought="先看全局状态再看统计"))
 
         assert controller.state == SessionController.State.AWAITING_CONFIRM
 
@@ -150,8 +146,7 @@ class TestFullConversationFlow:
         controller.handle_user_message("帮我翻译")
         assert controller.react_depth == 0
         step = {"id": 1, "tool": "get_statistics", "args": {}}
-        controller.handle_llm_response(_fake_parsed_response(
-            mode="react", steps=[step], thought="先看看有多少待翻译"))
+        controller.handle_llm_response(_fake_parsed_response(mode="react", steps=[step], thought="先看看有多少待翻译"))
         controller.handle_user_confirmed([step], "react")
         controller.handle_execution_complete([])
         # 自动进入 Round 2
@@ -160,8 +155,7 @@ class TestFullConversationFlow:
 
         # Round 2: LLM 看了统计后决定翻译
         step2 = {"id": 2, "tool": "start_translation", "args": {}}
-        controller.handle_llm_response(_fake_parsed_response(
-            mode="react", steps=[step2], thought="开始翻译"))
+        controller.handle_llm_response(_fake_parsed_response(mode="react", steps=[step2], thought="开始翻译"))
         controller.handle_user_confirmed([step2], "react")
         controller.handle_execution_complete([])
         # 自动进入 Round 3
@@ -180,8 +174,7 @@ class TestFullConversationFlow:
         # 模拟 MAX_REACT_DEPTH+2 轮完整的 ReAct（深度递增后检查，需 >MAX 触发上限）
         for i in range(SessionController._MAX_REACT_DEPTH + 2):
             if controller.state == SessionController.State.THINKING:
-                controller.handle_llm_response(_fake_parsed_response(
-                    mode="react", steps=[step], thought=f"round {i}"))
+                controller.handle_llm_response(_fake_parsed_response(mode="react", steps=[step], thought=f"round {i}"))
                 controller.handle_user_confirmed([step], "react")
             elif controller.state == SessionController.State.AWAITING_CONFIRM:
                 controller.handle_user_confirmed([step], "react")
@@ -191,7 +184,8 @@ class TestFullConversationFlow:
 
         # 达到上限后应终止到 IDLE
         assert controller.state == SessionController.State.IDLE, (
-            f"期望 IDLE，实际 {controller.state}，depth={controller.react_depth}")
+            f"期望 IDLE，实际 {controller.state}，depth={controller.react_depth}"
+        )
         assert controller.react_depth == 0
         assert any("深度" in m for m in sys_msgs)
 
@@ -203,8 +197,7 @@ class TestFullConversationFlow:
 
         controller.handle_user_message("写回文件")
         step = {"id": 1, "tool": "write_to_file", "args": {}}
-        controller.handle_llm_response(_fake_parsed_response(
-            mode="react", steps=[step], thought="需要写回"))
+        controller.handle_llm_response(_fake_parsed_response(mode="react", steps=[step], thought="需要写回"))
 
         assert controller.state == SessionController.State.AWAITING_CONFIRM
 
@@ -235,8 +228,7 @@ class TestFullConversationFlow:
 
         controller.handle_user_message("翻译全部")
         step = {"id": 1, "tool": "start_translation", "args": {}}
-        controller.handle_llm_response(_fake_parsed_response(
-            mode="react", steps=[step], thought="启动翻译"))
+        controller.handle_llm_response(_fake_parsed_response(mode="react", steps=[step], thought="启动翻译"))
         controller.handle_user_confirmed([step], "react")
         assert controller.state == SessionController.State.EXECUTING
 
@@ -254,20 +246,16 @@ class TestFullConversationFlow:
         """验证 Orchestrator._on_finished 确实调用了 on_response_parsed。"""
         # 这个测试验证 Orchestrator 回调链完整
         from transbridge.smart_assistant.conversation_orchestrator import ConversationOrchestrator
-        from transbridge.smart_assistant.conversation_manager import ConversationManager
 
-        parsed_calls = []
-
-        conv = ConversationManager()
         # 注意: Orchestrator 需要很多依赖，这里只验证回调属性存在
         # 完整的端到端测试需要启动 Qt 应用
-        assert hasattr(ConversationOrchestrator, '__init__')
+        assert hasattr(ConversationOrchestrator, "__init__")
 
         # 验证 ConversationOrchestrator.__init__ 接受 on_response_parsed 参数
         import inspect
+
         sig = inspect.signature(ConversationOrchestrator.__init__)
-        assert 'on_response_parsed' in sig.parameters, (
-            "Orchestrator 缺少 on_response_parsed 参数！")
+        assert "on_response_parsed" in sig.parameters, "Orchestrator 缺少 on_response_parsed 参数！"
 
 
 class TestCallbackWiringEquivalence:
@@ -284,24 +272,22 @@ class TestCallbackWiringEquivalence:
 
         # Round 1
         controller.handle_user_message("hi")
-        controller.handle_llm_response(
-            {"mode": "react", "steps": [step], "thought": ""})
+        controller.handle_llm_response({"mode": "react", "steps": [step], "thought": ""})
         controller.handle_user_confirmed([step], "react")
         controller.handle_execution_complete([])
 
         # Round 2
-        controller.handle_llm_response(
-            {"mode": "react", "steps": [step], "thought": ""})
+        controller.handle_llm_response({"mode": "react", "steps": [step], "thought": ""})
         controller.handle_user_confirmed([step], "react")
         controller.handle_execution_complete([])
 
         expected = [
-            "thinking",           # IDLE → THINKING
-            "awaiting",           # THINKING → AWAITING
-            "executing",          # AWAITING → EXECUTING
-            "thinking",           # EXECUTING → THINKING (round 1 done)
-            "awaiting",           # THINKING → AWAITING
-            "executing",          # AWAITING → EXECUTING
-            "thinking",           # EXECUTING → THINKING (round 2 done)
+            "thinking",  # IDLE → THINKING
+            "awaiting",  # THINKING → AWAITING
+            "executing",  # AWAITING → EXECUTING
+            "thinking",  # EXECUTING → THINKING (round 1 done)
+            "awaiting",  # THINKING → AWAITING
+            "executing",  # AWAITING → EXECUTING
+            "thinking",  # EXECUTING → THINKING (round 2 done)
         ]
         assert seq == expected, f"状态序列不匹配:\n期望: {expected}\n实际: {seq}"

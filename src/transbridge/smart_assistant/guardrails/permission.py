@@ -9,8 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 class PermissionGuard(GuardMiddleware):
-    def __init__(self, enable_admin_confirm: bool = True,
-                 write_require_confirm: bool = False):
+    def __init__(self, enable_admin_confirm: bool = True, write_require_confirm: bool = False):
         self._enable_admin_confirm = enable_admin_confirm
         self._write_require_confirm = write_require_confirm
 
@@ -21,14 +20,14 @@ class PermissionGuard(GuardMiddleware):
             logger.warning("PermissionGuard: 未知工具 %s", tool_name)
             return GuardResult(False, f"未知工具: {tool_name}")
 
-        perm = getattr(spec, 'permission', 'read')
+        perm = getattr(spec, "permission", "read")
         if perm == "read":
             return GuardResult(True)
         # M8: PermissionGuard 在 execute_with_guardrails 中仅返回状态文本
         # 上级调用方通过 GuardResult.requires_confirmation 字段判断
         # 是否需要弹窗确认，不再依赖 reason 中的 magic string。
         if perm == "write":
-            if self._write_require_confirm or getattr(spec, 'require_confirmation', False):
+            if self._write_require_confirm or getattr(spec, "require_confirmation", False):
                 return self._confirm_or_request(step, ctx, "write")
             return GuardResult(True)
         if perm == "admin":
@@ -40,10 +39,7 @@ class PermissionGuard(GuardMiddleware):
     @staticmethod
     def _confirm_or_request(step, ctx, level: str) -> GuardResult:
         request_context = getattr(ctx, "request_context", None)
-        owner_id = (
-            getattr(request_context, "owner_id", "")
-            or getattr(ctx, "owner_id", "")
-        )
+        owner_id = getattr(request_context, "owner_id", "") or getattr(ctx, "owner_id", "")
         plan_hash = getattr(ctx, "plan_hash", "")
         invocation = ToolInvocation(
             tool_name=step.get("tool", ""),

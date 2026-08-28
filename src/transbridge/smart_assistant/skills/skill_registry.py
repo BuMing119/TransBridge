@@ -39,6 +39,7 @@ class SkillRegistry:
     def reload(cls, directory) -> None:
         """重新扫描目录，热加载 Skill。"""
         from .skill_loader import SkillLoader
+
         cls._skills.clear()
         for spec in SkillLoader.load_all(directory):
             cls.register(spec)

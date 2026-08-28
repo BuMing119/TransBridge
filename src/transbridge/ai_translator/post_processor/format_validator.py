@@ -3,8 +3,9 @@
 """
 
 import re
-from .base import BaseChecker, PostProcessIssue
 from typing import TYPE_CHECKING
+
+from .base import BaseChecker, PostProcessIssue
 
 if TYPE_CHECKING:
     from ...converter.translation_entry import TranslationEntry
@@ -23,13 +24,13 @@ class FormatValidator(BaseChecker):
 
     # 占位符正则模式
     PLACEHOLDER_PATTERNS = [
-        (r'%[sdifouxXeEgGcCrR]', 'printf'),  # %s, %d, %f 等
-        (r'\{\d+\}', 'csharp'),  # {0}, {1} 等
-        (r'\{\{.*?\}\}', 'mustache'),  # {{variable}} 等
+        (r"%[sdifouxXeEgGcCrR]", "printf"),  # %s, %d, %f 等
+        (r"\{\d+\}", "csharp"),  # {0}, {1} 等
+        (r"\{\{.*?\}\}", "mustache"),  # {{variable}} 等
     ]
 
     # 格式标记
-    FORMAT_TAGS = ['<br>', '<br/>', '<br />', '[pagebreak]', '\\n', '\\r\\n']
+    FORMAT_TAGS = ["<br>", "<br/>", "<br />", "[pagebreak]", "\\n", "\\r\\n"]
 
     @property
     def name(self) -> str:
@@ -67,9 +68,7 @@ class FormatValidator(BaseChecker):
 
         return issues
 
-    def _check_placeholders(
-        self, entry: "TranslationEntry", original: str, translation: str
-    ) -> list[PostProcessIssue]:
+    def _check_placeholders(self, entry: "TranslationEntry", original: str, translation: str) -> list[PostProcessIssue]:
         """检查占位符是否匹配。"""
         issues = []
 
@@ -84,7 +83,10 @@ class FormatValidator(BaseChecker):
                     entry_id=entry.id,
                     issue_type=PostProcessIssue.PLACEHOLDER_MISMATCH,
                     severity="error",
-                    message=f"占位符数量不匹配：原文 {len(original_placeholders)} 个，译文 {len(translation_placeholders)} 个",
+                    message=(
+                        f"占位符数量不匹配：原文 {len(original_placeholders)} 个，"
+                        f"译文 {len(translation_placeholders)} 个"
+                    ),
                     original=original,
                     translation=translation,
                     suggestion=f"请确保译文包含以下占位符: {original_placeholders}",
@@ -100,7 +102,7 @@ class FormatValidator(BaseChecker):
                         entry_id=entry.id,
                         issue_type=PostProcessIssue.PLACEHOLDER_MISMATCH,
                         severity="error",
-                        message=f"第 {i+1} 个占位符不匹配：原文 '{orig}'，译文 '{trans}'",
+                        message=f"第 {i + 1} 个占位符不匹配：原文 '{orig}'，译文 '{trans}'",
                         original=original,
                         translation=translation,
                         suggestion=f"请将 '{trans}' 改为 '{orig}'",
@@ -130,9 +132,7 @@ class FormatValidator(BaseChecker):
         placeholders.sort(key=lambda x: x[0])
         return [p[1] for p in placeholders]
 
-    def _check_format_tags(
-        self, entry: "TranslationEntry", original: str, translation: str
-    ) -> list[PostProcessIssue]:
+    def _check_format_tags(self, entry: "TranslationEntry", original: str, translation: str) -> list[PostProcessIssue]:
         """检查格式标记是否完整保留。"""
         issues = []
 
@@ -175,13 +175,13 @@ class FormatValidator(BaseChecker):
         bracket_pairs = [
             ('"', '"'),  # 双引号
             ("'", "'"),  # 单引号
-            ('(', ')'),  # 圆括号
-            ('[', ']'),  # 方括号
-            ('{', '}'),  # 花括号
-            ('「', '」'),  # 日式引号
-            ('『', '』'),  # 日式双引号
+            ("(", ")"),  # 圆括号
+            ("[", "]"),  # 方括号
+            ("{", "}"),  # 花括号
+            ("「", "」"),  # 日式引号
+            ("『", "』"),  # 日式双引号
             ('"', '"'),  # 中文双引号
-            (''', '''),  # 中文单引号
+            (""", """),  # 中文单引号
         ]
 
         for open_char, close_char in bracket_pairs:
@@ -249,13 +249,13 @@ class FormatValidator(BaseChecker):
 
         # 定义括号映射
         bracket_map = {
-            ')': '(',
-            ']': '[',
-            '}': '{',
-            '」': '「',
-            '』': '『',
+            ")": "(",
+            "]": "[",
+            "}": "{",
+            "」": "「",
+            "』": "『",
         }
-        open_brackets = set(['(', '[', '{', '「', '『'])
+        open_brackets = set(["(", "[", "{", "「", "『"])
 
         for i, char in enumerate(text):
             if char in open_brackets:
@@ -275,9 +275,7 @@ class FormatValidator(BaseChecker):
 
         return issues
 
-    def _check_illegal_chars(
-        self, entry: "TranslationEntry", translation: str
-    ) -> list[PostProcessIssue]:
+    def _check_illegal_chars(self, entry: "TranslationEntry", translation: str) -> list[PostProcessIssue]:
         """检查是否存在非法字符。"""
         issues = []
 
@@ -313,7 +311,7 @@ class FormatValidator(BaseChecker):
 
         # 检查可能导致编码问题的字符
         # 例如：BOM标记、零宽字符等
-        zero_width_chars = ['\ufeff', '\u200b', '\u200c', '\u200d', '\u2060', '\ufeff']
+        zero_width_chars = ["\ufeff", "\u200b", "\u200c", "\u200d", "\u2060", "\ufeff"]
         found_zero_width = []
         for char in zero_width_chars:
             if char in translation:

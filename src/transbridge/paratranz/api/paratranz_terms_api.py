@@ -2,14 +2,9 @@ from transbridge.paratranz.paratranz_client import ParatranzClient
 
 
 class ParatranzTermsAPI(ParatranzClient):
-
     def list_terms(self, project_id: int, page: int = 1, page_size: int = 50):
         """获取术语列表（分页）"""
-        return self._request(
-            "GET",
-            f"/projects/{project_id}/terms",
-            params={"page": page, "pageSize": page_size}
-        )
+        return self._request("GET", f"/projects/{project_id}/terms", params={"page": page, "pageSize": page_size})
 
     def create_term(self, project_id: int, data: dict):
         """
@@ -50,11 +45,7 @@ class ParatranzTermsAPI(ParatranzClient):
             {"inserted": int, "updated": int, "deleted": int}
         """
         with open(filepath, "rb") as f:
-            return self._request(
-                "PUT",
-                f"/projects/{project_id}/terms",
-                files={"file": f}
-            )
+            return self._request("PUT", f"/projects/{project_id}/terms", files={"file": f})
 
     def get_term(self, project_id: int, term_id: int):
         """获取术语信息"""

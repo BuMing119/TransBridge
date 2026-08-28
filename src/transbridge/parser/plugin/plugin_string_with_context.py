@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 
-from .item import ContextUnion
 from sse_plugin_interface.plugin_string import PluginString
+
+from .item import ContextUnion
 
 
 @dataclass

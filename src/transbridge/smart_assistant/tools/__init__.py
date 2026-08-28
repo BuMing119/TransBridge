@@ -11,6 +11,7 @@ NOTE (QA-007): 注册模式不一致 — 当前 tools/skills/file_parser 三个�
   调用 register_all() 显式注册所有工具（无导入副作用）。
   模块级的 side-effect 导入已标记为 DEPRECATED，仅保留向后兼容。
 """
+
 from .base import (
     ExecutionContext,
     HITLRequest,

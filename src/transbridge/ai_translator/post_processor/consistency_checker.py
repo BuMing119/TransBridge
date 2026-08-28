@@ -3,8 +3,9 @@
 """
 
 import re
-from .base import BaseChecker, PostProcessIssue
 from typing import TYPE_CHECKING
+
+from .base import BaseChecker, PostProcessIssue
 
 if TYPE_CHECKING:
     from ...converter.translation_entry import TranslationEntry
@@ -41,7 +42,7 @@ class ConsistencyChecker(BaseChecker):
         else:
             self._esp_path = esp_path_or_manager
         # 缓存加载后的术语列表
-        self._terms_cache: list["TermEntry"] = []
+        self._terms_cache: list[TermEntry] = []
         self._terms_loaded = False
 
     def _load_terms(self) -> None:
@@ -55,6 +56,7 @@ class ConsistencyChecker(BaseChecker):
 
         # 直接从硬盘加载合并缓存，无需创建 TermDatabaseManager
         from ..term_database import TermDatabaseManager
+
         self._terms_cache = TermDatabaseManager.load_merged_cache(self._esp_path)
         self._terms_loaded = True
 
@@ -94,9 +96,7 @@ class ConsistencyChecker(BaseChecker):
 
         return matched
 
-    def _is_term_match(
-        self, text: str, term: str, case_sensitive: bool = False
-    ) -> bool:
+    def _is_term_match(self, text: str, term: str, case_sensitive: bool = False) -> bool:
         """
         检查单个术语/变体是否匹配原文。
 
@@ -128,9 +128,7 @@ class ConsistencyChecker(BaseChecker):
             # 词边界子串匹配
             return self._is_word_boundary_match(text, term, False)
 
-    def _is_word_boundary_match(
-        self, text: str, term: str, case_sensitive: bool = False
-    ) -> bool:
+    def _is_word_boundary_match(self, text: str, term: str, case_sensitive: bool = False) -> bool:
         """
         检查术语在文本中是否为词边界匹配。
 

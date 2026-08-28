@@ -4,19 +4,21 @@
 实际实现已迁移至 src/transbridge/config/，
 本文件保留 ActionRule + re-export 以兼容旧 import 路径。
 """
-import uuid
+
 from dataclasses import dataclass, field
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
+import uuid
 
 # ── Re-export（向后兼容）──────────────────────────────────
-from transbridge.config.llm import LLMConfig, EmbeddingConfig  # noqa: F401
-from transbridge.config.paratranz import ParatranzConfig        # noqa: F401
+from transbridge.config.llm import EmbeddingConfig, LLMConfig  # noqa: F401
+from transbridge.config.paratranz import ParatranzConfig  # noqa: F401
 
 if TYPE_CHECKING:
     from transbridge.converter.translation_entry import TranslationEntry
 
 
 # ── ActionRule ────────────────────────────────────────────
+
 
 @dataclass
 class ActionRule:
@@ -34,7 +36,6 @@ class ActionRule:
     action: str = "skip"
 
     def match(self, entry: "TranslationEntry") -> bool:
-        from transbridge.converter.translation_entry import TranslationEntry
         if self.status_filter is not None and entry.stage not in self.status_filter:
             return False
         if self.label_filter is not None:
@@ -114,7 +115,4 @@ def apply_rules(rules: list, entries: list) -> dict:
     ]
     assignments = ActionPlanner().plan(planning_entries, rule_specs).assignments
     by_key = {entry.identity: entry for entry in entries}
-    return {
-        by_key[assignment.key].id: assignment.action.value
-        for assignment in assignments
-    }
+    return {by_key[assignment.key].id: assignment.action.value for assignment in assignments}
