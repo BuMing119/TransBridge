@@ -5,6 +5,7 @@
 | Epic | 状态 | Stories | 文档 |
 |---|---|---:|---|
 | project-terminology-build-versioning-reporting | S00-11 生产闭环完成；S12 正式性能收口未通过，全部门禁 OFF | 12/13 | [plan](project-terminology-build-versioning-reporting/plan.md) |
+| proofread-terminology-closure | 已完成（2026-08-30，相关 QA 通过） | 3/3 | [plan](proofread-terminology-closure/plan.md) |
 | native-structured-outputs | 已完成 | 5/5 | [plan](native-structured-outputs/plan.md) |
 | english-llm-prompts | 已完成（2026-08-28，Story 01–06 聚焦 QA 通过） | 6/6 | [plan](english-llm-prompts/plan.md) |
 | embedding-model-management | 已完成（2026-08-27，相关 QA 通过） | 5/5 | [plan](embedding-model-management/plan.md) |
