@@ -126,6 +126,8 @@ class PostProcessCheckpoint:
             confidence=data.get("confidence", 0.0),
             needs_arbitration=data.get("needs_arbitration", False),
             note=data.get("note", ""),
+            valid=data.get("valid", True),
+            failure_code=data.get("failure_code", ""),
         )
 
     @staticmethod

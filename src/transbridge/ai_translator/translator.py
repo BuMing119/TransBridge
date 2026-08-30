@@ -1133,6 +1133,9 @@ class AutoTranslator:
                     def resolve_terms(candidate):
                         if self._term_mgr is None or not candidate.original:
                             return {}
+                        contextual = getattr(self._term_mgr, "match_terms_for_entry", None)
+                        if callable(contextual):
+                            return contextual(candidate)
                         return self._term_mgr.match_terms(
                             [candidate.original],
                             context=self._term_mgr.lookup_context_for_entry(candidate),
@@ -1147,6 +1150,10 @@ class AutoTranslator:
                             polish_level=self._cfg.llm_config.pp_polish_level,
                             model=self._cfg.llm_config.model,
                             max_tokens_per_batch=self._cfg.llm_config.max_tokens_per_batch,
+                            refinement_batch_size=max(
+                                1,
+                                int(getattr(self._cfg.llm_config, "pp_refinement_batch_size", 5)),
+                            ),
                             max_output_tokens=self._cfg.llm_config.max_output_tokens,
                             max_workers=self._cfg.llm_config.max_concurrent,
                         )

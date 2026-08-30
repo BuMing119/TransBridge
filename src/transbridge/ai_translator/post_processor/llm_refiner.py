@@ -6,14 +6,13 @@ LLM修复者。
 """
 
 from collections.abc import Mapping, Set
-from dataclasses import dataclass, field
-import json
+from concurrent.futures import CancelledError
 from pathlib import Path
-import re
 import tomllib
 from typing import TYPE_CHECKING
 import warnings
 
+from transbridge.application.translation.ai_request_budget import AiRequestCancelledError
 from transbridge.config.language_profiles import load_language_profile
 from transbridge.config.paths import get_data_resource_dir
 
@@ -23,6 +22,13 @@ from .prompt_contract import (
     build_postprocess_messages,
     render_prompt_template,
     validate_prompt_template,
+)
+from .refinement_response import (
+    FixApplied as FixApplied,
+    RefineResult,
+    failed_refine_result,
+    parse_batch_refinement_response,
+    parse_refinement_response,
 )
 
 if TYPE_CHECKING:
@@ -38,28 +44,6 @@ _SYSTEM_REQUIRED_VARIABLES = _SYSTEM_ALLOWED_VARIABLES
 # 单条 User 允许并必需的动态变量。
 _SINGLE_USER_ALLOWED_VARIABLES = frozenset({"original", "current_translation", "context", "issues", "terms"})
 _SINGLE_USER_REQUIRED_VARIABLES = frozenset({"original", "current_translation", "context", "issues", "terms"})
-
-
-@dataclass
-class FixApplied:
-    """应用的修复项。"""
-
-    issue_type: str  # 原问题类型
-    original_problem: str  # 原问题描述
-    fix_description: str  # 修复方式说明
-
-
-@dataclass
-class RefineResult:
-    """修复结果。"""
-
-    entry_id: str
-    original_translation: str
-    refined_translation: str
-    fixes_applied: list[FixApplied] = field(default_factory=list)
-    confidence: float = 0.0  # 0-1，对修复结果的信心度
-    needs_arbitration: bool = False  # 是否需要裁决（信心度低或改动大）
-    note: str = ""  # 额外说明
 
 
 # ── 内置默认提示词（只修复，不润色；JSON 示例为合法 JSON）─────────────────
@@ -266,6 +250,7 @@ class LLMRefiner:
         self,
         entry: "TranslationEntry",
         issues: list["PostProcessIssue"],
+        terms: Mapping[str, str] | None = None,
     ) -> RefineResult:
         """
         对单个条目进行针对性修复。
@@ -273,12 +258,13 @@ class LLMRefiner:
         Args:
             entry: 待修复的翻译条目
             issues: 检测到的问题列表
+            terms: 已按该条目作用域匹配的显式术语；省略时沿用术语管理器
 
         Returns:
             修复结果
         """
         # 构建Prompt
-        messages = self._build_refinement_prompt(entry, issues)
+        messages = self._build_refinement_prompt(entry, issues, terms=terms)
 
         try:
             response = self._llm.chat(
@@ -286,21 +272,16 @@ class LLMRefiner:
                 max_tokens=output_token_limit(self._max_output_tokens, 2000),
             )
             return self._parse_refinement_response(entry, response)
+        except (CancelledError, AiRequestCancelledError) as e:
+            return self._failed_result(entry, f"LLM修复已取消: {e}", "cancelled")
         except Exception as e:
-            # LLM调用失败，返回原始译文并标记
-            return RefineResult(
-                entry_id=entry.id,
-                original_translation=entry.translation or "",
-                refined_translation=entry.translation or "",
-                confidence=0.0,
-                needs_arbitration=True,
-                note=f"LLM修复失败: {e}",
-            )
+            return self._failed_result(entry, f"LLM修复失败: {e}", "call_failed")
 
     def refine_batch(
         self,
         entries: list["TranslationEntry"],
         issues_map: dict[str, list["PostProcessIssue"]],
+        terms_map: Mapping[str, Mapping[str, str]] | None = None,
     ) -> dict[str, RefineResult]:
         """
         批量修复条目。
@@ -308,6 +289,7 @@ class LLMRefiner:
         Args:
             entries: 待修复的条目列表
             issues_map: entry_id -> 问题列表的映射
+            terms_map: entry_id/稳定 key -> 该条目显式术语的映射；省略时沿用术语管理器
 
         Returns:
             entry_id -> 修复结果的映射
@@ -316,7 +298,7 @@ class LLMRefiner:
             return {}
 
         # 构建批量Prompt
-        messages = self._build_batch_refinement_prompt(entries, issues_map)
+        messages = self._build_batch_refinement_prompt(entries, issues_map, terms_map=terms_map)
 
         try:
             response = self._llm.chat(
@@ -324,25 +306,30 @@ class LLMRefiner:
                 max_tokens=output_token_limit(self._max_output_tokens, 4000),
             )
             return self._parse_batch_refinement_response(entries, response)
+        except (CancelledError, AiRequestCancelledError) as e:
+            return {entry.id: self._failed_result(entry, f"批量修复已取消: {e}", "cancelled") for entry in entries}
         except Exception:
             # 批量失败，降级为逐个处理
             results = {}
             for entry in entries:
                 entry_issues = issues_map.get(entry.id, [])
-                results[entry.id] = self.refine(entry, entry_issues)
+                entry_terms = terms_map.get(entry.id, terms_map.get(entry.key, {})) if terms_map is not None else None
+                results[entry.id] = self.refine(entry, entry_issues, terms=entry_terms)
             return results
 
     def _build_refinement_prompt(
         self,
         entry: "TranslationEntry",
         issues: list["PostProcessIssue"],
+        *,
+        terms: Mapping[str, str] | None = None,
     ) -> list[dict]:
         """构建针对性修复的Prompt。"""
         # 格式化问题列表
         issues_text = self._format_issues(issues)
 
         # 获取相关术语
-        terms_text = self._get_relevant_terms_text(entry)
+        terms_text = self._format_terms(terms if terms is not None else self._get_relevant_terms(entry))
 
         # 渲染稳定 System 与动态 User，并组装 SYSTEM(FINAL) -> USER
         system_content = self._render_system(self._prompts["system"], "refinement.single.system")
@@ -368,6 +355,8 @@ class LLMRefiner:
         self,
         entries: list["TranslationEntry"],
         issues_map: dict[str, list["PostProcessIssue"]],
+        *,
+        terms_map: Mapping[str, Mapping[str, str]] | None = None,
     ) -> list[dict]:
         """构建批量修复的Prompt。"""
         lines = ["Entries to correct:"]
@@ -384,11 +373,23 @@ class LLMRefiner:
                 lines.append("Detected issues:")
                 for issue in issues:
                     lines.append(f"  - [{issue.severity}] {issue.issue_type}: {issue.message}")
+                    if issue.term:
+                        lines.append(f"    Term: {issue.term}")
+                    if issue.matched_form:
+                        lines.append(f"    Matched form: {issue.matched_form}")
+                    if issue.standard_translation:
+                        lines.append(f"    Required translation: {issue.standard_translation}")
+                    if issue.suggestion:
+                        lines.append(f"    Suggestion: {issue.suggestion}")
             else:
                 lines.append("Detected issues: none (keep unchanged; no correction needed)")
 
             # 获取该条目的相关术语
-            terms = self._get_relevant_terms(entry)
+            terms = (
+                terms_map.get(entry.id, terms_map.get(entry.key, {}))
+                if terms_map is not None
+                else self._get_relevant_terms(entry)
+            )
             if terms:
                 lines.append("Relevant terminology:")
                 for term, trans in terms.items():
@@ -415,6 +416,12 @@ class LLMRefiner:
         for issue in issues:
             lines.append(f"- [{issue.severity}] {issue.issue_type}")
             lines.append(f"  Issue: {issue.message}")
+            if issue.term:
+                lines.append(f"  Term: {issue.term}")
+            if issue.matched_form:
+                lines.append(f"  Matched form: {issue.matched_form}")
+            if issue.standard_translation:
+                lines.append(f"  Required translation: {issue.standard_translation}")
             if issue.suggestion:
                 lines.append(f"  Suggestion: {issue.suggestion}")
         return "\n".join(lines)
@@ -434,7 +441,11 @@ class LLMRefiner:
 
     def _get_relevant_terms_text(self, entry: "TranslationEntry") -> str:
         """获取格式化的术语文本。"""
-        terms = self._get_relevant_terms(entry)
+        return self._format_terms(self._get_relevant_terms(entry))
+
+    @staticmethod
+    def _format_terms(terms: Mapping[str, str]) -> str:
+        """格式化已经按条目作用域匹配的术语。"""
         if not terms:
             return "none"
         return "\n".join(f"  {t} → {tr}" for t, tr in terms.items())
@@ -445,45 +456,7 @@ class LLMRefiner:
         response: str,
     ) -> RefineResult:
         """解析修复响应。"""
-        try:
-            # 提取JSON
-            json_match = re.search(r"\{[\s\S]*\}", response)
-            if json_match:
-                data = json.loads(json_match.group())
-            else:
-                data = json.loads(response)
-
-            # 解析fixes_applied
-            fixes = []
-            for fix_data in data.get("fixes_applied", []):
-                fixes.append(
-                    FixApplied(
-                        issue_type=fix_data.get("issue_type", ""),
-                        original_problem=fix_data.get("original_problem", ""),
-                        fix_description=fix_data.get("fix_description", ""),
-                    )
-                )
-
-            return RefineResult(
-                entry_id=entry.id,
-                original_translation=entry.translation or "",
-                refined_translation=data.get("refined_translation", entry.translation or ""),
-                fixes_applied=fixes,
-                confidence=data.get("confidence", 0.0),
-                needs_arbitration=data.get("needs_arbitration", False),
-                note=data.get("note", ""),
-            )
-
-        except json.JSONDecodeError:
-            # JSON解析失败，尝试提取译文
-            return RefineResult(
-                entry_id=entry.id,
-                original_translation=entry.translation or "",
-                refined_translation=entry.translation or "",
-                confidence=0.0,
-                needs_arbitration=True,
-                note=f"响应解析失败: {response[:200]}",
-            )
+        return parse_refinement_response(entry, response)
 
     def _parse_batch_refinement_response(
         self,
@@ -491,78 +464,9 @@ class LLMRefiner:
         response: str,
     ) -> dict[str, RefineResult]:
         """解析批量修复响应。"""
-        entry_map = {alias: entry for entry in entries for alias in {str(entry.id), str(entry.key)}}
-        results = {}
-        duplicate_entry_ids: set[str] = set()
+        return parse_batch_refinement_response(entries, response)
 
-        try:
-            payload = json.loads(response)
-            if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
-                raise TypeError("refinement batch response must contain a results array")
-            data = payload["results"]
-
-            for item in data:
-                response_id = str(item.get("entry_id", ""))
-                entry = entry_map.get(response_id)
-                if not entry:
-                    continue
-                entry_id = str(entry.id)
-                if entry_id in results:
-                    duplicate_entry_ids.add(entry_id)
-                    continue
-
-                # 解析fixes_applied
-                fixes = []
-                for fix_data in item.get("fixes_applied", []):
-                    fixes.append(
-                        FixApplied(
-                            issue_type=fix_data.get("issue_type", ""),
-                            original_problem=fix_data.get("original_problem", ""),
-                            fix_description=fix_data.get("fix_description", ""),
-                        )
-                    )
-
-                results[entry_id] = RefineResult(
-                    entry_id=entry_id,
-                    original_translation=entry.translation or "",
-                    refined_translation=item.get("refined_translation", entry.translation or ""),
-                    fixes_applied=fixes,
-                    confidence=item.get("confidence", 0.0),
-                    needs_arbitration=item.get("needs_arbitration", False),
-                    note=item.get("note", ""),
-                )
-
-            for entry in entries:
-                if entry.id in duplicate_entry_ids:
-                    results[entry.id] = RefineResult(
-                        entry_id=entry.id,
-                        original_translation=entry.translation or "",
-                        refined_translation=entry.translation or "",
-                        confidence=0.0,
-                        needs_arbitration=True,
-                        note="批量修复响应重复返回该条目",
-                    )
-                    continue
-                if entry.id not in results:
-                    results[entry.id] = RefineResult(
-                        entry_id=entry.id,
-                        original_translation=entry.translation or "",
-                        refined_translation=entry.translation or "",
-                        confidence=0.0,
-                        needs_arbitration=True,
-                        note="批量修复响应缺少该条目",
-                    )
-
-        except (AttributeError, TypeError, json.JSONDecodeError):
-            # JSON解析失败，标记所有为失败
-            for entry in entries:
-                results[entry.id] = RefineResult(
-                    entry_id=entry.id,
-                    original_translation=entry.translation or "",
-                    refined_translation=entry.translation or "",
-                    confidence=0.0,
-                    needs_arbitration=True,
-                    note=f"批量响应解析失败: {response[:200]}",
-                )
-
-        return results
+    @staticmethod
+    def _failed_result(entry: "TranslationEntry", note: str, failure_code: str) -> RefineResult:
+        """构建保留运行前候选的结构化失败结果。"""
+        return failed_refine_result(entry, note, failure_code)

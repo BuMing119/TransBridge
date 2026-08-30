@@ -98,7 +98,11 @@ class ProofreadPipeline:
                     contextual = getattr(term_manager, "match_terms_for_entry", None)
                     if callable(contextual):
                         return dict(contextual(candidate))
-                    return dict(term_manager.match_terms([candidate.original]))
+                    lookup_context = getattr(term_manager, "lookup_context_for_entry", None)
+                    match_terms = getattr(term_manager, "match_terms", None)
+                    if callable(lookup_context) and callable(match_terms):
+                        return dict(match_terms([candidate.original], context=lookup_context(candidate)))
+                    return {}
                 except Exception:
                     return {}
 
@@ -110,6 +114,7 @@ class ProofreadPipeline:
                 polish_level=profile.polish_level,
                 model=model,
                 max_tokens_per_batch=max_tokens_per_batch,
+                refinement_batch_size=profile.refinement_batch_size,
                 max_output_tokens=max_output_tokens,
             )
         return cls(processor, profile, proofread_stage=proofread_stage)
@@ -238,7 +243,7 @@ class ProofreadPipeline:
         projected = {}
         for entry in entries:
             candidate = by_key.get(entry.identity)
-            valid = candidate is not None and "proofread" in candidate.phases
+            valid = candidate is not None and candidate.accepted and "proofread" in candidate.phases
             note = "；".join((*global_notes, *notes_by_key.get(entry.identity, ())))
             projected[str(entry.id)] = self._proofread_result(
                 entry,

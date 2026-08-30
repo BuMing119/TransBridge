@@ -186,6 +186,8 @@ def execute_postprocess_task(
             checkpoint_port=FilesystemPostProcessCheckpointPort(checkpoint_root / "postprocess"),
         )
         context = _request_context(ctx, task_id, RequestContext)
+        from transbridge.ai_translator.project_terminology_adapter import plugin_id_from_entry
+
         inputs = tuple(
             TranslationInput(
                 entry.identity,
@@ -194,6 +196,7 @@ def execute_postprocess_task(
                 entry.translation,
                 entry.stage,
                 entry.context or "",
+                plugin_id_from_entry(entry),
             )
             for entry in request.entries
         )
@@ -387,7 +390,17 @@ def _build_stages(request, client, term_manager, postprocessor_type, postprocess
         max_terms = request.limits["max_terms_per_batch"]
 
         def resolve_terms(candidate):
-            matches = term_manager.match_terms([candidate.original]) if candidate.original else {}
+            if not candidate.original:
+                return {}
+            contextual = getattr(term_manager, "match_terms_for_entry", None)
+            if callable(contextual):
+                matches = contextual(candidate)
+            else:
+                lookup_context = getattr(term_manager, "lookup_context_for_entry", None)
+                match_terms = getattr(term_manager, "match_terms", None)
+                if not callable(lookup_context) or not callable(match_terms):
+                    return {}
+                matches = match_terms([candidate.original], context=lookup_context(candidate))
             return dict(list(matches.items())[:max_terms])
 
         return (
@@ -399,6 +412,7 @@ def _build_stages(request, client, term_manager, postprocessor_type, postprocess
                 polish_level=str(getattr(config, "pp_polish_level", "moderate")),
                 model=str(getattr(config, "model", "")),
                 max_tokens_per_batch=request.limits["max_tokens_per_batch"],
+                refinement_batch_size=max(1, int(getattr(config, "pp_refinement_batch_size", 5))),
                 max_output_tokens=request.limits["max_output_tokens"],
                 max_workers=request.limits["max_concurrent"],
             ),

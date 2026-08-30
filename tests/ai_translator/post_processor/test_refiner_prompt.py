@@ -2,7 +2,7 @@
 
 覆盖：
 - Refiner 只修复明确问题：System/User 不含润色职责、polish_changes、$polish_level。
-- 输出字段只包含 RefineResult；不扩展数据模型。
+- Structured Outputs 合同保持不变；本地 RefineResult 额外记录兼容的有效性和失败分类。
 - issues/suggestion 与现有术语完整进入 User。
 - 无 issues 时不要求润色（返回当前译文语义）。
 - 单条/批量经 build_postprocess_messages：SYSTEM(FINAL) -> USER、唯一 FINAL。
@@ -17,11 +17,14 @@ import re
 from unittest.mock import patch
 
 from transbridge.ai_translator.post_processor.base import PostProcessIssue
+from transbridge.ai_translator.post_processor.checkpoint import PostProcessCheckpoint
 from transbridge.ai_translator.post_processor.llm_refiner import (
     FixApplied,
     LLMRefiner,
     RefineResult,
 )
+from transbridge.application.io import EntryKey, SourceNamespace
+from transbridge.application.translation.ai_request_budget import AiRequestCancelledError
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.infra.prompt_cache import PROMPT_CACHE_METADATA_KEY
 
@@ -295,4 +298,253 @@ def test_batch_duplicate_result_keeps_original_for_arbitration():
 
     assert result.refined_translation == "Current"
     assert result.needs_arbitration is True
+    assert result.valid is False
+    assert result.failure_code == "invalid_response"
     assert "重复" in result.note
+
+
+def test_explicit_single_terms_and_structured_issue_fields_bypass_term_manager():
+    class _UnexpectedTermManager:
+        def match_terms_for_entry(self, entry):
+            raise AssertionError("explicit scoped terms must be authoritative")
+
+    llm = _CapturingLLM()
+    refiner = _make_refiner(llm, terms=_UnexpectedTermManager())
+    issue = PostProcessIssue(
+        entry_id="e1",
+        issue_type=PostProcessIssue.TERM_MISMATCH,
+        severity="warning",
+        message="remaining deterministic mismatch",
+        original="Greybeard",
+        translation="灰胡子",
+        term="Greybeards",
+        matched_form="Greybeard",
+        standard_translation="灰胡子长老",
+    )
+
+    refiner.refine(_entry("e1", "Greybeard", "灰胡子"), [issue], terms={"Greybeards": "灰胡子长老"})
+
+    user_text = _user_of(llm.calls[0])["content"]
+    assert "Term: Greybeards" in user_text
+    assert "Matched form: Greybeard" in user_text
+    assert "Required translation: 灰胡子长老" in user_text
+    assert "Greybeards → 灰胡子长老" in user_text
+
+
+def test_explicit_batch_terms_are_isolated_by_stable_entry_key():
+    class _UnexpectedTermManager:
+        def match_terms_for_entry(self, entry):
+            raise AssertionError("explicit scoped terms must be authoritative")
+
+    first = TranslationEntry(
+        id="legacy-one",
+        key="stable-one",
+        original="Dragon",
+        translation="龙",
+        stage=1,
+        context="NPC_:FULL",
+    )
+    second = TranslationEntry(
+        id="legacy-two",
+        key="stable-two",
+        original="Whiterun",
+        translation="白城",
+        stage=1,
+        context="NPC_:FULL",
+    )
+    llm = _CapturingLLM()
+    refiner = _make_refiner(llm, terms=_UnexpectedTermManager())
+
+    refiner.refine_batch(
+        [first, second],
+        {first.id: [_issue(first.id)], second.id: [_issue(second.id)]},
+        terms_map={"stable-one": {"Dragon": "巨龙"}, "stable-two": {"Whiterun": "雪漫城"}},
+    )
+
+    user_text = _user_of(llm.calls[0])["content"]
+    first_block, second_block = user_text.split("【ENTRY_ID: legacy-two】")
+    assert "Dragon → 巨龙" in first_block
+    assert "Whiterun → 雪漫城" not in first_block
+    assert "Whiterun → 雪漫城" in second_block
+    assert "Dragon → 巨龙" not in second_block
+
+
+def test_batch_call_failure_single_fallback_preserves_explicit_terms():
+    class _BatchThenSingleLLM:
+        def __init__(self):
+            self.calls = []
+
+        def chat(self, messages, max_tokens=0):
+            self.calls.append(messages)
+            if len(self.calls) == 1:
+                raise RuntimeError("batch failed")
+            return json.dumps({
+                "refined_translation": "巨龙",
+                "fixes_applied": [],
+                "confidence": 1.0,
+                "needs_arbitration": False,
+                "note": "",
+            })
+
+    class _UnexpectedTermManager:
+        def match_terms_for_entry(self, entry):
+            raise AssertionError("fallback must preserve explicit terms")
+
+    llm = _BatchThenSingleLLM()
+    entry = _entry("e1", "Dragon", "龙")
+    result = _make_refiner(llm, terms=_UnexpectedTermManager()).refine_batch(
+        [entry],
+        {entry.id: [_issue(entry.id)]},
+        terms_map={entry.key: {"Dragon": "巨龙"}},
+    )[entry.id]
+
+    assert result.valid is True
+    assert result.refined_translation == "巨龙"
+    assert "Dragon → 巨龙" in _user_of(llm.calls[1])["content"]
+
+
+def test_single_empty_missing_and_invalid_json_responses_are_invalid():
+    refiner = _make_refiner(_CapturingLLM())
+    entry = _entry("e1", "Dragon", "龙")
+
+    for response in ('{"refined_translation": ""}', "{}", "not json"):
+        result = refiner._parse_refinement_response(entry, response)
+        assert result.valid is False
+        assert result.failure_code == "invalid_response"
+        assert result.refined_translation == "龙"
+        assert result.needs_arbitration is True
+
+
+def test_batch_unknown_entry_invalidates_all_requested_results():
+    entries = [_entry("e1", "Dragon", "龙"), _entry("e2", "Cat", "猫")]
+    response = json.dumps({
+        "results": [
+            {"entry_id": "e1", "refined_translation": "巨龙"},
+            {"entry_id": "e2", "refined_translation": "猫咪"},
+            {"entry_id": "unknown", "refined_translation": "?"},
+        ]
+    })
+
+    results = _make_refiner(_CapturingLLM())._parse_batch_refinement_response(entries, response)
+
+    assert set(results) == {"e1", "e2"}
+    assert all(result.valid is False for result in results.values())
+    assert all(result.failure_code == "invalid_response" for result in results.values())
+    assert all(result.refined_translation in {"龙", "猫"} for result in results.values())
+    assert all("unknown" in result.note for result in results.values())
+
+
+def test_ambiguous_legacy_key_alias_cannot_cross_stable_entry_keys():
+    entries = [
+        TranslationEntry(
+            id="project-id",
+            key="shared",
+            original="Dragon",
+            translation="项目旧译",
+            stage=1,
+            context="NPC_:FULL",
+            entry_key=EntryKey(SourceNamespace("project"), "shared"),
+        ),
+        TranslationEntry(
+            id="plugin-id",
+            key="shared",
+            original="Dragon",
+            translation="插件旧译",
+            stage=1,
+            context="NPC_:FULL",
+            entry_key=EntryKey(SourceNamespace("plugin"), "shared"),
+        ),
+    ]
+    response = json.dumps({"results": [{"entry_id": "shared", "refined_translation": "歧义结果"}]})
+
+    results = _make_refiner(_CapturingLLM())._parse_batch_refinement_response(entries, response)
+
+    assert set(results) == {"project-id", "plugin-id"}
+    assert all(result.valid is False for result in results.values())
+    assert {result.refined_translation for result in results.values()} == {"项目旧译", "插件旧译"}
+
+
+def test_batch_empty_missing_and_invalid_json_responses_are_invalid():
+    entries = [_entry("e1", "Dragon", "龙"), _entry("e2", "Cat", "猫")]
+    refiner = _make_refiner(_CapturingLLM())
+
+    empty = refiner._parse_batch_refinement_response(
+        entries,
+        '{"results":[{"entry_id":"e1","refined_translation":"   "}]}',
+    )
+    malformed = refiner._parse_batch_refinement_response(entries, "not json")
+
+    assert empty["e1"].valid is False
+    assert empty["e1"].failure_code == "invalid_response"
+    assert empty["e1"].needs_arbitration is True
+    assert "空值" in empty["e1"].note
+    assert empty["e2"].valid is False
+    assert "缺少" in empty["e2"].note
+    assert all(result.valid is False for result in malformed.values())
+    assert all(result.failure_code == "invalid_response" for result in malformed.values())
+
+
+def test_checkpoint_round_trips_structured_issue_and_refine_validity_with_legacy_defaults():
+    issue = _issue("e1")
+    issue.term = "Dragon"
+    issue.matched_form = "Dragons"
+    issue.standard_translation = "巨龙"
+    restored_issue = PostProcessCheckpoint.issue_from_dict(PostProcessCheckpoint.issue_to_dict(issue))
+    restored_result = PostProcessCheckpoint.refine_result_from_dict({
+        "entry_id": "e1",
+        "original_translation": "龙",
+        "refined_translation": "龙",
+        "valid": False,
+        "failure_code": "invalid_response",
+    })
+    legacy_result = PostProcessCheckpoint.refine_result_from_dict({
+        "entry_id": "e1",
+        "original_translation": "龙",
+        "refined_translation": "巨龙",
+    })
+
+    assert (restored_issue.term, restored_issue.matched_form, restored_issue.standard_translation) == (
+        "Dragon",
+        "Dragons",
+        "巨龙",
+    )
+    assert restored_result.valid is False
+    assert restored_result.failure_code == "invalid_response"
+    assert legacy_result.valid is True
+    assert legacy_result.failure_code == ""
+
+
+def test_single_call_failure_and_cancellation_have_structured_failure_codes():
+    class _FailingLLM:
+        def __init__(self, error):
+            self._error = error
+
+        def chat(self, messages, max_tokens=0):
+            raise self._error
+
+    entry = _entry("e1", "Dragon", "龙")
+    failed = _make_refiner(_FailingLLM(RuntimeError("provider unavailable"))).refine(entry, [_issue("e1")])
+    cancelled = _make_refiner(_FailingLLM(AiRequestCancelledError("cancelled"))).refine(entry, [_issue("e1")])
+
+    assert failed.valid is False
+    assert failed.failure_code == "call_failed"
+    assert cancelled.valid is False
+    assert cancelled.failure_code == "cancelled"
+
+
+def test_batch_cancellation_does_not_fallback_to_single_calls():
+    class _CancelledLLM:
+        def __init__(self):
+            self.call_count = 0
+
+        def chat(self, messages, max_tokens=0):
+            self.call_count += 1
+            raise AiRequestCancelledError("cancelled")
+
+    llm = _CancelledLLM()
+    entries = [_entry("e1", "Dragon", "龙"), _entry("e2", "Cat", "猫")]
+    results = _make_refiner(llm).refine_batch(entries, {entry.id: [_issue(entry.id)] for entry in entries})
+
+    assert llm.call_count == 1
+    assert all(result.valid is False for result in results.values())
+    assert all(result.failure_code == "cancelled" for result in results.values())

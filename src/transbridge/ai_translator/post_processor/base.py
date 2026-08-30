@@ -35,6 +35,10 @@ class PostProcessIssue:
     original: str
     translation: str
     suggestion: str = ""
+    # 术语问题的结构化上下文。默认空值保持旧检查器、断点和调用方兼容。
+    term: str = ""
+    matched_form: str = ""
+    standard_translation: str = ""
 
     # 问题类型常量
     TERM_MISMATCH = "term_mismatch"

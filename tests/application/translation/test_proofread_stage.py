@@ -92,7 +92,8 @@ def test_terms_are_resolved_after_admission_and_one_pass_accepts_unchanged_value
         request = json.loads(messages[1]["content"])
         entry = request["entries"][0]
         assert entry["terms"] == {"Dragon": "巨龙"}
-        return json.dumps({"results": [_result(candidate, "龙")]}, ensure_ascii=False)
+        assert "detected_issues" not in entry
+        return json.dumps({"results": [_result(candidate, "巨龙")]}, ensure_ascii=False)
 
     client = _PreparedClient(respond)
 
@@ -112,11 +113,17 @@ def test_terms_are_resolved_after_admission_and_one_pass_accepts_unchanged_value
     assert client.events == ["admitted", "prepared"]
     assert client.max_tokens == [0]
     assert outcome.diagnostics == ()
-    assert outcome.candidates[0].text == "龙"
+    assert outcome.candidates[0].text == "巨龙"
     assert outcome.candidates[0].phases == ("proofread",)
     assert "confidence" not in client.messages[0][1]["content"]
     assert "needs_arbitration" not in client.messages[0][1]["content"]
     assert "only necessary corrections" in client.messages[0][0]["content"]
+    system_prompt = client.messages[0][0]["content"]
+    assert "semantic errors" in system_prompt
+    assert "omissions" in system_prompt
+    assert "negation relationships" in system_prompt
+    assert "mandatory constraint" in system_prompt
+    assert "not a complete list of possible problems" in system_prompt
     _clean_messages, output_schema = extract_structured_output_directive(client.messages[0])
     assert output_schema == PROOFREAD_OUTPUT_SCHEMA
 
