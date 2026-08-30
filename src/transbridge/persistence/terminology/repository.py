@@ -49,10 +49,12 @@ from .connection import (
     translate_sqlite_error,
 )
 from .drafts import DraftStore
+from .inbound_review import SqliteInboundReviewStore
 from .paths import TerminologyPaths
 from .publish import SqlitePublishRepository
 from .queries import keyset_page
 from .report_snapshot import SqliteReportSnapshotStore
+from .sync_state import SqliteTerminologySyncState
 
 if TYPE_CHECKING:
     from .draft_transactions import DraftLineStateReader, SqliteDraftTransactionAdapter
@@ -101,6 +103,8 @@ class SqliteTerminologyRepository:
         self.artifacts = ArtifactLedger(self._connection)
         self.changelogs = ChangelogDocumentStore(self._connection)
         self.report_snapshots = SqliteReportSnapshotStore(self._connection, build_reader=self)
+        self.sync_state = SqliteTerminologySyncState(self)
+        self.inbound_reviews = SqliteInboundReviewStore(self)
         self._drafts = DraftStore(
             self._connection,
             project_id,

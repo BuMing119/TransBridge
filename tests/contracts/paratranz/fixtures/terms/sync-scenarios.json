@@ -1,0 +1,1 @@
+{"calibration":{"pluginScope":"lossy_skip","activeVariantPerTarget":1,"deletePolicy":"managed_baseline_only"},"scenarios":["pure_echo","both_sides_modified","remote_added","both_sides_deleted","remote_id_reused","remote_id_missing","independent_remote_item","plugin_scope_lossy_skip","two_variant_mapping_conflict","snapshot_changed_between_pages","timeout_after_write_unknown"]}

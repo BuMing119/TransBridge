@@ -19,6 +19,7 @@ from typing import Literal
 
 from transbridge.application.tasks import JobCapabilities, OwnerRef
 from transbridge.application.translation.ai_execution_profile import AiExecutionProfile
+from transbridge.application.translation.terminology_run_snapshot import TerminologyRunSnapshotRef
 from transbridge.ui.shell.action_catalog import IntentId
 
 AiRunMode = Literal["translate", "polish", "mixed", "batch"]
@@ -79,6 +80,7 @@ class AiRunSpec:
     execution_profile: AiExecutionProfile
     overwrite: bool
     capabilities: AiRunCapabilities
+    terminology_snapshot: TerminologyRunSnapshotRef | None = None
 
     def __post_init__(self) -> None:
         if not self.run_id.strip():
@@ -290,6 +292,7 @@ def build_run_spec(
     esp_path: str | None,
     overwrite: bool,
     project_revision: int | None = None,
+    terminology_snapshot: TerminologyRunSnapshotRef | None = None,
 ) -> AiRunSpec:
     values = tuple(entries)
     entry_keys = tuple(_entry_key(value) for value in values)
@@ -318,6 +321,7 @@ def build_run_spec(
         ),
         overwrite=overwrite,
         capabilities=capabilities_for(mode),
+        terminology_snapshot=terminology_snapshot,
     )
 
 

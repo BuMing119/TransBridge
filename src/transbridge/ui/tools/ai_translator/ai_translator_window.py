@@ -314,17 +314,32 @@ class AITranslatorWindow(QWidget):
             entries=tuple(candidates),
             overwrite=self._view_port.overwrite,
         )
+        checkpoint_terminology_ref = None
+        if checkpoint_run_id:
+            from transbridge.ai_translator.translator import ProgressCheckpoint
+            from transbridge.application.translation.terminology_run_snapshot import TerminologyRunSnapshotRef
+
+            checkpoint = ProgressCheckpoint.load(self._ctx.esp_path)
+            if checkpoint is not None and checkpoint.terminology_snapshot is not None:
+                try:
+                    checkpoint_terminology_ref = TerminologyRunSnapshotRef.from_dict(checkpoint.terminology_snapshot)
+                except (KeyError, TypeError, ValueError) as exc:
+                    QMessageBox.warning(self, "翻译断点不可恢复", f"项目术语快照身份无效：{exc}")
+                    return
         request = try_begin_run(
             self._run_controller,
             "translate",
             cfg,
             candidates,
             lambda: QMessageBox.warning(self, "翻译", "已有任务正在运行，请等待完成或关闭窗口取消。"),
+            on_error=lambda message: QMessageBox.warning(self, "项目术语不可用", message),
             overwrite=self._view_port.overwrite,
             esp_path=self._ctx.esp_path,
             project_id=getattr(self._ctx, "active_project_id", None),
             variant_id=getattr(self._ctx, "active_variant_id", None),
             run_id=checkpoint_run_id,
+            terminology_owner=self._ctx,
+            terminology_snapshot_ref=checkpoint_terminology_ref,
         )
         if request is None:
             return
@@ -370,9 +385,11 @@ class AITranslatorWindow(QWidget):
             cfg,
             run_entries,
             lambda: QMessageBox.warning(self, "混合模式", "已有任务正在运行，请等待完成或关闭窗口取消。"),
+            on_error=lambda message: QMessageBox.warning(self, "项目术语不可用", message),
             esp_path=self._ctx.esp_path,
             project_id=getattr(self._ctx, "active_project_id", None),
             variant_id=getattr(self._ctx, "active_variant_id", None),
+            terminology_owner=self._ctx,
         )
         if request is None:
             return
@@ -404,9 +421,11 @@ class AITranslatorWindow(QWidget):
             cfg,
             entries_with_translation,
             lambda: QMessageBox.warning(self, "润色", "已有任务正在运行，请等待完成或关闭窗口取消。"),
+            on_error=lambda message: QMessageBox.warning(self, "项目术语不可用", message),
             esp_path=self._ctx.esp_path,
             project_id=getattr(self._ctx, "active_project_id", None),
             variant_id=getattr(self._ctx, "active_variant_id", None),
+            terminology_owner=self._ctx,
         )
         if request is None:
             return

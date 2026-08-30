@@ -160,6 +160,7 @@ def build_runtime(
             "terminology_ui_commands": terminology.commands,
             "terminology_ui_services_factory": terminology,
             "effective_terminology_factory": terminology,
+            "terminology_sync_service_factory": terminology,
         }
         for name, use_case in production_use_cases.items():
             runtime_use_cases.register(name, use_case)
@@ -183,7 +184,13 @@ def build_runtime(
                 missing_prerequisites=("complete-build-required",),
             )
         )
-        terminology_resource = terminology.repositories
+        runtime_capabilities.register(
+            CapabilityReport(
+                CapabilityId("terminology.paratranz-sync"),
+                CapabilityState.AVAILABLE,
+            )
+        )
+        terminology_resource = terminology
     else:
         # Explicitly supplied repositories are a test/integration seam.  They
         # retain the historical fail-closed fallback unless the caller also

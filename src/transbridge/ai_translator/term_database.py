@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from transbridge.converter.translation_entry import TranslationEntry
     from transbridge.paratranz.config_manager import LLMConfig
 
+    from .legacy_term_policy import LegacyTermFilterPort
     from .project_terminology_adapter import ProjectTerminologyAdapter
 
 logger = logging.getLogger(__name__)
@@ -152,6 +153,7 @@ class TermDatabaseManager:
         *,
         effective_loader: ProjectTerminologyAdapter | None = None,
         terminology_context: TerminologyLookupContext | None = None,
+        legacy_term_filter: LegacyTermFilterPort | None = None,
     ):
         self._config = config
         self._esp_path = esp_path
@@ -159,6 +161,7 @@ class TermDatabaseManager:
         self._project_id = project_id
         self._effective_loader = effective_loader
         self._terminology_context = terminology_context
+        self._legacy_term_filter = legacy_term_filter
         if terminology_context is not None and terminology_context.plugin_id is not None:
             raise ValueError("TermDatabaseManager base terminology context must not select a plugin")
         self._retrieval_enabled = getattr(config, "retrieval_enabled", True)
@@ -313,6 +316,7 @@ class TermDatabaseManager:
                     entries = loader()
                     # 保存该来源的缓存
                     self._save_source_cache(source, entries)
+                    entries = self._filter_legacy_entries(source, entries)
                     for entry in entries:
                         term_map[entry.term] = entry
                     self._load_log.append((source, len(entries), None))
@@ -320,6 +324,7 @@ class TermDatabaseManager:
                     # 源加载失败时尝试从缓存恢复
                     cached = self._load_source_cache(source)
                     if cached is not None:
+                        cached = self._filter_legacy_entries(source, cached)
                         for entry in cached:
                             term_map[entry.term] = entry
                         self._load_log.append((source, len(cached), f"from cache (source failed: {e})"))
@@ -330,6 +335,12 @@ class TermDatabaseManager:
         # 保存合并后的缓存
         self.save_merged_cache(merged)
         return merged
+
+    def _filter_legacy_entries(self, source: str, entries: list[TermEntry]) -> list[TermEntry]:
+        policy = getattr(self, "_legacy_term_filter", None)
+        if policy is None:
+            return entries
+        return list(policy.filter_entries(source, entries))
 
     def get_load_log(self) -> list[tuple[str, int, str | None]]:
         """返回各来源加载结果：[(source, count, error_or_None), ...]。"""

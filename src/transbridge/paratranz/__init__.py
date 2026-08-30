@@ -11,6 +11,7 @@ _EXPORTS = {
     "ParatranzFilesAPI": "api.paratranz_files_api",
     "ParatranzStringsAPI": "api.paratranz_strings_api",
     "ParatranzTermsAPI": "api.paratranz_terms_api",
+    "ParaTranzTermsService": "terms_service",
     "ParatranzMembersAPI": "api.paratranz_members_api",
     "ParatranzHistoryAPI": "api.paratranz_history_api",
     "ParatranzExportAPI": "api.paratranz_export_api",

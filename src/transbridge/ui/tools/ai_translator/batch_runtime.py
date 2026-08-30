@@ -63,18 +63,25 @@ def open_batch_translation(
 
         client = ParatranzTermsAPI(ctx.config)
     controller = RunController(task_runtime=task_runtime)
-    request = controller.begin(
-        "batch",
-        config,
-        entries,
-        overwrite=dialog.is_overwrite(),
-        esp_path=esp_path,
-        project_id=None if project_id is None else str(project_id),
-    )
+    try:
+        request = controller.begin(
+            "batch",
+            config,
+            entries,
+            overwrite=dialog.is_overwrite(),
+            esp_path=esp_path,
+            project_id=None if project_id is None else str(project_id),
+            terminology_owner=ctx,
+        )
+    except Exception as exc:
+        from transbridge.application.translation.terminology_run_snapshot import TerminologyRunSnapshotError
+
+        if not isinstance(exc, TerminologyRunSnapshotError):
+            raise
+        QMessageBox.warning(parent, "项目术语不可用", str(exc))
+        return None
     activity = controller.create_activity(request)
     try:
-        from transbridge.ai_translator.project_terminology_runtime import resolve_project_terminology
-
         worker = _BatchTranslationWorker(
             slots=slots,
             llm_config=request.config,
@@ -83,7 +90,7 @@ def open_batch_translation(
             project_id=project_id,
             run_id=request.run_id,
             request_budget=request.request_budget,
-            terminology_binding=resolve_project_terminology(ctx),
+            terminology_binding=request.terminology_binding,
         )
         activity.bind_worker(worker)
         progress = _BatchTranslationProgressWindow(

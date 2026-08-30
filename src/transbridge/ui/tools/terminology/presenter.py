@@ -53,6 +53,7 @@ class TerminologyUiServices:
     queries: TerminologyQueryPort | None = None
     commands: TerminologyCommandPort | None = None
     runtime: TaskRuntime | None = None
+    sync: object | None = None
 
     @classmethod
     def from_runtime(cls, runtime: object, context: RequestContext | None = None) -> TerminologyUiServices:

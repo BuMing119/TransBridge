@@ -5,6 +5,16 @@ repository, GUI, network, and task implementations belong to adapters and are
 assembled only by the composition root.
 """
 
+from .paratranz_terms import (
+    ParaTranzTerm,
+    ParaTranzTerminologyPort,
+    ParaTranzTermPage,
+    ParaTranzTermSnapshot,
+    ParaTranzTermWrite,
+    ParaTranzTermWriteResult,
+    TermWriteOperation,
+    TermWriteStatus,
+)
 from .system import (
     ClockPort,
     ClosablePort,
@@ -24,9 +34,17 @@ __all__ = [
     "FileSystemPort",
     "FormatPort",
     "IdGeneratorPort",
+    "ParaTranzTerm",
+    "ParaTranzTermPage",
+    "ParaTranzTermSnapshot",
+    "ParaTranzTermWrite",
+    "ParaTranzTermWriteResult",
+    "ParaTranzTerminologyPort",
     "RepositoryPort",
     "SecretPort",
     "SecurityPort",
     "TaskPort",
+    "TermWriteOperation",
+    "TermWriteStatus",
     "closeables",
 ]

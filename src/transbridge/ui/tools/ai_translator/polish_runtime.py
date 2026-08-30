@@ -9,6 +9,7 @@ def create_polish_worker(
     entries: list,
     *,
     request_budget: object | None = None,
+    terminology_binding: object | None = None,
 ) -> object:
     import threading
 
@@ -30,9 +31,10 @@ def create_polish_worker(
     stop_event = threading.Event()
     pause_event = threading.Event()
     pause_event.set()
-    from transbridge.ai_translator.project_terminology_runtime import resolve_project_terminology
+    if terminology_binding is None:
+        from transbridge.ai_translator.project_terminology_runtime import ProjectTerminologyBinding
 
-    terminology = resolve_project_terminology(ctx)
+        terminology_binding = ProjectTerminologyBinding()
 
     def build_pipeline() -> ProofreadPipeline:
         term_manager = None
@@ -52,7 +54,7 @@ def create_polish_worker(
                 ctx.esp_path,
                 paratranz_client,
                 project_id,
-                **terminology.term_database_kwargs(),
+                **terminology_binding.term_database_kwargs(),
             )
             term_manager.load_all()
         llm_client = create_llm_client(config) if profile.requires_llm else None

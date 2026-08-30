@@ -1,0 +1,1 @@
+{"scenario":"server rejects a conflicting write","request":{"method":"PUT","path":"/projects/41/terms/201","body":{}},"response":{"status":409,"headers":{"Content-Type":"application/json","X-Request-ID":"terms-error-409"},"body":{"error":"conflict"}}}

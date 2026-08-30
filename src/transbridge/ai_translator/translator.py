@@ -114,6 +114,7 @@ class ProgressCheckpoint:
     run_id: str = ""
     term_repairs: list[dict] = field(default_factory=list)
     completed_term_repairs: list[str] = field(default_factory=list)
+    terminology_snapshot: dict | None = None
 
     @staticmethod
     def _get_path(esp_path: str) -> str:
@@ -134,6 +135,7 @@ class ProgressCheckpoint:
             "run_id": self.run_id,
             "term_repairs": self.term_repairs,
             "completed_term_repairs": self.completed_term_repairs,
+            "terminology_snapshot": self.terminology_snapshot,
         }
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -155,6 +157,7 @@ class ProgressCheckpoint:
                 run_id=data.get("run_id", ""),
                 term_repairs=data.get("term_repairs", []),
                 completed_term_repairs=data.get("completed_term_repairs", []),
+                terminology_snapshot=data.get("terminology_snapshot"),
             )
         except Exception:
             return None
@@ -182,11 +185,14 @@ class AutoTranslator:
         request_budget: AiRequestBudget | None = None,
         effective_terminology: ProjectTerminologyAdapter | None = None,
         terminology_context: TerminologyLookupContext | None = None,
+        legacy_term_filter: object | None = None,
+        terminology_snapshot: object | None = None,
     ):
         self._cfg = config
         self._paratranz_client = paratranz_client
         self._project_id = project_id
         self._candidate_checkpoint_port = candidate_checkpoint
+        self._terminology_snapshot = terminology_snapshot
         self._run_id_factory = run_id_factory or (lambda: f"translation-{secrets.token_hex(16)}")
         self._candidate_session = None
 
@@ -220,6 +226,7 @@ class AutoTranslator:
             project_id=project_id,
             effective_loader=effective_terminology,
             terminology_context=terminology_context,
+            legacy_term_filter=legacy_term_filter,
         )
         self._extractor = None
         self._planner = BatchPlanner(
@@ -459,6 +466,7 @@ class AutoTranslator:
         # 从断点恢复累计统计
         completed_fps: set[frozenset] = set()
         if checkpoint and checkpoint.run_id:
+            self._validate_checkpoint_terminology(checkpoint)
             result.success_count = checkpoint.result_so_far.get("success_count", 0)
             result.failed_count = checkpoint.result_so_far.get("failed_count", 0)
             result.new_dynamic_terms = checkpoint.result_so_far.get("new_dynamic_terms", 0)
@@ -769,6 +777,9 @@ class AutoTranslator:
                         run_id=run_id,
                         term_repairs=term_repairs_checkpoint,
                         completed_term_repairs=sorted(completed_term_repairs),
+                        terminology_snapshot=(
+                            None if self._terminology_snapshot is None else self._terminology_snapshot.to_dict()
+                        ),
                     )
                 cp.save(self._cfg.esp_path)
 
@@ -1299,6 +1310,23 @@ class AutoTranslator:
 
         _log(f"\n总耗时: {t_total:.2f}s")
         return result
+
+    def _validate_checkpoint_terminology(self, checkpoint: ProgressCheckpoint) -> None:
+        payload = checkpoint.terminology_snapshot
+        if self._terminology_snapshot is None:
+            if payload is not None:
+                raise ValueError("翻译断点要求项目术语快照，但当前运行没有该 Project/Variant")
+            return
+        if payload is None:
+            raise ValueError("翻译断点缺少项目术语快照身份，不能安全恢复")
+        from transbridge.application.translation.terminology_run_snapshot import TerminologyRunSnapshotRef
+
+        try:
+            checkpoint_ref = TerminologyRunSnapshotRef.from_dict(payload)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("翻译断点中的项目术语快照身份无效") from exc
+        if checkpoint_ref != self._terminology_snapshot:
+            raise ValueError("翻译断点的项目术语版本或内容摘要与当前运行不一致")
 
     def _run_batch(
         self,

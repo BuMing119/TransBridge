@@ -31,6 +31,21 @@ def test_window_close_releases_subscription_and_all_query_models() -> None:
     assert all(model.closed for model in window._models)
 
 
+def test_window_mounts_sync_as_a_versions_child_without_expanding_window_workflow() -> None:
+    presenter = TerminologyPresenter(
+        TerminologyUiServices(sync=object()),
+        RequestContext("operator", project_id="project", variant_id="variant"),
+    )
+
+    window = TerminologyWindow(presenter)
+
+    assert window.versions_view._sync_panel is window.sync_view
+    assert window.sync_view.parent() is window.versions_view
+    assert window.sync_view.backup_button.text() == "备份已发布版本…"
+    assert window.sync_view.bidirectional_button.text() == "双向同步…"
+    window.close()
+
+
 def test_window_uses_horizontal_object_navigation_without_workflow_tabs() -> None:
     presenter = TerminologyPresenter(
         TerminologyUiServices(),

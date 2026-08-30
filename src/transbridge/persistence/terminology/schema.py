@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 DDL = """
 CREATE TABLE IF NOT EXISTS schema_metadata (
@@ -14,6 +14,15 @@ CREATE TABLE IF NOT EXISTS schema_metadata (
 CREATE TABLE IF NOT EXISTS migration_history (
     from_version INTEGER NOT NULL,
     to_version INTEGER NOT NULL,
+    backup_path TEXT NOT NULL,
+    completed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (from_version, to_version)
+);
+CREATE TABLE IF NOT EXISTS migration_history_evidence (
+    from_version INTEGER NOT NULL,
+    to_version INTEGER NOT NULL,
+    source_digest TEXT NOT NULL CHECK(length(source_digest) = 64),
+    backup_digest TEXT NOT NULL CHECK(length(backup_digest) = 64),
     backup_path TEXT NOT NULL,
     completed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (from_version, to_version)
@@ -170,6 +179,103 @@ CREATE TABLE IF NOT EXISTS cache_extraction (
     touched_at INTEGER NOT NULL,
     size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0)
 );
+CREATE TABLE IF NOT EXISTS terminology_sync_lines (
+    line_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    variant_id TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
+    account_user_id INTEGER CHECK (account_user_id IS NULL OR account_user_id > 0),
+    remote_project_id INTEGER NOT NULL CHECK (remote_project_id > 0),
+    profile_revision INTEGER NOT NULL CHECK (profile_revision >= 0),
+    created_at TEXT NOT NULL,
+    retired_at TEXT,
+    payload_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS terminology_sync_profiles (
+    line_id TEXT PRIMARY KEY REFERENCES terminology_sync_lines(line_id) ON DELETE RESTRICT,
+    revision INTEGER NOT NULL CHECK (revision >= 0),
+    mapping_revision INTEGER NOT NULL CHECK (mapping_revision >= 0),
+    payload_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS terminology_sync_baselines (
+    line_id TEXT PRIMARY KEY REFERENCES terminology_sync_lines(line_id) ON DELETE RESTRICT,
+    revision INTEGER NOT NULL CHECK (revision >= 0),
+    completed_run_id TEXT NOT NULL REFERENCES terminology_sync_runs(run_id) ON DELETE RESTRICT,
+    payload_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS terminology_sync_item_links (
+    line_id TEXT NOT NULL REFERENCES terminology_sync_lines(line_id) ON DELETE RESTRICT,
+    item_id TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK (revision >= 0),
+    remote_id INTEGER CHECK (remote_id IS NULL OR remote_id > 0),
+    tombstone TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    PRIMARY KEY (line_id, item_id)
+);
+CREATE TABLE IF NOT EXISTS terminology_sync_runs (
+    run_id TEXT PRIMARY KEY,
+    line_id TEXT NOT NULL REFERENCES terminology_sync_lines(line_id) ON DELETE RESTRICT,
+    plan_id TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    payload_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS terminology_sync_outcomes (
+    outcome_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES terminology_sync_runs(run_id) ON DELETE RESTRICT,
+    line_id TEXT NOT NULL REFERENCES terminology_sync_lines(line_id) ON DELETE RESTRICT,
+    item_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    payload_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS terminology_sync_inbound_sets (
+    change_set_id TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK (revision >= 0),
+    line_id TEXT NOT NULL REFERENCES terminology_sync_lines(line_id) ON DELETE RESTRICT,
+    plan_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    PRIMARY KEY (change_set_id, revision)
+);
+CREATE TABLE IF NOT EXISTS terminology_sync_inbound_items (
+    change_set_id TEXT NOT NULL,
+    change_set_revision INTEGER NOT NULL CHECK (change_set_revision >= 0),
+    item_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    PRIMARY KEY (change_set_id, change_set_revision, item_id),
+    FOREIGN KEY (change_set_id, change_set_revision)
+        REFERENCES terminology_sync_inbound_sets(change_set_id, revision) ON DELETE RESTRICT
+);
+CREATE TABLE IF NOT EXISTS terminology_sync_inbound_reviews (
+    change_set_id TEXT NOT NULL,
+    change_set_revision INTEGER NOT NULL CHECK (change_set_revision >= 0),
+    revision INTEGER NOT NULL CHECK (revision >= 0),
+    status TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    PRIMARY KEY (change_set_id, revision),
+    FOREIGN KEY (change_set_id, change_set_revision)
+        REFERENCES terminology_sync_inbound_sets(change_set_id, revision) ON DELETE RESTRICT
+);
+CREATE TABLE IF NOT EXISTS terminology_sync_inbound_dispositions (
+    change_set_id TEXT NOT NULL,
+    review_revision INTEGER NOT NULL CHECK (review_revision >= 0),
+    item_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    PRIMARY KEY (change_set_id, review_revision, item_id),
+    FOREIGN KEY (change_set_id, review_revision)
+        REFERENCES terminology_sync_inbound_reviews(change_set_id, revision) ON DELETE RESTRICT
+);
+CREATE TABLE IF NOT EXISTS terminology_sync_inbound_proposals (
+    change_set_id TEXT NOT NULL,
+    review_revision INTEGER NOT NULL CHECK (review_revision >= 0),
+    proposal_digest TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    PRIMARY KEY (change_set_id, review_revision, proposal_digest),
+    FOREIGN KEY (change_set_id, review_revision)
+        REFERENCES terminology_sync_inbound_reviews(change_set_id, revision) ON DELETE RESTRICT
+);
 CREATE INDEX IF NOT EXISTS idx_evidence_page ON build_evidence(build_key, stable_id);
 CREATE INDEX IF NOT EXISTS idx_candidate_page ON build_candidates(build_key, stable_id);
 CREATE INDEX IF NOT EXISTS idx_conflict_page ON build_conflicts(build_key, stable_id);
@@ -186,6 +292,19 @@ CREATE INDEX IF NOT EXISTS idx_changelog_section_page
 CREATE INDEX IF NOT EXISTS idx_cache_build_gc ON cache_build(touched_at, cache_key);
 CREATE INDEX IF NOT EXISTS idx_cache_parse_gc ON cache_parse(touched_at, cache_key);
 CREATE INDEX IF NOT EXISTS idx_cache_extraction_gc ON cache_extraction(touched_at, cache_key);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sync_active_target
+    ON terminology_sync_lines(project_id, target_id) WHERE retired_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_sync_line_variant
+    ON terminology_sync_lines(project_id, variant_id, target_id, retired_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sync_live_remote_id
+    ON terminology_sync_item_links(line_id, remote_id)
+    WHERE remote_id IS NOT NULL AND tombstone = 'live';
+CREATE INDEX IF NOT EXISTS idx_sync_item_page ON terminology_sync_item_links(line_id, item_id);
+CREATE INDEX IF NOT EXISTS idx_sync_outcome_page ON terminology_sync_outcomes(run_id, outcome_id);
+CREATE INDEX IF NOT EXISTS idx_sync_inbound_line
+    ON terminology_sync_inbound_sets(line_id, change_set_id, revision);
+CREATE INDEX IF NOT EXISTS idx_sync_inbound_review_latest
+    ON terminology_sync_inbound_reviews(change_set_id, revision DESC);
 """
 
 IMMUTABLE_TABLES = (
@@ -204,11 +323,19 @@ IMMUTABLE_TABLES = (
     "changelog_documents",
     "changelog_manifests",
     "changelog_sections",
+    "terminology_sync_runs",
+    "terminology_sync_outcomes",
+    "terminology_sync_inbound_sets",
+    "terminology_sync_inbound_items",
+    "terminology_sync_inbound_reviews",
+    "terminology_sync_inbound_dispositions",
+    "terminology_sync_inbound_proposals",
 )
 
 REQUIRED_TABLES = frozenset({
     "schema_metadata",
     "migration_history",
+    "migration_history_evidence",
     "builds",
     "build_evidence",
     "build_candidates",
@@ -231,11 +358,54 @@ REQUIRED_TABLES = frozenset({
     "cache_build",
     "cache_parse",
     "cache_extraction",
+    "terminology_sync_lines",
+    "terminology_sync_profiles",
+    "terminology_sync_baselines",
+    "terminology_sync_item_links",
+    "terminology_sync_runs",
+    "terminology_sync_outcomes",
+    "terminology_sync_inbound_sets",
+    "terminology_sync_inbound_items",
+    "terminology_sync_inbound_reviews",
+    "terminology_sync_inbound_dispositions",
+    "terminology_sync_inbound_proposals",
+})
+
+REQUIRED_SYNC_INDEXES = frozenset({
+    "idx_sync_active_target",
+    "idx_sync_live_remote_id",
+    "idx_sync_item_page",
+    "idx_sync_outcome_page",
+    "idx_sync_inbound_review_latest",
+})
+
+REQUIRED_SYNC_TRIGGERS = frozenset({
+    "immutable_terminology_sync_runs_update",
+    "immutable_terminology_sync_runs_delete",
+    "immutable_terminology_sync_outcomes_update",
+    "immutable_terminology_sync_outcomes_delete",
+    "immutable_terminology_sync_inbound_sets_update",
+    "immutable_terminology_sync_inbound_sets_delete",
+    "immutable_terminology_sync_inbound_items_update",
+    "immutable_terminology_sync_inbound_items_delete",
+    "immutable_terminology_sync_inbound_reviews_update",
+    "immutable_terminology_sync_inbound_reviews_delete",
+    "immutable_terminology_sync_inbound_dispositions_update",
+    "immutable_terminology_sync_inbound_dispositions_delete",
+    "immutable_terminology_sync_inbound_proposals_update",
+    "immutable_terminology_sync_inbound_proposals_delete",
+    "sync_line_identity_immutable",
+    "sync_line_no_delete",
+    "sync_terminology_sync_profiles_no_delete",
+    "sync_terminology_sync_baselines_no_delete",
+    "sync_terminology_sync_item_links_no_delete",
 })
 
 
 def initialize_schema(connection: sqlite3.Connection) -> None:
-    connection.executescript(DDL)
+    for statement in DDL.split(";"):
+        if statement.strip():
+            connection.execute(statement)
     for table in IMMUTABLE_TABLES:
         connection.execute(
             f"CREATE TRIGGER IF NOT EXISTS immutable_{table}_update BEFORE UPDATE ON {table} "
@@ -244,6 +414,28 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
         connection.execute(
             f"CREATE TRIGGER IF NOT EXISTS immutable_{table}_delete BEFORE DELETE ON {table} "
             f"BEGIN SELECT RAISE(ABORT, '{table} rows are immutable'); END"
+        )
+    connection.execute(
+        "CREATE TRIGGER IF NOT EXISTS sync_line_identity_immutable BEFORE UPDATE ON terminology_sync_lines "
+        "WHEN OLD.line_id != NEW.line_id OR OLD.project_id != NEW.project_id "
+        "OR OLD.variant_id != NEW.variant_id OR OLD.target_id != NEW.target_id "
+        "OR OLD.endpoint != NEW.endpoint OR OLD.account_user_id IS NOT NEW.account_user_id "
+        "OR OLD.remote_project_id != NEW.remote_project_id OR OLD.profile_revision != NEW.profile_revision "
+        "OR OLD.created_at != NEW.created_at "
+        "BEGIN SELECT RAISE(ABORT, 'sync line identity is immutable'); END"
+    )
+    connection.execute(
+        "CREATE TRIGGER IF NOT EXISTS sync_line_no_delete BEFORE DELETE ON terminology_sync_lines "
+        "BEGIN SELECT RAISE(ABORT, 'sync line history is append-only'); END"
+    )
+    for table in (
+        "terminology_sync_profiles",
+        "terminology_sync_baselines",
+        "terminology_sync_item_links",
+    ):
+        connection.execute(
+            f"CREATE TRIGGER IF NOT EXISTS sync_{table}_no_delete BEFORE DELETE ON {table} "
+            f"BEGIN SELECT RAISE(ABORT, '{table} rows cannot be deleted'); END"
         )
     connection.execute(
         "INSERT INTO schema_metadata(singleton, schema_version) VALUES (1, ?) "
@@ -260,6 +452,18 @@ def validate_schema(connection: sqlite3.Connection) -> str | None:
     missing = sorted(REQUIRED_TABLES - tables)
     if missing:
         return "missing tables: " + ", ".join(missing)
+    indexes = {
+        str(row[0]) for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'index'").fetchall()
+    }
+    missing_indexes = sorted(REQUIRED_SYNC_INDEXES - indexes)
+    if missing_indexes:
+        return "missing indexes: " + ", ".join(missing_indexes)
+    triggers = {
+        str(row[0]) for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'").fetchall()
+    }
+    missing_triggers = sorted(REQUIRED_SYNC_TRIGGERS - triggers)
+    if missing_triggers:
+        return "missing triggers: " + ", ".join(missing_triggers)
     row = connection.execute("SELECT schema_version FROM schema_metadata WHERE singleton = 1").fetchone()
     if row is None or int(row[0]) != SCHEMA_VERSION:
         return "schema metadata does not match user_version"
@@ -270,6 +474,8 @@ __all__ = [
     "DDL",
     "IMMUTABLE_TABLES",
     "REQUIRED_TABLES",
+    "REQUIRED_SYNC_INDEXES",
+    "REQUIRED_SYNC_TRIGGERS",
     "SCHEMA_VERSION",
     "initialize_schema",
     "validate_schema",

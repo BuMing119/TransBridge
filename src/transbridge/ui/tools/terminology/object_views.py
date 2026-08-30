@@ -129,6 +129,8 @@ class VersionsView(QWidget):
         current_layout.addWidget(self.publish_status)
         current_layout.addWidget(self.publish_details)
         layout.addWidget(current)
+        self._layout = layout
+        self._sync_panel: QWidget | None = None
 
         history_card = QFrame(self)
         history_card.setProperty("tbTerminologyCard", True)
@@ -142,6 +144,12 @@ class VersionsView(QWidget):
         history_layout.addWidget(history_description)
         history_layout.addWidget(history, 1)
         layout.addWidget(history_card, 1)
+
+    def set_sync_panel(self, panel: QWidget) -> None:
+        if self._sync_panel is not None:
+            self._layout.removeWidget(self._sync_panel)
+        self._sync_panel = panel
+        self._layout.insertWidget(3, panel)
 
     def set_context(self, version: str) -> None:
         self.current_version.setText("尚无已发布版本" if not version or version == "尚无" else f"版本 {version}")

@@ -42,6 +42,7 @@ def register_all() -> None:
         tool_paratranz,
         tool_parser,
         tool_proofreader,
+        tool_terminology_sync,
         tool_translator,
         tool_writer,
     )

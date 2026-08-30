@@ -1,0 +1,1 @@
+{"scenario":"delete succeeds with 204 and an empty body","request":{"method":"DELETE","path":"/projects/41/terms/201"},"response":{"status":204,"headers":{"X-Request-ID":"terms-delete-1"},"body":null}}

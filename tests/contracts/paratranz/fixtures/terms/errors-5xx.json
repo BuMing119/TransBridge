@@ -1,0 +1,1 @@
+{"scenario":"upstream availability failure","request":{"method":"GET","path":"/projects/41/terms"},"response":{"status":503,"headers":{"Content-Type":"application/json","X-Request-ID":"terms-error-503"},"body":{"error":"unavailable"}}}

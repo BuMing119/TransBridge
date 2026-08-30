@@ -13,11 +13,13 @@ from .connection import (
 )
 from .draft_transactions import DraftLineStateReader, SqliteDraftTransactionAdapter
 from .effective import SqliteEffectiveTerminologySnapshotPort
+from .inbound_review import SqliteInboundReviewStore
 from .migration import MigrationManifest, TerminologyMigrator
 from .paths import TerminologyPaths
 from .queries import CursorCodec, QueryFingerprint
 from .report_snapshot import ReportSection, SqliteReportSnapshotStore
 from .repository import SqliteTerminologyRepository, SqliteTerminologyTransaction
+from .sync_state import SqliteTerminologySyncState
 
 __all__ = [
     "ArtifactLedger",
@@ -32,7 +34,9 @@ __all__ = [
     "SqliteReportSnapshotStore",
     "SqliteDraftTransactionAdapter",
     "SqliteEffectiveTerminologySnapshotPort",
+    "SqliteInboundReviewStore",
     "SqliteTerminologyTransaction",
+    "SqliteTerminologySyncState",
     "StorageMode",
     "TerminologyCache",
     "TerminologyConnectionFactory",

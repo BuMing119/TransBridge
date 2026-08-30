@@ -130,17 +130,19 @@ class TranslationController:
                 entry_ids = [e.key for e in scoped]
                 logger.info("start_translation: 未指定条目，默认作用域=全部未翻译(stage=0)，共 %d 条", len(entry_ids))
 
-        stop_event = threading.Event()
-
-        tm = TaskManager()
-        task_id = tm.register(stop_event=stop_event, metadata={"mode": mode, "type": "translation"})
-
         # M4: 浅拷贝闭包捕获的可变引用，防止集合切换时读到错误数据
         _collection = collection
         _entry_ids = list(entry_ids) if entry_ids else None
-        from transbridge.ai_translator.project_terminology_runtime import resolve_project_terminology
+        from .terminology_run import freeze_terminology_binding
 
-        terminology = resolve_project_terminology(ctx)
+        try:
+            terminology = freeze_terminology_binding(ctx)
+        except ValueError as exc:
+            return ToolResult.fail(str(exc), error_category="terminology", error_code="SNAPSHOT_UNAVAILABLE")
+
+        stop_event = threading.Event()
+        tm = TaskManager()
+        task_id = tm.register(stop_event=stop_event, metadata={"mode": mode, "type": "translation"})
 
         def _run():
             paratranz_client = None
@@ -276,6 +278,13 @@ class TranslationController:
         if not targets:
             return ToolResult.fail("所有指定的 entry_id 均无效，未找到匹配条目")
 
+        from .terminology_run import freeze_terminology_binding
+
+        try:
+            terminology = freeze_terminology_binding(ctx)
+        except ValueError as exc:
+            return ToolResult.fail(str(exc), error_category="terminology", error_code="SNAPSHOT_UNAVAILABLE")
+
         stop_event = threading.Event()
         tm = TaskManager()
         task_id = tm.register(
@@ -287,9 +296,6 @@ class TranslationController:
                 "type": "polish",
             },
         )
-        from transbridge.ai_translator.project_terminology_runtime import resolve_project_terminology
-
-        terminology = resolve_project_terminology(ctx)
 
         def _run():
             llm_runtime = None

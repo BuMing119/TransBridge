@@ -15,7 +15,7 @@ from .changelog import ChangelogDocumentStore
 from .codec import loads
 from .paths import TerminologyPaths
 from .report_snapshot import SqliteReportSnapshotStore
-from .schema import SCHEMA_VERSION, initialize_schema
+from .schema import SCHEMA_VERSION, initialize_schema, validate_schema
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +65,9 @@ class TerminologyMigrator:
             initialize_schema(connection)
             _backfill_frozen_sections(connection)
             _ensure_migration_evidence_table(connection)
+            schema_diagnostic = validate_schema(connection)
+            if schema_diagnostic is not None:
+                raise TerminologyMigrationError(f"migrated schema validation failed: {schema_diagnostic}")
             connection.execute(
                 "INSERT INTO migration_history(from_version, to_version, backup_path) VALUES (?, ?, ?)",
                 (from_version, SCHEMA_VERSION, str(backup_path)),

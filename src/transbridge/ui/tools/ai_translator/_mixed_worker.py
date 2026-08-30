@@ -71,6 +71,10 @@ class _MixedWorker(QThread):
 
             request_budget = AiRequestBudget(int(getattr(cfg, "max_concurrent", 1)))
         self._request_budget = request_budget
+        if terminology_binding is None:
+            from transbridge.ai_translator.project_terminology_runtime import ProjectTerminologyBinding
+
+            terminology_binding = ProjectTerminologyBinding()
         self._terminology_binding = terminology_binding
         self._cancelled = threading.Event()
         self._pause_event = threading.Event()
@@ -207,10 +211,6 @@ class _MixedWorker(QThread):
         if self._ctx is None or not self._ctx.collection or not self._ctx.esp_path:
             raise RuntimeError("混合翻译需要活动集合和源文件路径")
         terminology = self._terminology_binding
-        if terminology is None:
-            from transbridge.ai_translator.project_terminology_runtime import resolve_project_terminology
-
-            terminology = resolve_project_terminology(self._ctx)
         translator = AutoTranslator(
             TranslatorConfig(
                 llm_config=self._cfg,
@@ -262,10 +262,6 @@ class _MixedWorker(QThread):
                 paratranz_client = ParatranzTermsAPI(self._ctx.config)
                 project_id = remote_project["id"]
             terminology = self._terminology_binding
-            if terminology is None:
-                from transbridge.ai_translator.project_terminology_runtime import resolve_project_terminology
-
-                terminology = resolve_project_terminology(self._ctx)
             term_manager = TermDatabaseManager(
                 self._cfg,
                 self._ctx.esp_path,

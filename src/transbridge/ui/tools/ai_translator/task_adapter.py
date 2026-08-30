@@ -313,7 +313,8 @@ def _job_spec(spec: AiRunSpec, *, expose_controls: bool) -> JobSpec:
             ("migration", "external-qthread-adapter"),
             ("workflow", spec.execution_profile.summary),
             ("workflow_digest", spec.execution_profile.digest),
-        ),
+        )
+        + (() if spec.terminology_snapshot is None else spec.terminology_snapshot.metadata()),
     )
 
 

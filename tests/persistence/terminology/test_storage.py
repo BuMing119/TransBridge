@@ -25,6 +25,7 @@ from transbridge.persistence.terminology import (
     TerminologyStorageReadOnlyError,
 )
 from transbridge.persistence.terminology.connection import translate_sqlite_error
+from transbridge.persistence.terminology.schema import SCHEMA_VERSION
 from transbridge.persistence.v2.models import PathBoundaryError
 
 
@@ -73,11 +74,11 @@ def test_existing_schema_zero_is_backed_up_before_migration(tmp_path: Path) -> N
 
     opened = TerminologyConnectionFactory(paths).open("project-1")
     try:
-        assert opened.state.schema_version == 2
+        assert opened.state.schema_version == 3
         assert opened.connection.execute("SELECT value FROM legacy_sentinel").fetchone()[0] == "preserved"
     finally:
         opened.connection.close()
-    backup = next(paths.backup_directory("project-1").glob("schema-v0-to-v2-*.sqlite3"))
+    backup = next(paths.backup_directory("project-1").glob("schema-v0-to-v3-*.sqlite3"))
     backup_connection = sqlite3.connect(backup)
     try:
         assert backup_connection.execute("SELECT value FROM legacy_sentinel").fetchone()[0] == "preserved"
@@ -89,7 +90,7 @@ def test_existing_schema_zero_is_backed_up_before_migration(tmp_path: Path) -> N
     try:
         evidence = history.connection.execute(
             "SELECT source_digest, backup_digest, backup_path FROM migration_history_evidence "
-            "WHERE from_version = 0 AND to_version = 2"
+            "WHERE from_version = 0 AND to_version = 3"
         ).fetchone()
     finally:
         history.connection.close()
@@ -148,11 +149,11 @@ def test_schema_one_migration_backfills_frozen_sections_and_artifact_revision(tm
 
     migrated = SqliteTerminologyRepository.open(str(tmp_path), "project-1")
     try:
-        assert migrated.storage_state.schema_version == 2
+        assert migrated.storage_state.schema_version == 3
         assert migrated.list_report_terms(snapshot.ref).items == snapshot.terms
         assert migrated.changelogs.list_changelog_changes(document.ref).items == document.changes
         assert migrated.get_artifact(artifact.artifact_id).revision == 0
-        assert tuple(TerminologyPaths(tmp_path).backup_directory("project-1").glob("schema-v1-to-v2-*.sqlite3"))
+        assert tuple(TerminologyPaths(tmp_path).backup_directory("project-1").glob("schema-v1-to-v3-*.sqlite3"))
     finally:
         migrated.close()
 
@@ -196,7 +197,7 @@ def test_current_but_incomplete_schema_is_rejected_without_initialization(tmp_pa
     database = paths.database("project-1")
     database.parent.mkdir(parents=True)
     incomplete = sqlite3.connect(database)
-    incomplete.execute("PRAGMA user_version = 1")
+    incomplete.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     incomplete.commit()
     incomplete.close()
 

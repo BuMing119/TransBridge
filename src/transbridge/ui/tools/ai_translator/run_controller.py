@@ -13,6 +13,7 @@ from PyQt6 import sip
 from transbridge.application.contracts import JobRef
 from transbridge.application.tasks import OwnerRef, TaskRuntime
 from transbridge.application.translation.ai_request_budget import AiRequestBudget
+from transbridge.application.translation.terminology_run_snapshot import TerminologyRunSnapshotRef
 from transbridge.ui.foundation.adapters import ThemeView
 from transbridge.ui.windowing import show_and_activate
 
@@ -28,6 +29,7 @@ class TranslationRunRequest[EntryT]:
     config_snapshot: FrozenExecutionConfig
     entries: tuple[EntryT, ...]
     request_budget: AiRequestBudget
+    terminology_binding: object
     runtime_ref: JobRef | None = None
 
     @property
@@ -88,6 +90,8 @@ class RunController:
         session_id: str | None = None,
         project_revision: int | None = None,
         run_id: str | None = None,
+        terminology_owner: object | None = None,
+        terminology_snapshot_ref: TerminologyRunSnapshotRef | None = None,
     ) -> TranslationRunRequest[EntryT]:
         if self._closed:
             raise RuntimeError("AI translator run owner is closed")
@@ -103,6 +107,16 @@ class RunController:
             request_budget = AiRequestBudget(max_concurrent)
         except ValueError as exc:
             raise ValueError("config.max_concurrent must be a positive integer") from exc
+        from transbridge.ai_translator.project_terminology_runtime import (
+            ProjectTerminologyBinding,
+            freeze_project_terminology,
+        )
+
+        terminology_binding = (
+            ProjectTerminologyBinding()
+            if terminology_owner is None
+            else freeze_project_terminology(terminology_owner, terminology_snapshot_ref)
+        )
         generation = next(self._ids)
         run_id = run_id or f"ai-{uuid4().hex}"
         owner = OwnerRef(
@@ -122,6 +136,7 @@ class RunController:
             esp_path=esp_path,
             overwrite=overwrite,
             project_revision=project_revision,
+            terminology_snapshot=terminology_binding.snapshot_ref,
         )
         runtime_ref = None
         if self._task_runtime is not None:
@@ -139,6 +154,7 @@ class RunController:
                 esp_path=esp_path,
                 overwrite=overwrite,
                 project_revision=project_revision,
+                terminology_snapshot=terminology_binding.snapshot_ref,
             )
             self._task_runtime.start(runtime_ref, owner)
         request = TranslationRunRequest(
@@ -146,6 +162,7 @@ class RunController:
             config_snapshot=config_snapshot,
             entries=tuple(entries),
             request_budget=request_budget,
+            terminology_binding=terminology_binding,
             runtime_ref=runtime_ref,
         )
         self._active = _ActiveRun(request)
@@ -295,12 +312,20 @@ def try_begin_run(
     config: object,
     entries: list,
     on_busy: Callable[[], None],
+    on_error: Callable[[str], None] | None = None,
     **identity: object,
 ) -> TranslationRunRequest | None:
     try:
         return controller.begin(mode, config, entries, **identity)
     except RunAlreadyActiveError:
         on_busy()
+        return None
+    except Exception as exc:
+        from transbridge.application.translation.terminology_run_snapshot import TerminologyRunSnapshotError
+
+        if not isinstance(exc, TerminologyRunSnapshotError) or on_error is None:
+            raise
+        on_error(str(exc))
         return None
 
 
@@ -342,9 +367,6 @@ def start_translation_run(
     from transbridge.ui.tools.ai_translator.workflow_logging_client import WorkflowLoggingLLMClient
 
     log_store = WorkflowLogStore(ctx.esp_path, workflow="translation")
-    from transbridge.ai_translator.project_terminology_runtime import resolve_project_terminology
-
-    terminology = resolve_project_terminology(ctx)
     translator = AutoTranslator(
         translator_config,
         paratranz_client,
@@ -361,7 +383,7 @@ def start_translation_run(
             log_store,
             channel_prefix="term_call",
         ),
-        **terminology.translator_kwargs(),
+        **request.terminology_binding.translator_kwargs(),
     )
     worker = _TranslationWorker(
         translator,
@@ -401,8 +423,6 @@ def start_mixed_run(
     progress_created: Callable[[object], None] | None = None,
     theme_view: ThemeView | None = None,
 ) -> object:
-    from transbridge.ai_translator.project_terminology_runtime import resolve_project_terminology
-
     from ._mixed_worker import _MixedWorker
     from .run_view import AiMixedProgressWindow
     from .task_adapter import AiLegacyRunState
@@ -416,7 +436,7 @@ def start_mixed_run(
         run_id=request.run_id,
         run_spec=request.spec,
         request_budget=request.request_budget,
-        terminology_binding=resolve_project_terminology(ctx),
+        terminology_binding=request.terminology_binding,
     )
     run_id = request.run_id
     activity = controller.create_activity(request)

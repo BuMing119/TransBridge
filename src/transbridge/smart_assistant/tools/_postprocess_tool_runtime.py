@@ -116,7 +116,7 @@ def resolve_postprocess_request(args: dict, ctx, collection) -> PostprocessToolR
     limits = _apply_limit_overrides(args, effective_config)
     stages = ("proofread",) if strategy == "proofread" else _strict_stages(effective_config, requested_phases)
     entries, scope = _resolve_entries(args, ctx, collection, effective_config)
-    from transbridge.ai_translator.project_terminology_runtime import resolve_project_terminology
+    from .terminology_run import freeze_terminology_binding
 
     return PostprocessToolRequest(
         entries=entries,
@@ -129,7 +129,7 @@ def resolve_postprocess_request(args: dict, ctx, collection) -> PostprocessToolR
         scope=scope,
         intensity=effective_intensity,
         limits=limits,
-        terminology_binding=resolve_project_terminology(ctx),
+        terminology_binding=freeze_terminology_binding(ctx),
     )
 
 

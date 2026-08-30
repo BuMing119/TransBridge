@@ -84,6 +84,7 @@ def start_versioned_polish(window: object, request: object, entries: list, colle
                 request.config,
                 entries,
                 request_budget=request.request_budget,
+                terminology_binding=request.terminology_binding,
             )
         except Exception as exc:
             window._run_controller.create_activity(request).fail(str(exc))

@@ -1,0 +1,1 @@
+{"scenario":"credential lacks project permission","request":{"method":"POST","path":"/projects/41/terms","body":{}},"response":{"status":403,"headers":{"Content-Type":"application/json","X-Request-ID":"terms-error-403"},"body":{"error":"permission_denied"}}}

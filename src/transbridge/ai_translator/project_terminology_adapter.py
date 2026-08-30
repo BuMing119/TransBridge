@@ -29,6 +29,14 @@ class DisabledEffectiveTerminologyGate:
         return False
 
 
+class EnabledEffectiveTerminologyGate:
+    """Run-frozen bindings already proved their snapshot at preflight."""
+
+    def enabled(self, context: TerminologyLookupContext) -> bool:
+        del context
+        return True
+
+
 @dataclass(frozen=True, slots=True)
 class PublishedEffectiveTerminologyGate:
     """Enable only after a first published version is known for the line."""
@@ -65,6 +73,15 @@ class ProjectTerminologyAdapter:
 
     def enabled(self, context: TerminologyLookupContext) -> bool:
         return self._gate.enabled(context)
+
+    def effective_snapshot(self, context: TerminologyLookupContext) -> EffectiveTerminologySnapshot:
+        """Expose the read-only source for one-time application-layer freezing."""
+
+        return self._effective.snapshot(
+            context.local_project_id,
+            context.local_variant_id,
+            context.version_id,
+        )
 
     def load(
         self,
@@ -176,6 +193,7 @@ def _scope_snapshot_identity(
 
 __all__ = [
     "DisabledEffectiveTerminologyGate",
+    "EnabledEffectiveTerminologyGate",
     "EffectiveTerminologyFeatureGate",
     "ProjectTerminologyAdapter",
     "ProjectTerminologyLoad",

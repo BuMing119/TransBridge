@@ -178,7 +178,7 @@ def test_sqlite_migration_retry_after_source_change_creates_a_new_digest_bound_b
     with pytest.raises(TerminologyMigrationError, match="migration failed"):
         TerminologyMigrator(paths).migrate(connection, "project-1", 0)
     connection.close()
-    first_backup = next(paths.backup_directory("project-1").glob("schema-v0-to-v2-*.sqlite3"))
+    first_backup = next(paths.backup_directory("project-1").glob("schema-v0-to-v3-*.sqlite3"))
 
     changed = sqlite3.connect(database)
     changed.execute("UPDATE legacy_sentinel SET value = 'changed-after-failure'")

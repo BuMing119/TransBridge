@@ -113,8 +113,13 @@ class TerminologyConnectionFactory:
             connection = self._connect(path, read_only=False)
             self._configure(connection, writable=True)
             if not existed:
-                initialize_schema(connection)
-                connection.commit()
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    initialize_schema(connection)
+                    connection.commit()
+                except Exception:
+                    connection.rollback()
+                    raise
                 version = SCHEMA_VERSION
                 mode = StorageMode.CREATE
             elif version < SCHEMA_VERSION:

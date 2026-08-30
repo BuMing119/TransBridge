@@ -174,6 +174,7 @@ class ParatranzClient:
         cancellation: CancellationPort | None = None,
         idempotency_key: str | None = None,
         confirmed_idempotent: bool = False,
+        retryable: bool | None = None,
         expected_type: type | tuple[type, ...] | None = None,
         raw_response: bool = False,
         **kwargs: Any,
@@ -184,6 +185,8 @@ class ParatranzClient:
         retryable_operation = (
             normalized_method in self._IDEMPOTENT_METHODS or bool(idempotency_key) or confirmed_idempotent
         )
+        if retryable is not None:
+            retryable_operation = retryable
         url = f"{self.config.base_url}{endpoint}"
         headers = self._request_headers()
         supplied_headers = kwargs.pop("headers", {})

@@ -9,7 +9,7 @@ from PyQt6.QtCore import QObject, QRunnable, Qt, QThreadPool, pyqtSignal
 from PyQt6.QtWidgets import QInputDialog, QMessageBox, QVBoxLayout, QWidget
 
 from transbridge.application.contracts import JobRef, RequestContext
-from transbridge.application.tasks import JobState
+from transbridge.application.tasks import JobState, OwnerRef
 from transbridge.application.terminology import Page
 from transbridge.application.terminology.conflicts import ConflictResolutionOperation
 from transbridge.application.terminology.workloads import TerminologyWorkloadType
@@ -23,6 +23,9 @@ from .object_views import TermsView, VersionsView
 from .paged_models import KeysetPagedTableModel, PagedColumn
 from .presenter import TerminologyPresenter, TerminologyUiServices
 from .reports_view import ReportsView
+from .sync_presenter import TerminologySyncPresenter
+from .sync_task_adapter import TerminologySyncTaskAdapter
+from .sync_view import TerminologySyncPanel
 from .task_adapter import TerminologyTaskViewState
 from .view_models import TerminologyArea, TerminologyPreflightViewState, business_diagnostic, phase_label
 from .workbench_shell import TerminologyWorkbenchShell
@@ -85,6 +88,7 @@ class TerminologyWindow(QWidget):
         self._task_refs: dict[str, JobRef] = {}
         self._models: list[KeysetPagedTableModel] = []
         self._closed = False
+        self._sync_tasks: TerminologySyncTaskAdapter | None = None
         self._init_ui()
         self.task_changed.connect(self._on_task_change, Qt.ConnectionType.QueuedConnection)
         presenter.bind_tasks(self.task_changed.emit)
@@ -143,6 +147,27 @@ class TerminologyWindow(QWidget):
         self.build_view.versions_requested.connect(lambda: self.workspace.set_current_area(TerminologyArea.VERSIONS))
         self.terms_view = TermsView(self.draft_view, self.conflicts_view, self)
         self.versions_view = VersionsView(self.history_view, self)
+        presenter = self.presenter
+        sync_service = presenter.services.sync
+        if sync_service is not None:
+            owner = OwnerRef(
+                presenter.context.owner_id,
+                "gui",
+                presenter.context.project_id,
+                presenter.context.variant_id,
+                presenter.context.session_id,
+                presenter.context.permissions,
+            )
+            sync_presenter = TerminologySyncPresenter(sync_service, presenter.context, owner)
+            self.sync_view = TerminologySyncPanel(sync_presenter, self.versions_view)
+            self.versions_view.set_sync_panel(self.sync_view)
+            if presenter.services.runtime is not None:
+                self._sync_tasks = TerminologySyncTaskAdapter(
+                    presenter.services.runtime,
+                    owner,
+                    self.sync_view.render_activity,
+                )
+                self._sync_tasks.start()
         self.versions_view.publish_requested.connect(self._publish)
         self.draft_view.publish_requested.connect(lambda: self.workspace.set_current_area(TerminologyArea.VERSIONS))
         self.publish_status = self.versions_view.publish_status
@@ -200,6 +225,8 @@ class TerminologyWindow(QWidget):
             self._command_messages.clear()
             for model in self._models:
                 model.close()
+            if self._sync_tasks is not None:
+                self._sync_tasks.close()
             self.presenter.close()
         super().closeEvent(event)
 
