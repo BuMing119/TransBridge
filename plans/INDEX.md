@@ -4,6 +4,7 @@
 
 | Epic | 状态 | Stories | 文档 |
 |---|---|---:|---|
+| project-terminology-paratranz-sync | S00～S08 功能实现完成、离线 QA 通过；正式发行门禁 OFF（live 合同与 FR5.16 S12 待通过） | 9/9（发行未完成） | [plan](project-terminology-paratranz-sync/plan.md) |
 | project-terminology-build-versioning-reporting | S00-11 生产闭环完成；S12 正式性能收口未通过，全部门禁 OFF | 12/13 | [plan](project-terminology-build-versioning-reporting/plan.md) |
 | proofread-terminology-closure | 已完成（2026-08-30，相关 QA 通过） | 3/3 | [plan](proofread-terminology-closure/plan.md) |
 | native-structured-outputs | 已完成 | 5/5 | [plan](native-structured-outputs/plan.md) |
