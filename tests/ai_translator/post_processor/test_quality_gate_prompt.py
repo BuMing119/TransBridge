@@ -21,6 +21,14 @@ from transbridge.ai_translator.post_processor.quality_gate import (
     QualityGateResult,
     QualityVerdict,
 )
+from transbridge.application.contracts import OperationOutcome
+from transbridge.application.io import StagePolicy
+from transbridge.application.translation import (
+    CheckerStage,
+    PostProcessStageOutcome,
+    PostProcessWorkload,
+    TranslationInput,
+)
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.infra.prompt_cache import PROMPT_CACHE_METADATA_KEY
 
@@ -118,6 +126,38 @@ def test_single_returns_system_final_user_and_unique_final_breakpoint():
     # 只有一个 FINAL 断点
     finals = [d for d in [directive] if d["breakpoint"] == "FINAL"]
     assert len(finals) == 1
+
+
+def test_game_placeholders_in_text_do_not_stop_the_strict_postprocess_workload():
+    llm = _CapturingLLM('{"verdict":"pass","reason":"ok","issues":[]}')
+    checker = _make_checker(llm)
+    entries = [
+        _entry("dollar", "Welcome, ${player_name}!", "欢迎，${player_name}！"),
+        _entry("ordinary", "Welcome!", "欢迎！"),
+    ]
+
+    def refine(candidates):
+        return PostProcessStageOutcome(
+            "refinement",
+            tuple(candidate.with_text(candidate.text + "（已校对）", "refinement") for candidate in candidates),
+        )
+
+    workload = PostProcessWorkload((CheckerStage("quality_gate", checker), refine), stage_policy=StagePolicy())
+    result = workload.run(
+        "placeholder-run",
+        tuple(
+            TranslationInput(entry.identity, entry.revision, entry.original, entry.translation, entry.stage)
+            for entry in entries
+        ),
+    )
+
+    assert result.outcome is OperationOutcome.COMPLETED
+    assert result.diagnostics == ()
+    assert [candidate.text for candidate in result.value.candidates] == [
+        "欢迎，${player_name}！（已校对）",
+        "欢迎！（已校对）",
+    ]
+    assert "${player_name}" in llm.calls[0][1]["content"]
 
 
 def test_batch_returns_system_final_user_and_independent_key():

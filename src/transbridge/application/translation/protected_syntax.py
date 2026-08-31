@@ -10,7 +10,8 @@ from __future__ import annotations
 import re
 
 _PROTECTED_SYNTAX = re.compile(
-    r"%(?:\([^)]+\))?[-+#0 ']*(?:\d+|\*)?(?:\.(?:\d+|\*))?(?:hh|h|ll|l|L|z|j|t)?[diuoxXfFeEgGaAcspn]"
+    # A space after '%' is ambiguous with percentage prose, so do not treat it as a printf flag.
+    r"%(?:\([^)]+\))?[-+#0']*(?:\d+|\*)?(?:\.(?:\d+|\*))?(?:hh|h|ll|l|L|z|j|t)?[diuoxXfFeEgGaAcspn]"
     r"|\{(?:[A-Za-z_][\w.-]*|\d+)(?:![rsa])?(?::[^{}]*)?\}"
     r"|\$\{[A-Za-z_][\w.-]*\}"
     r"|</?[A-Za-z][^<>\r\n]*?/?>"

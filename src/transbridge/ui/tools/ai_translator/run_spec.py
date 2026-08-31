@@ -132,13 +132,19 @@ def preflight_ai_run(
     *,
     esp_path: str | None,
     dependency_available: Callable[[str], bool] | None = None,
+    mixed_has_translation: bool | None = None,
 ) -> AiPreflightResult:
-    """Validate cheap, side-effect-free blockers before importing runtime code."""
+    """Validate blockers using stage presence from the caller's existing mixed partition.
+
+    Mixed callers without stage information retain translation prerequisites.
+    """
 
     available = dependency_available or (lambda name: importlib.util.find_spec(name) is not None)
     issues: list[AiPreflightIssue] = []
     profile = AiExecutionProfile.from_config("translate" if mode == "batch" else mode, config)
-    needs_llm = mode != "polish" or profile.requires_llm
+    has_translation = mode in {"translate", "batch"} or (mode == "mixed" and mixed_has_translation is not False)
+    has_polish = mode in {"polish", "mixed"}
+    needs_llm = has_translation or (has_polish and profile.requires_llm)
     if needs_llm and not str(getattr(config, "api_key", "")).strip():
         issues.append(
             AiPreflightIssue(
@@ -163,7 +169,7 @@ def preflight_ai_run(
                 IntentId.TRANSLATION_AI,
             )
         )
-    if mode == "polish":
+    if has_polish and not has_translation:
         if not profile.has_proofread_work:
             issues.append(
                 AiPreflightIssue(
@@ -172,7 +178,7 @@ def preflight_ai_run(
                     IntentId.SETTINGS_SERVICES,
                 )
             )
-    if mode in {"translate", "mixed", "batch"} and not esp_path:
+    if has_translation and not esp_path:
         issues.append(
             AiPreflightIssue(
                 AiPreflightCode.MISSING_SOURCE,
@@ -180,7 +186,7 @@ def preflight_ai_run(
                 IntentId.PROJECT_CREATE,
             )
         )
-    if mode in {"translate", "mixed", "batch"} and not available("tiktoken"):
+    if has_translation and not available("tiktoken"):
         issues.append(
             AiPreflightIssue(
                 AiPreflightCode.MISSING_DEPENDENCY,
@@ -189,7 +195,7 @@ def preflight_ai_run(
             )
         )
     if (
-        mode in {"translate", "mixed", "batch"}
+        has_translation
         and bool(getattr(config, "retrieval_enabled", True))
         and bool(getattr(config, "enable_semantic_match", True))
     ):

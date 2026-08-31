@@ -226,12 +226,18 @@ class AITranslatorWindow(QWidget):
         mode = self._view_port.mode
         cfg = self._config_presenter.build()
         execution_profile = self._config_presenter.execution_profile()
-        candidates = preflight_candidates(self, mode)
+        mixed_scope = (
+            self._scope_presenter.partition_mixed(self._view_port.rules, self._ctx.collection or ())
+            if mode == "mixed"
+            else None
+        )
+        candidates = preflight_candidates(self, mode, mixed_scope=mixed_scope)
         preflight = preflight_ai_run(
             mode,
             cfg,
             candidates,
             esp_path=self._ctx.esp_path,
+            mixed_has_translation=None if mixed_scope is None else bool(mixed_scope.translate_entries),
         )
         estimate = (
             self._view.controls.mixed_estimate_lbl.text()
@@ -373,7 +379,7 @@ class AITranslatorWindow(QWidget):
             if entry_id not in seen_entry_ids:
                 seen_entry_ids.add(entry_id)
                 run_entries.append(entry)
-        if not require_ready(self, "mixed", cfg, run_entries):
+        if not require_ready(self, "mixed", cfg, run_entries, mixed_has_translation=bool(translate_entries)):
             return
         cfg = self._config_presenter.save()
         cfg.mixed_execution_order = self._view_port.execution_order

@@ -10,78 +10,17 @@ from .base import GuardMiddleware, GuardResult
 
 logger = logging.getLogger(__name__)
 
-# M16: 放宽注入检测 — 移除常见翻译文本中的误伤模式，保留真正危险的模式
-_SAFE_HTML_TAGS = {
-    "font",
-    "b",
-    "i",
-    "u",
-    "br",
-    "p",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "div",
-    "span",
-    "img",
-    "a",
-    "table",
-    "tr",
-    "td",
-    "th",
-    "ul",
-    "ol",
-    "li",
-    "em",
-    "strong",
-    "s",
-    "sub",
-    "sup",
-    "hr",
-    "pre",
-    "code",
-    "blockquote",
-}
-
-_INJECTION_PATTERNS = [
-    # SQL注入 — M16: 仅保留明显的注入模式
-    (re.compile(r"'\s*;\s*(DROP|ALTER|EXEC|UNION|TRUNCATE)\b", re.IGNORECASE), "SQL注入"),
-    (re.compile(r"(\"|')\s+OR\s+(\"|'|\d)", re.IGNORECASE), "SQL OR注入"),
-    (re.compile(r"(\"|')\s*--"), "SQL注释注入"),
-    (re.compile(r"\bWAITFOR\s+DELAY\b", re.IGNORECASE), "SQL延时注入"),
-    # XSS — 仅检测危险标签和事件处理器
-    (re.compile(r"<script[\s>]", re.IGNORECASE), "XSS script标签"),
-    (re.compile(r"<iframe[\s>]", re.IGNORECASE), "XSS iframe"),
-    (re.compile(r"<embed[\s>]", re.IGNORECASE), "XSS embed"),
-    (re.compile(r"<object[\s>]", re.IGNORECASE), "XSS object"),
-    (
-        re.compile(r"\bon(?:error|load|focus|click|mouseover|mouseout|submit|change|keydown|keyup)=\s*", re.IGNORECASE),
-        "XSS事件处理器",
-    ),
-    (re.compile(r"javascript\s*:", re.IGNORECASE), "XSS javascript协议"),
-    # 命令注入
-    (
-        re.compile(
-            r"(?:;|\||&&|`)\s*(?:python|perl|ruby|php|node|nc|ncat|ssh|scp|wget|curl|telnet|socat|powershell|cmd|bash|sh|wmic|cscript|mshta|regsvr32|bitsadmin)\b",
-            re.IGNORECASE,
-        ),
-        "命令注入",
-    ),
-    (
-        re.compile(r"(?:Invoke-Expression|iex|Start-Process|EncodedCommand|IEX|Invoke-WebRequest)", re.IGNORECASE),
-        "PowerShell注入",
-    ),
-    (re.compile(r"`[^`]*`"), "反引号命令注入"),
-]
-
 _MAX_INPUT_SIZE = 102400  # 100KB
 _MAX_RECURSION_DEPTH = 10  # M18: 限制嵌套递归深度，防止RecursionError
 
 
 class InputValidationGuard(GuardMiddleware):
+    """Validate tool contracts and resource bounds; translation text remains data.
+
+    Tools do not execute argument strings as SQL, shell commands, or HTML.
+    Display escaping belongs to the renderer, and file access is authorized below.
+    """
+
     def __init__(self, max_input_size: int = _MAX_INPUT_SIZE, max_depth: int = _MAX_RECURSION_DEPTH):
         self._max_size = max_input_size
         self._max_depth = max_depth  # M18: 递归深度上限
@@ -206,10 +145,6 @@ class InputValidationGuard(GuardMiddleware):
         if isinstance(value, str):
             if len(value.encode("utf-8", errors="replace")) > self._max_size:
                 return GuardResult(False, f"参数 '{key}' 超过大小限制 ({self._max_size} bytes)")
-            for pattern, label in _INJECTION_PATTERNS:
-                if pattern.search(value):
-                    logger.warning("InputValidation: 检测到%s模式在参数 '%s'", label, key)
-                    return GuardResult(False, f"检测到{label}模式")
         elif isinstance(value, dict):
             for k, v in value.items():
                 result = self._check_value(f"{key}.{k}", v, depth + 1)

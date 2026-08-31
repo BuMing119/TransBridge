@@ -15,7 +15,6 @@ from __future__ import annotations
 from collections.abc import Mapping, Set
 import hashlib
 import logging
-import re
 from string import Template
 from typing import Literal
 
@@ -46,9 +45,6 @@ PromptShape = Literal["single", "batch"]
 
 # SYSTEM 只允许稳定变量；动态内容（条目、术语、问题、置信度、运行设置）不得进入 System。
 _SYSTEM_ALLOWED_VARIABLES = frozenset({"game_name", "source_lang", "target_lang"})
-
-# 未解析占位符匹配：$identifier / ${identifier}
-_UNRESOLVED_PATTERN = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)|\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 _OUTPUT_SCHEMAS = {
     ("quality_gate", "single"): QUALITY_GATE_SINGLE_OUTPUT_SCHEMA,
@@ -99,17 +95,13 @@ def render_prompt_template(
     template: str,
     values: Mapping[str, object],
 ) -> str:
-    """严格渲染模板。未知/缺失变量抛错误，不得静默保留占位符。"""
+    """严格替换模板变量，保留动态正文中的字面量美元符号和游戏占位符。"""
     try:
-        result = Template(template).substitute(values)
+        return Template(template).substitute(values)
     except KeyError as exc:
         raise PromptTemplateContractError(f"{name}: 缺少变量 {exc.args[0]!r}") from exc
     except ValueError as exc:
         raise PromptTemplateContractError(f"{name}: 模板语法无效") from exc
-    unresolved = {match.group(1) or match.group(2) for match in _UNRESOLVED_PATTERN.finditer(result)}
-    if unresolved:
-        raise PromptTemplateContractError(f"{name}: 渲染后存在未解析占位符 {sorted(unresolved)}")
-    return result
 
 
 def build_postprocess_cache_key(

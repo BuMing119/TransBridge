@@ -4,6 +4,8 @@ import json
 import threading
 import time
 
+import pytest
+
 from transbridge.ai_translator.structured_schemas import PROOFREAD_OUTPUT_SCHEMA
 from transbridge.application.contracts import OperationOutcome, RequestContext
 from transbridge.application.io import EntryKey, EntryRevision, SourceNamespace, StagePolicy
@@ -82,6 +84,66 @@ def test_protected_syntax_is_a_multiset_and_does_not_validate_natural_language()
     assert protected_syntax_matches(source, translated)
     assert not protected_syntax_matches(source, translated.replace(" %s", "", 1))
     assert extract_protected_syntax(source).count("%s") == 2
+
+
+@pytest.mark.parametrize(
+    ("source", "translated"),
+    [
+        ("50% chance to resist damage.", "50% 的几率抵抗伤害。"),
+        ("Move 25 % faster.", "移动速度提高 25%。"),
+        ("12.5% increased armor.", "护甲提高 12.5%。"),
+        ("50% chance to resist %s damage.", "50% 的几率抵抗 %s 伤害。"),
+        ("%d%% chance to resist damage.", "%d% 的几率抵抗伤害。"),
+    ],
+)
+def test_percentage_prose_is_accepted_without_a_recovery_request(source, translated) -> None:
+    candidate = _candidate("percentage", original=source)
+    client = _PreparedClient(lambda _messages: json.dumps({"results": [_result(candidate, translated)]}))
+
+    outcome = ProofreadStage(client, max_tokens_per_batch=10_000)((candidate,))
+
+    assert outcome.candidates[0].accepted
+    assert outcome.candidates[0].text == translated
+    assert outcome.diagnostics == ()
+    assert len(client.messages) == 1
+
+
+@pytest.mark.parametrize("token", ["%s", "%05d", "%.2f", "%lld", "%(name)s"])
+def test_printf_tokens_remain_protected_next_to_percentage_prose(token) -> None:
+    source = f"50% chance: {token}"
+    translated = f"50% 的几率：{token}"
+
+    assert extract_protected_syntax(source) == (token,)
+    assert protected_syntax_matches(source, translated)
+    assert not protected_syntax_matches(source, "50% 的几率")
+
+
+def test_printf_token_next_to_a_number_is_not_mistaken_for_a_percentage() -> None:
+    assert extract_protected_syntax("Prefix 2%d") == ("%d",)
+
+
+@pytest.mark.parametrize("token", ["% d", "%%"])
+def test_ambiguous_space_flag_and_escaped_percent_are_not_enforced(token) -> None:
+    candidate = _candidate("literal-percent", original=f"Value {token}")
+    client = _PreparedClient(lambda _messages: json.dumps({"results": [_result(candidate, "译文")]}))
+
+    outcome = ProofreadStage(client, max_tokens_per_batch=10_000)((candidate,))
+
+    assert outcome.candidates[0].accepted
+    assert outcome.candidates[0].text == "译文"
+    assert outcome.diagnostics == ()
+    assert len(client.messages) == 1
+
+
+def test_percentage_prose_does_not_allow_a_real_placeholder_to_be_dropped() -> None:
+    candidate = _candidate("mixed", original="50% chance to resist %s damage.")
+    client = _PreparedClient(lambda _messages: json.dumps({"results": [_result(candidate, "50% 的几率抵抗伤害。")]}))
+
+    outcome = ProofreadStage(client, max_tokens_per_batch=10_000)((candidate,))
+
+    assert not outcome.candidates[0].accepted
+    assert outcome.candidates[0].text == candidate.before_text
+    assert [diagnostic.code for diagnostic in outcome.diagnostics] == ["PROOFREAD_PROTECTED_SYNTAX_MISMATCH"]
 
 
 def test_terms_are_resolved_after_admission_and_one_pass_accepts_unchanged_values() -> None:

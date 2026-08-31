@@ -29,6 +29,22 @@ def test_invalid_template_syntax_is_rejected_during_render():
         )
 
 
+def test_missing_template_variable_is_still_rejected_during_render():
+    with pytest.raises(PromptTemplateContractError, match="缺少变量 'original'"):
+        render_prompt_template(name="single.user", template="Source: $original", values={})
+
+
+@pytest.mark.parametrize("text", ["Welcome, ${player_name}!", "$SKSE_VERSION", "Press `E` near <Alias=Hero>."])
+def test_dynamic_text_is_not_reinterpreted_as_template_syntax(text):
+    rendered = render_prompt_template(
+        name="single.user",
+        template="Source: $original\nLiteral dollar: $$game_name",
+        values={"original": text},
+    )
+
+    assert rendered == f"Source: {text}\nLiteral dollar: $game_name"
+
+
 def test_invalid_quality_gate_variant_falls_back_to_default():
     with pytest.warns(UserWarning, match="回退到内置默认模板"):
         resolved = _resolve_template(

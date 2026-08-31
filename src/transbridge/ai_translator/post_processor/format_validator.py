@@ -180,8 +180,6 @@ class FormatValidator(BaseChecker):
             ("{", "}"),  # 花括号
             ("「", "」"),  # 日式引号
             ("『", "』"),  # 日式双引号
-            ('"', '"'),  # 中文双引号
-            (""", """),  # 中文单引号
         ]
 
         for open_char, close_char in bracket_pairs:

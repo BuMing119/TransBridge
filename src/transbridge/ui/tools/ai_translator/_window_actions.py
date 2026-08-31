@@ -6,20 +6,27 @@ from PyQt6.QtWidgets import QMessageBox
 
 from ._theme_support import AiThemeBinding, set_widget_brush
 from .run_spec import AiPreflightCode, preflight_ai_run
+from .scope_presenter import MixedScope
 
 
-def preflight_candidates(window: object, mode: str) -> list:
+def preflight_candidates(window: object, mode: str, *, mixed_scope: MixedScope | None = None) -> list:
     if mode == "polish":
         return [entry for entry in window._build_scope_candidates() if entry.translation]
     if mode == "mixed":
-        collection = list(window._ctx.collection or ())
-        partition = window._scope_presenter.partition_mixed(window._view_port.rules, collection)
+        partition = mixed_scope
+        if partition is None:
+            collection = list(window._ctx.collection or ())
+            partition = window._scope_presenter.partition_mixed(window._view_port.rules, collection)
         return list(partition.translate_entries) + list(partition.polish_entries)
     return window._build_scope_candidates()
 
 
-def require_ready(window: object, mode: str, config: object, entries: list) -> bool:
-    result = preflight_ai_run(mode, config, entries, esp_path=window._ctx.esp_path)
+def require_ready(
+    window: object, mode: str, config: object, entries: list, *, mixed_has_translation: bool | None = None
+) -> bool:
+    result = preflight_ai_run(
+        mode, config, entries, esp_path=window._ctx.esp_path, mixed_has_translation=mixed_has_translation
+    )
     embedding = getattr(config, "embedding", None)
     missing_local_model = str(getattr(embedding, "mode", "disabled") or "disabled").casefold() == "local" and any(
         issue.code == AiPreflightCode.MISSING_EMBEDDING_CONFIGURATION for issue in result.issues
@@ -28,7 +35,9 @@ def require_ready(window: object, mode: str, config: object, entries: list) -> b
         if not window._embedding_models.resolve_missing():
             return False
         config = window._config_presenter.build()
-        result = preflight_ai_run(mode, config, entries, esp_path=window._ctx.esp_path)
+        result = preflight_ai_run(
+            mode, config, entries, esp_path=window._ctx.esp_path, mixed_has_translation=mixed_has_translation
+        )
     if result.ready:
         return True
     QMessageBox.warning(window, "AI 运行条件未满足", result.reason or "请检查运行配置。")

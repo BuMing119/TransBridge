@@ -73,6 +73,7 @@ class FailedSubsetRetryFactory:
         current_config: object,
         esp_path: str | None,
         controller: RetryRunController,
+        mixed_has_translation: bool | None = None,
     ) -> AiRetryPreparation:
         failed = frozenset(failed_entry_keys)
         selected = [entry for entry in current_entries if _entry_key(entry) in failed]
@@ -81,6 +82,7 @@ class FailedSubsetRetryFactory:
             current_config,
             selected,
             esp_path=esp_path,
+            mixed_has_translation=mixed_has_translation,
         )
         if not preflight.ready or not failed:
             return AiRetryPreparation(preflight, None)
