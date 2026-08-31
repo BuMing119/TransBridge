@@ -63,6 +63,28 @@ class _Dialog:
         pass
 
 
+class _AutoDialog(_Dialog):
+    def __init__(self, plan, context, _parent=None) -> None:
+        super().__init__(plan)
+        self.context = context
+
+    def show(self) -> None:
+        self.preflight_requested.emit(self.plan.session_id, ())
+
+
+class _RefreshingDialog(_Dialog):
+    def __init__(self, plan, _parent=None) -> None:
+        super().__init__(plan)
+        self.errors = []
+        self.running = False
+
+    def render_preflight_error(self, message) -> None:
+        self.errors.append(message)
+
+    def set_preflight_running(self, running) -> None:
+        self.running = running
+
+
 class _Submitter:
     def submit(self, *_args):
         return object()
@@ -113,3 +135,59 @@ def test_remote_preflight_is_deferred_and_cancelled_dialog_ignores_late_result()
     assert dialog.preflight is None
     assert workers[0].deleted
     assert discarded
+
+
+def test_operation_specific_dialog_can_start_remote_preflight_automatically() -> None:
+    workers = []
+
+    def worker_factory(fn):
+        worker = _DeferredWorker(fn)
+        workers.append(worker)
+        return worker
+
+    coordinator = OperationPlanCoordinator(
+        OperationPlanPresenter((UploadOperationMapper(),), _Submitter()),
+        {OperationKind.UPLOAD: lambda _context, _batch, _values: _draft()},
+        owner_id=lambda _context: "gui",
+        preflight_worker_factory=worker_factory,
+        dialog_factory=_Dialog,
+        dialog_factories={OperationKind.UPLOAD: _AutoDialog},
+    )
+
+    dialog = coordinator.begin_upload("context")
+
+    assert dialog.context == "context"
+    assert len(workers) == 1
+    assert workers[0].started
+
+
+def test_changed_options_queue_latest_preflight_without_showing_stale_error() -> None:
+    workers = []
+
+    def worker_factory(fn):
+        worker = _DeferredWorker(fn)
+        workers.append(worker)
+        return worker
+
+    coordinator = OperationPlanCoordinator(
+        OperationPlanPresenter((UploadOperationMapper(),), _Submitter()),
+        {OperationKind.UPLOAD: lambda _context, _batch, _values: _draft()},
+        owner_id=lambda _context: "gui",
+        edit_factories={OperationKind.UPLOAD: lambda _draft_value, _fields: _draft()},
+        preflight_worker_factory=worker_factory,
+        dialog_factory=_RefreshingDialog,
+    )
+    dialog = coordinator.begin_upload(object())
+
+    dialog.preflight_requested.emit(dialog.plan.session_id, (("strategy", "first"),))
+    dialog.preflight_requested.emit(dialog.plan.session_id, (("strategy", "second"),))
+    workers[0].complete()
+
+    assert dialog.errors == []
+    assert len(workers) == 2
+    assert workers[1].started
+
+    workers[1].complete()
+    assert dialog.preflight is not None
+    assert dialog.errors == []
+    assert not dialog.running

@@ -8,7 +8,7 @@ process ``TaskRuntime`` identity.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import json
 from threading import RLock
@@ -110,6 +110,7 @@ class OperationPlanFacade:
         features: tuple[OperationPlanFeature, ...],
         *,
         dialog_factory=OperationPlanDialog,
+        dialog_factories: Mapping[OperationKind, Callable[[object, object, object | None], object]] | None = None,
     ) -> None:
         self._runtime = runtime
         self._runtime_context = runtime_context
@@ -131,6 +132,7 @@ class OperationPlanFacade:
             edit_factories={kind: feature.edit_draft for kind, feature in self._features.items()},
             discard_factories={kind: feature.discard_draft for kind, feature in self._features.items()},
             dialog_factory=dialog_factory,
+            dialog_factories=dialog_factories,
         )
 
     @property

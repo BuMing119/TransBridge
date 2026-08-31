@@ -39,12 +39,17 @@ class OperationPreflightResult:
     checks: tuple[PreflightCheckState, ...]
     expected_side_effects: tuple[str, ...]
     confirmation_token: ConfirmationToken | None = None
+    estimated_impact: tuple[tuple[str, int], ...] = ()
 
     def __post_init__(self) -> None:
         if len(self.request_digest) != 64 or not self.target_revision.strip():
             raise ValueError("preflight requires a request digest and target revision")
         if len({item.check_id for item in self.checks}) != len(self.checks):
             raise ValueError("preflight check ids must be unique")
+        if len({key for key, _ in self.estimated_impact}) != len(self.estimated_impact):
+            raise ValueError("preflight impact keys must be unique")
+        if any(value < 0 for _, value in self.estimated_impact):
+            raise ValueError("preflight impact values must not be negative")
 
     @property
     def ready(self) -> bool:

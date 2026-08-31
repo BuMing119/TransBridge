@@ -24,12 +24,26 @@ from .use_case import AuthorizedSyncPlan
 
 
 @dataclass(frozen=True, slots=True)
+class ParaTranzSyncTaskPreparation:
+    """Fresh authorization and local input produced inside the task worker."""
+
+    authorized_plan: AuthorizedSyncPlan
+    current_local_entries: tuple[LocalEntrySnapshot, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "current_local_entries", tuple(self.current_local_entries))
+
+
+@dataclass(frozen=True, slots=True)
 class ParaTranzSyncTaskDraft:
     authorized_plan: AuthorizedSyncPlan
     project_id: int
     namespace: SourceNamespace
     current_local_entries: tuple[LocalEntrySnapshot, ...]
     retry_token: RetryToken | None = None
+    recovery_snapshot: Callable[[str], object] | None = None
+    recovery_snapshot_name: str | None = None
+    preparation: Callable[[str], ParaTranzSyncTaskPreparation] | None = None
 
     def __post_init__(self) -> None:
         if self.project_id < 1:
@@ -74,6 +88,7 @@ class ParaTranzSyncTaskEntrypoint:
                 metadata=(
                     ("operation", plan.operation.value),
                     ("plan_id", plan.plan_id),
+                    ("recovery_snapshot", draft.recovery_snapshot_name or ""),
                 ),
             ),
             owner,
@@ -81,18 +96,38 @@ class ParaTranzSyncTaskEntrypoint:
         ref = deferred.ref
 
         def execute(cancellation) -> None:
-            permit = self._runtime.commit_permit(ref, owner)
-            request = ExecuteSyncRequest(
-                draft.authorized_plan,
-                draft.project_id,
-                draft.namespace,
-                draft.current_local_entries,
-                ref.run_id,
-                TaskRuntimeCommitGuard(self._runtime, permit),
-                cancellation=cancellation,
-                retry_token=draft.retry_token,
-            )
             try:
+                authorized_plan = draft.authorized_plan
+                current_local_entries = draft.current_local_entries
+                if draft.preparation is not None:
+                    cancellation.raise_if_cancelled()
+                    prepared = draft.preparation(ref.run_id)
+                    if not isinstance(prepared, ParaTranzSyncTaskPreparation):
+                        raise TypeError("ParaTranz task preparation returned an invalid result")
+                    if prepared.authorized_plan.owner_id != owner.owner_id:
+                        raise PermissionError("prepared sync plan belongs to a different owner")
+                    if prepared.authorized_plan.plan.plan_hash != plan.plan_hash:
+                        raise ValueError("prepared sync plan differs from the submitted plan")
+                    if any(item.entry_key.namespace != draft.namespace for item in prepared.current_local_entries):
+                        raise ValueError("prepared sync entries do not share the requested namespace")
+                    authorized_plan = prepared.authorized_plan
+                    current_local_entries = prepared.current_local_entries
+                    cancellation.raise_if_cancelled()
+                if draft.recovery_snapshot is not None:
+                    cancellation.raise_if_cancelled()
+                    draft.recovery_snapshot(ref.run_id)
+                    cancellation.raise_if_cancelled()
+                permit = self._runtime.commit_permit(ref, owner)
+                request = ExecuteSyncRequest(
+                    authorized_plan,
+                    draft.project_id,
+                    draft.namespace,
+                    current_local_entries,
+                    ref.run_id,
+                    TaskRuntimeCommitGuard(self._runtime, permit),
+                    cancellation=cancellation,
+                    retry_token=draft.retry_token,
+                )
                 result = self._executor.execute(request)
                 with self._lock:
                     self._results[ref.run_id] = result

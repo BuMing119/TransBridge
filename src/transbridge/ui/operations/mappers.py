@@ -40,7 +40,6 @@ class OperationPlanDraft:
     overwrite_confirmed: bool = False
     backup_required: bool = False
     backup_enabled: bool = False
-    dirty_target: bool = False
     expected_side_effects: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -65,14 +64,19 @@ class OperationPlanDraft:
             "hidden": self.hidden_count,
             "overwrite": (self.overwrite_risk, self.overwrite_confirmed),
             "backup_policy": (self.backup_required, self.backup_enabled),
-            "dirty_target": self.dirty_target,
         }
         data = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
         return hashlib.sha256(data).hexdigest()
 
 
 class DomainPreflightPort(Protocol):
-    def __call__(self, request: object) -> tuple[PreflightCheckState, ...]: ...
+    def __call__(self, request: object) -> DomainPreflightResult | tuple[PreflightCheckState, ...]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class DomainPreflightResult:
+    checks: tuple[PreflightCheckState, ...]
+    estimated_impact: tuple[tuple[str, int], ...] = ()
 
 
 class _OperationMapper:
@@ -102,13 +106,21 @@ class _OperationMapper:
 
     def preflight(self, draft: object) -> OperationPreflightResult:
         value = self._draft(draft)
-        checks = (*self._shared_checks(value), *self._specific_checks(value), *self._domain_preflight(value.request))
+        domain = self._domain_preflight(value.request)
+        if isinstance(domain, DomainPreflightResult):
+            domain_checks = domain.checks
+            estimated_impact = domain.estimated_impact or value.estimated_impact
+        else:
+            domain_checks = tuple(domain)
+            estimated_impact = value.estimated_impact
+        checks = (*self._shared_checks(value), *self._specific_checks(value), *domain_checks)
         return OperationPreflightResult(
             self.kind,
             value.request_digest,
             value.target_revision,
             tuple(checks),
             value.expected_side_effects,
+            estimated_impact=estimated_impact,
         )
 
     @staticmethod
@@ -143,7 +155,7 @@ class _OperationMapper:
 
 class UploadOperationMapper(_OperationMapper):
     kind = OperationKind.UPLOAD
-    title = "上传计划"
+    title = "上传到 ParaTranz"
 
     def _specific_checks(self, value: OperationPlanDraft) -> tuple[PreflightCheckState, ...]:
         return (
@@ -155,13 +167,12 @@ class UploadOperationMapper(_OperationMapper):
 
 class DownloadOperationMapper(_OperationMapper):
     kind = OperationKind.DOWNLOAD
-    title = "下载并合并计划"
+    title = "从 ParaTranz 更新本地翻译"
 
     def _specific_checks(self, value: OperationPlanDraft) -> tuple[PreflightCheckState, ...]:
         return (
             _check("CREDENTIAL", "ParaTranz 凭据", value.credentials_ready, "未配置有效凭据", "settings.paratranz"),
             _check("PERMISSION", "远端读取权限", value.permission_ready, "当前账号无下载权限"),
-            _check("DIRTY_VARIANT", "本地版本状态", not value.dirty_target, "当前版本有未保存修改，不能直接合并"),
         )
 
 

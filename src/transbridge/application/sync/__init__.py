@@ -15,6 +15,7 @@ from .executor import (
 )
 from .models import (
     ConflictPolicy,
+    DeletionPolicy,
     EntrySummary,
     LocalEntrySnapshot,
     RemoteEntrySnapshot,
@@ -28,6 +29,7 @@ from .task_adapter import (
     ParaTranzSyncTaskDraft,
     ParaTranzSyncTaskEntrypoint,
     ParaTranzSyncTaskFailed,
+    ParaTranzSyncTaskPreparation,
 )
 from .use_case import (
     AuthorizedSyncPlan,
@@ -45,6 +47,7 @@ __all__ = [
     "AuthorizedSyncPlan",
     "CallbackLocalSyncUnitOfWork",
     "ConflictPolicy",
+    "DeletionPolicy",
     "CreateSyncPlanRequest",
     "EntrySummary",
     "ExecuteSyncRequest",
@@ -69,4 +72,5 @@ __all__ = [
     "ParaTranzSyncTaskDraft",
     "ParaTranzSyncTaskEntrypoint",
     "ParaTranzSyncTaskFailed",
+    "ParaTranzSyncTaskPreparation",
 ]

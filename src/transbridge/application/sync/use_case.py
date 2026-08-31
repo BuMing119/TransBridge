@@ -15,6 +15,7 @@ from transbridge.application.security.hitl import (
 
 from .models import (
     ConflictPolicy,
+    DeletionPolicy,
     LocalEntrySnapshot,
     RemoteEntrySnapshot,
     SyncOperation,
@@ -41,6 +42,7 @@ class CreateSyncPlanRequest:
     local_entries: tuple[LocalEntrySnapshot, ...]
     operation: SyncOperation
     conflict_policy: ConflictPolicy = ConflictPolicy.ABORT
+    deletion_policy: DeletionPolicy = DeletionPolicy.APPLY
     remote_limit: int = 100_000
     cancellation: CancellationPort | None = None
 
@@ -118,6 +120,7 @@ class ParaTranzSyncPlanningUseCase:
             remote_entries,
             operation=request.operation,
             conflict_policy=request.conflict_policy,
+            deletion_policy=request.deletion_policy,
             scope=_sync_scope(request.project_id, request.namespace),
         )
 

@@ -24,6 +24,13 @@ class ConflictPolicy(StrEnum):
     SKIP = "skip"
 
 
+class DeletionPolicy(StrEnum):
+    """Whether an explicit tombstone from the source may delete the target."""
+
+    APPLY = "apply"
+    PRESERVE = "preserve"
+
+
 class SyncAction(StrEnum):
     CREATE_LOCAL = "create_local"
     CREATE_REMOTE = "create_remote"
@@ -189,6 +196,7 @@ class SyncPlan:
     scope: str
     operation: SyncOperation
     conflict_policy: ConflictPolicy
+    deletion_policy: DeletionPolicy
     local_snapshot_hash: str
     remote_snapshot_hash: str
     items: tuple[SyncPlanItem, ...]
@@ -227,6 +235,7 @@ class SyncPlan:
             "scope": self.scope,
             "operation": self.operation.value,
             "conflict_policy": self.conflict_policy.value,
+            "deletion_policy": self.deletion_policy.value,
             "local_snapshot_hash": self.local_snapshot_hash,
             "remote_snapshot_hash": self.remote_snapshot_hash,
             "items": [item.to_dict() for item in self.items],
@@ -251,6 +260,7 @@ class SyncPlan:
             "scope": self.scope,
             "operation": self.operation.value,
             "conflict_policy": self.conflict_policy.value,
+            "deletion_policy": self.deletion_policy.value,
             "local_snapshot_hash": self.local_snapshot_hash,
             "remote_snapshot_hash": self.remote_snapshot_hash,
             "counts": dict(self.counts),

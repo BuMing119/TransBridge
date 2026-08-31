@@ -17,6 +17,7 @@ from transbridge.application.sync import (
     AuthorizeSyncPlanRequest,
     ConflictPolicy,
     CreateSyncPlanRequest,
+    DeletionPolicy,
     LocalEntrySnapshot,
     ParaTranzSyncPlanningUseCase,
     RemoteEntrySnapshot,
@@ -143,6 +144,67 @@ def test_operation_and_conflict_policy_are_explicit(operation, policy, expected)
 
     assert plan.items[0].action is expected
     assert plan.items[0].conflict_policy is policy
+
+
+def test_download_remote_priority_turns_content_difference_into_local_update() -> None:
+    plan = SyncPlanner().plan(
+        (_local("key", "local", remote_id=1),),
+        (_remote("key", "remote", remote_id=1),),
+        operation=SyncOperation.DOWNLOAD,
+        conflict_policy=ConflictPolicy.PREFER_REMOTE,
+        deletion_policy=DeletionPolicy.PRESERVE,
+    )
+
+    assert plan.conflicts == 0
+    assert plan.items[0].action is SyncAction.UPDATE_LOCAL
+
+
+def test_download_preserves_remote_deletions_unless_user_opts_in() -> None:
+    local = (_local("key", "local", remote_id=1),)
+    remote = (_remote("key", "", remote_id=1, deleted=True),)
+
+    protected = SyncPlanner().plan(
+        local,
+        remote,
+        operation=SyncOperation.DOWNLOAD,
+        conflict_policy=ConflictPolicy.PREFER_REMOTE,
+        deletion_policy=DeletionPolicy.PRESERVE,
+    )
+    applying = SyncPlanner().plan(
+        local,
+        remote,
+        operation=SyncOperation.DOWNLOAD,
+        conflict_policy=ConflictPolicy.PREFER_REMOTE,
+        deletion_policy=DeletionPolicy.APPLY,
+    )
+
+    assert protected.items[0].action is SyncAction.SKIP
+    assert protected.items[0].reason == "remote_tombstone_preserved"
+    assert applying.items[0].action is SyncAction.DELETE_LOCAL
+
+
+def test_download_8300_entry_regression_reports_8096_updates_instead_of_conflicts() -> None:
+    local = tuple(_local(f"key-{index}", "same", remote_id=index + 1) for index in range(8300))
+    remote = tuple(
+        _remote(
+            f"key-{index}",
+            "remote" if index < 8096 else "same",
+            remote_id=index + 1,
+        )
+        for index in range(8300)
+    )
+
+    plan = SyncPlanner().plan(
+        local,
+        remote,
+        operation=SyncOperation.DOWNLOAD,
+        conflict_policy=ConflictPolicy.PREFER_REMOTE,
+        deletion_policy=DeletionPolicy.PRESERVE,
+    )
+
+    assert plan.conflicts == 0
+    assert dict(plan.counts)["update_local"] == 8096
+    assert dict(plan.counts)["skip"] == 204
 
 
 def test_missing_and_duplicate_remote_ids_are_inspectable_conflicts() -> None:

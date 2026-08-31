@@ -13,6 +13,13 @@ class OperationKind(StrEnum):
     FOMOD = "fomod"
 
 
+class EditableControl(StrEnum):
+    TEXT = "text"
+    BOOLEAN = "boolean"
+    CHOICE = "choice"
+    REMOTE_PROJECT = "remote_project"
+
+
 @dataclass(frozen=True, slots=True)
 class EditableFieldState:
     field_id: str
@@ -20,10 +27,16 @@ class EditableFieldState:
     value: str
     required: bool = False
     enabled: bool = True
+    control: EditableControl = EditableControl.TEXT
+    display_value: str = ""
+    options: tuple[tuple[str, str], ...] = ()
+    help_text: str = ""
 
     def __post_init__(self) -> None:
         if not self.field_id.strip() or not self.label.strip():
             raise ValueError("editable operation fields require an id and label")
+        if len({value for value, _label in self.options}) != len(self.options):
+            raise ValueError("editable operation field option values must be unique")
 
 
 @dataclass(frozen=True, slots=True)

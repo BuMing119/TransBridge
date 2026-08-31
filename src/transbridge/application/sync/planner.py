@@ -9,6 +9,7 @@ from transbridge.application.io.identity import EntryKey
 
 from .models import (
     ConflictPolicy,
+    DeletionPolicy,
     EntrySummary,
     LocalEntrySnapshot,
     RemoteEntrySnapshot,
@@ -30,10 +31,12 @@ class SyncPlanner:
         *,
         operation: SyncOperation,
         conflict_policy: ConflictPolicy = ConflictPolicy.ABORT,
+        deletion_policy: DeletionPolicy = DeletionPolicy.APPLY,
         scope: str = "paratranz:unscoped",
     ) -> SyncPlan:
         operation = SyncOperation(operation)
         conflict_policy = ConflictPolicy(conflict_policy)
+        deletion_policy = DeletionPolicy(deletion_policy)
         if not isinstance(scope, str) or not scope.strip():
             raise ValueError("sync plan scope must not be empty")
         local = tuple(local_entries)
@@ -58,7 +61,7 @@ class SyncPlanner:
                 if remote_entry.external_ref.index_key in duplicate_remote_refs:
                     items.append(_conflict(key, local_entry, remote_entry, conflict_policy, "duplicate_remote_id"))
                     continue
-            items.append(_plan_item(key, local_entry, remote_entry, operation, conflict_policy))
+            items.append(_plan_item(key, local_entry, remote_entry, operation, conflict_policy, deletion_policy))
         item_tuple = tuple(items)
         counts = Counter(item.action.value for item in item_tuple)
         full_counts = tuple(sorted((action.value, counts[action.value]) for action in SyncAction))
@@ -68,6 +71,7 @@ class SyncPlanner:
             "scope": scope,
             "operation": operation.value,
             "conflict_policy": conflict_policy.value,
+            "deletion_policy": deletion_policy.value,
             "local_snapshot_hash": local_hash,
             "remote_snapshot_hash": remote_hash,
             "items": [item.to_dict() for item in item_tuple],
@@ -81,6 +85,7 @@ class SyncPlanner:
             scope=scope,
             operation=operation,
             conflict_policy=conflict_policy,
+            deletion_policy=deletion_policy,
             local_snapshot_hash=local_hash,
             remote_snapshot_hash=remote_hash,
             items=item_tuple,
@@ -127,6 +132,7 @@ def _plan_item(
     remote: RemoteEntrySnapshot | None,
     operation: SyncOperation,
     policy: ConflictPolicy,
+    deletion_policy: DeletionPolicy,
 ) -> SyncPlanItem:
     local_summary = None if local is None else EntrySummary.from_local(local)
     remote_summary = None if remote is None else EntrySummary.from_remote(remote)
@@ -157,6 +163,16 @@ def _plan_item(
         if operation is SyncOperation.UPLOAD:
             return _item(
                 key, SyncAction.UPDATE_REMOTE, remote_summary, local_summary, reference, "restore_from_local", policy
+            )
+        if deletion_policy is DeletionPolicy.PRESERVE:
+            return _item(
+                key,
+                SyncAction.SKIP,
+                local_summary,
+                local_summary,
+                reference,
+                "remote_tombstone_preserved",
+                policy,
             )
         return _item(key, SyncAction.DELETE_LOCAL, local_summary, remote_summary, reference, "remote_tombstone", policy)
     if local_summary.content_identity() == remote_summary.content_identity():

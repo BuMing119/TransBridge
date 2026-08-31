@@ -60,7 +60,16 @@ class _CatalogCancellation:
 
 
 class ParaTranzTargetDialog(QDialog):
-    def __init__(self, ctx, catalog: ParaTranzProjectCatalog, config_revision: int, parent=None) -> None:
+    def __init__(
+        self,
+        ctx,
+        catalog: ParaTranzProjectCatalog,
+        config_revision: int,
+        parent=None,
+        *,
+        explanation: str | None = None,
+        confirmation_text: str | None = None,
+    ) -> None:
         super().__init__(parent)
         self._ctx = ctx
         self._catalog = catalog
@@ -81,9 +90,9 @@ class ParaTranzTargetDialog(QDialog):
         self.resize(520, 460)
 
         layout = QVBoxLayout(self)
-        explanation = QLabel("选择“我的项目”中的一个项目。此选择只会在确认后绑定到当前本地工程。")
-        explanation.setWordWrap(True)
-        layout.addWidget(explanation)
+        explanation_label = QLabel(explanation or "选择“我的项目”中的一个项目。此选择只会在确认后绑定到当前本地工程。")
+        explanation_label.setWordWrap(True)
+        layout.addWidget(explanation_label)
         self._search = QLineEdit(self)
         self._search.setPlaceholderText("搜索项目名称或 ID…")
         self._search.textChanged.connect(self._render)
@@ -95,7 +104,7 @@ class ParaTranzTargetDialog(QDialog):
         self._status = QLabel("正在加载我的项目…", self)
         layout.addWidget(self._status)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("绑定到当前工程")
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText(confirmation_text or "绑定到当前工程")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)

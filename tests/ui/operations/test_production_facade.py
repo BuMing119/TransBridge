@@ -118,7 +118,12 @@ def test_production_builder_installs_all_four_features_without_remote_work() -> 
     assert facade.active_plan_count == 0
     cancelled = facade.begin_upload(context, paratranz_project_id="42", set_as_default=True)
     fields = {field.field_id: field.value for field in cancelled.plan.editable_fields}
-    assert fields == {"paratranz_project_id": "42", "set_as_default": "true"}
+    assert fields == {
+        "paratranz_project_id": "42",
+        "set_as_default": "true",
+        "conflict_policy": "prefer_local",
+        "apply_remote_deletions": "true",
+    }
     cancelled.rejected.emit()
     assert facade.active_plan_count == 0
     assert facade.tasks is runtime.tasks

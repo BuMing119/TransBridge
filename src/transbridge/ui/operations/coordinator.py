@@ -15,6 +15,7 @@ from .plan_view import OperationKind
 OperationDraftFactory = Callable[[object, bool, Mapping[str, object]], object]
 OperationEditFactory = Callable[[object, tuple[tuple[str, str], ...]], object]
 OperationDiscardFactory = Callable[[object], None]
+OperationContextDialogFactory = Callable[[object, object, object | None], object]
 
 
 class OperationPlanCoordinator:
@@ -30,6 +31,7 @@ class OperationPlanCoordinator:
         discard_factories: Mapping[OperationKind, OperationDiscardFactory] | None = None,
         preflight_worker_factory=ApiWorker,
         dialog_factory=OperationPlanDialog,
+        dialog_factories: Mapping[OperationKind, OperationContextDialogFactory] | None = None,
     ) -> None:
         self._presenter = presenter
         self._draft_factories = dict(draft_factories)
@@ -38,6 +40,7 @@ class OperationPlanCoordinator:
         self._discard_factories = dict(discard_factories or {})
         self._preflight_worker_factory = preflight_worker_factory
         self._dialog_factory = dialog_factory
+        self._dialog_factories = dict(dialog_factories or {})
         self._owned_windows: dict[str, object] = {}
         self._preflight_workers: dict[str, object] = {}
 
@@ -64,12 +67,28 @@ class OperationPlanCoordinator:
         owner_id = self._owner_id(context)
         draft_holder = [factory(context, batch, values)]
         plan = self._presenter.open(kind, draft_holder[0], owner_id=owner_id)
-        dialog = self._dialog_factory(plan, parent)
+        context_dialog_factory = self._dialog_factories.get(kind)
+        dialog = (
+            self._dialog_factory(plan, parent)
+            if context_dialog_factory is None
+            else context_dialog_factory(plan, context, parent)
+        )
         self._owned_windows[plan.session_id] = dialog
         released = False
+        preflight_generation = 0
+        pending_generation: int | None = None
+        in_flight_draft: object | None = None
+        retired_drafts: list[object] = []
 
         def release() -> None:
             self._owned_windows.pop(plan.session_id, None)
+
+        def show_error(title: str, message: str) -> None:
+            renderer = getattr(dialog, "render_preflight_error", None)
+            if callable(renderer):
+                renderer(message)
+            else:
+                QMessageBox.warning(dialog, title, message)
 
         def apply_edits(fields) -> None:
             edit = self._edit_factories.get(kind)
@@ -78,43 +97,76 @@ class OperationPlanCoordinator:
             previous = draft_holder[0]
             draft_holder[0] = edit(previous, tuple(fields))
             if draft_holder[0] is not previous:
-                self._discard_factories.get(kind, lambda _draft: None)(previous)
+                if previous is in_flight_draft:
+                    retired_drafts.append(previous)
+                else:
+                    self._discard_factories.get(kind, lambda _draft: None)(previous)
             edited = self._presenter.edit(plan.session_id, draft_holder[0], owner_id=owner_id)
             dialog.render_plan(edited)
 
         def preflight(_session_id, fields) -> None:
+            nonlocal preflight_generation, pending_generation
             try:
                 apply_edits(fields)
             except (RuntimeError, TypeError, ValueError) as exc:
-                QMessageBox.warning(dialog, "预检失败", str(exc))
+                show_error("预检失败", str(exc))
                 return
             if kind not in {OperationKind.UPLOAD, OperationKind.DOWNLOAD}:
                 try:
                     dialog.render_preflight(self._presenter.preflight(plan.session_id, owner_id=owner_id))
                 except (RuntimeError, TypeError, ValueError) as exc:
-                    QMessageBox.warning(dialog, "预检失败", str(exc))
+                    show_error("预检失败", str(exc))
                 return
+            preflight_generation += 1
+            generation = preflight_generation
             if plan.session_id in self._preflight_workers:
-                QMessageBox.information(dialog, "正在预检", "远端预检仍在进行，请稍候。")
+                pending_generation = generation
+                running = getattr(dialog, "set_preflight_running", None)
+                if callable(running):
+                    running(True)
                 return
+            start_remote_preflight(generation)
 
+        def start_remote_preflight(generation: int) -> None:
+            nonlocal in_flight_draft, pending_generation
+            pending_generation = None
+            captured_draft = draft_holder[0]
+            in_flight_draft = captured_draft
+            running = getattr(dialog, "set_preflight_running", None)
+            if callable(running):
+                running(True)
             worker = self._preflight_worker_factory(
                 lambda: self._presenter.preflight(plan.session_id, owner_id=owner_id)
             )
             self._preflight_workers[plan.session_id] = worker
 
             def on_result(result) -> None:
-                if self._owned_windows.get(plan.session_id) is dialog:
+                if self._owned_windows.get(plan.session_id) is dialog and generation == preflight_generation:
                     dialog.render_preflight(result)
 
             def on_error(message) -> None:
-                if self._owned_windows.get(plan.session_id) is dialog:
-                    QMessageBox.warning(dialog, "预检失败", str(message))
+                if self._owned_windows.get(plan.session_id) is dialog and generation == preflight_generation:
+                    show_error("预检失败", str(message))
 
             def on_finished() -> None:
+                nonlocal in_flight_draft
                 self._preflight_workers.pop(plan.session_id, None)
+                in_flight_draft = None
+                discard = self._discard_factories.get(kind, lambda _draft: None)
+                pending_discards = list(retired_drafts)
+                retired_drafts.clear()
                 if self._owned_windows.get(plan.session_id) is not dialog:
-                    self._discard_factories.get(kind, lambda _draft: None)(draft_holder[0])
+                    pending_discards.append(captured_draft)
+                elif pending_generation is not None:
+                    start_remote_preflight(pending_generation)
+                elif callable(running):
+                    running(False)
+                unique_discards: list[object] = []
+                for retired in pending_discards:
+                    if not any(retired is existing for existing in unique_discards):
+                        unique_discards.append(retired)
+                for retired in unique_discards:
+                    discard(retired)
                 delete_later = getattr(worker, "deleteLater", None)
                 if callable(delete_later):
                     delete_later()
@@ -128,13 +180,15 @@ class OperationPlanCoordinator:
             try:
                 apply_edits(fields)
             except (RuntimeError, TypeError, ValueError) as exc:
-                QMessageBox.warning(dialog, "无法返回编辑", str(exc))
+                show_error("无法返回编辑", str(exc))
 
         def confirm(_session_id, token) -> None:
             try:
                 self._presenter.confirm(plan.session_id, token, owner_id=owner_id)
             except (RuntimeError, TypeError, ValueError) as exc:
-                QMessageBox.warning(dialog, "无法开始操作", str(exc))
+                show_error("无法开始操作", str(exc))
+                if kind in {OperationKind.UPLOAD, OperationKind.DOWNLOAD}:
+                    preflight(plan.session_id, dialog.edited_values())
                 return
             dialog.accept()
             release()
@@ -148,7 +202,10 @@ class OperationPlanCoordinator:
                 self._presenter.cancel(plan.session_id, owner_id=owner_id)
             except OperationPlanError:
                 pass
-            self._discard_factories.get(kind, lambda _draft: None)(draft_holder[0])
+            if draft_holder[0] is in_flight_draft:
+                retired_drafts.append(draft_holder[0])
+            else:
+                self._discard_factories.get(kind, lambda _draft: None)(draft_holder[0])
             release()
 
         def destroyed(*_args) -> None:

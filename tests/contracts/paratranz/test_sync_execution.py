@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -23,15 +24,33 @@ from transbridge.application.sync import (
     LocalEntrySnapshot,
     ParaTranzArtifactPublisher,
     ParaTranzSyncExecutor,
+    ParaTranzSyncTaskDraft,
+    ParaTranzSyncTaskEntrypoint,
+    ParaTranzSyncTaskPreparation,
     RemoteEntrySnapshot,
     RetryToken,
     SyncOperation,
     SyncPlanner,
 )
 from transbridge.application.sync.models import canonical_hash
+from transbridge.application.tasks import CallbackThreadBackend, JobState, OwnerRef, TaskRuntime
 from transbridge.paratranz.service import ParaTranzService
 
 NAMESPACE = SourceNamespace("test:paratranz-sync")
+
+
+class _TaskIds:
+    def new_id(self) -> str:
+        return "paratranz-recovery-run"
+
+
+class _TaskClock:
+    def __init__(self) -> None:
+        self.value = datetime(2026, 8, 30, tzinfo=UTC)
+
+    def now(self):
+        self.value += timedelta(microseconds=1)
+        return self.value
 
 
 class Token:
@@ -145,6 +164,72 @@ def _request(plan, local, *, token=None, cancellation=None, confirmation="NOT_RE
         cancellation=cancellation,
         retry_token=token,
     )
+
+
+def test_sync_task_creates_recovery_point_before_executor_runs() -> None:
+    local = (_local("a", "A"),)
+    plan = SyncPlanner().plan(local, (), operation=SyncOperation.UPLOAD)
+    authorized = AuthorizedSyncPlan(plan, "owner-1", "NOT_REQUIRED")
+    events = []
+    executor = MagicMock()
+    executor.execute.side_effect = lambda _request: events.append("execute") or OperationResult.completed({})
+    runtime = TaskRuntime(
+        id_generator=_TaskIds(),
+        clock=_TaskClock(),
+        backend=CallbackThreadBackend(lambda _run_id, target: target()),
+    )
+    owner = OwnerRef("owner-1", "gui")
+
+    ref = ParaTranzSyncTaskEntrypoint(runtime, executor).submit(
+        ParaTranzSyncTaskDraft(
+            authorized,
+            7,
+            NAMESPACE,
+            local,
+            recovery_snapshot=lambda _run_id: events.append("recovery"),
+            recovery_snapshot_name="下载前还原点",
+            preparation=lambda _run_id: events.append("prepare") or ParaTranzSyncTaskPreparation(authorized, local),
+        ),
+        owner,
+    )
+
+    assert events == ["prepare", "recovery", "execute"]
+    assert runtime.get(ref, owner).state is JobState.COMPLETED
+
+
+def test_sync_task_submit_returns_before_remote_preparation_starts() -> None:
+    local = (_local("a", "A"),)
+    plan = SyncPlanner().plan(local, (), operation=SyncOperation.UPLOAD)
+    authorized = AuthorizedSyncPlan(plan, "owner-1", "NOT_REQUIRED")
+    queued = []
+    events = []
+    executor = MagicMock()
+    executor.execute.return_value = OperationResult.completed({})
+    runtime = TaskRuntime(
+        id_generator=_TaskIds(),
+        clock=_TaskClock(),
+        backend=CallbackThreadBackend(lambda _run_id, target: queued.append(target)),
+    )
+    owner = OwnerRef("owner-1", "gui")
+
+    ref = ParaTranzSyncTaskEntrypoint(runtime, executor).submit(
+        ParaTranzSyncTaskDraft(
+            authorized,
+            7,
+            NAMESPACE,
+            local,
+            preparation=lambda _run_id: events.append("prepare") or ParaTranzSyncTaskPreparation(authorized, local),
+        ),
+        owner,
+    )
+
+    assert events == []
+    assert len(queued) == 1
+    assert runtime.get(ref, owner).state is JobState.RUNNING
+
+    queued[0]()
+    assert events == ["prepare"]
+    assert runtime.get(ref, owner).state is JobState.COMPLETED
 
 
 def test_partial_remote_failure_and_retry_do_not_repeat_confirmed_success() -> None:

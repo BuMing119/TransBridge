@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from tests.conftest import make_test_collection
+from transbridge.application.sync import ConflictPolicy, DeletionPolicy
 from transbridge.ui.operations.plan_view import OperationKind
 from transbridge.ui.operations.production_support import sync_request, sync_request_target_is_current
 
@@ -33,8 +34,10 @@ def test_sync_request_uses_project_binding_and_ignores_browsed_project() -> None
 
     assert ready and not reason
     assert request.project_id == 42
+    assert request.target_project_name == "Bound"
     assert request.target_source == "project_binding"
     assert request.target_revision == "project_binding:7:config-0"
+    assert request.conflict_policy is ConflictPolicy.PREFER_LOCAL
 
 
 def test_sync_request_is_unbound_instead_of_falling_back_to_browsed_project() -> None:
@@ -44,6 +47,8 @@ def test_sync_request_is_unbound_instead_of_falling_back_to_browsed_project() ->
     assert request.project_id == 0
     assert request.target_source == "unbound"
     assert "尚未绑定" in reason
+    assert request.conflict_policy is ConflictPolicy.PREFER_REMOTE
+    assert request.deletion_policy is DeletionPolicy.PRESERVE
 
 
 def test_explicit_operation_override_has_priority_and_revision_identity() -> None:
@@ -58,11 +63,12 @@ def test_explicit_operation_override_has_priority_and_revision_identity() -> Non
         ),
         OperationKind.UPLOAD,
         False,
-        {"paratranz_project_id": "88"},
+        {"paratranz_project_id": "88", "paratranz_project_name": "Chosen"},
     )
 
     assert ready and not reason
     assert request.project_id == 88
+    assert request.target_project_name == "Chosen"
     assert request.target_source == "explicit"
     assert request.target_revision == "explicit:-:config-0"
 
@@ -83,7 +89,7 @@ def test_project_revision_change_invalidates_frozen_sync_target() -> None:
     current, reason = sync_request_target_is_current(request)
 
     assert not current
-    assert "重新预检" in reason
+    assert "重新检查" in reason
 
 
 def test_config_revision_change_invalidates_frozen_explicit_target() -> None:
