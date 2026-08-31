@@ -10,6 +10,7 @@ from transbridge.application.io.identity import (
     SourceNamespace,
 )
 from transbridge.application.io.mutation import EntrySnapshot
+from transbridge.converter.plugin_entry_metadata import build_plugin_metadata
 from transbridge.parser import EET_Entry
 from transbridge.parser.plugin.plugin_string_with_context import PluginStringWithContext
 from transbridge.parser.xt import SST_Entry, XT_Entry
@@ -208,7 +209,12 @@ class TranslationEntry:
         )
 
     @classmethod
-    def create_from_plugin_entry(cls, ps: "PluginStringWithContext") -> "TranslationEntry":
+    def create_from_plugin_entry(
+        cls,
+        ps: "PluginStringWithContext",
+        *,
+        source_order: int | None = None,
+    ) -> "TranslationEntry":
         """
         从 PluginStringWithContext 实例创建 TranslationEntry 实例
         :param ps: PluginStringWithContext 实例
@@ -254,6 +260,7 @@ class TranslationEntry:
             dsd_type=getattr(ps, "type", "") or "",  # "NPC_ FULL" 格式
             dsd_index=getattr(ps, "index", 1) or 1,  # 原始索引，默认为 1
             editor_id=getattr(ps, "editor_id", "") or "",  # 原始 editor_id
+            metadata=build_plugin_metadata(getattr(ps, "context", None), source_order),
         )
 
     @classmethod

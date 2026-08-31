@@ -351,8 +351,22 @@ class SSEPluginWithContext(SSEPlugin):
                 if label_hex and dial_context_map and label_hex in dial_context_map:
                     dial_context = dial_context_map[label_hex]
 
-        record: Record
-        for record in SSEPlugin.extract_group_records(group, recursive=False):
+        for child in group.children:
+            if isinstance(child, Group):
+                child_strings = self.extract_group_strings_with_context(
+                    child,
+                    extract_localized,
+                    dial_context,
+                    dial_context_map,
+                    dlbr_map,
+                    strings_lookup,
+                )
+                strings.update(child_strings)
+                continue
+            if not isinstance(child, Record):
+                continue
+
+            record = child
             edid: RawString | None = SSEPlugin.get_record_edid(record)
             master_index = int(record.formid[:2], base=16)
 
@@ -412,19 +426,6 @@ class SSEPluginWithContext(SSEPlugin):
 
                     strings[string_data] = subrecord
 
-        # Recursively process child groups with context propagation
-        for child in group.children:
-            if isinstance(child, Group):
-                child_strings = self.extract_group_strings_with_context(
-                    child,
-                    extract_localized,
-                    dial_context,
-                    dial_context_map,
-                    dlbr_map,
-                    strings_lookup,
-                )
-                strings.update(child_strings)
-
         return strings
 
     def extract_strings_with_context(
@@ -461,8 +462,6 @@ class SSEPluginWithContext(SSEPlugin):
             )
             strings.extend(current_group)
 
-        # 按 form_id 排序确保顺序稳定可复现
-        strings.sort(key=lambda x: x.form_id or "")
         return strings
 
     def find_string_subrecord(self, form_id: str, type: str, string: str, index: int | None) -> StringSubrecord | None:

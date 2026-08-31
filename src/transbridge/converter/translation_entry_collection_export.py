@@ -12,6 +12,7 @@ from transbridge.application.io import (
     WriteRequest,
 )
 from transbridge.converter.context_categories import EXPORT_CATEGORIES
+from transbridge.converter.plugin_entry_metadata import restore_plugin_source_order
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
@@ -82,7 +83,8 @@ def export_to_categorized_json_files(
     for quest_formid, entries in dial_entries.items():
         filename = _dial_filename(quest_formid, collection)
         file_path = output_dir / filename
-        _write_paratranz_entries(entries, file_path, ensure_ascii=ensure_ascii, indent=indent)
+        source_ordered_entries = restore_plugin_source_order(entries)
+        _write_paratranz_entries(source_ordered_entries, file_path, ensure_ascii=ensure_ascii, indent=indent)
 
 
 def _write_paratranz_entries(

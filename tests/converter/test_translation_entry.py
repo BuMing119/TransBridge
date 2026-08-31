@@ -82,10 +82,10 @@ class TestTranslationEntry:
             string="Original plugin text",
             index=1,
             string_id=None,
-            context=SimpleNamespace(quest="0100ABCD"),
+            context=SimpleNamespace(quest="0100ABCD", dialogue_topic="01000042|Fixture.esm"),
         )
 
-        entry = TranslationEntry.create_from_plugin_entry(plugin_string)
+        entry = TranslationEntry.create_from_plugin_entry(plugin_string, source_order=23)
 
         assert entry.id == "TestEditor:000123|1~INFO:NAM1"
         assert entry.key == "TestEditor:000123|1~INFO:NAM1"
@@ -93,6 +93,11 @@ class TestTranslationEntry:
         assert entry.translation == ""
         assert entry.stage == 0
         assert entry.context == "INFO:NAM1|0100ABCD"
+        assert dict(entry.metadata) == {
+            "plugin.parent_dial_formid": "01000042|Fixture.esm",
+            "plugin.source_order": 23,
+        }
+        assert TranslationEntry.from_dict(entry.to_dict()).metadata == entry.metadata
 
         # 测试没有 type 属性的情况
         plugin_string_no_type = SimpleNamespace(
@@ -118,6 +123,7 @@ class TestTranslationEntry:
             translation="",
             stage=0,
             context="INFO:NAM1",
+            metadata=(("plugin.source_order", 7),),
         )
 
         # 测试 list_id == 0，匹配的情况
@@ -130,6 +136,7 @@ class TestTranslationEntry:
         assert updated_entry is not None
         assert updated_entry.translation == "Translated text"
         assert updated_entry.stage == 1
+        assert updated_entry.metadata == entry.metadata
 
         # 测试 list_id == 1，匹配的情况
         entry2 = TranslationEntry(

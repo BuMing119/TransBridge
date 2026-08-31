@@ -86,3 +86,51 @@ def test_categorized_export_uses_local_key_and_only_real_external_id(tmp_path: P
     assert payload[1]["key"] == "stable-without-remote"
     assert "id" not in payload[1]
     assert all("schema_version" not in item and "entry_key" not in item for item in payload)
+
+
+def _dialogue_entry(key: str, source_order: object | None) -> TranslationEntry:
+    metadata = () if source_order is None else (("plugin.source_order", source_order),)
+    return TranslationEntry(key, key, key, "", 0, "INFO:NAM1|00ABCDEF", metadata=metadata)
+
+
+def test_categorized_dialogue_export_restores_complete_plugin_source_order(tmp_path: Path) -> None:
+    collection = TranslationEntryCollection((
+        _dialogue_entry("third", 2),
+        _dialogue_entry("first", 0),
+        _dialogue_entry("second", 1),
+    ))
+
+    export_to_categorized_json_files(collection, tmp_path)
+
+    output = next(tmp_path.glob("*.json"))
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert [item["key"] for item in payload] == ["first", "second", "third"]
+    assert all(not any(key.startswith("plugin.") for key in item) for item in payload)
+
+
+def test_categorized_dialogue_export_keeps_collection_order_for_incomplete_metadata(tmp_path: Path) -> None:
+    collection = TranslationEntryCollection((
+        _dialogue_entry("third", 2),
+        _dialogue_entry("legacy", None),
+        _dialogue_entry("first", 0),
+    ))
+
+    export_to_categorized_json_files(collection, tmp_path)
+
+    output = next(tmp_path.glob("*.json"))
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert [item["key"] for item in payload] == ["third", "legacy", "first"]
+
+
+def test_categorized_dialogue_export_keeps_collection_order_for_duplicate_source_order(tmp_path: Path) -> None:
+    collection = TranslationEntryCollection((
+        _dialogue_entry("first-seen", 1),
+        _dialogue_entry("duplicate", 1),
+        _dialogue_entry("zero", 0),
+    ))
+
+    export_to_categorized_json_files(collection, tmp_path)
+
+    output = next(tmp_path.glob("*.json"))
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert [item["key"] for item in payload] == ["first-seen", "duplicate", "zero"]

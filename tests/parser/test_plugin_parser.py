@@ -7,20 +7,20 @@ from transbridge.parser.plugin_parser import PluginParser
 
 # 伪造的 PluginString 对象
 class FakeContext:
-    def __init__(self, quest=None):
+    def __init__(self, quest=None, dialogue_topic=None):
         self.quest = quest
-        self.dialogue_topic = None
+        self.dialogue_topic = dialogue_topic
 
 
 class FakePluginString:
-    def __init__(self, editor_id, form_id, type_, string, index=1, quest=None):
+    def __init__(self, editor_id, form_id, type_, string, index=1, quest=None, dialogue_topic=None):
         self.editor_id = editor_id
         self.form_id = form_id
         self.type = type_
         self.string = string
         self.index = index
         self.string_id = None
-        self.context = FakeContext(quest)
+        self.context = FakeContext(quest, dialogue_topic)
 
 
 def make_fake_strings():
@@ -47,6 +47,8 @@ def test_parse_plugin_basic(mock_sseplugin, mock_strings_lookup):
     assert results[0].id == "NPC_John:0001|1~INFO:NAM1"
     assert results[0].key == "NPC_John:0001|1~INFO:NAM1"
     assert results[0].original == "Hello"
+    assert dict(results[0].metadata) == {"plugin.source_order": 0}
+    assert dict(results[1].metadata) == {"plugin.source_order": 2}
 
 
 @patch("transbridge.parser.plugin_parser.PluginStringsLookup.from_plugin", return_value=None)
@@ -107,12 +109,22 @@ def test_parse_plugin_exception_returns_empty(mock_sseplugin):
 
 def test_create_item():
     parser = PluginParser()
-    ps = FakePluginString("NPC_Test", "9999", "INFO NAM1", "Hello world")
+    ps = FakePluginString(
+        "NPC_Test",
+        "9999",
+        "INFO NAM1",
+        "Hello world",
+        dialogue_topic="0000ABCD|fixture.esm",
+    )
 
-    item = parser._create_item(ps)
+    item = parser._create_item(ps, source_order=17)
 
     assert item.id == "NPC_Test:9999|1~INFO:NAM1"
     assert item.key == "NPC_Test:9999|1~INFO:NAM1"
     assert item.original == "Hello world"
     assert item.translation == ""
     assert item.stage == 0
+    assert dict(item.metadata) == {
+        "plugin.parent_dial_formid": "0000ABCD|fixture.esm",
+        "plugin.source_order": 17,
+    }

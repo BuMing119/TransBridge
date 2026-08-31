@@ -101,7 +101,7 @@ class PluginParser:
                         setattr(ps, "editor_id", dial_edid)
                         self.log.debug(f"Filled INFO editor_id with DIAL '{dial_edid}'")
 
-            item = self._create_item(ps)
+            item = self._create_item(ps, source_order=idx)
             items.append(item)
 
         if skipped_count > 0:
@@ -109,7 +109,7 @@ class PluginParser:
         self.log.info(f"Successfully parsed {len(items)} translation items")
         return items
 
-    def _create_item(self, ps: PluginString) -> TranslationEntry:
+    def _create_item(self, ps: PluginString, *, source_order: int | None = None) -> TranslationEntry:
         """Convert PluginStringWithContext to TranslationEntry."""
         # Replace space with colon in type, e.g. "INFO NAM1" -> "INFO:NAM1"
         # key = ps.type.replace(" ", ":") if ps.type else "UNKNOWN"
@@ -123,7 +123,7 @@ class PluginParser:
         #     stage=0,
         #     context=None,
         # )
-        return TranslationEntry.create_from_plugin_entry(ps)
+        return TranslationEntry.create_from_plugin_entry(ps, source_order=source_order)
 
     def get_plugin(self) -> SSEPlugin | None:
         """Get the underlying plugin object."""
