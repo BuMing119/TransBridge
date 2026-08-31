@@ -92,6 +92,51 @@ def test_lossy_lexical_construct_is_reported_and_rewrite_fails_closed():
     assert captured.value.code == "FOMOD_XML_FIDELITY_UNSUPPORTED"
 
 
+def test_namespace_declaration_order_does_not_block_pipeline_publication(tmp_path):
+    for variant, module_name in (("new", "Original"), ("old", "Translated")):
+        with zipfile.ZipFile(tmp_path / f"{variant}.zip", "w") as bundle:
+            bundle.writestr(
+                "Mod/fomod/ModuleConfig.xml",
+                '<config xmlns:z="urn:z" xmlns:a="urn:a" z:k="v" a:k="v">'
+                f"<moduleName>{module_name}</moduleName></config>",
+            )
+    output = tmp_path / "translated.zip"
+    pipeline = FomodPipeline()
+
+    pipeline.run(
+        str(tmp_path / "new.zip"),
+        str(output),
+        old_archive=str(tmp_path / "old.zip"),
+        work_dir=str(tmp_path / "workspace"),
+        target_lang="zh_CN",
+        ai_enabled=False,
+    )
+
+    with zipfile.ZipFile(output) as bundle:
+        snapshot = parse_fomod_xml(bundle.read("fomod/ModuleConfig.xml"))
+    assert dict(snapshot.namespaces) == {"z": "urn:z", "a": "urn:a"}
+    assert [value.text for value in snapshot.values] == ["Translated"]
+    assert any(artifact.kind == "published-archive" for artifact in pipeline.last_report.artifacts)
+
+
+def test_namespace_binding_changes_still_block_translation(monkeypatch):
+    from transbridge.fomod import xml_fidelity
+
+    snapshot = parse_fomod_xml(_raw_xml("utf-8"))
+    original_serialize = xml_fidelity._serialize
+
+    def corrupt_namespace(source, root):
+        return original_serialize(source, root).replace(b"urn:vendor", b"urn:changed")
+
+    monkeypatch.setattr(xml_fidelity, "_serialize", corrupt_namespace)
+    value = snapshot.values[0]
+
+    with pytest.raises(FomodXmlError) as captured:
+        patch_and_validate(snapshot, (XmlTextCandidate(value.locator, value.text, "Translated", "test"),))
+
+    assert captured.value.code == "FOMOD_XML_NAMESPACE_FIDELITY_FAILED"
+
+
 def test_atomic_xml_failure_leaves_original_and_cleans_temp(tmp_path, monkeypatch):
     path = tmp_path / "ModuleConfig.xml"
     path.write_bytes(_raw_xml("utf-8"))

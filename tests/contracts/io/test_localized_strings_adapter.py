@@ -192,6 +192,57 @@ def test_invalid_stage_and_cp1252_encoding_loss_block_before_artifact(tmp_path: 
     assert not encoding_target.exists()
 
 
+@pytest.mark.parametrize(
+    ("fixture", "format_id"),
+    [
+        ("integrity.strings", FormatId.STRINGS),
+        ("integrity.dlstrings", FormatId.DLSTRINGS),
+        ("integrity.ilstrings", FormatId.ILSTRINGS),
+    ],
+)
+@pytest.mark.parametrize("source_state", ["removed", "changed"])
+@pytest.mark.parametrize("hydrated", [False, True])
+def test_only_hydrated_writes_are_independent_of_the_original_source(
+    tmp_path: Path, fixture, format_id, source_state, hydrated
+) -> None:
+    source = tmp_path / fixture
+    shutil.copyfile(FIXTURES / fixture, source)
+    adapter = LocalizedStringsAdapter(format_id)
+    parsed = adapter.parse(_parse_request(source, format_id))
+    changed = replace(parsed.entries[0], translation="Translated from snapshot", stage=1)
+    target = tmp_path / f"out-{fixture}"
+    request = _write_request(target, format_id, parsed, (changed,))
+    if hydrated:
+        request = replace(request, options=(("source_authority", "hydration-v2"),))
+    if source_state == "removed":
+        source.unlink()
+    else:
+        source.write_bytes(b"new source revision")
+
+    result = adapter.write(request)
+
+    if not hydrated:
+        assert result.outcome is OperationOutcome.FAILED
+        expected = "SOURCE_SNAPSHOT_UNAVAILABLE" if source_state == "removed" else "SOURCE_FINGERPRINT_CONFLICT"
+        assert result.diagnostics[0].code == expected
+        assert not target.exists()
+        return
+    assert result.outcome is OperationOutcome.COMPLETED, result.diagnostics
+    reparsed = adapter.parse(_parse_request(target, format_id))
+    assert [entry.string_id for entry in reparsed.entries] == [entry.string_id for entry in parsed.entries]
+    assert reparsed.entries[0].original == changed.translation
+    assert [entry.original for entry in reparsed.entries[1:]] == [entry.original for entry in parsed.entries[1:]]
+
+
+def test_hydrated_snapshot_rejects_same_size_content_corruption(tmp_path: Path) -> None:
+    source = tmp_path / "integrity.strings"
+    shutil.copyfile(FIXTURES / source.name, source)
+    adapter = LocalizedStringsAdapter(FormatId.STRINGS)
+    parsed = adapter.parse(_parse_request(source, FormatId.STRINGS))
+    with pytest.raises(ValueError, match="source snapshot hash does not match content"):
+        replace(parsed.source_snapshot, content=b"X" + parsed.source_snapshot.content[1:])
+
+
 def test_sse_snapshot_captures_and_rebuilds_all_loose_localized_variants(tmp_path: Path) -> None:
     plugin, originals = _localized_plugin_fixture(tmp_path)
     adapter = SsePluginAdapter()

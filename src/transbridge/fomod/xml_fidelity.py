@@ -405,7 +405,7 @@ def _validate_fidelity(
 ) -> None:
     if source.encoding != output.encoding or source.bom != output.bom:
         raise FomodXmlError("FOMOD_XML_ENCODING_FIDELITY_FAILED", "XML encoding or BOM changed")
-    if source.namespaces != output.namespaces:
+    if dict(source.namespaces) != dict(output.namespaces):
         raise FomodXmlError("FOMOD_XML_NAMESPACE_FIDELITY_FAILED", "XML namespaces changed")
     if source.resource_references != output.resource_references:
         raise FomodXmlError("FOMOD_XML_RESOURCE_REFERENCE_CHANGED", "XML resource references changed")

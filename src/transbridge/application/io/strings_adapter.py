@@ -201,30 +201,33 @@ class LocalizedStringsAdapter:
                 ),
                 request.context.run_id,
             )
-        try:
-            current = _local_path(snapshot.source.uri).read_bytes()
-        except (OSError, ValueError) as exc:
-            return _failed_write(
-                (
-                    Diagnostic(
-                        "SOURCE_SNAPSHOT_UNAVAILABLE",
-                        f"The source snapshot cannot be reopened ({type(exc).__name__}).",
+        # SourceSnapshot already verifies its immutable bytes and digest. Only
+        # path-backed writes depend on the live source remaining unchanged.
+        if dict(request.options).get("source_authority") != "hydration-v2":
+            try:
+                current = _local_path(snapshot.source.uri).read_bytes()
+            except (OSError, ValueError) as exc:
+                return _failed_write(
+                    (
+                        Diagnostic(
+                            "SOURCE_SNAPSHOT_UNAVAILABLE",
+                            f"The source snapshot cannot be reopened ({type(exc).__name__}).",
+                        ),
                     ),
-                ),
-                request.context.run_id,
-            )
-        actual_hash = hashlib.sha256(current).hexdigest()
-        if actual_hash != snapshot.sha256:
-            return _failed_write(
-                (
-                    Diagnostic(
-                        "SOURCE_FINGERPRINT_CONFLICT",
-                        "The localized strings source changed after parsing; reparse before writing.",
-                        details=(("expected_sha256", snapshot.sha256), ("actual_sha256", actual_hash)),
+                    request.context.run_id,
+                )
+            actual_hash = hashlib.sha256(current).hexdigest()
+            if actual_hash != snapshot.sha256:
+                return _failed_write(
+                    (
+                        Diagnostic(
+                            "SOURCE_FINGERPRINT_CONFLICT",
+                            "The localized strings source changed after parsing; reparse before writing.",
+                            details=(("expected_sha256", snapshot.sha256), ("actual_sha256", actual_hash)),
+                        ),
                     ),
-                ),
-                request.context.run_id,
-            )
+                    request.context.run_id,
+                )
 
         policy = request.stage_policy or DEFAULT_STAGE_POLICY
         stage_diagnostics: list[Diagnostic] = []

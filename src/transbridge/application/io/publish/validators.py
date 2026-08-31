@@ -127,18 +127,25 @@ def _probe_accepts(probe: FormatProbe, request: WriteRequest) -> bool:
 
 def _entry_namespace(entries: tuple[object, ...]) -> SourceNamespace | None:
     namespaces = {
-        identity.namespace for entry in entries if isinstance((identity := getattr(entry, "identity", None)), EntryKey)
+        entry_key.namespace
+        for entry in entries
+        if isinstance((entry_key := getattr(entry, "entry_key", None)), EntryKey)
     }
     return next(iter(namespaces)) if len(namespaces) == 1 else None
+
+
+def _entry_key(entry: object) -> EntryKey:
+    entry_key = getattr(entry, "entry_key", None)
+    if not isinstance(entry_key, EntryKey):
+        raise TypeError("fidelity entries require a canonical EntryKey")
+    return entry_key
 
 
 def _expected_summary(request: WriteRequest) -> tuple[tuple[str, str, str], ...]:
     policy = request.stage_policy or DEFAULT_STAGE_POLICY
     values: list[tuple[str, str, str]] = []
     for entry in request.entries:
-        identity = getattr(entry, "identity", None)
-        if not isinstance(identity, EntryKey):
-            raise TypeError("write fidelity requires EntryKey identities")
+        identity = _entry_key(entry)
         decision = policy.evaluate(
             getattr(entry, "stage", None),
             getattr(entry, "translation", ""),
@@ -155,7 +162,13 @@ def _expected_summary(request: WriteRequest) -> tuple[tuple[str, str, str], ...]
         }:
             values.append((identity.serialize(), decision.publish_text, ""))
         else:
-            values.append((identity.serialize(), str(getattr(entry, "original", "")), decision.publish_text))
+            # Bilingual exchange formats persist the translation field itself,
+            # including empty or draft translations, rather than game-ready text.
+            values.append((
+                identity.serialize(),
+                str(getattr(entry, "original", "")),
+                str(getattr(entry, "translation", "")),
+            ))
     return tuple(sorted(values))
 
 
@@ -165,9 +178,7 @@ def _parsed_summary(
 ) -> tuple[tuple[str, str, str], ...]:
     values: list[tuple[str, str, str]] = []
     for entry in entries:
-        identity = getattr(entry, "identity", None)
-        if not isinstance(identity, EntryKey):
-            raise TypeError("reparsed fidelity entry has no EntryKey")
+        identity = _entry_key(entry)
         serialized = identity.serialize()
         if serialized in expected_keys:
             values.append((
