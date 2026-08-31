@@ -181,7 +181,11 @@ class MainWindow(QMainWindow):
         self._ctx.dirty_changed.connect(lambda: self._workbench.project_bar.set_save_dirty(self._ctx.dirty))
 
     def closeEvent(self, event):
+        if not self._close_pending and not self._dialogue_editor.can_close():
+            event.ignore()
+            return
         if self._window_lifecycle.close_event(event):
+            self._dialogue_editor.close()
             self._intent_composition.close()
             if self._theme_view is not None:
                 self._theme_view.close()
@@ -246,6 +250,15 @@ class MainWindow(QMainWindow):
         self._mode_tabs.addTab(self._pt_widget, "ParaTranz 管理")
         self._start_center = StartCenterWidget(self)
         self._mode_tabs.addTab(self._start_center, "开始")
+        from .dialogue.controller import DialogueEditorController
+
+        self._dialogue_editor = DialogueEditorController(
+            self._ctx,
+            self,
+            self._workbench.preview,
+            self._workers,
+            projection=(self._app_runtime.use_cases.resolve("project_projection") if self._app_runtime else None),
+        )
         # Compatibility port for callers that still need the underlying page
         # stack; WorkspaceShell remains the one visible application shell.
         self._central_stack = self._mode_tabs.pages

@@ -17,6 +17,7 @@ _MUTATION_FILES = (
     "ui/tools/ai_translator/version_snapshot.py",
     "ui/tools/dictionary_panel.py",
     "ui/workbench/step2.py",
+    "ui/workbench/translation_reset.py",
 )
 
 _ALLOWED_PROJECTION_WRITES = {
@@ -34,6 +35,8 @@ _ALLOWED_PROJECTION_WRITES = {
     ("ui/workbench/step2.py", "_on_item_changed", "translation"),
     ("ui/workbench/step2.py", "_on_item_changed", "stage"),
     ("ui/workbench/step2.py", "_on_stage_change", "stage"),
+    ("ui/workbench/translation_reset.py", "run", "translation"),
+    ("ui/workbench/translation_reset.py", "run", "stage"),
 }
 
 

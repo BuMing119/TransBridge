@@ -39,6 +39,7 @@ from transbridge.ui.workbench.labels_view import (
 )
 from transbridge.ui.workbench.progress_view import ProgressView
 from transbridge.ui.workbench.table_presenter import TablePresenter
+from transbridge.ui.workbench.translation_reset import TranslationResetAction
 from transbridge.ui.workbench.translation_table import (
     COL_KEY as _COL_KEY,
     COL_MARK as _COL_MARK,
@@ -72,6 +73,7 @@ _LabelManagerDialog = LabelManagerDialog
 
 class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
     intent_requested = pyqtSignal(str)
+    entry_edit_requested = pyqtSignal(object)
 
     def __init__(self, ctx, parent=None, *, theme_view: ThemeView | None = None):
         super().__init__(parent)
@@ -152,6 +154,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         )
         self._table_presenter = TablePresenter(self._table)
         self._table.itemDoubleClicked.connect(self._on_double_clicked)
+        self._table.entry_edit_requested.connect(self.entry_edit_requested.emit)
         self._table.itemChanged.connect(self._on_item_changed)
         self._table.selectionModel().selectionChanged.connect(self._on_table_selection_changed)
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -391,9 +394,15 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
     # ── 事件处理 ──────────────────────────────────────────────────────────────
 
     def _on_double_clicked(self, item: QTableWidgetItem):
-        """双击进入编辑模式：只有译文列可编辑。"""
+        """打开词条编辑窗口；未绑定窗口时保留译文行内编辑。"""
+        if self._table.activate_entry_editor(item):
+            return
         if item.column() == _COL_TRANS:
             self._table.editItem(item)
+
+    def set_editable_entry_keys(self, keys) -> None:
+        """Bind popup activation without making Step2 own the editor window."""
+        self._table.set_editable_entry_keys(keys)
 
     def _on_item_changed(self, item: QTableWidgetItem):
         """译文编辑后原地同步 entry、状态文字与行视觉。"""
@@ -445,13 +454,27 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         if row < 0:
             return
         menu = self._build_context_menu(row)
-        menu.exec(self._table.viewport().mapToGlobal(pos))
+        try:
+            menu.exec(self._table.viewport().mapToGlobal(pos))
+        finally:
+            menu.deleteLater()
 
     def _build_context_menu(self, row: int):
         item = self._table.item(row, _COL_KEY)
         entry = item.data(Qt.ItemDataRole.UserRole) if item else None
         if not isinstance(entry, TranslationEntry) or not entry.id:
             return QMenu(self)
+        reset = TranslationResetAction(
+            self._ctx, entry, entries=self._entries, selected_ids=self.selected_row_entry_ids(), parent=self
+        )
+
+        def cancel_translation():
+            if reset.run():
+                self._summary = StatisticsSummary.from_entries(self._entries)
+                self._summary_view.set_summary(self._summary)
+                self._build_stage_tags()
+                self._populate_table()
+
         return build_entry_menu(
             entry,
             label_library=self._label_library,
@@ -461,6 +484,8 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
             on_create_label=self._on_quick_create_label,
             on_stage_change=lambda selected, stage: self._on_stage_change(selected, stage, preferred_row=row),
             parent=self,
+            on_cancel_translation=cancel_translation,
+            cancel_translation_enabled=reset.enabled,
         )
 
     def _on_label_toggle(self, entry_id: str, lid: str, checked: bool):

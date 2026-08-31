@@ -20,6 +20,8 @@ def build_entry_menu(
     on_create_label: Callable[[TranslationEntry], None],
     on_stage_change: Callable[[TranslationEntry, int], None],
     parent: QWidget,
+    on_cancel_translation: Callable[[], None] | None = None,
+    cancel_translation_enabled: bool = False,
 ) -> QMenu:
     """Build a stateless menu that emits intents through explicit callbacks."""
     menu = QMenu(parent)
@@ -48,4 +50,10 @@ def build_entry_menu(
         action.setChecked(stage_value == entry.stage)
         stage_group.addAction(action)
         action.toggled.connect(lambda checked, value=stage_value: on_stage_change(entry, value) if checked else None)
+    menu.addSeparator()
+    cancel_action = menu.addAction("取消翻译")
+    cancel_action.setToolTip("清空译文并恢复为“未翻译”；右键选中行时应用于全部选中词条。")
+    cancel_action.setEnabled(cancel_translation_enabled and on_cancel_translation is not None)
+    if on_cancel_translation is not None:
+        cancel_action.triggered.connect(on_cancel_translation)
     return menu
