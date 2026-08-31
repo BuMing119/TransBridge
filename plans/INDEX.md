@@ -4,8 +4,9 @@
 
 | Epic | 状态 | Stories | 文档 |
 |---|---|---:|---|
+| dialogue-context-editor | XT 式记录导航已完成（2026-08-31） | 4/4 | [plan](dialogue-context-editor/plan.md) · [S01–04 词条弹窗与XT式记录导航](../docs/changelogs/dialogue-context-editor/story-01-04-implementation/2026-08-31-001-词条弹窗与XT式记录导航.md) |
 | authoritative-project-mutation-closure | 已完成（2026-08-30，综合 QA 通过；1 项既有工具数量断言待纠偏） | 6/6 | [plan](authoritative-project-mutation-closure/plan.md) · [S03 配对来源移除修复](../docs/changelogs/authoritative-project-mutation-closure/story-03-source-lifecycle/2026-08-31-001-配对插件来源移除与重开一致性修复.md) |
-| paratranz-sync-operation-ux | 已实现（2026-08-30，聚焦 QA 通过；真实联机未执行） | 4/4 | [plan](paratranz-sync-operation-ux/plan.md) · [S04 未保存拦截移除与快照保护回归](../docs/changelogs/paratranz-sync-operation-ux/story-04-recovery-protection/2026-08-31-001-下载未保存拦截移除与快照保护回归.md) |
+| paratranz-sync-operation-ux | 已实现（2026-08-30，聚焦 QA 通过；真实联机未执行） | 4/4 | [plan](paratranz-sync-operation-ux/plan.md) · [S04 未保存拦截移除与快照保护回归](../docs/changelogs/paratranz-sync-operation-ux/story-04-recovery-protection/2026-08-31-001-下载未保存拦截移除与快照保护回归.md) · [S03 检查下载进度与操作锁定](../docs/changelogs/paratranz-sync-operation-ux/story-03-auto-preflight/2026-08-31-001-同步检查下载进度与操作锁定.md) |
 | dialogue-tree-order | 已完成（2026-08-30，相关 QA 与 Vigilant 实物验证通过） | 2/2 | [plan](dialogue-tree-order/plan.md) |
 | project-terminology-paratranz-sync | S00～S08 功能实现完成、离线 QA 通过；正式发行门禁 OFF（live 合同与 FR5.16 S12 待通过） | 9/9（发行未完成） | [plan](project-terminology-paratranz-sync/plan.md) |
 | project-terminology-build-versioning-reporting | S00-11 生产闭环完成；S12 正式性能收口未通过，全部门禁 OFF | 12/13 | [plan](project-terminology-build-versioning-reporting/plan.md) |
