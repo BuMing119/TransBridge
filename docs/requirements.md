@@ -1435,6 +1435,16 @@ ChatWidget 保留职责：UI 渲染（bubble/card/thinking indicator/system mess
 
 **FR19.8 Project catalog 缺失自愈** — *状态：已实现并通过综合 QA（2026-08-25） | 优先级：P0*：当 `project-catalog.json` 缺失但持久化根目录中仍存在合法的当前 V2 Project 记录时，系统 SHALL 在读取开始中心工程列表前自动重建目录索引，使全部可安全识别的本地工程重新可见。重建 SHALL 只接受 ID、文件位置、schema、entity type、内部引用和显示名称均通过当前合同验证的 canonical Project 记录；单个无效、不可读、未来版本或非 canonical 文件不得被加入目录，并 SHALL 产生可审计诊断。多个合法记录若产生重复规范化名称等目录不变量冲突，系统 SHALL 拒绝自动选择并保持原记录不变。若 catalog 已存在但无法解析或合同无效，系统 SHALL 保留现场并报告损坏，不得以扫描结果自动覆盖。重建写入 SHALL 原子提交并在发布前复读验证；失败、重复启动或无可恢复工程时不得留下半写索引，也不得修改 Project、Variant 或活动工程指针。只读目录查询仍 SHALL 无写盘副作用。
 
+**FR19.9 权威变更入口完整性** — *2026-08-30 | 状态：草稿（统一修复实施中） | 优先级：P0*：所有会改变项目来源、活动 Variant 条目、Stage、标签或外部引用的用户操作 SHALL 通过 application 层 Project/Variant command 提交，并在成功后由权威聚合重建 projection。范围至少覆盖工作台添加/移除插件、导入已有译文、迁移源、词典套用、AI 翻译/润色/混合及批量运行、ParaTranz 下载合并，以及 Smart Assistant 的编辑、标记、解析、词典、翻译、润色和校对工具。`AppContext.slots`、`TranslationEntryCollection` 与 `collection_changed` SHALL 仅作为 projection/兼容视图，不得成为正式写入点；命令失败、取消或冲突时不得返回成功或留下仅在界面可见的变更。
+
+**FR19.10 多来源内容生命周期** — *2026-08-30 | 状态：草稿（统一修复实施中） | 优先级：P0*：Project SHALL 作为已登记来源及关系的唯一权威，Variant SHALL 以完整 `EntryKey` 保存各来源条目状态。添加来源 SHALL 在一个受控提交中登记稳定 source identity、基线和初始 Variant 状态；移除来源 SHALL 同时移除或显式 tombstone 对应 Project source 与 Variant namespace；导入/迁移 SHALL 只更新已明确映射的来源条目。重新打开项目 SHALL 恢复全部已启用且可读取的来源，不得只恢复 primary/首个来源，也不得把已经移除的来源重新物化。
+
+**FR19.11 保存真实性与自动重试** — *2026-08-30 | 状态：草稿（统一修复实施中） | 优先级：P0*：手动保存和自动保存 SHALL 只在当前 Project/Variant 权威 revision 已成功持久化后显示 clean/“已保存”。聚合未变但 projection 存在未提交差异时 SHALL 返回可操作诊断，不得成功 no-op；正常 clean no-op MAY 返回成功但不得掩盖 projection 越权变更。保存期间产生新 revision、已有保存被 coalesce、保存失败或 revision 冲突时，系统 SHALL 保持 dirty，并在活动保存完成后自动安排一次受防抖控制的重试；不得依赖下一次定时周期或新的用户编辑才能再次保存。
+
+**FR19.12 Project/Variant 原子并发保存** — *2026-08-30 | 状态：草稿（统一修复实施中） | 优先级：P0*：Lifecycle save SHALL 对 Project 与 Variant 同时校验捕获的 persisted revision，并在同一可恢复提交边界发布。任一 revision 已变化 SHALL 在写入前拒绝陈旧保存；任一文档写入、复读或替换失败 SHALL 保持两份旧正式文档可用，不得出现只更新 Project 或只更新 Variant。进程中止后的恢复 SHALL 能根据事务记录完成或回滚到一致版本，并不得把较新的磁盘 revision 降级覆盖。
+
+**FR19.13 后台、批量与部分结果提交** — *2026-08-30 | 状态：草稿（统一修复实施中） | 优先级：P0*：后台、批量和可停止工作流 SHALL 在预检时绑定明确的 Project/Variant/source identity。正常完成的结果 SHALL 通过与前台相同的 Variant commit 边界进入 dirty 或按显式策略保存；无法映射权威身份时 SHALL 阻止启动。取消或部分完成 SHALL 要么不修改正式 Variant，要么以明确的 partial outcome 提交可保存的已验证子集；界面不得展示无法通过任何可达动作保存的部分结果，checkpoint 也不得替代正式 Project/Variant 提交。
+
 ### FR20：统一长任务运行时
 
 **FR20.1 调用结果类型** — *状态：已确认 | 优先级：P0*：同步完成的调用 SHALL 返回业务结果；转为后台执行的调用 SHALL 返回可查询的 Task 引用。调用方不得依赖同一方法在相同条件下随机返回业务数据或 Task ID。
@@ -1561,7 +1571,7 @@ ChatWidget 保留职责：UI 渲染（bubble/card/thinking indicator/system mess
 
 **FR26.1 用户任务与术语层级** — *状态：已实现（2026-08-24） | 优先级：P0*：GUI SHALL 以“开始翻译插件、继续工程、检查结果、写回或发布”等用户任务组织入口，不以内部模块、窗口 owner 或代码目录作为信息架构。普通界面 SHALL 明确区分本地翻译工程、ParaTranz 云端项目、当前插件/翻译内容、翻译版本与历史还原点；内部 `project`、`collection`、`variant`、`snapshot` 等模型名称 MAY 保持不变。
 
-**FR26.2 开始中心、启动策略与恢复入口** — *状态：已实现（2026-08-24） | 优先级：P0*：应用在没有可恢复的活动工程、上次工程自动恢复失败或用户主动返回开始页时 SHALL 提供“选择插件开始翻译”主入口，并显示继续上次工程、最近工程、真实可恢复的未完成任务和最近失败任务。FR8.4 的正常自动恢复语义继续保留；用户主动返回开始页 SHALL 只切换展示上下文，不隐式关闭当前工程或丢弃未保存修改。缺少 ParaTranz、LLM、Embedding 或其他可选服务配置时，应用 SHALL 仍允许进入开始中心并完成纯本地解析、编辑、保存和写回，不得用启动模态框阻断无关旅程。恢复项 SHALL 显示所属工程/翻译内容与状态，不得把过期、缺失或无法恢复的记录伪装为可继续。
+**FR26.2 开始中心、启动策略与恢复入口** — *状态：已实现（2026-08-24） | 优先级：P0*：应用在没有可恢复的活动工程、上次工程自动恢复失败或用户主动返回开始页时 SHALL 提供统一的“新建本地翻译工程”入口，并在建项页内提供“选择插件”和“创建空工程（不导入插件）”两种选择，同时显示继续上次工程、最近工程、真实可恢复的未完成任务和最近失败任务。FR8.4 的正常自动恢复语义继续保留；用户主动返回开始页 SHALL 只切换展示上下文，不隐式关闭当前工程或丢弃未保存修改。缺少 ParaTranz、LLM、Embedding 或其他可选服务配置时，应用 SHALL 仍允许进入开始中心并完成纯本地解析、编辑、保存和写回，不得用启动模态框阻断无关旅程。恢复项 SHALL 显示所属工程/翻译内容与状态，不得把过期、缺失或无法恢复的记录伪装为可继续。
 
 **FR26.3 插件驱动的原子建项流程** — *状态：已实现（2026-08-24） | 优先级：P0*：新用户 SHALL 能先选择 ESP/ESM/ESL 等插件，再由系统根据文件名建议本地翻译工程名称，并在同一流程中选择 EET、XT、SST、Strings、已翻译插件等已有译文来源。低频解析选项 SHALL 默认折叠；确认前 SHALL 显示工程、插件、迁移来源和影响摘要。正式提交 SHALL 通过 application 层权威建项用例，在 staging 中完成源识别/解析、工程与默认版本创建、来源基线登记和活动指针切换；全部校验成功后才原子发布。校验、解析、持久化或激活失败 SHALL 保留可编辑 draft，保持原活动工程/投影不变并清理 staging，不得由 View 直接写 repository，也不得留下无法继续的空工程；“创建空工程”作为高级入口保留并复用同一权威用例。
 
@@ -1615,7 +1625,7 @@ ChatWidget 保留职责：UI 渲染（bubble/card/thinking indicator/system mess
 
 > **状态（2026-08-25）**：功能与自动化 QA 已完成；初始实现经用户真实应用截图复核后判定视觉差距过大，现已按真实主题返工，等待用户再次视觉确认。用户确认“任务入口 + 本地工程列表”的现代浅色效果图作为信息结构与视觉层级基准；效果图中没有真实数据源或业务合同的搜索、最近时间、翻译进度和工程更多菜单不构成要求。
 
-**FR28.1 任务入口与本地工程双栏** — *状态：已实现（2026-08-25） | 优先级：P0*：开始中心 SHALL 在受约束的居中内容区内，以“开始新任务”和“本地工程”双栏呈现核心入口。唯一主动作 SHALL 为“翻译游戏插件”，并继续提交 `SOURCE_PARSE`；FOMOD、打开 TransBridge 工程和高级空工程 SHALL 分别复用 `PUBLISH_FOMOD`、`PROJECT_OPEN`、`PROJECT_CREATE`。本地工程 SHALL 来自既有只读 Project catalog，活动工程优先、不可用原因可见且不可激活；在 catalog 没有时间字段前不得称为“最近工程”或显示虚构时间。
+**FR28.1 任务入口与本地工程双栏** — *状态：已实现（2026-08-25） | 优先级：P0*：开始中心 SHALL 在受约束的居中内容区内，以“开始新任务”和“本地工程”双栏呈现核心入口。建项页的主选择 SHALL 为“选择插件”，并继续提交带插件模式的 `PROJECT_CREATE`；FOMOD 和打开 TransBridge 工程 SHALL 分别复用 `PUBLISH_FOMOD`、`PROJECT_OPEN`，高级空工程 SHALL 作为同一建项页的本地子选择。翻译菜单不得重复提供建项入口，只提供“为当前工程添加插件”。本地工程 SHALL 来自既有只读 Project catalog，活动工程优先、不可用原因可见且不可激活；在 catalog 没有时间字段前不得称为“最近工程”或显示虚构时间。
 
 **FR28.2 启动目的地与常驻开始导航** — *状态：已实现（2026-08-25） | 优先级：P0*：正常自动恢复成功 SHALL 继续直接进入工作台；无恢复目标、恢复失败或用户主动返回时 SHALL 显示开始中心。开始中心 SHALL 纳入现有 WorkspaceShell/NavigationRail，与“工作台”和“ParaTranz 管理”共享同一壳层；导航只切换现有页面或提交 canonical intent，不拥有工程状态。活动工程行的激活 SHALL 返回现有工作台，不得重新打开工程；用户主动返回开始中心不得关闭工程、清除 dirty 或取消任务。恢复进行中 SHALL 以紧凑状态提示呈现，并阻止会并发切换工程的入口。
 
@@ -1673,6 +1683,7 @@ ChatWidget 保留职责：UI 渲染（bubble/card/thinking indicator/system mess
 
 | 日期 | 变更内容 | 来源 |
 |------|---------|------|
+| 2026-08-30 | 新增 FR19.9～FR19.13 草稿：统一所有工作台、词典、AI、ParaTranz 与 Smart Assistant 写路径到 Project/Variant 权威 command，补齐多来源恢复、保存真实性、自动重试、跨文档并发原子性及后台/批量/部分结果提交合同 | 用户要求使用 /bm-pilot 对保存审计发现进行统一修复，/bm-analyze |
 | 2026-08-28 | 新增并确认 FR5.16 与术语库性能预算，明确 FR8.1 多插件项目边界；架构评审补充 Variant 级术语身份、草稿缓存身份，以及由规范差异和版本绑定事实冻结、同时服务最终用户摘要与维护明细的不可变更新日志文档 | 用户确认需求范围及 ADR-034 QA 修订方案，/bm-analyze + /bm-arch + /bm-qa |
 | 2026-08-28 | 新增并实现 FR5.16.41：移除发布候选证据对术语库运行时操作的阻塞，发布级性能/迁移/稳定性检查仅保留在 CI 与发行流程；用户操作只受真实业务前置条件保护 | 用户要求移除无关阻塞并审计同类问题，/bm-dev + /bm-qa |
 | 2026-08-27 | 新增 FR5.15：翻译、润色、混合和具名自定义工作流统一使用 OpenAI-compatible / Anthropic 原生 Structured Outputs，并保留领域校验、流式与运行护栏 | 用户要求通过 /bm-pilot 端到端升级，并明确与提示词英文化及智能助手 function calling 并行工作线隔离 |

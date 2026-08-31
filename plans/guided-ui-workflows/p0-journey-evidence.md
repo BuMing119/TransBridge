@@ -28,8 +28,8 @@ For the comparable J02-J07 set, final `D=8, M=3` versus baseline `D=20, M=15`: D
 
 ### J01 - first plugin and local project
 
-- **Fixture / intent**: one readable ESP/ESM/ESL, no active local project; `project.create_from_source` (`IntentId.PROJECT_CREATE_FROM_SOURCE`).
-- **Focus / cancel**: Start Center focuses “选择插件开始翻译”; draft focuses the first invalid field or its primary action. Cancelling the source picker or draft creates no visible project; editing after preview discards the token.
+- **Fixture / intent**: one readable ESP/ESM/ESL, no active local project; `project.create` (`IntentId.PROJECT_CREATE`) with plugin mode.
+- **Focus / cancel**: Project creation focuses “选择插件”; draft focuses the first invalid field or its primary action. Cancelling the source picker or draft creates no visible project; editing after preview discards the token.
 - **Failure / identity**: stable provisioning diagnostics remain beside the editable draft; prepare/commit uses one authoritative token and returns real Project/Variant IDs, with no second parse.
 - **Return / artifact**: success opens Workbench with the hydrated collection; failure remains on the draft and keeps the previous active project/generation.
 - **Tests**: `tests/ui/test_start_center_guided_project.py`, `tests/application/projects/test_provisioning.py`, `tests/persistence/v2/test_project_provisioning.py`.
