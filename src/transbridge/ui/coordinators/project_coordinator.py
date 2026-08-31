@@ -3,7 +3,7 @@ from pathlib import Path as PathLib
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
-from transbridge.application.projects.source_registry import plugin_source_location
+from transbridge.application.projects.source_registry import plugin_source_location, select_workbench_source
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.persistence import (
     PERSISTENCE_ROOT,
@@ -296,15 +296,19 @@ class ProjectCoordinator:
             if on_failure is not None:
                 on_failure(code, message)
 
-        def _prepare_and_activate():
-            prepared = prepare()
+        def _prepare_project():
+            return prepare()
+
+        def _on_prepared(prepared):
             if not prepared.is_success or prepared.value is None:
-                return prepared
-            return self._host.current_project_opener.activate(
+                _on_opened(prepared)
+                return
+            opened = self._host.current_project_opener.activate(
                 prepared.value,
                 self._host.runtime_context,
                 dirty_decision=dirty_decision,
             )
+            _on_opened(opened)
 
         def _on_opened(opened):
             self._host.workbench.hide_step2_progress()
@@ -312,7 +316,13 @@ class ProjectCoordinator:
                 diagnostic = opened.diagnostics[0]
                 _show_failure(diagnostic.code, diagnostic.message)
                 return
-            self._restore_plugin_sources(opened.value["sources"])
+            hydration_error = self._restore_plugin_sources(
+                opened.value["sources"],
+                opened.value.get("hydrations"),
+            )
+            if hydration_error is not None:
+                _show_failure("PROJECT_HYDRATION_FAILED", hydration_error)
+                return
             self._host.show_message(f"项目「{opened.value['name']}」{success_verb}")
             if on_success is not None:
                 on_success(opened.value)
@@ -321,8 +331,8 @@ class ProjectCoordinator:
             self._host.workbench.hide_step2_progress()
             _show_failure("PROJECT_PREPARE_FAILED", message)
 
-        worker = ApiWorker(_prepare_and_activate)
-        worker.result.connect(_on_opened)
+        worker = ApiWorker(_prepare_project)
+        worker.result.connect(_on_prepared)
         worker.error.connect(_on_prepare_error)
 
         def _on_finished() -> None:
@@ -349,44 +359,60 @@ class ProjectCoordinator:
         if hasattr(self._host, "show_workbench"):
             self._host.show_workbench()
 
-    def _restore_plugin_sources(self, sources) -> None:
-        for source in sources:
-            location = plugin_source_location(source)
-            if location is not None:
-                self.restore_parse_esp(location)
+    def _restore_plugin_sources(self, sources, hydrations=None) -> str | None:
+        if hydrations is not None:
+            from transbridge.ui.source_hydration import apply_variant_projection, slot_from_hydration
 
-    def restore_parse_esp(self, esp_path: str):
+            projection = self._host.app_runtime.use_cases.resolve("project_projection").snapshot()
+            states = () if projection is None else projection.to_dict()["values"].get("entries", ())
+            prepared_slots = []
+            try:
+                for hydration in hydrations:
+                    slot = slot_from_hydration(hydration)
+                    slot.collection = apply_variant_projection(slot.collection, states)
+                    prepared_slots.append((hydration.location, slot))
+            except Exception as exc:  # noqa: BLE001 - opening must surface a recoverable source error
+                message = f"工程来源界面数据恢复失败：{exc}。请重新打开工程或检查来源文件。"
+                self._host.show_message(message)
+                return message
+            for key in tuple(self._host.context.slots):
+                self._host.context.remove_slot(key)
+            for location, slot in prepared_slots:
+                self._host.context.add_slot(location, slot)
+            return None
+        source = select_workbench_source(sources)
+        location = plugin_source_location(source)
+        if location is not None:
+            self.restore_parse_esp(location)
+        return None
+
+    def restore_parse_esp(self, esp_path: str, *, hydration=None):
         """后台解析 ESP 源文件（启动恢复用，不阻塞 UI）。"""
         from transbridge.parser.plugin_parser import PluginParser
+        from transbridge.ui.source_hydration import apply_variant_projection, slot_from_hydration
+
+        if hydration is not None:
+            try:
+                projection = self._host.app_runtime.use_cases.resolve("project_projection").snapshot()
+                states = () if projection is None else projection.to_dict()["values"].get("entries", ())
+                slot = slot_from_hydration(hydration)
+                slot.collection = apply_variant_projection(slot.collection, states)
+                self._host.context.add_slot(hydration.location, slot)
+            except Exception as exc:  # noqa: BLE001 - compatibility callers need an actionable error
+                self._host.show_message(f"工程来源界面数据恢复失败：{exc}。请重新打开工程或检查来源文件。")
+            return
 
         self._host.workbench.show_step2_progress(0, f"解析中: {PathLib(esp_path).name}…")
 
         def _do():
             parser = PluginParser()
-            entries = parser.parse_plugin(PathLib(esp_path))
+            parsed_entries = parser.parse_plugin(PathLib(esp_path))
+            collection = TranslationEntryCollection(parsed_entries)
             if self._host.context.uses_authoritative_projection:
                 projection = self._host.app_runtime.use_cases.resolve("project_projection").snapshot()
-                projected = (
-                    {}
-                    if projection is None
-                    else {
-                        item["entry_key"]["local_key"]: item
-                        for item in projection.to_dict()["values"].get("entries", ())
-                    }
-                )
-                from dataclasses import replace
-
-                entries = [
-                    replace(
-                        entry,
-                        translation=projected[entry.key]["translation"],
-                        stage=projected[entry.key]["stage"],
-                    )
-                    if entry.key in projected
-                    else entry
-                    for entry in entries
-                ]
-            return TranslationEntryCollection(entries), parser.get_plugin()
+                states = () if projection is None else projection.to_dict()["values"].get("entries", ())
+                collection = apply_variant_projection(collection, states)
+            return collection, parser.get_plugin()
 
         def _on_done(result):
             collection, plugin = result

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import os
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -28,10 +29,21 @@ class PersistenceFilesystemPort(Protocol):
 
     def replace(self, source: str, destination: str) -> None: ...
 
+    def replace_durable(self, source: str, destination: str) -> None: ...
+
     def remove(self, path: str, *, missing_ok: bool = False) -> None: ...
 
 
 FilesystemPort = PersistenceFilesystemPort
+
+
+def _fsync_directory(path: str) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    descriptor = os.open(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 class OsPersistenceFilesystem:
@@ -65,6 +77,30 @@ class OsPersistenceFilesystem:
 
     def replace(self, source: str, destination: str) -> None:
         os.replace(source, destination)
+
+    def replace_durable(self, source: str, destination: str) -> None:
+        """Replace a recovery boundary and flush its directory entry."""
+
+        if os.name == "nt":
+            move_file = ctypes.WinDLL("kernel32", use_last_error=True).MoveFileExW
+            move_file.argtypes = (ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32)
+            move_file.restype = ctypes.c_int
+            movefile_replace_existing = 0x00000001
+            movefile_write_through = 0x00000008
+            if not move_file(
+                source,
+                destination,
+                movefile_replace_existing | movefile_write_through,
+            ):
+                raise ctypes.WinError(ctypes.get_last_error())
+            return
+
+        os.replace(source, destination)
+        source_parent = os.path.dirname(source)
+        destination_parent = os.path.dirname(destination)
+        _fsync_directory(destination_parent)
+        if os.path.normcase(source_parent) != os.path.normcase(destination_parent):
+            _fsync_directory(source_parent)
 
     def remove(self, path: str, *, missing_ok: bool = False) -> None:
         Path(path).unlink(missing_ok=missing_ok)

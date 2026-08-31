@@ -121,7 +121,7 @@ DEFAULT_CONTEXT_HELP = ContextHelpCatalog((
         "表示真实的 ESP、ESM 或 ESL 来源文件。",
         "要解析游戏插件、开始翻译或把译文写回插件时使用。",
         aliases=("ESP", "ESM", "ESL"),
-        related_intents=(IntentId.SOURCE_PARSE, IntentId.PUBLISH_WRITE),
+        related_intents=(IntentId.PROJECT_CREATE, IntentId.PUBLISH_WRITE),
     ),
     ContextHelpTopic(
         "translation-content",

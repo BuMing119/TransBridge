@@ -184,7 +184,7 @@ class StartCenterProjectsPanel(ThemedCard):
         configure_accessible_widget(
             self.projects_empty,
             name="没有本地工程",
-            description="选择翻译游戏插件、FOMOD 或打开 TransBridge 工程即可开始",
+            description="选择插件、翻译 FOMOD 或打开 TransBridge 工程即可开始",
         )
         empty_layout = QVBoxLayout(self.projects_empty)
         empty_layout.setContentsMargins(24, 24, 24, 24)

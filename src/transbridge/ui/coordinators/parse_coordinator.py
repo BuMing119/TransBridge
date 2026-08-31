@@ -97,6 +97,7 @@ class ParseCoordinator:
         from transbridge.parser.xt import XT_XmlParser
 
         esp_path = cfg.esp_paths[0]
+        authority = self._capture_authoritative_target()
         self._host.workbench.show_step2_progress(0, "解析中…")
         self._host.workbench.set_step2_parsing(True)
 
@@ -133,6 +134,13 @@ class ParseCoordinator:
                     pass
             # 自动套用词典（全局词典兜底，填空译文）
             migrate_count += _apply_dictionary_to_collection(collection)
+            collection = self._commit_authoritative_source(
+                esp_path,
+                collection,
+                format_id="plugin.sse",
+                options=(("skip_empty", cfg.skip_empty),),
+                expected_authority=authority,
+            )
             return collection, migrate_count, parser.get_plugin(), parser.get_strings_lookup()
 
         def _on_done(result):
@@ -175,12 +183,19 @@ class ParseCoordinator:
 
         results = []
         current = [0]
+        batch_identity = self._host.context.active_version_identity
 
         def _parse_next():
             if current[0] >= total:
                 _finish_batch()
                 return
             esp_path = esp_paths[current[0]]
+            try:
+                authority = self._capture_authoritative_target(expected_identity=batch_identity)
+            except RuntimeError:
+                results.extend((path, None, None) for path in esp_paths[current[0] :])
+                _finish_batch()
+                return
             self._host.workbench.update_step2_progress(current[0], total, f"批量解析中 ({current[0] + 1}/{total})…")
 
             def _do():
@@ -189,6 +204,13 @@ class ParseCoordinator:
                 collection = TranslationEntryCollection(entries)
                 # 自动套用词典（全局词典兜底，填空译文）
                 dict_hits = _apply_dictionary_to_collection(collection)
+                collection = self._commit_authoritative_source(
+                    esp_path,
+                    collection,
+                    format_id="plugin.sse",
+                    options=(("skip_empty", cfg.skip_empty),),
+                    expected_authority=authority,
+                )
                 return collection, dict_hits, parser.get_plugin(), parser.get_strings_lookup()
 
             def _on_one_done(result):
@@ -246,6 +268,7 @@ class ParseCoordinator:
         from transbridge.parser.xt import XT_XmlParser
 
         eet_path = cfg.eet_path
+        authority = self._capture_authoritative_target()
         self._host.workbench.show_step2_progress(0, "解析 EET 中…")
         self._host.workbench.set_step2_parsing(True)
 
@@ -263,6 +286,12 @@ class ParseCoordinator:
                     migrate_count += collection.update_from_translated_plugin(Path(cfg.tp_path))
                 except Exception:
                     pass
+            collection = self._commit_authoritative_source(
+                eet_path,
+                collection,
+                format_id="xml.eet",
+                expected_authority=authority,
+            )
             return collection, migrate_count
 
         def _on_done(result):
@@ -307,6 +336,8 @@ class ParseCoordinator:
 
     def _save_source_to_project(self, slot: CollectionSlot) -> None:
         """将解析的源文件路径保存到 project.json（下次启动自动恢复集合）。"""
+        if self._host.context.uses_authoritative_projection:
+            return
         proj = self._host.context.active_project
         if proj is None:
             return
@@ -319,6 +350,61 @@ class ParseCoordinator:
         if slot.sst_path and not any(s.get("key") == slot.sst_path for s in proj.sources):
             proj.add_source(slot.sst_path, "sst", slot.sst_path)
         proj.save()
+
+    def _commit_authoritative_source(
+        self,
+        path: str,
+        collection: TranslationEntryCollection,
+        *,
+        format_id: str,
+        options=(),
+        expected_authority=None,
+    ) -> TranslationEntryCollection:
+        """Commit a parsed source before exposing its workbench projection."""
+
+        context = self._host.context
+        if not context.uses_authoritative_projection:
+            return collection
+        from transbridge.application.io import FormatId
+        from transbridge.application.projects import ProjectSourceRequest
+        from transbridge.application.projects.source_commands import source_request_with_initial_entry_states
+        from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
+        from transbridge.ui.source_hydration import collection_from_hydration
+
+        if expected_authority is None:
+            raise RuntimeError("ACTIVE_VARIANT_REQUIRED: 解析任务没有绑定活动工程版本。")
+        identity, project_revision, variant_revision = expected_authority
+        project_id, variant_id = identity
+
+        request = source_request_with_initial_entry_states(
+            ProjectSourceRequest(path, FormatId(format_id), options=tuple(options)),
+            {entry.identity.local_key: (entry.translation, entry.stage) for entry in collection},
+        )
+        added = context.project_commands.add_source(
+            request,
+            context.runtime_context,
+            expected_project_revision=project_revision,
+            expected_variant_revision=variant_revision,
+            expected_variant_ref=VariantRef(VariantId(variant_id), ProjectId(project_id)),
+        )
+        if not added.is_success or added.value is None:
+            diagnostic = added.diagnostics[0]
+            raise RuntimeError(f"{diagnostic.code}: {diagnostic.message}")
+        if added.value.hydration is None:
+            raise RuntimeError("PROJECT_SOURCE_HYDRATION_REQUIRED: 工程来源没有可用的界面读取模型。")
+
+        return collection_from_hydration(added.value.hydration)
+
+    def _capture_authoritative_target(self, *, expected_identity=None):
+        context = self._host.context
+        if not context.uses_authoritative_projection:
+            return None
+        identity = context.active_version_identity
+        if identity is None:
+            raise RuntimeError("请先打开一个工程版本。")
+        if expected_identity is not None and identity != expected_identity:
+            raise RuntimeError("解析期间活动工程版本已变化。")
+        return identity, context.project_revision, context.variant_revision
 
     def _run_migrate(self, slot, cfg):
         from transbridge.parser.strings_file import PluginStringsLookup
@@ -370,6 +456,21 @@ class ParseCoordinator:
 
         def _on_done(result):
             migrate_count, new_eet, new_xt, new_strings, new_lang, updated_slots = result
+            if self._host.context.uses_authoritative_projection and updated_slots:
+                states = {
+                    entry.identity: (entry.translation, entry.stage)
+                    for updated_slot, _count in updated_slots
+                    for entry in updated_slot.collection
+                }
+                committed = self._host.context.project_commands.replace_entry_states(
+                    states,
+                    self._host.context.runtime_context,
+                )
+                if not committed.is_success:
+                    diagnostic = committed.diagnostics[0]
+                    self._host.workbench.hide_step2_progress()
+                    self._host.show_message(f"{diagnostic.code}: {diagnostic.message}")
+                    return
             for s, _ in updated_slots:
                 if s is slot:
                     if new_eet and s.eet_path is None:

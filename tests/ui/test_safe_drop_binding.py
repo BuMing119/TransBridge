@@ -33,7 +33,7 @@ def test_drop_binding_never_emits_intent_before_explicit_confirmation(tmp_path: 
     assert binding.confirm(resolution)
     assert confirmed == [
         (
-            IntentId.SOURCE_PARSE,
+            IntentId.PROJECT_CREATE,
             {
                 "path": str(source.resolve()),
                 "drop_kind": "plugin",

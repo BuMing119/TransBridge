@@ -9,6 +9,7 @@ from transbridge.application.io import (
     FormatId,
     SourceDescriptor,
     SourceSnapshot,
+    Stage,
 )
 from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.application.projects import (
@@ -123,7 +124,7 @@ class _Sources:
         )
 
 
-def _harness(*, fail_commit: bool = False):
+def _harness(*, fail_commit: bool = False, sources=None):
     store = _Store()
     store.fail_commit = fail_commit
     transactions = iter(f"tx-{index}" for index in range(20))
@@ -133,7 +134,7 @@ def _harness(*, fail_commit: bool = False):
     )
     identifiers = iter(f"id-{index}" for index in range(20))
     tokens = iter(f"preview-{index}" for index in range(20))
-    sources = _Sources([])
+    sources = sources or _Sources([])
     service = ProjectProvisioningService(
         lifecycle,
         sources,
@@ -142,6 +143,62 @@ def _harness(*, fail_commit: bool = False):
         token_factory=lambda: next(tokens),
     )
     return service, lifecycle, store, sources
+
+
+@dataclass
+class _SameIdentitySources:
+    calls: list[tuple[str, str]]
+
+    def prepare_source(self, request, context, *, role, common_options):
+        self.calls.append((request.location, role))
+        namespace = SourceNamespace("source:plugin:shared")
+        source_snapshot = SourceSnapshot.from_bytes(
+            SourceDescriptor(request.location),
+            FormatId.PLUGIN_SSE,
+            role.encode(),
+        )
+        fingerprint = SourceFingerprint(namespace, source_snapshot.sha256)
+        entry_key = EntryKey(namespace, "entry")
+        translation = "已有译文" if role == "migration" else ""
+        entry = VariantEntryState(
+            entry_key,
+            translation,
+            Stage.TRANSLATED if translation else Stage.UNTRANSLATED,
+        )
+        hydration = None
+        if role == "primary":
+            hydration = PreparedSourceHydration(
+                request.location,
+                source_snapshot.sha256,
+                FormatId.PLUGIN_SSE,
+                source_snapshot,
+                (
+                    EntrySnapshot(
+                        entry_key,
+                        "legacy-entry",
+                        "Original text",
+                        "",
+                        Stage.UNTRANSLATED.value,
+                        "FULL",
+                        (),
+                        EntryRevision(),
+                        (),
+                        (),
+                    ),
+                ),
+            )
+        return PreparedProjectSource(
+            (
+                ("source_id", namespace.value),
+                ("format_id", FormatId.PLUGIN_SSE.value),
+                ("location", request.location),
+                ("path", request.location),
+                ("fingerprint", fingerprint.sha256),
+                ("role", role),
+            ),
+            SourceBaseline(fingerprint, (entry,)),
+            hydration=hydration,
+        )
 
 
 def _context(owner: str = "gui") -> RequestContext:
@@ -222,6 +279,55 @@ def test_source_and_migration_candidates_are_parsed_once_before_commit() -> None
     assert lifecycle.active is not None and lifecycle.active.variant is not None
     assert len(lifecycle.active.variant.snapshot().source_fingerprints) == 2
     assert [name for name, _ in store.calls] == ["begin", "provision", "commit"]
+
+
+def test_same_identity_plugin_translation_is_folded_into_primary_baseline() -> None:
+    sources = _SameIdentitySources([])
+    service, lifecycle, _store, _sources = _harness(sources=sources)
+    request = ProjectProvisioningRequest(
+        "迁移工程",
+        source=ProjectSourceRequest("C:/mods/source.esp"),
+        migration_sources=(ProjectSourceRequest("C:/mods/translated.esp"),),
+    )
+
+    prepared = service.prepare(request, _context())
+
+    assert prepared.is_success and prepared.value is not None
+    assert prepared.value.source_count == 2
+    assert prepared.value.entry_count == 1
+    assert service.commit(prepared.value.token, _context()).is_success
+    assert lifecycle.active is not None and lifecycle.active.variant is not None
+    snapshot = lifecycle.active.variant.snapshot()
+    assert len(snapshot.source_fingerprints) == 1
+    assert snapshot.entries[0].translation == "已有译文"
+    assert snapshot.entries[0].stage is Stage.TRANSLATED
+    project_data = lifecycle.active.project.envelope.data
+    assert len(project_data["sources"]) == 2
+    assert len(project_data["source_relations"]) == 1
+
+    hydration = service.consume_hydration(prepared.value.project_id, _context())
+
+    assert hydration.is_success and hydration.value is not None
+    assert hydration.value.source.entries[0].original == "Original text"
+    assert hydration.value.source.entries[0].translation == "已有译文"
+    assert hydration.value.source.entries[0].stage == Stage.TRANSLATED.value
+
+
+def test_multiple_same_identity_plugin_translations_remain_ambiguous() -> None:
+    service, _lifecycle, _store, _sources = _harness(sources=_SameIdentitySources([]))
+    request = ProjectProvisioningRequest(
+        "迁移工程",
+        source=ProjectSourceRequest("C:/mods/source.esp"),
+        migration_sources=(
+            ProjectSourceRequest("C:/mods/translated-one.esp"),
+            ProjectSourceRequest("C:/mods/translated-two.esp"),
+        ),
+    )
+
+    prepared = service.prepare(request, _context())
+
+    assert prepared.outcome is OperationOutcome.FAILED
+    assert prepared.diagnostics[0].code == "PROJECT_SOURCE_IDENTITY_DUPLICATE"
 
 
 def test_commit_failure_rolls_back_and_keeps_lifecycle_unpublished() -> None:

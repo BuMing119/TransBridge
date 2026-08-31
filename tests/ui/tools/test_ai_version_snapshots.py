@@ -8,6 +8,7 @@ from PyQt6.QtCore import QCoreApplication, QEvent
 from PyQt6.QtWidgets import QApplication, QPushButton
 
 from transbridge.application.contracts import DomainError, ErrorCategory, OperationResult
+from transbridge.application.projections import ProjectionSnapshot, ProjectionStore
 from transbridge.application.tasks import JobState, TaskRuntime
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.persistence.variant_store import VariantStore
@@ -23,10 +24,12 @@ _APP = QApplication.instance() or QApplication([])
 class _Commands:
     def __init__(self) -> None:
         self.calls: list[tuple[str, object]] = []
+        self.expected: list[dict[str, object]] = []
         self.fail_snapshot = False
 
-    def replace_entry_states(self, states, context):
+    def replace_entry_states(self, states, context, **expected):
         self.calls.append(("replace", states))
+        self.expected.append(expected)
         return OperationResult.completed({"revision": 1}, run_id="run")
 
     def save(self, context):
@@ -50,6 +53,8 @@ def test_v2_save_translation_commits_saves_then_snapshots() -> None:
     context._project_projection = object()
     context._active_project_id = "project"
     context._active_variant_id = "variant"
+    context._project_revision = 3
+    context._variant_revision = 4
 
     result = VersionPersistence(context, ("project", "variant")).save_translation((_entry(),), "AI-翻译后")
 
@@ -57,6 +62,55 @@ def test_v2_save_translation_commits_saves_then_snapshots() -> None:
     assert [name for name, _value in commands.calls] == ["replace", "save", "snapshot"]
     states = commands.calls[0][1]
     assert next(iter(states.values())) == ("译文", 1)
+    assert commands.expected[0]["expected_project_revision"] == 3
+    assert commands.expected[0]["expected_variant_revision"] == 4
+    assert commands.expected[0]["expected_variant_ref"].identity.value == "variant"
+
+
+def test_v2_translation_commit_can_precede_save_without_repeating_mutation() -> None:
+    commands = _Commands()
+    context = AppContext(project_commands=commands, runtime_context=object())
+    context._project_projection = object()
+    context._active_project_id = "project"
+    context._active_variant_id = "variant"
+    persistence = VersionPersistence(context, ("project", "variant"))
+
+    committed = persistence.commit_translation((_entry(),))
+    committed_again = persistence.commit_translation((_entry(),))
+    saved = persistence.save_translation((_entry(),), "AI-翻译后")
+
+    assert committed.is_success
+    assert committed_again is committed
+    assert saved.is_success
+    assert [name for name, _value in commands.calls] == ["replace", "save", "snapshot"]
+
+
+def test_failed_v2_translation_commit_can_be_retried() -> None:
+    class Commands(_Commands):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fail_commit = True
+
+        def replace_entry_states(self, states, context, **expected):
+            self.calls.append(("replace", states))
+            if self.fail_commit:
+                return SimpleNamespace(is_success=False)
+            return OperationResult.completed({"revision": 1}, run_id="run")
+
+    commands = Commands()
+    context = AppContext(project_commands=commands, runtime_context=object())
+    context._project_projection = object()
+    context._active_project_id = "project"
+    context._active_variant_id = "variant"
+    persistence = VersionPersistence(context, ("project", "variant"))
+
+    failed = persistence.commit_translation((_entry(),))
+    commands.fail_commit = False
+    retried = persistence.save_translation((_entry(),), "AI-翻译后")
+
+    assert not failed.is_success
+    assert retried.is_success
+    assert [name for name, _value in commands.calls] == ["replace", "replace", "save", "snapshot"]
 
 
 def test_version_identity_change_blocks_save_before_any_command() -> None:
@@ -117,6 +171,36 @@ def test_legacy_version_collects_before_snapshot_and_saves_before_after_snapshot
     assert context.variant_store.translations == {"entry": "译文"}
 
 
+def test_legacy_translation_commit_can_precede_save_without_recollecting(tmp_path, monkeypatch) -> None:
+    variant_root = tmp_path / "variant"
+    project = SimpleNamespace(
+        name="legacy-project",
+        config_path=tmp_path / "project.json",
+        variant_dir=lambda _name: variant_root,
+    )
+    context = AppContext()
+    context._active_project = project
+    context._active_variant = "main"
+    context._variant_store = VariantStore(variant_root / "current.json")
+    identity = context.active_version_identity
+    assert identity is not None
+    persistence = VersionPersistence(context, identity)
+    collected: list[int] = []
+    original_collect = context.variant_store.collect_from
+
+    def collect_once(*args, **kwargs) -> None:
+        collected.append(1)
+        original_collect(*args, **kwargs)
+
+    monkeypatch.setattr(context.variant_store, "collect_from", collect_once)
+
+    persistence.commit_translation((_entry(),))
+    persistence.save_translation((_entry(),), "AI-翻译-保存后")
+
+    assert collected == [1]
+    assert (variant_root / "current.json").is_file()
+
+
 def test_snapshot_session_is_async_and_post_snapshot_is_idempotent() -> None:
     app = _APP
 
@@ -134,7 +218,7 @@ def test_snapshot_session_is_async_and_post_snapshot_is_idempotent() -> None:
             self.calls.append(f"snapshot:{name}")
             return {"name": name}
 
-        def replace_entry_states(self, states, _runtime_context):
+        def replace_entry_states(self, states, _runtime_context, **expected):
             self.calls.append("replace")
             assert len(states) == 1
             return OperationResult.completed({})
@@ -164,6 +248,63 @@ def test_snapshot_session_is_async_and_post_snapshot_is_idempotent() -> None:
     assert context.calls[1:3] == ["replace", "save"]
     assert context.calls[3].startswith("snapshot:AI-翻译-保存后-")
     assert completed[-1]["already_saved"] is True
+
+
+def test_cancelled_snapshot_session_restores_latest_authoritative_projection() -> None:
+    entry = _entry()
+    emitted: list[object] = []
+    projection = ProjectionStore(
+        ProjectionSnapshot(
+            "project:project",
+            5,
+            5,
+            {
+                "project_id": "project",
+                "variant_id": "variant",
+                "entries": [
+                    {
+                        "entry_key": entry.identity.to_dict(),
+                        "translation": "并发授权译文",
+                        "stage": 3,
+                    }
+                ],
+            },
+        )
+    )
+    context = SimpleNamespace(
+        active_version_identity=("project", "variant"),
+        collection=(entry,),
+        uses_authoritative_projection=True,
+        _project_projection=projection,
+        collection_changed=SimpleNamespace(emit=emitted.append),
+    )
+    session = AiVersionSnapshotSession(context, SimpleNamespace(mode="translate", run_id="ai-run"))
+    entry.translation = "AI 部分结果"
+    entry.stage = 1
+
+    session.rollback_uncommitted()
+
+    assert (entry.translation, entry.stage) == ("并发授权译文", 3)
+    assert emitted == [context.collection]
+
+
+def test_cancelled_snapshot_session_does_not_touch_a_newly_opened_version() -> None:
+    old_entry = _entry()
+    new_entry = TranslationEntry("new", "new", "source", "新版本译文", 1, "INFO:FULL")
+    context = SimpleNamespace(
+        active_version_identity=("project", "variant"),
+        collection=(old_entry,),
+        uses_authoritative_projection=False,
+        collection_changed=SimpleNamespace(emit=lambda _value: None),
+    )
+    session = AiVersionSnapshotSession(context, SimpleNamespace(mode="translate", run_id="ai-run"))
+    context.active_version_identity = ("project", "other-variant")
+    context.collection = (new_entry,)
+    new_entry.translation = "并发新版本编辑"
+
+    session.rollback_uncommitted()
+
+    assert new_entry.translation == "并发新版本编辑"
 
 
 def test_pre_snapshot_failure_marks_task_failed_and_never_starts_translation(monkeypatch) -> None:

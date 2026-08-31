@@ -19,15 +19,29 @@ class AtomicDocumentStore:
         self._filesystem = filesystem
         self._root = filesystem.canonicalize(root)
 
-    def write_json(self, relative_path: str, document: dict[str, Any], token: str) -> None:
+    def write_json(
+        self,
+        relative_path: str,
+        document: dict[str, Any],
+        token: str,
+        *,
+        durable: bool = False,
+    ) -> None:
         destination = self.path(relative_path)
         payload = json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
-        self.write_bytes(destination, payload, token)
+        self.write_bytes(destination, payload, token, durable=durable)
 
     def path(self, relative_path: str) -> str:
         return self._guard(os.path.join(self._root, relative_path))
 
-    def write_bytes(self, destination: str, payload: bytes, token: str) -> None:
+    def write_bytes(
+        self,
+        destination: str,
+        payload: bytes,
+        token: str,
+        *,
+        durable: bool = False,
+    ) -> None:
         destination = self._guard(destination)
         suffix = hashlib.sha256(token.encode()).hexdigest()
         stage = self._guard(os.path.join(self._root, ".staging", f"document-{suffix}.tmp"))
@@ -38,7 +52,12 @@ class AtomicDocumentStore:
             self._filesystem.write_bytes(stage, payload)
             if self._filesystem.read_bytes(stage) != payload:
                 raise OSError("document staging verification failed")
-            self._filesystem.replace(stage, destination)
+            if durable:
+                self._filesystem.replace_durable(stage, destination)
+            else:
+                self._filesystem.replace(stage, destination)
+            if self._filesystem.read_bytes(destination) != payload:
+                raise OSError("published document verification failed")
         except Exception:
             try:
                 self._filesystem.remove(stage, missing_ok=True)
@@ -46,6 +65,24 @@ class AtomicDocumentStore:
                 # Cleanup failure must not replace the publication failure.
                 pass
             raise
+
+    def remove_durable(self, destination: str, token: str) -> None:
+        """Durably remove a recovery boundary through a write-through rename."""
+
+        destination = self._guard(destination)
+        if not self._filesystem.exists(destination):
+            return
+        suffix = hashlib.sha256(f"remove:{token}".encode()).hexdigest()
+        tombstone = self._guard(os.path.join(self._root, ".staging", f"document-{suffix}.removed"))
+        self._filesystem.make_dirs(os.path.dirname(tombstone))
+        self._filesystem.remove(tombstone, missing_ok=True)
+        self._filesystem.replace_durable(destination, tombstone)
+        try:
+            self._filesystem.remove(tombstone, missing_ok=True)
+        except Exception:
+            # The durable rename already removed the authoritative boundary.
+            # A tombstone is inert and may be cleaned by a later maintenance run.
+            return
 
     def _guard(self, path: str) -> str:
         canonical = self._filesystem.canonicalize(path)

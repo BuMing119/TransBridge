@@ -16,13 +16,13 @@ from transbridge.ui.guidance import (
     (
         (
             GuidanceKind.NO_PROJECT,
-            GuidanceIntentId.PROJECT_CREATE_FROM_SOURCE,
+            GuidanceIntentId.PROJECT_CREATE,
             GuidanceIntentId.PROJECT_OPEN,
         ),
         (
             GuidanceKind.EMPTY_PROJECT,
-            GuidanceIntentId.TRANSLATION_IMPORT_SOURCE,
-            GuidanceIntentId.PROJECT_CREATE_FROM_SOURCE,
+            GuidanceIntentId.WORKBENCH_CONTENT_PREPARE,
+            GuidanceIntentId.PROJECT_CREATE,
         ),
         (
             GuidanceKind.UNTRANSLATED,

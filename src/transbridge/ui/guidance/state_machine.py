@@ -24,18 +24,18 @@ class _StateTemplate:
 
 _TEMPLATES = {
     GuidanceKind.NO_PROJECT: _StateTemplate(
-        "选择插件开始翻译",
+        "新建本地翻译工程",
         "当前没有打开的本地翻译工程。",
-        GuidanceIntent(GuidanceIntentId.PROJECT_CREATE_FROM_SOURCE, "选择插件开始翻译"),
+        GuidanceIntent(GuidanceIntentId.PROJECT_CREATE, "新建工程"),
         (GuidanceIntent(GuidanceIntentId.PROJECT_OPEN, "打开已有本地工程"),),
-        ("支持 ESP、ESM 和 ESL；工程名称与常用设置会自动准备。",),
+        ("进入建项页后可以选择插件，或使用高级入口创建空工程。",),
     ),
     GuidanceKind.EMPTY_PROJECT: _StateTemplate(
-        "添加第一份翻译内容",
+        "为当前工程添加插件",
         "当前工程还没有可编辑的翻译内容。",
-        GuidanceIntent(GuidanceIntentId.TRANSLATION_IMPORT_SOURCE, "导入已有译文"),
-        (GuidanceIntent(GuidanceIntentId.PROJECT_CREATE_FROM_SOURCE, "改为选择插件开始"),),
-        ("可以导入支持的译文来源，或选择一个插件创建新的翻译内容。",),
+        GuidanceIntent(GuidanceIntentId.WORKBENCH_CONTENT_PREPARE, "选择插件"),
+        (GuidanceIntent(GuidanceIntentId.PROJECT_CREATE, "新建其他工程"),),
+        ("选择 ESP、ESM 或 ESL，将它加载为当前工程的翻译内容。",),
     ),
     GuidanceKind.UNTRANSLATED: _StateTemplate(
         "开始翻译未完成的内容",

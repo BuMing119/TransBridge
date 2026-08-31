@@ -64,7 +64,7 @@ class GuidedProjectDraftState:
             f"将创建本地工程“{self.project_name or '未命名'}”、翻译版本"
             f"“{self.default_variant_name or '未命名'}”，来源：{kind}。"
         )
-        if self.preview_entry_count is not None:
+        if self.preview_entry_count is not None and self.phase is GuidedDraftPhase.PREPARED:
             summary += f" 已验证 {source_count} 个来源、{self.preview_entry_count} 条内容。"
         return summary
 
@@ -147,6 +147,16 @@ class GuidedProjectCoordinator:
         return self._edit(parse_options=tuple(sorted(options.items())))
 
     def prepare(self) -> bool:
+        """Prepare a preview without committing it for explicit two-phase callers."""
+
+        return self._prepare(commit_on_success=False)
+
+    def create(self) -> bool:
+        """Run prepare and commit internally as one user action."""
+
+        return self._prepare(commit_on_success=True)
+
+    def _prepare(self, *, commit_on_success: bool) -> bool:
         if self._state.in_flight or not self._state.can_submit:
             return False
         try:
@@ -166,8 +176,8 @@ class GuidedProjectCoordinator:
         self._publish()
         accepted = self._dispatch(
             lambda: self._commands.prepare_create(request, self._context),
-            "正在检查插件并准备工程…",
-            lambda result: self._finish_prepare(generation, result),
+            "正在创建本地翻译工程…" if commit_on_success else "正在检查插件并准备工程…",
+            lambda result: self._finish_prepare(generation, result, commit_on_success=commit_on_success),
             lambda message: self._finish_transport_error(generation, message),
         )
         if not accepted and generation == self._operation_generation:
@@ -252,7 +262,7 @@ class GuidedProjectCoordinator:
             parse_options=self._state.parse_options,
         )
 
-    def _finish_prepare(self, generation: int, result: object) -> None:
+    def _finish_prepare(self, generation: int, result: object, *, commit_on_success: bool = False) -> None:
         if generation != self._operation_generation:
             self._discard_late_preview(result)
             return
@@ -270,7 +280,10 @@ class GuidedProjectCoordinator:
             in_flight=False,
             revision=self._state.revision + 1,
         )
-        self._publish()
+        if commit_on_success:
+            self.commit()
+        else:
+            self._publish()
 
     def _finish_commit(self, generation: int, result: object) -> None:
         if generation != self._operation_generation:

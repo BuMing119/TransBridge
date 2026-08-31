@@ -17,6 +17,7 @@ from transbridge.application.io import (
     FormatId,
     ParseRequest,
     SourceDescriptor,
+    Stage,
     TranslationIoUseCase,
 )
 from transbridge.application.io.identity import SourceNamespace
@@ -103,16 +104,7 @@ class TranslationIoProjectSourcePreparer:
         namespace = _source_namespace(parsed)
         baseline = SourceBaseline(
             SourceFingerprint(namespace, parsed.source_snapshot.sha256),
-            tuple(
-                VariantEntryState(
-                    entry.identity,
-                    entry.translation,
-                    entry.stage,
-                    provenance=entry.provenance,
-                    revision=entry.revision,
-                )
-                for entry in parsed.entries
-            ),
+            tuple(_baseline_entry_state(entry, role=role, format_id=parsed.format_id) for entry in parsed.entries),
         )
         diagnostics = tuple(replace(item, severity=DiagnosticSeverity.WARNING) for item in parsed.diagnostics)
         hydration = None
@@ -148,6 +140,22 @@ def _infer_format(path: Path) -> FormatId:
         ErrorCategory.INPUT,
         "PROJECT_SOURCE_FORMAT_REQUIRED",
         "无法识别工程来源格式，请明确选择格式。",
+    )
+
+
+def _baseline_entry_state(entry, *, role: str, format_id: FormatId) -> VariantEntryState:
+    translation = entry.translation
+    stage = entry.stage
+    if role == "migration" and format_id is FormatId.PLUGIN_SSE:
+        translation = translation or entry.original
+        stage = Stage.TRANSLATED if translation.strip() else Stage.UNTRANSLATED
+    return VariantEntryState(
+        entry.identity,
+        translation,
+        stage,
+        provenance=entry.provenance,
+        external_refs=entry.external_refs,
+        revision=entry.revision,
     )
 
 

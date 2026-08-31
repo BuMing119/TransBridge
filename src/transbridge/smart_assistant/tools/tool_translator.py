@@ -17,6 +17,38 @@ from .task_manager import TaskManager
 logger = logging.getLogger(__name__)
 
 
+def _capture_run_entry_states(ctx, collection) -> dict[object, tuple[str, int]]:
+    capture = getattr(ctx, "capture_entry_states", None)
+    if callable(capture):
+        return capture(collection)
+    return {entry.identity: (entry.translation, entry.stage) for entry in collection}
+
+
+def _rollback_run_entry_states(ctx, collection, states: dict[object, tuple[str, int]]) -> str | None:
+    try:
+        rollback = getattr(ctx, "rollback_entry_states", None)
+        if callable(rollback):
+            rollback(states, collection)
+        else:
+            from .types import ExecutionContext
+
+            ExecutionContext(app_context=ctx).rollback_entry_states(states, collection)
+    except Exception as exc:  # noqa: BLE001 - the original task failure must remain visible too
+        logger.exception("助手任务回滚失败: %s", exc)
+        return str(exc)
+    return None
+
+
+def _publish_run_entry_states(ctx) -> None:
+    publish = getattr(ctx, "publish_collection_modified", None)
+    if callable(publish):
+        publish()
+        return
+    from .types import ExecutionContext
+
+    ExecutionContext(app_context=ctx).publish_collection_modified()
+
+
 def _paratranz_term_project_id(ctx) -> int | None:
     """Return only a binding that is safe to use with the current account/endpoint."""
 
@@ -143,6 +175,7 @@ class TranslationController:
         stop_event = threading.Event()
         tm = TaskManager()
         task_id = tm.register(stop_event=stop_event, metadata={"mode": mode, "type": "translation"})
+        run_entry_states = _capture_run_entry_states(ctx, _collection)
 
         def _run():
             paratranz_client = None
@@ -188,6 +221,9 @@ class TranslationController:
                     progress_callback=_progress,
                     stop_event=stop_event,
                 )
+                if stop_event.is_set():
+                    raise InterruptedError("任务已被用户停止")
+                _publish_run_entry_states(ctx)
                 tm.update_progress(
                     task_id,
                     {
@@ -208,15 +244,23 @@ class TranslationController:
                         "skipped_count": result.skipped_count,
                     },
                 )
-                ctx.safe_mutate(lambda: ctx.notify_collection_modified())
             except InterruptedError:
-                tm.set_status(task_id, "cancelled")
-                tm.notify_failed(task_id, "任务已被用户停止")
+                rollback_error = _rollback_run_entry_states(ctx, _collection, run_entry_states)
+                if rollback_error is None:
+                    tm.set_status(task_id, "cancelled")
+                    tm.notify_failed(task_id, "任务已被用户停止；本次修改已回滚")
+                else:
+                    message = f"任务已停止，但回滚失败：{rollback_error}"
+                    tm.set_status(task_id, "failed")
+                    tm.update_progress(task_id, {"error": message})
+                    tm.notify_failed(task_id, message)
             except Exception as exc:
                 logger.exception("翻译任务异常: %s", exc)
+                rollback_error = _rollback_run_entry_states(ctx, _collection, run_entry_states)
+                message = str(exc) if rollback_error is None else f"{exc}；回滚失败：{rollback_error}"
                 tm.set_status(task_id, "failed")
-                tm.update_progress(task_id, {"error": str(exc)})
-                tm.notify_failed(task_id, str(exc))
+                tm.update_progress(task_id, {"error": message})
+                tm.notify_failed(task_id, message)
             finally:
                 if paratranz_client is not None:
                     try:
@@ -296,6 +340,7 @@ class TranslationController:
                 "type": "polish",
             },
         )
+        run_entry_states = _capture_run_entry_states(ctx, collection)
 
         def _run():
             llm_runtime = None
@@ -341,6 +386,8 @@ class TranslationController:
                 if stop_event.is_set():
                     raise InterruptedError("任务已被用户停止")
 
+                _publish_run_entry_states(ctx)
+
                 tm.set_status(task_id, "completed")
 
                 import time
@@ -370,14 +417,23 @@ class TranslationController:
                         "strategy": strategy,
                     },
                 )
-                ctx.safe_mutate(lambda: ctx.notify_collection_modified())
             except InterruptedError:
-                tm.set_status(task_id, "cancelled")
-                tm.notify_failed(task_id, "任务已被用户停止")
+                rollback_error = _rollback_run_entry_states(ctx, collection, run_entry_states)
+                if rollback_error is None:
+                    tm.set_status(task_id, "cancelled")
+                    tm.notify_failed(task_id, "任务已被用户停止；本次修改已回滚")
+                else:
+                    message = f"任务已停止，但回滚失败：{rollback_error}"
+                    tm.set_status(task_id, "failed")
+                    tm.update_progress(task_id, {"error": message})
+                    tm.notify_failed(task_id, message)
             except Exception as exc:
                 logger.exception("润色任务异常: %s", exc)
+                rollback_error = _rollback_run_entry_states(ctx, collection, run_entry_states)
+                message = str(exc) if rollback_error is None else f"{exc}；回滚失败：{rollback_error}"
                 tm.set_status(task_id, "failed")
-                tm.notify_failed(task_id, str(exc))
+                tm.update_progress(task_id, {"error": message})
+                tm.notify_failed(task_id, message)
             finally:
                 if llm_runtime is not None:
                     llm_runtime.close()

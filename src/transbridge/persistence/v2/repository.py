@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from threading import RLock
 
 from .filesystem import (
@@ -30,6 +31,23 @@ from .models import (
 )
 from .schema import parse_json_bytes, serialize_document, validate_v2, version_of
 
+_MUTATION_LOCKS_GUARD = RLock()
+_MUTATION_LOCKS: dict[tuple[type[object], str], RLock] = {}
+
+
+def _mutation_lock_for(root: str, filesystem: PersistenceFilesystemPort) -> RLock:
+    """Return the process-wide mutation lock shared by one persistence root.
+
+    Project and Variant repositories are constructed independently by the
+    composition root.  Keying the lock by filesystem adapter family and
+    canonical root lets their conditional saves participate in one transaction
+    boundary, including when equivalent OS adapters are constructed separately.
+    """
+
+    key = (type(filesystem), os.path.normcase(filesystem.canonicalize(root)))
+    with _MUTATION_LOCKS_GUARD:
+        return _MUTATION_LOCKS.setdefault(key, RLock())
+
 
 class JsonRepository[RefT, DtoT]:
     """Generic implementation behind typed Project/Variant/Session facades."""
@@ -46,10 +64,17 @@ class JsonRepository[RefT, DtoT]:
         self._paths = RepositoryPaths(root, filesystem)
         self._kind = kind
         self._dto_type = dto_type
+        self._mutation_lock = _mutation_lock_for(root, filesystem)
 
     @property
     def root(self) -> str:
         return self._paths.root
+
+    @property
+    def mutation_lock(self) -> RLock:
+        """Lock shared by repositories targeting the same persistence root."""
+
+        return self._mutation_lock
 
     def path_for(self, ref: RefT) -> str:
         self._check_ref(ref)
@@ -156,6 +181,52 @@ class JsonRepository[RefT, DtoT]:
         self._assert_writable_destination(ref, path)
         self._filesystem.remove(path, missing_ok=False)
 
+    def restore_bytes_if_match(
+        self,
+        ref: RefT,
+        raw: bytes,
+        *,
+        expected_revision: int,
+        expected_source_hash: str,
+    ) -> LoadedRecord:
+        """Restore an exact verified preimage only over the expected published bytes."""
+
+        self._check_ref(ref)
+        with self._mutation_lock:
+            try:
+                current = self.load(ref)
+            except FileNotFoundError as exc:
+                raise RecordContentConflict(expected_revision, expected_source_hash, None, None) from exc
+            if not isinstance(current, LoadedRecord):
+                raise RecordContentConflict(expected_revision, expected_source_hash, None, None)
+            actual_revision = current.value.envelope.revision
+            if actual_revision != expected_revision or current.source_hash != expected_source_hash:
+                raise RecordContentConflict(
+                    expected_revision,
+                    expected_source_hash,
+                    actual_revision,
+                    current.source_hash,
+                )
+            document = parse_json_bytes(raw)
+            restored = validate_v2(document, ref)
+            if not isinstance(restored, self._dto_type):
+                raise TypeError("restored persistence preimage has the wrong DTO type")
+            digest = hashlib.sha256(raw).hexdigest()
+            path = self.path_for(ref)
+            staging_replace(
+                self._filesystem,
+                self._paths,
+                ref,
+                path,
+                raw,
+                token=digest,
+                purpose="restore",
+            )
+            loaded = self.load(ref)
+            if not isinstance(loaded, LoadedRecord) or loaded.source_hash != digest:
+                raise RuntimeError("restored persistence preimage could not be verified")
+            return loaded
+
     def _assert_writable_destination(self, ref: RefT, path: str) -> None:
         if not self._filesystem.exists(path):
             return
@@ -254,7 +325,6 @@ class JsonRepository[RefT, DtoT]:
 class ProjectRepository(JsonRepository[ProjectRef, ProjectDto]):
     def __init__(self, root: str, filesystem: PersistenceFilesystemPort) -> None:
         super().__init__(root, filesystem, kind=EntityKind.PROJECT, dto_type=ProjectDto)
-        self._mutation_lock = RLock()
 
     def save(self, ref: ProjectRef, value: ProjectDto) -> LoadedRecord:
         with self._mutation_lock:
@@ -266,16 +336,27 @@ class ProjectRepository(JsonRepository[ProjectRef, ProjectDto]):
         value: ProjectDto,
         *,
         expected_revision: int,
+        expected_source_hash: str | None = None,
     ) -> LoadedRecord:
         """Replace one Project only when its persisted revision still matches."""
 
         with self._mutation_lock:
-            current = super().load(ref)
+            try:
+                current = super().load(ref)
+            except FileNotFoundError as exc:
+                raise ProjectRevisionConflict(expected_revision, None) from exc
             if not isinstance(current, LoadedRecord):
                 raise ProjectRevisionConflict(expected_revision, None)
             actual_revision = current.value.envelope.revision
-            if actual_revision != expected_revision:
-                raise ProjectRevisionConflict(expected_revision, actual_revision)
+            if actual_revision != expected_revision or (
+                expected_source_hash is not None and current.source_hash != expected_source_hash
+            ):
+                raise ProjectRevisionConflict(
+                    expected_revision,
+                    actual_revision,
+                    expected_source_hash=expected_source_hash,
+                    actual_source_hash=current.source_hash,
+                )
             return super().save(ref, value)
 
     def delete(self, ref: ProjectRef) -> None:
@@ -284,15 +365,92 @@ class ProjectRepository(JsonRepository[ProjectRef, ProjectDto]):
 
 
 class ProjectRevisionConflict(PersistenceV2Error):
-    def __init__(self, expected_revision: int, actual_revision: int | None) -> None:
-        super().__init__("persisted Project revision changed before conditional save")
+    def __init__(
+        self,
+        expected_revision: int,
+        actual_revision: int | None,
+        *,
+        expected_source_hash: str | None = None,
+        actual_source_hash: str | None = None,
+    ) -> None:
+        super().__init__("persisted Project revision or content changed before conditional save")
         self.expected_revision = expected_revision
         self.actual_revision = actual_revision
+        self.expected_source_hash = expected_source_hash
+        self.actual_source_hash = actual_source_hash
+
+
+class RecordContentConflict(PersistenceV2Error):
+    def __init__(
+        self,
+        expected_revision: int,
+        expected_source_hash: str,
+        actual_revision: int | None,
+        actual_source_hash: str | None,
+    ) -> None:
+        super().__init__("persisted record content changed before exact restore")
+        self.expected_revision = expected_revision
+        self.expected_source_hash = expected_source_hash
+        self.actual_revision = actual_revision
+        self.actual_source_hash = actual_source_hash
 
 
 class VariantRepository(JsonRepository[VariantRef, VariantDto]):
     def __init__(self, root: str, filesystem: PersistenceFilesystemPort) -> None:
         super().__init__(root, filesystem, kind=EntityKind.VARIANT, dto_type=VariantDto)
+
+    def save(self, ref: VariantRef, value: VariantDto) -> LoadedRecord:
+        with self._mutation_lock:
+            return super().save(ref, value)
+
+    def save_if_revision(
+        self,
+        ref: VariantRef,
+        value: VariantDto,
+        *,
+        expected_revision: int,
+        expected_source_hash: str | None = None,
+    ) -> LoadedRecord:
+        """Replace one Variant only when its persisted revision still matches."""
+
+        with self._mutation_lock:
+            try:
+                current = super().load(ref)
+            except FileNotFoundError as exc:
+                raise VariantRevisionConflict(expected_revision, None) from exc
+            if not isinstance(current, LoadedRecord):
+                raise VariantRevisionConflict(expected_revision, None)
+            actual_revision = current.value.envelope.revision
+            if actual_revision != expected_revision or (
+                expected_source_hash is not None and current.source_hash != expected_source_hash
+            ):
+                raise VariantRevisionConflict(
+                    expected_revision,
+                    actual_revision,
+                    expected_source_hash=expected_source_hash,
+                    actual_source_hash=current.source_hash,
+                )
+            return super().save(ref, value)
+
+    def delete(self, ref: VariantRef) -> None:
+        with self._mutation_lock:
+            super().delete(ref)
+
+
+class VariantRevisionConflict(PersistenceV2Error):
+    def __init__(
+        self,
+        expected_revision: int,
+        actual_revision: int | None,
+        *,
+        expected_source_hash: str | None = None,
+        actual_source_hash: str | None = None,
+    ) -> None:
+        super().__init__("persisted Variant revision or content changed before conditional save")
+        self.expected_revision = expected_revision
+        self.actual_revision = actual_revision
+        self.expected_source_hash = expected_source_hash
+        self.actual_source_hash = actual_source_hash
 
 
 class SessionRepository(JsonRepository[SessionRef, SessionDto]):
@@ -327,6 +485,8 @@ __all__ = [
     "JsonRepository",
     "ProjectRepository",
     "ProjectRevisionConflict",
+    "RecordContentConflict",
     "SessionRepository",
+    "VariantRevisionConflict",
     "VariantRepository",
 ]

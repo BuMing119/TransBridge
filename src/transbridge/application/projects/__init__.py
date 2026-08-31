@@ -56,12 +56,15 @@ from .remote_binding import (
     project_paratranz_binding,
     project_with_paratranz_binding,
 )
+from .source_commands import ProjectSourceMutationService, SourceMutationResult
+from .variant_commands import EntryStatePatch
 
 __all__ = [
     "ActiveProject",
     "CandidateLoaderPort",
     "DirtyDecision",
     "ExportRevisionLease",
+    "EntryStatePatch",
     "LegacyProjectLifecycleAdapter",
     "LifecycleActivation",
     "LifecycleEvent",
@@ -89,6 +92,7 @@ __all__ = [
     "ProjectCatalogSnapshot",
     "ProjectSourcePreparationPort",
     "ProjectSourceRequest",
+    "ProjectSourceMutationService",
     "ProjectLifecycleService",
     "ProjectRemoteBindingService",
     "GuiProjectCommandFacade",
@@ -103,6 +107,7 @@ __all__ = [
     "ParaTranzTargetSource",
     "ParaTranzTargetStatus",
     "ResolvedParaTranzTarget",
+    "SourceMutationResult",
     "normalize_paratranz_endpoint",
     "project_paratranz_binding",
     "project_with_paratranz_binding",

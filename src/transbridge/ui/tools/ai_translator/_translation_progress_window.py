@@ -290,13 +290,23 @@ class _TranslationProgressWindow(QWidget):
 
         self._pause_btn.setEnabled(False)
         self._stop_btn.setEnabled(False)
+        completed_successfully = not self._was_stopped
+        if self._version_snapshot_session is not None:
+            if self._was_stopped:
+                self._version_snapshot_session.rollback_uncommitted()
+            else:
+                try:
+                    self._version_snapshot_session.mark_completed()
+                except Exception as exc:
+                    completed_successfully = False
+                    self._round_log.append(f"❌ AI 结果提交失败，界面修改已回滚：{exc}")
+                    QMessageBox.critical(self, "AI 结果提交失败", f"{exc}\n\n本次界面修改已回滚。")
         self._collection_synced = True
         if self._log_viewer is not None:
             self._log_viewer.stop_auto_refresh()
         self._ctx.collection_changed.emit(self._ctx.collection)
-        if not self._was_stopped and self._version_snapshot_session is not None:
-            self._version_snapshot_session.mark_completed()
-        self.translation_completed.emit()
+        if completed_successfully:
+            self.translation_completed.emit()
 
         report_path = getattr(result, "report_path", None)
         for diagnostic in getattr(result, "report_diagnostics", ()):
@@ -324,6 +334,8 @@ class _TranslationProgressWindow(QWidget):
         self._round_log.append(f"\n❌ 全局错误: {err}")
         self._round_log.verticalScrollBar().setValue(self._round_log.verticalScrollBar().maximum())
         self._collection_synced = True
+        if self._version_snapshot_session is not None:
+            self._version_snapshot_session.rollback_uncommitted()
         self._ctx.collection_changed.emit(self._ctx.collection)
         QMessageBox.critical(self, "翻译错误", err)
 
@@ -334,6 +346,8 @@ class _TranslationProgressWindow(QWidget):
             self._collection_synced = True
             if self._log_viewer is not None:
                 self._log_viewer.stop_auto_refresh()
+            if self._version_snapshot_session is not None:
+                self._version_snapshot_session.rollback_uncommitted()
             self._ctx.collection_changed.emit(self._ctx.collection)
 
     def _on_pause_resume(self):
@@ -355,7 +369,7 @@ class _TranslationProgressWindow(QWidget):
         reply = QMessageBox.question(
             self,
             "停止翻译",
-            "确定要停止翻译吗？\n已翻译的内容不会丢失，可通过断点续传继续。",
+            "确定要停止翻译吗？\n为避免保存部分结果，本次运行产生的修改将回滚。",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )

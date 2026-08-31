@@ -419,6 +419,7 @@ def start_mixed_run(
     *,
     finished: Callable,
     error: Callable,
+    cancelled: Callable[[], None] | None = None,
     parent: object | None = None,
     progress_created: Callable[[object], None] | None = None,
     theme_view: ThemeView | None = None,
@@ -464,18 +465,32 @@ def start_mixed_run(
         activity.progress(current, total, str(getattr(value, "stage", "执行中")))
 
     worker.progress.connect(on_activity_progress)
+    cancelled = cancelled or (lambda: None)
 
     def project_result(result: object) -> None:
         register_mixed_result_actions(progress, request.spec, result)
 
     worker.finished.connect(project_result)
-    worker.finished.connect(
-        lambda _result: activity.finish(cancelled=activity.activity.state is AiLegacyRunState.CANCELLING)
-    )
-    worker.cancelled.connect(controller.terminal_guard(run_id, lambda: activity.finish(cancelled=True)))
-    worker.error.connect(activity.fail)
-    worker.finished.connect(controller.terminal_guard(run_id, finished))
-    worker.error.connect(controller.terminal_guard(run_id, error))
+
+    def completed(result: object) -> None:
+        if activity.activity.state is AiLegacyRunState.CANCELLING:
+            cancelled()
+            activity.finish(cancelled=True)
+            return
+        activity.finish(cancelled=False)
+        finished(result)
+
+    def cancelled_run() -> None:
+        cancelled()
+        activity.finish(cancelled=True)
+
+    def failed(message: str) -> None:
+        activity.fail(message)
+        error(message)
+
+    worker.finished.connect(controller.terminal_guard(run_id, completed))
+    worker.cancelled.connect(controller.terminal_guard(run_id, cancelled_run))
+    worker.error.connect(controller.terminal_guard(run_id, failed))
     worker.finished.connect(lambda _result: worker.deleteLater())
     worker.error.connect(lambda _message: worker.deleteLater())
     worker.cancelled.connect(worker.deleteLater)
@@ -484,6 +499,7 @@ def start_mixed_run(
         show_and_activate(progress, deferred=True)
     except Exception:
         controller.cancel(run_id)
+        cancelled()
         activity.finish(cancelled=True)
         raise
     return progress
@@ -523,6 +539,7 @@ def show_polish_progress(
     entries: list,
     *,
     on_results: Callable[[object], None],
+    on_aborted: Callable[[], None] | None = None,
     preview: bool,
     theme_view: ThemeView | None = None,
 ) -> object:
@@ -536,6 +553,7 @@ def show_polish_progress(
         worker,
         entries,
         on_results=on_results,
+        on_aborted=on_aborted,
         preview=preview,
         theme_view=theme_view,
     )

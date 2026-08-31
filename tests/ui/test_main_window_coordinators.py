@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from transbridge.application.contracts import OperationResult
+from transbridge.application.io.identity import EntryKey, SourceNamespace
+from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui.coordinators.operation_coordinator import OperationCoordinator
 from transbridge.ui.coordinators.parse_coordinator import ParseCoordinator
 from transbridge.ui.coordinators.project_transfer_coordinator import ProjectTransferCoordinator
@@ -101,6 +105,47 @@ def test_parse_dialog_receives_real_window_host(monkeypatch) -> None:
     ParseCoordinator(host).parse_plugin()
 
     assert observed == [("parse", host)]
+
+
+def test_authoritative_source_import_commits_initial_states_without_second_variant_command() -> None:
+    captured = {}
+    key = EntryKey(SourceNamespace("source:plugin:test"), "entry")
+    entry = TranslationEntry("entry", "entry", "Original", "导入译文", 3, "FULL", entry_key=key)
+    collection = TranslationEntryCollection((entry,))
+
+    class Commands:
+        def add_source(self, request, _context, **kwargs):
+            captured["options"] = dict(request.options)
+            captured["kwargs"] = kwargs
+            return OperationResult.completed(
+                SimpleNamespace(
+                    hydration=SimpleNamespace(entries=(entry.snapshot(),)),
+                    project_revision=2,
+                    variant_revision=4,
+                )
+            )
+
+        def replace_entry_states(self, *_args, **_kwargs):
+            raise AssertionError("initial source states must be part of add_source")
+
+    context = SimpleNamespace(
+        uses_authoritative_projection=True,
+        project_commands=Commands(),
+        runtime_context=object(),
+    )
+    coordinator = ParseCoordinator(SimpleNamespace(context=context))
+
+    restored = coordinator._commit_authoritative_source(
+        "D:/mods/Plugin.esp",
+        collection,
+        format_id="plugin.sse",
+        expected_authority=(("project", "variant"), 1, 3),
+    )
+
+    payload = captured["options"]["__transbridge_initial_entry_states_v1"]
+    assert payload == [{"local_key": "entry", "translation": "导入译文", "stage": 3}]
+    assert captured["kwargs"]["expected_project_revision"] == 1
+    assert next(iter(restored)).translation == "导入译文"
 
 
 def test_migration_draft_is_non_blocking_and_owned_until_finished(monkeypatch) -> None:

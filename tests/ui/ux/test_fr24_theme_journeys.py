@@ -45,7 +45,7 @@ class SideEffectCounters:
 JOURNEYS = (
     JourneyContract(
         "J01",
-        (IntentId.PROJECT_CREATE_FROM_SOURCE,),
+        (IntentId.PROJECT_CREATE,),
         2,
         1,
         0,

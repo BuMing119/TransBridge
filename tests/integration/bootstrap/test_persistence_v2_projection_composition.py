@@ -3,8 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from transbridge.application.contracts import RequestContext
-from transbridge.application.io.identity import EntryKey, SourceNamespace
-from transbridge.application.projects import DirtyDecision
+from transbridge.application.io import FormatId
+from transbridge.application.io.identity import EntryKey, ExternalEntryRef, SourceNamespace
+from transbridge.application.projects import DirtyDecision, EntryStatePatch, PreparedProjectSource, ProjectSourceRequest
 from transbridge.bootstrap import build_runtime
 from transbridge.bootstrap.persistence import build_persistence_v2_services
 from transbridge.persistence.current_project import PROJECT_FILE_FILTER, CurrentProjectOpener
@@ -29,6 +30,31 @@ class _Ids:
     def __call__(self) -> str:
         self.value += 1
         return f"id-{self.value}"
+
+
+class _StaticSourcePreparer:
+    def __init__(self, location: str) -> None:
+        self.location = location
+        namespace = SourceNamespace("source:plugin:new")
+        fingerprint = SourceFingerprint(namespace, "b" * 64)
+        self.prepared = PreparedProjectSource(
+            (
+                ("enabled", True),
+                ("fingerprint", fingerprint.sha256),
+                ("format_id", FormatId.PLUGIN_SSE.value),
+                ("location", location),
+                ("role", "primary"),
+                ("source_id", namespace.value),
+            ),
+            SourceBaseline(
+                fingerprint,
+                (VariantEntryState(EntryKey(namespace, "new-entry"), "导入的新译文", 1),),
+            ),
+        )
+
+    def prepare_source(self, request, context, *, role, common_options):
+        assert request.location == self.location
+        return self.prepared
 
 
 def _records(services):
@@ -113,6 +139,118 @@ def test_variant_gui_commands_make_dirty_from_revision_then_save_clears_it(tmp_p
     assert saved.is_success
     assert clean is not None and not clean.dirty
     assert clean.to_dict()["values"]["entries"][0]["translation"] == "new"
+
+
+def test_variant_external_reference_survives_save_and_process_restart(tmp_path: Path) -> None:
+    root = tmp_path / "projects-v2"
+    services = build_persistence_v2_services(
+        root,
+        id_factory=_Ids(),
+        timestamp_factory=lambda: "2026-08-30T00:00:00+00:00",
+    )
+    project_ref, variant_ref, baseline = _records(services)
+    services.baselines.register(project_ref, variant_ref, (baseline,))
+    context = RequestContext("gui", run_id="external-ref")
+    assert services.gui_project_commands.switch_v2(project_ref, variant_ref, context).is_success
+    entry_key = EntryKey(SourceNamespace("source-a"), "entry-a")
+    reference = ExternalEntryRef("paratranz", "project:42", 71)
+
+    committed = services.gui_project_commands.replace_entry_records(
+        {entry_key: EntryStatePatch("remote", 1, (reference,))},
+        context,
+        expected_project_revision=0,
+        expected_variant_revision=0,
+    )
+    assert committed.is_success
+    assert services.gui_project_commands.save(context).is_success
+    services.close()
+
+    restarted = build_persistence_v2_services(
+        root,
+        id_factory=_Ids(),
+        timestamp_factory=lambda: "2026-08-30T00:01:00+00:00",
+    )
+    loaded = restarted.variants.load(variant_ref)
+    restored = VariantSnapshot.from_dto(loaded.value, variant_ref)
+
+    assert restored.entries[0].external_refs == (reference,)
+    restarted.close()
+
+
+def test_add_remove_source_survives_save_and_process_restart(tmp_path: Path) -> None:
+    root = tmp_path / "projects-v2"
+    source_path = tmp_path / "NewPlugin.esp"
+    source_path.write_bytes(b"fixture")
+    source_location = str(source_path.resolve())
+    preparer = _StaticSourcePreparer(source_location)
+    services = build_persistence_v2_services(
+        root,
+        id_factory=_Ids(),
+        timestamp_factory=lambda: "2026-08-30T00:00:00+00:00",
+        source_preparer=preparer,
+    )
+    project_ref = ProjectRef(ProjectId("p-source"))
+    variant_ref = VariantRef(VariantId("v-source"), project_ref.identity)
+    project = ProjectDto(
+        SchemaEnvelope(
+            2,
+            project_ref.kind,
+            project_ref.identity.value,
+            0,
+            {
+                "name": "Source restart",
+                "sources": [],
+                "source_relations": [],
+                "source_registry_diagnostics": [],
+                "variant_ids": [variant_ref.identity.value],
+                "active_variant_id": variant_ref.identity.value,
+            },
+        )
+    )
+    services.projects.save(project_ref, project)
+    services.variants.save(variant_ref, VariantSnapshot(variant_ref, (), ()).to_dto())
+    services.baselines.register(project_ref, variant_ref, (), allow_empty=True)
+    context = RequestContext("gui", "source-restart", project_ref.identity.value, variant_ref.identity.value)
+    assert services.gui_project_commands.switch_v2(project_ref, variant_ref, context).is_success
+
+    added = services.gui_project_commands.add_source(
+        ProjectSourceRequest(source_location, FormatId.PLUGIN_SSE),
+        context,
+    )
+    assert added.is_success
+    assert services.gui_project_commands.save(context).is_success
+    project_path = services.projects.path_for(project_ref)
+    services.close()
+
+    restarted = build_persistence_v2_services(
+        root,
+        id_factory=_Ids(),
+        timestamp_factory=lambda: "2026-08-30T00:01:00+00:00",
+        source_preparer=preparer,
+    )
+    reopened = restarted.current_project_opener.open_path(project_path, context)
+    assert reopened.is_success
+    restored = restarted.project_projection.snapshot().to_dict()["values"]
+    assert [source["location"] for source in restored["sources"]] == [source_location]
+    assert [(entry["entry_key"]["local_key"], entry["translation"]) for entry in restored["entries"]] == [
+        ("new-entry", "导入的新译文")
+    ]
+
+    assert restarted.gui_project_commands.remove_source(source_location, context).is_success
+    assert restarted.gui_project_commands.save(context).is_success
+    restarted.close()
+
+    reopened_again = build_persistence_v2_services(
+        root,
+        id_factory=_Ids(),
+        timestamp_factory=lambda: "2026-08-30T00:02:00+00:00",
+        source_preparer=preparer,
+    )
+    assert reopened_again.current_project_opener.open_path(project_path, context).is_success
+    final = reopened_again.project_projection.snapshot().to_dict()["values"]
+    assert final["sources"] == []
+    assert final["entries"] == []
+    reopened_again.close()
 
 
 def test_v2_variant_catalog_create_copy_switch_and_delete(tmp_path: Path) -> None:

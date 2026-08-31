@@ -398,9 +398,13 @@ class AITranslatorWindow(QWidget):
     def _on_mixed_finished(self, result: dict):
         from .result_view import apply_window_mixed_result, show_window_mixed_report
 
-        if self._version_snapshot_session is not None:
-            self._version_snapshot_session.mark_completed()
         if apply_window_mixed_result(self, result):
+            if self._version_snapshot_session is not None:
+                try:
+                    self._version_snapshot_session.mark_completed()
+                except Exception as exc:
+                    QMessageBox.critical(self, "AI 结果提交失败", f"{exc}\n\n本次界面修改已回滚。")
+                    return
             self._ctx.collection_changed.emit(self._ctx.collection)
         self._report_dialog = show_window_mixed_report(self, result)
 
@@ -438,6 +442,8 @@ class AITranslatorWindow(QWidget):
 
     def _on_polish_finished_direct(self, results, entries, collection):
         summary = self._result_presenter.apply_direct(collection, entries, results)
+        if not self._commit_completed_ai_result():
+            return
         self._ctx.collection_changed.emit(collection)
         self._show_polish_report(results, entries, summary)
         self.close()
@@ -450,9 +456,21 @@ class AITranslatorWindow(QWidget):
             polish_decisions,
             results=results,
         )
+        if not self._commit_completed_ai_result():
+            return
         self._ctx.collection_changed.emit(collection)
         self._show_polish_report(results, entries, summary)
         self.close()
+
+    def _commit_completed_ai_result(self) -> bool:
+        if self._version_snapshot_session is None:
+            return True
+        try:
+            self._version_snapshot_session.mark_completed()
+        except Exception as exc:
+            QMessageBox.critical(self, "AI 结果提交失败", f"{exc}\n\n本次界面修改已回滚。")
+            return False
+        return True
 
     def _show_polish_report(self, results, entries, summary):
         from .result_view import show_window_polish_report
@@ -467,6 +485,9 @@ class AITranslatorWindow(QWidget):
     def closeEvent(self, event):
         self._config_binding.close()
         self._embedding_connection.close()
+        session = getattr(self, "_version_snapshot_session", None)
+        if session is not None:
+            session.rollback_uncommitted()
         self._run_controller.close()
         self._theme_binding.close()
         super().closeEvent(event)

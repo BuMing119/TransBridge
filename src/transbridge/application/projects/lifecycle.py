@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+import logging
 import secrets
 from threading import RLock
 from typing import Any, cast
@@ -21,6 +22,7 @@ from transbridge.application.contracts import (
     OperationResult,
     RequestContext,
 )
+from transbridge.persistence.v2.variant import VariantChangeSet
 
 from .models import (
     ActiveProject,
@@ -430,6 +432,212 @@ class ProjectLifecycleService:
                 )
             return OperationResult.completed(self._active.summary(), run_id=context.run_id)
 
+    def commit_active_variant(
+        self,
+        change_set: VariantChangeSet,
+        context: RequestContext,
+        *,
+        expected_project_revision: int,
+    ) -> OperationResult[dict[str, Any]]:
+        """Commit one complete Variant change while holding the lifecycle lock."""
+
+        with self._lock:
+            active = self._active
+            if active is None or active.variant is None or active.formal_variant_ref is None:
+                return _failed(
+                    "ACTIVE_VARIANT_REQUIRED",
+                    "A V2 Variant must be active before applying a project command.",
+                    ErrorCategory.PREREQUISITE,
+                    context,
+                )
+            if context.project_id is not None and context.project_id != active.project_ref.identity.value:
+                return _failed(
+                    "PROJECT_CONTEXT_MISMATCH",
+                    "The request context targets a different Project.",
+                    ErrorCategory.PERMISSION,
+                    context,
+                )
+            if context.variant_id is not None and context.variant_id != active.formal_variant_ref.identity.value:
+                return _failed(
+                    "VARIANT_CONTEXT_MISMATCH",
+                    "The request context targets a different Variant.",
+                    ErrorCategory.PERMISSION,
+                    context,
+                )
+            if change_set.ref != active.formal_variant_ref:
+                return _failed(
+                    "ACTIVE_VARIANT_IDENTITY_CHANGED",
+                    "The active Variant changed before the command could commit.",
+                    ErrorCategory.CONFLICT,
+                    context,
+                )
+            if expected_project_revision != active.project.envelope.revision:
+                return _failed(
+                    "ACTIVE_PROJECT_REVISION_CHANGED",
+                    "The active Project changed before the Variant command could commit.",
+                    ErrorCategory.CONFLICT,
+                    context,
+                )
+            if change_set.expected_revision != active.variant.revision:
+                return _failed(
+                    "ACTIVE_VARIANT_REVISION_CHANGED",
+                    "The active Variant changed before the command could commit.",
+                    ErrorCategory.CONFLICT,
+                    context,
+                )
+
+            old_summary = active.summary()
+            try:
+                revision = active.variant.commit(change_set, context)
+            except Exception as exc:  # noqa: BLE001 - preserve the domain cause in OperationResult
+                return _from_exception(exc, "ACTIVE_VARIANT_CHANGE_FAILED", context)
+
+            self._generation += 1
+            diagnostics: list[Diagnostic] = []
+            event = LifecycleEvent(
+                "active-variant-updated",
+                self._generation,
+                old_summary,
+                active.summary(),
+            )
+            if self._event_publisher is not None:
+                try:
+                    self._event_publisher(event)
+                except Exception:  # noqa: BLE001 - committed aggregate remains authoritative
+                    diagnostics.append(
+                        Diagnostic(
+                            "PROJECTION_EVENT_FAILED",
+                            "The Variant command committed, but a projection callback failed.",
+                            DiagnosticSeverity.WARNING,
+                        )
+                    )
+            return OperationResult.completed(
+                {
+                    "project_id": active.project_ref.identity.value,
+                    "project_revision": active.project.envelope.revision,
+                    "variant_id": active.formal_variant_ref.identity.value,
+                    "revision": revision,
+                },
+                diagnostics=tuple(diagnostics),
+                run_id=context.run_id,
+            )
+
+    def commit_active_content(
+        self,
+        project,
+        variant,
+        context: RequestContext,
+        *,
+        expected_project_revision: int,
+        expected_variant_revision: int,
+        before_publish: Callable[[], None] | None = None,
+    ) -> OperationResult[dict[str, Any]]:
+        """Atomically replace active Project and Variant working-copy snapshots."""
+
+        from transbridge.persistence.v2.variant import VariantAggregate
+
+        with self._lock:
+            active = self._active
+            if active is None or active.variant is None or active.formal_variant_ref is None:
+                return _failed(
+                    "ACTIVE_VARIANT_REQUIRED",
+                    "A V2 Variant must be active before changing Project content.",
+                    ErrorCategory.PREREQUISITE,
+                    context,
+                )
+            if context.project_id is not None and context.project_id != active.project_ref.identity.value:
+                return _failed(
+                    "PROJECT_CONTEXT_MISMATCH",
+                    "The request context targets a different Project.",
+                    ErrorCategory.PERMISSION,
+                    context,
+                )
+            if context.variant_id is not None and context.variant_id != active.formal_variant_ref.identity.value:
+                return _failed(
+                    "VARIANT_CONTEXT_MISMATCH",
+                    "The request context targets a different Variant.",
+                    ErrorCategory.PERMISSION,
+                    context,
+                )
+            if active.project.envelope.revision != expected_project_revision:
+                return _failed(
+                    "ACTIVE_PROJECT_REVISION_CHANGED",
+                    "The active Project changed before the content command could commit.",
+                    ErrorCategory.CONFLICT,
+                    context,
+                )
+            if active.variant.revision != expected_variant_revision:
+                return _failed(
+                    "ACTIVE_VARIANT_REVISION_CHANGED",
+                    "The active Variant changed before the content command could commit.",
+                    ErrorCategory.CONFLICT,
+                    context,
+                )
+            if project.envelope.identity != active.project.envelope.identity:
+                return _failed(
+                    "ACTIVE_PROJECT_IDENTITY_CHANGED",
+                    "The candidate Project does not match the active Project.",
+                    ErrorCategory.CONFLICT,
+                    context,
+                )
+            if project.envelope.revision not in {expected_project_revision, expected_project_revision + 1}:
+                return _failed(
+                    "ACTIVE_PROJECT_REVISION_INVALID",
+                    "The candidate Project revision must stay unchanged or advance once.",
+                    ErrorCategory.CONFLICT,
+                    context,
+                )
+            if variant.ref != active.formal_variant_ref:
+                return _failed(
+                    "ACTIVE_VARIANT_IDENTITY_CHANGED",
+                    "The candidate Variant does not match the active Variant.",
+                    ErrorCategory.CONFLICT,
+                    context,
+                )
+            if variant.revision not in {expected_variant_revision, expected_variant_revision + 1}:
+                return _failed(
+                    "ACTIVE_VARIANT_REVISION_INVALID",
+                    "The candidate Variant revision must stay unchanged or advance once.",
+                    ErrorCategory.CONFLICT,
+                    context,
+                )
+            if project.envelope.revision == expected_project_revision and variant.revision == expected_variant_revision:
+                return OperationResult.completed(active.summary(), run_id=context.run_id)
+
+            try:
+                candidate_variant = VariantAggregate(variant)
+                if before_publish is not None:
+                    before_publish()
+            except Exception as exc:  # noqa: BLE001
+                return _from_exception(exc, "ACTIVE_CONTENT_CHANGE_FAILED", context)
+
+            old = active
+            self._active = replace(active, project=project, variant=candidate_variant)
+            self._generation += 1
+            diagnostics: list[Diagnostic] = []
+            event = LifecycleEvent(
+                "active-project-content-updated",
+                self._generation,
+                old.summary(),
+                self._active.summary(),
+            )
+            if self._event_publisher is not None:
+                try:
+                    self._event_publisher(event)
+                except Exception:  # noqa: BLE001 - committed working copy remains authoritative
+                    diagnostics.append(
+                        Diagnostic(
+                            "PROJECTION_EVENT_FAILED",
+                            "The Project content command committed, but a projection callback failed.",
+                            DiagnosticSeverity.WARNING,
+                        )
+                    )
+            return OperationResult.completed(
+                self._active.summary(),
+                diagnostics=tuple(diagnostics),
+                run_id=context.run_id,
+            )
+
     def commit_project_update(
         self,
         project,
@@ -693,6 +901,7 @@ def _from_exception[T](exc: Exception, fallback_code: str, context: RequestConte
     if isinstance(exc, DomainError):
         error = exc
     else:
+        logging.getLogger(__name__).error("Lifecycle operation failed (%s)", fallback_code, exc_info=exc)
         error = DomainError(
             ErrorCategory.INTERNAL,
             fallback_code,

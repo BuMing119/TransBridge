@@ -9,7 +9,7 @@ UnitOfWork while the lifecycle generation lock is held.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import json
 import secrets
@@ -24,7 +24,7 @@ from transbridge.application.contracts import (
     OperationResult,
     RequestContext,
 )
-from transbridge.application.io import EntrySnapshot, FormatId, SourceSnapshot
+from transbridge.application.io import EntrySnapshot, FormatId, SourceSnapshot, Stage
 from transbridge.persistence.v2.ids import ProjectId, ProjectRef, VariantId, VariantRef
 from transbridge.persistence.v2.models import SCHEMA_VERSION, ProjectDto, SchemaEnvelope
 from transbridge.persistence.v2.variant import (
@@ -287,6 +287,15 @@ class _OwnedProvisioningHydration:
     source: PreparedSourceHydration
 
 
+@dataclass(frozen=True, slots=True)
+class _PreparedSourceSet:
+    """Registered sources plus the baselines they materialize into the Variant."""
+
+    registrations: tuple[PreparedProjectSource, ...]
+    baselines: tuple[SourceBaseline, ...]
+    hydration: PreparedSourceHydration | None = None
+
+
 class ProjectProvisioningService:
     def __init__(
         self,
@@ -323,8 +332,8 @@ class ProjectProvisioningService:
                     raise DomainError(ErrorCategory.CONFLICT, "PROJECT_NAME_EXISTS", "已存在同名工程。")
                 project_ref, variant_ref = self._allocate_refs()
                 prepared_sources = self._prepare_sources(request, context)
-                baselines = tuple(item.baseline for item in prepared_sources)
-                descriptors = tuple(item.to_dict() for item in prepared_sources)
+                baselines = prepared_sources.baselines
+                descriptors = tuple(item.to_dict() for item in prepared_sources.registrations)
                 registry = migrate_legacy_source_registry(
                     project_ref.identity.value,
                     descriptors,
@@ -357,7 +366,7 @@ class ProjectProvisioningService:
                 commit = ProjectProvisioningCommit(project, snapshot, baselines, name_key)
                 token = self._new_token()
                 diagnostics = (
-                    *(item for source in prepared_sources for item in source.diagnostics),
+                    *(item for source in prepared_sources.registrations for item in source.diagnostics),
                     *(
                         Diagnostic(
                             code,
@@ -376,7 +385,7 @@ class ProjectProvisioningService:
                     variant_ref.identity.value,
                     request.project_name,
                     request.default_variant_name,
-                    len(prepared_sources),
+                    len(prepared_sources.registrations),
                     len(entries),
                     diagnostics,
                 )
@@ -387,7 +396,7 @@ class ProjectProvisioningService:
                     old_signature,
                     commit,
                     candidate,
-                    prepared_sources[0].hydration if request.source is not None else None,
+                    prepared_sources.hydration,
                 )
                 return OperationResult.completed(preview, run_id=context.run_id)
             except Exception as exc:  # noqa: BLE001 - application boundary maps adapter failures
@@ -505,12 +514,12 @@ class ProjectProvisioningService:
         self,
         request: ProjectProvisioningRequest,
         context: RequestContext,
-    ) -> tuple[PreparedProjectSource, ...]:
+    ) -> _PreparedSourceSet:
         candidates: list[tuple[ProjectSourceRequest, str]] = []
         if request.source is not None:
             candidates.append((request.source, "primary"))
         candidates.extend((source, "migration") for source in request.migration_sources)
-        prepared = tuple(
+        registrations = tuple(
             self._sources.prepare_source(
                 source,
                 context,
@@ -519,13 +528,45 @@ class ProjectProvisioningService:
             )
             for source, role in candidates
         )
-        locations = [str(item.to_dict().get("location", "")) for item in prepared]
-        namespaces = [item.baseline.fingerprint.namespace for item in prepared]
+        locations = [str(item.to_dict().get("location", "")) for item in registrations]
+        namespaces = [item.baseline.fingerprint.namespace for item in registrations]
         if len(set(map(str.casefold, locations))) != len(locations):
             raise DomainError(ErrorCategory.CONFLICT, "PROJECT_SOURCE_PATH_DUPLICATE", "工程来源路径重复。")
-        if len(set(namespaces)) != len(namespaces):
+        if len(set(namespaces)) == len(namespaces):
+            hydration = registrations[0].hydration if request.source is not None else None
+            return _PreparedSourceSet(
+                registrations,
+                tuple(item.baseline for item in registrations),
+                hydration,
+            )
+
+        if request.source is None or not registrations:
             raise DomainError(ErrorCategory.CONFLICT, "PROJECT_SOURCE_IDENTITY_DUPLICATE", "工程来源身份重复。")
-        return prepared
+        primary = registrations[0]
+        primary_namespace = primary.baseline.fingerprint.namespace
+        matching_migrations = tuple(
+            item for item in registrations[1:] if item.baseline.fingerprint.namespace == primary_namespace
+        )
+        duplicate_namespaces = {namespace for namespace in namespaces if namespaces.count(namespace) > 1}
+        if (
+            duplicate_namespaces != {primary_namespace}
+            or len(matching_migrations) != 1
+            or not _is_plugin_source(primary)
+            or not _is_plugin_source(matching_migrations[0])
+            or primary.hydration is None
+        ):
+            raise DomainError(ErrorCategory.CONFLICT, "PROJECT_SOURCE_IDENTITY_DUPLICATE", "工程来源身份重复。")
+
+        merged_primary = _merge_plugin_translation(primary, matching_migrations[0])
+        materialized = (
+            merged_primary.baseline,
+            *(item.baseline for item in registrations[1:] if item.baseline.fingerprint.namespace != primary_namespace),
+        )
+        return _PreparedSourceSet(
+            (merged_primary, *registrations[1:]),
+            materialized,
+            merged_primary.hydration,
+        )
 
     def _allocate_refs(self) -> tuple[ProjectRef, VariantRef]:
         for _ in range(8):
@@ -593,6 +634,47 @@ def _normalize_options(values: tuple[tuple[str, Any], ...]) -> tuple[tuple[str, 
 
 def _is_sha256(value: str) -> bool:
     return len(value) == 64 and all(character in "0123456789abcdef" for character in value)
+
+
+def _is_plugin_source(source: PreparedProjectSource) -> bool:
+    return source.to_dict().get("format_id") == FormatId.PLUGIN_SSE.value
+
+
+def _merge_plugin_translation(
+    primary: PreparedProjectSource,
+    migration: PreparedProjectSource,
+) -> PreparedProjectSource:
+    """Fold a translated plugin copy into its primary baseline by stable EntryKey."""
+
+    if primary.hydration is None:
+        raise ValueError("primary plugin translation migration requires hydration")
+    originals = {entry.entry_key: entry.original for entry in primary.hydration.entries}
+    candidates = {
+        entry.entry_key: entry.translation for entry in migration.baseline.entries if entry.translation.strip()
+    }
+
+    def translated_value(entry_key, current: str) -> str | None:
+        candidate = candidates.get(entry_key)
+        original = originals.get(entry_key)
+        if current or candidate is None or original is None or candidate == original:
+            return None
+        return candidate
+
+    baseline_entries = tuple(
+        replace(entry, translation=candidate, stage=Stage.TRANSLATED)
+        if (candidate := translated_value(entry.entry_key, entry.translation)) is not None
+        else entry
+        for entry in primary.baseline.entries
+    )
+    hydration_entries = tuple(
+        replace(entry, translation=candidate, stage=Stage.TRANSLATED.value)
+        if (candidate := translated_value(entry.entry_key, entry.translation)) is not None
+        else entry
+        for entry in primary.hydration.entries
+    )
+    hydration = replace(primary.hydration, entries=hydration_entries)
+    baseline = SourceBaseline(primary.baseline.fingerprint, baseline_entries)
+    return replace(primary, baseline=baseline, hydration=hydration)
 
 
 def _active_signature(active: ActiveProject | None) -> tuple[str, int, str | None, int | None] | None:

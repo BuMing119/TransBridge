@@ -30,7 +30,7 @@ def _callbacks(calls: list[str]) -> MenuCallbacks:
     return MenuCallbacks(
         new_project=callback("new_project"),
         open_project=callback("open_project"),
-        parse=callback("parse"),
+        prepare_content=callback("prepare_content"),
         migrate=callback("migrate"),
         upload=callback("upload"),
         batch_upload=callback("batch_upload"),
@@ -63,13 +63,14 @@ def test_menu_builder_connects_each_intent_once() -> None:
     window = QMainWindow()
     handles = MenuBuilder(window, _callbacks(calls)).build()
 
-    handles.parse.trigger()
+    handles.prepare_content.trigger()
     handles.upload.trigger()
     handles.smart_assistant.trigger()
     handles.appearance.trigger()
 
-    assert calls == ["parse", "upload", "assistant", "appearance"]
-    assert handles.parse.shortcut().toString() == "Ctrl+O"
+    assert calls == ["prepare_content", "upload", "assistant", "appearance"]
+    assert handles.prepare_content.data() == IntentId.WORKBENCH_CONTENT_PREPARE.value
+    assert handles.prepare_content.text() == "为当前工程添加插件…"
     assert handles.smart_assistant is handles.view_assistant
     assert handles.smart_assistant.shortcut().toString() == "Ctrl+Shift+I"
     assert handles.smart_assistant.data() == IntentId.VIEW_SMART_ASSISTANT.value
@@ -211,6 +212,39 @@ def test_cloud_sync_remains_discoverable_without_browse_selection_and_requires_c
     assert composition._has_cloud_context() == (True, None)
     composition._host.context.collection = None
     assert composition._has_cloud_context() == (False, "请先选择可编辑的翻译内容")
+
+
+def test_project_creation_and_workbench_content_have_distinct_routes() -> None:
+    calls: list[str] = []
+
+    class Noop:
+        def __getattr__(self, _name):
+            return self
+
+        def __call__(self, *_args, **_kwargs):
+            return None
+
+    host = Noop()
+    host.context = SimpleNamespace(project_name="HLIORemi")
+    host.parse_coordinator = SimpleNamespace(parse_plugin=lambda: calls.append("parse-current-content"))
+    host.start_center_controller = SimpleNamespace(
+        begin_creation=lambda: calls.append("open-project-creation"),
+        create_empty=lambda: calls.append("create-empty-project"),
+        choose_source=lambda: calls.append("create-project-from-source"),
+    )
+    composition = ShellIntentComposition(host)
+
+    creation = composition.dispatch(IntentId.PROJECT_CREATE)
+
+    assert creation.accepted
+    assert calls == ["open-project-creation"]
+    calls.clear()
+
+    result = composition.dispatch(IntentId.WORKBENCH_CONTENT_PREPARE)
+
+    assert result.accepted
+    assert calls == ["parse-current-content"]
+    composition.close()
 
 
 def test_action_catalog_has_unique_intents_shortcuts_and_disabled_reasons() -> None:

@@ -11,6 +11,7 @@ class MemoryFilesystem:
         self.directories: set[str] = set()
         self.canonical_aliases: dict[str, str] = {}
         self.fail_replace_destinations: set[str] = set()
+        self.fail_durable_replace_destinations: set[str] = set()
         self.fail_write_paths: set[str] = set()
         self.fail_read_paths: set[str] = set()
         self.fail_list_paths: set[str] = set()
@@ -68,6 +69,14 @@ class MemoryFilesystem:
         self.calls.append(("replace", canonical_destination))
         if canonical_destination in self.fail_replace_destinations:
             raise OSError("injected replace fault")
+        self.files[canonical_destination] = self.files.pop(canonical_source)
+
+    def replace_durable(self, source: str, destination: str) -> None:
+        canonical_source = self.canonicalize(source)
+        canonical_destination = self.canonicalize(destination)
+        self.calls.append(("replace-durable", canonical_destination))
+        if canonical_destination in self.fail_durable_replace_destinations:
+            raise OSError("injected durable replace fault")
         self.files[canonical_destination] = self.files.pop(canonical_source)
 
     def remove(self, path: str, *, missing_ok: bool = False) -> None:

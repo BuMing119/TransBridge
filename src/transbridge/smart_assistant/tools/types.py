@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from enum import Enum
 import json
+import threading
 from typing import Any
 
 # ── ToolResult v2 ──────────────────────────────────────────────
@@ -264,6 +265,56 @@ _FORWARDED_ATTRS = frozenset({
 })
 
 
+def _owns_current_qt_thread(app_ctx: Any) -> bool:
+    thread = getattr(app_ctx, "thread", None)
+    if not callable(thread):
+        return False
+    try:
+        from PyQt6.QtCore import QThread
+
+        return QThread.currentThread() == thread()
+    except (ImportError, RuntimeError):
+        return False
+
+
+def _projection_entry_states(
+    app_ctx: Any,
+    collection: Any,
+    identity: tuple[str, str] | None,
+) -> dict[Any, tuple[str, int]] | None:
+    projection = getattr(app_ctx, "_project_projection", None)
+    snapshot_reader = getattr(projection, "snapshot", None)
+    if not callable(snapshot_reader):
+        return None
+    snapshot = snapshot_reader()
+    if snapshot is None:
+        return None
+    values = snapshot.to_dict()["values"]
+    if identity is not None:
+        projected_project = values.get("project_id")
+        projected_variant = values.get("variant_id") or values.get("active_variant_id")
+        if projected_project is not None and str(projected_project) != identity[0]:
+            return None
+        if projected_variant is not None and str(projected_variant) != identity[1]:
+            return None
+    by_identity = {
+        (
+            str((item.get("entry_key") or {}).get("namespace", "")),
+            str((item.get("entry_key") or {}).get("local_key", "")),
+        ): (str(item.get("translation", "")), int(item.get("stage", 0)))
+        for item in values.get("entries", ())
+    }
+    result: dict[Any, tuple[str, int]] = {}
+    for entry in collection:
+        entry_identity = entry.identity
+        namespace = getattr(getattr(entry_identity, "namespace", None), "value", "")
+        local_key = getattr(entry_identity, "local_key", "")
+        state = by_identity.get((str(namespace), str(local_key)))
+        if state is not None:
+            result[entry_identity] = state
+    return result
+
+
 @dataclass
 class ExecutionContext:
     """工具执行上下文，包装 AppContext + TaskManager。
@@ -286,6 +337,27 @@ class ExecutionContext:
     plan_hash: str = ""
     confirmation_authority: Any = None
     confirmation_token: Any = None
+    _target_collection: Any = field(default=None, init=False, repr=False)
+    _target_version_identity: tuple[str, str] | None = field(default=None, init=False, repr=False)
+    _target_project_revision: int | None = field(default=None, init=False, repr=False)
+    _target_variant_revision: int | None = field(default=None, init=False, repr=False)
+    _committed_entry_states: dict[Any, tuple[str, int]] = field(default_factory=dict, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        app_ctx = self.app_context
+        if app_ctx is None:
+            return
+        collection = getattr(app_ctx, "collection", None)
+        object.__setattr__(self, "_target_collection", collection)
+        object.__setattr__(self, "_target_version_identity", getattr(app_ctx, "active_version_identity", None))
+        object.__setattr__(self, "_target_project_revision", getattr(app_ctx, "project_revision", None))
+        object.__setattr__(self, "_target_variant_revision", getattr(app_ctx, "variant_revision", None))
+        if collection is not None:
+            object.__setattr__(
+                self,
+                "_committed_entry_states",
+                {entry.identity: (entry.translation, entry.stage) for entry in collection},
+            )
 
     # ── C10: 线程安全状态变更 ──────────────────────────────────
 
@@ -314,18 +386,225 @@ class ExecutionContext:
         else:
             _run()
 
+    def safe_mutate_wait(self, fn: Callable[[], Any], *, timeout: float = 30.0) -> Any:
+        """Run one UI mutation and wait until the queued callback has really finished.
+
+        Tool results must not report success while a queued mutation can still fail in
+        ``AppContext._on_mutation``.  Calls already on the QObject's owning thread run
+        directly to avoid a self-deadlock; headless contexts keep their synchronous
+        compatibility behaviour.
+        """
+
+        app_ctx = self.__dict__.get("app_context")
+        if app_ctx is None or not hasattr(app_ctx, "safe_mutate") or _owns_current_qt_thread(app_ctx):
+            return self._run_dispatched(fn)
+
+        completed = threading.Event()
+        state_lock = threading.Lock()
+        state = {"phase": "queued", "result": None, "error": None}
+
+        def queued() -> None:
+            with state_lock:
+                if state["phase"] != "queued":
+                    completed.set()
+                    return
+                state["phase"] = "running"
+            try:
+                state["result"] = self._run_dispatched(fn)
+            except BaseException as exc:  # propagate the original queued failure to the tool caller
+                state["error"] = exc
+            finally:
+                with state_lock:
+                    state["phase"] = "done"
+                completed.set()
+
+        app_ctx.safe_mutate(queued)
+        if not completed.wait(timeout):
+            with state_lock:
+                phase = state["phase"]
+                if phase == "queued":
+                    state["phase"] = "cancelled"
+            if phase == "queued":
+                raise TimeoutError("等待主线程提交助手修改超时，排队操作已取消。")
+            # Once execution has started it is unsafe to return an unconfirmed result.
+            completed.wait()
+        error = state["error"]
+        if error is not None:
+            raise error
+        return state["result"]
+
+    def _run_dispatched(self, fn: Callable[[], Any]) -> Any:
+        object.__setattr__(self, "_in_dispatch", True)
+        try:
+            return fn()
+        finally:
+            object.__setattr__(self, "_in_dispatch", False)
+
+    def commit_label_state(
+        self,
+        entry_labels: dict[str, set[str]],
+        label_library: dict[str, dict],
+    ) -> object:
+        """Commit copied label state against the Project/Variant captured at tool start."""
+
+        app_ctx = self.__dict__.get("app_context")
+        if app_ctx is None:
+            raise RuntimeError("运行上下文未初始化，标签修改未提交。")
+
+        def commit() -> object:
+            if not bool(getattr(app_ctx, "uses_authoritative_projection", False)):
+                app_ctx.entry_labels = entry_labels
+                app_ctx.label_library = label_library
+                return None
+            identity = self.__dict__.get("_target_version_identity")
+            if identity is None or getattr(app_ctx, "active_version_identity", None) != identity:
+                raise RuntimeError("活动 Project/Variant 已变化，标签修改未提交。")
+            expected_project = self.__dict__.get("_target_project_revision")
+            expected_variant = self.__dict__.get("_target_variant_revision")
+            if getattr(app_ctx, "project_revision", None) != expected_project:
+                raise RuntimeError("活动 Project 修订号已变化，标签修改未提交。")
+            if getattr(app_ctx, "variant_revision", None) != expected_variant:
+                raise RuntimeError("活动 Variant 修订号已变化，标签修改未提交。")
+            from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
+
+            project_id, variant_id = identity
+            result = app_ctx.replace_projected_labels(
+                entry_labels,
+                label_library,
+                expected_project_revision=expected_project,
+                expected_variant_revision=expected_variant,
+                expected_variant_ref=VariantRef(VariantId(variant_id), ProjectId(project_id)),
+            )
+            if hasattr(result, "is_success") and not result.is_success:
+                diagnostics = tuple(getattr(result, "diagnostics", ()))
+                detail = diagnostics[0].message if diagnostics else "标签变更提交失败。"
+                raise RuntimeError(detail)
+            value = getattr(result, "value", None)
+            if isinstance(value, dict):
+                project_revision = value.get("project_revision")
+                variant_revision = value.get("revision")
+                if project_revision is not None:
+                    object.__setattr__(self, "_target_project_revision", int(project_revision))
+                if variant_revision is not None:
+                    object.__setattr__(self, "_target_variant_revision", int(variant_revision))
+            return result
+
+        return self.safe_mutate_wait(commit)
+
+    def capture_entry_states(self, collection=None) -> dict[Any, tuple[str, int]]:
+        target = collection if collection is not None else self.__dict__.get("_target_collection")
+        if target is None:
+            return {}
+        return {entry.identity: (entry.translation, entry.stage) for entry in target}
+
+    def rollback_entry_states(self, states: dict[Any, tuple[str, int]], collection=None) -> None:
+        """Restore a failed run from the latest authority, or its legacy start delta."""
+
+        app_ctx = self.__dict__.get("app_context")
+        target = collection if collection is not None else self.__dict__.get("_target_collection")
+        if app_ctx is None or target is None:
+            return
+        if not self._target_is_current(app_ctx, target):
+            return
+
+        def restore() -> None:
+            restore_states = states
+            if bool(getattr(app_ctx, "uses_authoritative_projection", False)):
+                authoritative = _projection_entry_states(
+                    app_ctx,
+                    target,
+                    self.__dict__.get("_target_version_identity"),
+                )
+                if authoritative is not None:
+                    restore_states = {**states, **authoritative}
+            changed = False
+            for entry in target:
+                state = restore_states.get(entry.identity)
+                if state is not None and (entry.translation, entry.stage) != state:
+                    entry.translation, entry.stage = state
+                    changed = True
+            if changed:
+                self._emit_collection_changed(app_ctx, target)
+
+        self.safe_mutate_wait(restore)
+
+    def _target_is_current(self, app_ctx, collection) -> bool:
+        if getattr(app_ctx, "collection", None) is not collection:
+            return False
+        identity = self.__dict__.get("_target_version_identity")
+        return identity is None or getattr(app_ctx, "active_version_identity", None) == identity
+
     def notify_collection_modified(self) -> None:
-        """C10: 在主线程发射 collection_changed 信号，触发 UI 表格刷新。
+        """Commit entry changes to the active Variant, then refresh the UI.
 
         应在 safe_mutate 回调中调用，确保信号在主线程发射。
         用于 entry.translation / entry.stage 等 dataclass 字段被修改后
         通知 UI 更新显示。
         """
         app_ctx = self.__dict__.get("app_context")
-        if app_ctx is not None and hasattr(app_ctx, "collection_changed"):
-            # 发射 collection_changed 信号，step2 表格监听此信号刷新
+        if app_ctx is None:
+            return
+        collection = self.__dict__.get("_target_collection")
+        if collection is None:
             collection = app_ctx.collection if hasattr(app_ctx, "collection") else None
+        if collection is None:
+            return
+        if bool(getattr(app_ctx, "uses_authoritative_projection", False)):
+            self._commit_authoritative_entries(app_ctx, collection)
+        elif hasattr(app_ctx, "mark_dirty"):
+            app_ctx.mark_dirty()
+        self._emit_collection_changed(app_ctx, collection)
+
+    def publish_collection_modified(self) -> None:
+        """Commit on the calling task, then marshal only the UI notification."""
+
+        app_ctx = self.__dict__.get("app_context")
+        collection = self.__dict__.get("_target_collection")
+        if app_ctx is None or collection is None:
+            return
+        if bool(getattr(app_ctx, "uses_authoritative_projection", False)):
+            self._commit_authoritative_entries(app_ctx, collection)
+            self.safe_mutate(lambda: self._emit_collection_changed(app_ctx, collection))
+        else:
+            self.safe_mutate(self.notify_collection_modified)
+
+    @staticmethod
+    def _emit_collection_changed(app_ctx, collection) -> None:
+        if hasattr(app_ctx, "collection_changed") and getattr(app_ctx, "collection", None) is collection:
             app_ctx.collection_changed.emit(collection)
+
+    def _commit_authoritative_entries(self, app_ctx, collection) -> None:
+        from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
+
+        identity = self.__dict__.get("_target_version_identity")
+        commands = getattr(app_ctx, "project_commands", None)
+        runtime_context = getattr(app_ctx, "runtime_context", None)
+        if identity is None or commands is None or runtime_context is None:
+            self.rollback_entry_states(self.__dict__.get("_committed_entry_states", {}), collection)
+            raise RuntimeError("权威 Variant 写入适配器不可用，助手修改已回滚。")
+        project_id, variant_id = identity
+        result = commands.replace_entry_states(
+            {entry.identity: (entry.translation, entry.stage) for entry in collection},
+            runtime_context,
+            expected_project_revision=self.__dict__.get("_target_project_revision"),
+            expected_variant_revision=self.__dict__.get("_target_variant_revision"),
+            expected_variant_ref=VariantRef(VariantId(variant_id), ProjectId(project_id)),
+        )
+        if not result.is_success:
+            self.rollback_entry_states(self.__dict__.get("_committed_entry_states", {}), collection)
+            detail = result.diagnostics[0].message if result.diagnostics else "Variant 提交失败"
+            raise RuntimeError(f"助手修改未能提交：{detail}")
+        revision = result.value.get("revision") if isinstance(result.value, dict) else None
+        if revision is not None:
+            object.__setattr__(self, "_target_variant_revision", int(revision))
+        object.__setattr__(
+            self,
+            "_committed_entry_states",
+            {entry.identity: (entry.translation, entry.stage) for entry in collection},
+        )
+
+    def _restore_committed_entries(self, collection) -> None:
+        self.rollback_entry_states(self.__dict__.get("_committed_entry_states", {}), collection)
 
     # ── 属性代理 ────────────────────────────────────────────────
 

@@ -17,6 +17,7 @@ from transbridge.application.projects import (
     ProjectLifecycleService,
     ProjectProvisioningService,
     ProjectRemoteBindingService,
+    ProjectSourceMutationService,
     ProjectSourcePreparationPort,
 )
 from transbridge.application.sessions import GuiSessionCommandFacade, SessionLifecycleService
@@ -131,12 +132,18 @@ def build_persistence_v2_services(
         event_publisher=project_publisher,
     )
     project_publisher.bind(project_lifecycle)
+    resolved_source_preparer = source_preparer or TranslationIoProjectSourcePreparer()
     project_provisioning = ProjectProvisioningService(
         project_lifecycle,
-        source_preparer or TranslationIoProjectSourcePreparer(),
+        resolved_source_preparer,
         project_store,
         id_factory=id_factory,
         token_factory=id_factory,
+    )
+    project_source_mutations = ProjectSourceMutationService(
+        project_lifecycle,
+        baselines,
+        resolved_source_preparer,
     )
     project_remote_bindings = ProjectRemoteBindingService(project_lifecycle)
     project_catalog = V2ProjectCatalog(resolved_root, adapter, projects)
@@ -149,6 +156,7 @@ def build_persistence_v2_services(
         baselines=baselines,
         id_factory=id_factory,
         provisioning=project_provisioning,
+        source_mutations=project_source_mutations,
     )
     current_project_opener = CurrentProjectOpener(
         resolved_root,
@@ -156,6 +164,7 @@ def build_persistence_v2_services(
         variants,
         baselines,
         gui_project_commands,
+        source_preparer=resolved_source_preparer,
     )
 
     session_projection = ProjectionStore()

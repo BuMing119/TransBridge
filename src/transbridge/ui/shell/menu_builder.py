@@ -17,7 +17,7 @@ VoidCallback = Callable[[], None]
 class MenuCallbacks:
     new_project: VoidCallback
     open_project: VoidCallback
-    parse: VoidCallback
+    prepare_content: VoidCallback
     migrate: VoidCallback
     upload: VoidCallback
     batch_upload: VoidCallback
@@ -50,7 +50,7 @@ class MenuCallbacks:
 
 @dataclass(frozen=True, slots=True)
 class MenuHandles:
-    parse: QAction
+    prepare_content: QAction
     migrate: QAction
     upload: QAction
     batch_upload: QAction
@@ -139,7 +139,11 @@ class MenuBuilder:
         self._intent_action(project_menu, IntentId.PROJECT_REFRESH, callbacks.refresh_projects)
 
         translation_menu = bar.addMenu(self._gettext("翻译"))
-        parse = self._intent_action(translation_menu, IntentId.SOURCE_PARSE, callbacks.parse)
+        prepare_content = self._intent_action(
+            translation_menu,
+            IntentId.WORKBENCH_CONTENT_PREPARE,
+            callbacks.prepare_content,
+        )
         migrate = self._intent_action(translation_menu, IntentId.SOURCE_MIGRATE, callbacks.migrate)
         translation_menu.addSeparator()
         ai_translator = self._intent_action(translation_menu, IntentId.TRANSLATION_AI, callbacks.open_ai_translator)
@@ -187,7 +191,7 @@ class MenuBuilder:
         # QAction owns discoverable shortcuts.  Ctrl+K stays available for S12.
 
         return MenuHandles(
-            parse=parse,
+            prepare_content=prepare_content,
             migrate=migrate,
             upload=upload,
             batch_upload=batch_upload,

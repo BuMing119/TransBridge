@@ -258,7 +258,7 @@ class StartCenterWidget(QWidget):
 
         actions = QHBoxLayout()
         self._draft_primary = make_primary_button("", page)
-        self._draft_primary.setAccessibleName("检查或提交工程创建方案")
+        self._draft_primary.setAccessibleName("确定创建本地翻译工程并开始翻译")
         self._draft_primary.clicked.connect(self._emit_draft_primary)
         actions.addStretch(1)
         actions.addWidget(self._draft_primary)
@@ -299,9 +299,7 @@ class StartCenterWidget(QWidget):
             self._draft_error,
             SemanticState.ERROR if diagnostic else SemanticState.DEFAULT,
         )
-        prepared = bool(state.preview_token)
-        self._draft_primary.setText("创建并开始翻译" if prepared else "检查创建方案")
-        self._draft_primary.setProperty("commitReady", prepared)
+        self._draft_primary.setText("确定")
         ComponentStyle.apply_state(self._draft_primary, SemanticState.PRIMARY)
         self._draft_primary.setEnabled(state.can_submit and not state.in_flight)
         self._name_edit.setEnabled(not state.in_flight)
@@ -314,10 +312,7 @@ class StartCenterWidget(QWidget):
             self._name_edit.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _emit_draft_primary(self) -> None:
-        if bool(self._draft_primary.property("commitReady")):
-            self.commit_requested.emit()
-        else:
-            self.prepare_requested.emit()
+        self.prepare_requested.emit()
 
     def _activate_draft_primary(self) -> None:
         if self._pages.currentWidget() is self._draft_page and self._draft_primary.isEnabled():

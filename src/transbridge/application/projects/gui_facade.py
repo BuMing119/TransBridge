@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import replace
 import hashlib
 from typing import Any
 
@@ -17,7 +16,6 @@ from transbridge.application.contracts import (
     RequestContext,
 )
 from transbridge.application.io.identity import EntryKey
-from transbridge.application.io.stage_policy import Stage
 from transbridge.persistence.v2.baselines import LegacyIdentityRegistry
 from transbridge.persistence.v2.ids import ProjectRef, VariantId, VariantRef
 from transbridge.persistence.v2.models import LoadedRecord, ProjectDto
@@ -26,7 +24,17 @@ from transbridge.persistence.v2.variant import VariantChangeSet, VariantSnapshot
 from .catalog import project_with_added_variant, project_without_variant, variant_catalog
 from .lifecycle import ProjectLifecycleService
 from .models import DirtyDecision, TransitionTarget
-from .provisioning import ProjectProvisioningRequest, ProjectProvisioningService
+from .provisioning import ProjectProvisioningRequest, ProjectProvisioningService, ProjectSourceRequest
+from .source_commands import ProjectSourceMutationService, SourceMutationResult
+from .variant_commands import (
+    EntryStatePatch,
+    normalize_label_library,
+    patch_entry_records,
+    patch_entry_states,
+    replace_labels as replace_variant_labels,
+    update_entry_by_key,
+    update_entry_by_local_key,
+)
 
 
 class GuiProjectCommandFacade:
@@ -41,6 +49,7 @@ class GuiProjectCommandFacade:
         baselines=None,
         id_factory: Callable[[], str] | None = None,
         provisioning: ProjectProvisioningService | None = None,
+        source_mutations: ProjectSourceMutationService | None = None,
     ) -> None:
         self._lifecycle = lifecycle
         self._legacy_identities = legacy_identities
@@ -50,6 +59,7 @@ class GuiProjectCommandFacade:
         self._baselines = baselines
         self._id_factory = id_factory
         self._provisioning = provisioning
+        self._source_mutations = source_mutations
 
     def prepare_create(
         self,
@@ -129,6 +139,44 @@ class GuiProjectCommandFacade:
                 )
             )
         return self._provisioning.consume_hydration(project_id, context)
+
+    def add_source(
+        self,
+        request: ProjectSourceRequest,
+        context: RequestContext,
+        *,
+        expected_project_revision: int | None = None,
+        expected_variant_revision: int | None = None,
+        expected_variant_ref: VariantRef | None = None,
+    ) -> OperationResult[SourceMutationResult]:
+        if self._source_mutations is None:
+            return OperationResult.failed(
+                DomainError(
+                    ErrorCategory.PREREQUISITE,
+                    "PROJECT_SOURCE_MUTATION_UNAVAILABLE",
+                    "工程来源变更服务未配置。",
+                ),
+                run_id=context.run_id,
+            )
+        return self._source_mutations.add_source(
+            request,
+            context,
+            expected_project_revision=expected_project_revision,
+            expected_variant_revision=expected_variant_revision,
+            expected_variant_ref=expected_variant_ref,
+        )
+
+    def remove_source(self, locator: str, context: RequestContext) -> OperationResult[SourceMutationResult]:
+        if self._source_mutations is None:
+            return OperationResult.failed(
+                DomainError(
+                    ErrorCategory.PREREQUISITE,
+                    "PROJECT_SOURCE_MUTATION_UNAVAILABLE",
+                    "工程来源变更服务未配置。",
+                ),
+                run_id=context.run_id,
+            )
+        return self._source_mutations.remove_source(locator, context)
 
     def create_project(
         self,
@@ -310,73 +358,74 @@ class GuiProjectCommandFacade:
 
     def update_entry(
         self,
-        local_key: str,
+        local_key: str | EntryKey,
         context: RequestContext,
         *,
         translation: str | None = None,
         stage: int | None = None,
     ) -> OperationResult[dict[str, Any]]:
-        def update(entries):
-            found = False
-            projected = []
-            for entry in entries:
-                if entry.entry_key.local_key != local_key:
-                    projected.append(entry)
-                    continue
-                found = True
-                projected.append(
-                    replace(
-                        entry,
-                        translation=entry.translation if translation is None else translation,
-                        stage=entry.stage if stage is None else Stage(stage),
-                    )
-                )
-            if not found:
-                raise ValueError("EntryKey is not present in the active Variant")
-            return tuple(projected)
-
-        return self._commit_variant(context, update_entries=update)
+        update = update_entry_by_key if isinstance(local_key, EntryKey) else update_entry_by_local_key
+        return self._commit_variant(
+            context,
+            update_entries=lambda entries: update(entries, local_key, translation=translation, stage=stage),
+        )
 
     def replace_labels(
         self,
-        entry_labels: Mapping[str, set[str]],
+        entry_labels: Mapping[EntryKey | str, set[str]],
         label_library: Mapping[str, Mapping[str, Any]],
         context: RequestContext,
+        *,
+        expected_project_revision: int | None = None,
+        expected_variant_revision: int | None = None,
+        expected_variant_ref: VariantRef | None = None,
     ) -> OperationResult[dict[str, Any]]:
-        def update(entries):
-            return tuple(
-                replace(entry, labels=tuple(sorted(entry_labels.get(entry.entry_key.local_key, ()))))
-                for entry in entries
-            )
-
         return self._commit_variant(
             context,
-            update_entries=update,
-            label_library=tuple((str(key), dict(value)) for key, value in label_library.items()),
+            update_entries=lambda entries: replace_variant_labels(entries, entry_labels),
+            label_library=normalize_label_library(label_library),
+            expected_project_revision=expected_project_revision,
+            expected_variant_revision=expected_variant_revision,
+            expected_variant_ref=expected_variant_ref,
         )
 
     def replace_entry_states(
         self,
         states: Mapping[EntryKey, tuple[str, int]],
         context: RequestContext,
+        *,
+        expected_project_revision: int | None = None,
+        expected_variant_revision: int | None = None,
+        expected_variant_ref: VariantRef | None = None,
     ) -> OperationResult[dict[str, Any]]:
         """Commit a complete set of projected translation/stage changes once."""
 
-        normalized = {key: (str(translation), Stage(stage)) for key, (translation, stage) in states.items()}
+        return self._commit_variant(
+            context,
+            update_entries=lambda entries: patch_entry_states(entries, states),
+            expected_project_revision=expected_project_revision,
+            expected_variant_revision=expected_variant_revision,
+            expected_variant_ref=expected_variant_ref,
+        )
 
-        def update(entries):
-            available = {entry.entry_key for entry in entries}
-            missing = set(normalized).difference(available)
-            if missing:
-                raise ValueError("one or more translated entries are not present in the active Variant")
-            return tuple(
-                replace(entry, translation=normalized[entry.entry_key][0], stage=normalized[entry.entry_key][1])
-                if entry.entry_key in normalized
-                else entry
-                for entry in entries
-            )
+    def replace_entry_records(
+        self,
+        patches: Mapping[EntryKey, EntryStatePatch],
+        context: RequestContext,
+        *,
+        expected_project_revision: int | None = None,
+        expected_variant_revision: int | None = None,
+        expected_variant_ref: VariantRef | None = None,
+    ) -> OperationResult[dict[str, Any]]:
+        """Commit all Variant-owned state for existing entries."""
 
-        return self._commit_variant(context, update_entries=update)
+        return self._commit_variant(
+            context,
+            update_entries=lambda entries: patch_entry_records(entries, patches),
+            expected_project_revision=expected_project_revision,
+            expected_variant_revision=expected_variant_revision,
+            expected_variant_ref=expected_variant_ref,
+        )
 
     def _commit_variant(
         self,
@@ -384,11 +433,12 @@ class GuiProjectCommandFacade:
         *,
         update_entries,
         label_library=None,
+        expected_project_revision: int | None = None,
+        expected_variant_revision: int | None = None,
+        expected_variant_ref: VariantRef | None = None,
     ) -> OperationResult[dict[str, Any]]:
         active = self._lifecycle.active
         if active is None or active.variant is None or active.formal_variant_ref is None:
-            from transbridge.application.contracts import DomainError, ErrorCategory
-
             return OperationResult.failed(
                 DomainError(
                     ErrorCategory.PREREQUISITE,
@@ -398,23 +448,61 @@ class GuiProjectCommandFacade:
                 run_id=context.run_id,
             )
         snapshot = active.variant.snapshot()
-        try:
-            revision = active.variant.commit(
-                VariantChangeSet(
-                    snapshot.ref,
-                    snapshot.revision,
-                    snapshot.source_fingerprints,
-                    update_entries(snapshot.entries),
-                    snapshot.label_library if label_library is None else label_library,
-                    context.run_id or "",
+        project_revision = active.project.envelope.revision
+        if expected_variant_ref is not None and expected_variant_ref != snapshot.ref:
+            return OperationResult.failed(
+                DomainError(
+                    ErrorCategory.CONFLICT,
+                    "ACTIVE_VARIANT_IDENTITY_CHANGED",
+                    "The active Variant changed before the command could commit.",
                 ),
-                context,
-            )
-            if self._projection_rebuild is not None:
-                self._projection_rebuild()
-            return OperationResult.completed(
-                {"variant_id": snapshot.ref.identity.value, "revision": revision},
                 run_id=context.run_id,
+            )
+        if expected_project_revision is not None and expected_project_revision != project_revision:
+            return OperationResult.failed(
+                DomainError(
+                    ErrorCategory.CONFLICT,
+                    "ACTIVE_PROJECT_REVISION_CHANGED",
+                    "The active Project changed before the command could commit.",
+                ),
+                run_id=context.run_id,
+            )
+        if expected_variant_revision is not None and expected_variant_revision != snapshot.revision:
+            return OperationResult.failed(
+                DomainError(
+                    ErrorCategory.CONFLICT,
+                    "ACTIVE_VARIANT_REVISION_CHANGED",
+                    "The active Variant changed before the command could commit.",
+                ),
+                run_id=context.run_id,
+            )
+        try:
+            entries = update_entries(snapshot.entries)
+            next_label_library = snapshot.label_library if label_library is None else label_library
+            if entries == snapshot.entries and next_label_library == snapshot.label_library:
+                return OperationResult.completed(
+                    {
+                        "project_id": active.project.envelope.identity,
+                        "project_revision": project_revision,
+                        "variant_id": snapshot.ref.identity.value,
+                        "revision": snapshot.revision,
+                    },
+                    run_id=context.run_id,
+                )
+            change_set = VariantChangeSet(
+                snapshot.ref,
+                snapshot.revision if expected_variant_revision is None else expected_variant_revision,
+                snapshot.source_fingerprints,
+                entries,
+                next_label_library,
+                context.run_id or "",
+            )
+            return self._lifecycle.commit_active_variant(
+                change_set,
+                context,
+                expected_project_revision=(
+                    project_revision if expected_project_revision is None else expected_project_revision
+                ),
             )
         except Exception as exc:  # noqa: BLE001
             return OperationResult.from_exception(exc, run_id=context.run_id)

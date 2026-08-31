@@ -45,13 +45,13 @@ class IntentId(StrEnum):
     PROJECT_SNAPSHOT_LOAD = "project.snapshot.load"
     PROJECT_EXPORT = "project.export-transbridge"
     PROJECT_IMPORT = "project.import-transbridge"
-    SOURCE_PARSE = "source.parse-plugin"
     SOURCE_MIGRATE = "source.apply-migration"
     TRANSLATION_AI = "translation.ai-run"
     TRANSLATION_DICTIONARY = "translation.dictionary"
     TRANSLATION_REVIEW = "translation.review"
     TERMINOLOGY_WORKBENCH = "terminology.workbench"
     WORKBENCH_MANAGE = "workbench.manage"
+    WORKBENCH_CONTENT_PREPARE = "workbench.content.prepare"
     SYNC_UPLOAD = "sync.upload"
     SYNC_UPLOAD_BATCH = "sync.upload-batch"
     SYNC_DOWNLOAD = "sync.download"
@@ -72,7 +72,6 @@ class IntentId(StrEnum):
 
     # Public vocabulary aliases used by state-driven guidance.  Aliases are
     # the same enum objects, so every surface reaches one catalog intent.
-    PROJECT_CREATE_FROM_SOURCE = "source.parse-plugin"
     TRANSLATION_IMPORT_SOURCE = "source.apply-migration"
     TRANSLATION_AI_RUN = "translation.ai-run"
     SYNC_PARATRANZ_UPLOAD = "sync.upload"
@@ -144,7 +143,12 @@ class ActionCatalog:
 
 
 DEFAULT_ACTION_CATALOG = ActionCatalog((
-    ActionDescriptor(IntentId.PROJECT_CREATE, "新建本地翻译工程…", ActionSection.PROJECT),
+    ActionDescriptor(
+        IntentId.PROJECT_CREATE,
+        "新建本地翻译工程…",
+        ActionSection.PROJECT,
+        aliases=("选择插件", "创建插件工程", "ESP", "ESM", "ESL"),
+    ),
     ActionDescriptor(IntentId.PROJECT_OPEN, "打开本地翻译工程…", ActionSection.PROJECT),
     ActionDescriptor(IntentId.PROJECT_SAVE, "保存当前工程", ActionSection.PROJECT, shortcut="Ctrl+S"),
     ActionDescriptor(
@@ -165,14 +169,6 @@ DEFAULT_ACTION_CATALOG = ActionCatalog((
     ),
     ActionDescriptor(IntentId.PROJECT_EXPORT, "导出 .transbridge…", ActionSection.FILE),
     ActionDescriptor(IntentId.PROJECT_IMPORT, "导入 .transbridge…", ActionSection.FILE, danger=DangerLevel.CAUTION),
-    ActionDescriptor(
-        IntentId.SOURCE_PARSE,
-        "选择插件开始翻译…",
-        ActionSection.TRANSLATION,
-        placement=IntentPlacement.PRIMARY,
-        shortcut="Ctrl+O",
-        aliases=("解析插件", "ESP", "ESM", "ESL"),
-    ),
     ActionDescriptor(
         IntentId.SOURCE_MIGRATE,
         "导入已有译文…",
@@ -211,6 +207,13 @@ DEFAULT_ACTION_CATALOG = ActionCatalog((
         ActionSection.PROJECT,
         placement=IntentPlacement.CONTEXTUAL,
         danger=DangerLevel.CAUTION,
+    ),
+    ActionDescriptor(
+        IntentId.WORKBENCH_CONTENT_PREPARE,
+        "为当前工程添加插件…",
+        ActionSection.TRANSLATION,
+        placement=IntentPlacement.CONTEXTUAL,
+        aliases=("当前工程加载插件", "添加新插件"),
     ),
     ActionDescriptor(
         IntentId.SYNC_UPLOAD,

@@ -11,13 +11,20 @@ from pathlib import Path
 from transbridge.application.contracts import (
     DomainError,
     ErrorCategory,
-    OperationOutcome,
     OperationResult,
     RequestContext,
 )
-from transbridge.application.io import FormatId, ParseRequest, SourceDescriptor, TranslationIoUseCase
-from transbridge.application.io.identity import SourceNamespace
-from transbridge.application.projects import DirtyDecision, GuiProjectCommandFacade
+from transbridge.application.io import FormatId
+from transbridge.application.projects import (
+    DirtyDecision,
+    GuiProjectCommandFacade,
+    PreparedProjectSource,
+    PreparedSourceHydration,
+    ProjectSourceRequest,
+)
+from transbridge.application.projects.source_content import authoritative_baseline_sources
+from transbridge.application.projects.source_registry import legacy_source_role
+from transbridge.persistence.project_provisioning import TranslationIoProjectSourcePreparer
 from transbridge.persistence.v2 import (
     SCHEMA_VERSION,
     EntityKind,
@@ -27,8 +34,6 @@ from transbridge.persistence.v2 import (
     ProjectRef,
     ProjectRepository,
     SourceBaseline,
-    SourceFingerprint,
-    VariantEntryState,
     VariantId,
     VariantRef,
     VariantRepository,
@@ -37,7 +42,7 @@ from transbridge.persistence.v2.baselines import BaselineRegistry
 from transbridge.persistence.v2.schema import parse_json_bytes, version_of
 
 PROJECT_FILE_FILTER = "项目 JSON (*.json);;所有文件 (*)"
-BaselineLoader = Callable[[dict, RequestContext], SourceBaseline]
+BaselineLoader = Callable[[dict, RequestContext], SourceBaseline | PreparedProjectSource]
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +53,7 @@ class PreparedCurrentProject:
     baselines: tuple[SourceBaseline, ...]
     name: str
     sources: tuple[dict, ...]
+    hydrations: tuple[PreparedSourceHydration, ...] = ()
 
 
 class CurrentProjectOpener:
@@ -60,13 +66,16 @@ class CurrentProjectOpener:
         commands: GuiProjectCommandFacade,
         *,
         baseline_loader: BaselineLoader | None = None,
+        source_preparer=None,
     ) -> None:
         self._active_pointer = Path(root) / "active-project.json"
         self._projects = projects
         self._variants = variants
         self._baselines = baselines
         self._commands = commands
-        self._baseline_loader = baseline_loader or _load_baseline
+        self._baseline_loader = baseline_loader or (
+            lambda source, context: _load_baseline(source, context, source_preparer=source_preparer)
+        )
 
     @property
     def directory(self) -> str:
@@ -145,7 +154,18 @@ class CurrentProjectOpener:
                     "项目的活动版本记录不存在。",
                 )
             sources = tuple(project.envelope.data.get("sources", ()))
-            baselines = tuple(self._baseline_loader(source, context) for source in sources)
+            baseline_sources = authoritative_baseline_sources(
+                sources, tuple(project.envelope.data.get("source_relations", ()))
+            )
+            loaded_sources = tuple(self._baseline_loader(source, context) for source in baseline_sources)
+            baselines = tuple(
+                item.baseline if isinstance(item, PreparedProjectSource) else item for item in loaded_sources
+            )
+            hydrations = tuple(
+                item.hydration
+                for item in loaded_sources
+                if isinstance(item, PreparedProjectSource) and item.hydration is not None
+            )
             if sources and not baselines:
                 raise DomainError(
                     ErrorCategory.PREREQUISITE,
@@ -164,6 +184,7 @@ class CurrentProjectOpener:
                     baselines,
                     str(project.envelope.data["name"]),
                     sources,
+                    hydrations,
                 ),
                 run_id=context.run_id,
             )
@@ -221,6 +242,7 @@ class CurrentProjectOpener:
                     "variant_id": prepared.variant_ref.identity.value,
                     "name": prepared.name,
                     "sources": prepared.sources,
+                    "hydrations": prepared.hydrations,
                 },
                 run_id=context.run_id,
             )
@@ -228,7 +250,12 @@ class CurrentProjectOpener:
             return OperationResult.from_exception(exc, run_id=context.run_id)
 
 
-def _load_baseline(source: dict, context: RequestContext) -> SourceBaseline:
+def _load_baseline(
+    source: dict,
+    context: RequestContext,
+    *,
+    source_preparer=None,
+) -> PreparedProjectSource:
     path = Path(str(source.get("location") or source.get("path") or "")).resolve(strict=True)
     raw_format = source.get("format_id", FormatId.PLUGIN_SSE.value)
     try:
@@ -239,46 +266,19 @@ def _load_baseline(source: dict, context: RequestContext) -> SourceBaseline:
             "SOURCE_FORMAT_UNSUPPORTED",
             "项目来源记录包含不支持的格式。",
         ) from exc
-    parsed = TranslationIoUseCase().parse(
-        ParseRequest(
-            SourceDescriptor(str(path), path.name, path.stat().st_size),
-            context,
+    options = tuple((source.get("format_options") or source.get("options") or {}).items())
+    role = legacy_source_role(source) or "primary"
+    preparer = source_preparer or TranslationIoProjectSourcePreparer()
+    return preparer.prepare_source(
+        ProjectSourceRequest(
+            str(path),
             format_hint=format_id,
-            options=(("skip_empty", False),),
-        )
-    )
-    allowed_partial = parsed.outcome is OperationOutcome.PARTIAL and all(
-        item.code == "SOURCE_LOCATOR_CONFLICT" for item in parsed.diagnostics
-    )
-    if (parsed.outcome is not OperationOutcome.COMPLETED and not allowed_partial) or parsed.source_snapshot is None:
-        raise DomainError(
-            ErrorCategory.PREREQUISITE,
-            "SOURCE_BASELINE_UNAVAILABLE",
-            "项目源文件无法解析为可验证基线。",
-        )
-    if parsed.entries:
-        namespace = parsed.entries[0].identity.namespace
-    else:
-        namespace_value = dict(parsed.source_snapshot.metadata).get("source_namespace")
-        if not isinstance(namespace_value, str):
-            raise DomainError(
-                ErrorCategory.PREREQUISITE,
-                "SOURCE_IDENTITY_UNAVAILABLE",
-                "空源文件没有可验证的来源身份。",
-            )
-        namespace = SourceNamespace(namespace_value)
-    return SourceBaseline(
-        SourceFingerprint(namespace, parsed.source_snapshot.sha256),
-        tuple(
-            VariantEntryState(
-                entry.identity,
-                entry.translation,
-                entry.stage,
-                provenance=entry.provenance,
-                revision=entry.revision,
-            )
-            for entry in parsed.entries
+            expected_fingerprint=source.get("fingerprint"),
+            options=options,
         ),
+        context,
+        role=role,
+        common_options=(),
     )
 
 

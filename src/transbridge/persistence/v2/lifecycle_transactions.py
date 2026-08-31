@@ -24,6 +24,7 @@ from .baselines import BaselineRegistry
 from .filesystem import PersistenceFilesystemPort
 from .ids import ProjectId, ProjectRef, SessionRef
 from .models import SchemaValidationError
+from .project_save_journal import ProjectSaveProtocol
 from .repository import ProjectRepository, ProjectRevisionConflict, VariantRepository
 
 
@@ -53,6 +54,7 @@ class ProjectLifecycleTransactionStore:
         self._projects = projects
         self._variants = variants
         self._baselines = baselines
+        self._project_save = ProjectSaveProtocol(root, filesystem, projects, variants)
         self._transactions: dict[str, _ProjectTransaction] = {}
         self._lock = RLock()
 
@@ -93,6 +95,9 @@ class ProjectLifecycleTransactionStore:
 
     def commit(self, transaction_id: str) -> None:
         with self._lock:
+            # No lifecycle mutation may advance Project/Variant state while a
+            # prior two-document save still owns the recovery boundary.
+            self._project_save.recover_pending()
             transaction = self._required(transaction_id)
             mutation = transaction.mutation
             if mutation is None:
@@ -100,10 +105,7 @@ class ProjectLifecycleTransactionStore:
             if isinstance(mutation, ProjectProvisioningCommit):
                 self._commit_provisioning(transaction_id, mutation)
             elif isinstance(mutation, LifecycleSave):
-                project_ref = ProjectRef(ProjectId(mutation.project.envelope.identity))
-                self._projects.save(project_ref, mutation.project)
-                if mutation.variant is not None and mutation.formal_variant_ref is not None:
-                    self._variants.save(mutation.formal_variant_ref, mutation.variant.to_dto())
+                self._project_save.commit(mutation, transaction_id)
             elif isinstance(mutation, LifecycleProjectUpdate):
                 project_ref = ProjectRef(ProjectId(mutation.project.envelope.identity))
                 try:

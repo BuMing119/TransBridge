@@ -223,8 +223,8 @@ class WorkbenchWidget(QWidget):
             lambda: self.intent_requested.emit(IntentId.TERMINOLOGY_WORKBENCH.value)
         )
         manage_menu.addSeparator()
-        self._btn_new = manage_menu.addAction("准备新的翻译内容")
-        self._btn_new.setToolTip("清空当前选择，准备加载新数据")
+        self._btn_new = manage_menu.addAction("为当前工程添加插件…")
+        self._btn_new.setToolTip("选择插件并加载为当前工程的新翻译内容")
         self._btn_new.triggered.connect(self._on_new_slot)
         manage_menu.addSeparator()
         self._btn_remove = manage_menu.addAction("移除当前翻译内容…")
@@ -301,7 +301,7 @@ class WorkbenchWidget(QWidget):
             self._ctx.activate_slot(key)
 
     def _on_new_slot(self):
-        self._ctx.activate_slot("")
+        self.intent_requested.emit(IntentId.WORKBENCH_CONTENT_PREPARE.value)
 
     def _on_import_json(self):
         from transbridge.converter.translation_entry_collection import (
@@ -321,6 +321,51 @@ class WorkbenchWidget(QWidget):
 
         def _on_done(collection):
             self.hide_step2_progress()
+            if self._ctx.uses_authoritative_projection:
+                from dataclasses import replace
+
+                target = self._ctx.active_slot
+                if target is None:
+                    QMessageBox.warning(self, "无法导入", "请先选择要更新的翻译内容。")
+                    return
+                exact = {entry.identity: entry for entry in collection}
+                by_local: dict[str, list] = {}
+                for entry in collection:
+                    by_local.setdefault(entry.identity.local_key, []).append(entry)
+                states = {}
+                replacements = {}
+                for entry in target.collection:
+                    imported = exact.get(entry.identity)
+                    if imported is None:
+                        candidates = by_local.get(entry.identity.local_key, ())
+                        imported = candidates[0] if len(candidates) == 1 else None
+                    if imported is None:
+                        continue
+                    states[entry.identity] = (imported.translation, imported.stage)
+                    replacements[entry.identity] = imported
+                if not states:
+                    QMessageBox.warning(self, "无法导入", "导入文件中没有可映射到当前来源的条目。")
+                    return
+                committed = self._ctx.project_commands.replace_entry_states(
+                    states,
+                    self._ctx.runtime_context,
+                )
+                if not committed.is_success:
+                    diagnostic = committed.diagnostics[0]
+                    QMessageBox.warning(self, "导入失败", diagnostic.message)
+                    return
+                target.collection = TranslationEntryCollection(
+                    replace(
+                        entry,
+                        translation=replacements[entry.identity].translation,
+                        stage=replacements[entry.identity].stage,
+                    )
+                    if entry.identity in replacements
+                    else entry
+                    for entry in target.collection
+                )
+                self._ctx.collection_changed.emit(target.collection)
+                return
             label = Path(path).stem
             slot = CollectionSlot(label=label, collection=collection)
             if path in self._ctx.slots:
@@ -349,13 +394,29 @@ class WorkbenchWidget(QWidget):
             return
         slot = self._ctx.slots.get(active)
         label = slot.label if slot else active
+        if self._ctx.uses_authoritative_projection:
+            scope = (
+                "范围：从当前工程移除此内容、译文状态，以及已合并的汉化来源登记，不删除磁盘上的源文件。\n"
+                "保存后重新打开工程，此内容也不会恢复。重新导入源文件不能保证恢复工程内的译文编辑。"
+            )
+        else:
+            scope = "范围：仅从当前工作台移除已解析数据，不删除源文件。\n恢复方式：之后可重新导入同一来源。"
         ret = QMessageBox.question(
             self,
             "移除集合",
-            f"确定要移除翻译内容「{label}」吗？\n"
-            "范围：仅从当前工作台移除已解析数据，不删除源文件。\n"
-            "恢复方式：之后可重新导入同一来源。",
+            f"确定要移除翻译内容「{label}」吗？\n{scope}",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if ret == QMessageBox.StandardButton.Yes:
+            if self._ctx.uses_authoritative_projection:
+                removed = self._ctx.project_commands.remove_source(active, self._ctx.runtime_context)
+                if not removed.is_success:
+                    diagnostic = removed.diagnostics[0]
+                    message = (
+                        "移除未能完成，工程内容未改变。请查看日志中的错误详情。"
+                        if diagnostic.code == "ACTIVE_CONTENT_CHANGE_FAILED"
+                        else diagnostic.message
+                    )
+                    QMessageBox.warning(self, "移除失败", message)
+                    return
             self._ctx.remove_slot(active)

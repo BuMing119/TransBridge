@@ -47,6 +47,11 @@ def start_versioned_mixed(
         window._active_mixed_spec = request.spec
         window._active_mixed_config = request.config
         try:
+
+            def mixed_error(message: str) -> None:
+                session.rollback_uncommitted()
+                QMessageBox.warning(window, "混合模式错误", message)
+
             window._active_mixed_progress = start_mixed_run(
                 window._run_controller,
                 request,
@@ -55,7 +60,8 @@ def start_versioned_mixed(
                 translate_entries,
                 polish_entries,
                 finished=window._on_mixed_finished,
-                error=lambda message: QMessageBox.warning(window, "混合模式错误", message),
+                error=mixed_error,
+                cancelled=session.rollback_uncommitted,
                 progress_created=window.progress_window_created.emit,
                 theme_view=window._theme_view,
             )
@@ -96,8 +102,6 @@ def start_versioned_polish(window: object, request: object, entries: list, colle
         window._active_polish_spec = request.spec
 
         def publish(callback, payload: object) -> None:
-            if not worker.was_cancelled:
-                session.mark_completed()
             callback(payload, entries, collection)
 
         on_results = (
@@ -112,6 +116,7 @@ def start_versioned_polish(window: object, request: object, entries: list, colle
             worker,
             entries,
             on_results=on_results,
+            on_aborted=session.rollback_uncommitted,
             preview=preview,
             theme_view=window._theme_view,
         )

@@ -58,7 +58,7 @@ class ShellIntentComposition:
         return MenuCallbacks(
             new_project=callback(IntentId.PROJECT_CREATE),
             open_project=callback(IntentId.PROJECT_OPEN),
-            parse=callback(IntentId.SOURCE_PARSE),
+            prepare_content=callback(IntentId.WORKBENCH_CONTENT_PREPARE),
             migrate=callback(IntentId.SOURCE_MIGRATE),
             upload=callback(IntentId.SYNC_UPLOAD),
             batch_upload=callback(IntentId.SYNC_UPLOAD_BATCH),
@@ -156,7 +156,7 @@ class ShellIntentComposition:
     def _register_handlers(self) -> None:
         host = self._host
         register = self.router.register
-        register(IntentId.PROJECT_CREATE, _call(lambda: host.start_center_controller.create_empty()))
+        register(IntentId.PROJECT_CREATE, self._create_project)
         register(IntentId.PROJECT_OPEN, self._open_project)
         register(IntentId.PROJECT_SAVE, _call(host.variant_coordinator.manual_save), availability=self._has_project)
         register(IntentId.PROJECT_REFRESH, _call(host.tool_windows.refresh_projects))
@@ -182,7 +182,6 @@ class ShellIntentComposition:
             availability=self._has_project,
         )
         register(IntentId.PROJECT_IMPORT, self._import_project)
-        register(IntentId.SOURCE_PARSE, self._choose_source)
         register(IntentId.SOURCE_MIGRATE, self._migrate_source, availability=self._has_collection)
         register(
             IntentId.TRANSLATION_AI, _call(host.tool_windows.open_ai_translator), availability=self._has_collection
@@ -216,6 +215,11 @@ class ShellIntentComposition:
         )
         register(IntentId.PUBLISH_FOMOD, self._open_fomod)
         register(IntentId.WORKBENCH_MANAGE, self._manage_content, availability=self._has_project)
+        register(
+            IntentId.WORKBENCH_CONTENT_PREPARE,
+            _call(host.parse_coordinator.parse_plugin),
+            availability=self._has_project,
+        )
         register(IntentId.VIEW_SMART_ASSISTANT, _call(host.tool_windows.toggle_smart_assistant))
         register(IntentId.SETTINGS_APPEARANCE, _call(host.tool_windows.show_ui_settings))
         register(IntentId.SETTINGS_SERVICES, _call(host.tool_windows.show_config))
@@ -233,11 +237,13 @@ class ShellIntentComposition:
             return self._host.project_coordinator.open_project_path(path)
         return self._host.project_coordinator.open_project()
 
-    def _choose_source(self, payload: Mapping[str, str]) -> object:
+    def _create_project(self, payload: Mapping[str, str]) -> object:
         path = payload.get("path")
         if path:
             return self._host.start_center_controller.choose_source_path(path)
-        return self._host.start_center_controller.choose_source()
+        if payload.get("mode") == "plugin":
+            return self._host.start_center_controller.choose_source()
+        return self._host.start_center_controller.begin_creation()
 
     def _migrate_source(self, payload: Mapping[str, str]) -> object:
         path = payload.get("path")

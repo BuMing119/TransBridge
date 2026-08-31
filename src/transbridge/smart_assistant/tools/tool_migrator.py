@@ -44,6 +44,8 @@ def _tool_apply_dictionary(args: dict, ctx, collection) -> ToolResult:
             context=context,
             overwrite=bool(args.get("overwrite", False)),
         )
+        if result.applied:
+            ctx.publish_collection_modified()
         data = {
             "applied": result.applied,
             "key_hits": result.key_hits,

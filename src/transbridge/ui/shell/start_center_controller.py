@@ -37,11 +37,11 @@ class StartCenterController:
     def start(self) -> None:
         view = self._view
         host = self._host
-        view.choose_plugin_requested.connect(lambda: self._submit(IntentId.SOURCE_PARSE))
+        view.choose_plugin_requested.connect(lambda: self._submit(IntentId.PROJECT_CREATE, {"mode": "plugin"}))
         view.open_project_requested.connect(lambda: self._submit(IntentId.PROJECT_OPEN))
         view.open_recent_requested.connect(lambda path: self._submit(IntentId.PROJECT_OPEN, {"path": path}))
         view.open_recent_in_new_window_requested.connect(self._open_recent_in_new_window)
-        view.create_empty_requested.connect(lambda: self._submit(IntentId.PROJECT_CREATE))
+        view.create_empty_requested.connect(self.create_empty)
         view.open_fomod_requested.connect(lambda: self._submit(IntentId.PUBLISH_FOMOD))
         view.task_center_requested.connect(lambda: self._submit(IntentId.TASK_OPEN_ACTIVITY))
         view.return_to_current_requested.connect(self.show_workbench)
@@ -60,8 +60,7 @@ class StartCenterController:
         view.variant_name_changed.connect(self.guided_project.set_variant_name)
         view.skip_empty_changed.connect(lambda value: self.guided_project.set_parse_option("skip_empty", value))
         view.choose_migration_requested.connect(self._choose_migrations)
-        view.prepare_requested.connect(self.guided_project.prepare)
-        view.commit_requested.connect(self.guided_project.commit)
+        view.prepare_requested.connect(self.guided_project.create)
 
     def show_restoring(self) -> None:
         self._render(StartDestinationState.RESTORING_LAST)
@@ -92,7 +91,7 @@ class StartCenterController:
         self._host.central_stack.setCurrentWidget(self._host.mode_tabs)
 
     def choose_source(self) -> None:
-        """Public SOURCE_PARSE intent target shared by button/menu/palette."""
+        """Choose the plugin source inside the unified Project creation flow."""
 
         self._choose_source()
 
@@ -102,9 +101,14 @@ class StartCenterController:
         self._begin_project(source_path)
 
     def create_empty(self) -> None:
-        """Public PROJECT_CREATE intent target for guided empty projects."""
+        """Create an empty Project from the advanced choice on the creation page."""
 
         self._begin_project(None)
+
+    def begin_creation(self) -> None:
+        """Open the single public Project creation entry page."""
+
+        self.show(user_requested=True)
 
     def _open_recent_in_new_window(self, path: str) -> None:
         try:
@@ -121,8 +125,10 @@ class StartCenterController:
     def _submit(self, intent_id: IntentId, payload=None) -> object:
         if self._intent_dispatch is not None:
             return self._intent_dispatch(intent_id, payload)
-        if intent_id is IntentId.SOURCE_PARSE:
-            return self._choose_source()
+        if intent_id is IntentId.PROJECT_CREATE:
+            if payload and payload.get("mode") == "plugin":
+                return self._choose_source()
+            return self.begin_creation()
         if intent_id is IntentId.PROJECT_OPEN:
             path = None if payload is None else payload.get("path")
             return (
@@ -130,8 +136,6 @@ class StartCenterController:
                 if path
                 else self._host.project_coordinator.open_project()
             )
-        if intent_id is IntentId.PROJECT_CREATE:
-            return self._begin_project(None)
         if intent_id is IntentId.PUBLISH_FOMOD:
             return self._host.tool_windows.open_fomod()
         raise KeyError(intent_id)
@@ -148,7 +152,7 @@ class StartCenterController:
     def _choose_source(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self._host,
-            "选择插件开始翻译",
+            "选择要翻译的插件",
             "",
             "Bethesda 插件 (*.esp *.esm *.esl);;所有文件 (*)",
         )
@@ -160,6 +164,14 @@ class StartCenterController:
             self._host.show_message("PROJECT_PROVISIONING_UNAVAILABLE: 建项服务不可用。")
             return
         self.guided_project.begin(source_path)
+        self._show_start_center_view()
+
+    def _show_start_center_view(self) -> None:
+        mode_tabs = getattr(self._host, "mode_tabs", None)
+        if mode_tabs is not None and hasattr(mode_tabs, "setCurrentWidget"):
+            mode_tabs.setCurrentWidget(self._view)
+        else:
+            self._host.central_stack.setCurrentWidget(self._view)
 
     def _choose_migrations(self) -> None:
         if self.guided_project is None:
@@ -255,11 +267,7 @@ class StartCenterController:
             recovery_diagnostic_message=self._recovery_diagnostic_message,
         )
         self._view.render(state)
-        mode_tabs = getattr(self._host, "mode_tabs", None)
-        if mode_tabs is not None and hasattr(mode_tabs, "setCurrentWidget"):
-            mode_tabs.setCurrentWidget(self._view)
-        else:
-            self._host.central_stack.setCurrentWidget(self._view)
+        self._show_start_center_view()
 
     def _recent_project_projection(self) -> tuple[RecentProjectViewState, ...]:
         runtime = self._host.app_runtime

@@ -275,8 +275,8 @@ class StartCenterLanding(QWidget):
         layout.addWidget(heading)
 
         self.choose_plugin_button = _task_button(
-            "翻译游戏插件",
-            "选择 ESP、ESM 或 ESL，自动创建翻译工程",
+            "选择插件",
+            "选择 ESP、ESM 或 ESL，自动准备工程和可编辑内容",
             "language",
             panel,
             primary=True,
@@ -303,13 +303,13 @@ class StartCenterLanding(QWidget):
         self._open_button.clicked.connect(self.open_project_requested)
         layout.addWidget(self._open_button)
 
-        self._empty_button = QPushButton("高级：创建空工程", panel)
+        self._empty_button = QPushButton("高级：创建空工程（不导入插件）", panel)
         self._empty_button.setFlat(True)
         self._empty_button.setProperty("tbStartAdvanced", True)
         self._empty_button.setIcon(tabler_icon(self._empty_button, "plus", 18, semantic="accent"))
         self._empty_button.setIconSize(QSize(18, 18))
         ComponentStyle.apply_static(self._empty_button, ComponentKind.BUTTON, ComponentDensity.COMPACT)
-        configure_accessible_widget(self._empty_button, name="创建空的本地翻译工程")
+        configure_accessible_widget(self._empty_button, name="创建不导入插件的空工程")
         self._empty_button.clicked.connect(self.create_empty_requested)
         layout.addWidget(self._empty_button, alignment=Qt.AlignmentFlag.AlignLeft)
         layout.addStretch(1)

@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6 import sip
 from PyQt6.QtCore import QCoreApplication, QEvent
-from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6.QtWidgets import QApplication, QMessageBox, QWidget
+import pytest
 
+from transbridge.application.contracts import DomainError, ErrorCategory, OperationResult
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui import context as context_module
+from transbridge.ui.shell.action_catalog import IntentId
 from transbridge.ui.workbench.filters_presenter import FiltersPresenter, FilterState
 from transbridge.ui.workbench.step1 import Step1SourceWidget
 from transbridge.ui.workbench.step2 import Step2PreviewWidget
@@ -61,6 +65,68 @@ def test_step1_facade_composes_source_input_view(monkeypatch) -> None:
     assert widget._esp_input is widget._source_view.esp_input
     assert widget._slot_combo is widget._source_view.slot_combo
     widget.close()
+
+
+def test_prepare_new_content_requests_current_workbench_parser(monkeypatch) -> None:
+    monkeypatch.setattr(context_module.ParatranzConfig, "create_or_load", lambda: _Config())
+    widget = WorkbenchWidget(context_module.AppContext())
+    requested: list[str] = []
+    widget.intent_requested.connect(requested.append)
+
+    widget._btn_new.trigger()
+
+    assert requested == [IntentId.WORKBENCH_CONTENT_PREPARE.value]
+    widget.close()
+
+
+@pytest.mark.parametrize("decision", [QMessageBox.StandardButton.Yes, QMessageBox.StandardButton.No])
+@pytest.mark.parametrize("succeeds", [False, True])
+def test_authoritative_remove_keeps_view_until_confirmed_commit(monkeypatch, decision, succeeds):
+    slots = {"plugin.esp": SimpleNamespace(label="Plugin")}
+    confirmations = []
+    warnings = []
+    commands = []
+
+    def confirm(_parent, _title, message, _buttons):
+        confirmations.append(message)
+        return decision
+
+    def remove_source(locator, _context):
+        commands.append(locator)
+        assert locator in slots
+        if succeeds:
+            return OperationResult.completed(None)
+        return OperationResult.failed(
+            DomainError(ErrorCategory.INTERNAL, "ACTIVE_CONTENT_CHANGE_FAILED", "internal fallback")
+        )
+
+    monkeypatch.setattr(QMessageBox, "question", confirm)
+    monkeypatch.setattr(QMessageBox, "warning", lambda _parent, _title, message: warnings.append(message))
+    host = SimpleNamespace(
+        _ctx=SimpleNamespace(
+            active_key="plugin.esp",
+            slots=slots,
+            uses_authoritative_projection=True,
+            project_commands=SimpleNamespace(remove_source=remove_source),
+            runtime_context=object(),
+            remove_slot=slots.pop,
+        )
+    )
+
+    WorkbenchWidget._on_remove_slot(host)
+
+    assert "不删除磁盘上的源文件" in confirmations[0]
+    assert "汉化来源登记" in confirmations[0]
+    assert "不能保证恢复工程内的译文编辑" in confirmations[0]
+    confirmed = decision == QMessageBox.StandardButton.Yes
+    assert commands == (["plugin.esp"] if confirmed else [])
+    assert ("plugin.esp" not in slots) == (confirmed and succeeds)
+    if confirmed and not succeeds:
+        assert len(warnings) == 1
+        assert "工程内容未改变" in warnings[0]
+        assert "日志" in warnings[0]
+    else:
+        assert not warnings
 
 
 def _flush_deferred_deletes() -> None:

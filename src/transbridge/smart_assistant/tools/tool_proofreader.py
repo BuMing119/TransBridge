@@ -76,6 +76,9 @@ class ProofreaderController:
         handle = tm.get_handle(task_id)
         if handle:
             handle.pause_event = pause_event
+        from .tool_translator import _capture_run_entry_states
+
+        run_entry_states = _capture_run_entry_states(ctx, collection)
 
         def _run() -> None:
             try:
@@ -89,7 +92,16 @@ class ProofreaderController:
                     report_directory=_resolve_report_directory(ctx),
                 )
                 set_last_report(result.report_data)
-                if result.cancelled:
+                if result.cancelled or stop_event.is_set():
+                    from .tool_translator import _rollback_run_entry_states
+
+                    rollback_error = _rollback_run_entry_states(ctx, collection, run_entry_states)
+                    if rollback_error is not None:
+                        message = f"任务已停止，但回滚失败：{rollback_error}"
+                        tm.set_status(task_id, "failed")
+                        tm.update_progress(task_id, {"error": message})
+                        tm.notify_failed(task_id, message)
+                        return
                     tm.update_progress(
                         task_id,
                         {
@@ -101,6 +113,10 @@ class ProofreaderController:
                     tm.set_status(task_id, "cancelled")
                     tm.notify_failed(task_id, "任务已被用户停止；终态报告已保存")
                     return
+                if result.committed:
+                    from .tool_translator import _publish_run_entry_states
+
+                    _publish_run_entry_states(ctx)
                 progress = {
                     "outcome": result.completion_data["outcome"],
                     "issue_count": result.completion_data["issue_count"],
@@ -111,13 +127,15 @@ class ProofreaderController:
                 tm.update_progress(task_id, progress)
                 tm.set_status(task_id, "completed")
                 tm.notify_completed(task_id, result.completion_data)
-                if result.committed:
-                    ctx.safe_mutate(lambda: ctx.notify_collection_modified())
             except Exception as exc:
                 logger.exception("后处理异常: %s", exc)
+                from .tool_translator import _rollback_run_entry_states
+
+                rollback_error = _rollback_run_entry_states(ctx, collection, run_entry_states)
+                message = str(exc) if rollback_error is None else f"{exc}；回滚失败：{rollback_error}"
                 tm.set_status(task_id, "failed")
-                tm.update_progress(task_id, {"error": str(exc)})
-                tm.notify_failed(task_id, str(exc))
+                tm.update_progress(task_id, {"error": message})
+                tm.notify_failed(task_id, message)
 
         tm.start_thread(task_id, _run)
         data = {

@@ -189,6 +189,20 @@ _DATA_SCHEMAS: dict[EntityKind, dict[str, Any]] = {
                             "uniqueItems": True,
                         },
                         "provenance": {"type": "array", "items": {"type": "object"}},
+                        "external_refs": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["system", "scope", "opaque_id", "metadata"],
+                                "properties": {
+                                    "system": {"type": "string", "minLength": 1},
+                                    "scope": {"type": "string", "minLength": 1},
+                                    "opaque_id": {"type": ["string", "integer", "number", "boolean", "null"]},
+                                    "metadata": {"type": "object"},
+                                },
+                                "additionalProperties": False,
+                            },
+                        },
                         "revision": {"type": "integer", "minimum": 0},
                         "tombstone": {"type": "boolean"},
                         "inferred_fields": {

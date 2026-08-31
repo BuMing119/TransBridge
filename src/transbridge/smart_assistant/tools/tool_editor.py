@@ -238,7 +238,7 @@ class EditorController:
             entry.stage = int(new_stage)
 
         # C10: 通知 UI 条目已修改（信号在主线程发射）
-        ctx.safe_mutate(lambda: ctx.notify_collection_modified())
+        ctx.publish_collection_modified()
 
         return ToolResult.ok(
             f"已更新 {entry_id}",
@@ -280,7 +280,7 @@ class EditorController:
 
         # C10: 通知 UI 条目已修改（信号在主线程发射）
         if updated > 0:
-            ctx.safe_mutate(lambda: ctx.notify_collection_modified())
+            ctx.publish_collection_modified()
 
         failed = [{"entry_id": eid, "reason": "条目不存在"} for eid in not_found] if not_found else None
         if failed:
@@ -338,15 +338,12 @@ class EditorController:
             import uuid
 
             lid = uuid.uuid4().hex[:8]
-
-            def _mutate():
-                if not hasattr(ctx, "label_library") or ctx.label_library is None:
-                    ctx.label_library = {}
-                ctx.label_library[lid] = {"name": name, "color": color}
-                if hasattr(ctx, "label_data_changed"):
-                    ctx.label_data_changed.emit()
-
-            ctx.safe_mutate(_mutate)
+            entry_labels, label_library = _copy_label_state(ctx)
+            label_library[lid] = {"name": name, "color": color}
+            try:
+                _commit_label_state(ctx, entry_labels, label_library)
+            except Exception as exc:
+                return ToolResult.fail(f"创建标签失败：{exc}")
             return ToolResult.ok(f"已创建标签: {name}", data={"label_id": lid, "name": name, "color": color})
 
         # assign / unassign / batch_assign 共用参数校验
@@ -364,18 +361,13 @@ class EditorController:
             entry_ids = args.get("entry_ids", [])
             if not entry_ids:
                 return ToolResult.fail("请提供 entry_ids")
-
-            def _mutate():
-                if not hasattr(ctx, "entry_labels") or ctx.entry_labels is None:
-                    ctx.entry_labels = {}
-                for eid in entry_ids:
-                    if eid not in ctx.entry_labels:
-                        ctx.entry_labels[eid] = set()
-                    ctx.entry_labels[eid].add(lid)
-                if hasattr(ctx, "label_data_changed"):
-                    ctx.label_data_changed.emit()
-
-            ctx.safe_mutate(_mutate)
+            entry_labels, label_library = _copy_label_state(ctx)
+            for eid in entry_ids:
+                entry_labels.setdefault(eid, set()).add(lid)
+            try:
+                _commit_label_state(ctx, entry_labels, label_library)
+            except Exception as exc:
+                return ToolResult.fail(f"分配标签失败：{exc}")
             return ToolResult.ok(
                 f"已为 {len(entry_ids)} 条条目分配标签 '{label_name}'", data={"assigned_count": len(entry_ids)}
             )
@@ -386,16 +378,13 @@ class EditorController:
                 return ToolResult.fail("请提供 entry_ids")
             entry_labels_read = getattr(ctx, "entry_labels", None) or {}
             removed = sum(1 for eid in entry_ids if eid in entry_labels_read and lid in entry_labels_read[eid])
-
-            def _mutate():
-                el = getattr(ctx, "entry_labels", None) or {}
-                for eid in entry_ids:
-                    if eid in el and lid in el[eid]:
-                        el[eid].discard(lid)
-                if hasattr(ctx, "label_data_changed"):
-                    ctx.label_data_changed.emit()
-
-            ctx.safe_mutate(_mutate)
+            entry_labels, label_library = _copy_label_state(ctx)
+            for eid in entry_ids:
+                entry_labels.get(eid, set()).discard(lid)
+            try:
+                _commit_label_state(ctx, entry_labels, label_library)
+            except Exception as exc:
+                return ToolResult.fail(f"移除标签失败：{exc}")
             return ToolResult.ok(f"已从 {removed} 条条目移除标签 '{label_name}'", data={"removed_count": removed})
 
         elif action == "batch_assign":
@@ -403,22 +392,48 @@ class EditorController:
             entry_labels_read = getattr(ctx, "entry_labels", None) or {}
             entries = filter_entries(collection, filter_state, entry_labels=entry_labels_read)
             _filtered_ids = [e.key for e in entries]
-
-            def _mutate():
-                if not hasattr(ctx, "entry_labels") or ctx.entry_labels is None:
-                    ctx.entry_labels = {}
-                for eid in _filtered_ids:
-                    if eid not in ctx.entry_labels:
-                        ctx.entry_labels[eid] = set()
-                    ctx.entry_labels[eid].add(lid)
-                if hasattr(ctx, "label_data_changed"):
-                    ctx.label_data_changed.emit()
-
-            ctx.safe_mutate(_mutate)
+            entry_labels, label_library = _copy_label_state(ctx)
+            for eid in _filtered_ids:
+                entry_labels.setdefault(eid, set()).add(lid)
+            try:
+                _commit_label_state(ctx, entry_labels, label_library)
+            except Exception as exc:
+                return ToolResult.fail(f"批量分配标签失败：{exc}")
             return ToolResult.ok(
                 f"已为筛选范围内 {len(entries)} 条条目批量分配标签 '{label_name}'",
                 data={"assigned_count": len(entries), "filter_total": len(entries)},
             )
+
+
+def _copy_label_state(ctx) -> tuple[dict[str, set[str]], dict[str, dict]]:
+    entry_labels = {
+        str(entry_id): set(label_ids) for entry_id, label_ids in (getattr(ctx, "entry_labels", None) or {}).items()
+    }
+    label_library = {
+        str(label_id): dict(info) for label_id, info in (getattr(ctx, "label_library", None) or {}).items()
+    }
+    return entry_labels, label_library
+
+
+def _commit_label_state(ctx, entry_labels: dict[str, set[str]], label_library: dict[str, dict]) -> None:
+    commit = getattr(ctx, "commit_label_state", None)
+    if callable(commit):
+        commit(entry_labels, label_library)
+        return
+
+    from .types import ExecutionContext
+
+    execution = ExecutionContext(app_context=ctx)
+    if bool(getattr(ctx, "uses_authoritative_projection", False)) and execution._target_version_identity is None:
+        # Compatibility for minimal non-runtime test doubles. Real authoritative
+        # AppContext instances always expose a stable active_version_identity.
+        result = ctx.replace_projected_labels(entry_labels, label_library)
+        if hasattr(result, "is_success") and not result.is_success:
+            diagnostics = tuple(getattr(result, "diagnostics", ()))
+            message = diagnostics[0].message if diagnostics else "标签变更提交失败。"
+            raise RuntimeError(message)
+        return
+    execution.commit_label_state(entry_labels, label_library)
 
 
 # ── 无状态 controller + 模块级兼容 wrapper ───────────────────────

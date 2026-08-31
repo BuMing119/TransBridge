@@ -376,6 +376,13 @@ class DownloadCard(OpCard):
         """批量下载入口。"""
         if self._dispatch_planned("download", self._ctx, batch=True):
             return
+        if bool(getattr(self._ctx, "uses_authoritative_projection", False)):
+            QMessageBox.warning(
+                self,
+                "批量下载暂不可用",
+                "V2 工程的批量 ParaTranz 下载尚未接入原子 Variant 写入；为避免内容只改在界面中，本次未执行。",
+            )
+            return
         slots = self._ctx.slots
         if len(slots) <= 1:
             return
@@ -515,6 +522,13 @@ class DownloadCard(OpCard):
 
     def download(self):
         if self._dispatch_planned("download", self._ctx):
+            return
+        if bool(getattr(self._ctx, "uses_authoritative_projection", False)):
+            QMessageBox.warning(
+                self,
+                "下载入口不可用",
+                "V2 工程必须通过带预检的 ParaTranz 同步计划下载；当前计划入口不可用，本次未修改本地内容。",
+            )
             return
         collection = self._ctx.collection
         from transbridge.ui.paratranz.target_context import bound_paratranz_project

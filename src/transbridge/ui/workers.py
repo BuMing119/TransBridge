@@ -8,7 +8,7 @@ import logging
 import re
 import traceback
 
-from PyQt6.QtCore import QObject, QThread, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QObject, QThread, pyqtSignal
 
 _logger = logging.getLogger(__name__)
 
@@ -26,11 +26,18 @@ class _HttpErrorBus(QObject):
     http_error = pyqtSignal(int, str)  # (status_code, error_message)
 
 
-_http_error_bus = _HttpErrorBus()
+_http_error_bus: _HttpErrorBus | None = None
 
 
 def get_http_error_bus() -> _HttpErrorBus:
-    """返回全局 HTTP 错误信号总线单例，供 MainWindow 连接使用。"""
+    """返回由 Qt 应用持有的 HTTP 错误信号总线单例。"""
+
+    global _http_error_bus
+    if _http_error_bus is None:
+        application = QCoreApplication.instance()
+        if application is None:
+            raise RuntimeError("HTTP error bus requires an active Qt application")
+        _http_error_bus = _HttpErrorBus(application)
     return _http_error_bus
 
 
@@ -49,11 +56,18 @@ class _ApiStatusBus(QObject):
     request_finished = pyqtSignal(bool)  # True=成功, False=失败
 
 
-_api_status_bus = _ApiStatusBus()
+_api_status_bus: _ApiStatusBus | None = None
 
 
 def get_api_status_bus() -> _ApiStatusBus:
-    """返回全局 API 状态信号总线单例，供 MainWindow 连接使用。"""
+    """返回由 Qt 应用持有的 API 状态信号总线单例。"""
+
+    global _api_status_bus
+    if _api_status_bus is None:
+        application = QCoreApplication.instance()
+        if application is None:
+            raise RuntimeError("API status bus requires an active Qt application")
+        _api_status_bus = _ApiStatusBus(application)
     return _api_status_bus
 
 
@@ -103,6 +117,11 @@ class ApiWorker(QThread):
         self._args = args
         self._kwargs = kwargs
         self._route_http_errors = route_http_errors
+        # Resolve both buses on the owning GUI thread.  Module-level QObjects
+        # created before QApplication are destroyed too late during interpreter
+        # shutdown and can leave SIP wrapping an already torn-down Qt object.
+        self._api_status_bus = get_api_status_bus()
+        self._http_error_bus = get_http_error_bus()
 
     def make_progress_callback(self):
         """返回一个可在工作线程中调用的进度回调，安全地 emit progress 信号。"""
@@ -113,10 +132,10 @@ class ApiWorker(QThread):
         return _cb
 
     def run(self) -> None:
-        _api_status_bus.request_started.emit()
+        self._api_status_bus.request_started.emit()
         try:
             self.result.emit(self._fn(*self._args, **self._kwargs))
-            _api_status_bus.request_finished.emit(True)
+            self._api_status_bus.request_finished.emit(True)
         except Exception as exc:
             err_str = str(exc)
             # 记录完整错误到日志
@@ -124,7 +143,7 @@ class ApiWorker(QThread):
             status = _parse_http_status(err_str)
             if self._route_http_errors and status in _GLOBAL_HANDLE_STATUSES:
                 # 路由到全局信号总线，不再 emit error，防止标签页弹出重复 QMessageBox
-                _http_error_bus.http_error.emit(status, err_str)
+                self._http_error_bus.http_error.emit(status, err_str)
             else:
                 self.error.emit(err_str)
-            _api_status_bus.request_finished.emit(False)
+            self._api_status_bus.request_finished.emit(False)

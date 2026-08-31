@@ -28,6 +28,7 @@ from transbridge.ui.tools.ai_translator.result_view import show_polish_report
 from transbridge.ui.tools.ai_translator.run_controller import (
     RunAlreadyActiveError,
     RunController,
+    show_polish_progress,
     start_mixed_run,
 )
 from transbridge.ui.tools.ai_translator.scope_presenter import ScopePresenter, Step2ScopeAdapter
@@ -288,6 +289,8 @@ def test_mixed_cancelled_signal_releases_active_run_and_allows_restart(monkeypat
     )
     controller = RunController(owner_id="window")
     request = controller.begin("mixed", config, [Entry("one")])
+    finished = []
+    cancelled = []
     progress = start_mixed_run(
         controller,
         request,
@@ -295,8 +298,9 @@ def test_mixed_cancelled_signal_releases_active_run_and_allows_restart(monkeypat
         config,
         [Entry("one")],
         [],
-        finished=lambda _result: None,
+        finished=finished.append,
         error=lambda _message: None,
+        cancelled=lambda: cancelled.append(True),
     )
 
     progress._request_stop()
@@ -304,9 +308,69 @@ def test_mixed_cancelled_signal_releases_active_run_and_allows_restart(monkeypat
     app.processEvents()
 
     assert controller.active_request is None
+    assert cancelled == [True]
+    assert finished == []
     restarted = controller.begin("mixed", config, [Entry("two")])
     assert restarted.run_id != request.run_id
     controller.finish(restarted.run_id)
+
+
+def test_polish_finished_after_cancel_rolls_back_without_publishing_results(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+
+    class Worker(QObject):
+        detailed_progress = pyqtSignal(object)
+        progress = pyqtSignal(int, int, str)
+        log = pyqtSignal(str)
+        finished_all = pyqtSignal(object)
+        finished = pyqtSignal()
+        error = pyqtSignal(str)
+
+        stream_log_dir = ""
+        stream_log_error = ""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.cancel_calls = 0
+
+        def start(self) -> None:
+            pass
+
+        def cancel(self) -> None:
+            self.cancel_calls += 1
+
+        def isRunning(self) -> bool:  # noqa: N802 - Qt compatibility
+            return False
+
+    from transbridge.ui.tools.ai_translator import workflow_progress_runtime
+
+    monkeypatch.setattr(workflow_progress_runtime, "show_and_activate", lambda *_args, **_kwargs: None)
+    controller = RunController(owner_id="window")
+    request = controller.begin("polish", _run_config(), [Entry("one")])
+    worker = Worker()
+    published = []
+    rolled_back = []
+    progress = show_polish_progress(
+        controller,
+        request,
+        QWidget(),
+        worker,
+        [Entry("one")],
+        on_results=published.append,
+        on_aborted=lambda: rolled_back.append(True),
+        preview=False,
+    )
+
+    progress._request_stop()
+    worker.finished_all.emit({"one": object()})
+    app.processEvents()
+
+    assert worker.cancel_calls == 1
+    assert rolled_back == [True]
+    assert published == []
+    assert controller.active_request is None
+    progress.close()
+    worker.deleteLater()
 
 
 def test_mixed_translate_uses_its_cancel_event(monkeypatch, tmp_path) -> None:

@@ -6,6 +6,7 @@ from transbridge.application.contracts import RequestContext
 from transbridge.application.io.identity import (
     EntryKey,
     EntryRevision,
+    ExternalEntryRef,
     Provenance,
     SourceNamespace,
 )
@@ -71,14 +72,17 @@ def test_snapshot_roundtrip_preserves_explicit_empty_stage_labels_and_provenance
         _ref(),
         (fingerprint,),
         (
-            _state(
-                namespace,
-                "same-key",
-                "",
-                stage=Stage.REVIEWED,
-                labels=(),
-                provenance=provenance,
-                revision=7,
+            replace(
+                _state(
+                    namespace,
+                    "same-key",
+                    "",
+                    stage=Stage.REVIEWED,
+                    labels=(),
+                    provenance=provenance,
+                    revision=7,
+                ),
+                external_refs=(ExternalEntryRef("paratranz", "project:42", 7),),
             ),
         ),
         revision=11,
@@ -95,6 +99,7 @@ def test_snapshot_roundtrip_preserves_explicit_empty_stage_labels_and_provenance
     assert restored.entries[0].stage is Stage.REVIEWED
     assert restored.entries[0].revision == EntryRevision(7)
     assert restored.entries[0].provenance == provenance
+    assert restored.entries[0].external_refs == (ExternalEntryRef("paratranz", "project:42", 7),)
     assert restored.to_dto().envelope.data["label_library"] == {"review": {"rules": [["pair", 1]], "color": "blue"}}
 
 

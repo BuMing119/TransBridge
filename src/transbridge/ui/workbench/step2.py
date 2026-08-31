@@ -414,7 +414,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         stage = STAGE_TRANSLATED if new_text and entry.stage == STAGE_UNTRANSLATED else entry.stage
         if getattr(self._ctx, "uses_authoritative_projection", False):
             result = self._ctx.update_projected_entry(
-                entry.key,
+                entry.identity,
                 translation=new_text,
                 stage=stage,
             )
@@ -483,7 +483,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         old_stage = entry.stage
         preferred_row = self._table.find_entry_row(preferred_row, entry.id)
         if getattr(self._ctx, "uses_authoritative_projection", False):
-            result = self._ctx.update_projected_entry(entry.key, stage=stage_val)
+            result = self._ctx.update_projected_entry(entry.identity, stage=stage_val)
             if not result.is_success:
                 return
         entry.stage = stage_val

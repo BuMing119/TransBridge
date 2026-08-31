@@ -177,7 +177,7 @@ def preflight_ai_run(
             AiPreflightIssue(
                 AiPreflightCode.MISSING_SOURCE,
                 "当前翻译内容缺少源文件",
-                IntentId.SOURCE_PARSE,
+                IntentId.PROJECT_CREATE,
             )
         )
     if mode in {"translate", "mixed", "batch"} and not available("tiktoken"):

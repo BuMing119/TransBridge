@@ -35,6 +35,11 @@ class AiVersionSnapshotSession:
         self._worker: ApiWorker | None = None
         self._completed = False
         self._saved = False
+        collection = context.collection
+        self._collection = collection
+        self._before_entry_states = (
+            {} if collection is None else {entry.identity: (entry.translation, entry.stage) for entry in collection}
+        )
         mode = display_mode or str(getattr(run_spec, "mode", "translate"))
         mode_label = _MODE_LABELS.get(mode, mode)
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -54,8 +59,23 @@ class AiVersionSnapshotSession:
     def can_save(self) -> bool:
         return self._completed and not self._saved
 
-    def mark_completed(self) -> None:
+    @property
+    def completed(self) -> bool:
+        return self._completed
+
+    def mark_completed(self) -> object:
+        """Publish the completed AI output to the authoritative working copy once."""
+
+        if self._completed:
+            return {"already_completed": True}
+        entries = self._freeze_entries()
+        try:
+            result = _require_success(self._persistence.commit_translation(entries))
+        except Exception:
+            self._restore_before_entries()
+            raise
         self._completed = True
+        return result
 
     def capture_before(
         self,
@@ -94,10 +114,71 @@ class AiVersionSnapshotSession:
         )
 
     def _freeze_entries(self) -> tuple[object, ...]:
-        collection = self._context.collection
+        collection = self._current_collection()
         if collection is None:
-            raise RuntimeError("当前翻译集合已关闭，无法创建版本快照。")
+            raise RuntimeError("活动 Project/Variant 已变化，无法提交本次 AI 结果。")
         return tuple(copy(entry) for entry in collection)
+
+    def _restore_before_entries(self) -> None:
+        collection = self._current_collection()
+        if collection is None:
+            return
+        authoritative_states = self._authoritative_entry_states(collection)
+        states = dict(self._before_entry_states)
+        if authoritative_states is not None:
+            states.update(authoritative_states)
+        changed = False
+        for entry in collection:
+            state = states.get(entry.identity)
+            if state is not None and (entry.translation, entry.stage) != state:
+                entry.translation, entry.stage = state
+                changed = True
+        if changed:
+            self._context.collection_changed.emit(collection)
+
+    def _current_collection(self):
+        if self._context.active_version_identity != self._identity:
+            return None
+        collection = self._context.collection
+        return collection if collection is self._collection else None
+
+    def _authoritative_entry_states(self, collection) -> dict[object, tuple[str, int]] | None:
+        if not bool(getattr(self._context, "uses_authoritative_projection", False)):
+            return None
+        projection = getattr(self._context, "_project_projection", None)
+        snapshot_reader = getattr(projection, "snapshot", None)
+        if not callable(snapshot_reader):
+            return None
+        snapshot = snapshot_reader()
+        if snapshot is None:
+            return None
+        values = snapshot.to_dict()["values"]
+        projected_project = values.get("project_id")
+        projected_variant = values.get("variant_id") or values.get("active_variant_id")
+        if projected_project is not None and str(projected_project) != self._identity[0]:
+            return None
+        if projected_variant is not None and str(projected_variant) != self._identity[1]:
+            return None
+        projected = {
+            (
+                str((item.get("entry_key") or {}).get("namespace", "")),
+                str((item.get("entry_key") or {}).get("local_key", "")),
+            ): (str(item.get("translation", "")), int(item.get("stage", 0)))
+            for item in values.get("entries", ())
+        }
+        states: dict[object, tuple[str, int]] = {}
+        for entry in collection:
+            identity = entry.identity
+            namespace = getattr(getattr(identity, "namespace", None), "value", "")
+            local_key = getattr(identity, "local_key", "")
+            state = projected.get((str(namespace), str(local_key)))
+            if state is not None:
+                states[identity] = state
+        return states
+
+    def rollback_uncommitted(self) -> None:
+        if not self._completed:
+            self._restore_before_entries()
 
     def _run(
         self,

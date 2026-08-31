@@ -60,7 +60,7 @@ class GuidanceBanner(QFrame):
         self._primary.clicked.connect(lambda: self.primary_requested.emit(self._revision))
         reserve_text_width(
             self._primary,
-            ("选择插件开始翻译", "导入已有译文", "开始 AI 翻译", "修复服务配置", "仅重试失败项"),
+            ("新建工程", "选择插件", "开始 AI 翻译", "修复服务配置", "仅重试失败项"),
         )
         root.addWidget(self._primary)
         self._recovery = QPushButton()
@@ -69,7 +69,7 @@ class GuidanceBanner(QFrame):
         self._recovery.clicked.connect(lambda: self.recovery_requested.emit(self._recovery_intent))
         reserve_text_width(
             self._recovery,
-            ("打开已有本地工程", "改为选择插件开始", "查看相关任务与结果", "上传至 ParaTranz", "查看错误、日志与结果"),
+            ("打开已有本地工程", "新建其他工程", "查看相关任务与结果", "上传至 ParaTranz", "查看错误、日志与结果"),
         )
         root.addWidget(self._recovery)
         self._mode = QComboBox()

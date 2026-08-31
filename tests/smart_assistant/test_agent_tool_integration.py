@@ -324,6 +324,99 @@ class TestLabelSystem(unittest.TestCase):
         )
         self.assertFalse(result.success)
 
+    def test_label_mutations_replace_copy_on_read_state(self):
+        from transbridge.smart_assistant.tools.tool_editor import _tool_manage_entry_labels
+
+        class CopyOnReadContext(MockAppContext):
+            @property
+            def label_library(self) -> dict:
+                return {key: dict(value) for key, value in self._label_library.items()}
+
+            @label_library.setter
+            def label_library(self, value: dict) -> None:
+                self._label_library = {key: dict(info) for key, info in value.items()}
+
+            @property
+            def entry_labels(self) -> dict:
+                return {key: set(value) for key, value in self._entry_labels.items()}
+
+            @entry_labels.setter
+            def entry_labels(self, value: dict) -> None:
+                self._entry_labels = {key: set(labels) for key, labels in value.items()}
+
+        context = CopyOnReadContext(self.collection)
+        execution = ExecutionContext(app_context=context)
+        created = _tool_manage_entry_labels({"action": "create", "name": "副本安全"}, context)
+        assigned = _tool_manage_entry_labels(
+            {"action": "assign", "name": "副本安全", "entry_ids": ["entry_000"]},
+            execution,
+            self.collection,
+        )
+        unassigned = _tool_manage_entry_labels(
+            {"action": "unassign", "name": "副本安全", "entry_ids": ["entry_000"]},
+            execution,
+            self.collection,
+        )
+
+        self.assertTrue(created.success)
+        self.assertTrue(assigned.success)
+        self.assertTrue(unassigned.success)
+        label_id = created.data["label_id"]
+        self.assertIn(label_id, context.label_library)
+        self.assertNotIn(label_id, context.entry_labels["entry_000"])
+
+    def test_authoritative_label_mutations_use_projected_label_command(self):
+        from transbridge.smart_assistant.tools.tool_editor import _tool_manage_entry_labels
+
+        class AuthoritativeContext(MockAppContext):
+            uses_authoritative_projection = True
+            active_version_identity = ("project", "variant")
+            project_revision = 1
+            variant_revision = 1
+
+            def __init__(self, collection) -> None:
+                super().__init__(collection)
+                self.replacements: list[tuple[dict, dict]] = []
+
+            @property
+            def label_library(self) -> dict:
+                return {key: dict(value) for key, value in self._label_library.items()}
+
+            @label_library.setter
+            def label_library(self, _value: dict) -> None:
+                raise AssertionError("authoritative label library must not use the projection setter")
+
+            @property
+            def entry_labels(self) -> dict:
+                return {key: set(value) for key, value in self._entry_labels.items()}
+
+            @entry_labels.setter
+            def entry_labels(self, _value: dict) -> None:
+                raise AssertionError("authoritative entry labels must not use the projection setter")
+
+            def replace_projected_labels(self, entry_labels: dict, label_library: dict, **_expected):
+                copied_entries = {key: set(value) for key, value in entry_labels.items()}
+                copied_library = {key: dict(value) for key, value in label_library.items()}
+                self.replacements.append((copied_entries, copied_library))
+                self._entry_labels = copied_entries
+                self._label_library = copied_library
+                return SimpleNamespace(is_success=True)
+
+        context = AuthoritativeContext(self.collection)
+        execution = ExecutionContext(app_context=context)
+        created = _tool_manage_entry_labels({"action": "create", "name": "权威标签"}, context)
+        assigned = _tool_manage_entry_labels(
+            {"action": "assign", "name": "权威标签", "entry_ids": ["entry_001"]},
+            execution,
+            self.collection,
+        )
+
+        self.assertTrue(created.success)
+        self.assertTrue(assigned.success)
+        label_id = created.data["label_id"]
+        self.assertEqual(len(context.replacements), 2)
+        self.assertIn(label_id, context.replacements[-1][0]["entry_001"])
+
 
 # ── Test: 安全护栏 ──────────────────────────────────────────────────────
 

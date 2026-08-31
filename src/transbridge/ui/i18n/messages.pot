@@ -78,10 +78,6 @@ msgid "导入 .transbridge…"
 msgstr ""
 
 #: ui/shell/menu_builder.py
-msgid "选择插件开始翻译…"
-msgstr ""
-
-#: ui/shell/menu_builder.py
 msgid "导入已有译文…"
 msgstr ""
 
@@ -99,6 +95,10 @@ msgstr ""
 
 #: ui/shell/menu_builder.py
 msgid "管理当前翻译内容"
+msgstr ""
+
+#: ui/shell/action_catalog.py
+msgid "为当前工程添加插件…"
 msgstr ""
 
 #: ui/shell/menu_builder.py

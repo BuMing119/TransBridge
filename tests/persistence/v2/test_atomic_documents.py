@@ -75,3 +75,25 @@ def test_cleanup_fault_does_not_mask_the_original_publication_failure() -> None:
 
     with pytest.raises(OSError, match="injected staging write fault"):
         store.write_json("project-catalog.json", {"schema_version": 1, "projects": {}}, "repair")
+
+
+def test_durable_document_uses_write_through_replace_and_durable_removal() -> None:
+    root = os.path.abspath("atomic-document-durable")
+    filesystem = MemoryFilesystem()
+    store = AtomicDocumentStore(root, filesystem)
+    destination = store.path("project-save-journal/tx.json")
+
+    store.write_json(
+        "project-save-journal/tx.json",
+        {"schema_version": 1},
+        "tx-prepare",
+        durable=True,
+    )
+
+    assert ("replace-durable", destination) in filesystem.calls
+    assert filesystem.read_bytes(destination) == b'{"schema_version":1}'
+
+    store.remove_durable(destination, "tx-cleanup")
+
+    assert destination not in filesystem.files
+    assert sum(operation == "replace-durable" for operation, _path in filesystem.calls) == 2

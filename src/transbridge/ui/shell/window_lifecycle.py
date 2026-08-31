@@ -12,6 +12,7 @@ class AutoSaveManager(QObject):
         super().__init__(parent)
         self._host = host
         self._debounce_ms = debounce_ms
+        self._stopped = False
         self._interval_timer = QTimer(self)
         self._interval_timer.timeout.connect(self.trigger_debounce)
         self._debounce_timer = QTimer(self)
@@ -19,13 +20,17 @@ class AutoSaveManager(QObject):
         self._debounce_timer.timeout.connect(self._auto_save)
 
     def start(self, interval_minutes: int = 5) -> None:
+        self._stopped = False
         self._interval_timer.start(interval_minutes * 60_000)
 
     def stop(self) -> None:
+        self._stopped = True
         self._interval_timer.stop()
         self._debounce_timer.stop()
 
     def trigger_debounce(self) -> None:
+        if self._stopped:
+            return
         context = self._host.context
         if not context.dirty:
             self._debounce_timer.stop()
@@ -40,8 +45,15 @@ class AutoSaveManager(QObject):
                 return
         elif variant_store is None or not variant_store.dirty:
             return
-        accepted = self._host.save_current_project_async(automatic=True)
+        accepted = self._host.save_current_project_async(
+            automatic=True,
+            on_finished=self._on_auto_save_finished,
+        )
         if not accepted and context.dirty:
+            self._debounce_timer.start(self._debounce_ms)
+
+    def _on_auto_save_finished(self, _saved: bool) -> None:
+        if not self._stopped and self._host.context.dirty:
             self._debounce_timer.start(self._debounce_ms)
 
 
@@ -96,7 +108,7 @@ class WindowLifecycle:
             QTimer.singleShot(0, self.begin_background_close)
 
     def finish_background_close(self, saved: bool) -> None:
-        if not saved:
+        if not saved or self._host.context.dirty:
             self._close_pending = False
             self._host.close_pending = False
             self._host.workbench.setEnabled(True)
@@ -104,7 +116,11 @@ class WindowLifecycle:
             self.auto_saver.start()
             from PyQt6.QtWidgets import QMessageBox
 
-            QMessageBox.warning(self._host, "无法关闭", "项目保存失败，窗口保持打开以避免数据丢失。")
+            QMessageBox.warning(
+                self._host,
+                "无法关闭",
+                "项目仍有未保存的更改或保存失败，窗口保持打开以避免数据丢失。",
+            )
             return
         try:
             self._host.project_coordinator.save_workspace_session()

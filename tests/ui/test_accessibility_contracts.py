@@ -60,7 +60,6 @@ def test_start_center_default_focus_enter_and_escape_are_local_navigation() -> N
     widget.return_to_landing_requested.connect(lambda: returned.append(True))
     widget._pages.setCurrentWidget(widget._draft_page)
     widget._draft_primary.setEnabled(True)
-    widget._draft_primary.setProperty("commitReady", False)
     widget._name_edit.setFocus()
 
     QTest.keyClick(widget._name_edit, Qt.Key.Key_Return)

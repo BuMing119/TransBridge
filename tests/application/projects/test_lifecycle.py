@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from transbridge.application.contracts import OperationOutcome, RequestContext
-from transbridge.application.io.identity import SourceNamespace
+from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.application.projects import (
     ActiveProject,
     DirtyDecision,
@@ -28,6 +28,7 @@ from transbridge.persistence.v2 import (
     SourceFingerprint,
     VariantAggregate,
     VariantChangeSet,
+    VariantEntryState,
     VariantId,
     VariantRef,
     VariantSnapshot,
@@ -485,6 +486,32 @@ def test_snapshot_load_keeps_formal_current_pointer_and_snapshot_save_does_not_c
     assert harness.service.active.source_ref == source_ref
 
 
+def test_snapshot_captures_unsaved_variant_without_requiring_a_formal_save() -> None:
+    project, variant = _refs("project", "variant")
+    active = _active(project, variant, revision=2, persisted_revision=2)
+    assert active.variant is not None
+    namespace = SourceNamespace("test:unsaved-snapshot")
+    entry = VariantEntryState(EntryKey(namespace, "entry"), "未保存的译文", 1, ("review",))
+    changed = active.variant.commit(
+        VariantChangeSet(variant, 2, (SourceFingerprint(namespace, "a" * 64),), (entry,), (), "edit"),
+        _context(run_id="edit"),
+    )
+    assert changed == 3
+    assert active.dirty
+    harness = _harness(active, {})
+
+    saved = harness.service.save_snapshot("ParaTranz-下载前", _context())
+
+    assert saved.is_success
+    assert harness.store.saved_revisions == []
+    assert len(harness.store.snapshots) == 1
+    snapshot = harness.store.snapshots[0]
+    assert snapshot.variant.entries == (entry,)
+    assert snapshot.variant.revision == active.variant.revision
+    assert active.persisted_variant_revision == 2
+    assert active.dirty
+
+
 def test_export_revision_lease_fails_closed_after_variant_revision_changes() -> None:
     project, variant = _refs("project", "variant")
     active = _active(project, variant, revision=2, persisted_revision=2)
@@ -508,6 +535,39 @@ def test_export_revision_lease_fails_closed_after_variant_revision_changes() -> 
 
     assert changed.diagnostics[0].code == "EXPORT_VARIANT_REVISION_CHANGED"
     assert replay.diagnostics[0].code == "EXPORT_REVISION_LEASE_INVALID"
+
+
+def test_active_variant_command_is_revision_checked_and_publishes_after_commit() -> None:
+    project, variant = _refs("project", "variant")
+    active = _active(project, variant, revision=2, persisted_revision=2)
+    events = []
+    harness = _harness(active, {}, event=events.append)
+    context = RequestContext(
+        owner_id="owner",
+        run_id="mutation-run",
+        project_id=project.identity.value,
+        variant_id=variant.identity.value,
+    )
+
+    committed = harness.service.commit_active_variant(
+        VariantChangeSet(variant, 2, (), (), (), "mutation-run"),
+        context,
+        expected_project_revision=0,
+    )
+    stale = harness.service.commit_active_variant(
+        VariantChangeSet(variant, 2, (), (), (), "mutation-run"),
+        context,
+        expected_project_revision=0,
+    )
+
+    assert committed.outcome is OperationOutcome.COMPLETED
+    assert harness.service.active is not None and harness.service.active.variant is not None
+    assert harness.service.active.variant.revision == 3
+    assert harness.service.active.dirty
+    assert harness.service.generation == 1
+    assert [event.name for event in events] == ["active-variant-updated"]
+    assert stale.diagnostics[0].code == "ACTIVE_VARIANT_REVISION_CHANGED"
+    assert harness.service.active.variant.revision == 3
 
 
 def test_save_uses_immutable_revision_capture_and_keeps_later_mutation_dirty() -> None:

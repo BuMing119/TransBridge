@@ -54,7 +54,7 @@ def test_binding_projects_context_events_and_dispatches_one_intent(qapp):
 
     assert view.accessibleName() == "当前任务引导"
     assert view._primary.accessibleName()
-    assert view.findChild(type(view._headline), "guidance-headline").text() == "选择插件开始翻译"
+    assert view.findChild(type(view._headline), "guidance-headline").text() == "新建本地翻译工程"
     context.active_project_id = "project-1"
     context.project_name = "Demo"
     context.active_variant_id = "variant-1"

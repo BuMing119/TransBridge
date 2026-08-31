@@ -45,7 +45,7 @@ def test_supported_file_signatures_only_propose_canonical_intents(
     assert result.status is DropResolutionStatus.CANDIDATE
     assert result.items[0].kind is kind
     assert result.candidate is not None
-    expected = IntentId.SOURCE_PARSE if kind is DropKind.PLUGIN else IntentId.SOURCE_MIGRATE
+    expected = IntentId.PROJECT_CREATE if kind is DropKind.PLUGIN else IntentId.SOURCE_MIGRATE
     assert result.candidate.intent_id is expected
     assert result.candidate.requires_confirmation
     assert result.candidate.payload_mapping()["format_id"] == format_id

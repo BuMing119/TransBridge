@@ -60,7 +60,7 @@ def _callbacks(calls: list[str]) -> MenuCallbacks:
     return MenuCallbacks(
         new_project=callback("project.new"),
         open_project=callback("project.open"),
-        parse=callback("translation.parse"),
+        prepare_content=callback("translation.prepare_content"),
         migrate=callback("translation.migrate"),
         upload=callback("sync.upload"),
         batch_upload=callback("sync.batch_upload"),
@@ -94,7 +94,7 @@ def test_current_navigation_routes_each_public_intent_once() -> None:
     builder = MenuBuilder(window, _callbacks(calls))
     handles = builder.build()
 
-    handles.parse.trigger()
+    handles.prepare_content.trigger()
     handles.ai_translator.trigger()
     handles.dictionary.trigger()
     handles.fomod.trigger()
@@ -102,7 +102,7 @@ def test_current_navigation_routes_each_public_intent_once() -> None:
     handles.view_assistant.trigger()
     handles.appearance.trigger()
     assert calls == [
-        "translation.parse",
+        "translation.prepare_content",
         "translation.ai",
         "dictionary.open",
         "publish.fomod",

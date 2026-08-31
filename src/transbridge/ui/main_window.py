@@ -386,6 +386,18 @@ class MainWindow(QMainWindow):
     def _save_current_project(self):
         """同步保存实现；仅允许从后台 worker 调用。"""
         if self._ctx.uses_authoritative_projection:
+            projection_diverged = getattr(self._ctx, "authoritative_projection_diverged", None)
+            if callable(projection_diverged) and projection_diverged():
+                from transbridge.application.contracts import DomainError, ErrorCategory, OperationResult
+
+                return OperationResult.failed(
+                    DomainError(
+                        ErrorCategory.CONFLICT,
+                        "PROJECTION_AUTHORITY_DIVERGED",
+                        "工作台内容尚未提交到当前工程版本；已拒绝显示为保存成功。请重试刚才的操作。",
+                    ),
+                    run_id=None if self._runtime_context is None else self._runtime_context.run_id,
+                )
             if self._project_commands is not None and self._runtime_context is not None:
                 return self._project_commands.save(self._runtime_context)
             return None
@@ -447,11 +459,6 @@ class MainWindow(QMainWindow):
                 self.show_message(f"{diagnostic.code}: {diagnostic.message}")
                 return
             save_succeeded = True
-            self._workbench.project_bar.set_save_dirty(False)
-            if not automatic:
-                self._workbench.project_bar.flash_saved()
-            if not automatic:
-                self.show_message("项目已保存")
 
         def _on_error(error: str) -> None:
             set_save_failed = getattr(self._workbench.project_bar, "set_save_failed", None)
@@ -462,13 +469,22 @@ class MainWindow(QMainWindow):
         def _on_done() -> None:
             if self._save_worker is worker:
                 self._save_worker = None
+            final_dirty = bool(ctx.dirty)
+            persistence_is_current = save_succeeded and not final_dirty
+            if save_succeeded:
+                self._workbench.project_bar.set_save_dirty(final_dirty)
+                if not automatic and persistence_is_current:
+                    self._workbench.project_bar.flash_saved()
+                    self.show_message("项目已保存")
+                elif not automatic:
+                    self.show_message("保存完成，但仍有新的更改待保存")
             if not automatic and self._foreground_worker is None:
                 self._workbench.hide_step2_progress()
             if not automatic and not self._close_pending:
                 self._workbench.setEnabled(True)
             callbacks, self._save_callbacks = self._save_callbacks, []
             for callback in callbacks:
-                callback(save_succeeded)
+                callback(persistence_is_current)
 
         worker.result.connect(_on_saved)
         worker.error.connect(_on_error)

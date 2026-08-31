@@ -14,6 +14,7 @@ from transbridge.application.io import EntryKey, SourceNamespace
 from transbridge.ui.coordinators.guided_project_coordinator import (
     GuidedDraftPhase,
     GuidedProjectCoordinator,
+    GuidedProjectDraftState,
 )
 from transbridge.ui.coordinators.project_coordinator import ProjectCoordinator
 from transbridge.ui.shell.action_catalog import IntentId
@@ -76,6 +77,105 @@ def test_guided_draft_prepare_commit_uses_authoritative_commands_once() -> None:
     assert created == [{"project_id": "project-1", "variant_id": "variant-1"}]
     assert coordinator.state.phase is GuidedDraftPhase.COMPLETED
     assert states[-1] == coordinator.state
+
+
+def test_guided_create_runs_prepare_and_commit_as_one_user_action() -> None:
+    commands = _Commands()
+    created = []
+    states = []
+    coordinator = GuidedProjectCoordinator(
+        commands,
+        "gui-context",
+        on_state=states.append,
+        on_created=created.append,
+    )
+    coordinator.begin("D:/mods/MyMod.esp")
+
+    assert coordinator.create()
+
+    assert len(commands.prepared) == 1
+    assert len(commands.committed) == 1
+    assert created == [{"project_id": "project-1", "variant_id": "variant-1"}]
+    assert coordinator.state.phase is GuidedDraftPhase.COMPLETED
+    assert GuidedDraftPhase.PREPARED not in {state.phase for state in states}
+
+
+def test_guided_create_chains_commit_after_async_prepare() -> None:
+    commands = _Commands()
+    pending = []
+    created = []
+
+    def dispatch(operation, message, on_result, on_error):
+        pending.append((operation, message, on_result, on_error))
+        return True
+
+    coordinator = GuidedProjectCoordinator(
+        commands,
+        "gui-context",
+        dispatch=dispatch,
+        on_created=created.append,
+    )
+    coordinator.begin("D:/mods/MyMod.esp")
+
+    assert coordinator.create()
+    assert len(pending) == 1
+    assert pending[0][1] == "正在创建本地翻译工程…"
+    pending[0][2](pending[0][0]())
+    assert len(pending) == 2
+    assert coordinator.state.phase is GuidedDraftPhase.COMMITTING
+    assert "已验证" not in coordinator.state.summary
+    pending[1][2](pending[1][0]())
+
+    assert len(commands.prepared) == 1
+    assert len(commands.committed) == 1
+    assert created == [{"project_id": "project-1", "variant_id": "variant-1"}]
+    assert coordinator.state.phase is GuidedDraftPhase.COMPLETED
+
+
+def test_guided_create_only_exposes_prepare_diagnostic_when_validation_fails() -> None:
+    commands = _Commands()
+    commands.prepare_create = lambda _request, _context: OperationResult.failed(
+        DomainError(ErrorCategory.PREREQUISITE, "PROJECT_SOURCE_PARSE_FAILED", "插件无法解析。")
+    )
+    coordinator = GuidedProjectCoordinator(commands, "gui-context")
+    coordinator.begin("D:/mods/broken.esp")
+
+    assert coordinator.create()
+
+    assert commands.committed == []
+    assert coordinator.state.phase is GuidedDraftPhase.FAILED
+    assert coordinator.state.diagnostic_code == "PROJECT_SOURCE_PARSE_FAILED"
+    assert coordinator.state.diagnostic_message == "插件无法解析。"
+
+
+def test_draft_primary_button_is_always_one_confirm_action() -> None:
+    widget = StartCenterWidget()
+    requested = []
+    committed = []
+    widget.prepare_requested.connect(lambda: requested.append(True))
+    widget.commit_requested.connect(lambda: committed.append(True))
+    widget.render_draft(GuidedProjectDraftState("D:/mods/MyMod.esp", "MyMod", revision=1))
+
+    assert widget._draft_primary.text() == "确定"
+    widget._draft_primary.click()
+    widget.render_draft(
+        GuidedProjectDraftState(
+            "D:/mods/MyMod.esp",
+            "MyMod",
+            preview_token="preview-1",
+            request_fingerprint="fingerprint-1",
+            preview_entry_count=42,
+            preview_source_count=1,
+            revision=2,
+            phase=GuidedDraftPhase.PREPARED,
+        )
+    )
+
+    assert widget._draft_primary.text() == "确定"
+    widget._draft_primary.click()
+    assert requested == [True, True]
+    assert committed == []
+    widget.close()
 
 
 def test_duplicate_intent_is_merged_while_prepare_is_in_flight() -> None:
@@ -153,7 +253,8 @@ def test_start_center_renders_one_primary_action_and_unavailable_recent_reason()
         )
     )
 
-    assert widget.choose_plugin_button.accessibleName() == "翻译游戏插件"
+    assert widget.choose_plugin_button.accessibleName() == "选择插件"
+    assert widget._empty_button.text() == "高级：创建空工程（不导入插件）"
     assert widget._recent_list.count() == 1
     item = widget._recent_list.item(0)
     assert item.text() == ""
@@ -215,6 +316,7 @@ def test_start_center_buttons_forward_one_canonical_intent() -> None:
         runtime_context=object(),
         project_coordinator=SimpleNamespace(),
         tool_windows=SimpleNamespace(),
+        mode_tabs=SimpleNamespace(setCurrentWidget=lambda _widget: None),
     )
     controller = StartCenterController(
         host,
@@ -225,17 +327,17 @@ def test_start_center_buttons_forward_one_canonical_intent() -> None:
 
     view.choose_plugin_button.click()
     view._open_button.click()
-    view._empty_button.click()
     view._fomod_button.click()
     view._task_center_button.click()
+    view._empty_button.click()
 
     assert requests == [
-        (IntentId.SOURCE_PARSE, None),
+        (IntentId.PROJECT_CREATE, {"mode": "plugin"}),
         (IntentId.PROJECT_OPEN, None),
-        (IntentId.PROJECT_CREATE, None),
         (IntentId.PUBLISH_FOMOD, None),
         (IntentId.TASK_OPEN_ACTIVITY, None),
     ]
+    assert view._source_label.text() == "无源文件（空工程）"
     view.close()
 
 
@@ -463,6 +565,26 @@ def test_start_center_controller_switches_pages_inside_the_persistent_workspace_
 
     assert shown == [view]
     assert indices == [0]
+    view.close()
+
+
+def test_begin_project_from_workbench_shows_the_guided_draft() -> None:
+    shown = []
+    view = StartCenterWidget()
+    host = SimpleNamespace(
+        project_commands=_Commands(),
+        runtime_context=object(),
+        mode_tabs=SimpleNamespace(setCurrentWidget=shown.append),
+    )
+    controller = StartCenterController(host, view)
+    controller.start()
+
+    controller.choose_source_path("D:/mods/MyMod.esp")
+
+    assert shown == [view]
+    assert view._pages.currentWidget() is view._draft_page
+    assert view._source_label.text().replace("\\", "/") == "D:/mods/MyMod.esp"
+    assert view._name_edit.text() == "MyMod"
     view.close()
 
 

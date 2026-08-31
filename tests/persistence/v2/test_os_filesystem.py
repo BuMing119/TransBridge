@@ -80,3 +80,16 @@ def test_real_filesystem_lists_only_direct_files_in_stable_order(tmp_path: Path)
 
     assert files == tuple(sorted((str(directory / "a.json"), str(directory / "b.json")), key=os.path.normcase))
     assert filesystem.list_files(str(tmp_path / "missing")) == ()
+
+
+def test_real_filesystem_durable_replace_publishes_and_replaces_destination(tmp_path: Path) -> None:
+    filesystem = OsPersistenceFilesystem()
+    source = str(tmp_path / "journal.tmp")
+    destination = str(tmp_path / "journal.json")
+    filesystem.write_bytes(source, b"first")
+    filesystem.write_bytes(destination, b"old")
+
+    filesystem.replace_durable(source, destination)
+
+    assert filesystem.read_bytes(destination) == b"first"
+    assert not filesystem.exists(source)

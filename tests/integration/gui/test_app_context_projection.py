@@ -9,8 +9,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt6.QtWidgets import QApplication
 import pytest
 
+from transbridge.application.contracts import OperationResult
+from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.application.projections import ProjectionSnapshot, ProjectionStore
+from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
 from transbridge.ui import context as context_module
+from transbridge.ui.projection_types import CollectionSlot
 
 
 class _Config:
@@ -236,4 +242,123 @@ def test_project_binding_projection_is_defensive_and_updates_compatibility_id(mo
     )
     assert context.paratranz_binding is None
     assert context.paratranz_project_id is None
+    context.close_projection()
+
+
+def test_authoritative_projection_divergence_detects_unsaved_ui_copy(monkeypatch) -> None:
+    _application()
+    monkeypatch.setattr(context_module.ParatranzConfig, "create_or_load", lambda: _Config())
+    namespace = SourceNamespace("source")
+    store = ProjectionStore(
+        ProjectionSnapshot(
+            "project:project-a",
+            5,
+            4,
+            {
+                "project_id": "project-a",
+                "project_revision": 2,
+                "variant_id": "variant-a",
+                "variant_revision": 3,
+                "entries": [
+                    {
+                        "entry_key": {"namespace": namespace.value, "local_key": "entry-a"},
+                        "translation": "权威译文",
+                        "stage": 1,
+                    }
+                ],
+                "label_library": {},
+            },
+        )
+    )
+    context = context_module.AppContext(project_projection=store)
+    entry = TranslationEntry(
+        "entry-a",
+        "entry-a",
+        "source",
+        "权威译文",
+        1,
+        None,
+        entry_key=EntryKey(namespace, "entry-a"),
+    )
+    context.add_slot("source", CollectionSlot("source", TranslationEntryCollection([entry])))
+
+    assert context.variant_revision == 3
+    assert not context.authoritative_projection_diverged()
+
+    entry.translation = "只改了界面"
+
+    assert context.authoritative_projection_diverged()
+    entry.translation = "权威译文"
+    context.remove_slot("source")
+    assert context.authoritative_projection_diverged()
+    context.close_projection()
+
+
+def test_projected_label_command_forwards_exact_entry_keys_and_expected_revisions(monkeypatch) -> None:
+    _application()
+    monkeypatch.setattr(context_module.ParatranzConfig, "create_or_load", lambda: _Config())
+    namespace = SourceNamespace("source")
+    entry_key = EntryKey(namespace, "entry-a")
+    store = ProjectionStore(
+        ProjectionSnapshot(
+            "project:project-a",
+            5,
+            5,
+            {
+                "project_id": "project-a",
+                "project_revision": 2,
+                "variant_id": "variant-a",
+                "variant_revision": 3,
+                "entries": [{"entry_key": entry_key.to_dict(), "labels": []}],
+                "label_library": {},
+            },
+        )
+    )
+
+    class Commands:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def replace_labels(self, labels, library, runtime_context, **expected):
+            self.calls.append((labels, library, runtime_context, expected))
+            return OperationResult.completed({"revision": 4})
+
+    commands = Commands()
+    runtime_context = object()
+    context = context_module.AppContext(
+        project_projection=store,
+        project_commands=commands,
+        runtime_context=runtime_context,
+    )
+    collection = TranslationEntryCollection([
+        TranslationEntry(
+            "entry-a",
+            "entry-a",
+            "source",
+            "",
+            0,
+            None,
+            entry_key=entry_key,
+        )
+    ])
+    context.add_slot("active", CollectionSlot("active", collection))
+    variant_ref = VariantRef(VariantId("variant-a"), ProjectId("project-a"))
+
+    result = context.replace_projected_labels(
+        {"entry-a": {"review"}},
+        {"review": {"name": "Review", "color": "#fff"}},
+        expected_project_revision=2,
+        expected_variant_revision=3,
+        expected_variant_ref=variant_ref,
+    )
+
+    assert result.is_success
+    labels, _library, observed_runtime, expected = commands.calls[0]
+    assert labels == {entry_key: {"review"}}
+    assert observed_runtime is runtime_context
+    assert expected == {
+        "expected_project_revision": 2,
+        "expected_variant_revision": 3,
+        "expected_variant_ref": variant_ref,
+    }
     context.close_projection()

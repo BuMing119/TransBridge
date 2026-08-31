@@ -15,7 +15,13 @@ import re
 from typing import Any
 
 from transbridge.application.contracts import Diagnostic, DiagnosticSeverity, RequestContext
-from transbridge.application.io.identity import EntryKey, EntryRevision, Provenance, SourceNamespace
+from transbridge.application.io.identity import (
+    EntryKey,
+    EntryRevision,
+    ExternalEntryRef,
+    Provenance,
+    SourceNamespace,
+)
 from transbridge.application.io.stage_policy import Stage
 
 from .ids import VariantRef
@@ -52,6 +58,7 @@ class VariantEntryState:
     revision: EntryRevision = EntryRevision()
     tombstone: bool = False
     inferred_fields: tuple[str, ...] = ()
+    external_refs: tuple[ExternalEntryRef, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.translation, str):
@@ -63,10 +70,14 @@ class VariantEntryState:
         if len(set(labels)) != len(labels) or any(not label for label in labels):
             raise ValueError("variant labels must be unique non-empty strings")
         revision = self.revision if isinstance(self.revision, EntryRevision) else EntryRevision(self.revision)
+        external_refs = tuple(self.external_refs)
+        if len({item.index_key for item in external_refs}) != len(external_refs):
+            raise ValueError("variant external_refs must not contain duplicate identities")
         inferred = tuple(sorted(set(self.inferred_fields)))
         object.__setattr__(self, "stage", stage)
         object.__setattr__(self, "labels", labels)
         object.__setattr__(self, "provenance", tuple(self.provenance))
+        object.__setattr__(self, "external_refs", external_refs)
         object.__setattr__(self, "revision", revision)
         object.__setattr__(self, "inferred_fields", inferred)
 
@@ -77,6 +88,7 @@ class VariantEntryState:
             "stage": self.stage.value,
             "labels": list(self.labels),
             "provenance": [item.to_dict() for item in self.provenance],
+            "external_refs": [item.to_dict() for item in self.external_refs],
             "revision": self.revision.value,
             "tombstone": self.tombstone,
             "inferred_fields": list(self.inferred_fields),
@@ -87,15 +99,19 @@ class VariantEntryState:
         entry_key = data.get("entry_key")
         if not isinstance(entry_key, dict):
             raise ValueError("variant entry_key must be an object")
+        inferred_fields = tuple(str(value) for value in data.get("inferred_fields", ()))
+        if "external_refs" not in data:
+            inferred_fields = (*inferred_fields, "external_refs")
         return cls(
             entry_key=EntryKey.from_dict(entry_key),
             translation=str(data.get("translation", "")),
             stage=int(data.get("stage", Stage.UNTRANSLATED.value)),
             labels=tuple(str(value) for value in data.get("labels", ())),
             provenance=tuple(Provenance.from_dict(value) for value in data.get("provenance", ())),
+            external_refs=tuple(ExternalEntryRef.from_dict(value) for value in data.get("external_refs", ())),
             revision=EntryRevision(data.get("revision", 0)),
             tombstone=bool(data.get("tombstone", False)),
-            inferred_fields=tuple(str(value) for value in data.get("inferred_fields", ())),
+            inferred_fields=inferred_fields,
         )
 
 
@@ -438,6 +454,7 @@ def collect_variant_snapshot(
                 tuple(entry.provenance),
                 entry.revision,
                 key in tombstone_set,
+                external_refs=tuple(entry.external_refs),
             )
         )
     return VariantSnapshot(

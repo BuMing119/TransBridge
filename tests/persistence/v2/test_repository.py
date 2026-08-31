@@ -34,6 +34,7 @@ from transbridge.persistence.v2 import (
     VariantRepository,
 )
 from transbridge.persistence.v2.lifecycle_transactions import ProjectLifecycleTransactionStore
+from transbridge.persistence.v2.repository import VariantRevisionConflict
 
 from .fakes import MemoryFilesystem
 
@@ -269,6 +270,27 @@ def test_project_lifecycle_update_commits_matching_persisted_revision() -> None:
     loaded = projects.load(ref)
     assert isinstance(loaded, LoadedRecord)
     assert loaded.value == updated
+
+
+def test_variant_conditional_save_rejects_matching_revision_with_wrong_digest() -> None:
+    filesystem = MemoryFilesystem()
+    ref = VariantRef(VariantId("main"), ProjectId("project-1"))
+    variants = VariantRepository(ROOT, filesystem)
+    current = _variant_dto()
+    variants.save(ref, current)
+    before = filesystem.read_bytes(variants.path_for(ref))
+
+    with pytest.raises(VariantRevisionConflict) as error:
+        variants.save_if_revision(
+            ref,
+            current,
+            expected_revision=current.envelope.revision,
+            expected_source_hash="0" * 64,
+        )
+
+    assert error.value.actual_revision == current.envelope.revision
+    assert error.value.actual_source_hash == hashlib.sha256(before).hexdigest()
+    assert filesystem.read_bytes(variants.path_for(ref)) == before
 
 
 @pytest.mark.parametrize(

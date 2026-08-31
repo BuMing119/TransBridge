@@ -25,12 +25,15 @@ def show_polish_progress(
     entries: list,
     *,
     on_results: Callable[[object], None],
+    on_aborted: Callable[[], None] | None = None,
     preview: bool,
     theme_view: ThemeView | None = None,
 ) -> AiWorkflowProgressWindow:
     """Start proofreading and project its real effective stages into one window."""
 
     from .task_adapter import AiLegacyRunState
+
+    on_aborted = on_aborted or (lambda: None)
 
     profile = request.spec.execution_profile
     run_id = request.run_id
@@ -82,8 +85,9 @@ def show_polish_progress(
         cancelled = activity.activity.state is AiLegacyRunState.CANCELLING
         if cancelled:
             progress.mark_cancelled()
-        else:
-            progress.mark_finished()
+            on_aborted()
+            return
+        progress.mark_finished()
         if not preview:
             on_results(results)
             return
@@ -97,20 +101,21 @@ def show_polish_progress(
     worker.finished_all.connect(
         lambda _results: activity.finish(cancelled=activity.activity.state is AiLegacyRunState.CANCELLING)
     )
-    worker.error.connect(controller.guard(run_id, progress.mark_error))
-    worker.error.connect(controller.guard(run_id, activity.fail))
-    worker.error.connect(
-        controller.terminal_guard(
-            run_id,
-            lambda error: QMessageBox.critical(parent, "润色错误", error),
-        )
-    )
+
+    def failed(error: str) -> None:
+        on_aborted()
+        progress.mark_error(error)
+        activity.fail(error)
+        QMessageBox.critical(parent, "润色错误", error)
+
+    worker.error.connect(controller.terminal_guard(run_id, failed))
     worker.finished.connect(worker.deleteLater)
     try:
         worker.start()
         show_and_activate(progress, deferred=True)
     except Exception:
         controller.cancel(run_id)
+        on_aborted()
         raise
     return progress
 

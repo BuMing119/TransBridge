@@ -35,6 +35,28 @@ class BaselineRegistry:
         with self._lock:
             self._items.pop((project_ref.identity.value, variant_ref.identity.value), None)
 
+    def replace_many(
+        self,
+        project_ref: ProjectRef,
+        variant_refs: tuple[VariantRef, ...],
+        baselines: tuple[SourceBaseline, ...],
+        *,
+        allow_empty: bool = False,
+    ) -> None:
+        """Atomically replace one Project's baseline set for all formal Variants."""
+
+        if not variant_refs:
+            raise ValueError("a Project baseline replacement requires at least one Variant")
+        if any(ref.project_id != project_ref.identity for ref in variant_refs):
+            raise ValueError("baseline Variants must belong to their Project")
+        if not baselines and not allow_empty:
+            raise ValueError("an authoritative baseline registration must not be empty")
+        if len(set(variant_refs)) != len(variant_refs):
+            raise ValueError("baseline replacement contains duplicate Variants")
+        with self._lock:
+            for variant_ref in variant_refs:
+                self._items[(project_ref.identity.value, variant_ref.identity.value)] = baselines
+
     def provide(
         self,
         project: ProjectDto,

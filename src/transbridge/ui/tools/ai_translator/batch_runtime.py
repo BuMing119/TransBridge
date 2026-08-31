@@ -29,6 +29,14 @@ def open_batch_translation(
     from ._batch_translation_worker import _BatchTranslationWorker
     from .run_controller import RunController
 
+    if bool(getattr(ctx, "uses_authoritative_projection", False)):
+        QMessageBox.warning(
+            parent,
+            "批量翻译暂不可用",
+            "V2 工程的跨插件 AI 批量翻译尚未接入统一原子 Variant 提交；为避免结果只保留在界面中，本次未启动。",
+        )
+        return None
+
     dialog = _BatchTranslationDialog(ctx, parent, theme_view=theme_view)
     if dialog.exec() != dialog.DialogCode.Accepted:
         return None

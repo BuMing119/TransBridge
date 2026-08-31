@@ -6,6 +6,7 @@ AppContext: 全局应用上下文，持有配置、当前用户、当前项目�
 from __future__ import annotations
 
 from collections import deque
+import json
 import threading
 from typing import TYPE_CHECKING
 
@@ -20,6 +21,7 @@ __all__ = ["AppContext", "CollectionSlot"]
 if TYPE_CHECKING:
     from transbridge.application.projections import ProjectionSnapshot, ProjectionStore, ProjectionSubscription
     from transbridge.persistence.project import ProjectHandle
+    from transbridge.persistence.v2.ids import VariantRef
     from transbridge.persistence.variant_store import VariantStore
     from transbridge.persistence.workspace import WorkspaceState
 
@@ -89,6 +91,7 @@ class AppContext(QObject):
         self._projection_dirty = False
         self._projection_revision: int | None = None
         self._project_revision: int | None = None
+        self._variant_revision: int | None = None
         self._active_project_id: str | None = None
         self._project_name: str | None = None
         self._project_sources: tuple[dict[str, object], ...] = ()
@@ -438,6 +441,10 @@ class AppContext(QObject):
         return self._project_revision
 
     @property
+    def variant_revision(self) -> int | None:
+        return self._variant_revision
+
+    @property
     def paratranz_binding(self) -> dict[str, object] | None:
         return None if self._paratranz_binding is None else dict(self._paratranz_binding)
 
@@ -515,7 +522,7 @@ class AppContext(QObject):
 
     def update_projected_entry(
         self,
-        local_key: str,
+        local_key,
         *,
         translation: str | None = None,
         stage: int | None = None,
@@ -533,13 +540,31 @@ class AppContext(QObject):
         self,
         entry_labels: dict[str, set[str]],
         label_library: dict[str, dict],
+        *,
+        expected_project_revision: int | None = None,
+        expected_variant_revision: int | None = None,
+        expected_variant_ref: VariantRef | None = None,
     ):
         if self._project_commands is None or self._runtime_context is None:
             raise RuntimeError("authoritative Variant command adapter is unavailable")
+        collection = self.collection
+        exact_labels = (
+            entry_labels
+            if collection is None
+            else {entry.identity: set(entry_labels.get(entry.key, ())) for entry in collection}
+        )
+        expected = {}
+        if expected_project_revision is not None:
+            expected["expected_project_revision"] = expected_project_revision
+        if expected_variant_revision is not None:
+            expected["expected_variant_revision"] = expected_variant_revision
+        if expected_variant_ref is not None:
+            expected["expected_variant_ref"] = expected_variant_ref
         return self._project_commands.replace_labels(
-            entry_labels,
+            exact_labels,
             label_library,
             self._runtime_context,
+            **expected,
         )
 
     @property
@@ -562,6 +587,54 @@ class AppContext(QObject):
     @property
     def runtime_context(self):
         return self._runtime_context
+
+    def authoritative_projection_diverged(self) -> bool:
+        """Return whether a visible workbench state bypassed the V2 aggregate."""
+
+        if self._project_projection is None:
+            return False
+        snapshot = self._project_projection.snapshot()
+        if snapshot is None:
+            return any(slot.collection for slot in self._slots.values())
+        states = {
+            (
+                str((item.get("entry_key") or {}).get("namespace", "")),
+                str((item.get("entry_key") or {}).get("local_key", "")),
+            ): (
+                str(item.get("translation", "")),
+                int(item.get("stage", 0)),
+                tuple(
+                    sorted(
+                        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                        for value in item.get("external_refs", ())
+                    )
+                ),
+            )
+            for item in snapshot.to_dict()["values"].get("entries", ())
+        }
+        visible: dict[tuple[str, str], tuple[str, int, tuple[str, ...]]] = {}
+        for slot in self._slots.values():
+            for entry in slot.collection:
+                identity = (entry.identity.namespace.value, entry.identity.local_key)
+                entry_state = (
+                    entry.translation or "",
+                    entry.stage,
+                    tuple(
+                        sorted(
+                            json.dumps(
+                                value.to_dict(),
+                                ensure_ascii=False,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            )
+                            for value in entry.external_refs
+                        )
+                    ),
+                )
+                if identity in visible and visible[identity] != entry_state:
+                    return True
+                visible[identity] = entry_state
+        return visible != states
 
     @property
     def effective_terminology_factory(self):
@@ -592,6 +665,7 @@ class AppContext(QObject):
             self._projection_dirty = False
             self._projection_revision = None
             self._project_revision = None
+            self._variant_revision = None
             self._active_project_id = None
             self._project_name = None
             self._project_sources = ()
@@ -607,6 +681,8 @@ class AppContext(QObject):
             project_id = values.get("project_id")
             project_revision = values.get("project_revision")
             self._project_revision = None if project_revision is None else int(project_revision)
+            variant_revision = values.get("variant_revision")
+            self._variant_revision = None if variant_revision is None else int(variant_revision)
             self._active_project_id = None if project_id is None else str(project_id)
             project_name = values.get("project_name")
             self._project_name = None if project_name is None else str(project_name)
