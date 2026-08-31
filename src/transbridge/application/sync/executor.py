@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import logging
 from typing import Protocol
 
 from transbridge.application.contracts import (
@@ -34,6 +35,8 @@ from .models import (
 )
 from .planner import SyncPlanner
 from .use_case import AuthorizedSyncPlan, RemoteSyncSnapshotPort
+
+_logger = logging.getLogger(__name__)
 
 
 class LocalSyncTransactionPort(Protocol):
@@ -348,10 +351,12 @@ class ParaTranzSyncExecutor:
         local = local_map.get(item.entry_key)
         if local is None:
             raise ValueError("local source entry is missing")
+        reference = item.external_ref if item.action is SyncAction.UPDATE_REMOTE else None
+        remote_id = None if reference is None else reference.opaque_id
         result = self._remote.upsert_entry(
             request.project_id,
             ParaTranzEntry(
-                None,
+                remote_id,
                 local.entry_key.local_key,
                 local.original,
                 local.translation,
@@ -413,6 +418,7 @@ class ParaTranzSyncExecutor:
                 for item_id, item in pending
             ]
         except Exception:
+            _logger.exception("ParaTranz local transaction failed (run_id=%s)", request.run_id)
             return [
                 _outcome(
                     item_id,

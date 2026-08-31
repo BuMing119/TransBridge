@@ -143,19 +143,27 @@ def test_paratranz_external_reference_is_part_of_authoritative_patch() -> None:
     assert context.collection.get(snapshots[0].entry_key.local_key).external_refs == (remote_ref,)
 
 
-def test_paratranz_source_owned_text_change_is_rejected_for_v2_project() -> None:
+def test_paratranz_download_preserves_source_text_while_applying_translation_for_v2_project() -> None:
     commands = _Commands()
     context = _context(commands)
     snapshots = local_snapshots(context, 7)
 
-    with pytest.raises(RuntimeError, match="来源基线不可安全改写"):
-        replace_local_snapshots(
-            context,
-            (replace(snapshots[0], original="remote original"), *snapshots[1:]),
-            7,
-            active_version_identity=("project", "variant"),
-            project_revision=3,
-            variant_revision=2,
-        )
+    replace_local_snapshots(
+        context,
+        (
+            replace(
+                snapshots[0], original="remote original", context="remote context", translation="远端译文", stage=1
+            ),
+            *snapshots[1:],
+        ),
+        7,
+        active_version_identity=("project", "variant"),
+        project_revision=3,
+        variant_revision=2,
+    )
 
-    assert commands.calls == []
+    entry = context.collection.get(snapshots[0].entry_key.local_key)
+    assert (entry.original, entry.context) == (snapshots[0].original, snapshots[0].context)
+    assert (entry.translation, entry.stage) == ("远端译文", 1)
+    patches = commands.calls[0][0]
+    assert patches[entry.identity].translation == "远端译文"

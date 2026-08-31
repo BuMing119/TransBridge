@@ -10,11 +10,14 @@ from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QProgressBar,
     QPushButton,
     QRadioButton,
     QVBoxLayout,
 )
 
+from transbridge.application.tasks import JobState
+from transbridge.application.tasks.activity import TaskActivityViewState
 from transbridge.paratranz.project_catalog import ParaTranzProjectCatalog
 from transbridge.ui.foundation.accessibility import configure_accessible_widget, update_accessible_state
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState, configure_dialog
@@ -30,6 +33,8 @@ class ParaTranzSyncDialog(QDialog):
     preflight_requested = pyqtSignal(str, object)
     return_to_edit_requested = pyqtSignal(str, object)
     confirm_requested = pyqtSignal(str, object)
+    execution_changed = pyqtSignal(object)
+    execution_finished = pyqtSignal()
 
     def __init__(self, plan: OperationPlanViewState, context: object, parent=None) -> None:
         super().__init__(parent)
@@ -46,6 +51,10 @@ class ParaTranzSyncDialog(QDialog):
         self._project_name = ""
         self._rendering = False
         self._preflight_scheduled = False
+        self._preflight_running = False
+        self._execution_running = False
+        self._check_ready = False
+        self._retry_available = False
         self._strategy_buttons: dict[str, QRadioButton] = {}
 
         self.setWindowTitle(plan.title)
@@ -126,6 +135,11 @@ class ParaTranzSyncDialog(QDialog):
         ComponentStyle.apply_state(self._status, SemanticState.INFO)
         configure_accessible_widget(self._status, name="同步检查状态", state_text=self._status.text())
         root.addWidget(self._status)
+        self._progress = QProgressBar(self)
+        ComponentStyle.apply_static(self._progress, ComponentKind.PROGRESS)
+        configure_accessible_widget(self._progress, name="同步进度")
+        self._progress.hide()
+        root.addWidget(self._progress)
         root.addStretch(1)
 
         footer = QHBoxLayout()
@@ -143,7 +157,9 @@ class ParaTranzSyncDialog(QDialog):
         footer.addWidget(self._confirm)
         root.addLayout(footer)
 
+        self.execution_changed.connect(self.render_execution, Qt.ConnectionType.QueuedConnection)
         self.render_plan(plan)
+        self.set_preflight_running(True)
         QTimer.singleShot(0, self._request_preflight)
 
     def render_plan(self, plan: OperationPlanViewState) -> None:
@@ -151,6 +167,8 @@ class ParaTranzSyncDialog(QDialog):
         try:
             self._plan = plan
             self._preflight = None
+            self._check_ready = False
+            self._retry_available = False
             self.setWindowTitle(plan.title)
             self._headline.setText(plan.title)
             self._scope.setText(plan.scope_summary)
@@ -172,6 +190,7 @@ class ParaTranzSyncDialog(QDialog):
             self._set_status("正在检查项目权限和云端内容…", SemanticState.INFO)
         finally:
             self._rendering = False
+        self._sync_controls()
 
     def render_preflight(self, result: OperationPreflightResult) -> None:
         if result.request_digest != self._plan.request_digest:
@@ -207,21 +226,86 @@ class ParaTranzSyncDialog(QDialog):
             self._set_status(warnings[0], SemanticState.WARNING)
         else:
             self._set_status("检查完成，可以开始。", SemanticState.SUCCESS)
-        self._confirm.setEnabled(result.ready and result.confirmation_token is not None and actionable > 0)
+        self._check_ready = result.ready and result.confirmation_token is not None and actionable > 0
+        self._retry_available = bool(blocked)
+        self._sync_controls()
 
     def render_preflight_error(self, message: str) -> None:
         self._preflight = None
-        self._confirm.setEnabled(False)
+        self._check_ready = False
+        self._retry_available = True
+        self.set_preflight_running(False)
         if "changed while preflight" in message or "PREFLIGHT_STALE" in message:
             self._set_status("选项已变化，正在按最新设置重新检查…", SemanticState.INFO)
             return
         self._set_status(str(message) or "检查失败，请稍后重试。", SemanticState.ERROR)
 
     def set_preflight_running(self, running: bool) -> None:
-        self._choose_project.setEnabled(not running)
-        self._confirm.setEnabled(False if running else self._confirm.isEnabled())
+        self._preflight_running = running
         if running:
+            self._preflight = None
+            self._check_ready = False
+            self._retry_available = False
             self._set_status("正在检查项目权限和云端内容…", SemanticState.INFO)
+            self._progress.setRange(0, 0)
+        self._progress.setVisible(running or self._execution_running)
+        self._sync_controls()
+
+    def set_execution_running(self, running: bool) -> None:
+        self._execution_running = running
+        self._check_ready = False
+        self._retry_available = False
+        self._preflight = None
+        if running:
+            action = "下载并更新本地翻译" if self._plan.kind is OperationKind.DOWNLOAD else "上传到 ParaTranz"
+            self._set_status(f"正在{action}，请稍候…", SemanticState.INFO)
+            self._progress.setRange(0, 0)
+        self._progress.setVisible(running or self._preflight_running)
+        self._sync_controls()
+
+    def render_execution(self, activity: TaskActivityViewState) -> None:
+        if not self._execution_running or not activity.is_terminal:
+            return
+        self.set_execution_running(False)
+        self._retry_available = True
+        self._cancel.setText("关闭")
+        if activity.state is JobState.COMPLETED:
+            action = "下载并更新本地翻译" if self._plan.kind is OperationKind.DOWNLOAD else "上传到 ParaTranz"
+            self._set_status(f"{action}完成。", SemanticState.SUCCESS)
+            self._progress.setRange(0, 100)
+            self._progress.setValue(100)
+            self._progress.show()
+        elif activity.state is JobState.CANCELLED:
+            self._set_status("同步已取消。再次执行前请重新检查。", SemanticState.WARNING)
+        else:
+            self._set_status("同步失败，请在任务中心查看详情；再次执行前请重新检查。", SemanticState.ERROR)
+        self._sync_controls()
+        self.execution_finished.emit()
+
+    def _sync_controls(self) -> None:
+        busy = self._preflight_running or self._execution_running
+        fields = {field.field_id: field for field in self._plan.editable_fields}
+        for widget, field_id in (
+            (self._choose_project, "paratranz_project_id"),
+            (self._set_default, "set_as_default"),
+            (self._apply_deletions, "apply_remote_deletions"),
+            *((button, "conflict_policy") for button in self._strategy_buttons.values()),
+        ):
+            field = fields.get(field_id)
+            widget.setEnabled(not busy and field is not None and field.enabled)
+        self._cancel.setEnabled(not busy)
+        self._confirm.setEnabled(not busy and (self._check_ready or self._retry_available))
+        self._confirm.setText("重新检查" if self._retry_available else self._action_text(self._plan.kind))
+
+    def done(self, result: int) -> None:
+        if not self._preflight_running and not self._execution_running:
+            super().done(result)
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if self._preflight_running or self._execution_running:
+            event.ignore()
+        else:
+            super().closeEvent(event)
 
     def edited_values(self) -> tuple[tuple[str, str], ...]:
         selected = self._strategy_group.checkedButton()
@@ -267,23 +351,34 @@ class ParaTranzSyncDialog(QDialog):
         widget.setToolTip(field.help_text)
 
     def _controls_changed(self, *_args) -> None:
-        if self._rendering or self._preflight_scheduled:
+        if self._rendering or self._preflight_scheduled or self._preflight_running or self._execution_running:
             return
         self._preflight = None
         self._confirm.setEnabled(False)
         self._preflight_scheduled = True
+        self.set_preflight_running(True)
         QTimer.singleShot(0, self._request_preflight)
 
     def _request_preflight(self) -> None:
+        if self._execution_running:
+            return
         self._preflight_scheduled = False
+        self.set_preflight_running(True)
         self.preflight_requested.emit(self._plan.session_id, self.edited_values())
 
     def _confirm_operation(self) -> None:
+        if self._preflight_running or self._execution_running:
+            return
+        if self._retry_available:
+            self._request_preflight()
+            return
         token = None if self._preflight is None else self._preflight.confirmation_token
         if token is not None:
             self.confirm_requested.emit(self._plan.session_id, token)
 
     def _choose_remote_project(self) -> None:
+        if self._preflight_running or self._execution_running:
+            return
         config_revision = int(getattr(getattr(self._context, "config", None), "config_revision", 0))
         dialog = ParaTranzTargetDialog(
             self._context,

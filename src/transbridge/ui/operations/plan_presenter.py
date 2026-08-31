@@ -116,7 +116,9 @@ class OperationPlanPresenter:
             )
             return result
 
-    def confirm(self, session_id: str, token: ConfirmationToken | None, *, owner_id: str) -> object:
+    def confirm(
+        self, session_id: str, token: ConfirmationToken | None, *, owner_id: str, retain_session: bool = False
+    ) -> object:
         with self._lock:
             session = self._resolve(session_id, owner_id)
             preflight = session.preflight
@@ -136,7 +138,13 @@ class OperationPlanPresenter:
         # the user can return, edit, and run a fresh preflight.
         result = self._submitter.submit(kind, draft, preflight, owner_id)
         with self._lock:
-            self._sessions.pop(session_id, None)
+            if retain_session:
+                session.preflight = None
+                session.plan = replace(
+                    session.plan, submit_enabled=False, submit_disabled_reason="再次执行前需重新检查"
+                )
+            else:
+                self._sessions.pop(session_id, None)
         return result
 
     def cancel(self, session_id: str, *, owner_id: str) -> None:

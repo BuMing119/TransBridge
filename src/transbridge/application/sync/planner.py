@@ -24,6 +24,10 @@ from .models import (
 class SyncPlanner:
     """Compare immutable snapshots without network or repository side effects."""
 
+    def __init__(self, *, local_state_only: bool = False) -> None:
+        # Source-backed projects download translation state, not source structure.
+        self._local_state_only = local_state_only
+
     def plan(
         self,
         local_entries: Sequence[LocalEntrySnapshot],
@@ -61,7 +65,17 @@ class SyncPlanner:
                 if remote_entry.external_ref.index_key in duplicate_remote_refs:
                     items.append(_conflict(key, local_entry, remote_entry, conflict_policy, "duplicate_remote_id"))
                     continue
-            items.append(_plan_item(key, local_entry, remote_entry, operation, conflict_policy, deletion_policy))
+            items.append(
+                _plan_item(
+                    key,
+                    local_entry,
+                    remote_entry,
+                    operation,
+                    conflict_policy,
+                    deletion_policy,
+                    local_state_only=self._local_state_only and operation is SyncOperation.DOWNLOAD,
+                )
+            )
         item_tuple = tuple(items)
         counts = Counter(item.action.value for item in item_tuple)
         full_counts = tuple(sorted((action.value, counts[action.value]) for action in SyncAction))
@@ -133,6 +147,8 @@ def _plan_item(
     operation: SyncOperation,
     policy: ConflictPolicy,
     deletion_policy: DeletionPolicy,
+    *,
+    local_state_only: bool = False,
 ) -> SyncPlanItem:
     local_summary = None if local is None else EntrySummary.from_local(local)
     remote_summary = None if remote is None else EntrySummary.from_remote(remote)
@@ -142,6 +158,10 @@ def _plan_item(
             return _item(key, SyncAction.SKIP, remote_summary, remote_summary, reference, "no_live_entry", policy)
         if operation is SyncOperation.UPLOAD:
             return _item(key, SyncAction.SKIP, remote_summary, remote_summary, reference, "remote_only", policy)
+        if local_state_only:
+            return _item(
+                key, SyncAction.SKIP, remote_summary, remote_summary, reference, "outside_local_source", policy
+            )
         return _item(key, SyncAction.CREATE_LOCAL, None, remote_summary, reference, "remote_only", policy)
     if remote is None:
         if local.deleted:
@@ -164,7 +184,7 @@ def _plan_item(
             return _item(
                 key, SyncAction.UPDATE_REMOTE, remote_summary, local_summary, reference, "restore_from_local", policy
             )
-        if deletion_policy is DeletionPolicy.PRESERVE:
+        if local_state_only or deletion_policy is DeletionPolicy.PRESERVE:
             return _item(
                 key,
                 SyncAction.SKIP,
@@ -175,7 +195,12 @@ def _plan_item(
                 policy,
             )
         return _item(key, SyncAction.DELETE_LOCAL, local_summary, remote_summary, reference, "remote_tombstone", policy)
-    if local_summary.content_identity() == remote_summary.content_identity():
+    unchanged = (
+        (local.translation, local.stage, local.external_ref) == (remote.translation, remote.stage, remote.external_ref)
+        if local_state_only
+        else local_summary.content_identity() == remote_summary.content_identity()
+    )
+    if unchanged:
         return _item(key, SyncAction.SKIP, remote_summary, local_summary, reference, "unchanged", policy)
     if policy is ConflictPolicy.ABORT:
         return _conflict(key, local, remote, policy, "content_changed")

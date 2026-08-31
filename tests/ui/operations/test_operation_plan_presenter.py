@@ -84,6 +84,26 @@ def test_one_final_confirmation_is_one_shot() -> None:
     assert len(submitter.calls) == 1
 
 
+def test_retained_session_requires_fresh_preflight_before_another_submission() -> None:
+    submitter = Submitter()
+    subject = presenter(submitter)
+    opened = subject.open(OperationKind.DOWNLOAD, draft(), owner_id="gui")
+    checked = subject.preflight(opened.session_id, owner_id="gui")
+
+    assert (
+        subject.confirm(opened.session_id, checked.confirmation_token, owner_id="gui", retain_session=True) == "run-1"
+    )
+    assert not subject.state(opened.session_id, owner_id="gui").submit_enabled
+    with pytest.raises(OperationPlanError, match="preflight"):
+        subject.confirm(opened.session_id, checked.confirmation_token, owner_id="gui", retain_session=True)
+    subject.edit(opened.session_id, draft(input_fingerprint="updated-local"), owner_id="gui")
+    refreshed = subject.preflight(opened.session_id, owner_id="gui")
+    assert (
+        subject.confirm(opened.session_id, refreshed.confirmation_token, owner_id="gui", retain_session=True) == "run-2"
+    )
+    subject.cancel(opened.session_id, owner_id="gui")
+
+
 def test_cancel_has_zero_feature_side_effect_and_100_sessions_remain_bounded() -> None:
     submitter = Submitter()
     subject = presenter(submitter)

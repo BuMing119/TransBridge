@@ -251,18 +251,6 @@ def test_service_maps_tool_operations_to_real_endpoint_methods() -> None:
     history = MagicMock()
     exports = MagicMock()
     service = ParaTranzService(projects, strings, history, exports)
-    strings.list_strings.return_value = {
-        "results": [
-            {
-                "id": 7,
-                "key": "NPC_:1",
-                "original": "Hello",
-                "translation": "",
-                "context": "NPC_:FULL",
-                "stage": 0,
-            }
-        ]
-    }
     strings.update_string.return_value = {
         "id": 7,
         "key": "NPC_:1",
@@ -272,27 +260,27 @@ def test_service_maps_tool_operations_to_real_endpoint_methods() -> None:
         "stage": 1,
     }
     history.list_file_revisions.return_value = {"results": [{"id": 3, "status": "success", "filename": "a.json"}]}
-    entry = ParaTranzEntry(None, "NPC_:1", "Hello", "你好", "NPC_:FULL", 1)
+    entry = ParaTranzEntry(7, "NPC_:1", "Hello", "你好", "NPC_:FULL", 1)
 
-    result = service.upsert_entry(11, entry)
+    result = service.upsert_entry(11, entry, force_overwrite=True)
     revisions = service.list_upload_history(11, limit=20)
 
     assert result.remote_id == 7
     assert revisions[0].revision_id == 3
-    strings.list_strings.assert_called_once()
+    strings.list_strings.assert_not_called()
     strings.update_string.assert_called_once_with(11, 7, entry.to_remote_payload(), cancellation=None)
     history.list_file_revisions.assert_called_once()
     assert not hasattr(service, "get_entries")
     assert not hasattr(service, "get_upload_history")
 
-    strings.list_strings.return_value = {"results": []}
+    new_entry = ParaTranzEntry(None, "NPC_:2", "Hello", "你好", "NPC_:FULL", 1)
     strings.create_string.return_value = {
         "id": 8,
-        **entry.to_remote_payload(),
+        **new_entry.to_remote_payload(),
     }
-    created = service.upsert_entry(11, entry)
+    created = service.upsert_entry(11, new_entry)
     assert created.remote_id == 8
-    strings.create_string.assert_called_once_with(11, entry.to_remote_payload(), cancellation=None)
+    strings.create_string.assert_called_once_with(11, new_entry.to_remote_payload(), cancellation=None)
 
 
 def test_project_catalog_reads_all_pages_and_isolates_cache_by_configuration() -> None:

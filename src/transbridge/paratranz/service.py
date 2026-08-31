@@ -128,8 +128,8 @@ class ParaTranzService:
             raise ValueError("limit must be a positive integer")
         items: list[Mapping[str, Any]] = []
         page = 1
+        page_size = min(limit, 800)
         while len(items) < limit:
-            page_size = min(limit - len(items), 800)
             payload = self._strings.list_strings(
                 project_id,
                 page=page,
@@ -137,7 +137,7 @@ class ParaTranzService:
                 cancellation=cancellation,
             )
             current = self._items(payload, "results", "strings")
-            items.extend(current[:page_size])
+            items.extend(current)
             if len(current) < page_size:
                 break
             page += 1
@@ -151,40 +151,24 @@ class ParaTranzService:
         force_overwrite: bool = False,
         cancellation: CancellationPort | None = None,
     ) -> ParaTranzEntry:
-        matches = tuple(
-            item
-            for item in self.list_entries(project_id, limit=800, cancellation=cancellation)
-            if item.key == entry.key
-        )
-        if len(matches) > 1:
-            raise ExternalServiceError(
-                ExternalServiceCategory.CONFLICT,
-                "ParaTranz key resolves to multiple remote entries",
-                safe_context={"key": entry.key},
-            )
-        if matches:
-            existing = matches[0]
-            if not force_overwrite and existing.translation and existing.translation != entry.translation:
-                raise ExternalServiceError(
-                    ExternalServiceCategory.CONFLICT,
-                    "ParaTranz entry has a different remote translation",
-                    safe_context={"key": entry.key, "remote_id": str(existing.remote_id)},
-                )
-            if existing.remote_id is None:
-                raise ExternalServiceError(
-                    ExternalServiceCategory.INVALID_RESPONSE,
-                    "ParaTranz existing entry has no remote id",
-                    safe_context={"key": entry.key},
-                )
+        """Create directly, or update an explicit remote identity with overwrite authorization.
+
+        No key lookup or collection scan precedes a write. Without an authorized
+        remote identity, duplicate keys are reported by the create endpoint.
+        """
+        remote_id = entry.remote_id if force_overwrite else None
+        if remote_id is not None:
+            if isinstance(remote_id, bool) or not isinstance(remote_id, int) or remote_id < 1:
+                raise ValueError("remote_id must be a positive integer")
             payload = self._strings.update_string(
                 project_id,
-                existing.remote_id,
+                remote_id,
                 entry.to_remote_payload(),
                 cancellation=cancellation,
             )
             if payload is None:
                 return ParaTranzEntry(
-                    existing.remote_id,
+                    remote_id,
                     entry.key,
                     entry.original,
                     entry.translation,

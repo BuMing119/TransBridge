@@ -101,6 +101,8 @@ def sync_request(context, kind: OperationKind, batch: bool, values=None):
             if _bool_value(values.get("apply_remote_deletions", default_deletion is DeletionPolicy.APPLY))
             else DeletionPolicy.PRESERVE
         )
+    if kind is OperationKind.DOWNLOAD and bool(getattr(context, "uses_authoritative_projection", False)):
+        deletion_policy = DeletionPolicy.PRESERVE
     resolve = getattr(context, "resolve_paratranz_target", None)
     if callable(resolve):
         target = resolve(
@@ -257,6 +259,7 @@ def replace_local_snapshots(
     variant_revision: int | None = None,
 ) -> None:
     original_collection = context.collection
+    authoritative = bool(getattr(context, "uses_authoritative_projection", False))
     existing = {entry.identity: entry for entry in original_collection or ()}
     active_scope = f"project:{project_id}"
     entries = []
@@ -292,27 +295,19 @@ def replace_local_snapshots(
             entries.append(
                 replace(
                     current,
-                    original=item.original,
+                    original=current.original if authoritative else item.original,
                     translation=item.translation,
                     stage=item.stage,
-                    context=item.context,
+                    context=current.context if authoritative else item.context,
                     external_refs=next_refs,
                     revision=current.revision.next() if changed else current.revision,
                 )
             )
     candidate = TranslationEntryCollection(entries)
-    if bool(getattr(context, "uses_authoritative_projection", False)):
+    if authoritative:
         candidate_keys = {entry.identity for entry in candidate}
         if candidate_keys != set(existing):
             raise RuntimeError("当前 V2 工程尚不支持通过 ParaTranz 新增或删除本地词条；本地内容未更改。")
-        source_owned_changes = tuple(
-            entry.identity
-            for entry in candidate
-            if (entry.original, entry.context or "")
-            != (existing[entry.identity].original, existing[entry.identity].context or "")
-        )
-        if source_owned_changes:
-            raise RuntimeError("ParaTranz 返回了原文或上下文变更；当前来源基线不可安全改写，本地内容未更改。")
         if active_version_identity is None:
             raise RuntimeError("ParaTranz 同步缺少活动工程版本身份；本地内容未更改。")
         commands = getattr(context, "project_commands", None)

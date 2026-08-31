@@ -22,6 +22,7 @@ from transbridge.application.sync import (
     ParaTranzSyncTaskEntrypoint,
     ParaTranzSyncTaskPreparation,
     SyncOperation,
+    SyncPlanner,
 )
 from transbridge.application.tasks import OwnerRef, TaskRuntime
 from transbridge.bootstrap.runtime import AppRuntime
@@ -88,7 +89,12 @@ def build_paratranz_sync_features(runtime: AppRuntime) -> tuple[OperationFeature
             if remote_project is None:
                 target_name = value.target_project_name or "所选 ParaTranz 项目"
                 raise PermissionError(f"当前账号无权访问“{target_name}”")
-            planning = ParaTranzSyncPlanningUseCase(ParaTranzRemoteSnapshotAdapter(service))
+            planning = ParaTranzSyncPlanningUseCase(
+                ParaTranzRemoteSnapshotAdapter(service),
+                planner=SyncPlanner(
+                    local_state_only=bool(getattr(value.ui_context, "uses_authoritative_projection", False))
+                ),
+            )
             plan = planning.create_plan(
                 CreateSyncPlanRequest(
                     value.project_id,
@@ -126,7 +132,19 @@ def build_paratranz_sync_features(runtime: AppRuntime) -> tuple[OperationFeature
             PreflightCheckStatus.PASSED if not unresolved else PreflightCheckStatus.BLOCKED,
             "" if not unresolved else f"发现 {unresolved} 条无法安全对应的数据，请查看变更明细",
         )
-        return DomainPreflightResult((check,), tuple(plan.counts))
+        checks = (check,)
+        if value.operation is SyncOperation.DOWNLOAD and bool(
+            getattr(value.ui_context, "uses_authoritative_projection", False)
+        ):
+            checks += (
+                PreflightCheckState(
+                    "PARATRANZ_LOCAL_SOURCE_SCOPE",
+                    "当前来源的译文更新",
+                    PreflightCheckStatus.WARNING,
+                    "仅更新当前来源已有条目的译文和状态；云端独有条目跳过，本地原文、上下文和条目集合保持不变。",
+                ),
+            )
+        return DomainPreflightResult(checks, tuple(plan.counts))
 
     def create_sync(kind: OperationKind, context, batch: bool, values):
         request, ready, reason = sync_request(context, kind, batch, values)
@@ -150,6 +168,9 @@ def build_paratranz_sync_features(runtime: AppRuntime) -> tuple[OperationFeature
         project_name = str(getattr(context, "project_name", "") or "当前本地工程")
         variant_name = str(getattr(context, "active_variant", "") or "当前版本")
         recovery_available = _recovery_available(context)
+        local_state_only = kind is OperationKind.DOWNLOAD and bool(
+            getattr(context, "uses_authoritative_projection", False)
+        )
         conflict_summary = _conflict_summary(request)
         return OperationPlanDraft(
             request=request,
@@ -190,13 +211,13 @@ def build_paratranz_sync_features(runtime: AppRuntime) -> tuple[OperationFeature
                     "同步方式",
                     request.conflict_policy.value,
                     control=EditableControl.CHOICE,
-                    options=_conflict_options(kind),
+                    options=_conflict_options(kind, local_state_only=local_state_only),
                 ),
                 EditableFieldState(
                     "apply_remote_deletions",
                     "同时删除云端已明确删除的本地条目",
                     "true" if request.deletion_policy is DeletionPolicy.APPLY else "false",
-                    enabled=kind is OperationKind.DOWNLOAD,
+                    enabled=kind is OperationKind.DOWNLOAD and not local_state_only,
                     control=EditableControl.BOOLEAN,
                     help_text="开启后，云端明确删除的对应条目也会从本地删除。",
                 ),
@@ -353,7 +374,7 @@ def build_paratranz_sync_features(runtime: AppRuntime) -> tuple[OperationFeature
     )
 
 
-def _conflict_options(kind: OperationKind) -> tuple[tuple[str, str], ...]:
+def _conflict_options(kind: OperationKind, *, local_state_only: bool = False) -> tuple[tuple[str, str], ...]:
     if kind is OperationKind.UPLOAD:
         return (
             (ConflictPolicy.PREFER_LOCAL.value, "使用本地内容更新 ParaTranz（推荐）"),
@@ -361,7 +382,10 @@ def _conflict_options(kind: OperationKind) -> tuple[tuple[str, str], ...]:
         )
     return (
         (ConflictPolicy.PREFER_REMOTE.value, "使用 ParaTranz 内容更新本地（推荐）"),
-        (ConflictPolicy.PREFER_LOCAL.value, "保留本地已有内容，只补充云端新增内容"),
+        (
+            ConflictPolicy.PREFER_LOCAL.value,
+            "保留本地已有内容" if local_state_only else "保留本地已有内容，只补充云端新增内容",
+        ),
     )
 
 

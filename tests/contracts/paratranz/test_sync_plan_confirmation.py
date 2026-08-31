@@ -80,6 +80,38 @@ def _remote(
     )
 
 
+@pytest.mark.parametrize("state_only", [False, True])
+def test_download_plan_respects_source_owned_structure_and_text(state_only) -> None:
+    local = (
+        _local("update", "old", remote_id=1),
+        _local("delete", "keep", remote_id=2),
+        _local("source-text", "same", remote_id=3),
+    )
+    remote = (
+        _remote("update", "new", remote_id=1),
+        _remote("delete", "", deleted=True, remote_id=2),
+        replace(_remote("source-text", "same", remote_id=3), original="other original", context="other context"),
+        _remote("remote-only", "new", remote_id=4),
+    )
+    plan = SyncPlanner(local_state_only=state_only).plan(
+        local,
+        remote,
+        operation=SyncOperation.DOWNLOAD,
+        conflict_policy=ConflictPolicy.PREFER_REMOTE,
+        deletion_policy=DeletionPolicy.APPLY,
+    )
+    assert {item.entry_key.local_key: item.action for item in plan.items} == {
+        "update": SyncAction.UPDATE_LOCAL,
+        "delete": SyncAction.SKIP if state_only else SyncAction.DELETE_LOCAL,
+        "source-text": SyncAction.SKIP if state_only else SyncAction.UPDATE_LOCAL,
+        "remote-only": SyncAction.SKIP if state_only else SyncAction.CREATE_LOCAL,
+    }
+    assert plan.compute_hash() == plan.plan_hash
+    assert SyncPlanner(local_state_only=state_only).plan(
+        local, remote, operation=SyncOperation.UPLOAD, conflict_policy=ConflictPolicy.PREFER_LOCAL
+    ) == SyncPlanner().plan(local, remote, operation=SyncOperation.UPLOAD, conflict_policy=ConflictPolicy.PREFER_LOCAL)
+
+
 def test_golden_plan_covers_create_update_conflict_skip_and_explicit_delete() -> None:
     local = (
         _local("create", "local"),

@@ -17,6 +17,7 @@ from typing import Protocol
 from transbridge.application.contracts import RequestContext
 from transbridge.application.tasks import OwnerRef, TaskRuntime
 from transbridge.bootstrap.runtime import AppRuntime
+from transbridge.ui.presentation.task_projection import TaskProjectionBinding
 
 from .coordinator import OperationPlanCoordinator
 from .plan_dialog import OperationPlanDialog
@@ -133,6 +134,7 @@ class OperationPlanFacade:
             discard_factories={kind: feature.discard_draft for kind, feature in self._features.items()},
             dialog_factory=dialog_factory,
             dialog_factories=dialog_factories,
+            execution_observer=self._observe_execution,
         )
 
     @property
@@ -206,6 +208,19 @@ class OperationPlanFacade:
                 expired = self._owner_order.pop(0)
                 self._owners.pop(expired, None)
         return scope_key
+
+    def _observe_execution(self, ref, owner_id: str, dialog) -> None:
+        with self._lock:
+            owner = self._owners[owner_id]
+
+        def on_change(activity) -> None:
+            if activity.run_id == (ref.run_id or ref.job_id):
+                dialog.execution_changed.emit(activity)
+
+        binding = TaskProjectionBinding(self._runtime.tasks, owner, on_change)
+        dialog.execution_finished.connect(binding.close)
+        dialog.destroyed.connect(binding.close)
+        binding.start()
 
 
 __all__ = [

@@ -361,10 +361,11 @@ def _tool_upload_entries(args: dict, ctx, collection) -> ToolResult:
         failed_items = []
         for e in entries:
             try:
+                reference = _paratranz_ref(e, pid) if force else None
                 client.upsert_entry(
                     pid,
                     ParaTranzEntry(
-                        None,
+                        reference.opaque_id if reference is not None else None,
                         e.key,
                         e.original,
                         e.translation or "",
@@ -637,7 +638,7 @@ _PARAM_SCHEMAS = {
         "force_overwrite": {
             "type": "bool",
             "required": False,
-            "description": "Whether to overwrite existing entries; defaults to false",
+            "description": "Overwrite only with a stored remote ID for this project; no key lookup; default false",
         },
         "entry_ids": {
             "type": "list",
@@ -749,7 +750,8 @@ def _register_paratranz_tools():
                     "①Upload local entries to ParaTranz. ②Parameters: project_id (optional), "
                     "entry_ids (optional list of "
                     "keys from get_visible_entries; uploads all entries when omitted), "
-                    "force_overwrite (default false). Key "
+                    "force_overwrite (default false; updates require a stored remote ID for this project). "
+                    "Without that ID, creates directly and reports server conflicts; never searches by key. Key "
                     "format: {record_type}:{form_id}, for example NPC_:00012345. Write permission, long-running, and "
                     "confirmation required. ③Returns: {uploaded,total,failed_items:[{key,error}]}. "
                     "Rule: uploading 100 or "

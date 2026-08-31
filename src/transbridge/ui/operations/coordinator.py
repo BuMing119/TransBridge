@@ -32,6 +32,7 @@ class OperationPlanCoordinator:
         preflight_worker_factory=ApiWorker,
         dialog_factory=OperationPlanDialog,
         dialog_factories: Mapping[OperationKind, OperationContextDialogFactory] | None = None,
+        execution_observer: Callable[[object, str, object], None] | None = None,
     ) -> None:
         self._presenter = presenter
         self._draft_factories = dict(draft_factories)
@@ -41,6 +42,7 @@ class OperationPlanCoordinator:
         self._preflight_worker_factory = preflight_worker_factory
         self._dialog_factory = dialog_factory
         self._dialog_factories = dict(dialog_factories or {})
+        self._execution_observer = execution_observer
         self._owned_windows: dict[str, object] = {}
         self._preflight_workers: dict[str, object] = {}
 
@@ -183,12 +185,21 @@ class OperationPlanCoordinator:
                 show_error("无法返回编辑", str(exc))
 
         def confirm(_session_id, token) -> None:
+            running = getattr(dialog, "set_execution_running", None)
+            retain_session = callable(running) and self._execution_observer is not None
+            if retain_session:
+                running(True)
             try:
-                self._presenter.confirm(plan.session_id, token, owner_id=owner_id)
+                ref = self._presenter.confirm(plan.session_id, token, owner_id=owner_id, retain_session=retain_session)
             except (RuntimeError, TypeError, ValueError) as exc:
+                if retain_session:
+                    running(False)
                 show_error("无法开始操作", str(exc))
                 if kind in {OperationKind.UPLOAD, OperationKind.DOWNLOAD}:
                     preflight(plan.session_id, dialog.edited_values())
+                return
+            if retain_session:
+                self._execution_observer(ref, owner_id, dialog)
                 return
             dialog.accept()
             release()
