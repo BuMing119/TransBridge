@@ -25,11 +25,15 @@ from transbridge.application.projects import (
 from transbridge.application.projects.source_content import authoritative_baseline_sources
 from transbridge.application.projects.source_registry import legacy_source_role
 from transbridge.persistence.project_provisioning import TranslationIoProjectSourcePreparer
+from transbridge.persistence.project_recovery import (
+    ProjectRecoverySnapshot,
+    load_recovery_snapshot,
+    source_recovery_diagnostic,
+    validate_recovery_context,
+)
 from transbridge.persistence.v2 import (
     SCHEMA_VERSION,
     EntityKind,
-    LoadedRecord,
-    ProjectDto,
     ProjectId,
     ProjectRef,
     ProjectRepository,
@@ -39,6 +43,7 @@ from transbridge.persistence.v2 import (
     VariantRepository,
 )
 from transbridge.persistence.v2.baselines import BaselineRegistry
+from transbridge.persistence.v2.models import PersistenceV2Error
 from transbridge.persistence.v2.schema import parse_json_bytes, version_of
 
 PROJECT_FILE_FILTER = "项目 JSON (*.json);;所有文件 (*)"
@@ -54,6 +59,7 @@ class PreparedCurrentProject:
     name: str
     sources: tuple[dict, ...]
     hydrations: tuple[PreparedSourceHydration, ...] = ()
+    recovery: ProjectRecoverySnapshot | None = None
 
 
 class CurrentProjectOpener:
@@ -131,14 +137,15 @@ class CurrentProjectOpener:
                     "PROJECT_RECORD_OUTSIDE_REPOSITORY",
                     "所选项目不属于当前数据目录。",
                 )
-            loaded = self._projects.load(project_ref)
-            if not isinstance(loaded, LoadedRecord) or not isinstance(loaded.value, ProjectDto):
+            try:
+                project = self._projects.read_snapshot(project_ref)
+            except (OSError, PersistenceV2Error) as exc:
                 raise DomainError(
                     ErrorCategory.PREREQUISITE,
                     "PROJECT_RECORD_UNAVAILABLE",
                     "项目记录不可用或为只读状态。",
-                )
-            project = loaded.value
+                    cause=exc,
+                ) from exc
             variant_id = project.envelope.data.get("active_variant_id")
             if not isinstance(variant_id, str) or not variant_id:
                 raise DomainError(
@@ -157,7 +164,15 @@ class CurrentProjectOpener:
             baseline_sources = authoritative_baseline_sources(
                 sources, tuple(project.envelope.data.get("source_relations", ()))
             )
-            loaded_sources = tuple(self._baseline_loader(source, context) for source in baseline_sources)
+            loaded_sources = []
+            source_diagnostics = []
+            for source in baseline_sources:
+                try:
+                    loaded_sources.append(self._baseline_loader(source, context))
+                except (OSError, DomainError) as exc:
+                    source_diagnostics.append(source_recovery_diagnostic(source, exc))
+                    # Recovery only needs persisted translations, not more source diagnostics.
+                    break
             baselines = tuple(
                 item.baseline if isinstance(item, PreparedProjectSource) else item for item in loaded_sources
             )
@@ -166,7 +181,7 @@ class CurrentProjectOpener:
                 for item in loaded_sources
                 if isinstance(item, PreparedProjectSource) and item.hydration is not None
             )
-            if sources and not baselines:
+            if sources and not baselines and not source_diagnostics:
                 raise DomainError(
                     ErrorCategory.PREREQUISITE,
                     "SOURCE_BASELINE_REQUIRED",
@@ -176,6 +191,16 @@ class CurrentProjectOpener:
                 VariantRef(VariantId(str(value)), project_ref.identity)
                 for value in project.envelope.data.get("variant_ids", ())
             )
+            recovery = None
+            if source_diagnostics:
+                recovery = load_recovery_snapshot(
+                    str(selected),
+                    str(project.envelope.data["name"]),
+                    variant_ref,
+                    self._variants,
+                    tuple(source_diagnostics),
+                    context,
+                )
             return OperationResult.completed(
                 PreparedCurrentProject(
                     project_ref,
@@ -185,7 +210,9 @@ class CurrentProjectOpener:
                     str(project.envelope.data["name"]),
                     sources,
                     hydrations,
+                    recovery,
                 ),
+                diagnostics=tuple(source_diagnostics),
                 run_id=context.run_id,
             )
         except Exception as exc:
@@ -221,6 +248,22 @@ class CurrentProjectOpener:
         """Commit a prepared Project on the caller thread."""
 
         try:
+            if prepared.recovery is not None:
+                # A recovery result is deliberately detached from the editable
+                # lifecycle. Do not save/discard the current project or replace
+                # its baseline registry with a partial source set.
+                validate_recovery_context(prepared.recovery.variant.ref, context)
+                return OperationResult.completed(
+                    {
+                        "project_id": prepared.project_ref.identity.value,
+                        "variant_id": prepared.variant_ref.identity.value,
+                        "name": prepared.name,
+                        "read_only": True,
+                        "recovery": prepared.recovery,
+                    },
+                    diagnostics=prepared.recovery.diagnostics,
+                    run_id=context.run_id,
+                )
             for variant_ref in prepared.variant_refs:
                 self._baselines.register(
                     prepared.project_ref,

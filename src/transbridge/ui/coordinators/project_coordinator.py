@@ -316,6 +316,21 @@ class ProjectCoordinator:
                 diagnostic = opened.diagnostics[0]
                 _show_failure(diagnostic.code, diagnostic.message)
                 return
+            recovery = opened.value.get("recovery")
+            if recovery is not None:
+                from transbridge.ui.project_recovery import ProjectRecoveryDialog
+
+                if on_failure is not None:
+                    on_failure("PROJECT_SOURCE_RECOVERY_AVAILABLE", "来源不可用，已打开只读恢复视图。")
+                self._host.show_message(f"项目「{recovery.name}」已打开只读恢复视图，当前工程保持不变")
+                dialog = ProjectRecoveryDialog(recovery, self._host)
+                self._recovery_dialog = dialog
+                dialog.accepted.connect(
+                    lambda: QTimer.singleShot(0, lambda: self.open_project_path(recovery.project_path))
+                )
+                dialog.finished.connect(lambda _result: setattr(self, "_recovery_dialog", None))
+                dialog.open()
+                return
             hydration_error = self._restore_plugin_sources(
                 opened.value["sources"],
                 opened.value.get("hydrations"),

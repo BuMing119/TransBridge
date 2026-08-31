@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 from threading import RLock
+from typing import cast
 
 from .filesystem import (
     PersistenceFilesystemPort,
@@ -79,6 +80,14 @@ class JsonRepository[RefT, DtoT]:
     def path_for(self, ref: RefT) -> str:
         self._check_ref(ref)
         return self._paths.record(ref)
+
+    def read_snapshot(self, ref: RefT) -> DtoT:
+        """Validate a record without writing migrations, backups or quarantine files."""
+
+        document = parse_json_bytes(self._filesystem.read_bytes(self.path_for(ref)))
+        if version_of(document) < SCHEMA_VERSION:
+            document = migrate_to_current(document, ref).document
+        return cast(DtoT, validate_v2(document, ref))
 
     def load(self, ref: RefT) -> LoadResult:
         self._check_ref(ref)
