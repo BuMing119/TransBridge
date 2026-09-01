@@ -67,81 +67,6 @@ def _collection_type():
     return TranslationEntryCollection
 
 
-def _create_slot(
-    path: str,
-    label: str,
-    collection: TranslationEntryCollection,
-    ctx,
-    *,
-    source_snapshot=None,
-    format_id=None,
-) -> ToolResult:
-    """创建新的 CollectionSlot 并激活。
-
-    Args:
-        path: 文件路径（作为 slot key）
-        label: slot 显示名称（文件名不含扩展名）
-        collection: 解析得到的翻译条目集合
-        ctx: 执行上下文
-    """
-    from transbridge.ui.context import CollectionSlot
-
-    # 检查同名 slot 是否已存在
-    if path in ctx.slots:
-        return ToolResult.fail(
-            f"集合「{label}」已存在。如需覆盖请先在界面中手动移除，或使用 action=append 将条目追加到当前活跃集合。"
-        )
-
-    slot = CollectionSlot(
-        label=label,
-        collection=collection,
-        source_snapshot=source_snapshot,
-        format_id=format_id,
-    )
-    ctx.add_slot(path, slot)
-    ctx.activate_slot(path)
-
-    return ToolResult.ok(
-        f"已创建并激活集合「{label}」，共 {len(collection)} 条条目",
-        data={
-            "action": "create_slot",
-            "label": label,
-            "entry_count": len(collection),
-            "activated": True,
-        },
-    )
-
-
-def _append_to_collection(collection: TranslationEntryCollection, ctx) -> ToolResult:
-    """将解析出的条目追加到当前活跃集合。
-
-    Args:
-        collection: 解析得到的翻译条目集合
-        ctx: 执行上下文
-    """
-    active_slot = getattr(ctx, "active_slot", None)
-    if active_slot is None or active_slot.collection is None:
-        return ToolResult.fail(
-            "当前无活跃集合，无法追加。请先使用 action=create_slot 创建集合，或通过 switch_collection 切换到已有集合。"
-        )
-
-    existing = active_slot.collection
-    added_count = 0
-    for entry in collection:
-        existing.add(entry, overwrite=True)
-        added_count += 1
-
-    return ToolResult.ok(
-        f"已追加 {added_count} 条条目到当前集合「{active_slot.label}」，集合总计 {len(existing)} 条",
-        data={
-            "action": "append",
-            "added_count": added_count,
-            "total_count": len(existing),
-            "target_label": active_slot.label,
-        },
-    )
-
-
 # ── Parser 工具函数工厂 ─────────────────────────────────────────
 # M1: 消除 5 个 parser 函数中 95% 相同的代码（action校验/path校验/懒加载导入/解析/slot操作）
 
@@ -165,8 +90,6 @@ _PARSER_DISPATCH = {
         "label": "SST 二进制",
     },
     "json": {
-        "import_fn": _collection_type,
-        "parse_fn_str": "from_json_file",
         "label": "JSON 导入",
     },
 }
@@ -177,6 +100,10 @@ def _parse_file(file_type: str, args: dict, ctx) -> ToolResult:
 
     file_type: "esp" | "eet" | "xt" | "sst" | "json"
     """
+    from ._project_tool_mutations import ProjectToolTarget
+    from ._source_import import publish_import
+
+    target = ProjectToolTarget.capture(ctx)
     path = args.get("path", "")
     action = args.get("action", "create_slot")
     if action not in ("create_slot", "append"):
@@ -190,10 +117,12 @@ def _parse_file(file_type: str, args: dict, ctx) -> ToolResult:
     dispatch = _PARSER_DISPATCH[file_type]
     source_snapshot = None
     format_id = None
+    options = ()
     try:
         if file_type == "json":
-            cls = dispatch["import_fn"]()
-            collection = getattr(cls, dispatch["parse_fn_str"])(path)
+            from ._json_import import parse_json_source
+
+            collection, source_snapshot, format_id, options = parse_json_source(path, args)
         elif "format_id" in dispatch:
             from transbridge.application.contracts import OperationOutcome, RequestContext
             from transbridge.application.io import (
@@ -226,21 +155,18 @@ def _parse_file(file_type: str, args: dict, ctx) -> ToolResult:
             cls = getattr(mod, dispatch["class"])
             result = cls().parse(path)
             collection = _to_collection(result)
+        return publish_import(
+            target,
+            path,
+            Path(path).stem,
+            collection,
+            source_snapshot,
+            format_id,
+            action,
+            options,
+        )
     except Exception as exc:
         return ToolResult.fail(f"解析 {dispatch['label']} 失败: {_sanitize_error(str(exc), path)}")
-
-    label = Path(path).stem
-    if action == "create_slot":
-        return _create_slot(
-            path,
-            label,
-            collection,
-            ctx,
-            source_snapshot=source_snapshot,
-            format_id=format_id,
-        )
-    else:
-        return _append_to_collection(collection, ctx)
 
 
 # ── Parser 工具函数 ──────────────────────────────────────────────
@@ -315,6 +241,16 @@ _PARAM_SCHEMAS = {
     },
     "import_json": {
         "path": {"type": "str", "required": True, "description": "Path to the JSON file"},
+        "format": {
+            "type": "str",
+            "required": False,
+            "description": "auto/paratranz/transbridge/dsd; ambiguous JSON requires an explicit choice",
+        },
+        "project_id": {
+            "type": "int",
+            "required": False,
+            "description": "Known ParaTranz project ID for remote references; otherwise IDs remain offline-scoped",
+        },
         "action": {
             "type": "str",
             "required": False,
@@ -372,7 +308,15 @@ def _register_parser_tools():
             {
                 "name": "import_json",
                 "display_name": "导入JSON",
-                "description": "①Import translation entries from a JSON file, supporting the standard [{key,original,translation,stage,context}] format and DSD format. ②Parameters: path (required, .json), action (optional; create_slot by default, or append). ③Returns: create_slot→{action,label,entry_count,activated}, append→{action,added_count,total_count,target_label}. Rules: the file path is not recorded for write_back inference; append requires has_active_collection; path must be a normalized path within a root authorized by RuntimeContext.",  # noqa: E501
+                "description": (
+                    "①Import JSON using its explicit identity contract, retaining remote references and extensions. "
+                    "②Arguments: path, action=create_slot/append, format=auto/paratranz/transbridge/dsd, "
+                    "optional project_id for ParaTranz remote references. Ambiguous JSON requires format. "
+                    "③create_slot returns {action,label,entry_count,activated}; append returns counts. "
+                    "In V2, create_slot requires a formal source adapter (currently ParaTranz JSON); "
+                    "append updates only existing full EntryKeys and cannot add an unregistered source. "
+                    "Paths must be within an authorized root."
+                ),
                 "execute": _tool_import_json,
                 "parameters": _PARAM_SCHEMAS.get("import_json", {}),
                 "permission": "write",

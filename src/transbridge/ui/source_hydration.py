@@ -27,6 +27,7 @@ def collection_from_hydration(source) -> TranslationEntryCollection:
                 revision=item.revision,
                 provenance=item.provenance,
                 metadata=item.metadata,
+                string_id=item.string_id,
             )
             for item in source.entries
         )
@@ -40,6 +41,7 @@ def slot_from_hydration(source, *, plugin=None) -> CollectionSlot:
         collection=collection_from_hydration(source),
         esp_path=source.location if format_id is FormatId.PLUGIN_SSE else None,
         eet_path=source.location if format_id is FormatId.XML_EET else None,
+        xt_path=source.location if format_id is FormatId.XML_XT else None,
         plugin=plugin,
         source_snapshot=source.source_snapshot,
         format_id=format_id,

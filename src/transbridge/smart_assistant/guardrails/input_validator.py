@@ -51,7 +51,7 @@ class InputValidationGuard(GuardMiddleware):
             if not result.allowed:
                 return result
         # E1: 路径遍历检测
-        path_result = self._authorize_paths(args, ctx)
+        path_result = self._authorize_paths(args, ctx, output_path=step.get("tool") == "write_back")
         if not path_result.allowed:
             return path_result
         return GuardResult(True)
@@ -59,7 +59,7 @@ class InputValidationGuard(GuardMiddleware):
     def after_execute(self, step, result, ctx) -> GuardResult:
         return GuardResult(True)
 
-    def _authorize_paths(self, args: dict, ctx) -> GuardResult:
+    def _authorize_paths(self, args: dict, ctx, *, output_path: bool = False) -> GuardResult:
         """E1: 检测路径参数中的路径遍历攻击和绝对路径注入。
 
         M10: 使用启发式检测替代硬编码白名单。任何参数名含 path/file/dir/
@@ -96,7 +96,7 @@ class InputValidationGuard(GuardMiddleware):
             decision = policy.authorize(
                 value,
                 working_directory=base,
-                for_creation=for_creation,
+                for_creation=for_creation or (output_path and key == "path"),
             )
             if not decision.allowed:
                 logger.warning("InputValidation: 路径参数 '%s' 被拒绝: %s", key, decision.code)

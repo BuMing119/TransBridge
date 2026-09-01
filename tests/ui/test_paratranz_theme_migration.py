@@ -26,6 +26,7 @@ def qapp():
 
 
 class _Context(QObject):
+    paratranz_permissions_changed = pyqtSignal()
     project_selected = pyqtSignal(object)
     config_changed = pyqtSignal(object)
     project_list_changed = pyqtSignal()

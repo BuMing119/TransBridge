@@ -18,8 +18,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.paratranz.workflow.downloader import ParaTranzDownloader
 from transbridge.ui.foundation.adapters import ThemeView
+from transbridge.ui.operations.authoritative_batch_download import AuthoritativeBatchDownloadSession
 
 from ...workers import ApiWorker
 from .base import OpCard
@@ -35,6 +37,7 @@ class BatchDownloadResult:
     failed_count: int = 0
     merged_total: int = 0
     details: list[str] = field(default_factory=list)
+    updated_collections: list[tuple[object, TranslationEntryCollection]] = field(default_factory=list)
 
 
 class _SlotSelectDialog(QDialog):
@@ -376,13 +379,6 @@ class DownloadCard(OpCard):
         """批量下载入口。"""
         if self._dispatch_planned("download", self._ctx, batch=True):
             return
-        if bool(getattr(self._ctx, "uses_authoritative_projection", False)):
-            QMessageBox.warning(
-                self,
-                "批量下载暂不可用",
-                "V2 工程的批量 ParaTranz 下载尚未接入原子 Variant 写入；为避免内容只改在界面中，本次未执行。",
-            )
-            return
         slots = self._ctx.slots
         if len(slots) <= 1:
             return
@@ -437,6 +433,11 @@ class DownloadCard(OpCard):
         project_id = project.get("id")
         project_name = project.get("name", "?")
         config = self._ctx.config
+        try:
+            authority = AuthoritativeBatchDownloadSession.capture(self._ctx)
+        except RuntimeError as exc:
+            QMessageBox.warning(self, "批量下载", str(exc))
+            return
 
         # 确认对话框
         slot_names = [s.label or Path(s.esp_path).stem for s in selected_slots]
@@ -464,7 +465,6 @@ class DownloadCard(OpCard):
                 raise RuntimeError(f"获取文件列表失败：{e}")
 
             total = len(selected_slots)
-
             for i, slot in enumerate(selected_slots):
                 slot_name = slot.label or Path(slot.esp_path).stem
 
@@ -483,23 +483,28 @@ class DownloadCard(OpCard):
                 file_names_str = ", ".join([name for name, _ in split_files])
 
                 try:
+                    working_collection = authority.detached(slot.collection)
                     result = downloader.download_to_collection(
                         project_id,
-                        slot.collection,
+                        working_collection,
                         file_ids=file_ids,
                     )
                     results.success_count += 1
                     results.merged_total += result.merged
                     results.details.append(f"✓ {slot_name}: 合并 {result.merged} 条 ({file_names_str})")
+                    if authority.authoritative:
+                        results.updated_collections.append((slot, working_collection))
                 except Exception as e:
                     results.failed_count += 1
                     results.details.append(f"✗ {slot_name}: {e}")
 
             if progress_cb:
                 progress_cb(total, total, "下载完成")
+            authority.commit(results.updated_collections)
             return results
 
         def _on_done(result: BatchDownloadResult):
+            authority.publish(result.updated_collections)
             # 触发 collection_changed 更新 UI
             self._ctx.collection_changed.emit(self._ctx.collection)
 

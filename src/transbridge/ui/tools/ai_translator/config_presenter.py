@@ -187,21 +187,7 @@ class ConfigPresenter:
         return AiExecutionProfile.from_config(preset, self.build())
 
     def test_connection(self) -> ConnectionTestResult:
-        config = self.build()
-        if not config.api_key:
-            return ConnectionTestResult("warning", "测试 LLM 连接", "请先填写 LLM API Key。")
-        if not config.model:
-            return ConnectionTestResult("warning", "测试 LLM 连接", "请先填写 LLM 模型名。")
-        try:
-            from transbridge.infra.llm_client import create_llm_client
-
-            reply = create_llm_client(config).chat(
-                [{"role": "user", "content": "Say 'OK' in one word."}],
-                max_tokens=10,
-            )
-            return ConnectionTestResult("info", "LLM 连接成功", f"模型回复：{reply}")
-        except Exception as exc:
-            return ConnectionTestResult("critical", "LLM 连接失败", str(exc))
+        return check_llm_connection(self.build())
 
     def test_embedding_connection(self, config: LLMConfig | None = None) -> ConnectionTestResult:
         """Run an explicit, user-triggered Embedding capability check."""
@@ -242,3 +228,21 @@ class ConfigPresenter:
             return ConnectionTestResult("info", "语义检索可用", f"{backend}编码成功，向量维度 {dimension}。")
         except Exception as exc:
             return ConnectionTestResult("critical", "语义检索检查失败", str(exc))
+
+
+def check_llm_connection(config: LLMConfig) -> ConnectionTestResult:
+    """Check a detached config snapshot without retaining any Qt-backed presenter."""
+    if not config.api_key:
+        return ConnectionTestResult("warning", "测试 LLM 连接", "请先填写 LLM API Key。")
+    if not config.model:
+        return ConnectionTestResult("warning", "测试 LLM 连接", "请先填写 LLM 模型名。")
+    try:
+        from transbridge.infra.llm_client import create_llm_client
+
+        reply = create_llm_client(config).chat(
+            [{"role": "user", "content": "Say 'OK' in one word."}],
+            max_tokens=10,
+        )
+        return ConnectionTestResult("info", "LLM 连接成功", f"模型回复：{reply}")
+    except Exception as exc:
+        return ConnectionTestResult("critical", "LLM 连接失败", str(exc))

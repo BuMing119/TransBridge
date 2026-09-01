@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import ast
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,8 +10,11 @@ from PyQt6.QtCore import QCoreApplication, QEvent, QObject, QThread, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QWidget
 import pytest
 
+from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.converter.translation_entry import STAGE_HIDDEN, STAGE_LOCKED, TranslationEntry
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.paratranz.config_manager import LLMConfig
+from transbridge.ui.projection_types import CollectionSlot
 from transbridge.ui.tools.ai_translator import config_presenter as config_module
 from transbridge.ui.tools.ai_translator._batch_translation_progress_window import (
     _BatchTranslationProgressWindow,
@@ -21,7 +24,7 @@ from transbridge.ui.tools.ai_translator._translation_progress_window import (
     _TranslationProgressWindow,
 )
 from transbridge.ui.tools.ai_translator.ai_translator_window import AITranslatorWindow
-from transbridge.ui.tools.ai_translator.batch_runtime import TermSourceInspector
+from transbridge.ui.tools.ai_translator.batch_runtime import TermSourceInspector, _prepare_authoritative_batch
 from transbridge.ui.tools.ai_translator.config_presenter import ConfigPresenter
 from transbridge.ui.tools.ai_translator.result_presenter import ResultPresenter
 from transbridge.ui.tools.ai_translator.result_view import show_polish_report
@@ -63,6 +66,82 @@ class WorkbenchPort:
 
     def locate_entry(self, entry_id: str) -> None:
         self.located.append(entry_id)
+
+
+class _BatchCommands:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def replace_entry_states(self, states, context, **expected):
+        self.calls.append((dict(states), context, expected))
+        return SimpleNamespace(is_success=True, value={"revision": 2}, diagnostics=())
+
+
+def _authoritative_batch_fixture():
+    first = TranslationEntry(
+        "first",
+        "first",
+        "First",
+        "",
+        0,
+        "INFO:NAM1",
+        entry_key=EntryKey(SourceNamespace("source:first"), "first"),
+    )
+    second = TranslationEntry(
+        "second",
+        "second",
+        "Second",
+        "",
+        0,
+        "INFO:NAM1",
+        entry_key=EntryKey(SourceNamespace("source:second"), "second"),
+    )
+    slots = [
+        CollectionSlot("first", TranslationEntryCollection((first,))),
+        CollectionSlot("second", TranslationEntryCollection((second,))),
+    ]
+    commands = _BatchCommands()
+    context = SimpleNamespace(
+        active_version_identity=("project", "variant"),
+        uses_authoritative_projection=True,
+        project_revision=4,
+        variant_revision=1,
+        project_commands=commands,
+        runtime_context=object(),
+    )
+    return context, slots, commands
+
+
+def test_authoritative_batch_ai_publishes_detached_results_once() -> None:
+    context, slots, commands = _authoritative_batch_fixture()
+    detached, publish = _prepare_authoritative_batch(context, slots)
+    detached[0].collection = TranslationEntryCollection(
+        replace(entry, translation="译文一", stage=1) for entry in detached[0].collection
+    )
+    detached[1].collection = TranslationEntryCollection(
+        replace(entry, translation="译文二", stage=1) for entry in detached[1].collection
+    )
+
+    assert [entry.translation for slot in slots for entry in slot.collection] == ["", ""]
+    assert publish(SimpleNamespace(failed_plugins=0), cancelled=False)
+
+    assert len(commands.calls) == 1
+    assert {value[0] for value in commands.calls[0][0].values()} == {"译文一", "译文二"}
+    assert [entry.translation for slot in slots for entry in slot.collection] == ["译文一", "译文二"]
+    assert [entry.revision.value for slot in slots for entry in slot.collection] == [1, 1]
+
+
+@pytest.mark.parametrize(("failed", "cancelled"), [(1, False), (0, True)])
+def test_authoritative_batch_ai_does_not_publish_partial_or_cancelled_results(failed, cancelled) -> None:
+    context, slots, commands = _authoritative_batch_fixture()
+    detached, publish = _prepare_authoritative_batch(context, slots)
+    detached[0].collection = TranslationEntryCollection(
+        replace(entry, translation="不应提交", stage=1) for entry in detached[0].collection
+    )
+
+    assert not publish(SimpleNamespace(failed_plugins=failed), cancelled=cancelled)
+    assert not commands.calls
+    assert [entry.translation for slot in slots for entry in slot.collection] == ["", ""]
 
 
 def test_scope_presenter_uses_public_workbench_snapshot_and_filters_locked_entries() -> None:

@@ -8,6 +8,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 from transbridge.entrypoints.mcp import RedactingLogFilter
 
 
@@ -22,10 +24,36 @@ def test_gui_cli_forwards_explicit_project_path(monkeypatch) -> None:
     assert received == ["D:/data/projects/project.json"]
 
 
-def test_cli_capability_command_is_headless_and_json_serializable() -> None:
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (["gui", "--import-project", "D:/backup/project.transbridge"], "D:/backup/project.transbridge"),
+        (["D:/backup/project.transbridge"], "D:/backup/project.transbridge"),
+    ],
+)
+def test_gui_cli_routes_project_archives_to_the_import_flow(monkeypatch, argv, expected) -> None:
+    from transbridge import cli
+    from transbridge.entrypoints import gui
+
+    received = []
+    monkeypatch.setattr(
+        gui,
+        "main",
+        lambda *, initial_project_path=None, initial_import_path=None: (
+            received.append((initial_project_path, initial_import_path)) or 0
+        ),
+    )
+
+    assert cli.main(argv) == 0
+    assert received == [(None, expected)]
+
+
+@pytest.mark.parametrize("stdout_encoding", ["ascii", "gbk", "utf-8"])
+def test_cli_capability_command_is_headless_and_json_serializable(stdout_encoding: str) -> None:
     project_root = Path(__file__).parents[3]
     script = (
         f"import sys; sys.path.insert(0, {str(project_root / 'src')!r}); "
+        f"sys.stdout.reconfigure(encoding={stdout_encoding!r}); "
         "from transbridge.cli import main; "
         "code = main(['capabilities']); "
         "assert not any(name == 'PyQt6' or name.startswith('PyQt6.') for name in sys.modules); "

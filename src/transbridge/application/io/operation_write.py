@@ -22,6 +22,7 @@ from transbridge.converter.translation_entry import TranslationEntry
 from .catalog import FormatCatalog, default_format_catalog
 from .contracts import CapabilityLevel, FormatId, SourceDescriptor, SourceSnapshot, WriteRequest
 from .mutation import EntrySnapshot
+from .plugin_write import plugin_artifact_paths
 from .publish import (
     BackupPolicy,
     ConflictPolicy,
@@ -79,6 +80,7 @@ class HydratedWritePreflight:
     target_fingerprint: FileFingerprint
     checks: tuple[WritePreflightCheck, ...]
     blocked_entry_keys: tuple[str, ...] = ()
+    artifact_fingerprints: tuple[tuple[str, FileFingerprint], ...] = ()
 
     @property
     def ready(self) -> bool:
@@ -120,8 +122,13 @@ class HydratedWritePreflightService:
                 "输出位置不支持同卷原子替换。",
             )
         )
-        initial = self._filesystem.fingerprint(target) if parent_ready else FileFingerprint.missing()
-        overwrite_ready = not initial.exists or draft.conflict_policy is ConflictPolicy.EXPLICIT_OVERWRITE
+        paths = plugin_artifact_paths(draft.source_snapshot, target, draft.options)
+        fingerprints = tuple(
+            (self._filesystem.canonicalize(path), self._filesystem.fingerprint(path)) for path in paths
+        )
+        initial = fingerprints[0][1]
+        any_existing = any(value.exists for _path, value in fingerprints)
+        overwrite_ready = not any_existing or draft.conflict_policy is ConflictPolicy.EXPLICIT_OVERWRITE
         checks.append(
             WritePreflightCheck(
                 "OVERWRITE_CONFIRMED",
@@ -129,7 +136,7 @@ class HydratedWritePreflightService:
                 "目标已存在；必须显式选择覆盖策略。",
             )
         )
-        backup_ready = not initial.exists or draft.backup_policy is not BackupPolicy.NONE
+        backup_ready = not any_existing or draft.backup_policy is not BackupPolicy.NONE
         checks.append(
             WritePreflightCheck(
                 "BACKUP_POLICY",
@@ -159,6 +166,8 @@ class HydratedWritePreflightService:
         snapshot_valid = draft.source_snapshot.format_id is draft.format_id and (
             snapshot_content is None or hashlib.sha256(snapshot_content).hexdigest() == draft.source_snapshot.sha256
         )
+        if draft.format_id is FormatId.PLUGIN_SSE:
+            snapshot_valid = snapshot_valid and snapshot_content is not None
         checks.append(
             WritePreflightCheck(
                 "SOURCE_SNAPSHOT_BOUND",
@@ -172,6 +181,7 @@ class HydratedWritePreflightService:
             initial,
             tuple(checks),
             blocked,
+            fingerprints,
         )
 
 
@@ -203,6 +213,10 @@ class HydratedWriteWorkload:
         if adapter is None:
             return _failed("FORMAT_ADAPTER_UNAVAILABLE", "写回格式适配器不可用。", run_context.ref.run_id)
         request_context = replace(draft.context, run_id=run_context.ref.run_id)
+        options = dict(draft.options)
+        options["source_authority"] = "hydration-v2"
+        if draft.format_id is FormatId.PLUGIN_SSE:
+            options.setdefault("language", dict(draft.source_snapshot.metadata).get("localized_language", "english"))
         request = WriteRequest(
             target=SourceDescriptor(draft.target_path, display_name=Path(draft.target_path).name),
             format_id=draft.format_id,
@@ -210,11 +224,20 @@ class HydratedWriteWorkload:
             variant_revision=draft.variant_revision,
             context=request_context,
             source_snapshot=draft.source_snapshot,
-            options=tuple((key, value) for key, value in draft.options if key != "source_authority")
-            + (("source_authority", "hydration-v2"),),
+            options=tuple(options.items()),
             cancellation=run_context.cancellation,
             stage_policy=self._stage_policy,
         )
+        if len(self._preflight.artifact_fingerprints) > 1:
+            from .publish.plugin_bundle import PluginBundlePublisher
+
+            return PluginBundlePublisher(self._filesystem, adapter).publish(
+                request,
+                self._preflight.artifact_fingerprints,
+                conflict_policy=draft.conflict_policy,
+                backup_policy=draft.backup_policy,
+                commit_guard=run_context.publish_commit_guard(),
+            )
         target = PublishTarget(
             draft.target_path,
             conflict_policy=draft.conflict_policy,
@@ -253,6 +276,7 @@ def _translation_entries(
                 revision=item.revision,
                 provenance=item.provenance,
                 metadata=item.metadata,
+                string_id=item.string_id,
             )
         )
     return tuple(output)
@@ -274,6 +298,7 @@ def _write_digest(draft: HydratedWriteDraft) -> str:
                 "original": entry.original,
                 "translation": entry.translation,
                 "stage": entry.stage,
+                "string_id": entry.string_id,
             }
             for entry in _translation_entries(draft.entries)
         ],

@@ -333,6 +333,22 @@ def test_load_duplicate_mod_raises(tm_tmp_dir: Path):
         m2.load(tm_tmp_dir)
 
 
+def test_failed_reload_preserves_previous_snapshot_and_duplicate_files(tmp_path):
+    manager = TranslationMemoryManager(base_dir=tmp_path)
+    manager.add("key", "Original", "Translation", mod_file_id="mod")
+    manager.save()
+    manager.load()
+    before = manager.snapshot_dictionaries()
+    source = tmp_path / "mod.tbdict"
+    duplicate = tmp_path / "duplicate.tbdict"
+    duplicate.write_bytes(source.read_bytes())
+    with pytest.raises(RuntimeError, match="mod_file_id 重复"):
+        manager.load()
+    assert source.exists() and duplicate.exists()
+    assert not list(tmp_path.glob("*.corrupt-*"))
+    assert manager.snapshot_dictionaries() == before
+
+
 def test_merge_counts_added():
     m1 = TranslationMemoryManager()
     m1.add("K1", "Hello", "你好", mod_file_id="ModA", scope="global")

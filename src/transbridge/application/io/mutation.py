@@ -104,6 +104,15 @@ class EntrySnapshot:
     revision: EntryRevision
     provenance: tuple[Provenance, ...]
     metadata: tuple[tuple[str, Any], ...]
+    string_id: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.string_id is not None and (
+            isinstance(self.string_id, bool)
+            or not isinstance(self.string_id, int)
+            or not 0 <= self.string_id <= 0xFFFFFFFF
+        ):
+            raise ValueError("localized string_id must be a uint32 or None")
 
 
 class MutationStatus(StrEnum):

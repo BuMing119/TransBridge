@@ -44,6 +44,7 @@ class TranslatorControls:
         "excel_trans_col_edit",
         "csv_path_edit",
         "json_path_edit",
+        "llm_test_btn",
         "max_terms_spin",
         "mixed_estimate_lbl",
         "mode_mixed",

@@ -87,3 +87,32 @@ def test_panel_default_source_path_from_esp(qapp, tm_tmp_dir):
     panel = DictionaryPanel(ctx, base_dir=tm_tmp_dir)
     assert panel._default_source_path() == "D:/mods/LegacyPatch.esp"
     assert panel._default_mod_id() == "LegacyPatch"
+
+
+def test_dictionary_refresh_reloads_disk_without_quarantining_valid_files(qapp, tmp_path):
+    from types import SimpleNamespace
+
+    from transbridge.translation_memory.manager import TranslationMemoryManager
+    from transbridge.ui.tools.dictionary_panel import DictionaryPanel
+
+    manager = TranslationMemoryManager(base_dir=tmp_path)
+    manager.add("key", "Hello", "你好", mod_file_id="First")
+    manager.save()
+    original = (tmp_path / "First.tbdict").read_bytes()
+    panel = DictionaryPanel(SimpleNamespace(), base_dir=tmp_path)
+    try:
+        panel._refresh_btn.click()
+        panel._refresh_btn.click()
+        assert (tmp_path / "First.tbdict").read_bytes() == original
+        assert not list(tmp_path.glob("*.corrupt-*"))
+        assert panel._table.rowCount() == 1
+
+        (tmp_path / "First.tbdict").unlink()
+        replacement = TranslationMemoryManager(base_dir=tmp_path)
+        replacement.add("next", "Goodbye", "再见", mod_file_id="Second")
+        replacement.save()
+        panel._refresh_btn.click()
+        assert set(panel._manager.dictionaries) == {"Second"}
+        assert panel._table.item(0, 0).text() == "Goodbye"
+    finally:
+        panel.close()

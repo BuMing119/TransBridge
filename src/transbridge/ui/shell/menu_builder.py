@@ -45,6 +45,9 @@ class MenuCallbacks:
     open_terminology: VoidCallback = lambda: None
     show_context_help: VoidCallback = lambda: None
     show_task_activity: VoidCallback = lambda: None
+    rename_project: VoidCallback = lambda: None
+    delete_project: VoidCallback = lambda: None
+    delete_snapshot: VoidCallback = lambda: None
     exit_app: VoidCallback | None = None
 
 
@@ -128,6 +131,8 @@ class MenuBuilder:
         self._intent_action(project_menu, IntentId.PROJECT_CREATE, callbacks.new_project)
         self._intent_action(project_menu, IntentId.PROJECT_OPEN, callbacks.open_project)
         self._intent_action(project_menu, IntentId.PROJECT_SAVE, callbacks.manual_save)
+        self._intent_action(project_menu, IntentId.PROJECT_RENAME, callbacks.rename_project)
+        self._intent_action(project_menu, IntentId.PROJECT_DELETE, callbacks.delete_project)
         project_menu.addSeparator()
         variant_menu = project_menu.addMenu(self._gettext("翻译版本"))
         new_variant = self._intent_action(variant_menu, IntentId.PROJECT_VARIANT_CREATE, callbacks.new_variant)
@@ -135,6 +140,7 @@ class MenuBuilder:
         variant_menu.addSeparator()
         save_snapshot = self._intent_action(variant_menu, IntentId.PROJECT_SNAPSHOT_SAVE, callbacks.save_snapshot)
         load_snapshot = self._intent_action(variant_menu, IntentId.PROJECT_SNAPSHOT_LOAD, callbacks.load_snapshot)
+        self._intent_action(variant_menu, IntentId.PROJECT_SNAPSHOT_DELETE, callbacks.delete_snapshot)
         project_menu.addSeparator()
         self._intent_action(project_menu, IntentId.PROJECT_REFRESH, callbacks.refresh_projects)
 

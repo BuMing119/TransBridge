@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 from PyQt6.QtWidgets import QMessageBox
@@ -61,7 +62,12 @@ class ParseCoordinator:
             else:
                 self._run_parse_esp(cfg)
 
-    def apply_migration(self, source_path: str | None = None, drop_kind: str | None = None):
+    def apply_migration(
+        self,
+        source_path: str | None = None,
+        drop_kind: str | None = None,
+        format_id: str | None = None,
+    ):
         """Open a non-blocking migration draft for the current collection."""
         slot = self._host.context.active_slot
         if not slot:
@@ -71,14 +77,21 @@ class ParseCoordinator:
         from ..workbench._parse_config_dialog import ParseConfigDialog
 
         dlg = ParseConfigDialog(mode="migrate", parent=self._host)
-        if source_path is not None and not dlg.prefill_migration_source(source_path, drop_kind or ""):
+        if source_path is not None and not dlg.prefill_migration_source(source_path, drop_kind or "", format_id):
             self._host.show_message("DROP_MIGRATION_ADAPTER_UNAVAILABLE: 已识别该来源，但当前工程尚无对应迁移适配器。")
             return
 
         def submit() -> None:
             cfg = dlg.get_config()
-            if not any([cfg.eet_path, cfg.xt_path, cfg.tp_path, cfg.strings_dir]):
+            json_path = getattr(cfg, "json_path", None)
+            sst_path = getattr(cfg, "sst_path", None)
+            if not any([cfg.eet_path, cfg.xt_path, cfg.tp_path, cfg.strings_dir, json_path, sst_path]):
                 self._host.show_message("请先选择迁移源文件")
+                return
+            if (json_path or sst_path) and any([cfg.eet_path, cfg.xt_path, cfg.tp_path, cfg.strings_dir]):
+                self._host.show_message(
+                    "MIGRATION_MIXED_LEGACY_UNSUPPORTED: JSON/SST 原子导入不能与旧迁移来源在同一次草稿中混用。"
+                )
                 return
             self._run_migrate(slot, cfg)
 
@@ -98,6 +111,7 @@ class ParseCoordinator:
 
         esp_path = cfg.esp_paths[0]
         authority = self._capture_authoritative_target()
+        publication = [authority]
         self._host.workbench.show_step2_progress(0, "解析中…")
         self._host.workbench.set_step2_parsing(True)
 
@@ -134,17 +148,18 @@ class ParseCoordinator:
                     pass
             # 自动套用词典（全局词典兜底，填空译文）
             migrate_count += _apply_dictionary_to_collection(collection)
-            collection = self._commit_authoritative_source(
+            collection, hydration = self._commit_authoritative_source(
                 esp_path,
                 collection,
                 format_id="plugin.sse",
                 options=(("skip_empty", cfg.skip_empty),),
                 expected_authority=authority,
+                committed_authority=publication,
             )
-            return collection, migrate_count, parser.get_plugin(), parser.get_strings_lookup()
+            return collection, migrate_count, parser.get_plugin(), parser.get_strings_lookup(), hydration
 
         def _on_done(result):
-            collection, migrate_count, plugin, strings_lookup = result
+            collection, migrate_count, plugin, strings_lookup, hydration = result
             self._host.workbench.hide_step2_progress()
             self._host.workbench.set_step2_parsing(False)
             label = Path(esp_path).stem
@@ -159,8 +174,10 @@ class ParseCoordinator:
                 migrate_count=migrate_count,
                 plugin=plugin,
                 strings_lookup=strings_lookup,
+                source_snapshot=None if hydration is None else hydration.source_snapshot,
+                format_id=None if hydration is None else hydration.format_id,
             )
-            self._finish_parse(esp_path, slot, collection)
+            self._finish_parse(esp_path, slot, collection, expected_authority=publication[0])
 
         def _on_error(msg: str):
             self._host.workbench.hide_step2_progress()
@@ -184,6 +201,7 @@ class ParseCoordinator:
         results = []
         current = [0]
         batch_identity = self._host.context.active_version_identity
+        publication = [self._capture_authoritative_target(expected_identity=batch_identity)]
 
         def _parse_next():
             if current[0] >= total:
@@ -191,6 +209,8 @@ class ParseCoordinator:
                 return
             esp_path = esp_paths[current[0]]
             try:
+                if current[0] and not self._can_publish_authoritative_source(publication[0]):
+                    raise RuntimeError("解析期间活动工程版本或修订已变化。")
                 authority = self._capture_authoritative_target(expected_identity=batch_identity)
             except RuntimeError:
                 results.extend((path, None, None) for path in esp_paths[current[0] :])
@@ -204,17 +224,18 @@ class ParseCoordinator:
                 collection = TranslationEntryCollection(entries)
                 # 自动套用词典（全局词典兜底，填空译文）
                 dict_hits = _apply_dictionary_to_collection(collection)
-                collection = self._commit_authoritative_source(
+                collection, hydration = self._commit_authoritative_source(
                     esp_path,
                     collection,
                     format_id="plugin.sse",
                     options=(("skip_empty", cfg.skip_empty),),
                     expected_authority=authority,
+                    committed_authority=publication,
                 )
-                return collection, dict_hits, parser.get_plugin(), parser.get_strings_lookup()
+                return collection, dict_hits, parser.get_plugin(), parser.get_strings_lookup(), hydration
 
             def _on_one_done(result):
-                collection, migrate_count, plugin, strings_lookup = result
+                collection, migrate_count, plugin, strings_lookup, hydration = result
                 label = Path(esp_path).stem
                 slot = CollectionSlot(
                     label=label,
@@ -227,6 +248,8 @@ class ParseCoordinator:
                     migrate_count=migrate_count,
                     plugin=plugin,
                     strings_lookup=strings_lookup,
+                    source_snapshot=None if hydration is None else hydration.source_snapshot,
+                    format_id=None if hydration is None else hydration.format_id,
                 )
                 results.append((esp_path, slot, collection))
                 current[0] += 1
@@ -246,6 +269,9 @@ class ParseCoordinator:
         def _finish_batch():
             self._host.workbench.hide_step2_progress()
             self._host.workbench.set_step2_parsing(False)
+            if not self._can_publish_authoritative_source(publication[0]):
+                self._host.show_message("解析期间活动工程版本或修订已变化，未发布过期集合，请重新加载当前版本。")
+                return
             success_count = sum(1 for _, slot, _ in results if slot is not None)
             fail_count = total - success_count
             for esp_path, slot, collection in results:
@@ -269,6 +295,7 @@ class ParseCoordinator:
 
         eet_path = cfg.eet_path
         authority = self._capture_authoritative_target()
+        publication = [authority]
         self._host.workbench.show_step2_progress(0, "解析 EET 中…")
         self._host.workbench.set_step2_parsing(True)
 
@@ -286,16 +313,17 @@ class ParseCoordinator:
                     migrate_count += collection.update_from_translated_plugin(Path(cfg.tp_path))
                 except Exception:
                     pass
-            collection = self._commit_authoritative_source(
+            collection, hydration = self._commit_authoritative_source(
                 eet_path,
                 collection,
                 format_id="xml.eet",
                 expected_authority=authority,
+                committed_authority=publication,
             )
-            return collection, migrate_count
+            return collection, migrate_count, hydration
 
         def _on_done(result):
-            collection, migrate_count = result
+            collection, migrate_count, hydration = result
             self._host.workbench.hide_step2_progress()
             self._host.workbench.set_step2_parsing(False)
             label = Path(eet_path).stem
@@ -305,8 +333,10 @@ class ParseCoordinator:
                 eet_path=eet_path,
                 xt_path=cfg.xt_path,
                 migrate_count=migrate_count,
+                source_snapshot=None if hydration is None else hydration.source_snapshot,
+                format_id=None if hydration is None else hydration.format_id,
             )
-            self._finish_parse(eet_path, slot, collection)
+            self._finish_parse(eet_path, slot, collection, expected_authority=publication[0])
 
         def _on_error(msg: str):
             self._host.workbench.hide_step2_progress()
@@ -319,7 +349,10 @@ class ParseCoordinator:
         w.start()
         self._host.workers.append(w)
 
-    def _finish_parse(self, key: str, slot: CollectionSlot, collection):
+    def _finish_parse(self, key: str, slot: CollectionSlot, collection, *, expected_authority=None):
+        if not self._can_publish_authoritative_source(expected_authority):
+            self._host.show_message("解析期间活动工程版本或修订已变化，未发布过期集合，请重新加载当前版本。")
+            return
         if key in self._host.context.slots:
             ret = QMessageBox.question(
                 self._host,
@@ -329,6 +362,10 @@ class ParseCoordinator:
             )
             if ret != QMessageBox.StandardButton.Yes:
                 self._host.show_message("已取消，保留原有集合")
+                return
+            # The modal confirmation can process a queued Variant change.
+            if not self._can_publish_authoritative_source(expected_authority):
+                self._host.show_message("确认期间活动工程版本或修订已变化，未发布过期集合。")
                 return
         self._host.context.add_slot(key, slot)
         self._save_source_to_project(slot)
@@ -359,12 +396,13 @@ class ParseCoordinator:
         format_id: str,
         options=(),
         expected_authority=None,
-    ) -> TranslationEntryCollection:
+        committed_authority=None,
+    ) -> tuple[TranslationEntryCollection, object | None]:
         """Commit a parsed source before exposing its workbench projection."""
 
         context = self._host.context
         if not context.uses_authoritative_projection:
-            return collection
+            return collection, None
         from transbridge.application.io import FormatId
         from transbridge.application.projects import ProjectSourceRequest
         from transbridge.application.projects.source_commands import source_request_with_initial_entry_states
@@ -392,8 +430,20 @@ class ParseCoordinator:
             raise RuntimeError(f"{diagnostic.code}: {diagnostic.message}")
         if added.value.hydration is None:
             raise RuntimeError("PROJECT_SOURCE_HYDRATION_REQUIRED: 工程来源没有可用的界面读取模型。")
+        if committed_authority is not None:
+            committed_authority[0] = identity, added.value.project_revision, added.value.variant_revision
 
-        return collection_from_hydration(added.value.hydration)
+        return collection_from_hydration(added.value.hydration), added.value.hydration
+
+    def _can_publish_authoritative_source(self, expected_authority) -> bool:
+        context = self._host.context
+        if expected_authority is None:
+            return not context.uses_authoritative_projection
+        return expected_authority == (
+            context.active_version_identity,
+            context.project_revision,
+            context.variant_revision,
+        )
 
     def _capture_authoritative_target(self, *, expected_identity=None):
         context = self._host.context
@@ -407,6 +457,10 @@ class ParseCoordinator:
         return identity, context.project_revision, context.variant_revision
 
     def _run_migrate(self, slot, cfg):
+        if getattr(cfg, "json_path", None) or getattr(cfg, "sst_path", None):
+            self._run_structured_migrate(slot, cfg)
+            return
+
         from transbridge.parser.strings_file import PluginStringsLookup
         from transbridge.parser.xt import XT_XmlParser
 
@@ -496,3 +550,117 @@ class ParseCoordinator:
         w.error.connect(_on_error)
         w.start()
         self._host.workers.append(w)
+
+    def _run_structured_migrate(self, slot, cfg) -> None:
+        """Prepare JSON/SST changes off-thread, then publish one Variant mutation."""
+
+        from transbridge.application.io.migration_import import MigrationImportError, prepare_migration_import
+        from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
+
+        context = self._host.context
+        authority = self._capture_authoritative_target()
+        original_collection = slot.collection
+        sources = tuple(
+            item
+            for item in (
+                (getattr(cfg, "json_path", None), getattr(cfg, "json_format_id", None)),
+                (getattr(cfg, "sst_path", None), getattr(cfg, "sst_format_id", None)),
+            )
+            if item[0]
+        )
+        self._host.workbench.show_step2_progress(0, "验证迁移源中…")
+
+        def _do():
+            proposals = {}
+            formats = []
+            skipped = 0
+            for path, format_hint in sources:
+                draft = prepare_migration_import(
+                    path,
+                    original_collection,
+                    format_hint=format_hint,
+                    context=context.runtime_context,
+                )
+                formats.append(draft.format_id)
+                skipped += draft.skipped_unmatched
+                for entry_key, state in draft.states:
+                    previous = proposals.get(entry_key)
+                    if previous is not None and previous != state:
+                        raise MigrationImportError(
+                            "MIGRATION_ENTRY_KEY_CONFLICT",
+                            f"多个迁移源为同一 EntryKey 提供了不同译文：{entry_key.local_key}",
+                        )
+                    proposals[entry_key] = state
+
+            changed_states = {}
+            staged_entries = []
+            for entry in original_collection:
+                proposed = proposals.get(entry.identity)
+                if proposed is None or entry.translation or entry.stage != 0:
+                    staged_entries.append(entry)
+                    continue
+                translation, stage = proposed
+                changed_states[entry.identity] = proposed
+                staged_entries.append(
+                    replace(
+                        entry,
+                        translation=translation,
+                        stage=stage,
+                        revision=entry.revision.next(),
+                    )
+                )
+            return (
+                changed_states,
+                TranslationEntryCollection(staged_entries),
+                tuple(formats),
+                skipped,
+            )
+
+        def _on_done(result):
+            changed_states, candidate, formats, skipped = result
+            if slot.collection is not original_collection:
+                self._host.workbench.hide_step2_progress()
+                self._host.show_message("MIGRATION_TARGET_CHANGED: 导入期间当前词条集合已变化，草稿未提交。")
+                return
+            if context.uses_authoritative_projection and changed_states:
+                if authority is None:
+                    self._host.workbench.hide_step2_progress()
+                    self._host.show_message("ACTIVE_VARIANT_REQUIRED: 导入草稿没有绑定活动工程版本。")
+                    return
+                identity, project_revision, variant_revision = authority
+                project_id, variant_id = identity
+                committed = context.project_commands.replace_entry_states(
+                    changed_states,
+                    context.runtime_context,
+                    expected_project_revision=project_revision,
+                    expected_variant_revision=variant_revision,
+                    expected_variant_ref=VariantRef(VariantId(variant_id), ProjectId(project_id)),
+                )
+                if not committed.is_success:
+                    diagnostic = committed.diagnostics[0]
+                    self._host.workbench.hide_step2_progress()
+                    self._host.show_message(f"{diagnostic.code}: {diagnostic.message}")
+                    return
+            elif context.uses_authoritative_projection and not self._can_publish_authoritative_source(authority):
+                self._host.workbench.hide_step2_progress()
+                self._host.show_message("MIGRATION_TARGET_CHANGED: 活动工程版本已变化，草稿未提交。")
+                return
+
+            slot.collection = candidate
+            if getattr(cfg, "sst_path", None) and changed_states:
+                slot.sst_path = cfg.sst_path
+            self._host.workbench.hide_step2_progress()
+            suffix = f"；{skipped} 条无法唯一匹配已跳过" if skipped else ""
+            formats_label = " + ".join(item.value for item in formats)
+            self._host.show_message(f"迁移完成（{formats_label}），新增 {len(changed_states)} 条译文{suffix}")
+            context.collection_changed.emit(slot.collection)
+
+        def _on_error(msg: str):
+            self._host.workbench.hide_step2_progress()
+            self._host.show_message(f"迁移失败：{msg}")
+
+        worker = ApiWorker(_do)
+        worker.result.connect(_on_done)
+        worker.error.connect(_on_error)
+        worker.start()
+        self._host.workers.append(worker)

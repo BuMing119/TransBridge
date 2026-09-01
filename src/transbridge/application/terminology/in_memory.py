@@ -7,6 +7,7 @@ from threading import RLock
 from typing import TypeVar
 
 from .changelog_queries import build_changelog_manifest
+from .conflict_queries import ConflictFilter
 from .errors import (
     ActiveDraftError,
     CursorStaleError,
@@ -230,9 +231,14 @@ class InMemoryTerminologyRepository:
         build = self.get_build(ref)
         return self._page(build.candidates, build.ref.content_digest, request, lambda item: item.candidate_id)
 
-    def list_conflicts(self, ref: BuildResultRef, request: PageRequest = PageRequest()) -> Page[ConflictGroup]:
+    def list_conflicts(
+        self, ref: BuildResultRef, request: PageRequest = PageRequest(), *, filters: ConflictFilter = ConflictFilter()
+    ) -> Page[ConflictGroup]:
         build = self.get_build(ref)
-        return self._page(build.conflicts, build.ref.content_digest, request, lambda item: item.conflict_group_id)
+        conflicts = tuple(item for item in build.conflicts if filters.matches(item))
+        return self._page(
+            conflicts, build.ref.content_digest, filters.bind_request(request), lambda item: item.conflict_group_id
+        )
 
     def list_terms(self, ref: TerminologyVersionRef, request: PageRequest = PageRequest()) -> Page[TermDecision]:
         version = self.get_version(ref)

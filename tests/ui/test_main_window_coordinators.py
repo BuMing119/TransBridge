@@ -135,7 +135,7 @@ def test_authoritative_source_import_commits_initial_states_without_second_varia
     )
     coordinator = ParseCoordinator(SimpleNamespace(context=context))
 
-    restored = coordinator._commit_authoritative_source(
+    restored, hydration = coordinator._commit_authoritative_source(
         "D:/mods/Plugin.esp",
         collection,
         format_id="plugin.sse",
@@ -146,6 +146,7 @@ def test_authoritative_source_import_commits_initial_states_without_second_varia
     assert payload == [{"local_key": "entry", "translation": "导入译文", "stage": 3}]
     assert captured["kwargs"]["expected_project_revision"] == 1
     assert next(iter(restored)).translation == "导入译文"
+    assert hydration.entries[0].translation == "导入译文"
 
 
 def test_migration_draft_is_non_blocking_and_owned_until_finished(monkeypatch) -> None:

@@ -88,6 +88,7 @@ class IssuesTab(QWidget):
         self._access_ok = True
         self._init_ui()
         ctx.project_selected.connect(self._on_project_changed)
+        ctx.paratranz_permissions_changed.connect(self._refresh_permissions)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -185,6 +186,7 @@ class IssuesTab(QWidget):
         self.load_issues()
 
     def _on_project_changed(self, project):
+        self._gen += 1
         self._project_id = project.get("id") if project else None
         self._list.clear()
         self._set_title("（选择一个讨论查看详情）")
@@ -210,6 +212,15 @@ class IssuesTab(QWidget):
                 self.load_issues()
         else:
             self._new_btn.setEnabled(False)
+
+    def _refresh_permissions(self):
+        project = self._ctx.current_project
+        if not project or project.get("id") != self._project_id:
+            return
+        mode = project.get("issueMode", 0)
+        allowed = mode == 0 or (self._ctx.is_member() if mode == 1 else self._ctx.is_admin())
+        if allowed != self._access_ok:
+            self._on_project_changed(project)
 
     def load_issues(self):
         if not self._project_id or not self._access_ok:

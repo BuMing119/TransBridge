@@ -17,7 +17,13 @@ from transbridge.application.projects import (
     ProjectProvisioningCommit,
 )
 from transbridge.application.sessions import SessionSnapshot
-from transbridge.persistence.project_catalog_document import build_project_catalog, parse_project_catalog
+from transbridge.persistence.project_catalog_document import (
+    ProjectCatalogRecord,
+    build_project_catalog,
+    parse_project_catalog,
+    project_display_name,
+    project_name_key,
+)
 
 from .atomic_documents import AtomicDocumentStore
 from .baselines import BaselineRegistry
@@ -107,24 +113,7 @@ class ProjectLifecycleTransactionStore:
             elif isinstance(mutation, LifecycleSave):
                 self._project_save.commit(mutation, transaction_id)
             elif isinstance(mutation, LifecycleProjectUpdate):
-                project_ref = ProjectRef(ProjectId(mutation.project.envelope.identity))
-                try:
-                    self._projects.save_if_revision(
-                        project_ref,
-                        mutation.project,
-                        expected_revision=mutation.expected_persisted_project_revision,
-                    )
-                except ProjectRevisionConflict as exc:
-                    raise DomainError(
-                        ErrorCategory.CONFLICT,
-                        "PROJECT_UPDATE_PERSISTED_STALE",
-                        "The persisted Project changed before the update could commit.",
-                        details={
-                            "expected_revision": exc.expected_revision,
-                            "actual_revision": exc.actual_revision,
-                        },
-                        cause=exc,
-                    ) from exc
+                self._commit_project_update(transaction_id, mutation)
             elif isinstance(mutation, LifecycleActivation):
                 if mutation.candidate_project is not None and mutation.write_candidate_project:
                     project_ref = ProjectRef(ProjectId(mutation.candidate_project.envelope.identity))
@@ -170,6 +159,91 @@ class ProjectLifecycleTransactionStore:
                     transaction_id,
                 )
             self._transactions.pop(transaction_id)
+
+    def _commit_project_update(self, transaction_id: str, mutation: LifecycleProjectUpdate) -> None:
+        project_ref = ProjectRef(ProjectId(mutation.project.envelope.identity))
+        with self._projects.mutation_lock:
+            project_path = self._projects.path_for(project_ref)
+            previous_project = self._filesystem.read_bytes(project_path)
+            persisted = self._projects.read_snapshot(project_ref)
+            previous_name = project_display_name(persisted.envelope.data.get("name"))
+            next_name = project_display_name(mutation.project.envelope.data.get("name"))
+            rename = previous_name != next_name
+            catalog_path = self._documents.path("project-catalog.json")
+            previous_catalog = None
+            next_catalog = None
+            if rename:
+                previous_catalog = self._filesystem.read_bytes(catalog_path)
+                records = parse_project_catalog(previous_catalog)
+                current = next((item for item in records if item.project_id == project_ref.identity.value), None)
+                if current is None or current.name != previous_name:
+                    raise ValueError("Project catalog does not match the authoritative Project")
+                next_key = project_name_key(next_name)
+                if any(item.project_id != current.project_id and item.name_key == next_key for item in records):
+                    raise DomainError(
+                        ErrorCategory.CONFLICT,
+                        "PROJECT_NAME_ALREADY_EXISTS",
+                        "A Project with the same name already exists.",
+                    )
+                next_catalog = build_project_catalog(
+                    tuple(
+                        ProjectCatalogRecord(item.project_id, next_name, next_key)
+                        if item.project_id == current.project_id
+                        else item
+                        for item in records
+                    )
+                )
+            try:
+                self._projects.save_if_revision(
+                    project_ref,
+                    mutation.project,
+                    expected_revision=mutation.expected_persisted_project_revision,
+                )
+                if next_catalog is not None:
+                    self._documents.write_json(
+                        "project-catalog.json",
+                        next_catalog,
+                        f"{transaction_id}-rename-catalog",
+                        durable=True,
+                    )
+            except ProjectRevisionConflict as exc:
+                raise DomainError(
+                    ErrorCategory.CONFLICT,
+                    "PROJECT_UPDATE_PERSISTED_STALE",
+                    "The persisted Project changed before the update could commit.",
+                    details={
+                        "expected_revision": exc.expected_revision,
+                        "actual_revision": exc.actual_revision,
+                    },
+                    cause=exc,
+                ) from exc
+            except Exception:
+                try:
+                    self._documents.write_bytes(
+                        project_path,
+                        previous_project,
+                        f"{transaction_id}-restore-project",
+                        durable=True,
+                    )
+                    if self._filesystem.read_bytes(project_path) != previous_project:
+                        raise OSError("Project rename rollback verification failed")
+                    if previous_catalog is not None and (
+                        not self._filesystem.exists(catalog_path)
+                        or self._filesystem.read_bytes(catalog_path) != previous_catalog
+                    ):
+                        self._documents.write_bytes(
+                            catalog_path,
+                            previous_catalog,
+                            f"{transaction_id}-restore-catalog",
+                            durable=True,
+                        )
+                    if previous_catalog is not None and self._filesystem.read_bytes(catalog_path) != previous_catalog:
+                        raise OSError("Project catalog rollback verification failed")
+                except Exception as rollback_exc:
+                    raise RuntimeError(
+                        "Project rename failed and its exact preimage could not be restored"
+                    ) from rollback_exc
+                raise
 
     def rollback(self, transaction_id: str) -> None:
         with self._lock:

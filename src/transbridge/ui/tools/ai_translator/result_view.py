@@ -55,6 +55,22 @@ def apply_window_mixed_result(window: object, result: Mapping[str, object]) -> b
     return summary.accepted > 0
 
 
+def complete_window_mixed_result(window: object, result: dict) -> None:
+    """Commit completed translation independently of the user's polish decisions."""
+    from PyQt6.QtWidgets import QMessageBox
+
+    polish_applied = apply_window_mixed_result(window, result)
+    if result.get("translate") is not None or polish_applied:
+        if window._version_snapshot_session is not None:
+            try:
+                window._version_snapshot_session.mark_completed()
+            except Exception as exc:
+                QMessageBox.critical(window, "AI 结果提交失败", f"{exc}\n\n本次界面修改已回滚。")
+                return
+        window._ctx.collection_changed.emit(window._ctx.collection)
+    window._report_dialog = show_window_mixed_report(window, result)
+
+
 def _render_mixed_preview_report(
     window: object,
     result: Mapping[str, object],

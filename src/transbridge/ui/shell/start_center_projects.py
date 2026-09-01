@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QProgressBar,
     QVBoxLayout,
     QWidget,
@@ -31,6 +32,7 @@ from .project_open_choice_dialog import ProjectOpenChoiceDialog
 PROJECT_PATH_ROLE = int(Qt.ItemDataRole.UserRole)
 PROJECT_ACTIVE_ROLE = PROJECT_PATH_ROLE + 1
 PROJECT_NAME_ROLE = PROJECT_PATH_ROLE + 2
+PROJECT_ID_ROLE = PROJECT_PATH_ROLE + 3
 
 
 def _heading(text: str, parent: QWidget) -> QLabel:
@@ -130,6 +132,7 @@ class StartCenterProjectsPanel(ThemedCard):
     open_current_requested = pyqtSignal(str)
     open_new_window_requested = pyqtSignal(str)
     return_to_current_requested = pyqtSignal()
+    delete_requested = pyqtSignal(str, str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -173,9 +176,11 @@ class StartCenterProjectsPanel(ThemedCard):
         self.project_list.setAccessibleName("本地工程")
         self.project_list.setUniformItemSizes(True)
         self.project_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        self.project_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.project_list.setMinimumHeight(400)
         ComponentStyle.apply_static(self.project_list, ComponentKind.TABLE)
         self.project_list.project_invoked.connect(self._activate_project)
+        self.project_list.customContextMenuRequested.connect(self._show_project_menu)
         layout.addWidget(self.project_list, 1)
 
         self.projects_empty = QWidget(self)
@@ -221,6 +226,7 @@ class StartCenterProjectsPanel(ThemedCard):
             item.setData(PROJECT_PATH_ROLE, path)
             item.setData(PROJECT_ACTIVE_ROLE, active)
             item.setData(PROJECT_NAME_ROLE, name)
+            item.setData(PROJECT_ID_ROLE, str(getattr(project, "project_key", "")))
             item.setSizeHint(QSize(0, 120 if path else 96))
             if not available:
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled & ~Qt.ItemFlag.ItemIsSelectable)
@@ -277,5 +283,23 @@ class StartCenterProjectsPanel(ThemedCard):
         if self._project_dialog is dialog:
             self._project_dialog = None
 
+    def _show_project_menu(self, position) -> None:
+        item = self.project_list.itemAt(position)
+        if item is None:
+            return
+        project_id = str(item.data(PROJECT_ID_ROLE) or "")
+        name = str(item.data(PROJECT_NAME_ROLE) or "")
+        if not project_id or not name:
+            return
+        menu = QMenu(self)
+        menu.addAction("删除本地工程…", lambda: self.delete_requested.emit(project_id, name))
+        menu.exec(self.project_list.viewport().mapToGlobal(position))
 
-__all__ = ["PROJECT_ACTIVE_ROLE", "PROJECT_NAME_ROLE", "PROJECT_PATH_ROLE", "StartCenterProjectsPanel"]
+
+__all__ = [
+    "PROJECT_ACTIVE_ROLE",
+    "PROJECT_ID_ROLE",
+    "PROJECT_NAME_ROLE",
+    "PROJECT_PATH_ROLE",
+    "StartCenterProjectsPanel",
+]

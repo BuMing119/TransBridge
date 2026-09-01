@@ -10,9 +10,8 @@ ParaTranzDownloader：从 ParaTranz 下载译文并合并到本地 TranslationEn
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
-from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.paratranz.api.paratranz_files_api import ParatranzFilesAPI
 from transbridge.paratranz.config_manager import ParatranzConfig
@@ -101,32 +100,16 @@ class ParaTranzDownloader:
                     result.skipped_no_match += 1
                     continue
 
-                # 用 ParaTranz 的译文和状态更新本地词条
-                # collection._entries[entry.id] = TranslationEntry(
-                #     id=entry.id,
-                #     key=entry.key,
-                #     original=entry.original,
-                #     translation=translation,
-                #     stage=stage,
-                #     context=entry.context,
-                # )
-                # print(f"Updated entry: {entry.id}, translation: {collection._entries[entry.id].translation}")
+                # 保留 V2 EntryKey、远端引用和来源证据，只更新本地可变状态。
+                changed = (entry.translation, entry.stage) != (translation, stage)
                 collection.add(
-                    TranslationEntry(
-                        id=entry.id,
-                        key=entry.key,
-                        original=entry.original,
+                    replace(
+                        entry,
                         translation=translation,
                         stage=stage,  # 直接透传 ParaTranz stage，对齐 STAGE_* 常量语义
-                        context=entry.context,
-                        form_id_with_plugin=entry.form_id_with_plugin,
-                        string_id=entry.string_id,
-                        # 保留 DSD 字段
-                        dsd_type=entry.dsd_type,
-                        dsd_index=entry.dsd_index,
-                        editor_id=entry.editor_id,
+                        revision=entry.revision.next() if changed else entry.revision,
                     ),
-                    overwrite=True,  # 确保覆盖
+                    overwrite=True,
                 )
 
                 result.merged += 1

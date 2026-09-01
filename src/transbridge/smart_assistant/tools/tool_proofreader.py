@@ -13,6 +13,7 @@ from ._postprocess_tool_runtime import (
 )
 from .base import ToolResult, require_runtime_context
 from .task_manager import TaskManager
+from .task_runtime_bridge import task_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -69,13 +70,10 @@ class ProofreaderController:
             return ToolResult.fail(str(exc))
 
         stop_event = threading.Event()
-        pause_event = threading.Event()
-        pause_event.set()
         tm = TaskManager()
-        task_id = tm.register(stop_event=stop_event, metadata=request.metadata)
+        task_id = tm.register(stop_event=stop_event, metadata=task_metadata(ctx, request.metadata))
         handle = tm.get_handle(task_id)
-        if handle:
-            handle.pause_event = pause_event
+        pause_event = handle.pause_event
         from .tool_translator import _capture_run_entry_states
 
         run_entry_states = _capture_run_entry_states(ctx, collection)
@@ -90,6 +88,7 @@ class ProofreaderController:
                     stop_event=stop_event,
                     pause_event=pause_event,
                     report_directory=_resolve_report_directory(ctx),
+                    commit_guard=handle.execution,
                 )
                 set_last_report(result.report_data)
                 if result.cancelled or stop_event.is_set():
@@ -116,7 +115,11 @@ class ProofreaderController:
                 if result.committed:
                     from .tool_translator import _publish_run_entry_states
 
-                    _publish_run_entry_states(ctx)
+                    decision = handle.execution.commit(
+                        task_id, lambda: _publish_run_entry_states(ctx, rollback_on_failure=False)
+                    )
+                    if not decision.accepted:
+                        raise InterruptedError("任务已被用户停止；结果未提交")
                 progress = {
                     "outcome": result.completion_data["outcome"],
                     "issue_count": result.completion_data["issue_count"],

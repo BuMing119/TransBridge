@@ -3,11 +3,13 @@ from __future__ import annotations
 from collections.abc import Callable
 import logging
 
+from transbridge.application.sessions import ControllerSnapshot
+
 logger = logging.getLogger(__name__)
 
 
 class SessionBinding:
-    """Binds the legacy session store to chat state through explicit ports."""
+    """Binds session persistence and recovery to chat state through explicit ports."""
 
     def __init__(
         self,
@@ -17,13 +19,16 @@ class SessionBinding:
         clear_messages: Callable[[], None],
         load_history: Callable[[list[dict]], None],
         reset_task_monitor: Callable[[], None],
+        restore_controller: Callable[[ControllerSnapshot], None] | None = None,
     ) -> None:
         self._conversation = conversation
         self._abort = abort
         self._clear_messages = clear_messages
         self._load_history = load_history
         self._reset_task_monitor = reset_task_monitor
+        self._restore_controller = restore_controller
         self._manager = None
+        self._save_session: Callable[[], bool] | None = None
         self._active_session_id: Callable[[], str | None] = lambda: None
         self._refresh_sessions: Callable[[], None] = lambda: None
         self._closed = False
@@ -35,17 +40,24 @@ class SessionBinding:
         *,
         active_session_id: Callable[[], str | None] | None = None,
         refresh_sessions: Callable[[], None] | None = None,
+        save_session: Callable[[], bool] | None = None,
     ) -> None:
         if self._closed:
             return
         self._manager = manager
+        self._save_session = save_session
         if active_session_id is not None:
             self._active_session_id = active_session_id
         if refresh_sessions is not None:
             self._refresh_sessions = refresh_sessions
 
     def save(self, session_id: str) -> None:
-        if self._closed or self._manager is None:
+        if self._closed:
+            return
+        if self._save_session is not None:
+            self._save_session()
+            return
+        if self._manager is None:
             return
         messages = self._conversation.to_dict()["messages"]
         if messages:
@@ -58,18 +70,26 @@ class SessionBinding:
         self._abort()
         self._clear_messages()
         messages = list(data.get("messages", []))
-        self._conversation.from_dict({"messages": messages})
+        backend = data.get("backend_history", data.get("history", messages))
+        self._conversation.from_dict({"messages": list(backend)})
+        if self._restore_controller is not None and "controller" in data:
+            try:
+                controller = ControllerSnapshot.from_dict(data["controller"])
+            except (AttributeError, KeyError, TypeError, ValueError):
+                logger.warning("会话控制器恢复数据无效，已恢复为空闲状态", exc_info=True)
+                controller = ControllerSnapshot(recoverable=False, reason="controller_state_invalid")
+            self._restore_controller(controller)
         self._load_history(messages)
         self._reset_task_monitor()
 
     def auto_save(self, parsed: dict | None = None) -> None:
-        if self._closed or self._manager is None:
+        if self._closed or (self._manager is None and self._save_session is None):
             return
         session_id = self._active_session_id()
         if not session_id:
             return
         self.save(session_id)
-        if parsed:
+        if parsed and self._manager is not None:
             self._auto_name(session_id, parsed)
 
     def log_memory(self, memory_store, messages: list, response: str) -> None:
@@ -113,6 +133,7 @@ class SessionBinding:
         self._closed = True
         self._generation += 1
         self._manager = None
+        self._save_session = None
         self._active_session_id = lambda: None
         self._refresh_sessions = lambda: None
 

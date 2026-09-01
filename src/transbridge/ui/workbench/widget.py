@@ -69,6 +69,12 @@ class WorkbenchWidget(QWidget):
 
         # ── 项目与翻译内容上下文 ───────────────────────────
         self._project_bar = ProjectBar(self._ctx, theme_view=self._theme_view)
+        self._project_bar.snapshot_save_requested.connect(
+            lambda: self.intent_requested.emit(IntentId.PROJECT_SNAPSHOT_SAVE.value)
+        )
+        self._project_bar.snapshot_load_requested.connect(
+            lambda: self.intent_requested.emit(IntentId.PROJECT_SNAPSHOT_LOAD.value)
+        )
         context_layout.addWidget(self._project_bar, 1)
 
         self._remote_target = RemoteTargetView(self._ctx, self)

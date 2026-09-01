@@ -14,6 +14,7 @@ from .mutation import VALID_STAGES
 
 PARATRANZ_SYSTEM = "paratranz"
 PARATRANZ_CORE_FIELDS = frozenset({"id", "key", "original", "translation", "stage", "context"})
+PARATRANZ_EXTENSION_METADATA = "transbridge.io.paratranz.extensions"
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +61,22 @@ class ParatranzEntry:
         if len(references) > 1:
             raise ValueError("an entry cannot have more than one ParaTranz external reference")
         return references[0] if references else None
+
+    def to_translation_entry(self):
+        """Project the transport record without using its remote ID as local identity."""
+        from transbridge.converter.translation_entry import TranslationEntry
+
+        return TranslationEntry(
+            id=self.key,
+            key=self.key,
+            original=self.original,
+            translation=self.translation,
+            stage=self.stage,
+            context=self.context,
+            entry_key=self.entry_key,
+            external_refs=self.external_refs,
+            metadata=((PARATRANZ_EXTENSION_METADATA, _json_clone(dict(self.extensions))),),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,7 +276,14 @@ def paratranz_record_from_entry(entry: Any, *, preserve_extensions: bool = True)
         record["context"] = context
 
     if preserve_extensions:
-        extensions = getattr(entry, "extensions", ())
+        extensions = getattr(entry, "extensions", None)
+        if extensions is None:
+            # Only the explicit format envelope is portable JSON data. Plugin
+            # source metadata must never leak into a ParaTranz export.
+            envelope = dict(getattr(entry, "metadata", ())).get(PARATRANZ_EXTENSION_METADATA, {})
+            if not isinstance(envelope, dict):
+                raise ValueError("ParaTranz extension metadata must be an object")
+            extensions = envelope.items()
         for name, value in extensions:
             if name in PARATRANZ_CORE_FIELDS:
                 raise ValueError(f"ParaTranz extension conflicts with core field: {name}")

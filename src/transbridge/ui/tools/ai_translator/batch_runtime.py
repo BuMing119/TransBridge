@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from copy import copy
+from dataclasses import replace
 import logging
 import os
 
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui.foundation.adapters import ThemeView
+from transbridge.ui.version_persistence import VersionPersistence
 from transbridge.ui.windowing import show_and_activate
 
 from .run_spec import preflight_ai_run
@@ -29,14 +33,6 @@ def open_batch_translation(
     from ._batch_translation_worker import _BatchTranslationWorker
     from .run_controller import RunController
 
-    if bool(getattr(ctx, "uses_authoritative_projection", False)):
-        QMessageBox.warning(
-            parent,
-            "批量翻译暂不可用",
-            "V2 工程的跨插件 AI 批量翻译尚未接入统一原子 Variant 提交；为避免结果只保留在界面中，本次未启动。",
-        )
-        return None
-
     dialog = _BatchTranslationDialog(ctx, parent, theme_view=theme_view)
     if dialog.exec() != dialog.DialogCode.Accepted:
         return None
@@ -45,6 +41,13 @@ def open_batch_translation(
     if not slots or not config:
         QMessageBox.warning(parent, "批量翻译", "请选择插件并配置 AI 服务。")
         return None
+    authoritative_publisher = None
+    if bool(getattr(ctx, "uses_authoritative_projection", False)):
+        try:
+            slots, authoritative_publisher = _prepare_authoritative_batch(ctx, slots)
+        except Exception as exc:
+            QMessageBox.warning(parent, "批量翻译", str(exc))
+            return None
     entries = [entry for slot in slots for entry in (slot.collection or ())]
     esp_path = slots[0].esp_path if all(slot.esp_path for slot in slots) else None
     preflight = preflight_ai_run("batch", config, entries, esp_path=esp_path)
@@ -107,6 +110,7 @@ def open_batch_translation(
             entry_activated=entry_activated,
             activity=activity,
             theme_view=theme_view,
+            completion_publisher=authoritative_publisher,
         )
     except Exception as exc:
         activity.fail(str(exc))
@@ -116,6 +120,65 @@ def open_batch_translation(
     worker.start()
     show_and_activate(progress, deferred=True)
     return progress
+
+
+def _prepare_authoritative_batch(ctx, slots):
+    """Run AI against detached projections and publish one CAS-guarded Variant change set."""
+
+    identity = getattr(ctx, "active_version_identity", None)
+    if identity is None:
+        raise RuntimeError("请先打开一个工程版本。")
+    if not slots:
+        raise RuntimeError("请选择至少一个翻译来源。")
+    originals = tuple(slots)
+    seen = set()
+    detached = []
+    for slot in originals:
+        collection = getattr(slot, "collection", None)
+        if collection is None:
+            raise RuntimeError(f"来源 {getattr(slot, 'label', '?')} 没有可翻译内容。")
+        entries = []
+        for entry in collection:
+            if entry.identity in seen:
+                raise RuntimeError(f"来源映射包含重复 EntryKey：{entry.identity.serialize()}")
+            seen.add(entry.identity)
+            entries.append(copy(entry))
+        detached.append(replace(slot, collection=TranslationEntryCollection(entries)))
+    persistence = VersionPersistence(ctx, identity)
+
+    def publish(summary, *, cancelled: bool = False) -> bool:
+        if cancelled or int(getattr(summary, "failed_plugins", 0)):
+            return False
+        if getattr(ctx, "active_version_identity", None) != identity:
+            raise RuntimeError("活动工程或版本已变化，批量翻译结果未提交。")
+        entries = tuple(entry for slot in detached for entry in slot.collection)
+        if {entry.identity for entry in entries} != seen:
+            raise RuntimeError("批量翻译结果的 EntryKey 映射已改变，结果未提交。")
+        result = persistence.commit_translation(entries)
+        if result is not None and not bool(getattr(result, "is_success", True)):
+            diagnostics = tuple(getattr(result, "diagnostics", ()))
+            message = diagnostics[0].message if diagnostics else "权威 Variant 写入失败"
+            raise RuntimeError(f"批量翻译提交失败：{message}")
+
+        states = {entry.identity: (entry.translation, entry.stage) for entry in entries}
+        for slot in originals:
+            projected = []
+            for entry in slot.collection:
+                state = states.get(entry.identity)
+                if state is None:
+                    raise RuntimeError("权威提交完成后，工作台来源映射已改变；请重新打开工程。")
+                if (entry.translation, entry.stage) != state:
+                    entry = replace(
+                        entry,
+                        translation=state[0],
+                        stage=state[1],
+                        revision=entry.revision.next(),
+                    )
+                projected.append(entry)
+            slot.collection = TranslationEntryCollection(projected)
+        return True
+
+    return detached, publish
 
 
 class TermSourceInspector:

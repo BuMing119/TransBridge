@@ -84,6 +84,7 @@ class FormatRoundTripValidator:
                 request.context,
                 request.format_id,
                 namespace,
+                options=request.options,
                 cancellation=request.cancellation,
             )
         )

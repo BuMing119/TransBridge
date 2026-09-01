@@ -43,8 +43,10 @@ class FilesTab(QWidget):
         self._files: list[dict] = []
         self._project_id: int | None = None
         self._gen = 0
+        self._operation_busy = False
         self._init_ui()
         ctx.project_selected.connect(self._on_project_changed)
+        ctx.paratranz_permissions_changed.connect(lambda: self._update_buttons(self._selected_file() is not None))
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -148,6 +150,9 @@ class FilesTab(QWidget):
         self._update_buttons(False)
 
     def _update_buttons(self, has_selection: bool):
+        if self._operation_busy:
+            self._set_op_buttons_enabled(False)
+            return
         is_admin = self._ctx.is_admin()
         self._upload_btn.setEnabled(bool(self._project_id) and is_admin)
         self._reupload_btn.setEnabled(has_selection and is_admin)
@@ -231,6 +236,7 @@ class FilesTab(QWidget):
             self._det_updated.setText(str(f.get("updatedAt", "—"))[:19])
 
     def _show_progress(self, msg: str):
+        self._operation_busy = True
         self._progress_lbl.set_full_text(msg)
         self._progress_lbl.setToolTip(msg)
         self._progress_bar.show()
@@ -238,6 +244,7 @@ class FilesTab(QWidget):
         self._set_op_buttons_enabled(False)
 
     def _hide_progress(self):
+        self._operation_busy = False
         self._progress_bar.hide()
         self._progress_lbl.hide()
         self._progress_lbl.set_full_text("")

@@ -142,6 +142,7 @@ def execute_postprocess_task(
     stop_event: object,
     pause_event: object,
     report_directory: Path,
+    commit_guard,
 ) -> PostprocessTaskResult:
     """Run the resolved workload through shared budget/logging and render its canonical report."""
 
@@ -149,7 +150,6 @@ def execute_postprocess_task(
     from transbridge.ai_translator.term_database import TermDatabaseManager
     from transbridge.application.contracts import OperationOutcome, RequestContext
     from transbridge.application.io import StagePolicy
-    from transbridge.application.io.publish import ImmediateCommitGuard
     from transbridge.application.translation import (
         FilesystemPostProcessCheckpointPort,
         FilesystemTranslationCheckpointPort,
@@ -205,7 +205,7 @@ def execute_postprocess_task(
             entries=inputs,
             collection=collection,
             context=context,
-            commit_guard=ImmediateCommitGuard(task_id, active=lambda: not stop_event.is_set()),
+            commit_guard=commit_guard,
             commit_checkpoint=FilesystemTranslationCheckpointPort(checkpoint_root / "translation"),
             is_cancelled=stop_event.is_set,
             run_spec_summary={**request.metadata, "model": str(getattr(config, "model", ""))},
@@ -240,14 +240,15 @@ def execute_postprocess_task(
         if execution.commit_result is not None and execution.commit_result.outcome not in {
             OperationOutcome.COMPLETED,
             OperationOutcome.PARTIAL,
+            OperationOutcome.CANCELLED,
         }:
             codes = ", ".join(item.code for item in execution.commit_result.diagnostics)
             raise RuntimeError(f"后处理提交失败: {codes or 'POSTPROCESS_COMMIT_FAILED'}")
         return PostprocessTaskResult(
             report_data,
             completion_data,
-            execution.report_result.outcome is OperationOutcome.CANCELLED,
-            execution.commit_result is not None,
+            execution.outcome is OperationOutcome.CANCELLED,
+            execution.commit_result is not None and execution.commit_result.is_success,
         )
     finally:
         llm_runtime.close()

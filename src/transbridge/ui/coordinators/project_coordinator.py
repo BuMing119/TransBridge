@@ -401,6 +401,38 @@ class ProjectCoordinator:
             self.restore_parse_esp(location)
         return None
 
+    def restore_active_sources(self) -> None:
+        """Rehydrate every source after a Variant change without reactivating it."""
+        projection = self._host.app_runtime.use_cases.resolve("project_projection")
+        expected = projection.snapshot()
+        if expected is None:
+            return
+
+        def _restore(prepared) -> None:
+            current = projection.snapshot()
+            if current != expected:
+                self._host.show_message("工程版本已变化，已忽略过期的来源加载结果。请重新打开当前工程。")
+                return
+            if not prepared.is_success or prepared.value is None:
+                message = "；".join(item.message for item in prepared.diagnostics)
+                self._host.show_message(f"工程来源恢复失败：{message}。请重新打开工程。")
+                return
+            value = prepared.value
+            if value.recovery is not None:
+                self._host.show_message("工程来源不可用，工作台已清空。请重新打开工程进入恢复视图。")
+                return
+            self._restore_plugin_sources(value.sources, value.hydrations)
+
+        started = self._host.start_foreground_task(
+            lambda: self._host.current_project_opener.prepare_active(self._host.runtime_context),
+            message="正在恢复当前版本的全部来源…",
+            on_result=_restore,
+        )
+        if started:
+            # A failed/late hydration must never leave the previous Variant editable.
+            for key in tuple(self._host.context.slots):
+                self._host.context.remove_slot(key)
+
     def restore_parse_esp(self, esp_path: str, *, hydration=None):
         """后台解析 ESP 源文件（启动恢复用，不阻塞 UI）。"""
         from transbridge.parser.plugin_parser import PluginParser

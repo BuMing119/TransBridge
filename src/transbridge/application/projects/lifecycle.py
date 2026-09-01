@@ -736,6 +736,62 @@ class ProjectLifecycleService:
                 run_id=context.run_id,
             )
 
+    def accept_project_deletion(
+        self,
+        project_ref,
+        context: RequestContext,
+    ) -> OperationResult[dict[str, Any]]:
+        """Invalidate process state after the persistence aggregate was deleted.
+
+        Persistence is the publication boundary for deletion. This method never
+        writes the active pointer again and therefore cannot resurrect it.
+        """
+
+        with self._lock:
+            old = self._active
+            if old is None or old.project_ref != project_ref:
+                return OperationResult.completed(
+                    {"project_id": project_ref.identity.value, "active_removed": False},
+                    run_id=context.run_id,
+                )
+            self._active = None
+            self._generation += 1
+            diagnostics: list[Diagnostic] = []
+            if self._safe_release(old.leases):
+                diagnostics.append(
+                    Diagnostic(
+                        "DELETED_PROJECT_LEASE_RELEASE_FAILED",
+                        "The Project was deleted, but a lifecycle lease could not be released.",
+                        DiagnosticSeverity.WARNING,
+                    )
+                )
+            for prepared in self._prepared.values():
+                self._safe_release(prepared.leases)
+            self._prepared.clear()
+            self._exports.clear()
+            event = LifecycleEvent(
+                "active-project-changed",
+                self._generation,
+                old.summary(),
+                None,
+            )
+            if self._event_publisher is not None:
+                try:
+                    self._event_publisher(event)
+                except Exception:  # noqa: BLE001 - persistence deletion is already committed
+                    diagnostics.append(
+                        Diagnostic(
+                            "PROJECTION_EVENT_FAILED",
+                            "The Project was deleted, but a projection callback failed.",
+                            DiagnosticSeverity.WARNING,
+                        )
+                    )
+            return OperationResult.completed(
+                {"project_id": project_ref.identity.value, "active_removed": True},
+                diagnostics=tuple(diagnostics),
+                run_id=context.run_id,
+            )
+
     def save_snapshot(self, name: str, context: RequestContext) -> OperationResult[dict[str, Any]]:
         with self._lock:
             if not name or not name.strip():
@@ -753,6 +809,17 @@ class ProjectLifecycleService:
                     ErrorCategory.PREREQUISITE,
                     context,
                 )
+            for requested, actual, code in (
+                (context.project_id, active.project_ref.identity.value, "PROJECT_CONTEXT_MISMATCH"),
+                (context.variant_id, active.formal_variant_ref.identity.value, "VARIANT_CONTEXT_MISMATCH"),
+            ):
+                if requested is not None and requested != actual:
+                    return _failed(
+                        code,
+                        "The snapshot context no longer matches the active Variant.",
+                        ErrorCategory.PERMISSION,
+                        context,
+                    )
             capture = LifecycleSnapshot(
                 active.project_ref,
                 active.formal_variant_ref,

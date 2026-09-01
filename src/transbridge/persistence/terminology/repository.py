@@ -7,6 +7,7 @@ import sqlite3
 from threading import RLock
 from typing import TYPE_CHECKING, Any
 
+from transbridge.application.terminology.conflict_queries import ConflictFilter
 from transbridge.application.terminology.errors import (
     CursorStaleError,
     DigestCollisionError,
@@ -41,6 +42,7 @@ from .artifacts import ArtifactLedger
 from .cache import TerminologyCache
 from .changelog import ChangelogDocumentStore
 from .codec import dumps, loads
+from .conflict_queries import conflict_page
 from .connection import (
     StorageMode,
     TerminologyConnectionFactory,
@@ -392,9 +394,12 @@ class SqliteTerminologyRepository:
         self._require_build_ref(ref)
         return self._page_build("build_candidates", ref, request, TermCandidate)
 
-    def list_conflicts(self, ref: BuildResultRef, request: PageRequest = PageRequest()) -> Page[ConflictGroup]:
+    def list_conflicts(
+        self, ref: BuildResultRef, request: PageRequest = PageRequest(), *, filters: ConflictFilter = ConflictFilter()
+    ) -> Page[ConflictGroup]:
         self._require_build_ref(ref)
-        return self._page_build("build_conflicts", ref, request, ConflictGroup)
+        with self._lock:
+            return conflict_page(self._connection, ref, request, filters)
 
     def list_terms(self, ref: TerminologyVersionRef, request: PageRequest = PageRequest()) -> Page[TermDecision]:
         self._require_version_ref(ref)

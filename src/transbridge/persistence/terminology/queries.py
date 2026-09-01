@@ -67,6 +67,8 @@ def keyset_page[T](
     snapshot_digest: str,
     request: PageRequest,
     decode: Callable[[str], T],
+    filter_sql: str = "",
+    filter_parameters: tuple[object, ...] = (),
 ) -> Page[T]:
     cursor = request.cursor
     if cursor is not None and (
@@ -77,7 +79,10 @@ def keyset_page[T](
         raise CursorStaleError("cursor sort key does not match the stable keyset order")
     after_id = None if cursor is None else cursor.stable_id
     where = f"{owner_column} = ?"
-    parameters: list[Any] = [owner_value]
+    if filter_sql:
+        where += f" AND ({filter_sql})"
+    parameters: list[Any] = [owner_value, *filter_parameters]
+    total = int(connection.execute(f"SELECT COUNT(*) FROM {table} WHERE {where}", parameters).fetchone()[0])
     if after_id is not None:
         where += " AND stable_id > ?"
         parameters.append(after_id)
@@ -85,9 +90,6 @@ def keyset_page[T](
         f"SELECT stable_id, payload_json FROM {table} WHERE {where} ORDER BY stable_id LIMIT ?",
         (*parameters, request.limit + 1),
     ).fetchall()
-    total = int(
-        connection.execute(f"SELECT COUNT(*) FROM {table} WHERE {owner_column} = ?", (owner_value,)).fetchone()[0]
-    )
     visible = rows[: request.limit]
     next_cursor = None
     if len(rows) > request.limit and visible:

@@ -121,6 +121,9 @@ def test_fr26_project_and_task_activity_services_are_registered(tmp_path: Path) 
         "task_recovery",
         "task_recovery_expectations",
         "task_retry_intents",
+        "task_recovery_intents",
+        "task_history_navigators",
+        "task_center_actions",
         "ui_preferences",
     } <= names
     assert (

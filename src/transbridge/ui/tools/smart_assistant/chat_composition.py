@@ -31,24 +31,7 @@ def initialize_runtime(facade) -> None:
         embedding_mode="disabled",
         persist_to_disk=False,
     )
-    embedding_client = None
-    try:
-        from transbridge.paratranz.config_manager import LLMConfig
-
-        config = LLMConfig.load_from_file()
-        if config.embedding.mode != "disabled" and config.embedding.api_key:
-            from transbridge.infra import create_llm_client
-
-            embedding_client = create_llm_client(
-                config.embedding.api_key,
-                config.embedding.base_url,
-            )
-    except Exception as error:
-        logger.info("Embedding 客户端创建失败，语义检索降级: %s", error)
-    facade._memory_retriever = MemoryRetriever(
-        facade._memory_store,
-        embedding_client=embedding_client,
-    )
+    facade._memory_retriever = MemoryRetriever(facade._memory_store)
 
     from transbridge.smart_assistant.observability import ObservabilityCollector
 
@@ -216,11 +199,13 @@ def initialize_message_area(facade) -> None:
         clear_messages=facade._message_list.clear,
         load_history=facade._message_list.load_history,
         reset_task_monitor=lambda: facade._task_binding.reset_monitor() if facade._task_binding is not None else None,
+        restore_controller=facade._restore_session_controller,
     )
     facade._session_binding.configure(
         facade._session_mgr,
         active_session_id=facade._active_session_id_port,
         refresh_sessions=facade._refresh_sessions_port,
+        save_session=facade._save_session_port,
     )
     facade._task_binding = TaskBinding(
         parent=facade,

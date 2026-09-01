@@ -9,6 +9,7 @@ from datetime import datetime
 import json
 from typing import Protocol
 
+from .conflict_queries import ConflictFilter
 from .models import (
     ArtifactLedgerEntry,
     ArtifactStatus,
@@ -167,7 +168,9 @@ class TerminologyQueryPort(Protocol):
 
     def list_candidates(self, ref: BuildResultRef, request: PageRequest = PageRequest()) -> Page[TermCandidate]: ...
 
-    def list_conflicts(self, ref: BuildResultRef, request: PageRequest = PageRequest()) -> Page[ConflictGroup]: ...
+    def list_conflicts(
+        self, ref: BuildResultRef, request: PageRequest = PageRequest(), *, filters: ConflictFilter = ConflictFilter()
+    ) -> Page[ConflictGroup]: ...
 
     def list_terms(self, ref: TerminologyVersionRef, request: PageRequest = PageRequest()) -> Page[TermDecision]: ...
 

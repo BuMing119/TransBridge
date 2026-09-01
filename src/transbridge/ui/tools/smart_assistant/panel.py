@@ -10,7 +10,7 @@ import logging
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QDockWidget, QFrame, QSizePolicy, QSplitter, QVBoxLayout
+from PyQt6.QtWidgets import QDockWidget, QFrame, QMessageBox, QSizePolicy, QSplitter, QVBoxLayout
 
 from transbridge.ui.foundation.adapters import ThemeView
 from transbridge.ui.windows_taskbar import clear_window_app_user_model_id, set_window_app_user_model_id
@@ -58,6 +58,7 @@ class SmartAssistantPanel(QDockWidget):
         self.setMinimumHeight(self.MINIMUM_DOCK_HEIGHT)
 
         self._active_session_id: str | None = None
+        self._saving_session_id: str | None = None
         self._session_commands = session_commands
         self._session_projection = session_projection
         self._runtime_context = runtime_context
@@ -127,6 +128,7 @@ class SmartAssistantPanel(QDockWidget):
         self._chat.configure_session_port(
             active_session_id=self._current_session_id,
             refresh_sessions=self._refresh_session_list,
+            save_session=self._persist_authoritative_chat if self._session_commands is not None else None,
         )
         if self._session_mgr is not None:
             self._chat.set_session_manager(self._session_mgr)
@@ -212,7 +214,8 @@ class SmartAssistantPanel(QDockWidget):
 
     def _on_create_session(self, name: str):
         if self._session_commands is not None:
-            self._persist_authoritative_chat()
+            if not self._persist_authoritative_chat():
+                return
             self._create_authoritative_session(name)
             return
         sid = self._session_mgr.create_session(name=name, project_name=self._get_project_name())
@@ -223,7 +226,21 @@ class SmartAssistantPanel(QDockWidget):
 
     def _on_delete_session(self, session_id: str):
         if self._session_commands is not None:
-            logger.warning("V2 Session deletion requires an explicit repository command")
+            from transbridge.persistence.v2 import SessionId, SessionRef
+
+            if self._current_session_id() == session_id and not self._persist_authoritative_chat():
+                return
+            result = self._session_commands.delete(SessionRef(SessionId(session_id)), self._runtime_context)
+            if not self._show_session_result(result, "删除会话失败"):
+                self._refresh_session_list()
+                return
+            if self._current_session_id() is None:
+                sessions = self._session_commands.list_sessions()
+                if sessions:
+                    self._switch_to(sessions[0]["session_id"])
+                else:
+                    self._create_authoritative_session("")
+            self._refresh_session_list()
             return
         self._session_mgr.delete_session(session_id)
         if self._active_session_id == session_id:
@@ -236,9 +253,6 @@ class SmartAssistantPanel(QDockWidget):
         self._refresh_session_list()
 
     def _on_rename_session(self, session_id: str, current_name: str):
-        if self._session_commands is not None:
-            logger.warning("V2 Session rename requires an explicit aggregate command")
-            return
         from PyQt6.QtWidgets import QInputDialog
 
         new_name, ok = QInputDialog.getText(
@@ -248,6 +262,18 @@ class SmartAssistantPanel(QDockWidget):
             text=current_name,
         )
         if ok and new_name.strip():
+            if self._session_commands is not None:
+                from transbridge.persistence.v2 import SessionId, SessionRef
+
+                if not self._persist_authoritative_chat():
+                    return
+                result = self._session_commands.rename(
+                    SessionRef(SessionId(session_id)), new_name.strip(), self._runtime_context
+                )
+                if not self._show_session_result(result, "重命名会话失败"):
+                    return
+                self._refresh_session_list()
+                return
             self._session_mgr.rename_session(session_id, new_name.strip())
             self._refresh_session_list()
 
@@ -255,15 +281,15 @@ class SmartAssistantPanel(QDockWidget):
         if self._session_commands is not None:
             if self._current_session_id() == session_id:
                 return
-            self._persist_authoritative_chat()
+            if not self._persist_authoritative_chat():
+                return
             from transbridge.persistence.v2 import SessionId, SessionRef
 
             result = self._session_commands.switch(
                 SessionRef(SessionId(session_id)),
                 self._runtime_context,
             )
-            if not result.is_success:
-                logger.warning("V2 Session switch refused: %s", result.diagnostics[0].code)
+            self._show_session_result(result, "切换会话失败")
             return
         if self._active_session_id == session_id:
             return
@@ -401,33 +427,64 @@ class SmartAssistantPanel(QDockWidget):
             logger.error("V2 Session creation requires RuntimeContext")
             return
         result = self._session_commands.create_and_activate(name, self._runtime_context)
-        if not result.is_success:
-            logger.warning("V2 Session creation failed: %s", result.diagnostics[0].code)
+        self._show_session_result(result, "创建会话失败")
 
-    def _persist_authoritative_chat(self) -> None:
+    def _persist_authoritative_chat(self) -> bool:
         session_id = self._current_session_id()
         if session_id is None or self._runtime_context is None:
-            return
+            return True
+        if not getattr(self._chat, "session_ready", True):
+            return True
         from transbridge.persistence.v2 import SessionId, SessionRef
 
         backend, controller = self._chat.recovery_snapshot()
-        result = self._session_commands.save_conversation(
-            SessionRef(SessionId(session_id)),
-            list(backend),
-            list(backend),
-            self._runtime_context,
-            controller=controller,
-        )
-        if not result.is_success:
-            logger.warning("V2 Session save failed: %s", result.diagnostics[0].code)
+        snapshot = None if self._session_projection is None else self._session_projection.snapshot()
+        values = {} if snapshot is None else snapshot.to_dict()["values"]
+        previous = values.get("backend_history", [])
+        visible = list(backend)
+        if backend[: len(previous)] == previous:
+            visible = [*values.get("messages", []), *backend[len(previous) :]]
+        self._saving_session_id = session_id
+        try:
+            result = self._session_commands.save_conversation(
+                SessionRef(SessionId(session_id)),
+                visible,
+                list(backend),
+                self._runtime_context,
+                backend_summary=values.get("backend_summary") if backend else None,
+                controller=controller,
+            )
+        finally:
+            self._saving_session_id = None
+        return self._show_session_result(result, "保存会话失败")
+
+    def _show_session_result(self, result, title: str) -> bool:
+        if result.is_success:
+            return True
+        message = "\n".join(f"{item.code}: {item.message}" for item in result.diagnostics) or "操作失败，请重试。"
+        QMessageBox.warning(self, title, message)
+        return False
 
     def _on_session_projection(self, snapshot) -> None:
         if not hasattr(self, "_session_list"):
             return
         self._refresh_session_list()
         if snapshot is None:
+            self._active_session_id = None
+            self._chat.load_session({"messages": []})
             return
         values = snapshot.to_dict()["values"]
+        session_id = str(values.get("session_id", ""))
+        if self._active_session_id == session_id:
+            if self._saving_session_id == session_id:
+                return
+            if getattr(self._chat, "session_ready", True):
+                backend, controller = self._chat.recovery_snapshot()
+                if backend == values.get("backend_history", values.get("messages", [])) and (
+                    controller.to_dict() == values.get("controller")
+                ):
+                    return
+        self._active_session_id = session_id
         self._chat.load_session(values)
 
     # ── 公共访问 ──────────────────────────────────────────────

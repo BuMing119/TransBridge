@@ -30,8 +30,10 @@ class ExportTab(QWidget):
         self._project_id: int | None = None
         self._download_allowed = True  # 由项目 download 字段决定
         self._gen = 0
+        self._busy = False
         self._init_ui()
         ctx.project_selected.connect(self._on_project_changed)
+        ctx.paratranz_permissions_changed.connect(self._refresh_permissions)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -102,6 +104,7 @@ class ExportTab(QWidget):
             self.load_artifacts()
 
     def _check_download_permission(self, project: dict):
+        self._download_btn.setToolTip("")
         download = project.get("download", 0)
         is_admin = self._ctx.is_admin()
         is_member = self._ctx.is_member()
@@ -120,6 +123,15 @@ class ExportTab(QWidget):
 
         # 触发导出仅管理员可用
         self._trigger_btn.setEnabled(bool(self._project_id) and is_admin)
+        if self._busy:
+            self._set_buttons_enabled(False)
+
+    def _refresh_permissions(self):
+        project = self._ctx.current_project
+        if project and project.get("id") == self._project_id:
+            self._check_download_permission(project)
+        else:
+            self._set_buttons_enabled(False)
 
     def _set_empty(self):
         for lbl in (self._lbl_time, self._lbl_total, self._lbl_translated, self._lbl_reviewed, self._lbl_duration):
@@ -166,6 +178,7 @@ class ExportTab(QWidget):
         self._lbl_duration.setText(f"{duration} ms" if duration else "—")
 
     def _set_busy(self, busy: bool, msg: str = ""):
+        self._busy = busy
         self._progress_bar.setVisible(busy)
         self._set_status(msg)
         if not busy:

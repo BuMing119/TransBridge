@@ -123,6 +123,7 @@ class TranslationEntry:
             revision=self.revision,
             provenance=self.provenance,
             metadata=self.metadata,
+            string_id=self.string_id,
         )
 
     @property

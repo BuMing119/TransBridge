@@ -9,6 +9,7 @@ from typing import Any, Protocol
 from transbridge.application.contracts import JobRef, OperationOutcome, RequestContext
 from transbridge.application.tasks import OwnerRef, TaskRuntime
 from transbridge.application.terminology import BuildResult, PageRequest, TerminologyQueryPort
+from transbridge.application.terminology.conflict_queries import ConflictQuery
 from transbridge.application.terminology.conflicts import ConflictResolutionOperation
 from transbridge.application.terminology.decisions import DecisionOperation
 from transbridge.application.terminology.input_capture import BuildInputSnapshot, TerminologyBuildInputPort
@@ -290,6 +291,12 @@ class TerminologyPresenter:
         method = getattr(queries, name)
         if name == "list_versions":
             return lambda ref, request=PageRequest(): method(ref[0], ref[1], request)
+        if name == "list_conflicts":
+            return lambda ref, request=PageRequest(): (
+                method(ref.build_ref, request, filters=ref.filters)
+                if isinstance(ref, ConflictQuery)
+                else method(ref, request)
+            )
         return lambda ref, request=PageRequest(): method(ref, request)
 
     def close(self) -> None:

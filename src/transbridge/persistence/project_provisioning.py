@@ -82,9 +82,14 @@ class TranslationIoProjectSourcePreparer:
                 SourceDescriptor(str(path), path.name, path.stat().st_size),
                 context,
                 format_hint=format_hint,
+                source_namespace=SourceNamespace(options["source_namespace"])
+                if "source_namespace" in options
+                else None,
                 options=tuple(sorted(options.items())),
             )
         )
+        if parsed.format_id is FormatId.JSON_PARATRANZ:
+            parsed = replace(parsed, entries=tuple(entry.to_translation_entry() for entry in parsed.entries))
         allowed_partial = parsed.outcome is OperationOutcome.PARTIAL and all(
             item.code == "SOURCE_LOCATOR_CONFLICT" for item in parsed.diagnostics
         )

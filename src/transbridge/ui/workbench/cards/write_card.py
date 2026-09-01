@@ -87,6 +87,15 @@ class WriteCard(OpCard):
 
     def do_batch_write(self, selected_slots: list):
         """执行批量写回（由 step3 调用）。"""
+        if getattr(self._ctx, "uses_authoritative_projection", False):
+            if self._dispatch_planned("write", self._ctx, batch=True):
+                return
+            QMessageBox.warning(
+                self,
+                "批量写回不可用",
+                "至少两个所选来源缺少正式 hydration 快照或格式身份；本次未调用旧写入器。",
+            )
+            return
         slot_names = [s.label or Path(s.esp_path).stem for s in selected_slots]
 
         # 使用可滚动确认对话框
@@ -161,6 +170,9 @@ class WriteCard(OpCard):
 
     def write(self):
         if self._dispatch_planned("write", self._ctx):
+            return
+        if getattr(self._ctx, "uses_authoritative_projection", False):
+            QMessageBox.warning(self, "写回不可用", "当前来源缺少正式写回快照，请重新打开工程后重试。")
             return
         collection = self._ctx.collection
         if not collection:

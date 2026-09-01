@@ -29,35 +29,22 @@ _PARAM_SCHEMAS = {
     },
 }
 
+for _tool_name in ("apply_dictionary", "save_dictionary"):
+    for _locale in ("source_locale", "target_locale"):
+        _PARAM_SCHEMAS[_tool_name][_locale] = {
+            "type": "str",
+            "required": False,
+            "description": "Explicit language locale; required for apply unless captured in the request context",
+        }
+
 
 @require_collection
 def _tool_apply_dictionary(args: dict, ctx, collection) -> ToolResult:
-    """调用 TranslationMemoryManager.apply_to_collection() 套用词典。"""
+    """Apply only candidates accepted by the current locale/source contract."""
     try:
-        from transbridge.translation_memory.manager import QueryContext, TranslationMemoryManager
+        from ._dictionary_application import apply_dictionary
 
-        manager = TranslationMemoryManager()
-        manager.load()
-        context = QueryContext()
-        result = manager.apply_to_collection(
-            collection,
-            context=context,
-            overwrite=bool(args.get("overwrite", False)),
-        )
-        if result.applied:
-            ctx.publish_collection_modified()
-        data = {
-            "applied": result.applied,
-            "key_hits": result.key_hits,
-            "text_hits": result.text_hits,
-            "misses": result.misses,
-            "needs_review": result.needs_review,
-            "conflicts": len(result.conflicts),
-        }
-        return ToolResult.ok(
-            f"词典套用: 命中{result.applied}(键{result.key_hits}/文本{result.text_hits}) 未命中{result.misses}",
-            data=data,
-        )
+        return apply_dictionary(args, ctx, collection)
     except Exception as exc:
         return ToolResult.fail(f"词典套用失败: {exc}", error_category="internal")
 
@@ -69,12 +56,20 @@ def _tool_save_dictionary(args: dict, ctx, collection) -> ToolResult:
         from transbridge.translation_memory.manager import TranslationMemoryManager
         from transbridge.translation_memory.model import SCOPE_GLOBAL
 
+        from ._dictionary_application import dictionary_scope
+
         manager = TranslationMemoryManager()
         manager.load()
+        source_locale, target_locale, fingerprint = dictionary_scope(args, ctx, required=False)
+        namespaces = {entry.identity.namespace.value for entry in collection}
         added = manager.save_from_collection(
             collection,
             mod_file_id=args.get("mod_file_id", ""),
             scope=args.get("scope", SCOPE_GLOBAL),
+            source_locale=source_locale,
+            target_locale=target_locale,
+            source_namespace=next(iter(namespaces)) if len(namespaces) == 1 else "",
+            source_fingerprint=fingerprint,
         )
         manager.save()
         return ToolResult.ok(f"已存词典，新增 {added} 条", data={"added": added})
@@ -121,9 +116,10 @@ def _register_migrator_tools():
                 "display_name": "词典套用",
                 "description": (
                     "①Apply the translation-memory dictionary to fill empty translations in the current collection. "
-                    "②Argument: optional overwrite, default false. ③Returns "
+                    "②Arguments: source_locale and target_locale unless captured in context; "
+                    "optional overwrite, default false. ③Returns "
                     "{applied,key_hits,text_hits,misses,needs_review,conflicts}. "
-                    "④Rule: key lookup first, then text fallback."
+                    "④Rule: skip disabled/wrong-language entries; stale or conflicting candidates require review."
                 ),
                 "execute": _tool_apply_dictionary,
                 "permission": "write",

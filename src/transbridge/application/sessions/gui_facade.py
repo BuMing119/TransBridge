@@ -157,6 +157,40 @@ class GuiSessionCommandFacade:
             for item in self._catalog.list()
         ]
 
+    def rename(self, ref: SessionRef, name: str, context: RequestContext) -> OperationResult[dict[str, Any]]:
+        """Keep the list metadata and authoritative conversation name consistent."""
+        try:
+            previous = self._catalog_entry(ref)
+            replacement = replace(previous, name=name.strip())
+            self._catalog.upsert(replacement)
+            result = self._lifecycle.rename(ref, replacement.name, replace(context, session_id=ref.identity.value))
+            if not result.is_success:
+                self._catalog.upsert(previous)
+                return result
+            return OperationResult.completed(
+                {"session_id": ref.identity.value, "name": replacement.name}, run_id=context.run_id
+            )
+        except Exception as exc:
+            return OperationResult.from_exception(exc, run_id=context.run_id)
+
+    def delete(self, ref: SessionRef, context: RequestContext) -> OperationResult[dict[str, Any]]:
+        """Remove discoverability first, restoring it if the record cannot be deleted."""
+        try:
+            previous = self._catalog_entry(ref)
+            self._catalog.remove(ref.identity.value)
+            result = self._lifecycle.delete(ref, replace(context, session_id=ref.identity.value))
+            if not result.is_success:
+                self._catalog.upsert(previous)
+            return result
+        except Exception as exc:
+            return OperationResult.from_exception(exc, run_id=context.run_id)
+
+    def _catalog_entry(self, ref: SessionRef) -> SessionCatalogEntry:
+        entry = next((item for item in self._catalog.list() if item.session_id == ref.identity.value), None)
+        if entry is None:
+            raise DomainError(ErrorCategory.PREREQUISITE, "SESSION_NOT_LISTED", "会话已不存在，请刷新会话列表。")
+        return entry
+
     def _upsert_active_catalog(self) -> None:
         active = self._lifecycle.active
         if active is None:

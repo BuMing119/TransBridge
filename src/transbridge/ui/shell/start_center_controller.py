@@ -41,6 +41,12 @@ class StartCenterController:
         view.open_project_requested.connect(lambda: self._submit(IntentId.PROJECT_OPEN))
         view.open_recent_requested.connect(lambda path: self._submit(IntentId.PROJECT_OPEN, {"path": path}))
         view.open_recent_in_new_window_requested.connect(self._open_recent_in_new_window)
+        view.delete_project_requested.connect(
+            lambda project_id, name: self._submit(
+                IntentId.PROJECT_DELETE,
+                {"project_id": project_id, "name": name},
+            )
+        )
         view.create_empty_requested.connect(self.create_empty)
         view.open_fomod_requested.connect(lambda: self._submit(IntentId.PUBLISH_FOMOD))
         view.task_center_requested.connect(lambda: self._submit(IntentId.TASK_OPEN_ACTIVITY))

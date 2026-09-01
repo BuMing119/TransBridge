@@ -14,6 +14,8 @@ _MUTATION_FILES = (
     "smart_assistant/tools/tool_editor.py",
     "smart_assistant/tools/types.py",
     "ui/operations/production_support.py",
+    "ui/operations/authoritative_batch_download.py",
+    "ui/tools/ai_translator/batch_runtime.py",
     "ui/tools/ai_translator/version_snapshot.py",
     "ui/tools/dictionary_panel.py",
     "ui/workbench/step2.py",
@@ -27,6 +29,8 @@ _ALLOWED_PROJECTION_WRITES = {
     ("smart_assistant/tools/types.py", "rollback_entry_states.restore", "translation"),
     ("smart_assistant/tools/types.py", "rollback_entry_states.restore", "stage"),
     ("ui/operations/production_support.py", "replace_local_snapshots", "collection"),
+    ("ui/operations/authoritative_batch_download.py", "publish", "collection"),
+    ("ui/tools/ai_translator/batch_runtime.py", "_prepare_authoritative_batch.publish", "collection"),
     ("ui/tools/ai_translator/version_snapshot.py", "_restore_before_entries", "translation"),
     ("ui/tools/ai_translator/version_snapshot.py", "_restore_before_entries", "stage"),
     ("ui/tools/dictionary_panel.py", "_on_apply_dict", "translation"),
@@ -79,16 +83,17 @@ class _ProjectionWriteVisitor(ast.NodeVisitor):
 def test_known_translation_adapters_commit_or_fail_closed_for_v2_projects() -> None:
     assert "commands.replace_entry_states(" in _source("ui/tools/dictionary_panel.py")
     assert "commands.replace_entry_states(" in _source("ui/version_persistence.py")
-    assert "publish_collection_modified()" in _source("smart_assistant/tools/tool_translator.py")
+    assert "publish_collection_modified(" in _source("smart_assistant/tools/tool_translator.py")
     assert "commands.replace_entry_records(" in _source("ui/operations/production_support.py")
 
     batch_ai = _source("ui/tools/ai_translator/batch_runtime.py")
     assert "uses_authoritative_projection" in batch_ai
-    assert "本次未启动" in batch_ai
+    assert "persistence.commit_translation(entries)" in batch_ai
 
     batch_download = _source("ui/workbench/cards/download_card.py")
     assert "uses_authoritative_projection" in batch_download
-    assert "本次未执行" in batch_download
+    assert "AuthoritativeBatchDownloadSession.capture" in batch_download
+    assert "commands.replace_entry_records(" in _source("ui/operations/authoritative_batch_download.py")
 
 
 def test_projection_divergence_guard_compares_complete_visible_and_authoritative_sets() -> None:

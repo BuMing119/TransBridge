@@ -1,5 +1,6 @@
 """混合模式 Worker：统一调度翻译 + 校改润色候选。"""
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 import re
@@ -173,35 +174,26 @@ class _MixedWorker(QThread):
         return result
 
     def _run_parallel(self) -> dict:
-        """并行执行：使用线程分别跑翻译和润色。"""
+        """Wait for both stages before propagating failure to the run boundary."""
         result = {}
-        threads = []
-
-        def run_translate():
+        failures: list[tuple[str, Exception]] = []
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="ai-mixed") as executor:
+            futures = {}
             if self._translate_entries:
-                result["translate"] = self._do_translate()
-
-        def run_polish():
+                futures["translate"] = executor.submit(self._do_translate)
             if self._polish_entries:
-                result["polish"] = self._do_polish()
-
-        if self._translate_entries:
-            t = threading.Thread(target=run_translate, daemon=True)
-            threads.append(("translate", t))
-        if self._polish_entries:
-            t = threading.Thread(target=run_polish, daemon=True)
-            threads.append(("polish", t))
-
-        for _, t in threads:
-            t.start()
-
-        # A cancel request stops new work, but the outer worker remains alive
-        # until both children leave their current safe point.  Returning while
-        # daemon children still mutate results would publish a false terminal.
-        for _name, t in threads:
-            while t.is_alive():
-                t.join(0.1)
-
+                futures["polish"] = executor.submit(self._do_polish)
+            for stage, future in futures.items():
+                try:
+                    result[stage] = future.result()
+                except Exception as exc:
+                    failures.append((stage, exc))
+        # The executor has joined every stage. Rollback can now safely run
+        # without a still-running sibling writing into the restored collection.
+        if failures:
+            labels = {"translate": "翻译", "polish": "润色"}
+            message = "；".join(f"{labels[stage]}失败：{type(exc).__name__}: {exc}" for stage, exc in failures)
+            raise RuntimeError(message) from ExceptionGroup("Mixed workflow stage failures", [e for _, e in failures])
         return result
 
     def _do_translate(self):

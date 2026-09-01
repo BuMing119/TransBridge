@@ -49,6 +49,15 @@ class MemoryFilesystem:
         files = (path for path in self.files if os.path.normcase(os.path.dirname(path)) == os.path.normcase(canonical))
         return tuple(sorted(files, key=os.path.normcase))
 
+    def list_tree_files(self, directory: str) -> tuple[str, ...]:
+        canonical = self.canonicalize(directory)
+        self.calls.append(("list-tree", canonical))
+        if canonical in self.fail_list_paths:
+            raise OSError("injected list fault")
+        prefix = canonical + os.sep
+        files = (path for path in self.files if os.path.normcase(path).startswith(os.path.normcase(prefix)))
+        return tuple(sorted(files, key=os.path.normcase))
+
     def make_dirs(self, path: str) -> None:
         canonical = self.canonicalize(path)
         self.calls.append(("mkdir", canonical))
@@ -85,6 +94,21 @@ class MemoryFilesystem:
         if canonical not in self.files and not missing_ok:
             raise FileNotFoundError(canonical)
         self.files.pop(canonical, None)
+
+    def remove_empty_tree(self, directory: str) -> None:
+        canonical = self.canonicalize(directory)
+        self.calls.append(("rmdir-tree", canonical))
+        prefix = canonical + os.sep
+        if any(os.path.normcase(path).startswith(os.path.normcase(prefix)) for path in self.files):
+            raise OSError("directory is not empty")
+        self.directories = {
+            path
+            for path in self.directories
+            if not (
+                os.path.normcase(path) == os.path.normcase(canonical)
+                or os.path.normcase(path).startswith(os.path.normcase(prefix))
+            )
+        }
 
     def seed(self, path: str, data: bytes) -> None:
         self.files[self.canonicalize(path)] = bytes(data)

@@ -39,10 +39,13 @@ class IntentId(StrEnum):
     PROJECT_OPEN = "project.open"
     PROJECT_SAVE = "project.save"
     PROJECT_REFRESH = "project.refresh"
+    PROJECT_RENAME = "project.rename"
+    PROJECT_DELETE = "project.delete"
     PROJECT_VARIANT_CREATE = "project.variant.create"
     PROJECT_VARIANT_COPY = "project.variant.copy"
     PROJECT_SNAPSHOT_SAVE = "project.snapshot.save"
     PROJECT_SNAPSHOT_LOAD = "project.snapshot.load"
+    PROJECT_SNAPSHOT_DELETE = "project.snapshot.delete"
     PROJECT_EXPORT = "project.export-transbridge"
     PROJECT_IMPORT = "project.import-transbridge"
     SOURCE_MIGRATE = "source.apply-migration"
@@ -151,6 +154,13 @@ DEFAULT_ACTION_CATALOG = ActionCatalog((
     ),
     ActionDescriptor(IntentId.PROJECT_OPEN, "打开本地翻译工程…", ActionSection.PROJECT),
     ActionDescriptor(IntentId.PROJECT_SAVE, "保存当前工程", ActionSection.PROJECT, shortcut="Ctrl+S"),
+    ActionDescriptor(IntentId.PROJECT_RENAME, "重命名当前工程…", ActionSection.PROJECT),
+    ActionDescriptor(
+        IntentId.PROJECT_DELETE,
+        "删除本地工程…",
+        ActionSection.PROJECT,
+        danger=DangerLevel.DESTRUCTIVE,
+    ),
     ActionDescriptor(
         IntentId.PROJECT_REFRESH,
         "刷新工程列表",
@@ -166,6 +176,12 @@ DEFAULT_ACTION_CATALOG = ActionCatalog((
         "载入历史还原点…",
         ActionSection.PROJECT,
         danger=DangerLevel.CAUTION,
+    ),
+    ActionDescriptor(
+        IntentId.PROJECT_SNAPSHOT_DELETE,
+        "删除历史还原点…",
+        ActionSection.PROJECT,
+        danger=DangerLevel.DESTRUCTIVE,
     ),
     ActionDescriptor(IntentId.PROJECT_EXPORT, "导出 .transbridge…", ActionSection.FILE),
     ActionDescriptor(IntentId.PROJECT_IMPORT, "导入 .transbridge…", ActionSection.FILE, danger=DangerLevel.CAUTION),

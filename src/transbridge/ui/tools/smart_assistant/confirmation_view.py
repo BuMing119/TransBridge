@@ -293,7 +293,8 @@ class PlanExecutionBinding:
         self._engine = None
         if engine is not None:
             engine.cancel()
-            engine.shutdown()
+            # Cancellation is cooperative; the GUI must not join in-flight I/O.
+            engine._executor.shutdown(wait=False)
 
 
 __all__.append("PlanExecutionBinding")

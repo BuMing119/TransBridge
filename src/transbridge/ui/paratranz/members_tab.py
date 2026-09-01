@@ -45,6 +45,8 @@ class MembersTab(QWidget):
         self._gen = 0
         self._init_ui()
         ctx.project_selected.connect(self._on_project_changed)
+        ctx.paratranz_permissions_changed.connect(self._refresh_permissions)
+        self._refresh_permissions()
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -81,8 +83,10 @@ class MembersTab(QWidget):
         layout.addWidget(self._table, stretch=1)
 
     def _on_project_changed(self, project):
+        self._gen += 1
         self._project_id = project.get("id") if project else None
         self._table.setRowCount(0)
+        self._refresh_permissions()
         if self._project_id:
             self.load_members()
 
@@ -102,8 +106,7 @@ class MembersTab(QWidget):
             if self._gen != gen:
                 return
             # 缓存到 project dict 以供权限判断使用
-            if self._ctx.current_project:
-                self._ctx.current_project["_members"] = members
+            self._ctx.update_paratranz_members(pid, members)
             self._fill_table(members)
 
         w = ApiWorker(_fetch)
@@ -111,6 +114,11 @@ class MembersTab(QWidget):
         w.error.connect(lambda e: QMessageBox.warning(self, "加载失败", e))
         w.start()
         self._workers.append(w)
+
+    def _refresh_permissions(self):
+        allowed = bool(self._project_id) and self._ctx.is_admin()
+        self._add_btn.setEnabled(allowed)
+        self._remove_btn.setEnabled(allowed and bool(self._table.selectedItems()))
 
     def _fill_table(self, members: list):
         self._table.setRowCount(len(members))

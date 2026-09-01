@@ -32,6 +32,7 @@ def test_paratranz_public_package_keeps_legacy_exports_after_lazy_loading() -> N
         "ParaTranzDownloader",
         "DownloadResult",
         "ArtifactWorkflow",
+        "ParaTranzTermsService",
     }
 
     assert set(package.__all__) == expected

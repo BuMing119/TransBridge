@@ -169,6 +169,7 @@ class StartCenterLanding(QWidget):
     open_fomod_requested = pyqtSignal()
     return_to_current_requested = pyqtSignal()
     task_center_requested = pyqtSignal()
+    delete_project_requested = pyqtSignal(str, str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -224,6 +225,7 @@ class StartCenterLanding(QWidget):
         self._projects_panel.open_current_requested.connect(self.open_recent_requested)
         self._projects_panel.open_new_window_requested.connect(self.open_recent_in_new_window_requested)
         self._projects_panel.return_to_current_requested.connect(self.return_to_current_requested)
+        self._projects_panel.delete_requested.connect(self.delete_project_requested)
         self._project_list = self._projects_panel.project_list
         self._projects_empty = self._projects_panel.projects_empty
         self._project_count = self._projects_panel.project_count

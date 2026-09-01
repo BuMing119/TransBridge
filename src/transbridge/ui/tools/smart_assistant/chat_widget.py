@@ -91,6 +91,8 @@ class ChatWidget(QWidget):
         self._session_mgr = None
         self._active_session_id_port = lambda: None
         self._refresh_sessions_port = lambda: None
+        self._save_session_port = None
+        self._pending_session_data = None
 
         # 延后 UI 构建：__init__ 累积的 Python→C++ 调用在 Windows 1MB C 栈
         # 上可能溢出 (0xC00000FD)。通过 QTimer.singleShot 将 QObject 密集的
@@ -178,6 +180,8 @@ class ChatWidget(QWidget):
             self._shortcut_ctrl_o.activated.connect(self._message_list.toggle_thinking)
         except Exception as e:
             logger.error("UI初始化 Stage 4/4 失败: %s", e)
+        if self._pending_session_data is not None:
+            self.load_session(self._pending_session_data)
 
     # ── 公共方法 ──────────────────────────────────────────────
 
@@ -255,6 +259,21 @@ class ChatWidget(QWidget):
         backend = list(self._conversation.to_dict().get("messages", []))
         controller = self._controller.to_recovery_snapshot()
         return backend, controller
+
+    def _restore_session_controller(self, snapshot) -> None:
+        restored = self._controller.restore_recovery_snapshot(snapshot)
+        self._auto_mode = restored.auto_mode
+        self._orchestrator.auto_mode = restored.auto_mode
+        self._orchestrator.react_depth = restored.react_depth
+        checkbox = getattr(self, "_auto_cb", None)
+        if checkbox is not None:
+            blocked = checkbox.blockSignals(True)
+            checkbox.setChecked(restored.auto_mode)
+            checkbox.blockSignals(blocked)
+
+    @property
+    def session_ready(self) -> bool:
+        return self._session_binding is not None and self._pending_session_data is None
 
     def add_system_prompt(self, text: str) -> None:
         """注入 System Prompt 到对话历史（供 SkillExecutor 等外部调用者使用）。
@@ -420,6 +439,7 @@ class ChatWidget(QWidget):
                 mgr,
                 active_session_id=self._active_session_id_port,
                 refresh_sessions=self._refresh_sessions_port,
+                save_session=self._save_session_port,
             )
 
     def configure_session_port(
@@ -427,15 +447,18 @@ class ChatWidget(QWidget):
         *,
         active_session_id,
         refresh_sessions,
+        save_session=None,
     ) -> None:
         """Inject Panel session ports without parent-chain/private lookup."""
         self._active_session_id_port = active_session_id
         self._refresh_sessions_port = refresh_sessions
+        self._save_session_port = save_session
         if self._session_binding is not None:
             self._session_binding.configure(
                 self._session_mgr,
                 active_session_id=active_session_id,
                 refresh_sessions=refresh_sessions,
+                save_session=save_session,
             )
 
     # ── FR14: 后台任务监控 ────────────────────────────────────
@@ -458,10 +481,12 @@ class ChatWidget(QWidget):
 
     def load_session(self, data: dict) -> None:
         """加载会话数据：清空当前对话并渲染历史消息。"""
-        if self._session_binding is None:
-            if not getattr(self, "_shutdown_complete", False):
-                QTimer.singleShot(50, lambda: self.load_session(dict(data)))
+        if getattr(self, "_shutdown_complete", False):
             return
+        if self._session_binding is None or self._input is None:
+            self._pending_session_data = dict(data)
+            return
+        self._pending_session_data = None
         if self._streaming_presenter is not None:
             self._streaming_presenter.advance_generation()
         self._session_binding.load(data)

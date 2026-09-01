@@ -7,7 +7,9 @@ from ._workflow_llm_runtime import WorkflowLlmRuntime, create_workflow_llm_runti
 PolishLlmRuntime = WorkflowLlmRuntime
 
 
-def create_polish_llm_runtime(llm_config: object, *, esp_path: str, stop_event: object) -> PolishLlmRuntime:
+def create_polish_llm_runtime(
+    llm_config: object, *, esp_path: str, stop_event: object, pause_event: object | None = None
+) -> PolishLlmRuntime:
     """Create one budgeted and logged client for the complete polish run."""
 
     return create_workflow_llm_runtime(
@@ -15,6 +17,7 @@ def create_polish_llm_runtime(llm_config: object, *, esp_path: str, stop_event: 
         esp_path=esp_path,
         workflow="polish",
         stop_event=stop_event,
+        pause_event=pause_event,
     )
 
 

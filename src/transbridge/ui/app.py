@@ -64,7 +64,12 @@ def _global_exception_hook(exc_type, exc_value, exc_tb):
     sys.__excepthook__(exc_type, exc_value, exc_tb)
 
 
-def main(runtime: AppRuntime | None = None, *, initial_project_path: str | None = None) -> int:
+def main(
+    runtime: AppRuntime | None = None,
+    *,
+    initial_project_path: str | None = None,
+    initial_import_path: str | None = None,
+) -> int:
     """Run the GUI adapter against one explicitly owned application runtime."""
 
     _setup_logging()
@@ -118,6 +123,7 @@ def main(runtime: AppRuntime | None = None, *, initial_project_path: str | None 
             runtime_context=binding.context,
             ui_foundation=ui_foundation,
             initial_project_path=initial_project_path,
+            initial_import_path=initial_import_path,
         )
         window.show()
         return int(app.exec())

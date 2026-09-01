@@ -21,6 +21,7 @@ from transbridge.config.paratranz import ParatranzConfig
 
 from .checkpoint_manager import CheckpointManager
 from .condition_evaluator import ConditionEvaluator
+from .graph_tasks import GraphTaskAwaiter
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,9 @@ class GraphExecutor:
         # M8: _paused 改为实例级属性，不同会话独立暂停
         self._paused = threading.Event()
         self._pause_cv = threading.Condition()
+        from .tools.task_manager import TaskManager
+
+        self._tasks = GraphTaskAwaiter(TaskManager(), self._cancelled, self._paused)
         # m11: 复用 ThreadPoolExecutor
         self._executor = ThreadPoolExecutor(max_workers=self._MAX_WORKERS)
         # ADR-008: 回调列表替代 pyqtSignal
@@ -106,14 +110,15 @@ class GraphExecutor:
 
     def cancel(self) -> None:
         self._cancelled.set()
+        self._tasks.control("cancel")
         with self._pause_cv:
             self._pause_cv.notify_all()
 
-    def shutdown(self):
+    def shutdown(self, *, wait: bool = True):
         """关闭线程池，释放线程资源。"""
         if hasattr(self, "_executor") and self._executor:
             try:
-                self._executor.shutdown(wait=True, cancel_futures=True)
+                self._executor.shutdown(wait=wait, cancel_futures=True)
             except RuntimeError:
                 # Already shut down, ignore
                 pass
@@ -332,6 +337,9 @@ class GraphExecutor:
         if exec_error is not None:
             return exec_error
 
+        if getattr(spec, "is_long_running", False):
+            raw_result = self._tasks.resolve(raw_result)
+
         final_result = StepResult(
             step_id=step_id,
             tool=tool_name,
@@ -514,6 +522,8 @@ class GraphExecutor:
         self, pending: list, node_map: dict, visited: set, graph, results: dict, completed: set, total: int
     ) -> list:
         """执行一层 BFS：并行执行当前层所有节点，返回下一层待处理节点 ID 列表。"""
+        from .graph_types import ActionNode
+
         # 构建当前层节点列表
         level_nodes = []
         for nid in pending:
@@ -525,10 +535,31 @@ class GraphExecutor:
             return []
 
         # 并行执行当前层
-        futures = {self._executor.submit(self._dispatch_node, node, node_map, results): node for node in level_nodes}
+        futures = {}
+        for node in level_nodes:
+            failed_dependencies = [
+                edge.from_node
+                for edge in graph.edges
+                if edge.to_node == node.node_id
+                and edge.edge_type != "loop_back"
+                and edge.from_node in results
+                and not results[edge.from_node].success
+            ]
+            # Control nodes may intentionally inspect failure to choose a recovery branch.
+            if failed_dependencies and isinstance(node, ActionNode):
+                result = StepResult(
+                    self._stable_step_id(node.node_id),
+                    getattr(node, "tool", "?"),
+                    False,
+                    f"依赖步骤失败或取消，未执行: {', '.join(failed_dependencies)}",
+                )
+                results[node.node_id] = result
+                completed.add(node.node_id)
+                self._emit(self._on_step_finished, result)
+                self._emit(self._on_progress, len(completed), total)
+                continue
+            futures[self._executor.submit(self._dispatch_node, node, node_map, results)] = node
         for future in as_completed(futures):
-            if self._cancelled.is_set():
-                break
             node = futures[future]
             try:
                 r = future.result()
@@ -551,8 +582,13 @@ class GraphExecutor:
         # 找下一层节点
         next_pending = []
         for edge in graph.edges:
-            if edge.from_node in visited and edge.to_node not in visited:
-                if edge.edge_type != "loop_back":
+            if edge.from_node in completed and edge.to_node not in visited and edge.edge_type != "loop_back":
+                predecessors = (
+                    incoming.from_node
+                    for incoming in graph.edges
+                    if incoming.to_node == edge.to_node and incoming.edge_type != "loop_back"
+                )
+                if all(predecessor in completed for predecessor in predecessors):
                     next_pending.append(edge.to_node)
 
         return list(set(next_pending))
@@ -894,8 +930,10 @@ class GraphExecutor:
 
     def pause(self) -> None:
         self._paused.set()
+        self._tasks.control("pause")
 
     def resume(self) -> None:
         self._paused.clear()
+        self._tasks.control("resume")
         with self._pause_cv:
             self._pause_cv.notify_all()

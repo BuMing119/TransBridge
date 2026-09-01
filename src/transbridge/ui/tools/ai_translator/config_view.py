@@ -162,7 +162,7 @@ class AITranslatorView:
         self._max_terms_spin.setToolTip("每批次发送给 LLM 的术语表上限，防止 token 超限")
         llm_layout.addLayout(_row("术语上限:", self._max_terms_spin))
 
-        test_btn = QPushButton("测试 LLM 连接")
+        test_btn = self._llm_test_btn = QPushButton("测试 LLM 连接")
         test_btn.setFixedWidth(100)
         test_btn.clicked.connect(lambda: callbacks.on_test_connection("llm"))
         test_row = QHBoxLayout()

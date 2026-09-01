@@ -353,45 +353,14 @@ def _tool_upload_entries(args: dict, ctx, collection) -> ToolResult:
         return ToolResult.fail(target_error, error_category="input", error_code="PARATRANZ_TARGET_INVALID")
     if not pid:
         return ToolResult.fail("请指定 project_id")
+    from ._entry_upload import upload_entries
+
     try:
-        force = args.get("force_overwrite", False)
-        entry_ids = args.get("entry_ids")
-        entries = [collection.get(eid) for eid in entry_ids] if entry_ids else list(collection)
-        uploaded = 0
-        failed_items = []
-        for e in entries:
-            try:
-                reference = _paratranz_ref(e, pid) if force else None
-                client.upsert_entry(
-                    pid,
-                    ParaTranzEntry(
-                        reference.opaque_id if reference is not None else None,
-                        e.key,
-                        e.original,
-                        e.translation or "",
-                        e.context or "",
-                        e.stage,
-                    ),
-                    force_overwrite=force,
-                    cancellation=_cancellation(ctx),
-                )
-                uploaded += 1
-            except TaskCancelled:
-                raise
-            except Exception as exc:
-                logger.warning("上传条目失败: %s", exc)
-                failed_items.append({
-                    "key": e.key if hasattr(e, "key") else str(e),
-                    "error": str(exc),
-                })
-        return ToolResult.ok(
-            f"已上传 {uploaded}/{len(entries)} 条" + (f"，失败 {len(failed_items)} 条" if failed_items else ""),
-            data={"uploaded": uploaded, "total": len(entries), "failed_items": failed_items},
-        )
+        return upload_entries(args, ctx, collection, client, pid, _cancellation(ctx))
     except TaskCancelled:
         raise
     except Exception as exc:
-        logger.error("上传条目失败")
+        logger.exception("上传条目失败")
         return ToolResult.fail(f"上传失败: {exc}")
 
 

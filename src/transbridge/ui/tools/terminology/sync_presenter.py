@@ -86,6 +86,7 @@ class TerminologySyncPresenter:
         self._context = context
         self._owner = owner
         self._state = TerminologySyncViewState()
+        self._inbound_generation = 0
 
     @property
     def state(self) -> TerminologySyncViewState:
@@ -132,6 +133,7 @@ class TerminologySyncPresenter:
 
     def load_inbound(self, *, page_size: int = 50) -> TerminologySyncViewState:
         values = self._service.list_inbound(self._context)
+        self.invalidate_inbound_preview()
         selected = self._state.selected_inbound_id
         if selected not in {item.change_set_id for item in values}:
             selected = None if not values else values[0].change_set_id
@@ -148,6 +150,7 @@ class TerminologySyncPresenter:
     def select_inbound(self, change_set_id: str, *, page_size: int = 50) -> TerminologySyncViewState:
         if change_set_id not in {item.change_set_id for item in self._state.inbound_sets}:
             raise KeyError("unknown inbound terminology change set")
+        self.invalidate_inbound_preview()
         self._state = replace(
             self._state,
             selected_inbound_id=change_set_id,
@@ -176,13 +179,21 @@ class TerminologySyncPresenter:
     def preview_inbound(self, choices: tuple[DraftImportChoice, ...]) -> TerminologySyncViewState:
         if self._state.selected_inbound_id is None:
             raise RuntimeError("select an inbound terminology change set first")
+        generation = self._inbound_generation
         selection = self._service.prepare_import_selection(
             self._context,
             self._state.selected_inbound_id,
             choices,
         )
         proposal = self._service.preview_import(selection)
+        if generation != self._inbound_generation:
+            return self._state
         self._state = replace(self._state, inbound_proposal=proposal, inbound_commit=None, error=None)
+        return self._state
+
+    def invalidate_inbound_preview(self) -> TerminologySyncViewState:
+        self._inbound_generation += 1
+        self._state = replace(self._state, inbound_proposal=None, inbound_commit=None, error=None)
         return self._state
 
     def commit_inbound(self) -> TerminologySyncViewState:

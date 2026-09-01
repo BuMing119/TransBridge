@@ -41,6 +41,7 @@ from transbridge.persistence.v2 import (
     VariantId,
     VariantRef,
     VariantRepository,
+    VariantSnapshot,
 )
 from transbridge.persistence.v2.baselines import BaselineRegistry
 from transbridge.persistence.v2.models import PersistenceV2Error
@@ -192,6 +193,30 @@ class CurrentProjectOpener:
                 for value in project.envelope.data.get("variant_ids", ())
             )
             recovery = None
+            try:
+                stored = VariantSnapshot.from_dto(self._variants.read_snapshot(variant_ref), variant_ref)
+            except (OSError, PersistenceV2Error, ValueError) as exc:
+                raise DomainError(
+                    ErrorCategory.PREREQUISITE,
+                    "VARIANT_RECORD_UNAVAILABLE",
+                    "保存的版本记录不可读取，无法打开工程或恢复视图。",
+                    cause=exc,
+                ) from exc
+            unverified = any(
+                item.sha256 is None or item.namespace.value == "legacy:v1" for item in stored.source_fingerprints
+            )
+            recovery_required = project.envelope.data.get("legacy", {}).get("archive_recovery")
+            if unverified or recovery_required or (not sources and (stored.entries or stored.source_fingerprints)):
+                source_diagnostics.append(
+                    source_recovery_diagnostic(
+                        {},
+                        DomainError(
+                            ErrorCategory.PREREQUISITE,
+                            "SOURCE_BASELINE_REQUIRED",
+                            "保存的版本尚未映射到可靠源文件基线；已打开只读恢复视图，原始数据未改变。",
+                        ),
+                    )
+                )
             if source_diagnostics:
                 recovery = load_recovery_snapshot(
                     str(selected),

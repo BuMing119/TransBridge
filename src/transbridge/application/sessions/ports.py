@@ -22,6 +22,8 @@ class SessionSnapshotRepositoryPort(Protocol):
         context: RequestContext,
     ) -> SessionSnapshot: ...
 
+    def delete(self, ref: SessionRef, *, expected_revision: int, context: RequestContext) -> None: ...
+
 
 @runtime_checkable
 class SessionReconcilerPort(Protocol):

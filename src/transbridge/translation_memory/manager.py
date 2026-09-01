@@ -441,23 +441,23 @@ class TranslationMemoryManager:
     def load(self, base_dir: Path | None = None) -> int:
         """从 base_dir 扫描并加载 .tbdict 词典文件。返回加载的词典数。"""
         target = base_dir or self._base_dir or self.default_dir()
-        if not target.exists():
-            return 0
-        count = 0
+        loaded: dict[str, Dictionary] = {}
         for f in sorted(target.glob(f"*{DICT_SUFFIX}")):
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
                 d = Dictionary.from_dict(data)
-                if d.mod_file_id in self._dicts:
-                    raise RuntimeError(f"词典 mod_file_id 重复: {d.mod_file_id}")
-                with self._lock:
-                    self._dicts[d.mod_file_id] = d
-                count += 1
+            except OSError as exc:
+                raise RuntimeError(f"词典读取失败: {f}（{exc}）") from exc
             except Exception as exc:  # noqa: BLE001 - 损坏文件保留现场不静默吞
                 corrupt = f.with_suffix(f".corrupt-{int(datetime.now().timestamp())}")
                 f.replace(corrupt)
-                raise RuntimeError(f"词典文件损坏，已保留现场: {corrupt}（{exc}）")
-        return count
+                raise RuntimeError(f"词典文件损坏，已保留现场: {corrupt}（{exc}）") from exc
+            if d.mod_file_id in loaded:
+                raise RuntimeError(f"词典 mod_file_id 重复: {d.mod_file_id}（{f}）")
+            loaded[d.mod_file_id] = d
+        with self._lock:
+            self._dicts = loaded
+        return len(loaded)
 
     def import_dict(self, src_path: str | Path, overwrite: bool = False) -> bool:
         """导入外部 .tbdict 词典，同步名校验。返回是否成功（同名且不覆盖返回 False）。"""

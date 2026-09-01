@@ -19,7 +19,10 @@ from transbridge.application.tasks import (
     FilesystemTaskHistoryPort,
     RecoveryCatalog,
     RecoveryExpectationRegistry,
+    TaskCenterActions,
+    TaskHistoryNavigationRegistry,
     TaskHistoryRecorder,
+    TaskRecoveryIntentRegistry,
     TaskRetryIntentRegistry,
     TaskRuntime,
 )
@@ -109,15 +112,40 @@ def build_runtime(
         task_recovery_expectations,
     )
     task_retry_intents = TaskRetryIntentRegistry()
+    task_recovery_intents = TaskRecoveryIntentRegistry()
+    task_history_navigators = TaskHistoryNavigationRegistry()
+    existing_use_cases = set(runtime_use_cases.names())
+    task_center_actions = TaskCenterActions(
+        runtime_use_cases.resolve("task_history") if "task_history" in existing_use_cases else task_history,
+        runtime_use_cases.resolve("task_recovery") if "task_recovery" in existing_use_cases else task_recovery,
+        (
+            runtime_use_cases.resolve("task_retry_intents")
+            if "task_retry_intents" in existing_use_cases
+            else task_retry_intents
+        ),
+        (
+            runtime_use_cases.resolve("task_recovery_intents")
+            if "task_recovery_intents" in existing_use_cases
+            else task_recovery_intents
+        ),
+        (
+            runtime_use_cases.resolve("task_history_navigators")
+            if "task_history_navigators" in existing_use_cases
+            else task_history_navigators
+        ),
+    )
     persistence_use_cases = {
         "persistence_v2": persistence,
         "project_lifecycle": persistence.project_lifecycle,
+        "project_management": persistence.project_management,
         "project_provisioning": persistence.project_provisioning,
         "project_remote_bindings": persistence.project_remote_bindings,
         "project_catalog": persistence.project_catalog,
         "project_catalog_repair_report": persistence.project_catalog_repair_report,
         "gui_project_commands": persistence.gui_project_commands,
         "current_project_opener": persistence.current_project_opener,
+        "project_snapshots": persistence.project_snapshots,
+        "project_archive": persistence.project_archive,
         "session_lifecycle": persistence.session_lifecycle,
         "gui_session_commands": persistence.gui_session_commands,
         "project_projection": persistence.project_projection,
@@ -128,6 +156,9 @@ def build_runtime(
         "task_recovery": task_recovery,
         "task_recovery_expectations": task_recovery_expectations,
         "task_retry_intents": task_retry_intents,
+        "task_recovery_intents": task_recovery_intents,
+        "task_history_navigators": task_history_navigators,
+        "task_center_actions": task_center_actions,
     }
     for name, use_case in persistence_use_cases.items():
         if name not in runtime_use_cases.names():

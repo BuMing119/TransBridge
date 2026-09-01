@@ -555,7 +555,7 @@ class ExecutionContext:
             app_ctx.mark_dirty()
         self._emit_collection_changed(app_ctx, collection)
 
-    def publish_collection_modified(self) -> None:
+    def publish_collection_modified(self, *, rollback_on_failure: bool = True) -> None:
         """Commit on the calling task, then marshal only the UI notification."""
 
         app_ctx = self.__dict__.get("app_context")
@@ -563,7 +563,7 @@ class ExecutionContext:
         if app_ctx is None or collection is None:
             return
         if bool(getattr(app_ctx, "uses_authoritative_projection", False)):
-            self._commit_authoritative_entries(app_ctx, collection)
+            self._commit_authoritative_entries(app_ctx, collection, rollback_on_failure=rollback_on_failure)
             self.safe_mutate(lambda: self._emit_collection_changed(app_ctx, collection))
         else:
             self.safe_mutate(self.notify_collection_modified)
@@ -573,14 +573,15 @@ class ExecutionContext:
         if hasattr(app_ctx, "collection_changed") and getattr(app_ctx, "collection", None) is collection:
             app_ctx.collection_changed.emit(collection)
 
-    def _commit_authoritative_entries(self, app_ctx, collection) -> None:
+    def _commit_authoritative_entries(self, app_ctx, collection, *, rollback_on_failure: bool = True) -> None:
         from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
 
         identity = self.__dict__.get("_target_version_identity")
         commands = getattr(app_ctx, "project_commands", None)
         runtime_context = getattr(app_ctx, "runtime_context", None)
         if identity is None or commands is None or runtime_context is None:
-            self.rollback_entry_states(self.__dict__.get("_committed_entry_states", {}), collection)
+            if rollback_on_failure:
+                self.rollback_entry_states(self.__dict__.get("_committed_entry_states", {}), collection)
             raise RuntimeError("权威 Variant 写入适配器不可用，助手修改已回滚。")
         project_id, variant_id = identity
         result = commands.replace_entry_states(
@@ -591,7 +592,8 @@ class ExecutionContext:
             expected_variant_ref=VariantRef(VariantId(variant_id), ProjectId(project_id)),
         )
         if not result.is_success:
-            self.rollback_entry_states(self.__dict__.get("_committed_entry_states", {}), collection)
+            if rollback_on_failure:
+                self.rollback_entry_states(self.__dict__.get("_committed_entry_states", {}), collection)
             detail = result.diagnostics[0].message if result.diagnostics else "Variant 提交失败"
             raise RuntimeError(f"助手修改未能提交：{detail}")
         revision = result.value.get("revision") if isinstance(result.value, dict) else None

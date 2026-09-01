@@ -487,14 +487,15 @@ def test_cleanup_fault_is_reported_without_claiming_success(tmp_path: Path) -> N
 
 
 def test_real_eet_parse_write_reparse_atomic_success_with_unicode_long_path(tmp_path: Path) -> None:
+    filesystem = OsPublishFilesystem()
     nested = tmp_path
     for index in range(6):
         nested /= f"很长的目录-{index}-abcdefghijklmnop"
+    nested = Path(filesystem.canonicalize(str(nested)))
     nested.mkdir(parents=True)
     source = nested / "源文件.xml"
     target = nested / "正式译文输出-非常长的文件名称.xml"
     shutil.copyfile(_FIXTURE, source)
-    filesystem = OsPublishFilesystem()
     long_target = Path(filesystem.canonicalize(str(target)))
     long_target.write_bytes(b"old target")
     adapter = EetXmlAdapter()

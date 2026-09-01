@@ -13,6 +13,7 @@ import threading
 
 from .base import ToolResult, require_collection, require_runtime_context
 from .task_manager import TaskManager
+from .task_runtime_bridge import task_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -39,14 +40,14 @@ def _rollback_run_entry_states(ctx, collection, states: dict[object, tuple[str, 
     return None
 
 
-def _publish_run_entry_states(ctx) -> None:
+def _publish_run_entry_states(ctx, *, rollback_on_failure: bool = True) -> None:
     publish = getattr(ctx, "publish_collection_modified", None)
     if callable(publish):
-        publish()
+        publish(rollback_on_failure=rollback_on_failure)
         return
     from .types import ExecutionContext
 
-    ExecutionContext(app_context=ctx).publish_collection_modified()
+    ExecutionContext(app_context=ctx).publish_collection_modified(rollback_on_failure=rollback_on_failure)
 
 
 def _paratranz_term_project_id(ctx) -> int | None:
@@ -174,7 +175,8 @@ class TranslationController:
 
         stop_event = threading.Event()
         tm = TaskManager()
-        task_id = tm.register(stop_event=stop_event, metadata={"mode": mode, "type": "translation"})
+        task_id = tm.register(stop_event=stop_event, metadata=task_metadata(ctx, {"mode": mode, "type": "translation"}))
+        handle = tm.get_handle(task_id)
         run_entry_states = _capture_run_entry_states(ctx, _collection)
 
         def _run():
@@ -220,10 +222,15 @@ class TranslationController:
                     target_entry_ids=_entry_ids,
                     progress_callback=_progress,
                     stop_event=stop_event,
+                    pause_event=handle.pause_event,
                 )
                 if stop_event.is_set():
                     raise InterruptedError("任务已被用户停止")
-                _publish_run_entry_states(ctx)
+                decision = handle.execution.commit(
+                    task_id, lambda: _publish_run_entry_states(ctx, rollback_on_failure=False)
+                )
+                if not decision.accepted:
+                    raise InterruptedError("任务已被用户停止；结果未提交")
                 tm.update_progress(
                     task_id,
                     {
@@ -333,13 +340,17 @@ class TranslationController:
         tm = TaskManager()
         task_id = tm.register(
             stop_event=stop_event,
-            metadata={
-                "intensity": intensity,
-                "scope": scope,
-                "strategy": strategy,
-                "type": "polish",
-            },
+            metadata=task_metadata(
+                ctx,
+                {
+                    "intensity": intensity,
+                    "scope": scope,
+                    "strategy": strategy,
+                    "type": "polish",
+                },
+            ),
         )
+        handle = tm.get_handle(task_id)
         run_entry_states = _capture_run_entry_states(ctx, collection)
 
         def _run():
@@ -355,6 +366,7 @@ class TranslationController:
                     llm_cfg,
                     esp_path=getattr(ctx, "esp_path", None) or "",
                     stop_event=stop_event,
+                    pause_event=handle.pause_event,
                 )
 
                 from transbridge.ai_translator.term_database import TermDatabaseManager
@@ -386,7 +398,11 @@ class TranslationController:
                 if stop_event.is_set():
                     raise InterruptedError("任务已被用户停止")
 
-                _publish_run_entry_states(ctx)
+                decision = handle.execution.commit(
+                    task_id, lambda: _publish_run_entry_states(ctx, rollback_on_failure=False)
+                )
+                if not decision.accepted:
+                    raise InterruptedError("任务已被用户停止；结果未提交")
 
                 tm.set_status(task_id, "completed")
 

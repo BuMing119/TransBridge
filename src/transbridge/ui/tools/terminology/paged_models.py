@@ -172,6 +172,7 @@ class KeysetPagedTableModel(QAbstractTableModel):
         self._cancelled.set()
         self._cancelled = threading.Event()
         self._query = PageQuery(snapshot_ref, query_fingerprint)
+        self._set_loading(False)
         self._reset_rows()
         self._request(None)
         return self._generation

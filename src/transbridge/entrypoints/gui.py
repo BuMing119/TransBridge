@@ -25,8 +25,8 @@ def parse_translation_source(use_case: TranslationIoUseCase, request: ParseReque
     return use_case.parse(request)
 
 
-def main(*, initial_project_path: str | None = None) -> int:
+def main(*, initial_project_path: str | None = None, initial_import_path: str | None = None) -> int:
     from transbridge.ui.app import main as run_gui
 
-    result = run_gui(initial_project_path=initial_project_path)
+    result = run_gui(initial_project_path=initial_project_path, initial_import_path=initial_import_path)
     return 0 if result is None else int(result)

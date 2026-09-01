@@ -40,6 +40,7 @@ class _Preferences:
 
 
 class _ParaContext(QObject):
+    paratranz_permissions_changed = pyqtSignal()
     project_selected = pyqtSignal(object)
     config = SimpleNamespace(token="")
 

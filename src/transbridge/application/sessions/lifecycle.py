@@ -312,6 +312,72 @@ class SessionLifecycleService:
                 self._active = None
                 self._generation += 1
 
+    def rename(self, ref: SessionRef, name: str, context: RequestContext) -> OperationResult[SessionSnapshot]:
+        """Persist a metadata change without switching away from the active conversation."""
+        with self._lock:
+            try:
+                active = self._active if self._active is not None and self._active.aggregate.ref == ref else None
+                snapshot = active.aggregate.snapshot() if active else self._repository.load(ref, context)
+                expected_revision = active.persisted_revision if active else snapshot.revision
+                retained = self._sessions.get(ref.identity.value)
+                if active is None and retained is not None and retained.revision > snapshot.revision:
+                    snapshot = retained.snapshot()
+                _require_management_scope(snapshot, context)
+                updated = replace(snapshot, name=name.strip(), revision=snapshot.revision + 1)
+                persisted = self._repository.save(
+                    updated,
+                    expected_revision=expected_revision,
+                    context=context,
+                )
+                if active is not None:
+                    active.aggregate.replace_snapshot(persisted, expected_revision=snapshot.revision)
+                    self._active = replace(active, persisted_revision=persisted.revision)
+                    self._publish_projection(persisted)
+                elif retained is not None:
+                    retained.close()
+                    self._sessions[ref.identity.value] = SessionAggregate(persisted)
+                return OperationResult.completed(persisted, run_id=context.run_id)
+            except Exception as exc:
+                return _from_exception(exc, "SESSION_RENAME_FAILED", context)
+
+    def delete(self, ref: SessionRef, context: RequestContext) -> OperationResult[dict[str, Any]]:
+        """Detach the active pointer before deleting its record; restore it on deletion failure."""
+        with self._lock:
+            was_active = self._active is not None and self._active.aggregate.ref == ref
+            detached = False
+            try:
+                snapshot = self._repository.load(ref, context)
+                _require_management_scope(snapshot, context)
+                if was_active:
+                    prepared = self.prepare_switch(None, context)
+                    if not prepared.is_success or prepared.value is None:
+                        return prepared
+                    switched = self.commit_switch(prepared.value["token"], context)
+                    if not switched.is_success:
+                        return switched
+                    detached = True
+                    # Preparing the switch may have saved dirty conversation data.
+                    snapshot = self._repository.load(ref, context)
+                self._repository.delete(ref, expected_revision=snapshot.revision, context=context)
+                self.detach_session(ref)
+                return OperationResult.completed({"deleted_session_id": ref.identity.value}, run_id=context.run_id)
+            except Exception as exc:
+                if detached:
+                    restored = self.prepare_switch(ref, context)
+                    if restored.is_success and restored.value is not None:
+                        restored = self.commit_switch(restored.value["token"], context)
+                    if not restored.is_success:
+                        return OperationResult.failed(
+                            DomainError(
+                                ErrorCategory.INTERNAL,
+                                "SESSION_DELETE_RESTORE_FAILED",
+                                "删除会话失败，活动会话恢复也失败；请从会话列表重新打开。",
+                                cause=exc,
+                            ),
+                            run_id=context.run_id,
+                        )
+                return _from_exception(exc, "SESSION_DELETE_FAILED", context)
+
     @property
     def retained_session_count(self) -> int:
         with self._lock:
@@ -337,6 +403,19 @@ def _signature(active: ActiveSession | None) -> tuple[str, int] | None:
     if active is None:
         return None
     return active.aggregate.ref.identity.value, active.aggregate.revision
+
+
+def _require_management_scope(snapshot: SessionSnapshot, context: RequestContext) -> None:
+    if snapshot.owner.owner_id != context.owner_id:
+        raise DomainError(ErrorCategory.PERMISSION, "SESSION_OWNER_MISMATCH", "The Session belongs to another owner.")
+    if (
+        (context.session_id is not None and context.session_id != snapshot.ref.identity.value)
+        or (context.project_id is not None and context.project_id != snapshot.owner.project_id)
+        or (context.variant_id is not None and context.variant_id != snapshot.owner.variant_id)
+    ):
+        raise DomainError(
+            ErrorCategory.PERMISSION, "SESSION_CONTEXT_SCOPE_MISMATCH", "The Session is outside the request scope."
+        )
 
 
 def _summary(active: ActiveSession) -> dict[str, Any]:

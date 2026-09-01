@@ -80,6 +80,17 @@ class V2SessionSnapshotRepository:
             self._repository.save(snapshot.ref, snapshot.to_dto())
             return snapshot
 
+    def delete(self, ref: SessionRef, *, expected_revision: int, context: RequestContext) -> None:
+        with self._lock:
+            current = self.load(ref, context)
+            if current.owner.owner_id != context.owner_id:
+                raise DomainError(ErrorCategory.PERMISSION, "SESSION_OWNER_MISMATCH", "The Session has another owner.")
+            if current.revision != expected_revision:
+                raise DomainError(
+                    ErrorCategory.CONFLICT, "SESSION_REVISION_CONFLICT", "The Session changed since it was loaded."
+                )
+            self._repository.delete(ref)
+
 
 @runtime_checkable
 class SessionTransactionStorePort(Protocol):

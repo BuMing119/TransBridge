@@ -360,3 +360,11 @@ msgstr ""
 #: ui/settings_dialog.py
 msgid "主题不可用，已恢复默认主题"
 msgstr ""
+
+#: ui/shell/action_catalog.py
+msgid "构建术语库…"
+msgstr ""
+
+#: ui/shell/action_catalog.py
+msgid "构建、检查、调整并发布当前工程的项目术语库"
+msgstr ""

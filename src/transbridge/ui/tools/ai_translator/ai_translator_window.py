@@ -22,6 +22,7 @@ from transbridge.ui.tools.ai_translator.embedding_model_controller import (
     EmbeddingWindowCallbacks,
 )
 from transbridge.ui.tools.ai_translator.legacy_checkpoint import check_translation_checkpoint
+from transbridge.ui.tools.ai_translator.llm_connection_controller import LlmConnectionController
 from transbridge.ui.tools.ai_translator.quick_run_presenter import AiQuickRunPresenter
 from transbridge.ui.tools.ai_translator.result_presenter import ResultPresenter
 from transbridge.ui.tools.ai_translator.run_controller import RunController, try_begin_run
@@ -92,6 +93,9 @@ class AITranslatorWindow(QWidget):
             self._view,
             self._config_presenter,
             lambda result: show_connection_test(self, result),
+        )
+        self._llm_connection = LlmConnectionController(
+            self._view, self._config_presenter, lambda result: show_connection_test(self, result)
         )
         self._config_binding = ConfigAutosaveBinding(
             self._view,
@@ -275,8 +279,7 @@ class AITranslatorWindow(QWidget):
         if target == "embedding":
             self._embedding_connection.start()
             return
-        result = self._config_presenter.test_connection()
-        show_connection_test(self, result)
+        self._llm_connection.start()
 
     def browse_file(self, target_edit: QLineEdit, file_filter: str):
         path, _ = QFileDialog.getOpenFileName(self, "选择文件", "", file_filter)
@@ -402,17 +405,9 @@ class AITranslatorWindow(QWidget):
         start_versioned_mixed(self, request, translate_entries, polish_entries)
 
     def _on_mixed_finished(self, result: dict):
-        from .result_view import apply_window_mixed_result, show_window_mixed_report
+        from .result_view import complete_window_mixed_result
 
-        if apply_window_mixed_result(self, result):
-            if self._version_snapshot_session is not None:
-                try:
-                    self._version_snapshot_session.mark_completed()
-                except Exception as exc:
-                    QMessageBox.critical(self, "AI 结果提交失败", f"{exc}\n\n本次界面修改已回滚。")
-                    return
-            self._ctx.collection_changed.emit(self._ctx.collection)
-        self._report_dialog = show_window_mixed_report(self, result)
+        complete_window_mixed_result(self, result)
 
     def _on_polish_start(self):
         collection = self._ctx.collection
@@ -491,6 +486,7 @@ class AITranslatorWindow(QWidget):
     def closeEvent(self, event):
         self._config_binding.close()
         self._embedding_connection.close()
+        self._llm_connection.close()
         session = getattr(self, "_version_snapshot_session", None)
         if session is not None:
             session.rollback_uncommitted()

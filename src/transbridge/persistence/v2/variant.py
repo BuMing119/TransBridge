@@ -488,6 +488,8 @@ def _compatibility_key(key: EntryKey) -> str:
 
 
 def _freeze_json(value: Any) -> Any:
+    if isinstance(value, (_FrozenObject, _FrozenArray)):
+        value = _thaw_json(value)
     try:
         json.dumps(value, allow_nan=False)
     except (TypeError, ValueError) as exc:

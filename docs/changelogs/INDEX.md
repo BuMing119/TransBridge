@@ -18,6 +18,7 @@ docs/changelogs/
 
 | Epic | Plan | 状态 | Story 数 | 最新日志 |
 |------|------|------|---------|---------|
+| v3-ui-gap-closure | [plan](../../plans/v3-ui-gap-closure/plan.md) | ✅ S01-05 已完成，综合 QA 通过 | 5 | [S01-05:①V3权威工程UI缺口闭环](v3-ui-gap-closure/story-01-to-05-implementation/2026-09-01-001-V3权威工程UI缺口闭环.md) |
 | authoritative-project-mutation-closure | [plan](../../plans/authoritative-project-mutation-closure/plan.md) | ✅ S01-06 已完成，综合 QA 通过；1 项既有断言失败 | 6 | [S01-06:①权威变更与可恢复保存统一修复](authoritative-project-mutation-closure/story-01-to-06-implementation/2026-08-30-001-权威变更与可恢复保存统一修复.md) · [S03:①配对插件来源移除与重开一致性修复](authoritative-project-mutation-closure/story-03-source-lifecycle/2026-08-31-001-配对插件来源移除与重开一致性修复.md) |
 | core-data-model | [plan](../../plans/core-data-model/plan.md) | ✔️ 已实现 | 5 | — |
 | dialogue-context-editor | [plan](../../plans/dialogue-context-editor/plan.md) | ✅ S01–04 已完成，140 项相关回归与 XT 式记录导航验证通过 | 4 | [S01–04:①词条弹窗与XT式记录导航](dialogue-context-editor/story-01-04-implementation/2026-08-31-001-词条弹窗与XT式记录导航.md) |
@@ -82,6 +83,8 @@ docs/changelogs/
 | ui-presentation-modularization | [plan](../../plans/ui-presentation-modularization/plan.md) | ✔️ 已完成（FR25/NFR1.5 实现与终验通过） | 8 | [设计:①需求架构方案Story](ui-presentation-modularization/design/2026-08-19-001-需求架构方案与Story设计.md) · [实现:①FR25模块化与终验](ui-presentation-modularization/implementation/2026-08-19-001-FR25展示层模块化实现与终验.md) |
 | release-hardening-v2 | [plan](../../plans/release-hardening-v2/plan.md) | 实现完成，综合 QA 通过 | 5 | [S01:①可复现 QA 证据基线](release-hardening-v2/story-01-reproducible-evidence/2026-08-18-001-可复现QA证据基线.md) · [S02:①真实成功链与跨入口parity测试资产](release-hardening-v2/story-02-success-chain-parity/2026-08-18-001-真实成功链与跨入口parity测试资产.md) · [S03:①性能取消恢复长期稳定门禁](release-hardening-v2/story-03-performance-stability/2026-08-18-001-性能取消恢复长期稳定门禁.md) · [S04:①Windows安全与能力矩阵](release-hardening-v2/story-04-windows-security-capability/2026-08-18-001-Windows安全与能力矩阵.md) · [S05:①CleanRelease与最终QA门禁](release-hardening-v2/story-05-clean-release-qa/2026-08-18-001-CleanRelease与最终QA门禁.md) · [S05:②精确证据集合与最终综合QA](release-hardening-v2/story-05-clean-release-qa/2026-08-18-002-精确证据集合与最终综合QA.md) |
 | unplanned/workbench-translation-reset | — | ✔️ 已实现，33 项新增用例及 86 项相关回归通过 | — | [①右键取消翻译与批量清空保护](unplanned/workbench-translation-reset/2026-08-31-001-右键取消翻译.md) |
+| maintenance/legacy-module-misuse | — | ✔️ 已确认误用链路修复；相关综合回归 1026 通过 | — | [①旧模块误用修复与权威链路回归](maintenance/legacy-module-misuse/2026-09-01-001-旧模块误用修复与权威链路回归.md) |
+| maintenance/ui-workflow-chain-closure | — | ✔️ 本轮 16 类断链已修复；最终回归 3492 通过、6 跳过、30 未选入 | — | [①UI全链路修复与全库回归](maintenance/ui-workflow-chain-closure/2026-08-31-001-UI全链路修复与全库回归.md) |
 | maintenance/defensive-validation-reduction | — | ✔️ 校验缩减与补强扫描取消；最终相关回归 449 通过、1 跳过 | — | [①非必要校验缩减与补强扫描取消](maintenance/defensive-validation-reduction/2026-08-31-001-非必要校验缩减与补强扫描取消.md) |
 | maintenance/ruff-quality-baseline | — | ✔️ Ruff 格式与 lint 门禁通过 | — | [①全仓 Ruff 格式与 Lint 基线](maintenance/ruff-quality-baseline/2026-08-28-001-全仓Ruff格式与Lint基线.md) |
 | maintenance/repository-agent-governance | — | ✔️ 已记录 | — | [①仓库全局 Agent 规范](maintenance/repository-agent-governance/2026-08-24-001-仓库全局Agent规范.md) |

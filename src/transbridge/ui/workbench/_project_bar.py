@@ -33,6 +33,10 @@ class ProjectBar(QWidget):
     variant_copy_requested = pyqtSignal()
     variant_delete_requested = pyqtSignal(str)  # variant_name
     project_rename_requested = pyqtSignal(str)  # new_name
+    project_delete_requested = pyqtSignal(str, str)  # Project ID, exact displayed name
+    snapshot_save_requested = pyqtSignal()
+    snapshot_load_requested = pyqtSignal()
+    snapshot_delete_requested = pyqtSignal()
 
     def __init__(self, ctx, parent=None, *, theme_view: ThemeView | None = None):
         super().__init__(parent)
@@ -68,9 +72,9 @@ class ProjectBar(QWidget):
         self._rename_btn.setFixedWidth(28)
         self._rename_btn.setFlat(True)
         ComponentStyle.apply_static(self._rename_btn, ComponentKind.BUTTON)
-        self._rename_btn.setToolTip("修改项目名称")
-        self._rename_btn.setAccessibleName("修改本地翻译工程名称")
-        self._rename_btn.clicked.connect(self._on_rename_project)
+        self._rename_btn.setToolTip("管理本地工程")
+        self._rename_btn.setAccessibleName("管理本地翻译工程")
+        self._rename_btn.clicked.connect(self._on_project_menu)
         layout.addWidget(self._rename_btn)
 
         # ── 版本下拉 ──
@@ -180,7 +184,10 @@ class ProjectBar(QWidget):
                 )
 
         menu.addSeparator()
-        menu.addAction("管理快照...", lambda: None)  # 预留
+        snapshots = menu.addMenu("管理快照")
+        snapshots.addAction("创建历史还原点…", self.snapshot_save_requested.emit)
+        snapshots.addAction("载入历史还原点…", self.snapshot_load_requested.emit)
+        snapshots.addAction("删除历史还原点…", self.snapshot_delete_requested.emit)
 
         menu.exec(self._variant_menu_btn.mapToGlobal(self._variant_menu_btn.rect().bottomLeft()))
 
@@ -188,6 +195,12 @@ class ProjectBar(QWidget):
 
     def _on_rename_project(self):
         if self._ctx.uses_authoritative_projection:
+            name = self._ctx.project_name
+            if not name:
+                return
+            new_name, ok = QInputDialog.getText(self, "修改项目名称", "新名称:", text=name)
+            if ok and new_name.strip() and new_name.strip() != name:
+                self.project_rename_requested.emit(new_name.strip())
             return
         proj = self._ctx.active_project
         if not proj:
@@ -195,6 +208,20 @@ class ProjectBar(QWidget):
         name, ok = QInputDialog.getText(self, "修改项目名称", "新名称:", text=proj.name)
         if ok and name.strip() and name.strip() != proj.name:
             self.project_rename_requested.emit(name.strip())
+
+    def _on_project_menu(self) -> None:
+        menu = QMenu(self)
+        menu.addAction("重命名工程…", self._on_rename_project)
+        if self._ctx.uses_authoritative_projection:
+            project_id = self._ctx.active_project_id
+            name = self._ctx.project_name
+            if project_id and name:
+                menu.addSeparator()
+                menu.addAction(
+                    "删除本地工程…",
+                    lambda: self.project_delete_requested.emit(str(project_id), str(name)),
+                )
+        menu.exec(self._rename_btn.mapToGlobal(self._rename_btn.rect().bottomLeft()))
 
     # ── 刷新 ──────────────────────────────────────────────────
 
@@ -295,7 +322,7 @@ class ProjectBar(QWidget):
         if project_name:
             self._project_label.set_full_text(project_name)
             self._project_label.setToolTip(project_name)
-            self._rename_btn.setVisible(not self._ctx.uses_authoritative_projection)
+            self._rename_btn.setVisible(True)
             self._variant_combo.setVisible(True)
             self._variant_menu_btn.setVisible(True)
             self._save_btn.setVisible(True)

@@ -224,6 +224,7 @@ class TestParaTranzDownloader:
             make_entry("key:001|1~NPC_:FULL", original="Auri"),
             make_entry("key:002|1~NPC_:FULL", original="Bandit"),
         )
+        identities = {entry.key: entry.identity for entry in collection}
 
         result = downloader.download_to_collection(1, collection)
 
@@ -233,6 +234,8 @@ class TestParaTranzDownloader:
         assert collection.get("key:001|1~NPC_:FULL").translation == "奥里"
         assert collection.get("key:002|1~NPC_:FULL").translation == "盗贼"
         assert collection.get("key:002|1~NPC_:FULL").stage == 3
+        assert collection.get("key:001|1~NPC_:FULL").identity == identities["key:001|1~NPC_:FULL"]
+        assert collection.get("key:001|1~NPC_:FULL").revision.value == 1
 
     # ── 跳过未翻译词条 ──────────────────────────────────────────
 

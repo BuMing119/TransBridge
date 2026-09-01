@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import QInputDialog, QMessageBox, QVBoxLayout, QWidget
 from transbridge.application.contracts import JobRef, RequestContext
 from transbridge.application.tasks import JobState, OwnerRef
 from transbridge.application.terminology import Page
+from transbridge.application.terminology.conflict_queries import ConflictFilter, ConflictQuery
 from transbridge.application.terminology.conflicts import ConflictResolutionOperation
 from transbridge.application.terminology.workloads import TerminologyWorkloadType
 from transbridge.ui.windowing import show_and_activate
@@ -87,6 +88,7 @@ class TerminologyWindow(QWidget):
         self._command_messages: dict[int, str] = {}
         self._task_refs: dict[str, JobRef] = {}
         self._models: list[KeysetPagedTableModel] = []
+        self._conflict_filter = ConflictFilter()
         self._closed = False
         self._sync_tasks: TerminologySyncTaskAdapter | None = None
         self._init_ui()
@@ -207,6 +209,8 @@ class TerminologyWindow(QWidget):
             "draft": self.draft_model,
             "history": self.history_model,
         }
+        if section == "conflicts":
+            snapshot_ref = ConflictQuery(snapshot_ref, self._conflict_filter)
         models[section].set_query(snapshot_ref, query_fingerprint=query_fingerprint)
 
     def showEvent(self, event) -> None:  # noqa: N802 - Qt API
@@ -461,8 +465,10 @@ class TerminologyWindow(QWidget):
         query = getattr(self.conflicts_model, "_query", None)
         if query is None:
             return
-        fingerprint = f"search={search.casefold()}|risk={risk}"
-        self.conflicts_model.set_query(query.snapshot_ref, query_fingerprint=fingerprint)
+        ref = query.snapshot_ref
+        build_ref = ref.build_ref if isinstance(ref, ConflictQuery) else ref
+        self._conflict_filter = ConflictFilter(search, None if risk == "all" else risk)
+        self.bind_page("conflicts", build_ref)
 
 
 class TerminologyLauncher:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import os
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -23,6 +24,8 @@ class PersistenceFilesystemPort(Protocol):
 
     def list_files(self, directory: str) -> tuple[str, ...]: ...
 
+    def list_tree_files(self, directory: str) -> tuple[str, ...]: ...
+
     def make_dirs(self, path: str) -> None: ...
 
     def write_bytes(self, path: str, data: bytes) -> None: ...
@@ -32,6 +35,8 @@ class PersistenceFilesystemPort(Protocol):
     def replace_durable(self, source: str, destination: str) -> None: ...
 
     def remove(self, path: str, *, missing_ok: bool = False) -> None: ...
+
+    def remove_empty_tree(self, directory: str) -> None: ...
 
 
 FilesystemPort = PersistenceFilesystemPort
@@ -65,6 +70,31 @@ class OsPersistenceFilesystem:
             return tuple(sorted(files, key=os.path.normcase))
         except FileNotFoundError:
             return ()
+
+    def list_tree_files(self, directory: str) -> tuple[str, ...]:
+        root = Path(directory)
+        if not root.exists():
+            return ()
+        canonical_root = self.canonicalize(str(root))
+        files: list[str] = []
+        for current_root, directory_names, file_names in os.walk(root, followlinks=False):
+            canonical_current = self.canonicalize(current_root)
+            try:
+                common = os.path.commonpath((canonical_root, canonical_current))
+            except ValueError as exc:
+                raise OSError("Project-owned directory escaped its authorized root") from exc
+            if os.path.normcase(common) != os.path.normcase(canonical_root):
+                raise OSError("Project-owned directory escaped its authorized root")
+            for name in tuple(directory_names):
+                path = os.path.join(current_root, name)
+                if os.path.islink(path):
+                    raise OSError("Project-owned directory contains a symbolic link")
+            for name in file_names:
+                path = os.path.join(current_root, name)
+                if os.path.islink(path):
+                    raise OSError("Project-owned directory contains a symbolic link")
+                files.append(self.canonicalize(path))
+        return tuple(sorted(files, key=os.path.normcase))
 
     def make_dirs(self, path: str) -> None:
         Path(path).mkdir(parents=True, exist_ok=True)
@@ -105,6 +135,13 @@ class OsPersistenceFilesystem:
     def remove(self, path: str, *, missing_ok: bool = False) -> None:
         Path(path).unlink(missing_ok=missing_ok)
 
+    def remove_empty_tree(self, directory: str) -> None:
+        root = Path(directory)
+        if not root.exists():
+            return
+        for current_root, _directory_names, _file_names in os.walk(root, topdown=False, followlinks=False):
+            Path(current_root).rmdir()
+
 
 class RepositoryPaths:
     def __init__(self, root: str, filesystem: PersistenceFilesystemPort) -> None:
@@ -126,7 +163,11 @@ class RepositoryPaths:
         return self._path("quarantine", *_scope(ref), f"{ref.identity.encoded}-{digest}.report.json")
 
     def staging(self, ref: EntityRef, token: str, purpose: str) -> str:
-        return self._path(".staging", *_scope(ref), f"{ref.identity.encoded}.{purpose}.{token}.tmp")
+        # Staging is internal: keep UUID identities and tokens out of nested filenames
+        # so ordinary Windows data roots do not exceed MAX_PATH during a save.
+        identity = "\0".join((*_scope(ref), ref.identity.value, purpose, token))
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+        return self._path(".staging", f"{digest}.tmp")
 
     def project_terminology(self, ref: ProjectRef) -> str:
         """Locate Project-owned terminology assets without exposing root joins to UI code."""
@@ -134,6 +175,24 @@ class RepositoryPaths:
         if not isinstance(ref, ProjectRef):
             raise TypeError("terminology assets require a Project reference")
         return self._path("projects", ref.identity.encoded, "terminology")
+
+    def project_data(self, ref: ProjectRef) -> str:
+        """Return the fixed, identity-owned Project directory.
+
+        This path is deliberately independent of every external source location
+        stored in the Project document.
+        """
+
+        if not isinstance(ref, ProjectRef):
+            raise TypeError("Project-owned data requires a Project reference")
+        return self._path("projects", ref.identity.encoded)
+
+    def project_backup_data(self, ref: ProjectRef) -> str:
+        """Return the fixed backup tree owned by one Project identity."""
+
+        if not isinstance(ref, ProjectRef):
+            raise TypeError("Project backup data requires a Project reference")
+        return self._path("backups", "projects", ref.identity.encoded)
 
     def guard(self, path: str) -> str:
         canonical = self._filesystem.canonicalize(path)

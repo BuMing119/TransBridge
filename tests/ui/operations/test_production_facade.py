@@ -175,3 +175,45 @@ def test_production_write_uses_hydration_and_task_runtime_after_one_confirmation
     assert len(jobs) == 1
     assert jobs[0].state is JobState.COMPLETED, [(event.code, event.message) for event in events]
     assert target.is_file()
+
+
+def test_production_batch_write_preflights_all_hydrated_sources_before_submission(tmp_path: Path) -> None:
+    fixture = Path("tests/contracts/io/fixtures/eet-small.xml").read_bytes()
+    slots = {}
+    for index in (1, 2):
+        source = tmp_path / f"source-{index}.xml"
+        source.write_bytes(fixture)
+        parsed = TranslationIoUseCase().parse(
+            ParseRequest(
+                SourceDescriptor(str(source), source.name, source.stat().st_size),
+                RequestContext("gui"),
+                FormatId.XML_EET,
+            )
+        )
+        collection = TranslationEntryCollection((replace(parsed.entries[0], translation=f"译文 {index}", stage=1),))
+        slots[str(source)] = SimpleNamespace(
+            source_snapshot=parsed.source_snapshot,
+            format_id=FormatId.XML_EET,
+            collection=collection,
+            esp_path=str(source),
+        )
+    context = SimpleNamespace(slots=slots, variant_revision=3)
+    runtime = _runtime()
+    facade = build_operation_plan_facade(
+        runtime,
+        RequestContext("gui", project_id="p", variant_id="v"),
+        dialog_factory=_ConfirmingDialog,
+    )
+
+    assert facade.supports(OperationKind.WRITE, context, batch=True)
+    dialog = facade.begin_write(context, batch=True)
+    dialog.preflight_requested.emit(dialog.plan.session_id, ())
+
+    assert dialog.preflight is not None and dialog.preflight.ready
+    assert sum(item.check_id.endswith("SOURCE_SNAPSHOT_BOUND") for item in dialog.preflight.checks) == 2
+    dialog.confirm_requested.emit(dialog.plan.session_id, dialog.preflight.confirmation_token)
+    jobs = runtime.tasks.list(OwnerRef("gui", "gui.operation-plan", project_id="p", variant_id="v"))
+    assert len(jobs) == 1
+    assert jobs[0].state is JobState.COMPLETED
+    assert (tmp_path / "source-1_translated.xml").is_file()
+    assert (tmp_path / "source-2_translated.xml").is_file()

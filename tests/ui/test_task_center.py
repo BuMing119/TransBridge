@@ -7,7 +7,18 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication, QDockWidget, QMainWindow, QWidget
 import pytest
 
-from transbridge.application.tasks import JobCapabilities, JobSpec, OwnerRef, TaskRuntime
+from transbridge.application.contracts import JobRef
+from transbridge.application.tasks import (
+    JobCapabilities,
+    JobSpec,
+    OwnerRef,
+    TaskActionAvailability,
+    TaskCenterAction,
+    TaskCenterActionResult,
+    TaskCenterItem,
+    TaskNavigationIntent,
+    TaskRuntime,
+)
 from transbridge.bootstrap.runtime import UseCaseRegistry
 from transbridge.ui.shell import intent_composition as intent_composition_module
 from transbridge.ui.shell.intent_composition import ShellIntentComposition
@@ -76,6 +87,20 @@ def test_task_center_tracks_runtime_events_and_only_enables_real_actions(qapp):
     assert panel._pause.isEnabled()
     assert panel._cancel.isEnabled()
     assert not panel._resume.isEnabled()
+    assert not any(button.isEnabled() for button in (panel._recover, panel._retry, panel._open_result, panel._open_log))
+
+    for index in (1, 2):
+        panel._tabs.setCurrentIndex(index)
+        assert not any(button.isEnabled() for button in (panel._pause, panel._resume, panel._cancel))
+        # Neither a click nor a delayed action may target the hidden current selection.
+        panel._cancel.click()
+        panel._emit_selected(panel.cancel_requested)
+        panel._emit_selected(panel.pause_requested)
+        qapp.processEvents()
+    panel._tabs.setCurrentIndex(0)
+    assert panel._pause.isEnabled()
+    assert panel._cancel.isEnabled()
+    assert not panel._resume.isEnabled()
 
     panel._pause.click()
     qapp.processEvents()
@@ -84,8 +109,96 @@ def test_task_center_tracks_runtime_events_and_only_enables_real_actions(qapp):
     controller.close()
 
 
+class _TaskCenterActions:
+    def __init__(self) -> None:
+        all_history_actions = TaskActionAvailability(retry=True, open_result=True, open_log=True)
+        self.history = (TaskCenterItem("history", "run-old", "run-old", "旧任务", "failed", 7, all_history_actions),)
+        self.recovery = (
+            TaskCenterItem(
+                "recovery",
+                "checkpoint-one",
+                "run-checkpoint",
+                "可恢复任务",
+                "可恢复",
+                3,
+                TaskActionAvailability(recover=True),
+            ),
+        )
+        self.executed = []
+
+    def list_history(self, _actor, *, retry_context, limit):
+        assert retry_context is not None
+        assert limit == 100
+        return self.history
+
+    def list_recovery(self, _actor):
+        return self.recovery
+
+    def execute(self, item, action, _actor, *, retry_context):
+        assert retry_context is not None
+        self.executed.append((item.key, action))
+        if action in {TaskCenterAction.OPEN_RESULT, TaskCenterAction.OPEN_LOG}:
+            return TaskCenterActionResult(navigation=TaskNavigationIntent(f"task.{action.value}"))
+        return TaskCenterActionResult(job_ref=JobRef(f"new-{action.value}", "gui-owner", f"new-{action.value}"))
+
+
+def test_task_center_renders_and_routes_only_catalog_available_actions(qapp) -> None:
+    tasks = TaskRuntime(id_generator=_Ids(), clock=_Clock())
+    actions = _TaskCenterActions()
+    use_cases = UseCaseRegistry({
+        "task_history": _Catalog(),
+        "task_recovery": _Catalog(),
+        "task_center_actions": actions,
+    })
+    runtime = SimpleNamespace(tasks=tasks, use_cases=use_cases)
+    context = SimpleNamespace(
+        owner_id="gui-owner",
+        project_id="project-one",
+        variant_id=None,
+        session_id="session-one",
+        metadata=(
+            ("entrypoint", "gui"),
+            ("context_ref", "project:project-one"),
+            ("context_fingerprint", "fingerprint-one"),
+        ),
+        permissions=frozenset({"gui"}),
+    )
+    panel = TaskCenterPanel()
+    controller = TaskCenterController(runtime, context, panel)
+    navigations = []
+    controller.navigation_requested.connect(navigations.append)
+    controller.start()
+
+    panel._tabs.setCurrentWidget(panel._history)
+    panel._history.setCurrentRow(0)
+    assert not any(button.isEnabled() for button in (panel._pause, panel._resume, panel._cancel, panel._recover))
+    assert all(button.isEnabled() for button in (panel._retry, panel._open_result, panel._open_log))
+
+    panel._open_result.click()
+    qapp.processEvents()
+    assert actions.executed[-1] == ("run-old", TaskCenterAction.OPEN_RESULT)
+    assert navigations[-1] == TaskNavigationIntent("task.open_result")
+
+    panel._tabs.setCurrentWidget(panel._recovery)
+    panel._recovery.setCurrentRow(0)
+    assert panel._recover.isEnabled()
+    assert not any(button.isEnabled() for button in (panel._retry, panel._open_result, panel._open_log))
+    panel._recover.click()
+    qapp.processEvents()
+    assert actions.executed[-1] == ("checkpoint-one", TaskCenterAction.RECOVER)
+    controller.close()
+
+
 class _TaskPanelStub(QWidget):
     pass
+
+
+class _SignalStub:
+    def __init__(self) -> None:
+        self.callbacks = []
+
+    def connect(self, callback) -> None:
+        self.callbacks.append(callback)
 
 
 class _TaskControllerStub:
@@ -98,6 +211,7 @@ class _TaskControllerStub:
         self.parent = parent
         self.starts = 0
         self.refreshes = 0
+        self.navigation_requested = _SignalStub()
         self.__class__.instances.append(self)
 
     def start(self) -> None:

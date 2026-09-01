@@ -127,6 +127,7 @@ class StartCenterWidget(QWidget):
     prepare_requested = pyqtSignal()
     commit_requested = pyqtSignal()
     return_to_landing_requested = pyqtSignal()
+    delete_project_requested = pyqtSignal(str, str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -152,6 +153,7 @@ class StartCenterWidget(QWidget):
         page.open_fomod_requested.connect(self.open_fomod_requested)
         page.return_to_current_requested.connect(self.return_to_current_requested)
         page.task_center_requested.connect(self.task_center_requested)
+        page.delete_project_requested.connect(self.delete_project_requested)
 
         # Compatibility names retained for existing coordinators and focused
         # UI contracts while the landing page owns their visual composition.

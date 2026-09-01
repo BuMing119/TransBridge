@@ -362,19 +362,16 @@ class TestTaskManagerPhase1(unittest.TestCase):
         self.assertIsNotNone(handle)
         self.assertIs(handle._thread, thread, "Thread should be associated with handle")
 
-    def test_h8_start_thread_nonexistent_task_returns_thread(self):
-        """M2: 任务不存在时仍创建并启动线程（不关联句柄）。"""
+    def test_h8_start_thread_rejects_unregistered_worker(self):
+        """An untracked worker cannot bypass runtime controls and shutdown."""
         ran = threading.Event()
 
         def _target():
             ran.set()
 
-        thread = self.tm.start_thread("nonexistent_id", _target)
-        ran.wait(timeout=2)
-        thread.join(timeout=2)
-
-        self.assertTrue(ran.is_set(), "Thread should run even without valid handle")
-        self.assertIsInstance(thread, threading.Thread)
+        with self.assertRaises(ValueError):
+            self.tm.start_thread("nonexistent_id", _target)
+        self.assertFalse(ran.is_set())
 
     def test_h9_start_thread_returns_running_thread(self):
         """M2: start_thread 返回的线程已经启动。"""

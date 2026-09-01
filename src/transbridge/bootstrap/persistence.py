@@ -15,13 +15,16 @@ from transbridge.application.projections import (
 from transbridge.application.projects import (
     GuiProjectCommandFacade,
     ProjectLifecycleService,
+    ProjectManagementCommands,
     ProjectProvisioningService,
     ProjectRemoteBindingService,
     ProjectSourceMutationService,
     ProjectSourcePreparationPort,
 )
+from transbridge.application.projects.snapshots import ProjectSnapshotCommands
 from transbridge.application.sessions import GuiSessionCommandFacade, SessionLifecycleService
 from transbridge.persistence.current_project import CurrentProjectOpener
+from transbridge.persistence.project_archive import ProjectArchiveService
 from transbridge.persistence.project_catalog import V2ProjectCatalog
 from transbridge.persistence.project_catalog_repair import (
     ProjectCatalogRepairReport,
@@ -30,7 +33,9 @@ from transbridge.persistence.project_catalog_repair import (
 )
 from transbridge.persistence.project_lifecycle_loader import V2ProjectCandidateLoader
 from transbridge.persistence.project_lifecycle_uow import RepositoryLifecycleUnitOfWorkFactory
+from transbridge.persistence.project_management import ProjectManagementStore
 from transbridge.persistence.project_provisioning import TranslationIoProjectSourcePreparer
+from transbridge.persistence.project_snapshots import ProjectSnapshotRepository
 from transbridge.persistence.session_lifecycle import (
     SessionUnitOfWorkFactory,
     V2SessionSnapshotRepository,
@@ -63,12 +68,15 @@ class PersistenceV2Services:
     baselines: BaselineRegistry
     legacy_identities: LegacyIdentityRegistry
     project_lifecycle: ProjectLifecycleService
+    project_management: ProjectManagementCommands
     project_provisioning: ProjectProvisioningService
     project_remote_bindings: ProjectRemoteBindingService
     project_catalog: V2ProjectCatalog
     project_catalog_repair_report: ProjectCatalogRepairReport
     gui_project_commands: GuiProjectCommandFacade
     current_project_opener: CurrentProjectOpener
+    project_snapshots: ProjectSnapshotCommands
+    project_archive: ProjectArchiveService
     session_lifecycle: SessionLifecycleService
     gui_session_commands: GuiSessionCommandFacade
     project_projection: ProjectionStore
@@ -132,7 +140,27 @@ def build_persistence_v2_services(
         event_publisher=project_publisher,
     )
     project_publisher.bind(project_lifecycle)
+    project_management_store = ProjectManagementStore(
+        resolved_root,
+        adapter,
+        projects,
+        variants,
+        token_factory=id_factory,
+    )
+    project_management = ProjectManagementCommands(project_lifecycle, project_management_store, baselines)
+    snapshot_repository = ProjectSnapshotRepository(resolved_root, adapter)
+    project_snapshots = ProjectSnapshotCommands(project_lifecycle, snapshot_repository)
     resolved_source_preparer = source_preparer or TranslationIoProjectSourcePreparer()
+    project_archive = ProjectArchiveService(
+        resolved_root,
+        adapter,
+        projects,
+        variants,
+        project_lifecycle,
+        snapshot_repository,
+        id_factory=id_factory,
+        source_preparer=resolved_source_preparer,
+    )
     project_provisioning = ProjectProvisioningService(
         project_lifecycle,
         resolved_source_preparer,
@@ -196,12 +224,15 @@ def build_persistence_v2_services(
         baselines=baselines,
         legacy_identities=identities,
         project_lifecycle=project_lifecycle,
+        project_management=project_management,
         project_provisioning=project_provisioning,
         project_remote_bindings=project_remote_bindings,
         project_catalog=project_catalog,
         project_catalog_repair_report=project_catalog_repair_report,
         gui_project_commands=gui_project_commands,
         current_project_opener=current_project_opener,
+        project_snapshots=project_snapshots,
+        project_archive=project_archive,
         session_lifecycle=session_lifecycle,
         gui_session_commands=gui_session_commands,
         project_projection=project_projection,

@@ -30,6 +30,7 @@ class AppContext(QObject):
     config_changed = pyqtSignal(object)  # ParatranzConfig
     user_changed = pyqtSignal(object)  # dict | None
     project_selected = pyqtSignal(object)  # dict | None
+    paratranz_permissions_changed = pyqtSignal()  # 账号或项目成员权限变化
     collection_changed = pyqtSignal(object)  # TranslationEntryCollection | None
     collection_list_changed = pyqtSignal()  # 集合列表有增删
     navigate_to = pyqtSignal(int)  # 请求切换主 tab（0=工作台, 1=ParaTranz 管理）
@@ -223,6 +224,7 @@ class AppContext(QObject):
     def current_user(self, v: dict | None) -> None:
         self._current_user = v
         self.user_changed.emit(v)
+        self.paratranz_permissions_changed.emit()
 
     # ── current_project ───────────────────────────────────────
 
@@ -755,6 +757,13 @@ class AppContext(QObject):
         self.mutation_requested.emit(callback)
 
     # ── helpers ───────────────────────────────────────────────
+
+    def update_paratranz_members(self, project_id: int, members: list[dict]) -> None:
+        """Apply a member response only to its project and notify permission views."""
+        if self._current_project is None or self._current_project.get("id") != project_id:
+            return
+        self._current_project["_members"] = list(members)
+        self.paratranz_permissions_changed.emit()
 
     def is_admin(self) -> bool:
         """当前用户是否为当前项目的管理员或所有者。"""

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import threading
+import time
+
+from PyQt6.QtCore import QThreadPool
 from PyQt6.QtWidgets import QApplication
 
 from transbridge.application.terminology import CursorStaleError, Page, SnapshotCursor
@@ -64,3 +68,32 @@ def test_close_releases_query_ownership_and_rejects_late_results() -> None:
     assert model.closed
     assert not model.accept_page(generation, Page(("late",), "snapshot"))
     assert model.rowCount() == 0
+
+
+def test_query_replacement_during_load_runs_new_query_and_settles() -> None:
+    first_started = threading.Event()
+    release_first = threading.Event()
+    pool = QThreadPool()
+
+    def load(ref, _request):
+        if ref == "old":
+            first_started.set()
+            assert release_first.wait(3)
+        return Page((ref,), f"snapshot-{ref}")
+
+    model = KeysetPagedTableModel(load, (PagedColumn("value", "值", str),), thread_pool=pool)
+    try:
+        model.set_query("old")
+        assert first_started.wait(2)
+        model.set_query("new")
+        release_first.set()
+        deadline = time.monotonic() + 2
+        while model.is_loading and time.monotonic() < deadline:
+            _APP.processEvents()
+            time.sleep(0.005)
+        assert not model.is_loading
+        assert [model.index(row, 0).data() for row in range(model.rowCount())] == ["new"]
+    finally:
+        release_first.set()
+        model.close()
+        pool.waitForDone(3000)

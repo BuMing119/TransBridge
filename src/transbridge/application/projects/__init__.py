@@ -9,6 +9,7 @@ from .catalog import (
 from .gui_facade import GuiProjectCommandFacade
 from .legacy import LegacyProjectLifecycleAdapter
 from .lifecycle import ProjectLifecycleService
+from .management import ProjectDeletion, ProjectManagementCommands, ProjectManagementPersistencePort
 from .models import (
     ActiveProject,
     DirtyDecision,
@@ -94,6 +95,9 @@ __all__ = [
     "ProjectSourceRequest",
     "ProjectSourceMutationService",
     "ProjectLifecycleService",
+    "ProjectDeletion",
+    "ProjectManagementCommands",
+    "ProjectManagementPersistencePort",
     "ProjectRemoteBindingService",
     "GuiProjectCommandFacade",
     "TransitionTarget",

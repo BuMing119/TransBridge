@@ -1,3 +1,4 @@
+from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QMainWindow, QMessageBox
 
 from transbridge import __version__
@@ -7,6 +8,7 @@ from .coordinators import (
     OperationCoordinator,
     ParseCoordinator,
     ProjectCoordinator,
+    ProjectManagementCoordinator,
     ProjectTransferCoordinator,
     VariantCoordinator,
 )
@@ -63,6 +65,7 @@ class MainWindow(QMainWindow):
     save_worker = _composition_port("_save_worker")
     legacy_mapping_key = _composition_port("_legacy_mapping_key")
     project_coordinator = _composition_port("_project_coordinator")
+    project_management_coordinator = _composition_port("_project_management_coordinator")
     parse_coordinator = _composition_port("_parse_coordinator")
     operation_coordinator = _composition_port("_operation_coordinator")
     operation_plan_facade = _composition_port("_operation_plan_facade")
@@ -86,6 +89,7 @@ class MainWindow(QMainWindow):
         runtime_context=None,
         ui_foundation=None,
         initial_project_path: str | None = None,
+        initial_import_path: str | None = None,
     ):
         super().__init__()
         self.setWindowTitle("TransBridge")
@@ -128,6 +132,7 @@ class MainWindow(QMainWindow):
         self._parse_coordinator = ParseCoordinator(self)
         self._operation_coordinator = OperationCoordinator(self)
         self._project_coordinator = ProjectCoordinator(self)
+        self._project_management_coordinator = ProjectManagementCoordinator(self)
         self._variant_coordinator = VariantCoordinator(self)
         self._project_transfer_coordinator = ProjectTransferCoordinator(self)
         self._operation_plan_facade = None
@@ -174,11 +179,20 @@ class MainWindow(QMainWindow):
         self._window_lifecycle = WindowLifecycle(self)
         self._window_lifecycle.restore_state()
         self._project_coordinator.init_workspace(initial_project_path=initial_project_path)
+        if initial_import_path:
+            QTimer.singleShot(0, lambda: self._open_initial_import_when_idle(initial_import_path))
 
         # 自动保存 — 编辑操作触发防抖
         self._window_lifecycle.start()
         self._auto_saver = self._window_lifecycle.auto_saver
         self._ctx.dirty_changed.connect(lambda: self._workbench.project_bar.set_save_dirty(self._ctx.dirty))
+
+    def _open_initial_import_when_idle(self, path: str) -> None:
+        workers = (self._foreground_worker, self._save_worker, self._project_open_worker)
+        if any(worker is not None and worker.isRunning() for worker in workers):
+            QTimer.singleShot(100, lambda: self._open_initial_import_when_idle(path))
+            return
+        self._project_transfer_coordinator.import_transbridge(path)
 
     def closeEvent(self, event):
         if not self._close_pending and not self._dialogue_editor.can_close():
@@ -244,7 +258,18 @@ class MainWindow(QMainWindow):
         pb.variant_add_requested.connect(self._intent_composition.callback(IntentId.PROJECT_VARIANT_CREATE))
         pb.variant_copy_requested.connect(self._intent_composition.callback(IntentId.PROJECT_VARIANT_COPY))
         pb.variant_delete_requested.connect(self._variant_coordinator.delete_variant)
-        pb.project_rename_requested.connect(self._variant_coordinator.rename_project)
+        pb.project_rename_requested.connect(
+            lambda name: self._intent_composition.dispatch(IntentId.PROJECT_RENAME, {"name": name})
+        )
+        pb.project_delete_requested.connect(
+            lambda project_id, name: self._intent_composition.dispatch(
+                IntentId.PROJECT_DELETE,
+                {"project_id": project_id, "name": name},
+            )
+        )
+        pb.snapshot_save_requested.connect(self._intent_composition.callback(IntentId.PROJECT_SNAPSHOT_SAVE))
+        pb.snapshot_load_requested.connect(self._intent_composition.callback(IntentId.PROJECT_SNAPSHOT_LOAD))
+        pb.snapshot_delete_requested.connect(self._intent_composition.callback(IntentId.PROJECT_SNAPSHOT_DELETE))
 
         self._mode_tabs.addTab(self._workbench, "工作台")
         self._mode_tabs.addTab(self._pt_widget, "ParaTranz 管理")

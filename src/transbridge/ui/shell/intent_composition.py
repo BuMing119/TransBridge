@@ -70,6 +70,7 @@ class ShellIntentComposition:
             copy_variant=callback(IntentId.PROJECT_VARIANT_COPY),
             save_snapshot=callback(IntentId.PROJECT_SNAPSHOT_SAVE),
             load_snapshot=callback(IntentId.PROJECT_SNAPSHOT_LOAD),
+            delete_snapshot=callback(IntentId.PROJECT_SNAPSHOT_DELETE),
             export_transbridge=callback(IntentId.PROJECT_EXPORT),
             import_transbridge=callback(IntentId.PROJECT_IMPORT),
             refresh_projects=callback(IntentId.PROJECT_REFRESH),
@@ -86,6 +87,8 @@ class ShellIntentComposition:
             manual_save=callback(IntentId.PROJECT_SAVE),
             show_context_help=callback(IntentId.HELP_CONTEXT),
             show_task_activity=callback(IntentId.TASK_OPEN_ACTIVITY),
+            rename_project=callback(IntentId.PROJECT_RENAME),
+            delete_project=callback(IntentId.PROJECT_DELETE),
             exit_app=callback(IntentId.APP_EXIT),
         )
 
@@ -160,6 +163,8 @@ class ShellIntentComposition:
         register(IntentId.PROJECT_OPEN, self._open_project)
         register(IntentId.PROJECT_SAVE, _call(host.variant_coordinator.manual_save), availability=self._has_project)
         register(IntentId.PROJECT_REFRESH, _call(host.tool_windows.refresh_projects))
+        register(IntentId.PROJECT_RENAME, self._rename_project, availability=self._has_project)
+        register(IntentId.PROJECT_DELETE, self._delete_project)
         register(
             IntentId.PROJECT_VARIANT_CREATE, _call(host.variant_coordinator.new_variant), availability=self._has_project
         )
@@ -174,6 +179,11 @@ class ShellIntentComposition:
         register(
             IntentId.PROJECT_SNAPSHOT_LOAD,
             _call(host.project_transfer_coordinator.load_snapshot),
+            availability=self._has_project,
+        )
+        register(
+            IntentId.PROJECT_SNAPSHOT_DELETE,
+            _call(host.project_transfer_coordinator.delete_snapshot),
             availability=self._has_project,
         )
         register(
@@ -237,6 +247,15 @@ class ShellIntentComposition:
             return self._host.project_coordinator.open_project_path(path)
         return self._host.project_coordinator.open_project()
 
+    def _rename_project(self, payload: Mapping[str, str]) -> object:
+        return self._host.project_management_coordinator.rename_current(payload.get("name"))
+
+    def _delete_project(self, payload: Mapping[str, str]) -> object:
+        return self._host.project_management_coordinator.delete_project(
+            payload.get("project_id"),
+            payload.get("name"),
+        )
+
     def _create_project(self, payload: Mapping[str, str]) -> object:
         path = payload.get("path")
         if path:
@@ -248,7 +267,11 @@ class ShellIntentComposition:
     def _migrate_source(self, payload: Mapping[str, str]) -> object:
         path = payload.get("path")
         if path:
-            return self._host.parse_coordinator.apply_migration(path, payload.get("drop_kind"))
+            return self._host.parse_coordinator.apply_migration(
+                path,
+                payload.get("drop_kind"),
+                payload.get("format_id"),
+            )
         return self._host.parse_coordinator.apply_migration()
 
     def _import_project(self, payload: Mapping[str, str]) -> object:
@@ -406,6 +429,7 @@ class ShellIntentComposition:
             dock.setWidget(panel)
             self._task_dock = dock
             self._task_center = controller
+            controller.navigation_requested.connect(self._dispatch_task_navigation)
             controller.start()
         else:
             self._task_center.refresh_catalogs()
@@ -419,6 +443,12 @@ class ShellIntentComposition:
         self._task_dock.show()
         self._task_dock.raise_()
         self._task_dock.activateWindow()
+
+    def _dispatch_task_navigation(self, intent) -> None:
+        try:
+            self.dispatch(intent.target, dict(intent.parameters))
+        except (KeyError, TypeError, ValueError) as exc:
+            self._host.show_message(f"任务结果入口当前不可用：{exc}")
 
     def _on_drop_resolution(self, resolution) -> None:
         if resolution.status not in {

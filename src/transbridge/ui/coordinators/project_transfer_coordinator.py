@@ -19,6 +19,10 @@ class ProjectTransferCoordinator:
 
     def save_snapshot(self):
         """另存为快照。"""
+        if getattr(self._host.context, "uses_authoritative_projection", False):
+            from .v2_project_transfer import V2ProjectTransferCoordinator
+
+            return V2ProjectTransferCoordinator(self._host).save_snapshot()
         proj = self._host.context.active_project
         vs = self._host.context.variant_store
         if not proj or not vs:
@@ -42,6 +46,10 @@ class ProjectTransferCoordinator:
 
     def load_snapshot(self):
         """加载快照。"""
+        if getattr(self._host.context, "uses_authoritative_projection", False):
+            from .v2_project_transfer import V2ProjectTransferCoordinator
+
+            return V2ProjectTransferCoordinator(self._host).load_snapshot()
         proj = self._host.context.active_project
         if not proj:
             return
@@ -93,15 +101,35 @@ class ProjectTransferCoordinator:
             on_error=lambda error: QMessageBox.warning(self._host, "快照读取失败", error),
         )
 
+    def delete_snapshot(self):
+        """Delete one formally owned V3 snapshot."""
+
+        if getattr(self._host.context, "uses_authoritative_projection", False):
+            from .v2_project_transfer import V2ProjectTransferCoordinator
+
+            return V2ProjectTransferCoordinator(self._host).delete_snapshot()
+        QMessageBox.information(
+            self._host,
+            "快照",
+            "旧版工程快照不支持在此处删除；请先迁移为当前工程格式。",
+        )
+
     def export_transbridge(self):
         """导出项目为 .transbridge ZIP 文件。"""
+        if getattr(self._host.context, "uses_authoritative_projection", False):
+            from .v2_project_transfer import V2ProjectTransferCoordinator
+
+            return V2ProjectTransferCoordinator(self._host).export_transbridge()
         proj = self._host.context.active_project
         if not proj:
             QMessageBox.warning(self._host, "导出", "请先打开一个项目。")
             return
 
         path, _ = QFileDialog.getSaveFileName(
-            self, "导出 .transbridge", f"{proj.name}.transbridge", "TransBridge 项目 (*.transbridge);;所有文件 (*)"
+            self._host,
+            "导出 .transbridge",
+            f"{proj.name}.transbridge",
+            "TransBridge 项目 (*.transbridge);;所有文件 (*)",
         )
         if not path:
             return
@@ -134,6 +162,10 @@ class ProjectTransferCoordinator:
 
     def import_transbridge(self, path: str | None = None):
         """导入 .transbridge 文件。"""
+        if getattr(self._host.context, "uses_authoritative_projection", False):
+            from .v2_project_transfer import V2ProjectTransferCoordinator
+
+            return V2ProjectTransferCoordinator(self._host).import_transbridge(path)
         if path is None:
             path, _ = QFileDialog.getOpenFileName(
                 self._host, "导入 .transbridge", "", "TransBridge 项目 (*.transbridge);;所有文件 (*)"

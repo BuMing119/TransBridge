@@ -32,6 +32,10 @@ class ParseConfig:
     eet_path: str | None = None
     xt_path: str | None = None
     tp_path: str | None = None
+    json_path: str | None = None
+    json_format_id: str | None = None
+    sst_path: str | None = None
+    sst_format_id: str | None = None
     strings_dir: str | None = None
     strings_lang: str = "chinese"
     strings_apply_all: bool = False
@@ -151,6 +155,56 @@ class ParseConfigDialog(QDialog):
         tp_row.addWidget(tp_clear)
         form.addRow("已翻译插件", self._tp_row)
 
+        # JSON / SST 是“导入已有译文”的迁移来源，不是新建来源。
+        if self._mode == "migrate":
+            self._json_row = QWidget()
+            json_row = QHBoxLayout(self._json_row)
+            json_row.setContentsMargins(0, 0, 0, 0)
+            self._json_input = QLineEdit()
+            self._json_input.setPlaceholderText("选择 ParaTranz / DSD / TransBridge JSON…")
+            self._json_input.setReadOnly(True)
+            json_browse = QPushButton("浏览")
+            json_browse.setFixedWidth(60)
+            json_browse.clicked.connect(self._browse_json)
+            json_clear = QPushButton("✕")
+            json_clear.setFixedWidth(28)
+            json_clear.setToolTip("清除")
+            json_clear.clicked.connect(self._clear_json)
+            self._json_format = QComboBox()
+            self._json_format.addItem("自动识别", None)
+            self._json_format.addItem("ParaTranz", "json.paratranz")
+            self._json_format.addItem("DSD", "json.dsd")
+            self._json_format.addItem("TransBridge", "json.transbridge")
+            self._json_format.setToolTip("空数组等歧义 JSON 需要明确选择格式")
+            json_row.addWidget(self._json_input)
+            json_row.addWidget(json_browse)
+            json_row.addWidget(json_clear)
+            json_row.addWidget(self._json_format)
+            form.addRow("JSON 译文", self._json_row)
+
+            self._sst_row = QWidget()
+            sst_row = QHBoxLayout(self._sst_row)
+            sst_row.setContentsMargins(0, 0, 0, 0)
+            self._sst_input = QLineEdit()
+            self._sst_input.setPlaceholderText("选择 SSU8 / SSU9 SST 文件…")
+            self._sst_input.setReadOnly(True)
+            sst_browse = QPushButton("浏览")
+            sst_browse.setFixedWidth(60)
+            sst_browse.clicked.connect(self._browse_sst)
+            sst_clear = QPushButton("✕")
+            sst_clear.setFixedWidth(28)
+            sst_clear.setToolTip("清除")
+            sst_clear.clicked.connect(self._clear_sst)
+            self._sst_format = QComboBox()
+            self._sst_format.addItem("自动识别", None)
+            self._sst_format.addItem("SSU8", "sst.ssu8")
+            self._sst_format.addItem("SSU9", "sst.ssu9")
+            sst_row.addWidget(self._sst_input)
+            sst_row.addWidget(sst_browse)
+            sst_row.addWidget(sst_clear)
+            sst_row.addWidget(self._sst_format)
+            form.addRow("SST 译文", self._sst_row)
+
         # ── Strings 目录 ──
         self._strings_row = QWidget()
         strings_row = QHBoxLayout(self._strings_row)
@@ -253,6 +307,24 @@ class ParseConfigDialog(QDialog):
         if path:
             self._tp_input.setText(path)
 
+    def _browse_json(self):
+        path, _ = QFileDialog.getOpenFileName(self, "选择 JSON 译文文件", "", "JSON 文件 (*.json);;所有文件 (*)")
+        if path:
+            self._json_input.setText(path)
+
+    def _browse_sst(self):
+        path, _ = QFileDialog.getOpenFileName(self, "选择 SST 译文文件", "", "SST 文件 (*.sst);;所有文件 (*)")
+        if path:
+            self._sst_input.setText(path)
+
+    def _clear_json(self):
+        self._json_input.clear()
+        self._json_format.setCurrentIndex(0)
+
+    def _clear_sst(self):
+        self._sst_input.clear()
+        self._sst_format.setCurrentIndex(0)
+
     def _browse_strings_dir(self):
         dir_path = QFileDialog.getExistingDirectory(self, "选择 Strings 目录", "")
         if dir_path:
@@ -286,13 +358,19 @@ class ParseConfigDialog(QDialog):
         config.eet_path = self._eet_input.text().strip() or None
         config.xt_path = self._xt_input.text().strip() or None
         config.tp_path = self._tp_input.text().strip() or None
+        if hasattr(self, "_json_input"):
+            config.json_path = self._json_input.text().strip() or None
+            config.json_format_id = self._json_format.currentData() if config.json_path else None
+        if hasattr(self, "_sst_input"):
+            config.sst_path = self._sst_input.text().strip() or None
+            config.sst_format_id = self._sst_format.currentData() if config.sst_path else None
         config.strings_dir = self._strings_input.text().strip() or None
         config.strings_lang = self._strings_lang.currentText()
         config.strings_apply_all = self._strings_apply_all.isChecked()
         config.skip_empty = self._skip_empty.currentText() == "是"
         return config
 
-    def prefill_migration_source(self, path: str, kind: str) -> bool:
+    def prefill_migration_source(self, path: str, kind: str, format_id: str | None = None) -> bool:
         """Prefill one reviewed drop without executing the migration."""
 
         if self._mode != "migrate":
@@ -303,8 +381,22 @@ class ParseConfigDialog(QDialog):
             self._xt_input.setText(path)
         elif kind == "plugin":
             self._tp_input.setText(path)
+        elif kind == "json":
+            self._json_input.setText(path)
+            self._select_format(self._json_format, format_id)
+        elif kind == "sst":
+            self._sst_input.setText(path)
+            self._select_format(self._sst_format, format_id)
         elif kind == "strings-directory":
             self._strings_input.setText(path)
         else:
             return False
         return True
+
+    @staticmethod
+    def _select_format(combo: QComboBox, format_id: str | None) -> None:
+        if format_id is None:
+            combo.setCurrentIndex(0)
+            return
+        index = combo.findData(format_id)
+        combo.setCurrentIndex(index if index >= 0 else 0)

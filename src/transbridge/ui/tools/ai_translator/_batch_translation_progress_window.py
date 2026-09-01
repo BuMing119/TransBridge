@@ -58,12 +58,14 @@ class _BatchTranslationProgressWindow(QWidget):
         entry_activated=None,
         activity=None,
         theme_view: ThemeView | None = None,
+        completion_publisher=None,
     ):
         super().__init__(parent, Qt.WindowType.Window)
         self._worker = worker
         self._ctx = ctx
         self._entry_activated = entry_activated
         self._activity = activity
+        self._completion_publisher = completion_publisher
         self._theme_view = theme_view
         self.setWindowTitle("AI 批量翻译 — 进行中")
         self.resize(560, 650)
@@ -282,6 +284,15 @@ class _BatchTranslationProgressWindow(QWidget):
     def _on_all_finished(self, summary: BatchTranslationSummary):
         if self._activity is not None:
             self._was_stopped |= str(self._activity.activity.state) == "cancelling"
+        if self._completion_publisher is not None:
+            try:
+                published = self._completion_publisher(summary, cancelled=self._was_stopped)
+            except Exception as exc:
+                self._on_error(str(exc))
+                return
+            if not published:
+                self._round_log.append("批量结果未提交：运行已取消或至少一个来源失败。")
+        if self._activity is not None:
             self._activity.finish(cancelled=self._was_stopped)
         self._overall_progress_bar.setMaximum(100)
         self._overall_progress_bar.setValue(100)

@@ -131,6 +131,7 @@ class OverviewTab(QWidget):
         self._gen = 0
         self._init_ui()
         ctx.project_selected.connect(self.set_project)
+        ctx.paratranz_permissions_changed.connect(self._refresh_permissions)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -249,9 +250,7 @@ class OverviewTab(QWidget):
         self._lbl_join.setText(_JOIN_LABELS.get(p.get("joinMode", 0), "—"))
         self._lbl_members.setText(str(p.get("total", "—")))
 
-        is_admin = self._ctx.is_admin()
-        self._edit_btn.setVisible(is_admin)
-        self._del_btn.setVisible(is_admin)
+        self._refresh_permissions()
 
         self._load_progress(p.get("id"))
 
@@ -310,6 +309,11 @@ class OverviewTab(QWidget):
         w.error.connect(_on_error)
         w.start()
         self._workers.append(w)
+
+    def _refresh_permissions(self):
+        is_admin = self._ctx.is_admin()
+        self._edit_btn.setVisible(is_admin)
+        self._del_btn.setVisible(is_admin)
 
     def _edit_project(self):
         project = self._ctx.current_project

@@ -50,6 +50,7 @@ class StringsTab(QWidget):
         self._strings_gen = 0
         self._init_ui()
         ctx.project_selected.connect(self._on_project_changed)
+        ctx.paratranz_permissions_changed.connect(self._refresh_permissions)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -241,6 +242,10 @@ class StringsTab(QWidget):
         is_admin = self._ctx.is_admin()
         self._batch_stage_btn.setEnabled(len(rows) >= 1 and is_admin)
         self._batch_del_btn.setEnabled(len(rows) >= 1 and is_admin)
+
+    def _refresh_permissions(self):
+        self._create_btn.setEnabled(bool(self._project_id) and self._ctx.is_admin())
+        self._on_selection_changed()
 
     def _on_double_clicked(self, item: QTableWidgetItem):
         row = item.row()

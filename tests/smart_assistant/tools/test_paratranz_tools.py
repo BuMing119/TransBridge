@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from tests.conftest import MockAppContext, make_test_collection
+from transbridge.application.ports.paratranz import ParaTranzEntry
 from transbridge.application.tasks import TaskCancelled
 
 _PT_PROJECT_API_PATH = "transbridge.paratranz.service.ParaTranzService.from_config"
@@ -176,12 +177,24 @@ class TestUploadEntries(unittest.TestCase):
     @patch(_PT_PROJECT_API_PATH)
     def test_upload_all_entries(self, mock_api):
         mock_client = MagicMock()
-        mock_client.upsert_entry.return_value = None
+
+        def uploaded(project_id, entry, **kwargs):
+            return ParaTranzEntry(
+                100 + mock_client.upsert_entry.call_count,
+                entry.key,
+                entry.original,
+                entry.translation,
+                entry.context,
+                entry.stage,
+            )
+
+        mock_client.upsert_entry.side_effect = uploaded
         mock_api.return_value = mock_client
 
         r = self.func({"project_id": 1}, self.ctx)
         self.assertTrue(r.success)
         self.assertEqual(r.data["uploaded"], 3)
+        self.assertTrue(all(entry.external_refs for entry in self.ctx.collection))
 
 
 # ============================================================

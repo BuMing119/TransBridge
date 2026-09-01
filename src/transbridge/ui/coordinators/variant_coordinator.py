@@ -371,9 +371,7 @@ class VariantCoordinator:
         if result.diagnostics:
             self._host.show_message(f"{success_message}；{result.diagnostics[0].message}")
         if reload_source:
-            for source in self._host.context.project_sources:
-                if source.get("type") == "esp" and source.get("path"):
-                    self._host.project_coordinator.restore_parse_esp(str(source["path"]))
+            self._host.project_coordinator.restore_active_sources()
 
     def rename_project(self, new_name: str):
         """重命名项目——移动目录、更新 workspace。"""

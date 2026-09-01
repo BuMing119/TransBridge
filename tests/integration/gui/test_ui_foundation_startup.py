@@ -58,6 +58,9 @@ def test_real_qapplication_foundation_startup_preserves_atomic_ui_preferences(tm
 class _UseCases:
     preferences: UiPreferenceRepository
 
+    def names(self):
+        return ("ui_preferences",)
+
     def resolve(self, name: str):
         if name == "ui_preferences":
             return self.preferences

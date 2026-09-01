@@ -21,10 +21,10 @@ from PyQt6.QtWidgets import (
 
 from transbridge.application.contracts import JobRef
 from transbridge.application.tasks.activity import TaskActivityViewState
-from transbridge.application.terminology_sync.draft_import_models import DraftImportChoice
 from transbridge.application.terminology_sync.inbound import InboundReviewDecision
 from transbridge.application.terminology_sync.models import TerminologySyncMode
 
+from .inbound_review import InboundReviewDrafts, InboundReviewEdit
 from .sync_presenter import TerminologySyncPresenter, TerminologySyncViewState
 
 
@@ -89,6 +89,9 @@ class TerminologySyncPanel(QFrame):
         self._signals.completed.connect(self._completed, Qt.ConnectionType.QueuedConnection)
         self._signals.failed.connect(self._failed, Qt.ConnectionType.QueuedConnection)
         self._pending = ""
+        self._review_drafts = InboundReviewDrafts()
+        self._rendered_inbound_id: str | None = None
+        self._rendered_inbound_items = ()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(22, 18, 22, 18)
@@ -315,6 +318,8 @@ class TerminologySyncPanel(QFrame):
         reviewed_choices = (
             {} if proposal_selection is None else {item.item_id: item for item in proposal_selection.choices}
         )
+        self._rendered_inbound_id = selected
+        self._rendered_inbound_items = state.inbound_items
         self.inbound_table.setRowCount(len(state.inbound_items))
         for row, item in enumerate(state.inbound_items):
             content = item.remote or item.local
@@ -326,14 +331,15 @@ class TerminologySyncPanel(QFrame):
             if content is not None:
                 choice.addItem("编辑", InboundReviewDecision.EDIT.value)
             choice.setProperty("item_id", item.item_id)
-            reviewed = reviewed_choices.get(item.item_id)
-            if reviewed is not None:
-                choice.setCurrentIndex(choice.findData(reviewed.decision.value))
+            edit = self._review_drafts.row(selected, item, reviewed_choices.get(item.item_id))
+            choice.setCurrentIndex(choice.findData(edit.decision.value))
             self.inbound_table.setCellWidget(row, 2, choice)
-            edited_content = content if reviewed is None or reviewed.edited is None else reviewed.edited
-            edited = QLineEdit("" if edited_content is None else edited_content.translation, self.inbound_table)
+            edited = QLineEdit(edit.translation, self.inbound_table)
             edited.setProperty("item_id", item.item_id)
+            edited.setEnabled(edit.decision is InboundReviewDecision.EDIT)
             self.inbound_table.setCellWidget(row, 3, edited)
+            choice.currentIndexChanged.connect(self._inbound_edited)
+            edited.textChanged.connect(self._inbound_edited)
         start = state.inbound_offset + 1 if state.inbound_total else 0
         end = state.inbound_offset + len(state.inbound_items)
         self.inbound_page_label.setText(f"{start}-{end} / {state.inbound_total}")
@@ -356,14 +362,18 @@ class TerminologySyncPanel(QFrame):
     def _select_inbound(self, index: int) -> None:
         change_set_id = self.inbound_selector.itemData(index)
         if isinstance(change_set_id, str):
+            self._remember_inbound_page()
             self.render_sync(self.presenter.select_inbound(change_set_id))
 
     def _page_inbound(self, delta: int) -> None:
+        self._remember_inbound_page()
         self.render_sync(self.presenter.page_inbound(self.presenter.state.inbound_offset + delta))
 
-    def _preview_inbound(self) -> None:
-        choices = []
-        items = {item.item_id: item for item in self.presenter.state.inbound_items}
+    def _remember_inbound_page(self) -> None:
+        if self._rendered_inbound_id is None:
+            return
+        edits = []
+        items = {item.item_id: item for item in self._rendered_inbound_items}
         for row in range(self.inbound_table.rowCount()):
             choice_widget = self.inbound_table.cellWidget(row, 2)
             edited_widget = self.inbound_table.cellWidget(row, 3)
@@ -371,14 +381,26 @@ class TerminologySyncPanel(QFrame):
                 continue
             item_id = str(choice_widget.property("item_id"))
             decision = InboundReviewDecision(str(choice_widget.currentData()))
-            edited = None
-            if decision is InboundReviewDecision.EDIT:
-                source = items[item_id].remote or items[item_id].local
-                if source is None:
-                    continue
-                edited = replace(source, translation=edited_widget.text().strip())
-            choices.append(DraftImportChoice(item_id, decision, edited))
-        self._run("preview-inbound", lambda: self.presenter.preview_inbound(tuple(choices)))
+            edited_widget.setEnabled(decision is InboundReviewDecision.EDIT)
+            edits.append(InboundReviewEdit(items[item_id], decision, edited_widget.text()))
+        self._review_drafts.remember(self._rendered_inbound_id, tuple(edits))
+
+    def _inbound_edited(self, *_args) -> None:
+        self._remember_inbound_page()
+        self.presenter.invalidate_inbound_preview()
+        self.commit_inbound_button.setEnabled(False)
+        self.inbound_notice.setText("复核内容已修改，请重新预览草稿变更后提交。")
+
+    def _preview_inbound(self) -> None:
+        self._remember_inbound_page()
+        self.presenter.invalidate_inbound_preview()
+        self.commit_inbound_button.setEnabled(False)
+        try:
+            choices = self._review_drafts.choices(self.presenter.state.selected_inbound_id)
+        except ValueError as exc:
+            self._failed(exc)
+            return
+        self._run("preview-inbound", lambda: self.presenter.preview_inbound(choices))
 
 
 __all__ = ["SYNC_ACTIONS", "TerminologySyncActionDescriptor", "TerminologySyncPanel", "TerminologySyncView"]

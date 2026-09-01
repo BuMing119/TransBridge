@@ -8,6 +8,7 @@ from .guided_project_coordinator import (
 from .operation_coordinator import OperationCoordinator
 from .parse_coordinator import ParseCoordinator
 from .project_coordinator import ProjectCoordinator
+from .project_management_coordinator import ProjectManagementCoordinator
 from .project_transfer_coordinator import ProjectTransferCoordinator
 from .variant_coordinator import VariantCoordinator
 
@@ -18,6 +19,7 @@ __all__ = [
     "GuidedProjectDraftState",
     "OperationCoordinator",
     "ProjectCoordinator",
+    "ProjectManagementCoordinator",
     "VariantCoordinator",
     "ProjectTransferCoordinator",
 ]

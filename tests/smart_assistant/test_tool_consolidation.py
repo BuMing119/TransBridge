@@ -231,14 +231,16 @@ class TestDeprecatedWrappers(unittest.TestCase):
         for name in new_names:
             self.assertIsNotNone(ToolRegistry.get(name), f"{name} should be registered")
 
-    def test_tool_count_is_current(self):
-        """The complete FR9/FR16 catalog is explicit and contains no hidden wrappers."""
+    def test_current_catalog_exposes_registered_capabilities_without_hidden_wrappers(self):
+        """Check the executable tool surface instead of freezing a historical count."""
+        from transbridge.smart_assistant.native_tools import PROPOSE_PLAN_TOOL_NAME, build_native_tool_definitions
         from transbridge.smart_assistant.tool_registry import ToolRegistry
         from transbridge.smart_assistant.tools import register_all
 
         register_all()
 
-        active = {spec.name for spec in ToolRegistry.list_all(include_deprecated=False)}
+        specifications = ToolRegistry.list_all(include_deprecated=False)
+        active = {spec.name for spec in specifications}
         required_fr16 = {
             "extract_archive",
             "pack_archive",
@@ -250,7 +252,16 @@ class TestDeprecatedWrappers(unittest.TestCase):
             "plan_sync",
         }
         self.assertTrue(required_fr16.issubset(active))
-        self.assertEqual(len(active), 50, "unexpected active tool was added or removed")
+        definitions = build_native_tool_definitions(ToolRegistry.list_all_namespaces())
+        native_names = [definition.name for definition in definitions]
+        available = {spec.name for spec in specifications if spec.available}
+        self.assertEqual(set(native_names), available | {PROPOSE_PLAN_TOOL_NAME})
+        self.assertEqual(len(native_names), len(set(native_names)), "native tool names must stay unique")
+        for spec in specifications:
+            if spec.available:
+                self.assertTrue(callable(spec.execute), f"{spec.name} must have an executable handler")
+                self.assertEqual(spec.parameters["type"], "object")
+                self.assertIn(spec.permission, {"read", "write", "admin"})
 
     def test_native_tool_definitions_no_old_names(self):
         from transbridge.smart_assistant.native_tools import build_native_tool_definitions
