@@ -9,9 +9,9 @@
 
 AI 翻译的正式翻译、专有名词抽取、proofread，以及 strict 后处理的质量检测、修复、润色和裁决都要求模型返回 JSON。当前实现主要依靠 Prompt 约束，再以正则、`json.loads()`、截断修复和文本启发式解析响应。该方式无法由 Provider 保证字段、类型和枚举，格式错误会进入应用重试或保守回退。
 
-项目同时支持 OpenAI-compatible Chat Completions 与 Anthropic Messages，并已有请求级推理控制、prompt cache、共享并发预算、取消和工作流日志包装器。智能助手已通过 ADR-031 使用独立的原生 function calling 接口；翻译结果是数据，不是工具行为，不能复用工具调用轮次或调用 ID。
+项目同时支持 OpenAI-compatible Responses/Chat Completions 与 Anthropic Messages，并已有请求级推理控制、prompt cache、共享并发预算、取消和工作流日志包装器。结构化业务响应使用 Responses API，普通文本和智能助手 function calling 保持既有接口；翻译结果是数据，不是工具行为，不能复用工具调用轮次或调用 ID。
 
-OpenAI 官方文档规定 Chat Completions 通过 `response_format.type=json_schema` 提交命名 schema 和 strict 约束，且 strict schema 的根必须是 object、object 必须声明 `additionalProperties: false`。Anthropic 官方文档规定 Messages 通过 `output_config.format.type=json_schema` 提交 schema，并说明拒答和 `max_tokens` 截断时响应可能不符合 schema。当前锁定的 OpenAI 2.29.0、Anthropic 0.85.0 和 jsonschema 4.26.0 已提供所需接口。
+OpenAI Responses API 通过 `text.format.type=json_schema` 提交命名 schema，并以 `response.output_text.delta` 提供流式文本事件。Anthropic Messages 通过 `output_config.format.type=json_schema` 提交 schema。当前锁定的 OpenAI 2.29.0、Anthropic 0.85.0 和 jsonschema 4.26.0 已提供所需接口。
 
 参考：
 
@@ -34,15 +34,14 @@ OpenAI 官方文档规定 Chat Completions 通过 `response_format.type=json_sch
 
 ### 2. Provider 适配器独立于主客户端和 function calling
 
-OpenAI 适配器为 Chat Completions 请求添加：
+OpenAI 适配器对携带 directive 的请求调用 Responses API，并添加：
 
 ```python
-response_format = {
-    "type": "json_schema",
-    "json_schema": {
+text = {
+    "format": {
+        "type": "json_schema",
         "name": output_schema.name,
         "schema": output_schema.schema,
-        "strict": True,
     },
 }
 ```
@@ -80,7 +79,7 @@ Schema 只使用 OpenAI 与 Anthropic 共同支持的子集。所有 object 都�
 
 ### 4. Provider 约束与领域校验分层
 
-Provider 负责保证 JSON 语法和 schema 形状，基础设施层使用 `Draft202012Validator` 再次验证响应，以识别忽略 `response_format` 的 OpenAI-compatible 网关。
+Provider 负责保证 JSON 语法和 schema 形状，基础设施层使用 `Draft202012Validator` 再次验证响应，以识别忽略 `text.format` 的 OpenAI-compatible 网关。
 
 领域层继续负责：
 
@@ -101,8 +100,8 @@ Provider 负责保证 JSON 语法和 schema 形状，基础设施层使用 `Draf
 
 ### 6. 错误和重试契约
 
-- OpenAI `message.refusal`、Anthropic `stop_reason=refusal` 归类为 refusal。
-- OpenAI `finish_reason=length`、Anthropic `stop_reason=max_tokens` 归类为 truncated。
+- OpenAI Responses 的 refusal content、Anthropic `stop_reason=refusal` 归类为 refusal。
+- OpenAI `status=incomplete` 且原因为 `max_output_tokens`、Anthropic `stop_reason=max_tokens` 归类为 truncated。
 - 空文本、非 JSON、schema 校验失败或不允许的结束原因归类为 invalid response。
 - Provider 明确拒绝 Structured Outputs 参数时归类为 unsupported，并保留原始异常为 cause。
 - prompt-cache 被拒绝后的无缓存重试，以及 Anthropic system blocks 到字符串的兼容重试，必须保留相同结构化 schema。

@@ -165,14 +165,14 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
   - **FR5.14.8 下载、删除与失败恢复**: 模型下载 SHALL 在后台执行，展示真实可得的进度与状态，支持取消/重试，并在完成后以原子方式转为可用安装；网络中断、磁盘空间不足、校验失败或用户取消 SHALL 保留可诊断原因并不破坏已安装模型。删除当前选中模型前 SHALL 二次确认；确认删除后 SHALL 先将 Embedding 持久化为 `disabled`，再仅删除应用自身管理目录内的对应模型。
   - **FR5.14.9 凭据与诊断安全**: Embedding API Key SHALL 继续通过独立凭据引用存储，不得明文进入 INI、日志、错误消息、模型元数据或导出产物。本地模型目录与下载临时目录 SHALL 使用可验证的应用数据根路径，删除和清理操作 SHALL 拒绝超出该边界的路径。
 
-**FR5.15 AI 翻译原生 Structured Outputs** — *2026-08-27 | 状态: 已完成 | 优先级: P0*: AI 翻译窗口的翻译、润色、混合与具名自定义入口 SHALL 对所有期望结构化结果的业务 LLM 请求使用 Provider 原生 Structured Outputs，而不是仅通过提示词要求模型返回 JSON。OpenAI-compatible 协议 SHALL 使用 Chat Completions `response_format` JSON Schema；Anthropic 协议 SHALL 使用 Messages `output_config.format` JSON Schema。
+**FR5.15 AI 翻译原生 Structured Outputs** — *2026-08-27 | 状态: 已完成 | 优先级: P0*: AI 翻译窗口的翻译、润色、混合与具名自定义入口 SHALL 对所有期望结构化结果的业务 LLM 请求使用 Provider 原生 Structured Outputs，而不是仅通过提示词要求模型返回 JSON。OpenAI-compatible 协议 SHALL 使用 Responses API `text.format` JSON Schema；Anthropic 协议 SHALL 使用 Messages `output_config.format` JSON Schema。
 
   - **FR5.15.1 四入口一致覆盖**: 翻译、润色和混合入口 SHALL 使用同一套 Provider-neutral 结构化请求契约；具名自定义入口 SHALL 随其 `base_mode` 复用对应契约，不得形成独立的文本 JSON 回退路径。
   - **FR5.15.2 全流程结构化调用**: 正式翻译、翻译流程内的专有名词抽取、默认 proofread，以及 strict 后处理中的质量检测、修复、润色和裁决，只要模型响应由应用按 JSON 结构消费，就 SHALL 提交与该响应匹配的原生 JSON Schema。连接检查和智能助手原生 function calling 不属于本条改造范围。
-  - **FR5.15.3 Provider 原生协议**: OpenAI-compatible 请求 SHALL 提交 `response_format.type=json_schema`、命名 schema 与 strict 约束；Anthropic 请求 SHALL 提交 `output_config.format.type=json_schema`。Schema SHALL 使用两种协议共同支持的 JSON Schema 子集，根节点为 object，object 明确声明 `additionalProperties`，并对业务必需字段声明 `required`。
+  - **FR5.15.3 Provider 原生协议**: OpenAI-compatible 请求 SHALL 通过 Responses API 提交 `text.format.type=json_schema`、命名 schema 与 schema 定义；Anthropic 请求 SHALL 提交 `output_config.format.type=json_schema`。Schema SHALL 使用两种协议共同支持的 JSON Schema 子集，根节点为 object，object 明确声明 `additionalProperties`，并对业务必需字段声明 `required`。
   - **FR5.15.4 领域语义仍由应用校验**: Provider 的语法和类型约束 SHALL NOT 替代应用对 entry key 完整性、未知或重复条目、空译文、受保护占位符、术语、裁决枚举及结果归属的验证。模型输出即使满足 JSON Schema，也只有通过现有领域校验后才能提交到翻译结果。
   - **FR5.15.5 流式与运行护栏不回退**: 正式翻译 SHALL 保留流式增量展示、暂停、取消、并发预算、日志和缺项拆批恢复。限流、推理控制、prompt cache 和工作流日志包装器 SHALL 透明转发结构化输出契约；因缓存参数触发无缓存重试时 SHALL 保留相同 schema。
-  - **FR5.15.6 明确失败语义**: Provider 拒绝 schema、模型拒答、输出因 token 上限截断、响应缺少结构化文本或本地解析/语义校验失败时，系统 SHALL 给出可诊断失败并沿用既有安全重试、拆批或保留原译文策略。系统 SHALL NOT 对生产 OpenAI-compatible 或 Anthropic 客户端静默降级为仅靠提示词约束的文本 JSON 请求。
+  - **FR5.15.6 明确失败语义**: Provider 拒绝 schema、模型拒答、输出因 token 上限截断、响应缺少结构化文本或本地解析/语义校验失败时，系统 SHALL 给出可诊断失败并沿用既有安全重试、拆批或保留原译文策略。生产 OpenAI-compatible 结构化请求 SHALL NOT 回退到 Chat Completions；OpenAI-compatible 或 Anthropic 客户端均 SHALL NOT 静默降级为仅靠提示词约束的文本 JSON 请求。
   - **FR5.15.7 协议隔离**: Provider-neutral 结构化输出指令 SHALL 与智能助手的 `chat_stream_with_tools()` 保持语义和消息历史隔离；Provider 客户端 SHALL 在发出网络请求前剥离内部元数据并映射为原生 schema 参数，不得把翻译结果伪装成工具调用，也不得改变已完成的原生 function calling 行为。
 
 **FR5.16 项目全来源术语库构建、版本管理与质量报告** — *2026-08-28 | 状态: 已确认 | 优先级: P1*: 系统 SHALL 允许用户以当前项目的完整来源清单和当前激活 Variant 为输入，构建和维护一份有版本的项目级术语库，并生成质量分析报告与版本更新日志。功能范围 SHALL 由项目权威状态决定，不得缩减为当前工作台已打开的单个 `TranslationEntryCollection`、当前激活插件或 `AppContext.slots` 的临时内容。

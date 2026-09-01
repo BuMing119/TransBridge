@@ -17,6 +17,7 @@ _UNSUPPORTED_STATUS_CODES = frozenset({400, 422})
 _UNSUPPORTED_MARKERS = (
     "not support",
     "unsupported",
+    "unavailable",
     "unknown parameter",
     "unrecognized",
     "not permitted",
@@ -146,6 +147,18 @@ def openai_response_format(output_schema: LlmOutputSchema) -> dict[str, Any]:
     }
 
 
+def openai_responses_text_config(output_schema: LlmOutputSchema) -> dict[str, Any]:
+    """Build the OpenAI Responses API structured text configuration."""
+
+    return {
+        "format": {
+            "type": "json_schema",
+            "name": output_schema.name,
+            "schema": output_schema.schema,
+        }
+    }
+
+
 def anthropic_output_config(output_schema: LlmOutputSchema) -> dict[str, Any]:
     """Build the Anthropic Messages native output configuration."""
 
@@ -196,6 +209,22 @@ def ensure_openai_structured_output_completion(
         raise LlmStructuredOutputInvalidResponseError("OpenAI structured output response had an invalid finish reason")
 
 
+def ensure_openai_responses_structured_output_completion(
+    *,
+    status: str | None,
+    incomplete_reason: str | None = None,
+    refusal: object | None = None,
+) -> None:
+    """Classify Responses API refusal, truncation, and invalid terminal states."""
+
+    if refusal not in (None, ""):
+        raise LlmStructuredOutputRefusalError("OpenAI structured output request was refused")
+    if status == "incomplete" and incomplete_reason == "max_output_tokens":
+        raise LlmStructuredOutputTruncatedError("OpenAI structured output response was truncated")
+    if status != "completed":
+        raise LlmStructuredOutputInvalidResponseError("OpenAI structured output response did not complete successfully")
+
+
 def ensure_anthropic_structured_output_completion(*, stop_reason: str | None) -> None:
     """Classify Anthropic refusal, truncation, and invalid completion states."""
 
@@ -219,7 +248,11 @@ def raise_if_structured_output_unsupported(
     message = getattr(exc, "message", None)
     text = message if isinstance(message, str) else str(exc)
     lowered = text.lower()
-    parameter_markers = ("response_format", "json_schema") if provider == "openai" else ("output_config", "json_schema")
+    parameter_markers = (
+        ("response_format", "text.format", "json_schema", "/responses")
+        if provider == "openai"
+        else ("output_config", "json_schema")
+    )
     if not any(marker in lowered for marker in parameter_markers):
         return
     if not any(marker in lowered for marker in _UNSUPPORTED_MARKERS):
@@ -240,9 +273,11 @@ __all__ = [
     "anthropic_output_config",
     "attach_structured_output_directive",
     "ensure_anthropic_structured_output_completion",
+    "ensure_openai_responses_structured_output_completion",
     "ensure_openai_structured_output_completion",
     "extract_structured_output_directive",
     "openai_response_format",
+    "openai_responses_text_config",
     "raise_if_structured_output_unsupported",
     "validate_structured_output",
 ]

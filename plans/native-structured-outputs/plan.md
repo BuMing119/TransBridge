@@ -14,7 +14,7 @@
 
 ## 非目标
 
-- 不迁移到 OpenAI Responses API，不改变 Provider 配置或模型选择 UI。
+- 不改变 Provider 配置或模型选择 UI；普通文本和 function calling 请求不迁移协议。
 - 不把 Structured Outputs 扩展到普通连接检查、纯文本智能助手回答或 embedding 请求。
 - 不以 schema 校验替代翻译领域的 entry key、占位符、术语、质量和提交校验。
 - 不为缺少 Structured Outputs 能力的兼容端点增加 prompt-only JSON 静默回退。
@@ -57,7 +57,7 @@
 
 **验收标准**：
 
-- [x] 普通与流式 Chat Completions 请求发送命名 `response_format` JSON Schema 和 `strict=true`，且不发送 tools。
+- [x] 普通与流式结构化请求通过 Responses API 发送命名 `text.format` JSON Schema，且不发送 tools。
 - [x] prompt-cache 无缓存重试保留相同 schema、reasoning patch 和输出 token 上限。
 - [x] 普通与流式响应检测 refusal、length/content filter、空内容和无效 JSON，并维护请求计数/取消语义。
 - [x] 现有 text chat、stream 和 function-calling 测试保持通过。
@@ -71,7 +71,7 @@
 **实施步骤**：
 
 1. 复用现有 prompt-cache 消息转换和 reasoning patch。
-2. 对普通响应读取 refusal、content 和 finish reason；对流式响应聚合 content/refusal 并读取最终结束原因。
+2. 对普通响应读取 output text、refusal 和 status；对流式响应聚合 `response.output_text.delta` 并读取最终终态事件。
 3. 将完整文本交给 Story 01 的本地解析器，不在 Provider 模块做翻译领域判断。
 
 **验证**：fake SDK 精确参数断言、缓存拒绝重试、refusal/truncation/invalid、流式 callback 与 active request 测试。

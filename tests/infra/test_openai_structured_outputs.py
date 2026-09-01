@@ -39,21 +39,25 @@ def _messages() -> list[dict]:
 def _response(
     content: str = '{"value":"ok"}',
     *,
-    finish_reason: str | None = "stop",
+    status: str = "completed",
+    incomplete_reason: str | None = None,
     refusal: object | None = None,
 ):
-    message = SimpleNamespace(content=content, refusal=refusal)
-    return SimpleNamespace(choices=[SimpleNamespace(message=message, finish_reason=finish_reason)])
+    part = (
+        SimpleNamespace(type="refusal", refusal=refusal)
+        if refusal is not None
+        else SimpleNamespace(type="output_text", text=content)
+    )
+    return SimpleNamespace(
+        output_text=content,
+        status=status,
+        incomplete_details=(SimpleNamespace(reason=incomplete_reason) if incomplete_reason is not None else None),
+        output=[SimpleNamespace(type="message", content=[part])],
+    )
 
 
-def _chunk(
-    content: str = "",
-    *,
-    finish_reason: str | None = None,
-    refusal: object | None = None,
-):
-    delta = SimpleNamespace(content=content, refusal=refusal)
-    return SimpleNamespace(choices=[SimpleNamespace(delta=delta, finish_reason=finish_reason)])
+def _event(event_type: str, *, delta: str = "", response: object | None = None):
+    return SimpleNamespace(type=event_type, delta=delta, response=response)
 
 
 class _Stream:
@@ -83,36 +87,37 @@ def _client() -> OpenAICompatibleClient:
     return client
 
 
-def _expected_response_format() -> dict:
+def _expected_text_config() -> dict:
     return {
-        "type": "json_schema",
-        "json_schema": {
+        "format": {
+            "type": "json_schema",
             "name": "test_result",
             "schema": _SCHEMA_JSON,
-            "strict": True,
-        },
+        }
     }
 
 
 def test_chat_sends_native_schema_strips_metadata_and_returns_original_json() -> None:
     client = _client()
     raw = '{ "value": "translated" }'
-    client._client.chat.completions.create.return_value = _response(raw)
+    client._client.responses.create.return_value = _response(raw)
 
     result = client.chat(_messages(), max_tokens=64)
 
     assert result == raw
-    kwargs = client._client.chat.completions.create.call_args.kwargs
+    kwargs = client._client.responses.create.call_args.kwargs
     assert kwargs == {
         "model": "test-model",
-        "messages": [
+        "input": [
             {"role": "system", "content": "Return the result."},
             {"role": "user", "content": "Translate this."},
         ],
-        "response_format": _expected_response_format(),
-        "max_tokens": 64,
+        "text": _expected_text_config(),
+        "store": False,
+        "max_output_tokens": 64,
     }
-    assert all(STRUCTURED_OUTPUT_METADATA_KEY not in message for message in kwargs["messages"])
+    assert all(STRUCTURED_OUTPUT_METADATA_KEY not in message for message in kwargs["input"])
+    client._client.chat.completions.create.assert_not_called()
     assert client._active_requests == 0
 
 
@@ -131,10 +136,11 @@ def test_plain_chat_keeps_legacy_request_and_response_behavior() -> None:
 
 def test_stream_sends_native_schema_validates_completion_and_preserves_callbacks() -> None:
     client = _client()
-    client._client.chat.completions.create.return_value = _Stream([
-        _chunk('{"value":'),
-        _chunk('"ok"}'),
-        _chunk(finish_reason="stop"),
+    terminal = _response('{"value":"ok"}')
+    client._client.responses.create.return_value = _Stream([
+        _event("response.output_text.delta", delta='{"value":'),
+        _event("response.output_text.delta", delta='"ok"}'),
+        _event("response.completed", response=terminal),
     ])
     received: list[str] = []
 
@@ -142,9 +148,11 @@ def test_stream_sends_native_schema_validates_completion_and_preserves_callbacks
 
     assert result == '{"value":"ok"}'
     assert received == ['{"value":', '"ok"}']
-    kwargs = client._client.chat.completions.create.call_args.kwargs
-    assert kwargs["response_format"] == _expected_response_format()
+    kwargs = client._client.responses.create.call_args.kwargs
+    assert kwargs["text"] == _expected_text_config()
     assert kwargs["stream"] is True
+    assert kwargs["store"] is False
+    client._client.chat.completions.create.assert_not_called()
     assert client._active_requests == 0
 
 
@@ -158,7 +166,7 @@ class _ProviderError(Exception):
 
 def test_cache_rejection_retry_preserves_schema_reasoning_and_token_limit() -> None:
     client = _client()
-    client._client.chat.completions.create.side_effect = [
+    client._client.responses.create.side_effect = [
         _ProviderError("prompt_cache_options unsupported"),
         _response(),
     ]
@@ -178,22 +186,23 @@ def test_cache_rejection_retry_preserves_schema_reasoning_and_token_limit() -> N
         result = client._chat(_messages(), 48, reasoning_patch=reasoning_patch)
 
     assert result == '{"value":"ok"}'
-    first, second = (call.kwargs for call in client._client.chat.completions.create.call_args_list)
-    assert first["response_format"] == second["response_format"] == _expected_response_format()
-    assert first["reasoning_effort"] == second["reasoning_effort"] == "low"
-    assert first["max_tokens"] == second["max_tokens"] == 48
-    assert first["extra_body"] == {
-        "prompt_cache_key": "cache-key",
-        "reasoning": {"effort": "low"},
-    }
-    assert second["extra_body"] == {"reasoning": {"effort": "low"}}
+    first, second = (call.kwargs for call in client._client.responses.create.call_args_list)
+    assert first["text"] == second["text"] == _expected_text_config()
+    assert first["reasoning"] == second["reasoning"] == {"effort": "low"}
+    assert first["max_output_tokens"] == second["max_output_tokens"] == 48
+    assert first["extra_body"] == {"prompt_cache_key": "cache-key"}
+    assert "extra_body" not in second
 
 
 def test_stream_cache_rejection_retry_preserves_schema_and_reasoning() -> None:
     client = _client()
-    client._client.chat.completions.create.side_effect = [
+    terminal = _response()
+    client._client.responses.create.side_effect = [
         _ProviderError("prompt_cache_options unsupported"),
-        _Stream([_chunk('{"value":"ok"}'), _chunk(finish_reason="stop")]),
+        _Stream([
+            _event("response.output_text.delta", delta='{"value":"ok"}'),
+            _event("response.completed", response=terminal),
+        ]),
     ]
     reasoning_patch = SimpleNamespace(
         standard={"reasoning_effort": "low"},
@@ -211,27 +220,28 @@ def test_stream_cache_rejection_retry_preserves_schema_and_reasoning() -> None:
         result = client._chat_stream(_messages(), 48, lambda _text: None, reasoning_patch=reasoning_patch)
 
     assert result == '{"value":"ok"}'
-    first, second = (call.kwargs for call in client._client.chat.completions.create.call_args_list)
-    assert first["response_format"] == second["response_format"] == _expected_response_format()
-    assert first["reasoning_effort"] == second["reasoning_effort"] == "low"
-    assert first["max_tokens"] == second["max_tokens"] == 48
+    first, second = (call.kwargs for call in client._client.responses.create.call_args_list)
+    assert first["text"] == second["text"] == _expected_text_config()
+    assert first["reasoning"] == second["reasoning"] == {"effort": "low"}
+    assert first["max_output_tokens"] == second["max_output_tokens"] == 48
     assert "prompt_cache_key" in first["extra_body"]
-    assert second["extra_body"] == {"reasoning": {"effort": "low"}}
+    assert "extra_body" not in second
 
 
 @pytest.mark.parametrize(
-    ("finish_reason", "refusal", "error_type"),
+    ("status", "incomplete_reason", "refusal", "error_type"),
     [
-        ("stop", "I cannot comply", LlmStructuredOutputRefusalError),
-        ("length", None, LlmStructuredOutputTruncatedError),
-        ("content_filter", None, LlmStructuredOutputInvalidResponseError),
-        (None, None, LlmStructuredOutputInvalidResponseError),
+        ("completed", None, "I cannot comply", LlmStructuredOutputRefusalError),
+        ("incomplete", "max_output_tokens", None, LlmStructuredOutputTruncatedError),
+        ("incomplete", "content_filter", None, LlmStructuredOutputInvalidResponseError),
+        ("failed", None, None, LlmStructuredOutputInvalidResponseError),
     ],
 )
-def test_chat_rejects_non_complete_structured_responses(finish_reason, refusal, error_type) -> None:
+def test_chat_rejects_non_complete_structured_responses(status, incomplete_reason, refusal, error_type) -> None:
     client = _client()
-    client._client.chat.completions.create.return_value = _response(
-        finish_reason=finish_reason,
+    client._client.responses.create.return_value = _response(
+        status=status,
+        incomplete_reason=incomplete_reason,
         refusal=refusal,
     )
 
@@ -243,36 +253,44 @@ def test_chat_rejects_non_complete_structured_responses(finish_reason, refusal, 
 
 def test_stream_rejects_invalid_json_after_complete_stop() -> None:
     client = _client()
-    client._client.chat.completions.create.return_value = _Stream([_chunk('{"value":'), _chunk(finish_reason="stop")])
+    client._client.responses.create.return_value = _Stream([
+        _event("response.output_text.delta", delta='{"value":'),
+        _event("response.completed", response=_response('{"value":')),
+    ])
 
     with pytest.raises(LlmStructuredOutputInvalidResponseError):
         client.chat_stream(_messages(), 32, lambda _text: None)
 
 
 @pytest.mark.parametrize(
-    ("finish_reason", "refusal", "error_type"),
+    ("event_type", "status", "incomplete_reason", "refusal", "error_type"),
     [
-        ("stop", "I cannot comply", LlmStructuredOutputRefusalError),
-        ("length", None, LlmStructuredOutputTruncatedError),
-        ("content_filter", None, LlmStructuredOutputInvalidResponseError),
+        ("response.completed", "completed", None, "I cannot comply", LlmStructuredOutputRefusalError),
+        ("response.incomplete", "incomplete", "max_output_tokens", None, LlmStructuredOutputTruncatedError),
+        ("response.incomplete", "incomplete", "content_filter", None, LlmStructuredOutputInvalidResponseError),
     ],
 )
-def test_stream_rejects_non_complete_structured_responses(finish_reason, refusal, error_type) -> None:
+def test_stream_rejects_non_complete_structured_responses(
+    event_type,
+    status,
+    incomplete_reason,
+    refusal,
+    error_type,
+) -> None:
     client = _client()
-    client._client.chat.completions.create.return_value = _Stream([
-        _chunk('{"value":"ok"}'),
-        _chunk(finish_reason=finish_reason, refusal=refusal),
+    terminal = _response(status=status, incomplete_reason=incomplete_reason, refusal=refusal)
+    client._client.responses.create.return_value = _Stream([
+        _event("response.output_text.delta", delta='{"value":"ok"}'),
+        _event(event_type, response=terminal),
     ])
 
     with pytest.raises(error_type):
         client.chat_stream(_messages(), 32, lambda _text: None)
 
 
-def test_explicit_response_format_rejection_is_classified_as_unsupported() -> None:
+def test_explicit_responses_schema_rejection_is_classified_as_unsupported() -> None:
     client = _client()
-    client._client.chat.completions.create.side_effect = _ProviderError(
-        "unknown parameter: response_format json_schema is unsupported"
-    )
+    client._client.responses.create.side_effect = _ProviderError("text.format json_schema is unavailable now")
 
     with pytest.raises(LlmStructuredOutputUnsupportedError) as exc_info:
         client.chat(_messages(), max_tokens=32)
