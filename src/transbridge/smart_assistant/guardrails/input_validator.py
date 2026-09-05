@@ -28,7 +28,14 @@ class InputValidationGuard(GuardMiddleware):
     def before_execute(self, step, ctx) -> GuardResult:
         args = step.get("args", {})
         if not isinstance(args, dict):
-            return GuardResult(False, f"参数类型错误: 期望 dict，实际 {type(args).__name__}")
+            error = validate_arguments({"type": "object"}, args)[0]
+            return GuardResult(
+                False,
+                f"参数校验失败 {error.pointer}: {error.message}",
+                code="ARGUMENT_SCHEMA_INVALID",
+                json_pointer=error.pointer,
+                validation_issues=[error.to_dict()],
+            )
         spec = ToolRegistry.get(step.get("tool", ""))
         if spec is not None:
             if not spec.available:
@@ -45,6 +52,7 @@ class InputValidationGuard(GuardMiddleware):
                     f"参数校验失败 {error.pointer}: {error.message}",
                     code="ARGUMENT_SCHEMA_INVALID",
                     json_pointer=error.pointer,
+                    validation_issues=[issue.to_dict() for issue in schema_errors],
                 )
         for key, value in args.items():
             result = self._check_value(key, value)

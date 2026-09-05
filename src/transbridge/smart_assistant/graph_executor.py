@@ -53,20 +53,15 @@ class GraphExecutor:
     _MAX_DISPATCH_DEPTH = 50
     _SAFE_SERIALIZE_MAX_CHARS = 2000
 
-    def __init__(self, tool_registry, ctx, middlewares=None, *, checkpoint_manager=None):
+    def __init__(self, tool_registry, ctx, middlewares=None, *, checkpoint_manager=None, retry_handler=None):
         self._registry = tool_registry
         self._ctx = ctx
         self._cancelled = threading.Event()
-        # M1: 实例化 RetryHandler 并注入 LLM 客户端以启用 Reflexion 自纠错
-        try:
-            from transbridge.config.llm import LLMConfig
-            from transbridge.infra.llm_client import create_llm_client
-            from transbridge.smart_assistant.reflexion.retry_handler import RetryHandler
+        from transbridge.smart_assistant.reflexion.retry_executor import ToolRetryExecutor
+        from transbridge.smart_assistant.reflexion.retry_handler import RetryHandler
 
-            llm_cfg = LLMConfig.load_from_file()
-            self._retry_handler = RetryHandler(llm_client=create_llm_client(llm_cfg))
-        except ImportError:
-            self._retry_handler = None
+        self._retry_handler = retry_handler or RetryHandler()
+        self._retry_executor = ToolRetryExecutor(self._retry_handler)
         # B3 FIX: 优先使用传入的 middlewares，无传参时 fallback 到默认链
         if middlewares:
             self._guards = list(middlewares)
@@ -325,9 +320,14 @@ class GraphExecutor:
         raw_ctx = agent_instance.ctx if agent_instance is not None else self._ctx
         exec_ctx = ExecutionContext(app_context=raw_ctx, task_manager=TaskManager())
 
-        early_result, current_step = self._run_guard_chain(step, exec_ctx, step_id, tool_name, start, agent_instance_id)
-        if early_result is not None:
-            return early_result
+        retry_allowed = self._is_retry_allowed(spec, step)
+        current_step = step
+        if not retry_allowed:
+            early_result, current_step = self._run_guard_chain(
+                step, exec_ctx, step_id, tool_name, start, agent_instance_id
+            )
+            if early_result is not None:
+                return early_result
 
         # 工具执行（带 Reflexion 重试）
         raw_result, exec_error = self._execute_tool_with_retry(
@@ -351,14 +351,15 @@ class GraphExecutor:
         )
 
         # After 中间件链（逆序）
-        for mw in reversed(self._guards):
-            guard_result = mw.after_execute(step, final_result, exec_ctx)
-            if not guard_result.allowed:
-                final_result.success = False
-                final_result.message = f"输出校验拒绝: {guard_result.reason}"
-                return final_result
-            if guard_result.modified_result is not None:
-                final_result.data = guard_result.modified_result
+        if not retry_allowed:
+            for mw in reversed(self._guards):
+                guard_result = mw.after_execute(step, final_result, exec_ctx)
+                if not guard_result.allowed:
+                    final_result.success = False
+                    final_result.message = f"输出校验拒绝: {guard_result.reason}"
+                    return final_result
+                if guard_result.modified_result is not None:
+                    final_result.data = guard_result.modified_result
 
         return final_result
 
@@ -371,48 +372,45 @@ class GraphExecutor:
             (raw_result, error_result): 成功时 error_result 为 None，
             失败时 raw_result 为 None。
         """
-        step_id = current_step["id"]
-        attempt = 0
-        while True:
-            if self._cancelled.is_set():
-                return None, StepResult(
-                    step_id=step_id,
-                    tool=tool_name,
-                    success=False,
-                    message="已取消",
-                    duration_ms=int((time.monotonic() - start) * 1000),
-                    agent_instance_id=agent_instance_id,
+        from transbridge.smart_assistant.tools.base import execute_with_guardrails
+
+        retry_allowed = self._is_retry_allowed(spec, current_step)
+        if retry_allowed:
+
+            def invoke(current_args):
+                return execute_with_guardrails(
+                    spec,
+                    current_args,
+                    exec_ctx,
+                    middlewares=self._guards,
+                    tool_name=tool_name,
                 )
-            try:
-                raw_result = spec.execute(current_step.get("args", args), exec_ctx)
-                return raw_result, None
-            except Exception as exc:
-                if (
-                    self._retry_handler is None
-                    or not self._retry_handler.should_retry(str(exc))
-                    or attempt >= self._retry_handler.MAX_RETRIES
-                ):
-                    return None, StepResult(
-                        step_id=step_id,
-                        tool=tool_name,
-                        success=False,
-                        message=f"执行异常: {exc}",
-                        duration_ms=int((time.monotonic() - start) * 1000),
-                        agent_instance_id=agent_instance_id,
-                    )
-                adjusted = self._retry_handler.analyze_and_adjust(current_step, str(exc), attempt)
-                if adjusted is None:
-                    return None, StepResult(
-                        step_id=step_id,
-                        tool=tool_name,
-                        success=False,
-                        message=f"执行异常: {exc}",
-                        duration_ms=int((time.monotonic() - start) * 1000),
-                        agent_instance_id=agent_instance_id,
-                    )
-                current_step = adjusted
-                attempt += 1
-                self._emit(self._on_step_retrying, step_id, attempt)
+
+        else:
+
+            def invoke(current_args):
+                return spec.execute(current_args, exec_ctx)
+
+        outcome = self._retry_executor.execute(
+            current_step,
+            invoke,
+            retry_allowed=retry_allowed,
+            tool_schema=getattr(spec, "parameters", None),
+            cancelled=self._cancelled.is_set,
+            on_retry=lambda next_attempt, _max_attempts, _result: self._emit(
+                self._on_step_retrying, current_step["id"], next_attempt - 1
+            ),
+        )
+        return outcome.result, None
+
+    @staticmethod
+    def _is_retry_allowed(spec, step: dict) -> bool:
+        return (
+            getattr(spec, "permission", "read") == "read"
+            and not getattr(spec, "require_confirmation", False)
+            and not getattr(spec, "is_long_running", False)
+            and step.get("retry", True) is not False
+        )
 
     # ── Graph 编排扩展 (S09/S10) ──────────────────────────────
 

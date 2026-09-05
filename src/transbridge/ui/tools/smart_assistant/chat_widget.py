@@ -18,6 +18,7 @@ from .lifecycle_binding import close_runtime_resources
 from .message_bubble import MessageBubble
 from .message_list_view import MessageListView
 from .plan_card import PlanCard
+from .react_execution_binding import ReactExecutionBinding
 from .session_binding import ConversationBinding, SessionBinding
 from .streaming_presenter import StreamingPresenter
 from .task_binding import TaskBinding
@@ -85,6 +86,7 @@ class ChatWidget(QWidget):
         self._streaming_presenter: StreamingPresenter | None = None
         self._confirmation_view: ConfirmationView | None = None
         self._plan_execution: PlanExecutionBinding | None = None
+        self._react_execution: ReactExecutionBinding | None = None
         self._session_binding: SessionBinding | None = None
         self._conversation_binding: ConversationBinding | None = None
         self._task_binding: TaskBinding | None = None
@@ -197,6 +199,7 @@ class ChatWidget(QWidget):
         for attr in (
             "_confirmation_view",
             "_plan_execution",
+            "_react_execution",
             "_input_view",
             "_upload_binding",
             "_streaming_presenter",
@@ -381,6 +384,8 @@ class ChatWidget(QWidget):
         self._orchestrator.cancel_current_round()
         if self._plan_execution is not None:
             self._plan_execution.abort()
+        if self._react_execution is not None:
+            self._react_execution.abort()
         # Native tool calls must be closed before the next user message is appended.
         self._controller.handle_abort()
 
@@ -399,6 +404,8 @@ class ChatWidget(QWidget):
         self._orchestrator.cancel_current_round()
         if self._plan_execution is not None:
             self._plan_execution.abort()
+        if self._react_execution is not None:
+            self._react_execution.abort()
         self._controller.handle_abort()
         self._orchestrator.reset_state()
         if self._message_list is not None:

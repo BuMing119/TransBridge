@@ -91,8 +91,8 @@ class TestApplyAfterGuards(unittest.TestCase):
 
     # ── rejection ──
 
-    def test_rejection_returns_reason(self):
-        """When a guard rejects, return (StepResult, reason_string)."""
+    def test_rejection_returns_structured_guard_result(self):
+        """When a guard rejects, preserve its structured diagnostics."""
         g1 = self._make_guard(allowed=True)
         g2 = self._make_guard(allowed=False, reason="sensitive data detected")
         guards = [g1, g2]
@@ -101,7 +101,7 @@ class TestApplyAfterGuards(unittest.TestCase):
             guards, self.step, "test_tool", True, "ok", {"phone": "13800138000"}, self.ctx
         )
 
-        self.assertEqual(rejection, "sensitive data detected")
+        self.assertEqual(rejection.reason, "sensitive data detected")
         self.assertIsNotNone(sr)
 
     def test_rejection_stops_further_guards(self):

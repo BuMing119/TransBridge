@@ -19,6 +19,7 @@ class GuardResult:
     requires_confirmation: str = ""
     code: str = ""
     json_pointer: str = ""
+    validation_issues: list[dict[str, object]] | None = None
     # C28: dedicated field to distinguish hard blocks from confirmation-pending.
     # "" = no confirmation needed (hard block if allowed=False).
     # "write" = write-level confirmation pending.

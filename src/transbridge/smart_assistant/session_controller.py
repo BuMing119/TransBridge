@@ -85,6 +85,7 @@ class SessionController:
         on_thinking_indicator_hide: Callable | None = None,
         # 权限检查
         on_check_permission: Callable | None = None,
+        on_execute_react_async: Callable[[list], bool] | None = None,
     ):
         self._orchestrator = orchestrator
         self._tool_handler = tool_handler
@@ -102,6 +103,7 @@ class SessionController:
         self._on_llm_round_start = on_llm_round_start or (lambda: None)
         self._on_thinking_indicator_hide = on_thinking_indicator_hide or (lambda: None)
         self._on_check_permission = on_check_permission
+        self._on_execute_react_async = on_execute_react_async
 
         # 内部状态
         self._state: SessionController.State = self.State.IDLE
@@ -157,9 +159,9 @@ class SessionController:
             # 注意: plan 模式始终走确认流程，因为 _execute_plan 是 no-op，
             # 实际执行依赖 ChatWidget._on_plan_confirmed 创建 ExecutionEngine
             self._transition_to(self.State.EXECUTING)
-            self._dispatch_steps(steps, mode)
+            pending = self._dispatch_steps(steps, mode)
             # 执行完成后自动触发下一轮（ReAct 继续）
-            if self._state is self.State.EXECUTING:
+            if not pending and self._state is self.State.EXECUTING:
                 self.handle_execution_complete([])
         else:
             # 需要用户确认 → 展示确认卡片
@@ -171,11 +173,11 @@ class SessionController:
             else:
                 self.on_present_batch_tool_card(steps)
 
-    def handle_user_confirmed(self, steps: list, mode: str = "react") -> None:
+    def handle_user_confirmed(self, steps: list, mode: str = "react") -> bool:
         """AWAITING_CONFIRM → EXECUTING: 用户确认执行。"""
         self._require("handle_user_confirmed", self.State.AWAITING_CONFIRM)
         self._transition_to(self.State.EXECUTING)
-        self._dispatch_steps(steps, mode)
+        return self._dispatch_steps(steps, mode)
 
     def handle_user_cancelled(self) -> None:
         """AWAITING_CONFIRM → IDLE: 用户取消操作。"""
@@ -305,7 +307,7 @@ class SessionController:
             return False
         return any(self._tool_handler._needs_confirm(s) for s in steps)
 
-    def _dispatch_steps(self, steps: list, mode: str) -> None:
+    def _dispatch_steps(self, steps: list, mode: str) -> bool:
         """根据模式分发步骤执行。
 
         plan 模式 → 通过 ExecutionEngine 执行。
@@ -313,8 +315,9 @@ class SessionController:
         """
         if mode == "plan":
             self._execute_plan(steps)
+            return True
         else:
-            self._execute_react(steps)
+            return self._execute_react(steps)
 
     def _execute_plan(self, steps: list) -> None:
         """计划模式：委托给 ExecutionEngine DAG 执行。
@@ -326,11 +329,14 @@ class SessionController:
         # plan 的实际执行由 ChatWidget._on_plan_confirmed 处理
         # 它创建 ExecutionEngine 并注册回调，在 _on_plan_all_finished 中调用 handle_execution_complete
 
-    def _execute_react(self, steps: list) -> None:
+    def _execute_react(self, steps: list) -> bool:
         """ReAct 模式：逐个执行工具步骤（跳过每步完成回调，由调用方统一触发）。"""
         logger.debug("SessionController: 进入 ReAct 执行模式 (%d 步骤)", len(steps))
+        if self._on_execute_react_async is not None and self._on_execute_react_async(steps):
+            return True
         if self._tool_handler is None:
             logger.warning("SessionController: tool_handler 未注入，跳过 React 执行")
-            return
+            return False
         for s in steps:
             self._tool_handler.execute_step(s, skip_react_continue=True)
+        return False

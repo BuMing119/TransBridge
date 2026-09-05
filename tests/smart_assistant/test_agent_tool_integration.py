@@ -979,6 +979,10 @@ class TestDecorators(unittest.TestCase):
         result = _tool({}, None)
         self.assertFalse(result.success)
         self.assertIn("缺少必需参数", result.message)
+        self.assertEqual(result.error_code, "ARGUMENT_SCHEMA_INVALID")
+        self.assertEqual(result.recovery_action, "adjust_arguments")
+        self.assertEqual(result.data["json_pointer"], "/name")
+        self.assertEqual(result.data["validation_issues"][0]["code"], "REQUIRED_FIELD_MISSING")
 
     def test_validate_params_wrong_type(self):
         @validate_params({"count": {"type": "int", "required": True}})
@@ -988,6 +992,34 @@ class TestDecorators(unittest.TestCase):
         result = _tool({"count": "not_a_number"}, None)
         self.assertFalse(result.success)
         self.assertIn("参数类型错误", result.message)
+        self.assertEqual(
+            result.data["validation_issues"][0],
+            {
+                "path": "/count",
+                "schema_path": "/properties/count/type",
+                "keyword": "type",
+                "code": "TYPE_MISMATCH",
+                "expected": "integer",
+                "actual_type": "string",
+                "message": "参数类型错误: 期望 integer，实际 string",
+            },
+        )
+
+    def test_validate_params_returns_all_field_issues(self):
+        @validate_params({
+            "count": {"type": "int", "required": True},
+            "name": {"type": "str", "required": True},
+        })
+        def _tool(args, ctx):
+            return ToolResult.ok("should not reach")
+
+        result = _tool({"count": "not_a_number"}, None)
+
+        self.assertFalse(result.success)
+        self.assertEqual(
+            {issue["path"]: issue["code"] for issue in result.data["validation_issues"]},
+            {"/count": "TYPE_MISMATCH", "/name": "REQUIRED_FIELD_MISSING"},
+        )
 
     def test_validate_params_args_not_dict(self):
         @validate_params({"x": {"type": "str", "required": True}})

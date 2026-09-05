@@ -175,6 +175,7 @@ class PlanExecutionBinding:
         conversation,
         hide_thinking: Callable[[], None],
         system_message: Callable[[str], None],
+        retry_handler: Callable[[], object] | None = None,
     ) -> None:
         self._context = context
         self._controller = controller
@@ -183,6 +184,7 @@ class PlanExecutionBinding:
         self._conversation = conversation
         self._hide_thinking = hide_thinking
         self._system_message = system_message
+        self._retry_handler = retry_handler or (lambda: None)
         self._engine = None
         self._closed = False
         self._generation = 0
@@ -200,7 +202,12 @@ class PlanExecutionBinding:
         self._controller().handle_user_confirmed(steps, "plan")
         self._hide_thinking()
         self._dispose_engine()
-        engine = ExecutionEngine(ToolRegistry, self._context, middlewares=self._middlewares())
+        engine = ExecutionEngine(
+            ToolRegistry,
+            self._context,
+            middlewares=self._middlewares(),
+            retry_handler=self._retry_handler(),
+        )
         self._engine = engine
         generation = self._generation
         engine.on_all_finished(
@@ -319,8 +326,8 @@ class ConfirmationActions:
     def execute_tool(self, step: dict) -> None:
         self._hide_thinking()
         controller = self._controller()
-        controller.handle_user_confirmed([step], "react")
-        if getattr(getattr(controller, "state", None), "value", "") == "executing":
+        pending = controller.handle_user_confirmed([step], "react")
+        if not pending and getattr(getattr(controller, "state", None), "value", "") == "executing":
             controller.handle_execution_complete([])
 
     def ignore_tool(self, step: dict) -> None:
@@ -330,9 +337,9 @@ class ConfirmationActions:
 
     def execute_batch(self, steps: list) -> None:
         controller = self._controller()
-        controller.handle_user_confirmed(steps, "react")
+        pending = controller.handle_user_confirmed(steps, "react")
         self._hide_thinking()
-        if getattr(getattr(controller, "state", None), "value", "") == "executing":
+        if not pending and getattr(getattr(controller, "state", None), "value", "") == "executing":
             controller.handle_execution_complete([])
 
     def ignore_batch(self, steps: list) -> None:

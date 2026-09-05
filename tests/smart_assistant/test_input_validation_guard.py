@@ -65,6 +65,24 @@ def test_translation_schema_still_rejects_a_non_string_before_editing():
     )
 
     assert not result.success
+    assert result.error_category == "input"
+    assert result.error_code == "ARGUMENT_SCHEMA_INVALID"
+    assert result.recovery_action == "adjust_arguments"
+    assert result.data == {
+        "phase": "input",
+        "json_pointer": "/new_translation",
+        "validation_issues": [
+            {
+                "path": "/new_translation",
+                "schema_path": "/properties/new_translation/type",
+                "keyword": "type",
+                "code": "TYPE_MISMATCH",
+                "expected": "string",
+                "actual_type": "integer",
+                "message": "参数类型错误: 期望 string，实际 integer",
+            }
+        ],
+    }
     assert entry.translation == original
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -121,6 +122,34 @@ def test_json_schema_diagnostic_contains_json_pointer() -> None:
     errors = validate_arguments(schema, {"items": [{"count": "wrong"}]})
 
     assert errors[0].pointer == "/items/0/count"
+
+
+def test_json_schema_diagnostics_are_field_level_complete_and_do_not_copy_values() -> None:
+    schema = {
+        "type": "object",
+        "properties": {"count": {"type": "integer"}, "name": {"type": "string"}},
+        "required": ["count", "name"],
+        "additionalProperties": False,
+    }
+
+    errors = validate_arguments(schema, {"count": "10", "credential": "secret-value"})
+    issues = {error.pointer: error.to_dict() for error in errors}
+
+    assert set(issues) == {"/count", "/credential", "/name"}
+    assert issues["/count"] == {
+        "path": "/count",
+        "schema_path": "/properties/count/type",
+        "keyword": "type",
+        "code": "TYPE_MISMATCH",
+        "expected": "integer",
+        "actual_type": "string",
+        "message": "参数类型错误: 期望 integer，实际 string",
+    }
+    assert issues["/name"]["code"] == "REQUIRED_FIELD_MISSING"
+    assert issues["/name"]["expected"] == "present"
+    assert issues["/name"]["actual_type"] == "missing"
+    assert issues["/credential"]["code"] == "UNKNOWN_FIELD"
+    assert "secret-value" not in json.dumps(list(issues.values()), ensure_ascii=False)
 
 
 def test_registered_agent_wildcards_resolve_only_after_tools_are_loaded() -> None:

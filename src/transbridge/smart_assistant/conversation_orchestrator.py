@@ -224,6 +224,10 @@ class ConversationOrchestrator(QObject):
         self._llm_client_config_hash = cache["config_hash"]
         return client
 
+    def get_llm_client(self):
+        """Return the current cached Provider-neutral client through a public port."""
+        return self._get_llm_client()
+
     # ── Worker 访问（供 panel.closeEvent 使用）──
 
     @property

@@ -232,6 +232,7 @@ class ToolResult:
         message: str,
         failed_items: list | None = None,
         *,
+        data: Any = None,
         error_category: str | None = None,
         error_code: str | None = None,
         recovery_action: str | None = None,
@@ -239,6 +240,7 @@ class ToolResult:
         return cls(
             success=False,
             message=message,
+            data=data,
             failed_items=failed_items,
             error_category=error_category,
             error_code=error_code,

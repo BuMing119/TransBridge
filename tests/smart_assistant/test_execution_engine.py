@@ -126,6 +126,57 @@ class TestExecutionEngine(unittest.TestCase):
         """M1: RetryHandler 应在 __init__ 中实例化。"""
         self.assertIsNotNone(self.engine._retry_handler)
 
+    def test_tool_result_failure_uses_shared_retry_coordinator(self):
+        import json
+
+        from transbridge.smart_assistant.execution_engine import ExecutionEngine
+        from transbridge.smart_assistant.reflexion import RetryHandler
+        from transbridge.smart_assistant.tools import ToolResult
+
+        calls = []
+
+        class Client:
+            def chat(self, _messages, max_tokens):
+                self.max_tokens = max_tokens
+                return json.dumps({"retry": True, "adjusted_args": {"value": 2}, "reason": "repair"})
+
+        class Spec:
+            name = "recoverable"
+            permission = "read"
+            require_confirmation = False
+            is_long_running = False
+
+            @staticmethod
+            def execute(args, _ctx):
+                calls.append(dict(args))
+                if args["value"] == 1:
+                    return ToolResult.fail("bad value", error_category="input")
+                return ToolResult.ok("ok", data={"value": args["value"]})
+
+        class Registry:
+            @staticmethod
+            def get(_name, namespace=None):
+                del namespace
+                return Spec()
+
+        retries = []
+        engine = ExecutionEngine(
+            Registry(),
+            self.ctx,
+            middlewares=[NoopGuard()],
+            retry_handler=RetryHandler(Client()),
+        )
+        engine.on_step_retrying(lambda step_id, attempt: retries.append((step_id, attempt)))
+        try:
+            results = engine.execute([{"id": 1, "tool": "recoverable", "args": {"value": 1}}])
+        finally:
+            engine.shutdown()
+
+        self.assertEqual(calls, [{"value": 1}, {"value": 2}])
+        self.assertEqual(retries, [(results[0].step_id, 1)])
+        self.assertTrue(results[0].success)
+        self.assertEqual(results[0].data, {"value": 2})
+
     # ── 暂停/恢复 ────────────────────────────────────────────────
 
     def test_pause_is_instance_level(self):

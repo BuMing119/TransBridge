@@ -13,6 +13,7 @@ from transbridge.smart_assistant.tool_execution_handler import ToolExecutionHand
 from .confirmation_view import ConfirmationActions, ConfirmationView, PlanExecutionBinding
 from .message_bubble import MessageBubble
 from .message_list_view import MessageListView
+from .react_execution_binding import ReactExecutionBinding
 from .session_binding import ConversationBinding, SessionBinding
 from .streaming_presenter import StreamingPresenter
 from .task_binding import TaskBinding, sanitize_error_message
@@ -58,6 +59,7 @@ def initialize_runtime(facade) -> None:
         on_confirm_permission=lambda title, message: (
             facade._confirmation_view.ask_permission(title, message) if facade._confirmation_view is not None else False
         ),
+        llm_client_provider=lambda: facade._orchestrator.get_llm_client(),
     )
     facade._orchestrator = ConversationOrchestrator(
         ctx=facade._ctx,
@@ -107,6 +109,12 @@ def initialize_runtime(facade) -> None:
         ),
     )
     facade._orchestrator.auto_mode = facade._auto_mode
+    facade._react_execution = ReactExecutionBinding(
+        parent=facade,
+        handler=facade._tool_handler,
+        controller=lambda: facade._controller,
+        system_message=facade.add_system_message,
+    )
     facade._controller = SessionController(
         orchestrator=facade._orchestrator,
         tool_handler=facade._tool_handler,
@@ -121,6 +129,7 @@ def initialize_runtime(facade) -> None:
         on_thinking_indicator_hide=lambda: (
             facade._message_list.hide_thinking() if facade._message_list is not None else None
         ),
+        on_execute_react_async=facade._react_execution.execute,
     )
     facade._controller.auto_mode = facade._auto_mode
 
@@ -169,6 +178,7 @@ def initialize_message_area(facade) -> None:
         conversation=facade._conversation,
         hide_thinking=facade._message_list.hide_thinking,
         system_message=facade.add_system_message,
+        retry_handler=lambda: facade._tool_handler.retry_handler,
     )
     facade._confirmation_actions = ConfirmationActions(
         controller=lambda: facade._controller,
@@ -191,6 +201,7 @@ def initialize_message_area(facade) -> None:
 
     def abort_session_activity() -> None:
         facade._plan_execution.abort()
+        facade._react_execution.abort()
         facade._controller.handle_abort()
 
     facade._session_binding = SessionBinding(

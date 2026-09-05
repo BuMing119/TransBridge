@@ -5,14 +5,27 @@
 """
 
 from collections.abc import Callable
+from copy import deepcopy
+from dataclasses import dataclass
 import logging
 import time
 
 from transbridge.application.security.hitl import ConfirmationAuthority
 from transbridge.application.tools.contracts import ToolInvocation
+from transbridge.smart_assistant.reflexion.retry_executor import ToolRetryExecutor
+from transbridge.smart_assistant.reflexion.retry_handler import RetryHandler
 from transbridge.smart_assistant.tools.base import ToolResult
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class DetachedToolResult:
+    """Worker-safe result awaiting conversation and UI finalization."""
+
+    step: dict
+    result: ToolResult
+    retry_messages: tuple[str, ...] = ()
 
 
 class ToolExecutionHandler:
@@ -34,6 +47,8 @@ class ToolExecutionHandler:
         on_step_completed: Callable[[], None] | None = None,
         on_task_started: Callable[[str, str], None] | None = None,
         on_confirm_permission: Callable[[str, str], bool] | None = None,
+        retry_handler: RetryHandler | None = None,
+        llm_client_provider: Callable[[], object] | None = None,
     ):
         self._ctx = ctx
         self._conversation = conversation_manager
@@ -51,6 +66,13 @@ class ToolExecutionHandler:
         self._confirmation_authority = ConfirmationAuthority(ttl_seconds=60.0)
         self._fallback_owner_id = f"gui:{id(ctx)}"
         self._structured_observations: list = []
+        self._retry_handler = retry_handler or RetryHandler(llm_client_provider=llm_client_provider)
+        self._retry_executor = ToolRetryExecutor(self._retry_handler)
+
+    @property
+    def retry_handler(self) -> RetryHandler:
+        """Shared analyzer used by both ReAct and Plan execution paths."""
+        return self._retry_handler
 
     # ── 护栏 ──────────────────────────────────────────────
 
@@ -207,8 +229,17 @@ class ToolExecutionHandler:
 
     # ── 重试执行 ──────────────────────────────────────
 
-    def _execute_with_retry(self, spec, step: dict, middlewares: list, exec_ctx) -> ToolResult:
-        """M6: 带重试循环与 Reflexion 调整的工具执行。
+    def _execute_with_retry(
+        self,
+        spec,
+        step: dict,
+        middlewares: list,
+        exec_ctx,
+        *,
+        on_retry: Callable[[int, int, ToolResult], None] | None = None,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> ToolResult:
+        """Execute a tool through the shared bounded Reflexion coordinator.
 
         Args:
             spec: 工具注册信息。
@@ -221,39 +252,92 @@ class ToolExecutionHandler:
         """
         from transbridge.smart_assistant.tools.base import execute_with_guardrails
 
-        try:
-            from transbridge.smart_assistant.reflexion.retry_handler import RetryHandler
-
-            retry_handler = RetryHandler()
-        except ImportError:
-            retry_handler = None
-
-        max_attempts = retry_handler.MAX_RETRIES + 1 if retry_handler else 3
-        current_step = dict(step)
-        for attempt in range(max_attempts):
-            try:
-                result = execute_with_guardrails(
-                    spec,
-                    current_step.get("args", {}),
-                    exec_ctx,
-                    middlewares=middlewares,
+        retry_allowed = (
+            getattr(spec, "permission", "read") == "read"
+            and not getattr(spec, "require_confirmation", False)
+            and not getattr(spec, "is_long_running", False)
+            and step.get("retry", True) is not False
+        )
+        outcome = self._retry_executor.execute(
+            step,
+            lambda args: execute_with_guardrails(spec, args, exec_ctx, middlewares=middlewares),
+            retry_allowed=retry_allowed,
+            tool_schema=getattr(spec, "parameters", None),
+            cancelled=cancelled,
+            on_retry=on_retry
+            or (
+                lambda next_attempt, max_attempts, result: self._on_system_message(
+                    f"[重试 {next_attempt}/{max_attempts}] {spec.name}: {result.message}"
                 )
-            except Exception as exc:
-                result = ToolResult.fail(str(exc))
+            ),
+        )
+        return outcome.result
 
-            if getattr(result, "success", False) or attempt == max_attempts - 1:
-                return result
+    def can_execute_detached(self, steps: list[dict]) -> bool:
+        """Return whether all steps are safe to run away from the GUI thread."""
+        from .tool_registry import ToolRegistry
 
-            err_msg = getattr(result, "message", "")
-            if retry_handler and retry_handler.should_retry(err_msg):
-                adjusted = retry_handler.analyze_and_adjust(current_step, err_msg, attempt)
-                if adjusted:
-                    current_step = adjusted
-                    self._on_system_message(f"[重试 {attempt + 2}/{max_attempts}] {spec.name}: {err_msg}")
-                    continue
-            return result
+        if not steps:
+            return False
+        for step in steps:
+            spec = ToolRegistry.get(step.get("tool", ""))
+            if (
+                spec is None
+                or not spec.execute
+                or not getattr(spec, "available", True)
+                or getattr(spec, "permission", "read") != "read"
+                or getattr(spec, "require_confirmation", False)
+                or getattr(spec, "is_long_running", False)
+            ):
+                return False
+        return True
 
-        return result
+    def execute_steps_detached(
+        self,
+        steps: list[dict],
+        on_retry_message: Callable[[str], None] | None = None,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> tuple[DetachedToolResult, ...]:
+        """Execute prequalified read-only steps without touching UI or conversation state."""
+        from .tool_registry import ToolRegistry
+
+        completed: list[DetachedToolResult] = []
+        for original_step in steps:
+            if cancelled is not None and cancelled():
+                break
+            step = deepcopy(original_step)
+            spec = ToolRegistry.get(step.get("tool", ""))
+            if spec is None or not self.can_execute_detached([step]):
+                completed.append(
+                    DetachedToolResult(step, ToolResult.fail(f"工具不支持后台执行: {step.get('tool', '?')}"))
+                )
+                continue
+            retry_messages: list[str] = []
+
+            def report_retry(next_attempt, max_attempts, failure, name=spec.name):
+                message = f"[重试 {next_attempt}/{max_attempts}] {name}: {failure.message}"
+                if on_retry_message is None:
+                    retry_messages.append(message)
+                else:
+                    on_retry_message(message)
+
+            result = self._execute_with_retry(
+                spec,
+                step,
+                self._ensure_middlewares(),
+                self._build_execution_context(),
+                on_retry=report_retry,
+                cancelled=cancelled,
+            )
+            completed.append(DetachedToolResult(step, result, tuple(retry_messages)))
+        return tuple(completed)
+
+    def complete_detached(self, completed: tuple[DetachedToolResult, ...]) -> None:
+        """Finalize detached results on the owning UI thread."""
+        for item in completed:
+            for message in item.retry_messages:
+                self._on_system_message(message)
+            self._handle_result(item.step, item.result, skip_react_continue=True)
 
     # ── 单步执行 ──────────────────────────────────────────
 

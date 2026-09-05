@@ -19,8 +19,8 @@ class ExecutionEngine:
     _MAX_DISPATCH_DEPTH = 50
     _SAFE_SERIALIZE_MAX_CHARS = 2000
 
-    def __init__(self, tool_registry, ctx, middlewares=None):
-        self._executor = GraphExecutor(tool_registry, ctx, middlewares)
+    def __init__(self, tool_registry, ctx, middlewares=None, *, retry_handler=None):
+        self._executor = GraphExecutor(tool_registry, ctx, middlewares, retry_handler=retry_handler)
         self._condition_evaluator = self._executor._condition_evaluator
         self._checkpoint_manager = self._executor._checkpoint_manager
 

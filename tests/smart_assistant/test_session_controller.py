@@ -123,6 +123,26 @@ class TestStateTransitions:
         # auto_mode + no confirm → tool_handler=None跳过执行 → 触发完成 → THINKING
         assert controller.state == SessionController.State.THINKING
 
+    def test_auto_mode_keeps_executing_while_react_worker_is_pending(self):
+        handler = MagicMock()
+        handler._needs_confirm = lambda _step: False
+        submitted = []
+        controller = SessionController(
+            tool_handler=handler,
+            on_execute_react_async=lambda steps: submitted.append(steps) or True,
+        )
+        controller.auto_mode = True
+        controller.handle_user_message("do it")
+        steps = [{"id": 1, "tool": "get_statistics", "args": {}}]
+
+        controller.handle_llm_response({"mode": "react", "steps": steps, "thought": ""})
+
+        assert controller.state == SessionController.State.EXECUTING
+        assert submitted == [steps]
+        handler.execute_step.assert_not_called()
+        controller.handle_execution_complete([])
+        assert controller.state == SessionController.State.THINKING
+
     def test_llm_response_asserts_if_not_thinking(self):
         controller = SessionController()
         with pytest.raises(SessionTransitionError):
@@ -137,6 +157,17 @@ class TestStateTransitions:
         controller.handle_llm_response({"mode": "react", "steps": [step], "thought": ""})
         # Now AWAITING_CONFIRM
         controller.handle_user_confirmed([step], "react")
+        assert controller.state == SessionController.State.EXECUTING
+
+    def test_user_confirmed_reports_pending_async_execution(self):
+        controller = SessionController(on_execute_react_async=lambda _steps: True)
+        controller.handle_user_message("hi")
+        step = {"id": 1, "tool": "get_statistics", "args": {}}
+        controller.handle_llm_response({"mode": "react", "steps": [step], "thought": ""})
+
+        pending = controller.handle_user_confirmed([step], "react")
+
+        assert pending is True
         assert controller.state == SessionController.State.EXECUTING
 
     def test_user_confirmed_asserts_if_not_awaiting(self):

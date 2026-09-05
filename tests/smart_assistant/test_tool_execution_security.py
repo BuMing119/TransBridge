@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -10,6 +11,7 @@ from transbridge.smart_assistant.guardrails import (
     OutputValidationGuard,
     PermissionGuard,
 )
+from transbridge.smart_assistant.reflexion import RetryHandler
 from transbridge.smart_assistant.tool_execution_handler import ToolExecutionHandler
 from transbridge.smart_assistant.tool_registry import ToolRegistry, ToolSpec
 from transbridge.smart_assistant.tools import ToolResult
@@ -223,3 +225,198 @@ def test_retry_cannot_reuse_confirmation_for_second_side_effect() -> None:
 
     assert result is not None and not result.success
     assert effects["count"] == 1
+
+
+def test_read_tool_failure_is_repaired_and_closes_native_call_once() -> None:
+    name = f"contract_read_retry_{uuid4().hex}"
+    calls: list[dict] = []
+    completed: list[bool] = []
+    conversation = _Conversation()
+
+    def execute(args, _ctx):
+        calls.append(dict(args))
+        if args["value"] == 1:
+            return ToolResult.fail("value is invalid", error_category="input", error_code="INVALID_VALUE")
+        return ToolResult.ok("read", data={"value": args["value"]})
+
+    class Client:
+        def chat(self, _messages, max_tokens):
+            assert max_tokens == 256
+            return json.dumps({"retry": True, "adjusted_args": {"value": 2}, "reason": "repair"})
+
+    spec = ToolSpec(
+        name=name,
+        display_name=name,
+        description="read retry",
+        parameters={
+            "type": "object",
+            "properties": {"value": {"type": "integer"}},
+            "required": ["value"],
+            "additionalProperties": False,
+        },
+        execute=execute,
+        permission="read",
+    )
+    ToolRegistry.register(spec, namespace="contract_retry")
+    handler = ToolExecutionHandler(
+        SimpleNamespace(owner_id="gui-1", plan_hash="plan-1"),
+        conversation,
+        retry_handler=RetryHandler(Client()),
+        on_step_completed=lambda: completed.append(True),
+    )
+    handler._middlewares = []
+    try:
+        result = handler.execute_step({"tool": name, "args": {"value": 1}, "tool_call_id": "call-retry"})
+    finally:
+        ToolRegistry._namespaced_tools["contract_retry"].pop(name, None)
+
+    assert result is not None and result.success
+    assert calls == [{"value": 1}, {"value": 2}]
+    assert completed == [True]
+    assert len(conversation.tool_results) == 1
+    assert conversation.tool_results[0]["tool_call_id"] == "call-retry"
+    assert conversation.tool_results[0]["is_error"] is False
+
+
+def test_schema_rejected_sensitive_field_is_removed_before_retry() -> None:
+    name = f"contract_sensitive_unknown_retry_{uuid4().hex}"
+    calls: list[dict] = []
+    prompts: list[str] = []
+    conversation = _Conversation()
+
+    def execute(args, _ctx):
+        calls.append(dict(args))
+        return ToolResult.ok("read", data=args)
+
+    class Client:
+        def chat(self, messages, max_tokens):
+            assert max_tokens == 256
+            prompts.append(messages[0]["content"])
+            return json.dumps({"retry": True, "adjusted_args": {"query": "dragon"}, "reason": "remove unknown"})
+
+    spec = ToolSpec(
+        name=name,
+        display_name=name,
+        description="remove schema-rejected sensitive field",
+        parameters={
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+            "additionalProperties": False,
+        },
+        execute=execute,
+        permission="read",
+    )
+    ToolRegistry.register(spec, namespace="contract_retry")
+    handler = ToolExecutionHandler(
+        SimpleNamespace(owner_id="gui-1", plan_hash="plan-1"),
+        conversation,
+        retry_handler=RetryHandler(Client()),
+    )
+    handler._middlewares = [InputValidationGuard()]
+    try:
+        result = handler.execute_step({
+            "tool": name,
+            "args": {"query": "dragon", "api_key": "secret-value"},
+            "tool_call_id": "call-sensitive-unknown",
+        })
+    finally:
+        ToolRegistry._namespaced_tools["contract_retry"].pop(name, None)
+
+    assert result is not None and result.success
+    assert calls == [{"query": "dragon"}]
+    assert len(prompts) == 1
+    assert '"code": "UNKNOWN_FIELD"' in prompts[0]
+    assert "secret-value" not in prompts[0]
+    assert len(conversation.tool_results) == 1
+    assert conversation.tool_results[0]["tool_call_id"] == "call-sensitive-unknown"
+
+
+def test_exhausted_failure_closes_native_call_and_continues_react_once() -> None:
+    name = f"contract_read_fail_{uuid4().hex}"
+    completed: list[bool] = []
+    conversation = _Conversation()
+    spec = ToolSpec(
+        name=name,
+        display_name=name,
+        description="read failure",
+        parameters={"type": "object", "properties": {}, "additionalProperties": False},
+        execute=lambda _args, _ctx: ToolResult.fail(
+            "API key missing",
+            error_category="config",
+            error_code="API_KEY_MISSING",
+        ),
+        permission="read",
+    )
+    ToolRegistry.register(spec, namespace="contract_retry")
+    handler = ToolExecutionHandler(
+        SimpleNamespace(owner_id="gui-1", plan_hash="plan-1"),
+        conversation,
+        on_step_completed=lambda: completed.append(True),
+    )
+    handler._middlewares = []
+    try:
+        result = handler.execute_step({"tool": name, "args": {}, "tool_call_id": "call-fail"})
+    finally:
+        ToolRegistry._namespaced_tools["contract_retry"].pop(name, None)
+
+    assert result is not None and not result.success
+    assert completed == [True]
+    assert len(conversation.tool_results) == 1
+    assert conversation.tool_results[0]["tool_call_id"] == "call-fail"
+    assert conversation.tool_results[0]["is_error"] is True
+    assert conversation.tool_results[0]["value"]["result"]["error_code"] == "API_KEY_MISSING"
+
+
+def test_detached_read_retry_defers_conversation_and_ui_finalization() -> None:
+    name = f"contract_detached_retry_{uuid4().hex}"
+    calls: list[dict] = []
+    messages: list[str] = []
+    conversation = _Conversation()
+
+    def execute(args, _ctx):
+        calls.append(dict(args))
+        if args["value"] == 1:
+            return ToolResult.fail("invalid value", error_category="input", error_code="INVALID_VALUE")
+        return ToolResult.ok("read", data={"value": args["value"]})
+
+    class Client:
+        def chat(self, _messages, max_tokens):
+            assert max_tokens == 256
+            return json.dumps({"retry": True, "adjusted_args": {"value": 2}, "reason": "repair"})
+
+    spec = ToolSpec(
+        name=name,
+        display_name=name,
+        description="detached read retry",
+        parameters={
+            "type": "object",
+            "properties": {"value": {"type": "integer"}},
+            "required": ["value"],
+            "additionalProperties": False,
+        },
+        execute=execute,
+        permission="read",
+    )
+    ToolRegistry.register(spec, namespace="contract_retry")
+    handler = ToolExecutionHandler(
+        SimpleNamespace(owner_id="gui-1", plan_hash="plan-1"),
+        conversation,
+        retry_handler=RetryHandler(Client()),
+        on_system_message=messages.append,
+    )
+    handler._middlewares = []
+    step = {"tool": name, "args": {"value": 1}, "tool_call_id": "call-detached"}
+    try:
+        completed = handler.execute_steps_detached([step])
+        assert conversation.tool_results == []
+        assert messages == []
+        handler.complete_detached(completed)
+    finally:
+        ToolRegistry._namespaced_tools["contract_retry"].pop(name, None)
+
+    assert calls == [{"value": 1}, {"value": 2}]
+    assert len(conversation.tool_results) == 1
+    assert conversation.tool_results[0]["tool_call_id"] == "call-detached"
+    assert messages[0].startswith("[重试 2/4]")
+    assert messages[1].startswith("[OK]")

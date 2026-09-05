@@ -54,7 +54,7 @@ def _build_guard_chain() -> list | None:
 def _apply_after_guards(guards: list, step: dict, tool_name: str, success: bool, message: str, data: dict | None, ctx):
     """Apply after-execution guard middleware chain (onion model, reverse order).
 
-    Returns (StepResult, rejection_reason_or_None).
+    Returns (StepResult, rejection_or_None).
     Extracted from execute_with_guardrails to deduplicate ToolResult/dict branches (m5).
     """
     from transbridge.smart_assistant.execution_engine import StepResult
@@ -70,13 +70,45 @@ def _apply_after_guards(guards: list, step: dict, tool_name: str, success: bool,
     for mw in reversed(guards):
         gr = mw.after_execute(step, temp, ctx)
         if not gr.allowed:
-            return temp, gr.reason
+            return temp, gr
         if gr.modified_result is not None:
             temp.data = gr.modified_result
     return temp, None
 
 
-def execute_with_guardrails(spec, args: dict, ctx: ExecutionContext, middlewares: list | None = None) -> ToolResult:
+def _guard_failure(result, *, phase: str) -> ToolResult:
+    """Preserve guard diagnostics so a safe retry can repair invalid arguments."""
+    code = str(result.code or "GUARD_REJECTED").upper()
+    if code == "CAPABILITY_UNAVAILABLE":
+        category = "config"
+    elif code.startswith(("CONFIRMATION_", "PATH_")):
+        category = "permission"
+    elif phase == "input":
+        category = "input"
+    else:
+        category = "internal"
+    details = {"phase": phase}
+    if result.json_pointer:
+        details["json_pointer"] = result.json_pointer
+    if result.validation_issues:
+        details["validation_issues"] = result.validation_issues
+    return ToolResult.fail(
+        f"{'护栏拒绝' if phase == 'input' else '输出校验拒绝'}: {result.reason}",
+        data=details,
+        error_category=category,
+        error_code=code,
+        recovery_action="adjust_arguments" if category == "input" else None,
+    )
+
+
+def execute_with_guardrails(
+    spec,
+    args: dict,
+    ctx: ExecutionContext,
+    middlewares: list | None = None,
+    *,
+    tool_name: str | None = None,
+) -> ToolResult:
     """统一工具执行入口，GUI 和 MCP 共享同一条中间件链。
 
     链: PermissionGuard → InputValidationGuard → 工具执行 → OutputValidationGuard
@@ -88,13 +120,14 @@ def execute_with_guardrails(spec, args: dict, ctx: ExecutionContext, middlewares
         logger.critical("护栏模块导入失败，拒绝执行工具: %s", spec.name)
         return ToolResult.fail("安全护栏不可用，工具执行被拒绝")
 
-    step = {"tool": spec.name, "args": args}
+    resolved_tool_name = tool_name or getattr(spec, "name", "")
+    step = {"tool": resolved_tool_name, "args": args}
 
     # 1. Before 中间件链
     for mw in guards:
         guard_result = mw.before_execute(step, ctx)
         if not guard_result.allowed:
-            return ToolResult.fail(f"护栏拒绝: {guard_result.reason}")
+            return _guard_failure(guard_result, phase="input")
         if guard_result.modified_args is not None:
             step["args"] = guard_result.modified_args
 
@@ -104,10 +137,10 @@ def execute_with_guardrails(spec, args: dict, ctx: ExecutionContext, middlewares
     # 3. After 中间件链（逆序 — 洋葱模型） — m5: 提取 _apply_after_guards 消除重复
     if isinstance(raw_result, ToolResult):
         step_result, rejection = _apply_after_guards(
-            guards, step, spec.name, raw_result.success, raw_result.message, raw_result.data, ctx
+            guards, step, resolved_tool_name, raw_result.success, raw_result.message, raw_result.data, ctx
         )
         if rejection:
-            return ToolResult.fail(f"输出校验拒绝: {rejection}")
+            return _guard_failure(rejection, phase="output")
         raw_result.message = step_result.message
         if step_result.data is not raw_result.data:
             raw_result.data = step_result.data
@@ -121,10 +154,10 @@ def execute_with_guardrails(spec, args: dict, ctx: ExecutionContext, middlewares
             data=raw_result.get("data"),
         )
         step_result, rejection = _apply_after_guards(
-            guards, step, spec.name, result.success, result.message, result.data, ctx
+            guards, step, resolved_tool_name, result.success, result.message, result.data, ctx
         )
         if rejection:
-            return ToolResult.fail(f"输出校验拒绝: {rejection}")
+            return _guard_failure(rejection, phase="output")
         result.message = step_result.message
         if step_result.data is not result.data:
             result.data = step_result.data
@@ -296,8 +329,14 @@ def validate_params(schema: dict) -> Callable:
                 error = errors[0]
                 return ToolResult.fail(
                     f"参数校验失败 {error.pointer}: {error.message}",
+                    data={
+                        "phase": "input",
+                        "json_pointer": error.pointer,
+                        "validation_issues": [issue.to_dict() for issue in errors],
+                    },
                     error_category="input",
                     error_code="ARGUMENT_SCHEMA_INVALID",
+                    recovery_action="adjust_arguments",
                 )
 
             return func(args, *rest)
