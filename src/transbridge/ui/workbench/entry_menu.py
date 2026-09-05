@@ -7,18 +7,19 @@ from collections.abc import Callable, Mapping
 from PyQt6.QtGui import QActionGroup
 from PyQt6.QtWidgets import QMenu, QWidget
 
-from transbridge.converter.translation_entry import STAGE_LABELS, TranslationEntry
+from transbridge.converter.translation_entry import STAGE_LABELS
 
 
 def build_entry_menu(
-    entry: TranslationEntry,
     *,
+    target_entry_ids: tuple[str, ...],
+    current_stage: int | None,
     label_library: Mapping[str, Mapping[str, str]],
     assigned_labels: set[str],
-    on_label_toggle: Callable[[str, str, bool], None],
+    on_label_toggle: Callable[[tuple[str, ...], str, bool], None],
     on_manage_labels: Callable[[], None],
-    on_create_label: Callable[[TranslationEntry], None],
-    on_stage_change: Callable[[TranslationEntry, int], None],
+    on_create_label: Callable[[tuple[str, ...]], None],
+    on_stage_change: Callable[[int], None],
     parent: QWidget,
     on_cancel_translation: Callable[[], None] | None = None,
     cancel_translation_enabled: bool = False,
@@ -34,12 +35,10 @@ def build_entry_menu(
             action = label_menu.addAction(f"● {info['name']}")
             action.setCheckable(True)
             action.setChecked(label_id in assigned_labels)
-            action.toggled.connect(
-                lambda checked, entry_id=entry.id, value=label_id: on_label_toggle(entry_id, value, checked)
-            )
+            action.toggled.connect(lambda checked, value=label_id: on_label_toggle(target_entry_ids, value, checked))
     label_menu.addSeparator()
     label_menu.addAction("管理标签…", on_manage_labels)
-    label_menu.addAction("+ 新建标签…", lambda: on_create_label(entry))
+    label_menu.addAction("+ 新建标签…", lambda: on_create_label(target_entry_ids))
 
     stage_menu = menu.addMenu("翻译状态")
     stage_group = QActionGroup(stage_menu)
@@ -47,9 +46,9 @@ def build_entry_menu(
     for stage_value, stage_name in sorted(STAGE_LABELS.items()):
         action = stage_menu.addAction(stage_name)
         action.setCheckable(True)
-        action.setChecked(stage_value == entry.stage)
+        action.setChecked(stage_value == current_stage)
         stage_group.addAction(action)
-        action.toggled.connect(lambda checked, value=stage_value: on_stage_change(entry, value) if checked else None)
+        action.triggered.connect(lambda _checked=False, value=stage_value: on_stage_change(value))
     menu.addSeparator()
     cancel_action = menu.addAction("取消翻译")
     cancel_action.setToolTip("清空译文并恢复为“未翻译”；右键选中行时应用于全部选中词条。")

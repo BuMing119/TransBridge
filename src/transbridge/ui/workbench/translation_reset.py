@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QMessageBox, QWidget
 from transbridge.converter.translation_entry import STAGE_UNTRANSLATED, TranslationEntry
 from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
 from transbridge.ui.context import AppContext
+from transbridge.ui.workbench.entry_action_scope import resolve_entry_action_scope
 
 
 class TranslationResetAction:
@@ -23,10 +24,7 @@ class TranslationResetAction:
         selected_ids: Iterable[str],
         parent: QWidget,
     ) -> None:
-        selected = set(selected_ids)
-        scope = (
-            (entry for entry in entries if entry.id in selected) if clicked_entry.id in selected else (clicked_entry,)
-        )
+        scope = resolve_entry_action_scope(clicked_entry, entries, selected_ids)
         self._entries = tuple(entry for entry in scope if entry.translation or entry.stage != STAGE_UNTRANSLATED)
         self._context = context
         self._parent = parent

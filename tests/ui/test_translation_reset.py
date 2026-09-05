@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QContextMenuEvent
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication, QMenu, QMessageBox
+from PyQt6.QtWidgets import QApplication, QInputDialog, QMenu, QMessageBox
 import pytest
 
 from transbridge.application.contracts import OperationResult, RequestContext
@@ -17,6 +17,7 @@ from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.application.projections import ProjectionSnapshot, ProjectionStore
 from transbridge.application.projects.gui_facade import GuiProjectCommandFacade
 from transbridge.converter.translation_entry import (
+    STAGE_CHECKED,
     STAGE_LABELS,
     STAGE_TRANSLATED,
     STAGE_UNTRANSLATED,
@@ -77,6 +78,19 @@ def _cancel_action(widget, row):
     return next(action for action in menu.actions() if action.text() == "取消翻译")
 
 
+def _submenu(widget, row, label):
+    menu = widget._build_context_menu(row)
+    return next(action.menu() for action in menu.actions() if action.text() == label)
+
+
+def _stage_action(widget, row, label):
+    return next(action for action in _submenu(widget, row, "翻译状态").actions() if action.text() == label)
+
+
+def _label_action(widget, row, label):
+    return next(action for action in _submenu(widget, row, "标签").actions() if action.text() == label)
+
+
 def test_cancel_translation_is_a_direct_action_and_resets_only_clicked_entry(preview, monkeypatch):
     widget, entries, confirmations = preview
     before = [entry.to_dict() for entry in entries]
@@ -116,6 +130,80 @@ def test_cancel_translation_uses_selected_ids_after_sorting(preview, clicked_sel
         assert entry.translation == ("" if index in affected else f"译文 {index}")
         assert entry.stage == (STAGE_UNTRANSLATED if index in affected else STAGE_TRANSLATED)
     assert f"{len(affected)} 条" in confirmations[0]
+
+
+@pytest.mark.parametrize("clicked_selected", [False, True])
+def test_stage_change_uses_selected_ids_and_preserves_translations(preview, clicked_selected):
+    widget, entries, _ = preview
+    table = widget._table
+    table.item(0, COL_CHECK).setCheckState(Qt.CheckState.Checked)
+    table.item(2, COL_CHECK).setCheckState(Qt.CheckState.Checked)
+    generation = widget._render_generation
+
+    _stage_action(widget, 0 if clicked_selected else 1, "已检查").trigger()
+
+    affected = {0, 2} if clicked_selected else {1}
+    for index, entry in enumerate(entries):
+        assert entry.translation == f"译文 {index}"
+        assert entry.stage == (STAGE_CHECKED if index in affected else STAGE_TRANSLATED)
+    assert widget._render_generation == generation
+
+
+def test_mixed_stage_selection_can_apply_the_clicked_rows_existing_stage(preview):
+    widget, entries, _ = preview
+    entries[0].stage = STAGE_CHECKED
+    widget._table.item(0, COL_CHECK).setCheckState(Qt.CheckState.Checked)
+    widget._table.item(1, COL_CHECK).setCheckState(Qt.CheckState.Checked)
+
+    action = _stage_action(widget, 0, "已检查")
+    assert not action.isChecked()
+    action.trigger()
+
+    assert entries[0].stage == entries[1].stage == STAGE_CHECKED
+    assert entries[2].stage == STAGE_TRANSLATED
+
+
+def test_label_toggle_applies_to_the_selected_scope(preview):
+    widget, entries, _ = preview
+    widget._label_library = {"review": {"name": "待复核", "color": "#123456"}}
+    widget._table.selectAll()
+
+    action = _label_action(widget, 0, "● 待复核")
+    assert not action.isChecked()
+    action.trigger()
+
+    assert all(widget._entry_labels[entry.id] == {"review"} for entry in entries)
+    remove_action = _label_action(widget, 0, "● 待复核")
+    assert remove_action.isChecked()
+    remove_action.trigger()
+    assert all(not widget._entry_labels[entry.id] for entry in entries)
+
+
+def test_quick_created_label_is_assigned_to_the_selected_scope(preview, monkeypatch):
+    widget, entries, _ = preview
+    widget._table.selectAll()
+    monkeypatch.setattr(QInputDialog, "getText", lambda *_args: ("新标签", True))
+
+    _label_action(widget, 0, "+ 新建标签…").trigger()
+
+    assert len(widget._label_library) == 1
+    label_id = next(iter(widget._label_library))
+    assert widget._label_library[label_id]["name"] == "新标签"
+    assert all(widget._entry_labels[entry.id] == {label_id} for entry in entries)
+
+
+def test_stage_batch_refreshes_filter_membership_and_statistics(preview):
+    widget, entries, _ = preview
+    widget._filters_view.apply_state(FilterState(stages=frozenset({STAGE_TRANSLATED})))
+    widget._on_filters_changed()
+    widget._table.selectAll()
+
+    _stage_action(widget, 0, "已检查").trigger()
+
+    assert all(entry.stage == STAGE_CHECKED for entry in entries)
+    assert widget.filtered_entries() == ()
+    assert widget._table.rowCount() == 0
+    assert widget._summary.completed == 3
 
 
 def test_declining_cancel_translation_keeps_everything_unchanged(preview, monkeypatch):
@@ -355,6 +443,61 @@ def test_authoritative_batch_commits_once_and_keeps_other_sources_and_labels(pre
         assert widget._table.item(row, COL_TRANSLATION).text() == "（无译文）"
     assert widget.collect_labels() == labels
     assert not warnings
+
+
+def test_authoritative_stage_batch_commits_once_and_keeps_translations_and_other_sources(preview, authority):
+    widget, entries, _ = preview
+    aggregate, lifecycle, other_key, warnings = authority
+    widget._table.selectAll()
+
+    _stage_action(widget, 0, "已检查").trigger()
+
+    assert lifecycle.commits == [1]
+    states = {entry.entry_key: entry for entry in aggregate.snapshot().entries}
+    assert states[other_key].translation == "Other source"
+    assert states[other_key].stage.value == STAGE_TRANSLATED
+    for row, entry in enumerate(entries):
+        assert entry.translation == states[entry.identity].translation == f"译文 {row}"
+        assert entry.stage == states[entry.identity].stage.value == STAGE_CHECKED
+        assert "已检查" in widget._table.item(row, COL_CONTEXT).text()
+    assert not warnings
+
+
+def test_authoritative_label_batch_commits_once_and_keeps_other_sources(preview, authority):
+    widget, entries, _ = preview
+    aggregate, lifecycle, other_key, warnings = authority
+    widget._reload_projected_labels()
+    widget._table.selectAll()
+
+    _label_action(widget, 0, "● Keep").trigger()
+
+    assert lifecycle.commits == [1]
+    states = {entry.entry_key: entry for entry in aggregate.snapshot().entries}
+    assert states[other_key].labels == ()
+    assert all(states[entry.identity].labels == ("keep",) for entry in entries)
+    assert all(widget._entry_labels[entry.id] == {"keep"} for entry in entries)
+    assert not warnings
+
+
+def test_authoritative_stage_batch_failure_is_atomic(preview, authority, monkeypatch):
+    widget, entries, _ = preview
+    aggregate, lifecycle, _, warnings = authority
+    widget._table.selectAll()
+    before = [entry.to_dict() for entry in entries]
+    stored = aggregate.snapshot()
+    monkeypatch.setattr(
+        lifecycle,
+        "commit_active_variant",
+        lambda *_args, **_kwargs: OperationResult.failed(ValueError("Unable to save the changes")),
+    )
+
+    _stage_action(widget, 0, "已检查").trigger()
+
+    assert [entry.to_dict() for entry in entries] == before
+    assert aggregate.snapshot() == stored
+    assert not lifecycle.commits
+    assert len(warnings) == 1
+    assert "状态未改变" in warnings[0]
 
 
 @pytest.mark.parametrize("failure", ["stale", "commit", "missing_service", "missing_identity"])

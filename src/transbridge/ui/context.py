@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal, pyqtSlot
 
+from transbridge.application.io.identity import EntryKey
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.paratranz.config_manager import ParatranzConfig
 from transbridge.ui.projection_types import CollectionSlot
@@ -75,6 +76,7 @@ class AppContext(QObject):
         self._filter_state: dict = dict(self.DEFAULT_FILTER_STATE)
         self._label_library: dict[str, dict] = {}  # B1: 标签库 {label_id: {name, color}}
         self._entry_labels: dict[str, set[str]] = {}  # B1: 条目标签 {entry_id: {label_id, ...}}
+        self._entry_labels_exact: dict[str, set[str]] = {}
         self._translation_scope: dict = {  # E8: 翻译作用域
             "stages": [],
             "labels": [],
@@ -154,6 +156,13 @@ class AppContext(QObject):
 
     @property
     def entry_labels(self) -> dict[str, set[str]]:
+        collection = self.collection
+        if self._project_projection is not None and collection is not None:
+            return {
+                entry.id: set(self._entry_labels_exact.get(entry.identity.serialize(), ()))
+                for entry in collection
+                if entry.id
+            }
         return {key: set(value) for key, value in self._entry_labels.items()}
 
     @entry_labels.setter
@@ -161,6 +170,7 @@ class AppContext(QObject):
         if self._project_projection is not None:
             raise RuntimeError("entry_labels is a read-only projection; submit a Variant command")
         self._entry_labels = {key: set(value) for key, value in v.items()}
+        self._entry_labels_exact = {}
         self.label_data_changed.emit()
 
     # E8: 翻译作用域（带类型校验的正式属性）
@@ -550,11 +560,14 @@ class AppContext(QObject):
         if self._project_commands is None or self._runtime_context is None:
             raise RuntimeError("authoritative Variant command adapter is unavailable")
         collection = self.collection
-        exact_labels = (
-            entry_labels
-            if collection is None
-            else {entry.identity: set(entry_labels.get(entry.key, ())) for entry in collection}
-        )
+        if collection is None:
+            exact_labels = entry_labels
+        else:
+            exact_labels = {}
+            for entry in collection:
+                keys = (entry.id, entry.identity.serialize(), entry.key)
+                labels = next((entry_labels[key] for key in keys if key in entry_labels), ())
+                exact_labels[entry.identity] = set(labels)
         expected = {}
         if expected_project_revision is not None:
             expected["expected_project_revision"] = expected_project_revision
@@ -655,6 +668,7 @@ class AppContext(QObject):
         old_revision = self._projection_revision
         old_label_library = self._label_library
         old_entry_labels = self._entry_labels
+        old_entry_labels_exact = self._entry_labels_exact
         old_project = (
             self._active_project_id,
             self._project_name,
@@ -676,6 +690,7 @@ class AppContext(QObject):
             self._paratranz_binding = None
             self._label_library = {}
             self._entry_labels = {}
+            self._entry_labels_exact = {}
         else:
             values = snapshot.to_dict()["values"]
             self._projection_dirty = snapshot.dirty
@@ -697,13 +712,22 @@ class AppContext(QObject):
             library = values.get("label_library") or {}
             self._label_library = {str(key): dict(value) for key, value in library.items()}
             labels: dict[str, set[str]] = {}
+            exact_labels: dict[str, set[str]] = {}
             for entry in values.get("entries", ()):
                 entry_key = entry.get("entry_key") or {}
                 local_key = entry_key.get("local_key")
                 if local_key is not None:
-                    labels[str(local_key)] = set(str(value) for value in entry.get("labels", ()))
+                    entry_label_ids = set(str(value) for value in entry.get("labels", ()))
+                    labels[str(local_key)] = entry_label_ids
+                    if entry_key.get("namespace") is not None:
+                        exact_labels[EntryKey.from_dict(entry_key).serialize()] = entry_label_ids
             self._entry_labels = labels
-        if old_label_library != self._label_library or old_entry_labels != self._entry_labels:
+            self._entry_labels_exact = exact_labels
+        if (
+            old_label_library != self._label_library
+            or old_entry_labels != self._entry_labels
+            or old_entry_labels_exact != self._entry_labels_exact
+        ):
             self.label_data_changed.emit()
         dirty_content_changed = (
             snapshot is not None and old_revision is not None and snapshot.revision != old_revision and snapshot.dirty

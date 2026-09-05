@@ -332,7 +332,7 @@ def test_projected_label_command_forwards_exact_entry_keys_and_expected_revision
     )
     collection = TranslationEntryCollection([
         TranslationEntry(
-            "entry-a",
+            "legacy-entry-id",
             "entry-a",
             "source",
             "",
@@ -345,7 +345,7 @@ def test_projected_label_command_forwards_exact_entry_keys_and_expected_revision
     variant_ref = VariantRef(VariantId("variant-a"), ProjectId("project-a"))
 
     result = context.replace_projected_labels(
-        {"entry-a": {"review"}},
+        {"legacy-entry-id": {"review"}},
         {"review": {"name": "Review", "color": "#fff"}},
         expected_project_revision=2,
         expected_variant_revision=3,

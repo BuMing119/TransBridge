@@ -25,6 +25,7 @@ from transbridge.converter.translation_entry import (
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui.foundation.adapters import ThemeView
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle
+from transbridge.ui.workbench.entry_action_scope import resolve_entry_action_scope
 from transbridge.ui.workbench.entry_menu import build_entry_menu
 from transbridge.ui.workbench.filters_presenter import (
     FiltersPresenter,
@@ -40,6 +41,7 @@ from transbridge.ui.workbench.labels_view import (
 from transbridge.ui.workbench.progress_view import ProgressView
 from transbridge.ui.workbench.table_presenter import TablePresenter
 from transbridge.ui.workbench.translation_reset import TranslationResetAction
+from transbridge.ui.workbench.translation_stage_action import TranslationStageAction
 from transbridge.ui.workbench.translation_table import (
     COL_KEY as _COL_KEY,
     COL_MARK as _COL_MARK,
@@ -467,6 +469,14 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         reset = TranslationResetAction(
             self._ctx, entry, entries=self._entries, selected_ids=self.selected_row_entry_ids(), parent=self
         )
+        selected_ids = self.selected_row_entry_ids()
+        scope = resolve_entry_action_scope(entry, self._entries, selected_ids)
+        target_entry_ids = tuple(selected.id for selected in scope if selected.id)
+        common_labels = set(self._entry_labels.get(target_entry_ids[0], ()))
+        for entry_id in target_entry_ids[1:]:
+            common_labels.intersection_update(self._entry_labels.get(entry_id, ()))
+        stages = {selected.stage for selected in scope}
+        current_stage = next(iter(stages)) if len(stages) == 1 else None
 
         def cancel_translation():
             if reset.run():
@@ -476,23 +486,26 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
                 self._populate_table()
 
         return build_entry_menu(
-            entry,
+            target_entry_ids=target_entry_ids,
+            current_stage=current_stage,
             label_library=self._label_library,
-            assigned_labels=self._entry_labels.get(entry.id, set()),
+            assigned_labels=common_labels,
             on_label_toggle=self._on_label_toggle,
             on_manage_labels=self._on_manage_labels,
             on_create_label=self._on_quick_create_label,
-            on_stage_change=lambda selected, stage: self._on_stage_change(selected, stage, preferred_row=row),
+            on_stage_change=lambda stage: self._on_stage_change(
+                entry, stage, selected_ids=selected_ids, preferred_row=row
+            ),
             parent=self,
             on_cancel_translation=cancel_translation,
             cancel_translation_enabled=reset.enabled,
         )
 
-    def _on_label_toggle(self, entry_id: str, lid: str, checked: bool):
-        entry_labels = self._labels_presenter.toggle(
+    def _on_label_toggle(self, entry_ids: tuple[str, ...], lid: str, checked: bool):
+        entry_labels = self._labels_presenter.toggle_many(
             self._entry_labels,
             self._label_library,
-            entry_id,
+            entry_ids,
             lid,
             checked,
         )
@@ -502,17 +515,46 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         self._build_label_tags()
         self._populate_table()
 
-    def _on_stage_change(self, entry: TranslationEntry, stage_val: int, *, preferred_row: int = -1):
-        if entry.stage == stage_val:
+    def _on_stage_change(
+        self,
+        entry: TranslationEntry,
+        stage_val: int,
+        *,
+        selected_ids: tuple[str, ...] = (),
+        preferred_row: int = -1,
+    ) -> None:
+        action = TranslationStageAction(
+            self._ctx,
+            entry,
+            stage_val,
+            entries=self._entries,
+            selected_ids=selected_ids,
+            parent=self,
+        )
+        changes = action.run()
+        if not changes:
             return
-        old_stage = entry.stage
-        preferred_row = self._table.find_entry_row(preferred_row, entry.id)
-        if getattr(self._ctx, "uses_authoritative_projection", False):
-            result = self._ctx.update_projected_entry(entry.identity, stage=stage_val)
-            if not result.is_success:
-                return
-        entry.stage = stage_val
-        self._refresh_changed_entry(entry, preferred_row=preferred_row, old_stage=old_stage)
+        if len(changes) == 1:
+            change = changes[0]
+            self._refresh_changed_entry(
+                change.entry,
+                preferred_row=self._table.find_entry_row(preferred_row, change.entry.id),
+                old_stage=change.previous_stage,
+            )
+            return
+        self._summary = StatisticsSummary.from_entries(self._entries)
+        self._summary_view.set_summary(self._summary)
+        self._build_stage_tags()
+        if self._stage_filters and any(
+            (change.previous_stage in self._stage_filters) != (change.entry.stage in self._stage_filters)
+            for change in changes
+        ):
+            self._populate_table()
+            return
+        for change in changes:
+            self._table.update_rendered_entry(change.entry)
+        self._update_count_label()
+        self._update_workflow_actions()
 
     def _refresh_changed_entry(
         self,
@@ -541,16 +583,16 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         self._update_count_label()
         self._update_workflow_actions()
 
-    def _on_quick_create_label(self, entry):
+    def _on_quick_create_label(self, entry_ids: tuple[str, ...]):
         from PyQt6.QtWidgets import QInputDialog
 
         name, ok = QInputDialog.getText(self, "新建标签", "标签名称：")
         if not ok or not name.strip():
             return
-        result = self._labels_presenter.create(
+        result = self._labels_presenter.create_many(
             self._entry_labels,
             self._label_library,
-            entry.id,
+            entry_ids,
             name.strip(),
             tuple(_PRESET_COLORS),
         )

@@ -20,6 +20,7 @@ _MUTATION_FILES = (
     "ui/tools/dictionary_panel.py",
     "ui/workbench/step2.py",
     "ui/workbench/translation_reset.py",
+    "ui/workbench/translation_stage_action.py",
 )
 
 _ALLOWED_PROJECTION_WRITES = {
@@ -38,9 +39,9 @@ _ALLOWED_PROJECTION_WRITES = {
     ("ui/tools/dictionary_panel.py", "_restore_collection_states", "stage"),
     ("ui/workbench/step2.py", "_on_item_changed", "translation"),
     ("ui/workbench/step2.py", "_on_item_changed", "stage"),
-    ("ui/workbench/step2.py", "_on_stage_change", "stage"),
     ("ui/workbench/translation_reset.py", "run", "translation"),
     ("ui/workbench/translation_reset.py", "run", "stage"),
+    ("ui/workbench/translation_stage_action.py", "run", "stage"),
 }
 
 
@@ -85,6 +86,7 @@ def test_known_translation_adapters_commit_or_fail_closed_for_v2_projects() -> N
     assert "commands.replace_entry_states(" in _source("ui/version_persistence.py")
     assert "publish_collection_modified(" in _source("smart_assistant/tools/tool_translator.py")
     assert "commands.replace_entry_records(" in _source("ui/operations/production_support.py")
+    assert "commands.replace_entry_states(" in _source("ui/workbench/translation_stage_action.py")
 
     batch_ai = _source("ui/tools/ai_translator/batch_runtime.py")
     assert "uses_authoritative_projection" in batch_ai

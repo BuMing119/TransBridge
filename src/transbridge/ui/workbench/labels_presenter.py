@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 import random
 import uuid
 
@@ -34,9 +34,20 @@ class LabelsPresenter:
         label_id: str,
         checked: bool,
     ) -> dict[str, set[str]] | None:
+        return self.toggle_many(entry_labels, label_library, (entry_id,), label_id, checked)
+
+    def toggle_many(
+        self,
+        entry_labels: Mapping[str, set[str]],
+        label_library: Mapping[str, Mapping],
+        entry_ids: Iterable[str],
+        label_id: str,
+        checked: bool,
+    ) -> dict[str, set[str]] | None:
         updated, library = self.copies(entry_labels, label_library)
-        labels = updated.setdefault(entry_id, set())
-        labels.add(label_id) if checked else labels.discard(label_id)
+        for entry_id in entry_ids:
+            labels = updated.setdefault(entry_id, set())
+            labels.add(label_id) if checked else labels.discard(label_id)
         return updated if self._commit(updated, library) else None
 
     def create(
@@ -47,8 +58,19 @@ class LabelsPresenter:
         name: str,
         colors: tuple[str, ...],
     ) -> tuple[dict[str, set[str]], dict[str, dict]] | None:
+        return self.create_many(entry_labels, label_library, (entry_id,), name, colors)
+
+    def create_many(
+        self,
+        entry_labels: Mapping[str, set[str]],
+        label_library: Mapping[str, Mapping],
+        entry_ids: Iterable[str],
+        name: str,
+        colors: tuple[str, ...],
+    ) -> tuple[dict[str, set[str]], dict[str, dict]] | None:
         updated, library = self.copies(entry_labels, label_library)
         label_id = uuid.uuid4().hex[:8]
         library[label_id] = {"name": name, "color": random.choice(colors)}
-        updated.setdefault(entry_id, set()).add(label_id)
+        for entry_id in entry_ids:
+            updated.setdefault(entry_id, set()).add(label_id)
         return (updated, library) if self._commit(updated, library) else None
