@@ -4,6 +4,7 @@
 
 | Epic | 状态 | Stories | 文档 |
 |---|---|---:|---|
+| smart-assistant-tool-retry-recovery | 已完成（2026-09-05，S01～S04 QA 通过） | 4/4 | [plan](smart-assistant-tool-retry-recovery/plan.md) |
 | v3-ui-gap-closure | 已完成（2026-09-01，综合 QA 通过） | 5/5 | [plan](v3-ui-gap-closure/plan.md) |
 | dialogue-context-editor | XT 式记录导航已完成（2026-08-31） | 4/4 | [plan](dialogue-context-editor/plan.md) · [S01–04 词条弹窗与XT式记录导航](../docs/changelogs/dialogue-context-editor/story-01-04-implementation/2026-08-31-001-词条弹窗与XT式记录导航.md) |
 | authoritative-project-mutation-closure | 已完成（2026-08-30，综合 QA 通过；1 项既有工具数量断言待纠偏） | 6/6 | [plan](authoritative-project-mutation-closure/plan.md) · [S03 配对来源移除修复](../docs/changelogs/authoritative-project-mutation-closure/story-03-source-lifecycle/2026-08-31-001-配对插件来源移除与重开一致性修复.md) |

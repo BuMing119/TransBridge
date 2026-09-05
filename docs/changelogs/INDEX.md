@@ -18,6 +18,7 @@ docs/changelogs/
 
 | Epic | Plan | 状态 | Story 数 | 最新日志 |
 |------|------|------|---------|---------|
+| smart-assistant-tool-retry-recovery | [plan](../../plans/smart-assistant-tool-retry-recovery/plan.md) | ✅ S01-04 已完成，字段级诊断与 Smart Assistant QA 通过 | 4 | [S01-03:①工具失败自纠错闭环](smart-assistant-tool-retry-recovery/story-01-to-03-implementation/2026-09-05-001-智能助手工具失败自纠错闭环.md) · [S04:①字段级参数诊断](smart-assistant-tool-retry-recovery/story-04-field-validation-diagnostics/2026-09-05-001-参数校验字段级诊断与重试上下文增强.md) |
 | v3-ui-gap-closure | [plan](../../plans/v3-ui-gap-closure/plan.md) | ✅ S01-05 已完成，综合 QA 通过 | 5 | [S01-05:①V3权威工程UI缺口闭环](v3-ui-gap-closure/story-01-to-05-implementation/2026-09-01-001-V3权威工程UI缺口闭环.md) |
 | authoritative-project-mutation-closure | [plan](../../plans/authoritative-project-mutation-closure/plan.md) | ✅ S01-06 已完成，综合 QA 通过；1 项既有断言失败 | 6 | [S01-06:①权威变更与可恢复保存统一修复](authoritative-project-mutation-closure/story-01-to-06-implementation/2026-08-30-001-权威变更与可恢复保存统一修复.md) · [S03:①配对插件来源移除与重开一致性修复](authoritative-project-mutation-closure/story-03-source-lifecycle/2026-08-31-001-配对插件来源移除与重开一致性修复.md) |
 | core-data-model | [plan](../../plans/core-data-model/plan.md) | ✔️ 已实现 | 5 | — |

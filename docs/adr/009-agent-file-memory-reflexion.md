@@ -104,7 +104,7 @@ class MemoryStore:
 
 **决策**: 在 `ExecutionEngine._run_single()` 中注入 `RetryHandler`，每个工具步骤执行失败时触发 LLM 分析 → 参数调整 → 重试。
 
-**集成方式**（不改 ExecutionEngine 的 DAG 拓扑逻辑）:
+**原始集成草图**（不改 ExecutionEngine 的 DAG 拓扑逻辑；已由文末 2026-09-05 更新替代）:
 
 ```python
 class ExecutionEngine:
@@ -130,7 +130,7 @@ class ExecutionEngine:
                 attempt += 1
 ```
 
-**RetryHandler**:
+**原始 RetryHandler 草图**（保留为决策历史，不代表当前接口）:
 
 ```python
 class RetryHandler:
@@ -217,3 +217,43 @@ class MemoryStore:
 ### 更新：2026-08-18 — 知识文件、格式 I/O 与重试边界（已接受）
 
 Smart Assistant 的 `FileParser/ParsedDocument` 只负责知识文件提取，不替代 [ADR-017](017-translation-io-kernel-v2.md) 的翻译格式 Adapter；ParaTranz JSON 的业务导入必须走明确 format_id 和双 ID 合同。Memory/Embedding disabled 模式不得加载向量索引或语料。Reflexion 只可重试经错误分类判定为安全且幂等的步骤，并受 ADR-019 的次数、取消、owner 和 idempotency key 约束；不得调整参数后重复不可逆副作用。
+
+### 更新：2026-09-05 — 统一工具失败恢复与 ReAct 续跑（已接受）
+
+原决策要求 `ExecutionEngine` 在工具失败时执行 Reflexion，但当前原生 Function Calling 已形成 ReAct 与
+Graph/Plan 两条执行路径。两条路径分别持有重试循环会造成 LLM client 注入、`ToolResult.fail()` 与异常处理、
+错误分类和重试计数不一致。本更新细化原决策，不改变 FR7.13.4 的最多三次自纠错和耗尽后继续 ReAct 语义。
+
+**决策**：新增后端共享的工具重试协调器，由 ReAct 与 Graph/Plan 调用同一执行契约。协调器接收工具名、当前
+进程内参数、参数 schema、一次调用函数、工具重试策略和 `RetryHandler`，返回最终结果及尝试元数据；owner、
+plan、授权路径和确认上下文只由调用闭包持有，不进入可调整对象。`ToolResult`/异常先归一化，再按结构化
+`error_category`、`error_code`、恢复建议和失败详情决定停止、原参数重试或参数修复；不得只依赖面向用户的错误文案。
+
+关键契约如下：
+
+- `RetryHandler` 的 LLM client 由 Composition Root 通过 provider 注入并在分析时解析当前配置；执行组件不得各自
+  加载长期持有的模型客户端。分析器只可返回同一工具的 `adjusted_args`，不得改变工具名、owner、项目、Variant、
+  授权路径或确认上下文；调整后参数必须重新经过 schema 与护栏。
+- 默认只对 `read` 工具启用自动 Reflexion。`write`/`admin` 工具保守地不自动重复执行；未来只有工具显式声明幂等、
+  具备 idempotency key 或 reconcile-first 契约时才可放宽。一次性确认令牌不得跨尝试复用。
+- 取消、权限拒绝、认证和配置错误不可重试；输入错误可在安全工具上修复参数；瞬态错误仅在调用副作用可证明安全时
+  有界重试。远端结果未知必须先 reconcile，不能把 timeout 直接解释为未执行。
+- 普通 `ToolResult(success=False)` 与抛出的异常使用同一恢复管线。尝试次数包含首次调用，默认最多三次重试；每次
+  重试记录原因和次数，并响应取消信号。
+- 重试成功或耗尽后都必须闭合原生 `tool_call_id`。耗尽失败写入结构化工具结果并继续外层 ReAct；Plan 中依赖失败
+  节点的步骤阻塞，独立步骤继续，聚合结果回到下一轮 ReAct。LLM 请求自身失败属于会话传输恢复，不进入工具重试。
+- 重试分析上下文保留原参数供进程内决策，但对模型、UI、日志和持久化仅暴露脱敏投影；不得把参数拼入公开错误消息。
+- 参数 schema 校验失败通过确定性排序的 `validation_issues[]` 暴露全部问题；每项包含参数 JSON Pointer、schema
+  Pointer、稳定约束代码/keyword、期望值、实际 JSON 类型和不回显实际值的说明。兼容层继续保留首项
+  `json_pointer` 和总错误码；纠错模型从单独脱敏的当前参数读取实际值，不能从错误对象绕过脱敏。参数调整时只恢复
+  schema 明确允许的既有敏感字段，禁止模型新增或改写凭据；被 schema 拒绝的未知敏感字段允许删除，以免安全恢复
+  逻辑阻断 `UNKNOWN_FIELD` 自愈。
+- ReAct 的安全只读调用在单线程 worker 内执行，重试状态与最终结果排回 Qt 主线程；取消后用 generation 隔离迟到
+  回调。Graph/Plan 继续复用其既有后台执行器。
+
+**备选方案**：仅为 ReAct 的 `RetryHandler()` 补一个 client，改动较小，但保留两套不同循环并继续漏掉
+`ToolResult.fail()`、幂等和 Plan 一致性，拒绝。完全删除内层 Reflexion、只依赖下一轮 ReAct 虽然更简单，但不满足
+FR7.13.4 的工具层自动参数修复要求，拒绝。
+
+**迁移与回退**：先引入共享协调器并保持 `ToolSpec`、`ToolResult` 与 `ExecutionEngine.execute()` 公共接口兼容，
+再将两条路径逐一切换。出现回归时可按调用方回退到单次执行；工具失败结果闭环和外层 ReAct 续跑不得回退。
