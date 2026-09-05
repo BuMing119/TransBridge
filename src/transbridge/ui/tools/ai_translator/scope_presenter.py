@@ -16,6 +16,8 @@ class WorkbenchScopePort(Protocol[EntryT]):
 
     def filtered_entries(self) -> tuple[EntryT, ...]: ...
 
+    def selected_entry_ids(self) -> tuple[str, ...]: ...
+
     def locate_entry(self, entry_id: str) -> None: ...
 
 
@@ -27,6 +29,12 @@ class Step2ScopeAdapter:
 
     def filtered_entries(self) -> tuple[object, ...]:
         return tuple(self._step2.filtered_entries())
+
+    def selected_entry_ids(self) -> tuple[str, ...]:
+        selector = getattr(self._step2, "selected_row_entry_ids", None)
+        if not callable(selector):
+            return ()
+        return tuple(selector())
 
     def locate_entry(self, entry_id: str) -> None:
         locator = getattr(self._step2, "locate_entry", None)
@@ -40,6 +48,7 @@ class TranslationScope:
     label_filters: frozenset[str] = frozenset()
     category_filters: frozenset[str] = frozenset()
     preset: str | None = None
+    selected_entry_ids: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +93,11 @@ class ScopePresenter:
             self._state = TranslationScope(stage_filters=frozenset({0}))
         elif preset == "table_view":
             self._state = TranslationScope(preset="table_view")
+        elif preset == "selection":
+            self._state = TranslationScope(
+                preset="selection",
+                selected_entry_ids=frozenset(self._workbench.selected_entry_ids()),
+            )
         return self._state
 
     def toggle_stage(self, stage: int | None) -> TranslationScope:
@@ -113,6 +127,8 @@ class ScopePresenter:
             if collection is None:
                 return []
             candidates = list(collection)
+            if state.preset == "selection":
+                candidates = [entry for entry in candidates if entry.id in state.selected_entry_ids]
             if state.stage_filters:
                 candidates = [entry for entry in candidates if entry.stage in state.stage_filters]
             if state.label_filters:

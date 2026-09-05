@@ -368,3 +368,51 @@ msgstr ""
 #: ui/shell/action_catalog.py
 msgid "构建、检查、调整并发布当前工程的项目术语库"
 msgstr ""
+
+#: ui/shell/action_catalog.py
+msgid "AI 翻译当前内容…"
+msgstr ""
+
+#: ui/shell/action_catalog.py
+msgid "批量 AI 翻译…"
+msgstr ""
+
+#: ui/shell/action_catalog.py
+msgid "选择并排序当前工程中的多个翻译内容后批量执行 AI 翻译"
+msgstr ""
+
+#: ui/shell/action_catalog.py
+msgid "设置…"
+msgstr ""
+
+#: ui/shell/action_catalog.py
+msgid "管理外观、AI 服务、Embedding、ParaTranz 与默认参数"
+msgstr ""
+
+#: ui/shell/action_catalog.py
+msgid "重命名当前工程…"
+msgstr ""
+
+#: ui/shell/action_catalog.py
+msgid "删除本地工程…"
+msgstr ""
+
+#: ui/shell/action_catalog.py
+msgid "删除历史还原点…"
+msgstr ""
+
+#: ui/settings/center_layout.py
+msgid "恢复默认外观"
+msgstr ""
+
+#: ui/settings/center_layout.py
+msgid "仅在外观分类中恢复主题默认值"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "服务设置已保存，但主题无法应用；当前主题保持不变。"
+msgstr ""
+
+#: ui/settings_dialog.py
+msgid "服务设置已保存，但所选主题已不可用；当前主题保持不变。"
+msgstr ""

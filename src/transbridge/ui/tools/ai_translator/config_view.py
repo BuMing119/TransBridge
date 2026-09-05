@@ -1,9 +1,4 @@
-"""Qt widget construction for the AI translator facade.
-
-The builder deliberately receives the facade instead of application services: it
-only creates widgets and connects user intents.  Config/scope/run behaviour lives
-in the corresponding presenters/controllers.
-"""
+"""View facade and configuration adapters for the AI translator."""
 
 from __future__ import annotations
 
@@ -11,39 +6,15 @@ from collections.abc import Callable
 import logging
 from typing import Protocol
 
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import (
-    QAbstractItemView,
-    QButtonGroup,
-    QComboBox,
-    QFrame,
-    QGroupBox,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QListWidget,
-    QListWidgetItem,
-    QPushButton,
-    QRadioButton,
-    QScrollArea,
-    QSpinBox,
-    QTabWidget,
-    QVBoxLayout,
-    QWidget,
-)
+from PyQt6.QtCore import QTimer
+from PyQt6.QtWidgets import QLineEdit, QListWidgetItem, QWidget
 
 from transbridge.config.language_profiles import discover_language_profiles
 from transbridge.ui.foundation.adapters import ThemeView
-from transbridge.ui.foundation.components import (
-    ComponentKind,
-    ComponentStyle,
-    ElidedLabel,
-    SemanticState,
-    reserve_text_width,
-)
-from transbridge.ui.tools.ai_translator.config_dialogs import render_paratranz_source
-from transbridge.ui.tools.ai_translator.embedding_config_view import build_embedding_config_section
-from transbridge.ui.tools.ai_translator.view_controls import TranslatorControls
+
+from .config_dialogs import render_paratranz_source
+from .single_task_view import build_single_task_view, refresh_service_summary
+from .view_controls import TranslatorControls
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +29,7 @@ class AITranslatorViewCallbacks(Protocol):
     def browse_file(self, target: QLineEdit, file_filter: str) -> None: ...
     def on_view_terms(self) -> None: ...
     def on_open_history(self) -> None: ...
+    def on_open_settings(self) -> None: ...
     def on_batch_start(self) -> None: ...
     def on_start(self) -> None: ...
     def on_mode_changed(self) -> None: ...
@@ -68,7 +40,7 @@ class AITranslatorViewCallbacks(Protocol):
 
 
 class AITranslatorView:
-    """Owns all configuration-window widgets; callbacks carry user intents only."""
+    """Own all task controls while delegating their visual composition."""
 
     def __init__(
         self,
@@ -79,247 +51,15 @@ class AITranslatorView:
     ) -> None:
         self.theme_view = theme_view
         self.controls = TranslatorControls(self)
-        main_layout = QVBoxLayout(parent)
-        main_layout.setSpacing(8)
-        # ── 模式切换 ────────────────────────────────────────────────────────────
-        mode_box = QHBoxLayout()
-        mode_box.addWidget(QLabel("模式:"))
-        self._mode_group = QButtonGroup(parent)
-        self._mode_translate = QRadioButton("翻译")
-        self._mode_polish = QRadioButton("润色")
-        self._mode_mixed = QRadioButton("混合")
-        self._mode_custom = QRadioButton("自定义")
-        self._mode_group.addButton(self._mode_translate)
-        self._mode_group.addButton(self._mode_polish)
-        self._mode_group.addButton(self._mode_mixed)
-        self._mode_group.addButton(self._mode_custom)
-        self._mode_translate.setChecked(True)
-        mode_box.addWidget(self._mode_translate)
-        mode_box.addWidget(self._mode_polish)
-        mode_box.addWidget(self._mode_mixed)
-        mode_box.addWidget(self._mode_custom)
-        mode_box.addStretch()
-        main_layout.addLayout(mode_box)
-        from .custom_profile_view import build_custom_profile_view
+        build_single_task_view(
+            self,
+            parent,
+            callbacks,
+            language_profiles=discover_language_profiles(),
+        )
 
-        self._custom_profile_group = build_custom_profile_view(self)
-        main_layout.addWidget(self._custom_profile_group)
-        # ── LLM 配置区 ────────────────────────────────────────────────────────
-        llm_box = QGroupBox("LLM 配置")
-        llm_layout = QVBoxLayout(llm_box)
-        llm_layout.setSpacing(4)
-
-        def _row(label_text, widget):
-            row = QHBoxLayout()
-            lbl = QLabel(label_text)
-            lbl.setFixedWidth(90)
-            row.addWidget(lbl)
-            row.addWidget(widget)
-            return row
-
-        self._provider_combo = QComboBox()
-        self._provider_combo.addItems(["OpenAI 兼容", "Anthropic"])
-        self._provider_combo.currentIndexChanged.connect(callbacks.on_provider_changed)
-        llm_layout.addLayout(_row("供应商:", self._provider_combo))
-        self._target_lang_combo = QComboBox()
-        for profile in discover_language_profiles():
-            self._target_lang_combo.addItem(f"{profile.display_name} ({profile.locale})", profile.locale)
-        self._target_lang_combo.setToolTip("目标语言配置，对应 data/prompts/langs/{lang}.toml")
-        llm_layout.addLayout(_row("目标语言:", self._target_lang_combo))
-        self._model_edit = QLineEdit()
-        self._model_edit.setPlaceholderText("如 gpt-4o / deepseek-chat")
-        llm_layout.addLayout(_row("模型名:", self._model_edit))
-        self._apikey_edit = QLineEdit()
-        self._apikey_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self._apikey_edit.setPlaceholderText("API Key")
-        llm_layout.addLayout(_row("API Key:", self._apikey_edit))
-        self._baseurl_edit = QLineEdit()
-        self._baseurl_edit.setPlaceholderText("https://api.openai.com/v1")
-        llm_layout.addLayout(_row("Base URL:", self._baseurl_edit))
-        self._concurrent_spin = QSpinBox()
-        self._concurrent_spin.setRange(1, 50)
-        self._concurrent_spin.setValue(20)
-        self._concurrent_spin.setToolTip("本次 AI 工作流共享的最大在途 LLM 请求数；不是单个请求的条目数")
-        llm_layout.addLayout(_row("最大并发请求数（任务共享）:", self._concurrent_spin))
-
-        self._tokens_spin = QSpinBox()
-        self._tokens_spin.setRange(200, 32000)
-        self._tokens_spin.setSingleStep(200)
-        self._tokens_spin.setValue(2500)
-        self._tokens_spin.setToolTip("每个 LLM 请求中业务内容的 Token 上限；每个请求包含的条目数不固定")
-        llm_layout.addLayout(_row("每请求业务内容 Token 上限:", self._tokens_spin))
-
-        self._output_tokens_spin = QSpinBox()
-        self._output_tokens_spin.setRange(0, 65536)
-        self._output_tokens_spin.setSingleStep(256)
-        self._output_tokens_spin.setValue(0)
-        self._output_tokens_spin.setSpecialValueText("不限制（供应商支持时）")
-        llm_layout.addLayout(_row("输出 Token:", self._output_tokens_spin))
-
-        self._max_terms_spin = QSpinBox()
-        self._max_terms_spin.setRange(10, 500)
-        self._max_terms_spin.setValue(50)
-        self._max_terms_spin.setToolTip("每批次发送给 LLM 的术语表上限，防止 token 超限")
-        llm_layout.addLayout(_row("术语上限:", self._max_terms_spin))
-
-        test_btn = self._llm_test_btn = QPushButton("测试 LLM 连接")
-        test_btn.setFixedWidth(100)
-        test_btn.clicked.connect(lambda: callbacks.on_test_connection("llm"))
-        test_row = QHBoxLayout()
-        test_row.addStretch()
-        test_row.addWidget(test_btn)
-        llm_layout.addLayout(test_row)
-
-        # 创建标签页
-        self._tabs = QTabWidget()
-
-        # Tab 1: LLM 与模型
-        tab_llm = QWidget()
-        tab_llm_layout = QVBoxLayout(tab_llm)
-        tab_llm_layout.setSpacing(6)
-        tab_llm_layout.addWidget(llm_box)
-
-        embed_box = build_embedding_config_section(self, callbacks, _row)
-        tab_llm_layout.addWidget(embed_box)
-        self._batch_btn = QPushButton("批量翻译…")
-        self._batch_btn.clicked.connect(callbacks.on_batch_start)
-        tab_llm_layout.addWidget(self._batch_btn)
-        tab_llm_layout.addStretch()
-        self._tabs.addTab(tab_llm, "LLM 与模型")
-
-        # ── 术语库配置区 ──────────────────────────────────────────────────────
-        term_box = QGroupBox("术语库来源（上方优先级更高）")
-        term_layout = QVBoxLayout(term_box)
-
-        self._priority_list = QListWidget()
-        self._priority_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
-        self._priority_list.setMaximumHeight(110)
-        for source_name in [
-            "dynamic（动态词库）",
-            "paratranz（ParaTranz 术语）",
-            "json（本地 JSON）",
-            "csv（本地 CSV）",
-            "excel（本地 Excel）",
-        ]:
-            self._priority_list.addItem(QListWidgetItem(source_name))
-        term_layout.addWidget(self._priority_list)
-
-        json_row = QHBoxLayout()
-        json_row.addWidget(QLabel("本地 JSON:"))
-        self._json_path_edit = QLineEdit()
-        self._json_path_edit.setPlaceholderText("可选")
-        json_row.addWidget(self._json_path_edit)
-        json_browse = QPushButton("浏览")
-        json_browse.setFixedWidth(52)
-        json_browse.clicked.connect(lambda: callbacks.browse_file(self._json_path_edit, "JSON 文件 (*.json)"))
-        json_row.addWidget(json_browse)
-        term_layout.addLayout(json_row)
-
-        csv_row = QHBoxLayout()
-        csv_row.addWidget(QLabel("本地 CSV:"))
-        self._csv_path_edit = QLineEdit()
-        self._csv_path_edit.setPlaceholderText("可选")
-        csv_row.addWidget(self._csv_path_edit)
-        csv_browse = QPushButton("浏览")
-        csv_browse.setFixedWidth(52)
-        csv_browse.clicked.connect(lambda: callbacks.browse_file(self._csv_path_edit, "CSV 文件 (*.csv)"))
-        csv_row.addWidget(csv_browse)
-        term_layout.addLayout(csv_row)
-
-        excel_row = QHBoxLayout()
-        excel_row.addWidget(QLabel("本地 Excel:"))
-        self._excel_path_edit = QLineEdit()
-        self._excel_path_edit.setPlaceholderText("可选")
-        excel_row.addWidget(self._excel_path_edit)
-        excel_browse = QPushButton("浏览")
-        excel_browse.setFixedWidth(52)
-        excel_browse.clicked.connect(lambda: callbacks.browse_file(self._excel_path_edit, "Excel 文件 (*.xlsx *.xls)"))
-        excel_row.addWidget(excel_browse)
-        term_layout.addLayout(excel_row)
-
-        excel_col_row = QHBoxLayout()
-        excel_col_row.addWidget(QLabel("原文列:"))
-        self._excel_orig_col_edit = QLineEdit("A")
-        self._excel_orig_col_edit.setFixedWidth(40)
-        excel_col_row.addWidget(self._excel_orig_col_edit)
-        excel_col_row.addWidget(QLabel("译文列:"))
-        self._excel_trans_col_edit = QLineEdit("B")
-        self._excel_trans_col_edit.setFixedWidth(40)
-        excel_col_row.addWidget(self._excel_trans_col_edit)
-        excel_col_row.addStretch()
-        term_layout.addLayout(excel_col_row)
-
-        view_terms_btn = QPushButton("查看/编辑动态术语库")
-        view_terms_btn.clicked.connect(callbacks.on_view_terms)
-        term_layout.addWidget(view_terms_btn)
-
-        # Tab 2: 术语库
-        tab_terms = QWidget()
-        tab_terms_layout = QVBoxLayout(tab_terms)
-        tab_terms_layout.setSpacing(6)
-        tab_terms_layout.addWidget(term_box)
-        tab_terms_layout.addStretch()
-        self._tabs.addTab(tab_terms, "术语库")
-
-        from .scope_view import build_scope_view
-
-        build_scope_view(self, callbacks)
-        from .postprocess_view import build_postprocess_view
-
-        build_postprocess_view(self)
-        # ── 可滚动内容区 ──────────────────────────────────────────────────────
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll_content = QWidget()
-        scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setContentsMargins(0, 0, 0, 0)
-        scroll_layout.setSpacing(6)
-        scroll_layout.addWidget(self._scope_stack)
-        self._advanced_btn = QPushButton("高级配置…")
-        self._advanced_btn.setCheckable(True)
-        self._advanced_btn.setObjectName("aiAdvancedSettingsToggle")
-        self._advanced_btn.setToolTip("供应商、模型、Embedding、术语库和后处理设置")
-        scroll_layout.addWidget(self._advanced_btn)
-        scroll_layout.addWidget(self._tabs)
-        self._tabs.setVisible(False)
-        self._advanced_btn.toggled.connect(self._tabs.setVisible)
-        scroll.setWidget(scroll_content)
-        main_layout.addWidget(scroll, stretch=1)
-
-        # ── 底部按钮 ──────────────────────────────────────────────────────────
-        btn_row = QHBoxLayout()
-        self._history_btn = QPushButton("历史报告")
-        self._history_btn.clicked.connect(callbacks.on_open_history)
-        btn_row.addWidget(self._history_btn)
-        self._preflight_label = ElidedLabel("正在检查运行条件…")
-        self._preflight_label.setObjectName("aiPreflightReason")
-        preflight_font = self._preflight_label.font()
-        preflight_font.setPointSize(9)
-        self._preflight_label.setFont(preflight_font)
-        self._preflight_label.setAccessibleName("AI 运行条件")
-        ComponentStyle.apply_state(self._preflight_label, SemanticState.WARNING)
-        self._preflight_label.setToolTip(self._preflight_label.full_text)
-        self._preflight_label.setAccessibleDescription(self._preflight_label.full_text)
-        btn_row.addWidget(self._preflight_label, 1)
-        self._start_btn = QPushButton("▶ 开始翻译")
-        start_font = self._start_btn.font()
-        start_font.setBold(True)
-        self._start_btn.setFont(start_font)
-        self._start_btn.setAccessibleName("开始 AI 运行")
-        ComponentStyle.apply_static(self._start_btn, ComponentKind.BUTTON)
-        ComponentStyle.apply_state(self._start_btn, SemanticState.PRIMARY)
-        reserve_text_width(self._start_btn, ("▶ 开始翻译", "▶ 开始润色", "▶ 开始执行"))
-        self._start_btn.clicked.connect(callbacks.on_start)
-        btn_row.addWidget(self._start_btn)
-        main_layout.addLayout(btn_row)
-
-        self._mode_translate.toggled.connect(callbacks.on_mode_changed)
-        self._mode_polish.toggled.connect(callbacks.on_mode_changed)
-        self._mode_mixed.toggled.connect(callbacks.on_mode_changed)
-        self._mode_custom.toggled.connect(callbacks.on_mode_changed)
-        self._overwrite_check.toggled.connect(callbacks.update_estimate)
+    def refresh_service_summary(self) -> None:
+        refresh_service_summary(self)
 
 
 class WindowConfigView:
@@ -374,10 +114,8 @@ class WindowConfigView:
         embed_mode = str(getattr(cfg.embedding, "mode", "disabled") or "disabled").casefold()
         if embed_mode not in {"disabled", "local", "api"}:
             embed_mode = "local" if cfg.embedding.provider == "local" else "api"
-        embed_index = h.embed_provider_combo.findData(embed_mode)
-        h.embed_provider_combo.setCurrentIndex(max(embed_index, 0))
-        embed_api_provider_index = h.embed_api_provider_combo.findData(cfg.embedding.provider)
-        h.embed_api_provider_combo.setCurrentIndex(max(embed_api_provider_index, 0))
+        h.embed_provider_combo.setCurrentIndex(max(h.embed_provider_combo.findData(embed_mode), 0))
+        h.embed_api_provider_combo.setCurrentIndex(max(h.embed_api_provider_combo.findData(cfg.embedding.provider), 0))
         h.embed_local_model_id_edit.setText(getattr(cfg.embedding, "local_model_id", ""))
         h.embed_local_model_edit.setText(cfg.embedding.local_model_path)
         h.embed_model_edit.setText(cfg.embedding.model)
@@ -400,6 +138,7 @@ class WindowConfigView:
         self._callbacks.on_pp_enable_changed()
         self._callbacks.update_estimate()
         render_paratranz_source(h.priority_list, self._current_project())
+        self._view.refresh_service_summary()
 
     def update_config(self, cfg: object) -> object:
         h = self._view.controls
@@ -462,7 +201,7 @@ class WindowConfigView:
 
 
 class ConfigAutosaveBinding:
-    """Owns the debounced Qt connections and releases its timer on close."""
+    """Own the debounced Qt connections and releases its timer on close."""
 
     def __init__(
         self,
@@ -548,3 +287,6 @@ class ConfigAutosaveBinding:
             self._save_callback()
         except Exception as exc:
             logger.warning("AI configuration autosave failed: %s", exc, exc_info=True)
+
+
+__all__ = ["AITranslatorView", "ConfigAutosaveBinding", "WindowConfigView"]

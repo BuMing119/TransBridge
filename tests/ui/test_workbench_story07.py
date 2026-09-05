@@ -28,6 +28,7 @@ from transbridge.ui.workbench.save_presenter import SavePhase, SaveStatePresente
 from transbridge.ui.workbench.step2 import Step2PreviewWidget
 from transbridge.ui.workbench.workflow_actions_view import StatisticsSummaryView, WorkflowActionsView
 from transbridge.ui.workbench.workflow_presenter import (
+    ContextActionViewState,
     StatisticsSummary,
     WorkbenchContentKind,
     WorkbenchWorkflowPresenter,
@@ -143,10 +144,32 @@ def test_context_actions_expose_reasons_and_view_emits_one_stable_intent() -> No
     view.set_actions(states)
 
     view._buttons[IntentId.TRANSLATION_AI].click()
+    view._ai_batch_action.trigger()
 
     assert review.enabled is False
     assert review.reason == "当前没有“有疑问”状态的词条"
-    assert emitted == [IntentId.TRANSLATION_AI.value]
+    assert emitted == [IntentId.TRANSLATION_AI.value, IntentId.TRANSLATION_AI_BATCH.value]
+    assert IntentId.TRANSLATION_AI_BATCH not in view._buttons
+    assert [action.text() for action in view._ai_menu.actions()] == ["翻译当前内容", "批量翻译多个插件"]
+    view.close()
+
+
+def test_single_ai_menu_keeps_batch_action_available_when_current_action_is_disabled() -> None:
+    view = WorkflowActionsView()
+    emitted: list[str] = []
+    view.intent_requested.connect(emitted.append)
+    view.set_actions((
+        ContextActionViewState(IntentId.TRANSLATION_AI, "AI 翻译", False, "当前内容不可翻译"),
+        ContextActionViewState(IntentId.TRANSLATION_AI_BATCH, "批量 AI 翻译", True, None),
+        ContextActionViewState(IntentId.TRANSLATION_REVIEW, "检查", False, "没有待检查内容"),
+        ContextActionViewState(IntentId.PUBLISH_WRITE, "写回/发布", False, "当前内容不可写回"),
+        ContextActionViewState(IntentId.WORKBENCH_MANAGE, "更多", True, None, True),
+    ))
+
+    assert view._ai_button.isEnabled()
+    view._ai_button.click()
+    view._ai_batch_action.trigger()
+    assert emitted == [IntentId.TRANSLATION_AI_BATCH.value]
     view.close()
 
 

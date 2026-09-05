@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
-from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6.QtWidgets import QApplication
 import pytest
 
 from transbridge.application.tasks import JobState, TaskRuntime
@@ -323,7 +323,7 @@ def test_run_controller_survives_100_owner_lifecycles_without_accepting_late_cal
     assert observed == []
 
 
-def test_quick_run_is_default_and_advanced_settings_are_preserved_but_hidden(monkeypatch) -> None:
+def test_single_ai_window_uses_visible_four_page_task_configuration(monkeypatch) -> None:
     app = QApplication.instance() or QApplication([])
     monkeypatch.setattr(config_module.LLMConfig, "load_from_file", lambda: LLMConfig())
     ctx = SimpleNamespace(
@@ -337,12 +337,18 @@ def test_quick_run_is_default_and_advanced_settings_are_preserved_but_hidden(mon
 
     window = AITranslatorWindow(ctx, workbench)
 
-    assert window._view.controls.tabs.isHidden()
-    assert window._view.controls.advanced_btn.isCheckable()
+    window.show()
+    app.processEvents()
+    assert [window._view.controls.tabs.tabText(index) for index in range(window._view.controls.tabs.count())] == [
+        "基础配置",
+        "术语库",
+        "质量处理",
+        "运行参数",
+    ]
+    assert window._view.controls.tabs.isVisible()
     assert window._view.controls.start_btn.isEnabled() is False
     assert window._view.controls.preflight_label.text()
-    window._view.controls.advanced_btn.click()
-    assert not window._view.controls.tabs.isHidden()
+    assert not window._view.controls.advanced_btn.isVisible()
     window.close()
     app.processEvents()
 
@@ -405,17 +411,24 @@ def test_default_ai_entry_skips_target_dialog_and_binds_current_content(monkeypa
         label_library={},
         entry_labels={},
     )
-    workbench = SimpleNamespace(filtered_entries=lambda: (), locate_entry=lambda _entry_id: None)
+    workbench = SimpleNamespace(
+        filtered_entries=lambda: (),
+        selected_row_entry_ids=lambda: ("selected-entry",),
+        locate_entry=lambda _entry_id: None,
+    )
 
     window = AITranslatorWindow.open_for_translation(ctx, workbench)
 
     assert isinstance(window, AITranslatorWindow)
     assert window._ctx is ctx
+    assert window._scope_presenter.state.preset == "selection"
+    assert window._scope_presenter.state.selected_entry_ids == frozenset({"selected-entry"})
+    assert window._view.controls.preset_selection.text() == "当前选择 1"
     window.close()
     app.processEvents()
 
 
-def test_batch_translation_remains_reachable_from_advanced_settings(monkeypatch) -> None:
+def test_single_ai_window_has_no_visible_legacy_batch_entry(monkeypatch) -> None:
     app = QApplication.instance() or QApplication([])
     monkeypatch.setattr(config_module.LLMConfig, "load_from_file", lambda: LLMConfig())
     ctx = SimpleNamespace(
@@ -426,24 +439,13 @@ def test_batch_translation_remains_reachable_from_advanced_settings(monkeypatch)
         entry_labels={},
     )
     workbench = SimpleNamespace(filtered_entries=lambda: (), locate_entry=lambda _entry_id: None)
-    opened: list[QWidget] = []
-
-    def open_batch(_cls, *_args, **_kwargs):
-        progress = QWidget()
-        opened.append(progress)
-        return progress
-
-    monkeypatch.setattr(AITranslatorWindow, "open_for_batch_translation", classmethod(open_batch))
     window = AITranslatorWindow(ctx, workbench)
     window.show()
     app.processEvents()
     assert not window._view.controls.batch_btn.isVisible()
-    window._view.controls.advanced_btn.click()
-    assert window._view.controls.batch_btn.isVisible()
-    window._view.controls.batch_btn.click()
-
-    assert len(opened) == 1
+    assert not window._view.controls.advanced_btn.isVisible()
     app.processEvents()
+    window.close()
 
 
 def test_translation_handoff_starts_worker_then_reactivates_progress_deferred() -> None:

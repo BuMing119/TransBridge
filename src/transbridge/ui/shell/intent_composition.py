@@ -196,6 +196,11 @@ class ShellIntentComposition:
         register(
             IntentId.TRANSLATION_AI, _call(host.tool_windows.open_ai_translator), availability=self._has_collection
         )
+        register(
+            IntentId.TRANSLATION_AI_BATCH,
+            _call(host.tool_windows.open_batch_ai_translation),
+            availability=self._has_collection,
+        )
         register(IntentId.TRANSLATION_DICTIONARY, _call(host.tool_windows.open_dictionary))
         register(
             IntentId.TERMINOLOGY_WORKBENCH,
@@ -232,7 +237,7 @@ class ShellIntentComposition:
         )
         register(IntentId.VIEW_SMART_ASSISTANT, _call(host.tool_windows.toggle_smart_assistant))
         register(IntentId.SETTINGS_APPEARANCE, _call(host.tool_windows.show_ui_settings))
-        register(IntentId.SETTINGS_SERVICES, _call(host.tool_windows.show_config))
+        register(IntentId.SETTINGS_SERVICES, _call(lambda: host.tool_windows.show_ui_settings("ai_service")))
         register(IntentId.SETTINGS_ACCOUNT, _call(host.tool_windows.show_user), availability=self._has_current_user)
         register(IntentId.SETTINGS_MESSAGES, _call(host.tool_windows.show_mails), availability=self._has_current_user)
         register(IntentId.TASK_OPEN_ACTIVITY, _call(self._show_task_center), availability=self._has_task_runtime)

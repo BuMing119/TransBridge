@@ -26,6 +26,8 @@ from transbridge.ui.tools.ai_translator.scope_presenter import ScopeEstimate, Sc
 from transbridge.ui.tools.ai_translator.view_controls import TranslatorViewOwner
 from transbridge.ui.tools.ai_translator.view_state import ScopeOptions
 
+from .task_widget_style import configure_task_input, configure_task_panel
+
 
 class ScopeCallbacks(Protocol):
     def on_preset(self, preset: str) -> None: ...
@@ -45,6 +47,11 @@ def render_scope_tags(
     categories: tuple[str, ...],
     category_of: Callable[[object], str],
 ) -> None:
+    view.controls.preset_selection.setText(f"当前选择 {len(state.selected_entry_ids)}")
+    _style_filter(view.controls.preset_selection, state.preset == "selection")
+    _style_filter(view.controls.preset_untranslated, state.stage_filters == frozenset({0}) and state.preset is None)
+    _style_filter(view.controls.preset_table_view, state.preset == "table_view")
+
     stage_counts = Counter(entry.stage for entry in entries)
     for stage, label in STAGE_LABELS.items():
         button = view.controls.scope_stage_btns.get(stage)
@@ -118,6 +125,7 @@ def refresh_scope_estimate(view: TranslatorViewOwner, presenter: ScopePresenter,
 def build_scope_view(view: TranslatorViewOwner, callbacks: ScopeCallbacks) -> None:
     # ── 翻译范围区 ────────────────────────────────────────────────────────
     scope_box = QGroupBox("翻译范围")
+    configure_task_panel(scope_box)
     scope_layout = QVBoxLayout(scope_box)
     scope_layout.setSpacing(4)
 
@@ -128,6 +136,10 @@ def build_scope_view(view: TranslatorViewOwner, callbacks: ScopeCallbacks) -> No
     view.controls.preset_untranslated.setCursor(Qt.CursorShape.PointingHandCursor)
     view.controls.preset_untranslated.clicked.connect(lambda: callbacks.on_preset("untranslated"))
     preset_row.addWidget(view.controls.preset_untranslated)
+    view.controls.preset_selection = QPushButton("当前选择 0")
+    view.controls.preset_selection.setCursor(Qt.CursorShape.PointingHandCursor)
+    view.controls.preset_selection.clicked.connect(lambda: callbacks.on_preset("selection"))
+    preset_row.addWidget(view.controls.preset_selection)
     view.controls.preset_table_view = QPushButton("当前主表视图")
     view.controls.preset_table_view.setCursor(Qt.CursorShape.PointingHandCursor)
     view.controls.preset_table_view.clicked.connect(lambda: callbacks.on_preset("table_view"))
@@ -190,6 +202,7 @@ def build_scope_view(view: TranslatorViewOwner, callbacks: ScopeCallbacks) -> No
     order_row = QHBoxLayout()
     order_row.addWidget(QLabel("执行顺序:"))
     view.controls.order_combo = QComboBox()
+    configure_task_input(view.controls.order_combo)
     view.controls.order_combo.addItems(["串行（先翻译后润色）", "并行"])
     order_row.addWidget(view.controls.order_combo)
     order_row.addStretch()

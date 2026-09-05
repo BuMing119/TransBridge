@@ -270,41 +270,71 @@ def test_current_operation_guards_are_silent_until_required_context_exists() -> 
 
 
 def test_current_ai_intent_routes_through_workbench_public_port() -> None:
-    calls: list[str] = []
-    host = SimpleNamespace(workbench=SimpleNamespace(open_tool=lambda tool_id: calls.append(tool_id)))
+    calls: list[tuple[str, dict[str, object]]] = []
+    host = SimpleNamespace(
+        workbench=SimpleNamespace(open_tool=lambda tool_id, **kwargs: calls.append((tool_id, kwargs))),
+        app_runtime=None,
+    )
+    tools = ToolWindows(host)
+    settings_sections: list[str] = []
+    tools.show_ui_settings = lambda section="appearance": settings_sections.append(section)  # type: ignore[method-assign]
 
-    ToolWindows(host).open_ai_translator()
+    tools.open_ai_translator()
 
-    assert calls == ["ai_translator"]
+    assert calls[0][0] == "ai_translator"
+    calls[0][1]["settings_requested"]()
+    assert settings_sections == ["ai_service"]
 
 
-def test_ui_settings_uses_injected_foundation_and_existing_service_config_callback(monkeypatch) -> None:
+def test_batch_ai_intent_routes_through_workbench_and_exposes_settings_callback() -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+    host = SimpleNamespace(
+        workbench=SimpleNamespace(open_tool=lambda tool_id, **kwargs: calls.append((tool_id, kwargs))),
+        app_runtime=None,
+    )
+    tools = ToolWindows(host)
+    settings_sections: list[str] = []
+    tools.show_ui_settings = lambda section="appearance": settings_sections.append(section)  # type: ignore[method-assign]
+
+    tools.open_batch_ai_translation()
+
+    assert calls[0][0] == "ai_batch_translation"
+    calls[0][1]["settings_requested"]()
+    assert settings_sections == ["ai_service"]
+
+
+def test_ui_settings_injects_existing_service_configs_into_one_center(monkeypatch) -> None:
     calls: list[object] = []
 
-    class _Signal:
-        def connect(self, callback) -> None:
-            calls.append(("connect", callback))
-
     class _Dialog:
-        def __init__(self, theme, config, parent, *, registry, locale_service) -> None:
-            calls.append(("construct", theme, config, parent, registry, locale_service))
-            self.service_settings_requested = _Signal()
+        def __init__(self, theme, config, parent, **kwargs) -> None:
+            calls.append(("construct", theme, config, parent, kwargs))
 
         def exec(self) -> None:
             calls.append("exec")
 
     monkeypatch.setattr("transbridge.ui.settings_dialog.SettingsDialog", _Dialog)
+    llm = SimpleNamespace()
+    monkeypatch.setattr("transbridge.config.llm.LLMConfig.load_from_file", lambda: llm)
     foundation = SimpleNamespace(theme="theme", config="config", registry="registry", locale="locale")
-    host = SimpleNamespace(ui_foundation=foundation)
+    paratranz = SimpleNamespace(token="")
+    host = SimpleNamespace(
+        ui_foundation=foundation,
+        context=SimpleNamespace(config=paratranz, current_user=None),
+    )
     tools = ToolWindows(host)
-    tools.show_config = lambda: calls.append("services")  # type: ignore[method-assign]
 
-    tools.show_ui_settings()
+    tools.show_ui_settings("ai_service")
 
-    assert calls[0] == ("construct", "theme", "config", host, "registry", "locale")
-    assert calls[1][0] == "connect"
-    calls[1][1]()
-    assert calls[2:] == ["exec", "services"]
+    assert calls[0][:4] == ("construct", "theme", "config", host)
+    kwargs = calls[0][4]
+    assert kwargs["initial_section"] == "ai_service"
+    assert kwargs["llm_config"] is llm
+    assert kwargs["paratranz_config"] is paratranz
+    assert callable(kwargs["reload_llm"])
+    kwargs["on_paratranz_saved"](paratranz)
+    assert host.context.config is paratranz
+    assert calls[1:] == ["exec"]
 
 
 def test_ui_settings_without_foundation_reports_stable_unavailability() -> None:

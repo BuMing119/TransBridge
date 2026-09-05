@@ -75,8 +75,8 @@ def test_menu_builder_connects_each_intent_once() -> None:
     assert handles.smart_assistant.shortcut().toString() == "Ctrl+Shift+I"
     assert handles.smart_assistant.data() == IntentId.VIEW_SMART_ASSISTANT.value
     assert handles.appearance.data() == IntentId.SETTINGS_APPEARANCE.value
-    assert handles.appearance.text() == "外观与通用设置…"
-    assert handles.appearance.statusTip() == "选择应用主题、语言与无障碍选项"
+    assert handles.appearance.text() == "设置…"
+    assert handles.appearance.statusTip() == "管理外观、AI 服务、Embedding、ParaTranz 与默认参数"
     assert not any(shortcut.key().toString() == "Ctrl+K" for shortcut in window.findChildren(QShortcut))
     window.close()
 
@@ -255,6 +255,7 @@ def test_action_catalog_has_unique_intents_shortcuts_and_disabled_reasons() -> N
         item for item in descriptors if item.shortcut
     ])
     assert DEFAULT_ACTION_CATALOG.get(IntentId.TRANSLATION_AI).section is ActionSection.TRANSLATION
+    assert DEFAULT_ACTION_CATALOG.get(IntentId.TRANSLATION_AI_BATCH).section is ActionSection.TRANSLATION
     appearance = DEFAULT_ACTION_CATALOG.get(IntentId.SETTINGS_APPEARANCE)
     assert appearance.section is ActionSection.SETTINGS
     assert appearance.shortcut is None
@@ -279,8 +280,8 @@ def test_menu_uses_optional_foundation_locale_without_changing_intent_identity()
     handles = MenuBuilder(window, _callbacks([])).build()
 
     assert window.menuBar().actions()[5].text() == "译:设置"
-    assert handles.appearance.text() == "译:外观与通用设置…"
-    assert handles.appearance.statusTip() == "译:选择应用主题、语言与无障碍选项"
+    assert handles.appearance.text() == "译:设置…"
+    assert handles.appearance.statusTip() == "译:管理外观、AI 服务、Embedding、ParaTranz 与默认参数"
     assert handles.appearance.data() == IntentId.SETTINGS_APPEARANCE.value
     window.close()
 

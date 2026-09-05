@@ -245,6 +245,12 @@ class WorkbenchWorkflowPresenter:
                 None if scope_ready else no_scope,
             ),
             ContextActionViewState(
+                IntentId.TRANSLATION_AI_BATCH,
+                "批量 AI 翻译",
+                scope_ready,
+                None if scope_ready else no_scope,
+            ),
+            ContextActionViewState(
                 IntentId.TRANSLATION_REVIEW,
                 "检查",
                 has_context and needs_review > 0,

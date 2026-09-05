@@ -8,7 +8,6 @@ from PyQt6.QtCore import QRect
 from PyQt6.QtWidgets import QApplication
 
 from transbridge.paratranz.api.paratranz_user_api import ParatranzUserAPI
-from transbridge.ui.paratranz.config_dialog import ConfigDialog
 from transbridge.ui.workers import ApiWorker
 
 from .overlay_geometry import workspace_overlay_rect
@@ -60,16 +59,24 @@ class ToolWindows:
         self._host.paratranz_widget.refresh_projects()
 
     def show_config(self) -> None:
-        ConfigDialog(self._host.context, None).exec()
-        if self._host.context.config.token and not self._host.context.current_user:
-            self.load_current_user()
+        """Compatibility entry for callers that previously opened ParaTranz settings."""
 
-    def show_ui_settings(self) -> None:
+        self.show_ui_settings("paratranz")
+
+    def show_ui_settings(self, initial_section: str = "appearance") -> None:
         foundation = getattr(self._host, "ui_foundation", None)
         if foundation is None:
             self._host.show_message("通用设置当前不可用，请稍后重试。")
             return
+        from transbridge.config.llm import LLMConfig
         from transbridge.ui.settings_dialog import SettingsDialog
+
+        context = getattr(self._host, "context", None)
+        paratranz_config = None if context is None else context.config
+
+        def paratranz_saved(config) -> None:
+            if context is not None:
+                context.config = config
 
         dialog = SettingsDialog(
             foundation.theme,
@@ -77,9 +84,15 @@ class ToolWindows:
             self._host,
             registry=foundation.registry,
             locale_service=foundation.locale,
+            initial_section=initial_section,
+            llm_config=LLMConfig.load_from_file(),
+            paratranz_config=paratranz_config,
+            reload_llm=LLMConfig.load_from_file,
+            on_paratranz_saved=paratranz_saved,
         )
-        dialog.service_settings_requested.connect(self.show_config)
         dialog.exec()
+        if context is not None and context.config.token and not context.current_user:
+            self.load_current_user()
 
     def show_user(self) -> None:
         if not self._host.context.current_user:
@@ -101,9 +114,30 @@ class ToolWindows:
     def open_ai_translator(self) -> None:
         runtime = getattr(self._host, "app_runtime", None)
         if runtime is None:
-            self._host.workbench.open_tool("ai_translator")
+            self._host.workbench.open_tool(
+                "ai_translator",
+                settings_requested=lambda: self.show_ui_settings("ai_service"),
+            )
         else:
-            self._host.workbench.open_tool("ai_translator", task_runtime=runtime.tasks)
+            self._host.workbench.open_tool(
+                "ai_translator",
+                task_runtime=runtime.tasks,
+                settings_requested=lambda: self.show_ui_settings("ai_service"),
+            )
+
+    def open_batch_ai_translation(self) -> None:
+        runtime = getattr(self._host, "app_runtime", None)
+        if runtime is None:
+            self._host.workbench.open_tool(
+                "ai_batch_translation",
+                settings_requested=lambda: self.show_ui_settings("ai_service"),
+            )
+        else:
+            self._host.workbench.open_tool(
+                "ai_batch_translation",
+                task_runtime=runtime.tasks,
+                settings_requested=lambda: self.show_ui_settings("ai_service"),
+            )
 
     def open_dictionary(self) -> None:
         from transbridge.ui.tools.dictionary_panel import DictionaryPanel

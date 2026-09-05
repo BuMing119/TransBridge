@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QFileDialog, QLineEdit, QMessageBox, QWidget
 
 from transbridge.ui.foundation.adapters import ThemeView
-from transbridge.ui.foundation.components import ComponentStyle, SemanticState
 from transbridge.ui.tools.ai_translator.batch_runtime import TermSourceInspector, open_batch_translation
 from transbridge.ui.tools.ai_translator.config_dialogs import open_term_editor, show_connection_test
 from transbridge.ui.tools.ai_translator.config_presenter import ConfigPresenter
@@ -26,7 +26,6 @@ from transbridge.ui.tools.ai_translator.llm_connection_controller import LlmConn
 from transbridge.ui.tools.ai_translator.quick_run_presenter import AiQuickRunPresenter
 from transbridge.ui.tools.ai_translator.result_presenter import ResultPresenter
 from transbridge.ui.tools.ai_translator.run_controller import RunController, try_begin_run
-from transbridge.ui.tools.ai_translator.run_spec import preflight_ai_run
 from transbridge.ui.tools.ai_translator.scope_presenter import ScopePresenter, Step2ScopeAdapter
 from transbridge.ui.tools.ai_translator.versioned_run import (
     start_versioned_mixed,
@@ -37,8 +36,14 @@ from transbridge.ui.tools.ai_translator.view_state import TranslatorViewPort
 from transbridge.ui.windowing import show_and_activate
 from transbridge.ui.workbench.filters_presenter import ALL_CATEGORIES, entry_category
 
-from ._theme_support import AiThemeBinding, set_widget_brush
-from ._window_actions import apply_window_theme, open_batch_from_window, preflight_candidates, require_ready
+from ._theme_support import AiThemeBinding
+from ._window_actions import (
+    apply_window_theme,
+    open_batch_from_window,
+    open_settings_from_window,
+    require_ready,
+    update_window_quick_run,
+)
 
 if TYPE_CHECKING:
     from transbridge.application.tasks import TaskRuntime
@@ -59,12 +64,15 @@ class AITranslatorWindow(QWidget):
         *,
         task_runtime: TaskRuntime | None = None,
         theme_view: ThemeView | None = None,
+        settings_requested: Callable[[], None] | None = None,
     ):
         super().__init__(parent, Qt.WindowType.Window)
         self._ctx = ctx
         self._step2 = step2
         self._task_runtime = task_runtime
         self._theme_view = theme_view
+        self._settings_requested = settings_requested
+        self.on_open_settings = lambda: open_settings_from_window(self)
         self.on_batch_start = lambda: open_batch_from_window(self)
         self._scope_port = Step2ScopeAdapter(step2)
         self._scope_presenter = ScopePresenter(
@@ -73,8 +81,9 @@ class AITranslatorWindow(QWidget):
             category_of=entry_category,
             workbench=self._scope_port,
         )
-        self.setWindowTitle("AI 自动翻译")
-        self.resize(680, 520)
+        self.setWindowTitle("AI 翻译任务 · 当前内容")
+        self.setMinimumSize(720, 480)
+        self.resize(980, 700)
         self._view_callbacks = EmbeddingWindowCallbacks(self)
         self._view = AITranslatorView(self, self._view_callbacks, theme_view=theme_view)
         self._view_port = TranslatorViewPort(self._view)
@@ -113,7 +122,10 @@ class AITranslatorWindow(QWidget):
             self, self._view, self._view_port, self._config_presenter, self.on_mode_changed
         )
         self._config_binding.start()
-        self.update_quick_run()
+        if self._scope_port.selected_entry_ids():
+            self.on_preset("selection")
+        else:
+            self.update_quick_run()
 
     @classmethod
     def open_for_translation(
@@ -124,12 +136,20 @@ class AITranslatorWindow(QWidget):
         *,
         task_runtime: TaskRuntime | None = None,
         theme_view: ThemeView | None = None,
+        settings_requested: Callable[[], None] | None = None,
     ) -> QWidget | None:
         """直接打开当前翻译内容的 AI 快速运行页。"""
         if not ctx.slots:
             QMessageBox.warning(parent, "AI 翻译", "请先加载插件。")
             return None
-        window = cls(ctx, step2, parent, task_runtime=task_runtime, theme_view=theme_view)
+        window = cls(
+            ctx,
+            step2,
+            parent,
+            task_runtime=task_runtime,
+            theme_view=theme_view,
+            settings_requested=settings_requested,
+        )
         show_and_activate(window)
         return window
 
@@ -142,6 +162,7 @@ class AITranslatorWindow(QWidget):
         *,
         task_runtime: TaskRuntime | None = None,
         theme_view: ThemeView | None = None,
+        settings_requested=None,
     ) -> QWidget | None:
         """显式打开批量翻译计划；普通 AI intent 不调用此路径。"""
         return open_batch_translation(
@@ -150,6 +171,7 @@ class AITranslatorWindow(QWidget):
             Step2ScopeAdapter(step2).locate_entry,
             task_runtime=task_runtime,
             theme_view=theme_view,
+            settings_requested=settings_requested,
         )
 
     def on_provider_changed(self):
@@ -225,55 +247,7 @@ class AITranslatorWindow(QWidget):
         refresh_scope_estimate(self._view, self._scope_presenter, self._view_port.scope_options())
 
     def update_quick_run(self):
-        if self._custom_profiles.block_unavailable_start():
-            return
-        mode = self._view_port.mode
-        cfg = self._config_presenter.build()
-        execution_profile = self._config_presenter.execution_profile()
-        mixed_scope = (
-            self._scope_presenter.partition_mixed(self._view_port.rules, self._ctx.collection or ())
-            if mode == "mixed"
-            else None
-        )
-        candidates = preflight_candidates(self, mode, mixed_scope=mixed_scope)
-        preflight = preflight_ai_run(
-            mode,
-            cfg,
-            candidates,
-            esp_path=self._ctx.esp_path,
-            mixed_has_translation=None if mixed_scope is None else bool(mixed_scope.translate_entries),
-        )
-        estimate = (
-            self._view.controls.mixed_estimate_lbl.text()
-            if mode == "mixed"
-            else self._view.controls.estimate_lbl.text()
-        )
-        active = self._run_controller.active_request
-        state = self._quick_run_presenter.present(
-            mode=mode,
-            entry_count=len(candidates),
-            estimate_text=estimate,
-            overwrite=self._view_port.overwrite,
-            preflight=preflight,
-            active_run_id=None if active is None else active.run_id,
-        )
-        self._view.controls.start_btn.setEnabled(state.enabled)
-        preflight_text = state.status_text(execution_profile.summary)
-        if mode == "polish" and not execution_profile.enable_polish:
-            self._view.controls.start_btn.setText("▶ 开始执行")
-        self._view.controls.preflight_label.set_full_text(preflight_text)
-        self._view.controls.preflight_label.setToolTip(preflight_text)
-        self._view.controls.preflight_label.setAccessibleDescription(
-            state.enabled_reason or state.scope_summary or "运行条件已满足"
-        )
-        ComponentStyle.apply_state(
-            self._view.controls.preflight_label,
-            SemanticState.SUCCESS if state.enabled else SemanticState.WARNING,
-        )
-        set_widget_brush(
-            self._view.controls.preflight_label,
-            self._theme_binding.report("success" if state.enabled else "warning"),
-        )
+        update_window_quick_run(self)
 
     def on_test_connection(self, target: str = "llm"):
         if target == "embedding":

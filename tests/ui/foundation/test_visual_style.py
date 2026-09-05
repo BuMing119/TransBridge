@@ -44,6 +44,9 @@ def test_theme_service_installs_one_compiled_skin_and_restores_previous_style(
     assert 'QMenuBar[tbComponentKind="menu"]::item:selected' in light
     assert 'QPushButton[tbSummaryItem="true"]' in light
     assert 'QTableView[tbComponentKind="table"]' in light
+    assert '*[tbTaskDialog="true"]' in light
+    assert 'QTabWidget[tbComponentKind="tabs"]::pane' in light
+    assert 'QPushButton[tbComponentKind="button"][tbTaskPrimary="true"]' in light
     assert "QMenu::item:selected:enabled" in light
     assert "QMenu::item:selected:disabled" in light
     assert not re.search(r"#[0-9A-Fa-f]{6,8}\b", light)

@@ -50,6 +50,7 @@ class IntentId(StrEnum):
     PROJECT_IMPORT = "project.import-transbridge"
     SOURCE_MIGRATE = "source.apply-migration"
     TRANSLATION_AI = "translation.ai-run"
+    TRANSLATION_AI_BATCH = "translation.ai-batch"
     TRANSLATION_DICTIONARY = "translation.dictionary"
     TRANSLATION_REVIEW = "translation.review"
     TERMINOLOGY_WORKBENCH = "terminology.workbench"
@@ -193,9 +194,17 @@ DEFAULT_ACTION_CATALOG = ActionCatalog((
     ),
     ActionDescriptor(
         IntentId.TRANSLATION_AI,
-        "AI 自动翻译…",
+        "AI 翻译当前内容…",
         ActionSection.TRANSLATION,
         placement=IntentPlacement.PRIMARY,
+    ),
+    ActionDescriptor(
+        IntentId.TRANSLATION_AI_BATCH,
+        "批量 AI 翻译…",
+        ActionSection.TRANSLATION,
+        placement=IntentPlacement.PRIMARY,
+        aliases=("批量翻译插件", "批量翻译 ESP", "ESP AI 翻译"),
+        status_tip="选择并排序当前工程中的多个翻译内容后批量执行 AI 翻译",
     ),
     ActionDescriptor(
         IntentId.TRANSLATION_DICTIONARY,
@@ -284,10 +293,10 @@ DEFAULT_ACTION_CATALOG = ActionCatalog((
     ),
     ActionDescriptor(
         IntentId.SETTINGS_APPEARANCE,
-        "外观与通用设置…",
+        "设置…",
         ActionSection.SETTINGS,
-        aliases=("主题", "浅色", "深色", "语言", "无障碍"),
-        status_tip="选择应用主题、语言与无障碍选项",
+        aliases=("通用设置", "主题", "浅色", "深色", "语言", "无障碍", "AI 设置", "Embedding 设置", "ParaTranz 设置"),
+        status_tip="管理外观、AI 服务、Embedding、ParaTranz 与默认参数",
     ),
     ActionDescriptor(
         IntentId.SETTINGS_SERVICES,

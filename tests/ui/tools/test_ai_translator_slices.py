@@ -57,12 +57,16 @@ def _run_config(max_concurrent: object = 2) -> SimpleNamespace:
 
 
 class WorkbenchPort:
-    def __init__(self, entries=()) -> None:
+    def __init__(self, entries=(), selected_ids=()) -> None:
         self.entries = tuple(entries)
+        self.selected_ids = tuple(selected_ids)
         self.located: list[str] = []
 
     def filtered_entries(self):
         return self.entries
+
+    def selected_entry_ids(self):
+        return self.selected_ids
 
     def locate_entry(self, entry_id: str) -> None:
         self.located.append(entry_id)
@@ -161,6 +165,22 @@ def test_scope_presenter_uses_public_workbench_snapshot_and_filters_locked_entri
     assert port.located == ["visible"]
 
 
+def test_scope_presenter_selection_preset_uses_exact_selected_ids() -> None:
+    selected = Entry("selected")
+    entries = [Entry("other"), selected, Entry("locked", stage=STAGE_LOCKED)]
+    presenter = ScopePresenter(
+        collection_provider=lambda: entries,
+        label_projection_provider=lambda: {},
+        category_of=lambda _entry: "其他",
+        workbench=WorkbenchPort(selected_ids=("selected", "locked")),
+    )
+
+    presenter.select_preset("selection")
+
+    assert presenter.state.selected_entry_ids == frozenset({"selected", "locked"})
+    assert presenter.candidates() == [selected]
+
+
 def test_scope_presenter_combines_dimensions_without_copying_entries() -> None:
     keep = Entry("keep", stage=1, context="NPC_:FULL")
     entries = [keep, Entry("label-miss", stage=1), Entry("hidden", stage=STAGE_HIDDEN)]
@@ -207,12 +227,16 @@ def test_scope_estimate_exposes_request_tokens_oversized_and_shared_concurrency(
 
 
 def test_step2_adapter_prefers_public_filtered_entries() -> None:
-    step2 = WorkbenchPort([Entry("one")])
+    step2 = SimpleNamespace(
+        filtered_entries=lambda: (Entry("one"),),
+        selected_row_entry_ids=lambda: ("one",),
+        locate_entry=lambda _entry_id: None,
+    )
     adapter = Step2ScopeAdapter(step2)
 
     assert [entry.id for entry in adapter.filtered_entries()] == ["one"]
+    assert adapter.selected_entry_ids() == ("one",)
     adapter.locate_entry("one")
-    assert step2.located == ["one"]
 
 
 def test_run_controller_rejects_reentry_and_releases_terminal_resources() -> None:

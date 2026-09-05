@@ -181,7 +181,7 @@ def test_mixed_quick_run_and_start_gate_follow_current_rule_assignment(monkeypat
         window.update_quick_run()
 
         assert not window._view.controls.start_btn.isEnabled()
-        assert "API Key" in window._view.controls.preflight_label.text()
+        assert "API Key" in window._view.controls.preflight_label.full_text
     finally:
         window.close()
         app.processEvents()

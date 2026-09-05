@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QPalette
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QMenu, QPushButton, QVBoxLayout, QWidget
+from PyQt6.QtGui import QAction, QPalette
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QMenu, QPushButton, QToolButton, QVBoxLayout, QWidget
 
 from transbridge.ui.foundation.components import (
     ComponentKind,
     ComponentStyle,
     ElidedLabel,
-    make_primary_button,
+    SemanticState,
     reserve_text_width,
 )
 from transbridge.ui.foundation.tabler_icons import tabler_pixmap
@@ -125,16 +125,35 @@ class WorkflowActionsView(QWidget):
         self._action_reason.setAccessibleName("操作可用性说明")
         layout.addWidget(self._action_reason, 1)
         layout.addStretch()
-        self._buttons: dict[IntentId, QPushButton] = {}
-        for intent in (IntentId.TRANSLATION_AI, IntentId.TRANSLATION_REVIEW, IntentId.PUBLISH_WRITE):
-            button = make_primary_button("") if intent is IntentId.TRANSLATION_AI else QPushButton()
+        self._buttons: dict[IntentId, QPushButton | QToolButton] = {}
+        self._ai_button = QToolButton(self)
+        self._ai_button.setText("AI 翻译")
+        self._ai_button.setAccessibleName("AI 翻译")
+        self._ai_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        ComponentStyle.apply_static(self._ai_button, ComponentKind.BUTTON)
+        ComponentStyle.apply_state(self._ai_button, SemanticState.PRIMARY)
+        reserve_text_width(self._ai_button, ("AI 翻译",))
+        self._ai_menu = QMenu(self._ai_button)
+        self._ai_current_action = QAction("翻译当前内容", self._ai_menu)
+        self._ai_batch_action = QAction("批量翻译多个插件", self._ai_menu)
+        self._ai_current_action.triggered.connect(lambda: self.intent_requested.emit(IntentId.TRANSLATION_AI.value))
+        self._ai_batch_action.triggered.connect(lambda: self.intent_requested.emit(IntentId.TRANSLATION_AI_BATCH.value))
+        self._ai_menu.addAction(self._ai_current_action)
+        self._ai_menu.addAction(self._ai_batch_action)
+        self._ai_button.setMenu(self._ai_menu)
+        self._ai_button.clicked.connect(self._request_current_ai)
+        layout.addWidget(self._ai_button)
+        self._buttons[IntentId.TRANSLATION_AI] = self._ai_button
+        for intent in (
+            IntentId.TRANSLATION_REVIEW,
+            IntentId.PUBLISH_WRITE,
+        ):
+            button = QPushButton()
             button.setAccessibleName(f"Workbench 操作：{intent.value}")
-            if intent is not IntentId.TRANSLATION_AI:
-                ComponentStyle.apply_static(button, ComponentKind.BUTTON)
+            ComponentStyle.apply_static(button, ComponentKind.BUTTON)
             reserve_text_width(
                 button,
                 {
-                    IntentId.TRANSLATION_AI: ("AI 翻译",),
                     IntentId.TRANSLATION_REVIEW: ("检查",),
                     IntentId.PUBLISH_WRITE: ("写回/发布",),
                 }[intent],
@@ -163,7 +182,16 @@ class WorkflowActionsView(QWidget):
                 if not action.enabled and action.reason:
                     disabled_reasons.append(action.reason)
                 continue
+            if action.intent_id is IntentId.TRANSLATION_AI_BATCH:
+                self._ai_batch_action.setEnabled(action.enabled)
+                self._ai_batch_action.setToolTip(action.reason or "选择并按顺序翻译多个插件")
+                if not action.enabled and action.reason:
+                    disabled_reasons.append(action.reason)
+                continue
             button = self._buttons[action.intent_id]
+            if action.intent_id is IntentId.TRANSLATION_AI:
+                self._ai_current_action.setEnabled(action.enabled)
+                self._ai_current_action.setToolTip(action.reason or "翻译当前内容")
             button.setText(action.label)
             button.setEnabled(action.enabled)
             button.setToolTip(action.reason or action.label)
@@ -171,9 +199,14 @@ class WorkflowActionsView(QWidget):
             button.setAccessibleDescription(action.reason or f"对当前范围执行{action.label}")
             if not action.enabled and action.reason:
                 disabled_reasons.append(action.reason)
+        self._ai_button.setEnabled(self._ai_current_action.isEnabled() or self._ai_batch_action.isEnabled())
         reason = "；".join(dict.fromkeys(disabled_reasons))
         self._action_reason.set_full_text(reason)
         self._action_reason.setToolTip(reason)
+
+    def _request_current_ai(self) -> None:
+        if self._ai_current_action.isEnabled():
+            self.intent_requested.emit(IntentId.TRANSLATION_AI.value)
 
     def _show_more(self) -> None:
         if not self._more_enabled:

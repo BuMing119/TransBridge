@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .task_visual_style import compile_task_visual_styles
+
 if TYPE_CHECKING:
     from .theme_service import ThemeSnapshot
 
@@ -294,6 +296,8 @@ QMenuBar[tbComponentKind="menu"]::item:pressed {{
 *[tbComponentKind="notification"] {{
     background: {header_surface.canonical};
 }}
+
+{compile_task_visual_styles(snapshot)}
 
 QPushButton[tbComponentKind="button"], QToolButton[tbComponentKind="button"] {{
     color: {text.canonical};

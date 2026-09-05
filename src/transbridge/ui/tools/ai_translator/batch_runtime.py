@@ -25,6 +25,7 @@ def open_batch_translation(
     *,
     task_runtime=None,
     theme_view: ThemeView | None = None,
+    settings_requested: Callable[[], None] | None = None,
 ):
     from PyQt6.QtWidgets import QMessageBox
 
@@ -34,6 +35,8 @@ def open_batch_translation(
     from .run_controller import RunController
 
     dialog = _BatchTranslationDialog(ctx, parent, theme_view=theme_view)
+    if settings_requested is not None:
+        dialog.open_settings_requested.connect(settings_requested)
     if dialog.exec() != dialog.DialogCode.Accepted:
         return None
     slots = dialog.get_selected_slots()
