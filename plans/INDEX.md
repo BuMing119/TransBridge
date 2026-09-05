@@ -4,6 +4,7 @@
 
 | Epic | 状态 | Stories | 文档 |
 |---|---|---:|---|
+| unified-ai-settings-and-batch-dialog | 已完成（2026-09-06，Story 01～07 共享任务视觉 QA 通过） | 7/7 | [plan](unified-ai-settings-and-batch-dialog/plan.md) · [S01-05 增量记录](../docs/changelogs/unified-ai-settings-and-batch-dialog/story-01-to-05-implementation/2026-09-05-001-统一AI设置与任务式翻译界面.md) · [S06-07 增量记录](../docs/changelogs/unified-ai-settings-and-batch-dialog/story-06-to-07-visual-unification/2026-09-06-001-单入口与AI任务视觉统一.md) |
 | smart-assistant-tool-retry-recovery | 已完成（2026-09-05，S01～S04 QA 通过） | 4/4 | [plan](smart-assistant-tool-retry-recovery/plan.md) |
 | v3-ui-gap-closure | 已完成（2026-09-01，综合 QA 通过） | 5/5 | [plan](v3-ui-gap-closure/plan.md) |
 | dialogue-context-editor | XT 式记录导航已完成（2026-08-31） | 4/4 | [plan](dialogue-context-editor/plan.md) · [S01–04 词条弹窗与XT式记录导航](../docs/changelogs/dialogue-context-editor/story-01-04-implementation/2026-08-31-001-词条弹窗与XT式记录导航.md) |
