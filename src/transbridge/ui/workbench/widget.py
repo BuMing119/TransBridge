@@ -32,6 +32,8 @@ from transbridge.ui.windowing import show_and_activate
 from ._project_bar import ProjectBar
 from .remote_target_view import RemoteTargetView
 from .step2 import Step2PreviewWidget
+from .terminology_profile_bar import TerminologyProfileBar
+from .terminology_profile_controller import TerminologyProfileUiController
 from .workflow_presenter import WorkbenchHierarchyViewState, WorkbenchWorkflowPresenter
 
 
@@ -44,13 +46,22 @@ def _track_ai_progress(tool_windows: dict, progress_win) -> None:
 class WorkbenchWidget(QWidget):
     intent_requested = pyqtSignal(str)
 
-    def __init__(self, ctx, parent=None, *, theme_view: ThemeView | None = None):
+    def __init__(
+        self,
+        ctx,
+        parent=None,
+        *,
+        theme_view: ThemeView | None = None,
+        terminology_profile_factory=None,
+    ):
         super().__init__(parent)
         self.setObjectName("tbWorkbench")
         self.setAccessibleName("翻译工作台")
         self._initial_focus_set = False
         self._ctx = ctx
         self._theme_view = theme_view
+        self._terminology_profile_factory = terminology_profile_factory
+        self._terminology_profile_controller = None
         self._tool_windows: dict = {}
         self._workflow_presenter = WorkbenchWorkflowPresenter()
         self._init_ui()
@@ -84,12 +95,26 @@ class WorkbenchWidget(QWidget):
         context_layout.addWidget(self._collection_bar, 1)
         layout.addWidget(context_card)
 
+        self._terminology_profile_bar = None
+        if self._terminology_profile_factory is not None:
+            self._terminology_profile_bar = TerminologyProfileBar(self)
+            layout.addWidget(self._terminology_profile_bar)
+
         self._guidance_banner = GuidanceBanner(self)
         layout.addWidget(self._guidance_banner)
 
         self._step2 = Step2PreviewWidget(self._ctx, theme_view=self._theme_view)
         self._step2.intent_requested.connect(self.intent_requested.emit)
         layout.addWidget(self._step2)
+
+        if self._terminology_profile_bar is not None:
+            self._terminology_profile_controller = TerminologyProfileUiController(
+                self._ctx,
+                self._terminology_profile_factory,
+                self._terminology_profile_bar,
+                self._step2,
+                self,
+            )
 
         self._ctx.collection_list_changed.connect(self._rebuild_collection_combo)
         self._rebuild_collection_combo()
@@ -174,6 +199,7 @@ class WorkbenchWidget(QWidget):
                 task_runtime=task_runtime,
                 theme_view=self._theme_view,
                 settings_requested=settings_requested,
+                terminology_profile_controller=self._terminology_profile_controller,
             )
             if win is None:
                 return

@@ -57,6 +57,8 @@ class TranslationTable(QTableWidget):
         self._batch_generation = 0
         self._entry_labels: Mapping[str, set[str]] = {}
         self._label_library: Mapping[str, Mapping[str, str]] = {}
+        self._translation_projection: Mapping[str, object] = {}
+        self._terminology_profile_label: str | None = None
         self._pending_entry_id: str | None = None
         self._pending_selected_entry_ids: set[str] = set()
         self._pending_current_entry_id: str | None = None
@@ -121,10 +123,21 @@ class TranslationTable(QTableWidget):
     def set_editable_entry_keys(self, keys) -> None:
         self._editable_entry_keys = frozenset(keys)
 
+    @property
+    def terminology_profile_active(self) -> bool:
+        return self._terminology_profile_label is not None
+
+    def set_terminology_projection(self, values: Mapping[str, object], *, profile_label: str | None) -> None:
+        """Install one immutable display projection before starting a render."""
+
+        self._translation_projection = values
+        self._terminology_profile_label = profile_label
+
     def activate_entry_editor(self, item: QTableWidgetItem) -> bool:
         entry = item.data(Qt.ItemDataRole.UserRole)
         if (
             item.column() != COL_CHECK
+            and not self.terminology_profile_active
             and isinstance(entry, TranslationEntry)
             and entry.identity in self._editable_entry_keys
         ):
@@ -269,12 +282,32 @@ class TranslationTable(QTableWidget):
         original.setData(Qt.ItemDataRole.UserRole, entry)
         original.setFlags(original.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
-        translation_text = entry.translation or ""
+        projected = self._projected_translation(entry)
+        translation_text = entry.translation if projected is None else str(getattr(projected, "translation", ""))
+        translation_text = translation_text or ""
         translation = QTableWidgetItem(translation_text[:80] if translation_text else "（无译文）")
         translation.setData(Qt.ItemDataRole.UserRole, entry)
+        if self.terminology_profile_active:
+            translation.setFlags(translation.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            profile = self._terminology_profile_label or "当前译名方案"
+            changed = bool(getattr(projected, "is_derived", False))
+            diagnostics = tuple(getattr(projected, "diagnostics", ()))
+            status = (
+                f"有 {len(diagnostics)} 项术语无法安全定位，已保留整条项目译文"
+                if diagnostics
+                else "已按方案调整"
+                if changed
+                else "此条无需调整"
+            )
+            details = "" if not diagnostics else "\n" + "\n".join(str(item.message) for item in diagnostics[:3])
+            translation.setToolTip(f"{profile} · {status}。如需编辑正文，请切换为“不应用方案”。{details}")
 
         stage_label = STAGE_LABELS.get(entry.stage, f"状态 {entry.stage}")
-        context = QTableWidgetItem(f"{entry_category(entry)} · {stage_label}")
+        if tuple(getattr(projected, "diagnostics", ())):
+            derived_label = " · 术语待确认"
+        else:
+            derived_label = " · 已应用译名方案" if bool(getattr(projected, "is_derived", False)) else ""
+        context = QTableWidgetItem(f"{entry_category(entry)} · {stage_label}{derived_label}")
         context.setData(Qt.ItemDataRole.UserRole, entry)
         context.setFlags(context.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
@@ -303,13 +336,20 @@ class TranslationTable(QTableWidget):
         try:
             translation = self.item(row, COL_TRANSLATION)
             if translation is not None:
-                text = entry.translation or ""
+                projected = self._projected_translation(entry)
+                text = entry.translation if projected is None else str(getattr(projected, "translation", ""))
+                text = text or ""
                 translation.setText(text[:80] if text else "（无译文）")
                 translation.setData(Qt.ItemDataRole.UserRole, entry)
             context = self.item(row, COL_CONTEXT)
             if context is not None:
                 stage_label = STAGE_LABELS.get(entry.stage, f"状态 {entry.stage}")
-                context.setText(f"{entry_category(entry)} · {stage_label}")
+                projected = self._projected_translation(entry)
+                if tuple(getattr(projected, "diagnostics", ())):
+                    derived_label = " · 术语待确认"
+                else:
+                    derived_label = " · 已应用译名方案" if bool(getattr(projected, "is_derived", False)) else ""
+                context.setText(f"{entry_category(entry)} · {stage_label}{derived_label}")
                 context.setData(Qt.ItemDataRole.UserRole, entry)
             for column in (COL_CHECK, COL_INDEX, COL_MARK, COL_KEY, COL_ORIGINAL):
                 item = self.item(row, column)
@@ -455,3 +495,20 @@ class TranslationTable(QTableWidget):
     ) -> tuple[int, QTableWidgetItem | None]:
         row = self.find_entry_row(preferred_row, entry_id)
         return (row, None) if row < 0 else (row, self.item(row, COL_TRANSLATION))
+
+    def restore_projected_translation(self, item: QTableWidgetItem) -> None:
+        """Undo an out-of-band attempt to edit a profile-derived cell."""
+
+        entry = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(entry, TranslationEntry):
+            return
+        projected = self._projected_translation(entry)
+        text = entry.translation if projected is None else str(getattr(projected, "translation", ""))
+        self.blockSignals(True)
+        try:
+            item.setText(text[:80] if text else "（无译文）")
+        finally:
+            self.blockSignals(False)
+
+    def _projected_translation(self, entry: TranslationEntry):
+        return self._translation_projection.get(entry.identity.serialize())

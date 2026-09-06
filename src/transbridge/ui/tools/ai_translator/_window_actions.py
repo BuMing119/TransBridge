@@ -107,7 +107,11 @@ def update_window_quick_run(window: object, *, config=None, tasks=None) -> None:
         reason = "已有 AI 任务正在启动"
     controls = window._view.controls
     controls.start_btn.setText("开始 AI 翻译" if mode == "translate" else "开始 AI 任务")
-    text = reason or f"已选 {len(tasks)} 个插件，本次处理 {len(entries)} 条；流程：{profile.summary}"
+    naming_schemes = getattr(window, "_naming_schemes", None)
+    naming_scheme = getattr(naming_schemes, "summary_label", "保持当前译名")
+    text = reason or (
+        f"已选 {len(tasks)} 个插件，本次处理 {len(entries)} 条；译名方案：{naming_scheme}；流程：{profile.summary}"
+    )
     _render_quick_run(window, text, ready=reason is None)
 
 

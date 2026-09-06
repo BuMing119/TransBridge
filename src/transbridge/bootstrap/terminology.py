@@ -15,6 +15,11 @@ from transbridge.application.terminology.input_capture import BuildInputCaptureS
 from transbridge.application.terminology.ports import PageRequest
 from transbridge.application.terminology.runtime import TerminologyTaskEntrypoint, TerminologyWorkloadRegistry
 from transbridge.application.terminology.workloads import TerminologyWorkloadType
+from transbridge.application.terminology_profiles import (
+    ProfiledEffectiveTerminologySnapshotPort,
+    TerminologyProfileService,
+    is_profiled_version_id,
+)
 from transbridge.application.terminology_sync.draft_import import InboundDraftImportService
 from transbridge.application.terminology_sync.draft_import_models import DraftImportChoice, DraftImportSelection
 from transbridge.application.terminology_sync.executor import TerminologyBackupExecutor, TerminologySyncFreshInputPort
@@ -83,6 +88,7 @@ class ProductionTerminologyComposition:
     _sync_services: dict[tuple[str, str, str], TerminologySyncApplicationService] = field(
         default_factory=dict, compare=False, repr=False
     )
+    _profile_services: dict[str, TerminologyProfileService] = field(default_factory=dict, compare=False, repr=False)
     _sync_resources: list[ParaTranzTermsService] = field(default_factory=list, compare=False, repr=False)
     _sync_lock: RLock = field(default_factory=RLock, compare=False, repr=False)
 
@@ -136,11 +142,38 @@ class ProductionTerminologyComposition:
             self._sync_services[key] = service
             return service
 
+    def profile_service_for(self, project_id: str) -> TerminologyProfileService:
+        """Return the one profile application service bound to a Project repository."""
+
+        if not project_id.strip():
+            raise ValueError("terminology profile service requires a Project identity")
+        with self._sync_lock:
+            existing = self._profile_services.get(project_id)
+            if existing is not None:
+                return existing
+            repository = self.repositories.for_project(project_id)
+            now = getattr(getattr(self, "clock", None), "now", None)
+            new_id = getattr(getattr(self, "ids", None), "new_id", None)
+            service = TerminologyProfileService(
+                repository.localization_profiles,
+                now=now if callable(now) else None,
+                new_id=new_id if callable(new_id) else None,
+            )
+            self._profile_services[project_id] = service
+            return service
+
+    def base_terminology_snapshot(self, project_id: str, variant_id: str):
+        """Read the unprofiled snapshot used to prove export completeness."""
+
+        repository = self.repositories.for_project(project_id)
+        return SqliteEffectiveTerminologySnapshotPort(repository).snapshot(project_id, variant_id)
+
     def close(self) -> None:
         with self._sync_lock:
             resources = tuple(self._sync_resources)
             self._sync_resources.clear()
             self._sync_services.clear()
+            self._profile_services.clear()
         for resource in reversed(resources):
             resource.close()
         self.repositories.close()
@@ -148,16 +181,18 @@ class ProductionTerminologyComposition:
     def effective_adapter(self, project_id: str, variant_id: str):
         """Create an adapter enabled by the existence of a published version."""
 
-        del variant_id
-
         from transbridge.ai_translator.project_terminology_adapter import (
             ProjectTerminologyAdapter,
             PublishedEffectiveTerminologyGate,
         )
 
         repository = self.repositories.for_project(project_id)
+        snapshots = ProfiledEffectiveTerminologySnapshotPort(
+            SqliteEffectiveTerminologySnapshotPort(repository),
+            self.profile_service_for(project_id),
+        )
         return ProjectTerminologyAdapter(
-            SnapshotEffectiveTerminologyPort(SqliteEffectiveTerminologySnapshotPort(repository)),
+            SnapshotEffectiveTerminologyPort(snapshots),
             PublishedEffectiveTerminologyGate(
                 lambda candidate_project, candidate_variant: (
                     repository.effective_version(candidate_project, candidate_variant) is not None
@@ -173,6 +208,19 @@ class ProductionTerminologyComposition:
             FrozenTerminologyEchoLinks,
         )
         from transbridge.application.projects import project_paratranz_binding
+
+        if is_profiled_version_id(ref.version_id):
+            return FrozenTerminologyEchoLinks(
+                ref.local_project_id,
+                ref.local_variant_id,
+                "profiled-effective:no-remote-target",
+                "unavailable",
+                available=False,
+                diagnostic=(
+                    "ParaTranz legacy terminology is disabled for a profiled AI run until an explicit "
+                    "profile-to-remote mapping is available"
+                ),
+            )
 
         lifecycle = self.lifecycle
         active = None if lifecycle is None else lifecycle.active

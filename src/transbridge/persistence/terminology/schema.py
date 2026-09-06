@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 DDL = """
 CREATE TABLE IF NOT EXISTS schema_metadata (
@@ -276,6 +276,43 @@ CREATE TABLE IF NOT EXISTS terminology_sync_inbound_proposals (
     FOREIGN KEY (change_set_id, review_revision)
         REFERENCES terminology_sync_inbound_reviews(change_set_id, revision) ON DELETE RESTRICT
 );
+CREATE TABLE IF NOT EXISTS terminology_profiles (
+    profile_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('active', 'archived')),
+    draft_revision INTEGER NOT NULL CHECK (draft_revision >= 0),
+    draft_json TEXT NOT NULL,
+    latest_published_revision INTEGER CHECK (
+        latest_published_revision IS NULL OR latest_published_revision >= 0
+    ),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (project_id, profile_id)
+);
+CREATE TABLE IF NOT EXISTS terminology_profile_revisions (
+    profile_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK (revision >= 0),
+    name TEXT NOT NULL,
+    content_digest TEXT NOT NULL CHECK (length(content_digest) = 64),
+    content_json TEXT NOT NULL,
+    published_at TEXT NOT NULL,
+    PRIMARY KEY (profile_id, revision),
+    UNIQUE (project_id, profile_id, revision),
+    FOREIGN KEY (project_id, profile_id)
+        REFERENCES terminology_profiles(project_id, profile_id) ON DELETE RESTRICT
+);
+CREATE TABLE IF NOT EXISTS terminology_profile_selections (
+    project_id TEXT NOT NULL,
+    variant_id TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK (revision >= 0),
+    selected_at TEXT NOT NULL,
+    PRIMARY KEY (project_id, variant_id),
+    FOREIGN KEY (project_id, profile_id, revision)
+        REFERENCES terminology_profile_revisions(project_id, profile_id, revision) ON DELETE RESTRICT
+);
 CREATE INDEX IF NOT EXISTS idx_evidence_page ON build_evidence(build_key, stable_id);
 CREATE INDEX IF NOT EXISTS idx_candidate_page ON build_candidates(build_key, stable_id);
 CREATE INDEX IF NOT EXISTS idx_conflict_page ON build_conflicts(build_key, stable_id);
@@ -305,6 +342,12 @@ CREATE INDEX IF NOT EXISTS idx_sync_inbound_line
     ON terminology_sync_inbound_sets(line_id, change_set_id, revision);
 CREATE INDEX IF NOT EXISTS idx_sync_inbound_review_latest
     ON terminology_sync_inbound_reviews(change_set_id, revision DESC);
+CREATE INDEX IF NOT EXISTS idx_terminology_profiles_project
+    ON terminology_profiles(project_id, state, name, profile_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_terminology_profiles_name
+    ON terminology_profiles(project_id, name COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_terminology_profile_selections_profile
+    ON terminology_profile_selections(profile_id, project_id, variant_id);
 """
 
 IMMUTABLE_TABLES = (
@@ -330,6 +373,7 @@ IMMUTABLE_TABLES = (
     "terminology_sync_inbound_reviews",
     "terminology_sync_inbound_dispositions",
     "terminology_sync_inbound_proposals",
+    "terminology_profile_revisions",
 )
 
 REQUIRED_TABLES = frozenset({
@@ -369,6 +413,9 @@ REQUIRED_TABLES = frozenset({
     "terminology_sync_inbound_reviews",
     "terminology_sync_inbound_dispositions",
     "terminology_sync_inbound_proposals",
+    "terminology_profiles",
+    "terminology_profile_revisions",
+    "terminology_profile_selections",
 })
 
 REQUIRED_SYNC_INDEXES = frozenset({
@@ -399,6 +446,19 @@ REQUIRED_SYNC_TRIGGERS = frozenset({
     "sync_terminology_sync_profiles_no_delete",
     "sync_terminology_sync_baselines_no_delete",
     "sync_terminology_sync_item_links_no_delete",
+})
+
+REQUIRED_PROFILE_TRIGGERS = frozenset({
+    "immutable_terminology_profile_revisions_update",
+    "immutable_terminology_profile_revisions_delete",
+    "terminology_profile_no_delete",
+    "terminology_profile_identity_immutable",
+})
+
+REQUIRED_PROFILE_INDEXES = frozenset({
+    "idx_terminology_profiles_project",
+    "idx_terminology_profiles_name",
+    "idx_terminology_profile_selections_profile",
 })
 
 
@@ -438,6 +498,17 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
             f"BEGIN SELECT RAISE(ABORT, '{table} rows cannot be deleted'); END"
         )
     connection.execute(
+        "CREATE TRIGGER IF NOT EXISTS terminology_profile_no_delete BEFORE DELETE ON terminology_profiles "
+        "BEGIN SELECT RAISE(ABORT, 'terminology profiles cannot be deleted; archive them instead'); END"
+    )
+    connection.execute(
+        "CREATE TRIGGER IF NOT EXISTS terminology_profile_identity_immutable "
+        "BEFORE UPDATE ON terminology_profiles "
+        "WHEN OLD.profile_id != NEW.profile_id OR OLD.project_id != NEW.project_id "
+        "OR OLD.created_at != NEW.created_at "
+        "BEGIN SELECT RAISE(ABORT, 'terminology profile identity is immutable'); END"
+    )
+    connection.execute(
         "INSERT INTO schema_metadata(singleton, schema_version) VALUES (1, ?) "
         "ON CONFLICT(singleton) DO UPDATE SET schema_version=excluded.schema_version",
         (SCHEMA_VERSION,),
@@ -455,13 +526,13 @@ def validate_schema(connection: sqlite3.Connection) -> str | None:
     indexes = {
         str(row[0]) for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'index'").fetchall()
     }
-    missing_indexes = sorted(REQUIRED_SYNC_INDEXES - indexes)
+    missing_indexes = sorted((REQUIRED_SYNC_INDEXES | REQUIRED_PROFILE_INDEXES) - indexes)
     if missing_indexes:
         return "missing indexes: " + ", ".join(missing_indexes)
     triggers = {
         str(row[0]) for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'").fetchall()
     }
-    missing_triggers = sorted(REQUIRED_SYNC_TRIGGERS - triggers)
+    missing_triggers = sorted((REQUIRED_SYNC_TRIGGERS | REQUIRED_PROFILE_TRIGGERS) - triggers)
     if missing_triggers:
         return "missing triggers: " + ", ".join(missing_triggers)
     row = connection.execute("SELECT schema_version FROM schema_metadata WHERE singleton = 1").fetchone()
@@ -474,8 +545,10 @@ __all__ = [
     "DDL",
     "IMMUTABLE_TABLES",
     "REQUIRED_TABLES",
+    "REQUIRED_PROFILE_INDEXES",
     "REQUIRED_SYNC_INDEXES",
     "REQUIRED_SYNC_TRIGGERS",
+    "REQUIRED_PROFILE_TRIGGERS",
     "SCHEMA_VERSION",
     "initialize_schema",
     "validate_schema",

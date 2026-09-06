@@ -118,6 +118,9 @@ class MainWindow(QMainWindow):
         self._current_project_opener = None if runtime is None else runtime.use_cases.resolve("current_project_opener")
         self._session_commands = None if runtime is None else runtime.use_cases.resolve("gui_session_commands")
         self._session_projection = None if runtime is None else runtime.use_cases.resolve("session_projection")
+        self._terminology_profile_factory = None
+        if runtime is not None and "terminology_profile_service_factory" in runtime.use_cases.names():
+            self._terminology_profile_factory = runtime.use_cases.resolve("terminology_profile_service_factory")
         self._legacy_mapping_key: str | None = None
         self._workers: list[ApiWorker] = []
         self._foreground_worker: ApiWorker | None = None
@@ -246,7 +249,11 @@ class MainWindow(QMainWindow):
         self._mode_tabs = WorkspaceShell(self, theme_view=self._theme_view)
         self._mode_tabs.intent_requested.connect(self._intent_composition.dispatch)
 
-        self._workbench = WorkbenchWidget(self._ctx, theme_view=self._theme_view)
+        self._workbench = WorkbenchWidget(
+            self._ctx,
+            theme_view=self._theme_view,
+            terminology_profile_factory=self._terminology_profile_factory,
+        )
         self._pt_widget = ParaTranzWidget(self._ctx, theme_view=self._theme_view)
 
         # 连接 ProjectBar 信号

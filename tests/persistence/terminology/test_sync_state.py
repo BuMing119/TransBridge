@@ -238,7 +238,7 @@ def test_v2_database_migrates_with_backup_and_sync_tables(tmp_path: Path) -> Non
 
     opened = TerminologyConnectionFactory(paths).open("project-1")
     try:
-        assert opened.state.schema_version == SCHEMA_VERSION == 3
+        assert opened.state.schema_version == SCHEMA_VERSION == 4
         for expected in (
             "terminology_sync_lines",
             "terminology_sync_inbound_reviews",
@@ -252,7 +252,7 @@ def test_v2_database_migrates_with_backup_and_sync_tables(tmp_path: Path) -> Non
             ).fetchone()
     finally:
         opened.connection.close()
-    assert tuple(paths.backup_directory("project-1").glob("schema-v2-to-v3-*.sqlite3"))
+    assert tuple(paths.backup_directory("project-1").glob("schema-v2-to-v4-*.sqlite3"))
 
 
 def test_future_sync_payload_version_fails_closed() -> None:

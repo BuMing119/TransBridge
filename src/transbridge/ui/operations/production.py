@@ -31,6 +31,7 @@ from transbridge.application.io.operation_write import (
 from transbridge.application.io.plugin_write import plugin_artifact_paths
 from transbridge.application.io.publish import BackupPolicy, ConflictPolicy as PublishConflictPolicy
 from transbridge.application.tasks import OwnerRef, TaskRuntime
+from transbridge.application.terminology_profiles import TerminologyProfileWriteProjectionSource
 from transbridge.bootstrap.runtime import AppRuntime
 
 from .errors import OperationCompositionError
@@ -161,12 +162,23 @@ def build_operation_plan_facade(
     fomod_cache: dict[int, object] = {}
     write_cache: dict[int, object] = {}
     cache_lock = RLock()
-    write_preflights = HydratedWritePreflightService()
+    profile_projection = None
+    use_cases = getattr(runtime, "use_cases", None)
+    if use_cases is not None and "terminology_profile_service_factory" in use_cases.names():
+        profile_services = use_cases.resolve("terminology_profile_service_factory")
+        profile_projection = TerminologyProfileWriteProjectionSource(
+            profile_services.profile_service_for,
+            base_snapshot_for=profile_services.base_terminology_snapshot,
+        )
+    write_preflights = HydratedWritePreflightService(entry_projection=profile_projection)
     fomod_preflights = FomodTaskPreflightService()
 
     def write_checks(value: object) -> tuple[PreflightCheckState, ...]:
         if isinstance(value, _HydratedWriteBatch):
-            checked_batch = tuple(write_preflights.preflight(item) for item in value.drafts)
+            frozen_projection = write_preflights.freeze_projection(value.drafts[0])
+            checked_batch = tuple(
+                write_preflights.preflight(item, frozen_projection=frozen_projection) for item in value.drafts
+            )
             with cache_lock:
                 write_cache[id(value)] = checked_batch
                 _trim_cache(write_cache)

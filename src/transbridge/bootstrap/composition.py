@@ -191,6 +191,7 @@ def build_runtime(
             "terminology_ui_commands": terminology.commands,
             "terminology_ui_services_factory": terminology,
             "effective_terminology_factory": terminology,
+            "terminology_profile_service_factory": terminology,
             "terminology_sync_service_factory": terminology,
         }
         for name, use_case in production_use_cases.items():

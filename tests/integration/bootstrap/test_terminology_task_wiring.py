@@ -87,6 +87,9 @@ def test_composition_exposes_project_terminology_without_runtime_release_evidenc
         assert app.use_cases.resolve("effective_terminology_factory") is app.use_cases.resolve(
             "terminology_ui_services_factory"
         )
+        profile_factory = app.use_cases.resolve("terminology_profile_service_factory")
+        assert profile_factory is app.use_cases.resolve("effective_terminology_factory")
+        assert profile_factory.profile_service_for("project-1") is profile_factory.profile_service_for("project-1")
         assert app.capabilities.report("terminology.analysis-report").state is CapabilityState.AVAILABLE
         assert "terminology_feature_gates" not in app.use_cases.names()
         assert "terminology_release_evidence_diagnostics" not in app.use_cases.names()

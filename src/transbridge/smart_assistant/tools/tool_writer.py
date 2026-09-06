@@ -17,6 +17,7 @@ from transbridge.application.io.plugin_write import plugin_artifact_paths
 from transbridge.application.io.publish import BackupPolicy, ConflictPolicy
 from transbridge.application.security.paths import PathAuthorizationPolicy, PathGrant
 from transbridge.application.tasks import TaskCancelled
+from transbridge.application.terminology_profiles import TerminologyProfileWriteProjectionSource
 
 from .base import ToolResult, require_collection
 from .task_manager import TaskManager
@@ -80,7 +81,14 @@ def _tool_write_back(args: dict, ctx, collection) -> ToolResult:
             conflict_policy=ConflictPolicy.EXPLICIT_OVERWRITE if args.get("overwrite", False) else ConflictPolicy.FAIL,
             backup_policy=BackupPolicy.REQUIRED_IF_EXISTS,
         )
-        checked = HydratedWritePreflightService().preflight(draft)
+        profile_factory = getattr(ctx, "terminology_profile_service_factory", None)
+        projection = None
+        if profile_factory is not None:
+            projection = TerminologyProfileWriteProjectionSource(
+                profile_factory.profile_service_for,
+                base_snapshot_for=profile_factory.base_terminology_snapshot,
+            )
+        checked = HydratedWritePreflightService(entry_projection=projection).preflight(draft)
         if not checked.ready:
             blocked = tuple(check for check in checked.checks if not check.passed and not check.warning)
             return ToolResult.fail("；".join(check.message for check in blocked), error_code=blocked[0].code)

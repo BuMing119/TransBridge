@@ -4,6 +4,8 @@
 支持多选标签筛选、文本搜索、行内编辑、三态标记（★/?/✓）。
 """
 
+from types import MappingProxyType
+
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QDialog,
@@ -17,6 +19,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from transbridge.application.terminology_profiles import TerminologyProfileProjector
 from transbridge.converter.translation_entry import (
     STAGE_TRANSLATED,
     STAGE_UNTRANSLATED,
@@ -92,6 +95,9 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         self._filtered_total = 0
         self._render_generation = 0
         self._render_entries: tuple[TranslationEntry, ...] = ()
+        self._terminology_profile = None
+        self._terminology_projector = TerminologyProfileProjector()
+        self._terminology_projection = MappingProxyType({})
         self._pending_locate_entry_id: str | None = None
         self._filter_scope: tuple[object, ...] | None = None
         self._filters_presenter = FiltersPresenter()
@@ -271,6 +277,8 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
             self._search_widget.hide()
             self._filtered_total = 0
             self._render_entries = ()
+            self._terminology_projection = MappingProxyType({})
+            self._table.set_terminology_projection({}, profile_label=self._profile_label())
             session = self._table_presenter.render((), {}, {})
             self._render_generation = session.generation
             self._update_count_label()
@@ -279,6 +287,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
 
         self._progress.setValue(100)
         self._entries = list(collection)
+        self._rebuild_terminology_projection()
         self._summary = StatisticsSummary.from_entries(self._entries)
         self._summary_view.set_summary(self._summary)
         if content_changed:
@@ -364,6 +373,10 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         self._filtered_total = len(self._render_entries)
         projection = getattr(self._ctx, "project_projection", None)
         snapshot = projection.snapshot() if projection is not None else None
+        self._table.set_terminology_projection(
+            self._terminology_projection,
+            profile_label=self._profile_label(),
+        )
         session = self._table_presenter.render(
             self._render_entries,
             self._entry_labels,
@@ -420,6 +433,50 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         if item.column() == _COL_TRANS:
             self._table.editItem(item)
 
+    def set_terminology_profile(self, profile) -> None:
+        """Apply one frozen published profile to display without changing entries."""
+
+        if profile == self._terminology_profile:
+            return
+        self._terminology_profile = profile
+        self._rebuild_terminology_projection()
+        self._populate_table()
+
+    def _rebuild_terminology_projection(self) -> None:
+        profile = self._terminology_profile
+        if profile is None:
+            self._terminology_projection = MappingProxyType({})
+            return
+        values = {}
+        for entry in self._entries:
+            key = entry.identity.serialize()
+            values[key] = self._terminology_projector.project(
+                entry_key=key,
+                original=entry.original or "",
+                common_translation=entry.translation or "",
+                content=profile.content,
+                plugin_id=self._terminology_plugin_id(entry),
+            )
+        self._terminology_projection = MappingProxyType(values)
+
+    @staticmethod
+    def _terminology_plugin_id(entry: TranslationEntry) -> str | None:
+        metadata = dict(entry.metadata)
+        configured = metadata.get("terminology_plugin_id")
+        if configured is not None and str(configured).strip():
+            return str(configured).strip()
+        form_id = (entry.form_id_with_plugin or "").strip()
+        if "|" not in form_id:
+            return None
+        plugin_id = form_id.rpartition("|")[2].strip()
+        return plugin_id or None
+
+    def _profile_label(self) -> str | None:
+        profile = self._terminology_profile
+        if profile is None:
+            return None
+        return profile.name
+
     def set_editable_entry_keys(self, keys) -> None:
         """Bind popup activation without making Step2 own the editor window."""
         self._table.set_editable_entry_keys(keys)
@@ -427,6 +484,9 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
     def _on_item_changed(self, item: QTableWidgetItem):
         """译文编辑后原地同步 entry、状态文字与行视觉。"""
         if item.column() != _COL_TRANS:
+            return
+        if self._table.terminology_profile_active:
+            self._table.restore_projected_translation(item)
             return
         # Projection commands notify synchronously. A subscriber may rebuild the
         # table during the command, which deletes this QTableWidgetItem wrapper.
@@ -516,7 +576,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
             ),
             parent=self,
             on_cancel_translation=cancel_translation,
-            cancel_translation_enabled=reset.enabled,
+            cancel_translation_enabled=reset.enabled and not self._table.terminology_profile_active,
         )
 
     def _on_label_toggle(self, entry_ids: tuple[str, ...], lid: str, checked: bool):

@@ -16,6 +16,7 @@ from .effective import SqliteEffectiveTerminologySnapshotPort
 from .inbound_review import SqliteInboundReviewStore
 from .migration import MigrationManifest, TerminologyMigrator
 from .paths import TerminologyPaths
+from .profiles import SqliteTerminologyProfileRepository
 from .queries import CursorCodec, QueryFingerprint
 from .report_snapshot import ReportSection, SqliteReportSnapshotStore
 from .repository import SqliteTerminologyRepository, SqliteTerminologyTransaction
@@ -31,6 +32,7 @@ __all__ = [
     "QueryFingerprint",
     "ReportSection",
     "SqliteTerminologyRepository",
+    "SqliteTerminologyProfileRepository",
     "SqliteReportSnapshotStore",
     "SqliteDraftTransactionAdapter",
     "SqliteEffectiveTerminologySnapshotPort",

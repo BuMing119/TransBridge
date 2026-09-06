@@ -4,7 +4,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QFileDialog, QLineEdit, QMessageBox, QWidget
+from PyQt6.QtWidgets import QFileDialog, QInputDialog, QLineEdit, QMessageBox, QWidget
 
 from transbridge.ui.foundation.adapters import ThemeView
 from transbridge.ui.tools.ai_translator.config_dialogs import open_term_editor, show_connection_test
@@ -55,6 +55,7 @@ class AITranslatorWindow(QWidget):
         task_runtime: TaskRuntime | None = None,
         theme_view: ThemeView | None = None,
         settings_requested: Callable[[], None] | None = None,
+        terminology_profile_controller=None,
     ):
         super().__init__(parent, Qt.WindowType.Window)
         self._ctx = ctx
@@ -81,6 +82,14 @@ class AITranslatorWindow(QWidget):
         self._view_callbacks = EmbeddingWindowCallbacks(self)
         self._view = AITranslatorView(self, self._view_callbacks, theme_view=theme_view)
         self._view_port = TranslatorViewPort(self._view)
+        from transbridge.ui.tools.ai_translator.naming_scheme_controller import AiNamingSchemeBinding
+
+        self._naming_schemes = AiNamingSchemeBinding(
+            terminology_profile_controller,
+            self._view.controls,
+            self.request_task_refresh,
+            self,
+        )
         self._task_refresh_timer = QTimer(self)
         self._task_refresh_timer.setSingleShot(True)
         self._task_refresh_timer.timeout.connect(self.update_estimate)
@@ -113,6 +122,18 @@ class AITranslatorWindow(QWidget):
         self._run_controller = RunController(task_runtime=task_runtime)
         self._theme_binding = AiThemeBinding(self, theme_view, lambda binding: apply_window_theme(self, binding))
         self._config_presenter.load()
+        from transbridge.ai_translator.term_source_reader import ConfiguredTermSourceReader
+        from transbridge.ui.tools.ai_translator.terminology_source_import_controller import (
+            TerminologySourceImportController,
+        )
+
+        self._term_source_imports = TerminologySourceImportController(
+            self,
+            self._view.controls.save_term_source_as_scheme_btn,
+            terminology_profile_controller,
+            ConfiguredTermSourceReader,
+        )
+        self._view.controls.save_term_source_as_scheme_btn.setEnabled(terminology_profile_controller is not None)
         self._embedding_models.restore_managed_path()
         self._custom_profiles = CustomProfileController(
             self, self._view, self._view_port, self._config_presenter, self.on_mode_changed
@@ -134,6 +155,7 @@ class AITranslatorWindow(QWidget):
         task_runtime: TaskRuntime | None = None,
         theme_view: ThemeView | None = None,
         settings_requested: Callable[[], None] | None = None,
+        terminology_profile_controller=None,
     ) -> QWidget | None:
         """打开统一任务，默认勾选当前内容，可扩展到多个插件。"""
         if not ctx.slots:
@@ -146,6 +168,7 @@ class AITranslatorWindow(QWidget):
             task_runtime=task_runtime,
             theme_view=theme_view,
             settings_requested=settings_requested,
+            terminology_profile_controller=terminology_profile_controller,
         )
         show_and_activate(window)
         return window
@@ -160,6 +183,7 @@ class AITranslatorWindow(QWidget):
         task_runtime: TaskRuntime | None = None,
         theme_view: ThemeView | None = None,
         settings_requested=None,
+        terminology_profile_controller=None,
     ) -> QWidget | None:
         """旧调用方的兼容别名；不再创建独立批量窗口。"""
         return cls.open_for_translation(
@@ -169,6 +193,7 @@ class AITranslatorWindow(QWidget):
             task_runtime=task_runtime,
             theme_view=theme_view,
             settings_requested=settings_requested,
+            terminology_profile_controller=terminology_profile_controller,
         )
 
     def on_provider_changed(self):
@@ -298,6 +323,78 @@ class AITranslatorWindow(QWidget):
 
     def on_view_terms(self):
         open_term_editor(self, self._ctx.esp_path)
+
+    def on_save_term_source_as_scheme(self) -> None:
+        from pathlib import Path
+
+        from transbridge.ai_translator.term_source_reader import ConfiguredTermSourceReader, TermSourceReadRequest
+        from transbridge.ui.paratranz.target_context import bound_paratranz_project
+
+        item = self._view.controls.priority_list.currentItem()
+        if item is None:
+            QMessageBox.information(self, "选择术语来源", "请先在列表中单击要保存的术语来源。")
+            return
+        source_id = str(item.data(Qt.ItemDataRole.UserRole) or "")
+        config = self._config_presenter.build()
+        file_path = {
+            "json": config.local_json_path,
+            "csv": getattr(config, "local_csv_path", ""),
+            "excel": config.local_excel_path,
+        }.get(source_id)
+        esp_path = None
+        source_label = item.text()
+        if source_id == "dynamic":
+            slots = [slot for slot in self._view.sources_panel.selected_slots() if getattr(slot, "esp_path", None)]
+            if not slots:
+                QMessageBox.warning(self, "选择动态词库", "请先在左侧勾选一个带动态词库的插件。")
+                return
+            slot = slots[0]
+            if len(slots) > 1:
+                labels = [getattr(candidate, "label", None) or Path(candidate.esp_path).stem for candidate in slots]
+                choice, accepted = QInputDialog.getItem(self, "选择动态词库", "插件", labels, 0, False)
+                if not accepted:
+                    return
+                slot = slots[labels.index(choice)]
+            esp_path = slot.esp_path
+            source_label = f"动态词库 · {getattr(slot, 'label', None) or Path(esp_path).stem}"
+        paratranz = bound_paratranz_project(self._ctx) if source_id == "paratranz" else None
+        if source_id == "paratranz" and paratranz is not None:
+            source_label = f"ParaTranz 术语 · {paratranz.get('name') or paratranz['id']}"
+        elif file_path:
+            local_label = {"json": "本地 JSON", "csv": "本地 CSV", "excel": "本地 Excel"}[source_id]
+            source_label = f"{local_label} · {Path(file_path).name}"
+        request = TermSourceReadRequest(
+            source_id=source_id,
+            source_label=source_label,
+            file_path=file_path,
+            esp_path=esp_path,
+            excel_original_column=config.excel_original_col,
+            excel_translation_column=config.excel_translation_col,
+            paratranz_project_id=None if paratranz is None else int(paratranz["id"]),
+        )
+        reader_factory = None
+        if source_id == "paratranz":
+            from transbridge.paratranz.config_manager import ParatranzConfig
+            from transbridge.paratranz.terms_service import ParaTranzTermsService
+
+            live = self._ctx.config
+            frozen = ParatranzConfig(
+                token=live.token,
+                user_id=live.user_id,
+                base_url=live.base_url,
+                timeout=live.timeout,
+                extra_headers=dict(live.headers),
+            )
+
+            def frozen_paratranz_reader():
+                return ConfiguredTermSourceReader(lambda: ParaTranzTermsService.from_config(frozen))
+
+            reader_factory = frozen_paratranz_reader
+        self._term_source_imports.start_with_reader(
+            request,
+            default_name=f"{source_label} 方案",
+            reader_factory=reader_factory,
+        )
 
     def on_start(self):
         from .task_runtime import start_task

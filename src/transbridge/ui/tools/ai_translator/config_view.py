@@ -6,7 +6,7 @@ from collections.abc import Callable
 import logging
 from typing import Protocol
 
-from PyQt6.QtCore import QObject, QSignalBlocker, QTimer
+from PyQt6.QtCore import QObject, QSignalBlocker, Qt, QTimer
 from PyQt6.QtWidgets import QLineEdit, QListWidgetItem, QWidget
 
 from transbridge.config.language_profiles import discover_language_profiles
@@ -28,6 +28,7 @@ class AITranslatorViewCallbacks(Protocol):
     def on_test_connection(self, target: str = "llm") -> None: ...
     def browse_file(self, target: QLineEdit, file_filter: str) -> None: ...
     def on_view_terms(self) -> None: ...
+    def on_save_term_source_as_scheme(self) -> None: ...
     def on_open_history(self) -> None: ...
     def on_open_settings(self) -> None: ...
     def on_batch_start(self) -> None: ...
@@ -140,7 +141,9 @@ class WindowConfigView:
             h.priority_list.clear()
             for key in cfg.term_priority:
                 if key in priority_map:
-                    h.priority_list.addItem(QListWidgetItem(priority_map[key]))
+                    item = QListWidgetItem(priority_map[key])
+                    item.setData(Qt.ItemDataRole.UserRole, key)
+                    h.priority_list.addItem(item)
         self._callbacks.on_provider_changed()
         self._callbacks.on_embed_provider_changed()
         from .view_state import TranslatorViewPort
@@ -194,17 +197,10 @@ class WindowConfigView:
         cfg.embedding.model = h.embed_model_edit.text().strip()
         cfg.embedding.api_key = h.embed_apikey_edit.text().strip()
         cfg.embedding.base_url = h.embed_baseurl_edit.text().strip()
-        key_map = {
-            "dynamic（动态词库）": "dynamic",
-            "paratranz（ParaTranz 术语）": "paratranz",
-            "json（本地 JSON）": "json",
-            "csv（本地 CSV）": "csv",
-            "excel（本地 Excel）": "excel",
-        }
         cfg.term_priority = [
-            key_map[h.priority_list.item(index).text()]
+            str(h.priority_list.item(index).data(Qt.ItemDataRole.UserRole))
             for index in range(h.priority_list.count())
-            if h.priority_list.item(index).text() in key_map
+            if h.priority_list.item(index).data(Qt.ItemDataRole.UserRole)
         ]
         return cfg
 

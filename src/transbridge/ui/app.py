@@ -110,12 +110,18 @@ def main(
             if "effective_terminology_factory" in use_case_names
             else None
         )
+        terminology_profile_service_factory = (
+            app_runtime.use_cases.resolve("terminology_profile_service_factory")
+            if "terminology_profile_service_factory" in use_case_names
+            else None
+        )
         projection = AppContext(
             project_projection=app_runtime.use_cases.resolve("project_projection"),
             project_commands=app_runtime.use_cases.resolve("gui_project_commands"),
             project_remote_bindings=app_runtime.use_cases.resolve("project_remote_bindings"),
             runtime_context=binding.context,
             effective_terminology_factory=effective_terminology_factory,
+            terminology_profile_service_factory=terminology_profile_service_factory,
         )
         window = MainWindow(
             app_context=projection,

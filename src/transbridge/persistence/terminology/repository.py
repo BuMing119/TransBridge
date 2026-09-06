@@ -107,6 +107,9 @@ class SqliteTerminologyRepository:
         self.report_snapshots = SqliteReportSnapshotStore(self._connection, build_reader=self)
         self.sync_state = SqliteTerminologySyncState(self)
         self.inbound_reviews = SqliteInboundReviewStore(self)
+        from .profiles import SqliteTerminologyProfileRepository
+
+        self.localization_profiles = SqliteTerminologyProfileRepository(self._connection, lock=self._lock)
         self._drafts = DraftStore(
             self._connection,
             project_id,

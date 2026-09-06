@@ -13,6 +13,11 @@ from transbridge.ai_translator.term_formats import TermEntry
 from transbridge.application.terminology.effective import EffectiveSnapshotStatus, EffectiveTerminologySnapshot
 from transbridge.application.terminology.identity import normalize_original, term_id
 from transbridge.application.terminology.models import DecisionStatus, TermDecision, TermScope
+from transbridge.application.terminology_profiles import (
+    ProfileTermMapping,
+    TerminologyProfileContent,
+    is_profiled_version_id,
+)
 from transbridge.application.terminology_sync.identity import sync_item_id, sync_line_id
 from transbridge.application.terminology_sync.mapping import local_content
 from transbridge.application.terminology_sync.models import (
@@ -166,9 +171,12 @@ class _Repositories:
 class _ProductionEffectiveSeam:
     effective_adapter = ProductionTerminologyComposition.effective_adapter
     freeze_echo_links = ProductionTerminologyComposition.freeze_echo_links
+    profile_service_for = ProductionTerminologyComposition.profile_service_for
 
     def __init__(self, repository: SqliteTerminologyRepository) -> None:
         self.repositories = _Repositories(repository)
+        self._profile_services = {}
+        self._sync_lock = threading.RLock()
         identity = SimpleNamespace(value="project-1")
         self.lifecycle = SimpleNamespace(
             active=SimpleNamespace(project_ref=SimpleNamespace(identity=identity), project=object())
@@ -253,5 +261,44 @@ def test_production_sqlite_composition_filters_exact_echo_and_preserves_independ
         assert frozen.legacy_term_filter.filter_entries("json", (echo, independent)) == (echo, independent)
         assert frozen.snapshot_ref.version_id == "version-1"
         assert frozen.snapshot_ref.content_digest == snapshot.content_digest
+    finally:
+        repository.close()
+
+
+def test_production_profile_selection_overlays_ai_terms_and_disables_paratranz_legacy_source(tmp_path: Path) -> None:
+    repository = SqliteTerminologyRepository.open(str(tmp_path), "project-1")
+    try:
+        _publish(repository)
+        composition = _ProductionEffectiveSeam(repository)
+        profiles = composition.profile_service_for("project-1")
+        profile = profiles.create("project-1", "本体汉化 A")
+        draft = profiles.save_draft(
+            profile.profile_id,
+            TerminologyProfileContent(mappings=(ProfileTermMapping("Dragon", "巨龙", "龙"),)),
+            expected_revision=profile.draft_revision,
+        )
+        profiles.publish(profile.profile_id, expected_draft_revision=draft.draft_revision)
+        profiles.select("project-1", "variant-1", profile.profile_id)
+
+        frozen = freeze_project_terminology(
+            SimpleNamespace(
+                active_version_identity=("project-1", "variant-1"),
+                effective_terminology_factory=composition,
+            )
+        )
+        loaded = frozen.adapter.load(frozen.context, ())
+
+        assert composition.profile_service_for("project-1") is profiles
+        assert is_profiled_version_id(frozen.snapshot_ref.version_id)
+        assert [(entry.term, entry.translation) for entry in loaded.entries] == [("Dragon", "巨龙")]
+        assert frozen.legacy_term_filter is not None
+        assert "explicit profile-to-remote mapping" in frozen.legacy_term_filter.diagnostic
+        assert (
+            frozen.legacy_term_filter.filter_entries(
+                "paratranz",
+                (TermEntry("Independent", "独立远端术语", "paratranz", external_id=99),),
+            )
+            == ()
+        )
     finally:
         repository.close()

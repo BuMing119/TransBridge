@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from typing import Protocol
 
 from transbridge.application.contracts import (
     Diagnostic,
@@ -73,6 +74,26 @@ class WritePreflightCheck:
     warning: bool = False
 
 
+class FrozenWriteEntryProjection(Protocol):
+    @property
+    def identity(self) -> str: ...
+
+    @property
+    def metadata(self) -> tuple[tuple[str, str], ...]: ...
+
+    def project_entries(
+        self,
+        entries: tuple[TranslationEntry, ...],
+    ) -> tuple[tuple[TranslationEntry, ...], tuple[object, ...]]: ...
+
+
+class WriteEntryProjectionSource(Protocol):
+    def freeze(self, project_id: str, variant_id: str) -> FrozenWriteEntryProjection: ...
+
+
+_UNSET_PROJECTION = object()
+
+
 @dataclass(frozen=True, slots=True)
 class HydratedWritePreflight:
     draft: HydratedWriteDraft
@@ -81,6 +102,9 @@ class HydratedWritePreflight:
     checks: tuple[WritePreflightCheck, ...]
     blocked_entry_keys: tuple[str, ...] = ()
     artifact_fingerprints: tuple[tuple[str, FileFingerprint], ...] = ()
+    projected_entries: tuple[TranslationEntry, ...] = ()
+    projection_identity: str | None = None
+    projection_metadata: tuple[tuple[str, str], ...] = ()
 
     @property
     def ready(self) -> bool:
@@ -94,16 +118,49 @@ class HydratedWritePreflightService:
         filesystem: PublishFilesystemPort | None = None,
         *,
         stage_policy: StagePolicyPort | None = None,
+        entry_projection: WriteEntryProjectionSource | None = None,
     ) -> None:
         self._catalog = catalog or default_format_catalog()
         self._filesystem = filesystem or OsPublishFilesystem()
         self._stage_policy = stage_policy or DEFAULT_STAGE_POLICY
+        self._entry_projection = entry_projection
 
-    def preflight(self, draft: HydratedWriteDraft) -> HydratedWritePreflight:
+    def freeze_projection(self, draft: HydratedWriteDraft) -> FrozenWriteEntryProjection | None:
+        if self._entry_projection is None or draft.context.project_id is None or draft.context.variant_id is None:
+            return None
+        return self._entry_projection.freeze(draft.context.project_id, draft.context.variant_id)
+
+    def preflight(
+        self,
+        draft: HydratedWriteDraft,
+        *,
+        frozen_projection: FrozenWriteEntryProjection | None | object = _UNSET_PROJECTION,
+    ) -> HydratedWritePreflight:
         target = self._filesystem.canonicalize(draft.target_path)
         parent = Path(target).parent
         adapter = self._catalog.adapter(draft.format_id)
         checks: list[WritePreflightCheck] = []
+        entries = _translation_entries(draft.entries)
+        projection_identity = None
+        projection_metadata: tuple[tuple[str, str], ...] = ()
+        projection_diagnostics: tuple[object, ...] = ()
+        frozen = self.freeze_projection(draft) if frozen_projection is _UNSET_PROJECTION else frozen_projection
+        if frozen is not None:
+            entries, projection_diagnostics = frozen.project_entries(entries)
+            projection_identity = frozen.identity
+            projection_metadata = frozen.metadata
+        checks.append(
+            WritePreflightCheck(
+                "TERMINOLOGY_PROFILE_PROJECTION",
+                not projection_diagnostics,
+                (
+                    "译名方案包含无法自动确认的位置；这些位置保留项目译文。"
+                    if projection_diagnostics
+                    else "本次写出使用的译名方案已固定。"
+                ),
+                warning=bool(projection_diagnostics),
+            )
+        )
         checks.append(
             WritePreflightCheck(
                 "FORMAT_WRITE_CAPABILITY",
@@ -147,7 +204,7 @@ class HydratedWritePreflightService:
         )
         blocked = tuple(
             entry.identity.serialize()
-            for entry in _translation_entries(draft.entries)
+            for entry in entries
             if self._stage_policy.evaluate(
                 entry.stage,
                 entry.translation,
@@ -177,11 +234,14 @@ class HydratedWritePreflightService:
         )
         return HydratedWritePreflight(
             draft,
-            _write_digest(draft),
+            _write_digest(draft, entries=entries, projection_identity=projection_identity),
             initial,
             tuple(checks),
             blocked,
             fingerprints,
+            entries,
+            projection_identity,
+            projection_metadata,
         )
 
 
@@ -207,12 +267,26 @@ class HydratedWriteWorkload:
 
     def __call__(self, run_context) -> OperationResult[dict[str, object]]:
         draft = self._preflight.draft
-        if _write_digest(draft) != self._preflight.request_digest:
+        entries = self._preflight.projected_entries or _translation_entries(draft.entries)
+        if (
+            _write_digest(
+                draft,
+                entries=entries,
+                projection_identity=self._preflight.projection_identity,
+            )
+            != self._preflight.request_digest
+        ):
             return _failed("WRITE_REQUEST_CHANGED", "写回输入在预检后发生变化。", run_context.ref.run_id)
         adapter = self._catalog.adapter(draft.format_id)
         if adapter is None:
             return _failed("FORMAT_ADAPTER_UNAVAILABLE", "写回格式适配器不可用。", run_context.ref.run_id)
-        request_context = replace(draft.context, run_id=run_context.ref.run_id)
+        request_metadata = dict(draft.context.metadata)
+        request_metadata.update(self._preflight.projection_metadata)
+        request_context = replace(
+            draft.context,
+            run_id=run_context.ref.run_id,
+            metadata=tuple(sorted(request_metadata.items())),
+        )
         options = dict(draft.options)
         options["source_authority"] = "hydration-v2"
         if draft.format_id is FormatId.PLUGIN_SSE:
@@ -220,7 +294,7 @@ class HydratedWriteWorkload:
         request = WriteRequest(
             target=SourceDescriptor(draft.target_path, display_name=Path(draft.target_path).name),
             format_id=draft.format_id,
-            entries=_translation_entries(draft.entries),
+            entries=entries,
             variant_revision=draft.variant_revision,
             context=request_context,
             source_snapshot=draft.source_snapshot,
@@ -231,13 +305,14 @@ class HydratedWriteWorkload:
         if len(self._preflight.artifact_fingerprints) > 1:
             from .publish.plugin_bundle import PluginBundlePublisher
 
-            return PluginBundlePublisher(self._filesystem, adapter).publish(
+            result = PluginBundlePublisher(self._filesystem, adapter).publish(
                 request,
                 self._preflight.artifact_fingerprints,
                 conflict_policy=draft.conflict_policy,
                 backup_policy=draft.backup_policy,
                 commit_guard=run_context.publish_commit_guard(),
             )
+            return _with_projection_metadata(result, self._preflight.projection_metadata)
         target = PublishTarget(
             draft.target_path,
             conflict_policy=draft.conflict_policy,
@@ -252,7 +327,10 @@ class HydratedWriteWorkload:
             validator=FormatRoundTripValidator(adapter, self._filesystem),
             commit_guard=run_context.publish_commit_guard(),
         )
-        return _operation_result(result, run_context.ref.run_id)
+        return _with_projection_metadata(
+            _operation_result(result, run_context.ref.run_id),
+            self._preflight.projection_metadata,
+        )
 
 
 def _translation_entries(
@@ -282,7 +360,13 @@ def _translation_entries(
     return tuple(output)
 
 
-def _write_digest(draft: HydratedWriteDraft) -> str:
+def _write_digest(
+    draft: HydratedWriteDraft,
+    *,
+    entries: tuple[TranslationEntry, ...] | None = None,
+    projection_identity: str | None = None,
+) -> str:
+    frozen_entries = _translation_entries(draft.entries) if entries is None else entries
     payload = {
         "source": draft.source_snapshot.sha256,
         "format": draft.format_id.value,
@@ -291,6 +375,7 @@ def _write_digest(draft: HydratedWriteDraft) -> str:
         "conflict": draft.conflict_policy.value,
         "backup": draft.backup_policy.value,
         "options": list(draft.options),
+        "terminology_profile_projection": projection_identity,
         "entries": [
             {
                 "key": entry.identity.serialize(),
@@ -300,7 +385,7 @@ def _write_digest(draft: HydratedWriteDraft) -> str:
                 "stage": entry.stage,
                 "string_id": entry.string_id,
             }
-            for entry in _translation_entries(draft.entries)
+            for entry in frozen_entries
         ],
     }
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode()
@@ -347,3 +432,14 @@ def _failed(code: str, message: str, run_id: str) -> OperationResult:
         DomainError(ErrorCategory.EXTERNAL, code, message),
         run_id=run_id,
     )
+
+
+def _with_projection_metadata(
+    result: OperationResult[dict[str, object]],
+    metadata: tuple[tuple[str, str], ...],
+) -> OperationResult[dict[str, object]]:
+    if not metadata or result.value is None:
+        return result
+    value = dict(result.value)
+    value["terminology_profile"] = dict(metadata)
+    return replace(result, value=value)

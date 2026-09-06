@@ -181,6 +181,7 @@ def _build_task_tabs(
     task_layout = QVBoxLayout(view._task_surface)
     task_layout.setContentsMargins(0, 0, 0, 0)
     task_layout.setSpacing(0)
+    task_layout.addWidget(_build_naming_scheme_group(view, callbacks, view._task_surface))
     view.controls.tabs = QTabWidget(view._task_surface)
     configure_task_tabs(view.controls.tabs)
     view.controls.tabs.setAccessibleName("AI 任务配置")
@@ -224,6 +225,33 @@ def _build_task_tabs(
     root.addWidget(view._task_surface, 1)
 
 
+def _build_naming_scheme_group(view: object, callbacks: object, parent: QWidget) -> QGroupBox:
+    group = QGroupBox("本次采用的译名方案", parent)
+    configure_task_panel(group)
+    layout = QVBoxLayout(group)
+    row = QHBoxLayout()
+    view.controls.naming_scheme_combo = QComboBox(group)
+    view.controls.naming_scheme_combo.setAccessibleName("本次采用的译名方案")
+    view.controls.naming_scheme_combo.addItem("保持当前译名", None)
+    view.controls.naming_scheme_combo.setEnabled(False)
+    configure_task_input(view.controls.naming_scheme_combo)
+    row.addWidget(view.controls.naming_scheme_combo, 1)
+    view.controls.naming_scheme_manage_btn = QPushButton("管理方案…", group)
+    view.controls.naming_scheme_manage_btn.setAccessibleName("管理译名方案")
+    view.controls.naming_scheme_manage_btn.setEnabled(False)
+    configure_task_button(view.controls.naming_scheme_manage_btn)
+    row.addWidget(view.controls.naming_scheme_manage_btn)
+    layout.addLayout(row)
+    view.controls.naming_scheme_status_label = QLabel(
+        "保持项目译文中的现有译名；术语来源仍在“术语库”页设置。",
+        group,
+    )
+    view.controls.naming_scheme_status_label.setWordWrap(True)
+    view.controls.naming_scheme_status_label.setAccessibleName("译名方案说明")
+    layout.addWidget(view.controls.naming_scheme_status_label)
+    return group
+
+
 def _build_terms_group(view: object, callbacks: object, parent: QWidget) -> QGroupBox:
     group = QGroupBox("术语来源（拖拽调整优先级）", parent)
     configure_task_panel(group)
@@ -232,15 +260,27 @@ def _build_terms_group(view: object, callbacks: object, parent: QWidget) -> QGro
     configure_task_list(view.controls.priority_list)
     view.controls.priority_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
     view.controls.priority_list.setMaximumHeight(120)
-    for source in (
-        "dynamic（动态词库）",
-        "paratranz（ParaTranz 术语）",
-        "json（本地 JSON）",
-        "csv（本地 CSV）",
-        "excel（本地 Excel）",
+    for source_id, source_label in (
+        ("dynamic", "dynamic（动态词库）"),
+        ("paratranz", "paratranz（ParaTranz 术语）"),
+        ("json", "json（本地 JSON）"),
+        ("csv", "csv（本地 CSV）"),
+        ("excel", "excel（本地 Excel）"),
     ):
-        view.controls.priority_list.addItem(QListWidgetItem(source))
+        item = QListWidgetItem(source_label)
+        item.setData(Qt.ItemDataRole.UserRole, source_id)
+        view.controls.priority_list.addItem(item)
     layout.addWidget(view.controls.priority_list)
+    view.controls.save_term_source_as_scheme_btn = QPushButton("从选中来源创建译名方案…", group)
+    view.controls.save_term_source_as_scheme_btn.setAccessibleName("从选中术语来源创建译名方案")
+    view.controls.save_term_source_as_scheme_btn.setToolTip(
+        "读取当前选中来源的一次性快照，并以项目术语为基础创建独立的译名方案"
+    )
+    configure_task_button(view.controls.save_term_source_as_scheme_btn)
+    view.controls.save_term_source_as_scheme_btn.clicked.connect(
+        getattr(callbacks, "on_save_term_source_as_scheme", lambda: None)
+    )
+    layout.addWidget(view.controls.save_term_source_as_scheme_btn)
     for label, name, file_filter in (
         ("本地 JSON", "json_path_edit", "JSON 文件 (*.json)"),
         ("本地 CSV", "csv_path_edit", "CSV 文件 (*.csv)"),

@@ -54,6 +54,7 @@ class AppContext(QObject):
         project_remote_bindings=None,
         runtime_context=None,
         effective_terminology_factory=None,
+        terminology_profile_service_factory=None,
     ):
         super().__init__(parent)
         self._config: ParatranzConfig = ParatranzConfig.create_or_load()
@@ -90,6 +91,7 @@ class AppContext(QObject):
         self._project_remote_bindings = project_remote_bindings
         self._runtime_context = runtime_context
         self._effective_terminology_factory = effective_terminology_factory
+        self._terminology_profile_service_factory = terminology_profile_service_factory
         self._projection_subscription: ProjectionSubscription | None = None
         self._projection_dirty = False
         self._projection_revision: int | None = None
@@ -656,6 +658,12 @@ class AppContext(QObject):
         """Return the injected Project/Variant-scoped read-only adapter factory."""
 
         return self._effective_terminology_factory
+
+    @property
+    def terminology_profile_service_factory(self):
+        """Return the profile composition used by explicit export boundaries."""
+
+        return self._terminology_profile_service_factory
 
     def _on_project_projection(self, snapshot: ProjectionSnapshot | None) -> None:
         if QThread.currentThread() != self.thread():

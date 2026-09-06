@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication, QPushButton, QWidget
 import pytest
 
@@ -22,6 +23,7 @@ class _Callbacks:
         self.settings_requests = 0
         self.source_requests = 0
         self.preset_requests = 0
+        self.import_requests = 0
 
     def on_sources_changed(self) -> None:
         self.source_requests += 1
@@ -52,6 +54,9 @@ class _Callbacks:
 
     def on_view_terms(self) -> None:
         return None
+
+    def on_save_term_source_as_scheme(self) -> None:
+        self.import_requests += 1
 
     def on_open_history(self) -> None:
         return None
@@ -107,6 +112,13 @@ def test_single_ai_view_exposes_four_visible_task_pages_without_legacy_entries(q
     ]
     assert controls.tabs.isVisible()
     assert controls.tabs.accessibleName() == "AI 任务配置"
+    assert controls.naming_scheme_combo.accessibleName() == "本次采用的译名方案"
+    assert controls.naming_scheme_combo.currentText() == "保持当前译名"
+    assert not controls.naming_scheme_combo.isEnabled()
+    assert controls.naming_scheme_manage_btn.text() == "管理方案…"
+    assert "术语来源" in controls.naming_scheme_status_label.text()
+    assert controls.save_term_source_as_scheme_btn.text() == "从选中来源创建译名方案…"
+    assert controls.priority_list.item(0).data(Qt.ItemDataRole.UserRole) == "dynamic"
     assert view.sources_panel.isVisible()
     assert view.sources_panel.selected_slots() == []
     assert view._save_preset_btn.isVisible()
@@ -160,5 +172,7 @@ def test_unified_task_uses_project_context_and_routes_source_and_preset_actions(
     assert callbacks.source_requests == 1
     view._save_preset_btn.click()
     assert callbacks.preset_requests == 1
+    view.controls.save_term_source_as_scheme_btn.click()
+    assert callbacks.import_requests == 1
     assert view.sources_panel.geometry().right() < view._task_surface.geometry().left()
     parent.close()
