@@ -24,6 +24,8 @@ from .object_views import TermsView, VersionsView
 from .paged_models import KeysetPagedTableModel, PagedColumn
 from .presenter import TerminologyPresenter, TerminologyUiServices
 from .reports_view import ReportsView
+from .schemes_controller import TerminologySchemesController
+from .schemes_view import TerminologySchemesView
 from .sync_presenter import TerminologySyncPresenter
 from .sync_task_adapter import TerminologySyncTaskAdapter
 from .sync_view import TerminologySyncPanel
@@ -67,7 +69,14 @@ class TerminologyWindow(QWidget):
 
     task_changed = pyqtSignal(object)
 
-    def __init__(self, presenter: TerminologyPresenter, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        presenter: TerminologyPresenter,
+        parent: QWidget | None = None,
+        *,
+        ui_context=None,
+        profile_controller=None,
+    ) -> None:
         super().__init__(parent, Qt.WindowType.Window)
         self.presenter = presenter
         self.setWindowTitle("项目术语工作台")
@@ -91,6 +100,8 @@ class TerminologyWindow(QWidget):
         self._conflict_filter = ConflictFilter()
         self._closed = False
         self._sync_tasks: TerminologySyncTaskAdapter | None = None
+        self._ui_context = ui_context
+        self._profile_controller = profile_controller
         self._init_ui()
         self.task_changed.connect(self._on_task_change, Qt.ConnectionType.QueuedConnection)
         presenter.bind_tasks(self.task_changed.emit)
@@ -148,6 +159,13 @@ class TerminologyWindow(QWidget):
         self.build_view.terms_requested.connect(lambda: self.workspace.set_current_area(TerminologyArea.TERMS))
         self.build_view.versions_requested.connect(lambda: self.workspace.set_current_area(TerminologyArea.VERSIONS))
         self.terms_view = TermsView(self.draft_view, self.conflicts_view, self)
+        self.schemes_view = TerminologySchemesView(self)
+        self._schemes = TerminologySchemesController(
+            self.schemes_view,
+            self._ui_context,
+            self._profile_controller,
+            self,
+        )
         self.versions_view = VersionsView(self.history_view, self)
         presenter = self.presenter
         sync_service = presenter.services.sync
@@ -180,6 +198,7 @@ class TerminologyWindow(QWidget):
         self.reports_view.retry_requested.connect(self._retry_changelog)
         self.workspace.add_area(TerminologyArea.OVERVIEW, self.build_view)
         self.workspace.add_area(TerminologyArea.TERMS, self.terms_view)
+        self.workspace.add_area(TerminologyArea.SCHEMES, self.schemes_view)
         self.workspace.add_area(TerminologyArea.VERSIONS, self.versions_view)
         self.workspace.add_area(TerminologyArea.REPORTS, self.reports_view)
 
@@ -492,7 +511,14 @@ class TerminologyLauncher:
         context = _terminology_context(self._host, runtime)
         services = TerminologyUiServices.from_runtime(runtime, context)
         parent = self._host if isinstance(self._host, QWidget) else None
-        window = TerminologyWindow(TerminologyPresenter(services, context), parent)
+        workbench = getattr(self._host, "workbench", None)
+        profile_controller = getattr(workbench, "terminology_profile_controller", None)
+        window = TerminologyWindow(
+            TerminologyPresenter(services, context),
+            parent,
+            ui_context=getattr(self._host, "context", None),
+            profile_controller=profile_controller,
+        )
         identity = id(window)
         window.destroyed.connect(lambda _obj=None: self._clear(identity))
         self._window = window

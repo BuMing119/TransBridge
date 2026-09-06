@@ -271,10 +271,10 @@ def _build_terms_group(view: object, callbacks: object, parent: QWidget) -> QGro
         item.setData(Qt.ItemDataRole.UserRole, source_id)
         view.controls.priority_list.addItem(item)
     layout.addWidget(view.controls.priority_list)
-    view.controls.save_term_source_as_scheme_btn = QPushButton("从选中来源创建译名方案…", group)
-    view.controls.save_term_source_as_scheme_btn.setAccessibleName("从选中术语来源创建译名方案")
+    view.controls.save_term_source_as_scheme_btn = QPushButton("前往术语工作台创建译名方案…", group)
+    view.controls.save_term_source_as_scheme_btn.setAccessibleName("前往术语工作台创建译名方案")
     view.controls.save_term_source_as_scheme_btn.setToolTip(
-        "读取当前选中来源的一次性快照，并以项目术语为基础创建独立的译名方案"
+        "译名方案是项目术语资产，请在术语工作台中选择来源、预览并创建"
     )
     configure_task_button(view.controls.save_term_source_as_scheme_btn)
     view.controls.save_term_source_as_scheme_btn.clicked.connect(

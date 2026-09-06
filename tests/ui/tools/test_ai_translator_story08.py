@@ -446,6 +446,33 @@ def test_single_ai_window_has_no_visible_legacy_batch_entry(monkeypatch) -> None
     window.close()
 
 
+def test_ai_naming_scheme_creation_routes_to_the_project_terminology_workbench(monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(config_module.LLMConfig, "load_from_file", lambda: LLMConfig())
+    ctx = SimpleNamespace(
+        slots={},
+        collection=None,
+        esp_path=None,
+        current_project=None,
+        label_library={},
+        entry_labels={},
+    )
+    workbench = SimpleNamespace(filtered_entries=lambda: (), locate_entry=lambda _entry_id: None)
+    opened = []
+    window = AITranslatorWindow(
+        ctx,
+        workbench,
+        terminology_workbench_requested=lambda: opened.append(True),
+    )
+
+    assert window._view.controls.save_term_source_as_scheme_btn.isEnabled()
+    window._view.controls.save_term_source_as_scheme_btn.click()
+
+    assert opened == [True]
+    window.close()
+    app.processEvents()
+
+
 def test_translation_handoff_starts_worker_then_reactivates_progress_deferred() -> None:
     source = Path("src/transbridge/ui/tools/ai_translator/run_controller.py").read_text(encoding="utf-8")
     function = source[source.index("def start_translation_run(") : source.index("def start_mixed_run(")]

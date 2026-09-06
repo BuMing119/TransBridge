@@ -53,7 +53,7 @@ def test_window_uses_horizontal_object_navigation_without_workflow_tabs() -> Non
     )
     window = TerminologyWindow(presenter)
 
-    assert window.workspace.labels == ("概览", "术语", "版本", "报告")
+    assert window.workspace.labels == ("概览", "术语", "译名方案", "版本", "报告")
     assert isinstance(window.workspace.layout(), QHBoxLayout)
     assert isinstance(window.workspace.surface.layout(), QVBoxLayout)
     assert window.workspace.navigation.parent() is window.workspace.surface
@@ -69,6 +69,9 @@ def test_window_uses_horizontal_object_navigation_without_workflow_tabs() -> Non
     window.workspace.set_current_area(TerminologyArea.VERSIONS)
 
     assert window.workspace.current_area() is TerminologyArea.VERSIONS
+    window.workspace.set_current_area(TerminologyArea.SCHEMES)
+    assert window.workspace.current_area() is TerminologyArea.SCHEMES
+    assert window.schemes_view.create_button.text() == "从术语来源创建…"
     window.close()
 
 

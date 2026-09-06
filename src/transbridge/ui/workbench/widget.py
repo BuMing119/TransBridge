@@ -144,6 +144,12 @@ class WorkbenchWidget(QWidget):
     def guidance_banner(self) -> GuidanceBanner:
         return self._guidance_banner
 
+    @property
+    def terminology_profile_controller(self):
+        """Expose the shared naming-scheme coordinator to project tool windows."""
+
+        return self._terminology_profile_controller
+
     def collect_labels(self) -> tuple[dict[str, set[str]], dict[str, dict]]:
         return self._step2.collect_labels()
 
@@ -200,6 +206,9 @@ class WorkbenchWidget(QWidget):
                 theme_view=self._theme_view,
                 settings_requested=settings_requested,
                 terminology_profile_controller=self._terminology_profile_controller,
+                terminology_workbench_requested=lambda: self.intent_requested.emit(
+                    IntentId.TERMINOLOGY_WORKBENCH.value
+                ),
             )
             if win is None:
                 return
