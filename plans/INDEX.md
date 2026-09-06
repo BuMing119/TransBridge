@@ -4,6 +4,7 @@
 
 | Epic | 状态 | Stories | 文档 |
 |---|---|---:|---|
+| history-translation-term-search | 已完成（2026-09-06，多窗口与范围筛选扩展自动化 QA 通过） | 5/5 | [plan](history-translation-term-search/plan.md) · [S01-04 增量记录](../docs/changelogs/history-translation-term-search/story-01-to-04-implementation/2026-09-06-001-历史翻译与术语统一搜索.md) · [S05 增量记录](../docs/changelogs/history-translation-term-search/story-05-multi-window-source-scope/2026-09-06-001-多窗口来源筛选与独立任务栏.md) |
 | unified-ai-task | 已完成（2026-09-06，离线 QA 通过；2 项扩大回归例外已隔离记录） | 4/4 | [plan](unified-ai-task/plan.md) · [QA](unified-ai-task/qa.md) · [模式切换修复记录](../docs/changelogs/unified-ai-task/story-01-mode-switch-stability/2026-09-06-001-模式切换响应与布局稳定性修复.md) |
 | unified-ai-settings-and-batch-dialog | 已完成（2026-09-06，Story 01～07 共享任务视觉 QA 通过） | 7/7 | [plan](unified-ai-settings-and-batch-dialog/plan.md) · [S01-05 增量记录](../docs/changelogs/unified-ai-settings-and-batch-dialog/story-01-to-05-implementation/2026-09-05-001-统一AI设置与任务式翻译界面.md) · [S06-07 增量记录](../docs/changelogs/unified-ai-settings-and-batch-dialog/story-06-to-07-visual-unification/2026-09-06-001-单入口与AI任务视觉统一.md) |
 | smart-assistant-tool-retry-recovery | 已完成（2026-09-05，S01～S04 QA 通过） | 4/4 | [plan](smart-assistant-tool-retry-recovery/plan.md) |
