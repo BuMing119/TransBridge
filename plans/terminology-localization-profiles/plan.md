@@ -109,6 +109,19 @@
 - [x] 确认后创建并发布独立方案，默认不改变当前选择；用户明确要求时才设为当前方案并同步工作台与 AI
 - [x] 覆盖单源加载、合成规则、发布/选择、错误恢复和 UI 入口测试，并通过相关 pytest 与 Ruff 检查
 
+## Story 09：译名方案资产入口归位术语工作台
+
+**依赖**: Story 04、Story 08
+**主要落点**: `src/transbridge/ui/tools/terminology/`、`src/transbridge/ui/tools/terminology_profiles/`、`src/transbridge/ui/tools/ai_translator/`
+
+**验收标准**:
+- [x] 项目术语工作台新增独立“译名方案”区域，集中提供当前方案切换、来源创建和方案管理
+- [x] 来源选择器列出项目插件动态词库、已绑定 ParaTranz 术语和已配置本地来源，并允许直接浏览 JSON、CSV、Excel 文件
+- [x] 来源读取、预览、发布和可选立即使用继续复用既有单源快照与后台任务边界，不在术语工作台复制领域逻辑
+- [x] AI 翻译任务移除就地创建流程，只保留前往项目术语工作台的快捷入口，同时继续显示和消费当前方案
+- [x] 精简运行入口在缺少方案服务时显示不可用状态，不影响既有术语构建、版本和报告页面
+- [x] 补充入口归属、来源发现、切换和跳转回归，并通过相关 pytest 与 Ruff 检查
+
 ## 实施结果与后续增强
 
 - 首版核心闭环已完成：配置档持久化与不可变发布、Workbench 快速切换、只读安全投影、AI 组合快照、GUI/智能助手冻结写出及兼容迁移。
@@ -117,6 +130,8 @@
 - Story 07 自动化 QA：相关 UI、应用、持久化、AI 快照与集成回归 `468 passed`，补充接线/写出/兼容合同 `9 passed`；Ruff check 与 format check 全仓通过。
 - Story 08 已完成：AI“术语库”可从动态词库、ParaTranz、JSON、CSV 或 Excel 的当前单源快照创建完整译名方案；预览明确采用、保持、冲突、作用域不明确、重复和来源独有统计，默认创建后不切换。
 - Story 08 自动化 QA：核心新增边界 `22 passed`，相关 UI、AI、应用与集成回归 `683 passed`，持久化/写出/迁移补充回归 `74 passed`；Ruff check 与 format check 全仓通过。系统 Python 环境缺少 `xlrd`、`faiss` 和 `rank_bm25`，因此另一次包含可选依赖测试的 `696` 项运行有 `10` 项环境失败，非本功能回归。
+- Story 09 已完成：项目术语工作台新增“译名方案”区域并成为来源创建、切换和管理的主入口；AI 翻译任务降为跳转入口，底层快照、预览和发布语义保持不变。
+- Story 09 自动化 QA：新增与核心相关回归 `100 passed`，扩展 UI tools 与 Workbench 回归 `340 passed`；Ruff check 与 format check 全仓通过。
 - 本轮未执行真实 Skyrim 插件/Strings 资产、ParaTranz 联机和人工桌面交互验证。
 - FR5.18 的配置档差异视图、聚合影响统计、在 UI 中新建条目特例/精确出现位置绑定，以及显式 ParaTranz 配置档远端映射属于后续增强；底层模型已为特例和绑定保留契约。
 
