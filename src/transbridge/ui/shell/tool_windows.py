@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from os import getpid
 
 from PyQt6.QtCore import QRect
 from PyQt6.QtWidgets import QApplication
@@ -34,6 +35,8 @@ class ToolWindows:
         self.assistant_panel = None
         self._assistant_overlay_host_geometry: QRect | None = None
         self._terminology_launcher = None
+        self._history_search_windows: dict[int, object] = {}
+        self._next_history_search_window_id = 1
 
     def load_current_user(self) -> None:
         context = self._host.context
@@ -134,6 +137,47 @@ class ToolWindows:
 
         DictionaryPanel(self._host.context, self._host).exec()
 
+    def open_history_search(self) -> None:
+        runtime = getattr(self._host, "app_runtime", None)
+        runtime_context = getattr(self._host, "runtime_context", None)
+        required = {"history_search", "history_search_tasks"}
+        if runtime is None or runtime_context is None or not required.issubset(runtime.use_cases.names()):
+            self._host.show_message("历史搜索当前不可用，请从完整桌面入口启动。")
+            return
+        from transbridge.application.tasks import OwnerRef
+        from transbridge.ui.tools.history_search import HistorySearchWindow
+
+        window_id = self._next_history_search_window_id
+        self._next_history_search_window_id += 1
+        owner = OwnerRef(
+            runtime_context.owner_id,
+            f"history-search:{window_id}",
+            session_id=runtime_context.session_id,
+            permissions=runtime_context.permissions,
+        )
+        window = HistorySearchWindow(
+            runtime.use_cases.resolve("history_search"),
+            runtime.use_cases.resolve("history_search_tasks"),
+            owner,
+            None,
+            taskbar_app_user_model_id=f"TransBridge.HistorySearch.{getpid()}.{window_id}",
+        )
+        window.setWindowTitle(f"历史翻译与术语搜索 {window_id}")
+        icon_getter = getattr(self._host, "windowIcon", None)
+        if callable(icon_getter):
+            icon = icon_getter()
+            if not icon.isNull():
+                window.setWindowIcon(icon)
+        self._history_search_windows[window_id] = window
+        window.finished.connect(lambda _result=0, identity=window_id: self._clear_history_search(identity))
+        window.destroyed.connect(lambda _obj=None, identity=window_id: self._clear_history_search(identity))
+        window.show()
+        window.raise_()
+        window.activateWindow()
+
+    def _clear_history_search(self, window_id: int) -> None:
+        self._history_search_windows.pop(window_id, None)
+
     def open_terminology(self) -> None:
         if self._terminology_launcher is None:
             from transbridge.ui.tools.terminology import TerminologyLauncher
@@ -191,6 +235,11 @@ class ToolWindows:
             self._assistant_overlay_host_geometry = None
 
     def dispose(self, *, wait_for_worker: bool = True) -> None:
+        history_windows = tuple(self._history_search_windows.values())
+        self._history_search_windows.clear()
+        for window in history_windows:
+            window.close()
+            window.deleteLater()
         if self._terminology_launcher is not None:
             self._terminology_launcher.close()
             self._terminology_launcher = None

@@ -238,6 +238,22 @@ def build_runtime(
                 "terminology_tasks",
                 TerminologyTaskEntrypoint(tasks, runtime_use_cases.resolve("terminology_workloads"), commit_port),
             )
+    if "history_search" not in runtime_use_cases.names():
+        from transbridge.translation_memory.manager import TranslationMemoryManager
+
+        from .history_search import build_production_history_search
+
+        translation_memory_root = runtime_settings.get("translation_memory_root")
+        if translation_memory_root is None:
+            translation_memory_root = TranslationMemoryManager().default_dir()
+        history_search = build_production_history_search(
+            persistence=persistence,
+            task_runtime=tasks,
+            translation_memory_root=translation_memory_root,
+        )
+        runtime_use_cases.register("history_search", history_search.query)
+        runtime_use_cases.register("history_search_refresh", history_search.refresh)
+        runtime_use_cases.register("history_search_tasks", history_search.tasks)
     task_history_recorder.start()
     return AppRuntime(
         settings=runtime_settings,

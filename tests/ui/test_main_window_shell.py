@@ -50,6 +50,7 @@ def _callbacks(calls: list[str]) -> MenuCallbacks:
         open_ai_translator=callback("ai"),
         toggle_smart_assistant=callback("assistant"),
         open_dictionary=callback("dictionary"),
+        open_history_search=callback("history_search"),
         open_fomod=callback("fomod"),
         show_user=callback("user"),
         show_mails=callback("mails"),
@@ -66,14 +67,16 @@ def test_menu_builder_connects_each_intent_once() -> None:
     handles.prepare_content.trigger()
     handles.upload.trigger()
     handles.smart_assistant.trigger()
+    handles.history_search.trigger()
     handles.appearance.trigger()
 
-    assert calls == ["prepare_content", "upload", "assistant", "appearance"]
+    assert calls == ["prepare_content", "upload", "assistant", "history_search", "appearance"]
     assert handles.prepare_content.data() == IntentId.WORKBENCH_CONTENT_PREPARE.value
     assert handles.prepare_content.text() == "为当前工程添加插件…"
     assert handles.smart_assistant is handles.view_assistant
     assert handles.smart_assistant.shortcut().toString() == "Ctrl+Shift+I"
     assert handles.smart_assistant.data() == IntentId.VIEW_SMART_ASSISTANT.value
+    assert handles.history_search.data() == IntentId.TRANSLATION_HISTORY_SEARCH.value
     assert handles.appearance.data() == IntentId.SETTINGS_APPEARANCE.value
     assert handles.appearance.text() == "设置…"
     assert handles.appearance.statusTip() == "管理外观、AI 服务、Embedding、ParaTranz 与默认参数"

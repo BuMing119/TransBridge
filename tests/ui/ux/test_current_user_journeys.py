@@ -8,6 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication, QMainWindow
 
+from transbridge.application.history_search import HistorySearchPage, IndexStatus
 from transbridge.ui.coordinators import project_coordinator as project_module
 from transbridge.ui.coordinators.operation_coordinator import OperationCoordinator
 from transbridge.ui.coordinators.parse_coordinator import ParseCoordinator
@@ -80,6 +81,7 @@ def _callbacks(calls: list[str]) -> MenuCallbacks:
         open_ai_translator=callback("translation.ai"),
         toggle_smart_assistant=callback("assistant.toggle"),
         open_dictionary=callback("dictionary.open"),
+        open_history_search=callback("history.search"),
         open_fomod=callback("publish.fomod"),
         show_user=callback("account.user"),
         show_mails=callback("account.mails"),
@@ -97,6 +99,7 @@ def test_current_navigation_routes_each_public_intent_once() -> None:
     handles.prepare_content.trigger()
     handles.ai_translator.trigger()
     handles.dictionary.trigger()
+    handles.history_search.trigger()
     handles.fomod.trigger()
     handles.smart_assistant.trigger()
     handles.view_assistant.trigger()
@@ -105,6 +108,7 @@ def test_current_navigation_routes_each_public_intent_once() -> None:
         "translation.prepare_content",
         "translation.ai",
         "dictionary.open",
+        "history.search",
         "publish.fomod",
         "assistant.toggle",
         "assistant.toggle",
@@ -301,6 +305,73 @@ def test_legacy_batch_ai_entry_routes_to_unified_workbench_tool() -> None:
     assert calls[0][0] == "ai_translator"
     calls[0][1]["settings_requested"]()
     assert settings_sections == ["ai_service"]
+
+
+def test_history_search_menu_opens_independent_windows() -> None:
+    class _Subscription:
+        def close(self) -> None:
+            pass
+
+    class _TaskRuntime:
+        @staticmethod
+        def subscribe(*_args, **_kwargs):
+            return _Subscription()
+
+    class _Tasks:
+        runtime = _TaskRuntime()
+
+    class _Search:
+        @staticmethod
+        def status():
+            return IndexStatus(True, 0, "now")
+
+        @staticmethod
+        def scopes():
+            return ()
+
+        @staticmethod
+        def query(_request):
+            return HistorySearchPage((), 0)
+
+    class _UseCases:
+        values = {"history_search": _Search(), "history_search_tasks": _Tasks()}
+
+        def names(self):
+            return frozenset(self.values)
+
+        def resolve(self, name):
+            return self.values[name]
+
+    host = QMainWindow()
+    host.app_runtime = SimpleNamespace(use_cases=_UseCases())
+    host.runtime_context = SimpleNamespace(
+        owner_id="desktop",
+        session_id="session",
+        permissions=frozenset(),
+    )
+    host.show_message = lambda _message: None
+    tools = ToolWindows(host)
+
+    tools.open_history_search()
+    tools.open_history_search()
+
+    windows = tuple(tools._history_search_windows.values())
+    assert len(windows) == 2
+    assert windows[0] is not windows[1]
+    assert all(window.parent() is None for window in windows)
+    assert {window._owner.entrypoint for window in windows} == {"history-search:1", "history-search:2"}
+    assert {window._taskbar_app_user_model_id for window in windows} == {
+        f"TransBridge.HistorySearch.{os.getpid()}.1",
+        f"TransBridge.HistorySearch.{os.getpid()}.2",
+    }
+    assert {window.windowTitle() for window in windows} == {
+        "历史翻译与术语搜索 1",
+        "历史翻译与术语搜索 2",
+    }
+
+    tools.dispose()
+    assert tools._history_search_windows == {}
+    host.close()
 
 
 def test_ui_settings_injects_existing_service_configs_into_one_center(monkeypatch) -> None:

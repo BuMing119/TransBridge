@@ -52,6 +52,7 @@ class IntentId(StrEnum):
     TRANSLATION_AI = "translation.ai-run"
     TRANSLATION_AI_BATCH = "translation.ai-batch"
     TRANSLATION_DICTIONARY = "translation.dictionary"
+    TRANSLATION_HISTORY_SEARCH = "translation.history-search"
     TRANSLATION_REVIEW = "translation.review"
     TERMINOLOGY_WORKBENCH = "terminology.workbench"
     WORKBENCH_MANAGE = "workbench.manage"
@@ -205,6 +206,13 @@ DEFAULT_ACTION_CATALOG = ActionCatalog((
         "翻译词典…",
         ActionSection.TRANSLATION,
         aliases=("术语", "词库"),
+    ),
+    ActionDescriptor(
+        IntentId.TRANSLATION_HISTORY_SEARCH,
+        "搜索历史翻译与术语…",
+        ActionSection.TRANSLATION,
+        aliases=("搜索译文", "翻译历史", "查找术语"),
+        status_tip="按原文或译文搜索所有已保存的本地翻译与术语",
     ),
     ActionDescriptor(
         IntentId.TRANSLATION_REVIEW,

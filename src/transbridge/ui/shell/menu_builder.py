@@ -42,6 +42,7 @@ class MenuCallbacks:
     show_mails: VoidCallback
     show_about: VoidCallback
     manual_save: VoidCallback
+    open_history_search: VoidCallback = lambda: None
     open_terminology: VoidCallback = lambda: None
     show_context_help: VoidCallback = lambda: None
     show_task_activity: VoidCallback = lambda: None
@@ -72,6 +73,7 @@ class MenuHandles:
     smart_assistant: QAction
     view_assistant: QAction
     dictionary: QAction
+    history_search: QAction
     terminology: QAction
     fomod: QAction
     appearance: QAction
@@ -154,6 +156,11 @@ class MenuBuilder:
         translation_menu.addSeparator()
         ai_translator = self._intent_action(translation_menu, IntentId.TRANSLATION_AI, callbacks.open_ai_translator)
         dictionary = self._intent_action(translation_menu, IntentId.TRANSLATION_DICTIONARY, callbacks.open_dictionary)
+        history_search = self._intent_action(
+            translation_menu,
+            IntentId.TRANSLATION_HISTORY_SEARCH,
+            callbacks.open_history_search,
+        )
         terminology = self._intent_action(
             translation_menu,
             IntentId.TERMINOLOGY_WORKBENCH,
@@ -216,6 +223,7 @@ class MenuBuilder:
             smart_assistant=smart_assistant,
             view_assistant=view_assistant,
             dictionary=dictionary,
+            history_search=history_search,
             terminology=terminology,
             fomod=fomod,
             appearance=appearance,
