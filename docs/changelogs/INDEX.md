@@ -18,6 +18,7 @@ docs/changelogs/
 
 | Epic | Plan | 状态 | Story 数 | 最新日志 |
 |------|------|------|---------|---------|
+| terminology-localization-profiles | [plan](../../plans/terminology-localization-profiles/plan.md) | 已完成，支持从单个术语来源创建独立译名方案；683 项较宽相关回归与 Ruff 门禁通过 | 8 | [S01-06:①本体汉化术语配置档与非破坏性切换](terminology-localization-profiles/story-01-to-06-implementation/2026-09-06-001-本体汉化术语配置档与非破坏性切换.md) · [S08:①从单个术语来源创建译名方案](terminology-localization-profiles/story-08-source-to-naming-scheme/2026-09-06-001-从单个术语来源创建译名方案.md) |
 | unified-ai-task | [plan](../../plans/unified-ai-task/plan.md) | 模式切换追加修复完成，323 项工具回归通过 | 4 | [S01:①模式切换响应与布局稳定性修复](unified-ai-task/story-01-mode-switch-stability/2026-09-06-001-模式切换响应与布局稳定性修复.md) |
 | smart-assistant-tool-retry-recovery | [plan](../../plans/smart-assistant-tool-retry-recovery/plan.md) | ✅ S01-04 已完成，字段级诊断与 Smart Assistant QA 通过 | 4 | [S01-03:①工具失败自纠错闭环](smart-assistant-tool-retry-recovery/story-01-to-03-implementation/2026-09-05-001-智能助手工具失败自纠错闭环.md) · [S04:①字段级参数诊断](smart-assistant-tool-retry-recovery/story-04-field-validation-diagnostics/2026-09-05-001-参数校验字段级诊断与重试上下文增强.md) |
 | v3-ui-gap-closure | [plan](../../plans/v3-ui-gap-closure/plan.md) | ✅ S01-05 已完成，综合 QA 通过 | 5 | [S01-05:①V3权威工程UI缺口闭环](v3-ui-gap-closure/story-01-to-05-implementation/2026-09-01-001-V3权威工程UI缺口闭环.md) |
