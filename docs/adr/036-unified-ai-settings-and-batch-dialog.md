@@ -1,6 +1,6 @@
 # ADR-036：统一 AI 设置中心与批量翻译任务弹窗
 
-- **状态**：已接受
+- **状态**：部分被取代（独立批量任务决策由 [ADR-037](037-unified-ai-task.md) 取代；设置中心仍有效）
 - **日期**：2026-09-05
 - **对应需求**：用户确认的批量 AI 翻译效果图与统一设置方案
 - **关联 ADR**：[ADR-020](020-ui-foundation-framework.md)、[ADR-021](021-ui-presentation-modularization.md)、[ADR-022](022-modern-workbench-visual-shell.md)、[ADR-026](026-ai-workflow-presets-and-effective-profile.md)、[ADR-030](030-independent-embedding-and-managed-local-models.md)、[ADR-035](035-authoritative-project-mutations-and-recoverable-save.md)
