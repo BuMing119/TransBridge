@@ -40,9 +40,25 @@ def test_window_mounts_sync_as_a_versions_child_without_expanding_window_workflo
     window = TerminologyWindow(presenter)
 
     assert window.versions_view._sync_panel is window.sync_view
-    assert window.sync_view.parent() is window.versions_view
+    assert window.versions_view.isAncestorOf(window.sync_view)
     assert window.sync_view.backup_button.text() == "备份已发布版本…"
     assert window.sync_view.bidirectional_button.text() == "双向同步…"
+    window.close()
+
+
+def test_versions_page_scrolls_instead_of_clipping_on_a_short_screen() -> None:
+    presenter = TerminologyPresenter(
+        TerminologyUiServices(sync=object()),
+        RequestContext("operator", project_id="project", variant_id="variant"),
+    )
+    window = TerminologyWindow(presenter)
+    window.resize(window.minimumWidth(), window.minimumHeight())
+    window.workspace.set_current_area(TerminologyArea.VERSIONS)
+    window.show()
+    _APP.processEvents()
+
+    assert window.versions_view.scroll.verticalScrollBar().maximum() > 0
+    assert window.versions_view.scroll.horizontalScrollBarPolicy() is Qt.ScrollBarPolicy.ScrollBarAlwaysOff
     window.close()
 
 
