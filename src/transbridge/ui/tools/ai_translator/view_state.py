@@ -81,8 +81,9 @@ class TranslatorViewPort:
         mode = self.mode
         selected_mode = self.selected_mode
         self._view.controls.custom_profile_group.setVisible(selected_mode == "custom")
-        self._view.controls.overwrite_check.setVisible(mode == "translate")
+        self._view.controls.overwrite_check.setEnabled(mode == "translate")
         self._view.controls.scope_stack.setCurrentIndex(1 if mode == "mixed" else 0)
+        self._view.controls.scope_stack.setVisible(mode == "mixed")
         self._view.controls.start_btn.setText(
             "▶ 开始执行"
             if selected_mode == "custom"

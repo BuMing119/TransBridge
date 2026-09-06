@@ -194,17 +194,11 @@ DEFAULT_ACTION_CATALOG = ActionCatalog((
     ),
     ActionDescriptor(
         IntentId.TRANSLATION_AI,
-        "AI 翻译当前内容…",
-        ActionSection.TRANSLATION,
-        placement=IntentPlacement.PRIMARY,
-    ),
-    ActionDescriptor(
-        IntentId.TRANSLATION_AI_BATCH,
-        "批量 AI 翻译…",
+        "AI 翻译…",
         ActionSection.TRANSLATION,
         placement=IntentPlacement.PRIMARY,
         aliases=("批量翻译插件", "批量翻译 ESP", "ESP AI 翻译"),
-        status_tip="选择并排序当前工程中的多个翻译内容后批量执行 AI 翻译",
+        status_tip="选择一个或多个翻译内容，使用统一的 AI 翻译任务",
     ),
     ActionDescriptor(
         IntentId.TRANSLATION_DICTIONARY,

@@ -128,6 +128,8 @@ class ShellIntentComposition:
         *,
         confirmed: bool = True,
     ) -> IntentDispatchResult:
+        if intent_id == IntentId.TRANSLATION_AI_BATCH:
+            intent_id = IntentId.TRANSLATION_AI
         result = self.router.dispatch(intent_id, payload, confirmed=confirmed)
         if not result.accepted and result.reason and not result.requires_confirmation:
             self._host.show_message(result.reason)
@@ -194,12 +196,7 @@ class ShellIntentComposition:
         register(IntentId.PROJECT_IMPORT, self._import_project)
         register(IntentId.SOURCE_MIGRATE, self._migrate_source, availability=self._has_collection)
         register(
-            IntentId.TRANSLATION_AI, _call(host.tool_windows.open_ai_translator), availability=self._has_collection
-        )
-        register(
-            IntentId.TRANSLATION_AI_BATCH,
-            _call(host.tool_windows.open_batch_ai_translation),
-            availability=self._has_collection,
+            IntentId.TRANSLATION_AI, _call(host.tool_windows.open_ai_translator), availability=self._has_ai_content
         )
         register(IntentId.TRANSLATION_DICTIONARY, _call(host.tool_windows.open_dictionary))
         register(
@@ -308,6 +305,13 @@ class ShellIntentComposition:
     def _has_collection(self) -> tuple[bool, str | None]:
         enabled = self._host.context.collection is not None
         return enabled, None if enabled else "请先选择可编辑的翻译内容"
+
+    def _has_ai_content(self) -> tuple[bool, str | None]:
+        context = self._host.context
+        enabled = bool(context.collection) or any(
+            bool(slot.collection) for slot in getattr(context, "slots", {}).values()
+        )
+        return enabled, None if enabled else "请先加载可翻译内容"
 
     def _has_review(self) -> tuple[bool, str | None]:
         collection = self._host.context.collection

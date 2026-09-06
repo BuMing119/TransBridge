@@ -15,7 +15,7 @@ _MUTATION_FILES = (
     "smart_assistant/tools/types.py",
     "ui/operations/production_support.py",
     "ui/operations/authoritative_batch_download.py",
-    "ui/tools/ai_translator/batch_runtime.py",
+    "ui/tools/ai_translator/task_session.py",
     "ui/tools/ai_translator/version_snapshot.py",
     "ui/tools/dictionary_panel.py",
     "ui/workbench/step2.py",
@@ -31,7 +31,7 @@ _ALLOWED_PROJECTION_WRITES = {
     ("smart_assistant/tools/types.py", "rollback_entry_states.restore", "stage"),
     ("ui/operations/production_support.py", "replace_local_snapshots", "collection"),
     ("ui/operations/authoritative_batch_download.py", "publish", "collection"),
-    ("ui/tools/ai_translator/batch_runtime.py", "_prepare_authoritative_batch.publish", "collection"),
+    ("ui/tools/ai_translator/task_session.py", "mark_completed", "collection"),
     ("ui/tools/ai_translator/version_snapshot.py", "_restore_before_entries", "translation"),
     ("ui/tools/ai_translator/version_snapshot.py", "_restore_before_entries", "stage"),
     ("ui/tools/dictionary_panel.py", "_on_apply_dict", "translation"),
@@ -88,9 +88,9 @@ def test_known_translation_adapters_commit_or_fail_closed_for_v2_projects() -> N
     assert "commands.replace_entry_records(" in _source("ui/operations/production_support.py")
     assert "commands.replace_entry_states(" in _source("ui/workbench/translation_stage_action.py")
 
-    batch_ai = _source("ui/tools/ai_translator/batch_runtime.py")
-    assert "uses_authoritative_projection" in batch_ai
-    assert "persistence.commit_translation(entries)" in batch_ai
+    task_ai = _source("ui/tools/ai_translator/task_session.py")
+    assert "uses_authoritative_projection" in task_ai
+    assert "self._persistence.commit_translation(entries)" in task_ai
 
     batch_download = _source("ui/workbench/cards/download_card.py")
     assert "uses_authoritative_projection" in batch_download

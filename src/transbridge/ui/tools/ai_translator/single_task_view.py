@@ -1,4 +1,4 @@
-"""Task-oriented composition for the single-content AI translator window."""
+"""Shared task composition for one or more AI translation content sources."""
 
 from __future__ import annotations
 
@@ -36,6 +36,7 @@ from .custom_profile_view import build_custom_profile_view
 from .embedding_config_view import build_embedding_config_section
 from .postprocess_view import build_postprocess_view
 from .scope_view import build_scope_view
+from .task_sources_view import TaskSourcesView
 from .task_widget_style import (
     configure_task_button,
     configure_task_footer,
@@ -67,7 +68,13 @@ def build_single_task_view(
     _build_header(view, parent, callbacks, root)
     _build_hidden_service_controls(view, parent, callbacks)
     profiles = discover_language_profiles() if language_profiles is None else language_profiles
-    _build_task_tabs(view, parent, callbacks, root, profiles)
+    body = QHBoxLayout()
+    body.setSpacing(16)
+    view.sources_panel = TaskSourcesView(getattr(parent, "_ctx", None), parent)
+    view.sources_panel.selection_changed.connect(getattr(callbacks, "on_sources_changed", lambda: None))
+    body.addWidget(view.sources_panel)
+    _build_task_tabs(view, parent, callbacks, body, profiles)
+    root.addLayout(body, 1)
     _build_footer(view, parent, callbacks, root)
     _connect_task_signals(view, callbacks)
 
@@ -98,7 +105,7 @@ def _build_header(view: object, parent: QWidget, callbacks: object, root: QVBoxL
     view._context_label.set_full_text(context_text)
     view._context_label.setToolTip(context_text)
     view._context_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-    view._context_label.setAccessibleName("当前 AI 翻译内容")
+    view._context_label.setAccessibleName("当前 AI 翻译工程")
     configure_task_title(view._context_label, "subtitle")
     root.addWidget(view._context_label)
 
@@ -123,10 +130,6 @@ def _build_header(view: object, parent: QWidget, callbacks: object, root: QVBoxL
         mode_layout.addWidget(button, 1)
     view.controls.mode_translate.setChecked(True)
     root.addWidget(mode_surface)
-
-    view.controls.custom_profile_group = build_custom_profile_view(view)
-    configure_task_panel(view.controls.custom_profile_group)
-    root.addWidget(view.controls.custom_profile_group)
 
 
 def _build_hidden_service_controls(view: object, parent: QWidget, callbacks: object) -> None:
@@ -160,7 +163,7 @@ def _build_hidden_service_controls(view: object, parent: QWidget, callbacks: obj
     view.controls.advanced_btn = QPushButton("高级配置…", state)
     view.controls.advanced_btn.setCheckable(True)
     view.controls.batch_btn = QPushButton("批量翻译…", state)
-    view.controls.batch_btn.clicked.connect(callbacks.on_batch_start)
+    view.controls.batch_btn.setEnabled(False)  # Hidden legacy control; no second task entry.
     layout.addWidget(view.controls.advanced_btn)
     layout.addWidget(view.controls.batch_btn)
     view._compatibility_service_state = state
@@ -170,7 +173,7 @@ def _build_task_tabs(
     view: object,
     parent: QWidget,
     callbacks: object,
-    root: QVBoxLayout,
+    root: QHBoxLayout,
     language_profiles: object,
 ) -> None:
     view._task_surface = QFrame(parent)
@@ -180,11 +183,12 @@ def _build_task_tabs(
     task_layout.setSpacing(0)
     view.controls.tabs = QTabWidget(view._task_surface)
     configure_task_tabs(view.controls.tabs)
-    view.controls.tabs.setAccessibleName("AI 当前内容任务配置")
+    view.controls.tabs.setAccessibleName("AI 任务配置")
 
     basic = QWidget(view.controls.tabs)
     basic_layout = QVBoxLayout(basic)
     basic_layout.setContentsMargins(14, 12, 14, 12)
+    basic_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
     language_form = QFormLayout()
     view.controls.target_lang_combo = QComboBox(basic)
     configure_task_input(view.controls.target_lang_combo)
@@ -193,7 +197,11 @@ def _build_task_tabs(
     language_form.addRow("目标语言", view.controls.target_lang_combo)
     basic_layout.addLayout(language_form)
     build_scope_view(view, callbacks)
-    basic_layout.addWidget(view.controls.scope_stack, 1)
+    basic_layout.addWidget(view._scope_filter_box)
+    view.controls.custom_profile_group = build_custom_profile_view(view)
+    configure_task_panel(view.controls.custom_profile_group)
+    basic_layout.addWidget(view.controls.custom_profile_group)
+    basic_layout.addWidget(view.controls.scope_stack)
     view.controls.tabs.addTab(_scroll_tab(basic), "基础配置")
 
     terms = QWidget(view.controls.tabs)
@@ -325,8 +333,12 @@ def _build_footer(view: object, parent: QWidget, callbacks: object, root: QVBoxL
     configure_task_button(view._cancel_btn)
     view._cancel_btn.clicked.connect(parent.close)
     actions.addWidget(view._cancel_btn)
+    view._save_preset_btn = QPushButton("保存为任务预设", footer)
+    configure_task_button(view._save_preset_btn)
+    view._save_preset_btn.clicked.connect(getattr(callbacks, "on_save_task_preset", lambda: None))
+    actions.addWidget(view._save_preset_btn)
     view.controls.start_btn = QPushButton("▶ 开始翻译", footer)
-    reserve_text_width(view.controls.start_btn, ("▶ 开始翻译", "▶ 开始润色", "▶ 开始执行"))
+    reserve_text_width(view.controls.start_btn, ("开始 AI 翻译", "开始 AI 任务"))
     configure_task_button(view.controls.start_btn, primary=True)
     view.controls.start_btn.clicked.connect(callbacks.on_start)
     actions.addWidget(view.controls.start_btn)
@@ -340,18 +352,15 @@ def _connect_task_signals(view: object, callbacks: object) -> None:
         view.controls.mode_mixed,
         view.controls.mode_custom,
     ):
-        control.toggled.connect(callbacks.on_mode_changed)
+        control.toggled.connect(lambda checked: callbacks.on_mode_changed() if checked else None)
     view.controls.overwrite_check.toggled.connect(callbacks.update_estimate)
+    view.controls.overwrite_check.toggled.connect(callbacks.update_quick_run)
 
 
 def _context_text(parent: QWidget) -> str:
     context = getattr(parent, "_ctx", None)
     project = str(getattr(context, "project_name", "") or "").strip()
-    slot = getattr(context, "active_slot", None)
-    content = str(getattr(slot, "label", "") or "").strip()
-    parts = [part for part in (project, content) if part]
-    detail = " · ".join(parts) if parts else "当前翻译内容"
-    return f"处理范围 · 当前内容 · {detail}"
+    return f"当前工程 · {project}" if project else "选择处理内容，配置本次 AI 任务"
 
 
 def _spin(parent: QWidget, minimum: int, maximum: int, value: int, step: int = 1) -> QSpinBox:
@@ -367,8 +376,8 @@ def _scroll_tab(content: QWidget) -> QScrollArea:
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
     scroll.setFrameShape(QFrame.Shape.NoFrame)
-    scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
     scroll.setWidget(content)
     return scroll
 

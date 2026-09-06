@@ -6,7 +6,7 @@ from collections.abc import Callable
 import logging
 from typing import Protocol
 
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QObject, QSignalBlocker, QTimer
 from PyQt6.QtWidgets import QLineEdit, QListWidgetItem, QWidget
 
 from transbridge.config.language_profiles import discover_language_profiles
@@ -76,6 +76,14 @@ class WindowConfigView:
         self._current_project = current_project
 
     def render_config(self, cfg: object) -> None:
+        # Programmatic hydration is one transaction, never a sequence of user edits.
+        blockers = [QSignalBlocker(value) for value in vars(self._view).values() if isinstance(value, QObject)]
+        try:
+            self._render_config(cfg)
+        finally:
+            del blockers
+
+    def _render_config(self, cfg: object) -> None:
         h = self._view.controls
         h.provider_combo.setCurrentIndex(0 if cfg.provider != "anthropic" else 1)
         target_index = h.target_lang_combo.findData(cfg.target_lang)
@@ -135,8 +143,9 @@ class WindowConfigView:
                     h.priority_list.addItem(QListWidgetItem(priority_map[key]))
         self._callbacks.on_provider_changed()
         self._callbacks.on_embed_provider_changed()
-        self._callbacks.on_pp_enable_changed()
-        self._callbacks.update_estimate()
+        from .view_state import TranslatorViewPort
+
+        TranslatorViewPort(self._view).update_post_process_controls()
         render_paratranz_source(h.priority_list, self._current_project())
         self._view.refresh_service_summary()
 
@@ -209,10 +218,13 @@ class ConfigAutosaveBinding:
         parent: QWidget,
         save_callback: Callable[[], object],
         callbacks: AITranslatorViewCallbacks,
+        *,
+        refresh_callback: Callable[[], None] | None = None,
     ) -> None:
         self._view = view
         self._callbacks = callbacks
         self._save_callback = save_callback
+        self._refresh_callback = refresh_callback
         self._timer = QTimer(parent)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self._save_safely)
@@ -270,11 +282,15 @@ class ConfigAutosaveBinding:
         h.pp_polish_check.toggled.connect(self._callbacks.on_polish_changed)
 
     def schedule(self, *_args: object) -> None:
-        self._callbacks.update_quick_run()
+        request = self._refresh_callback
+        if request is not None:
+            request()
+        else:
+            self._callbacks.update_estimate()
+            self._callbacks.update_quick_run()
         self._timer.start(2000)
 
     def schedule_scope(self, *_args: object) -> None:
-        self._callbacks.update_estimate()
         self.schedule()
 
     def close(self) -> None:

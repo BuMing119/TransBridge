@@ -10,12 +10,8 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QSizePolicy, QVBoxLayout, QWidget
 import pytest
 
-from transbridge.ui.tools.ai_translator._batch_llm_log_viewer import _BatchLLMLogViewer
-from transbridge.ui.tools.ai_translator._batch_translation_dialog import _BatchTranslationDialog
-from transbridge.ui.tools.ai_translator._batch_translation_progress_window import _BatchTranslationProgressWindow
 from transbridge.ui.tools.ai_translator._llm_log_viewer import _LLMLogViewer
 from transbridge.ui.tools.ai_translator._translation_progress_window import _TranslationProgressWindow
-from transbridge.ui.tools.ai_translator._translation_target_dialog import _TranslationTargetDialog
 from transbridge.ui.tools.ai_translator.config_view import AITranslatorView
 from transbridge.ui.tools.ai_translator.run_view import AiMixedProgressWindow
 from transbridge.ui.tools.smart_assistant.input_view import ChatInputView
@@ -50,19 +46,6 @@ class _TranslationWorker(QObject):
     progress = pyqtSignal(int, int, str, int, int, int)
     log = pyqtSignal(int, str)
     result = pyqtSignal(object)
-    error = pyqtSignal(str)
-    finished = pyqtSignal()
-
-    def isRunning(self) -> bool:  # noqa: N802 - Qt compatibility
-        return False
-
-
-class _BatchWorker(QObject):
-    plugin_started = pyqtSignal(str, int, int)
-    plugin_finished = pyqtSignal(str, object)
-    plugin_progress = pyqtSignal(int, int, str, int, int, int)
-    log = pyqtSignal(int, str)
-    all_finished = pyqtSignal(object)
     error = pyqtSignal(str)
     finished = pyqtSignal()
 
@@ -201,36 +184,10 @@ def test_smart_assistant_input_is_one_bounded_composer_card(qapp) -> None:
     assert not input_view.send_button.icon().isNull()
 
 
-def test_target_and_batch_config_long_names_do_not_change_dialog_minimum_width(qapp) -> None:
-    class Context:
-        def __init__(self, name: str) -> None:
-            self.active_slot = SimpleNamespace(label=name, esp_path="", collection=[])
-            self.slots = {"slot": self.active_slot}
-
-    short = _TranslationTargetDialog(Context("短插件"))
-    long_name = "插件-" + "非常长" * 300
-    long = _TranslationTargetDialog(Context(long_name))
-    assert long.minimumSizeHint().width() == short.minimumSizeHint().width()
-    assert long._current_label.full_text.startswith(long_name)
-    assert long._current_label.toolTip() == long._current_label.full_text
-    short.close()
-    long.close()
-
-    batch = _BatchTranslationDialog(SimpleNamespace(slots={}))
-    before = batch.minimumSizeHint().width()
-    config_text = "模型: " + "model/" * 300
-    batch._set_config_text(config_text)
-    qapp.processEvents()
-    assert batch.minimumSizeHint().width() == before
-    assert batch._config_label.toolTip() == config_text
-    batch.close()
-
-
-@pytest.mark.parametrize("viewer_type", [_LLMLogViewer, _BatchLLMLogViewer])
-def test_log_viewer_long_path_keeps_toolbar_stable(qapp, viewer_type) -> None:
-    short = viewer_type("C:/logs")
+def test_log_viewer_long_path_keeps_toolbar_stable(qapp) -> None:
+    short = _LLMLogViewer("C:/logs")
     long_path = "C:/" + "/very-long-directory" * 200
-    long = viewer_type(long_path)
+    long = _LLMLogViewer(long_path)
     short.resize(900, 640)
     long.resize(900, 640)
     short.show()
@@ -238,10 +195,7 @@ def test_log_viewer_long_path_keeps_toolbar_stable(qapp, viewer_type) -> None:
     qapp.processEvents()
 
     assert long.minimumSizeHint().width() == short.minimumSizeHint().width()
-    if viewer_type is _LLMLogViewer:
-        assert long._refresh_btn.x() == short._refresh_btn.x()
-    else:
-        assert long._auto_cb.x() == short._auto_cb.x()
+    assert long._refresh_btn.x() == short._refresh_btn.x()
     assert long._path_label.full_text == long_path
     assert long._path_label.toolTip() == long_path
     short.close()
@@ -284,17 +238,6 @@ def test_progress_statuses_do_not_change_window_or_action_geometry(qapp) -> None
         width=560,
     )
     assert single._progress_msg.toolTip() == message
-
-    batch = _BatchTranslationProgressWindow(_BatchWorker(), SimpleNamespace())
-    plugin_name = "插件-" + "长名称" * 300
-    _assert_horizontal_stable(
-        qapp,
-        batch,
-        batch._llm_log_btn,
-        lambda: batch._on_plugin_started(plugin_name, 1, 2),
-        width=560,
-    )
-    assert batch._plugin_msg.toolTip() == plugin_name
 
     mixed = AiMixedProgressWindow(_MixedWorker(), _Activity())
     error = "失败：" + "服务错误" * 300

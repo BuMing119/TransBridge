@@ -228,3 +228,32 @@ def test_main_table_and_dialogue_editor_share_the_authoritative_projection(autho
         shell.close()
         shell.deleteLater()
         _APP.processEvents()
+
+
+def test_opening_editor_after_stage_change_preserves_filter_for_same_content(authority):
+    context, store, _, _, target, _ = authority
+    shell = WorkspaceShell()
+    preview = Step2PreviewWidget(context)
+    preview.refresh(context.collection)
+    shell.addTab(preview, "工作台")
+    editor = DialogueEditorController(context, shell, preview, [], projection=store)
+
+    try:
+        preview.apply_filter_state({"stage": [0]})
+        changed_entry = context.collection.get(target.identity)
+        preview._on_stage_change(changed_entry, 1, preferred_row=2)
+        assert target.identity not in {entry.identity for entry in preview.filtered_entries()}
+        assert preview.get_filter_state()["stage"] == [0]
+
+        other = next(entry for entry in context.collection if entry.identity != target.identity)
+        editor.open_entry(other.identity)
+
+        assert context.collection.get(target.identity).stage == 1
+        assert preview.get_filter_state()["stage"] == [0]
+        assert all(entry.stage == 0 for entry in preview.filtered_entries())
+    finally:
+        editor.close()
+        preview.close()
+        shell.close()
+        shell.deleteLater()
+        _APP.processEvents()

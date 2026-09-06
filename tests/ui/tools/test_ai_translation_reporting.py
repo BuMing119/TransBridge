@@ -16,12 +16,6 @@ from transbridge.application.translation import (
 )
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.paratranz.config_manager import LLMConfig
-from transbridge.ui.tools.ai_translator._batch_translation_progress_window import _BatchTranslationProgressWindow
-from transbridge.ui.tools.ai_translator._batch_translation_worker import (
-    BatchTranslationSummary,
-    PluginTranslationResult,
-    _BatchTranslationWorker,
-)
 from transbridge.ui.tools.ai_translator._report_history_dialog import _parse_report_filename
 from transbridge.ui.tools.ai_translator._report_render_worker import _ReportRenderWorker
 from transbridge.ui.tools.ai_translator._translation_progress_window import _TranslationProgressWindow
@@ -378,33 +372,6 @@ def test_translation_completion_callback_accepts_canonical_snapshot() -> None:
     assert changed.emitted == 1
     assert "运行报告：1 条" in window._round_log.toPlainText()
     assert window._collection_synced is True
-
-    window.close()
-    worker.deleteLater()
-    app.processEvents()
-
-
-def test_batch_completion_callbacks_accept_canonical_snapshot() -> None:
-    app = QApplication.instance() or QApplication([])
-    worker = _BatchTranslationWorker([], LLMConfig(), overwrite=False)
-    window = _BatchTranslationProgressWindow(worker, SimpleNamespace(slots={}))
-    window._background_mode = True
-    result = _result_with_snapshot()
-
-    window._on_plugin_finished("Plugin", result)
-    window._on_all_finished(
-        BatchTranslationSummary(
-            total_plugins=1,
-            success_plugins=1,
-            failed_plugins=0,
-            total_success_entries=1,
-            total_failed_entries=0,
-            details=[PluginTranslationResult("Plugin", True, result)],
-        )
-    )
-
-    assert "Plugin 完成" in window._round_log.toPlainText()
-    assert "批量翻译完成" in window._round_log.toPlainText()
 
     window.close()
     worker.deleteLater()

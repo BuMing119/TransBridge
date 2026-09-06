@@ -286,7 +286,7 @@ def test_current_ai_intent_routes_through_workbench_public_port() -> None:
     assert settings_sections == ["ai_service"]
 
 
-def test_batch_ai_intent_routes_through_workbench_and_exposes_settings_callback() -> None:
+def test_legacy_batch_ai_entry_routes_to_unified_workbench_tool() -> None:
     calls: list[tuple[str, dict[str, object]]] = []
     host = SimpleNamespace(
         workbench=SimpleNamespace(open_tool=lambda tool_id, **kwargs: calls.append((tool_id, kwargs))),
@@ -298,7 +298,7 @@ def test_batch_ai_intent_routes_through_workbench_and_exposes_settings_callback(
 
     tools.open_batch_ai_translation()
 
-    assert calls[0][0] == "ai_batch_translation"
+    assert calls[0][0] == "ai_translator"
     calls[0][1]["settings_requested"]()
     assert settings_sections == ["ai_service"]
 

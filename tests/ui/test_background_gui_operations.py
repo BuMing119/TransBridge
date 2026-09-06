@@ -666,7 +666,7 @@ def test_gui_close_handlers_do_not_block_on_thread_waits() -> None:
         root / "src/transbridge/ui/main_window.py",
         root / "src/transbridge/ui/paratranz/string_detail_dialog.py",
         root / "src/transbridge/ui/tools/ai_translator/_translation_progress_window.py",
-        root / "src/transbridge/ui/tools/ai_translator/_batch_translation_progress_window.py",
+        root / "src/transbridge/ui/tools/ai_translator/task_progress.py",
     )
     offenders: list[str] = []
     for path in targets:

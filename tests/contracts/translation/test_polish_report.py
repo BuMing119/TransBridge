@@ -7,6 +7,7 @@ from io import BytesIO
 import json
 
 from openpyxl import load_workbook
+import pytest
 
 from transbridge.application.contracts import OperationOutcome
 from transbridge.application.io import EntryKey, EntryRevision, SourceNamespace
@@ -111,6 +112,24 @@ def test_polish_snapshot_preserves_decision_and_report_details() -> None:
     assert any(diagnostic.code == "POLISH_ISSUE_TONE_RISK" for diagnostic in snapshot.diagnostics)
     assert any(diagnostic.code == "POLISH_ENTRY_FAILED" for diagnostic in snapshot.diagnostics)
     json.dumps(snapshot.to_dict(), ensure_ascii=False, allow_nan=False)
+
+
+def test_explicit_pending_candidate_is_neither_rejected_nor_failed() -> None:
+    entry = _Entry("pending", "Hello", "你好")
+    snapshot = build_polish_report_snapshot(
+        {"pending": {"polished_translation": "您好", "confidence": 1, "accepted": True}},
+        [entry],
+        run_id="pending-run",
+        pending_entry_ids={"pending"},
+    )
+    assert snapshot.accepted_count == snapshot.failure_count == 0
+    assert dict(snapshot.candidates[0].report_details)["result_status"] == "pending"
+    assert snapshot.run_spec_summary["polish_counts"]["pending"] == 1
+    assert snapshot.diagnostics == ()
+    with pytest.raises(ValueError, match="disjoint"):
+        build_polish_report_snapshot(
+            {}, [entry], run_id="invalid", pending_entry_ids={"pending"}, accepted_entry_ids={"pending"}
+        )
 
 
 def test_polish_bundle_keeps_details_in_all_three_formats(tmp_path) -> None:

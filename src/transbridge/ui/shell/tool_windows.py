@@ -126,18 +126,8 @@ class ToolWindows:
             )
 
     def open_batch_ai_translation(self) -> None:
-        runtime = getattr(self._host, "app_runtime", None)
-        if runtime is None:
-            self._host.workbench.open_tool(
-                "ai_batch_translation",
-                settings_requested=lambda: self.show_ui_settings("ai_service"),
-            )
-        else:
-            self._host.workbench.open_tool(
-                "ai_batch_translation",
-                task_runtime=runtime.tasks,
-                settings_requested=lambda: self.show_ui_settings("ai_service"),
-            )
+        """Route legacy callers to the unified AI task entry."""
+        self.open_ai_translator()
 
     def open_dictionary(self) -> None:
         from transbridge.ui.tools.dictionary_panel import DictionaryPanel

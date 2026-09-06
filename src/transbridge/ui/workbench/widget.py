@@ -157,19 +157,7 @@ class WorkbenchWidget(QWidget):
 
     def open_tool(self, tool_id: str, *, task_runtime=None, settings_requested=None):
         if tool_id == "ai_batch_translation":
-            from transbridge.ui.tools.ai_translator.ai_translator_window import AITranslatorWindow
-
-            progress = AITranslatorWindow.open_for_batch_translation(
-                self._ctx,
-                self._step2,
-                parent=self,
-                task_runtime=task_runtime,
-                theme_view=self._theme_view,
-                settings_requested=settings_requested,
-            )
-            if progress is not None:
-                _track_ai_progress(self._tool_windows, progress)
-            return
+            tool_id = "ai_translator"
 
         if tool_id == "ai_translator":
             progress_win = self._tool_windows.get("ai_translator_progress")

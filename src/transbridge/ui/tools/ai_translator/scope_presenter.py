@@ -83,6 +83,9 @@ class ScopePresenter:
     def state(self) -> TranslationScope:
         return self._state
 
+    def restore(self, state: TranslationScope) -> None:
+        self._state = state
+
     def reset_default(self, *, polish: bool) -> TranslationScope:
         stages = frozenset({1, 2, 3, 5} if polish else {0})
         self._state = TranslationScope(stage_filters=stages)

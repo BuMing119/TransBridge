@@ -234,21 +234,17 @@ class WorkbenchWorkflowPresenter:
         visible_entries: int,
         needs_review: int,
         write_supported: bool,
+        has_ai_content: bool | None = None,
     ) -> tuple[ContextActionViewState, ...]:
         scope_ready = has_context and visible_entries > 0
+        ai_ready = scope_ready if has_ai_content is None else has_ai_content
         no_scope = "当前翻译内容没有可操作词条"
         return (
             ContextActionViewState(
                 IntentId.TRANSLATION_AI,
                 "AI 翻译",
-                scope_ready,
-                None if scope_ready else no_scope,
-            ),
-            ContextActionViewState(
-                IntentId.TRANSLATION_AI_BATCH,
-                "批量 AI 翻译",
-                scope_ready,
-                None if scope_ready else no_scope,
+                ai_ready,
+                None if ai_ready else "请先加载可翻译内容",
             ),
             ContextActionViewState(
                 IntentId.TRANSLATION_REVIEW,

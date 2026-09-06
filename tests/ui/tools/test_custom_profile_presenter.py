@@ -195,6 +195,7 @@ def test_window_custom_entry_inherits_service_and_restores_builtin_profile(
     monkeypatch.setattr(config_module.LLMConfig, "load_from_file", lambda: global_config.copy_for_execution())
     app = QApplication.instance() or QApplication([])
     ctx = SimpleNamespace(
+        slots={},
         collection=None,
         esp_path=None,
         current_project=None,
@@ -227,6 +228,7 @@ def test_window_disables_custom_start_when_no_profile_exists(tmp_path: Path, mon
     monkeypatch.setattr(config_module.LLMConfig, "load_from_file", lambda: LLMConfig())
     app = QApplication.instance() or QApplication([])
     ctx = SimpleNamespace(
+        slots={},
         collection=None,
         esp_path=None,
         current_project=None,
@@ -257,6 +259,7 @@ def test_invalid_internal_profile_file_keeps_builtin_window_modes_available(tmp_
     monkeypatch.setattr(config_module.LLMConfig, "load_from_file", lambda: LLMConfig())
     app = QApplication.instance() or QApplication([])
     ctx = SimpleNamespace(
+        slots={},
         collection=None,
         esp_path=None,
         current_project=None,
@@ -268,9 +271,9 @@ def test_invalid_internal_profile_file_keeps_builtin_window_modes_available(tmp_
     window = AITranslatorWindow(ctx, step2)
     controls = window._view.controls
     controls.mode_polish.click()
-    assert controls.start_btn.text() == "▶ 开始润色"
+    assert controls.start_btn.text() == "开始 AI 任务"
     controls.mode_translate.click()
-    assert controls.start_btn.text() == "▶ 开始翻译"
+    assert controls.start_btn.text() == "开始 AI 翻译"
 
     controls.mode_custom.click()
     assert not controls.start_btn.isEnabled()

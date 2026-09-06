@@ -3,11 +3,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QFileDialog, QLineEdit, QMessageBox, QWidget
 
 from transbridge.ui.foundation.adapters import ThemeView
-from transbridge.ui.tools.ai_translator.batch_runtime import TermSourceInspector, open_batch_translation
 from transbridge.ui.tools.ai_translator.config_dialogs import open_term_editor, show_connection_test
 from transbridge.ui.tools.ai_translator.config_presenter import ConfigPresenter
 from transbridge.ui.tools.ai_translator.config_view import (
@@ -21,17 +20,10 @@ from transbridge.ui.tools.ai_translator.embedding_model_controller import (
     EmbeddingModelController,
     EmbeddingWindowCallbacks,
 )
-from transbridge.ui.tools.ai_translator.legacy_checkpoint import check_translation_checkpoint
 from transbridge.ui.tools.ai_translator.llm_connection_controller import LlmConnectionController
-from transbridge.ui.tools.ai_translator.quick_run_presenter import AiQuickRunPresenter
-from transbridge.ui.tools.ai_translator.result_presenter import ResultPresenter
-from transbridge.ui.tools.ai_translator.run_controller import RunController, try_begin_run
+from transbridge.ui.tools.ai_translator.run_controller import RunController
 from transbridge.ui.tools.ai_translator.scope_presenter import ScopePresenter, Step2ScopeAdapter
-from transbridge.ui.tools.ai_translator.versioned_run import (
-    start_versioned_mixed,
-    start_versioned_polish,
-    start_versioned_translation,
-)
+from transbridge.ui.tools.ai_translator.task_scope import TaskScope
 from transbridge.ui.tools.ai_translator.view_state import TranslatorViewPort
 from transbridge.ui.windowing import show_and_activate
 from transbridge.ui.workbench.filters_presenter import ALL_CATEGORIES, entry_category
@@ -39,9 +31,7 @@ from transbridge.ui.workbench.filters_presenter import ALL_CATEGORIES, entry_cat
 from ._theme_support import AiThemeBinding
 from ._window_actions import (
     apply_window_theme,
-    open_batch_from_window,
     open_settings_from_window,
-    require_ready,
     update_window_quick_run,
 )
 
@@ -73,24 +63,31 @@ class AITranslatorWindow(QWidget):
         self._theme_view = theme_view
         self._settings_requested = settings_requested
         self.on_open_settings = lambda: open_settings_from_window(self)
-        self.on_batch_start = lambda: open_batch_from_window(self)
         self._scope_port = Step2ScopeAdapter(step2)
+        self._task_scope = TaskScope(ctx, self._scope_port, entry_category)
         self._scope_presenter = ScopePresenter(
-            collection_provider=lambda: self._ctx.collection,
+            collection_provider=lambda: (
+                [entry for slot in self._view.sources_panel.selected_slots() for entry in (slot.collection or ())]
+                if hasattr(self, "_view")
+                else list(self._ctx.collection or ())
+            ),
             label_projection_provider=lambda: self._ctx.entry_labels,
             category_of=entry_category,
             workbench=self._scope_port,
         )
-        self.setWindowTitle("AI 翻译任务 · 当前内容")
+        self.setWindowTitle("AI 翻译任务")
         self.setMinimumSize(720, 480)
-        self.resize(980, 700)
+        self.resize(1120, 760)
         self._view_callbacks = EmbeddingWindowCallbacks(self)
         self._view = AITranslatorView(self, self._view_callbacks, theme_view=theme_view)
         self._view_port = TranslatorViewPort(self._view)
+        self._task_refresh_timer = QTimer(self)
+        self._task_refresh_timer.setSingleShot(True)
+        self._task_refresh_timer.timeout.connect(self.update_estimate)
         from transbridge.ui.paratranz.target_context import bound_paratranz_project
 
         config_view = WindowConfigView(self._view, self._view_callbacks, lambda: bound_paratranz_project(self._ctx))
-        self._config_presenter = ConfigPresenter(config_view)
+        self._config_presenter = ConfigPresenter(config_view, task_draft=True)
         self._embedding_models = EmbeddingModelController(
             self,
             self._view,
@@ -111,10 +108,9 @@ class AITranslatorWindow(QWidget):
             self,
             self._config_presenter.save,
             self,
+            refresh_callback=self.request_task_refresh,
         )
         self._run_controller = RunController(task_runtime=task_runtime)
-        self._quick_run_presenter = AiQuickRunPresenter()
-        self._result_presenter = ResultPresenter()
         self._theme_binding = AiThemeBinding(self, theme_view, lambda binding: apply_window_theme(self, binding))
         self._config_presenter.load()
         self._embedding_models.restore_managed_path()
@@ -125,7 +121,8 @@ class AITranslatorWindow(QWidget):
         if self._scope_port.selected_entry_ids():
             self.on_preset("selection")
         else:
-            self.update_quick_run()
+            self._reset_scope_to_default(False)
+            self.update_estimate()
 
     @classmethod
     def open_for_translation(
@@ -138,7 +135,7 @@ class AITranslatorWindow(QWidget):
         theme_view: ThemeView | None = None,
         settings_requested: Callable[[], None] | None = None,
     ) -> QWidget | None:
-        """直接打开当前翻译内容的 AI 快速运行页。"""
+        """打开统一任务，默认勾选当前内容，可扩展到多个插件。"""
         if not ctx.slots:
             QMessageBox.warning(parent, "AI 翻译", "请先加载插件。")
             return None
@@ -164,11 +161,11 @@ class AITranslatorWindow(QWidget):
         theme_view: ThemeView | None = None,
         settings_requested=None,
     ) -> QWidget | None:
-        """显式打开批量翻译计划；普通 AI intent 不调用此路径。"""
-        return open_batch_translation(
+        """旧调用方的兼容别名；不再创建独立批量窗口。"""
+        return cls.open_for_translation(
             ctx,
+            step2,
             parent,
-            Step2ScopeAdapter(step2).locate_entry,
             task_runtime=task_runtime,
             theme_view=theme_view,
             settings_requested=settings_requested,
@@ -178,16 +175,21 @@ class AITranslatorWindow(QWidget):
         self._view_port.update_provider_controls()
 
     def on_mode_changed(self):
-        mode = self._view_port.mode
         if self._view_port.selected_mode == "custom":
             self._custom_profiles.activate_selected()
         else:
-            self._config_presenter.switch_preset(mode)
+            self._config_presenter.switch_preset(self._view_port.mode)
+        mode = self._view_port.mode
         self._view_port.update_mode_controls()
         if mode != "mixed":
             self._reset_scope_to_default(mode == "polish")
-        self.update_estimate()
-        self.update_quick_run()
+        else:
+            from .scope_presenter import TranslationScope
+
+            self._scope_presenter.restore(TranslationScope())
+            self._rebuild_scope_tags()
+        self._view.controls.tabs.widget(0).verticalScrollBar().setValue(0)
+        self.request_task_refresh()
 
     def _reset_scope_to_default(self, is_polish: bool):
         self._scope_presenter.reset_default(polish=is_polish)
@@ -220,7 +222,7 @@ class AITranslatorWindow(QWidget):
     def _rebuild_scope_tags(self):
         from .scope_view import render_scope_tags
 
-        collection = self._ctx.collection
+        collection = [e for slot in self._view.sources_panel.selected_slots() for e in (slot.collection or ())]
         render_scope_tags(
             self._view,
             self,
@@ -233,18 +235,52 @@ class AITranslatorWindow(QWidget):
         )
 
     def _build_scope_candidates(self) -> list:
-        return self._scope_presenter.candidates()
+        return [entry for task in self._task_sources() for entry in task.entries]
 
     def on_pp_enable_changed(self):
         self._view_port.update_post_process_controls()
+        self.request_task_refresh()
 
     def on_polish_changed(self):
         self._view_port.update_polish_controls()
 
     def update_estimate(self):
-        from .scope_view import refresh_scope_estimate
+        from .task_scope import estimate_tasks
 
-        refresh_scope_estimate(self._view, self._scope_presenter, self._view_port.scope_options())
+        if not hasattr(self, "_custom_profiles"):
+            return
+        self._task_refresh_timer.stop()
+        config = self._config_presenter.build()
+        try:
+            all_tasks = self._task_sources(config=config, all_sources=True)
+            by_key = {task.key: task for task in all_tasks}
+            by_slot = {id(slot): str(key) for key, slot in self._ctx.slots.items()}
+            selected = self._view.sources_panel.selected_slots()
+            if any(id(slot) not in by_slot for slot in selected):
+                raise ValueError("处理来源已变化，请重新打开 AI 翻译任务。")
+            tasks = tuple(by_key[by_slot[id(slot)]] for slot in selected)
+            counts = {task.key: len(task.entries) for task in all_tasks}
+            text = estimate_tasks(tasks, config)
+        except ValueError as exc:
+            text, counts = str(exc), {}
+            self._view.controls.start_btn.setEnabled(False)
+            self._view.controls.preflight_label.set_full_text(text)
+        else:
+            update_window_quick_run(self, config=config, tasks=tasks)
+        self._view.controls.estimate_lbl.setText(text)
+        self._view.controls.mixed_estimate_lbl.setText(text)
+        self._view.sources_panel.set_counts(counts)
+
+    def request_task_refresh(self):
+        """Coalesce edits and mode hydration; compute only the final UI state on the next event turn."""
+        if not hasattr(self, "_custom_profiles"):
+            return
+        controls = self._view.controls
+        controls.start_btn.setEnabled(False)
+        controls.start_btn.setText("开始 AI 翻译" if self._view_port.mode == "translate" else "开始 AI 任务")
+        if not self._custom_profiles.block_unavailable_start():
+            controls.preflight_label.set_full_text("正在更新本次任务范围…")
+        self._task_refresh_timer.start(0)
 
     def update_quick_run(self):
         update_window_quick_run(self)
@@ -264,193 +300,53 @@ class AITranslatorWindow(QWidget):
         open_term_editor(self, self._ctx.esp_path)
 
     def on_start(self):
-        if self._view_port.mode == "mixed":
-            self._on_mixed_start()
-            return
-        if self._view_port.mode == "polish":
-            self._on_polish_start()
-            return
-        collection = self._ctx.collection
-        if not collection:
-            QMessageBox.warning(self, "翻译", "请先加载词条集合。")
-            return
-        cfg = self._config_presenter.build()
-        candidates = self._build_scope_candidates()
-        if not require_ready(self, "translate", cfg, candidates):
-            return
-        from transbridge.ui.paratranz.target_context import bound_paratranz_project
+        from .task_runtime import start_task
 
-        if not bound_paratranz_project(self._ctx) and TermSourceInspector.all_empty(cfg, self._ctx.esp_path):
-            reply = QMessageBox.question(
-                self,
-                "术语库为空",
-                "当前未选择 ParaTranz 项目，且所有术语来源均为空。\n\n没有术语库辅助，翻译质量可能下降。是否继续？",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if reply != QMessageBox.StandardButton.Yes:
-                return
-        cfg = self._config_presenter.save()
-        checkpoint_run_id = check_translation_checkpoint(
-            self,
-            self._ctx.esp_path,
-            entries=tuple(candidates),
-            overwrite=self._view_port.overwrite,
-        )
-        checkpoint_terminology_ref = None
-        if checkpoint_run_id:
-            from transbridge.ai_translator.translator import ProgressCheckpoint
-            from transbridge.application.translation.terminology_run_snapshot import TerminologyRunSnapshotRef
-
-            checkpoint = ProgressCheckpoint.load(self._ctx.esp_path)
-            if checkpoint is not None and checkpoint.terminology_snapshot is not None:
-                try:
-                    checkpoint_terminology_ref = TerminologyRunSnapshotRef.from_dict(checkpoint.terminology_snapshot)
-                except (KeyError, TypeError, ValueError) as exc:
-                    QMessageBox.warning(self, "翻译断点不可恢复", f"项目术语快照身份无效：{exc}")
-                    return
-        request = try_begin_run(
-            self._run_controller,
-            "translate",
-            cfg,
-            candidates,
-            lambda: QMessageBox.warning(self, "翻译", "已有任务正在运行，请等待完成或关闭窗口取消。"),
-            on_error=lambda message: QMessageBox.warning(self, "项目术语不可用", message),
-            overwrite=self._view_port.overwrite,
-            esp_path=self._ctx.esp_path,
-            project_id=getattr(self._ctx, "active_project_id", None),
-            variant_id=getattr(self._ctx, "active_variant_id", None),
-            run_id=checkpoint_run_id,
-            terminology_owner=self._ctx,
-            terminology_snapshot_ref=checkpoint_terminology_ref,
-        )
-        if request is None:
-            return
-        start_versioned_translation(self, request)
+        start_task(self)
 
     def _on_mixed_start(self):
-        collection = self._ctx.collection
-        if not collection:
-            QMessageBox.warning(self, "混合模式", "请先加载词条集合。")
-            return
-        rules = self._view_port.rules
-        entries = list(collection)
-        mixed_scope = self._scope_presenter.partition_mixed(rules, entries)
-        translate_entries = list(mixed_scope.translate_entries)
-        polish_entries = list(mixed_scope.polish_entries)
-        if not translate_entries and not polish_entries:
-            QMessageBox.warning(self, "混合模式", "当前筛选条件下无匹配条目，请调整规则。")
-            return
-        cfg = self._config_presenter.build()
-        cfg.mixed_execution_order = self._view_port.execution_order
-        cfg.action_rules = rules
-        if not self._config_presenter.execution_profile().has_proofread_work:
-            polish_entries = []
-        if not translate_entries and not polish_entries:
-            QMessageBox.warning(self, "混合模式", "当前预设未启用可执行的处理阶段。")
-            return
-        run_entries = []
-        seen_entry_ids: set[str] = set()
-        for entry in translate_entries + polish_entries:
-            entry_id = str(getattr(entry, "id", getattr(entry, "key", "")))
-            if entry_id not in seen_entry_ids:
-                seen_entry_ids.add(entry_id)
-                run_entries.append(entry)
-        if not require_ready(self, "mixed", cfg, run_entries, mixed_has_translation=bool(translate_entries)):
-            return
-        cfg = self._config_presenter.save()
-        cfg.mixed_execution_order = self._view_port.execution_order
-        cfg.action_rules = rules
-        self._active_mixed_polish_entries = polish_entries
-        request = try_begin_run(
-            self._run_controller,
-            "mixed",
-            cfg,
-            run_entries,
-            lambda: QMessageBox.warning(self, "混合模式", "已有任务正在运行，请等待完成或关闭窗口取消。"),
-            on_error=lambda message: QMessageBox.warning(self, "项目术语不可用", message),
-            esp_path=self._ctx.esp_path,
-            project_id=getattr(self._ctx, "active_project_id", None),
-            variant_id=getattr(self._ctx, "active_variant_id", None),
-            terminology_owner=self._ctx,
-        )
-        if request is None:
-            return
-        start_versioned_mixed(self, request, translate_entries, polish_entries)
-
-    def _on_mixed_finished(self, result: dict):
-        from .result_view import complete_window_mixed_result
-
-        complete_window_mixed_result(self, result)
+        self.on_start()
 
     def _on_polish_start(self):
-        collection = self._ctx.collection
-        if not collection:
-            QMessageBox.warning(self, "润色", "请先加载词条集合。")
-            return
-        cfg = self._config_presenter.build()
-        candidates = self._build_scope_candidates()
-        entries_with_translation = [e for e in candidates if e.translation]
-        if not require_ready(self, "polish", cfg, entries_with_translation):
-            return
-        cfg = self._config_presenter.save()
-        request = try_begin_run(
-            self._run_controller,
-            "polish",
-            cfg,
-            entries_with_translation,
-            lambda: QMessageBox.warning(self, "润色", "已有任务正在运行，请等待完成或关闭窗口取消。"),
-            on_error=lambda message: QMessageBox.warning(self, "项目术语不可用", message),
-            esp_path=self._ctx.esp_path,
-            project_id=getattr(self._ctx, "active_project_id", None),
-            variant_id=getattr(self._ctx, "active_variant_id", None),
-            terminology_owner=self._ctx,
+        self.on_start()
+
+    def _task_sources(self, *, config=None, all_sources=False):
+        config = config or self._config_presenter.build()
+        slots = list(self._ctx.slots.values()) if all_sources else self._view.sources_panel.selected_slots()
+        return self._task_scope.build(
+            slots,
+            self._scope_presenter.state,
+            mode=self._view_port.mode,
+            config=config,
+            overwrite=self._view_port.overwrite,
         )
-        if request is None:
+
+    def on_sources_changed(self):
+        if hasattr(self, "_custom_profiles"):
+            self._rebuild_scope_tags()
+            self.update_estimate()
+            self.update_quick_run()
+
+    def on_save_task_preset(self):
+        from PyQt6.QtWidgets import QInputDialog
+
+        from transbridge.application.translation.custom_workflow_profile import CustomWorkflowProfile
+        from transbridge.config.ai_workflow_profiles import AiWorkflowProfileRepository
+
+        name, accepted = QInputDialog.getText(self, "保存任务预设", "预设名称")
+        if not accepted or not name.strip():
             return
-        start_versioned_polish(self, request, entries_with_translation, collection)
-
-    def _on_polish_preview_ready(self, payload, entries, collection):
-        results, decisions = payload
-        self._last_polish_results = results
-        self._apply_polish_results(entries, decisions, collection)
-
-    def _on_polish_finished_direct(self, results, entries, collection):
-        summary = self._result_presenter.apply_direct(collection, entries, results)
-        if not self._commit_completed_ai_result():
-            return
-        self._ctx.collection_changed.emit(collection)
-        self._show_polish_report(results, entries, summary)
-        self.close()
-
-    def _apply_polish_results(self, entries, polish_decisions, collection):
-        results = self._last_polish_results if hasattr(self, "_last_polish_results") else {}
-        summary = self._result_presenter.apply_decisions(
-            collection,
-            entries,
-            polish_decisions,
-            results=results,
-        )
-        if not self._commit_completed_ai_result():
-            return
-        self._ctx.collection_changed.emit(collection)
-        self._show_polish_report(results, entries, summary)
-        self.close()
-
-    def _commit_completed_ai_result(self) -> bool:
-        if self._version_snapshot_session is None:
-            return True
         try:
-            self._version_snapshot_session.mark_completed()
+            profile = CustomWorkflowProfile.from_config(
+                name.strip(),
+                self._view_port.mode,
+                self._config_presenter.build(),
+            )
+            AiWorkflowProfileRepository().upsert(profile, select=True)
         except Exception as exc:
-            QMessageBox.critical(self, "AI 结果提交失败", f"{exc}\n\n本次界面修改已回滚。")
-            return False
-        return True
-
-    def _show_polish_report(self, results, entries, summary):
-        from .result_view import show_window_polish_report
-
-        self._report_dialog = show_window_polish_report(self, results, entries, summary)
+            QMessageBox.warning(self, "预设保存失败", str(exc))
+            return
+        QMessageBox.information(self, "任务预设已保存", f"已保存“{name.strip()}”。")
 
     def on_open_history(self):
         from .result_view import open_report_history
@@ -458,6 +354,7 @@ class AITranslatorWindow(QWidget):
         open_report_history(self, self._theme_view)
 
     def closeEvent(self, event):
+        self._task_refresh_timer.stop()
         self._config_binding.close()
         self._embedding_connection.close()
         self._llm_connection.close()

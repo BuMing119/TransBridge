@@ -26,6 +26,8 @@ class WorkflowPresentationMixin:
             visible_entries=self._filtered_total,
             needs_review=self._summary.needs_review,
             write_supported=self._workflow_presenter.supports_write(content_kind),
+            has_ai_content=bool(self._entries)
+            or any(bool(slot.collection) for slot in getattr(self._ctx, "slots", {}).values()),
         )
         selected_count = len(self.selected_row_entry_ids())
         self._workflow_actions.set_scope_count(selected_count or self._filtered_total)

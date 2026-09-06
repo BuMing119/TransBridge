@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -19,6 +20,14 @@ def qapp() -> QApplication:
 class _Callbacks:
     def __init__(self) -> None:
         self.settings_requests = 0
+        self.source_requests = 0
+        self.preset_requests = 0
+
+    def on_sources_changed(self) -> None:
+        self.source_requests += 1
+
+    def on_save_task_preset(self) -> None:
+        self.preset_requests += 1
 
     def on_provider_changed(self) -> None:
         return None
@@ -86,7 +95,7 @@ def test_single_ai_view_exposes_four_visible_task_pages_without_legacy_entries(q
     controls = view.controls
 
     assert parent.property("tbTaskDialog") is True
-    assert view._context_label.full_text.startswith("处理范围 · 当前内容")
+    assert view._context_label.full_text == "选择处理内容，配置本次 AI 任务"
     assert controls.tabs.property("tbComponentKind") == "tabs"
     assert view._task_surface.property("tbTaskSurface") is True
     assert controls.mode_translate.property("tbTaskSegment") is True
@@ -97,7 +106,10 @@ def test_single_ai_view_exposes_four_visible_task_pages_without_legacy_entries(q
         "运行参数",
     ]
     assert controls.tabs.isVisible()
-    assert controls.tabs.accessibleName() == "AI 当前内容任务配置"
+    assert controls.tabs.accessibleName() == "AI 任务配置"
+    assert view.sources_panel.isVisible()
+    assert view.sources_panel.selected_slots() == []
+    assert view._save_preset_btn.isVisible()
     assert not controls.advanced_btn.isVisible()
     assert not controls.batch_btn.isVisible()
     visible_button_texts = {button.text() for button in parent.findChildren(QPushButton) if button.isVisible()}
@@ -130,4 +142,23 @@ def test_single_ai_service_summary_is_secret_free_and_settings_button_emits_inte
     view.controls.settings_btn.click()
     assert callbacks.settings_requests == 1
 
+    parent.close()
+
+
+def test_unified_task_uses_project_context_and_routes_source_and_preset_actions(qapp: QApplication) -> None:
+    parent = QWidget()
+    slot = SimpleNamespace(label="Content.esp", collection=[object()])
+    parent._ctx = SimpleNamespace(project_name="Test project", slots={"content": slot}, active_slot=slot)
+    callbacks = _Callbacks()
+    view = AITranslatorView(parent, callbacks)
+    parent.show()
+    qapp.processEvents()
+
+    assert view._context_label.full_text == "当前工程 · Test project"
+    assert view.sources_panel.selected_slots() == [slot]
+    view.sources_panel.clear_button.click()
+    assert callbacks.source_requests == 1
+    view._save_preset_btn.click()
+    assert callbacks.preset_requests == 1
+    assert view.sources_panel.geometry().right() < view._task_surface.geometry().left()
     parent.close()

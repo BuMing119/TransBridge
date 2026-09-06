@@ -327,6 +327,7 @@ def test_single_ai_window_uses_visible_four_page_task_configuration(monkeypatch)
     app = QApplication.instance() or QApplication([])
     monkeypatch.setattr(config_module.LLMConfig, "load_from_file", lambda: LLMConfig())
     ctx = SimpleNamespace(
+        slots={},
         collection=None,
         esp_path=None,
         current_project=None,
@@ -373,6 +374,7 @@ def test_closing_missing_local_model_guide_persists_disabled_mode(monkeypatch) -
     monkeypatch.setattr(config_module.LLMConfig, "load_from_file", lambda: config)
     monkeypatch.setattr(dialog_module, "LocalEmbeddingGuideDialog", _Guide)
     ctx = SimpleNamespace(
+        slots={},
         collection=None,
         esp_path=None,
         current_project=None,
@@ -394,17 +396,12 @@ def test_closing_missing_local_model_guide_persists_disabled_mode(monkeypatch) -
 
 
 def test_default_ai_entry_skips_target_dialog_and_binds_current_content(monkeypatch) -> None:
-    from transbridge.ui.tools.ai_translator import _translation_target_dialog as target_module
-
     app = QApplication.instance() or QApplication([])
     monkeypatch.setattr(config_module.LLMConfig, "load_from_file", lambda: LLMConfig())
-    monkeypatch.setattr(
-        target_module._TranslationTargetDialog,
-        "__init__",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("target dialog opened")),
-    )
+    slot = SimpleNamespace(label="Plugin", collection=[], esp_path="Plugin.esp")
     ctx = SimpleNamespace(
-        slots={"active": object()},
+        slots={"active": slot},
+        active_slot=slot,
         collection=None,
         esp_path=None,
         current_project=None,
@@ -432,6 +429,7 @@ def test_single_ai_window_has_no_visible_legacy_batch_entry(monkeypatch) -> None
     app = QApplication.instance() or QApplication([])
     monkeypatch.setattr(config_module.LLMConfig, "load_from_file", lambda: LLMConfig())
     ctx = SimpleNamespace(
+        slots={},
         collection=None,
         esp_path=None,
         current_project=None,

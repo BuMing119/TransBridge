@@ -34,8 +34,10 @@ class ConnectionTestResult:
 class ConfigPresenter:
     """Maps the persisted config to/from a narrow view port."""
 
-    def __init__(self, view: ConfigViewPort) -> None:
+    def __init__(self, view: ConfigViewPort, *, task_draft: bool = False) -> None:
         self._view = view
+        self._task_draft = task_draft
+        self._draft_config: LLMConfig | None = None
         self._active_preset: AiWorkflowPreset = "translate"
         self._profiles: dict[str, dict[str, object]] = {}
         self._custom_mode = False
@@ -43,11 +45,18 @@ class ConfigPresenter:
         self._persist_custom: Callable[[CustomWorkflowProfile], None] | None = None
 
     @property
+    def task_draft(self) -> bool:
+        return self._task_draft
+
+    @property
     def active_custom_profile(self) -> CustomWorkflowProfile | None:
         return self._active_custom_profile
 
     def load(self) -> LLMConfig:
         config = LLMConfig.load_from_file()
+        if self._task_draft:
+            config = config.copy_for_execution()
+        self._draft_config = config.copy_for_execution() if self._task_draft else None
         self._profiles = deepcopy(ensure_workflow_profiles(config))
         apply_profile_settings(config, self._active_preset)
         self._view.render_config(config)
@@ -62,6 +71,8 @@ class ConfigPresenter:
         return self._capture_active_profile()
 
     def save(self) -> LLMConfig:
+        if self._task_draft:
+            return self.build()
         if self._active_custom_profile is not None:
             config, profile = self._capture_active_custom()
             if self._persist_custom is not None:
@@ -87,7 +98,7 @@ class ConfigPresenter:
             self._exit_custom()
         if was_custom:
             self._active_preset = preset
-            config = LLMConfig.load_from_file()
+            config = self._load_base()
             config.workflow_profiles = deepcopy(self._profiles)
             apply_profile_settings(config, preset)
             self._view.render_config(config)
@@ -110,7 +121,7 @@ class ConfigPresenter:
         self._custom_mode = True
         self._active_custom_profile = profile
         self._persist_custom = persist
-        config = LLMConfig.load_from_file()
+        config = self._load_base()
         config.workflow_profiles = deepcopy(self._profiles)
         execution = profile.apply_to(config)
         self._view.render_config(execution)
@@ -129,7 +140,7 @@ class ConfigPresenter:
         self._persist_custom = None
 
     def _capture_active_profile(self) -> LLMConfig:
-        config = LLMConfig.load_from_file()
+        config = self._load_base()
         config.workflow_profiles = deepcopy(self._profiles)
         apply_profile_settings(config, self._active_preset)
         config = self._view.update_config(config)
@@ -141,7 +152,7 @@ class ConfigPresenter:
         profile = self._active_custom_profile
         if profile is None:  # pragma: no cover - guarded by callers
             raise RuntimeError("no custom workflow profile is active")
-        config = LLMConfig.load_from_file()
+        config = self._load_base()
         config.workflow_profiles = deepcopy(self._profiles)
         execution = profile.apply_to(config)
         execution = self._view.update_config(execution)
@@ -156,9 +167,18 @@ class ConfigPresenter:
         return execution, updated
 
     def _capture_empty_custom(self) -> LLMConfig:
-        config = LLMConfig.load_from_file()
+        config = self._load_base()
         config.workflow_profiles = deepcopy(self._profiles)
         return self._view.update_config(config)
+
+    def _load_base(self) -> LLMConfig:
+        return self._draft_config.copy_for_execution() if self._draft_config is not None else LLMConfig.load_from_file()
+
+    def refresh_service(self, config: LLMConfig) -> None:
+        """Explicit global settings changes survive subsequent task-mode switches."""
+        if self._draft_config is not None:
+            for field in ("provider", "model", "api_key", "base_url"):
+                setattr(self._draft_config, field, deepcopy(getattr(config, field)))
 
     def _save_global_fields_from_custom(self, execution: LLMConfig) -> None:
         global_config = LLMConfig.load_from_file()

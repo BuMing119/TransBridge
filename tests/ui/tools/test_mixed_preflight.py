@@ -148,40 +148,33 @@ def test_mixed_quick_run_and_start_gate_follow_current_rule_assignment(monkeypat
         label_library={},
         entry_labels={},
     )
+    slot = SimpleNamespace(label="Plugin", collection=context.collection, esp_path=None)
+    context.slots = {"plugin": slot}
+    context.active_slot = slot
     workbench = SimpleNamespace(filtered_entries=lambda: (), locate_entry=lambda _: None)
     window = AITranslatorWindow(context, workbench)
     try:
         window._view.controls.mode_mixed.setChecked(True)
-        partition = window._scope_presenter.partition_mixed
-        partition_calls = []
-
-        def partition_once(rules, values):
-            partition_calls.append(True)
-            return partition(rules, values)
-
-        monkeypatch.setattr(window._scope_presenter, "partition_mixed", partition_once)
         window.update_quick_run()
-
-        assert len(partition_calls) == 1
+        sources = window._task_sources()
+        assert sources[0].translate_entries == ()
+        assert sources[0].polish_entries == tuple(entries)
         assert window._view.controls.start_btn.isEnabled()
         assert require_ready(window, "mixed", window._config_presenter.build(), entries, mixed_has_translation=False)
         started = []
-        monkeypatch.setattr(window_module, "try_begin_run", lambda *_args, **_kwargs: object())
-        monkeypatch.setattr(
-            window_module,
-            "start_versioned_mixed",
-            lambda _window, _request, translated, polished: started.append((translated, polished)),
-        )
+        from transbridge.ui.tools.ai_translator import task_runtime
+
+        monkeypatch.setattr(task_runtime, "start_task", lambda task_window: started.append(task_window._task_sources()))
         monkeypatch.setattr(window_module.QMessageBox, "warning", lambda *_: pytest.fail("local start was blocked"))
         window._on_mixed_start()
 
-        assert started == [([], entries)]
+        assert started[0][0].polish_entries == tuple(entries)
 
         window._view.controls.rule_editor.set_rules([ActionRule(action="translate")])
         window.update_quick_run()
 
         assert not window._view.controls.start_btn.isEnabled()
-        assert "API Key" in window._view.controls.preflight_label.full_text
+        assert "可处理词条" in window._view.controls.preflight_label.full_text
     finally:
         window.close()
         app.processEvents()

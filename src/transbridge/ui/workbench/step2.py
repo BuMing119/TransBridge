@@ -93,12 +93,14 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         self._render_generation = 0
         self._render_entries: tuple[TranslationEntry, ...] = ()
         self._pending_locate_entry_id: str | None = None
+        self._filter_scope: tuple[object, ...] | None = None
         self._filters_presenter = FiltersPresenter()
         self._workflow_presenter = WorkbenchWorkflowPresenter()
         self._summary = StatisticsSummary(0, 0, 0, 0)
         self._tag_buttons: dict[str | int | None, QPushButton] = {}  # 标签按钮
         self._init_ui()
         ctx.collection_changed.connect(self.refresh)
+        ctx.collection_list_changed.connect(self._update_workflow_actions)
         if getattr(ctx, "uses_authoritative_projection", False):
             ctx.label_data_changed.connect(self._reload_projected_labels)
             self._reload_projected_labels()
@@ -228,6 +230,17 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
 
     # ── 进度 / 刷新 ───────────────────────────────────────────────────────────
 
+    def _current_filter_scope(self, collection: TranslationEntryCollection | None) -> tuple[object, ...]:
+        """Identify the content whose local filters are currently describing."""
+
+        slot = self._ctx.active_slot
+        collection_fallback = id(collection) if slot is None and collection is not None else None
+        return (
+            self._ctx.active_version_identity,
+            self._ctx.active_key,
+            id(slot) if slot is not None else collection_fallback,
+        )
+
     def set_parsing(self, parsing: bool):
         if parsing:
             self._progress.setRange(0, 0)
@@ -236,6 +249,9 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
             self._progress.setValue(100)
 
     def refresh(self, collection: TranslationEntryCollection | None):
+        filter_scope = self._current_filter_scope(collection)
+        content_changed = filter_scope != self._filter_scope
+        self._filter_scope = filter_scope
         self._progress.setRange(0, 100)
         if collection is None:
             self._summary = StatisticsSummary(0, 0, 0, 0)
@@ -265,12 +281,14 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         self._entries = list(collection)
         self._summary = StatisticsSummary.from_entries(self._entries)
         self._summary_view.set_summary(self._summary)
-        self._category_filters.clear()
-        self._stage_filters.clear()
+        if content_changed:
+            self._category_filters.clear()
+            self._stage_filters.clear()
 
         existing_ids = {e.id for e in collection if e.id}
         self._entry_labels = {eid: ls for eid, ls in self._entry_labels.items() if eid in existing_ids}
-        self._label_filters.clear()
+        if content_changed:
+            self._label_filters.clear()
 
         self._build_category_tags()
         self._build_stage_tags()

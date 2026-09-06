@@ -41,6 +41,7 @@ def build_polish_report_snapshot(
     accepted_entry_ids: Collection[str] | None = None,
     rejected_entry_ids: Collection[str] | None = None,
     failed_entry_ids: Collection[str] | None = None,
+    pending_entry_ids: Collection[str] | None = None,
     run_id: str,
     polish_level: str | None = None,
     run_spec_summary: Mapping[str, Any] | None = None,
@@ -49,12 +50,13 @@ def build_polish_report_snapshot(
 
     Explicit status collections are authoritative when supplied.  Callers that
     only have result objects may omit them; status is then inferred from the
-    optional ``accepted`` attribute, confidence and candidate text.
+    optional ``accepted`` attribute, confidence and candidate text. Explicit
+    ``pending_entry_ids`` represent candidates awaiting a user decision.
     """
     if not run_id or not run_id.strip():
         raise ValueError("polish report run_id must not be empty")
 
-    explicit_sets = _status_sets(accepted_entry_ids, rejected_entry_ids, failed_entry_ids)
+    explicit_sets = _status_sets(accepted_entry_ids, rejected_entry_ids, failed_entry_ids, pending_entry_ids)
     entry_by_id = {str(entry.id): entry for entry in entries}
     diagnostics: list[Diagnostic] = []
     candidates: list[PostProcessCandidate] = []
@@ -68,7 +70,7 @@ def build_polish_report_snapshot(
         polished = str(_value(result, "polished_translation", "") or "")
         before_text = str(_value(result, "original_translation", entry.translation) or entry.translation or "")
         status = _result_status(entry_id, result, polished, confidence, explicit_sets)
-        counts[status] += 1
+        counts[status] = counts.get(status, 0) + 1
         confidences.append(confidence)
 
         issues = tuple(_issue_dict(issue) for issue in (_value(result, "issues", ()) or ()))
@@ -166,11 +168,12 @@ def _status_sets(
     accepted: Collection[str] | None,
     rejected: Collection[str] | None,
     failed: Collection[str] | None,
-) -> tuple[set[str], set[str], set[str]] | None:
-    if accepted is None and rejected is None and failed is None:
+    pending: Collection[str] | None,
+) -> tuple[set[str], ...] | None:
+    if accepted is None and rejected is None and failed is None and pending is None:
         return None
-    values = tuple(set(map(str, group or ())) for group in (accepted, rejected, failed))
-    if values[0] & values[1] or values[0] & values[2] or values[1] & values[2]:
+    values = tuple(set(map(str, group or ())) for group in (accepted, rejected, failed, pending))
+    if sum(map(len, values)) != len(set().union(*values)):
         raise ValueError("polish report status collections must be disjoint")
     return values
 
@@ -191,7 +194,7 @@ def _result_status(
     result: object | None,
     polished: str,
     confidence: float,
-    explicit_sets: tuple[set[str], set[str], set[str]] | None,
+    explicit_sets: tuple[set[str], ...] | None,
 ) -> str:
     if explicit_sets is not None:
         if entry_id in explicit_sets[0]:
@@ -200,6 +203,8 @@ def _result_status(
             return "rejected"
         if entry_id in explicit_sets[2]:
             return "failed"
+        if entry_id in explicit_sets[3]:
+            return "pending"
         return "failed"
     if result is None or confidence <= 0 or not polished:
         return "failed"

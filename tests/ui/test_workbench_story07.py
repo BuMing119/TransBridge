@@ -28,7 +28,6 @@ from transbridge.ui.workbench.save_presenter import SavePhase, SaveStatePresente
 from transbridge.ui.workbench.step2 import Step2PreviewWidget
 from transbridge.ui.workbench.workflow_actions_view import StatisticsSummaryView, WorkflowActionsView
 from transbridge.ui.workbench.workflow_presenter import (
-    ContextActionViewState,
     StatisticsSummary,
     WorkbenchContentKind,
     WorkbenchWorkflowPresenter,
@@ -144,33 +143,55 @@ def test_context_actions_expose_reasons_and_view_emits_one_stable_intent() -> No
     view.set_actions(states)
 
     view._buttons[IntentId.TRANSLATION_AI].click()
-    view._ai_batch_action.trigger()
 
     assert review.enabled is False
     assert review.reason == "当前没有“有疑问”状态的词条"
-    assert emitted == [IntentId.TRANSLATION_AI.value, IntentId.TRANSLATION_AI_BATCH.value]
+    assert emitted == [IntentId.TRANSLATION_AI.value]
     assert IntentId.TRANSLATION_AI_BATCH not in view._buttons
-    assert [action.text() for action in view._ai_menu.actions()] == ["翻译当前内容", "批量翻译多个插件"]
+    assert all(item.intent_id is not IntentId.TRANSLATION_AI_BATCH for item in states)
+    assert view._ai_button.menu() is None
     view.close()
 
 
-def test_single_ai_menu_keeps_batch_action_available_when_current_action_is_disabled() -> None:
+def test_unified_ai_remains_available_with_loaded_content_outside_current_scope() -> None:
     view = WorkflowActionsView()
     emitted: list[str] = []
     view.intent_requested.connect(emitted.append)
-    view.set_actions((
-        ContextActionViewState(IntentId.TRANSLATION_AI, "AI 翻译", False, "当前内容不可翻译"),
-        ContextActionViewState(IntentId.TRANSLATION_AI_BATCH, "批量 AI 翻译", True, None),
-        ContextActionViewState(IntentId.TRANSLATION_REVIEW, "检查", False, "没有待检查内容"),
-        ContextActionViewState(IntentId.PUBLISH_WRITE, "写回/发布", False, "当前内容不可写回"),
-        ContextActionViewState(IntentId.WORKBENCH_MANAGE, "更多", True, None, True),
-    ))
+    view.set_actions(
+        WorkbenchWorkflowPresenter.actions(
+            has_context=True,
+            visible_entries=0,
+            needs_review=0,
+            write_supported=True,
+            has_ai_content=True,
+        )
+    )
 
     assert view._ai_button.isEnabled()
     view._ai_button.click()
-    view._ai_batch_action.trigger()
-    assert emitted == [IntentId.TRANSLATION_AI_BATCH.value]
+    assert emitted == [IntentId.TRANSLATION_AI.value]
+    assert not view._buttons[IntentId.PUBLISH_WRITE].isEnabled()
     view.close()
+
+
+def test_ai_action_tracks_other_loaded_content_when_current_collection_is_empty(monkeypatch) -> None:
+    monkeypatch.setattr(context_module.ParatranzConfig, "create_or_load", lambda: _Config())
+    context = context_module.AppContext()
+    widget = Step2PreviewWidget(context)
+    context.add_slot("empty", context_module.CollectionSlot(label="Empty", collection=TranslationEntryCollection([])))
+    assert not widget._workflow_actions._ai_button.isEnabled()
+
+    context.add_slot(
+        "other",
+        context_module.CollectionSlot(label="Other", collection=TranslationEntryCollection([_entry(0, 0, "")])),
+    )
+    context.activate_slot("empty")
+
+    assert widget._workflow_actions._ai_button.isEnabled()
+    assert widget._filtered_total == 0
+    context.remove_slot("other")
+    assert not widget._workflow_actions._ai_button.isEnabled()
+    widget.close()
 
 
 def test_label_management_is_separate_from_label_filter_and_advanced_is_progressive() -> None:

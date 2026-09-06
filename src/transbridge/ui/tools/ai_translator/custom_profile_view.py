@@ -19,6 +19,8 @@ def build_custom_profile_view(view: TranslatorViewOwner) -> QGroupBox:
     view.controls.custom_profile_combo.setMinimumContentsLength(16)
     view.controls.custom_profile_combo.setAccessibleName("自定义工作流配置")
     selector_row.addWidget(view.controls.custom_profile_combo, 1)
+    layout.addLayout(selector_row)
+    actions_row = QHBoxLayout()
     for name, text in (
         ("custom_profile_new_btn", "新建"),
         ("custom_profile_rename_btn", "重命名"),
@@ -28,8 +30,9 @@ def build_custom_profile_view(view: TranslatorViewOwner) -> QGroupBox:
     ):
         button = QPushButton(text)
         setattr(view.controls, name, button)
-        selector_row.addWidget(button)
-    layout.addLayout(selector_row)
+        actions_row.addWidget(button)
+    actions_row.addStretch(1)
+    layout.addLayout(actions_row)
 
     base_row = QHBoxLayout()
     base_row.addWidget(QLabel("基础入口:"))

@@ -13,11 +13,13 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
     QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
+    QWidgetAction,
 )
 
 from transbridge.converter.translation_entry import STAGE_LABELS
@@ -47,6 +49,12 @@ def render_scope_tags(
     categories: tuple[str, ...],
     category_of: Callable[[object], str],
 ) -> None:
+    for button, selected in (
+        (view.controls.scope_stage_all_btn, state.stage_filters),
+        (view.controls.scope_label_all_btn, state.label_filters),
+        (view.controls.scope_cat_all_btn, state.category_filters),
+    ):
+        button.setText(f"已选 {len(selected)} 项" if selected else "不限")
     view.controls.preset_selection.setText(f"当前选择 {len(state.selected_entry_ids)}")
     _style_filter(view.controls.preset_selection, state.preset == "selection")
     _style_filter(view.controls.preset_untranslated, state.stage_filters == frozenset({0}) and state.preset is None)
@@ -96,13 +104,21 @@ def _style_filter(button: QPushButton, active: bool) -> None:
 
 
 def _new_button(anchor: QPushButton, callback: Callable[[], None]) -> QPushButton:
-    button = QPushButton()
+    menu = anchor.menu()
+    button = QPushButton(menu)
     button.setCursor(Qt.CursorShape.PointingHandCursor)
     button.clicked.connect(lambda _checked=False: callback())
-    layout = anchor.parent().layout()
-    if layout:
-        layout.insertWidget(layout.count() - 1, button)
+    action = QWidgetAction(menu)
+    action.setDefaultWidget(button)
+    menu.addAction(action)
     return button
+
+
+def _filter_menu(anchor: QPushButton, reset: Callable[[], None]) -> None:
+    menu = QMenu(anchor)
+    menu.addAction("不限", reset)
+    anchor.setMenu(menu)
+    anchor.setMinimumWidth(140)
 
 
 def render_scope_estimate(view: TranslatorViewOwner, estimate: ScopeEstimate) -> None:
@@ -127,6 +143,7 @@ def build_scope_view(view: TranslatorViewOwner, callbacks: ScopeCallbacks) -> No
     scope_box = QGroupBox("翻译范围")
     configure_task_panel(scope_box)
     scope_layout = QVBoxLayout(scope_box)
+    scope_box.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
     scope_layout.setSpacing(4)
 
     # 快捷预设按钮
@@ -153,7 +170,7 @@ def build_scope_view(view: TranslatorViewOwner, callbacks: ScopeCallbacks) -> No
     stage_row.addWidget(QLabel("状态："))
     view.controls.scope_stage_all_btn = QPushButton("不限")
     view.controls.scope_stage_all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-    view.controls.scope_stage_all_btn.clicked.connect(lambda: callbacks.on_scope_stage_clicked(None))
+    _filter_menu(view.controls.scope_stage_all_btn, lambda: callbacks.on_scope_stage_clicked(None))
     stage_row.addWidget(view.controls.scope_stage_all_btn)
     view.controls.scope_stage_btns: dict[int, QPushButton] = {}
     stage_row.addStretch()
@@ -165,7 +182,7 @@ def build_scope_view(view: TranslatorViewOwner, callbacks: ScopeCallbacks) -> No
     mark_row.addWidget(QLabel("标记："))
     view.controls.scope_label_all_btn = QPushButton("不限")
     view.controls.scope_label_all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-    view.controls.scope_label_all_btn.clicked.connect(lambda: callbacks.on_scope_label_clicked(None))
+    _filter_menu(view.controls.scope_label_all_btn, lambda: callbacks.on_scope_label_clicked(None))
     mark_row.addWidget(view.controls.scope_label_all_btn)
     view.controls.scope_label_btns: dict[str, QPushButton] = {}
     mark_row.addStretch()
@@ -177,7 +194,7 @@ def build_scope_view(view: TranslatorViewOwner, callbacks: ScopeCallbacks) -> No
     cat_row.addWidget(QLabel("分类："))
     view.controls.scope_cat_all_btn = QPushButton("不限")
     view.controls.scope_cat_all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-    view.controls.scope_cat_all_btn.clicked.connect(lambda: callbacks.on_scope_category_clicked(None))
+    _filter_menu(view.controls.scope_cat_all_btn, lambda: callbacks.on_scope_category_clicked(None))
     cat_row.addWidget(view.controls.scope_cat_all_btn)
     view.controls.scope_cat_btns: dict[str, QPushButton] = {}
     cat_row.addStretch()
@@ -185,6 +202,10 @@ def build_scope_view(view: TranslatorViewOwner, callbacks: ScopeCallbacks) -> No
 
     view.controls.overwrite_check = QCheckBox("覆盖已有译文（重新翻译）")
     scope_layout.addWidget(view.controls.overwrite_check)
+    hint = QLabel("筛选条件应用于已选插件；当前选择和主表视图仅针对打开任务时的当前内容。")
+    hint.setWordWrap(True)
+    hint.setProperty("tbTaskHint", True)
+    scope_layout.addWidget(hint)
 
     view.controls.estimate_lbl = QLabel("预计：— 条")
     _configure_estimate_label(view.controls.estimate_lbl)
@@ -207,15 +228,13 @@ def build_scope_view(view: TranslatorViewOwner, callbacks: ScopeCallbacks) -> No
     order_row.addWidget(view.controls.order_combo)
     order_row.addStretch()
     mixed_layout.addLayout(order_row)
-    mixed_estimate = QLabel("预计：— 条")
-    _configure_estimate_label(mixed_estimate)
-    mixed_estimate.setAccessibleName("AI 混合运行范围估算")
-    view.controls.mixed_estimate_lbl = mixed_estimate
-    mixed_layout.addWidget(mixed_estimate)
+    view.controls.mixed_estimate_lbl = view.controls.estimate_lbl
 
     view.controls.scope_stack = QStackedWidget()
-    view.controls.scope_stack.addWidget(scope_box)
+    view._scope_filter_box = scope_box
+    view.controls.scope_stack.addWidget(QWidget())
     view.controls.scope_stack.addWidget(mixed_panel)
+    view.controls.scope_stack.setVisible(False)
 
 
 def _configure_estimate_label(label: QLabel) -> None:

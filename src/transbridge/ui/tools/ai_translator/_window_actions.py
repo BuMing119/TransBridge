@@ -1,4 +1,4 @@
-"""Preflight and batch-entry actions kept outside the window composition root."""
+"""Preflight and settings actions kept outside the window composition root."""
 
 from __future__ import annotations
 
@@ -48,20 +48,6 @@ def require_ready(
     return False
 
 
-def open_batch_from_window(window: object) -> None:
-    progress = type(window).open_for_batch_translation(
-        window._ctx,
-        window._step2,
-        window,
-        task_runtime=window._task_runtime,
-        theme_view=window._theme_view,
-        settings_requested=window._settings_requested,
-    )
-    if progress is not None:
-        window.progress_window_created.emit(progress)
-        window.close()
-
-
 def open_settings_from_window(window: object) -> None:
     """Open global AI settings and refresh service-only fields on return."""
 
@@ -73,6 +59,7 @@ def open_settings_from_window(window: object) -> None:
     from transbridge.config.llm import LLMConfig
 
     config = LLMConfig.load_from_file()
+    window._config_presenter.refresh_service(config)
     controls = window._view.controls
     widgets = (controls.provider_combo, controls.model_edit, controls.apikey_edit, controls.baseurl_edit)
     blockers = [QSignalBlocker(widget) for widget in widgets]
@@ -88,50 +75,52 @@ def open_settings_from_window(window: object) -> None:
     window.update_quick_run()
 
 
-def update_window_quick_run(window: object) -> None:
-    if window._custom_profiles.block_unavailable_start():
+def update_window_quick_run(window: object, *, config=None, tasks=None) -> None:
+    if not hasattr(window, "_custom_profiles") or window._custom_profiles.block_unavailable_start():
         return
     mode = window._view_port.mode
-    config = window._config_presenter.build()
-    execution_profile = window._config_presenter.execution_profile()
-    mixed_scope = (
-        window._scope_presenter.partition_mixed(window._view_port.rules, window._ctx.collection or ())
-        if mode == "mixed"
-        else None
-    )
-    candidates = preflight_candidates(window, mode, mixed_scope=mixed_scope)
-    preflight = preflight_ai_run(
-        mode,
-        config,
-        candidates,
-        esp_path=window._ctx.esp_path,
-        mixed_has_translation=None if mixed_scope is None else bool(mixed_scope.translate_entries),
-    )
+    from transbridge.application.translation.ai_execution_profile import AiExecutionProfile
+
+    config = config if config is not None else window._config_presenter.build()
+    profile = AiExecutionProfile.from_config(mode, config)
+    try:
+        tasks = tasks if tasks is not None else window._task_sources(config=config)
+    except ValueError as exc:
+        _render_quick_run(window, str(exc), ready=False)
+        return
+    entries = [entry for task in tasks for entry in task.entries]
+    checks = [
+        preflight_ai_run(
+            mode,
+            config,
+            task.entries,
+            esp_path=task.esp_path,
+            mixed_has_translation=bool(task.translate_entries),
+        )
+        for task in tasks
+        if task.entries
+    ]
+    reason = next((check.reason for check in checks if not check.ready), None)
+    if not entries:
+        reason = "所选来源没有符合范围的可处理词条"
+    if window._run_controller.is_running:
+        reason = "已有 AI 任务正在启动"
     controls = window._view.controls
-    estimate = controls.mixed_estimate_lbl.text() if mode == "mixed" else controls.estimate_lbl.text()
-    active = window._run_controller.active_request
-    state = window._quick_run_presenter.present(
-        mode=mode,
-        entry_count=len(candidates),
-        estimate_text=estimate,
-        overwrite=window._view_port.overwrite,
-        preflight=preflight,
-        active_run_id=None if active is None else active.run_id,
-    )
-    controls.start_btn.setEnabled(state.enabled)
-    preflight_text = state.status_text(execution_profile.summary)
-    if mode == "polish" and not execution_profile.enable_polish:
-        controls.start_btn.setText("▶ 开始执行")
-    controls.preflight_label.set_full_text(preflight_text)
-    controls.preflight_label.setToolTip(preflight_text)
-    controls.preflight_label.setAccessibleDescription(state.enabled_reason or state.scope_summary or "运行条件已满足")
-    ComponentStyle.apply_state(
-        controls.preflight_label,
-        SemanticState.SUCCESS if state.enabled else SemanticState.WARNING,
-    )
+    controls.start_btn.setText("开始 AI 翻译" if mode == "translate" else "开始 AI 任务")
+    text = reason or f"已选 {len(tasks)} 个插件，本次处理 {len(entries)} 条；流程：{profile.summary}"
+    _render_quick_run(window, text, ready=reason is None)
+
+
+def _render_quick_run(window, text: str, *, ready: bool) -> None:
+    controls = window._view.controls
+    controls.start_btn.setEnabled(ready)
+    controls.preflight_label.set_full_text(text)
+    controls.preflight_label.setToolTip(text)
+    controls.preflight_label.setAccessibleDescription(text)
+    ComponentStyle.apply_state(controls.preflight_label, SemanticState.SUCCESS if ready else SemanticState.WARNING)
     set_widget_brush(
         controls.preflight_label,
-        window._theme_binding.report("success" if state.enabled else "warning"),
+        window._theme_binding.report("success" if ready else "warning"),
     )
 
 
@@ -142,7 +131,6 @@ def apply_window_theme(window: object, binding: AiThemeBinding) -> None:
 
 __all__ = [
     "apply_window_theme",
-    "open_batch_from_window",
     "open_settings_from_window",
     "preflight_candidates",
     "require_ready",

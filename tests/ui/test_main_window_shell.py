@@ -255,7 +255,7 @@ def test_action_catalog_has_unique_intents_shortcuts_and_disabled_reasons() -> N
         item for item in descriptors if item.shortcut
     ])
     assert DEFAULT_ACTION_CATALOG.get(IntentId.TRANSLATION_AI).section is ActionSection.TRANSLATION
-    assert DEFAULT_ACTION_CATALOG.get(IntentId.TRANSLATION_AI_BATCH).section is ActionSection.TRANSLATION
+    assert IntentId.TRANSLATION_AI_BATCH not in {item.intent_id for item in descriptors}
     appearance = DEFAULT_ACTION_CATALOG.get(IntentId.SETTINGS_APPEARANCE)
     assert appearance.section is ActionSection.SETTINGS
     assert appearance.shortcut is None
@@ -267,6 +267,31 @@ def test_action_catalog_has_unique_intents_shortcuts_and_disabled_reasons() -> N
     )
     assert not unavailable.enabled
     assert unavailable.reason == "当前没有可翻译内容"
+
+
+def test_legacy_ai_intent_uses_unified_handler_with_another_loaded_content() -> None:
+    calls: list[str] = []
+
+    class Noop:
+        def __getattr__(self, _name):
+            return self
+
+        def __call__(self, *_args, **_kwargs):
+            return None
+
+    host = Noop()
+    host.context = SimpleNamespace(collection=None, slots={"other": SimpleNamespace(collection=[object()])})
+    host.tool_windows = Noop()
+    host.tool_windows.open_ai_translator = lambda: calls.append("unified-ai")
+    composition = ShellIntentComposition(host)
+
+    assert composition.dispatch(IntentId.TRANSLATION_AI).accepted
+    assert composition.dispatch(IntentId.TRANSLATION_AI_BATCH.value).accepted
+    assert calls == ["unified-ai", "unified-ai"]
+    host.context.slots.clear()
+    assert not composition.dispatch(IntentId.TRANSLATION_AI).accepted
+    assert calls == ["unified-ai", "unified-ai"]
+    composition.close()
 
 
 def test_menu_uses_optional_foundation_locale_without_changing_intent_identity() -> None:

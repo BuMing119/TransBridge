@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Protocol
 
@@ -141,7 +142,14 @@ class CustomProfilePresenter:
             description=profile.description,
             profile_id=profile.id,
         )
-        self._persist_active(updated)
+        if getattr(self._config, "task_draft", False):
+            self._document = replace(
+                self._document,
+                profiles=tuple(updated if item.id == profile.id else item for item in self._document.profiles),
+            )
+            self._view.render_profiles(self._document)
+        else:
+            self._persist_active(updated)
         self._config.activate_custom(updated, self._persist_active)
         return updated
 
