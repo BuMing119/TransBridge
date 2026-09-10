@@ -40,6 +40,7 @@ class TerminologySourceImportController(QObject):
         reader_factory: Callable[[], object],
         *,
         idle_button_text: str = "从术语来源创建译名方案…",
+        select_after_create: bool = False,
     ) -> None:
         super().__init__(parent)
         self._parent = parent
@@ -47,6 +48,7 @@ class TerminologySourceImportController(QObject):
         self._profiles = profile_controller
         self._reader_factory = reader_factory
         self._idle_button_text = idle_button_text
+        self._select_after_create = select_after_create
         self._active_task: _ReadTask | None = None
         self._default_name = ""
         self._expected_identity: tuple[str, str] | None = None
@@ -91,7 +93,9 @@ class TerminologySourceImportController(QObject):
             return
         from transbridge.ui.tools.terminology_profiles import TerminologySourceImportDialog
 
-        dialog = TerminologySourceImportDialog(preview, self._default_name, self._parent)
+        dialog = TerminologySourceImportDialog(
+            preview, self._default_name, self._parent, select_after_create=self._select_after_create
+        )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         try:

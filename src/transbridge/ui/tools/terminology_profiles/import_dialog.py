@@ -27,17 +27,18 @@ class TerminologySourceImportDialog(QDialog):
 
     _MAX_VISIBLE_ROWS = 500
 
-    def __init__(self, preview, default_name: str, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, preview, default_name: str, parent: QWidget | None = None, *, select_after_create: bool = False
+    ) -> None:
         super().__init__(parent)
         self.preview = preview
-        self.setWindowTitle("从术语来源创建译名方案")
+        self.setWindowTitle("导入术语副本")
         self.setAccessibleName("术语来源转译名方案预览")
         self.resize(980, 680)
         layout = QVBoxLayout(self)
 
         explanation = QLabel(
-            "将以当前项目术语为完整基础，只采用来源中可唯一对应的译名。"
-            "创建的是当前读取结果的独立副本，来源以后变化不会自动修改这个方案。",
+            "仅匹配项目已有术语。导入为独立副本，不随来源自动更新。",
             self,
         )
         explanation.setWordWrap(True)
@@ -50,7 +51,7 @@ class TerminologySourceImportDialog(QDialog):
         self.name_edit = QLineEdit(default_name, self)
         self.name_edit.setAccessibleName("新译名方案名称")
         ComponentStyle.apply_static(self.name_edit, ComponentKind.INPUT)
-        form.addRow("方案名称", self.name_edit)
+        form.addRow("副本名称", self.name_edit)
         layout.addLayout(form)
 
         self.summary_label = QLabel(self._summary_text(), self)
@@ -71,12 +72,15 @@ class TerminologySourceImportDialog(QDialog):
         layout.addWidget(self.table, 1)
         self._render_rows()
 
-        self.select_check = QCheckBox("创建后设为当前方案（与工作台同步）", self)
-        self.select_check.setChecked(False)
+        self.select_check = QCheckBox("导入后用于当前项目", self)
+        self.select_check.setChecked(select_after_create)
         layout.addWidget(self.select_check)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel, self)
-        self.create_button = QPushButton("创建方案", self)
+        self.create_button = QPushButton("导入并选用" if select_after_create else "导入副本", self)
+        self.select_check.toggled.connect(
+            lambda selected: self.create_button.setText("导入并选用" if selected else "导入副本")
+        )
         self.create_button.setDefault(True)
         ComponentStyle.apply_static(self.create_button, ComponentKind.BUTTON)
         buttons.addButton(self.create_button, QDialogButtonBox.ButtonRole.AcceptRole)

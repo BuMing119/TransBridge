@@ -9,15 +9,15 @@ from enum import StrEnum
 class TerminologyArea(StrEnum):
     OVERVIEW = "overview"
     TERMS = "terms"
+    # Kept as a compatibility route. Selection now lives in the shared project
+    # context instead of occupying a top-level page.
     SCHEMES = "schemes"
     VERSIONS = "versions"
     REPORTS = "reports"
 
 
 TERMINOLOGY_AREAS = (
-    (TerminologyArea.OVERVIEW, "概览", "layout-dashboard"),
     (TerminologyArea.TERMS, "术语", "language"),
-    (TerminologyArea.SCHEMES, "译名方案", "sparkles"),
     (TerminologyArea.VERSIONS, "版本", "clock-hour-3"),
     (TerminologyArea.REPORTS, "报告", "list-details"),
 )

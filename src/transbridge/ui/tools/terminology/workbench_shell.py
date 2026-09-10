@@ -1,4 +1,4 @@
-"""Centered terminology shell with project context and horizontal navigation."""
+"""Compact terminology shell with project context and secondary navigation."""
 
 from __future__ import annotations
 
@@ -21,81 +21,69 @@ from .view_models import TERMINOLOGY_AREAS, TerminologyArea
 
 
 class TerminologyWorkbenchShell(QWidget):
-    """Present one centered workbench surface with a horizontal object bar."""
+    """Keep project and source context above a full-width terminology table."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("terminologyWorkbenchShell")
         outer = QHBoxLayout(self)
-        outer.setContentsMargins(18, 14, 18, 14)
+        outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
-        outer.addStretch(1)
 
         self.surface = QFrame(self)
         self.surface.setObjectName("terminologyWorkbenchSurface")
         self.surface.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.surface.setMinimumWidth(900)
-        self.surface.setMaximumWidth(1280)
+        self.surface.setMinimumWidth(760)
         surface_layout = QVBoxLayout(self.surface)
         surface_layout.setContentsMargins(0, 0, 0, 0)
         surface_layout.setSpacing(0)
         outer.addWidget(self.surface, 20)
-        outer.addStretch(1)
 
         header = QFrame(self.surface)
         header.setObjectName("terminologyHeader")
         header_layout = QVBoxLayout(header)
-        header_layout.setContentsMargins(26, 20, 26, 18)
-        header_layout.setSpacing(16)
+        header_layout.setContentsMargins(20, 12, 20, 12)
+        header_layout.setSpacing(12)
 
         brand = QHBoxLayout()
-        brand.setSpacing(12)
-        logo = QLabel("TB", header)
-        logo.setObjectName("terminologyBrandMark")
-        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        logo.setFixedSize(52, 52)
-        brand.addWidget(logo)
-        identity = QVBoxLayout()
-        identity.setSpacing(1)
-        title = QLabel("术语工作台", header)
+        brand.setSpacing(8)
+        title = QLabel("项目术语", header)
         title.setProperty("tbTerminologyBrandTitle", True)
-        self.brand_context = QLabel("项目术语与版本管理", header)
-        self.brand_context.setProperty("tbSecondary", True)
-        identity.addWidget(title)
-        identity.addWidget(self.brand_context)
-        brand.addLayout(identity)
-        brand.addStretch(1)
+        title.setAccessibleDescription("管理当前项目术语")
+        brand.addWidget(title)
         header_layout.addLayout(brand)
 
+        self.brand_context = QLabel("管理当前项目术语", header)
+        self.brand_context.hide()
+
         project = QFrame(header)
-        project.setObjectName("terminologyProjectCard")
+        project.setObjectName("terminologyProjectContext")
         project_layout = QHBoxLayout(project)
-        project_layout.setContentsMargins(16, 12, 16, 12)
+        project_layout.setContentsMargins(16, 0, 0, 0)
         project_layout.setSpacing(12)
         project_icon = QLabel(project)
         project_icon.setPixmap(tabler_icon(project_icon, "folder", 21).pixmap(QSize(21, 21)))
         project_icon.setAccessibleName("当前项目")
         project_layout.addWidget(project_icon)
-        project_identity = QVBoxLayout()
-        project_identity.setSpacing(1)
         self.project_name = QLabel("正在读取当前项目", project)
         self.project_name.setProperty("tbTerminologyProjectTitle", True)
-        self.project_caption = QLabel("正在检查翻译版本和来源", project)
-        self.project_caption.setProperty("tbSecondary", True)
-        project_identity.addWidget(self.project_name)
-        project_identity.addWidget(self.project_caption)
-        project_layout.addLayout(project_identity, 1)
-        chevron = QLabel("⌄", project)
-        chevron.setProperty("tbSecondary", True)
-        project_layout.addWidget(chevron)
-        header_layout.addWidget(project)
+        project_layout.addWidget(self.project_name, 1)
+        self.project_caption = QLabel("", project)
+        self.project_caption.hide()
+        brand.addWidget(project)
+        brand.addStretch(1)
+
+        self._scheme_slot = QVBoxLayout()
+        self._scheme_slot.setContentsMargins(0, 0, 0, 0)
+        self._scheme_slot.setSpacing(0)
+        header_layout.addLayout(self._scheme_slot)
         surface_layout.addWidget(header)
 
-        self.navigation = QFrame(self.surface)
+        self.navigation = QFrame(header)
         self.navigation.setObjectName("terminologyTopNavigation")
         self.navigation.setAccessibleName("术语工作台导航")
         navigation_layout = QHBoxLayout(self.navigation)
-        navigation_layout.setContentsMargins(12, 10, 12, 10)
+        navigation_layout.setContentsMargins(0, 0, 0, 0)
         navigation_layout.setSpacing(8)
 
         self._buttons = QButtonGroup(self)
@@ -108,17 +96,17 @@ class TerminologyWorkbenchShell(QWidget):
             button.setIcon(tabler_icon(button, icon_id, 20))
             button.setIconSize(QSize(20, 20))
             button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-            button.setProperty("tbTerminologyNav", True)
+            button.setProperty("tbTerminologyCompactNav", True)
             button.setCheckable(True)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.setAccessibleName(label)
-            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+            button.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
             button.clicked.connect(lambda _checked=False, value=index: self.set_current_index(value))
             self._buttons.addButton(button, index)
             self._area_buttons[area] = button
             self._area_indices[area] = index
-            navigation_layout.addWidget(button, 1)
-        surface_layout.addWidget(self.navigation)
+            navigation_layout.addWidget(button)
+        brand.addWidget(self.navigation)
 
         self.pages = QStackedWidget(self.surface)
         self.pages.setObjectName("terminologyObjectPages")
@@ -134,7 +122,12 @@ class TerminologyWorkbenchShell(QWidget):
         variant = variant_name.strip() or "当前翻译版本"
         self.project_name.setText(project)
         self.project_caption.setText(f"{variant} · {source_count} 个来源")
-        self.brand_context.setText(project)
+        self.project_name.setAccessibleDescription(f"{variant}，{source_count} 个来源")
+
+    def set_scheme_switcher(self, widget: QWidget) -> None:
+        """Place output naming selection beside the Project/Variant context."""
+
+        self._scheme_slot.addWidget(widget)
 
     def add_area(self, area: TerminologyArea, widget: QWidget) -> None:
         expected = self._area_indices[area]
@@ -145,6 +138,8 @@ class TerminologyWorkbenchShell(QWidget):
             self.set_current_index(0)
 
     def set_current_area(self, area: TerminologyArea) -> None:
+        if area in {TerminologyArea.OVERVIEW, TerminologyArea.SCHEMES}:
+            area = TerminologyArea.TERMS
         self.set_current_index(self._area_indices[area])
 
     def set_current_index(self, index: int) -> None:

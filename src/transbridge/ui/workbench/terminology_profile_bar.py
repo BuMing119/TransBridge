@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget
 
+from transbridge.application.terminology_profiles import PublishedTerminologyProfile
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, ElidedLabel
 
 
@@ -23,6 +24,8 @@ class TerminologyProfileBarState:
     enabled: bool = False
     can_manage: bool = False
     detail: str = "打开工程后可选择译名方案。"
+    selected_revision: PublishedTerminologyProfile | None = None
+    selection_error: str = ""
 
 
 class TerminologyProfileBar(QWidget):

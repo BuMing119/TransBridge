@@ -36,8 +36,8 @@ class TerminologyProfileManagerDialog(QDialog):
         self._project_id = project_id
         self._profiles = ()
         self._current = None
-        self.setWindowTitle("管理译名方案")
-        self.setAccessibleName("译名方案管理")
+        self.setWindowTitle("管理不同译名版本")
+        self.setAccessibleName("不同译名版本管理")
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.resize(920, 600)
         self._init_ui()
@@ -53,9 +53,9 @@ class TerminologyProfileManagerDialog(QDialog):
         layout.setSpacing(10)
 
         profile_row = QHBoxLayout()
-        profile_row.addWidget(QLabel("方案 ·", self))
+        profile_row.addWidget(QLabel("译名版本 ·", self))
         self.profile_combo = QComboBox(self)
-        self.profile_combo.setAccessibleName("要管理的译名方案")
+        self.profile_combo.setAccessibleName("要管理的译名版本")
         self.profile_combo.currentIndexChanged.connect(self._profile_selected)
         ComponentStyle.apply_static(self.profile_combo, ComponentKind.INPUT)
         profile_row.addWidget(self.profile_combo, 1)
@@ -68,20 +68,20 @@ class TerminologyProfileManagerDialog(QDialog):
         layout.addLayout(profile_row)
 
         explanation = QLabel(
-            "为同一术语设置不同场景下采用的译名。切换方案只改变预览和输出，不会修改项目中的普通译文。"
+            "为同一项目制作不同的专名版本。切换版本只改变预览和输出，不会修改项目中的普通译文。"
             "此表只编辑基础映射；条目特例和已确认位置会保持不变。",
             self,
         )
         explanation.setWordWrap(True)
-        explanation.setAccessibleName("译名方案映射说明")
+        explanation.setAccessibleName("译名版本映射说明")
         layout.addWidget(explanation)
 
         self.mapping_table = QTableWidget(0, 5, self)
-        self.mapping_table.setAccessibleName("译名方案映射")
+        self.mapping_table.setAccessibleName("译名版本映射")
         self.mapping_table.setHorizontalHeaderLabels([
             "原文术语",
             "当前译文中的叫法",
-            "此方案采用的译名",
+            "此版本采用的译名",
             "生效范围",
             "插件文件",
         ])
@@ -106,7 +106,7 @@ class TerminologyProfileManagerDialog(QDialog):
 
         footer = QHBoxLayout()
         self.status_label = QLabel("", self)
-        self.status_label.setAccessibleName("译名方案管理状态")
+        self.status_label.setAccessibleName("译名版本管理状态")
         footer.addWidget(self.status_label, 1)
         self.save_button = self._button("保存修改", self._save_draft)
         self.publish_button = self._button("应用修改", self._publish)
@@ -165,7 +165,7 @@ class TerminologyProfileManagerDialog(QDialog):
             self.publish_button,
         ):
             widget.setEnabled(enabled)
-        self.status_label.setText("请选择或新建译名方案。" if not enabled else self._profile_status(self._current))
+        self.status_label.setText("请选择或新建译名版本。" if not enabled else self._profile_status(self._current))
 
     def _profile_status(self, profile) -> str:
         published = profile.latest_published_revision
@@ -219,7 +219,7 @@ class TerminologyProfileManagerDialog(QDialog):
             self.mapping_table.removeRow(row)
 
     def _create_profile(self) -> None:
-        name, accepted = QInputDialog.getText(self, "新建译名方案", "方案名称:")
+        name, accepted = QInputDialog.getText(self, "新建译名版本", "版本名称:")
         if not accepted:
             return
         try:
@@ -227,15 +227,15 @@ class TerminologyProfileManagerDialog(QDialog):
         except Exception as exc:  # noqa: BLE001 - UI adapter boundary
             self._show_error(exc)
             return
-        self._changed("已创建译名方案。", select_profile_id=profile.profile_id)
+        self._changed("已创建译名版本。", select_profile_id=profile.profile_id)
 
     def _copy_profile(self) -> None:
         if self._current is None:
             return
         name, accepted = QInputDialog.getText(
             self,
-            "复制译名方案",
-            "新方案名称:",
+            "复制译名版本",
+            "新版本名称:",
             text=f"{self._current.name} 副本",
         )
         if not accepted:
@@ -252,8 +252,8 @@ class TerminologyProfileManagerDialog(QDialog):
             return
         name, accepted = QInputDialog.getText(
             self,
-            "重命名译名方案",
-            "方案名称:",
+            "重命名译名版本",
+            "版本名称:",
             text=self._current.name,
         )
         if not accepted:
@@ -263,7 +263,7 @@ class TerminologyProfileManagerDialog(QDialog):
         except Exception as exc:  # noqa: BLE001 - UI adapter boundary
             self._show_error(exc)
             return
-        self._changed("已重命名译名方案。", select_profile_id=profile.profile_id)
+        self._changed("已重命名译名版本。", select_profile_id=profile.profile_id)
 
     def _archive_profile(self) -> None:
         if self._current is None:
@@ -274,7 +274,7 @@ class TerminologyProfileManagerDialog(QDialog):
             self._show_error(exc)
             return
         self._current = None
-        self._changed("已归档译名方案；使用它的翻译版本已回到项目译文。")
+        self._changed("已归档译名版本；使用它的翻译版本已回到项目译文。")
 
     def _save_draft(self) -> None:
         if self._current is None:
@@ -347,7 +347,7 @@ class TerminologyProfileManagerDialog(QDialog):
 
     def _show_error(self, error: Exception) -> None:
         self.status_label.setText(f"操作失败：{error}")
-        QMessageBox.warning(self, "译名方案", str(error))
+        QMessageBox.warning(self, "译名版本", str(error))
 
 
 __all__ = ["TerminologyProfileManagerDialog"]

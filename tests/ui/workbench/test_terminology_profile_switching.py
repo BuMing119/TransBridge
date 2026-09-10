@@ -111,6 +111,7 @@ def test_controller_lists_only_published_profiles_and_persists_selection() -> No
     assert "r1" not in bar.combo.itemText(1)
     assert bar.manage_button.isEnabled()
     assert preview.profile is None
+    assert controller.state.selected_revision is None
 
     ai_controls = type("Controls", (), {})()
     ai_controls.naming_scheme_combo = QComboBox()
@@ -139,6 +140,31 @@ def test_controller_lists_only_published_profiles_and_persists_selection() -> No
     ai_controls.naming_scheme_combo.close()
     ai_controls.naming_scheme_manage_btn.close()
     ai_controls.naming_scheme_status_label.close()
+    bar.close()
+    preview.close()
+
+
+def test_failed_switch_retains_exact_published_rows_and_exposes_failure(monkeypatch) -> None:
+    service, profile_id = _service_with_profile()
+    service.select("project-a", "variant-a", profile_id)
+    context = _ProfileContext()
+    bar = TerminologyProfileBar()
+    preview = _Preview()
+    controller = TerminologyProfileUiController(context, _Factory(service), bar, preview)
+    original = controller.state.selected_revision
+    assert original is not None
+
+    def fail(*_args):
+        raise PermissionError("文件只读")
+
+    monkeypatch.setattr(service, "clear_selection", fail)
+    controller.select(None)
+
+    assert controller.state.selected_revision == original
+    assert controller.state.selected_profile_id == profile_id
+    assert controller.state.selection_error == "切换失败：文件只读"
+    assert preview.profile == original
+    controller.deleteLater()
     bar.close()
     preview.close()
 

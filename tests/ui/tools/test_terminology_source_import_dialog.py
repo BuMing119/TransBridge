@@ -60,4 +60,11 @@ def test_import_dialog_explains_snapshot_and_defaults_to_not_switching() -> None
     assert "来源独有且未导入 1 个" in dialog.summary_label.text()
     assert dialog.table.item(0, 3).text() == "采用来源译名"
     dialog.close()
+    adoption = TerminologySourceImportDialog(preview, "社区术语", select_after_create=True)
+    assert adoption.select_after_create
+    assert adoption.create_button.text() == "导入并选用"
+    adoption.select_check.setChecked(False)
+    assert not adoption.select_after_create
+    assert adoption.create_button.text() == "导入副本"
+    adoption.close()
     _APP.processEvents()

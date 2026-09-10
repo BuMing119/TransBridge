@@ -22,10 +22,11 @@ class TerminologySchemesController(QObject):
         self._profiles = profile_controller
         self._imports = TerminologySourceImportController(
             view,
-            view.create_button,
+            view.actions_button,
             profile_controller,
             ConfiguredTermSourceReader,
-            idle_button_text="从术语来源创建…",
+            idle_button_text="选用术语源…",
+            select_after_create=True,
         )
         view.create_requested.connect(self.create_from_source)
         view.manage_requested.connect(self.open_manager)

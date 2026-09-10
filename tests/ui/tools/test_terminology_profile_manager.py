@@ -59,7 +59,7 @@ def test_manager_saves_mapping_without_dropping_overrides_or_bindings_and_publis
     assert published.content.bindings == original.bindings
     profile = next(item for item in service.list_profiles("project-a") if item.profile_id == profile_id)
     assert profile.latest_published_revision == 1
-    assert dialog.windowTitle() == "管理译名方案"
+    assert dialog.windowTitle() == "管理不同译名版本"
     assert "可选择" in dialog.profile_combo.currentText()
     assert "r1" not in dialog.profile_combo.currentText()
     assert dialog.save_button.text() == "保存修改"
@@ -67,7 +67,7 @@ def test_manager_saves_mapping_without_dropping_overrides_or_bindings_and_publis
     assert [dialog.mapping_table.horizontalHeaderItem(index).text() for index in range(3)] == [
         "原文术语",
         "当前译文中的叫法",
-        "此方案采用的译名",
+        "此版本采用的译名",
     ]
     dialog.close()
     _APP.processEvents()

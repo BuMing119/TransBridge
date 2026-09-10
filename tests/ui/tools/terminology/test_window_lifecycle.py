@@ -5,14 +5,19 @@ import time
 from types import SimpleNamespace
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication, QHBoxLayout, QTabWidget, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QApplication, QHBoxLayout, QLabel, QTabWidget, QVBoxLayout, QWidget
 
 from transbridge.application.contracts import JobRef, RequestContext
 from transbridge.application.tasks import JobState
 from transbridge.application.terminology.workloads import TerminologyWorkloadType
+from transbridge.ui.tools.terminology.build_view import BuildView
 from transbridge.ui.tools.terminology.presenter import TerminologyPresenter, TerminologyUiServices
 from transbridge.ui.tools.terminology.task_adapter import TerminologyTaskViewState
-from transbridge.ui.tools.terminology.view_models import TerminologyArea
+from transbridge.ui.tools.terminology.view_models import (
+    TerminologyArea,
+    TerminologyPreflightViewState,
+    TerminologySummaryViewState,
+)
 from transbridge.ui.tools.terminology.window import TerminologyWindow
 
 _APP = QApplication.instance() or QApplication([])
@@ -69,15 +74,16 @@ def test_window_uses_horizontal_object_navigation_without_workflow_tabs() -> Non
     )
     window = TerminologyWindow(presenter)
 
-    assert window.workspace.labels == ("概览", "术语", "译名方案", "版本", "报告")
+    assert window.workspace.labels == ("术语", "版本", "报告")
     assert isinstance(window.workspace.layout(), QHBoxLayout)
     assert isinstance(window.workspace.surface.layout(), QVBoxLayout)
-    assert window.workspace.navigation.parent() is window.workspace.surface
-    assert window.workspace.surface.layout().indexOf(window.workspace.navigation) == 1
-    assert window.workspace.surface.layout().indexOf(window.workspace.pages) == 2
+    assert window.workspace.navigation.parent().objectName() == "terminologyHeader"
+    assert window.workspace.surface.layout().indexOf(window.workspace.pages) == 1
     assert not window.findChildren(QWidget, "tbNavigationRail")
     assert not window.findChildren(QTabWidget)
-    assert window.workspace.current_area() is TerminologyArea.OVERVIEW
+    assert window.findChild(QLabel, "terminologyBrandMark") is None
+    assert window.workspace.current_area() is TerminologyArea.TERMS
+    assert window.terms_view.isAncestorOf(window.build_view)
     assert window.draft_model.headerData(0, Qt.Orientation.Horizontal) == "原名"
     assert window.history_model.headerData(0, Qt.Orientation.Horizontal) == "版本"
     assert window.publish_details.isHidden()
@@ -86,8 +92,12 @@ def test_window_uses_horizontal_object_navigation_without_workflow_tabs() -> Non
 
     assert window.workspace.current_area() is TerminologyArea.VERSIONS
     window.workspace.set_current_area(TerminologyArea.SCHEMES)
-    assert window.workspace.current_area() is TerminologyArea.SCHEMES
-    assert window.schemes_view.create_button.text() == "从术语来源创建…"
+    assert window.workspace.current_area() is TerminologyArea.TERMS
+    window.workspace.set_current_area(TerminologyArea.OVERVIEW)
+    assert window.workspace.current_area() is TerminologyArea.TERMS
+    assert window.workspace.surface.isAncestorOf(window.schemes_view)
+    assert window.schemes_view.actions_button.text() == "选用术语源…"
+    assert window.schemes_view.create_action.text() == "从术语源导入副本…"
     window.close()
 
 
@@ -102,7 +112,9 @@ def test_workbench_projects_human_readable_context_into_the_top_project_card() -
 
     assert window.workspace.project_name.text() == "Skyrim SE 汉化项目"
     assert window.workspace.project_caption.text() == "简体中文 · 18 个来源"
-    assert window.workspace.brand_context.text() == "Skyrim SE 汉化项目"
+    assert window.workspace.project_caption.isHidden()
+    assert window.workspace.brand_context.isHidden()
+    assert window.workspace.project_name.accessibleDescription() == "简体中文，18 个来源"
     window.close()
 
 
@@ -173,4 +185,56 @@ def test_completed_build_refreshes_the_overview_summary() -> None:
 
     assert window.build_view.result.text() == "从 3 个来源整理出 42 个术语候选。"
     assert "2 组同名异译" in window.build_view.decisions.text()
+    assert window.build_view.result_title.text() == "待处理"
     window.close()
+
+
+def test_overview_hides_empty_and_technical_sections_until_they_are_useful() -> None:
+    view = BuildView()
+
+    assert view.isHidden()
+    assert view.alert.isHidden()
+    assert view.metrics.isHidden()
+    assert view.result_group.isHidden()
+    assert view.preflight_button.isHidden()
+    assert not hasattr(view, "llm_enabled")
+
+    view.set_preflight(
+        TerminologyPreflightViewState(
+            ready=True,
+            title="可以开始整理",
+            message="当前项目已准备好。",
+            action_label="开始整理",
+        )
+    )
+
+    assert view.alert.isHidden()
+    assert view.preflight_button.isHidden()
+    assert view.build_button.text() == "开始整理"
+    assert view.isHidden()
+
+    view.set_summary(
+        TerminologySummaryViewState(
+            title="整理完成",
+            result="从 1 个来源整理出 8 个术语。",
+            decisions="当前没有不同译法。",
+            impact="不会自动修改项目译文。",
+            next_action="可以查看术语。",
+            term_count=8,
+            attention_count=0,
+        )
+    )
+
+    assert not view.metrics.isHidden()
+    assert not view.result_group.isHidden()
+    assert not view.isHidden()
+    assert view.result_title.text() == "已完成"
+    assert view.decisions.isHidden()
+    assert view.impact.isHidden()
+    assert view.next_action.isHidden()
+
+    view.set_preflight(TerminologyPreflightViewState.unavailable("缺少可用的术语来源。"))
+
+    assert not view.alert.isHidden()
+    assert not view.preflight_button.isHidden()
+    view.close()

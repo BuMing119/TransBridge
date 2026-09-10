@@ -79,7 +79,7 @@ class TerminologyWindow(QWidget):
     ) -> None:
         super().__init__(parent, Qt.WindowType.Window)
         self.presenter = presenter
-        self.setWindowTitle("项目术语工作台")
+        self.setWindowTitle("项目术语")
         self.resize(1180, 760)
         self.setMinimumSize(920, 620)
         self.setAccessibleName("项目术语工作台")
@@ -158,7 +158,7 @@ class TerminologyWindow(QWidget):
         self.build_view.cancel_requested.connect(self._cancel_latest)
         self.build_view.terms_requested.connect(lambda: self.workspace.set_current_area(TerminologyArea.TERMS))
         self.build_view.versions_requested.connect(lambda: self.workspace.set_current_area(TerminologyArea.VERSIONS))
-        self.terms_view = TermsView(self.draft_view, self.conflicts_view, self)
+        self.terms_view = TermsView(self.draft_view, self.conflicts_view, self.build_view, self)
         self.schemes_view = TerminologySchemesView(self)
         self._schemes = TerminologySchemesController(
             self.schemes_view,
@@ -166,6 +166,12 @@ class TerminologyWindow(QWidget):
             self._profile_controller,
             self,
         )
+        if self._profile_controller is not None:
+            self._profile_controller.state_changed.connect(self.terms_view.render_source)
+            self.terms_view.render_source(self._profile_controller.state)
+        else:
+            self.terms_view.all_terms_button.click()
+        self.workspace.set_scheme_switcher(self.schemes_view)
         self.versions_view = VersionsView(self.history_view, self)
         presenter = self.presenter
         sync_service = presenter.services.sync
@@ -189,16 +195,13 @@ class TerminologyWindow(QWidget):
                 )
                 self._sync_tasks.start()
         self.versions_view.publish_requested.connect(self._publish)
-        self.draft_view.publish_requested.connect(lambda: self.workspace.set_current_area(TerminologyArea.VERSIONS))
         self.publish_status = self.versions_view.publish_status
         self.publish_details = self.versions_view.publish_details
         self.reports_view = ReportsView(self)
         self.reports_view.quality_report_requested.connect(self._render_report)
         self.reports_view.changelog_requested.connect(self._render_changelog)
         self.reports_view.retry_requested.connect(self._retry_changelog)
-        self.workspace.add_area(TerminologyArea.OVERVIEW, self.build_view)
         self.workspace.add_area(TerminologyArea.TERMS, self.terms_view)
-        self.workspace.add_area(TerminologyArea.SCHEMES, self.schemes_view)
         self.workspace.add_area(TerminologyArea.VERSIONS, self.versions_view)
         self.workspace.add_area(TerminologyArea.REPORTS, self.reports_view)
 
@@ -326,7 +329,7 @@ class TerminologyWindow(QWidget):
         if not term_identity:
             return
         suppressed = bool(getattr(decision, "suppressed", False))
-        action = "重新启用" if suppressed else "不再使用"
+        action = "启用" if suppressed else "停用"
         answer = QMessageBox.question(
             self,
             action,

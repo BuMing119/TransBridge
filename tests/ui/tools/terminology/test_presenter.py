@@ -76,6 +76,7 @@ def test_preflight_projects_scope_without_reading_sqlite_or_counting_rows() -> N
     assert state.ready
     assert state.scope_label == "来源范围 · 1 个已启用来源"
     assert state.current_version_label == "当前版本 · 尚无已发布版本"
+    assert state.current_version_value == ""
     assert state.expected_scale_label == "构建后显示准确规模"
     assert state.sources[0].name == "Main.esm"
     assert state.action_label == "创建术语库"

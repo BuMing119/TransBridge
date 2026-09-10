@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from .terminology_profile_bar import (
@@ -145,6 +147,7 @@ class TerminologyProfileUiController(QObject):
                 enabled=True,
                 can_manage=True,
                 detail=detail,
+                selected_revision=selected,
             )
         )
 
@@ -161,12 +164,10 @@ class TerminologyProfileUiController(QObject):
                 self._service.select(project_id, variant_id, str(profile_id))
         except Exception as exc:  # noqa: BLE001 - UI adapter boundary
             self.refresh()
-            state = TerminologyProfileBarState(
-                choices=self._current_choices(),
-                selected_profile_id=self._bar.combo.currentData(),
-                enabled=True,
-                can_manage=True,
+            state = replace(
+                self._state,
                 detail=f"切换失败，已保留原方案：{exc}",
+                selection_error=f"切换失败：{exc}",
             )
             self._render(state)
             return
@@ -200,12 +201,6 @@ class TerminologyProfileUiController(QObject):
         self._state = state
         self._bar.render(state)
         self.state_changed.emit(state)
-
-    def _current_choices(self) -> tuple[TerminologyProfileChoice, ...]:
-        return tuple(
-            TerminologyProfileChoice(str(self._bar.combo.itemData(index)), self._bar.combo.itemText(index))
-            for index in range(1, self._bar.combo.count())
-        )
 
 
 __all__ = ["TerminologyProfileUiController"]

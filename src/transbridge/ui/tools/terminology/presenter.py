@@ -143,7 +143,7 @@ class TerminologyPresenter:
             current_version_label=_current_version_label(snapshot.effective_version_id),
             project_display_name=project_name,
             variant_display_name=variant_name,
-            current_version_value=snapshot.effective_version_id or "尚无",
+            current_version_value=snapshot.effective_version_id or "",
             sources=sources,
             technical_details=details,
             action_label=action_label,

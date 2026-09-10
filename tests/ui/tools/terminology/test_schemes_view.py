@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 from PyQt6.QtCore import QObject, pyqtSignal
@@ -38,22 +39,50 @@ class _Profiles(QObject):
         self.manager_opened += 1
 
 
-def test_scheme_page_is_the_primary_place_to_switch_create_and_manage() -> None:
+def test_scheme_switcher_keeps_selection_visible_and_management_in_a_menu() -> None:
     profiles = _Profiles()
     view = TerminologySchemesView()
     controller = TerminologySchemesController(view, SimpleNamespace(), profiles, view)
 
     assert controller.parent() is view
     assert view.scheme_combo.currentData() == "classic"
-    assert view.create_button.text() == "从术语来源创建…"
-    assert view.create_button.isEnabled()
-    assert "经典译名" in view.status_label.text()
+    assert view.scheme_combo.currentText() == "经典译名"
+    assert view.scheme_combo.accessibleName() == "当前术语副本"
+    assert view.actions_button.text() == "选用术语源…"
+    assert view.create_action.text() == "从术语源导入副本…"
+    assert controller._imports._select_after_create
+    assert view.actions_button.isEnabled()
+    assert view.status_label.isHidden()
+    assert view.scheme_combo.accessibleDescription() == "经典译名"
 
     view.scheme_combo.setCurrentIndex(0)
-    view.manage_button.click()
+    view.manage_action.trigger()
 
     assert profiles.selected == [None]
     assert profiles.manager_opened == 1
+    view.close()
+
+
+def test_scheme_switcher_displays_none_when_no_library_is_selected() -> None:
+    view = TerminologySchemesView()
+    selections = []
+    view.selection_requested.connect(selections.append)
+    state = TerminologyProfileBarState(enabled=True, can_manage=True)
+    view.render(state)
+
+    assert view.scheme_combo.currentText() == "无"
+    assert view.scheme_combo.currentData() is None
+    assert view.scheme_combo.accessibleDescription() == "无"
+    assert view.metadata.isHidden()
+    assert view.metadata.text() == ""
+
+    selected = _Profiles().state
+    view.render(selected)
+    assert view.scheme_combo.currentText() == "经典译名"
+    view.render(replace(selected, selected_profile_id=None))
+    assert view.scheme_combo.currentText() == "无"
+    assert view.scheme_combo.count() == 2
+    assert selections == []
     view.close()
 
 

@@ -104,29 +104,17 @@ QToolButton[tbNavIntent="true"]:pressed {{
 QFrame#terminologyWorkbenchSurface {{
     color: {text.canonical};
     background: {surface.canonical};
-    border: 1px solid {subtle_border.canonical};
-    border-radius: {radius_large + 4}px;
-    font-family: "Microsoft YaHei UI";
-}}
-QFrame#terminologyWorkbenchSurface QWidget {{
-    font-family: "Microsoft YaHei UI";
+    border: 0;
+    border-radius: 0;
 }}
 QFrame#terminologyHeader {{
     background: {surface.canonical};
     border: 0;
     border-bottom: 1px solid {subtle_border.canonical};
 }}
-QLabel#terminologyBrandMark {{
-    color: {on_accent.canonical};
-    background: {error.canonical};
-    border: 0;
-    border-radius: 12px;
-    font-size: 15pt;
-    font-weight: 600;
-}}
 QLabel[tbTerminologyBrandTitle="true"] {{
     color: {text.canonical};
-    font-size: 18pt;
+    font-size: 15pt;
     font-weight: 650;
 }}
 QLabel[tbTerminologyProjectTitle="true"] {{
@@ -134,30 +122,24 @@ QLabel[tbTerminologyProjectTitle="true"] {{
     font-size: 12pt;
     font-weight: 600;
 }}
-QFrame#terminologyProjectCard {{
-    background: {row_alternate.canonical};
-    border: 0;
-    border-radius: {radius_large}px;
-}}
 QFrame#terminologyTopNavigation {{
-    background: {header_surface.canonical};
+    background: transparent;
     border: 0;
-    border-bottom: 1px solid {subtle_border.canonical};
 }}
-QToolButton[tbTerminologyNav="true"] {{
+QToolButton[tbTerminologyCompactNav="true"] {{
     color: {text.canonical};
     background: transparent;
     border: 0;
-    border-radius: {radius_large}px;
-    min-height: 54px;
-    padding: 0 18px;
-    font-size: 12pt;
+    border-radius: {radius}px;
+    min-height: 32px;
+    padding: 0 12px;
+    font-size: 10pt;
 }}
-QToolButton[tbTerminologyNav="true"]:hover {{
+QToolButton[tbTerminologyCompactNav="true"]:hover {{
     color: {focus.canonical};
     background: {control_hover.canonical};
 }}
-QToolButton[tbTerminologyNav="true"]:checked {{
+QToolButton[tbTerminologyCompactNav="true"]:checked {{
     color: {focus.canonical};
     background: {nav_selected.canonical};
     font-weight: 600;
