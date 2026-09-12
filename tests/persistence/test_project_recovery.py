@@ -132,11 +132,12 @@ def test_invalid_saved_project_is_rejected_without_quarantine_or_migration(proje
     assert _data_tree(services.root) == persisted
 
 
-def test_normal_prepare_leaves_legacy_records_unchanged_until_activation(project):
+@pytest.mark.parametrize("legacy_schema", [2, 3])
+def test_normal_prepare_leaves_legacy_records_unchanged_until_activation(project, legacy_schema):
     services, context, _source, _raw, path, _key = project
     variant_path = services.variants.path_for(services.project_lifecycle.active.formal_variant_ref)
-    _set_schema(path, 2)
-    _set_schema(variant_path, 2)
+    _set_schema(path, legacy_schema)
+    _set_schema(variant_path, legacy_schema)
     persisted = _data_tree(services.root)
 
     prepared = services.current_project_opener.prepare_path(path, context)

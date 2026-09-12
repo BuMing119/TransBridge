@@ -1,8 +1,10 @@
-"""Read-only V2 Project catalog projection.
+"""Read-only Project catalog projection.
 
 The projection deliberately does not call ``ProjectRepository.load`` because a
 load may migrate or quarantine an old/invalid record.  Start-center discovery
-must never mutate user data.
+must never mutate user data.  Migratable legacy records are upgraded only in
+memory here; opening one through the Project lifecycle publishes the validated
+migration through the repository's backup-and-replace path.
 """
 
 from __future__ import annotations
@@ -158,7 +160,7 @@ def _diagnostic(code: str, message: str) -> Diagnostic:
 
 def _project_document_for_projection(document: dict[str, object], ref: ProjectRef) -> dict[str, object]:
     version = version_of(document)
-    if version == 2:
+    if version < SCHEMA_VERSION:
         return migrate_to_current(document, ref).document
     if version == SCHEMA_VERSION and "source_relations" in (document.get("data") or {}):
         return document

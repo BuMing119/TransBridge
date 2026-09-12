@@ -25,6 +25,14 @@ def _document(project_id: str, name: str) -> bytes:
     })
 
 
+def _v3_document(project_id: str, name: str) -> bytes:
+    document = json.loads(_document(project_id, name))
+    document["schema_version"] = 3
+    document["data"]["source_registry_diagnostics"] = []
+    document["data"]["source_relations"] = []
+    return serialize_document(document)
+
+
 def _seed_json(filesystem: MemoryFilesystem, path: str, value: object) -> None:
     filesystem.seed(path, json.dumps(value, ensure_ascii=False).encode("utf-8"))
 
@@ -66,6 +74,29 @@ def test_catalog_lists_active_first_with_repository_derived_paths() -> None:
     assert snapshot.projects[0].active is True
     assert all(item.available and item.reason is None for item in snapshot.projects)
     assert snapshot.projects[1].path == repository.path_for(first)
+    assert not {"write", "replace", "remove", "mkdir"} & {operation for operation, _path in filesystem.calls}
+
+
+def test_catalog_projects_migratable_v3_record_without_writing_it() -> None:
+    root = os.path.abspath("legacy-catalog-root")
+    filesystem = MemoryFilesystem()
+    catalog, repository = _catalog(root, filesystem)
+    ref = ProjectRef(ProjectId("project-v3"))
+    original = _v3_document(ref.identity.value, "旧版工程")
+    filesystem.seed(repository.path_for(ref), original)
+    _seed_json(
+        filesystem,
+        os.path.join(root, "project-catalog.json"),
+        {"schema_version": 1, "projects": {ref.identity.value: {"name": "旧版工程"}}},
+    )
+    filesystem.calls.clear()
+
+    snapshot = catalog.list_projects()
+
+    assert len(snapshot.projects) == 1
+    assert snapshot.projects[0].available is True
+    assert snapshot.projects[0].reason is None
+    assert filesystem.read_bytes(repository.path_for(ref)) == original
     assert not {"write", "replace", "remove", "mkdir"} & {operation for operation, _path in filesystem.calls}
 
 

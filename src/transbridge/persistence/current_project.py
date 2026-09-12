@@ -1,4 +1,4 @@
-"""Open current-schema Project records for GUI and other entrypoints."""
+"""Open current or safely migratable Project records for GUI and other entrypoints."""
 
 from __future__ import annotations
 
@@ -121,10 +121,7 @@ class CurrentProjectOpener:
         try:
             selected = Path(path).resolve(strict=True)
             document = parse_json_bytes(selected.read_bytes())
-            if (
-                version_of(document) not in {2, SCHEMA_VERSION}
-                or document.get("entity_type") != EntityKind.PROJECT.value
-            ):
+            if version_of(document) > SCHEMA_VERSION or document.get("entity_type") != EntityKind.PROJECT.value:
                 raise DomainError(
                     ErrorCategory.INPUT,
                     "PROJECT_RECORD_REQUIRED",

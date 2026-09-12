@@ -10,7 +10,7 @@ from transbridge.persistence.project_catalog_repair import (
     ProjectCatalogRepairService,
     ProjectCatalogRepairStatus,
 )
-from transbridge.persistence.v2 import ProjectId, ProjectRef, ProjectRepository, VariantRepository
+from transbridge.persistence.v2 import SCHEMA_VERSION, ProjectId, ProjectRef, ProjectRepository, VariantRepository
 from transbridge.persistence.v2.lifecycle_transactions import ProjectLifecycleTransactionStore
 from transbridge.persistence.v2.schema import serialize_document
 
@@ -18,7 +18,7 @@ from .fakes import MemoryFilesystem
 
 
 def _document(project_id: str, name: str, *, schema_version: int = 2, entity_type: str = "project") -> bytes:
-    return serialize_document({
+    document = {
         "schema_version": schema_version,
         "entity_type": entity_type,
         "id": project_id,
@@ -29,7 +29,11 @@ def _document(project_id: str, name: str, *, schema_version: int = 2, entity_typ
             "variant_ids": [],
             "active_variant_id": None,
         },
-    })
+    }
+    if schema_version >= 3:
+        document["data"]["source_registry_diagnostics"] = []
+        document["data"]["source_relations"] = []
+    return serialize_document(document)
 
 
 def _root(name: str) -> str:
@@ -83,6 +87,28 @@ def test_missing_catalog_rebuilds_all_valid_projects_and_is_idempotent() -> None
     assert second.status is ProjectCatalogRepairStatus.NOT_NEEDED
     assert not any(operation == "list" for operation, _path in filesystem.calls[len(calls_after_first) :])
     assert sum(operation == "replace" for operation, _path in filesystem.calls) == 1
+
+
+def test_missing_catalog_recovers_migratable_v3_project_without_rewriting_project() -> None:
+    root = _root("repair-v3-project")
+    filesystem = MemoryFilesystem()
+    service, repository = _service(root, filesystem)
+    source_path = _seed_project(
+        filesystem,
+        repository,
+        "project-v3",
+        "旧版工程",
+        schema_version=3,
+    )
+    original = filesystem.files[source_path]
+
+    report = service.repair_if_missing()
+    published = json.loads(filesystem.read_bytes(_catalog_path(root)))
+
+    assert report.status is ProjectCatalogRepairStatus.REBUILT
+    assert report.recovered_count == 1
+    assert published["projects"]["project-v3"]["name"] == "旧版工程"
+    assert filesystem.files[source_path] == original
 
 
 def test_rebuilt_catalog_preserves_active_pointer_and_query_remains_read_only() -> None:
@@ -166,9 +192,9 @@ def test_invalid_and_noncanonical_candidates_are_skipped_without_touching_source
 
 @pytest.mark.parametrize(
     ("schema_version", "entity_type"),
-    [(1, "project"), (3, "project"), (2, "session")],
+    [(1, "project"), (SCHEMA_VERSION + 1, "project"), (2, "session")],
 )
-def test_legacy_future_and_wrong_entity_records_are_not_repaired(
+def test_unmigratable_future_and_wrong_entity_records_are_not_repaired(
     schema_version: int,
     entity_type: str,
 ) -> None:

@@ -226,7 +226,7 @@ class ProjectCatalogRepairService:
             return None, _skipped_candidate("PROJECT_CATALOG_REPAIR_CANDIDATE_UNREADABLE", candidate_name)
         except (SchemaValidationError, TypeError, ValueError):
             return None, _skipped_candidate("PROJECT_CATALOG_REPAIR_CANDIDATE_INVALID", candidate_name)
-        if version == 2:
+        if version < SCHEMA_VERSION:
             try:
                 document = migrate_to_current(document, ProjectRef(ProjectId(str(document.get("id"))))).document
             except (SchemaValidationError, TypeError, ValueError):
