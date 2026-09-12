@@ -204,6 +204,9 @@ class LLMClient(ABC):
         max_tokens: int,
         tools: Sequence[LlmToolDefinition],
         chunk_callback: Callable[[str], None],
+        *,
+        usage_callback=None,
+        purpose: str = "execution",
     ) -> LlmTurn:
         """Stream a tool-aware turn, degrading to text for legacy clients."""
         from transbridge.infra.llm_tool_calling import LlmTurn
@@ -372,11 +375,16 @@ class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
         max_tokens: int,
         tools: Sequence[LlmToolDefinition],
         chunk_callback: Callable[[str], None],
+        *,
+        usage_callback=None,
+        purpose: str = "execution",
     ) -> LlmTurn:
         from transbridge.infra.openai_tool_calling import chat_stream_with_tools
 
         _reject_structured_output_tool_request(messages)
-        return chat_stream_with_tools(self, messages, max_tokens, tools, chunk_callback)
+        return chat_stream_with_tools(
+            self, messages, max_tokens, tools, chunk_callback, usage_callback=usage_callback, purpose=purpose
+        )
 
     def _chat_stream(self, messages: list[dict], max_tokens: int, chunk_callback, *, reasoning_patch) -> str:
         from transbridge.infra.prompt_cache import (
@@ -706,11 +714,16 @@ class AnthropicClient(AnthropicReasoningProtocolMixin, LLMClient):
         max_tokens: int,
         tools: Sequence[LlmToolDefinition],
         chunk_callback: Callable[[str], None],
+        *,
+        usage_callback=None,
+        purpose: str = "execution",
     ) -> LlmTurn:
         from transbridge.infra.anthropic_tool_calling import chat_stream_with_tools
 
         _reject_structured_output_tool_request(messages)
-        return chat_stream_with_tools(self, messages, max_tokens, tools, chunk_callback)
+        return chat_stream_with_tools(
+            self, messages, max_tokens, tools, chunk_callback, usage_callback=usage_callback, purpose=purpose
+        )
 
 
 def create_llm_client(config: LLMConfig) -> LLMClient:

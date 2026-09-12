@@ -1,6 +1,8 @@
+from dataclasses import replace
 import logging
 import time
 
+from transbridge.infra.llm_usage import LlmUsage, UsageAttempt, supports_usage_callback
 from transbridge.smart_assistant.workers.async_worker import AsyncWorker
 
 logger = logging.getLogger(__name__)
@@ -18,14 +20,33 @@ class ChatWorker(AsyncWorker):
     需自行保证跨线程 Qt GUI 安全（使用 QTimer.singleShot 桥接）。
     """
 
-    def __init__(self, llm_client, messages: list[dict], max_tokens: int | None = None, tools=None):
+    def __init__(
+        self, llm_client, messages: list[dict], max_tokens: int | None = None, tools=None, *, purpose="execution"
+    ):
         super().__init__(daemon=True)
         self._client = llm_client
         self._messages = messages
         self._max_tokens = max_tokens
         self._tools = tools
+        self._purpose = purpose
 
     def run(self) -> None:
+        if self._cancelled.is_set():
+            return
+        model = getattr(self._client, "model", getattr(self._client, "_model", "unknown"))
+        fallback = UsageAttempt("unknown", model, self._purpose)
+        received: set[str] = set()
+        outcome = "completed"
+
+        def _usage_cb(usage: LlmUsage) -> None:
+            if usage.attempt_id in received:
+                return
+            received.add(usage.attempt_id)
+            if self._cancelled.is_set():
+                usage = replace(usage, outcome="cancelled")
+            if self.on_usage:
+                self.on_usage(usage)
+
         try:
             full_text = ""
             chunk_buffer: list[str] = []
@@ -49,12 +70,19 @@ class ChatWorker(AsyncWorker):
                 result = self._client.chat_stream(self._messages, self._max_tokens, _chunk_cb)
                 finished_value = full_text if result is None else result
             else:
-                finished_value = self._client.chat_stream_with_tools(
+                method = self._client.chat_stream_with_tools
+                kwargs = (
+                    {"usage_callback": _usage_cb, "purpose": self._purpose} if supports_usage_callback(method) else {}
+                )
+                finished_value = method(
                     self._messages,
                     self._max_tokens,
                     self._tools,
                     _chunk_cb,
+                    **kwargs,
                 )
+                if getattr(finished_value, "usage", None) is not None:
+                    _usage_cb(finished_value.usage)
             # Flush remaining buffered chunks at end of stream
             if chunk_buffer and self.on_chunk:
                 self.on_chunk("".join(chunk_buffer))
@@ -66,17 +94,21 @@ class ChatWorker(AsyncWorker):
                     estimated_input = max(1, input_chars // 3)
                     estimated_output = max(1, len(full_text) // 3)
                     model = getattr(self._client, "model", getattr(self._client, "_model", "unknown"))
-                    if self.on_token_usage:
+                    if self.on_token_usage and self.on_usage is None:
                         self.on_token_usage(model, estimated_input, estimated_output)
                 except Exception:
                     logger.debug("Token stats estimation failed", exc_info=True)
                 if self.on_finished:
                     self.on_finished(finished_value)
         except (_CancelledByStop,):
-            pass  # 静默终止
+            outcome = "cancelled"
         except Exception as exc:
+            outcome = "error"
             if not self._cancelled.is_set() and self.on_error:
                 self.on_error(str(exc))
+        finally:
+            if not received:
+                _usage_cb(fallback.finish(outcome="cancelled" if self._cancelled.is_set() else outcome))
 
     def cancel(self) -> None:
         super().cancel()

@@ -280,3 +280,90 @@ def test_rejects_incomplete_text_only_streams(finish_reason) -> None:
 
     with pytest.raises(LlmToolProtocolError):
         chat_stream_with_tools(owner, [{"role": "user", "content": "run"}], 64, _tools(), lambda _text: None)
+
+
+def test_usage_only_terminal_chunk_and_empty_tools():
+    owner = _owner(
+        _Stream([
+            _choice(content="hello", finish_reason="stop"),
+            {
+                "choices": [],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 4, "prompt_tokens_details": {"cached_tokens": 80}},
+            },
+        ])
+    )
+    records = []
+    turn = chat_stream_with_tools(owner, [], 64, [], lambda _: None, usage_callback=records.append, purpose="summary")
+    assert turn.usage is records[0]
+    assert turn.usage.input_tokens == 100
+    assert turn.usage.cache_read_tokens == 80
+    assert turn.usage.purpose == "summary"
+    kwargs = owner._client.chat.completions.create.call_args.kwargs
+    assert kwargs["stream_options"] == {"include_usage": True}
+    assert "tools" not in kwargs and "tool_choice" not in kwargs
+
+
+def test_usage_rejection_has_two_distinct_attempts_and_only_one_fallback():
+    owner = _owner(
+        _Stream(enter_error=_CacheRejected("stream_options unsupported")),
+        _Stream([_choice(content="ok", finish_reason="stop")]),
+    )
+    records = []
+    chat_stream_with_tools(owner, [], 64, [], lambda _: None, usage_callback=records.append)
+    assert len(records) == 2
+    assert records[0].degradation == "usage_parameter_unsupported"
+    assert records[1].retry_of == records[0].attempt_id
+    assert records[1].attempt_id != records[0].attempt_id
+    assert records[0].input_tokens is None
+    assert "stream_options" not in owner._client.chat.completions.create.call_args.kwargs
+
+
+def test_usage_rejection_after_event_is_not_retried():
+    owner = _owner(_FailingStream([_choice(content="partial")], _CacheRejected("include_usage unsupported")))
+    records = []
+    with pytest.raises(_CacheRejected):
+        chat_stream_with_tools(owner, [], 64, [], lambda _: None, usage_callback=records.append)
+    assert len(records) == 1
+    assert records[0].completeness == "unknown"
+    assert owner._client.chat.completions.create.call_count == 1
+
+
+def test_base_exception_cancellation_emits_unknown_usage():
+    class Cancelled(BaseException):
+        pass
+
+    def cancel(_):
+        raise Cancelled()
+
+    owner = _owner(_Stream([_choice(content="partial")]))
+    records = []
+    with pytest.raises(Cancelled):
+        chat_stream_with_tools(owner, [], 64, [], cancel, usage_callback=records.append)
+    assert records[0].outcome == "cancelled"
+    assert records[0].input_tokens is None
+    assert owner._active_requests == 0
+
+
+def test_usage_received_before_protocol_failure_is_retained():
+    owner = _owner(
+        _Stream([
+            {"choices": [], "usage": {"prompt_tokens": 50, "completion_tokens": 8}},
+            _choice(finish_reason="length"),
+        ])
+    )
+    records = []
+    with pytest.raises(LlmToolProtocolError):
+        chat_stream_with_tools(owner, [], 64, [], lambda _: None, usage_callback=records.append)
+    assert records[0].input_tokens == 50
+    assert records[0].outcome == "error"
+
+
+def test_nonterminal_usage_followed_by_timeout_is_partial():
+    chunk = _choice(content="partial")
+    chunk.usage = {"prompt_tokens": 50, "completion_tokens": 3}
+    owner = _owner(_FailingStream([chunk], TimeoutError("stream timed out")))
+    records = []
+    with pytest.raises(TimeoutError):
+        chat_stream_with_tools(owner, [], 64, [], lambda _: None, usage_callback=records.append)
+    assert records[0].input_tokens == 50
+    assert records[0].completeness == "partial"

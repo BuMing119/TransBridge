@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 import json
 import logging
 from typing import Any
 
+from transbridge.infra.assistant_prompt_cache import anthropic_assistant_cache_options, is_assistant_context
 from transbridge.infra.llm_tool_calling import (
     LlmToolCall,
     LlmToolDefinition,
@@ -14,6 +16,7 @@ from transbridge.infra.llm_tool_calling import (
     LlmTurn,
     require_complete_tool_call,
 )
+from transbridge.infra.llm_usage import UsageAttempt, single_attempt_client
 from transbridge.infra.prompt_cache import build_anthropic_system_blocks
 
 logger = logging.getLogger(__name__)
@@ -27,6 +30,9 @@ def chat_stream_with_tools(
     max_tokens: int,
     tools: list[LlmToolDefinition],
     chunk_callback,
+    *,
+    usage_callback=None,
+    purpose: str = "execution",
 ) -> LlmTurn:
     """Stream one Anthropic turn and return its complete native tool calls.
 
@@ -39,10 +45,11 @@ def chat_stream_with_tools(
         raise ValueError("Anthropic tool calling requires a positive max_tokens value")
 
     with owner._lock:
-        client = owner._client
+        client = single_attempt_client(owner._client)
         owner._active_requests += 1
 
     saw_event = False
+    attempt = UsageAttempt("anthropic", owner._model, purpose, usage_callback)
 
     def emit_text(text: str) -> None:
         if text:
@@ -53,18 +60,32 @@ def chat_stream_with_tools(
         saw_event = True
 
     try:
+        stable_layout = is_assistant_context(messages)
         system_blocks, non_system_messages = build_anthropic_system_blocks(messages, model=owner._model)
         kwargs = _request_kwargs(
             owner,
             system_blocks,
-            _convert_messages(non_system_messages),
+            _convert_messages(non_system_messages, merge_following_user=not stable_layout),
             tools,
             max_tokens,
         )
+        kwargs.update(
+            anthropic_assistant_cache_options(
+                messages,
+                model=owner._model,
+                base_url=str(getattr(client, "base_url", "")),
+            )
+        )
         try:
-            return _run_stream(client, kwargs, emit_text, mark_event)
+            return _run_stream(client, kwargs, emit_text, mark_event, attempt)
         except Exception as exc:
-            if not saw_event and _is_cache_rejection(exc) and _has_cache_control(system_blocks):
+            if (
+                not saw_event
+                and _is_cache_rejection(exc)
+                and (_has_cache_control(system_blocks) or "cache_control" in kwargs)
+            ):
+                attempt.finish(outcome="error", degradation="cache_parameter_unsupported")
+                attempt = UsageAttempt("anthropic", owner._model, purpose, usage_callback, retry_of=attempt.attempt_id)
                 no_cache_system, no_cache_messages = build_anthropic_system_blocks(
                     messages,
                     model=owner._model,
@@ -73,7 +94,7 @@ def chat_stream_with_tools(
                 retry_kwargs = _request_kwargs(
                     owner,
                     no_cache_system,
-                    _convert_messages(no_cache_messages),
+                    _convert_messages(no_cache_messages, merge_following_user=not stable_layout),
                     tools,
                     max_tokens,
                 )
@@ -82,16 +103,21 @@ def chat_stream_with_tools(
                     exc,
                     owner._model,
                 )
-                return _run_stream(client, retry_kwargs, emit_text, mark_event)
+                return _run_stream(client, retry_kwargs, emit_text, mark_event, attempt)
             if not saw_event and system_blocks and _is_system_blocks_unsupported(exc):
+                attempt.finish(outcome="error", degradation="system_blocks_unsupported")
+                attempt = UsageAttempt("anthropic", owner._model, purpose, usage_callback, retry_of=attempt.attempt_id)
                 retry_kwargs = dict(kwargs)
                 retry_kwargs["system"] = _system_text(system_blocks)
                 logger.warning(
                     "Anthropic tool stream does not support system content blocks; retrying with text: model=%s",
                     owner._model,
                 )
-                return _run_stream(client, retry_kwargs, emit_text, mark_event)
+                return _run_stream(client, retry_kwargs, emit_text, mark_event, attempt)
             raise
+    except BaseException as exc:
+        attempt.finish(outcome="error" if isinstance(exc, Exception) else "cancelled")
+        raise
     finally:
         with owner._lock:
             owner._active_requests -= 1
@@ -112,6 +138,8 @@ def _request_kwargs(
     }
     if system_blocks:
         kwargs["system"] = system_blocks
+    if not tools:
+        kwargs.pop("tools")
     return kwargs
 
 
@@ -126,7 +154,7 @@ def _convert_tool_definition(tool: LlmToolDefinition) -> dict[str, Any]:
     return converted
 
 
-def _convert_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _convert_messages(messages: list[dict[str, Any]], *, merge_following_user: bool = True) -> list[dict[str, Any]]:
     """Map the shared history representation to Anthropic content blocks."""
 
     converted: list[dict[str, Any]] = []
@@ -145,7 +173,7 @@ def _convert_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
             # Anthropic requires tool_result blocks first. A following user text
             # can share this message, which also preserves role alternation.
-            if index < len(messages) and messages[index].get("role") == "user":
+            if merge_following_user and index < len(messages) and messages[index].get("role") == "user":
                 user_blocks = _content_blocks(messages[index].get("content", ""))
                 result_blocks.extend(block for block in user_blocks if block.get("type") != "tool_result")
                 index += 1
@@ -211,15 +239,24 @@ def _content_blocks(content: Any) -> list[dict[str, Any]]:
     return [{"type": "text", "text": str(content)}]
 
 
-def _run_stream(client: Any, kwargs: dict[str, Any], chunk_callback, event_callback=lambda: None) -> LlmTurn:
+def _run_stream(client: Any, kwargs: dict[str, Any], chunk_callback, event_callback, attempt: UsageAttempt) -> LlmTurn:
     with client.messages.stream(**kwargs) as stream:
         for event in stream:
             event_callback()
+            event_type = _field(event, "type")
+            if event_type == "message_start":
+                attempt.observe(_field(_field(event, "message"), "usage"))
+            elif event_type == "message_delta":
+                attempt.observe(_field(event, "usage"))
+            elif event_type == "message_stop":
+                attempt.final_received = True
             text = _event_text_delta(event)
             if text:
                 chunk_callback(text)
         message = stream.get_final_message()
-    return _turn_from_message(message)
+        attempt.observe(_field(message, "usage"), final=True)
+    turn = _turn_from_message(message)
+    return replace(turn, usage=attempt.finish())
 
 
 def _event_text_delta(event: Any) -> str:
@@ -305,7 +342,7 @@ def _is_cache_rejection(exc: Exception) -> bool:
 
 
 def _is_system_blocks_unsupported(exc: Exception) -> bool:
-    return getattr(exc, "status_code", None) is None and "system" in str(exc).lower()
+    return isinstance(exc, TypeError) and "system" in str(exc).lower()
 
 
 def _system_text(system_blocks: list[dict[str, Any]]) -> str:

@@ -17,6 +17,9 @@ import pytest
 from transbridge.application.contracts import RequestContext
 from transbridge.bootstrap.persistence import build_persistence_v2_services
 from transbridge.infra.llm_tool_calling import LlmToolCall, LlmTurn
+from transbridge.persistence.assistant_context_store import AssistantContextStore
+from transbridge.smart_assistant.context_runtime import ContextRuntime
+from transbridge.smart_assistant.context_summary import SemanticSummaryGenerator
 from transbridge.smart_assistant.conversation_orchestrator import ConversationOrchestrator
 from transbridge.smart_assistant.request_protocol import COVERAGE_TOOL, ROUTING_TOOL
 from transbridge.ui.tools.smart_assistant import panel as panel_module
@@ -39,6 +42,7 @@ class _AnswerClient:
 
     def __init__(self):
         self.calls = []
+        self.summary_calls = []
         self._lock = Lock()
         self.block_goal = None
         self.answer_started = Event()
@@ -51,7 +55,31 @@ class _AnswerClient:
         self.routing_release = Event()
         self.fail_goal = None
 
-    def chat_stream_with_tools(self, messages, _max_tokens, tools, on_chunk):
+    def chat_stream_with_tools(
+        self,
+        messages,
+        _max_tokens,
+        tools,
+        on_chunk=None,
+        *,
+        chunk_callback=None,
+        usage_callback=None,
+        purpose="execution",
+    ):
+        on_chunk = chunk_callback or on_chunk or (lambda _text: None)
+        if not tools:
+            assert purpose == "summary"
+            with self._lock:
+                self.summary_calls.append((messages, QThread.currentThread()))
+            return LlmTurn(
+                text=json.dumps({
+                    "discussion_context": "Prior decisions retain compatibility; evidence remains in history.",
+                    "decisions_with_sources": [],
+                    "unresolved_questions": [],
+                    "suggested_next_steps": [],
+                }),
+                stop_reason="stop",
+            )
         with self._lock:
             number = len(self.calls) + 1
             self.calls.append((messages, tuple(tool.name for tool in tools), QThread.currentThread()))
@@ -78,9 +106,9 @@ class _AnswerClient:
                 stop_reason="tool_calls",
             )
         state = next(
-            json.loads(message["content"].split("\n", 1)[1])["request_state"]
-            for message in messages
-            if message.get("role") == "system" and message.get("content", "").startswith("Current request state")
+            json.loads(message["content"])["request_state"]
+            for message in reversed(messages)
+            if message.get("role") == "user" and '"kind":"current_request_state"' in message.get("content", "")
         )
         if state["goal"] == self.fail_goal:
             raise RuntimeError("injected provider failure")
@@ -178,6 +206,14 @@ def _requests(environment):
     return environment.service.requests(environment.service.state(environment.binding.context))
 
 
+def _stored_context(environment, request):
+    state = environment.service.state(environment.binding.context)
+    store = AssistantContextStore(environment.service.transcript_store)
+    return store.read(
+        request.session_id, request.request_id, request.scope, state.get("context_heads", {}).get(request.request_id)
+    )
+
+
 def _seed_long_request(environment):
     from transbridge.application.assistant_requests.models import RequestItem, UserRequest
 
@@ -202,40 +238,42 @@ def _seed_long_request(environment):
 
 def test_long_request_generates_summary_off_gui_thread_and_sends_it_to_model(environment, monkeypatch):
     request = _seed_long_request(environment)
-    summaries = environment.binding.context_preparation.summaries
-    original = summaries.refresh
+    original = SemanticSummaryGenerator.__call__
     threads = []
 
-    def refresh(*args):
+    def refresh(*args, **kwargs):
         threads.append(QThread.currentThread())
-        return original(*args)
+        return original(*args, **kwargs)
 
-    monkeypatch.setattr(summaries, "refresh", refresh)
+    monkeypatch.setattr(SemanticSummaryGenerator, "__call__", refresh)
     environment.binding.wake()
     _until(lambda: _requests(environment)[0].terminal)
     assert threads and all(thread is not _APP.thread() for thread in threads)
-    stored = environment.service.state(environment.binding.context)["request_summaries"][request.request_id]
+    stored = _stored_context(environment, request)
     messages = environment.client.calls[0][0]
     material = next(
         json.loads(m["content"]) for m in messages if '"kind":"request_history_summary"' in m.get("content", "")
     )
-    assert material["summary"] == stored
+    assert material["text"] == stored.epoch.summaries[0].text
+    assert material["summary_id"] == stored.epoch.summaries[0].summary_id
+    normalized = [
+        {key: value for key, value in message.items() if not key.startswith("_transbridge_")} for message in messages
+    ]
+    assert normalized == stored.epoch.messages
     assert material["material_only"] is True
     assert len(environment.panel.chat._conversation.get_transcript()) >= 32
 
 
 def test_context_assembly_runs_off_gui_thread_and_preserves_gui_response_dispatch(environment, monkeypatch):
-    from transbridge.smart_assistant.request_context_assembler import RequestContextAssembler
-
     _seed_long_request(environment)
-    original = RequestContextAssembler.assemble
+    original = ContextRuntime.prepare
     threads = []
 
     def assemble(self, *args, **kwargs):
         threads.append(QThread.currentThread())
         return original(self, *args, **kwargs)
 
-    monkeypatch.setattr(RequestContextAssembler, "assemble", assemble)
+    monkeypatch.setattr(ContextRuntime, "prepare", assemble)
     environment.binding.wake()
     _until(lambda: _requests(environment)[0].terminal)
     assert threads and all(thread is not _APP.thread() for thread in threads)
@@ -246,11 +284,9 @@ def test_context_assembly_runs_off_gui_thread_and_preserves_gui_response_dispatc
 def test_backend_change_during_context_assembly_prevents_old_model_dispatch(environment, monkeypatch, reason):
     from PyQt6.QtCore import QTimer
 
-    from transbridge.smart_assistant.request_context_assembler import RequestContextAssembler
-
     request = _seed_long_request(environment)
     started, proceed, finished = Event(), Event(), Event()
-    original = RequestContextAssembler.assemble
+    original = ContextRuntime.prepare
 
     def assemble(self, *args, **kwargs):
         started.set()
@@ -260,7 +296,7 @@ def test_backend_change_during_context_assembly_prevents_old_model_dispatch(envi
         finally:
             finished.set()
 
-    monkeypatch.setattr(RequestContextAssembler, "assemble", assemble)
+    monkeypatch.setattr(ContextRuntime, "prepare", assemble)
     environment.binding.wake()
     try:
         _until(started.is_set)
@@ -289,29 +325,31 @@ def test_deferred_model_material_preserves_synchronous_prepare_api(environment):
     )
     binding.admission = selection.admission
     history = environment.panel.chat._conversation.get_transcript()
-    material = binding.prepare_model_input(history, 4096, defer_assembly=True)
+    material = binding.prepare_model_input(history, 4096, context_window=65536, defer_assembly=True)
     assert isinstance(material, RequestModelInput)
     assembled = material.assemble()
     binding._prepared_turn = None
-    synchronous = binding.prepare_model_input(history, 4096)
+    synchronous = binding.prepare_model_input(history, 4096, context_window=65536)
     assert synchronous == assembled
     assert isinstance(synchronous[0], list)
     assert all(isinstance(message, dict) for message in synchronous[0])
     binding.release()
 
 
-def test_summary_generation_failure_falls_back_to_history_and_completes_request(environment, monkeypatch):
-    _seed_long_request(environment)
+def test_summary_generation_failure_waits_without_failing_business_request(environment, monkeypatch):
+    request = _seed_long_request(environment)
 
-    def fail(*args):
+    def fail(*args, **kwargs):
         raise ValueError("injected summary generator failure")
 
-    monkeypatch.setattr(environment.binding.context_preparation.summaries, "refresh", fail)
+    monkeypatch.setattr(SemanticSummaryGenerator, "__call__", fail)
     environment.binding.wake()
-    _until(lambda: _requests(environment)[0].terminal)
-    assert not environment.service.state(environment.binding.context).get("request_summaries")
-    assert not any('"kind":"request_history_summary"' in m.get("content", "") for m in environment.client.calls[0][0])
-    assert any("Decision 29:" in m.get("content", "") for m in environment.client.calls[0][0])
+    _until(
+        lambda: request.request_id in environment.service.state(environment.binding.context).get("context_waits", {})
+    )
+    assert not _requests(environment)[0].terminal
+    assert not environment.client.calls
+    assert _stored_context(environment, request) is None
 
 
 def test_new_unsaved_tool_result_uses_same_history_for_summary_generation_and_consumption(environment):
@@ -326,24 +364,24 @@ def test_new_unsaved_tool_result_uses_same_history_for_summary_generation_and_co
     messages = environment.client.calls[0][0]
     assert any('"kind":"request_history_summary"' in m.get("content", "") for m in messages)
     assert any(m.get("role") == "tool" and "Newest evidence" in m.get("content", "") for m in messages)
-    assert environment.service.state(environment.binding.context)["request_summaries"][request.request_id]
+    assert _stored_context(environment, request).epoch.summaries
 
 
 @pytest.mark.parametrize("reason", ["pause", "resource"])
 def test_backend_wait_during_summary_generation_prevents_model_dispatch(environment, monkeypatch, reason):
     request = _seed_long_request(environment)
     started, proceed, finished = Event(), Event(), Event()
-    original = environment.binding.context_preparation.summaries.refresh
+    original = SemanticSummaryGenerator.__call__
 
-    def refresh(*args):
+    def refresh(*args, **kwargs):
         started.set()
         try:
             assert proceed.wait(8), "summary worker was not released"
-            return original(*args)
+            return original(*args, **kwargs)
         finally:
             finished.set()
 
-    monkeypatch.setattr(environment.binding.context_preparation.summaries, "refresh", refresh)
+    monkeypatch.setattr(SemanticSummaryGenerator, "__call__", refresh)
     environment.binding.wake()
     try:
         _until(started.is_set)
@@ -361,17 +399,17 @@ def test_backend_wait_during_summary_generation_prevents_model_dispatch(environm
 def test_cancel_during_summary_preparation_cannot_start_old_model_round(environment, monkeypatch):
     request = _seed_long_request(environment)
     started, proceed, finished = Event(), Event(), Event()
-    original = environment.binding.context_preparation.summaries.refresh
+    original = SemanticSummaryGenerator.__call__
 
-    def refresh(*args):
+    def refresh(*args, **kwargs):
         started.set()
         try:
             assert proceed.wait(8), "summary worker was not released"
-            return original(*args)
+            return original(*args, **kwargs)
         finally:
             finished.set()
 
-    monkeypatch.setattr(environment.binding.context_preparation.summaries, "refresh", refresh)
+    monkeypatch.setattr(SemanticSummaryGenerator, "__call__", refresh)
     environment.binding.wake()
     try:
         _until(started.is_set)

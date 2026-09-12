@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "provenance": "Hand-authored synthetic content; no user translation data or network calls.",
+  "source_revision": "9d7afe28aafad2328bd59a93f85ecbfce1c3d25f",
+  "configuration": {
+    "legacy_projection_max_turns": 20,
+    "legacy_observation_max_chars": 2000,
+    "execution_reads_full_transcript": true,
+    "temperature": "provider_default",
+    "max_tokens": 128,
+    "paid_evaluation": "not_run",
+    "provider_cache_hits": "not_measured"
+  },
+  "messages": [
+    {"role": "system", "content": "Synthetic rules: inspect only; never write translations."},
+    {"role": "user", "content": "Inspect synthetic entry A."},
+    {"role": "assistant", "content": "Checking.", "tool_calls": [{"id": "synthetic-1", "name": "lookup", "arguments": {"key": "A"}}]},
+    {"role": "tool", "tool_call_id": "synthetic-1", "content": "Synthetic entry A exists."},
+    {"role": "user", "content": "Continue without writing."}
+  ],
+  "normalized_openai_messages": [
+    {"role": "system", "content": "Synthetic rules: inspect only; never write translations."},
+    {"role": "user", "content": "Inspect synthetic entry A."},
+    {"role": "assistant", "content": "Checking.", "tool_calls": [{"id": "synthetic-1", "type": "function", "function": {"name": "lookup", "arguments": "{\"key\": \"A\"}"}}]},
+    {"role": "tool", "tool_call_id": "synthetic-1", "content": "Synthetic entry A exists."},
+    {"role": "user", "content": "Continue without writing."}
+  ],
+  "normalized_anthropic_system": [{"type": "text", "text": "Synthetic rules: inspect only; never write translations."}],
+  "normalized_anthropic_messages": [
+    {"role": "user", "content": [{"type": "text", "text": "Inspect synthetic entry A."}]},
+    {"role": "assistant", "content": [{"type": "text", "text": "Checking."}, {"type": "tool_use", "id": "synthetic-1", "name": "lookup", "input": {"key": "A"}}]},
+    {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "synthetic-1", "content": "Synthetic entry A exists."}, {"type": "text", "text": "Continue without writing."}]}
+  ]
+}

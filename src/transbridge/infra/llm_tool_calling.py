@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 import json
 from typing import Any
 
+from transbridge.infra.llm_usage import LlmUsage
+
 
 class LlmToolProtocolError(ValueError):
     """A Provider returned an incomplete or malformed tool call."""
@@ -48,6 +50,7 @@ class LlmTurn:
     tool_calls: tuple[LlmToolCall, ...] = ()
     stop_reason: str | None = None
     provider_content: tuple[dict[str, Any], ...] = field(default_factory=tuple, repr=False)
+    usage: LlmUsage | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         call_ids = [call.id for call in self.tool_calls]

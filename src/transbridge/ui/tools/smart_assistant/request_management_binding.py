@@ -5,12 +5,14 @@ from PyQt6.QtWidgets import QInputDialog
 from transbridge.application.assistant_requests.journal import EventCause
 
 from .message_bubble import MessageBubble
+from .request_view_refresh import RequestViewRefresh
 
 
 class RequestManagementBinding:
     def __init__(self, binding):
         self.binding = binding
         self._timelines = set()
+        self._refresh = RequestViewRefresh(binding)
 
     def show_timeline(self, request_id):
         from transbridge.application.assistant_requests.journal import read_events
@@ -72,18 +74,7 @@ class RequestManagementBinding:
             self.binding.fail(str(exc))
 
     def refresh(self):
-        binding = self.binding
-        state = binding.service.state(binding.context)
-        binding.view.display(binding.service.requests(state))
-        pending = sum(
-            r["status"] == "needs_clarification"
-            for entry in state.get("batches", ())
-            for r in entry["batch"].get("receipts", ())
-        )
-        binding.view.set_pending(
-            pending, sum(b.get("status") in {"routing", "user_paused"} for b in state.get("batches", ()))
-        )
-        binding.view.show()
+        self._refresh.request()
 
     def sync_inputs(self):
         binding = self.binding

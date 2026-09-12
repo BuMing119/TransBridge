@@ -4,18 +4,20 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
-import json
 import logging
 from uuid import uuid4
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
-from transbridge.application.assistant_requests.journal import EventCause
 from transbridge.application.assistant_requests.models import RequestError
-from transbridge.application.assistant_requests.scheduler import commit_answer
 from transbridge.application.assistant_requests.turns import accept_turn, record_turn_failure
 from transbridge.smart_assistant.native_tools import build_native_tool_definitions
-from transbridge.smart_assistant.request_protocol import COVERAGE_TOOL, RETRIEVAL_TOOL, ROUTING_TOOL
+from transbridge.smart_assistant.request_protocol import (
+    COVERAGE_TOOL,
+    HISTORY_RETRIEVAL_TOOL,
+    RETRIEVAL_TOOL,
+    ROUTING_TOOL,
+)
 
 from .message_bubble import MessageBubble
 from .request_confirmation_binding import RequestConfirmationBinding
@@ -164,13 +166,18 @@ class RequestBinding(QObject):
                 self.batch, self.admission = batch, admission
             else:
                 state = self.service.state(self.context)
+                from transbridge.application.assistant_context.admission import available_requests
+                from transbridge.smart_assistant.context_runtime import configuration_digest
+
+                cfg = getattr(self.facade._orchestrator, "_cached_llm_config", None)
+                requests = available_requests(state, self.service.requests(state), configuration_digest(cfg))
                 tools = build_native_tool_definitions(
                     self.facade._conversation.get_loaded_tool_namespaces(), request_stage="execution"
                 )
                 selection = self.service.scheduler.select_next_turn(
                     self.context.session_id,
                     self.view_id,
-                    self.service.requests(state),
+                    requests,
                     priority_request_ids=self._priority,
                     allowed_tools=tuple(tool.name for tool in tools),
                 )
@@ -251,20 +258,9 @@ class RequestBinding(QObject):
             prepared = RequestModelInput(tuple(messages), tools, budget)
             return prepared if defer_assembly else prepared.assemble()
         request = next(r for r in self.service.requests(state) if r.request_id == self.admission.request_id)
-        constraints = {
-            "request_id": request.request_id,
-            "goal": request.goal,
-            "revision": request.revision,
-            "constraints": list(request.constraints),
-            "items": [item.to_dict() for item in request.items],
-            "ready_item_ids": list(self.admission.ready_item_ids),
-            "answer_protocol": "Complete text plus report_answer_coverage for answer items; never claim execution.",
-        }
-        details = request.to_dict()
-        constraints.update({key: details.get(key, []) for key in ("effects", "evidence", "dispatches")})
-        constraints["selection"] = [
-            i["selection"] for i in state.get("ingress", ()) if i["message_id"] in request.source_message_ids
-        ]
+        from transbridge.application.assistant_context.state_projection import required_state
+
+        constraints = required_state(request, self.admission, state)
         prepared = RequestModelInput(
             tuple(history),
             tools,
@@ -293,61 +289,14 @@ class RequestBinding(QObject):
                 self.wake()
                 return True
             if control == COVERAGE_TOOL:
-                arguments = parsed["arguments"]
-                if set(arguments) != {"item_ids", "dispositions"} or set(arguments["item_ids"]) != set(
-                    arguments["dispositions"]
-                ):
-                    raise RequestError("REQUEST_PROTOCOL_INVALID", "answer coverage fields disagree")
-                message_id = conversation.get_transcript()[-1]["message_id"]
-                request = next(
-                    r
-                    for r in self.service.requests(self.service.state(self.context))
-                    if r.request_id == self.admission.request_id
-                )
-                commit_answer(
-                    request,
-                    self.admission,
-                    turn.text,
-                    arguments["dispositions"],
-                    message_id=message_id,
-                    finish_reason=turn.stop_reason,
-                    scheduler=self.service.scheduler,
-                )
-                receipt_id = uuid4().hex
-                receipt = {
-                    "role": "tool",
-                    "tool_call_id": parsed["tool_call_id"],
-                    "name": control,
-                    "content": json.dumps({"accepted": True}),
-                    "display_summary": "",
-                    "is_error": False,
-                    "message_id": receipt_id,
-                }
-                self.service.update_request(
-                    self.context,
-                    self.admission.request_id,
-                    lambda request: commit_answer(
-                        request,
-                        self.admission,
-                        turn.text,
-                        arguments["dispositions"],
-                        message_id=message_id,
-                        finish_reason=turn.stop_reason,
-                        scheduler=self.service.scheduler,
-                    ),
-                    history=[*conversation.get_transcript(), receipt],
-                    cause=EventCause(
-                        "answer.committed",
-                        "model",
-                        {
-                            "turn_id": self.admission.turn_id,
-                            "message_ids": [message_id],
-                        },
-                    ),
-                )
-                conversation.add_tool_result(parsed["tool_call_id"], control, {"accepted": True}, message_id=receipt_id)
-                self.release()
-                self.wake()
+                from .request_answer_binding import accept_answer
+
+                accept_answer(self, parsed, turn)
+                return True
+            if control == HISTORY_RETRIEVAL_TOOL:
+                from .request_history_binding import retrieve_history
+
+                retrieve_history(self, parsed)
                 return True
             if control == RETRIEVAL_TOOL:
                 self._retrieve(parsed)
@@ -390,6 +339,9 @@ class RequestBinding(QObject):
         try:
             if command == "resume":
                 self._user_stopped = False
+                from transbridge.application.assistant_context.admission import clear_wait
+
+                clear_wait(self.service, self.context, request_id)
             if command == "reconcile":
                 from .request_outcome_binding import reconcile_outcome
 
@@ -421,6 +373,7 @@ class RequestBinding(QObject):
         self.refresh()
 
     def interrupt(self):
+        self.context_preparation.cancel()
         self.release()
         self.facade._confirmation_view.invalidate_pending()
         self.facade._react_execution.abort()
@@ -450,6 +403,7 @@ class RequestBinding(QObject):
         if self.context is not None:
             self.service.scheduler.deactivate(self.context.session_id, self.view_id)
         self._unsubscribe()
+        self.context_preparation.close()
         # Application teardown closes the persistence service next. Drain inputs
         # already submitted to this queue before relinquishing that writer.
         self._queue.shutdown(wait=True, cancel_futures=False)

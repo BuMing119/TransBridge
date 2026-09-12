@@ -7,9 +7,11 @@ from transbridge.smart_assistant.native_tools import build_native_tool_definitio
 from transbridge.smart_assistant.request_protocol import (
     CONTROL_TOOLS,
     COVERAGE_TOOL,
+    HISTORY_RETRIEVAL_TOOL,
     RETRIEVAL_TOOL,
     ROUTING_TOOL,
     coverage_definition,
+    history_retrieval_definition,
     retrieval_definition,
     routing_definition,
 )
@@ -30,14 +32,17 @@ def test_routing_stage_exposes_only_routing_control_despite_loaded_business_name
 
 def test_execution_stage_adds_coverage_and_retrieval_but_not_routing():
     names = [definition.name for definition in build_native_tool_definitions(request_stage="execution")]
-    assert COVERAGE_TOOL in names and RETRIEVAL_TOOL in names and ROUTING_TOOL not in names
+    assert COVERAGE_TOOL in names and RETRIEVAL_TOOL in names and HISTORY_RETRIEVAL_TOOL in names
+    assert ROUTING_TOOL not in names
     assert len(names) == len(set(names))
     assert "propose_plan" in names
     legacy_names = [definition.name for definition in build_native_tool_definitions()]
     assert not set(legacy_names).intersection(CONTROL_TOOLS)
 
 
-@pytest.mark.parametrize("definition", [routing_definition(), coverage_definition(), retrieval_definition()])
+@pytest.mark.parametrize(
+    "definition", [routing_definition(), coverage_definition(), retrieval_definition(), history_retrieval_definition()]
+)
 def test_control_schemas_close_unknown_top_level_fields(definition):
     assert definition.input_schema["type"] == "object"
     assert definition.input_schema["additionalProperties"] is False
@@ -107,3 +112,20 @@ def test_execution_cannot_reclassify_inputs_through_routing_tool():
 def test_routing_requires_control_even_when_model_returns_plain_text_only():
     with pytest.raises(LlmToolProtocolError, match="exactly one"):
         turn_to_parsed_response(LlmTurn(text="I have created the request"), request_stage="routing")
+
+
+def test_history_control_is_material_query_with_no_business_steps():
+    args = {"message_id": "source", "offset": 0, "limit": 2000}
+    parsed = turn_to_parsed_response(_turn(HISTORY_RETRIEVAL_TOOL, args), request_stage="execution")
+    assert parsed["control"] == HISTORY_RETRIEVAL_TOOL
+    assert parsed["steps"] == [] and parsed["arguments"] == args
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [{"path": "/private"}, {"request_id": "other"}, {"offset": True}, {"limit": 8001}, {"message_id": []}],
+)
+def test_history_control_rejects_owner_path_and_invalid_paging(changes):
+    args = {"message_id": "source", "offset": 0, "limit": 2000, **changes}
+    with pytest.raises(LlmToolProtocolError, match="history retrieval"):
+        turn_to_parsed_response(_turn(HISTORY_RETRIEVAL_TOOL, args), request_stage="execution")

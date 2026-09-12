@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtWidgets import QComboBox, QDoubleSpinBox, QFormLayout, QLabel, QLineEdit, QPushButton, QSpinBox
+from PyQt6.QtWidgets import QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QLabel, QLineEdit, QPushButton, QSpinBox
 
 from .page_common import SettingsPage, apply_if_present, password_editor
 
@@ -48,6 +48,16 @@ class AiServicePage(SettingsPage):
         self.context_window_spin = _spin(1024, 4_000_000, int(getattr(config, "assistant_context_window", 32768)), self)
         self.context_window_spin.setToolTip("按所选模型的实际窗口设置；助手会为工具定义和回答预留空间。")
         form.addRow("助手模型上下文窗口", self.context_window_spin)
+        self.auto_compaction_check = QCheckBox("接近容量时自动生成分段摘要", self)
+        self.auto_compaction_check.setChecked(bool(getattr(config, "assistant_auto_compaction", True)))
+        form.addRow("助手自动摘要", self.auto_compaction_check)
+        summary_note = QLabel("关闭后保留完整历史，不滚动裁剪旧消息；达到上下文容量限制时会暂停并提示处理。", self)
+        summary_note.setWordWrap(True)
+        form.addRow(summary_note)
+        self.prompt_cache_check = QCheckBox("启用受支持服务的助手提示缓存", self)
+        self.prompt_cache_check.setChecked(bool(getattr(config, "assistant_prompt_cache", True)))
+        self.prompt_cache_check.setToolTip("可关闭以对比缓存诊断；实际是否命中取决于供应商与模型，并以返回的用量为准。")
+        form.addRow("助手缓存诊断", self.prompt_cache_check)
         self.temperature_spin = QDoubleSpinBox(self)
         self.temperature_spin.setRange(0.0, 2.0)
         self.temperature_spin.setSingleStep(0.1)
@@ -71,6 +81,8 @@ class AiServicePage(SettingsPage):
         apply_if_present(cfg, "max_tokens_per_batch", self.input_tokens_spin.value())
         apply_if_present(cfg, "max_output_tokens", self.output_tokens_spin.value())
         apply_if_present(cfg, "assistant_context_window", self.context_window_spin.value())
+        apply_if_present(cfg, "assistant_auto_compaction", self.auto_compaction_check.isChecked())
+        apply_if_present(cfg, "assistant_prompt_cache", self.prompt_cache_check.isChecked())
         apply_if_present(cfg, "temperature", self.temperature_spin.value())
 
 

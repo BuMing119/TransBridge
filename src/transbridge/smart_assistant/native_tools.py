@@ -132,9 +132,9 @@ def build_native_tool_definitions(
             add_spec(spec)
 
     if request_stage == "execution":
-        from .request_protocol import coverage_definition, retrieval_definition
+        from .request_protocol import coverage_definition, history_retrieval_definition, retrieval_definition
 
-        definitions.extend((coverage_definition(), retrieval_definition()))
+        definitions.extend((coverage_definition(), retrieval_definition(), history_retrieval_definition()))
     return tuple(definitions)
 
 

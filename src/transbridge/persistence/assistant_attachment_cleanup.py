@@ -235,10 +235,16 @@ class AssistantAttachmentCleanup:
             document = parse_json_bytes(raw)
         except SchemaValidationError:
             return None  # Opaque, verified tool bytes have no structured retention edges.
-        if str(document.get("kind", "")).startswith("assistant_") and (
-            document.get("kind") != "assistant_request_archive" or document.get("version") != 1
-        ):
-            raise BackupVerificationError("unknown internal assistant artifact format")
+        if str(document.get("kind", "")).startswith("assistant_"):
+            archive = document.get("kind") == "assistant_request_archive" and document.get("version") == 1
+            context = (
+                document.get("kind") == "assistant_context"
+                and type(document.get("schema_version")) is int
+                and document["schema_version"] == 1
+                and document.get("mode") in {"base", "append"}
+            )
+            if not (archive or context):
+                raise BackupVerificationError("unknown internal assistant artifact format")
         return document
 
     def _retain_values(self, sid, value, reached):

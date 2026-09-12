@@ -47,7 +47,7 @@ class _Conversation:
 class _Worker:
     instances: list[_Worker] = []
 
-    def __init__(self, client, messages, max_tokens=None, tools=None) -> None:
+    def __init__(self, client, messages, max_tokens=None, tools=None, *, purpose="execution") -> None:
         self.on_chunk = None
         self.on_finished = None
         self.on_error = None

@@ -1,5 +1,6 @@
 """Timeline reads stay separate from lifecycle commands and Qt remains responsive."""
 
+from concurrent.futures import Future
 from copy import deepcopy
 from threading import Event
 from time import monotonic
@@ -211,7 +212,16 @@ def test_session_timeline_stays_reachable_without_requests_or_pending_inputs():
     view = RequestListView()
     view.hide()
     state = {"lifecycle_events": [_event(1, operation="routing.rejected", request_ids=[])]}
+
+    def submit(fn, *args):
+        future = Future()
+        future.set_result(fn(*args))
+        return future
+
     binding = SimpleNamespace(
+        _closed=False,
+        _queue=SimpleNamespace(submit=submit),
+        delivered=SimpleNamespace(emit=lambda callback: callback()),
         context=SimpleNamespace(session_id="original-session"),
         service=SimpleNamespace(state=lambda _: state, requests=lambda _: ()),
         facade=None,

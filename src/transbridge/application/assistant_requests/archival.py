@@ -176,9 +176,6 @@ def compact_request_state(state, manifest, session_id, store, *, keep_recent_ter
     restored["requests"] = [request.to_dict() for position, request in enumerate(requests) if position not in positions]
     if indexes or "request_archives" in restored:
         restored["request_archives"] = indexes
-    if "request_summaries" in restored:
-        for entry in indexes:
-            restored["request_summaries"].pop(entry["request_id"], None)
     old_paths = {entry["artifact"]["path"] for entry in previous.values()}
     # Other state may explicitly retain the same artifact; do not drop its manifest ref.
     other_state = {key: value for key, value in restored.items() if key != "request_archives"}

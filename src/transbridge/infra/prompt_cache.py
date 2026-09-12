@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 PROMPT_CACHE_METADATA_KEY = "_transbridge_prompt_cache"
 _OFFICIAL_OPENAI_BASE = "https://api.openai.com/v1"
 
-CacheProfile = Literal["translation_layered", "single_stable_prefix"]
+CacheProfile = Literal["translation_layered", "single_stable_prefix", "assistant_stable"]
 CacheBreakpoint = Literal["A", "B", "FINAL"]
 
 _OPENAI_EXPLICIT_MIN_TOKENS = 1024
@@ -93,7 +93,7 @@ def _extract_one(message: dict) -> PromptCacheDirective | None:
     breakpoint = value.get("breakpoint")
     if not isinstance(key, str) or not key:
         return None
-    if profile not in ("translation_layered", "single_stable_prefix"):
+    if profile not in ("translation_layered", "single_stable_prefix", "assistant_stable"):
         return None
     if breakpoint not in ("A", "B", "FINAL"):
         return None
@@ -101,7 +101,11 @@ def _extract_one(message: dict) -> PromptCacheDirective | None:
 
 
 def _strip_message(message: dict) -> dict:
-    return {key: value for key, value in message.items() if key != PROMPT_CACHE_METADATA_KEY}
+    return {
+        key: value
+        for key, value in message.items()
+        if key not in {PROMPT_CACHE_METADATA_KEY, "_transbridge_assistant_context"}
+    }
 
 
 def extract_prompt_cache_directives(
@@ -130,6 +134,10 @@ def validate_prompt_cache_directives(
 
     if profile == "translation_layered":
         valid = _validate_layered_topology(messages, slots, has_metadata)
+    elif profile == "assistant_stable":
+        from transbridge.infra.assistant_prompt_cache import validate_assistant_topology
+
+        valid = validate_assistant_topology(messages, slots, has_metadata)
     else:
         valid = _validate_single_topology(messages, slots, has_metadata)
     if not valid:
@@ -317,6 +325,11 @@ def prepare_openai_chat_cache_request(
     if not is_official_openai_base_url(base_url) or not directives:
         return _disabled_openai_request(clean)
 
+    if directives[0]["profile"] == "assistant_stable":
+        from transbridge.infra.assistant_prompt_cache import prepare_assistant_openai
+
+        return prepare_assistant_openai(messages=clean, model=model, base_url=base_url, key=directives[0]["key"])
+
     capability = openai_cache_capability(model)
     if capability == "disabled":
         return _disabled_openai_request(clean)
@@ -402,6 +415,7 @@ def build_anthropic_system_blocks(
     cacheable = bool(
         enable_cache
         and profile
+        and profile != "assistant_stable"
         and _prefixes_are_cacheable(
             provider="anthropic",
             model=model,

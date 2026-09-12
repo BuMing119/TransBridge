@@ -102,7 +102,7 @@ def test_terminal_with_unsettled_effect_remains_inline_and_summary_cache_is_disp
         state, TranscriptManifest(), "s", AssistantTranscriptStore(str(tmp_path)), keep_recent_terminal=0
     )
     assert [r["request_id"] for r in compact["requests"]] == ["unknown"]
-    assert list(compact["request_summaries"]) == ["unknown"]
+    assert compact["request_summaries"] == state["request_summaries"]
     assert len(manifest.artifacts) == 1
 
 

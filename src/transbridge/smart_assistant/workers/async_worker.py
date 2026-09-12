@@ -10,6 +10,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 import threading
 
+from transbridge.infra.llm_usage import UsageCallback
+
 
 class AsyncWorker(threading.Thread, ABC):
     """纯 Python 后台工作线程基类。
@@ -31,6 +33,7 @@ class AsyncWorker(threading.Thread, ABC):
         self.on_finished: Callable[[str], None] | None = None
         self.on_error: Callable[[str], None] | None = None
         self.on_token_usage: Callable[[str, int, int], None] | None = None
+        self.on_usage: UsageCallback | None = None
 
     @abstractmethod
     def run(self) -> None:

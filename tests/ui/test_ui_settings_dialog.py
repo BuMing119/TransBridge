@@ -429,6 +429,8 @@ def test_all_llm_settings_pages_round_trip_through_one_detached_save(
     defaults = dialog._settings_pages[SettingsSection.AI_DEFAULTS]
     advanced = dialog._settings_pages[SettingsSection.ADVANCED]
     dialog._settings_pages[SettingsSection.AI_SERVICE].context_window_spin.setValue(16384)
+    dialog._settings_pages[SettingsSection.AI_SERVICE].auto_compaction_check.setChecked(False)
+    dialog._settings_pages[SettingsSection.AI_SERVICE].prompt_cache_check.setChecked(False)
 
     embedding.mode_combo.setCurrentIndex(embedding.mode_combo.findData("api"))
     embedding.base_url_edit.setText("https://embedding.example/v1")
@@ -453,6 +455,8 @@ def test_all_llm_settings_pages_round_trip_through_one_detached_save(
     assert config.mcp_enabled is True
     assert config.mcp_write_tool_policy == "confirm"
     assert config.assistant_context_window == 16384
+    assert config.assistant_auto_compaction is False
+    assert config.assistant_prompt_cache is False
     service.close()
 
 

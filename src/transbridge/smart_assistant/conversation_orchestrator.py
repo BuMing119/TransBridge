@@ -277,8 +277,11 @@ class ConversationOrchestrator(QObject):
 
         self._react_depth += 1
         self._on_thinking_indicator_hide()
-        self._round_messages = self._conversation.get_messages()
+        self._round_messages = getattr(self._conversation, "get_transcript", self._conversation.get_messages)()
         cfg = self._cached_llm_config
+        from transbridge.smart_assistant.context_runtime import configuration_digest
+
+        self._round_config_digest = configuration_digest(cfg)
         self._round_max_tokens = _smart_assistant_max_tokens(cfg)
         from transbridge.smart_assistant.native_tools import build_native_tool_definitions
 
@@ -293,14 +296,21 @@ class ConversationOrchestrator(QObject):
                 def prepared(result):
                     if not self._is_current(generation):
                         return
+                    self._on_thinking_indicator_hide()
                     self._round_messages, self._round_tools = result
                     if self._round_messages:
                         QTimer.singleShot(0, lambda g=generation: self._stage_b(g))
 
                 def preparation_failed(exc):
                     if self._is_current(generation):
-                        binding.fail(str(exc))
+                        self._on_thinking_indicator_hide()
+                        from transbridge.ui.tools.smart_assistant.request_context_status import (
+                            preparation_failed as show,
+                        )
 
+                        show(binding, exc)
+
+                self._on_thinking_indicator_show("准备上下文…")
                 preparation.prepare(
                     self._conversation.get_transcript(),
                     self._round_max_tokens,
@@ -321,6 +331,16 @@ class ConversationOrchestrator(QObject):
             except Exception as exc:
                 binding.fail(str(exc))
                 return
+        try:
+            from transbridge.smart_assistant.context_budget import ContextBudget
+
+            ContextBudget(
+                context_window=int(getattr(cfg, "assistant_context_window", 32768)),
+                output_reserve=self._round_max_tokens or 4096,
+            ).require(self._round_messages, self._round_tools)
+        except ValueError as exc:
+            self._on_system_message(str(exc))
+            return
         QTimer.singleShot(0, lambda g=generation: self._stage_b(g))
 
     def _stage_b(self, generation: int) -> None:
@@ -342,6 +362,12 @@ class ConversationOrchestrator(QObject):
         from transbridge.smart_assistant.chat_worker import ChatWorker
 
         client = self._get_llm_client()
+        from transbridge.smart_assistant.context_runtime import configuration_digest
+
+        expected_config = getattr(self, "_round_config_digest", None)
+        if expected_config is not None and expected_config != configuration_digest(self._cached_llm_config):
+            QTimer.singleShot(0, self.start_round)
+            return
         messages = getattr(self, "_round_messages", [])
         _max = getattr(self, "_round_max_tokens", 0)
         tools = getattr(self, "_round_tools", [])
@@ -351,7 +377,10 @@ class ConversationOrchestrator(QObject):
 
         _bridge = self._cb_bridge
 
-        worker = ChatWorker(client, messages, max_tokens=_max, tools=tools)
+        binding = getattr(self, "request_binding", None)
+        worker = ChatWorker(
+            client, messages, max_tokens=_max, tools=tools, purpose=getattr(binding, "stage", None) or "execution"
+        )
         self._worker = worker
         self._workers.add(worker)
         worker.on_chunk = lambda chunk, g=generation, w=worker: _bridge._dispatch.emit(
@@ -364,9 +393,9 @@ class ConversationOrchestrator(QObject):
             lambda: self._on_error(g, w, message)
         )
         if self._obs_collector:
-            worker.on_token_usage = lambda model, i, o, g=generation, w=worker: _bridge._dispatch.emit(
-                lambda: self._on_token_usage(g, w, model, i, o)
-            )
+            from transbridge.smart_assistant.context_usage import connect_usage
+
+            connect_usage(worker, self._obs_collector, _bridge)
         worker.start()
 
     # ── 流式处理 ───────────────────────────────────────────

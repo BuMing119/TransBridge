@@ -1,10 +1,15 @@
 import atexit
 from collections.abc import Callable
 from datetime import datetime, timedelta
+import hashlib
+from itertools import chain
 import json
 import logging
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 import threading
+
+from transbridge.infra.llm_usage import LlmUsage
 
 from ..execution_engine import StepResult
 from ..guardrails.output_validator import sanitize_for_storage
@@ -55,13 +60,16 @@ class ObservabilityCollector:
         self._current_round: ReActRound | None = None
         self._pending_tool: tuple | None = None
         self._round_start: datetime | None = None
+        self._usage_lock = threading.RLock()
 
     def start_conversation(self, conv_id: str) -> None:
-        if self._active is not None:
-            self.end_conversation()
-        self._active = ConversationTrace(conv_id=conv_id)
-        # m12: 新会话重置 session 级 token 统计
-        self._session_tokens = TokenStats()
+        with self._usage_lock:
+            if self._active is not None:
+                self.end_conversation()
+            self._active = ConversationTrace(conv_id=conv_id)
+            # m12: 新会话重置 session 级 token 统计
+            self._session_tokens = TokenStats()
+            self._current_round = None
 
     def on_step_started(self, step_id: int, tool_name: str) -> None:
         self._pending_tool = (step_id, tool_name, datetime.now())
@@ -97,12 +105,91 @@ class ObservabilityCollector:
         if self._on_token_stats_updated:
             self._on_token_stats_updated(self._session_tokens)
 
+    def on_llm_usage(self, usage: LlmUsage) -> None:
+        """Legacy immediate delivery. Async callers must capture attribution before dispatch."""
+        self.capture_usage_callback(notify=lambda callback: callback())(usage)
+
+    def capture_usage_callback(self, *, notify: Callable[[Callable[[], None]], None] | None = None) -> Callable:
+        """Bind accounting to this invocation's trace, independent of the active view.
+
+        ``notify`` schedules a zero-argument callback (for example a GUI dispatch
+        signal's ``emit``). Without it, delivery only records diagnostics. Both
+        scheduling and eventual notification are isolated from accounting.
+        """
+        with self._usage_lock:
+            trace, stats, round_record = self._active, self._session_tokens, self._current_round
+
+        def notify_current() -> None:
+            try:
+                with self._usage_lock:
+                    if self._active is not trace or self._session_tokens is not stats:
+                        return
+                    if trace is not None and trace.finished_at:
+                        return
+                    if self._on_token_stats_updated:
+                        self._on_token_stats_updated(stats)
+            except Exception:
+                logger.warning("Usage notification failed; accounting was retained", exc_info=True)
+
+        def record(usage: LlmUsage) -> None:
+            with self._usage_lock:
+                if not stats.add_usage(usage):
+                    return
+                if trace is not None:
+                    trace.token_stats.add_usage(usage)
+                if round_record and usage.source == "reported" and usage.input_tokens is not None:
+                    round_record.llm_input_tokens += usage.input_tokens
+                current = self._active is trace and self._session_tokens is stats
+            # This separate diagnostic ledger never opens the business session
+            # repository or recreates a deleted session/trace. It also survives
+            # same-ID conversation reopening without overwriting the newer trace.
+            self._save_usage_attempt(trace, usage)
+            if current and notify is not None:
+                try:
+                    notify(notify_current)
+                except Exception:
+                    logger.warning("Usage notification dispatch unavailable; accounting was retained", exc_info=True)
+
+        return record
+
+    def _save_usage_attempt(self, trace: ConversationTrace | None, usage: LlmUsage) -> None:
+        if self._storage_dir is None:
+            return
+        temporary = None
+        try:
+            directory = self._storage_dir / "usage-attempts"
+            directory.mkdir(parents=True, exist_ok=True)
+            digest = hashlib.sha256(usage.attempt_id.encode("utf-8")).hexdigest()
+            path = directory / f"{digest}.json"
+            record = {
+                "schema_version": 1,
+                "conv_id": trace.conv_id if trace else None,
+                "trace_started_at": trace.started_at if trace else None,
+                "usage": usage.to_dict(),
+            }
+            data = json.dumps(sanitize_for_storage(record), ensure_ascii=False, indent=2)
+            with NamedTemporaryFile(mode="w", encoding="utf-8", dir=directory, prefix=".usage-", delete=False) as file:
+                temporary = Path(file.name)
+                file.write(data)
+            temporary.replace(path)
+        except Exception:
+            logger.warning(
+                "Failed to persist usage attempt %s; in-memory accounting retained", usage.attempt_id, exc_info=True
+            )
+        finally:
+            if temporary is not None:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    logger.warning("Failed to remove owned usage staging file", exc_info=True)
+
     def end_conversation(self) -> ConversationTrace | None:
-        if self._active is None:
-            return None
-        self._active.finished_at = datetime.now().isoformat()
-        trace = self._active
-        self._active = None
+        with self._usage_lock:
+            if self._active is None:
+                return None
+            self._active.finished_at = datetime.now().isoformat()
+            trace = self._active
+            self._active = None
         if self._storage_dir:
             try:
                 # M37: 注册到 atexit 兜底列表，防止守护线程未完成时进程退出丢失数据
@@ -142,7 +229,7 @@ class ObservabilityCollector:
         # 确保即使累积过多文件也能逐步清理，避免数据无限增长。
         scanned = 0
         expired_files: list[tuple[float, Path]] = []
-        for f in self._storage_dir.glob("*.json"):
+        for f in chain(self._storage_dir.glob("*.json"), (self._storage_dir / "usage-attempts").glob("*.json")):
             try:
                 mtime = f.stat().st_mtime
                 if datetime.fromtimestamp(mtime) < cutoff:

@@ -10,6 +10,75 @@ from transbridge.infra import anthropic_tool_calling as adapter
 from transbridge.infra.llm_tool_calling import LlmToolDefinition, LlmToolProtocolError
 
 
+def test_usage_start_delta_and_final_snapshot_are_not_added():
+    start = {"input_tokens": 10, "output_tokens": 1, "cache_read_input_tokens": 40, "cache_creation_input_tokens": 20}
+    final = SimpleNamespace(
+        stop_reason="end_turn", content=[_block("text", text="ok")], usage={**start, "output_tokens": 9}
+    )
+    owner = _owner([
+        _Stream(
+            [
+                _block("message_start", message={"usage": start}),
+                _block("message_delta", usage={"output_tokens": 4}),
+                _block("message_delta", usage={"output_tokens": 9}),
+                _block("message_stop"),
+            ],
+            final,
+        )
+    ])
+    records = []
+    turn = adapter.chat_stream_with_tools(
+        owner, [], 128, [], lambda _: None, usage_callback=records.append, purpose="summary"
+    )
+    assert turn.usage is records[0]
+    assert (turn.usage.input_tokens, turn.usage.output_tokens) == (70, 9)
+    assert turn.usage.completeness == "complete"
+    assert "tools" not in owner._client.messages.stream.call_args.kwargs
+
+
+def test_cancelled_anthropic_stream_preserves_partial_usage():
+    class Cancelled(BaseException):
+        pass
+
+    class CancelledStream(_Stream):
+        def __iter__(self):
+            yield _block(
+                "message_start",
+                message={
+                    "usage": {
+                        "input_tokens": 10,
+                        "output_tokens": 1,
+                        "cache_read_input_tokens": 40,
+                        "cache_creation_input_tokens": 0,
+                    }
+                },
+            )
+            yield _block("message_delta", usage={"output_tokens": 7})
+            raise Cancelled()
+
+    owner = _owner([CancelledStream([], None)])
+    records = []
+    with pytest.raises(Cancelled):
+        adapter.chat_stream_with_tools(owner, [], 128, [], lambda _: None, usage_callback=records.append)
+    assert len(records) == 1
+    assert (records[0].input_tokens, records[0].output_tokens) == (50, 7)
+    assert records[0].completeness == "partial"
+    assert records[0].outcome == "cancelled"
+    assert owner._active_requests == 0
+
+
+def test_network_error_mentioning_system_does_not_trigger_compatibility_retry():
+    owner = _owner([RuntimeError("system connection timed out")])
+    records = []
+    with pytest.raises(RuntimeError):
+        adapter.chat_stream_with_tools(
+            owner, [{"role": "system", "content": "rules"}], 128, [], lambda _: None, usage_callback=records.append
+        )
+    assert owner._client.messages.stream.call_count == 1
+    assert len(records) == 1
+    assert records[0].input_tokens is None
+
+
 class _Stream:
     def __init__(self, events, final_message):
         self._events = events

@@ -11,7 +11,7 @@ from transbridge.application.assistant_requests.summaries import RequestSummary
 from transbridge.infra.llm_tool_calling import LlmToolDefinition
 
 from .context_budget import ContextBudget
-from .request_context_assembler import RequestContextAssembler, assign_history_requests
+from .request_context_assembler import assign_history_requests
 
 
 @dataclass(frozen=True)
@@ -38,17 +38,25 @@ class RequestModelInput:
             return messages, self.tools
         request = self.request
         history = assign_history_requests(self.history, self.requests, self.message_owners)
-        sources = set(request.source_message_ids) | {revision.source_message_id for revision in request.revisions}
-        current_input = next((m["message_id"] for m in reversed(history) if m.get("message_id") in sources), None)
-        summary = None
+        from transbridge.application.assistant_context.models import CompactionSummary
+        from transbridge.application.assistant_context.projection import append_context
+
+        summaries = ()
         if self.prepared_summary is not None and self.prepared_summary[1] == digest(request.to_dict()):
             summary = self.prepared_summary[0]
-        projection = RequestContextAssembler(self.budget).assemble(
+            if summary is not None:
+                summaries = (
+                    CompactionSummary(
+                        "legacy-" + digest(summary.to_dict()), summary.text, (), summary.source_ids, "legacy-excerpt"
+                    ),
+                )
+        epoch = append_context(
             history,
-            tools=self.tools,
-            request_state=self.request_state,
-            current_input_id=current_input,
-            continuation={"reason": "continue admitted request", "request_id": request.request_id},
-            summary=summary,
+            request,
+            dict(self.request_state or {}),
+            config_digest="detached",
+            owners=self.message_owners,
+            summaries=summaries,
         )
-        return projection.messages, self.tools
+        self.budget.require(epoch.messages, self.tools)
+        return epoch.messages, self.tools

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import logging
 from typing import Any
@@ -16,6 +16,7 @@ from transbridge.infra.llm_tool_calling import (
     parse_tool_arguments,
     require_complete_tool_call,
 )
+from transbridge.infra.llm_usage import UsageAttempt, single_attempt_client
 from transbridge.infra.prompt_cache import (
     extract_prompt_cache_directives,
     prepare_openai_chat_cache_request,
@@ -93,6 +94,7 @@ def _request_kwargs(
         "model": owner._model,
         "messages": request["messages"],
         "stream": True,
+        "stream_options": {"include_usage": True},
         "tools": _openai_tools(tools),
         "tool_choice": "auto",
     }
@@ -100,6 +102,9 @@ def _request_kwargs(
         kwargs["extra_body"] = dict(request["request_options"])
     if max_tokens > 0:
         kwargs["max_tokens"] = max_tokens
+    if not tools:
+        kwargs.pop("tools")
+        kwargs.pop("tool_choice")
     return kwargs
 
 
@@ -114,11 +119,15 @@ def _clean_retry_kwargs(
         "model": owner._model,
         "messages": clean_messages,
         "stream": True,
+        "stream_options": {"include_usage": True},
         "tools": _openai_tools(tools),
         "tool_choice": "auto",
     }
     if max_tokens > 0:
         kwargs["max_tokens"] = max_tokens
+    if not tools:
+        kwargs.pop("tools")
+        kwargs.pop("tool_choice")
     return kwargs
 
 
@@ -182,10 +191,14 @@ def _merge_tool_delta(accumulator: _StreamAccumulator, delta: Any) -> None:
     pending.arguments += arguments
 
 
-def _consume_stream(stream: Any, chunk_callback, accumulator: _StreamAccumulator) -> None:
+def _consume_stream(stream: Any, chunk_callback, accumulator: _StreamAccumulator, attempt: UsageAttempt) -> None:
     for chunk in stream:
         accumulator.saw_event = True
         choices = _field(chunk, "choices", ()) or ()
+        attempt.observe(
+            _field(chunk, "usage"),
+            final=not choices or any(_field(choice, "finish_reason") is not None for choice in choices),
+        )
         if not choices:
             continue
         choice = choices[0]
@@ -205,6 +218,8 @@ def _consume_stream(stream: Any, chunk_callback, accumulator: _StreamAccumulator
 
         for tool_delta in _field(delta, "tool_calls", ()) or ():
             _merge_tool_delta(accumulator, tool_delta)
+    if accumulator.stop_reason is not None and attempt.raw:
+        attempt.final_received = True
 
 
 def _finalize(accumulator: _StreamAccumulator) -> LlmTurn:
@@ -252,6 +267,9 @@ def chat_stream_with_tools(
     max_tokens: int,
     tools: list[LlmToolDefinition],
     chunk_callback,
+    *,
+    usage_callback=None,
+    purpose: str = "execution",
 ) -> LlmTurn:
     """Run one native OpenAI-compatible streaming tool-call turn.
 
@@ -261,31 +279,51 @@ def chat_stream_with_tools(
     """
 
     with owner._lock:
-        client = owner._client
+        client = single_attempt_client(owner._client)
         owner._active_requests += 1
-    accumulator = _StreamAccumulator()
     try:
         kwargs = _request_kwargs(owner, messages, max_tokens, tools)
-        try:
-            with client.chat.completions.create(**kwargs) as stream:
-                _consume_stream(stream, chunk_callback, accumulator)
-        except Exception as exc:
-            if _is_cache_rejection(exc) and not accumulator.saw_event:
-                logger.warning(
-                    "OpenAI tool-call stream cache parameters rejected (%s); retrying without cache: model=%s",
-                    exc,
-                    owner._model,
+        retry_of = None
+        for index in range(2):
+            accumulator = _StreamAccumulator()
+            attempt = UsageAttempt("openai", owner._model, purpose, usage_callback, retry_of=retry_of)
+            try:
+                with client.chat.completions.create(**kwargs) as stream:
+                    _consume_stream(stream, chunk_callback, accumulator, attempt)
+                turn = _finalize(accumulator)
+            except BaseException as exc:
+                usage_rejected = _is_usage_rejection(exc)
+                cache_rejected = _is_cache_rejection(exc)
+                retry = index == 0 and not accumulator.saw_event and (usage_rejected or cache_rejected)
+                reason = "usage_parameter_unsupported" if usage_rejected else "cache_parameter_unsupported"
+                attempt.finish(
+                    outcome="error" if isinstance(exc, Exception) else "cancelled",
+                    degradation=reason if retry else None,
                 )
-                accumulator = _StreamAccumulator()
-                retry_kwargs = _clean_retry_kwargs(owner, messages, max_tokens, tools)
-                with client.chat.completions.create(**retry_kwargs) as stream:
-                    _consume_stream(stream, chunk_callback, accumulator)
+                if not retry:
+                    raise
+                logger.warning("OpenAI optional parameters rejected; retrying once: %s", reason)
+                retry_of = attempt.attempt_id
+                if cache_rejected:
+                    kwargs = _clean_retry_kwargs(owner, messages, max_tokens, tools)
+                else:
+                    kwargs = dict(kwargs)
+                if usage_rejected:
+                    kwargs.pop("stream_options", None)
             else:
-                raise
-        return _finalize(accumulator)
+                return replace(turn, usage=attempt.finish())
+        raise AssertionError("Unreachable attempt exhaustion")
     finally:
         with owner._lock:
             owner._active_requests -= 1
+
+
+def _is_usage_rejection(exc: BaseException) -> bool:
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+    text = str(getattr(exc, "message", None) or exc).lower()
+    return status in (400, 422) and any(key in text for key in ("stream_options", "include_usage"))
 
 
 __all__ = ["chat_stream_with_tools"]

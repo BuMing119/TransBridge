@@ -1,6 +1,10 @@
 """Background preparation of derived request material, fenced by the current turn."""
 
+from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 import logging
+import os
+from threading import Event, Thread
 
 from transbridge.application.assistant_requests.models import RequestError
 from transbridge.application.assistant_requests.scheduler import ready_item_ids
@@ -14,10 +18,26 @@ class RequestContextPreparation:
     def __init__(self, binding):
         self.binding = binding
         self.summaries = RequestSummaryService(binding.service)
+        self._cancelled = Event()
+        self._summary_client = None
+        self._queue = ThreadPoolExecutor(max_workers=2, thread_name_prefix="assistant-context")
+
+    def cancel(self):
+        self._cancelled.set()
+        if self._summary_client is not None:
+            client = self._summary_client
+            self._summary_client = None
+            Thread(target=client.cancel, daemon=True, name="assistant-summary-cancel").start()
+
+    def close(self):
+        self.cancel()
+        self._queue.shutdown(wait=False, cancel_futures=True)
 
     def prepare(self, history, max_tokens, *, context_window, on_ready, on_error):
         binding = self.binding
         admission, context = binding.admission, binding.context
+        self._cancelled.set()
+        cancelled = self._cancelled = Event()
 
         def active(expected):
             return (
@@ -56,7 +76,56 @@ class RequestContextPreparation:
                     except Exception as exc:
                         on_error(exc)
 
-                self._submit(prepared.assemble, assembled)
+                if prepared.request is None:
+                    work = prepared.assemble
+                else:
+                    from transbridge.smart_assistant.context_runtime import ContextRuntime
+
+                    orchestrator = binding.facade._orchestrator
+                    from transbridge.smart_assistant.context_summary import IsolatedSummaryClient
+
+                    config = (
+                        orchestrator._cached_llm_config.copy_for_execution()
+                        if hasattr(orchestrator._cached_llm_config, "copy_for_execution")
+                        else deepcopy(orchestrator._cached_llm_config)
+                    )
+                    client = IsolatedSummaryClient(config, orchestrator.get_llm_client())
+                    self._summary_client = client
+                    collector = getattr(orchestrator, "_obs_collector", None)
+                    from transbridge.config.paths import get_config_file_path
+
+                    config_path = get_config_file_path()
+                    config_stamp = getattr(orchestrator, "_llm_config_mtime", None)
+
+                    def still_current():
+                        if cancelled.is_set():
+                            return False
+                        if config_stamp is None:
+                            return True
+                        try:
+                            return os.path.getmtime(config_path) == config_stamp
+                        except OSError:
+                            return config_stamp == 0
+
+                    runtime = ContextRuntime(
+                        binding.service,
+                        context,
+                        selected,
+                        client=client,
+                        config=config,
+                        on_usage=(
+                            collector.capture_usage_callback() if hasattr(collector, "capture_usage_callback") else None
+                        ),
+                        still_current=still_current,
+                    )
+
+                    def work():
+                        try:
+                            return runtime.prepare(prepared)
+                        finally:
+                            client.cancel()
+
+                self._submit(work, assembled)
             except Exception as exc:
                 on_error(exc)
 
@@ -78,10 +147,6 @@ class RequestContextPreparation:
                 # A newly completed tool result or rebuilt system message may not
                 # be saved yet. Generation and consumption must share evidence.
                 binding.service.save_history(context, history, request_id=admission.request_id)
-            try:
-                self.summaries.refresh(context, admission.request_id)
-            except Exception:
-                logger.warning("Request summary unavailable; retaining original context materials", exc_info=True)
             return self.summaries.prepared_material(context, admission.request_id)
 
         def completed(result):
@@ -97,7 +162,7 @@ class RequestContextPreparation:
         self._submit(generate, completed)
 
     def _submit(self, work, callback):
-        future = self.binding._queue.submit(work)
+        future = self._queue.submit(work)
 
         def completed(result):
             try:

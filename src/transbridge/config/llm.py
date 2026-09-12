@@ -54,6 +54,8 @@ class LLMConfig:
     max_tokens_per_batch: int = 2000
     max_output_tokens: int = 0
     assistant_context_window: int = 32768
+    assistant_auto_compaction: bool = True
+    assistant_prompt_cache: bool = True
     temperature: float = 0.0
     term_priority: list[str] = field(default_factory=lambda: ["dynamic", "paratranz", "json", "csv", "excel"])
     local_json_path: str = ""
@@ -112,6 +114,8 @@ class LLMConfig:
         ("max_tokens_per_batch", "max_tokens_per_batch", "int"),
         ("max_output_tokens", "max_output_tokens", "int"),
         ("assistant_context_window", "assistant_context_window", "int"),
+        ("assistant_auto_compaction", "assistant_auto_compaction", "bool"),
+        ("assistant_prompt_cache", "assistant_prompt_cache", "bool"),
         ("temperature", "temperature", "float"),
         ("local_json_path", "local_json_path", "str"),
         ("local_csv_path", "local_csv_path", "str"),
