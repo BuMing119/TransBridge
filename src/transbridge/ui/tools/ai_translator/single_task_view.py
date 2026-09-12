@@ -35,6 +35,7 @@ from transbridge.ui.foundation.components import (
 from .custom_profile_view import build_custom_profile_view
 from .embedding_config_view import build_embedding_config_section
 from .postprocess_view import build_postprocess_view
+from .project_terminology_view import ProjectTerminologyPanel
 from .scope_view import build_scope_view
 from .task_sources_view import TaskSourcesView
 from .task_widget_style import (
@@ -208,6 +209,12 @@ def _build_task_tabs(
     terms = QWidget(view.controls.tabs)
     terms_layout = QVBoxLayout(terms)
     terms_layout.setContentsMargins(14, 12, 14, 12)
+    view.controls.project_terminology_panel = ProjectTerminologyPanel(terms)
+    view.controls.save_term_source_as_scheme_btn = view.controls.project_terminology_panel.open_button
+    view.controls.save_term_source_as_scheme_btn.clicked.connect(
+        getattr(callbacks, "on_save_term_source_as_scheme", lambda: None)
+    )
+    terms_layout.addWidget(view.controls.project_terminology_panel)
     terms_layout.addWidget(_build_terms_group(view, callbacks, terms))
     terms_layout.addStretch(1)
     view.controls.tabs.addTab(_scroll_tab(terms), "术语库")
@@ -271,16 +278,6 @@ def _build_terms_group(view: object, callbacks: object, parent: QWidget) -> QGro
         item.setData(Qt.ItemDataRole.UserRole, source_id)
         view.controls.priority_list.addItem(item)
     layout.addWidget(view.controls.priority_list)
-    view.controls.save_term_source_as_scheme_btn = QPushButton("前往术语工作台创建译名方案…", group)
-    view.controls.save_term_source_as_scheme_btn.setAccessibleName("前往术语工作台创建译名方案")
-    view.controls.save_term_source_as_scheme_btn.setToolTip(
-        "译名方案是项目术语资产，请在术语工作台中选择来源、预览并创建"
-    )
-    configure_task_button(view.controls.save_term_source_as_scheme_btn)
-    view.controls.save_term_source_as_scheme_btn.clicked.connect(
-        getattr(callbacks, "on_save_term_source_as_scheme", lambda: None)
-    )
-    layout.addWidget(view.controls.save_term_source_as_scheme_btn)
     for label, name, file_filter in (
         ("本地 JSON", "json_path_edit", "JSON 文件 (*.json)"),
         ("本地 CSV", "csv_path_edit", "CSV 文件 (*.csv)"),

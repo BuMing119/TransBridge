@@ -450,6 +450,7 @@ def test_ai_naming_scheme_creation_routes_to_the_project_terminology_workbench(m
     app = QApplication.instance() or QApplication([])
     monkeypatch.setattr(config_module.LLMConfig, "load_from_file", lambda: LLMConfig())
     ctx = SimpleNamespace(
+        active_version_identity=("project-1", "variant-1"),
         slots={},
         collection=None,
         esp_path=None,

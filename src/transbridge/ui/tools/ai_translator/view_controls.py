@@ -75,6 +75,7 @@ class TranslatorControls:
         "pp_strict_mode_check",
         "pp_strategy_combo",
         "priority_list",
+        "project_terminology_panel",
         "save_term_source_as_scheme_btn",
         "provider_combo",
         "rule_editor",

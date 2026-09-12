@@ -117,7 +117,9 @@ def test_single_ai_view_exposes_four_visible_task_pages_without_legacy_entries(q
     assert not controls.naming_scheme_combo.isEnabled()
     assert controls.naming_scheme_manage_btn.text() == "管理方案…"
     assert "术语来源" in controls.naming_scheme_status_label.text()
-    assert controls.save_term_source_as_scheme_btn.text() == "前往术语工作台创建译名方案…"
+    assert controls.save_term_source_as_scheme_btn.text() == "查看项目术语库…"
+    assert controls.project_terminology_panel.title() == "当前项目术语库"
+    assert controls.save_term_source_as_scheme_btn.parent() is controls.project_terminology_panel
     assert controls.priority_list.item(0).data(Qt.ItemDataRole.UserRole) == "dynamic"
     assert view.sources_panel.isVisible()
     assert view.sources_panel.selected_slots() == []

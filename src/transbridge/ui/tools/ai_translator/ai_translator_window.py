@@ -21,6 +21,7 @@ from transbridge.ui.tools.ai_translator.embedding_model_controller import (
     EmbeddingWindowCallbacks,
 )
 from transbridge.ui.tools.ai_translator.llm_connection_controller import LlmConnectionController
+from transbridge.ui.tools.ai_translator.project_terminology_controller import ProjectTerminologyController
 from transbridge.ui.tools.ai_translator.run_controller import RunController
 from transbridge.ui.tools.ai_translator.scope_presenter import ScopePresenter, Step2ScopeAdapter
 from transbridge.ui.tools.ai_translator.task_scope import TaskScope
@@ -124,7 +125,13 @@ class AITranslatorWindow(QWidget):
         self._run_controller = RunController(task_runtime=task_runtime)
         self._theme_binding = AiThemeBinding(self, theme_view, lambda binding: apply_window_theme(self, binding))
         self._config_presenter.load()
-        self._view.controls.save_term_source_as_scheme_btn.setEnabled(terminology_workbench_requested is not None)
+        self._project_terminology = ProjectTerminologyController(
+            self,
+            ctx,
+            self._view.controls.project_terminology_panel,
+            can_open=terminology_workbench_requested is not None,
+            profile_controller=terminology_profile_controller,
+        )
         self._embedding_models.restore_managed_path()
         self._custom_profiles = CustomProfileController(
             self, self._view, self._view_port, self._config_presenter, self.on_mode_changed
@@ -381,6 +388,7 @@ class AITranslatorWindow(QWidget):
 
     def closeEvent(self, event):
         self._task_refresh_timer.stop()
+        self._project_terminology.close()
         self._config_binding.close()
         self._embedding_connection.close()
         self._llm_connection.close()
