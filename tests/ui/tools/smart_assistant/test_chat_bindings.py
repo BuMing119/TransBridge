@@ -172,6 +172,12 @@ class _Controller:
     def handle_task_completed(self, *args) -> None:
         self.completed.append(args)
 
+    def accepts_task_completion(self, task_id, run_id) -> bool:
+        return not self.completed and task_id == "task-1" and run_id == "run-1"
+
+    def is_awaiting_task(self, task_id, run_id) -> bool:
+        return self.accepts_task_completion(task_id, run_id)
+
 
 def test_task_binding_deduplicates_terminal_event_and_ignores_late_after_close() -> None:
     parent = QWidget()
@@ -197,15 +203,15 @@ def test_task_binding_deduplicates_terminal_event_and_ignores_late_after_close()
     binding.close()
     binding._on_finished("task-2", True, "", {})
     assert len(controller.completed) == 1
-    assert manager.removed == [binding._on_finished, binding._on_updated]
+    assert manager.removed == [binding._on_terminal, binding._on_updated]
 
 
 class _RoundController:
     def __init__(self) -> None:
         self.events = []
 
-    def handle_abort(self) -> None:
-        self.events.append("abort")
+    def handle_round_interrupted(self) -> None:
+        self.events.append("interrupt")
 
     def handle_user_message(self, text: str) -> None:
         self.events.append(("message", text))
@@ -249,7 +255,7 @@ def test_conversation_binding_ignores_round_and_response_after_close() -> None:
 
     assert tasks.starts == 1
     assert controller.events == [
-        "abort",
+        "interrupt",
         ("message", "hello"),
         ("response", {"type": "final"}),
     ]

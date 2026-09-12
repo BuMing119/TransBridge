@@ -121,7 +121,8 @@ def test_v2_round_trip_uses_staging_replace(repository, ref, dto) -> None:
     assert isinstance(saved, LoadedRecord)
     assert isinstance(loaded, LoadedRecord)
     assert loaded.value == dto
-    assert any(operation == "replace" and path == repo.path_for(ref) for operation, path in filesystem.calls)
+    publication = "replace-durable" if isinstance(ref, SessionRef) else "replace"
+    assert any(operation == publication and path == repo.path_for(ref) for operation, path in filesystem.calls)
     assert not any(".tmp" in path for path in filesystem.files)
 
 

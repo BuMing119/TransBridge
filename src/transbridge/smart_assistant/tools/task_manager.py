@@ -107,6 +107,7 @@ class TaskManager:
                         "completed": [],
                         "failed": [],
                         "finished": [],
+                        "terminal": [],
                         "updated": [],
                     }
                     cls._instance = instance
@@ -170,6 +171,11 @@ class TaskManager:
         with self._lock:
             self._listeners["finished"].append(callback)
 
+    def on_terminal(self, callback: Callable) -> None:
+        """Subscribe with the event-time snapshot: callback(snapshot, success, message, data)."""
+        with self._lock:
+            self._listeners["terminal"].append(callback)
+
     def on_updated(self, callback: Callable[[str], None]) -> None:
         """Register a task snapshot/progress listener.
 
@@ -211,7 +217,7 @@ class TaskManager:
         """移除已注册的回调（从 completed、failed 和 finished 列表中都尝试移除）。"""
         with self._lock:
             callbacks = [callback, *self._listener_wrappers.pop(callback, [])]
-            for key in ("completed", "failed", "finished", "updated"):
+            for key in ("completed", "failed", "finished", "terminal", "updated"):
                 self._listeners[key] = [item for item in self._listeners[key] if item not in callbacks]
 
     def _notify_updated(self, task_id: str) -> None:
@@ -231,6 +237,10 @@ class TaskManager:
     ) -> str:
         """注册新任务，返回 task_id。默认创建 stop_event 和 pause_event（初始 set）。"""
         task_metadata = dict(metadata or {})
+        assistant_gate = task_metadata.pop("_assistant_gate", None)
+        assistant_effect_id = str(task_metadata.get("assistant_effect_id", ""))
+        if task_metadata.get("assistant_request_id") and assistant_gate is None:
+            raise ValueError("请求关联任务缺少接纳服务，不能按 legacy 任务启动")
         owner = OwnerRef(
             owner_id=str(task_metadata.get("owner_id", "legacy-task-manager")),
             entrypoint=str(task_metadata.get("entrypoint", "legacy")),
@@ -261,12 +271,27 @@ class TaskManager:
             _thread=thread,
         )
         handle.pause_event.set()  # 初始非暂停状态
-        handle.execution = TaskRuntimeBridge(self._runtime, ref, owner, handle, lambda: self._notify_updated(task_id))
+        handle.execution = TaskRuntimeBridge(
+            self._runtime,
+            ref,
+            owner,
+            handle,
+            lambda: self._notify_updated(task_id),
+            assistant_gate=assistant_gate,
+            assistant_effect_id=assistant_effect_id,
+        )
         with self._lock:
             self._tasks[task_id] = handle
             self._refs[task_id] = ref
             self._owners[task_id] = owner
-        handle.execution.schedule()
+        try:
+            if assistant_gate is not None:
+                assistant_gate.bind_job(assistant_effect_id, ref.job_id, ref.run_id, runtime=self._runtime, owner=owner)
+            handle.execution.schedule()
+        except Exception:
+            self._runtime.cancel(ref, owner)
+            handle.execution.close()
+            raise
         return task_id
 
     def cancel(self, task_id: str) -> bool:
@@ -278,10 +303,20 @@ class TaskManager:
         if handle is None or ref is None or owner is None:
             return False
         try:
-            snapshot = self._runtime.cancel(ref, owner)
             snapshot = self._runtime.get(ref, owner)
-        except (TaskAccessError, TransitionError):
+            if snapshot.state not in {JobState.CANCELLING, JobState.CANCELLED}:
+                if handle.execution is not None and handle.execution.assistant_gate is not None:
+                    handle.execution.assistant_gate.control_task(self._runtime, ref, owner, "cancel")
+                else:
+                    self._runtime.cancel(ref, owner)
+                snapshot = self._runtime.get(ref, owner)
+        except TransitionError:
+            # Another cancellation/terminal transition may have won the race.
+            snapshot = self._runtime.get(ref, owner)
+        except TaskAccessError:
             return False
+        if snapshot.state is JobState.CANCELLED:
+            self.notify_finished(task_id, False, "任务已取消")
         return snapshot.state in {JobState.CANCELLING, JobState.CANCELLED}
 
     def pause(self, task_id: str) -> bool:
@@ -300,7 +335,10 @@ class TaskManager:
                 handle.status = JobState.PAUSED.value
                 self._notify_updated(task_id)
                 return True
-            snapshot = self._runtime.pause(ref, owner)
+            if handle.execution is not None and handle.execution.assistant_gate is not None:
+                snapshot = handle.execution.assistant_gate.control_task(self._runtime, ref, owner, "pause")
+            else:
+                snapshot = self._runtime.pause(ref, owner)
         except (TaskAccessError, TransitionError):
             return False
         return snapshot.state is JobState.PAUSED
@@ -316,12 +354,18 @@ class TaskManager:
         if handle.pause_event is None:
             handle.pause_event = threading.Event()
         try:
+            if handle.execution is not None and handle.execution.assistant_gate is not None:
+                snapshot = handle.execution.assistant_gate.control_task(self._runtime, ref, owner, "resume")
+                return snapshot.state is JobState.RUNNING
             if self._runtime.get(ref, owner).state is JobState.RUNNING:
                 handle.pause_event.set()
                 handle.status = JobState.RUNNING.value
                 self._notify_updated(task_id)
                 return True
-            snapshot = self._runtime.resume(ref, owner)
+            if handle.execution is not None and handle.execution.assistant_gate is not None:
+                snapshot = handle.execution.assistant_gate.control_task(self._runtime, ref, owner, "resume")
+            else:
+                snapshot = self._runtime.resume(ref, owner)
         except (TaskAccessError, TransitionError):
             return False
         return snapshot.state is JobState.RUNNING
@@ -373,7 +417,7 @@ class TaskManager:
         return [
             task_id
             for task_id in task_ids
-            if self.get_status(task_id).get("status") in ("running", "paused", "cancelling")
+            if self.get_status(task_id).get("status") in ("queued", "running", "paused", "cancelling")
         ]
 
     def list_all(self) -> list[str]:
@@ -454,12 +498,18 @@ class TaskManager:
         with self._lock:
             handle = self._tasks.get(task_id)
             if handle is not None:
+                if handle.notified:
+                    return
                 handle.result = data
                 handle.message = message
                 handle.notified = True
             finished = list(self._listeners.get("finished", []))
+            terminal = list(self._listeners.get("terminal", []))
             legacy = list(self._listeners.get("completed" if success else "failed", []))
+        event_snapshot = self.get_status(task_id)
         dispatch = TaskManager._dispatcher
+        for cb in terminal:
+            dispatch(lambda c=cb, v=event_snapshot, s=success, m=message, d=data: self._safe_callback(c, v, s, m, d))
         for cb in finished:
             dispatch(lambda c=cb, t=task_id, s=success, m=message, d=data: self._safe_callback(c, t, s, m, d))
         if success:
@@ -556,6 +606,7 @@ class TaskManager:
                 cls._instance._listeners["completed"].clear()
                 cls._instance._listeners["failed"].clear()
                 cls._instance._listeners["finished"].clear()
+                cls._instance._listeners["terminal"].clear()
                 cls._instance._listeners["updated"].clear()
                 cls._instance._listener_wrappers.clear()
                 cls._instance._refs.clear()

@@ -217,6 +217,7 @@ def staging_replace(
     *,
     token: str,
     purpose: str,
+    durable: bool = False,
 ) -> None:
     destination = paths.guard(destination)
     stage = paths.staging(ref, token, purpose)
@@ -227,7 +228,10 @@ def staging_replace(
         filesystem.write_bytes(stage, data)
         if filesystem.read_bytes(stage) != data:
             raise AtomicWriteError("staging verification failed")
-        filesystem.replace(stage, destination)
+        if durable:
+            filesystem.replace_durable(stage, destination)
+        else:
+            filesystem.replace(stage, destination)
     except Exception as exc:
         try:
             filesystem.remove(stage, missing_ok=True)

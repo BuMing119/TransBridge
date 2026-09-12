@@ -1,16 +1,16 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 from typing import Any
+from uuid import uuid4
 
 
 class ConversationManager:
-    """维护多轮对话历史，封装 message list 操作。
+    """Preserve complete evidence separately from the recent model projection.
 
-    M10: _trim 按轮次裁剪，每轮包含 user -> assistant -> [observation*] -> [plan_result]
-    M12: add_observation 结果超过 _MAX_OBSERVATION_CHARS 字符自动截断
-    M3: turn_starts 预记录轮次起始位置，_trim 基于记录裁剪，不依赖遍历扫描消息顺序
-    m5: _messages_cache 缓存 get_messages() 返回值，仅在消息变更时重建
+    Only explicit user input opens a turn. Tool/confirmation continuations stay
+    in their original turn; the configured turn limit never deletes history.
     """
 
     _OBSERVATION_PREFIX = "[Tool result - {name}]\n"
@@ -19,6 +19,7 @@ class ConversationManager:
 
     def __init__(self, max_turns: int = 20) -> None:
         self._messages: list[dict[str, Any]] = []
+        self._message_ids: list[str] = []
         self._max_turns: int = max_turns
         # M3: 预记录每轮起始位置 (user 消息在 _messages 中的索引)
         self._turn_starts: list[int] = []
@@ -27,26 +28,35 @@ class ConversationManager:
         self._messages_cache: list[dict[str, Any]] = []
         self._loaded_tool_namespaces: set[str] = set()
 
+    def _append(self, message: dict[str, Any], *, message_id: str | None = None) -> None:
+        mid = message_id or str(uuid4())
+        if mid in self._message_ids:
+            raise ValueError(f"Conversation history already contains message ID {mid}")
+        self._messages.append(deepcopy(message))
+        self._message_ids.append(mid)
+        self._messages_dirty = True
+
     def add_system(self, content: str) -> None:
         """system 消息始终在列表最前（索引 0），替换已有 system 消息。"""
-        had_system = any(m["role"] == "system" for m in self._messages)
+        system_indices = [i for i, message in enumerate(self._messages) if message["role"] == "system"]
+        unchanged = system_indices and self._messages[system_indices[0]].get("content") == content
+        system_id = self._message_ids[system_indices[0]] if unchanged else str(uuid4())
+        self._message_ids = [mid for i, mid in enumerate(self._message_ids) if i not in system_indices]
         self._messages = [m for m in self._messages if m["role"] != "system"]
         self._messages.insert(0, {"role": "system", "content": content})
+        self._message_ids.insert(0, system_id)
         self._messages_dirty = True
-        # M3: 新增 system 消息会改变索引 0，所有 turn_starts 后移 1 位
-        if not had_system:
-            self._turn_starts = [s + 1 for s in self._turn_starts]
+        self._turn_starts = [start - sum(i < start for i in system_indices) + 1 for start in self._turn_starts]
 
-    def add_user(self, content: str) -> None:
-        # M3: 记录此轮起始位置
-        self._turn_starts.append(len(self._messages))
-        self._messages.append({"role": "user", "content": content})
-        self._messages_dirty = True
-        self._trim()
+    def add_user(self, content: str, *, message_id: str | None = None) -> None:
+        # Record the turn only after an accepted append; a duplicate ingress ID
+        # must not change either history or its projection boundary.
+        start = len(self._messages)
+        self._append({"role": "user", "content": content}, message_id=message_id)
+        self._turn_starts.append(start)
 
     def add_assistant(self, content: str) -> None:
-        self._messages.append({"role": "assistant", "content": content})
-        self._messages_dirty = True
+        self._append({"role": "assistant", "content": content})
 
     def add_assistant_turn(self, turn) -> None:
         """Persist a provider-neutral assistant turn, including native calls."""
@@ -73,8 +83,7 @@ class ConversationManager:
 
             reused = ", ".join(sorted(reused_call_ids))
             raise LlmToolProtocolError(f"The model reused historical tool call ids: {reused}")
-        self._messages.append(message)
-        self._messages_dirty = True
+        self._append(message)
 
     def add_tool_result(
         self,
@@ -84,8 +93,9 @@ class ConversationManager:
         *,
         display_summary: str = "",
         is_error: bool = False,
+        message_id: str | None = None,
     ) -> None:
-        """Close one native tool call with bounded, valid JSON content."""
+        """Close one native tool call, retaining the complete JSON evidence."""
         if any(
             message.get("role") == "tool" and str(message.get("tool_call_id", "")) == tool_call_id
             for message in self._messages
@@ -93,23 +103,17 @@ class ConversationManager:
             return
         payload = result if isinstance(result, dict) else {"message": str(result)}
         content = json.dumps(payload, ensure_ascii=False, default=str)
-        if len(content) > self._MAX_OBSERVATION_CHARS:
-            summary = display_summary or str(payload.get("message", ""))
-            payload = {
-                "success": not is_error,
-                "truncated": True,
-                "summary": summary[: self._MAX_OBSERVATION_CHARS - 100],
-            }
-            content = json.dumps(payload, ensure_ascii=False)
-        self._messages.append({
-            "role": "tool",
-            "tool_call_id": tool_call_id,
-            "name": tool_name,
-            "content": content,
-            "display_summary": display_summary,
-            "is_error": is_error,
-        })
-        self._messages_dirty = True
+        self._append(
+            {
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "name": tool_name,
+                "content": content,
+                "display_summary": display_summary,
+                "is_error": is_error,
+            },
+            message_id=message_id,
+        )
 
     def close_pending_tool_calls(self, reason: str = "工具调用已取消。") -> int:
         """Add synthetic error results for every unresolved native call."""
@@ -139,34 +143,15 @@ class ConversationManager:
         return tuple(sorted(self._loaded_tool_namespaces))
 
     def add_observation(self, tool_name: str, result: str) -> None:
-        """追加工具执行结果作为 user 消息。超过 _MAX_OBSERVATION_CHARS 字符时换行感知截断。
-
-        result 字符串预期由 ToolResult.to_observation() 预格式化，此处的截断为兜底安全网。
-        """
-        # M8: 前缀也计入总长度，截断限制需剔除前缀开销
+        """Keep the complete legacy result; only model projections may shorten it."""
         full_prefix = self._OBSERVATION_PREFIX.format(name=tool_name)
-        prefix_len = len(full_prefix)
-        max_result_chars = self._MAX_OBSERVATION_CHARS - prefix_len
-        if max_result_chars < 100:
-            max_result_chars = 100  # 保底：前缀再长也保留至少 100 字符的结果
-
-        if len(result) > max_result_chars:
-            cut_pos = max_result_chars - 30
-            last_nl = result.rfind("\n", 0, cut_pos)
-            if last_nl > cut_pos // 2:
-                result = result[:last_nl] + "\n  ...(truncated)"
-            else:
-                result = result[:cut_pos] + "...(truncated)"
-        self._messages.append({
+        self._append({
             "role": "user",
             "content": f"{full_prefix}{result}",
         })
-        self._messages_dirty = True
 
     def add_plan_result(self, summary: str, *, success: bool = True, results: list[dict] | None = None) -> None:
-        """追加计划执行聚合结果作为 user 消息。超过 _MAX_OBSERVATION_CHARS 字符自动截断。"""
-        if len(summary) > self._MAX_OBSERVATION_CHARS:
-            summary = summary[: self._MAX_OBSERVATION_CHARS] + f"...(truncated; {len(summary)} characters total)"
+        """Append a complete plan outcome, closing its native call when present."""
         pending_plan = self._latest_unresolved_call("propose_plan")
         if pending_plan is not None:
             self.add_tool_result(
@@ -177,21 +162,28 @@ class ConversationManager:
                 is_error=not success,
             )
             return
-        self._messages.append({"role": "user", "content": f"{self._PLAN_RESULT_PREFIX}\n{summary}"})
-        self._messages_dirty = True
+        self._append({"role": "user", "content": f"{self._PLAN_RESULT_PREFIX}\n{summary}"})
 
     def get_messages(self) -> list[dict[str, Any]]:
-        """返回消息列表副本。
-
-        m5: 缓存机制 — 仅在 _messages 变更时重建副本，后续调用返回缓存的副本。
-        """
+        """Return the recent projection; use get_history() for storage/display."""
         if self._messages_dirty:
-            self._messages_cache = self._messages.copy()
+            start = self._turn_starts[-self._max_turns] if 0 < self._max_turns < len(self._turn_starts) else 0
+            indices = [i for i in range(len(self._messages)) if i >= start or self._messages[i]["role"] == "system"]
+            self._messages_cache = [deepcopy(self._messages[i]) for i in indices]
             self._messages_dirty = False
-        return self._messages_cache.copy()
+        return deepcopy(self._messages_cache)
+
+    def get_history(self) -> list[dict[str, Any]]:
+        """Return complete original messages, including those outside the window."""
+        return deepcopy(self._messages)
+
+    def get_transcript(self) -> list[dict[str, Any]]:
+        """Return complete messages with stable IDs for projections and lookup."""
+        return [dict(deepcopy(message), message_id=mid) for message, mid in zip(self._messages, self._message_ids)]
 
     def clear(self) -> None:
         self._messages.clear()
+        self._message_ids.clear()
         self._turn_starts.clear()
         self._messages_dirty = True
         self._messages_cache.clear()
@@ -202,13 +194,21 @@ class ConversationManager:
     def to_dict(self) -> dict:
         """导出消息列表为可序列化的字典。"""
         return {
-            "messages": self.get_messages(),
+            "messages": self.get_history(),
+            "message_ids": list(self._message_ids),
             "loaded_tool_namespaces": list(self.get_loaded_tool_namespaces()),
         }
 
     def from_dict(self, data: dict) -> None:
         """从字典恢复消息列表。替换现有消息并重置轮次索引。"""
-        self._messages = list(data.get("messages", []))
+        self._messages = deepcopy(list(data.get("messages", [])))
+        saved_ids = data.get("message_ids", [])
+        self._message_ids = [
+            str(message.pop("message_id", "") or (saved_ids[i] if i < len(saved_ids) else "") or uuid4())
+            for i, message in enumerate(self._messages)
+        ]
+        if len(set(self._message_ids)) != len(self._message_ids):
+            raise ValueError("Conversation history contains duplicate message IDs")
         self._loaded_tool_namespaces = set(data.get("loaded_tool_namespaces", []))
         self._turn_starts = []
         self._messages_dirty = True
@@ -234,7 +234,8 @@ class ConversationManager:
     @classmethod
     def _is_legacy_observation(cls, message: dict[str, Any]) -> bool:
         content = str(message.get("content", ""))
-        return content.startswith("【工具执行结果") or content.startswith(cls._PLAN_RESULT_PREFIX)
+        observation_prefix = cls._OBSERVATION_PREFIX.partition("{name}")[0]
+        return content.startswith(("【工具执行结果", observation_prefix, cls._PLAN_RESULT_PREFIX))
 
     def _latest_unresolved_call(self, tool_name: str) -> str | None:
         resolved = {str(message.get("tool_call_id", "")) for message in self._messages if message.get("role") == "tool"}
@@ -246,51 +247,3 @@ class ConversationManager:
                 if call.get("name") == tool_name and call_id and call_id not in resolved:
                     return call_id
         return None
-
-    def _trim(self) -> None:
-        """M3/M10: 基于预记录的 turn_starts 裁剪，保留最后 max_turns 轮。
-
-        一轮 = 从 turn_starts[i] 到 turn_starts[i+1] (或末尾) 的所有消息。
-        裁剪时整轮移除（含该轮关联的所有 observation 和 plan_result 消息）。
-
-        M3: 使用 add_user() 时预记录的 _turn_starts，不再依赖遍历扫描消息顺序。
-        m6: 使用列表切片重建 messages，避免逐个 del 的 O(n*k) 开销。
-        """
-        if self._max_turns <= 0:
-            return
-
-        while len(self._turn_starts) > self._max_turns:
-            # 最旧一轮的起始位置
-            oldest_start = self._turn_starts.pop(0)
-            # 该轮结束位置 = 下一轮起始 (或消息末尾)
-            if self._turn_starts:
-                oldest_end = self._turn_starts[0]
-            else:
-                oldest_end = len(self._messages)
-
-            # 计算本轮将被移除的消息数量
-            removed_count = oldest_end - oldest_start
-            # 调整剩余 turn_starts 的偏移量：
-            # 所有后续轮次的起始索引前移 removed_count 位，
-            # 以匹配切片后新列表的索引
-            for i in range(len(self._turn_starts)):
-                self._turn_starts[i] -= removed_count
-
-            # 保存 system 消息 (始终位于索引 0)，切片 [oldest_end:]
-            # 会将其一并移除，因此需要先备份
-            system_msg = None
-            if self._messages and self._messages[0]["role"] == "system":
-                system_msg = self._messages[0]
-
-            # m6: 使用切片重建消息列表，O(n) 单次操作替代逐个 del 的 O(n*k)
-            # 切片保留从 oldest_end 开始的所有剩余轮次
-            self._messages = self._messages[oldest_end:]
-            self._messages_dirty = True
-
-            # 若 system 消息被切片移除则恢复
-            # M2: 防御性检查 — 若 sliced messages 已含 system 消息则不再插入
-            if system_msg is not None and oldest_end > 0:
-                if not (self._messages and self._messages[0]["role"] == "system"):
-                    self._messages.insert(0, system_msg)
-                    for i in range(len(self._turn_starts)):
-                        self._turn_starts[i] += 1

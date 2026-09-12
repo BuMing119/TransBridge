@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from copy import copy
 from dataclasses import dataclass
 import hashlib
 import json
@@ -318,7 +319,12 @@ class GraphExecutor:
         from transbridge.smart_assistant.tools.task_manager import TaskManager
 
         raw_ctx = agent_instance.ctx if agent_instance is not None else self._ctx
-        exec_ctx = ExecutionContext(app_context=raw_ctx, task_manager=TaskManager())
+        if isinstance(raw_ctx, ExecutionContext):
+            # Preserve the admitted owner/request and captured mutation target across graph steps.
+            exec_ctx = copy(raw_ctx)
+            exec_ctx.task_manager = raw_ctx.task_manager or TaskManager()
+        else:
+            exec_ctx = ExecutionContext(app_context=raw_ctx, task_manager=TaskManager())
 
         retry_allowed = self._is_retry_allowed(spec, step)
         current_step = step
@@ -339,6 +345,9 @@ class GraphExecutor:
 
         if getattr(spec, "is_long_running", False):
             raw_result = self._tasks.resolve(raw_result)
+            terminal_data = raw_result.get("data")
+            if isinstance(terminal_data, dict) and terminal_data.get("status") == "cancelled":
+                self.cancel()
 
         final_result = StepResult(
             step_id=step_id,
@@ -600,7 +609,8 @@ class GraphExecutor:
         checkpoint_identity: CheckpointExpectation | None = None,
     ) -> list[StepResult]:
         """执行有状态图：BFS 遍历 + 条件路由 + 循环 + HITL + checkpoint。"""
-        self._cancelled.clear()
+        # Cancellation belongs to this executor lifetime, including admission before entry.
+        # An intentional restart/resume uses a fresh executor and its checkpoint identity.
 
         node_map = {n.node_id: n for n in graph.nodes}
         run_id, owner, spec_fingerprint, input_fingerprint = self._graph_checkpoint_identity(

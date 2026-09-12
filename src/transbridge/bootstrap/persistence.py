@@ -83,6 +83,8 @@ class PersistenceV2Services:
     session_projection: ProjectionStore
 
     def close(self) -> None:
+        if self.gui_session_commands.assistant_requests is not None:
+            self.gui_session_commands.assistant_requests.close()
         self.project_projection.close()
         self.session_projection.close()
         self.baselines.close()
@@ -206,12 +208,22 @@ def build_persistence_v2_services(
         projection=session_publisher,
     )
     session_publisher.bind(session_lifecycle)
+    from transbridge.application.assistant_requests.service import RequestService
+    from transbridge.persistence.assistant_transcript_store import AssistantTranscriptStore
+
+    assistant_requests = RequestService(
+        session_lifecycle, transcript_store=AssistantTranscriptStore(str(resolved_root), adapter)
+    )
+    from transbridge.application.assistant_requests.deletion import deletion_preflight
+
+    session_lifecycle.set_delete_preflight(deletion_preflight(assistant_requests))
     gui_session_commands = GuiSessionCommandFacade(
         session_lifecycle,
         sessions,
         session_catalog,
         id_factory=id_factory,
         timestamp_factory=timestamp_factory,
+        assistant_requests=assistant_requests,
     )
 
     return PersistenceV2Services(

@@ -165,6 +165,61 @@ class TestConversationManager(unittest.TestCase):
         })
         self.assertEqual(self.cm._turn_starts, [0])
 
+    def test_round_trip_preserves_observation_turns_at_default_limit(self):
+        original = ConversationManager()
+        original.add_system("system instructions")
+        for index in range(20):
+            original.add_user(f"request {index}")
+            original.add_assistant_turn(LlmTurn(tool_calls=(LlmToolCall(f"call-{index}", "get_statistics", {}),)))
+            original.add_tool_result(f"call-{index}", "get_statistics", {"success": True})
+            original.add_observation("start_translation", f"translation {index}")
+            original.add_observation("start_polish", f"polish {index}")
+            original.add_plan_result(f"plan {index}")
+            original.add_assistant(f"answer {index}")
+
+        restored = ConversationManager()
+        restored.from_dict(original.to_dict())
+        restored.from_dict(restored.to_dict())
+        self.assertEqual(restored.get_messages(), original.get_messages())
+
+        for index in range(20, 23):
+            with self.subTest(next_request=index):
+                original.add_user(f"request {index}")
+                restored.add_user(f"request {index}")
+                self.assertEqual(restored.get_messages(), original.get_messages())
+                self.assertEqual(restored.get_messages()[0], _make_msg("system", "system instructions"))
+                self.assertEqual(restored.get_messages()[1], _make_msg("user", f"request {index - 19}"))
+                self.assertNotIn(_make_msg("user", f"request {index - 20}"), restored.get_messages())
+                restored.from_dict(restored.to_dict())
+
+    def test_restored_result_formats_stay_in_their_original_turn(self):
+        for result_text in (
+            "[Tool result - start_translation]\ndone",
+            "【工具执行结果 - start_translation】\ndone",
+            "[Plan execution completed]\ndone",
+        ):
+            with self.subTest(result_text=result_text):
+                first_turn = [
+                    _make_msg("user", "first request"),
+                    _make_msg("assistant", "working"),
+                    _make_msg("user", result_text),
+                ]
+                restored = ConversationManager(max_turns=2)
+                restored.from_dict({"messages": first_turn})
+                restored.add_user("second request")
+                restored.add_assistant("second answer")
+                self.assertEqual(restored.get_messages()[:3], first_turn)
+
+                restored.add_user("third request")
+                self.assertEqual(
+                    restored.get_messages(),
+                    [
+                        _make_msg("user", "second request"),
+                        _make_msg("assistant", "second answer"),
+                        _make_msg("user", "third request"),
+                    ],
+                )
+
     def test_duplicate_tool_result_is_idempotent(self):
         self.cm.add_tool_result("call-1", "x", {"success": True})
         self.cm.add_tool_result("call-1", "x", {"success": False}, is_error=True)
@@ -223,6 +278,62 @@ class TestConversationManager(unittest.TestCase):
         self.cm.clear()
         msgs = self.cm.get_messages()
         self.assertEqual(len(msgs), 0)
+
+    def test_projection_trim_never_deletes_history_or_result_evidence(self):
+        result = "完整结果" * 2000
+        self.cm.add_system("rules")
+        self.cm.add_user("first request")
+        self.cm.add_observation("translation", result)
+        for i in range(25):
+            self.cm.add_user(f"request {i}")
+            self.cm.add_assistant(f"answer {i}")
+        self.assertNotIn("first request", [message["content"] for message in self.cm.get_messages()])
+        self.assertEqual(self.cm.get_history()[2]["content"], "[Tool result - translation]\n" + result)
+        saved = self.cm.to_dict()
+        self.assertEqual(len(saved["messages"]), 53)
+        restored = ConversationManager(max_turns=5)
+        restored.from_dict(saved)
+        self.assertEqual(restored.get_history(), self.cm.get_history())
+        self.assertEqual(restored.get_transcript(), self.cm.get_transcript())
+        self.assertEqual(restored.get_messages(), self.cm.get_messages())
+
+    def test_native_results_and_plan_aggregate_are_not_truncated_in_storage(self):
+        import json
+
+        self.cm.add_assistant_turn(LlmTurn(tool_calls=(LlmToolCall("large", "x", {}),)))
+        result = {"message": "x" * 20000, "nested": {"evidence": [1, 2]}}
+        self.cm.add_tool_result("large", "x", result)
+        self.cm.add_plan_result("y" * 20000)
+        history = self.cm.to_dict()["messages"]
+        self.assertEqual(json.loads(history[1]["content"]), result)
+        self.assertEqual(history[2]["content"], "[Plan execution completed]\n" + "y" * 20000)
+
+    def test_returned_messages_cannot_mutate_original_evidence(self):
+        self.cm.add_assistant_turn(LlmTurn(tool_calls=(LlmToolCall("immutable", "x", {"nested": [1]}),)))
+        self.cm.get_history()[0]["tool_calls"][0]["arguments"]["nested"].append(2)
+        self.cm.get_messages()[0]["tool_calls"][0]["arguments"]["nested"].append(3)
+        self.assertEqual(self.cm.get_history()[0]["tool_calls"][0]["arguments"], {"nested": [1]})
+
+    def test_accepted_ingress_id_survives_restore_and_duplicate_does_not_change_history(self):
+        self.cm.add_user("accepted input", message_id="ingress-1")
+        restored = ConversationManager()
+        restored.from_dict({"messages": self.cm.get_transcript()})
+        self.assertEqual(restored.get_transcript()[0]["message_id"], "ingress-1")
+        before = restored.to_dict()
+        with self.assertRaisesRegex(ValueError, "already contains message ID"):
+            restored.add_user("different text", message_id="ingress-1")
+        self.assertEqual(restored.to_dict(), before)
+        self.assertEqual(restored._turn_starts, [0])
+
+    def test_changed_system_prompt_gets_new_identity_for_immutable_transcript(self):
+        self.cm.add_system("original rules")
+        original_id = self.cm.get_transcript()[0]["message_id"]
+        self.cm.add_system("original rules")
+        self.assertEqual(self.cm.get_transcript()[0]["message_id"], original_id)
+        self.cm.add_user("question")
+        self.cm.add_system("new rules")
+        self.assertNotEqual(self.cm.get_transcript()[0]["message_id"], original_id)
+        self.assertEqual(self.cm._turn_starts, [1])
 
 
 if __name__ == "__main__":

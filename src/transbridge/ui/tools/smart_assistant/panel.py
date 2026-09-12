@@ -129,6 +129,8 @@ class SmartAssistantPanel(QDockWidget):
             active_session_id=self._current_session_id,
             refresh_sessions=self._refresh_session_list,
             save_session=self._persist_authoritative_chat if self._session_commands is not None else None,
+            request_context=lambda: self._runtime_context,
+            assistant_requests=getattr(self._session_commands, "assistant_requests", None),
         )
         if self._session_mgr is not None:
             self._chat.set_session_manager(self._session_mgr)
@@ -359,10 +361,16 @@ class SmartAssistantPanel(QDockWidget):
         if not getattr(self, "_taskbar_identity_applied", False):
             self._prepare_taskbar_identity()
         self.visibility_changed.emit(True)
+        binding = getattr(getattr(self, "_chat", None), "_request_binding", None)
+        if binding is not None:
+            binding.set_active(True)
         super().showEvent(event)
 
     def hideEvent(self, event):
         self.visibility_changed.emit(False)
+        binding = getattr(getattr(self, "_chat", None), "_request_binding", None)
+        if binding is not None:
+            binding.set_active(False)
         super().hideEvent(event)
 
     def closeEvent(self, event):
@@ -440,10 +448,13 @@ class SmartAssistantPanel(QDockWidget):
         backend, controller = self._chat.recovery_snapshot()
         snapshot = None if self._session_projection is None else self._session_projection.snapshot()
         values = {} if snapshot is None else snapshot.to_dict()["values"]
-        previous = values.get("backend_history", [])
         visible = list(backend)
-        if backend[: len(previous)] == previous:
-            visible = [*values.get("messages", []), *backend[len(previous) :]]
+        if getattr(self._session_commands, "assistant_requests", None) is None:
+            # Preserve distinct display/backend projections for legacy callers
+            # until they supply the transcript application service.
+            previous = values.get("backend_history", [])
+            if backend[: len(previous)] == previous:
+                visible = [*values.get("messages", []), *backend[len(previous) :]]
         self._saving_session_id = session_id
         try:
             result = self._session_commands.save_conversation(
@@ -453,6 +464,7 @@ class SmartAssistantPanel(QDockWidget):
                 self._runtime_context,
                 backend_summary=values.get("backend_summary") if backend else None,
                 controller=controller,
+                jobs=self._chat.lifecycle_jobs(),
             )
         finally:
             self._saving_session_id = None

@@ -15,6 +15,7 @@ class ToolCard(QWidget):
     def __init__(self, step: dict, parent=None, *, theme: SmartAssistantTheme | None = None):
         super().__init__(parent)
         self._step = step
+        self._pending = True
         self._theme = theme or SmartAssistantTheme()
         self.setObjectName("ToolCard")
         self.setProperty("tbSurface", "card")
@@ -71,6 +72,7 @@ class ToolCard(QWidget):
         theme.apply_semantic(self._result_label, str(state))
 
     def set_result(self, success: bool, message: str) -> None:
+        self._pending = False
         state = "success" if success else "error"
         result_text = f"{'[OK]' if success else '[FAIL]'} {message}"
         self._result_label.set_full_text(result_text)
@@ -83,7 +85,19 @@ class ToolCard(QWidget):
         self._theme.apply_semantic(self._result_label, state)
         self.setAccessibleDescription(f"工具执行{message}")
 
+    def expire(self) -> None:
+        if not self._pending:
+            return
+        self._pending = False
+        self._exec_btn.setEnabled(False)
+        self._ignore_btn.setEnabled(False)
+        self._exec_btn.setText("已失效")
+        self.setAccessibleDescription("确认已失效，请使用当前请求的确认操作")
+
     def _on_execute(self) -> None:
+        if not self._pending:
+            return
+        self._pending = False
         self._exec_btn.setEnabled(False)
         self._ignore_btn.setEnabled(False)
         self._exec_btn.setText("执行中...")
@@ -91,6 +105,9 @@ class ToolCard(QWidget):
         self.executed.emit(self._step)
 
     def _on_ignore(self) -> None:
+        if not self._pending:
+            return
+        self._pending = False
         self._exec_btn.setEnabled(False)
         self._ignore_btn.setEnabled(False)
         self.setAccessibleDescription("工具已忽略")
@@ -104,6 +121,7 @@ class BatchToolCard(QWidget):
     def __init__(self, steps: list, parent=None, *, theme: SmartAssistantTheme | None = None):
         super().__init__(parent)
         self._steps = steps
+        self._pending = True
         self._theme = theme or SmartAssistantTheme()
         self.setObjectName("BatchToolCard")
         self.setProperty("tbSurface", "card")
@@ -144,7 +162,19 @@ class BatchToolCard(QWidget):
         theme.apply_semantic(self._exec_btn, "success", background=True)
         theme.apply_semantic(self._skip_btn, "muted", background=True)
 
+    def expire(self) -> None:
+        if not self._pending:
+            return
+        self._pending = False
+        self._exec_btn.setEnabled(False)
+        self._skip_btn.setEnabled(False)
+        self._exec_btn.setText("已失效")
+        self.setAccessibleDescription("批量确认已失效，请使用当前请求的确认操作")
+
     def _on_execute(self) -> None:
+        if not self._pending:
+            return
+        self._pending = False
         self._exec_btn.setEnabled(False)
         self._skip_btn.setEnabled(False)
         self._exec_btn.setText("执行中...")
@@ -152,6 +182,9 @@ class BatchToolCard(QWidget):
         self.all_executed.emit(self._steps)
 
     def _on_ignore(self) -> None:
+        if not self._pending:
+            return
+        self._pending = False
         self._exec_btn.setEnabled(False)
         self._skip_btn.setEnabled(False)
         self.setAccessibleDescription("批量工具已跳过")

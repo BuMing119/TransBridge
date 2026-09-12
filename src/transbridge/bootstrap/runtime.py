@@ -18,7 +18,7 @@ from transbridge.application.contracts import (
     map_exception,
 )
 from transbridge.application.ports import ClockPort, ClosablePort, IdGeneratorPort, SecretPort, SecurityPort
-from transbridge.application.tasks import TaskRuntime
+from transbridge.application.tasks import RuntimeTaskProjection, TaskRuntime
 from transbridge.application.use_cases import ContextRequirements, ValidateContextUseCase
 
 RuntimeContext = RequestContext
@@ -72,6 +72,11 @@ class AppRuntime:
         self.ports = ports
         self.use_cases = use_cases
         self.tasks = tasks
+        self.task_projection = (
+            use_cases.resolve("task_projection")
+            if "task_projection" in use_cases.names()
+            else RuntimeTaskProjection(tasks)
+        )
         self.state: dict[str, Any] = {}
         self._resources = list(resources)
         self._internal_resources = list(internal_resources)

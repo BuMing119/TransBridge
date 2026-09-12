@@ -19,6 +19,7 @@ from transbridge.application.tasks import (
     FilesystemTaskHistoryPort,
     RecoveryCatalog,
     RecoveryExpectationRegistry,
+    RuntimeTaskProjection,
     TaskCenterActions,
     TaskHistoryNavigationRegistry,
     TaskHistoryRecorder,
@@ -113,27 +114,45 @@ def build_runtime(
     )
     task_retry_intents = TaskRetryIntentRegistry()
     task_recovery_intents = TaskRecoveryIntentRegistry()
+    from transbridge.application.assistant_requests.recovery import request_recovery_preflight
+    from transbridge.application.assistant_requests.task_controls import request_task_control
+
+    request_preflight = request_recovery_preflight(persistence.gui_session_commands.assistant_requests)
+    from transbridge.application.assistant_requests.deletion import deletion_preflight
+
+    persistence.session_lifecycle.set_delete_preflight(
+        deletion_preflight(persistence.gui_session_commands.assistant_requests, tasks)
+    )
     task_history_navigators = TaskHistoryNavigationRegistry()
     existing_use_cases = set(runtime_use_cases.names())
+    if "task_retry_intents" in existing_use_cases:
+        task_retry_intents = runtime_use_cases.resolve("task_retry_intents")
+    if "task_recovery_intents" in existing_use_cases:
+        task_recovery_intents = runtime_use_cases.resolve("task_recovery_intents")
+    task_retry_intents.set_request_preflight(request_preflight)
+    task_recovery_intents.set_request_preflight(request_preflight)
+    task_projection = (
+        runtime_use_cases.resolve("task_projection")
+        if "task_projection" in existing_use_cases
+        else RuntimeTaskProjection(tasks)
+    )
+    task_projection.set_request_control(
+        request_task_control(persistence.gui_session_commands.assistant_requests, tasks)
+    )
     task_center_actions = TaskCenterActions(
         runtime_use_cases.resolve("task_history") if "task_history" in existing_use_cases else task_history,
         runtime_use_cases.resolve("task_recovery") if "task_recovery" in existing_use_cases else task_recovery,
-        (
-            runtime_use_cases.resolve("task_retry_intents")
-            if "task_retry_intents" in existing_use_cases
-            else task_retry_intents
-        ),
-        (
-            runtime_use_cases.resolve("task_recovery_intents")
-            if "task_recovery_intents" in existing_use_cases
-            else task_recovery_intents
-        ),
+        task_retry_intents,
+        task_recovery_intents,
         (
             runtime_use_cases.resolve("task_history_navigators")
             if "task_history_navigators" in existing_use_cases
             else task_history_navigators
         ),
     )
+    if "task_center_actions" in existing_use_cases:
+        task_center_actions = runtime_use_cases.resolve("task_center_actions")
+    task_center_actions.set_request_preflight(request_preflight)
     persistence_use_cases = {
         "persistence_v2": persistence,
         "project_lifecycle": persistence.project_lifecycle,
@@ -159,6 +178,7 @@ def build_runtime(
         "task_recovery_intents": task_recovery_intents,
         "task_history_navigators": task_history_navigators,
         "task_center_actions": task_center_actions,
+        "task_projection": task_projection,
     }
     for name, use_case in persistence_use_cases.items():
         if name not in runtime_use_cases.names():

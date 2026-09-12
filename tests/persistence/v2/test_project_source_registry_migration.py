@@ -5,6 +5,7 @@ import json
 import os
 
 from transbridge.persistence.v2 import (
+    SCHEMA_VERSION,
     LoadedRecord,
     ProjectDto,
     ProjectId,
@@ -59,7 +60,7 @@ def test_v2_project_migrates_to_validated_v3_registry_after_verified_backup() ->
     result = repository.load(ref)
 
     assert isinstance(result, LoadedRecord) and result.migrated
-    assert result.value.envelope.schema_version == 3
+    assert result.value.envelope.schema_version == SCHEMA_VERSION
     sources = result.value.envelope.data["sources"]
     assert all(item["source_id"] not in {"f" * 64, "legacy:xml"} for item in sources)
     assert len(result.value.envelope.data["source_relations"]) == 1
@@ -85,9 +86,9 @@ def test_saving_v2_project_dto_writes_canonical_v3_registry() -> None:
     result = repository.save(ref, legacy)
 
     persisted = json.loads(filesystem.read_bytes(repository.path_for(ref)))
-    assert result.value.envelope.schema_version == 3
+    assert result.value.envelope.schema_version == SCHEMA_VERSION
     assert persisted == result.value.envelope.to_dict()
-    assert persisted["schema_version"] == 3
+    assert persisted["schema_version"] == SCHEMA_VERSION
     assert len(persisted["data"]["source_relations"]) == 1
     assert {source["legacy"]["role"] for source in persisted["data"]["sources"]} == {"primary", "migration"}
 

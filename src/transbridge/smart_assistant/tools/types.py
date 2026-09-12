@@ -339,6 +339,9 @@ class ExecutionContext:
     plan_hash: str = ""
     confirmation_authority: Any = None
     confirmation_token: Any = None
+    assistant_gate: Any = None
+    assistant_effect_id: str = ""
+    assistant_required: bool = False
     _target_collection: Any = field(default=None, init=False, repr=False)
     _target_version_identity: tuple[str, str] | None = field(default=None, init=False, repr=False)
     _target_project_revision: int | None = field(default=None, init=False, repr=False)
@@ -374,6 +377,9 @@ class ExecutionContext:
         （__setattr__）写入 _FORWARDED_ATTRS 时，直接作用到 AppContext
         而非再次排队，避免延迟赋值导致的属性未就绪错误。
         """
+        if self.assistant_gate is not None and self.assistant_effect_id:
+            self.safe_mutate_wait(fn)
+            return
         app_ctx = self.__dict__.get("app_context")
 
         def _run() -> None:
@@ -438,6 +444,12 @@ class ExecutionContext:
     def _run_dispatched(self, fn: Callable[[], Any]) -> Any:
         object.__setattr__(self, "_in_dispatch", True)
         try:
+            if self.assistant_gate is not None and self.assistant_effect_id:
+                result = []
+                decision = self.assistant_gate.commit(self.assistant_effect_id, lambda: result.append(fn()))
+                if not decision.accepted:
+                    raise RuntimeError(f"请求已停止或修订，修改未提交：{decision.reason}")
+                return result[0]
             return fn()
         finally:
             object.__setattr__(self, "_in_dispatch", False)

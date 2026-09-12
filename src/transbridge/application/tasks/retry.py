@@ -45,6 +45,11 @@ class TaskRetryIntentRegistry:
     def __init__(self) -> None:
         self._handlers: dict[str, TaskRetryIntent] = {}
         self._lock = threading.RLock()
+        self._request_preflight = None
+
+    def set_request_preflight(self, callback) -> None:
+        """Composition-root check for persisted assistant ownership before feature retry."""
+        self._request_preflight = callback
 
     def register(self, job_type: str, handler: TaskRetryIntent) -> None:
         if not job_type.strip():
@@ -69,6 +74,8 @@ class TaskRetryIntentRegistry:
     def retry(self, previous: TaskHistoryRecord, context: TaskRetryContext) -> JobRef:
         if not previous.visible_to(context.actor):
             raise TaskRetryError("owner_mismatch", "retry actor cannot access the previous task")
+        if self._request_preflight is not None:
+            self._request_preflight(previous.run_id, previous.owner, context.actor)
         with self._lock:
             handler = self._handlers.get(previous.job_type)
         if handler is None:

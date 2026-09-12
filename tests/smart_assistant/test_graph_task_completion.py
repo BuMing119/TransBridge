@@ -88,16 +88,22 @@ def test_graph_waits_for_real_worker_terminal_and_blocks_failed_dependency(manag
         release.set()
         runner.join(5)
         assert not runner.is_alive()
-        assert len(results) == 2
-        producer, consumer = results
+        assert len(results) == (1 if outcome == "cancelled" else 2)
+        producer = results[0]
         if outcome == "completed":
+            consumer = results[1]
             assert producer.success and consumer.success
             assert producer.data["artifact"] == "ready"
             assert calls == ["produced", "consumed"]
-        else:
+        elif outcome == "failed":
+            consumer = results[1]
             assert not producer.success and not consumer.success
             assert producer.data["status"] == outcome
             assert "未执行" in consumer.message
+            assert calls == []
+        else:
+            assert not producer.success
+            assert producer.data["status"] == "cancelled"
             assert calls == []
     finally:
         release.set()

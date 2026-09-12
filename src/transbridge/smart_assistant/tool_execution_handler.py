@@ -7,6 +7,7 @@
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
+import json
 import logging
 import time
 
@@ -49,8 +50,10 @@ class ToolExecutionHandler:
         on_confirm_permission: Callable[[str, str], bool] | None = None,
         retry_handler: RetryHandler | None = None,
         llm_client_provider: Callable[[], object] | None = None,
+        request_context_provider: Callable[[], object] | None = None,
     ):
         self._ctx = ctx
+        self._request_context_provider = request_context_provider
         self._conversation = conversation_manager
         self._middlewares: list | None = None
 
@@ -122,6 +125,8 @@ class ToolExecutionHandler:
         """检查步骤是否需要用户确认（admin 级或显式标记）。"""
         from .tool_registry import ToolRegistry
 
+        if step.get("tool") == "stop_task" and step.get("args", {}).get("all_tasks", False):
+            return True
         spec = ToolRegistry.get(step.get("tool", ""))
         if spec is None:
             return False
@@ -129,16 +134,16 @@ class ToolExecutionHandler:
 
     # ── 执行上下文构建 ──────────────────────────────────
 
-    def _build_execution_context(self):
+    def build_execution_context(self):
         """构建工具执行上下文 (ExecutionContext)。"""
         from transbridge.smart_assistant.tools.base import ExecutionContext
         from transbridge.smart_assistant.tools.task_manager import TaskManager
 
-        request_context = getattr(self._ctx, "request_context", None)
+        request_context = self._current_request_context()
         owner_id = (
             getattr(request_context, "owner_id", "") or getattr(self._ctx, "owner_id", "") or self._fallback_owner_id
         )
-        return ExecutionContext(
+        context = ExecutionContext(
             app_context=self._ctx,
             task_manager=TaskManager(),
             request_context=request_context,
@@ -146,6 +151,19 @@ class ToolExecutionHandler:
             plan_hash=getattr(self._ctx, "plan_hash", ""),
             confirmation_authority=self._confirmation_authority,
         )
+        provider = getattr(self, "assistant_gate_provider", None)
+        if provider is not None:
+            context.assistant_gate = provider()
+            context.assistant_required = True
+        return context
+
+    def _build_execution_context(self):
+        return self.build_execution_context()
+
+    def _current_request_context(self):
+        if self._request_context_provider is not None:
+            return self._request_context_provider()
+        return getattr(self._ctx, "request_context", None)
 
     # ── 权限预检查 ──────────────────────────────────────
 
@@ -219,7 +237,7 @@ class ToolExecutionHandler:
         )
         # Re-read mutable GUI context after the callback. Owner/plan changes make
         # the issued token fail closed when PermissionGuard consumes it.
-        request_context = getattr(self._ctx, "request_context", None)
+        request_context = self._current_request_context()
         exec_ctx.request_context = request_context
         exec_ctx.owner_id = (
             getattr(request_context, "owner_id", "") or getattr(self._ctx, "owner_id", "") or self._fallback_owner_id
@@ -445,7 +463,7 @@ class ToolExecutionHandler:
                 is_error=not tr.success,
             )
         else:
-            self._conversation.add_observation(tool_name, observation.display_summary)
+            self._conversation.add_observation(tool_name, json.dumps(observation.to_dict(), ensure_ascii=False))
         record_structured = getattr(self._conversation, "add_structured_observation", None)
         if callable(record_structured):
             record_structured(tool_name, observation.to_dict())

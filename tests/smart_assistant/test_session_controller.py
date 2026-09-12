@@ -279,10 +279,10 @@ class TestStateTransitions:
         assert controller.state == SessionController.State.IDLE
         assert controller.react_depth == 0
 
-    def test_task_completed_asserts_if_not_awaiting_task(self):
+    def test_task_completed_ignores_event_if_not_awaiting_task(self):
         controller = SessionController()
-        with pytest.raises(SessionTransitionError):
-            controller.handle_task_completed("t1", {})
+        assert controller.handle_task_completed("t1", {}) is False
+        assert controller.state is SessionController.State.IDLE
 
     # ── handle_abort ─────────────────────────────────────────
 
@@ -349,3 +349,66 @@ class TestNeedsConfirmDelegation:
         controller = SessionController(tool_handler=handler)
         assert controller._any_needs_confirm([{"tool": "get_statistics", "args": {}}]) is False
         assert controller._any_needs_confirm([{"tool": "write_to_file", "args": {}}]) is True
+
+
+def test_detached_completion_does_not_advance_new_round_or_replace_new_task():
+    controller = SessionController()
+    controller._state = SessionController.State.EXECUTING
+    controller.handle_task_started("old", "run-old")
+    controller.handle_round_interrupted()
+    controller.handle_user_message("new question")
+    assert controller.accepts_task_completion("old", "run-old")
+    controller._state = SessionController.State.EXECUTING
+    controller.handle_task_started("new", "run-new")
+    assert not controller.is_awaiting_task("old", "run-old")
+    assert controller.handle_task_completed("old", {}, "run-old")
+    assert controller.state is SessionController.State.AWAITING_TASK
+    assert controller.is_awaiting_task("new", "run-new")
+    assert not controller.accepts_task_completion("old", "run-old")
+
+
+def test_abort_rejects_late_completion_and_known_run_rejects_missing_identity():
+    controller = SessionController()
+    controller._state = SessionController.State.EXECUTING
+    controller.handle_task_started("task", "run")
+    assert not controller.accepts_task_completion("task")
+    controller.handle_abort()
+    controller.handle_user_message("new")
+    assert not controller.handle_task_completed("task", {}, "run")
+    assert controller.state is SessionController.State.THINKING
+
+
+def test_cancelled_task_closes_waiting_round_without_restarting_model():
+    rounds = []
+    controller = SessionController(on_llm_round_start=lambda: rounds.append(True))
+    controller._state = SessionController.State.EXECUTING
+    controller.handle_task_started("task", "run")
+    assert controller.handle_task_completed("task", {"cancelled": True}, "run")
+    assert controller.state is SessionController.State.IDLE
+    assert rounds == []
+    assert not controller.handle_task_completed("task", {"cancelled": True}, "run")
+
+
+def test_confirmation_from_aborted_round_cannot_execute_identical_new_plan():
+    from transbridge.application.contracts import DomainError
+
+    controller = SessionController()
+    steps = [{"tool": "write_to_file", "args": {}}]
+    controller.handle_user_message("old")
+    controller.handle_llm_response({"steps": steps})
+    old_id = controller.pending_confirmation_id
+    controller.handle_round_interrupted()
+    controller.handle_user_message("new")
+    controller.handle_llm_response({"steps": steps})
+    assert not controller.accepts_confirmation(old_id)
+    with pytest.raises(DomainError, match="no longer current"):
+        controller.handle_user_confirmed(steps, confirmation_id=old_id)
+    assert controller.state is SessionController.State.AWAITING_CONFIRM
+
+
+@pytest.mark.parametrize("all_tasks, expected", [(False, "executing"), (True, "awaiting")])
+def test_only_narrow_stop_bypasses_manual_confirmation(all_tasks, expected):
+    controller = SessionController(on_execute_react_async=lambda _: True)
+    controller.handle_user_message("cancel")
+    controller.handle_llm_response({"steps": [{"tool": "stop_task", "args": {"all_tasks": all_tasks}}]})
+    assert controller.state.value == expected

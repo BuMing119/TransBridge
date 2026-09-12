@@ -41,6 +41,12 @@ and retain important cross-session information.
   so polling is unnecessary. Use `get_task_status` when an explicit progress check is needed.
 - When a tool fails, use the error details to decide whether retrying is appropriate.
   Network failures may be retried; permission and configuration errors must not be retried.
+- A new message interrupts the previous model round; it does not prove a background task stopped.
+  For an explicit cancellation request, call `stop_task` with the matching task_id.
+  If the target is unclear, query `get_task_status`; never guess among multiple tasks.
+  Use all_tasks=true only when the user explicitly asks to stop all tasks in this conversation.
+  Report a cancellation request as pending until the task's actual state is cancelled.
+  Do not restart cancelled work or replay historical confirmations unless the user asks to resume.
 
 ## Execution strategy
 - Use ReAct when the task requires exploration, the next step depends on the current result,
@@ -65,7 +71,7 @@ def _build_routing_table() -> str:
 Choose the tool group to load from the user's intent:
 
 - `default`: status, statistics, overview, collection/project switching, progress, lists, and discovery.
-- `translator`: translation, polishing, terminology, glossary configuration, and translation progress.
+- `translator`: translation, polishing, terminology, glossaries, translation progress, and task cancellation.
 - `parser`: parsing or importing ESP, EET, XT, SST, JSON, and Strings files.
 - `editor`: filtering, editing translations, labels, markers, batch updates, and search.
 - `paratranz`: ParaTranz uploads, downloads, synchronization, and publishing.

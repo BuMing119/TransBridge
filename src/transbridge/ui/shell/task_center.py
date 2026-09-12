@@ -291,7 +291,15 @@ class TaskCenterController(QObject):
             return
         ref = JobRef(state.job_id, state.owner.owner_id, state.run_id)
         try:
-            getattr(self._runtime.tasks, action)(ref, self._actor, expected_revision=revision)
+            projection = getattr(self._runtime, "task_projection", None)
+            if projection is None:
+                # Legacy shell test hosts have no request service; production AppRuntime
+                # always supplies the shared application control projection.
+                getattr(self._runtime.tasks, action)(ref, self._actor, expected_revision=revision)
+            else:
+                result = projection.control(ref, self._actor, action, expected_revision=revision)
+                if not result.accepted:
+                    self._panel.show_error(f"任务操作失败：{result.message}")
         except Exception as exc:
             self._panel.show_error(f"任务操作失败：{exc}")
 

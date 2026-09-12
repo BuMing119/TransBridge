@@ -8,7 +8,7 @@ import json
 from typing import Any
 from urllib.parse import urlsplit
 
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, validators
 
 from transbridge.application.projects.source_registry import SourceRegistrySnapshot
 
@@ -227,6 +227,8 @@ _DATA_SCHEMAS: dict[EntityKind, dict[str, Any]] = {
             "project_id": {"type": ["string", "null"]},
             "variant_id": {"type": ["string", "null"]},
             "history": {"type": "array", "items": {"type": "object"}},
+            "assistant_state": {"type": "object"},
+            "transcript_manifest": {"type": "object"},
             "legacy": {"type": "object"},
         },
         "additionalProperties": True,
@@ -270,8 +272,20 @@ def version_of(document: dict[str, Any]) -> int:
     return version
 
 
+def _object_items(validator, schema, instance, parent_schema):
+    # Histories are arrays of opaque JSON objects. For that exact schema,
+    # checking types needs no per-message validator allocation. Every richer
+    # schema and every invalid value uses the standard validator and diagnostics.
+    if schema == {"type": "object"} and isinstance(instance, list) and all(isinstance(item, dict) for item in instance):
+        return
+    yield from Draft202012Validator.VALIDATORS["items"](validator, schema, instance, parent_schema)
+
+
+_PersistenceValidator = validators.extend(Draft202012Validator, {"items": _object_items})
+
+
 def validate_v2(document: dict[str, Any], ref: EntityRef) -> PersistenceDto:
-    validator = Draft202012Validator(schema_for(ref.kind))
+    validator = _PersistenceValidator(schema_for(ref.kind))
     errors = sorted(validator.iter_errors(document), key=lambda error: list(error.absolute_path))
     if errors:
         error = errors[0]

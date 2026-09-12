@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from copy import deepcopy
 from dataclasses import dataclass
 from enum import StrEnum
-import json
+import math
 from typing import Any
 
 from transbridge.application.contracts import JobRef
@@ -35,6 +34,8 @@ class ControllerSnapshot:
     auto_mode: bool = False
     recoverable: bool = True
     reason: str | None = None
+    active_task_id: str | None = None
+    active_run_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.react_depth < 0:
@@ -43,6 +44,8 @@ class ControllerSnapshot:
             raise ValueError("recoverable controller state cannot carry a failure reason")
         if not self.recoverable and not self.reason:
             raise ValueError("unrecoverable controller state requires a reason")
+        if self.active_run_id and not self.active_task_id:
+            raise ValueError("controller task run requires a task identity")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -51,6 +54,8 @@ class ControllerSnapshot:
             "auto_mode": self.auto_mode,
             "recoverable": self.recoverable,
             "reason": self.reason,
+            "active_task_id": self.active_task_id,
+            "active_run_id": self.active_run_id,
         }
 
     @classmethod
@@ -61,6 +66,8 @@ class ControllerSnapshot:
             bool(data.get("auto_mode", False)),
             bool(data.get("recoverable", True)),
             None if data.get("reason") is None else str(data["reason"]),
+            None if data.get("active_task_id") is None else str(data["active_task_id"]),
+            None if data.get("active_run_id") is None else str(data["active_run_id"]),
         )
 
 
@@ -168,6 +175,8 @@ class SessionSnapshot:
     last_active_at: str
     recovery: RecoveryStatus = RecoveryStatus.COMPLETE
     degradation_reasons: tuple[str, ...] = ()
+    assistant_state: Any = None
+    transcript_manifest: Any = None
 
     def __post_init__(self) -> None:
         if not self.name.strip():
@@ -185,7 +194,11 @@ class SessionSnapshot:
         if not self.created_at or not self.last_active_at:
             raise ValueError("Session timestamps must not be empty")
         messages = tuple(_freeze_json(value) for value in self.messages)
-        history = tuple(_freeze_json(value) for value in self.backend_history)
+        history = (
+            messages
+            if self.backend_history is self.messages
+            else tuple(_freeze_json(value) for value in self.backend_history)
+        )
         approvals = tuple(sorted(self.approvals, key=lambda value: value.approval_id))
         jobs = tuple(sorted(self.jobs, key=lambda value: value.ref.job_id))
         if len({item.approval_id for item in approvals}) != len(approvals):
@@ -210,6 +223,11 @@ class SessionSnapshot:
         object.__setattr__(self, "jobs", jobs)
         object.__setattr__(self, "recovery", recovery)
         object.__setattr__(self, "degradation_reasons", reasons)
+        for field_name in ("assistant_state", "transcript_manifest"):
+            value = getattr(self, field_name)
+            if value is not None and not isinstance(value, (dict, _FrozenObject)):
+                raise ValueError(f"Session {field_name} must be an object")
+            object.__setattr__(self, field_name, _freeze_json(value or {}))
 
     @property
     def variant_ref(self) -> VariantRef | None:
@@ -222,6 +240,28 @@ class SessionSnapshot:
 
     def backend_messages(self) -> tuple[dict[str, Any], ...]:
         return tuple(_thaw_json(value) for value in self.backend_history)
+
+    def freeze_history(self, records) -> tuple[Any, ...]:
+        """Reuse unchanged immutable records when a live history gains messages."""
+        previous = {
+            dict(value.items).get("message_id"): value
+            for value in self.backend_history
+            if isinstance(value, _FrozenObject)
+        }
+        result = []
+        for record in records:
+            old = previous.get(record.get("message_id"))
+            if old is not None and tuple(sorted(record.items())) == old.items:
+                result.append(old)
+            else:
+                result.append(_freeze_json(record))
+        return tuple(result)
+
+    def assistant_data(self) -> dict[str, Any]:
+        return _thaw_json(self.assistant_state)
+
+    def transcript_data(self) -> dict[str, Any]:
+        return _thaw_json(self.transcript_manifest)
 
     def to_dto(self) -> SessionDto:
         data = {
@@ -239,6 +279,8 @@ class SessionSnapshot:
             "last_active_at": self.last_active_at,
             "recovery": self.recovery.value,
             "degradation_reasons": list(self.degradation_reasons),
+            "assistant_state": self.assistant_data(),
+            "transcript_manifest": self.transcript_data(),
         }
         return SessionDto(SchemaEnvelope(SCHEMA_VERSION, self.ref.kind, self.ref.identity.value, self.revision, data))
 
@@ -300,6 +342,8 @@ class SessionSnapshot:
             str(data.get("last_active_at") or data.get("legacy", {}).get("last_active_at") or "unknown"),
             RecoveryStatus.DEGRADED if reasons else RecoveryStatus.COMPLETE,
             tuple(reasons),
+            data.get("assistant_state"),
+            data.get("transcript_manifest"),
         )
 
 
@@ -316,15 +360,21 @@ class _FrozenArray:
 def _freeze_json(value: Any) -> Any:
     if isinstance(value, (_FrozenObject, _FrozenArray)):
         return value
-    try:
-        json.dumps(value, allow_nan=False)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("Session message/history must contain finite JSON values") from exc
+    # Validate each value once. Serializing every nested container repeatedly
+    # made long immutable histories quadratic in their nesting/size.
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("Session message/history must contain finite JSON values")
+        return value
     if isinstance(value, dict):
+        if any(not isinstance(key, (str, int, float, bool, type(None))) for key in value):
+            raise ValueError("Session message/history must contain JSON object keys")
         return _FrozenObject(tuple(sorted((str(key), _freeze_json(item)) for key, item in value.items())))
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
         return _FrozenArray(tuple(_freeze_json(item) for item in value))
-    return deepcopy(value)
+    raise ValueError("Session message/history must contain finite JSON values")
 
 
 def _thaw_json(value: Any) -> Any:
@@ -332,7 +382,7 @@ def _thaw_json(value: Any) -> Any:
         return {key: _thaw_json(item) for key, item in value.items}
     if isinstance(value, _FrozenArray):
         return [_thaw_json(item) for item in value.items]
-    return deepcopy(value)
+    return value
 
 
 def _owner_to_dict(owner: OwnerRef) -> dict[str, Any]:

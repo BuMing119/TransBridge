@@ -1,8 +1,6 @@
 """P0 翻译执行控制工具 — 启动/停止/查询翻译任务 (translator namespace)。
 
-Story 06 v2: 移除 pause_task(B5)，stop_task 必传 task_id(E7)，新增 stop_all_tasks(E7)。
-Story 18: stop_task 合并 2→1，task_id 改为可选（None/""=停止全部）。
-Story 03A: 重构为 TranslationController 类。
+任务控制限定在调用者会话内；省略 task_id 仅选择唯一活跃根任务，批量操作需 all_tasks=true。
 """
 
 from __future__ import annotations
@@ -12,6 +10,7 @@ import os
 import threading
 
 from .base import ToolResult, require_collection, require_runtime_context
+from .task_control import action_label, control_tasks, get_scoped_task_status
 from .task_manager import TaskManager
 from .task_runtime_bridge import task_metadata
 
@@ -280,7 +279,7 @@ class TranslationController:
 
         return ToolResult.ok(
             f"翻译任务已启动 (mode={mode})",
-            data={"task_id": task_id, "mode": mode},
+            data={"task_id": task_id, "run_id": tm.get_status(task_id).get("run_id", ""), "mode": mode},
         )
 
     def start_polish(self, args: dict, ctx, collection) -> ToolResult:
@@ -460,6 +459,7 @@ class TranslationController:
             f"润色任务已启动 (strategy={strategy}, scope={scope}, intensity={intensity}, {len(entry_ids)}条)",
             data={
                 "task_id": task_id,
+                "run_id": tm.get_status(task_id).get("run_id", ""),
                 "strategy": strategy,
                 "intensity": intensity,
                 "scope": scope,
@@ -470,79 +470,18 @@ class TranslationController:
     # ── 停止/暂停/恢复 ──────────────────────────────────────────────
 
     def stop_task(self, args: dict, ctx) -> ToolResult:
-        """Story 18+26: 停止/暂停/恢复任务。task_id 可选，None/""=操作全部活跃任务。
-        action: "stop"(默认)/"pause"/"resume"。"""
-        task_id = args.get("task_id")
-        action = args.get("action", "stop")
-        if action not in ("stop", "pause", "resume"):
-            return ToolResult.fail(f"无效 action: {action}，可选: stop, pause, resume")
-
-        tm = TaskManager()
-
-        if not task_id:
-            active = tm.list_active()
-            if not active:
-                return ToolResult.ok("当前无运行中的任务", data={"affected_task_ids": []})
-            affected, failed = [], []
-            for tid in active:
-                if action == "pause":
-                    ok = tm.pause(tid)
-                elif action == "resume":
-                    ok = tm.resume(tid)
-                else:
-                    ok = tm.cancel(tid)
-                if ok:
-                    affected.append(tid)
-                else:
-                    failed.append(tid)
-            data = {"affected_task_ids": affected, "action": action}
-            if failed:
-                data["failed_task_ids"] = failed
-                return ToolResult.partial_ok(
-                    f"已{self._action_label(action)} {len(affected)} 个任务，{len(failed)} 失败", data=data
-                )
-            return ToolResult.ok(f"已{self._action_label(action)}全部 {len(affected)} 个任务", data=data)
-
-        if action == "pause":
-            ok = tm.pause(task_id)
-        elif action == "resume":
-            ok = tm.resume(task_id)
-        else:
-            ok = tm.cancel(task_id)
-
-        if ok:
-            label = self._action_label(action)
-            return ToolResult.ok(f"任务 {task_id} 已{label}", data={"task_id": task_id, "action": action})
-        return ToolResult.fail(f"任务不存在或已结束: {task_id} (action={action})")
+        """停止/暂停/恢复当前调用者拥有的任务。"""
+        return control_tasks(args, ctx, self._task_mgr or TaskManager())
 
     def _action_label(self, action: str) -> str:
         """action → 中文标签。"""
-        return {"stop": "发送停止信号", "pause": "暂停", "resume": "恢复"}.get(action, action)
+        return action_label(action)
 
     # ── 查询状态 ──────────────────────────────────────────────────
 
     def get_task_status(self, args: dict, ctx) -> ToolResult:
-        """查询翻译任务状态。不传 task_id 时返回所有活跃任务摘要。"""
-        task_id = args.get("task_id")
-        tm = TaskManager()
-
-        if task_id:
-            status = tm.get_status(task_id)
-            if "error" in status:
-                return ToolResult.fail(status["error"])
-            return ToolResult.ok(f"任务 {task_id}: {status['status']}", data=status)
-
-        active = tm.list_active()
-        all_tasks = tm.list_all()
-        summaries = []
-        for tid in all_tasks:
-            s = tm.get_status(tid)
-            summaries.append({"task_id": tid, "status": s.get("status", "unknown"), "metadata": s.get("metadata", {})})
-
-        return ToolResult.ok(
-            f"活跃任务: {len(active)} / 总任务: {len(all_tasks)}",
-            data={"active_count": len(active), "total_count": len(all_tasks), "tasks": summaries},
-        )
+        """查询当前调用者会话内的翻译任务状态。"""
+        return get_scoped_task_status(args, ctx, self._task_mgr or TaskManager())
 
     # ── 翻译配置 (Story 09) ───────────────────────────────────────
 
@@ -848,7 +787,16 @@ _PARAM_SCHEMAS = {
         },
     },
     "stop_task": {
-        "task_id": {"type": "str", "required": False, "description": "Task ID; omitted targets all active tasks"},
+        "task_id": {
+            "type": "str",
+            "required": False,
+            "description": "Session task ID; omit only for a unique active root task (plan children excluded)",
+        },
+        "all_tasks": {
+            "type": "bool",
+            "required": False,
+            "description": "Explicitly target all active tasks in current session; never combine with task_id",
+        },
         "action": {"type": "str", "required": False, "description": "Action: stop (default), pause, or resume"},
     },
     "get_task_status": {
@@ -950,16 +898,17 @@ def _register_translator_tools():
                 "name": "stop_task",
                 "display_name": "停止/暂停/恢复",
                 "description": (
-                    "①Stop, pause, or resume background tasks. ②Arguments: optional task_id "
-                    "(omitted targets all active "
-                    "tasks), action=stop (default and irreversible)/pause/resume. "
-                    "③Returns {task_id, action} for one or "
-                    "{affected_task_ids, action} for all. ④Rules: active means running or paused; user confirmation is "
-                    "required."
+                    "①Stop, pause, or resume background tasks in the current session. "
+                    "②Optional task_id selects one task; omit only when there is one active root task. "
+                    "Children of an active plan are controlled through that plan unless explicitly selected. "
+                    "Use all_tasks=true only when the user explicitly requests all tasks; "
+                    "action=stop (default)/pause/resume. ③Returns affected_task_ids, action and task_states. "
+                    "④A cancelling task has received the signal but has not stopped yet. "
+                    "Narrow stop needs no additional confirmation; batch/pause/resume require confirmation."
                 ),
                 "execute": _tool_stop_task,
                 "permission": "write",
-                "require_confirmation": True,
+                "require_confirmation": False,
                 "parameters": _PARAM_SCHEMAS.get("stop_task", {}),
             },
             {

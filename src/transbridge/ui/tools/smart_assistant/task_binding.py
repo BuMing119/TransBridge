@@ -6,6 +6,8 @@ import re
 
 from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
 
+from transbridge.smart_assistant.tools.task_control import task_scope_matches
+
 logger = logging.getLogger(__name__)
 
 
@@ -43,6 +45,8 @@ class TaskBinding:
         system_message: Callable[[str], None],
         controller: Callable[[], object | None],
         sanitize_error: Callable[[str], str],
+        scope: Callable[[], dict] = dict,
+        on_lifecycle_changed: Callable[[], None] | None = None,
     ) -> None:
         self._parent = parent
         self._dispatcher = _MainThreadDispatcher(parent)
@@ -50,12 +54,16 @@ class TaskBinding:
         self._system_message = system_message
         self._controller = controller
         self._sanitize_error = sanitize_error
+        self._scope = scope
+        self._on_lifecycle_changed = on_lifecycle_changed
         self._manager = None
         self._dispatcher_installed = False
         self._monitor = None
         self._refresh_timer: QTimer | None = None
         self._closed = False
         self._seen_terminals: set[tuple[str, str]] = set()
+        self._settled_terminals: set[tuple[str, str]] = set()
+        self._seen_states: dict[tuple[str, str], str] = {}
 
     def start(self) -> None:
         if self._closed or self._manager is not None:
@@ -65,7 +73,7 @@ class TaskBinding:
         TaskManager.set_main_thread_dispatcher(self._dispatcher.dispatch)
         self._dispatcher_installed = True
         manager = TaskManager()
-        manager.on_finished(self._on_finished)
+        manager.on_terminal(self._on_terminal)
         manager.on_updated(self._on_updated)
         self._manager = manager
         self.refresh()
@@ -92,7 +100,7 @@ class TaskBinding:
             tasks = []
             for task_id in manager.list_all():
                 status = manager.get_status(task_id)
-                if not status.get("error"):
+                if not status.get("error") and task_scope_matches(status, self._scope()):
                     tasks.append(status)
             self._monitor.refresh(tasks)
         except Exception:
@@ -107,7 +115,7 @@ class TaskBinding:
             self._refresh_timer.deleteLater()
             self._refresh_timer = None
         if self._manager is not None:
-            self._manager.remove_listener(self._on_finished)
+            self._manager.remove_listener(self._on_terminal)
             self._manager.remove_listener(self._on_updated)
             self._manager = None
         if self._dispatcher_installed:
@@ -117,9 +125,22 @@ class TaskBinding:
             self._dispatcher_installed = False
         self._monitor = None
         self._seen_terminals.clear()
+        self._settled_terminals.clear()
+        self._seen_states.clear()
 
-    def _on_updated(self, _task_id: str) -> None:
-        if self._closed or self._monitor is None:
+    def _on_updated(self, task_id: str) -> None:
+        if self._closed:
+            return
+        if self._manager is not None:
+            status = self._manager.get_status(task_id)
+            if not status.get("error") and task_scope_matches(status, self._scope()):
+                identity = (task_id, str(status.get("run_id", "")))
+                state = status.get("status", "")
+                previous = self._seen_states.get(identity)
+                self._seen_states[identity] = state
+                if state == "cancelling" and previous != state and self._on_lifecycle_changed is not None:
+                    self._on_lifecycle_changed()
+        if self._monitor is None:
             return
         if self._refresh_timer is None:
             self._refresh_timer = QTimer(self._parent)
@@ -130,15 +151,53 @@ class TaskBinding:
             self._refresh_timer.start()
 
     def _on_finished(self, task_id: str, success: bool, message: str, data: dict | None) -> None:
+        """Compatibility entry point for direct delivery; queued delivery captures its snapshot."""
+        if self._closed or self._manager is None:
+            return
+        self._on_terminal(self._manager.get_status(task_id), success, message, data)
+
+    def reconcile_task(self, task_id: str) -> None:
+        """Settle work that finished before the controller registered its wait."""
         if self._closed or self._manager is None:
             return
         status = self._manager.get_status(task_id)
+        self._on_terminal(
+            status,
+            status.get("status") == "completed",
+            str(status.get("message") or ""),
+            status.get("result"),
+        )
+
+    def _on_terminal(self, status: dict, success: bool, message: str, data: dict | None) -> None:
+        if self._closed or self._manager is None or status.get("error"):
+            return
+        if status.get("metadata", {}).get("assistant_request_id"):
+            # Application request events own persistence and continuation. A view
+            # must not inject this result into whichever question is foreground.
+            self.refresh()
+            return
+        task_id = str(status.get("task_id", ""))
         run_id = str(status.get("run_id", ""))
+        terminal = status.get("status")
+        if not task_id or not run_id or terminal not in {"completed", "failed", "cancelled"}:
+            return
+        if (terminal == "completed") != success or not task_scope_matches(status, self._scope()):
+            return
+        current = self._manager.get_status(task_id)
+        if not current.get("error") and (
+            current.get("run_id") != run_id
+            or current.get("status") != terminal
+            or not task_scope_matches(current, self._scope())
+        ):
+            return
         identity = (task_id, run_id)
-        if identity in self._seen_terminals:
+        controller = self._controller()
+        accepted = controller is not None and controller.accepts_task_completion(task_id, run_id)
+        awaited = accepted and controller.is_awaiting_task(task_id, run_id)
+        already_notified = identity in self._seen_terminals
+        if already_notified and (not awaited or identity in self._settled_terminals):
             return
         self._seen_terminals.add(identity)
-        controller = self._controller()
         if success:
             result = data or {}
             succ = result.get("success_count", 0)
@@ -156,17 +215,26 @@ class TaskBinding:
                 parts.append(f"跳过 {skip}")
             detail = ", ".join(parts)
             text = f"任务 {task_id} 完成: {detail}" if detail else f"任务 {task_id} 完成"
-            self._conversation.add_observation("start_translation", text)
-            self._system_message(f"[OK] {text}")
-            if controller is not None:
-                controller.handle_task_completed(task_id, result, run_id)
+            prefix = "[OK]"
+        elif terminal == "cancelled":
+            safe_message = self._sanitize_error(message)
+            text = f"任务 {task_id} 已取消" + (f": {safe_message}" if safe_message else "")
+            result = {"status": "cancelled", "cancelled": True, "message": safe_message}
+            prefix = "[CANCELLED]"
         else:
             safe_error = self._sanitize_error(message)
             text = f"任务 {task_id} 失败: {safe_error}"
+            result = {"status": "failed", "error": safe_error}
+            prefix = "[FAIL]"
+        if awaited:
             self._conversation.add_observation("start_translation", text)
-            self._system_message(f"[FAIL] {text}")
-            if controller is not None:
-                controller.handle_task_completed(task_id, {"error": safe_error}, run_id)
+        if not already_notified:
+            self._system_message(f"{prefix} {text}")
+        if accepted:
+            controller.handle_task_completed(task_id, result, run_id)
+            self._settled_terminals.add(identity)
+        if self._on_lifecycle_changed is not None:
+            self._on_lifecycle_changed()
         self.refresh()
 
 

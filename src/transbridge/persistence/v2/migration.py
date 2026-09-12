@@ -12,6 +12,7 @@ from .ids import EntityKind, EntityRef, OpaqueId
 from .models import SCHEMA_VERSION, MigrationDraft, SchemaValidationError
 
 _V2_SCHEMA_VERSION = 2
+_V3_SCHEMA_VERSION = 3
 
 
 def migrate_v1(document: dict[str, Any], ref: EntityRef) -> MigrationDraft:
@@ -50,8 +51,44 @@ def migrate_v2_to_v3(document: dict[str, Any], ref: EntityRef) -> MigrationDraft
         defaults.extend(("sources=SourceRegistration[]", "source_relations=SourceRelation[]"))
         conflicts = tuple(f"{code}:{source_id}" for code, source_id in registry.diagnostics)
 
-    source["schema_version"] = SCHEMA_VERSION
+    source["schema_version"] = _V3_SCHEMA_VERSION
     return MigrationDraft(source, defaults=tuple(defaults), conflicts=conflicts)
+
+
+def migrate_v3_to_v4(document: dict[str, Any], ref: EntityRef) -> MigrationDraft:
+    """Add request storage without inferring goals or resurrecting legacy work."""
+
+    source = deepcopy(document)
+    if source.get("schema_version") != _V3_SCHEMA_VERSION:
+        raise SchemaValidationError("MIGRATION_VERSION_MISMATCH", "V3 to V4 migration requires schema_version 3.")
+    _check_v2_identity(source, ref)
+    data = source.get("data")
+    if not isinstance(data, dict):
+        raise SchemaValidationError("INVALID_V3_DATA", "V3 persistence data must be an object.")
+    defaults: tuple[str, ...] = ()
+    if ref.kind is EntityKind.SESSION:
+        # Retain each existing source independently; visible and backend projections
+        # are not proven duplicates. IDs remain stable across repeated migration.
+        legacy_messages = []
+        for projection in ("messages", "history"):
+            values = data.get(projection, [])
+            if not isinstance(values, list) or not all(isinstance(item, dict) for item in values):
+                raise SchemaValidationError("INVALID_V3_HISTORY", "Legacy Session history must contain objects.")
+            for index, value in enumerate(values):
+                identity = f"{ref.identity.value}:{projection}:{index}"
+                legacy_messages.append({
+                    "message_id": "legacy-" + hashlib.sha256(identity.encode()).hexdigest()[:32],
+                    "sequence": len(legacy_messages) + 1,
+                    "origin": "legacy",
+                    "request_id": None,
+                    "projection": projection,
+                    "message": deepcopy(value),
+                })
+        data["assistant_state"] = {"requests": [], "legacy_unassigned": legacy_messages}
+        data["transcript_manifest"] = {"segments": [], "last_sequence": 0, "input_watermark": 0}
+        defaults = ("requests=[]", "legacy_history=unassigned", "transcript_manifest=empty")
+    source["schema_version"] = 4
+    return MigrationDraft(source, defaults=defaults)
 
 
 def migrate_to_current(document: dict[str, Any], ref: EntityRef) -> MigrationDraft:
@@ -73,6 +110,13 @@ def migrate_to_current(document: dict[str, Any], ref: EntityRef) -> MigrationDra
         version = _V2_SCHEMA_VERSION
     if version == _V2_SCHEMA_VERSION:
         draft = migrate_v2_to_v3(source, ref)
+        source = draft.document
+        defaults.extend(draft.defaults)
+        dropped.extend(draft.dropped_fields)
+        conflicts.extend(draft.conflicts)
+        version = _V3_SCHEMA_VERSION
+    if version == _V3_SCHEMA_VERSION:
+        draft = migrate_v3_to_v4(source, ref)
         source = draft.document
         defaults.extend(draft.defaults)
         dropped.extend(draft.dropped_fields)
@@ -348,4 +392,4 @@ def _legacy_opaque_id(value: str) -> str:
         return f"legacy-{digest}"
 
 
-__all__ = ["migrate_to_current", "migrate_v1", "migrate_v2_to_v3"]
+__all__ = ["migrate_to_current", "migrate_v1", "migrate_v2_to_v3", "migrate_v3_to_v4"]

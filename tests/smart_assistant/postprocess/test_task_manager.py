@@ -164,7 +164,7 @@ class TestStopTaskActionParameter(unittest.TestCase):
         tid1 = self.tm.register()
         tid2 = self.tm.register()
         self._test_ids.extend([tid1, tid2])
-        result = _tool_stop_task({"action": "pause"}, self._mock_ctx())
+        result = _tool_stop_task({"action": "pause", "all_tasks": True}, self._mock_ctx())
         self.assertTrue(result.success)
         self.assertEqual(self.tm.get_status(tid1)["status"], "paused")
         self.assertEqual(self.tm.get_status(tid2)["status"], "paused")
@@ -177,7 +177,7 @@ class TestStopTaskActionParameter(unittest.TestCase):
         self._test_ids.extend([tid1, tid2])
         self.tm.pause(tid1)
         self.tm.pause(tid2)
-        result = _tool_stop_task({"action": "resume"}, self._mock_ctx())
+        result = _tool_stop_task({"action": "resume", "all_tasks": True}, self._mock_ctx())
         self.assertTrue(result.success)
         self.assertEqual(self.tm.get_status(tid1)["status"], "running")
         self.assertEqual(self.tm.get_status(tid2)["status"], "running")
@@ -185,7 +185,8 @@ class TestStopTaskActionParameter(unittest.TestCase):
     def test_g7_stop_task_no_active_tasks_empty_state(self):
         from transbridge.smart_assistant.tools.tool_translator import _tool_stop_task
 
-        _tool_stop_task({"action": "stop"}, self._mock_ctx())
+        cleared = _tool_stop_task({"action": "stop", "all_tasks": True}, self._mock_ctx())
+        self.assertTrue(cleared.success)
         result = _tool_stop_task({"action": "pause"}, self._mock_ctx())
         self.assertTrue(result.success)
         self.assertEqual(result.data.get("affected_task_ids"), [])

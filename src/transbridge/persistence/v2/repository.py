@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 import hashlib
 import os
 from threading import RLock
@@ -31,6 +33,7 @@ from .models import (
     VariantDto,
 )
 from .schema import parse_json_bytes, serialize_document, validate_v2, version_of
+from .session_write_lease import session_write_lease
 
 _MUTATION_LOCKS_GUARD = RLock()
 _MUTATION_LOCKS: dict[tuple[type[object], str], RLock] = {}
@@ -139,6 +142,7 @@ class JsonRepository[RefT, DtoT]:
             migrated_raw,
             token=migrated_digest,
             purpose="migration",
+            durable=ref.kind is EntityKind.SESSION,
         )
         report = MigrationReport(
             entity_type=ref.kind,
@@ -179,6 +183,7 @@ class JsonRepository[RefT, DtoT]:
             raw,
             token=digest,
             purpose="save",
+            durable=ref.kind is EntityKind.SESSION,
         )
         return LoadedRecord(ref, validated, digest)
 
@@ -465,6 +470,55 @@ class VariantRevisionConflict(PersistenceV2Error):
 class SessionRepository(JsonRepository[SessionRef, SessionDto]):
     def __init__(self, root: str, filesystem: PersistenceFilesystemPort) -> None:
         super().__init__(root, filesystem, kind=EntityKind.SESSION, dto_type=SessionDto)
+
+    def read_snapshot(self, ref: SessionRef) -> SessionDto:
+        value = super().read_snapshot(ref)
+        self._validate_attachments(ref, value)
+        return value
+
+    @contextmanager
+    def write_transaction(self, ref: SessionRef) -> Iterator[None]:
+        """Keep revision checks and publication inside one shared, fenced boundary."""
+        self._check_ref(ref)
+        with self._mutation_lock, session_write_lease(self.root, ref.identity.value, self._filesystem):
+            yield
+
+    def load(self, ref: SessionRef) -> LoadResult:
+        # Loading old data publishes migrations, so it uses the same write lease.
+        with self.write_transaction(ref):
+            loaded = super().load(ref)
+            if isinstance(loaded, LoadedRecord):
+                try:
+                    self._validate_attachments(ref, loaded.value)
+                except SchemaValidationError as exc:
+                    path = self.path_for(ref)
+                    raw = self._filesystem.read_bytes(path)
+                    return self._quarantine(ref, path, raw, hashlib.sha256(raw).hexdigest(), exc)
+            return loaded
+
+    def save(self, ref: SessionRef, value: SessionDto) -> LoadedRecord:
+        with self.write_transaction(ref):
+            self._validate_attachments(ref, value)
+            return super().save(ref, value)
+
+    def delete(self, ref: SessionRef) -> None:
+        with self.write_transaction(ref):
+            super().delete(ref)
+
+    def _validate_attachments(self, ref: SessionRef, value: SessionDto) -> None:
+        from transbridge.application.assistant_requests.transcript import TranscriptManifest
+        from transbridge.persistence.assistant_transcript_store import AssistantTranscriptStore
+
+        data = value.envelope.data
+        try:
+            manifest = TranscriptManifest.from_dict(data.get("transcript_manifest", {}))
+            AssistantTranscriptStore(self.root, self._filesystem).validate(ref.identity.value, manifest)
+        except (KeyError, TypeError, ValueError, OSError, PersistenceV2Error) as exc:
+            raise SchemaValidationError(
+                "SESSION_ATTACHMENTS_INVALID",
+                "Session transcript references are invalid, unavailable, or corrupt; keep this record read-only.",
+                pointer="/data/transcript_manifest",
+            ) from exc
 
 
 def _validate_future_identity(document: dict[str, object], ref: EntityRef) -> SchemaValidationError | None:

@@ -68,7 +68,8 @@ def test_late_success_notification_after_cancel_is_dropped(manager):
 
     manager.notify_completed(task_id, {"late": True})
 
-    assert received == []
+    assert len(received) == 1
+    assert received[0][0:2] == (task_id, False)
     assert manager.get_status(task_id)["status"] == "cancelled"
 
 

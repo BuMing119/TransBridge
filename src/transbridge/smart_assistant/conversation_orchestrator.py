@@ -245,7 +245,11 @@ class ConversationOrchestrator(QObject):
 
         client = self._get_llm_client()
         if client is None:
-            self._on_system_message("请先在设置中配置 LLM API Key")
+            binding = getattr(self, "request_binding", None)
+            if binding is not None:
+                binding.fail("请先在设置中配置 LLM API Key")
+            else:
+                self._on_system_message("请先在设置中配置 LLM API Key")
             return
 
         self._generation += 1
@@ -280,6 +284,20 @@ class ConversationOrchestrator(QObject):
 
         loaded_namespaces = getattr(self._conversation, "get_loaded_tool_namespaces", lambda: ())()
         self._round_tools = build_native_tool_definitions(loaded_namespaces)
+        binding = getattr(self, "request_binding", None)
+        if binding is not None:
+            try:
+                self._round_max_tokens = self._round_max_tokens or 4096
+                self._round_messages, self._round_tools = binding.prepare_model_input(
+                    self._conversation.get_transcript(),
+                    self._round_max_tokens or 4096,
+                    context_window=int(getattr(cfg, "assistant_context_window", 32768)),
+                )
+                if not self._round_messages:
+                    return
+            except Exception as exc:
+                binding.fail(str(exc))
+                return
         QTimer.singleShot(0, lambda g=generation: self._stage_b(g))
 
     def _stage_b(self, generation: int) -> None:
@@ -374,7 +392,8 @@ class ConversationOrchestrator(QObject):
         turn = response if isinstance(response, LlmTurn) else LlmTurn(text=str(response or ""))
         try:
             self._conversation.add_assistant_turn(turn)
-            parsed = turn_to_parsed_response(turn)
+            binding = getattr(self, "request_binding", None)
+            parsed = turn_to_parsed_response(turn, request_stage=None if binding is None else binding.stage)
         except LlmToolProtocolError as exc:
             self._conversation.close_pending_tool_calls("模型返回了无效的工具调用组合。")
             if _finished_bubble is not None:
@@ -396,7 +415,11 @@ class ConversationOrchestrator(QObject):
             self._on_system_message("模型未返回可显示内容，请重试。")
 
         # FR12 Story 02: 分发逻辑移交给 SessionController
-        self._on_response_parsed(parsed)
+        handled = binding is not None and binding.handle_response(parsed, turn)
+        if not handled:
+            self._on_response_parsed(parsed)
+            if binding is not None:
+                binding.after_business_response(parsed)
 
         if not steps:
             self._on_thinking_indicator_hide()
@@ -449,6 +472,9 @@ class ConversationOrchestrator(QObject):
             self._on_system_message(f"请求失败: {safe_msg}")
 
         self._cleanup_worker(worker)
+        binding = getattr(self, "request_binding", None)
+        if binding is not None:
+            binding.fail(f"请求执行暂停，请从请求清单继续：{safe_msg}")
 
     # ── 重试 ──────────────────────────────────────────────
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import replace
 from threading import RLock
 from typing import Protocol, runtime_checkable
@@ -18,7 +19,11 @@ from .v2.models import LoadedRecord, SessionDto
 class V2SessionSnapshotRepository:
     def __init__(self, repository) -> None:
         self._repository = repository
-        self._lock = RLock()
+        self._lock = getattr(repository, "mutation_lock", None) or RLock()
+
+    def _transaction(self, ref: SessionRef):
+        factory = getattr(self._repository, "write_transaction", None)
+        return factory(ref) if callable(factory) else nullcontext()
 
     def load(self, ref: SessionRef, context: RequestContext) -> SessionSnapshot:
         with self._lock:
@@ -57,7 +62,7 @@ class V2SessionSnapshotRepository:
         expected_revision: int,
         context: RequestContext,
     ) -> SessionSnapshot:
-        with self._lock:
+        with self._lock, self._transaction(snapshot.ref):
             if snapshot.owner.owner_id != context.owner_id:
                 raise DomainError(
                     ErrorCategory.PERMISSION,
@@ -81,7 +86,7 @@ class V2SessionSnapshotRepository:
             return snapshot
 
     def delete(self, ref: SessionRef, *, expected_revision: int, context: RequestContext) -> None:
-        with self._lock:
+        with self._lock, self._transaction(ref):
             current = self.load(ref, context)
             if current.owner.owner_id != context.owner_id:
                 raise DomainError(ErrorCategory.PERMISSION, "SESSION_OWNER_MISMATCH", "The Session has another owner.")

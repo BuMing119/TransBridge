@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QPushButton, QScrollArea, QVBoxLayout, QWidget
 
 from transbridge.smart_assistant.conversation_orchestrator import ConversationOrchestrator
@@ -16,6 +16,7 @@ from .message_list_view import MessageListView
 from .react_execution_binding import ReactExecutionBinding
 from .session_binding import ConversationBinding, SessionBinding
 from .streaming_presenter import StreamingPresenter
+from .submission_binding import SubmissionBinding
 from .task_binding import TaskBinding, sanitize_error_message
 from .theme_support import CHIP_STRUCTURE_STYLE
 
@@ -45,6 +46,7 @@ def initialize_runtime(facade) -> None:
     facade._tool_handler = ToolExecutionHandler(
         ctx=facade._ctx,
         conversation_manager=facade._conversation,
+        request_context_provider=facade._session_runtime.request_context,
         on_system_message=facade.add_system_message,
         on_plan_card=facade.add_plan_card,
         on_tool_card=facade.add_tool_card,
@@ -55,7 +57,7 @@ def initialize_runtime(facade) -> None:
             else None
         ),
         on_step_completed=lambda: facade._controller.handle_execution_complete([]),
-        on_task_started=lambda task_id, run_id: facade._controller.handle_task_started(task_id, run_id),
+        on_task_started=lambda task_id, run_id: _task_started(facade, task_id, run_id),
         on_confirm_permission=lambda title, message: (
             facade._confirmation_view.ask_permission(title, message) if facade._confirmation_view is not None else False
         ),
@@ -179,6 +181,10 @@ def initialize_message_area(facade) -> None:
         hide_thinking=facade._message_list.hide_thinking,
         system_message=facade.add_system_message,
         retry_handler=lambda: facade._tool_handler.retry_handler,
+        execution_context=facade._tool_handler.build_execution_context,
+        on_lifecycle_changed=lambda: (
+            facade._session_binding.auto_save() if facade._session_binding is not None else None
+        ),
     )
     facade._confirmation_actions = ConfirmationActions(
         controller=lambda: facade._controller,
@@ -200,7 +206,9 @@ def initialize_message_area(facade) -> None:
     )
 
     def abort_session_activity() -> None:
-        facade._plan_execution.abort()
+        facade._submission.invalidate()
+        facade._plan_execution.interrupt_round()
+        facade._confirmation_view.invalidate_pending()
         facade._react_execution.abort()
         facade._controller.handle_abort()
 
@@ -224,6 +232,8 @@ def initialize_message_area(facade) -> None:
         system_message=facade.add_system_message,
         controller=lambda: facade._controller,
         sanitize_error=sanitize_error_message,
+        scope=facade._session_runtime.scope,
+        on_lifecycle_changed=lambda: facade._session_binding.auto_save(),
     )
     if facade._task_monitor is not None:
         facade._task_binding.set_monitor(facade._task_monitor)
@@ -239,5 +249,37 @@ def initialize_message_area(facade) -> None:
         ),
     )
 
+    def interrupt_round() -> None:
+        facade._plan_execution.interrupt_round()
+        facade._confirmation_view.invalidate_pending()
+        facade._react_execution.abort()
+        facade._controller.handle_round_interrupted()
+
+    def append_user(text: str) -> None:
+        facade._message_list.add_bubble(MessageBubble(text, "user", theme=facade._theme))
+        facade._conversation.add_user(text)
+
+    facade._submission = SubmissionBinding(
+        interrupt=interrupt_round,
+        append=append_user,
+        start=facade._conversation_binding.start_round,
+    )
+    if getattr(facade, "_assistant_request_service", None) is not None:
+        from .request_binding import RequestBinding
+
+        facade._request_binding = RequestBinding(facade, facade._assistant_request_service)
+        facade._orchestrator.request_binding = facade._request_binding
+        facade._tool_handler.assistant_gate_provider = lambda: facade._request_binding.gate
+        facade._confirmation_view.intent_scope = facade._request_binding.confirmation_validator
+
 
 __all__ = ["initialize_message_area", "initialize_runtime"]
+
+
+def _task_started(facade, task_id: str, run_id: str) -> None:
+    facade._controller.handle_task_started(task_id, run_id)
+    if facade._task_binding is not None:
+        facade._task_binding.start()
+        QTimer.singleShot(0, lambda: facade._task_binding.reconcile_task(task_id))
+    if facade._session_binding is not None:
+        facade._session_binding.auto_save()

@@ -21,6 +21,14 @@ class PermissionGuard(GuardMiddleware):
             return GuardResult(False, f"未知工具: {tool_name}")
 
         perm = getattr(spec, "permission", "read")
+        if tool_name == "stop_task":
+            args = step.get("args", {})
+            if args.get("all_tasks", False):
+                return self._confirm_or_request(step, ctx, "write")
+            if args.get("action", "stop") == "stop":
+                # Narrow cancellation is itself the user's stop command. Scope and
+                # ambiguous target checks are enforced by the task control tool.
+                return GuardResult(True)
         if perm == "read":
             return GuardResult(True)
         # M8: PermissionGuard 在 execute_with_guardrails 中仅返回状态文本

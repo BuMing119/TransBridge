@@ -11,9 +11,12 @@ Story 01: 新建 + 新旧并行。不删除 ChatWidget 中任何旧方法。
 from __future__ import annotations
 
 from collections.abc import Callable
+from copy import deepcopy
+from dataclasses import replace
 from enum import Enum
 import logging
 from typing import Any
+from uuid import uuid4
 
 from transbridge.application.contracts import DomainError, ErrorCategory
 from transbridge.application.sessions.models import ControllerSnapshot, ControllerState
@@ -110,7 +113,10 @@ class SessionController:
         self._react_depth: int = 0
         self._auto_mode: bool = False
         self._active_task: tuple[str, str] | None = None
+        self._detached_tasks: set[tuple[str, str]] = set()
         self._stale_task_events: list[tuple[str, str]] = []
+        self._pending_confirmation: tuple[str, list, str] | None = None
+        self._recovery_reason: str | None = None
 
     # ── 状态属性 ─────────────────────────────────────────────
 
@@ -135,6 +141,7 @@ class SessionController:
     def handle_user_message(self, text: str) -> None:
         """IDLE → THINKING: 用户发送消息，启动 LLM 轮次。"""
         self._require("handle_user_message", self.State.IDLE)
+        self._recovery_reason = None
         self._react_depth = 0
         self._transition_to(self.State.THINKING)
         self._on_llm_round_start()
@@ -154,7 +161,13 @@ class SessionController:
             self.on_conversation_end()
             return
 
-        if self._auto_mode and mode != "plan" and not self._any_needs_confirm(steps):
+        narrow_stop = mode != "plan" and all(
+            step.get("tool") == "stop_task"
+            and step.get("args", {}).get("action", "stop") == "stop"
+            and not step.get("args", {}).get("all_tasks", False)
+            for step in steps
+        )
+        if narrow_stop or (self._auto_mode and mode != "plan" and not self._any_needs_confirm(steps)):
             # 自动模式 + ReAct + 无需确认 → 直接执行
             # 注意: plan 模式始终走确认流程，因为 _execute_plan 是 no-op，
             # 实际执行依赖 ChatWidget._on_plan_confirmed 创建 ExecutionEngine
@@ -165,6 +178,7 @@ class SessionController:
                 self.handle_execution_complete([])
         else:
             # 需要用户确认 → 展示确认卡片
+            self._pending_confirmation = (uuid4().hex, deepcopy(steps), mode)
             self._transition_to(self.State.AWAITING_CONFIRM)
             if mode == "plan":
                 self.on_present_plan_card(steps)
@@ -173,15 +187,53 @@ class SessionController:
             else:
                 self.on_present_batch_tool_card(steps)
 
-    def handle_user_confirmed(self, steps: list, mode: str = "react") -> bool:
+    @property
+    def pending_confirmation_id(self) -> str | None:
+        return self._pending_confirmation[0] if self._pending_confirmation else None
+
+    def restore_confirmation(self, parsed: dict) -> None:
+        """Present a request-owned decision after its current revision was validated."""
+        self._require("restore_confirmation", self.State.IDLE)
+        self._transition_to(self.State.THINKING)
+        previous_auto = self._auto_mode
+        self._auto_mode = False
+        try:
+            self.handle_llm_response(parsed)
+        finally:
+            self._auto_mode = previous_auto
+
+    def accepts_confirmation(self, confirmation_id: str | None) -> bool:
+        return (
+            self._state is self.State.AWAITING_CONFIRM
+            and confirmation_id is not None
+            and confirmation_id == self.pending_confirmation_id
+        )
+
+    def handle_user_confirmed(self, steps: list, mode: str = "react", *, confirmation_id: str | None = None) -> bool:
         """AWAITING_CONFIRM → EXECUTING: 用户确认执行。"""
         self._require("handle_user_confirmed", self.State.AWAITING_CONFIRM)
+        pending = self._pending_confirmation
+        if (
+            pending is None
+            or (confirmation_id is not None and not self.accepts_confirmation(confirmation_id))
+            or pending[1] != steps
+            or pending[2] != mode
+        ):
+            raise DomainError(
+                ErrorCategory.CONFLICT, "SESSION_CONFIRMATION_STALE", "The confirmation is no longer current."
+            )
+        self._pending_confirmation = None
         self._transition_to(self.State.EXECUTING)
         return self._dispatch_steps(steps, mode)
 
-    def handle_user_cancelled(self) -> None:
+    def handle_user_cancelled(self, *, confirmation_id: str | None = None) -> None:
         """AWAITING_CONFIRM → IDLE: 用户取消操作。"""
         self._require("handle_user_cancelled", self.State.AWAITING_CONFIRM)
+        if confirmation_id is not None and not self.accepts_confirmation(confirmation_id):
+            raise DomainError(
+                ErrorCategory.CONFLICT, "SESSION_CONFIRMATION_STALE", "The confirmation is no longer current."
+            )
+        self._pending_confirmation = None
         close_pending = getattr(self._conversation, "close_pending_tool_calls", None)
         if callable(close_pending):
             close_pending("用户取消了工具调用。")
@@ -204,16 +256,41 @@ class SessionController:
             self._transition_to(self.State.THINKING)
             self._on_llm_round_start()
 
-    def handle_task_completed(self, task_id: str, result: dict, run_id: str = "") -> None:
+    def accepts_task_completion(self, task_id: str, run_id: str = "") -> bool:
+        """Accept only the tracked run; detached completions cannot resume a new round."""
+        if (task_id, run_id) in self._detached_tasks:
+            return True
+        if self._active_task is None:
+            return self._state is self.State.AWAITING_TASK
+        expected_task_id, expected_run_id = self._active_task
+        return task_id == expected_task_id and (not expected_run_id or run_id == expected_run_id)
+
+    def is_awaiting_task(self, task_id: str, run_id: str = "") -> bool:
+        if self._state is not self.State.AWAITING_TASK or (task_id, run_id) in self._detached_tasks:
+            return False
+        if self._active_task is None:
+            return True
+        expected_task_id, expected_run_id = self._active_task
+        return task_id == expected_task_id and (not expected_run_id or run_id == expected_run_id)
+
+    def handle_task_completed(self, task_id: str, result: dict, run_id: str = "") -> bool:
         """AWAITING_TASK → THINKING | IDLE: 异步后台任务完成。"""
-        if self._active_task is not None:
-            expected_task_id, expected_run_id = self._active_task
-            if task_id != expected_task_id or (run_id and run_id != expected_run_id):
-                self._stale_task_events.append((task_id, run_id))
-                logger.warning("Ignoring stale task completion task=%s run=%s", task_id, run_id)
-                return
-        self._require("handle_task_completed", self.State.AWAITING_TASK)
+        if not self.accepts_task_completion(task_id, run_id):
+            self._stale_task_events.append((task_id, run_id))
+            logger.warning("Ignoring stale task completion task=%s run=%s", task_id, run_id)
+            return False
+        self._recovery_reason = None
+        if (task_id, run_id) in self._detached_tasks:
+            self._detached_tasks.discard((task_id, run_id))
+            return True
         self._active_task = None
+        if self._state is not self.State.AWAITING_TASK:
+            return True
+        if result.get("cancelled") or result.get("state") == "cancelled":
+            self._react_depth = 0
+            self._transition_to(self.State.IDLE)
+            self.on_conversation_end()
+            return True
 
         if self._react_depth > self._MAX_REACT_DEPTH:
             self._react_depth = 0
@@ -224,26 +301,37 @@ class SessionController:
             self._react_depth += 1
             self._transition_to(self.State.THINKING)
             self._on_llm_round_start()
+        return True
 
     def handle_task_started(self, task_id: str = "", run_id: str = "") -> None:
         """EXECUTING → AWAITING_TASK: 长运行异步任务已启动，等待完成通知。"""
         self._require("handle_task_started", self.State.EXECUTING)
+        if self._active_task is not None and self._active_task != (task_id, run_id):
+            self._detached_tasks.add(self._active_task)
         self._active_task = (task_id, run_id) if task_id else None
         self._transition_to(self.State.AWAITING_TASK)
 
-    def handle_abort(self) -> None:
-        """任意状态 → IDLE: 强制中断当前操作。"""
+    def handle_round_interrupted(self) -> None:
+        """Stop the conversational round while retaining the background task for reconciliation."""
+        self.handle_abort(preserve_task=True)
+
+    def handle_abort(self, *, preserve_task: bool = False) -> None:
+        """Stop the conversational round; this does not cancel the runtime task itself."""
         logger.info("SessionController: 强制中断，状态 %s → IDLE", self._state)
         if self._orchestrator is not None:
             try:
                 self._orchestrator.cancel_current_round()
             except Exception:
-                pass
+                logger.exception("Failed to interrupt the active model round")
         close_pending = getattr(self._conversation, "close_pending_tool_calls", None)
         if callable(close_pending):
             close_pending("会话中断，工具调用已取消。")
         self._react_depth = 0
-        self._active_task = None
+        if not preserve_task:
+            self._active_task = None
+            self._detached_tasks.clear()
+            self._recovery_reason = None
+        self._pending_confirmation = None
         self._transition_to(self.State.IDLE)
 
     # ── 内部方法 ─────────────────────────────────────────────
@@ -263,34 +351,60 @@ class SessionController:
 
     def to_recovery_snapshot(self) -> ControllerSnapshot:
         state = ControllerState(self._state.value)
-        recoverable = state in {ControllerState.IDLE, ControllerState.AWAITING_CONFIRM}
+        recoverable = state is ControllerState.IDLE and self._recovery_reason is None
         return ControllerSnapshot(
             state,
             self._react_depth,
             self._auto_mode,
             recoverable,
-            None if recoverable else "in_flight_controller_state_requires_job_reconciliation",
+            None if recoverable else self._recovery_reason or "in_flight_controller_state_requires_job_reconciliation",
+            self._active_task[0] if self._active_task else None,
+            self._active_task[1] if self._active_task else None,
         )
 
-    def restore_recovery_snapshot(self, snapshot: ControllerSnapshot) -> ControllerSnapshot:
-        if snapshot.recoverable and snapshot.state in {
-            ControllerState.IDLE,
-            ControllerState.AWAITING_CONFIRM,
-        }:
+    def restore_recovery_snapshot(
+        self, snapshot: ControllerSnapshot, *, task_verified: bool = False
+    ) -> ControllerSnapshot:
+        self._pending_confirmation = None
+        self._active_task = None
+        self._detached_tasks.clear()
+        self._recovery_reason = None
+        if snapshot.recoverable and (
+            snapshot.state is ControllerState.IDLE
+            or (
+                snapshot.state is ControllerState.AWAITING_TASK
+                and task_verified
+                and snapshot.active_task_id
+                and snapshot.active_run_id
+            )
+        ):
             self._state = self.State(snapshot.state.value)
             self._react_depth = snapshot.react_depth
             self._auto_mode = snapshot.auto_mode
+            if snapshot.active_task_id and task_verified:
+                self._active_task = (snapshot.active_task_id, snapshot.active_run_id or "")
+            if snapshot.active_task_id and not task_verified:
+                return replace(snapshot, active_task_id=None, active_run_id=None)
             return snapshot
         degraded = ControllerSnapshot(
             ControllerState.IDLE,
             0,
             snapshot.auto_mode,
             False,
-            snapshot.reason or "controller_state_not_recoverable",
+            "pending_confirmation_payload_unavailable"
+            if snapshot.state is ControllerState.AWAITING_CONFIRM
+            else "task_runtime_verification_required"
+            if snapshot.state is ControllerState.AWAITING_TASK and not task_verified
+            else snapshot.reason or "controller_state_not_recoverable",
+            snapshot.active_task_id if task_verified else None,
+            snapshot.active_run_id if task_verified else None,
         )
         self._state = self.State.IDLE
         self._react_depth = 0
         self._auto_mode = snapshot.auto_mode
+        self._recovery_reason = degraded.reason
+        if task_verified and snapshot.active_task_id:
+            self._active_task = (snapshot.active_task_id, snapshot.active_run_id or "")
         return degraded
 
     def _require(self, action: str, *expected: State) -> None:

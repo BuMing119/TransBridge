@@ -45,6 +45,9 @@ class AiServicePage(SettingsPage):
         self.output_tokens_spin = _spin(0, 1_000_000, int(getattr(config, "max_output_tokens", 0) or 0), self)
         self.output_tokens_spin.setSpecialValueText("不限制")
         form.addRow("默认输出 Token 上限", self.output_tokens_spin)
+        self.context_window_spin = _spin(1024, 4_000_000, int(getattr(config, "assistant_context_window", 32768)), self)
+        self.context_window_spin.setToolTip("按所选模型的实际窗口设置；助手会为工具定义和回答预留空间。")
+        form.addRow("助手模型上下文窗口", self.context_window_spin)
         self.temperature_spin = QDoubleSpinBox(self)
         self.temperature_spin.setRange(0.0, 2.0)
         self.temperature_spin.setSingleStep(0.1)
@@ -67,6 +70,7 @@ class AiServicePage(SettingsPage):
         apply_if_present(cfg, "llm_max_retries", self.retries_spin.value())
         apply_if_present(cfg, "max_tokens_per_batch", self.input_tokens_spin.value())
         apply_if_present(cfg, "max_output_tokens", self.output_tokens_spin.value())
+        apply_if_present(cfg, "assistant_context_window", self.context_window_spin.value())
         apply_if_present(cfg, "temperature", self.temperature_spin.value())
 
 

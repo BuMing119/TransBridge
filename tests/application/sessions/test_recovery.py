@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from transbridge.application.contracts import JobRef, RequestContext
 from transbridge.application.sessions import (
     ApprovalState,
@@ -95,3 +97,70 @@ def test_unavailable_project_variant_reference_is_degraded_without_rewriting_ids
     assert reconciled.variant_id == snapshot.variant_id
     assert reconciled.recovery is RecoveryStatus.DEGRADED
     assert "active_project_variant_reference_unavailable" in reconciled.degradation_reasons
+
+
+@pytest.mark.parametrize("state", [JobState.RUNNING, JobState.PAUSED, JobState.CANCELLING])
+def test_waiting_recovery_requires_exact_live_task(state) -> None:
+    snapshot = _snapshot()
+    snapshot = replace(
+        snapshot,
+        controller=replace(snapshot.controller, active_task_id="job-1", active_run_id="run-1"),
+    )
+    reconciled = SessionRecoveryReconciler(task_resolver=lambda job, owner: state).reconcile(
+        snapshot, RequestContext("owner", session_id="session-a")
+    )
+    assert reconciled.controller.state is ControllerState.AWAITING_TASK
+    assert reconciled.controller.recoverable
+    assert reconciled.controller.active_run_id == "run-1"
+
+
+@pytest.mark.parametrize("state", [JobState.CANCELLED, JobState.COMPLETED, JobState.FAILED])
+def test_terminal_task_cannot_restore_waiting_state(state) -> None:
+    snapshot = _snapshot()
+    snapshot = replace(
+        snapshot,
+        controller=replace(snapshot.controller, active_task_id="job-1", active_run_id="run-1"),
+    )
+    reconciled = SessionRecoveryReconciler(task_resolver=lambda job, owner: state).reconcile(
+        snapshot, RequestContext("owner", session_id="session-a")
+    )
+    assert reconciled.controller.state is ControllerState.IDLE
+    assert reconciled.controller.reason == "awaited_task_already_terminal"
+
+
+def test_unverified_persisted_job_and_wrong_run_cannot_restore_waiting() -> None:
+    snapshot = _snapshot()
+    snapshot = replace(
+        snapshot,
+        controller=replace(snapshot.controller, active_task_id="job-1", active_run_id="wrong-run"),
+    )
+    for reconciler in (
+        SessionRecoveryReconciler(),
+        SessionRecoveryReconciler(task_resolver=lambda *_: JobState.RUNNING),
+    ):
+        restored = reconciler.reconcile(snapshot, RequestContext("owner", session_id="session-a"))
+        assert restored.controller.state is ControllerState.IDLE
+
+
+def test_pending_approval_metadata_cannot_restore_executable_confirmation() -> None:
+    snapshot = replace(_snapshot(), controller=ControllerSnapshot(ControllerState.AWAITING_CONFIRM))
+    restored = SessionRecoveryReconciler().reconcile(snapshot, RequestContext("owner", session_id="session-a"))
+    assert restored.controller.state is ControllerState.IDLE
+    assert restored.controller.reason == "pending_confirmation_payload_unavailable"
+    assert restored.approvals == ()
+
+
+@pytest.mark.parametrize("state", [ControllerState.THINKING, ControllerState.EXECUTING])
+def test_interrupted_round_recovery_retains_verified_task_as_detached(state) -> None:
+    snapshot = _snapshot()
+    snapshot = replace(
+        snapshot,
+        controller=replace(snapshot.controller, state=state, active_task_id="job-1", active_run_id="run-1"),
+    )
+    restored = SessionRecoveryReconciler(task_resolver=lambda *_: JobState.RUNNING).reconcile(
+        snapshot, RequestContext("owner", session_id="session-a")
+    )
+    assert restored.controller.state is ControllerState.IDLE
+    assert restored.controller.reason == "in_flight_round_cannot_be_resumed"
+    assert restored.controller.active_task_id == "job-1"
+    assert restored.controller.active_run_id == "run-1"

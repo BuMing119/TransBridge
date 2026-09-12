@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from copy import copy
 import functools
 import logging
 from typing import TYPE_CHECKING
@@ -131,8 +132,40 @@ def execute_with_guardrails(
         if guard_result.modified_args is not None:
             step["args"] = guard_result.modified_args
 
+    # Request admission wraps the same execution path used by nested plans.
+    gate = getattr(ctx, "assistant_gate", None)
+    handle = None
+    if gate is not None:
+        from transbridge.application.assistant_requests.models import RequestError
+
+        try:
+            ctx = copy(ctx)
+            handle = gate.before(resolved_tool_name, step.get("args", args), ctx)
+            ctx.assistant_effect_id = handle.effect_id
+        except RequestError as error:
+            return ToolResult.fail(str(error), error_category="permission", error_code=error.code)
+    elif getattr(ctx, "assistant_effect_id", "") or getattr(ctx, "assistant_required", False):
+        return ToolResult.fail("请求执行许可缺失", error_category="permission", error_code="TURN_LEASE_STALE")
     # 2. 执行
-    raw_result = spec.execute(step.get("args", args), ctx)
+    try:
+        raw_result = spec.execute(step.get("args", args), ctx)
+    except Exception as error:
+        if gate is not None and handle is not None:
+            gate.failed(handle, error)
+        raise
+    if gate is not None and handle is not None:
+        outcome = (
+            raw_result
+            if isinstance(raw_result, ToolResult)
+            else ToolResult(
+                success=bool(raw_result.get("success", False)),
+                message=str(raw_result.get("message", "")),
+                data=raw_result.get("data"),
+            )
+            if isinstance(raw_result, dict)
+            else ToolResult.fail("工具未返回有效结果")
+        )
+        gate.after(handle, outcome)
 
     # 3. After 中间件链（逆序 — 洋葱模型） — m5: 提取 _apply_after_guards 消除重复
     if isinstance(raw_result, ToolResult):

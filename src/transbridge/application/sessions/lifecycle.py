@@ -20,6 +20,7 @@ from transbridge.application.contracts import (
 from transbridge.persistence.v2.ids import SessionRef
 
 from .aggregate import EventApplication, SessionAggregate, SessionRuntimeEvent
+from .commands import save_command
 from .models import SessionSnapshot
 from .ports import (
     IdentitySessionReconciler,
@@ -76,6 +77,7 @@ class SessionLifecycleService:
         self._token_factory = token_factory or (lambda: secrets.token_urlsafe(24))
         self._projection = projection
         self._event_sink = event_sink
+        self._delete_preflight = None
         self._generation = 0
         self._prepared: dict[str, _Prepared] = {}
         self._issued_tokens: set[str] = set()
@@ -314,6 +316,21 @@ class SessionLifecycleService:
 
     def rename(self, ref: SessionRef, name: str, context: RequestContext) -> OperationResult[SessionSnapshot]:
         """Persist a metadata change without switching away from the active conversation."""
+        return self.transact(ref, context, lambda snapshot: replace(snapshot, name=name.strip()))
+
+    def transact(
+        self,
+        ref: SessionRef,
+        context: RequestContext,
+        update: Callable[[SessionSnapshot], SessionSnapshot],
+        *,
+        publish: bool = True,
+    ) -> OperationResult[SessionSnapshot]:
+        """Commit one command against the latest Session, including inactive owners.
+
+        The callback must be deterministic and cannot execute external effects. Disk
+        acknowledgement precedes replacing the in-memory aggregate or notifying UI.
+        """
         with self._lock:
             try:
                 active = self._active if self._active is not None and self._active.aggregate.ref == ref else None
@@ -323,25 +340,46 @@ class SessionLifecycleService:
                 if active is None and retained is not None and retained.revision > snapshot.revision:
                     snapshot = retained.snapshot()
                 _require_management_scope(snapshot, context)
-                updated = replace(snapshot, name=name.strip(), revision=snapshot.revision + 1)
-                persisted = self._repository.save(
-                    updated,
-                    expected_revision=expected_revision,
-                    context=context,
+                persisted = save_command(
+                    self._repository,
+                    snapshot,
+                    expected_revision,
+                    context,
+                    update,
+                    retry_conflict=snapshot.revision == expected_revision,
                 )
+                if persisted == snapshot:
+                    return OperationResult.completed(persisted, run_id=context.run_id)
                 if active is not None:
-                    active.aggregate.replace_snapshot(persisted, expected_revision=snapshot.revision)
+                    active.aggregate.accept_persisted(persisted, expected_revision=snapshot.revision)
                     self._active = replace(active, persisted_revision=persisted.revision)
-                    self._publish_projection(persisted)
+                    if publish:
+                        self._publish_projection(persisted)
                 elif retained is not None:
                     retained.close()
                     self._sessions[ref.identity.value] = SessionAggregate(persisted)
                 return OperationResult.completed(persisted, run_id=context.run_id)
             except Exception as exc:
-                return _from_exception(exc, "SESSION_RENAME_FAILED", context)
+                return _from_exception(exc, "SESSION_COMMAND_FAILED", context)
+
+    def read_session(self, ref: SessionRef, context: RequestContext) -> SessionSnapshot:
+        """Read an owned snapshot without requiring foreground activation."""
+        with self._lock:
+            retained = self._sessions.get(ref.identity.value)
+            snapshot = retained.snapshot() if retained is not None else self._repository.load(ref, context)
+            _require_management_scope(snapshot, context)
+            return snapshot
+
+    def set_delete_preflight(self, callback) -> None:
+        self._delete_preflight = callback
 
     def delete(self, ref: SessionRef, context: RequestContext) -> OperationResult[dict[str, Any]]:
         """Detach the active pointer before deleting its record; restore it on deletion failure."""
+        if self._delete_preflight is not None:
+            try:
+                self._delete_preflight(ref, replace(context, session_id=ref.identity.value))
+            except Exception as exc:
+                return _from_exception(exc, "SESSION_DELETE_PENDING", context)
         with self._lock:
             was_active = self._active is not None and self._active.aggregate.ref == ref
             detached = False

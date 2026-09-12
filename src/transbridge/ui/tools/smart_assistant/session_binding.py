@@ -180,7 +180,7 @@ class ConversationBinding:
                 logger.info("记忆检索失败: %s", error)
         self._task_binding().start()
         controller = self._controller()
-        controller.handle_abort()
+        controller.handle_round_interrupted()
         controller.handle_user_message(text)
 
     def handle_response(self, parsed: dict) -> None:

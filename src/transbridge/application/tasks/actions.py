@@ -68,6 +68,11 @@ class TaskRecoveryIntentRegistry:
     def __init__(self) -> None:
         self._handlers: dict[str, TaskRecoveryIntent] = {}
         self._lock = threading.RLock()
+        self._request_preflight = None
+
+    def set_request_preflight(self, callback) -> None:
+        """Composition-root check before a feature resumes any old checkpoint."""
+        self._request_preflight = callback
 
     def register(self, job_type: str, handler: TaskRecoveryIntent) -> None:
         if not job_type.strip():
@@ -92,6 +97,8 @@ class TaskRecoveryIntentRegistry:
             TASKS_MANAGE_PERMISSION not in actor.permissions and candidate.owner != TaskOwnerScope.from_owner(actor)
         ):
             raise TaskCenterActionError("owner_mismatch", "当前任务所有者不能访问此检查点。")
+        if self._request_preflight is not None:
+            self._request_preflight(candidate.run_id, candidate.owner, actor)
         with self._lock:
             handler = self._handlers.get(candidate.job_type)
         if handler is None:
@@ -149,6 +156,11 @@ class TaskCenterActions:
         self._retry_intents = retry_intents
         self._recovery_intents = recovery_intents
         self._navigators = navigators
+
+    def set_request_preflight(self, callback) -> None:
+        """Apply mandatory ownership checks to the registries this facade actually uses."""
+        self._retry_intents.set_request_preflight(callback)
+        self._recovery_intents.set_request_preflight(callback)
 
     def list_history(
         self,

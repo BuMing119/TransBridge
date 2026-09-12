@@ -7,7 +7,7 @@ from typing import Any
 
 from .ids import EntityKind, EntityRef
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 @dataclass(frozen=True, slots=True)

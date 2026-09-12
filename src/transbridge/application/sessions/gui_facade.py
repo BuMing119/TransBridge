@@ -13,12 +13,12 @@ from transbridge.application.contracts import (
     OperationResult,
     RequestContext,
 )
-from transbridge.application.tasks.models import OwnerRef
+from transbridge.application.tasks.models import TERMINAL_STATES, OwnerRef
 from transbridge.persistence.v2.ids import ProjectId, SessionId, SessionRef, VariantId
 from transbridge.persistence.v2.session_catalog import SessionCatalogEntry, SessionCatalogRepository
 
 from .lifecycle import SessionLifecycleService
-from .models import ControllerSnapshot, SessionSnapshot
+from .models import ControllerSnapshot, RecoveryStatus, SessionJobRef, SessionSnapshot
 
 
 class SessionCreateRepositoryPort(Protocol):
@@ -34,12 +34,14 @@ class GuiSessionCommandFacade:
         *,
         id_factory: Callable[[], str],
         timestamp_factory: Callable[[], str],
+        assistant_requests=None,
     ) -> None:
         self._lifecycle = lifecycle
         self._repository = repository
         self._catalog = catalog
         self._id_factory = id_factory
         self._timestamp_factory = timestamp_factory
+        self.assistant_requests = assistant_requests
 
     def create_and_activate(
         self,
@@ -114,6 +116,7 @@ class GuiSessionCommandFacade:
         *,
         backend_summary: str | None = None,
         controller: ControllerSnapshot | None = None,
+        jobs: tuple[SessionJobRef, ...] | None = None,
     ) -> OperationResult[dict[str, Any] | None]:
         active = self._lifecycle.active
         if active is None or active.aggregate.ref != ref:
@@ -125,25 +128,34 @@ class GuiSessionCommandFacade:
                 ),
                 run_id=context.run_id,
             )
-        snapshot = active.aggregate.snapshot()
-        try:
-            active.aggregate.replace_snapshot(
-                replace(
-                    snapshot,
-                    messages=tuple(visible_messages),
-                    backend_history=tuple(backend_history),
-                    backend_summary=backend_summary,
-                    controller=controller or snapshot.controller,
-                    last_active_at=self._timestamp_factory(),
-                ),
-                expected_revision=snapshot.revision,
+
+        def update(snapshot):
+            changes = dict(
+                messages=tuple(visible_messages),
+                backend_summary=backend_summary,
+                controller=controller or snapshot.controller,
+                jobs=snapshot.jobs if jobs is None else _merge_job_refs(snapshot.jobs, jobs),
+                recovery=RecoveryStatus.COMPLETE,
+                last_active_at=self._timestamp_factory(),
             )
-        except Exception as exc:  # noqa: BLE001
-            return OperationResult.from_exception(exc, run_id=context.run_id)
-        result = self._lifecycle.save_active(replace(context, session_id=ref.identity.value))
+            if self.assistant_requests is not None:
+                if visible_messages == backend_history and all(m.get("message_id") for m in backend_history):
+                    changes["messages"] = backend_history
+                return self.assistant_requests.with_transcript(snapshot, backend_history, **changes)
+            return replace(snapshot, backend_history=tuple(backend_history), **changes)
+
+        result = self._lifecycle.transact(
+            ref,
+            replace(context, session_id=ref.identity.value),
+            update,
+        )
         if result.is_success:
             self._upsert_active_catalog()
         return result
+
+    @property
+    def lifecycle(self) -> SessionLifecycleService:
+        return self._lifecycle
 
     def list_sessions(self) -> list[dict[str, Any]]:
         return [
@@ -208,3 +220,18 @@ class GuiSessionCommandFacade:
 
 
 __all__ = ["GuiSessionCommandFacade", "SessionCreateRepositoryPort"]
+
+
+def _merge_job_refs(
+    previous: tuple[SessionJobRef, ...], current: tuple[SessionJobRef, ...]
+) -> tuple[SessionJobRef, ...]:
+    """Retain lifecycle evidence when a runtime handle was cleaned up or lost."""
+    merged = {job.ref.job_id: job for job in current}
+    for job in previous:
+        if job.ref.job_id not in merged:
+            merged[job.ref.job_id] = (
+                job
+                if job.state in TERMINAL_STATES
+                else replace(job, recoverable=False, reason="task_runtime_job_unavailable")
+            )
+    return tuple(merged.values())

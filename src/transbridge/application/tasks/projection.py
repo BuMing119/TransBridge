@@ -87,7 +87,9 @@ class TaskProjectionPort(Protocol):
 
     def controls(self, ref: JobRef, actor: OwnerRef) -> ControlProjection: ...
 
-    def control(self, ref: JobRef, actor: OwnerRef, action: str) -> JobSnapshot: ...
+    def control(
+        self, ref: JobRef, actor: OwnerRef, action: str, *, expected_revision: int | None = None
+    ) -> ControlActionResult: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +106,11 @@ class RuntimeTaskProjection:
 
     def __init__(self, runtime: TaskRuntime) -> None:
         self._runtime = runtime
+        self._request_control = None
+
+    def set_request_control(self, callback) -> None:
+        """Bind the application request admission boundary for monitor controls."""
+        self._request_control = callback
 
     def list(self, actor: OwnerRef) -> tuple[JobSnapshot, ...]:
         return self._runtime.list(actor)
@@ -114,17 +121,22 @@ class RuntimeTaskProjection:
     def controls(self, ref: JobRef, actor: OwnerRef) -> ControlProjection:
         return self._runtime.controls(ref, actor)
 
-    def control(self, ref: JobRef, actor: OwnerRef, action: str) -> ControlActionResult:
+    def control(
+        self, ref: JobRef, actor: OwnerRef, action: str, *, expected_revision: int | None = None
+    ) -> ControlActionResult:
         """Route a monitor button to the runtime; cleanup is view-local only."""
         if action not in MONITOR_ACTIONS:
             return ControlActionResult(None, action, False, "unknown_action", "unsupported monitor action")
         try:
-            if action == "pause":
-                snapshot = self._runtime.pause(ref, actor)
+            revision = {} if expected_revision is None else {"expected_revision": expected_revision}
+            if self._request_control is not None and action in {"pause", "resume", "cancel"}:
+                snapshot = self._request_control(ref, actor, action, **revision)
+            elif action == "pause":
+                snapshot = self._runtime.pause(ref, actor, **revision)
             elif action == "resume":
-                snapshot = self._runtime.resume(ref, actor)
+                snapshot = self._runtime.resume(ref, actor, **revision)
             elif action == "cancel":
-                snapshot = self._runtime.cancel(ref, actor)
+                snapshot = self._runtime.cancel(ref, actor, **revision)
             else:  # cleanup / cleanup_completed are display-only
                 return ControlActionResult(None, action, True, "view_local", "cleanup is a view-local action")
         except TransitionError as exc:

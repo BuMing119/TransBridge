@@ -22,12 +22,24 @@ class TaskRuntimeBridge:
     after the legacy caller has installed its closure and captured its input.
     """
 
-    def __init__(self, runtime, ref, owner, handle, updated: Callable[[], None]) -> None:
+    def __init__(
+        self,
+        runtime,
+        ref,
+        owner,
+        handle,
+        updated: Callable[[], None],
+        *,
+        assistant_gate=None,
+        assistant_effect_id: str = "",
+    ) -> None:
         self.runtime = runtime
         self.ref = ref
         self.owner = owner
         self.handle = handle
         self._updated = updated
+        self.assistant_gate = assistant_gate
+        self.assistant_effect_id = assistant_effect_id
         self._scheduled: Callable[[], None] | None = None
         self._target: Callable[[], None] | None = None
         self._projection_lock = threading.Lock()
@@ -85,7 +97,15 @@ class TaskRuntimeBridge:
                 if exc.current is JobState.PAUSED:
                     continue
                 return CommitDecision(False, exc.code)
-            decision = TaskRuntimeCommitGuard(self.runtime, permit).commit(run_id, mutation)
+            runtime_guard = TaskRuntimeCommitGuard(self.runtime, permit)
+            if self.assistant_gate is not None and self.assistant_effect_id:
+                decision = self.assistant_gate.commit(
+                    self.assistant_effect_id,
+                    mutation,
+                    runtime_commit=lambda action: runtime_guard.commit(run_id, action),
+                )
+            else:
+                decision = runtime_guard.commit(run_id, mutation)
             if decision.accepted:
                 return decision
             # Progress or pause can invalidate a permit before the mutation begins.
@@ -110,6 +130,8 @@ class TaskRuntimeBridge:
     def start(self, target: Callable[[], None], finished: Callable[[], None]) -> threading.Thread:
         if self._scheduled is None or self.handle._thread is not None:
             raise RuntimeError("task worker is not prepared or was already started")
+        if self.assistant_gate is not None:
+            self.assistant_gate.validate_start(self.assistant_effect_id)
         self._target = target
 
         def run() -> None:
@@ -150,5 +172,11 @@ def task_metadata(ctx, metadata: dict) -> dict:
         value = getattr(context, name, None) or getattr(ctx, name, None)
         if value:
             values[name] = str(getattr(value, "value", value))
+    parent_task_id = dict(getattr(context, "metadata", ()) or ()).get("parent_task_id")
+    if parent_task_id:
+        values["parent_task_id"] = str(parent_task_id)
     values["entrypoint"] = "smart-assistant"
+    gate = getattr(ctx, "assistant_gate", None)
+    if gate is not None:
+        values.update(gate.metadata(getattr(ctx, "assistant_effect_id", "")))
     return values

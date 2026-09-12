@@ -90,6 +90,16 @@ class SessionAggregate:
             self._notify(projected)
             return projected
 
+    def accept_persisted(self, snapshot: SessionSnapshot, *, expected_revision: int) -> None:
+        """Accept the exact durable revision after a command, including a conflict reload."""
+        with self._lock:
+            if snapshot.ref != self.ref or snapshot.owner != self.owner:
+                raise ValueError("persisted Session snapshot changes aggregate identity or owner")
+            if self.revision != expected_revision or snapshot.revision <= expected_revision:
+                raise ValueError("Session aggregate revision conflict")
+            self._snapshot = snapshot
+            self._notify(snapshot)
+
     def apply_runtime_event(self, event: SessionRuntimeEvent) -> EventApplication:
         with self._lock:
             mismatch = self._event_mismatch(event)

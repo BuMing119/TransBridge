@@ -98,6 +98,8 @@ def _is_exposable(spec: ToolSpec | None) -> bool:
 
 def build_native_tool_definitions(
     loaded_namespaces: Iterable[str] | str | None = (),
+    *,
+    request_stage: str | None = None,
 ) -> tuple[LlmToolDefinition, ...]:
     """Return core/control tools plus tools from namespaces loaded in this session.
 
@@ -106,6 +108,10 @@ def build_native_tool_definitions(
     unavailable/deprecated tools are ignored.
     """
 
+    if request_stage == "routing":
+        from .request_protocol import routing_definition
+
+        return (routing_definition(),)
     definitions: list[LlmToolDefinition] = []
     seen: set[str] = set()
 
@@ -125,12 +131,24 @@ def build_native_tool_definitions(
         for spec in ToolRegistry.list_namespace(namespace):
             add_spec(spec)
 
+    if request_stage == "execution":
+        from .request_protocol import coverage_definition, retrieval_definition
+
+        definitions.extend((coverage_definition(), retrieval_definition()))
     return tuple(definitions)
 
 
-def turn_to_parsed_response(turn: LlmTurn) -> dict:
+def turn_to_parsed_response(turn: LlmTurn, *, request_stage: str | None = None) -> dict:
     """Map one native assistant turn onto the existing controller dispatch shape."""
 
+    from .request_protocol import CONTROL_TOOLS, parse_control_turn
+
+    if request_stage is not None:
+        control = parse_control_turn(turn, request_stage)
+        if control is not None:
+            return control
+    elif any(call.name in CONTROL_TOOLS for call in turn.tool_calls):
+        raise LlmToolProtocolError("Request control requires an admitted request stage")
     plan_calls = [call for call in turn.tool_calls if call.name == PROPOSE_PLAN_TOOL_NAME]
     if plan_calls and len(turn.tool_calls) != 1:
         raise LlmToolProtocolError("propose_plan cannot be mixed with business tool calls")
@@ -181,6 +199,8 @@ def turn_to_parsed_response(turn: LlmTurn) -> dict:
             raise LlmToolProtocolError(f"propose_plan step {index + 1} has an invalid id")
         if not isinstance(tool_name, str) or not tool_name:
             raise LlmToolProtocolError(f"propose_plan step {index + 1} has an invalid tool name")
+        if tool_name in CONTROL_TOOLS:
+            raise LlmToolProtocolError("Request control cannot be embedded in a business plan")
         if not isinstance(args, dict):
             raise LlmToolProtocolError(f"propose_plan step {index + 1} args must be an object")
         if not isinstance(depends_on, list) or any(

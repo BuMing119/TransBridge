@@ -13,7 +13,7 @@ from transbridge.application.contracts import DomainError, ErrorCategory
 from transbridge.application.projects.models import LifecycleProjectUpdate, LifecycleSave
 from transbridge.persistence.v2.ids import ProjectId, ProjectRef, VariantId, VariantRef
 from transbridge.persistence.v2.lifecycle_transactions import ProjectLifecycleTransactionStore
-from transbridge.persistence.v2.models import AtomicWriteError, LoadedRecord, ProjectDto, SchemaEnvelope
+from transbridge.persistence.v2.models import SCHEMA_VERSION, AtomicWriteError, LoadedRecord, ProjectDto, SchemaEnvelope
 from transbridge.persistence.v2.repository import (
     ProjectRepository,
     VariantRepository,
@@ -32,7 +32,7 @@ VARIANT_REF = VariantRef(VariantId("main"), PROJECT_REF.identity)
 def _project(revision: int) -> ProjectDto:
     return ProjectDto(
         SchemaEnvelope(
-            3,
+            SCHEMA_VERSION,
             PROJECT_REF.kind,
             PROJECT_REF.identity.value,
             revision,

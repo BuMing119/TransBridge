@@ -20,7 +20,9 @@ from .message_list_view import MessageListView
 from .plan_card import PlanCard
 from .react_execution_binding import ReactExecutionBinding
 from .session_binding import ConversationBinding, SessionBinding
+from .session_runtime import SessionRuntimeBinding
 from .streaming_presenter import StreamingPresenter
+from .submission_binding import SubmissionBinding
 from .task_binding import TaskBinding
 from .theme_support import SmartAssistantTheme
 from .tool_card import BatchToolCard, ToolCard
@@ -95,6 +97,17 @@ class ChatWidget(QWidget):
         self._refresh_sessions_port = lambda: None
         self._save_session_port = None
         self._pending_session_data = None
+        self._request_context_port = lambda: (
+            getattr(ctx, "request_context", None) or getattr(ctx, "runtime_context", None)
+        )
+        self._session_runtime = SessionRuntimeBinding(
+            context=lambda: self._request_context_port(),
+            session_id=lambda: self._active_session_id_port(),
+            fallback_owner=f"gui:{id(self)}",
+        )
+        self._submission: SubmissionBinding | None = None
+        self._assistant_request_service = None
+        self._request_binding = None
 
         # 延后 UI 构建：__init__ 累积的 Python→C++ 调用在 Windows 1MB C 栈
         # 上可能溢出 (0xC00000FD)。通过 QTimer.singleShot 将 QObject 密集的
@@ -197,6 +210,8 @@ class ChatWidget(QWidget):
         self._shutdown_complete = True
         # 1/ 先关闭 UI-owned bindings/presenters，迟到事件从此被忽略。
         for attr in (
+            "_request_binding",
+            "_submission",
             "_confirmation_view",
             "_plan_execution",
             "_react_execution",
@@ -259,12 +274,22 @@ class ChatWidget(QWidget):
 
     def recovery_snapshot(self) -> tuple[list[dict], dict]:
         """Return authoritative conversation and controller recovery data."""
-        backend = list(self._conversation.to_dict().get("messages", []))
+        backend = (
+            self._conversation.get_transcript()
+            if self._request_binding is not None
+            else list(self._conversation.to_dict().get("messages", []))
+        )
         controller = self._controller.to_recovery_snapshot()
         return backend, controller
 
+    def lifecycle_jobs(self):
+        return self._session_runtime.jobs()
+
     def _restore_session_controller(self, snapshot) -> None:
-        restored = self._controller.restore_recovery_snapshot(snapshot)
+        if snapshot.active_task_id and self._task_binding is not None:
+            self._task_binding.start()
+        snapshot, verified = self._session_runtime.reconcile_controller(snapshot)
+        restored = self._controller.restore_recovery_snapshot(snapshot, task_verified=verified)
         self._auto_mode = restored.auto_mode
         self._orchestrator.auto_mode = restored.auto_mode
         self._orchestrator.react_depth = restored.react_depth
@@ -292,18 +317,10 @@ class ChatWidget(QWidget):
         封装了完整发送流程：添加用户气泡 → 写入对话历史 → 触发 LLM 轮次。
         与 _on_send() 不同，此方法直接接受文本参数，不依赖 _input 控件状态。
         """
-        text = text.strip()
-        if not text:
-            return
-        self._orchestrator.cancel_current_round()
-        if self._message_list is not None:
-            self._message_list.add_bubble(MessageBubble(text, "user", theme=self._presentation_theme()))
-        self._conversation.add_user(text)
-        # m22: LLM 推理在后台 QThread 中异步执行，本方法立即返回
-        QTimer.singleShot(
-            0,
-            lambda: self._conversation_binding.start_round(text) if self._conversation_binding is not None else None,
-        )
+        if self._request_binding is not None:
+            self._request_binding.submit(text)
+        elif self._submission is not None:
+            self._submission.submit(text)
 
     def add_user_bubble(self, text: str) -> None:
         """Add a user bubble through the stable public facade."""
@@ -380,27 +397,14 @@ class ChatWidget(QWidget):
                 self._input_actions.toggle_observability()
             return
 
-        # 中断正在进行的流式输出
-        self._orchestrator.cancel_current_round()
-        if self._plan_execution is not None:
-            self._plan_execution.abort()
-        if self._react_execution is not None:
-            self._react_execution.abort()
-        # Native tool calls must be closed before the next user message is appended.
-        self._controller.handle_abort()
-
-        if self._message_list is not None:
-            self._message_list.add_bubble(MessageBubble(text, "user", theme=self._presentation_theme()))
         self._input.clear()
-        self._conversation.add_user(text)
-
-        # M18: 延迟到事件循环执行检索+LLM，避免主线程同步检索阻塞 UI
-        QTimer.singleShot(
-            0,
-            lambda: self._conversation_binding.start_round(text) if self._conversation_binding is not None else None,
-        )
+        self.send_user_message(text)
 
     def _clear_conversation(self) -> None:
+        if self._submission is not None:
+            self._submission.invalidate()
+        if self._confirmation_view is not None:
+            self._confirmation_view.invalidate_pending()
         self._orchestrator.cancel_current_round()
         if self._plan_execution is not None:
             self._plan_execution.abort()
@@ -455,11 +459,16 @@ class ChatWidget(QWidget):
         active_session_id,
         refresh_sessions,
         save_session=None,
+        request_context=None,
+        assistant_requests=None,
     ) -> None:
         """Inject Panel session ports without parent-chain/private lookup."""
         self._active_session_id_port = active_session_id
         self._refresh_sessions_port = refresh_sessions
         self._save_session_port = save_session
+        self._assistant_request_service = assistant_requests
+        if request_context is not None:
+            self._request_context_port = request_context
         if self._session_binding is not None:
             self._session_binding.configure(
                 self._session_mgr,
@@ -490,6 +499,8 @@ class ChatWidget(QWidget):
         """加载会话数据：清空当前对话并渲染历史消息。"""
         if getattr(self, "_shutdown_complete", False):
             return
+        if self._submission is not None:
+            self._submission.invalidate()
         if self._session_binding is None or self._input is None:
             self._pending_session_data = dict(data)
             return
@@ -497,6 +508,8 @@ class ChatWidget(QWidget):
         if self._streaming_presenter is not None:
             self._streaming_presenter.advance_generation()
         self._session_binding.load(data)
+        if self._request_binding is not None:
+            self._request_binding.load(data)
 
     def load_history(self, messages: list[dict]) -> None:
         """渲染历史消息列表为 MessageBubble。若 UI 尚未就绪则延迟重试。"""

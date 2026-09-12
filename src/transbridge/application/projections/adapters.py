@@ -61,6 +61,8 @@ def session_projection(
         "messages": list(snapshot.visible_messages()),
         "backend_history": list(snapshot.backend_messages()),
         "backend_summary": snapshot.backend_summary,
+        "assistant_state": snapshot.assistant_data(),
+        "transcript_manifest": snapshot.transcript_data(),
         "controller": snapshot.controller.to_dict(),
         "project_id": None if snapshot.project_id is None else snapshot.project_id.value,
         "variant_id": None if snapshot.variant_id is None else snapshot.variant_id.value,

@@ -53,6 +53,7 @@ class LLMConfig:
     llm_max_retries: int = 2
     max_tokens_per_batch: int = 2000
     max_output_tokens: int = 0
+    assistant_context_window: int = 32768
     temperature: float = 0.0
     term_priority: list[str] = field(default_factory=lambda: ["dynamic", "paratranz", "json", "csv", "excel"])
     local_json_path: str = ""
@@ -110,6 +111,7 @@ class LLMConfig:
         ("llm_max_retries", "llm_max_retries", "int"),
         ("max_tokens_per_batch", "max_tokens_per_batch", "int"),
         ("max_output_tokens", "max_output_tokens", "int"),
+        ("assistant_context_window", "assistant_context_window", "int"),
         ("temperature", "temperature", "float"),
         ("local_json_path", "local_json_path", "str"),
         ("local_csv_path", "local_csv_path", "str"),

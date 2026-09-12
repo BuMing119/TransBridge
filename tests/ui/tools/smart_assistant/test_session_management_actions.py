@@ -27,6 +27,9 @@ class _Chat(QWidget):
     def recovery_snapshot(self):
         return list(self.messages), ControllerSnapshot()
 
+    def lifecycle_jobs(self):
+        return ()
+
     def load_session(self, values):
         self.messages = list(values.get("messages", []))
         self.loads.append(list(self.messages))
