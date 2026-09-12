@@ -5,6 +5,7 @@
 - 需求：[FR30](../requirements.md#fr30智能助手用户请求生命周期与长会话上下文)
 - Plan：[assistant-user-request-lifecycle](../../plans/assistant-user-request-lifecycle/plan.md)
 - 关联：[ADR-008](008-smart-assistant-code-layering.md)、[ADR-018](018-project-session-persistence-v2.md)、[ADR-019](019-unified-task-runtime.md)、[ADR-031](031-native-llm-function-calling.md)。
+- 后续实现：[ADR-041](041-assistant-context-compaction.md) 已替代决策 7 的生产逐轮选材与摘录刷新策略，保留本 ADR 的目标、计划、授权及执行规则；本 ADR 对旧上下文策略的记录作为历史基线。
 - 关系：补充 ADR-018 的 Session 内容与应用层写入边界；保留 ADR-019 的任务终态/提交权威。SessionController 对外继续兼容，定位收敛为前台轮次控制，不再承担整个用户目标是否完成的判断。没有修改既有已接受 ADR。
 
 ## 背景与当前事实

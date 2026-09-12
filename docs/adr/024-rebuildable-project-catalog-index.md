@@ -2,14 +2,15 @@
 
 - **状态**：已接受并实现
 - **日期**：2026-08-25
-- **对应需求**：FR19.8、NFR2.1、NFR4.1
+- **修订**：2026-09-12，接受具有显式迁移链的旧版 Project 只读投影；正式升级仍归属 Project 激活事务
+- **对应需求**：FR19.7～FR19.8、NFR2.1、NFR4.1
 - **关联 ADR**：ADR-018、ADR-022
 
 ## 背景与约束
 
-V2 Project 记录是工程本体，`project-catalog.json` 只保存工程 ID、显示名称和名称唯一性键，供创建查重与开始中心目录投影使用。现有创建事务会写 catalog，但普通打开和活动工程恢复只更新 `active-project.json`。因此，catalog 功能引入前已存在的 Project，或用户误删 catalog 后，可能出现“合法 Project 仍在、目录索引缺失”的兼容形态。
+版本化 Project 记录是工程本体，`project-catalog.json` 只保存工程 ID、显示名称和名称唯一性键，供创建查重与开始中心目录投影使用。现有创建事务会写 catalog，但普通打开和活动工程恢复只更新 `active-project.json`。因此，catalog 功能引入前已存在的 Project，或用户误删 catalog 后，可能出现“合法 Project 仍在、目录索引缺失”的兼容形态；提升当前 schema 后，仍处于上一合法 schema 的 Project 也不得被误报为损坏。
 
-当前 `V2ProjectCatalog` 是明确的只读查询边界。它直接解析和验证 Project 记录，避免调用可能迁移、备份或隔离数据的 `ProjectRepository.load()`。ADR-018 又要求损坏或不可迁移数据保留现场并生成诊断，不得当作空数据覆盖。修复机制必须同时保持这两项约束。
+当前 `V2ProjectCatalog` 是明确的只读查询边界。它直接解析 Project 记录；旧版记录只调用确定性的 `migrate_to_current()` 形成内存文档，再按当前合同验证，不调用可能备份、写回或隔离数据的 `ProjectRepository.load()`。ADR-018 又要求损坏或不可迁移数据保留现场并生成诊断，不得当作空数据覆盖。正式打开/激活则继续走 repository load，在备份和原子替换边界中发布迁移。修复机制必须同时保持这些约束。
 
 桌面组合根在返回 Persistence V2 服务前已经拥有 root、文件系统 adapter 和 `ProjectRepository`，此时 UI、生命周期命令和目录查询尚未暴露，是执行一次启动维护的最小并发窗口。
 
@@ -38,14 +39,14 @@ V2 Project 记录是工程本体，`project-catalog.json` 只保存工程 ID、�
 
 1. canonical real path 仍位于授权 root；
 2. strict UTF-8 JSON 可解析；
-3. `schema_version` 等于当前 V2，`entity_type` 为 Project；
+3. `schema_version` 等于当前版本，或存在从该版本到当前版本的完整显式迁移链；带 envelope 的记录须声明 `entity_type` 为 Project；
 4. 内部 ID 可构造 `ProjectId`；
 5. 候选路径与 `ProjectRepository.path_for(ProjectRef(id))` 完全一致；
-6. `validate_v2(document, ref)` 通过全部 schema、身份和引用语义；
+6. 当前文档或内存迁移结果通过 `validate_v2(document, ref)` 的全部 schema、身份和引用语义；
 7. 显示名称经 trim 后长度为 1～80，且不包含 CR、LF、TAB；
 8. `name_key = trimmed_name.casefold()` 在全部合法候选中唯一。
 
-单个损坏、不可读、V1、未来 schema、错误 entity type、ID/路径不匹配或路径逃逸候选只产生安全诊断并被跳过，不迁移、不隔离、不改写源记录。两个合法记录若产生相同 `name_key`，整次自动重建停止，不擅自重命名、覆盖或挑选其中一个。
+单个损坏、不可读、缺少 canonical 身份且无法安全绑定的 legacy V1、未来 schema、没有完整迁移路径、错误 entity type、ID/路径不匹配或路径逃逸候选只产生安全诊断并被跳过，不隔离、不改写源记录。具有完整迁移路径的旧版候选只在内存迁移后验证；两个合法记录若产生相同 `name_key`，整次自动重建停止，不擅自重命名、覆盖或挑选其中一个。
 
 ### 4. 确定性 catalog 与原子发布
 
@@ -65,7 +66,7 @@ V2 Project 记录是工程本体，`project-catalog.json` 只保存工程 ID、�
 
 条目按 Project ID 稳定序列化。将 lifecycle 内现有的 root-confined 原子 JSON 写入能力抽成共享持久化组件，供 provisioning 和 repair 复用：写 staging、复读字节校验、写前再次确认 catalog 仍缺失、原子 replace、发布后按 catalog 合同复读验证、尽力清理本次 staging。
 
-修复只允许发布 catalog；不得修改 Project、Variant、active pointer、workspace、baseline 或 session 数据。任何写入/校验失败后 catalog 保持缺失或是完整的新文件，下次启动可重试。
+修复只允许发布 catalog；不得把内存迁移结果写回 Project，也不得修改 Variant、active pointer、workspace、baseline 或 session 数据。任何写入/校验失败后 catalog 保持缺失或是完整的新文件，下次启动可重试。Project/Variant 的正式升级只在用户实际打开并激活工程时由 ADR-018 repository 事务完成。
 
 ### 5. 可观测结果
 
@@ -92,6 +93,7 @@ V2 Project 记录是工程本体，`project-catalog.json` 只保存工程 ID、�
 ## 影响与风险
 
 - 正面：误删 catalog 后所有合法本地工程可在下次启动自动恢复；Project 本体和活动指针不被修改。
+- 正面：schema 提升后，仍有完整迁移路径的旧版工程保持可发现，并在实际打开时安全升级，不会因目录投影的版本硬编码被误报为损坏。
 - 正面：查询只读性、损坏现场保护、路径约束和 schema 验证保持不变。
 - 成本：文件系统 port 增加目录枚举；原子根文档能力需要从 lifecycle 私有实现抽取为共享组件。
 - 风险：大量 Project 文件会增加一次启动扫描，但只在 catalog 缺失时发生，且仅枚举顶层小型 Project 元数据，不进入大型 Variant 数据。
@@ -99,6 +101,6 @@ V2 Project 记录是工程本体，`project-catalog.json` 只保存工程 ID、�
 
 ## 迁移与回退
 
-无需修改 Project、Variant、active pointer 或 catalog schema。部署后首次启动若 catalog 缺失，将从合法 V2 Project 记录生成 schema-1 catalog；已存在 catalog 完全不变。
+无需预先批量修改 Project、Variant、active pointer 或 catalog schema。部署后首次启动若 catalog 缺失，将从合法当前 Project 及可在内存迁移验证的旧版 Project 记录生成 schema-1 catalog；已存在 catalog 完全不变。旧版 Project/Variant 在目录查询和准备阶段保持原字节，实际激活时才先保留版本化备份，再原子发布当前 schema。
 
 回退代码不会破坏已生成的 catalog，因为它与现有 provisioning 写出的格式一致。若修复发布失败，删除本功能自己的 staging 残留并保持 catalog 缺失；现有活动工程只读兜底继续可用。若生成后的 catalog 被人工判定有误，可在应用关闭时移走该派生索引，保留所有 Project 本体，再使用显式维护流程重建。

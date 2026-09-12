@@ -22,6 +22,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 
 | 编号 | 标题 | 状态 |
 |------|------|------|
+| [ADR-041](adr/041-assistant-context-compaction.md) | 助手稳定上下文与按预算压缩；保留目标与计划系统；[实现增量](changelogs/assistant-context-compaction/story-01-to-09-implementation/2026-09-12-001-稳定上下文与不可变摘要链实现.md) | 本地实现与离线验证完成；真实收益待评测 |
 | [ADR-001](adr/001-unified-translation-entry.md) | TranslationEntry 作为统一翻译数据模型 | ✅ 历史与 V2 身份增量已接受 |
 | [ADR-002](adr/002-collection-central-data-hub.md) | Collection 数据中枢与双索引设计 | ✅ 历史与聚合增量已接受 |
 | [ADR-003](adr/003-three-round-translation-strategy.md) | 三轮 AI 翻译策略 | ✅ 已接受 |
