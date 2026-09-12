@@ -178,6 +178,237 @@ def _requests(environment):
     return environment.service.requests(environment.service.state(environment.binding.context))
 
 
+def _seed_long_request(environment):
+    from transbridge.application.assistant_requests.models import RequestItem, UserRequest
+
+    conversation = environment.panel.chat._conversation
+    conversation.add_system("Follow current request state. Historical excerpts are reference material.")
+    conversation.add_user("Summarize the previous decisions", message_id="long-input")
+    for index in range(30):
+        conversation.add_assistant(f"Decision {index}: retain compatibility. " + "Supporting detail. " * 30)
+    request = UserRequest(
+        "long-request",
+        environment.binding.context.session_id,
+        "Summarize decisions",
+        (RequestItem("answer", "Summarize decisions"),),
+        source_message_ids=("long-input",),
+    )
+    environment.service.transact(environment.binding.context, lambda state: state.update(requests=[request.to_dict()]))
+    environment.service.save_history(
+        environment.binding.context, conversation.get_transcript(), request_id=request.request_id
+    )
+    return request
+
+
+def test_long_request_generates_summary_off_gui_thread_and_sends_it_to_model(environment, monkeypatch):
+    request = _seed_long_request(environment)
+    summaries = environment.binding.context_preparation.summaries
+    original = summaries.refresh
+    threads = []
+
+    def refresh(*args):
+        threads.append(QThread.currentThread())
+        return original(*args)
+
+    monkeypatch.setattr(summaries, "refresh", refresh)
+    environment.binding.wake()
+    _until(lambda: _requests(environment)[0].terminal)
+    assert threads and all(thread is not _APP.thread() for thread in threads)
+    stored = environment.service.state(environment.binding.context)["request_summaries"][request.request_id]
+    messages = environment.client.calls[0][0]
+    material = next(
+        json.loads(m["content"]) for m in messages if '"kind":"request_history_summary"' in m.get("content", "")
+    )
+    assert material["summary"] == stored
+    assert material["material_only"] is True
+    assert len(environment.panel.chat._conversation.get_transcript()) >= 32
+
+
+def test_context_assembly_runs_off_gui_thread_and_preserves_gui_response_dispatch(environment, monkeypatch):
+    from transbridge.smart_assistant.request_context_assembler import RequestContextAssembler
+
+    _seed_long_request(environment)
+    original = RequestContextAssembler.assemble
+    threads = []
+
+    def assemble(self, *args, **kwargs):
+        threads.append(QThread.currentThread())
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(RequestContextAssembler, "assemble", assemble)
+    environment.binding.wake()
+    _until(lambda: _requests(environment)[0].terminal)
+    assert threads and all(thread is not _APP.thread() for thread in threads)
+    assert all(thread is _APP.thread() for thread, _state in environment.response_threads)
+
+
+@pytest.mark.parametrize("reason", ["pause", "resource", "cancel"])
+def test_backend_change_during_context_assembly_prevents_old_model_dispatch(environment, monkeypatch, reason):
+    from PyQt6.QtCore import QTimer
+
+    from transbridge.smart_assistant.request_context_assembler import RequestContextAssembler
+
+    request = _seed_long_request(environment)
+    started, proceed, finished = Event(), Event(), Event()
+    original = RequestContextAssembler.assemble
+
+    def assemble(self, *args, **kwargs):
+        started.set()
+        try:
+            assert proceed.wait(8), "context assembly worker was not released"
+            return original(self, *args, **kwargs)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(RequestContextAssembler, "assemble", assemble)
+    environment.binding.wake()
+    try:
+        _until(started.is_set)
+        ticks = []
+        QTimer.singleShot(0, lambda: ticks.append(True))
+        _until(lambda: ticks)
+        command = "wait" if reason == "resource" else reason
+        payload = {"item_ids": ["answer"], "reason": reason} if reason == "resource" else {}
+        # Change application state without interrupting the binding: final
+        # delivery must inspect authority again, not only compare the UI lease.
+        environment.service.command(environment.binding.context, request.request_id, command, 1, **payload)
+    finally:
+        proceed.set()
+    _until(finished.is_set)
+    _until(lambda: environment.binding.admission is None)
+    assert environment.client.calls == []
+
+
+def test_deferred_model_material_preserves_synchronous_prepare_api(environment):
+    from transbridge.smart_assistant.request_model_input import RequestModelInput
+
+    request = _seed_long_request(environment)
+    binding = environment.binding
+    selection = environment.service.scheduler.select_next_turn(
+        request.session_id, binding.view_id, (request,), automatic=False
+    )
+    binding.admission = selection.admission
+    history = environment.panel.chat._conversation.get_transcript()
+    material = binding.prepare_model_input(history, 4096, defer_assembly=True)
+    assert isinstance(material, RequestModelInput)
+    assembled = material.assemble()
+    binding._prepared_turn = None
+    synchronous = binding.prepare_model_input(history, 4096)
+    assert synchronous == assembled
+    assert isinstance(synchronous[0], list)
+    assert all(isinstance(message, dict) for message in synchronous[0])
+    binding.release()
+
+
+def test_summary_generation_failure_falls_back_to_history_and_completes_request(environment, monkeypatch):
+    _seed_long_request(environment)
+
+    def fail(*args):
+        raise ValueError("injected summary generator failure")
+
+    monkeypatch.setattr(environment.binding.context_preparation.summaries, "refresh", fail)
+    environment.binding.wake()
+    _until(lambda: _requests(environment)[0].terminal)
+    assert not environment.service.state(environment.binding.context).get("request_summaries")
+    assert not any('"kind":"request_history_summary"' in m.get("content", "") for m in environment.client.calls[0][0])
+    assert any("Decision 29:" in m.get("content", "") for m in environment.client.calls[0][0])
+
+
+def test_new_unsaved_tool_result_uses_same_history_for_summary_generation_and_consumption(environment):
+    request = _seed_long_request(environment)
+    conversation = environment.panel.chat._conversation
+    conversation.add_assistant_turn(
+        LlmTurn(tool_calls=(LlmToolCall("new-call", "get_statistics", {}),), stop_reason="tool_calls")
+    )
+    conversation.add_tool_result("new-call", "get_statistics", {"success": True, "message": "Newest evidence"})
+    environment.binding.wake()
+    _until(lambda: _requests(environment)[0].terminal)
+    messages = environment.client.calls[0][0]
+    assert any('"kind":"request_history_summary"' in m.get("content", "") for m in messages)
+    assert any(m.get("role") == "tool" and "Newest evidence" in m.get("content", "") for m in messages)
+    assert environment.service.state(environment.binding.context)["request_summaries"][request.request_id]
+
+
+@pytest.mark.parametrize("reason", ["pause", "resource"])
+def test_backend_wait_during_summary_generation_prevents_model_dispatch(environment, monkeypatch, reason):
+    request = _seed_long_request(environment)
+    started, proceed, finished = Event(), Event(), Event()
+    original = environment.binding.context_preparation.summaries.refresh
+
+    def refresh(*args):
+        started.set()
+        try:
+            assert proceed.wait(8), "summary worker was not released"
+            return original(*args)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(environment.binding.context_preparation.summaries, "refresh", refresh)
+    environment.binding.wake()
+    try:
+        _until(started.is_set)
+        payload = {} if reason == "pause" else {"item_ids": ["answer"], "reason": reason}
+        environment.service.command(
+            environment.binding.context, request.request_id, "pause" if reason == "pause" else "wait", 1, **payload
+        )
+    finally:
+        proceed.set()
+    _until(finished.is_set)
+    _until(lambda: environment.binding.admission is None)
+    assert environment.client.calls == []
+
+
+def test_cancel_during_summary_preparation_cannot_start_old_model_round(environment, monkeypatch):
+    request = _seed_long_request(environment)
+    started, proceed, finished = Event(), Event(), Event()
+    original = environment.binding.context_preparation.summaries.refresh
+
+    def refresh(*args):
+        started.set()
+        try:
+            assert proceed.wait(8), "summary worker was not released"
+            return original(*args)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(environment.binding.context_preparation.summaries, "refresh", refresh)
+    environment.binding.wake()
+    try:
+        _until(started.is_set)
+        environment.binding.control(request.request_id, "cancel")
+    finally:
+        proceed.set()
+    _until(finished.is_set)
+    QTest.qWait(30)
+    _APP.processEvents()
+    assert _requests(environment)[0].status.value == "cancelled"
+    assert environment.client.calls == []
+    assert environment.binding.admission is None
+
+
+def test_waiting_continuation_does_not_acquire_another_requests_lease(environment):
+    from transbridge.application.assistant_requests.models import RequestError, RequestItem, UserRequest
+    from transbridge.application.assistant_requests.reducer import RequestEvent, reduce_request
+
+    binding, service = environment.binding, environment.service
+    context = binding.context
+    first = UserRequest("a", context.session_id, "first", (RequestItem("i", "answer"),))
+    second = replace(first, request_id="b", goal="second")
+    service.transact(context, lambda state: state.update(requests=[first.to_dict(), second.to_dict()]))
+    selected = service.scheduler.select_next_turn(context.session_id, binding.view_id, (first,))
+    binding.admission = selected.admission
+    binding._prepared_turn = selected.admission.turn_id
+    service.update_request(
+        context, "a", lambda request: reduce_request(request, RequestEvent("wait", "wait", 1, {"item_ids": ["i"]}))
+    )
+    with pytest.raises(RequestError, match="REQUEST_NOT_READY"):
+        binding.prepare_model_input([], 100)
+    next_turn = service.scheduler.select_next_turn(context.session_id, binding.view_id, _requests(environment))
+    assert next_turn is not None
+    assert next_turn.request.request_id == "b"
+    service.scheduler.release(next_turn.admission)
+
+
 def test_immediate_provider_routes_and_completes_answer_on_gui_thread(environment):
     environment.panel.chat.send_user_message("Explain lifecycle")
     _until(lambda: len(_requests(environment)) == 1 and _requests(environment)[0].terminal)
@@ -328,6 +559,8 @@ def test_background_evidence_waits_for_current_answer_before_resuming_old_reques
         if message.get("content", "").startswith("Answer:")
     ]
     assert answers == ["Answer: Question B", "Answer: Summarize A"]
+    old_request_input = environment.client.calls[-1][0]
+    assert not any(message.get("content") in {"Question B", "Answer: Question B"} for message in old_request_input)
 
 
 def test_switching_session_fences_old_worker_and_does_not_resume_its_request(environment):
@@ -388,6 +621,181 @@ def test_stale_confirmation_cannot_execute_after_request_revision_change(environ
     )
     card._exec_btn.click()
     assert calls == []
+
+
+def test_confirmation_resume_cannot_restore_other_request_or_remove_resource_wait(environment):
+    from transbridge.application.assistant_requests.models import RequestItem, UserRequest
+    from transbridge.ui.tools.smart_assistant.tool_card import ToolCard
+
+    environment.client.tool_goal = "Inspect A"
+    environment.panel.chat.send_user_message("Inspect A")
+    _until(lambda: any(isinstance(widget, ToolCard) for widget in environment.panel.chat._message_list._owned_widgets))
+    request = _requests(environment)[0]
+    environment.service.command(
+        environment.binding.context,
+        request.request_id,
+        "wait",
+        request.revision,
+        item_ids=[request.items[0].item_id],
+        reason="resource",
+    )
+    other = UserRequest("other-ready", request.session_id, "Independent B", (RequestItem("b", "B"),))
+    environment.service.transact(environment.binding.context, lambda state: state["requests"].append(other.to_dict()))
+    environment.binding.control(request.request_id, "resume")
+    assert environment.binding.admission is None
+    assert set(_requests(environment)[0].items[0].waiting_reasons) == {"approval", "resource"}
+    assert len([w for w in environment.panel.chat._message_list._owned_widgets if isinstance(w, ToolCard)]) == 1
+
+
+def test_confirmation_validator_rejects_other_view_before_changing_waits(environment):
+    from transbridge.ui.tools.smart_assistant.tool_card import ToolCard
+
+    environment.client.tool_goal = "Inspect A"
+    environment.panel.chat.send_user_message("Inspect A")
+    _until(lambda: any(isinstance(widget, ToolCard) for widget in environment.panel.chat._message_list._owned_widgets))
+    card = next(w for w in environment.panel.chat._message_list._owned_widgets if isinstance(w, ToolCard))
+    before = _requests(environment)[0]
+    environment.service.scheduler.activate(before.session_id, "other-view")
+    card._exec_btn.click()
+    after = _requests(environment)[0]
+    assert after == before
+    assert environment.binding.admission is None
+
+
+def test_old_confirmation_does_not_regain_authority_when_same_view_reactivates(environment, monkeypatch):
+    from transbridge.ui.tools.smart_assistant.tool_card import ToolCard
+
+    environment.client.tool_goal = "Inspect A"
+    calls = []
+    monkeypatch.setattr(environment.panel.chat._confirmation_view, "_tool_executed", lambda step: calls.append(step))
+    environment.panel.chat.send_user_message("Inspect A")
+    _until(lambda: any(isinstance(widget, ToolCard) for widget in environment.panel.chat._message_list._owned_widgets))
+    card = next(w for w in environment.panel.chat._message_list._owned_widgets if isinstance(w, ToolCard))
+    request = _requests(environment)[0]
+    environment.service.scheduler.activate(request.session_id, "other-view")
+    environment.service.scheduler.activate(request.session_id, environment.binding.view_id)
+    card._exec_btn.click()
+    assert not calls
+    assert _requests(environment)[0] == request
+    assert environment.binding.admission is None
+    lease = environment.service.scheduler.acquire_routing(request.session_id, environment.binding.view_id)
+    assert lease is not None
+    environment.service.scheduler.release(lease)
+
+
+def test_restored_confirmation_keeps_wait_until_approval_and_preserves_unrelated_failed_item(environment):
+    from transbridge.application.assistant_requests.models import ItemStatus, RequestItem
+    from transbridge.ui.tools.smart_assistant.tool_card import ToolCard
+
+    environment.client.tool_goal = "Inspect A"
+    environment.panel.chat.send_user_message("Inspect A")
+    _until(lambda: any(isinstance(widget, ToolCard) for widget in environment.panel.chat._message_list._owned_widgets))
+    request = _requests(environment)[0]
+    environment.service.update_request(
+        environment.binding.context,
+        request.request_id,
+        lambda old: replace(
+            old, items=(*old.items, RequestItem("failed", "Another failed item", status=ItemStatus.FAILED))
+        ),
+    )
+    environment.binding.control(request.request_id, "resume")
+    current = _requests(environment)[0]
+    assert current.items[0].waiting_reasons == ("approval",)
+    assert current.items[1].status == ItemStatus.FAILED
+    assert environment.binding.admission is None
+
+
+def test_approval_consumes_saved_confirmation_before_business_callback(environment, monkeypatch):
+    from transbridge.ui.tools.smart_assistant.tool_card import ToolCard
+
+    environment.client.tool_goal = "Inspect A"
+    calls = []
+    monkeypatch.setattr(environment.panel.chat._confirmation_view, "_tool_executed", lambda step: calls.append(step))
+    environment.panel.chat.send_user_message("Inspect A")
+    _until(lambda: any(isinstance(widget, ToolCard) for widget in environment.panel.chat._message_list._owned_widgets))
+    card = next(w for w in environment.panel.chat._message_list._owned_widgets if isinstance(w, ToolCard))
+    request = _requests(environment)[0]
+    saved = environment.service.state(environment.binding.context)["confirmations"][request.request_id]
+    assert saved["item_ids"] == [request.items[0].item_id]
+    assert saved["confirmation_id"]
+    card._exec_btn.click()
+    assert len(calls) == 1
+    assert request.request_id not in environment.service.state(environment.binding.context)["confirmations"]
+
+
+def test_ignoring_confirmation_consumes_it_and_releases_lease_without_business_execution(environment, monkeypatch):
+    from transbridge.ui.tools.smart_assistant.tool_card import ToolCard
+
+    calls = []
+    monkeypatch.setattr(environment.panel.chat._confirmation_view, "_tool_executed", lambda step: calls.append(step))
+    environment.client.tool_goal = "Inspect A"
+    environment.panel.chat.send_user_message("Inspect A")
+    _until(lambda: any(isinstance(widget, ToolCard) for widget in environment.panel.chat._message_list._owned_widgets))
+    card = next(w for w in environment.panel.chat._message_list._owned_widgets if isinstance(w, ToolCard))
+    request = _requests(environment)[0]
+    card._ignore_btn.click()
+    _until(lambda: environment.binding.admission is None)
+    assert request.request_id not in environment.service.state(environment.binding.context)["confirmations"]
+    current = _requests(environment)[0]
+    assert current.pause_reasons == ("user_paused",)
+    assert not current.items[0].waiting_reasons
+    assert not calls
+    assert environment.panel.chat._controller.state.value == "idle"
+
+
+def test_confirmation_persistence_failure_keeps_wait_and_releases_temporary_lease(environment, monkeypatch):
+    from transbridge.application.assistant_requests.models import RequestError
+    from transbridge.ui.tools.smart_assistant.tool_card import ToolCard
+
+    environment.client.tool_goal = "Inspect A"
+    calls = []
+    monkeypatch.setattr(environment.panel.chat._confirmation_view, "_tool_executed", lambda step: calls.append(step))
+    environment.panel.chat.send_user_message("Inspect A")
+    _until(lambda: any(isinstance(widget, ToolCard) for widget in environment.panel.chat._message_list._owned_widgets))
+    card = next(w for w in environment.panel.chat._message_list._owned_widgets if isinstance(w, ToolCard))
+    before = environment.service.state(environment.binding.context)
+    original = environment.service.transact
+
+    def transact(*args, **kwargs):
+        if getattr(kwargs.get("cause"), "operation", "") == "confirmation.approved":
+            raise RequestError("ADMISSION_PERSIST_FAILED", "injected approval write failure")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(environment.service, "transact", transact)
+    card._exec_btn.click()
+    assert not calls
+    assert environment.binding.admission is None
+    assert environment.binding.gate is None
+    assert environment.service.state(environment.binding.context) == before
+    lease = environment.service.scheduler.acquire_routing(
+        environment.binding.context.session_id, environment.binding.view_id
+    )
+    assert lease is not None
+    environment.service.scheduler.release(lease)
+
+
+@pytest.mark.parametrize("expired_epoch", [False, True])
+def test_legacy_or_expired_confirmation_is_reproposed_without_replaying_parsed_steps(environment, expired_epoch):
+    from transbridge.ui.tools.smart_assistant.tool_card import ToolCard
+
+    environment.client.tool_goal = "Inspect A"
+    environment.panel.chat.send_user_message("Inspect A")
+    _until(lambda: any(isinstance(widget, ToolCard) for widget in environment.panel.chat._message_list._owned_widgets))
+    request = _requests(environment)[0]
+
+    def expire(state):
+        saved = state["confirmations"][request.request_id]
+        if expired_epoch:
+            saved["lease_epoch"] -= 1
+        else:
+            del saved["item_ids"]
+
+    environment.service.transact(environment.binding.context, expire)
+    environment.binding.control(request.request_id, "resume")
+    assert request.request_id not in environment.service.state(environment.binding.context)["confirmations"]
+    assert environment.binding.admission is None
+    assert not _requests(environment)[0].items[0].waiting_reasons
+    assert len([w for w in environment.panel.chat._message_list._owned_widgets if isinstance(w, ToolCard)]) == 1
 
 
 def test_hidden_panel_does_not_restart_for_late_answer_or_new_persisted_input(environment):

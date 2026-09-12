@@ -1,0 +1,919 @@
+{
+  "schema_version": 1,
+  "corpus_id": "assistant-routing-zh-v1",
+  "description": "合成中文多轮情境；history 仅用于审阅，实际路由输入严格使用生产 request_router 的请求快照和新输入。",
+  "cases": [
+    {
+      "case_id": "amend",
+      "category": "补充条件",
+      "history": [
+        {
+          "role": "user",
+          "content": "翻译当前文件"
+        },
+        {
+          "role": "assistant",
+          "content": "翻译任务已建立，稍后返回结果。"
+        }
+      ],
+      "requests": [
+        {
+          "request_id": "translate",
+          "session_id": "evaluation",
+          "goal": "翻译当前文件",
+          "items": [
+            {
+              "item_id": "translate-item",
+              "description": "完成翻译",
+              "kind": "execution"
+            }
+          ],
+          "scope": [
+            [
+              "project_id",
+              "synthetic-project"
+            ]
+          ],
+          "source_message_ids": [
+            "previous-user"
+          ]
+        }
+      ],
+      "batch": {
+        "batch_id": "amend",
+        "session_id": "evaluation",
+        "sources": [
+          {
+            "message_id": "input",
+            "text": "翻译时请保留变量名。",
+            "scope": [
+              [
+                "project_id",
+                "synthetic-project"
+              ]
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "directives": [
+          {
+            "action": "AMEND",
+            "target_id": "translate",
+            "status": "applied"
+          }
+        ],
+        "existing": {
+          "translate": {
+            "revision": 2,
+            "constraints": [
+              "保留变量名"
+            ],
+            "status": "open"
+          }
+        }
+      }
+    },
+    {
+      "case_id": "progress",
+      "category": "进度追问",
+      "history": [
+        {
+          "role": "user",
+          "content": "翻译当前文件"
+        },
+        {
+          "role": "assistant",
+          "content": "翻译任务已建立，稍后返回结果。"
+        }
+      ],
+      "requests": [
+        {
+          "request_id": "translate",
+          "session_id": "evaluation",
+          "goal": "翻译当前文件",
+          "items": [
+            {
+              "item_id": "translate-item",
+              "description": "完成翻译",
+              "kind": "execution"
+            }
+          ],
+          "scope": [
+            [
+              "project_id",
+              "synthetic-project"
+            ]
+          ],
+          "source_message_ids": [
+            "previous-user"
+          ]
+        }
+      ],
+      "batch": {
+        "batch_id": "progress",
+        "session_id": "evaluation",
+        "sources": [
+          {
+            "message_id": "input",
+            "text": "现在翻译到哪了？",
+            "scope": [
+              [
+                "project_id",
+                "synthetic-project"
+              ]
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "directives": [
+          {
+            "action": "FOLLOW_UP",
+            "target_id": "translate",
+            "status": "applied"
+          }
+        ],
+        "created": [
+          {
+            "related_to": "translate",
+            "status": "open",
+            "item_kinds": [
+              "answer"
+            ],
+            "source_message_ids": [
+              "input"
+            ],
+            "goal_terms": [
+              "进度"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "new_question",
+      "category": "新增问题",
+      "history": [
+        {
+          "role": "user",
+          "content": "翻译当前文件"
+        },
+        {
+          "role": "assistant",
+          "content": "翻译任务已建立，稍后返回结果。"
+        }
+      ],
+      "requests": [
+        {
+          "request_id": "translate",
+          "session_id": "evaluation",
+          "goal": "翻译当前文件",
+          "items": [
+            {
+              "item_id": "translate-item",
+              "description": "完成翻译",
+              "kind": "execution"
+            }
+          ],
+          "scope": [
+            [
+              "project_id",
+              "synthetic-project"
+            ]
+          ],
+          "source_message_ids": [
+            "previous-user"
+          ]
+        }
+      ],
+      "batch": {
+        "batch_id": "new_question",
+        "session_id": "evaluation",
+        "sources": [
+          {
+            "message_id": "input",
+            "text": "另外解释一下术语表怎么配置。",
+            "scope": [
+              [
+                "project_id",
+                "synthetic-project"
+              ]
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "directives": [
+          {
+            "action": "CREATE",
+            "target_id": "",
+            "status": "applied"
+          }
+        ],
+        "created": [
+          {
+            "related_to": "",
+            "status": "open",
+            "item_kinds": [
+              "answer"
+            ],
+            "source_message_ids": [
+              "input"
+            ],
+            "goal_terms": [
+              "术语"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "replace",
+      "category": "取消换任务",
+      "history": [
+        {
+          "role": "user",
+          "content": "翻译当前文件"
+        },
+        {
+          "role": "assistant",
+          "content": "翻译任务已建立，稍后返回结果。"
+        }
+      ],
+      "requests": [
+        {
+          "request_id": "translate",
+          "session_id": "evaluation",
+          "goal": "翻译当前文件",
+          "items": [
+            {
+              "item_id": "translate-item",
+              "description": "完成翻译",
+              "kind": "execution"
+            }
+          ],
+          "scope": [
+            [
+              "project_id",
+              "synthetic-project"
+            ]
+          ],
+          "source_message_ids": [
+            "previous-user"
+          ]
+        }
+      ],
+      "batch": {
+        "batch_id": "replace",
+        "session_id": "evaluation",
+        "sources": [
+          {
+            "message_id": "input",
+            "text": "不用翻译了，改成检查重复条目。",
+            "scope": [
+              [
+                "project_id",
+                "synthetic-project"
+              ]
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "directives": [
+          {
+            "action": "REPLACE",
+            "target_id": "translate",
+            "status": "applied"
+          }
+        ],
+        "existing": {
+          "translate": {
+            "status": "superseded"
+          }
+        },
+        "created": [
+          {
+            "related_to": "translate",
+            "status": "open",
+            "item_kinds": [
+              "execution"
+            ],
+            "source_message_ids": [
+              "input"
+            ],
+            "goal_terms": [
+              "重复"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "confirmation_interjection",
+      "category": "确认时插话",
+      "history": [
+        {
+          "role": "user",
+          "content": "翻译当前文件"
+        },
+        {
+          "role": "assistant",
+          "content": "需要确认后开始翻译。"
+        }
+      ],
+      "requests": [
+        {
+          "request_id": "translate",
+          "session_id": "evaluation",
+          "goal": "翻译当前文件",
+          "items": [
+            {
+              "item_id": "translate-item",
+              "description": "完成翻译",
+              "kind": "execution",
+              "status": "waiting",
+              "waiting_reasons": [
+                "approval"
+              ]
+            }
+          ],
+          "scope": [
+            [
+              "project_id",
+              "synthetic-project"
+            ]
+          ],
+          "source_message_ids": [
+            "previous-user"
+          ]
+        }
+      ],
+      "batch": {
+        "batch_id": "confirmation_interjection",
+        "session_id": "evaluation",
+        "sources": [
+          {
+            "message_id": "input",
+            "text": "先解释一下这次操作会修改什么。",
+            "scope": [
+              [
+                "project_id",
+                "synthetic-project"
+              ]
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "directives": [
+          {
+            "action": "FOLLOW_UP",
+            "target_id": "translate",
+            "status": "applied"
+          }
+        ],
+        "created": [
+          {
+            "related_to": "translate",
+            "status": "open",
+            "item_kinds": [
+              "answer"
+            ],
+            "source_message_ids": [
+              "input"
+            ],
+            "goal_terms": [
+              "操作"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "quoted_cancel",
+      "category": "引用命令",
+      "history": [
+        {
+          "role": "user",
+          "content": "翻译当前文件"
+        },
+        {
+          "role": "assistant",
+          "content": "翻译任务已建立，稍后返回结果。"
+        }
+      ],
+      "requests": [
+        {
+          "request_id": "translate",
+          "session_id": "evaluation",
+          "goal": "翻译当前文件",
+          "items": [
+            {
+              "item_id": "translate-item",
+              "description": "完成翻译",
+              "kind": "execution"
+            }
+          ],
+          "scope": [
+            [
+              "project_id",
+              "synthetic-project"
+            ]
+          ],
+          "source_message_ids": [
+            "previous-user"
+          ]
+        }
+      ],
+      "batch": {
+        "batch_id": "quoted_cancel",
+        "session_id": "evaluation",
+        "sources": [
+          {
+            "message_id": "input",
+            "text": "文档里写着“取消翻译”，这句话是什么意思？",
+            "scope": [
+              [
+                "project_id",
+                "synthetic-project"
+              ]
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "directives": [
+          {
+            "action": "CREATE",
+            "target_id": "",
+            "status": "applied"
+          }
+        ],
+        "created": [
+          {
+            "related_to": "",
+            "status": "open",
+            "item_kinds": [
+              "answer"
+            ],
+            "source_message_ids": [
+              "input"
+            ],
+            "goal_terms": [
+              "取消"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "ambiguous_cancel",
+      "category": "歧义目标",
+      "history": [
+        {
+          "role": "user",
+          "content": "翻译文件，再检查重复条目"
+        },
+        {
+          "role": "assistant",
+          "content": "两个任务均已建立。"
+        }
+      ],
+      "requests": [
+        {
+          "request_id": "translate",
+          "session_id": "evaluation",
+          "goal": "翻译当前文件",
+          "items": [
+            {
+              "item_id": "translate-item",
+              "description": "完成翻译",
+              "kind": "execution"
+            }
+          ],
+          "scope": [
+            [
+              "project_id",
+              "synthetic-project"
+            ]
+          ],
+          "source_message_ids": [
+            "previous-user"
+          ]
+        },
+        {
+          "request_id": "check",
+          "session_id": "evaluation",
+          "goal": "检查重复条目",
+          "items": [
+            {
+              "item_id": "check-item",
+              "description": "检查重复",
+              "kind": "execution"
+            }
+          ],
+          "scope": [
+            [
+              "project_id",
+              "synthetic-project"
+            ]
+          ],
+          "source_message_ids": [
+            "previous-user"
+          ]
+        }
+      ],
+      "batch": {
+        "batch_id": "ambiguous_cancel",
+        "session_id": "evaluation",
+        "sources": [
+          {
+            "message_id": "input",
+            "text": "取消那个任务。",
+            "scope": [
+              [
+                "project_id",
+                "synthetic-project"
+              ]
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "directives": [
+          {
+            "action": "CANCEL",
+            "status": "needs_clarification",
+            "diagnostic": "REQUEST_TARGET_AMBIGUOUS"
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "stale_revision",
+      "category": "路由期间版本变化",
+      "history": [
+        {
+          "role": "user",
+          "content": "翻译当前文件"
+        },
+        {
+          "role": "assistant",
+          "content": "翻译任务已建立，稍后返回结果。"
+        }
+      ],
+      "requests": [
+        {
+          "request_id": "translate",
+          "session_id": "evaluation",
+          "goal": "翻译当前文件",
+          "items": [
+            {
+              "item_id": "translate-item",
+              "description": "完成翻译",
+              "kind": "execution"
+            }
+          ],
+          "scope": [
+            [
+              "project_id",
+              "synthetic-project"
+            ]
+          ],
+          "source_message_ids": [
+            "previous-user"
+          ],
+          "revision": 2,
+          "constraints": [
+            "保留变量名"
+          ]
+        }
+      ],
+      "batch": {
+        "batch_id": "stale_revision",
+        "session_id": "evaluation",
+        "sources": [
+          {
+            "message_id": "input",
+            "text": "取消翻译任务。",
+            "scope": [
+              [
+                "project_id",
+                "synthetic-project"
+              ]
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "directives": [
+          {
+            "action": "CANCEL",
+            "target_id": "translate",
+            "status": "needs_clarification",
+            "diagnostic": "REQUEST_REVISION_CONFLICT"
+          }
+        ]
+      },
+      "visible_requests": [
+        {
+          "request_id": "translate",
+          "session_id": "evaluation",
+          "goal": "翻译当前文件",
+          "items": [
+            {
+              "item_id": "translate-item",
+              "description": "完成翻译",
+              "kind": "execution"
+            }
+          ],
+          "scope": [
+            [
+              "project_id",
+              "synthetic-project"
+            ]
+          ],
+          "source_message_ids": [
+            "previous-user"
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "multiple_directives",
+      "category": "多指令部分生效",
+      "history": [
+        {
+          "role": "user",
+          "content": "翻译当前文件"
+        },
+        {
+          "role": "assistant",
+          "content": "翻译任务已建立，稍后返回结果。"
+        }
+      ],
+      "requests": [
+        {
+          "request_id": "translate",
+          "session_id": "evaluation",
+          "goal": "翻译当前文件",
+          "items": [
+            {
+              "item_id": "translate-item",
+              "description": "完成翻译",
+              "kind": "execution"
+            }
+          ],
+          "scope": [
+            [
+              "project_id",
+              "synthetic-project"
+            ]
+          ],
+          "source_message_ids": [
+            "previous-user"
+          ]
+        },
+        {
+          "request_id": "check",
+          "session_id": "evaluation",
+          "goal": "检查重复条目",
+          "items": [
+            {
+              "item_id": "check-item",
+              "description": "检查重复",
+              "kind": "execution"
+            }
+          ],
+          "scope": [
+            [
+              "project_id",
+              "synthetic-project"
+            ]
+          ],
+          "source_message_ids": [
+            "previous-user"
+          ]
+        }
+      ],
+      "batch": {
+        "batch_id": "multiple_directives",
+        "session_id": "evaluation",
+        "sources": [
+          {
+            "message_id": "input",
+            "text": "取消那个，再解释术语表。",
+            "scope": [
+              [
+                "project_id",
+                "synthetic-project"
+              ]
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "directives": [
+          {
+            "action": "CANCEL",
+            "status": "needs_clarification",
+            "diagnostic": "REQUEST_TARGET_AMBIGUOUS"
+          },
+          {
+            "action": "CREATE",
+            "target_id": "",
+            "status": "applied"
+          }
+        ],
+        "created": [
+          {
+            "related_to": "",
+            "status": "open",
+            "item_kinds": [
+              "answer"
+            ],
+            "source_message_ids": [
+              "input"
+            ],
+            "goal_terms": [
+              "术语"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "protocol_version",
+      "category": "错误协议版本",
+      "history": [
+        {
+          "role": "user",
+          "content": "翻译当前文件"
+        },
+        {
+          "role": "assistant",
+          "content": "翻译任务已建立，稍后返回结果。"
+        }
+      ],
+      "requests": [
+        {
+          "request_id": "translate",
+          "session_id": "evaluation",
+          "goal": "翻译当前文件",
+          "items": [
+            {
+              "item_id": "translate-item",
+              "description": "完成翻译",
+              "kind": "execution"
+            }
+          ],
+          "scope": [
+            [
+              "project_id",
+              "synthetic-project"
+            ]
+          ],
+          "source_message_ids": [
+            "previous-user"
+          ]
+        }
+      ],
+      "batch": {
+        "batch_id": "protocol_version",
+        "session_id": "evaluation",
+        "sources": [
+          {
+            "message_id": "input",
+            "text": "解释术语表。",
+            "scope": [
+              [
+                "project_id",
+                "synthetic-project"
+              ]
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "rejection": "REQUEST_PROTOCOL_INVALID"
+      },
+      "replay_only": true
+    },
+    {
+      "case_id": "truncated",
+      "category": "模型输出截断",
+      "history": [
+        {
+          "role": "user",
+          "content": "翻译当前文件"
+        },
+        {
+          "role": "assistant",
+          "content": "翻译任务已建立，稍后返回结果。"
+        }
+      ],
+      "requests": [
+        {
+          "request_id": "translate",
+          "session_id": "evaluation",
+          "goal": "翻译当前文件",
+          "items": [
+            {
+              "item_id": "translate-item",
+              "description": "完成翻译",
+              "kind": "execution"
+            }
+          ],
+          "scope": [
+            [
+              "project_id",
+              "synthetic-project"
+            ]
+          ],
+          "source_message_ids": [
+            "previous-user"
+          ]
+        }
+      ],
+      "batch": {
+        "batch_id": "truncated",
+        "session_id": "evaluation",
+        "sources": [
+          {
+            "message_id": "input",
+            "text": "取消翻译任务。",
+            "scope": [
+              [
+                "project_id",
+                "synthetic-project"
+              ]
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "rejection": "LlmToolProtocolError"
+      },
+      "replay_only": true
+    },
+    {
+      "case_id": "mixed_business",
+      "category": "控制与业务调用混合",
+      "history": [
+        {
+          "role": "user",
+          "content": "翻译当前文件"
+        },
+        {
+          "role": "assistant",
+          "content": "翻译任务已建立，稍后返回结果。"
+        }
+      ],
+      "requests": [
+        {
+          "request_id": "translate",
+          "session_id": "evaluation",
+          "goal": "翻译当前文件",
+          "items": [
+            {
+              "item_id": "translate-item",
+              "description": "完成翻译",
+              "kind": "execution"
+            }
+          ],
+          "scope": [
+            [
+              "project_id",
+              "synthetic-project"
+            ]
+          ],
+          "source_message_ids": [
+            "previous-user"
+          ]
+        }
+      ],
+      "batch": {
+        "batch_id": "mixed_business",
+        "session_id": "evaluation",
+        "sources": [
+          {
+            "message_id": "input",
+            "text": "取消翻译任务。",
+            "scope": [
+              [
+                "project_id",
+                "synthetic-project"
+              ]
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "rejection": "LlmToolProtocolError"
+      },
+      "replay_only": true
+    }
+  ]
+}

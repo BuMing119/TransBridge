@@ -187,6 +187,9 @@ def reduce_request(request: UserRequest, event: RequestEvent) -> UserRequest:
             if item.item_id not in ids or item.status in (ItemStatus.SATISFIED, ItemStatus.CANCELLED):
                 items.append(item)
                 continue
+            if event.kind == "unblock" and reason not in item.waiting_reasons:
+                items.append(item)
+                continue
             reasons = (
                 tuple(r for r in item.waiting_reasons if r != reason)
                 if event.kind == "unblock"

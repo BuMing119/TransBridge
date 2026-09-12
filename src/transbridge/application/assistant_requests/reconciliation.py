@@ -10,6 +10,7 @@ from transbridge.application.tasks import OwnerRef, TaskAccessError
 
 from .admission import get_effect, record_effect_outcome
 from .dispatch import reconcile_dispatches, record_dispatch_outcome
+from .journal import EventCause
 from .models import EffectStatus, Evidence, RequestError, UserRequest, digest
 from .reducer import add_evidence, converge
 
@@ -252,7 +253,18 @@ class RequestReconciliationCoordinator:
                 })
 
         self.service.transact(
-            context, apply, append_messages=({"message_id": command_id, "role": "user", "content": text},)
+            context,
+            apply,
+            append_messages=({"message_id": command_id, "role": "user", "content": text},),
+            cause=EventCause(
+                "request.reconciled",
+                "user",
+                {
+                    "request_ids": [request_id],
+                    "message_ids": [command_id],
+                    "dispatch_ids" if is_dispatch else "effect_ids": [record_id],
+                },
+            ),
         )
         resources = getattr(self.service, "request_resources", None)
         if resources is not None and not is_dispatch:

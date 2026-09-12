@@ -64,7 +64,7 @@ class ConfirmationView:
             return None
         card = ToolCard(step, theme=self._theme)
         self._connect_intent(card, card.executed, self._tool_executed)
-        self._connect_intent(card, card.ignored, self._tool_ignored)
+        self._connect_intent(card, card.ignored, self._tool_ignored, accepted=False)
         self._add_widget(card)
         return card
 
@@ -73,7 +73,7 @@ class ConfirmationView:
             return None
         card = PlanCard(steps, theme=self._theme)
         self._connect_intent(card, card.confirmed, self._plan_confirmed)
-        self._connect_intent(card, card.cancelled, self._plan_cancelled)
+        self._connect_intent(card, card.cancelled, self._plan_cancelled, accepted=False)
         self._add_widget(card)
         return card
 
@@ -82,14 +82,14 @@ class ConfirmationView:
             return None
         card = BatchToolCard(steps, theme=self._theme)
         self._connect_intent(card, card.all_executed, self._batch_executed)
-        self._connect_intent(card, card.all_ignored, self._batch_ignored)
+        self._connect_intent(card, card.all_ignored, self._batch_ignored, accepted=False)
         self._add_widget(card)
         return card
 
-    def _connect_intent(self, card, signal, callback: Callable) -> None:
+    def _connect_intent(self, card, signal, callback: Callable, *, accepted=True) -> None:
         generation = self._generation
         scope = getattr(self, "intent_scope", None)
-        validate = scope() if scope is not None else lambda: True
+        validate = scope(accepted=accepted) if scope is not None else lambda: True
         self._pending_cards.add(card)
 
         def deliver(*args) -> None:

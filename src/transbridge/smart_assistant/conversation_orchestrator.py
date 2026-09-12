@@ -286,6 +286,29 @@ class ConversationOrchestrator(QObject):
         self._round_tools = build_native_tool_definitions(loaded_namespaces)
         binding = getattr(self, "request_binding", None)
         if binding is not None:
+            preparation = getattr(binding, "context_preparation", None)
+            if preparation is not None:
+                self._round_max_tokens = self._round_max_tokens or 4096
+
+                def prepared(result):
+                    if not self._is_current(generation):
+                        return
+                    self._round_messages, self._round_tools = result
+                    if self._round_messages:
+                        QTimer.singleShot(0, lambda g=generation: self._stage_b(g))
+
+                def preparation_failed(exc):
+                    if self._is_current(generation):
+                        binding.fail(str(exc))
+
+                preparation.prepare(
+                    self._conversation.get_transcript(),
+                    self._round_max_tokens,
+                    context_window=int(getattr(cfg, "assistant_context_window", 32768)),
+                    on_ready=prepared,
+                    on_error=preparation_failed,
+                )
+                return
             try:
                 self._round_max_tokens = self._round_max_tokens or 4096
                 self._round_messages, self._round_tools = binding.prepare_model_input(

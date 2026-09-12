@@ -19,6 +19,7 @@ from .v2.ids import SessionId
 from .v2.models import AtomicWriteError, BackupVerificationError, PathBoundaryError
 from .v2.repository import _mutation_lock_for
 from .v2.schema import parse_json_bytes, serialize_document
+from .v2.session_write_lease import session_write_lease
 
 
 @lru_cache(maxsize=16)
@@ -54,7 +55,7 @@ class AssistantTranscriptStore:
     ) -> TranscriptManifest:
         if not messages:
             return manifest
-        with self._lock:
+        with self._lock, session_write_lease(self._paths.root, session_id, self._filesystem):
             existing = self.read(session_id, manifest)
             combined = existing + tuple(messages)
             validate_message_order(combined)
@@ -91,11 +92,21 @@ class AssistantTranscriptStore:
             self.read_artifact(session_id, reference)
 
     def write_artifact(self, session_id: str, data: bytes) -> AttachmentRef:
-        with self._lock:
+        with self._lock, session_write_lease(self._paths.root, session_id, self._filesystem):
             return self._write(session_id, "artifacts", data)
 
     def read_artifact(self, session_id: str, reference: AttachmentRef) -> bytes:
         return self._read(session_id, "artifacts", reference)
+
+    def read_attachment(self, session_id: str, reference: AttachmentRef) -> bytes:
+        """Verify a manifest/retention edge without accepting a caller-built path."""
+        parts = reference.path.split("/")
+        if len(parts) != 4 or parts[2] not in {"segments", "artifacts"}:
+            raise PathBoundaryError("unknown assistant attachment content type")
+        raw = self._read(session_id, parts[2], reference)
+        if parts[2] == "segments" and len(_decode_segment(raw)) != reference.count:
+            raise BackupVerificationError("retained segment count does not match its reference")
+        return raw
 
     def _reference(self, session_id: str, kind: str, digest: str, size: int, count: int) -> AttachmentRef:
         session = SessionId(session_id)

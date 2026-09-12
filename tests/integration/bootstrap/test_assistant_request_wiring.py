@@ -120,6 +120,9 @@ def test_actual_task_center_buttons_persist_request_waits_and_refuse_paused_requ
         panel.pause_requested.emit(job.run_id, revision)
         app.processEvents()
         assert runtime.tasks.get(job, owner).state == JobState.PAUSED
+        event = service.state(context)["lifecycle_events"][-1]
+        assert event["operation"] == "task.pause" and event["origin"] == "user"
+        assert event["references"]["run_ids"] == [job.run_id]
         assert service.requests(service.state(context))[0].items[0].waiting_reasons == ("user_job_control",)
         service.command(context, "request-a", "pause", 1)
         panel.resume_requested.emit(job.run_id, runtime.tasks.get(job, owner).revision)

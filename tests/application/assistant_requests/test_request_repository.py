@@ -32,6 +32,60 @@ def _snapshot(services, context):
     return services.session_lifecycle.read_session(SessionRef(SessionId(context.session_id)), context)
 
 
+def _terminal_requests(context):
+    from transbridge.application.assistant_requests.models import ItemStatus, RequestItem, RequestStatus, UserRequest
+
+    return [
+        UserRequest(
+            f"r{n}",
+            context.session_id,
+            f"Finished request {n}",
+            (RequestItem("answer", "Explanation", status=ItemStatus.SATISFIED),),
+            status=RequestStatus.COMPLETED,
+            scope=(("owner_id", context.owner_id), ("session_id", context.session_id)),
+        ).to_dict()
+        for n in range(102)
+    ]
+
+
+def test_terminal_archives_publish_in_real_session_and_remain_restartable(composed):
+    services, requests, context = composed
+    original = _terminal_requests(context)
+    returned = requests.transact(context, lambda state: state.update(requests=original))
+    raw = _snapshot(services, context).assistant_data()
+    assert len(raw["requests"]) == 100
+    assert len(raw["request_archives"]) == 2
+    assert [r.to_dict() for r in requests.requests(returned)] == original
+    assert [r.to_dict() for r in requests.requests(requests.state(context))] == original
+    successor = requests.restart(context, "r0", text="Continue first", command_id="restart-first")
+    assert successor.request_id != "r0"
+    assert requests.requests(requests.state(context))[0].to_dict() == original[0]
+    reopened = build_persistence_v2_services(
+        services.root, id_factory=lambda: uuid4().hex, timestamp_factory=lambda: "later"
+    )
+    try:
+        state = reopened.gui_session_commands.assistant_requests.state(context)
+        assert [r.to_dict() for r in requests.requests(state)][:102] == original
+        assert any(r["request_id"] == successor.request_id for r in state["requests"])
+    finally:
+        reopened.close()
+
+
+def test_archive_publication_failure_does_not_replace_previous_snapshot(composed, monkeypatch):
+    services, requests, context = composed
+    before = _snapshot(services, context)
+
+    def fail(*args, **kwargs):
+        raise OSError("injected archive publish failure")
+
+    monkeypatch.setattr(services.sessions, "save", fail)
+    with pytest.raises(RequestError, match="ADMISSION_PERSIST_FAILED"):
+        requests.transact(context, lambda state: state.update(requests=_terminal_requests(context)))
+    after = _snapshot(services, context)
+    assert after.assistant_data() == before.assistant_data()
+    assert after.transcript_data() == before.transcript_data()
+
+
 def _proposal(batch):
     return {
         "protocol_version": 1,

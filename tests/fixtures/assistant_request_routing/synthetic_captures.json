@@ -1,0 +1,473 @@
+[
+  {
+    "case_id": "amend",
+    "input_digest": "8d380f8e856872c618dfd69f646bee572fd1f89d6f6bc71b37cae1b5863ab082",
+    "origin": "synthetic",
+    "model": "",
+    "provider": "",
+    "captured_at": "2026-09-12T00:00:00+00:00",
+    "turn": {
+      "text": "",
+      "tool_calls": [
+        {
+          "id": "call-amend",
+          "name": "submit_request_routing",
+          "arguments": {
+            "protocol_version": 1,
+            "directives": [
+              {
+                "local_id": "directive-0",
+                "message_id": "input",
+                "span": [
+                  0,
+                  10
+                ],
+                "action": "AMEND",
+                "target_id": "translate",
+                "expected_revision": 1,
+                "constraints": [
+                  "保留变量名"
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "stop_reason": "tool_calls"
+    }
+  },
+  {
+    "case_id": "progress",
+    "input_digest": "7b08f6e2880cdf5817b2f62c63dd62e06f81af728a6c80328336dcd39002c955",
+    "origin": "synthetic",
+    "model": "",
+    "provider": "",
+    "captured_at": "2026-09-12T00:00:00+00:00",
+    "turn": {
+      "text": "",
+      "tool_calls": [
+        {
+          "id": "call-progress",
+          "name": "submit_request_routing",
+          "arguments": {
+            "protocol_version": 1,
+            "directives": [
+              {
+                "local_id": "directive-0",
+                "message_id": "input",
+                "span": [
+                  0,
+                  8
+                ],
+                "action": "FOLLOW_UP",
+                "target_id": "translate",
+                "expected_revision": 1,
+                "goal": "查询翻译进度",
+                "items": [
+                  {
+                    "item_id": "new-item",
+                    "description": "回答当前问题",
+                    "kind": "answer"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "stop_reason": "tool_calls"
+    }
+  },
+  {
+    "case_id": "new_question",
+    "input_digest": "690946357fe15193e86b8717300a1fdcc58c84dc671866ba6feadedf609191cf",
+    "origin": "synthetic",
+    "model": "",
+    "provider": "",
+    "captured_at": "2026-09-12T00:00:00+00:00",
+    "turn": {
+      "text": "",
+      "tool_calls": [
+        {
+          "id": "call-new_question",
+          "name": "submit_request_routing",
+          "arguments": {
+            "protocol_version": 1,
+            "directives": [
+              {
+                "local_id": "directive-0",
+                "message_id": "input",
+                "span": [
+                  0,
+                  14
+                ],
+                "action": "CREATE",
+                "goal": "解释术语表配置",
+                "items": [
+                  {
+                    "item_id": "new-item",
+                    "description": "回答当前问题",
+                    "kind": "answer"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "stop_reason": "tool_calls"
+    }
+  },
+  {
+    "case_id": "replace",
+    "input_digest": "a7b6810f6136396ec949082b88b1511feb8d8ffcfce76ae1fbb284f07552ff71",
+    "origin": "synthetic",
+    "model": "",
+    "provider": "",
+    "captured_at": "2026-09-12T00:00:00+00:00",
+    "turn": {
+      "text": "",
+      "tool_calls": [
+        {
+          "id": "call-replace",
+          "name": "submit_request_routing",
+          "arguments": {
+            "protocol_version": 1,
+            "directives": [
+              {
+                "local_id": "directive-0",
+                "message_id": "input",
+                "span": [
+                  0,
+                  15
+                ],
+                "action": "REPLACE",
+                "target_id": "translate",
+                "expected_revision": 1,
+                "goal": "检查重复条目",
+                "items": [
+                  {
+                    "item_id": "new-item",
+                    "description": "完成检查",
+                    "kind": "execution"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "stop_reason": "tool_calls"
+    }
+  },
+  {
+    "case_id": "confirmation_interjection",
+    "input_digest": "bf4e9adced57ece360c0832a3e74dcd174844d4e9c53cafe7425338a431a2b4b",
+    "origin": "synthetic",
+    "model": "",
+    "provider": "",
+    "captured_at": "2026-09-12T00:00:00+00:00",
+    "turn": {
+      "text": "",
+      "tool_calls": [
+        {
+          "id": "call-confirmation_interjection",
+          "name": "submit_request_routing",
+          "arguments": {
+            "protocol_version": 1,
+            "directives": [
+              {
+                "local_id": "directive-0",
+                "message_id": "input",
+                "span": [
+                  0,
+                  15
+                ],
+                "action": "FOLLOW_UP",
+                "target_id": "translate",
+                "expected_revision": 1,
+                "goal": "解释待批准操作",
+                "items": [
+                  {
+                    "item_id": "new-item",
+                    "description": "回答当前问题",
+                    "kind": "answer"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "stop_reason": "tool_calls"
+    }
+  },
+  {
+    "case_id": "quoted_cancel",
+    "input_digest": "1fbb42e493655400f7fe82028ec2d0c65d2fafa1d777fcb8b6773b96474efcef",
+    "origin": "synthetic",
+    "model": "",
+    "provider": "",
+    "captured_at": "2026-09-12T00:00:00+00:00",
+    "turn": {
+      "text": "",
+      "tool_calls": [
+        {
+          "id": "call-quoted_cancel",
+          "name": "submit_request_routing",
+          "arguments": {
+            "protocol_version": 1,
+            "directives": [
+              {
+                "local_id": "directive-0",
+                "message_id": "input",
+                "span": [
+                  0,
+                  21
+                ],
+                "action": "CREATE",
+                "goal": "解释文档中的取消翻译",
+                "items": [
+                  {
+                    "item_id": "new-item",
+                    "description": "回答当前问题",
+                    "kind": "answer"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "stop_reason": "tool_calls"
+    }
+  },
+  {
+    "case_id": "ambiguous_cancel",
+    "input_digest": "08b89940ba5a55e2c033cd828ee4771a1043cd65a78892f6eb6047e4a017f957",
+    "origin": "synthetic",
+    "model": "",
+    "provider": "",
+    "captured_at": "2026-09-12T00:00:00+00:00",
+    "turn": {
+      "text": "",
+      "tool_calls": [
+        {
+          "id": "call-ambiguous_cancel",
+          "name": "submit_request_routing",
+          "arguments": {
+            "protocol_version": 1,
+            "directives": [
+              {
+                "local_id": "directive-0",
+                "message_id": "input",
+                "span": [
+                  0,
+                  7
+                ],
+                "action": "CANCEL"
+              }
+            ]
+          }
+        }
+      ],
+      "stop_reason": "tool_calls"
+    }
+  },
+  {
+    "case_id": "stale_revision",
+    "input_digest": "28d33781836fbb3f4beeb16a74edb84b55f6a81aff8a81f6c2618c63cf32dca8",
+    "origin": "synthetic",
+    "model": "",
+    "provider": "",
+    "captured_at": "2026-09-12T00:00:00+00:00",
+    "turn": {
+      "text": "",
+      "tool_calls": [
+        {
+          "id": "call-stale_revision",
+          "name": "submit_request_routing",
+          "arguments": {
+            "protocol_version": 1,
+            "directives": [
+              {
+                "local_id": "directive-0",
+                "message_id": "input",
+                "span": [
+                  0,
+                  7
+                ],
+                "action": "CANCEL",
+                "target_id": "translate",
+                "expected_revision": 1
+              }
+            ]
+          }
+        }
+      ],
+      "stop_reason": "tool_calls"
+    }
+  },
+  {
+    "case_id": "multiple_directives",
+    "input_digest": "b4a823a1ae1643f0f1d97dfc818205d209beca7aa3174d9e894feb639fdfd8b9",
+    "origin": "synthetic",
+    "model": "",
+    "provider": "",
+    "captured_at": "2026-09-12T00:00:00+00:00",
+    "turn": {
+      "text": "",
+      "tool_calls": [
+        {
+          "id": "call-multiple_directives",
+          "name": "submit_request_routing",
+          "arguments": {
+            "protocol_version": 1,
+            "directives": [
+              {
+                "local_id": "directive-0",
+                "message_id": "input",
+                "span": [
+                  0,
+                  4
+                ],
+                "action": "CANCEL"
+              },
+              {
+                "local_id": "directive-1",
+                "message_id": "input",
+                "span": [
+                  5,
+                  12
+                ],
+                "action": "CREATE",
+                "goal": "解释术语表",
+                "items": [
+                  {
+                    "item_id": "new-item",
+                    "description": "回答当前问题",
+                    "kind": "answer"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "stop_reason": "tool_calls"
+    }
+  },
+  {
+    "case_id": "protocol_version",
+    "input_digest": "6eb7f1e67fdf57b49741e037233ac4bdcddd0f5654d45dec2d75858717e12292",
+    "origin": "synthetic",
+    "model": "",
+    "provider": "",
+    "captured_at": "2026-09-12T00:00:00+00:00",
+    "turn": {
+      "text": "",
+      "tool_calls": [
+        {
+          "id": "call-protocol_version",
+          "name": "submit_request_routing",
+          "arguments": {
+            "protocol_version": 2,
+            "directives": [
+              {
+                "local_id": "directive-0",
+                "message_id": "input",
+                "span": [
+                  0,
+                  6
+                ],
+                "action": "CREATE",
+                "goal": "解释术语表",
+                "items": [
+                  {
+                    "item_id": "new-item",
+                    "description": "回答当前问题",
+                    "kind": "answer"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "stop_reason": "tool_calls"
+    }
+  },
+  {
+    "case_id": "truncated",
+    "input_digest": "cd6139ef3a9190114b08855991b82ed9d296fc80869bc59c144f61805156dab9",
+    "origin": "synthetic",
+    "model": "",
+    "provider": "",
+    "captured_at": "2026-09-12T00:00:00+00:00",
+    "turn": {
+      "text": "",
+      "tool_calls": [
+        {
+          "id": "call-truncated",
+          "name": "submit_request_routing",
+          "arguments": {
+            "protocol_version": 1,
+            "directives": [
+              {
+                "local_id": "directive-0",
+                "message_id": "input",
+                "span": [
+                  0,
+                  7
+                ],
+                "action": "CANCEL",
+                "target_id": "translate",
+                "expected_revision": 1
+              }
+            ]
+          }
+        }
+      ],
+      "stop_reason": "length"
+    }
+  },
+  {
+    "case_id": "mixed_business",
+    "input_digest": "f31c4f51e6e8edd9d32d0e2cb5eaa255b9f1fd2cee73365a1364266d8fb8f3a9",
+    "origin": "synthetic",
+    "model": "",
+    "provider": "",
+    "captured_at": "2026-09-12T00:00:00+00:00",
+    "turn": {
+      "text": "",
+      "tool_calls": [
+        {
+          "id": "call-mixed_business",
+          "name": "submit_request_routing",
+          "arguments": {
+            "protocol_version": 1,
+            "directives": [
+              {
+                "local_id": "directive-0",
+                "message_id": "input",
+                "span": [
+                  0,
+                  7
+                ],
+                "action": "CANCEL",
+                "target_id": "translate",
+                "expected_revision": 1
+              }
+            ]
+          }
+        },
+        {
+          "id": "business",
+          "name": "translate_entries",
+          "arguments": {}
+        }
+      ],
+      "stop_reason": "tool_calls"
+    }
+  }
+]

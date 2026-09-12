@@ -18,6 +18,7 @@ class RequestListView(QWidget):
     clarify = pyqtSignal()
     stop_generation = pyqtSignal()
     retry_input = pyqtSignal()
+    timeline = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -40,6 +41,14 @@ class RequestListView(QWidget):
             button.clicked.connect(lambda _checked=False, value=command: self._act(value))
             actions.addWidget(button)
         layout.addLayout(actions)
+        history = QHBoxLayout()
+        self.timeline_request = QPushButton("查看过程")
+        self.timeline_request.clicked.connect(self._show_timeline)
+        history.addWidget(self.timeline_request)
+        self.timeline_session = QPushButton("会话过程")
+        self.timeline_session.clicked.connect(lambda: self.timeline.emit(""))
+        history.addWidget(self.timeline_session)
+        layout.addLayout(history)
         self.pending = QPushButton("澄清待定归属")
         self.pending.clicked.connect(self.clarify.emit)
         layout.addWidget(self.pending)
@@ -52,12 +61,13 @@ class RequestListView(QWidget):
         stop.clicked.connect(self.stop_generation.emit)
         layout.addWidget(stop)
         self._requests = []
+        self.timeline_request.setEnabled(False)
+        self.items.currentRowChanged.connect(lambda row: self.timeline_request.setEnabled(row >= 0))
 
     def set_pending(self, count, routing=0):
         self.pending.setText(f"澄清待定归属 ({count})")
         self.pending.setVisible(bool(count))
         self.retry.setVisible(bool(routing))
-        self.setVisible(bool(count or routing or self._requests))
 
     def display(self, requests):
         selected = self.items.currentRow()
@@ -76,7 +86,11 @@ class RequestListView(QWidget):
             self.items.addItem(f"{request.goal} · {done}/{len(request.items)} · {label}")
         if self._requests:
             self.items.setCurrentRow(min(max(selected, 0), len(self._requests) - 1))
-        self.setVisible(bool(self._requests))
+
+    def _show_timeline(self):
+        index = self.items.currentRow()
+        if 0 <= index < len(self._requests):
+            self.timeline.emit(self._requests[index].request_id)
 
     def _act(self, command):
         index = self.items.currentRow()

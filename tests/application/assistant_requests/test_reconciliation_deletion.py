@@ -4,6 +4,7 @@ from uuid import uuid4
 import pytest
 
 from transbridge.application.assistant_requests.deletion import prepare_session_deletion
+from transbridge.application.assistant_requests.journal import read_events
 from transbridge.application.assistant_requests.models import (
     AssistantExecutionRef,
     EffectIntent,
@@ -92,6 +93,14 @@ def test_delete_blocks_unknown_results_and_refuses_new_input(saved):
         command_id="resolution",
     )
     assert service.requests(service.state(context))[0].status == "cancelled"
+    events = read_events(service.state(context), request_id="request")["events"]
+    reconciled = next(event for event in events if event["operation"] == "request.reconciled")
+    assert reconciled["origin"] == "user"
+    assert reconciled["references"]["message_ids"] == ["resolution"]
+    assert any(
+        event["operation"] == "input.accepted" and event["references"]["message_ids"] == ["resolution"]
+        for event in events
+    )
     assert services.gui_session_commands.delete(ref, context).is_success
     with pytest.raises(Exception):
         service.update_request(context, "request", lambda r: r)

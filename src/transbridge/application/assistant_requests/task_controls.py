@@ -5,6 +5,7 @@ from dataclasses import replace
 from transbridge.application.contracts import RequestContext
 from transbridge.application.tasks import TaskAccessError
 
+from .journal import EventCause
 from .models import RequestError
 from .reducer import require_open
 
@@ -66,7 +67,19 @@ def request_task_control(service, runtime):
                     )
                     return replace(current, items=items)
 
-                service.update_request(context, request.request_id, record_control)
+                service.update_request(
+                    context,
+                    request.request_id,
+                    record_control,
+                    cause=EventCause(
+                        f"task.{action}",
+                        "user",
+                        {
+                            "job_ids": [ref.job_id],
+                            "run_ids": [ref.run_id],
+                        },
+                    ),
+                )
             service.notify(owner.session_id)
             return result
         except RequestError as error:

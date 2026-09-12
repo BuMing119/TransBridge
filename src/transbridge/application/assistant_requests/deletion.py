@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from transbridge.application.tasks import JobState, OwnerRef
 
+from .journal import EventCause
 from .models import RequestError, RequestStatus, UserRequest
 from .reducer import RequestEvent, reduce_request
 
@@ -69,7 +70,9 @@ class RequestDeletionCoordinator:
             state.clear()
             state.update(updated)
 
-        self.service.transact(context, prepare)
+        self.service.transact(
+            context, prepare, cause=EventCause("session.deletion", "user", {"command_id": command_id})
+        )
         self.service.scheduler.invalidate_session(context.session_id)
         self.service.notify(context.session_id)
         state = self.service.state(context)

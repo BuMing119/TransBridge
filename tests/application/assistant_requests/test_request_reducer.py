@@ -208,3 +208,21 @@ def test_dependencies_are_acyclic_and_waiting_blocks_only_dependants():
         ),
     )
     assert ready_item_ids(request) == ("c",)
+
+
+def test_unblock_preserves_items_without_the_corresponding_wait():
+    request = make_request()
+    request = replace(
+        request,
+        items=(
+            replace(request.items[0], status=ItemStatus.WAITING, waiting_reasons=("approval",)),
+            replace(request.items[1], status=ItemStatus.FAILED),
+            replace(request.items[2], status=ItemStatus.RUNNING),
+        ),
+    )
+    updated = reduce_request(
+        request, RequestEvent("approved", "unblock", 1, {"item_ids": ["i0", "i1", "i2"], "reason": "approval"})
+    )
+    assert updated.items[0].status == ItemStatus.PENDING
+    assert updated.items[0].waiting_reasons == ()
+    assert updated.items[1:] == request.items[1:]

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import hashlib
 from typing import Any
 
+from transbridge.application.assistant_requests.history_scope import assign_history_requests as assign_history_requests
 from transbridge.infra.llm_tool_calling import LlmToolProtocolError
 from transbridge.smart_assistant.context_budget import ContextBudget, ContextBudgetExceeded, ContextUsage, context_json
 
@@ -30,6 +31,14 @@ def _is_result(message: Mapping[str, Any]) -> bool:
         or message.get("role") == "tool"
         or (message.get("role") == "user" and str(message.get("content", "")).startswith(_LEGACY_RESULTS))
     )
+
+
+def _belongs(message, request_id):
+    if not request_id:
+        return True
+    if "request_ids" in message:
+        return request_id in message["request_ids"]
+    return str(message.get("request_id", request_id)) == request_id
 
 
 def _groups(history: list[dict]) -> list[list[int]]:
@@ -87,32 +96,44 @@ class RequestContextAssembler:
         required_message_ids: Sequence[str] = (),
         relevant_message_ids: Sequence[str] = (),
         continuation: Mapping[str, Any] | None = None,
+        summary=None,
     ) -> ContextProjection:
         records = self._records(history)
         groups = _groups(records)
+        request_id = str((request_state or {}).get("request_id", ""))
         ids = {record["message_id"] for record in records}
         required = set(required_message_ids)
         if current_input_id is not None:
             required.add(current_input_id)
         elif continuation is None:
-            latest = next((m for m in reversed(records) if m.get("role") == "user" and not _is_result(m)), None)
+            latest = next(
+                (
+                    m
+                    for m in reversed(records)
+                    if m.get("role") == "user" and not _is_result(m) and _belongs(m, request_id)
+                ),
+                None,
+            )
             if latest is not None:
                 required.add(latest["message_id"])
         if not required <= ids:
             raise ValueError(f"Required context messages do not exist: {sorted(required - ids)}")
         required.update(m["message_id"] for m in records if m.get("role") == "system")
         # The latest closed call is necessary to interpret a tool-triggered continuation.
-        if records and records[-1].get("role") == "tool":
+        if records and records[-1].get("role") == "tool" and _belongs(records[-1], request_id):
             required.add(records[-1]["message_id"])
         selected = {i for i, group in enumerate(groups) if any(records[j]["message_id"] in required for j in group)}
+        if any(not _belongs(records[j], request_id) for i in selected for j in groups[i]):
+            raise ValueError("Required context evidence crosses the current request scope")
         projected, references = self._project(records)
         state_messages = self._state_messages(request_state, continuation)
+        summary_messages = []
 
         def materialize(indices: set[int]) -> list[dict]:
             chosen = [j for i, group in enumerate(groups) if i in indices for j in group]
             systems = [projected[j] for j in chosen if projected[j].get("role") == "system"]
             body = [projected[j] for j in chosen if projected[j].get("role") != "system"]
-            return systems + state_messages + body
+            return systems + state_messages + summary_messages + body
 
         preview_chars = self.result_preview_chars
         while True:
@@ -124,15 +145,28 @@ class RequestContextAssembler:
                     raise
                 preview_chars //= 2
                 projected, references = self._project(records, preview_chars=preview_chars)
+        covered = set()
+        if summary is not None and summary.request_id == request_id:
+            summary_messages.append({
+                "role": "assistant",
+                "content": context_json({
+                    "material_only": True,
+                    "kind": "request_history_summary",
+                    "authority": "Historical excerpts only; current request state controls permissions and completion.",
+                    "summary": summary.to_dict(),
+                }),
+            })
+            summary_usage = self.budget.measure(materialize(selected), tools)
+            if summary_usage.fits:
+                required_usage = summary_usage
+                covered = set(summary.source_ids)
+            else:
+                summary_messages.clear()
         relevant = set(relevant_message_ids)
         optional = [i for i in reversed(range(len(groups))) if i not in selected]
-        request_id = str((request_state or {}).get("request_id", ""))
+        optional = [i for i in optional if not all(records[j]["message_id"] in covered for j in groups[i])]
         if request_id:
-            optional = [
-                i
-                for i in optional
-                if all(str(records[j].get("request_id", request_id)) == request_id for j in groups[i])
-            ]
+            optional = [i for i in optional if all(_belongs(records[j], request_id) for j in groups[i])]
         optional.sort(key=lambda i: not any(records[j]["message_id"] in relevant for j in groups[i]))
         estimated_total = required_usage.total
         added: list[int] = []
@@ -213,7 +247,7 @@ class RequestContextAssembler:
         for source in records:
             message = {key: deepcopy(source[key]) for key in _PROVIDER_KEYS if key in source}
             content = str(source.get("content", ""))
-            if _is_result(source) and len(content) > self.result_preview_chars:
+            if _is_result(source) and len(content) > limit:
                 reference = {
                     "message_id": source["message_id"],
                     "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),

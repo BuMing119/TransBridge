@@ -11,6 +11,7 @@ from transbridge.application.tasks import JobState
 
 from .admission import get_effect, record_effect_outcome
 from .dispatch import reconcile_dispatches, record_dispatch_outcome
+from .journal import EventCause
 from .models import EffectStatus, RequestStatus
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,9 @@ class RequestTaskEventRouter:
                     lambda request: record_dispatch_outcome(
                         request, gate.dispatch_id, status=snapshot.state.value, sequence=snapshot.sequence
                     ),
+                    cause=EventCause(
+                        "task.result", references={"job_ids": [binding.ref.job_id], "run_ids": [binding.ref.run_id]}
+                    ),
                 )
                 self._bindings.pop(binding.ref.run_id, None)
                 gate.service.notify(gate.context.session_id)
@@ -83,6 +87,9 @@ class RequestTaskEventRouter:
                         item_complete=not partial,
                         satisfy_item=False,
                     )
+                ),
+                cause=EventCause(
+                    "task.result", references={"job_ids": [binding.ref.job_id], "run_ids": [binding.ref.run_id]}
                 ),
             )
             if status != EffectStatus.OUTCOME_UNKNOWN:

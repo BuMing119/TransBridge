@@ -12,8 +12,10 @@ from uuid import uuid4
 from transbridge.application.contracts import RequestContext
 from transbridge.persistence.v2.ids import SessionId, SessionRef
 
+from .journal import EventCause
 from .models import RequestError, UserRequest, digest
 from .reducer import RequestEvent, reduce_request
+from .transactions import commit_request_change
 
 
 class RequestService:
@@ -44,50 +46,35 @@ class RequestService:
             yield
 
     def transact(
-        self, context: RequestContext, change: Callable[[dict], None], *, history=None, append_messages=()
+        self, context: RequestContext, change: Callable[[dict], None], *, history=None, append_messages=(), cause=None
     ) -> dict:
         if not context.session_id:
             raise RequestError("REQUEST_SCOPE_MISMATCH", "a saved Session is required")
         with self._lock:
             if self._closed:
                 raise RequestError("REQUEST_SERVICE_CLOSED", "the application is closing")
-            command_errors = []
-
-            def update(snapshot):
-                state = snapshot.assistant_data()
-                try:
-                    change(state)
-                except RequestError as exc:
-                    command_errors.append(exc)
-                    raise
-                changes = {"assistant_state": state}
-                records = history
-                if append_messages:
-                    records = list(snapshot.backend_messages())
-                    known = {m.get("message_id") for m in records}
-                    records.extend(m for m in append_messages if m.get("message_id") not in known)
-                try:
-                    if records is not None:
-                        changes["messages"] = records
-                        return self.with_transcript(snapshot, records, **changes)
-                    return replace(snapshot, **changes)
-                except RequestError as exc:
-                    command_errors.append(exc)
-                    raise
-
-            result = self.lifecycle.transact(SessionRef(SessionId(context.session_id)), context, update, publish=False)
-            if not result.is_success or result.value is None:
-                if command_errors:
-                    raise command_errors[0]
-                detail = "; ".join(f"{d.code}: {d.message}" for d in result.diagnostics)
-                raise RequestError("ADMISSION_PERSIST_FAILED", detail or "Session command was not saved")
-            state = result.value.assistant_data()
-        return state
+            return commit_request_change(
+                self.lifecycle,
+                context,
+                change,
+                self.with_transcript,
+                history=history,
+                append_messages=append_messages,
+                cause=cause,
+                transcript_store=self.transcript_store,
+            )
 
     def state(self, context: RequestContext) -> dict:
         if not context.session_id:
             raise RequestError("REQUEST_SCOPE_MISMATCH", "a saved Session is required")
-        return self.lifecycle.read_session(SessionRef(SessionId(context.session_id)), context).assistant_data()
+        from .archival import hydrate_request_state
+
+        state = self.lifecycle.read_session(SessionRef(SessionId(context.session_id)), context).assistant_data()
+        return (
+            hydrate_request_state(state, context.session_id, self.transcript_store)
+            if state.get("request_archives")
+            else state
+        )
 
     @staticmethod
     def requests(state: dict) -> tuple[UserRequest, ...]:
@@ -123,7 +110,12 @@ class RequestService:
             ingress.append(item)
             accepted.update(item)
 
-        self.transact(context, apply, append_messages=({"role": "user", "content": text, "message_id": command_id},))
+        self.transact(
+            context,
+            apply,
+            append_messages=({"role": "user", "content": text, "message_id": command_id},),
+            cause=EventCause("input.accepted", "user", {"message_ids": [command_id]}),
+        )
         return accepted
 
     def _append_transcript(self, snapshot, records):
@@ -207,10 +199,13 @@ class RequestService:
                     raise RequestError("REQUEST_SCOPE_MISMATCH", "unknown request result owner")
                 owners = state.setdefault("result_owners", {})
                 message_owners = state.setdefault("message_owners", {})
-                recorded = set(state.get("recorded_ids", ()))
+                snapshot = self.lifecycle.read_session(SessionRef(SessionId(context.session_id)), context)
+                recorded = set(state.get("recorded_ids", ())) | {
+                    record.get("message_id") for record in snapshot.backend_messages()
+                }
                 for record in records:
                     if record.get("role") in {"assistant", "tool"} and record.get("message_id") not in recorded:
-                        message_owners[record["message_id"]] = request_id
+                        message_owners.setdefault(record["message_id"], request_id)
                     is_result = record.get("role") == "tool" or (
                         record.get("role") == "user"
                         and str(record.get("content", "")).startswith((
@@ -271,7 +266,7 @@ class RequestService:
                     state.clear()
                     state.update(recovered)
 
-                current = self.transact(context, apply)
+                current = self.transact(context, apply, cause=EventCause("recovery.checked", "recovery"))
             self._recovered_sessions.add(context.session_id)
             return current
 
@@ -309,7 +304,10 @@ class RequestService:
             )
 
         state = self.transact(
-            context, apply, append_messages=({"message_id": command_id, "role": "user", "content": text},)
+            context,
+            apply,
+            append_messages=({"message_id": command_id, "role": "user", "content": text},),
+            cause=EventCause(f"request.{kind}", "user", {"message_ids": [command_id]}),
         )
         self.notify(context.session_id)
         return state, tuple(result_ids)
@@ -431,12 +429,22 @@ class RequestService:
                 if item["batch_id"] == batch_id:
                     item["status"] = "applied"
 
-        state = self.transact(context, apply)
+        state = self.transact(
+            context,
+            apply,
+            cause=EventCause("routing.applied", "model", {"batch_id": batch_id}, {"proposal_digest": digest(proposal)}),
+        )
         self.notify(context.session_id)
         return state
 
     def update_request(
-        self, context: RequestContext, request_id: str, update: Callable[[UserRequest], UserRequest], *, history=None
+        self,
+        context: RequestContext,
+        request_id: str,
+        update: Callable[[UserRequest], UserRequest],
+        *,
+        history=None,
+        cause=None,
     ) -> UserRequest:
         updated = []
 
@@ -454,12 +462,22 @@ class RequestService:
                 raise RequestError("REQUEST_TARGET_AMBIGUOUS", "request does not exist in this Session")
             state["requests"] = [r.to_dict() for r in requests]
 
-        self.transact(context, apply, history=history)
+        self.transact(context, apply, history=history, cause=cause)
         return updated[-1]
 
-    def command(self, context: RequestContext, request_id: str, kind: str, revision: int, **payload) -> UserRequest:
+    def command(
+        self, context: RequestContext, request_id: str, kind: str, revision: int, *, cause=None, **payload
+    ) -> UserRequest:
         event = RequestEvent(uuid4().hex, kind, revision, payload)
-        updated = self.update_request(context, request_id, lambda request: reduce_request(request, event))
+        origin = (
+            "user" if kind in {"pause", "resume", "interrupt", "cancel", "replace", "amend", "unblock"} else "runtime"
+        )
+        updated = self.update_request(
+            context,
+            request_id,
+            lambda request: reduce_request(request, event),
+            cause=cause or EventCause(f"request.{kind}", origin, {"command_id": event.event_id}),
+        )
         self.notify(context.session_id)
         return updated
 

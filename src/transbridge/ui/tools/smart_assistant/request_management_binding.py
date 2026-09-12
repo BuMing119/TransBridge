@@ -2,12 +2,33 @@
 
 from PyQt6.QtWidgets import QInputDialog
 
+from transbridge.application.assistant_requests.journal import EventCause
+
 from .message_bubble import MessageBubble
 
 
 class RequestManagementBinding:
     def __init__(self, binding):
         self.binding = binding
+        self._timelines = set()
+
+    def show_timeline(self, request_id):
+        from transbridge.application.assistant_requests.journal import read_events
+
+        from .request_timeline_view import RequestTimelineView
+
+        binding = self.binding
+        context = binding.context
+
+        def load_page(sequence):
+            return read_events(
+                binding.service.state(context), request_id=request_id or None, after_sequence=sequence, limit=100
+            )
+
+        dialog = RequestTimelineView(load_page, request_only=bool(request_id), parent=binding.facade)
+        self._timelines.add(dialog)
+        dialog.finished.connect(lambda: self._timelines.discard(dialog))
+        dialog.show()
 
     def stop_generation(self):
         self.binding._user_stopped = True
@@ -28,6 +49,7 @@ class RequestManagementBinding:
                         for entry in state.get("batches", ())
                         if entry["batch"]["batch_id"] == batch_id
                     ],
+                    cause=EventCause("routing.paused", "user"),
                 )
             self.binding.interrupt()
         except Exception as exc:
@@ -43,6 +65,7 @@ class RequestManagementBinding:
                     for entry in state.get("batches", ())
                     if entry.get("status") == "user_paused"
                 ],
+                cause=EventCause("routing.resumed", "user"),
             )
             self.binding.wake()
         except Exception as exc:
@@ -60,6 +83,7 @@ class RequestManagementBinding:
         binding.view.set_pending(
             pending, sum(b.get("status") in {"routing", "user_paused"} for b in state.get("batches", ()))
         )
+        binding.view.show()
 
     def sync_inputs(self):
         binding = self.binding
