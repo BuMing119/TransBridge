@@ -1,6 +1,6 @@
 # 用户请求生命周期与长会话上下文
 
-- 状态：已实现（2026-09-12）；离线集成验证通过，真实模型语料评估未执行。
+- 状态：S01～S08 已实现（2026-09-12）；S06 派生摘要已接通后台生成、持久化及模型上下文消费，长期终态归档与离线附件维护已补齐；真实模型语料评估未执行。
 - 日期：2026-09-12
 - 需求：[FR30](../../docs/requirements.md#fr30智能助手用户请求生命周期与长会话上下文)
 - 架构：[ADR-040](../../docs/adr/040-assistant-user-request-lifecycle.md)
@@ -28,7 +28,7 @@
 - [x] S03：模型控制协议及多指令路由。
 - [x] S04：执行接纳与后台结果归属。
 - [x] S05：调度、确认与完整回答提交。
-- [x] S06：上下文预算及结果回查。
+- [x] S06：上下文预算、结果回查与独立派生摘要生成、持久化、上下文消费。
 - [x] S07：恢复、迁移与关闭集成。
 - [x] S08：请求清单及综合验证。
 
@@ -113,11 +113,11 @@
 用户价值：长会话保留关键目标及约束，工具输出再大也不挤掉当前问题。
 
 - 新增 `smart_assistant/request_context_assembler.py`、`context_budget.py`；修改 `conversation_orchestrator.py` 每轮组装动态请求信息和工具 schema 预算。
-- 新增 `application/assistant_requests/summaries.py`：带来源和覆盖水位的派生摘要；目标、约束、状态仍读取权威请求记录。
-- 复用已有 tokenizer 能力；未知模型预算需显式配置或采用有标识的保守上限，不把字符数当精确 token。无需联网探测模型规格。
+- 已交付权威请求结构、上下文投影和结果预览；本轮补齐独立派生摘要的生成、持久化和上下文消费。摘要为确定性、可追溯的旧材料摘录，按长度阈值触发，不要求每个请求额外调用模型。LLM 自由摘要仍为后续增强。
+- 当前预算使用可配置窗口与有标识的离线保守估计，不声称等于供应商精确 tokenizer。无需联网探测模型规格。
 - 大结果先写可校验 artifact，模型只读范围摘要和引用；新增受 session/request scope 校验的分页回查工具，不将检索到的原文重新作为用户控制指令。
 - tools/messages/output/reserve 联合预算；原生调用链按完整组保留或整体移到摘要；必需部分超预算返回 CONTEXT_BUDGET_EXCEEDED，不静默丢约束。
-- 验收：第 21 轮仍带最初约束；替换模型窗口后输入保持预算；schema 计入预算；当前输入去重且时序正确，自动续跑不重复旧 user 消息；长结果分页可追溯；跨会话检索拒绝；摘要失败仍能用结构化记录继续或明确阻塞。
+- 验收：第 21 轮仍带最初约束；替换模型窗口后输入保持预算；schema 计入预算；当前输入去重且时序正确，自动续跑不重复旧 user 消息；长结果分页可追溯；跨会话检索拒绝；摘要具有 schema、请求/修订、来源与覆盖水位，异步旧结果不可覆盖新修订。摘要失败、失效或占用过多预算时回退原材料，必要材料超预算明确阻塞。
 - 测试：`tests/smart_assistant/test_request_context_budget.py`、`tests/application/assistant_requests/test_request_repository.py`。
 - 依赖：S01、S02；集成验收依赖 S05。
 
@@ -146,13 +146,30 @@
 
 ## 实施验证与限制
 
+### 摘要与长期存储补齐（2026-09-12）
+
+- [x] 明确本轮范围及已有调用入口，复用 S06 与 ADR-040 存储契约。
+- [x] 摘要核心：`application/assistant_requests/summaries.py` 与来源归属模块；仅明确归属的旧材料生成有界摘录，保留近期原文，来源变更/修订变化使缓存失效。
+- [x] 摘要接线：独立摘要应用服务后台生成，事务内重验并保存；每轮上下文准备读取有效摘要，取消/切换后的回调失效，预算回退保留权威状态。真实 Qt→后台→持久化→模型输入，以及组装中暂停/资源等待/取消、确认后工具续轮均已回归。
+- [x] 长期归档：已结束且无未决副作用的旧请求移入不可变 artifact，保留最近 100 个终态；读和事务透明还原，既有继续/审计接口仍可访问完整证据。归档与 Session manifest 同次发布，CAS/保存失败不破坏旧快照。
+- [x] 附件维护：全量核对当前/备份/保留引用，损坏或未知格式停止清理，路径守卫与发布共用锁；显式维护 CLI 默认仅预览，临时测试根验证实际删除，开发期间不清理用户数据。
+- [x] QA：针对性回归、Qt 集成、相关综合测试、Ruff 与新版本基准；需求、ADR 和索引状态已同步。
+
+摘要不成为授权、任务状态或隐藏推理记录。摘要生成与存储整理避免阻塞 Qt；真实外部模型评估需要可用模型配置和采集环境，离线验收与真实模型结果分别报告。
+
+过程记录与对话验收工具在[后续实施计划](../assistant-request-observability/plan.md)跟踪；原设计和实现增量保留当时状态，当前进度以本文为准。
+
 综合回归命令：
 
-`uv run pytest tests/smart_assistant tests/ui/tools/smart_assistant tests/application/sessions tests/application/assistant_requests tests/persistence/v2 tests/persistence/test_assistant_transcript_store.py tests/persistence/test_session_request_storage.py tests/contracts/test_task_runtime.py tests/contracts/test_task_runtime_backends.py tests/integration/bootstrap tests/config tests/ui/test_ui_settings_dialog.py -q -m "not llm"`
+`uv run pytest tests/smart_assistant tests/ui/tools/smart_assistant tests/application/sessions tests/application/assistant_requests tests/persistence/v2 tests/persistence/test_assistant_transcript_store.py tests/persistence/test_session_request_storage.py tests/persistence/test_assistant_attachment_cleanup.py tests/persistence/test_assistant_attachment_cleanup_cli.py tests/contracts/test_task_runtime.py tests/contracts/test_task_runtime_backends.py tests/integration/bootstrap tests/config tests/ui/test_ui_settings_dialog.py -q -m "not llm"`
 
-最终综合回归 1,258 项通过（32.82 秒），包含确认提交顺序、主动停止、窗口预算设置及迟到结果投影。`uv run ruff check src tests`、`uv run ruff format --check src tests` 均通过（1,301 个文件格式合规）；`git -c core.safecrlf=false diff --check` 通过。
+最终综合回归 1,410 项通过（55.32 秒），包含摘要生成/缓存失效/真实上下文消费、组装期间取消与等待、归档 CAS 故障及离线清理。`uv run ruff check src tests scripts/maintain_assistant_storage.py scripts/benchmark_assistant_requests.py`、`uv run ruff format --check src tests scripts/maintain_assistant_storage.py scripts/benchmark_assistant_requests.py` 均通过（1,323 个文件格式合规）；`git -c core.safecrlf=false diff --check` 通过。
 
-`uv run python scripts/benchmark_assistant_requests.py --samples 20` 使用真实临时 repository、10,000 条消息、100 请求及长结果。最终 20 样本：上下文组装 P95 62.209 ms；后台接纳 P95 203.344 ms；历史保存 P95 63.667 ms。重复保存跳过无变化写入；Qt 保存相同历史样本最大心跳间隔 51.439 ms。这不是全部有变化保存、冷启动和磁盘故障的延迟保证。已减少历史反复解码、嵌套重复 JSON 验证及重复冻结；缓存命中仍每次读盘核验摘要。
+中间一次合并运行在首个 UI 测试初始化时出现 Qt 原生异常，退出码 1；随后核心/存储分组 1,219 项、UI/组合入口分组 186 项均通过。最终新增 5 项后台组装回归后，上述 1,410 项合并运行完整通过；异常未再次复现，尚无证据认定根因已消除或属于既有问题。
+
+`uv run python scripts/benchmark_assistant_requests.py --samples 20` 使用真实临时 repository、10,000 条消息、100 请求及长结果，在无并行测试时测量。最终 P95：原历史上下文组装 58.078 ms；摘要刷新 126.546 ms；权威材料准备 179.304 ms；包含摘要的上下文组装 253.423 ms；输入接纳 657.896 ms；历史保存 222.131 ms。Qt 保存相同历史样本最大心跳间隔 114.027 ms，保存耗时 113.812 ms。摘要刷新、材料准备及实际 UI 入口的预算组装均在后台线程，线程归属与中途取消另由 Qt 回归验证。
+
+这些测量不表示新增摘要降低总时延，也不是全部有变化保存、冷启动和磁盘故障的延迟保证；完整证据与归属核验增加了存储工作。摘要缓存命中仍读取权威记录并校验，当前保证是避免把这些长历史计算放在 Qt 线程，不承诺每次请求在 200 ms 内完成。
 
 `assistant_context_window` 默认 32768，可在 AI 服务设置按模型窗口调整。预算包含工具定义、输出预留及协议余量，使用离线保守估计，不声称等于供应商 tokenizer。
 
@@ -160,6 +177,8 @@
 
 ## 结构与兼容性复核
 
-请求核心、路由、接纳、事件、恢复、结果核对、删除及上下文分模块实现；RequestBinding 的确认和管理职责已抽离。SessionLifecycleService 约 500 行，新增内容只扩展现有命令和删除前置边界，CAS 保存逻辑已抽到 `application/sessions/commands.py`；后续请求业务仍放在 assistant_requests 包。
+请求核心、路由、接纳、事件、恢复、结果核对、删除及上下文分模块实现；RequestBinding 的确认和管理职责已抽离，现为 465 行、21 个方法。RequestService 为 497 行、22 个方法；摘要服务、终态归档和事务发布各自独立。ConversationOrchestrator 为 635 行、25 个方法，已进行职责复核：本轮仅在既有轮次启动边界接入异步准备，不承载摘要或存储算法；后台准备和纯消息组装分别放入 RequestContextPreparation 与 RequestModelInput。后续若再增加独立轮次处理职责，须先抽离轮次准备入口，避免继续扩充该模块。
+
+SessionLifecycleService 约 500 行，新增内容只扩展现有命令和删除前置边界，CAS 保存逻辑已抽到 `application/sessions/commands.py`；后续请求业务仍放在 assistant_requests 包。
 
 Schema 4 保留已有历史，不推断旧请求，不改变翻译项目快照语义；旧程序拒写新版数据。保留先前取消修复、术语界面及已有增量记录，没有提交或推送。设计历史见已有设计增量记录，本文描述当前实现。

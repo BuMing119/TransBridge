@@ -1,6 +1,6 @@
 # ADR-040：助手用户请求、执行归属与上下文投影
 
-- 状态：已实施（2026-09-12 用户授权开发）；真实模型语料评估未执行。
+- 状态：核心链路、独立派生摘要及长期请求归档已实施（2026-09-12 用户授权继续开发）；离线附件维护入口已接通，真实模型语料评估未执行。
 - 日期：2026-09-12
 - 需求：[FR30](../requirements.md#fr30智能助手用户请求生命周期与长会话上下文)
 - Plan：[assistant-user-request-lifecycle](../../plans/assistant-user-request-lifecycle/plan.md)
@@ -122,7 +122,7 @@ PAUSE/“暂停推进”记录用户来源并关闭新轮次/新操作接纳，�
 
 ## 决策 5：确认绑定操作，结果归属优先于显示
 
-确认记录绑定 request/revision、规范化操作摘要、资源版本及授权范围，并具有独立 approval 版本。批准 A 不改变请求修订，也不使同请求无关 B 的确认失效；撤销对应授权使其 lease_epoch 失效。无关新问题只停用旧卡片的前台交互，保留原请求的“待确认事项”；修订、替换和取消才使相关业务许可失效。当前 UI 临时 token 不能跨重启沿用，恢复后重建方案并重新确认。
+确认记录绑定 request/revision、准确的 item_ids、规范化操作摘要、资源版本及授权范围，并具有独立确认身份与 lease_epoch。恢复展示只为原请求和原事项重建卡片，保留持久化审批等待；点击时先核验会话租约、修订、epoch 和事项集合，再原子消费确认记录。批准只解除这些事项的审批等待，资源或未知结果等等待保持有效；明确忽略消费该记录并暂停请求推进。无关新问题只停用旧卡片的前台交互，保留原请求的“待确认事项”；修订、替换和取消使相关业务许可失效。旧记录缺少确认身份、事项归属或具有过期 epoch 时作废并重新提议，不把旧工具参数重放到其他事项。当前 UI 临时 token 不能跨重启沿用，恢复后重建方案并重新确认。
 
 这会取代取消修复中“所有新输入均使旧卡片失效”的粗粒度默认：防旧回调的 generation 检查保留，但业务确认需求从 UI 移到请求记录。后台图 HITL 必须能输出持久化的等待描述/安全 checkpoint；缺少该能力时中断后标为需要重新规划，不试图序列化 Python 回调。
 
@@ -157,7 +157,9 @@ PAUSE/“暂停推进”记录用户来源并关闭新轮次/新操作接纳，�
 
 裁剪顺序：先移除无关/低相关历史，再收缩可替代大结果摘要，再缩短近期历史；固定规则、当前输入、有效约束与必要工具协议不可静默移除。原生 call/results 作为完整组保留或整体以带引用的普通摘要替代，不能留下孤立 tool 消息。必需部分超预算时阻止执行并要求缩小材料或提高配置窗口。
 
-请求摘要包含 schema、request_revision、covered_sequence、source_ids、摘要生成方式；摘要为派生数据，可丢弃重建。异步生成后若修订或覆盖水位已变化则不替换当前摘要。首期用结构化请求状态加确定性材料摘录即可工作，LLM 自由摘要与 embedding 检索为后续增强。
+独立请求摘要由 `summaries.py` 和 `summary_service.py` 实现，保存 schema、request/session/revision、covered_sequence、source_ids、source_digest、生成方式和有界正文。默认保留最近 8 条相关消息；更早的公开材料达到 8 条或 4000 字符时生成，正文最多 2400 字符。首版采用确定性摘录和有证据的完成事实引用，材料本身不产生授权或任务完成结论；LLM 自由摘要与 embedding 检索仍为后续增强。
+
+每次业务模型轮次由 `RequestContextPreparation` 在后台先保存捕获的最新工具结果及上下文，再生成、事务内重验并保存摘要，返回按同一权威 transcript 校验过的材料。GUI 接纳当前轮次后，将独立 `RequestModelInput` 材料交回后台完成归属投影和预算组装；ReAct 续跑以重新签发的执行租约为准。请求修订或覆盖来源变化使候选失效；取消、暂停、事项等待和窗口权限变化在分派前再次检查。未变化摘要不重复发布；生成失败或派生缓存无效时使用原历史，原始证据保存失败则阻止本轮执行。摘要只替代实际引用的可选材料，不按覆盖水位删除未摘录原文；摘要装不下时优先保留必需状态及原输入。GUI 不重新执行全量摘要生成、验证和消息预算计算。
 
 回查工具按授权 scope/request 和允许引用分页读取 artifact/历史，返回来源、范围与完整性诊断；路径不由模型随意拼接。检索到的原文作为材料，不转换成新 ingress 或执行许可。不存在的结果、截断缺失或历史已被旧版裁剪须明确标记，不臆造全文。
 
@@ -165,11 +167,17 @@ PAUSE/“暂停推进”记录用户来源并关闭新轮次/新操作接纳，�
 
 首期保留 JSON repository 技术路线，不引入 SQLite 或第二套业务状态数据库。Session manifest 保存 typed 请求目录、修订、活动焦点、输入消费位置、effect intents、结果引用与已消费事件水位；完整历史分段及大结果存为带 digest 的不可变文件。
 
-提交顺序：先写并验证新 segment/artifact，再通过条件保存原子替换 Session manifest。只有 manifest 引用的附件视为已提交；失败产生的孤儿不能被恢复为活跃操作。归档长期终态请求也采用不可变详情文件与 manifest 小摘要，避免请求目录无限增长。清理仅回收不被当前 manifest、备份或保留记录引用的文件，禁止依据时间直接删除。
+提交顺序：先写并验证新 segment/artifact，再通过条件保存原子替换 Session manifest。只有 manifest 引用的附件视为已提交；失败产生的孤儿不能被恢复为活跃操作。`archival.py` 默认保留最近 100 个已收尾终态，将更早终态的完整请求详情写入不可变 artifact，主状态保留带身份、位置、摘要校验值的索引；活动请求和未决副作用不归档。请求应用服务及事务读取时透明还原，继续、审计和晚到证据沿用原请求身份；发布失败保留旧快照，旧备份继续引用旧详情。归档详情及索引仍随长期使用增长，不宣称存储总量有固定上限。
 
-新增 SessionCommandStore/应用写入服务，使用按存储根路径及 SessionRef 共享的条件保存锁；UI 与后台经同一个实例入口提交，冲突时重读、按 command/event ID 重新归约。底层 JsonRepository 已有 root-shared mutation_lock，但目前 Session adapter 的读 revision→save 序列只受自身 RLock 保护；应复用该底层共享锁包住完整条件保存，不能仅新增另一把不相干的锁。跨进程写同一 Session 采用文件租约/互斥；若暂不支持多写进程，则明确拒绝第二写入者，不能用实例 RLock 声称安全。
+`AssistantAttachmentCleanup` 全量核对当前 Session、备份、保留/隔离记录以及显式保留引用，只回收确认无引用的应用附件；损坏、未知格式、未决 staging 或越界阻止清理，禁止依据时间直接删除。维护入口 `scripts/maintain_assistant_storage.py --root <数据根>` 默认只预览；实际删除需停止所有写入者后显式指定 `--apply --offline`，每次重新扫描而非沿用旧预览。root-shared 锁与 Session 写租约只约束协作写者；offline 是调用者声明，不能证明其他进程已关闭，也不能推断其他进程内尚未提交的引用。开发测试只对临时根执行删除。
+
+应用写入服务使用按存储根路径及 SessionRef 共享的条件保存锁；UI 与后台经同一写入边界提交，冲突时重读、按 command/event ID 重新归约。Session adapter 的读 revision→save 序列复用底层 root-shared mutation_lock，并使用文件写入租约拒绝跨进程冲突发布。
 
 序列消费位置只随 manifest 成功提交而推进；进度可以合并，接纳、许可变更、停止和终态必须持久化。保存失败暂停新的副作用接纳；进行中的已授权工作由已有运行时管理，保留结果用于补记，不能报成已可靠保存。
+
+过程诊断保存在 `assistant_state.lifecycle_events`，与本次状态变更共享同一个原子 Session 发布。`journal.py` 从提交前后状态提取差异，`transactions.py` 承接保存，`turns.py` 处理轮次接纳与失败证据；重载冲突后重新计算序号。记录 UTC 时间、事件和会话身份、操作来源、请求关联、状态差异及消息/批次/轮次/任务引用。模型提供的局部标签采用稳定摘要，诊断不重复用户正文、工具结果或确认参数；原始提案和结果仍在原证据中。
+
+被拒绝的路由只提交拒绝事实及提案摘要，不提交候选请求变化，再向调用者返回拒绝。日志不是事件溯源命令，不驱动恢复、授权或执行。旧 Session 没有日志时从下一次变化开始记录，不补推旧事件。界面异步分页读取原会话记录，查看不影响调度；语料回放与显式真实模型采集另见[验收说明](../../tests/fixtures/assistant_request_routing/README.md)。
 
 SessionSnapshot 的旧 messages/history 字段在迁移后作为兼容输出投影，不与 Transcript 双向合并。后台写入新结果与用户输入通过同一最新聚合提交，禁止用陈旧整份 UI 快照覆盖请求状态。
 
@@ -196,7 +204,7 @@ SessionSnapshot 的旧 messages/history 字段在迁移后作为兼容输出投�
 
 ## 模块边界与接口
 
-以下接口均为设计，不是当前已有 API：
+以下模块边界已实施；末尾的核心命令列表为用例概念，具体签名以各模块实现为准：
 
 - `application/assistant_requests/`：纯 Python 的 models/reducer、输入路由校验、admission、scheduler、task_events、recovery、transcript/summary ports。service 只组合用例，不拥有 UI、模型客户端、文件系统或业务翻译逻辑。
 - `smart_assistant/request_router.py`：RoutingProposal 的模型适配器；`request_context_assembler.py` 与 `context_budget.py` 负责模型输入，复用 provider，使用可注入估计器与默认离线保守估算。
