@@ -2,7 +2,7 @@
 
 **所属方案**: `plans/smart-assistant-qa-fix/plan.md`
 **技术模块**: `smart_assistant/` (memory_store, agent_worker, execution_engine, conversation_manager, tool_registry)、`ui/tools/smart_assistant/` (chat_widget, panel)
-**状态**: 部分已废除（2026-09-13）：C9/M9 旧记忆异步写入、LRU 及 M13 中旧记忆关闭部分已废除；其他线程与资源要求保持原状态。旧记忆相关设计仅保留为历史，不再实施或验收。
+**状态**: 部分已废除（2026-09-13）：C9/M9 旧记忆异步写入、LRU 及 M13 中旧记忆关闭部分已废除；其他线程与资源要求保持原状态。旧记忆及固定轮次裁剪（M10、max_turns/_trim 测试）已废除，相关设计仅保留为历史，不再实施或验收。
 **创建日期**: 2026-05-12
 **覆盖问题**: C9（UI线程IO）、M7（cancel空操作）、M8（_paused共享）、M9（MemoryStore无限制）、M10（_trim不裁剪观察）、M11（无Token预算）、M12（观察消息无限增长）、M13（面板关闭线程未终止）、M14（_clear不清除worker）
 
@@ -23,7 +23,7 @@
 - [ ] `AgentWorker.cancel()` 可中断正在执行的工具调用
 - [ ] `ExecutionEngine._paused` 改为实例级属性，不同会话独立暂停
 - **已废除（旧记忆）**：`MemoryStore` 添加 `max_entries`（默认 1000）+ LRU 淘汰策略
-- [ ] `ConversationManager._trim()` 裁剪时同步移除 observation/plan_result 消息
+- **已废除（固定轮次窗口）**：`ConversationManager._trim()` 裁剪时同步移除 observation/plan_result 消息
 - [ ] `build_tool_schema_for_prompt()` 按当前 Agent namespace 过滤工具
 - [ ] `add_observation()` 结果文本超过 2000 字符时自动截断
 - [ ] `panel.py` 添加 `closeEvent` 覆盖：关闭面板时 cancel worker + stop engine
@@ -62,7 +62,7 @@ AgentWorker.cancel()
   → self._stop_event.set()            （已有）
 ```
 
-### M10: _trim 裁剪观察消息
+### M10: _trim 裁剪观察消息（已废除，历史设计）
 
 ```
 ConversationManager._trim() 当前:
@@ -193,7 +193,7 @@ def run(self):
 
 ---
 
-### 步骤 4: M10 — ConversationManager._trim 裁剪观察消息
+### 步骤 4: M10 — ConversationManager._trim 裁剪观察消息（已废除）
 
 **涉及文件**: `src/transbridge/smart_assistant/conversation_manager.py`（修改）
 

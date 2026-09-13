@@ -2,7 +2,7 @@
 
 **所属方案**: `plans/smart-assistant-qa-fix/plan.md`
 **技术模块**: `tests/`（测试）、`smart_assistant/`（被测模块）
-**状态**: 部分已废除（2026-09-13）：MemoryStore/MemoryRetriever 专属测试及步骤 4 已废除；其他测试范围保持原状态。旧记忆相关设计仅保留为历史，不再实施或验收。
+**状态**: 部分已废除（2026-09-13）：MemoryStore/MemoryRetriever 专属测试及步骤 4 已废除；其他测试范围保持原状态。旧记忆及固定轮次裁剪（M10、max_turns/_trim 测试）已废除，相关设计仅保留为历史，不再实施或验收。
 **创建日期**: 2026-05-12
 **覆盖问题**: C2（测试覆盖几乎为零 — 仅 1 个测试文件覆盖 3 个 Epic 的 ~50 源文件）
 
@@ -19,7 +19,7 @@
 ## 验收标准
 
 - [ ] `ChatWorker` 测试：流式响应 / cancel / 错误处理 / token usage 统计
-- [ ] `ConversationManager` 测试：max_turns 裁剪（含 observation 消息）/ 上下文长度限制
+- **已废除（固定轮次窗口）**：`ConversationManager` 测试：max_turns 裁剪（含 observation 消息）/ 上下文长度限制
 - [ ] `ExecutionEngine.execute_graph()` 测试：DAG 拓扑排序 / 层级并行 / checkpoint 暂停恢复 / 重试
 - [ ] `RetryHandler` 测试：可重试错误 vs 不可重试错误 / 参数调整 / MAX_RETRIES（若 M1 实例化）
 - **已废除（旧记忆）**：`MemoryStore` / `MemoryRetriever` 测试：添加 / 语义搜索 / 精确搜索 / LRU 淘汰
@@ -50,8 +50,8 @@
 **涉及文件**: `tests/test_conversation_manager.py`（新建）
 
 **覆盖场景**:
-- 正常对话 10 轮（< max_turns=20）→ 不裁剪
-- 对话 25 轮（> max_turns=20）→ 保留最后 20 轮
+- 完整历史按原顺序保存，包括工具调用与观察结果
+- 对话超过 20 轮并重启后，起始消息、工具结果及稳定 ID 仍完整保留；旧窗口截断测试已废除
 - 含 observation 消息的对话 → 裁剪时一并移除旧的 observation
 - 含 plan_result 消息 → 同上
 - 空对话 → 不抛异常

@@ -102,7 +102,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [vector-term-retrieval](../plans/vector-term-retrieval/plan.md) | ✔️ 已实现 | — |
 | [agent-tool-expansion](../plans/agent-tool-expansion/plan.md) | ✔️ S01-21+S23-26已实现 + ✔️ S22已实现 (描述+代码修复) | 26 |
 | [agent-upgrade](../plans/agent-upgrade/plan.md) | 部分已废除：S04；其他 Story 保持原状态 | 12（S04 已废除） |
-| [llm-chat](../plans/llm-chat/plan.md) | ✅ 全部完成 (S01-10，含 ChatWidget拆分) | 10 |
+| [llm-chat](../plans/llm-chat/plan.md) | 部分已废除：S02 固定轮次窗口；其他范围保持原状态 | 10 |
 | [smart-assistant-qa-fix](../plans/smart-assistant-qa-fix/plan.md) | 部分已废除：S03/S05/S07 的旧记忆项；其他范围保持原状态 | 7 |
 | [smart-assistant-refactor](../plans/smart-assistant-refactor/plan.md) | 部分已废除：S04 子任务 B；其他范围保持原状态 | 4 |
 | [tool-prompt-layering](../plans/tool-prompt-layering/plan.md) | ✅ 全部完成 (S01-S05) | 5 |

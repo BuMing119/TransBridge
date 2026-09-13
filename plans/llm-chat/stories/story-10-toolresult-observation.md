@@ -175,7 +175,7 @@ conversation_manager.add_observation(tool_name, observation_text)
     ├── → 兜底截断（安全网）
     └── → 追加 {"role": "user", "content": "【工具执行结果 - tool】\n..."}
     ↓
-下一轮 LLM 调用时 get_messages() → 观察消息在对话上下文中
+下一轮 LLM 调用时 get_transcript() → 观察消息在对话上下文中
 ```
 
 ## 边界条件

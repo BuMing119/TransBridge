@@ -3,7 +3,7 @@
 **对应需求**: FR7 (用户界面) — 新增 AI 智能助手入口
 **技术模块**: `src/transbridge/ui/tools/smart_assistant/` (新建)
 **业务域**: AI 辅助翻译
-**状态**: ✅ 已实现（Story-01~09 全部完成，含 ChatWidget 拆分重构）
+**状态**: 部分已废除（2026-09-13）：固定 20 轮窗口、max_turns/get_messages 及裁剪接口设计已废除；其余功能保留原状态。当前保留完整历史，模型输入由请求上下文预算与摘要压缩管理。
 **创建日期**: 2026-03
 **确认日期**: 2026-05-06
 
@@ -19,7 +19,7 @@
 - 快捷指令面板：翻译选中、质量检查、查询术语、导出 JSON
 - v1 工具集（6个）：lookup_terms / translate_entries / check_quality / get_collection_summary / export_json / write_back
 - 菜单入口（小工具→智能助手）+ 快捷键 Ctrl+K / Ctrl+Shift+I + View 菜单勾选
-- 多轮对话管理（ConversationManager，max_turns=20）
+- 完整对话历史管理（旧固定 20 轮窗口已废除，模型输入由请求上下文系统管理）
 - 主窗口状态持久化（QSettings：geometry + DockWidget state）
 - PromptBuilder 扩展：parse_hybrid_response() 解析 mode/thought/steps
 - LLM 流式调用 + 取消支持（复用现有 LLMClient）
@@ -64,7 +64,7 @@
 **详细文档**: `stories/story-02-core-backend.md`
 
 **验收标准**:
-- [ ] ConversationManager 正确维护多轮对话，max_turns=20
+- **已废除（固定轮次窗口）**：ConversationManager 正确维护多轮对话，max_turns=20
 - [ ] ChatWorker 后台调用 LLM 流式接口，chunk 信号逐字传递
 - [ ] ChatWorker 支持 cancel() 中断（threading.Event + LLMClient.cancel()）
 - [ ] parse_hybrid_response() 正确解析 mode/thought/steps JSON 格式

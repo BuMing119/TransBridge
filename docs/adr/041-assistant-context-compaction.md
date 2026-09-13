@@ -16,7 +16,7 @@
 
 ## 2. 改造前已核实的实现基线
 
-- `smart_assistant/conversation_manager.py` 的 `get_messages()` 默认 20 轮，但 `conversation_orchestrator.py` 在请求执行链使用 `get_transcript()`。完整历史已持久化，不能把现状描述成只保存 20 轮。
+- 旧 `get_messages()` 固定 20 轮窗口及兼容回退已于 2026-09-13 废除。`ConversationManager` 只提供完整历史和带稳定 ID 的 `get_transcript()`；模型输入由请求上下文准备和预算压缩管理，完整历史继续持久化。
 - `request_context_assembler.py` 按预算重新选择消息，最终为 `systems + state_messages + summary_messages + body`。状态、摘要变化可能在相同历史前打断可复用前缀。
 - `application/assistant_requests/summaries.py` 是确定性摘录：最近 8 条以外达到 8 条或 4000 字符后生成，正文上限 2400 字符。不是 LLM 语义摘要。
 - `request_context_preparation.py` 每次执行准备保存历史、刷新摘要并后台组装，已经有租约与过期回调保护。

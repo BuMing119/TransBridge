@@ -528,7 +528,7 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
 
   - **FR7.14.5 视觉风格现代化**: 消息气泡 SHALL 采用现代聊天应用风格——圆角（12-16px）、柔和阴影、用户气泡右对齐（品牌色背景）、AI 气泡左对齐（白色/浅灰背景+细边框）、系统消息居中（更小字号+灰色）。输入框 SHALL 采用圆角多行文本编辑区，发送按钮突出显示。快捷指令按钮 SHALL 改为小圆角标签样式。整体配色以中性灰白为主调，辅以品牌色点缀。字体大小和间距适度增大（正文 13-14px，行距 1.5-1.6）。
 
-  - **FR7.14.6 消息区滚动优化**: 消息区 SHALL 支持平滑滚动（QScrollBar 动画）。新消息到达时自动滚到底部，但用户手动上滚查看历史时 SHALL 不强制拉回底部（显示「↓ 回到底部」浮动按钮）。消息加载 SHALL 支持虚拟列表或懒加载，避免大量消息时卡顿（当前会话上限 20 轮，历史会话不限）。
+  - **FR7.14.6 消息区滚动优化**: 消息区 SHALL 支持平滑滚动（QScrollBar 动画）。新消息到达时自动滚到底部，但用户手动上滚查看历史时 SHALL 不强制拉回底部（显示「↓ 回到底部」浮动按钮）。消息加载 SHALL 支持虚拟列表或懒加载，避免大量消息时卡顿（当前与历史会话均保留完整消息，固定 20 轮窗口已废除）。
 
   - **FR7.14.7 快捷指令面板重构**: 快捷指令按钮 SHALL 从独立的 `QuickActionsPanel`（固定高度 48px）改为嵌入输入框上方的标签式工具栏。按钮样式从 QPushButton 改为小型圆角标签（类似聊天应用的「建议操作」chips）。Skill 下拉按钮保留。工具栏可折叠或自动隐藏。
 
@@ -552,7 +552,7 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
   - **FR7.15.2 异步通知**: TaskManager SHALL 添加 `task_completed` / `task_failed` pyqtSignal，异步翻译/润色任务完成后自动通知 LLM 结果。
   - **FR7.15.3 安全加固**: MCP stdio 通道 SHALL 支持可选 token 认证。v1 工具 SHALL 添加路径校验。输入校验正则 SHALL 放宽以允许游戏标记语言中的合法 HTML 标签。
   - **FR7.15.4 配置完整性**: `get_translation_config` SHALL 返回真实的后处理/术语配置。`start_translation` SHALL 检查 API Key/术语数据库等前置条件。`ToolResult.fail()` SHALL 支持 `error_category`/`error_code`/`recovery_action` 字段。
-  - **FR7.15.5 线程与资源**: 面板关闭时 SHALL 清理运行中的 worker/engine。ConversationManager SHALL 正确裁剪工具调用消息。系统 SHALL 实现 Token 预算和截断机制。
+  - **FR7.15.5 线程与资源**: 面板关闭时 SHALL 清理运行中的 worker/engine。固定轮次裁剪要求已废除；ConversationManager SHALL 保留完整消息和工具结果，模型输入由请求上下文预算及摘要压缩管理。系统 SHALL 实现 Token 预算和截断机制。
   - **FR7.15.6 代码清理**: `context_builder.py` SHALL NOT 直接 import UI 模块（修复 ADR-008 违规）。死代码 SHALL 移除或正确实例化。collection-is-None 检查 SHALL 统一使用 `@require_collection` 装饰器。
   - **FR7.15.7 测试补充**: 系统 SHALL 为 ChatWorker / ConversationManager / ExecutionEngine / ContextBuilder / MarkdownRenderer / MCP 模块补充测试覆盖。
 

@@ -3,7 +3,7 @@
 **对应需求**: FR7.15 — Smart Assistant QA 审查修复
 **技术模块**: `smart_assistant/`、`ui/tools/smart_assistant/`、`infra/`
 **业务域**: AI 辅助翻译 — 安全/质量/性能修复
-**状态**: 部分已废除（2026-09-13）：Story-03 的旧记忆文件存储/检索方案、Story-05 的记忆线程/LRU/关闭逻辑及 Story-07 的旧记忆测试已废除；其他范围保持原状态。旧记忆相关设计仅保留为历史，不再实施或验收。
+**状态**: 部分已废除（2026-09-13）：Story-03 的旧记忆文件存储/检索方案、Story-05 的记忆线程/LRU/关闭逻辑及 Story-07 的旧记忆测试已废除；其他范围保持原状态。旧记忆及固定轮次裁剪（M10、max_turns/_trim 测试）已废除，相关设计仅保留为历史，不再实施或验收。
 **创建日期**: 2026-05-12
 **更新日期**: 2026-05-13 (第四轮修复 + Phase 1 后端 QObject 解耦与栈溢出根治)
 **输入文档**: 
@@ -140,7 +140,7 @@
 - [ ] `AgentWorker.cancel()` 可中断正在执行的工具调用（通过 `_cancelled` 标志在工具执行循环中检查）
 - [ ] `ExecutionEngine._paused` 改为实例级属性（非类级），不同会话独立暂停
 - **已废除（旧记忆）**：`MemoryStore` 添加 `max_entries`（默认 1000）+ LRU 淘汰策略
-- [ ] `ConversationManager._trim()` 裁剪时同步移除 observation/plan_result 消息
+- **已废除（固定轮次窗口）**：`ConversationManager._trim()` 裁剪时同步移除 observation/plan_result 消息
 - [ ] `build_tool_schema_for_prompt()` 按当前 Agent namespace 过滤工具，仅发送相关工具 schema（token 节省 50%+）
 - [ ] `add_observation()` 结果文本超过 2000 字符时自动截断
 - [ ] `panel.py` 添加 `closeEvent` 覆盖：关闭面板时 cancel worker + stop engine
@@ -216,7 +216,7 @@
 
 **验收标准**:
 - [ ] `ChatWorker` 测试：流式响应 / cancel / 错误处理 / token usage 统计
-- [ ] `ConversationManager` 测试：max_turns 裁剪（含 observation 消息）/ 上下文长度限制
+- **已废除（固定轮次窗口）**：`ConversationManager` 测试：max_turns 裁剪（含 observation 消息）/ 上下文长度限制
 - [ ] `ExecutionEngine.execute_graph()` 测试：DAG 拓扑排序 / 层级并行 / checkpoint 暂停恢复 / 重试
 - [ ] `RetryHandler` 测试：可重试错误 vs 不可重试错误 / 参数调整 / MAX_RETRIES
 - **已废除（旧记忆）**：`MemoryStore` / `MemoryRetriever` 测试：添加 / 语义搜索 / 精确搜索 / LRU 淘汰

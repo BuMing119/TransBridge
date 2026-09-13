@@ -2,7 +2,7 @@
 
 **所属方案**: `plans/llm-chat/plan.md`
 **技术模块**: `src/transbridge/ui/tools/smart_assistant/` (新建), `src/transbridge/ai_translator/` (修改)
-**状态**: ✅ 已确认
+**状态**: 部分已废除（2026-09-13）：固定 20 轮窗口、max_turns/get_messages 及裁剪接口设计已废除；其余功能保留原状态。当前保留完整历史，模型输入由请求上下文预算与摘要压缩管理。
 **创建日期**: 2026-05-06
 
 ## 前置依赖
@@ -20,7 +20,7 @@
 
 ## 验收标准
 
-- [ ] ConversationManager 正确维护多轮对话，max_turns=20
+- **已废除（固定轮次窗口）**：ConversationManager 正确维护多轮对话，max_turns=20
 - [ ] ChatWorker 后台调用 LLM 流式接口，chunk 信号逐字传递
 - [ ] ChatWorker 支持 cancel() 中断（threading.Event + LLMClient.cancel()）
 - [ ] parse_hybrid_response() 正确解析 mode/thought/steps JSON 格式
@@ -36,7 +36,7 @@
   │
   ▼
 ConversationManager.add_user(text)
-  │  get_messages() → [system, ..., user]
+  │  get_transcript() → 完整消息及稳定 ID → 请求上下文准备
   ▼
 ChatWorker.run()  ← QThread (后台线程)
   │  self._client.chat_stream(messages, max_tokens, chunk_cb)
@@ -73,7 +73,7 @@ ExecutionEngine.execute(steps)
 
 ## 关键接口
 
-### conversation_manager.py
+### conversation_manager.py（历史窗口接口已废除）
 
 ```python
 class ConversationManager:

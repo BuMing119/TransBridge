@@ -38,7 +38,7 @@ ChatWidget.message_sent
     │
     ▼
 _run_llm_round()
-    ├─ ConversationManager.get_messages()
+    ├─ ConversationManager.get_transcript()
     ├─ ChatWorker(messages) → chunk → 流式显示
     └─ ChatWorker.finished → _on_llm_finished(response)
          │
