@@ -199,7 +199,7 @@ def test_complete_result_reference_is_recoverable_after_twenty_turns_and_restart
     restored = ConversationManager()
     restored.from_dict({"messages": snapshot.backend_messages()})
     assert restored.get_transcript() == records
-    assert len(restored.get_messages()) < len(restored.get_history())
+    assert len(restored.get_history()) == 52
 
 
 def test_wrong_owner_cannot_read_or_append_request_history(composed):

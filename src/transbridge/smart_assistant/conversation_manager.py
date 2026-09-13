@@ -7,25 +7,15 @@ from uuid import uuid4
 
 
 class ConversationManager:
-    """Preserve complete evidence separately from the recent model projection.
-
-    Only explicit user input opens a turn. Tool/confirmation continuations stay
-    in their original turn; the configured turn limit never deletes history.
-    """
+    """Own complete conversation evidence; model budgets belong to context preparation."""
 
     _OBSERVATION_PREFIX = "[Tool result - {name}]\n"
     _PLAN_RESULT_PREFIX = "[Plan execution completed]"
     _MAX_OBSERVATION_CHARS = 2000
 
-    def __init__(self, max_turns: int = 20) -> None:
+    def __init__(self) -> None:
         self._messages: list[dict[str, Any]] = []
         self._message_ids: list[str] = []
-        self._max_turns: int = max_turns
-        # M3: 预记录每轮起始位置 (user 消息在 _messages 中的索引)
-        self._turn_starts: list[int] = []
-        # m5: 消息缓存 -- 仅在消息变更时重建副本
-        self._messages_dirty: bool = True
-        self._messages_cache: list[dict[str, Any]] = []
         self._loaded_tool_namespaces: set[str] = set()
 
     def _append(self, message: dict[str, Any], *, message_id: str | None = None) -> None:
@@ -34,7 +24,6 @@ class ConversationManager:
             raise ValueError(f"Conversation history already contains message ID {mid}")
         self._messages.append(deepcopy(message))
         self._message_ids.append(mid)
-        self._messages_dirty = True
 
     def add_system(self, content: str) -> None:
         """system 消息始终在列表最前（索引 0），替换已有 system 消息。"""
@@ -45,15 +34,9 @@ class ConversationManager:
         self._messages = [m for m in self._messages if m["role"] != "system"]
         self._messages.insert(0, {"role": "system", "content": content})
         self._message_ids.insert(0, system_id)
-        self._messages_dirty = True
-        self._turn_starts = [start - sum(i < start for i in system_indices) + 1 for start in self._turn_starts]
 
     def add_user(self, content: str, *, message_id: str | None = None) -> None:
-        # Record the turn only after an accepted append; a duplicate ingress ID
-        # must not change either history or its projection boundary.
-        start = len(self._messages)
         self._append({"role": "user", "content": content}, message_id=message_id)
-        self._turn_starts.append(start)
 
     def add_assistant(self, content: str) -> None:
         self._append({"role": "assistant", "content": content})
@@ -164,17 +147,8 @@ class ConversationManager:
             return
         self._append({"role": "user", "content": f"{self._PLAN_RESULT_PREFIX}\n{summary}"})
 
-    def get_messages(self) -> list[dict[str, Any]]:
-        """Return the recent projection; use get_history() for storage/display."""
-        if self._messages_dirty:
-            start = self._turn_starts[-self._max_turns] if 0 < self._max_turns < len(self._turn_starts) else 0
-            indices = [i for i in range(len(self._messages)) if i >= start or self._messages[i]["role"] == "system"]
-            self._messages_cache = [deepcopy(self._messages[i]) for i in indices]
-            self._messages_dirty = False
-        return deepcopy(self._messages_cache)
-
     def get_history(self) -> list[dict[str, Any]]:
-        """Return complete original messages, including those outside the window."""
+        """Return a detached copy of all original messages."""
         return deepcopy(self._messages)
 
     def get_transcript(self) -> list[dict[str, Any]]:
@@ -184,9 +158,6 @@ class ConversationManager:
     def clear(self) -> None:
         self._messages.clear()
         self._message_ids.clear()
-        self._turn_starts.clear()
-        self._messages_dirty = True
-        self._messages_cache.clear()
         self._loaded_tool_namespaces.clear()
 
     # ── 序列化 (FR13) ──────────────────────────────────────
@@ -200,7 +171,7 @@ class ConversationManager:
         }
 
     def from_dict(self, data: dict) -> None:
-        """从字典恢复消息列表。替换现有消息并重置轮次索引。"""
+        """从字典恢复完整消息、稳定 ID 和已加载工具命名空间。"""
         self._messages = deepcopy(list(data.get("messages", [])))
         saved_ids = data.get("message_ids", [])
         self._message_ids = [
@@ -210,17 +181,12 @@ class ConversationManager:
         if len(set(self._message_ids)) != len(self._message_ids):
             raise ValueError("Conversation history contains duplicate message IDs")
         self._loaded_tool_namespaces = set(data.get("loaded_tool_namespaces", []))
-        self._turn_starts = []
-        self._messages_dirty = True
-        # 重建轮次索引
         successful_results = {
             str(message.get("tool_call_id", ""))
             for message in self._messages
             if message.get("role") == "tool" and not message.get("is_error", False)
         }
-        for i, msg in enumerate(self._messages):
-            if msg.get("role") == "user" and not self._is_legacy_observation(msg):
-                self._turn_starts.append(i)
+        for msg in self._messages:
             if msg.get("role") == "assistant":
                 for call in msg.get("tool_calls", []):
                     if call.get("name") != "get_tool_help" or str(call.get("id", "")) not in successful_results:
@@ -230,12 +196,6 @@ class ConversationManager:
                         if namespace.strip():
                             self._loaded_tool_namespaces.add(namespace.strip())
         self.close_pending_tool_calls("会话恢复时取消了未完成的工具调用。")
-
-    @classmethod
-    def _is_legacy_observation(cls, message: dict[str, Any]) -> bool:
-        content = str(message.get("content", ""))
-        observation_prefix = cls._OBSERVATION_PREFIX.partition("{name}")[0]
-        return content.startswith(("【工具执行结果", observation_prefix, cls._PLAN_RESULT_PREFIX))
 
     def _latest_unresolved_call(self, tool_name: str) -> str | None:
         resolved = {str(message.get("tool_call_id", "")) for message in self._messages if message.get("role") == "tool"}

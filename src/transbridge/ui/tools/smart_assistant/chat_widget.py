@@ -49,7 +49,7 @@ class ChatWidget(QWidget):
         font.setStyleHint(QFont.StyleHint.SansSerif)
         self.setFont(font)
 
-        self._conversation = ConversationManager(max_turns=20)
+        self._conversation = ConversationManager()
         self._uploaded_docs: dict[str, object] = {}  # filename → ParsedDocument
         self._upload_binding = UploadBinding(
             parent=self,

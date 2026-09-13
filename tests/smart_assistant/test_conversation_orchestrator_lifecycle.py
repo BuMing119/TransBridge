@@ -31,8 +31,11 @@ class _Conversation:
         self.assistant_messages: list[str] = []
         self.assistant_turns: list[LlmTurn] = []
 
-    def get_messages(self) -> list[dict]:
+    def get_history(self) -> list[dict]:
         return [{"role": "system", "content": "ready"}]
+
+    def get_transcript(self) -> list[dict]:
+        return [dict(message, message_id=str(index)) for index, message in enumerate(self.get_history())]
 
     def add_assistant(self, text: str) -> None:
         self.assistant_messages.append(text)
@@ -88,6 +91,26 @@ def _orchestrator(monkeypatch):
     )
     value._get_llm_client = lambda: object()
     return value, conversation, parsed, chunks, systems
+
+
+def test_round_preparation_uses_complete_transcript_beyond_twenty_turns(monkeypatch) -> None:
+    from transbridge.smart_assistant.conversation_manager import ConversationManager
+
+    value, _, _, _, systems = _orchestrator(monkeypatch)
+    conversation = ConversationManager()
+    conversation.add_system("ready")
+    for index in range(25):
+        conversation.add_user(f"question {index}", message_id=f"user-{index}")
+        conversation.add_assistant(f"answer {index}")
+    value._conversation = conversation
+    try:
+        value.start_round()
+        assert not systems
+        assert value._round_messages == conversation.get_transcript()
+        assert value._round_messages[1]["message_id"] == "user-0"
+        assert len(value._round_messages) == 51
+    finally:
+        value.shutdown(wait=True, timeout=0.1)
 
 
 def test_cancel_discards_worker_callback_already_queued_to_gui(monkeypatch) -> None:

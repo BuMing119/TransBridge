@@ -227,7 +227,7 @@ class TestConversationManagerSerialization:
                 {"role": "user", "content": "new user"},
             ]
         })
-        msgs = conv.get_messages()
+        msgs = conv.get_history()
         assert len(msgs) == 2
         assert msgs[0]["content"] == "new sys"
         assert msgs[1]["content"] == "new user"
@@ -236,9 +236,9 @@ class TestConversationManagerSerialization:
         conv = ConversationManager()
         conv.add_user("old")
         conv.from_dict({})
-        assert len(conv.get_messages()) == 0
+        assert len(conv.get_history()) == 0
 
-    def test_from_dict_rebuilds_turn_starts(self):
+    def test_from_dict_preserves_message_order(self):
         conv = ConversationManager()
         conv.from_dict({
             "messages": [
@@ -248,10 +248,7 @@ class TestConversationManagerSerialization:
                 {"role": "assistant", "content": "resp2"},
             ]
         })
-        # turn_starts 应该是 [0, 2]
-        assert len(conv._turn_starts) == 2
-        assert conv._turn_starts[0] == 0
-        assert conv._turn_starts[1] == 2
+        assert [message["content"] for message in conv.get_history()] == ["turn1", "resp1", "turn2", "resp2"]
 
     def test_roundtrip(self):
         conv1 = ConversationManager()
@@ -265,4 +262,4 @@ class TestConversationManagerSerialization:
         conv2 = ConversationManager()
         conv2.from_dict(data)
 
-        assert conv2.get_messages() == conv1.get_messages()
+        assert conv2.get_history() == conv1.get_history()

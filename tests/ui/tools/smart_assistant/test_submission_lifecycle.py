@@ -84,14 +84,14 @@ def test_real_panel_cancellation_closes_old_task_without_resuming_it(chat_enviro
     panel.chat._tool_handler._middlewares = [PermissionGuard(write_require_confirm=True)]
     panel.chat.send_user_message("取消前面的任务")
     _until(lambda: len(starts) == 2)
-    before_terminal = len(panel.chat._conversation.get_messages())
+    before_terminal = len(panel.chat._conversation.get_history())
     panel.chat._controller.handle_llm_response({"steps": [{"tool": "stop_task", "args": {"task_id": task_id}}]})
     _until(lambda: manager.get_status(task_id)["status"] == "cancelled")
     QApplication.processEvents()
     assert len(starts) == 3  # New cancellation request + its tool result, never the old task.
     assert panel.chat._controller.to_recovery_snapshot().active_task_id is None
     assert panel.chat._controller.state.value == "thinking"
-    additions = panel.chat._conversation.get_messages()[before_terminal:]
+    additions = panel.chat._conversation.get_history()[before_terminal:]
     assert not any("[Tool result - start_translation]" in message.get("content", "") for message in additions)
     assert captured.request_context.session_id == panel._current_session_id()
     assert panel._persist_authoritative_chat()
@@ -142,10 +142,10 @@ def test_forged_foreign_task_snapshot_degrades_without_subscribing_to_foreign_hi
     panel.chat._restore_session_controller(snapshot)
     assert panel.chat._controller.state.value == "idle"
     assert panel.chat.recovery_snapshot()[1].active_task_id is None
-    before = panel.chat._conversation.get_messages()
+    before = panel.chat._conversation.get_history()
     manager.cancel(foreign)
     QApplication.processEvents()
-    assert panel.chat._conversation.get_messages() == before
+    assert panel.chat._conversation.get_history() == before
 
 
 def test_scoped_stop_skips_redundant_confirmation_but_batch_requires_it(monkeypatch):
@@ -169,7 +169,7 @@ def test_real_panel_session_switch_invalidates_queued_user_round(chat_environmen
     QApplication.processEvents()
     assert starts == []
     assert panel.chat._controller.state.value == "idle"
-    assert panel.chat._conversation.get_messages() == []
+    assert panel.chat._conversation.get_history() == []
 
 
 def test_interrupted_round_reason_survives_repeated_gui_restore(chat_environment, manager):

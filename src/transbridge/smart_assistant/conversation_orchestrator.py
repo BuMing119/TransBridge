@@ -247,7 +247,7 @@ class ConversationOrchestrator(QObject):
         generation = self._generation
         self._active_generation = generation
 
-        current_messages = self._conversation.get_messages()
+        current_messages = self._conversation.get_history()
         system_message = next((m for m in current_messages if m.get("role") == "system"), None)
         has_legacy_tool_prompt = system_message is not None and '"mode": "plan"' in str(
             system_message.get("content", "")
@@ -264,7 +264,7 @@ class ConversationOrchestrator(QObject):
 
         self._react_depth += 1
         self._on_thinking_indicator_hide()
-        self._round_messages = getattr(self._conversation, "get_transcript", self._conversation.get_messages)()
+        self._round_messages = self._conversation.get_transcript()
         cfg = self._cached_llm_config
         from transbridge.smart_assistant.context_runtime import configuration_digest
 
