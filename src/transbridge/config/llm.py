@@ -53,7 +53,7 @@ class LLMConfig:
     llm_max_retries: int = 2
     max_tokens_per_batch: int = 2000
     max_output_tokens: int = 0
-    assistant_context_window: int = 32768
+    assistant_context_window: int = 0
     assistant_auto_compaction: bool = True
     assistant_prompt_cache: bool = True
     temperature: float = 0.0

@@ -175,11 +175,11 @@ def test_conflicting_message_ids_and_missing_required_evidence_are_rejected():
         assembler.assemble([], required_message_ids=["missing"])
 
 
-def test_default_budget_identifies_conservative_estimate_without_loading_model():
+def test_default_budget_identifies_text_estimate_without_loading_model():
     budget = ContextBudget()
     usage = budget.measure([{"role": "user", "content": "中文"}])
-    assert usage.estimator_label == "utf8-bytes-v1-conservative"
-    assert usage.messages >= len(json.dumps([{"role": "user", "content": "中文"}], ensure_ascii=False).encode())
+    assert usage.estimator_label == "text-v2-estimated-25pct"
+    assert 0 < usage.messages < len(json.dumps([{"role": "user", "content": "中文"}], ensure_ascii=False).encode())
 
 
 def test_required_large_tool_preview_can_shrink_while_keeping_reference_and_protocol():

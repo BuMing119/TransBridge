@@ -301,7 +301,7 @@ class ConversationOrchestrator(QObject):
                 preparation.prepare(
                     self._conversation.get_transcript(),
                     self._round_max_tokens,
-                    context_window=int(getattr(cfg, "assistant_context_window", 32768)),
+                    context_window=int(getattr(cfg, "assistant_context_window", 0)),
                     on_ready=prepared,
                     on_error=preparation_failed,
                 )
@@ -311,7 +311,7 @@ class ConversationOrchestrator(QObject):
                 self._round_messages, self._round_tools = binding.prepare_model_input(
                     self._conversation.get_transcript(),
                     self._round_max_tokens or 4096,
-                    context_window=int(getattr(cfg, "assistant_context_window", 32768)),
+                    context_window=int(getattr(cfg, "assistant_context_window", 0)),
                 )
                 if not self._round_messages:
                     return
@@ -319,12 +319,9 @@ class ConversationOrchestrator(QObject):
                 binding.fail(str(exc))
                 return
         try:
-            from transbridge.smart_assistant.context_budget import ContextBudget
+            from transbridge.smart_assistant.context_budget import budget_for_config
 
-            ContextBudget(
-                context_window=int(getattr(cfg, "assistant_context_window", 32768)),
-                output_reserve=self._round_max_tokens or 4096,
-            ).require(self._round_messages, self._round_tools)
+            budget_for_config(cfg, self._round_max_tokens or 4096).require(self._round_messages, self._round_tools)
         except ValueError as exc:
             self._on_system_message(str(exc))
             return
@@ -451,7 +448,8 @@ class ConversationOrchestrator(QObject):
                 self._on_thinking_indicator_show(thought)
         elif not turn.text and _finished_bubble is not None:
             self._on_remove_widget(_finished_bubble)
-            self._on_system_message("模型未返回可显示内容，请重试。")
+            if not turn.tool_calls:
+                self._on_system_message("模型未返回可显示内容，请重试。")
 
         # FR12 Story 02: 分发逻辑移交给 SessionController
         handled = binding is not None and binding.handle_response(parsed, turn)

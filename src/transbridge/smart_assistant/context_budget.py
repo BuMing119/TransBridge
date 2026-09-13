@@ -5,14 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field, is_dataclass
 import json
-import math
 from typing import Any
 
-
-def _offline_estimate(text: str) -> int:
-    # Same fallback bound as infra.token_counting, without its translation
-    # pipeline import or any encoding download. A ready tokenizer is injectable.
-    return math.ceil(len(text.encode("utf-8")) * 1.25)
+from .context_capacity import FALLBACK_CONTEXT_WINDOW
+from .context_estimation import ESTIMATOR_LABEL, estimate_tokens
 
 
 def _json_default(value: Any) -> Any:
@@ -42,6 +38,14 @@ class ContextUsage:
     def fits(self) -> bool:
         return self.total <= self.context_window
 
+    def describe(self) -> str:
+        return (
+            f"本地估算 {self.total:,} / 配置窗口 {self.context_window:,} token"
+            f"（消息 {self.messages:,}、工具定义 {self.tool_schemas:,}、"
+            f"输出预留 {self.output_reserve:,}、协议余量 {self.protocol_margin:,}；"
+            f"估算方式 {self.estimator_label}，不是服务端实际用量）"
+        )
+
 
 class ContextBudgetExceeded(ValueError):
     """Required instructions/input cannot fit; callers must block dispatch."""
@@ -50,19 +54,16 @@ class ContextBudgetExceeded(ValueError):
 
     def __init__(self, usage: ContextUsage) -> None:
         self.usage = usage
-        super().__init__(
-            f"{self.code}: required context needs {usage.total} estimated tokens, "
-            f"configured window is {usage.context_window}; reduce materials or increase the configured window."
-        )
+        super().__init__(f"{self.code}: {usage.describe()}。请在设置 → AI 服务中核对助手上下文容量或缩小材料。")
 
 
 @dataclass(frozen=True)
 class ContextBudget:
-    context_window: int = 32768
+    context_window: int = FALLBACK_CONTEXT_WINDOW
     output_reserve: int = 4096
     protocol_margin: int = 512
-    estimator: Callable[[str], int] = field(default=_offline_estimate, repr=False, compare=False)
-    estimator_label: str = "utf8-bytes-v1-conservative"
+    estimator: Callable[[str], int] = field(default=estimate_tokens, repr=False, compare=False)
+    estimator_label: str = ESTIMATOR_LABEL
 
     def __post_init__(self) -> None:
         for name in ("context_window", "output_reserve", "protocol_margin"):
@@ -93,3 +94,12 @@ class ContextBudget:
         if not usage.fits:
             raise ContextBudgetExceeded(usage)
         return usage
+
+
+def budget_for_config(config, output_reserve=4096, *, context_window=None) -> ContextBudget:
+    from .context_capacity import resolve_context_capacity
+    from .context_estimation import select_estimator
+
+    capacity = resolve_context_capacity(config, override=context_window)
+    estimator, label = select_estimator(str(getattr(config, "model", "") or ""))
+    return ContextBudget(capacity.window, output_reserve, estimator=estimator, estimator_label=label)

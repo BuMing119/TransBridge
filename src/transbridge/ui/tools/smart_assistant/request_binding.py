@@ -203,9 +203,9 @@ class RequestBinding(QObject):
         accept_turn(self.service, self.context, selection)
 
     def prepare_model_input(
-        self, history, max_tokens, *, context_window=32768, prepared_summary=None, defer_assembly=False
+        self, history, max_tokens, *, context_window=None, prepared_summary=None, defer_assembly=False
     ):
-        from transbridge.smart_assistant.context_budget import ContextBudget
+        from transbridge.smart_assistant.context_budget import budget_for_config
         from transbridge.smart_assistant.request_model_input import RequestModelInput
         from transbridge.smart_assistant.request_router import routing_messages
 
@@ -252,7 +252,9 @@ class RequestBinding(QObject):
             self._persist_selection(selected)
             self._set_gate()
         self._prepared_turn = self.admission.turn_id
-        budget = ContextBudget(context_window=context_window, output_reserve=max_tokens)
+        budget = budget_for_config(
+            self.facade._orchestrator._cached_llm_config, max_tokens, context_window=context_window
+        )
         if self.stage == "routing":
             messages = routing_messages(self.batch, self.service.requests(state))
             prepared = RequestModelInput(tuple(messages), tools, budget)

@@ -46,10 +46,10 @@ def test_complete_tool_group_is_selected_atomically():
     assert "c4" not in selected
 
 
-def test_unknown_model_uses_offline_conservative_estimate():
+def test_unknown_model_uses_labeled_offline_estimate():
     budget = ContextBudget(100)
     epoch = ContextEpoch("s", "r", (), "e", "c", "[]", items=(state_item({}),))
     result = BudgetPolicy().decide(epoch, budget)
     assert result.action == "capacity_wait"
     assert result.code == "CONTEXT_REQUIRED_TOO_LARGE"
-    assert result.estimator_label == "utf8-bytes-v1-conservative"
+    assert result.estimator_label == "text-v2-estimated-25pct"

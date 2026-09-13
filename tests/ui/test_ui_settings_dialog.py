@@ -460,6 +460,26 @@ def test_all_llm_settings_pages_round_trip_through_one_detached_save(
     service.close()
 
 
+def test_context_capacity_page_explains_manual_limit_and_allows_auto(qapp):
+    from transbridge.ui.settings.ai_service_page import AiServicePage
+
+    config = LLMConfig(
+        model="deepseek-v4-flash", base_url="https://api.deepseek.com/v1", assistant_context_window=32768
+    )
+    page = AiServicePage(config)
+    assert "32,768" in page.context_capacity_note.text()
+    assert "1,000,000" in page.context_capacity_note.text()
+    page.context_auto_button.click()
+    assert page.context_window_spin.value() == 0
+    assert "官方模型规格" in page.context_capacity_note.text()
+    page.apply_to_draft()
+    assert config.assistant_context_window == 0
+    page.base_url_edit.setText("https://proxy.example/v1")
+    assert "默认 128K" in page.context_capacity_note.text()
+    assert "131,072" in page.context_capacity_note.text()
+    page.close()
+
+
 def test_credential_save_failure_never_closes_or_reveals_backend_details(
     qapp,
     tmp_path: Path,

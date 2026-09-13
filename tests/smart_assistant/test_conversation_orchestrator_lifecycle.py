@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import threading
 
+import pytest
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication
@@ -224,3 +226,54 @@ def test_json_looking_text_is_never_executed(monkeypatch) -> None:
 
     assert parsed[0]["steps"] == []
     value.shutdown(wait=True, timeout=0.1)
+
+
+@pytest.mark.parametrize(
+    "control,stage,args",
+    [
+        ("submit_request_routing", "routing", {"directives": []}),
+        ("read_request_result", "execution", {"message_id": "m", "offset": 0, "limit": 100}),
+    ],
+)
+def test_control_only_turn_is_handled_without_empty_response_warning(monkeypatch, control, stage, args):
+    value, conversation, _, _, systems = _orchestrator(monkeypatch)
+    handled, removed = [], []
+
+    class Binding:
+        def handle_response(self, parsed, turn):
+            handled.append(parsed["control"])
+            return True
+
+    class Bubble:
+        def set_text(self, text):
+            pass
+
+    binding = Binding()
+    binding.stage = stage
+    value.request_binding = binding
+    value._generation = value._active_generation = 1
+    worker = _Worker(None, [])
+    value._worker = worker
+    bubble = value._streaming_bubble = Bubble()
+    value._on_remove_widget = removed.append
+    turn = LlmTurn(tool_calls=(LlmToolCall("control-1", control, args),), stop_reason="tool_calls")
+    value._on_finished(1, worker, turn)
+    assert handled == [control]
+    assert conversation.assistant_turns == [turn]
+    assert removed == [bubble]
+    assert systems == []
+
+
+def test_genuinely_empty_response_still_warns(monkeypatch):
+    value, _, _, _, systems = _orchestrator(monkeypatch)
+
+    class Bubble:
+        def set_text(self, text):
+            pass
+
+    value._generation = value._active_generation = 1
+    worker = _Worker(None, [])
+    value._worker = worker
+    value._streaming_bubble = Bubble()
+    value._on_finished(1, worker, LlmTurn())
+    assert systems == ["模型未返回可显示内容，请重试。"]

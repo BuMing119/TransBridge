@@ -88,9 +88,17 @@ def compact(
             if not enabled:
                 if budget.measure(current.messages, tools).fits:
                     return current
-                raise PreparationWait("CONTEXT_REQUIRED_TOO_LARGE", "压缩已暂停，当前材料超出模型窗口。")
+                raise PreparationWait(
+                    "CONTEXT_REQUIRED_TOO_LARGE",
+                    f"自动摘要已关闭，当前材料超出本地容量。{budget.measure(current.messages, tools).describe()}。",
+                )
             if decision.action == "capacity_wait":
-                raise PreparationWait(decision.code, "不可删减的摘要链、当前输入或完整协议组没有足够压缩空间。")
+                reason = (
+                    "固定规则、工具定义或当前必需材料超过本地容量，压缩旧历史无法解决。"
+                    if decision.code == "CONTEXT_REQUIRED_TOO_LARGE"
+                    else "现有摘要链与必需材料未给新摘要留下足够空间。"
+                )
+                raise PreparationWait(decision.code, reason + budget.measure(current.messages, tools).describe() + "。")
             if limit == 2 and current is not epoch:
                 raise PreparationWait("CONTEXT_SUMMARY_CAPACITY", "单次压缩仍未低于高水位，请扩大窗口或显式继续。")
             if calls >= limit:

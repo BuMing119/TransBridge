@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from PyQt6.QtWidgets import QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QLabel, QLineEdit, QPushButton, QSpinBox
 
 from .page_common import SettingsPage, apply_if_present, password_editor
@@ -45,9 +47,21 @@ class AiServicePage(SettingsPage):
         self.output_tokens_spin = _spin(0, 1_000_000, int(getattr(config, "max_output_tokens", 0) or 0), self)
         self.output_tokens_spin.setSpecialValueText("不限制")
         form.addRow("默认输出 Token 上限", self.output_tokens_spin)
-        self.context_window_spin = _spin(1024, 4_000_000, int(getattr(config, "assistant_context_window", 32768)), self)
-        self.context_window_spin.setToolTip("按所选模型的实际窗口设置；助手会为工具定义和回答预留空间。")
+        self.context_window_spin = _spin(0, 4_000_000, int(getattr(config, "assistant_context_window", 0)), self)
+        self.context_window_spin.setSpecialValueText("自动匹配模型容量")
+        self.context_window_spin.setToolTip("0 为自动；正数按服务商实际窗口设置。切换模型时保留手动值。")
         form.addRow("助手模型上下文窗口", self.context_window_spin)
+        self.context_capacity_note = QLabel(self)
+        self.context_capacity_note.setWordWrap(True)
+        form.addRow(self.context_capacity_note)
+        self.context_auto_button = QPushButton("使用自动容量", self)
+        self.context_auto_button.clicked.connect(lambda: self.context_window_spin.setValue(0))
+        form.addRow(self.context_auto_button)
+        self.context_window_spin.valueChanged.connect(self._refresh_context_capacity)
+        self.model_edit.textChanged.connect(self._refresh_context_capacity)
+        self.base_url_edit.textChanged.connect(self._refresh_context_capacity)
+        self.provider_combo.currentIndexChanged.connect(self._refresh_context_capacity)
+        self._refresh_context_capacity()
         self.auto_compaction_check = QCheckBox("接近容量时自动生成分段摘要", self)
         self.auto_compaction_check.setChecked(bool(getattr(config, "assistant_auto_compaction", True)))
         form.addRow("助手自动摘要", self.auto_compaction_check)
@@ -68,6 +82,26 @@ class AiServicePage(SettingsPage):
         self.test_status = QLabel("", self)
         self.test_status.setWordWrap(True)
         form.addRow("连接结果", self.test_status)
+
+    def _refresh_context_capacity(self) -> None:
+        from transbridge.smart_assistant.context_capacity import resolve_context_capacity
+
+        config = SimpleNamespace(
+            provider=self.provider_combo.currentData(),
+            base_url=self.base_url_edit.text().strip(),
+            model=self.model_edit.text().strip(),
+            assistant_context_window=self.context_window_spin.value(),
+        )
+        try:
+            capacity = resolve_context_capacity(config)
+            automatic = resolve_context_capacity(config, override=0)
+        except ValueError:
+            self.context_capacity_note.setText("服务地址格式无效，请检查后再设置容量。")
+            return
+        text = f"生效容量：{capacity.window:,} token；来源：{capacity.source}。"
+        if config.assistant_context_window and automatic.window > capacity.window:
+            text += f" 此官方模型自动容量为 {automatic.window:,}；可点击“使用自动容量”。"
+        self.context_capacity_note.setText(text)
 
     def apply_to_draft(self) -> None:
         cfg = self._config

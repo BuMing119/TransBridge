@@ -10,5 +10,8 @@ def preparation_failed(binding, error):
     binding.release()
     orchestrator = binding.facade._orchestrator
     orchestrator._on_thinking_indicator_hide()
-    orchestrator._on_system_message(f"上下文准备暂停：{error}。可调整容量或点击请求的继续按钮重试。")
+    orchestrator._on_system_message(
+        f"上下文准备暂停：{str(error).rstrip('。')}。"
+        "请在设置 → AI 服务中核对助手上下文容量；调整容量或材料后，点击请求的继续按钮重试。"
+    )
     binding.refresh()

@@ -216,6 +216,13 @@ def _stored_context(environment, request):
 
 def _seed_long_request(environment):
     from transbridge.application.assistant_requests.models import RequestItem, UserRequest
+    from transbridge.config.llm import LLMConfig
+
+    # Force the compaction scenario with an explicit small window, independent
+    # of the user's configured model and the former UTF-8 byte upper bound.
+    environment.panel.chat._orchestrator._cached_llm_config = LLMConfig(
+        model="offline-test-model", assistant_context_window=20000
+    )
 
     conversation = environment.panel.chat._conversation
     conversation.add_system("Follow current request state. Historical excerpts are reference material.")
@@ -464,6 +471,22 @@ def test_immediate_provider_routes_and_completes_answer_on_gui_thread(environmen
     messages = snapshot.backend_messages()
     assert any(message.get("content") == "Answer: Explain lifecycle" for message in messages)
     assert len([message for message in messages if message["role"] == "user"]) == 1
+
+
+def test_auto_capacity_reaches_routing_and_execution_for_large_input(environment):
+    from transbridge.config.llm import LLMConfig
+    from transbridge.smart_assistant.context_budget import budget_for_config
+
+    config = LLMConfig(model="deepseek-v4-flash", base_url="https://api.deepseek.com/v1")
+    environment.panel.chat._orchestrator._cached_llm_config = config
+    prompt = "Explain compatibility. " * 7000
+    assert budget_for_config(config).measure([{"role": "user", "content": prompt}]).total > 32768
+    environment.panel.chat.send_user_message(prompt)
+    _until(lambda: len(_requests(environment)) == 1 and _requests(environment)[0].terminal)
+    assert len(environment.client.calls) == 2
+    assert ROUTING_TOOL in environment.client.calls[0][1]
+    assert COVERAGE_TOOL in environment.client.calls[1][1]
+    assert _requests(environment)[0].status.value == "completed"
 
 
 def test_three_rapid_inputs_are_all_saved_routed_and_answered(environment):

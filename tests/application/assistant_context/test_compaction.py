@@ -104,6 +104,20 @@ def test_huge_current_input_cannot_be_summarized(budget):
     assert not fake.calls
 
 
+def test_capacity_wait_explains_local_budget_and_preserves_input(budget):
+    original = epoch([item("user", "x" * 10000, "user")])
+    tools = [{"name": "read", "description": "read records"}]
+    fake = Summarizer()
+    with pytest.raises(PreparationWait) as error:
+        compact(original, budget, tools, {}, fake)
+    message = str(error.value)
+    assert "配置窗口 7,000" in message
+    assert "消息" in message and "工具定义" in message and "输出预留 300" in message
+    assert "协议余量 50" in message and "不是服务端实际用量" in message
+    assert not fake.calls
+    assert original.items[-1].message["content"] == "x" * 10000
+
+
 def test_incomplete_protocol_group_is_never_selected(budget):
     pending = item("pending", "", tool_calls=[{"id": "call", "name": "read", "arguments": {}}])
     original = epoch([item(str(n)) for n in range(7)] + [pending, item("user", "now", "user")])

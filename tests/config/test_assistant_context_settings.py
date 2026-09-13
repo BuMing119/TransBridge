@@ -44,3 +44,15 @@ def test_invalid_policy_values_keep_safe_defaults(tmp_path):
     repository.update_sections({"llm": {"assistant_auto_compaction": "invalid", "assistant_prompt_cache": "invalid"}})
     config = LLMConfig.load_from_file(repository=repository, environment={})
     assert config.assistant_auto_compaction is True and config.assistant_prompt_cache is True
+
+
+@pytest.mark.parametrize("window", [0, 32768, 1_000_000])
+def test_auto_and_legacy_explicit_capacity_round_trip(tmp_path, window):
+    repository = _repository(tmp_path)
+    config = LLMConfig(assistant_context_window=window)
+    config.save_to_file(repository=repository)
+    assert LLMConfig.load_from_file(repository=repository, environment={}).assistant_context_window == window
+
+
+def test_absent_capacity_defaults_to_auto(tmp_path):
+    assert LLMConfig.load_from_file(repository=_repository(tmp_path), environment={}).assistant_context_window == 0
