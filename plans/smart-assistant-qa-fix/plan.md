@@ -3,7 +3,7 @@
 **对应需求**: FR7.15 — Smart Assistant QA 审查修复
 **技术模块**: `smart_assistant/`、`ui/tools/smart_assistant/`、`infra/`
 **业务域**: AI 辅助翻译 — 安全/质量/性能修复
-**状态**: ✅ 第四轮全量修复 + Phase 1-2 QObject 解耦 (后端 QObject 类 6→1)
+**状态**: 部分已废除（2026-09-13）：Story-03 的旧记忆文件存储/检索方案、Story-05 的记忆线程/LRU/关闭逻辑及 Story-07 的旧记忆测试已废除；其他范围保持原状态。旧记忆相关设计仅保留为历史，不再实施或验收。
 **创建日期**: 2026-05-12
 **更新日期**: 2026-05-13 (第四轮修复 + Phase 1 后端 QObject 解耦与栈溢出根治)
 **输入文档**: 
@@ -84,14 +84,14 @@
 
 ---
 
-### Story-03: 安全加固
+### Story-03: 安全加固（旧记忆存储/检索部分已废除）
 
 **Phase**: 3 | **预估**: 3h | **优先级**: Critical
 **覆盖问题**: C6, C7, C8, M15, M16
 **详细文档**: `plans/smart-assistant-qa-fix/stories/story-03-security-hardening.md`
 
 **验收标准**:
-- [ ] 用户上传文件内容不再直接拼接到系统提示词，改为存储为内存条目后注入 `{uploaded_doc_summary}` 占位符（仅文件名+字符数摘要）
+- [ ] 用户上传文件内容不再直接拼接到系统提示词；原 MemoryStore 存储和 search_memory 检索方案已废除，不作为此项验收条件。
 - [ ] MCP stdio 通道支持可选的 token 认证（INI 配置 `[mcp] auth_token`，空则不启用）
 - [ ] `tool_v1.py` 的 `_tool_write_back` 和 `_tool_export_json` 添加 `_validate_path` / `_validate_output_path` 检查（与 namespace 工具一致）
 - [ ] 输入校验正则 `_INJECTION_PATTERNS` 放宽：允许合法 HTML 标签（`<font>`, `<b>`, `<i>`, `<br>`）和 SQL-like 关键词（`SELECT`, `FROM`, `WHERE` 在翻译文本中）
@@ -129,17 +129,17 @@
 
 ---
 
-### Story-05: 线程与资源生命周期管理
+### Story-05: 线程与资源生命周期管理（旧记忆线程/LRU/关闭部分已废除）
 
 **Phase**: 5 | **预估**: 4h | **优先级**: Critical/Major
 **覆盖问题**: C9, M7, M8, M9, M10, M11, M12, M13, M14
 **详细文档**: `plans/smart-assistant-qa-fix/stories/story-05-thread-resource.md`
 
 **验收标准**:
-- [ ] 记忆持久化从 UI 线程移出：`MemoryStore.add()` 提交到后台队列，由专用 `QThread` 异步写入
+- **已废除（旧记忆）**：记忆持久化从 UI 线程移出：`MemoryStore.add()` 提交到后台队列，由专用 `QThread` 异步写入
 - [ ] `AgentWorker.cancel()` 可中断正在执行的工具调用（通过 `_cancelled` 标志在工具执行循环中检查）
 - [ ] `ExecutionEngine._paused` 改为实例级属性（非类级），不同会话独立暂停
-- [ ] `MemoryStore` 添加 `max_entries`（默认 1000）+ LRU 淘汰策略
+- **已废除（旧记忆）**：`MemoryStore` 添加 `max_entries`（默认 1000）+ LRU 淘汰策略
 - [ ] `ConversationManager._trim()` 裁剪时同步移除 observation/plan_result 消息
 - [ ] `build_tool_schema_for_prompt()` 按当前 Agent namespace 过滤工具，仅发送相关工具 schema（token 节省 50%+）
 - [ ] `add_observation()` 结果文本超过 2000 字符时自动截断
@@ -208,7 +208,7 @@
 
 ---
 
-### Story-07: 测试补充
+### Story-07: 测试补充（旧记忆测试部分已废除）
 
 **Phase**: 7 | **预估**: 4h | **优先级**: Critical
 **覆盖问题**: C2
@@ -219,7 +219,7 @@
 - [ ] `ConversationManager` 测试：max_turns 裁剪（含 observation 消息）/ 上下文长度限制
 - [ ] `ExecutionEngine.execute_graph()` 测试：DAG 拓扑排序 / 层级并行 / checkpoint 暂停恢复 / 重试
 - [ ] `RetryHandler` 测试：可重试错误 vs 不可重试错误 / 参数调整 / MAX_RETRIES
-- [ ] `MemoryStore` / `MemoryRetriever` 测试：添加 / 语义搜索 / 精确搜索 / LRU 淘汰
+- **已废除（旧记忆）**：`MemoryStore` / `MemoryRetriever` 测试：添加 / 语义搜索 / 精确搜索 / LRU 淘汰
 - [ ] `ObservabilityCollector` 测试：token 统计 / 追踪持久化 / 过期清理
 - [ ] `MarkdownRenderer` 测试：12 种格式渲染 / 容错降级 / 链接点击
 - [ ] `ContextBuilder` 测试：系统提示词构建 / 上传文件摘要注入 / 工具 schema 注入

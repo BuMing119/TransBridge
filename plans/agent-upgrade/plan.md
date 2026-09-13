@@ -3,7 +3,7 @@
 **对应需求**: FR7.13
 **技术模块**: smart_assistant + infra
 **业务域**: AI 辅助翻译
-**状态**: ✔️ 已实现（Phase 1 + Phase 2 全部完成）
+**状态**: 部分已废除（2026-09-13）：Story-04 长期记忆整体已废除；其他 Story 保持原状态。旧记忆相关设计仅保留为历史，不再实施或验收。
 **创建日期**: 2026-05-10
 **更新日期**: 2026-05-10（追加 Phase 2）
 
@@ -13,7 +13,7 @@
 - infra/ 共享基础设施提取（LLMClient + EmbeddingClient + LLMConfig + VectorStore）
 - Skill 系统（用户自定义 TOML Skill + 热加载 + 触发匹配）
 - 文件上传与知识注入（Excel/CSV/Markdown/TXT/JSON/PDF/Word/ParaTranz）
-- 长期记忆（FAISS 向量存储 + JSON 元数据 + 两阶段召回）
+- 已废除：长期记忆（原 FAISS 向量存储 + JSON 元数据 + 两阶段召回，不再属于实施范围）
 - Reflexion 自纠错（工具失败→LLM分析→重试 max 3 次）
 
 ### 范围内 (Phase 2 — 待实现，分三批)
@@ -109,21 +109,21 @@
 6. UI：文件上传区域（拖拽 + 按钮 + 文件列表） → `chat_widget.py` (改) 或新建组件
 7. ContextBuilder 扩展：注入已上传文件内容 → `context_builder.py` (改)
 
-### Story-04: 长期记忆
+### Story-04: 长期记忆（已废除）
 
-**Phase**: 4 | **预估**: 3h | **状态**: 📝
+**Phase**: 4 | **预估**: 3h | **状态**: 已废除（2026-09-13）
 **对应需求**: FR7.13.3 | **架构引用**: ADR-009, ADR-010
 **详细文档**: `plans/agent-upgrade/stories/story-04-long-term-memory.md`
 
-**验收标准**:
-- [ ] `MemoryStore` 支持 add/search/get/delete/list_by_type
-- [ ] `MemoryRetriever` 实现两阶段召回（精确匹配 → 语义检索）
-- [ ] 对话结束时自动记录翻译上下文记忆
-- [ ] 新对话开始时自动检索相关记忆并注入 system prompt
-- [ ] 记忆存储在项目目录下（`data/projects/{project}/{variant}/memory/`）
-- [ ] 项目切换时记忆自动隔离
+**历史验收标准（已废除，不再验收）**:
+- **已废除**：`MemoryStore` 支持 add/search/get/delete/list_by_type
+- **已废除**：`MemoryRetriever` 实现两阶段召回（精确匹配 → 语义检索）
+- **已废除**：对话结束时自动记录翻译上下文记忆
+- **已废除**：新对话开始时自动检索相关记忆并注入 system prompt
+- **已废除**：记忆存储在项目目录下（`data/projects/{project}/{variant}/memory/`）
+- **已废除**：项目切换时记忆自动隔离
 
-**实现步骤**:
+**历史实现步骤（已废除，不再实施）**:
 1. 创建 `MemoryEntry` 数据类 + `MemoryStore` → `smart_assistant/memory/memory_store.py` (新建)
 2. 创建 `Embedding` 嵌入生成（复用 infra/EmbeddingClient） → `smart_assistant/memory/embedding.py` (新建)
 3. 创建 `MemoryRetriever` → `smart_assistant/memory/memory_retriever.py` (新建)

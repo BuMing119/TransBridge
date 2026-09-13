@@ -3,7 +3,7 @@
 **对应需求**: [FR10](../../docs/requirements.md#FR10-Smart-Assistant-模块超重文件拆分重构)
 **技术模块**: backend
 **业务域**: smart-assistant 代码健康度
-**状态**: 已实现
+**状态**: 部分已废除（2026-09-13）：Story-04 的 MemoryWriterThread 外提、重导出及旧记忆验收已废除；其他范围保持原状态。旧记忆相关设计仅保留为历史，不再实施或验收。
 **创建日期**: 2026-05-22
 
 ## 功能边界
@@ -16,7 +16,7 @@
 - tools/tool_editor.py: 模块级函数 → EditorController 类
 - tools/_common.py: 提取重复的 LLM 配置/PostProcessor 构建逻辑
 - conversation_orchestrator.py: 修复重复属性 bug + LLM 工厂提取
-- memory/memory_writer.py: MemoryWriterThread 独立
+- 已废除：memory/memory_writer.py 的 MemoryWriterThread 外提，不再属于实施范围。
 - tools/task_manager.py: 移除废弃方法 + 合并重复方法对
 - 全量测试保持通过（~223 用例）
 - 所有新模块通过原路径重导出保持兼容
@@ -93,14 +93,14 @@
 
 **详细文档**: `plans/smart-assistant-refactor/stories/story-03-controller-encapsulation.md`
 
-### Story 04: 剩余模块精简收尾 (P2)
+### Story 04: 剩余模块精简收尾 (P2，旧记忆子任务 B 已废除)
 
 **验收标准**:
 - [ ] `conversation_orchestrator.py`: LLM 客户端创建逻辑提取为模块级 `_create_llm_client()` 函数（~60行）
 - [ ] `conversation_orchestrator.py`: 去除 `_get_prompt_builder()` 中与 `prompts.build_system_prompt()` 重复的内联逻辑
-- [ ] `memory/memory_writer.py` 存在，包含 `MemoryWriterThread` 类（~42行，5参数构造器保持不变）
-- [ ] `memory/memory_store.py` 顶部 `from .memory_writer import MemoryWriterThread` 重导出
-- [ ] `memory/__init__.py` 新增 `MemoryWriterThread` 导出
+- **已废除（旧记忆）**：`memory/memory_writer.py` 存在，包含 `MemoryWriterThread` 类（~42行，5参数构造器保持不变）
+- **已废除（旧记忆）**：`memory/memory_store.py` 顶部 `from .memory_writer import MemoryWriterThread` 重导出
+- **已废除（旧记忆）**：`memory/__init__.py` 新增 `MemoryWriterThread` 导出
 - [ ] `tools/task_manager.py`: 新增 `on_finished` / `notify_finished` 统一回调方法
 - [ ] `tools/task_manager.py`: `on_completed`/`on_failed`/`notify_completed`/`notify_failed` 保留为 deprecated wrapper
 - [ ] `tools/task_manager.py`: `set_main_thread_dispatcher`/`reset_dispatcher`/`get_handle` 保留不动（有活跃调用方）

@@ -3,7 +3,7 @@
 **所属方案**: `plans/llm-chat/plan.md`
 **技术模块**: `src/transbridge/ui/tools/smart_assistant/`
 **业务域**: AI 辅助翻译 — 智能助手 UI
-**状态**: 已确认
+**状态**: 部分已废除（2026-09-13）：MemoryRetriever 集成已废除；其他 ChatWidget 拆分范围保持原状态。旧记忆相关设计仅保留为历史，不再实施或验收。
 **创建日期**: 2026-05-14
 **对应问题**: QA 报告 C1 — ChatWidget 1120 行超重，违反 ADR-008 代码分层
 
@@ -36,7 +36,7 @@ ConversationOrchestrator (~300 行, ui/tools/smart_assistant/)
   ├── 模式分发: _on_llm_finished → ReAct / Plan / Auto
   ├── 流式管理: _on_llm_chunk / _flush_streaming
   ├── Worker 生命周期: 创建 / cancel / 回调绑定
-  └── 记忆/上下文: MemoryRetriever / ContextBuilder / 系统提示词
+  └── 上下文: ContextBuilder / 系统提示词（旧 MemoryRetriever 集成已废除）
 
 ToolExecutionHandler (~200 行, ui/tools/smart_assistant/)
   ├── 工具查找: ToolRegistry.get()
@@ -95,7 +95,7 @@ ToolExecutionHandler (~200 行, ui/tools/smart_assistant/)
 - [ ] `_get_llm_client` / `_get_prompt_builder` 移入
 - [ ] `_on_llm_error` / `_on_retry` 移入
 - [ ] Worker 生命周期管理移入：`_start_worker` / `_cleanup_worker`
-- [ ] Memory/Context 管理移入：`_inject_memory_context` / `_build_context`
+- [ ] Context 管理移入：`_build_context`；旧 `_inject_memory_context` 的迁移验收已废除。
 - [ ] `_SignalBridge` 内部类移入（仅编排器需要跨线程回调）
 - [ ] 回调注入模式：编排器通过回调 `on_chunk(callable)`, `on_finished(callable)`, `on_error(callable)`, `on_streaming_bubble_created(callable)` 通知 UI
 - [ ] ChatWidget 中 import 更新，`self._orchestrator = ConversationOrchestrator(...)`

@@ -2,7 +2,7 @@
 
 **所属方案**: `plans/agent-upgrade/plan.md`
 **技术模块**: smart_assistant/memory
-**状态**: 已确认
+**状态**: 已废除（2026-09-13）；原验收标准、数据流、接口和实施步骤全部失效，仅保留为历史设计。新记忆系统不沿用此 Story，另行建立需求与计划。
 **创建日期**: 2026-05-10
 
 ## 前置依赖
@@ -15,14 +15,14 @@
 - [ADR-009: MemoryStore 双存储设计](../../../docs/adr/009-agent-file-memory-reflexion.md)
 - [ADR-010: infra/VectorStore 接口](../../../docs/adr/010-infra-extraction.md)
 
-## 验收标准
+## 历史验收标准（已废除）
 
-- [ ] `MemoryStore` 支持 add/search/get/delete/list_by_type
-- [ ] `MemoryRetriever` 实现两阶段召回（精确匹配 → 语义检索）
-- [ ] 对话结束时自动记录翻译上下文记忆
-- [ ] 新对话开始时自动检索相关记忆并注入 system prompt
-- [ ] 记忆存储在项目目录下（`data/projects/{project}/{variant}/memory/`）
-- [ ] 项目切换时记忆自动隔离
+- **已废除**：`MemoryStore` 支持 add/search/get/delete/list_by_type
+- **已废除**：`MemoryRetriever` 实现两阶段召回（精确匹配 → 语义检索）
+- **已废除**：对话结束时自动记录翻译上下文记忆
+- **已废除**：新对话开始时自动检索相关记忆并注入 system prompt
+- **已废除**：记忆存储在项目目录下（`data/projects/{project}/{variant}/memory/`）
+- **已废除**：项目切换时记忆自动隔离
 
 ## 数据流
 
@@ -96,7 +96,7 @@ class MemoryRetriever:
         """两阶段：精确→语义→合并"""
 ```
 
-## 实现步骤
+## 历史实现步骤（已废除）
 
 ### 步骤 1-3: 新建 3 个核心文件
 `memory/memory_store.py` → `memory/embedding.py`（EmbeddingClient 封装）→ `memory/memory_retriever.py` → `memory/__init__.py`

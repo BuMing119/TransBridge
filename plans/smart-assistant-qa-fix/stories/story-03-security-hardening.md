@@ -2,7 +2,7 @@
 
 **所属方案**: `plans/smart-assistant-qa-fix/plan.md`
 **技术模块**: `smart_assistant/`（context_builder, guardrails, mcp）、`smart_assistant/tools/`（tool_v1）
-**状态**: 已确认
+**状态**: 部分已废除（2026-09-13）：旧 MemoryStore/search_memory 存储与检索方案已废除；Prompt 注入防护及其他安全要求保持原状态。旧记忆相关设计仅保留为历史，不再实施或验收。
 **创建日期**: 2026-05-12
 **覆盖问题**: C6（Prompt注入）、C7（MCP无认证）、C8（v1无路径校验）、M15（翻译条目注入向量）、M16（校验过于激进）
 
@@ -18,7 +18,7 @@
 
 ## 验收标准
 
-- [ ] 用户上传文件内容不再直接拼接到系统提示词，改为存储为内存条目后注入 `{uploaded_doc_summary}` 占位符（仅文件名+字符数摘要）
+- [ ] 用户上传文件内容不再直接拼接到系统提示词；原 MemoryStore 存储和 search_memory 检索方案已废除，不作为此项验收条件。
 - [ ] MCP stdio 通道支持可选的 token 认证（INI 配置 `[mcp] auth_token`，空则不启用）
 - [ ] `tool_v1.py` 的 `_tool_write_back` 和 `_tool_export_json` 添加 `_validate_output_path` 检查（与 namespace 工具一致）
 - [ ] 输入校验正则 `_INJECTION_PATTERNS` 放宽：允许合法 HTML 标签和 SQL-like 关键词

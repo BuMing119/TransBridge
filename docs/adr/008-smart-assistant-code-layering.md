@@ -1,6 +1,6 @@
 # ADR-008: SmartAssistant 代码分层 — UI 与业务逻辑分离
 
-- **状态**: 已接受
+- **状态**: 部分已废除（2026-09-13）：旧 memory 子包布局及 D5 MemoryWriterThread 外提已废除；其他分层决策保持原状态。
 - **日期**: 2026-05-10
 - **决策者**: BuMing
 - **对应需求**: [FR7.12](../requirements.md)
@@ -129,7 +129,7 @@ src/transbridge/smart_assistant/
 │   ├── text_parser.py        # Excel/CSV/Markdown/TXT/JSON
 │   ├── binary_parser.py      # PDF/Word
 │   └── paratranz_parser.py   # ParaTranz 导出格式
-├── memory/              # FR7.13.3 长期记忆
+├── memory/              # FR7.13.3 旧长期记忆（已废除）
 │   ├── __init__.py
 │   ├── memory_store.py       # FAISS 向量存储 + 精确索引
 │   ├── embedding.py          # 嵌入生成（复用现有 LLMClient）
@@ -338,7 +338,7 @@ class TranslationController:
 
 `_build_postprocessor()` **不提取**：两处签名差异较大（参数数量不同、阶段配置不同），强行统一会引入回归风险，各自保留在对应 Controller 中。
 
-#### D5: MemoryWriterThread 外提
+#### D5: MemoryWriterThread 外提（已废除，历史决策）
 
 `memory/memory_store.py`（335行）中内嵌的 `MemoryWriterThread` 类（~42行）提取到 `memory/memory_writer.py`，原位置 `from .memory_writer import MemoryWriterThread` 重导出。
 

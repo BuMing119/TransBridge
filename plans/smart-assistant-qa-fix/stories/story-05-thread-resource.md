@@ -2,7 +2,7 @@
 
 **所属方案**: `plans/smart-assistant-qa-fix/plan.md`
 **技术模块**: `smart_assistant/` (memory_store, agent_worker, execution_engine, conversation_manager, tool_registry)、`ui/tools/smart_assistant/` (chat_widget, panel)
-**状态**: 已确认
+**状态**: 部分已废除（2026-09-13）：C9/M9 旧记忆异步写入、LRU 及 M13 中旧记忆关闭部分已废除；其他线程与资源要求保持原状态。旧记忆相关设计仅保留为历史，不再实施或验收。
 **创建日期**: 2026-05-12
 **覆盖问题**: C9（UI线程IO）、M7（cancel空操作）、M8（_paused共享）、M9（MemoryStore无限制）、M10（_trim不裁剪观察）、M11（无Token预算）、M12（观察消息无限增长）、M13（面板关闭线程未终止）、M14（_clear不清除worker）
 
@@ -19,10 +19,10 @@
 
 ## 验收标准
 
-- [ ] 记忆持久化从 UI 线程移出：`MemoryStore.add()` 提交到后台队列，由专用线程异步写入
+- **已废除（旧记忆）**：记忆持久化从 UI 线程移出：`MemoryStore.add()` 提交到后台队列，由专用线程异步写入
 - [ ] `AgentWorker.cancel()` 可中断正在执行的工具调用
 - [ ] `ExecutionEngine._paused` 改为实例级属性，不同会话独立暂停
-- [ ] `MemoryStore` 添加 `max_entries`（默认 1000）+ LRU 淘汰策略
+- **已废除（旧记忆）**：`MemoryStore` 添加 `max_entries`（默认 1000）+ LRU 淘汰策略
 - [ ] `ConversationManager._trim()` 裁剪时同步移除 observation/plan_result 消息
 - [ ] `build_tool_schema_for_prompt()` 按当前 Agent namespace 过滤工具
 - [ ] `add_observation()` 结果文本超过 2000 字符时自动截断
@@ -31,7 +31,7 @@
 
 ## 数据流
 
-### C9: MemoryStore 异步写入
+### C9: MemoryStore 异步写入（已废除，历史设计）
 
 ```
 MemoryStore.add(entry)
@@ -77,7 +77,7 @@ ConversationManager._trim() 当前:
 
 ## 关键接口
 
-### MemoryWriterThread
+### MemoryWriterThread（已废除，历史设计）
 
 ```python
 # src/transbridge/smart_assistant/memory/memory_store.py
@@ -114,7 +114,7 @@ class MemoryWriterThread(QThread):
             self._cond.notify()
 ```
 
-### MemoryStore.with_capacity
+### MemoryStore.with_capacity（已废除，历史设计）
 
 ```python
 class MemoryStore:
@@ -143,7 +143,7 @@ class MemoryStore:
 
 ## 实现步骤
 
-### 步骤 1: C9+M9 — MemoryStore 异步写入 + LRU 淘汰
+### 步骤 1: C9+M9 — MemoryStore 异步写入 + LRU 淘汰（已废除，历史设计）
 
 **涉及文件**: `src/transbridge/smart_assistant/memory/memory_store.py`（修改）
 

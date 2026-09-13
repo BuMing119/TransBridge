@@ -10,7 +10,7 @@
 
 ### 上游 Story
 - **Story-01**（安全护栏）: 已完成 → ReAct 路径已接入 `execute_with_guardrails`，本 Story 的 M6 在此基础上接入 RetryHandler
-- **Story-05**（线程资源）: 已完成 → MemoryStore 异步写入，本 Story 的 m13/m14 联动
+- **Story-05**（线程资源）: 旧 MemoryStore 异步写入依赖已废除（2026-09-13）；m13/m14 的其他线程资源联动保持原状态
 
 ### 引用的架构决策
 - **ADR-008 §2**（Import 规范）: backend 不依赖 UI，修复 C1

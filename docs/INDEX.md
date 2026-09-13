@@ -30,9 +30,9 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [ADR-005](adr/005-toml-prompt-no-langchain.md) | TOML Prompt 模板 + Skill 定义格式 | ✅ 已接受（更新: 2026-05-10） |
 | [ADR-006](adr/006-project-persistence-variant-management.md) | 项目持久化与翻译版本管理 | ✅ 历史已接受；被 ADR-018 部分取代 |
 | [ADR-007](adr/007-mixed-translation-polish-mode.md) | AI翻译混合模式（三模式制+规则映射表+MixedWorker） | ✅ 已接受 |
-| [ADR-008](adr/008-smart-assistant-code-layering.md) | SmartAssistant 代码分层（UI与业务逻辑分离 + Agent框架4子包） | ✅ 历史与应用/Session/Task 增量已接受 |
-| [ADR-009](adr/009-agent-file-memory-reflexion.md) | Agent 文件解析、长期记忆与 Reflexion 自纠错（三模式降级） | ✅ 历史与 I/O/重试边界增量已接受 |
-| [ADR-010](adr/010-infra-extraction.md) | 共享基础设施提取 — infra/ 包（Embedding三模式可选） | ✅ 历史与 Ports adapter 增量已接受 |
+| [ADR-008](adr/008-smart-assistant-code-layering.md) | SmartAssistant 代码分层（UI与业务逻辑分离 + Agent框架4子包） | 部分已废除：旧记忆布局与 D5；其他决策保持原状态 |
+| [ADR-009](adr/009-agent-file-memory-reflexion.md) | Agent 文件解析、长期记忆与 Reflexion 自纠错（三模式降级） | 部分已废除：长期记忆及三模式降级；其他决策保持原状态 |
+| [ADR-010](adr/010-infra-extraction.md) | 共享基础设施提取 — infra/ 包（Embedding三模式可选） | 部分已废除：旧记忆消费方接线；共享 infra 保留 |
 | [ADR-011](adr/011-graph-orchestration-engine.md) | 自研有状态图编排引擎（StatefulDAGExecutor，零新依赖） | ✅ 历史与 Task workload 增量已接受 |
 | [ADR-012](adr/012-safety-observability-mcp.md) | 安全护栏（中间件链）+ 可观测性（pyqtSignal遥测）+ MCP Server（stdio） | ✅ 历史与 MCP 拓扑/安全增量已接受 |
 | [ADR-013](adr/013-vector-retrieval-enhancement.md) | 向量语义检索增强（BM25 混合检索 + 增量索引 + 编码缓存） | ✅ 历史与 capability/依赖增量已接受 |
@@ -101,10 +101,10 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [batch-operations](../plans/batch-operations/plan.md) | ✔️ 已实现 | 7 |
 | [vector-term-retrieval](../plans/vector-term-retrieval/plan.md) | ✔️ 已实现 | — |
 | [agent-tool-expansion](../plans/agent-tool-expansion/plan.md) | ✔️ S01-21+S23-26已实现 + ✔️ S22已实现 (描述+代码修复) | 26 |
-| [agent-upgrade](../plans/agent-upgrade/plan.md) | ✅ Phase 1 + Phase 2 全部完成 | 12 |
+| [agent-upgrade](../plans/agent-upgrade/plan.md) | 部分已废除：S04；其他 Story 保持原状态 | 12（S04 已废除） |
 | [llm-chat](../plans/llm-chat/plan.md) | ✅ 全部完成 (S01-10，含 ChatWidget拆分) | 10 |
-| [smart-assistant-qa-fix](../plans/smart-assistant-qa-fix/plan.md) | ✅ 第五轮全量修复完成 (166/166) | 7 |
-| [smart-assistant-refactor](../plans/smart-assistant-refactor/plan.md) | ✔️ 已实现 | 4 |
+| [smart-assistant-qa-fix](../plans/smart-assistant-qa-fix/plan.md) | 部分已废除：S03/S05/S07 的旧记忆项；其他范围保持原状态 | 7 |
+| [smart-assistant-refactor](../plans/smart-assistant-refactor/plan.md) | 部分已废除：S04 子任务 B；其他范围保持原状态 | 4 |
 | [tool-prompt-layering](../plans/tool-prompt-layering/plan.md) | ✅ 全部完成 (S01-S05) | 5 |
 | [session-controller](../plans/session-controller/plan.md) | ✅ 全部完成（2/2） | 2 |
 | [session-manager](../plans/session-manager/plan.md) | ✅ 全部完成（3/3） | 3 |

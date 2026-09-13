@@ -430,13 +430,13 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
   - **FR7.10.5 标记计数**: 底部状态栏 SHALL 显示各标记类型的计数（"★ N / ? N / ✓ N | 显示 M 条（共 K 条）"）。
   - **FR7.10.6 与 AI 翻译解耦**: `get_selected_entries()` SHALL 保持返回 ★ 标记条目（向后兼容）。AI 翻译窗口的作用域选择（翻译/润色哪些条目）由 AI 翻译面板自行处理，不耦合到标记系统。
 
-**FR7.13 Agent 框架全面升级** — *2026-05-10 | 状态: 已实现（Phase 1 + Phase 2 全部完成）| 优先级: P1*: 系统 SHALL 将 smart_assistant 从带工具的 LLM 对话面板升级为完整的翻译 Agent 框架，分两阶段实施。Phase 1（已实现，5 Story，QA 通过）覆盖 Skill 系统、文件上传、长期记忆、Reflexion 自纠错。Phase 2（待方案，分三批实施）覆盖多 Agent 协作、安全护栏、Graph 编排、可观测性、MCP Server 五个能力。
+**FR7.13 Agent 框架全面升级** — *2026-05-10 | 状态: 部分已废除（2026-09-13，FR7.13.3 旧长期记忆）；其他范围保持原状态 | 优先级: P1*: 系统 SHALL 将 smart_assistant 从带工具的 LLM 对话面板升级为完整的翻译 Agent 框架，分两阶段实施。Phase 1 覆盖 Skill 系统、文件上传、Reflexion 自纠错。Phase 2 覆盖多 Agent 协作、安全护栏、Graph 编排、可观测性、MCP Server 五个能力。
 
   **Phase 1（已实现 — 2026-05-10 QA 通过）**:
 
   - **FR7.13.1 Skill 系统**: 系统 SHALL 提供用户可自定义的能力模块（Skill）管理功能。每个 Skill 包含名称、描述、触发条件、Prompt 模板、关联工具列表。用户可创建/编辑/启用/禁用 Skill，agent 在推理过程中按需匹配和调用。Skill 模型参考 bm-* 系列：声明式定义，热加载，可组合。
   - **FR7.13.2 文件上传与知识注入**: 系统 SHALL 支持用户上传外部文件作为 agent 的参考知识源。支持格式：文本类（Excel .xlsx、CSV、Markdown .md、纯文本 .txt、JSON）、二进制类（PDF、Word .docx）、ParaTranz 导出格式。上传后系统解析文件内容，构建可被 agent 在翻译/校对/术语查询时引用的知识索引。典型场景：用户上传纠错表 → agent 翻译时自动对照修正；上传风格指南 → agent 润色时参考规范。
-  - **FR7.13.3 长期记忆**: 系统 SHALL 提供跨会话持久化的长期记忆能力，包含两个维度：(a) 翻译上下文记忆 — 用户偏好、术语决策、纠错历史、翻译风格选择等，下次翻译时自动加载相关记忆；(b) 全量对话历史 — 完整的对话记录可回溯。记忆存储基于向量嵌入（复用已有 FAISS 基础设施），支持语义检索 + 精确匹配两阶段召回。记忆数据存储在项目目录下，随项目切换。
+  - **FR7.13.3 旧长期记忆（已废除，2026-09-13）**: 原需求及其验收已废除，不再作为当前或待实现能力。移除范围包含 FAISS/JSON 记忆存储、检索器、后台写入线程及聊天接线；已有用户记忆文件不自动删除或迁移。当前会话历史保存/恢复、请求上下文及语义摘要压缩继续保留。新长期记忆另立需求、plan 和 Story，不恢复本需求。
   - **FR7.13.4 Reflexion 自纠错**: 系统 SHALL 在工具执行失败时自动触发自纠错机制。LLM 分析失败原因（错误消息/异常类型），调整参数或换策略，自动重试（最多 N 次，默认 3 次）。重试耗尽仍失败则反馈用户并继续 ReAct 循环。自纠错仅作用于工具调用层，不改变正常 LLM 响应流程。纠错过程对用户透明（显示"正在重试…"状态）。
 
   **Phase 2（已实现 — ADR-008/011/012 + S06-S12 全部编码）**:
@@ -552,9 +552,9 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
   - **FR7.15.2 异步通知**: TaskManager SHALL 添加 `task_completed` / `task_failed` pyqtSignal，异步翻译/润色任务完成后自动通知 LLM 结果。
   - **FR7.15.3 安全加固**: MCP stdio 通道 SHALL 支持可选 token 认证。v1 工具 SHALL 添加路径校验。输入校验正则 SHALL 放宽以允许游戏标记语言中的合法 HTML 标签。
   - **FR7.15.4 配置完整性**: `get_translation_config` SHALL 返回真实的后处理/术语配置。`start_translation` SHALL 检查 API Key/术语数据库等前置条件。`ToolResult.fail()` SHALL 支持 `error_category`/`error_code`/`recovery_action` 字段。
-  - **FR7.15.5 线程与资源**: 记忆持久化 SHALL 从 UI 线程移出。面板关闭时 SHALL 清理运行中的 worker/engine。MemoryStore SHALL 添加 LRU 淘汰策略。ConversationManager SHALL 正确裁剪工具调用消息。系统 SHALL 实现 Token 预算和截断机制。
+  - **FR7.15.5 线程与资源**: 面板关闭时 SHALL 清理运行中的 worker/engine。ConversationManager SHALL 正确裁剪工具调用消息。系统 SHALL 实现 Token 预算和截断机制。
   - **FR7.15.6 代码清理**: `context_builder.py` SHALL NOT 直接 import UI 模块（修复 ADR-008 违规）。死代码 SHALL 移除或正确实例化。collection-is-None 检查 SHALL 统一使用 `@require_collection` 装饰器。
-  - **FR7.15.7 测试补充**: 系统 SHALL 为 ChatWorker / ConversationManager / ExecutionEngine / MemoryStore / ContextBuilder / MarkdownRenderer / MCP 模块补充测试覆盖。
+  - **FR7.15.7 测试补充**: 系统 SHALL 为 ChatWorker / ConversationManager / ExecutionEngine / ContextBuilder / MarkdownRenderer / MCP 模块补充测试覆盖。
 
   **关联需求**: FR7.12（代码分层）、FR7.13（Agent 框架）、FR7.14（UX 翻新）、FR9（工具扩展）
   **对应方案**: `plans/smart-assistant-qa-fix/plan.md`（7 Story，预估 22h）
@@ -1044,7 +1044,7 @@ Agent SHALL 可查询软件全局状态和执行 UI 导航。
 - 去除 `_get_prompt_builder()` 内联逻辑（已有 `prompts.build_system_prompt()`）。
 - 保留对话编排、流式处理、stage_b/stage_c 解析核心职责（~350行）。
 
-**FR10.5 MemoryWriterThread 外提**: `memory/memory_store.py`（335行）SHALL 将内嵌的 `MemoryWriterThread` 类提取到独立文件 `memory/memory_writer.py`（~80行）。`memory_store.py` 保留 `MemoryEntry` + `MemoryStore` 核心类（~280行）。
+**FR10.5 MemoryWriterThread 外提（已废除，2026-09-13）**: 对应旧记忆包已按 FR7.13.3 移除，不再要求保留该线程或存储类。
 
 **FR10.6 TaskManager 精简**: `tools/task_manager.py`（317行，23方法）SHALL 精简——
 
@@ -1147,7 +1147,7 @@ Agent SHALL 可查询软件全局状态和执行 UI 导航。
 - `_on_task_completed()` / `_on_task_failed()` → 简化为调用 `controller.handle_task_completed()`
 - `_react_depth` 属性 → 删除
 
-ChatWidget 保留职责：UI 渲染（bubble/card/thinking indicator/system message）、用户输入处理、文件上传、记忆检索触发。
+ChatWidget 保留职责：UI 渲染（bubble/card/thinking indicator/system message）、用户输入处理、文件上传。
 
 **FR12.3 Orchestrator 分发逻辑迁移**: `ConversationOrchestrator._on_finished()` SHALL 不再内部做模式分发。分发逻辑（Plan Card vs Tool Card vs Auto Execute vs Reply）移到 SessionController。Orchestrator 仅负责：LLM 轮次生命周期、流式处理、响应解析，完成后通过回调通知 Controller。
 

@@ -1,6 +1,6 @@
 # ADR-010: 共享基础设施提取 — infra/ 包
 
-- **状态**: 已接受
+- **状态**: 部分已废除（2026-09-13）：旧 smart_assistant/memory 消费方接线和 MemoryStore 条件初始化决策已废除；共享 infra、EmbeddingClient 与 VectorStore 决策保持原状态。
 - **日期**: 2026-05-10
 - **决策者**: BuMing
 - **对应需求**: [FR7.13](../requirements.md)
@@ -148,7 +148,7 @@ class EmbeddingConfig:
 | `local` | 加载本地 ONNX 模型做推理 | onnxruntime（新增，预留接口暂不实现下载逻辑） |
 | `disabled` | `embed()` 直接返回 None | 无 |
 
-**VectorStore 条件初始化**: 当 mode=disabled 时，MemoryStore 不创建 VectorStore 实例（`_vector_store = None`），跳过所有 FAISS 操作。
+**VectorStore 条件初始化（旧 MemoryStore 部分已废除）**: 当 mode=disabled 时，MemoryStore 不创建 VectorStore 实例（`_vector_store = None`），跳过所有 FAISS 操作。
 
 **理由**: 不是所有用户都有 embedding API 额度或愿意部署本地模型。RAG/语义检索应该是可选增强而非强制依赖，用户可在设置中随时切换模式。disabled 模式下记忆系统降级为纯结构化检索。
 

@@ -2,7 +2,7 @@
 
 **所属方案**: `plans/smart-assistant-refactor/plan.md`
 **技术模块**: backend
-**状态**: 已实现
+**状态**: 部分已废除（2026-09-13）：子任务 B（旧记忆写入线程外提）及对应接口、验收、文件清单已废除；子任务 A/C 保持原状态。旧记忆相关设计仅保留为历史，不再实施或验收。
 **创建日期**: 2026-05-22
 
 ## 前置依赖
@@ -23,8 +23,8 @@
 
 - [ ] `conversation_orchestrator.py`: LLM 客户端创建逻辑提取为模块级 `_create_llm_client()` 函数（~60行），从 `_get_llm_client()` 中委托调用
 - [ ] `conversation_orchestrator.py`: 去除 `_get_prompt_builder()` 中与 `prompts.build_system_prompt()` 重复的内联逻辑
-- [ ] `memory/memory_writer.py` 存在，包含 `MemoryWriterThread` 类（~42行）
-- [ ] `memory/memory_store.py` 顶部 `from .memory_writer import MemoryWriterThread` 重导出
+- **已废除（旧记忆）**：`memory/memory_writer.py` 存在，包含 `MemoryWriterThread` 类（~42行）
+- **已废除（旧记忆）**：`memory/memory_store.py` 顶部 `from .memory_writer import MemoryWriterThread` 重导出
 - [ ] `tools/task_manager.py`: `on_completed`+`on_failed` → `on_finished`; `notify_completed`+`notify_failed` → `notify_finished`。旧方法保留为 deprecated wrapper（兼容 chat_widget.py 的外部调用）
 - [ ] `tools/task_manager.py`: `set_main_thread_dispatcher` / `reset_dispatcher` / `get_handle` **保留不动**（chat_widget.py:712 和 tool_proofreader.py:129 有活跃调用方）
 - [ ] `tools/task_manager.py`: 移除仅内部分发用的死代码（`_default_dispatcher` 模块级函数，如无调用方可删除）
@@ -77,7 +77,7 @@ class ConversationOrchestrator:
     # react_depth 和 auto_mode 经代码验证无重复定义，无需修复
     ...
 
-### memory/memory_writer.py
+### memory/memory_writer.py（已废除，历史接口）
 
 ```python
 class MemoryWriterThread(threading.Thread):
@@ -159,7 +159,7 @@ class TaskManager:
 - 如有 → 改为调用 `build_system_prompt()` 或简化为 factory 方法
 - 确保不影响 `start_round()` 中的 system prompt 构建流程
 
-### 子任务 B: memory/memory_writer.py 外提
+### 子任务 B: memory/memory_writer.py 外提（已废除，历史设计）
 
 **涉及文件**:
 - `src/transbridge/smart_assistant/memory/memory_writer.py`（新建）

@@ -1,6 +1,6 @@
 # ADR-009: Agent 文件解析、长期记忆与 Reflexion 自纠错
 
-- **状态**: 已接受
+- **状态**: 部分已废除（2026-09-13）：长期记忆及 MemoryStore 降级策略已按 [FR7.13.3](../requirements.md) 移除，下文对应决策仅保留为历史记录；文件解析与自纠错不受此次移除影响。
 - **日期**: 2026-05-10
 - **决策者**: BuMing
 - **对应需求**: [FR7.13](../requirements.md)
@@ -58,7 +58,7 @@ class FileParser(ABC):
 - 新增格式只需添加一个 parser 类，不修改现有代码
 - `ParsedDocument` 同时保留结构化数据（sections/rows）和纯文本（raw_text），前者供精确引用，后者供向量嵌入
 
-### 2. 长期记忆：infra/VectorStore + JSON 元数据双存储
+### 2. 长期记忆：infra/VectorStore + JSON 元数据双存储（已废除，历史决策）
 
 **决策**: 向量存储通过 `infra/vector_store.py` 的 `VectorStore` 类操作 FAISS 索引，嵌入生成通过 `infra/embedding_client.py` 的 `EmbeddingClient`。新增 JSON 元数据索引做精确匹配。详见 [ADR-010](010-infra-extraction.md)。
 
@@ -169,7 +169,7 @@ class RetryHandler:
 | `tomllib` (Python 3.11 内置) | Skill TOML 解析 | 无需新增 |
 | `faiss-cpu` | 向量存储 | 已有 |
 
-### 更新: 2026-05-10 - MemoryStore 三模式降级策略
+### 更新: 2026-05-10 - MemoryStore 三模式降级策略（已废除，历史决策）
 
 **决策**: MemoryStore 根据 `EmbeddingConfig.mode` 运行在不同模式。
 
