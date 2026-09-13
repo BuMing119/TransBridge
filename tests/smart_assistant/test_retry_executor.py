@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from transbridge.application.security.redaction import SecretRedactor
 from transbridge.smart_assistant.reflexion import RetryHandler, ToolRetryExecutor
 from transbridge.smart_assistant.tools import ToolResult
@@ -277,3 +279,81 @@ def test_cancellation_stops_before_invocation() -> None:
     assert not outcome.result.success
     assert outcome.result.error_code == "TOOL_CALL_CANCELLED"
     assert calls == 0
+    assert outcome.attempts == 0
+    assert outcome.result.execution_meta == {"attempt": 0, "retry_count": 0}
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        "null",
+        "[]",
+        "true",
+        "42",
+        '[{"retry": true, "adjusted_args": {}}]',
+        '{"retry": "false", "adjusted_args": {}}',
+        '{"retry": 1, "adjusted_args": {}}',
+        '{"adjusted_args": {}}',
+        '{"retry": true, "adjusted_args": []}',
+        "invalid JSON",
+    ],
+)
+def test_invalid_analysis_response_preserves_original_failure(response):
+    class Client:
+        def chat(self, *_args, **_kwargs):
+            return response
+
+    failure = ToolResult.fail("invalid query", error_category="input", error_code="INVALID_QUERY")
+    calls = []
+    outcome = ToolRetryExecutor(RetryHandler(Client())).execute(
+        {"tool": "lookup", "args": {"query": "bad"}},
+        lambda args: calls.append(args) or failure,
+        retry_allowed=True,
+    )
+    assert calls == [{"query": "bad"}]
+    assert outcome.result.error_code == "INVALID_QUERY"
+    assert outcome.attempts == 1
+
+
+def test_network_retry_backoff_is_bounded(monkeypatch):
+    from transbridge.smart_assistant.reflexion import retry_executor
+
+    clock = [0.0]
+    monkeypatch.setattr(retry_executor.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(retry_executor.time, "sleep", lambda delay: clock.__setitem__(0, clock[0] + delay))
+    calls = []
+
+    def invoke(_args):
+        calls.append(clock[0])
+        return ToolResult.fail("rate limited", error_code="RATE_LIMIT")
+
+    outcome = ToolRetryExecutor(RetryHandler()).execute({"tool": "lookup", "args": {}}, invoke, retry_allowed=True)
+    assert calls == pytest.approx([0, 1, 3, 7])
+    assert outcome.attempts == 4
+
+
+def test_cancellation_during_backoff_does_not_invoke_again(monkeypatch):
+    from transbridge.smart_assistant.reflexion import retry_executor
+
+    clock = [0.0]
+    sleeps = []
+    monkeypatch.setattr(retry_executor.time, "monotonic", lambda: clock[0])
+
+    def sleep(delay):
+        sleeps.append(delay)
+        clock[0] += delay
+
+    monkeypatch.setattr(retry_executor.time, "sleep", sleep)
+    calls = []
+    outcome = ToolRetryExecutor(RetryHandler()).execute(
+        {"tool": "lookup", "args": {}},
+        lambda args: calls.append(args) or ToolResult.fail("timeout", error_category="network"),
+        retry_allowed=True,
+        cancelled=lambda: clock[0] >= 0.1,
+    )
+    assert calls == [{}]
+    assert max(sleeps) <= 0.05
+    assert clock[0] == pytest.approx(0.1)
+    assert outcome.result.error_code == "TOOL_CALL_CANCELLED"
+    assert outcome.attempts == 1
+    assert outcome.result.execution_meta == {"attempt": 1, "retry_count": 0}

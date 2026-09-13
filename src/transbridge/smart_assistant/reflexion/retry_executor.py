@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
+import time
 from typing import Any
 
 from transbridge.application.security.redaction import SecretRedactor
@@ -49,7 +50,7 @@ class ToolRetryExecutor:
                     error_category="cancelled",
                     error_code="TOOL_CALL_CANCELLED",
                 )
-                return RetryOutcome(self._with_attempts(result, attempt), current_step, attempt)
+                return RetryOutcome(self._with_attempts(result, attempt - 1), current_step, attempt - 1)
 
             result = self._invoke(invoke, current_step)
             if result.success:
@@ -67,11 +68,12 @@ class ToolRetryExecutor:
             ):
                 return RetryOutcome(self._with_attempts(result, attempt), current_step, attempt)
 
-            if self._retry_handler.should_retry_same_args(
+            same_args = self._retry_handler.should_retry_same_args(
                 result.message,
                 error_category=result.error_category,
                 error_code=result.error_code,
-            ):
+            )
+            if same_args:
                 adjusted_step = deepcopy(current_step)
             else:
                 adjusted_step = self._retry_handler.analyze_and_adjust(
@@ -86,9 +88,24 @@ class ToolRetryExecutor:
 
             if on_retry is not None:
                 on_retry(attempt + 1, max_attempts, result)
+            if same_args and not self._wait_before_retry(min(2 ** (attempt - 1), 4), cancelled):
+                result = ToolResult.fail("工具调用已取消", error_category="cancelled", error_code="TOOL_CALL_CANCELLED")
+                return RetryOutcome(self._with_attempts(result, attempt), current_step, attempt)
             current_step = adjusted_step
 
         raise RuntimeError("unreachable retry loop state")
+
+    @staticmethod
+    def _wait_before_retry(delay: float, cancelled: Callable[[], bool] | None) -> bool:
+        """Bound network retries while checking cancellation at least every 50ms."""
+        deadline = time.monotonic() + delay
+        while True:
+            if cancelled is not None and cancelled():
+                return False
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return True
+            time.sleep(min(remaining, 0.05))
 
     @staticmethod
     def _invoke(invoke: Callable[[dict[str, Any]], Any], step: dict[str, Any]) -> ToolResult:
@@ -136,6 +153,6 @@ class ToolRetryExecutor:
         if attempts == 1 and result.success:
             return result
         execution_meta = dict(result.execution_meta or {})
-        execution_meta.update({"attempt": attempts, "retry_count": attempts - 1})
+        execution_meta.update({"attempt": attempts, "retry_count": max(0, attempts - 1)})
         result.execution_meta = execution_meta
         return result

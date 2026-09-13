@@ -381,6 +381,7 @@ class RequestBinding(QObject):
 
     def fail(self, message):
         logger.warning("Assistant request stopped: %s", message)
+        self.management.capture_failed_turn()
         if self.admission is not None:
             try:
                 record_turn_failure(

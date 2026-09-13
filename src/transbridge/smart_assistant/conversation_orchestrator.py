@@ -534,6 +534,10 @@ class ConversationOrchestrator(QObject):
         """网络错误后重试。"""
         if self._shutdown_complete:
             return
+        binding = getattr(self, "request_binding", None)
+        if binding is not None:
+            binding.management.retry_failed_turn()
+            return
         self.cancel_current_round()
         self._on_system_message("正在重试…")
         self.start_round()

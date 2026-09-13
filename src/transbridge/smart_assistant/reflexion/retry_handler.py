@@ -145,25 +145,31 @@ class RetryHandler:
         )
         try:
             response = client.chat([{"role": "user", "content": prompt}], max_tokens=256)
-            # 容错提取 JSON
-            start = response.find("{")
-            end = response.rfind("}") + 1
-            if start >= 0 and end > start:
-                parsed = json.loads(response[start:end])
-            else:
+            try:
                 parsed = json.loads(response)
+            except json.JSONDecodeError:
+                # Accept explanatory prose/code fences, but validate complete JSON values as-is.
+                start = response.find("{")
+                end = response.rfind("}") + 1
+                if start < 0 or end <= start:
+                    raise
+                parsed = json.loads(response[start:end])
         except Exception as exc:
             safe_error = SecretRedactor.default().redact_text(str(exc))
             logger.warning("RetryHandler LLM 响应解析失败: %s", safe_error)
             return None
 
-        if parsed.get("retry"):
+        if not isinstance(parsed, dict) or type(parsed.get("retry")) is not bool:
+            logger.warning("RetryHandler response must be an object with a boolean retry field")
+            return None
+
+        if parsed["retry"]:
             adjusted = parsed.get("adjusted_args")
             if isinstance(adjusted, dict):
                 safe_step["args"] = self._restore_sensitive_values(original_args, adjusted, tool_schema)
             else:
                 logger.warning(
-                    "LLM 返回的 adjusted_args 不是 dict 类型 (got %s)，使用原参数重试",
+                    "LLM 返回的 adjusted_args 不是 dict 类型 (got %s)，停止重试",
                     type(adjusted).__name__,
                 )
                 return None

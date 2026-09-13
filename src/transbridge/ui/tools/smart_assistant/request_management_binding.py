@@ -13,6 +13,43 @@ class RequestManagementBinding:
         self.binding = binding
         self._timelines = set()
         self._refresh = RequestViewRefresh(binding)
+        self._failed_turn = None
+
+    def capture_failed_turn(self):
+        binding = self.binding
+        if binding.admission is not None:
+            self._failed_turn = (binding.context, binding.admission.request_id)
+
+    def retry_failed_turn(self):
+        binding = self.binding
+        target = self._failed_turn
+        if (
+            target is None
+            or binding._closed
+            or not binding._active
+            or binding.context != target[0]
+            or binding.admission is not None
+        ):
+            return
+        self._failed_turn = None
+        request_id = target[1]
+        if not request_id:
+            self.retry_inputs()
+            return
+        try:
+            request = next(
+                (
+                    r
+                    for r in binding.service.requests(binding.service.state(binding.context))
+                    if r.request_id == request_id
+                ),
+                None,
+            )
+            # A stale retry button must never create a successor for a completed request.
+            if request is not None and not request.terminal and request.pause_reasons:
+                binding.control(request_id, "resume")
+        except Exception as exc:
+            binding.fail(str(exc))
 
     def show_timeline(self, request_id):
         from transbridge.application.assistant_requests.journal import read_events
