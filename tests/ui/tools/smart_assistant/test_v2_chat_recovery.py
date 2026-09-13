@@ -180,16 +180,15 @@ def test_real_worker_round_autosaves_v2_without_cancelling_or_reloading(chat_env
     assert panel.chat._session_binding._generation == 1
 
 
-def test_disabled_memory_initialization_never_reads_embedding_config_or_creates_client(chat_environment, monkeypatch):
+def test_chat_initialization_does_not_create_legacy_memory_or_model_client(chat_environment, monkeypatch, tmp_path):
     def unexpected(*_args, **_kwargs):
-        pytest.fail("Disabled memory must not configure an embedding client")
+        pytest.fail("Chat initialization must not configure a model client")
 
     monkeypatch.setattr("transbridge.paratranz.config_manager.LLMConfig.load_from_file", unexpected)
     monkeypatch.setattr("transbridge.infra.create_llm_client", unexpected)
     panel = chat_environment.panel()
     _until(lambda: panel.chat.session_ready)
-    assert panel.chat._memory_store.count == 0
-    assert panel.chat._memory_retriever is not None
+    assert not (tmp_path / "assistant" / "memory").exists()
 
 
 def test_real_panel_switch_and_close_save_unsaved_history_without_losing_recovered_messages(chat_environment):

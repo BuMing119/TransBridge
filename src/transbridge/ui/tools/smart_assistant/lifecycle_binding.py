@@ -8,7 +8,6 @@ logger = logging.getLogger(__name__)
 def close_runtime_resources(
     *,
     observability,
-    memory_store,
     orchestrator,
     wait_for_worker: bool,
 ) -> None:
@@ -24,11 +23,6 @@ def close_runtime_resources(
             observability._on_token_stats_updated = None
     except Exception:
         logger.debug("shutdown: 清理 observability 失败", exc_info=True)
-    try:
-        if memory_store is not None:
-            memory_store.close()
-    except Exception:
-        logger.debug("shutdown: 关闭 memory_store 失败", exc_info=True)
 
 
 __all__ = ["close_runtime_resources"]

@@ -26,15 +26,6 @@ logger = logging.getLogger(__name__)
 def initialize_runtime(facade) -> None:
     """Compose backend adapters; the facade remains the public compatibility root."""
     from transbridge.config.paths import get_data_dir
-    from transbridge.smart_assistant.memory import MemoryRetriever, MemoryStore
-
-    facade._memory_store = MemoryStore(
-        Path(get_data_dir()) / "memory",
-        embedding_mode="disabled",
-        persist_to_disk=False,
-    )
-    facade._memory_retriever = MemoryRetriever(facade._memory_store)
-
     from transbridge.smart_assistant.observability import ObservabilityCollector
 
     facade._obs_collector = ObservabilityCollector(
@@ -68,7 +59,6 @@ def initialize_runtime(facade) -> None:
         conversation_manager=facade._conversation,
         tool_execution_handler=facade._tool_handler,
         obs_collector=facade._obs_collector,
-        memory_store=facade._memory_store,
         on_system_message=facade.add_system_message,
         on_streaming_bubble_factory=lambda: MessageBubble("...", "assistant", theme=facade._theme),
         on_streaming_flush=lambda text, bubble, dirty: (
@@ -94,18 +84,7 @@ def initialize_runtime(facade) -> None:
             facade._message_list.remove(widget) if facade._message_list is not None else None
         ),
         on_retry_offer=lambda message: facade._offer_retry_button(),
-        on_log_memory=lambda messages, response: (
-            facade._session_binding.log_memory(facade._memory_store, messages, response)
-            if facade._session_binding is not None
-            else None
-        ),
         on_get_uploaded_docs=lambda: facade._uploaded_docs,
-        on_get_pending_memory=lambda: (
-            facade._conversation_binding.pending_memory_context if facade._conversation_binding is not None else ""
-        ),
-        on_clear_pending_memory=lambda: (
-            facade._conversation_binding.clear_pending_memory() if facade._conversation_binding is not None else None
-        ),
         on_response_parsed=lambda parsed: (
             facade._conversation_binding.handle_response(parsed) if facade._conversation_binding is not None else None
         ),
@@ -238,8 +217,6 @@ def initialize_message_area(facade) -> None:
     if facade._task_monitor is not None:
         facade._task_binding.set_monitor(facade._task_monitor)
     facade._conversation_binding = ConversationBinding(
-        memory_store=facade._memory_store,
-        memory_retriever=facade._memory_retriever,
         controller=lambda: facade._controller,
         task_binding=lambda: facade._task_binding,
         session_binding=lambda: facade._session_binding,

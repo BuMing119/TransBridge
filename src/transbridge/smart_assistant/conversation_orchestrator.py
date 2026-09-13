@@ -88,7 +88,6 @@ class ConversationOrchestrator(QObject):
         conversation_manager,
         tool_execution_handler,
         obs_collector=None,
-        memory_store=None,
         *,
         # UI 回调
         on_system_message: Callable[[str], None] | None = None,
@@ -107,12 +106,8 @@ class ConversationOrchestrator(QObject):
         on_remove_widget: Callable[[Any], None] | None = None,
         # 错误回调
         on_retry_offer: Callable[[str], None] | None = None,
-        # 记忆回调
-        on_log_memory: Callable[[list, str], None] | None = None,
         # 上下文回调
         on_get_uploaded_docs: Callable[[], dict] | None = None,
-        on_get_pending_memory: Callable[[], str] | None = None,
-        on_clear_pending_memory: Callable[[], None] | None = None,
         # React 深度回调
         on_react_depth_check: Callable[[], bool] | None = None,
         # FR12: SessionController 响应回调
@@ -123,7 +118,6 @@ class ConversationOrchestrator(QObject):
         self._conversation = conversation_manager
         self._tool_handler = tool_execution_handler
         self._obs_collector = obs_collector
-        self._memory_store = memory_store
 
         # LLM client cache
         self._prompt_builder = None
@@ -177,10 +171,7 @@ class ConversationOrchestrator(QObject):
         self._on_end_conversation = on_end_conversation or (lambda: None)
         self._on_remove_widget = on_remove_widget or (lambda _: None)
         self._on_retry_offer = on_retry_offer or (lambda _: None)
-        self._on_log_memory = on_log_memory or (lambda *a: None)
         self._on_get_uploaded_docs = on_get_uploaded_docs or (lambda: {})
-        self._on_get_pending_memory = on_get_pending_memory or (lambda: "")
-        self._on_clear_pending_memory = on_clear_pending_memory or (lambda: None)
         self._on_react_depth_check = on_react_depth_check or (lambda: True)
         self._on_response_parsed = on_response_parsed or (lambda _: None)  # FR12
 
@@ -269,10 +260,6 @@ class ConversationOrchestrator(QObject):
             ctx._uploaded_docs = self._on_get_uploaded_docs()
             context = ContextBuilder(ctx).build()
             sys_prompt = build_system_prompt(context)
-            pending = self._on_get_pending_memory()
-            if pending:
-                sys_prompt = sys_prompt + "\n\n" + pending
-                self._on_clear_pending_memory()
             self._conversation.add_system(sys_prompt)
 
         self._react_depth += 1
@@ -476,12 +463,6 @@ class ConversationOrchestrator(QObject):
         if not steps:
             self._on_thinking_indicator_hide()
             self._on_end_conversation()
-
-        # 记录记忆
-        self._on_log_memory(
-            self._conversation.get_messages(),
-            turn.text[:300],
-        )
 
         # 清理 worker
         self._cleanup_worker(worker)

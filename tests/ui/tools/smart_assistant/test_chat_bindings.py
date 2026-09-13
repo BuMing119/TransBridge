@@ -220,10 +220,6 @@ class _RoundController:
         self.events.append(("response", parsed))
 
 
-class _MemoryStore:
-    count = 0
-
-
 class _StartableTaskBinding:
     def __init__(self) -> None:
         self.starts = 0
@@ -237,8 +233,6 @@ def test_conversation_binding_ignores_round_and_response_after_close() -> None:
     tasks = _StartableTaskBinding()
     session = type("Session", (), {"auto_save": lambda self, parsed: None})()
     binding = ConversationBinding(
-        memory_store=_MemoryStore(),
-        memory_retriever=None,
         controller=lambda: controller,
         task_binding=lambda: tasks,
         session_binding=lambda: session,

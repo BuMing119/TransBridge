@@ -74,9 +74,6 @@ class ChatWidget(QWidget):
 
         # 可观测性收集器引用（延迟创建）
         self._obs_collector = None
-        # 长期记忆引用（延迟创建）
-        self._memory_store = None
-        self._memory_retriever = None
         # UI 控件引用（延迟创建，resizeEvent 等可能在 _init_ui 前触发）
         self._main_layout: QVBoxLayout | None = None
         self._back_to_bottom_btn: QPushButton | None = None
@@ -125,7 +122,7 @@ class ChatWidget(QWidget):
         self._init_ui_stage1()
 
     def _init_ui_stage1(self) -> None:
-        """Stage 1/4: QTimers + 长期记忆 + 可观测性收集器。"""
+        """Stage 1/4: QTimers + 可观测性收集器。"""
         if getattr(self, "_shutdown_complete", False):
             return
         try:
@@ -232,7 +229,6 @@ class ChatWidget(QWidget):
 
         close_runtime_resources(
             observability=getattr(self, "_obs_collector", None),
-            memory_store=getattr(self, "_memory_store", None),
             orchestrator=getattr(self, "_orchestrator", None),
             wait_for_worker=wait_for_worker,
         )

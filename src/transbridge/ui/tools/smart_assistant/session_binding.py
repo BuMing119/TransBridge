@@ -92,25 +92,6 @@ class SessionBinding:
         if parsed and self._manager is not None:
             self._auto_name(session_id, parsed)
 
-    def log_memory(self, memory_store, messages: list, response: str) -> None:
-        if self._closed:
-            return
-        try:
-            from transbridge.smart_assistant.memory import MemoryEntry
-
-            user_messages = [m["content"] for m in messages if m.get("role") == "user"]
-            last_user = user_messages[-1][:100] if user_messages else ""
-            memory_store.add(
-                MemoryEntry(
-                    type="conversation",
-                    summary=last_user,
-                    content=f"User: {last_user}\nAssistant: {response[:300]}",
-                    source="chat",
-                )
-            )
-        except Exception as error:
-            logger.warning("记忆记录失败: %s", error)
-
     def _auto_name(self, session_id: str, parsed: dict) -> None:
         data = self._manager.get_session(session_id)
         if data is None or data.get("name") != "新对话":
@@ -147,37 +128,22 @@ class ConversationBinding:
     def __init__(
         self,
         *,
-        memory_store,
-        memory_retriever,
         controller,
         task_binding,
         session_binding,
         system_message,
         observability_visible,
     ) -> None:
-        self._memory_store = memory_store
-        self._memory_retriever = memory_retriever
         self._controller = controller
         self._task_binding = task_binding
         self._session_binding = session_binding
         self._system_message = system_message
         self._observability_visible = observability_visible
-        self.pending_memory_context = ""
         self._closed = False
 
     def start_round(self, text: str) -> None:
         if self._closed:
             return
-        self.pending_memory_context = ""
-        if self._memory_store.count > 0:
-            try:
-                memories = self._memory_retriever.retrieve(text, top_k=3)
-                if memories:
-                    lines = ["相关历史记忆:"]
-                    lines.extend(f"  - [{memory.type}] {memory.summary}" for memory in memories)
-                    self.pending_memory_context = "\n".join(lines)
-            except Exception as error:
-                logger.info("记忆检索失败: %s", error)
         self._task_binding().start()
         controller = self._controller()
         controller.handle_round_interrupted()
@@ -202,14 +168,10 @@ class ConversationBinding:
         if self._observability_visible() and hasattr(stats, "input_tokens"):
             self._system_message(f"Token: 输入 {stats.input_tokens} / 输出 {stats.output_tokens}")
 
-    def clear_pending_memory(self) -> None:
-        self.pending_memory_context = ""
-
     def close(self) -> None:
         if self._closed:
             return
         self._closed = True
-        self.pending_memory_context = ""
 
 
 __all__.append("ConversationBinding")
