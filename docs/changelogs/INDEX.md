@@ -6,6 +6,9 @@
 
 ## 日志结构
 
+- 2026-09-13：[移除旧 AI 助手记忆系统](maintenance/legacy-assistant-memory/2026-09-13-001-remove-legacy-memory.md) — 删除旧存储、检索与聊天接线，保留会话历史和上下文摘要。
+- 2026-09-13：[废除旧记忆需求与规划状态](maintenance/legacy-assistant-memory/2026-09-13-002-abolish-planning-status.md) — 同步需求、plan、Story、ADR 和索引，混合文档只废除旧记忆部分。
+
 ```
 docs/changelogs/
 ├── INDEX.md                    # 本文件
