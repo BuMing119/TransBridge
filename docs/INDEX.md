@@ -14,11 +14,13 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 
 | 文档 | 说明 | 状态 |
 |------|------|------|
-| [requirements.md](requirements.md) | 项目需求概述及历史 FR1～FR16；2026-08-18 已确认综合整改需求 FR17～FR23 与 NFR 增量，覆盖入口一致性、I/O 身份、持久化、任务、翻译工作流、ParaTranz、FOMOD 和发行质量合同 | ⚠️ 历史实现部分核验；整改需求已确认 |
+| [requirements.md](requirements.md) | 项目需求概述及历史 FR1～FR16；2026-08-18 已确认综合整改需求 FR17～FR23 与 NFR 增量，覆盖入口一致性、I/O 身份、持久化、任务、翻译工作流、ParaTranz、FOMOD 和发行质量合同；新增 [FR31 自动长期记忆](requirements.md#fr31-assistant-memory) | ⚠️ 历史实现部分核验；整改需求已确认；FR31 为草稿 |
 
 ---
 
 ## 架构决策记录 (ADR)
+
+新增提议：[ADR-042：项目作用域优先的助手长期记忆](adr/042-assistant-durable-memory.md)，对应[详细计划与流程图](../plans/assistant-durable-memory/plan.md)；草稿规划，尚未实现。
 
 | 编号 | 标题 | 状态 |
 |------|------|------|
