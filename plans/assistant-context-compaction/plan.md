@@ -1,13 +1,31 @@
 # 助手稳定上下文与按预算压缩实施计划
 
 - Epic：`assistant-context-compaction`。
-- 状态：2026-09-12 本地实现与离线验证完成；S01～S08 已实现，S09 离线部分完成，真实模型收益与重复性能样本验收尚未完成。
+- 状态：2026-09-13 S01～S08、S10 本地实现与离线验证完成；S09 离线部分完成，真实模型收益与重复性能样本验收尚未完成。
 - 用户授权：按当前计划开始实现并验证；未授权本轮调用付费模型。
 - 需求：[FR30.16～FR30.22](../../docs/requirements.md#fr30-stable-context)。
 - 架构：[ADR-041](../../docs/adr/041-assistant-context-compaction.md)。
 - 证据：[实施验证报告](../../docs/test-reports/assistant-context-compaction.md)。
 
 ## 1. 当前阶段
+
+本轮修复（2026-09-13，S10；bm-pilot 授权本地实施，代码及离线验收完成）：
+
+- [x] 定位内部控制回合空回复误报、固定 32K 默认值和字节上界估算。
+- [x] S10 实现：有效控制回合不报空回复；容量支持自动解析和手动覆盖；统一离线估算；等待提示列出预算组成。
+- [x] S10 验证：控制回合/真正空响应、容量保存和端点隔离、工具规模、摘要及 UI 回归 1,141 项通过；Ruff 检查通过。
+- [x] S10 记录：审查 diff，补[实现增量](../../docs/changelogs/assistant-context-compaction/story-10-capacity/2026-09-13-001-capacity-and-control-feedback.md)、[默认 128K 调整及 165 项复验](../../docs/changelogs/assistant-context-compaction/story-10-capacity/2026-09-13-002-default-128k.md)和索引。
+
+S10 落点：`context_budget.py`、独立 `context_capacity.py`/`context_estimation.py`、配置/AI 设置页、
+请求接线、`budget_policy.py`/`compaction.py` 和相关测试。现有 orchestrator 超过体量阈值，
+只保留局部条件修正和预算工厂调用，容量与估算职责独立实现。
+
+验收与边界：新配置以 0 表示自动容量，仅对核验的官方端点和精确模型 ID 应用规格；未知端点
+使用用户指定的默认 128K（131,072），用户保存的正数容量不被自动改写。设置展示实际生效容量及来源，旧 32K 可显式切换自动。
+估算优先使用进程内已加载 tokenizer，否则采用带余量的字符估算，明确不是计费 token 或严格上界；
+不下载编码、不请求模型、不删除摘要链和必需材料。所有准备入口复用工厂；摘要继承同一估算器。
+超限显示消息、工具定义、输出预留、协议余量和窗口，并区分硬超限与摘要空间不足。
+依赖顺序：容量/估算 → 接线和提示 → 回归 → 记录。回退可手动配置容量；现有会话格式不变。
 
 - [x] 核对需求、架构和原有请求生命周期。
 - [x] 实现实际用量与助手专属缓存适配。

@@ -20,7 +20,7 @@
 - `request_context_assembler.py` 按预算重新选择消息，最终为 `systems + state_messages + summary_messages + body`。状态、摘要变化可能在相同历史前打断可复用前缀。
 - `application/assistant_requests/summaries.py` 是确定性摘录：最近 8 条以外达到 8 条或 4000 字符后生成，正文上限 2400 字符。不是 LLM 语义摘要。
 - `request_context_preparation.py` 每次执行准备保存历史、刷新摘要并后台组装，已经有租约与过期回调保护。
-- `context_budget.py` 默认 32768、输出预留 4096、协议余量 512；估算器为 UTF-8 字节数乘 1.25。估算不是供应商计费 token 数。
+- `context_budget.py` 联合计算消息、工具定义、输出预留 4096 和协议余量 512。配置窗口 0 表示自动：已核验的 DeepSeek 官方兼容端点与精确 V4 Flash/Pro 模型 ID 使用 1,000,000，未知服务采用用户指定的默认 128K（131,072）并明确标注默认值；现有正数配置保持手动值。设置展示实际容量及来源，切换模型不改写手动值。
 - `infra/prompt_cache.py` 当前 profile 校验固定的 2/3 消息拓扑；助手长历史需要独立 profile，不能放宽翻译 profile 冒充兼容。
 - `infra/openai_tool_calling.py` 使用 Chat Completions；Anthropic 适配会跳过普通 messages 中的 system，并把连续工具结果转换成 content blocks。应用消息稳定不等于最终供应商 payload 稳定。
 - `LlmTurn` 没有 usage；`chat_worker.py` 用字符数估算并只在未取消时回调。当前没有证据支持具体缓存命中率或费用收益。
@@ -134,7 +134,7 @@ flowchart TD
 
 预算须计入全部旧摘要 P、新段、RequiredState 和近期原文；不能只计最后一段。生成前检查 `P + 必需状态/协议/当前输入 + 新段最小结构` 是否已经无可用空间，无空间直接进入 `CONTEXT_SUMMARY_CAPACITY` 等待，保留旧链，不自动摘要化摘要。低于硬窗口但无法继续有效压缩时停止自动推进并显示容量原因；扩大可用窗口或改变摘要保留策略需要用户明确选择，不能承诺无限长会话仍能同时携带全部摘要。
 
-本轮新增输入、冻结结果、工具 schema、输出和 margin 在调用前一起计数。摘要调用另算提示、待压缩材料和摘要输出预算，不能发送一个本来已经超窗的整段。使用已就绪 tokenizer；未知模型继续保守离线估算，不在 GUI 或隐式网络下载编码。
+本轮新增输入、冻结结果、工具 schema、输出和 margin 在调用前一起计数。摘要调用另算提示、待压缩材料和摘要输出预算，不能发送一个本来已经超窗的整段。路由、执行与摘要复用同一预算工厂；已加载的模型 tokenizer 计数加 25% 余量，否则按 ASCII 词段每 3 字符、独立标点及非 ASCII UTF-8 字节数 / 2 估算，再加 25% 余量。不加载或隐式下载编码。该估算用于本地接纳，不是严格上界或供应商计费量，特殊文本可能低估；服务端容量校验仍生效。等待提示显示完整预算组成，区分硬超限与新摘要空间不足，配置变化后用户可显式继续。
 
 未达到 H 直接追加。达到 H 只选尚未归入摘要的旧的已闭合原文组进行压缩，最近用户输入、未解决的协议组和必要状态留在尾部。已提交摘要不是本次压缩源。不可压缩的当前输入自身超窗，提示缩小材料/分块，不以吞掉当前要求来降级。
 
@@ -216,6 +216,7 @@ sequenceDiagram
 - [OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)：流式 usage 属于接口能力，兼容端点需单独验证。
 - [OpenAI compaction](https://developers.openai.com/api/docs/guides/compaction)：Responses 原生压缩返回包含不透明项的上下文，与本次通用文本摘要分开。
 - [Anthropic prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)：tools/system/messages 的前缀缓存及 read/create 用量口径。
+- [DeepSeek 模型规格](https://api-docs.deepseek.com/quick_start/pricing/)（2026-09-13 核验）：V4 Flash/Pro 官方服务上下文 1M；自动解析采用 1,000,000，只适用于明确匹配的官方端点和模型，不推断代理服务容量。
 
 ## 13. 风险与待验证项
 
