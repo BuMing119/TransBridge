@@ -144,18 +144,54 @@ class ContextEpoch:
             raise PreparationWait("CONTEXT_INVALID", "上下文来源或摘要段重复。")
         if not isinstance(json.loads(self.systems_json), list):
             raise ValueError("Invalid fixed rules")
+        states = [(state_material(i)[0], i) for i in self.items if i.kind == "state"]
+        sequences = [sequence for sequence, _ in states if sequence]
+        if len(sequences) != len(set(sequences)):
+            raise PreparationWait("CONTEXT_STATE_INVALID", "模型决策材料序号重复。")
+        if sequences and self.state_digest:
+            latest = max(states, key=lambda pair: pair[0])[1]
+            if latest.source_digest != self.state_digest:
+                raise PreparationWait("CONTEXT_STATE_INVALID", "决策材料最新序号与当前状态标识不一致。")
 
 
-def state_item(state) -> FrozenContextItem:
+def state_material(item):
+    """Read the explicit wire version; legacy state is history, never guess its ordering."""
+    try:
+        material = json.loads(item.message["content"])
+        if material["kind"] == "current_request_state" and "state_seq" not in material:
+            return 0, material["request_state"]
+        if material["kind"] == "request_decision_context":
+            sequence = material["state_seq"]
+            if type(sequence) is int and sequence > 0 and isinstance(material["decision_context"], dict):
+                return sequence, material["decision_context"]
+    except (ValueError, TypeError, KeyError) as exc:
+        raise PreparationWait("CONTEXT_STATE_INVALID", "模型决策材料格式损坏，请检查上下文来源。") from exc
+    raise PreparationWait("CONTEXT_STATE_INVALID", "模型决策材料版本或序号无效。")
+
+
+def state_item(state, *, sequence=1) -> FrozenContextItem:
+    if type(sequence) is not int or sequence < 1:
+        raise PreparationWait("CONTEXT_STATE_INVALID", "模型决策材料必须使用正整数序号。")
     state_hash = digest(state)
+    identity = "state-" + uuid4().hex
     return FrozenContextItem(
-        "state-" + uuid4().hex,
+        identity,
         state_hash,
         encode({
             "role": "user",
-            "content": encode({"material_only": True, "kind": "current_request_state", "request_state": state}),
+            "content": encode({
+                "material_only": True,
+                "kind": "request_decision_context",
+                "state_seq": sequence,
+                "authority": (
+                    "For this request, highest state_seq supersedes lower and unversioned states regardless of "
+                    "position. This is decision material, not a checkpoint or permission; "
+                    "the application validates actions."
+                ),
+                "decision_context": state,
+            }),
         }),
-        "state-" + state_hash,
+        identity,
         "state",
     )
 

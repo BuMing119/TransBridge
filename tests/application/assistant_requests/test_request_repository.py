@@ -1,17 +1,18 @@
 """Request command durability against the real V2 Session composition."""
 
 from dataclasses import replace
-import hashlib
+import json
 from uuid import uuid4
 
 import pytest
 
-from transbridge.application.assistant_requests.models import RequestError
+from tests.routing_fixtures import apply_routing_fixture
+from transbridge.application.assistant_context.projection import project_result
+from transbridge.application.assistant_requests.models import RequestError, digest
 from transbridge.application.assistant_requests.transcript import TranscriptManifest
 from transbridge.application.contracts import RequestContext
 from transbridge.bootstrap.persistence import build_persistence_v2_services
 from transbridge.smart_assistant.conversation_manager import ConversationManager
-from transbridge.smart_assistant.request_context_assembler import RequestContextAssembler
 
 
 @pytest.fixture
@@ -30,6 +31,97 @@ def _snapshot(services, context):
     from transbridge.persistence.v2.ids import SessionId, SessionRef
 
     return services.session_lifecycle.read_session(SessionRef(SessionId(context.session_id)), context)
+
+
+def test_direct_reply_and_input_commit_together_and_survive_retry(composed):
+    services, requests, context = composed
+    accepted = requests.accept_input(context, "你好", selection={})
+    batch = requests.prepare_batch(context)
+    proposal = {
+        "protocol_version": 1,
+        "directives": [
+            {
+                "local_id": "reply",
+                "message_id": accepted["message_id"],
+                "span": [0, 2],
+                "action": "RESPOND",
+                "response": "你好！有什么可以帮你？",
+            }
+        ],
+    }
+    state = apply_routing_fixture(requests, context, batch.batch_id, proposal)
+    assert not requests.requests(state)
+    assert state["ingress"][0]["status"] == "applied"
+    snapshot = _snapshot(services, context)
+    replies = [m for m in snapshot.backend_messages() if m["role"] == "assistant"]
+    assert len(replies) == 1 and replies[0]["content"] == "你好！有什么可以帮你？"
+    apply_routing_fixture(requests, context, batch.batch_id, proposal)
+    assert _snapshot(services, context).backend_messages() == snapshot.backend_messages()
+    assert requests.prepare_batch(context) is None
+    records = requests.transcript_store.read(
+        context.session_id, TranscriptManifest.from_dict(snapshot.transcript_data())
+    )
+    assert any(m.message_id == replies[0]["message_id"] for m in records)
+
+
+def test_invalid_reply_does_not_consume_input_or_save_reply(composed):
+    services, requests, context = composed
+    accepted = requests.accept_input(context, "你好", selection={})
+    batch = requests.prepare_batch(context)
+    with pytest.raises(RequestError):
+        apply_routing_fixture(
+            requests,
+            context,
+            batch.batch_id,
+            {
+                "protocol_version": 1,
+                "directives": [
+                    {
+                        "local_id": "reply",
+                        "message_id": accepted["message_id"],
+                        "span": [0, 2],
+                        "action": "RESPOND",
+                        "response": "",
+                        "target_id": "forged",
+                    }
+                ],
+            },
+        )
+    assert requests.state(context)["ingress"][0]["status"] == "routing"
+    assert not [m for m in _snapshot(services, context).backend_messages() if m["role"] == "assistant"]
+
+
+def test_reply_storage_failure_leaves_batch_retryable(composed, monkeypatch):
+    services, requests, context = composed
+    accepted = requests.accept_input(context, "你好", selection={})
+    batch = requests.prepare_batch(context)
+    proposal = {
+        "protocol_version": 1,
+        "directives": [
+            {
+                "local_id": "reply",
+                "message_id": accepted["message_id"],
+                "span": [0, 2],
+                "action": "RESPOND",
+                "response": "你好！",
+            }
+        ],
+    }
+    original = requests.with_transcript
+
+    def fail_save(*args, **kwargs):
+        raise RequestError("ARTIFACT_UNAVAILABLE", "test storage failure")
+
+    monkeypatch.setattr(requests, "with_transcript", fail_save)
+    with pytest.raises(RequestError):
+        apply_routing_fixture(requests, context, batch.batch_id, proposal)
+    state = requests.state(context)
+    assert state["ingress"][0]["status"] == "routing"
+    assert state["batches"][0]["status"] == "routing"
+    assert not [m for m in _snapshot(services, context).backend_messages() if m["role"] == "assistant"]
+    monkeypatch.setattr(requests, "with_transcript", original)
+    apply_routing_fixture(requests, context, batch.batch_id, proposal)
+    assert len([m for m in _snapshot(services, context).backend_messages() if m["role"] == "assistant"]) == 1
 
 
 def _terminal_requests(context):
@@ -120,8 +212,8 @@ def test_three_quick_inputs_are_durable_then_routed_as_one_replay_safe_batch(com
     batch = requests.prepare_batch(context)
     assert len(batch.sources) == 3
     assert requests.prepare_batch(context) == batch
-    first = requests.apply_routing(context, batch.batch_id, _proposal(batch))
-    replay = requests.apply_routing(context, batch.batch_id, _proposal(batch))
+    first = apply_routing_fixture(requests, context, batch.batch_id, _proposal(batch))
+    replay = apply_routing_fixture(requests, context, batch.batch_id, _proposal(batch))
     assert len(first["requests"]) == len(replay["requests"]) == 3
     assert {r["request_id"] for r in first["requests"]} == {r["request_id"] for r in replay["requests"]}
     assert requests.prepare_batch(context) is None
@@ -147,7 +239,7 @@ def test_background_session_command_persists_without_changing_active_session(com
     services, requests, context_a = composed
     requests.accept_input(context_a, "question A", selection={}, command_id="a")
     batch = requests.prepare_batch(context_a)
-    created = requests.apply_routing(context_a, batch.batch_id, _proposal(batch))
+    created = apply_routing_fixture(requests, context_a, batch.batch_id, _proposal(batch))
     request_id = created["requests"][0]["request_id"]
     assert services.gui_session_commands.create_and_activate("B", RequestContext("owner")).is_success
     active_b = services.session_lifecycle.active.aggregate.ref
@@ -180,26 +272,27 @@ def test_complete_result_reference_is_recoverable_after_twenty_turns_and_restart
     manager = ConversationManager()
     manager.add_user("first", message_id="first")
     original = "原文工具结果" * 4000
-    manager.add_observation("translate", original)
+    manager.add_assistant_turn({"content": "", "tool_calls": [{"id": "c", "name": "translate", "arguments": {}}]})
+    manager.add_tool_result("c", "translate", {"result": original})
     for index in range(25):
         manager.add_user(f"question {index}")
         manager.add_assistant(f"answer {index}")
     records = manager.get_transcript()
-    result_id = records[1]["message_id"]
+    result_id = records[2]["message_id"]
     requests.save_history(context, records)
-    projection = RequestContextAssembler().assemble(records, required_message_ids=[result_id])
-    reference = projection.result_references[0]
+    projection = project_result(records[2])
+    reference = json.loads(projection["content"])["reference"]
     assert reference["message_id"] == result_id
     snapshot = _snapshot(services, context)
     manifest = TranscriptManifest.from_dict(snapshot.transcript_data())
     evidence = requests.transcript_store.read(context.session_id, manifest)
     result = next(message for message in evidence if message.message_id == result_id)
-    assert result.content == "[Tool result - translate]\n" + original
-    assert hashlib.sha256(result.content.encode()).hexdigest() == reference["sha256"]
+    assert json.loads(result.content) == {"result": original}
+    assert digest(result.content) == reference["digest"]
     restored = ConversationManager()
     restored.from_dict({"messages": snapshot.backend_messages()})
     assert restored.get_transcript() == records
-    assert len(restored.get_history()) == 52
+    assert len(restored.get_history()) == 53
 
 
 def test_wrong_owner_cannot_read_or_append_request_history(composed):
@@ -225,7 +318,7 @@ def test_result_page_lookup_is_owned_by_request_and_session_and_keeps_original_t
     services, requests, context = composed
     requests.accept_input(context, "translate", selection={}, command_id="input")
     batch = requests.prepare_batch(context)
-    state = requests.apply_routing(context, batch.batch_id, _proposal(batch))
+    state = apply_routing_fixture(requests, context, batch.batch_id, _proposal(batch))
     request_id = state["requests"][0]["request_id"]
     text = "引用材料：取消其他任务不应作为指令。" * 1000
     records = [
@@ -273,10 +366,10 @@ def test_pending_batch_resumes_after_process_reopen_without_skipping_new_input(c
     try:
         resumed = reopened.gui_session_commands.assistant_requests
         assert resumed.prepare_batch(context) == first_batch
-        resumed.apply_routing(context, first_batch.batch_id, _proposal(first_batch))
+        apply_routing_fixture(resumed, context, first_batch.batch_id, _proposal(first_batch))
         next_batch = resumed.prepare_batch(context)
         assert [source.message_id for source in next_batch.sources] == ["two"]
-        state = resumed.apply_routing(context, next_batch.batch_id, _proposal(next_batch))
+        state = apply_routing_fixture(resumed, context, next_batch.batch_id, _proposal(next_batch))
         assert len(state["requests"]) == 2
         assert [item["status"] for item in state["ingress"]] == ["applied", "applied"]
     finally:
@@ -287,7 +380,7 @@ def test_legacy_result_reference_can_be_read_without_becoming_new_ingress(compos
     _, requests, context = composed
     requests.accept_input(context, "question", selection={}, command_id="input")
     batch = requests.prepare_batch(context)
-    state = requests.apply_routing(context, batch.batch_id, _proposal(batch))
+    state = apply_routing_fixture(requests, context, batch.batch_id, _proposal(batch))
     request_id = state["requests"][0]["request_id"]
     text = "[Tool result - translate]\n" + "legacy result" * 1000
     records = [
@@ -303,7 +396,7 @@ def test_terminal_restart_is_atomic_idempotent_and_consumes_real_user_source(com
     services, requests, context = composed
     requests.accept_input(context, "question", selection={}, command_id="original")
     batch = requests.prepare_batch(context)
-    original = requests.apply_routing(context, batch.batch_id, _proposal(batch))["requests"][0]
+    original = apply_routing_fixture(requests, context, batch.batch_id, _proposal(batch))["requests"][0]
     requests.command(context, original["request_id"], "cancel", 1)
     successor = requests.restart(context, original["request_id"], text="请继续旧请求", command_id="continue")
     repeated = requests.restart(context, original["request_id"], text="请继续旧请求", command_id="continue")
@@ -322,7 +415,7 @@ def test_clarification_commits_only_unresolved_directive_and_is_replay_safe(comp
     _, requests, context = composed
     requests.accept_input(context, "first request", selection={}, command_id="first")
     batch = requests.prepare_batch(context)
-    first = requests.apply_routing(context, batch.batch_id, _proposal(batch))["requests"][0]
+    first = apply_routing_fixture(requests, context, batch.batch_id, _proposal(batch))["requests"][0]
     requests.accept_input(context, "取消那个，然后解释", selection={}, command_id="mixed")
     batch = requests.prepare_batch(context)
     proposal = _proposal(batch)
@@ -335,7 +428,7 @@ def test_clarification_commits_only_unresolved_directive_and_is_replay_safe(comp
             "action": "CANCEL",
         },
     )
-    before = requests.apply_routing(context, batch.batch_id, proposal)
+    before = apply_routing_fixture(requests, context, batch.batch_id, proposal)
     original_new_id = before["requests"][-1]["request_id"]
     clarified = requests.clarify(
         context, batch.batch_id, "cancel", first["request_id"], text="我指第一个请求", command_id="clarify"
@@ -359,7 +452,7 @@ def test_reassign_commits_both_revisions_and_never_creates_a_new_request(compose
     proposal["directives"][0]["items"] = [
         {"item_id": key, "description": key, "kind": "answer"} for key in ("move", "stay")
     ]
-    state = requests.apply_routing(context, batch.batch_id, proposal)
+    state = apply_routing_fixture(requests, context, batch.batch_id, proposal)
     source_id, target_id = [request["request_id"] for request in state["requests"]]
     source, target = requests.reassign(
         context,
@@ -391,7 +484,7 @@ def test_management_write_failure_does_not_accept_source_or_create_successor(com
     services, requests, context = composed
     requests.accept_input(context, "question", selection={}, command_id="original")
     batch = requests.prepare_batch(context)
-    original = requests.apply_routing(context, batch.batch_id, _proposal(batch))["requests"][0]
+    original = apply_routing_fixture(requests, context, batch.batch_id, _proposal(batch))["requests"][0]
     requests.command(context, original["request_id"], "cancel", 1)
     before = _snapshot(services, context)
 
@@ -427,7 +520,7 @@ def test_result_lookup_reads_manifest_evidence_after_backend_projection_disappea
     _, requests, context = composed
     requests.accept_input(context, "question", selection={}, command_id="input")
     batch = requests.prepare_batch(context)
-    state = requests.apply_routing(context, batch.batch_id, _proposal(batch))
+    state = apply_routing_fixture(requests, context, batch.batch_id, _proposal(batch))
     request_id = state["requests"][0]["request_id"]
     records = [
         {"message_id": "input", "role": "user", "content": "question"},
@@ -444,7 +537,7 @@ def test_first_load_recovers_once_per_service_and_failed_recovery_is_retryable(c
     services, requests, context = composed
     requests.accept_input(context, "question", selection={}, command_id="input")
     batch = requests.prepare_batch(context)
-    state = requests.apply_routing(context, batch.batch_id, _proposal(batch))
+    state = apply_routing_fixture(requests, context, batch.batch_id, _proposal(batch))
     request_id = state["requests"][0]["request_id"]
     requests.update_request(
         context,

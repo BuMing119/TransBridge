@@ -44,6 +44,7 @@ def successor_request(request: UserRequest, source_message_id: str, new_id: str)
         scope=request.scope,
         constraints=request.constraints,
         source_message_ids=(source_message_id,),
+        work_round_id=source_message_id,
         related_to=request.request_id,
         evidence=(provenance,),
     )

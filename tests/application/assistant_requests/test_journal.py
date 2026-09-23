@@ -9,6 +9,7 @@ import pytest
 import test_request_repository as repository_tests
 from test_request_repository import _proposal, _snapshot
 
+from tests.routing_fixtures import apply_routing_fixture
 from transbridge.application.assistant_requests.journal import EventCause, append_events, observe_state, read_events
 from transbridge.application.assistant_requests.models import RequestError
 from transbridge.application.contracts import DomainError, ErrorCategory, RequestContext
@@ -21,7 +22,7 @@ composed = repository_tests.composed
 def _create(service, context, text="翻译文件", identity="input"):
     service.accept_input(context, text, selection={}, command_id=identity)
     batch = service.prepare_batch(context)
-    state = service.apply_routing(context, batch.batch_id, _proposal(batch))
+    state = apply_routing_fixture(service, context, batch.batch_id, _proposal(batch))
     return service.requests(state)[-1], batch
 
 
@@ -51,7 +52,7 @@ def test_duplicate_input_routing_and_noop_callback_do_not_duplicate_events(compo
     request, batch = _create(service, context)
     before = _snapshot(services, context)
     service.accept_input(context, "翻译文件", selection={}, command_id="input")
-    service.apply_routing(context, batch.batch_id, _proposal(batch))
+    apply_routing_fixture(service, context, batch.batch_id, _proposal(batch))
     service.update_request(context, request.request_id, lambda current: current)
     after = _snapshot(services, context)
     assert read_events(before.assistant_data()) == read_events(after.assistant_data())
@@ -80,7 +81,7 @@ def test_rejected_proposal_keeps_original_state_and_records_diagnostic(composed)
     invalid = _proposal(batch)
     invalid["directives"][0]["span"] = [0, 1000]
     with pytest.raises(RequestError, match="REQUEST_PROTOCOL_INVALID"):
-        service.apply_routing(context, batch.batch_id, invalid)
+        apply_routing_fixture(service, context, batch.batch_id, invalid)
     state = service.state(context)
     assert not state.get("requests")
     assert state["batches"][0]["status"] == "routing"
@@ -89,7 +90,7 @@ def test_rejected_proposal_keeps_original_state_and_records_diagnostic(composed)
     assert event["details"]["code"] == "REQUEST_PROTOCOL_INVALID"
     assert event["references"]["batch_id"] == batch.batch_id
     assert event["before"] == event["after"] == {}
-    service.apply_routing(context, batch.batch_id, _proposal(batch))
+    apply_routing_fixture(service, context, batch.batch_id, _proposal(batch))
     assert len(service.state(context)["requests"]) == 1
 
 
@@ -105,7 +106,7 @@ def test_rejected_proposal_diagnostic_save_failure_is_explicit(composed, monkeyp
     with monkeypatch.context() as patch:
         patch.setattr(services.sessions, "save", fail)
         with pytest.raises(RequestError, match="ADMISSION_PERSIST_FAILED"):
-            service.apply_routing(context, batch.batch_id, {"bad": True})
+            apply_routing_fixture(service, context, batch.batch_id, {"bad": True})
     assert service.state(context) == before
 
 
@@ -127,7 +128,7 @@ def test_revision_conflict_receipt_is_visible_without_mutating_target(composed):
             }
         ],
     }
-    state = service.apply_routing(context, batch.batch_id, proposal)
+    state = apply_routing_fixture(service, context, batch.batch_id, proposal)
     assert service.requests(state)[0].status == "open"
     event = next(e for e in reversed(read_events(state)["events"]) if "receipts" in e["after"])
     assert event["after"]["receipts"][0]["status"] == "needs_clarification"
@@ -268,7 +269,7 @@ def test_model_identifiers_do_not_duplicate_source_material_in_diagnostics(compo
     secret = "private-source-used-as-model-label"
     proposal["directives"][0]["local_id"] = secret
     proposal["directives"][0]["items"][0]["item_id"] = secret
-    state = service.apply_routing(context, batch.batch_id, proposal)
+    state = apply_routing_fixture(service, context, batch.batch_id, proposal)
     assert secret in json.dumps(state["batches"])
     assert secret not in json.dumps(state["lifecycle_events"])
     event = next(event for event in state["lifecycle_events"] if "items" in event["after"])
@@ -281,7 +282,8 @@ def test_clarification_receipt_uses_actual_error_code_and_user_input_reference(c
     service.command(context, request.request_id, "cancel", 1)
     service.accept_input(context, "暂停那个", selection={}, command_id="ambiguous")
     batch = service.prepare_batch(context)
-    service.apply_routing(
+    apply_routing_fixture(
+        service,
         context,
         batch.batch_id,
         {

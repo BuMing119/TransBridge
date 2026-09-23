@@ -7,7 +7,7 @@ from uuid import uuid4
 from transbridge.smart_assistant.context_budget import ContextBudget
 
 from .budget_policy import EMPTY_SUMMARY, BudgetPolicy, current_state_item
-from .models import CompactionSummary, ContextEpoch, PreparationWait, encode, validate_successor
+from .models import CompactionSummary, ContextEpoch, PreparationWait, encode, state_material, validate_successor
 from .ports import SummaryGenerator
 
 
@@ -49,10 +49,7 @@ def validate_summary(text, items):
 
 def _require_state(epoch, required_state):
     latest = current_state_item(epoch)
-    try:
-        actual = json.loads(latest.message["content"])["request_state"] if latest else None
-    except (ValueError, TypeError, KeyError) as exc:
-        raise PreparationWait("CONTEXT_INVALID", "当前权威状态快照损坏。") from exc
+    actual = state_material(latest)[1] if latest else None
     if encode(actual) != encode(required_state):
         raise PreparationWait("CONTEXT_STATE_CHANGED", "当前权威状态快照与压缩基线不一致。")
 

@@ -50,9 +50,9 @@ class ContextRuntime:
         snapshot = self.service.lifecycle.read_session(SessionRef(SessionId(self.context.session_id)), self.context)
         state = snapshot.assistant_data()
         request = require_admitted(self.service, self.admission, state)
-        from transbridge.application.assistant_context.state_projection import required_state
+        from transbridge.application.assistant_context.state_projection import decision_context
 
-        prepared = replace(prepared, request_state=required_state(request, self.admission, state))
+        prepared = replace(prepared, request_state=decision_context(request, self.admission, state))
         history = self.sources._history(snapshot, state)
         owners = {**state.get("result_owners", {}), **state.get("message_owners", {})}
         old_head = state.get("context_heads", {}).get(request.request_id)
@@ -125,7 +125,7 @@ class ContextRuntime:
             candidate = append_context(
                 fresh_history,
                 request,
-                required_state(request, self.admission, fresh_state),
+                decision_context(request, self.admission, fresh_state),
                 config_digest=fingerprint,
                 previous=candidate,
                 owners=fresh_owners,

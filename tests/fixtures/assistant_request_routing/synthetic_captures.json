@@ -1,11 +1,11 @@
 [
   {
     "case_id": "amend",
-    "input_digest": "8d380f8e856872c618dfd69f646bee572fd1f89d6f6bc71b37cae1b5863ab082",
+    "input_digest": "3ea008df452803b59914fa46c608e066b98a81c1971dac0042e588aa2b85af76",
     "origin": "synthetic",
     "model": "",
     "provider": "",
-    "captured_at": "2026-09-12T00:00:00+00:00",
+    "captured_at": "2026-09-13T00:00:00+00:00",
     "turn": {
       "text": "",
       "tool_calls": [
@@ -38,11 +38,11 @@
   },
   {
     "case_id": "progress",
-    "input_digest": "7b08f6e2880cdf5817b2f62c63dd62e06f81af728a6c80328336dcd39002c955",
+    "input_digest": "af594cfdd5dc61256ed34508da3bd95a295609edb14841771c6b8679a34595bd",
     "origin": "synthetic",
     "model": "",
     "provider": "",
-    "captured_at": "2026-09-12T00:00:00+00:00",
+    "captured_at": "2026-09-13T00:00:00+00:00",
     "turn": {
       "text": "",
       "tool_calls": [
@@ -80,11 +80,11 @@
   },
   {
     "case_id": "new_question",
-    "input_digest": "690946357fe15193e86b8717300a1fdcc58c84dc671866ba6feadedf609191cf",
+    "input_digest": "cf529aab9ef7076232ebbf2da1429c352c24629f605796a9e1c03c65e523c5ec",
     "origin": "synthetic",
     "model": "",
     "provider": "",
-    "captured_at": "2026-09-12T00:00:00+00:00",
+    "captured_at": "2026-09-13T00:00:00+00:00",
     "turn": {
       "text": "",
       "tool_calls": [
@@ -99,10 +99,10 @@
                 "message_id": "input",
                 "span": [
                   0,
-                  14
+                  22
                 ],
                 "action": "CREATE",
-                "goal": "解释术语表配置",
+                "goal": "检查术语表配置并写分析报告",
                 "items": [
                   {
                     "item_id": "new-item",
@@ -120,11 +120,11 @@
   },
   {
     "case_id": "replace",
-    "input_digest": "a7b6810f6136396ec949082b88b1511feb8d8ffcfce76ae1fbb284f07552ff71",
+    "input_digest": "022c12a08218c0d281c9a714b973bdc025ad8ebe766897cf76790bb97f6f6f39",
     "origin": "synthetic",
     "model": "",
     "provider": "",
-    "captured_at": "2026-09-12T00:00:00+00:00",
+    "captured_at": "2026-09-13T00:00:00+00:00",
     "turn": {
       "text": "",
       "tool_calls": [
@@ -162,11 +162,11 @@
   },
   {
     "case_id": "confirmation_interjection",
-    "input_digest": "bf4e9adced57ece360c0832a3e74dcd174844d4e9c53cafe7425338a431a2b4b",
+    "input_digest": "fb02cd64f1d187cb83c2606433625944288c80fc795d14b5c891ee69fad51560",
     "origin": "synthetic",
     "model": "",
     "provider": "",
-    "captured_at": "2026-09-12T00:00:00+00:00",
+    "captured_at": "2026-09-13T00:00:00+00:00",
     "turn": {
       "text": "",
       "tool_calls": [
@@ -204,11 +204,11 @@
   },
   {
     "case_id": "quoted_cancel",
-    "input_digest": "1fbb42e493655400f7fe82028ec2d0c65d2fafa1d777fcb8b6773b96474efcef",
+    "input_digest": "7485e6757386ec7f8a0c5a8b73bd0dd803b7d92fc33ee122b709e2458c7dc4c2",
     "origin": "synthetic",
     "model": "",
     "provider": "",
-    "captured_at": "2026-09-12T00:00:00+00:00",
+    "captured_at": "2026-09-13T00:00:00+00:00",
     "turn": {
       "text": "",
       "tool_calls": [
@@ -219,21 +219,14 @@
             "protocol_version": 1,
             "directives": [
               {
-                "local_id": "directive-0",
+                "local_id": "reply",
                 "message_id": "input",
                 "span": [
                   0,
                   21
                 ],
-                "action": "CREATE",
-                "goal": "解释文档中的取消翻译",
-                "items": [
-                  {
-                    "item_id": "new-item",
-                    "description": "回答当前问题",
-                    "kind": "answer"
-                  }
-                ]
+                "action": "RESPOND",
+                "response": "这句话表示停止翻译工作。你是在询问文档含义，我没有取消当前翻译。"
               }
             ]
           }
@@ -244,11 +237,11 @@
   },
   {
     "case_id": "ambiguous_cancel",
-    "input_digest": "08b89940ba5a55e2c033cd828ee4771a1043cd65a78892f6eb6047e4a017f957",
+    "input_digest": "5e883ee5f1c06334d58a355c5f25d380a2ab888044fb9352e225ec406697f3fa",
     "origin": "synthetic",
     "model": "",
     "provider": "",
-    "captured_at": "2026-09-12T00:00:00+00:00",
+    "captured_at": "2026-09-13T00:00:00+00:00",
     "turn": {
       "text": "",
       "tool_calls": [
@@ -276,11 +269,11 @@
   },
   {
     "case_id": "stale_revision",
-    "input_digest": "28d33781836fbb3f4beeb16a74edb84b55f6a81aff8a81f6c2618c63cf32dca8",
+    "input_digest": "6cc29fc857ef6047bf256ffc71e4d90977e05edc713906f6f55572b03d29cc4d",
     "origin": "synthetic",
     "model": "",
     "provider": "",
-    "captured_at": "2026-09-12T00:00:00+00:00",
+    "captured_at": "2026-09-13T00:00:00+00:00",
     "turn": {
       "text": "",
       "tool_calls": [
@@ -310,11 +303,11 @@
   },
   {
     "case_id": "multiple_directives",
-    "input_digest": "b4a823a1ae1643f0f1d97dfc818205d209beca7aa3174d9e894feb639fdfd8b9",
+    "input_digest": "a5c2e5d64f0c05ccada57aab7ad02905569bb1643d199c47a4a04781ae35e44c",
     "origin": "synthetic",
     "model": "",
     "provider": "",
-    "captured_at": "2026-09-12T00:00:00+00:00",
+    "captured_at": "2026-09-13T00:00:00+00:00",
     "turn": {
       "text": "",
       "tool_calls": [
@@ -337,11 +330,11 @@
                 "local_id": "directive-1",
                 "message_id": "input",
                 "span": [
-                  5,
-                  12
+                  9,
+                  21
                 ],
                 "action": "CREATE",
-                "goal": "解释术语表",
+                "goal": "检查术语表配置",
                 "items": [
                   {
                     "item_id": "new-item",
@@ -359,11 +352,11 @@
   },
   {
     "case_id": "protocol_version",
-    "input_digest": "6eb7f1e67fdf57b49741e037233ac4bdcddd0f5654d45dec2d75858717e12292",
+    "input_digest": "98d8cddae0de622d75caa63e3026114a861447776ffde81b2d3a0fd8107dab93",
     "origin": "synthetic",
     "model": "",
     "provider": "",
-    "captured_at": "2026-09-12T00:00:00+00:00",
+    "captured_at": "2026-09-13T00:00:00+00:00",
     "turn": {
       "text": "",
       "tool_calls": [
@@ -399,11 +392,11 @@
   },
   {
     "case_id": "truncated",
-    "input_digest": "cd6139ef3a9190114b08855991b82ed9d296fc80869bc59c144f61805156dab9",
+    "input_digest": "259a80482e7756de6f33b838b5ad531a43d923e33df863ed6dc7cd45d1d005ba",
     "origin": "synthetic",
     "model": "",
     "provider": "",
-    "captured_at": "2026-09-12T00:00:00+00:00",
+    "captured_at": "2026-09-13T00:00:00+00:00",
     "turn": {
       "text": "",
       "tool_calls": [
@@ -433,11 +426,11 @@
   },
   {
     "case_id": "mixed_business",
-    "input_digest": "f31c4f51e6e8edd9d32d0e2cb5eaa255b9f1fd2cee73365a1364266d8fb8f3a9",
+    "input_digest": "cd6171275e6516e261b1ac8a47cf1c42b570bccda44347e5bde96bcdd16611bb",
     "origin": "synthetic",
     "model": "",
     "provider": "",
-    "captured_at": "2026-09-12T00:00:00+00:00",
+    "captured_at": "2026-09-13T00:00:00+00:00",
     "turn": {
       "text": "",
       "tool_calls": [
@@ -465,6 +458,155 @@
           "id": "business",
           "name": "translate_entries",
           "arguments": {}
+        }
+      ],
+      "stop_reason": "tool_calls"
+    }
+  },
+  {
+    "case_id": "greeting",
+    "input_digest": "b0ec856103e06283e89bdb35d6a300f27f33cced20854d67ba62118222f0c2bc",
+    "origin": "synthetic",
+    "model": "",
+    "provider": "",
+    "captured_at": "2026-09-13T00:00:00+00:00",
+    "turn": {
+      "text": "",
+      "tool_calls": [
+        {
+          "id": "call-greeting",
+          "name": "submit_request_routing",
+          "arguments": {
+            "protocol_version": 1,
+            "directives": [
+              {
+                "local_id": "reply",
+                "message_id": "input",
+                "span": [
+                  0,
+                  2
+                ],
+                "action": "RESPOND",
+                "response": "你好！有什么可以帮你？"
+              }
+            ]
+          }
+        }
+      ],
+      "stop_reason": "tool_calls"
+    }
+  },
+  {
+    "case_id": "thanks",
+    "input_digest": "b9413ffafc763bf74dfcf3f71bf126babd87222a8a06b10e7a19aede28b9d3a0",
+    "origin": "synthetic",
+    "model": "",
+    "provider": "",
+    "captured_at": "2026-09-13T00:00:00+00:00",
+    "turn": {
+      "text": "",
+      "tool_calls": [
+        {
+          "id": "call-thanks",
+          "name": "submit_request_routing",
+          "arguments": {
+            "protocol_version": 1,
+            "directives": [
+              {
+                "local_id": "reply",
+                "message_id": "input",
+                "span": [
+                  0,
+                  2
+                ],
+                "action": "RESPOND",
+                "response": "不客气！"
+              }
+            ]
+          }
+        }
+      ],
+      "stop_reason": "tool_calls"
+    }
+  },
+  {
+    "case_id": "ordinary_question",
+    "input_digest": "bdc85f45a6d626b4f5deb7cb1224186080eebdc78693ad90dea73c36cc74e06a",
+    "origin": "synthetic",
+    "model": "",
+    "provider": "",
+    "captured_at": "2026-09-13T00:00:00+00:00",
+    "turn": {
+      "text": "",
+      "tool_calls": [
+        {
+          "id": "call-ordinary_question",
+          "name": "submit_request_routing",
+          "arguments": {
+            "protocol_version": 1,
+            "directives": [
+              {
+                "local_id": "reply",
+                "message_id": "input",
+                "span": [
+                  0,
+                  8
+                ],
+                "action": "RESPOND",
+                "response": "翻译记忆保存原文与译文的对应关系，供后续翻译参考。"
+              }
+            ]
+          }
+        }
+      ],
+      "stop_reason": "tool_calls"
+    }
+  },
+  {
+    "case_id": "greeting_work",
+    "input_digest": "0a1da1a8f1e7ecd77ae64a563c9cc8e73724531aded278b41cddd84fbb8dc7f3",
+    "origin": "synthetic",
+    "model": "",
+    "provider": "",
+    "captured_at": "2026-09-13T00:00:00+00:00",
+    "turn": {
+      "text": "",
+      "tool_calls": [
+        {
+          "id": "call-greeting_work",
+          "name": "submit_request_routing",
+          "arguments": {
+            "protocol_version": 1,
+            "directives": [
+              {
+                "local_id": "reply",
+                "message_id": "input",
+                "span": [
+                  0,
+                  2
+                ],
+                "action": "RESPOND",
+                "response": "你好！"
+              },
+              {
+                "local_id": "work",
+                "message_id": "input",
+                "span": [
+                  3,
+                  10
+                ],
+                "action": "CREATE",
+                "goal": "翻译当前文件",
+                "items": [
+                  {
+                    "item_id": "translate",
+                    "description": "翻译文件",
+                    "kind": "execution"
+                  }
+                ]
+              }
+            ]
+          }
         }
       ],
       "stop_reason": "tool_calls"

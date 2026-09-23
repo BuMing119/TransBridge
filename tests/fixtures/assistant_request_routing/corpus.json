@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "corpus_id": "assistant-routing-zh-v1",
-  "description": "合成中文多轮情境；history 仅用于审阅，实际路由输入严格使用生产 request_router 的请求快照和新输入。",
+  "description": "Synthetic Chinese scenarios. Recent history is passed through production routing context; synthetic captures do not demonstrate live model accuracy.",
   "cases": [
     {
       "case_id": "amend",
@@ -193,7 +193,7 @@
         "sources": [
           {
             "message_id": "input",
-            "text": "另外解释一下术语表怎么配置。",
+            "text": "另外请建立任务，检查术语表配置并写分析报告。",
             "scope": [
               [
                 "project_id",
@@ -446,24 +446,8 @@
       "expected": {
         "directives": [
           {
-            "action": "CREATE",
-            "target_id": "",
+            "action": "RESPOND",
             "status": "applied"
-          }
-        ],
-        "created": [
-          {
-            "related_to": "",
-            "status": "open",
-            "item_kinds": [
-              "answer"
-            ],
-            "source_message_ids": [
-              "input"
-            ],
-            "goal_terms": [
-              "取消"
-            ]
           }
         ]
       }
@@ -704,7 +688,7 @@
         "sources": [
           {
             "message_id": "input",
-            "text": "取消那个，再解释术语表。",
+            "text": "取消翻译任务，然后建立任务检查术语表配置。",
             "scope": [
               [
                 "project_id",
@@ -914,6 +898,170 @@
         "rejection": "LlmToolProtocolError"
       },
       "replay_only": true
+    },
+    {
+      "case_id": "greeting",
+      "category": "conversation routing",
+      "history": [],
+      "requests": [],
+      "batch": {
+        "batch_id": "greeting",
+        "session_id": "evaluation",
+        "sources": [
+          {
+            "message_id": "input",
+            "text": "你好",
+            "scope": [
+              [
+                "project_id",
+                "synthetic-project"
+              ]
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "directives": [
+          {
+            "action": "RESPOND",
+            "status": "applied"
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "thanks",
+      "category": "conversation routing",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "当前文件翻译已完成。"
+        }
+      ],
+      "requests": [
+        {
+          "request_id": "translate",
+          "session_id": "evaluation",
+          "goal": "翻译当前文件",
+          "items": [
+            {
+              "item_id": "translate-item",
+              "description": "完成翻译",
+              "kind": "execution",
+              "status": "satisfied"
+            }
+          ],
+          "scope": [
+            [
+              "project_id",
+              "synthetic-project"
+            ]
+          ],
+          "source_message_ids": [
+            "previous-user"
+          ],
+          "status": "completed"
+        }
+      ],
+      "batch": {
+        "batch_id": "thanks",
+        "session_id": "evaluation",
+        "sources": [
+          {
+            "message_id": "input",
+            "text": "谢谢",
+            "scope": [
+              [
+                "project_id",
+                "synthetic-project"
+              ]
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "directives": [
+          {
+            "action": "RESPOND",
+            "status": "applied"
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "ordinary_question",
+      "category": "conversation routing",
+      "history": [],
+      "requests": [],
+      "batch": {
+        "batch_id": "ordinary_question",
+        "session_id": "evaluation",
+        "sources": [
+          {
+            "message_id": "input",
+            "text": "什么是翻译记忆？",
+            "scope": [
+              [
+                "project_id",
+                "synthetic-project"
+              ]
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "directives": [
+          {
+            "action": "RESPOND",
+            "status": "applied"
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "greeting_work",
+      "category": "conversation routing",
+      "history": [],
+      "requests": [],
+      "batch": {
+        "batch_id": "greeting_work",
+        "session_id": "evaluation",
+        "sources": [
+          {
+            "message_id": "input",
+            "text": "你好，请翻译当前文件",
+            "scope": [
+              [
+                "project_id",
+                "synthetic-project"
+              ]
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "directives": [
+          {
+            "action": "RESPOND",
+            "status": "applied"
+          },
+          {
+            "action": "CREATE",
+            "status": "applied"
+          }
+        ],
+        "created": [
+          {
+            "item_kinds": [
+              "execution"
+            ],
+            "status": "open",
+            "goal_terms": [
+              "翻译"
+            ]
+          }
+        ]
+      }
     }
   ]
 }

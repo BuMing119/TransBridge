@@ -1,4 +1,4 @@
-"""Disposable, deterministic excerpts of a request's older public discussion.
+"""Read-only validation of the legacy deterministic request-summary format.
 
 No model is called and no instruction, approval or execution state is inferred.
 Consumers must keep authoritative request state separate and validate before use.
@@ -225,7 +225,7 @@ def _excerpts(
     return _json(material), tuple(entry["message_id"] for entry in material["excerpts"])
 
 
-def plan_summary(
+def _reconstruct_legacy_summary(
     request: UserRequest,
     history: Sequence[Mapping],
     *,
@@ -235,7 +235,9 @@ def plan_summary(
     max_chars: int = 2400,
     excerpt_chars: int = 240,
 ) -> RequestSummary | None:
-    """Summarize only explicit request-owned old material; retain recent text intact.
+    """Reconstruct v1 bytes solely to validate stored legacy summaries.
+
+    This is not a generation entry point for new sessions.
 
     ``history`` is an ordered, ownership-projected transcript. Explicit empty or
     foreign ``request_ids`` override even a request's original source association.
@@ -281,7 +283,7 @@ def validate_summary(summary: RequestSummary, request: UserRequest, history: Seq
     ):
         return False
     try:
-        current = plan_summary(
+        current = _reconstruct_legacy_summary(
             request,
             history,
             keep_recent=summary.keep_recent,

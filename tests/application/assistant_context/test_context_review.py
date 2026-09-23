@@ -10,6 +10,7 @@ import pytest
 
 from tests.application.assistant_context.test_history_queries import _request
 from tests.application.assistant_requests.test_request_repository import _proposal
+from tests.routing_fixtures import apply_routing_fixture
 from transbridge.application.assistant_context.admission import clear_wait, save_wait
 from transbridge.application.assistant_context.models import CompactionSummary, PreparationWait
 from transbridge.application.assistant_context.projection import append_context, project_result
@@ -95,7 +96,7 @@ def test_independent_followup_receives_authorized_parent_decision_context(compos
     batch = service.prepare_batch(context)
     proposal = _proposal(batch)
     proposal["directives"][0].update(action="FOLLOW_UP", target_id=parent_id, expected_revision=1)
-    state = service.apply_routing(context, batch.batch_id, proposal)
+    state = apply_routing_fixture(service, context, batch.batch_id, proposal)
     follow_id = state["requests"][-1]["request_id"]
     request, admission = _admit(service, context, follow_id)
     assert request.related_to == parent_id
@@ -153,7 +154,7 @@ def test_amend_discards_partial_summary_from_previous_request_revision(composed)
     batch = service.prepare_batch(context)
     proposal = _proposal(batch)
     proposal["directives"][0].update(action="AMEND", target_id=request_id, expected_revision=1)
-    service.apply_routing(context, batch.batch_id, proposal)
+    apply_routing_fixture(service, context, batch.batch_id, proposal)
     request, admission = _admit(service, context, request_id)
     assert request.revision == 2
     clear_wait(service, context, request_id)

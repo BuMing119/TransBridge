@@ -70,35 +70,48 @@ class RequestManagementBinding:
         dialog.show()
 
     def stop_generation(self):
-        self.binding._user_stopped = True
-        try:
-            if self.binding.admission is not None and self.binding.admission.request_id:
-                self.binding.service.command(
-                    self.binding.context,
-                    self.binding.admission.request_id,
-                    "interrupt",
-                    self.binding.admission.request_revision,
+        binding = self.binding
+        binding._user_stopped = True
+        context, admission, batch = binding.context, binding.admission, binding.batch
+        binding.interrupt()
+
+        def stop():
+            if admission is not None and admission.request_id:
+                # Answer commit may win before cancellation. Terminal requests
+                # retain their success; stopping only blocks further model work.
+                request = next(
+                    r
+                    for r in binding.service.requests(binding.service.state(context))
+                    if r.request_id == admission.request_id
                 )
-            elif self.binding.batch is not None:
-                batch_id = self.binding.batch.batch_id
-                self.binding.service.transact(
-                    self.binding.context,
+                if not request.terminal:
+                    binding.service.command(context, admission.request_id, "interrupt", admission.request_revision)
+            elif batch is not None:
+                binding.service.transact(
+                    context,
                     lambda state: [
                         entry.update(status="user_paused")
                         for entry in state.get("batches", ())
-                        if entry["batch"]["batch_id"] == batch_id
+                        if entry["batch"]["batch_id"] == batch.batch_id
                     ],
                     cause=EventCause("routing.paused", "user"),
                 )
-            self.binding.interrupt()
-        except Exception as exc:
-            self.binding.fail(str(exc))
+
+        def stopped(_):
+            if admission is not None and admission.request_id:
+                binding.undo.stopped(admission.request_id)
+            binding.refresh()
+
+        binding.background.submit(stop, stopped, context=context)
 
     def retry_inputs(self):
-        self.binding._user_stopped = False
-        try:
-            self.binding.service.transact(
-                self.binding.context,
+        binding = self.binding
+        binding._user_stopped = False
+        context = binding.context
+
+        def retry():
+            binding.service.transact(
+                context,
                 lambda state: [
                     entry.update(status="routing")
                     for entry in state.get("batches", ())
@@ -106,9 +119,8 @@ class RequestManagementBinding:
                 ],
                 cause=EventCause("routing.resumed", "user"),
             )
-            self.binding.wake()
-        except Exception as exc:
-            self.binding.fail(str(exc))
+
+        binding.background.submit(retry, context=context, wake=True)
 
     def refresh(self):
         self._refresh.request()

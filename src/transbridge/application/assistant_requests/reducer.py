@@ -35,6 +35,8 @@ def converge(request: UserRequest) -> UserRequest:
     """Only evidence-backed, fully settled requests can reach any terminal state."""
     if request.terminal or request.unsettled:
         return request
+    if request.status == RequestStatus.OPEN:
+        request = _fail_dependants(request)
     if request.status == RequestStatus.STOPPING:
         return replace(
             request,
@@ -54,6 +56,28 @@ def converge(request: UserRequest) -> UserRequest:
     ):
         return replace(request, status=RequestStatus.FAILED)
     return request
+
+
+def _fail_dependants(request: UserRequest) -> UserRequest:
+    """Settle unstarted descendants without touching live or unknown operations."""
+    items = {item.item_id: item for item in request.items}
+    while True:
+        changed = False
+        for item in tuple(items.values()):
+            if item.status not in {ItemStatus.PENDING, ItemStatus.WAITING}:
+                continue
+            failed = [
+                dep for dep in item.dependencies if items[dep].status in {ItemStatus.FAILED, ItemStatus.CANCELLED}
+            ]
+            if failed:
+                items[item.item_id] = replace(
+                    item,
+                    status=ItemStatus.FAILED,
+                    waiting_reasons=tuple(f"dependency_failed:{dep}" for dep in failed),
+                )
+                changed = True
+        if not changed:
+            return replace(request, items=tuple(items.values()))
 
 
 def add_evidence(request: UserRequest, evidence: Evidence, *, satisfy_items: bool = True) -> UserRequest:
@@ -126,6 +150,7 @@ def reduce_request(request: UserRequest, event: RequestEvent) -> UserRequest:
                 for item in request.items
             ),
         )
+        updated = converge(updated)
     elif event.kind in ("cancel", "replace", "stop_failure"):
         target = {
             "cancel": RequestStatus.CANCELLED,
@@ -202,4 +227,11 @@ def reduce_request(request: UserRequest, event: RequestEvent) -> UserRequest:
         updated = converge(replace(request, items=tuple(items)))
     else:
         raise RequestError("REQUEST_PROTOCOL_INVALID", f"unsupported request command: {event.kind}")
+    if event.kind in ("amend", "continue", "resume") and data.get("source_message_id"):
+        source_message_id = str(data["source_message_id"])
+        updated = replace(
+            updated,
+            work_round_id=source_message_id,
+            source_message_ids=tuple(dict.fromkeys((*updated.source_message_ids, source_message_id))),
+        )
     return replace(updated, applied_events=(*updated.applied_events, (event.event_id, fingerprint)))

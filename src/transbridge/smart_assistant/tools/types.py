@@ -481,13 +481,18 @@ class ExecutionContext:
                 raise RuntimeError("活动 Variant 修订号已变化，标签修改未提交。")
             from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
 
+            from .undo_capture import capture_variant_command
+
             project_id, variant_id = identity
-            result = app_ctx.replace_projected_labels(
-                entry_labels,
-                label_library,
-                expected_project_revision=expected_project,
-                expected_variant_revision=expected_variant,
-                expected_variant_ref=VariantRef(VariantId(variant_id), ProjectId(project_id)),
+            result = capture_variant_command(
+                self,
+                lambda: app_ctx.replace_projected_labels(
+                    entry_labels,
+                    label_library,
+                    expected_project_revision=expected_project,
+                    expected_variant_revision=expected_variant,
+                    expected_variant_ref=VariantRef(VariantId(variant_id), ProjectId(project_id)),
+                ),
             )
             if hasattr(result, "is_success") and not result.is_success:
                 diagnostics = tuple(getattr(result, "diagnostics", ()))
@@ -513,34 +518,9 @@ class ExecutionContext:
 
     def rollback_entry_states(self, states: dict[Any, tuple[str, int]], collection=None) -> None:
         """Restore a failed run from the latest authority, or its legacy start delta."""
+        from .projection_restore import restore_entry_projection
 
-        app_ctx = self.__dict__.get("app_context")
-        target = collection if collection is not None else self.__dict__.get("_target_collection")
-        if app_ctx is None or target is None:
-            return
-        if not self._target_is_current(app_ctx, target):
-            return
-
-        def restore() -> None:
-            restore_states = states
-            if bool(getattr(app_ctx, "uses_authoritative_projection", False)):
-                authoritative = _projection_entry_states(
-                    app_ctx,
-                    target,
-                    self.__dict__.get("_target_version_identity"),
-                )
-                if authoritative is not None:
-                    restore_states = {**states, **authoritative}
-            changed = False
-            for entry in target:
-                state = restore_states.get(entry.identity)
-                if state is not None and (entry.translation, entry.stage) != state:
-                    entry.translation, entry.stage = state
-                    changed = True
-            if changed:
-                self._emit_collection_changed(app_ctx, target)
-
-        self.safe_mutate_wait(restore)
+        restore_entry_projection(self, states, collection)
 
     def _target_is_current(self, app_ctx, collection) -> bool:
         if getattr(app_ctx, "collection", None) is not collection:
@@ -590,6 +570,8 @@ class ExecutionContext:
     def _commit_authoritative_entries(self, app_ctx, collection, *, rollback_on_failure: bool = True) -> None:
         from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
 
+        from .undo_capture import capture_variant_command
+
         identity = self.__dict__.get("_target_version_identity")
         commands = getattr(app_ctx, "project_commands", None)
         runtime_context = getattr(app_ctx, "runtime_context", None)
@@ -598,12 +580,15 @@ class ExecutionContext:
                 self.rollback_entry_states(self.__dict__.get("_committed_entry_states", {}), collection)
             raise RuntimeError("权威 Variant 写入适配器不可用，助手修改已回滚。")
         project_id, variant_id = identity
-        result = commands.replace_entry_states(
-            {entry.identity: (entry.translation, entry.stage) for entry in collection},
-            runtime_context,
-            expected_project_revision=self.__dict__.get("_target_project_revision"),
-            expected_variant_revision=self.__dict__.get("_target_variant_revision"),
-            expected_variant_ref=VariantRef(VariantId(variant_id), ProjectId(project_id)),
+        result = capture_variant_command(
+            self,
+            lambda: commands.replace_entry_states(
+                {entry.identity: (entry.translation, entry.stage) for entry in collection},
+                runtime_context,
+                expected_project_revision=self.__dict__.get("_target_project_revision"),
+                expected_variant_revision=self.__dict__.get("_target_variant_revision"),
+                expected_variant_ref=VariantRef(VariantId(variant_id), ProjectId(project_id)),
+            ),
         )
         if not result.is_success:
             if rollback_on_failure:

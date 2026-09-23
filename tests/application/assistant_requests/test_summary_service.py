@@ -1,11 +1,12 @@
-"""Derived summaries are actually persisted and fenced against concurrent request changes."""
+"""Stored v1 summaries remain readable without any new legacy summary writes."""
 
 from dataclasses import replace
 from uuid import uuid4
 
 import pytest
 
-from transbridge.application.assistant_requests.models import RequestError, RequestItem, UserRequest
+from transbridge.application.assistant_requests.models import RequestItem, UserRequest
+from transbridge.application.assistant_requests.summaries import _reconstruct_legacy_summary
 from transbridge.application.assistant_requests.summary_service import RequestSummaryService
 from transbridge.application.contracts import RequestContext
 from transbridge.bootstrap.persistence import build_persistence_v2_services
@@ -31,68 +32,64 @@ def summary_session(tmp_path):
     services.close()
 
 
-def test_summary_persists_reopens_and_unchanged_refresh_does_not_write(summary_session):
-    services, service, context, request, _ = summary_session
+def _seed_legacy_summary(service, context, request):
     summaries = RequestSummaryService(service)
-    summary = summaries.refresh(context, request.request_id)
+    history, _, _ = summaries.prepared_material(context, request.request_id)
+    summary = _reconstruct_legacy_summary(request, history)
     assert summary is not None
+    service.transact(context, lambda state: state.update(request_summaries={request.request_id: summary.to_dict()}))
+    return summary
+
+
+def test_legacy_summary_reopens_and_preparation_never_writes(summary_session, monkeypatch):
+    services, service, context, request, _ = summary_session
+    summary = _seed_legacy_summary(service, context, request)
     snapshot = services.session_lifecycle.read_session(SessionRef(SessionId(context.session_id)), context)
-    assert snapshot.assistant_data()["request_summaries"][request.request_id] == summary.to_dict()
-    assert summaries.refresh(context, request.request_id) == summary
-    assert services.session_lifecycle.read_session(snapshot.ref, context).revision == snapshot.revision
     reopened = build_persistence_v2_services(
         services.root, id_factory=lambda: uuid4().hex, timestamp_factory=lambda: "later"
     )
     try:
+
+        def forbid_write(*args, **kwargs):
+            raise AssertionError("Legacy summary reader must not persist refreshed material")
+
+        monkeypatch.setattr(reopened.sessions, "save", forbid_write)
         restored = RequestSummaryService(reopened.gui_session_commands.assistant_requests)
-        assert restored.refresh(context, request.request_id) == summary
+        history, material, _ = restored.prepared_material(context, request.request_id)
+        assert material == summary
+        assert len(history) == 30
+        assert reopened.session_lifecycle.read_session(snapshot.ref, context).revision == snapshot.revision
     finally:
         reopened.close()
 
 
-def test_summary_does_not_publish_if_revision_changes_during_generation(summary_session, monkeypatch):
-    from transbridge.application.assistant_requests import summary_service as module
-
+def test_no_summary_is_generated_when_old_cache_is_absent(summary_session):
     _, service, context, request, _ = summary_session
-    original = module.plan_summary
-
-    def generate(*args):
-        summary = original(*args)
-        service.update_request(
-            context, request.request_id, lambda current: replace(current, revision=2, goal="New goal")
-        )
-        return summary
-
-    monkeypatch.setattr(module, "plan_summary", generate)
-    assert RequestSummaryService(service).refresh(context, request.request_id) is None
-    state = service.state(context)
-    assert not state.get("request_summaries")
-    assert service.requests(state)[0].goal == "New goal"
-
-
-def test_summary_write_failure_preserves_authoritative_state(summary_session, monkeypatch):
-    services, service, context, request, records = summary_session
     before = service.state(context)
-
-    def fail(*args, **kwargs):
-        raise OSError("injected disk full")
-
-    monkeypatch.setattr(services.sessions, "save", fail)
-    with pytest.raises(RequestError, match="SUMMARY_PERSIST_FAILED"):
-        RequestSummaryService(service).refresh(context, request.request_id)
+    history, summary, _ = RequestSummaryService(service).prepared_material(context, request.request_id)
+    assert len(history) == 30
+    assert summary is None
     assert service.state(context) == before
-    snapshot = services.session_lifecycle.read_session(SessionRef(SessionId(context.session_id)), context)
-    assert list(snapshot.backend_messages()) == records
+    assert "request_summaries" not in before
 
 
-def test_malformed_or_stale_cache_is_ignored(summary_session):
-    _, service, context, request, records = summary_session
+def test_stale_summary_is_not_refreshed_or_deleted(summary_session):
+    _, service, context, request, _ = summary_session
+    summary = _seed_legacy_summary(service, context, request)
+    service.update_request(context, request.request_id, lambda current: replace(current, revision=2, goal="New goal"))
+    before = service.state(context)
+    _, material, _ = RequestSummaryService(service).prepared_material(context, request.request_id)
+    assert material is None
+    assert service.state(context) == before
+    assert before["request_summaries"][request.request_id] == summary.to_dict()
+
+
+def test_malformed_or_altered_cache_is_ignored_without_repair(summary_session):
+    _, service, context, request, _ = summary_session
+    summary = _seed_legacy_summary(service, context, request)
     summaries = RequestSummaryService(service)
-    summary = summaries.refresh(context, request.request_id)
-    scoped = [{**record, "request_id": request.request_id} for record in records]
-    assert summaries.read_valid(service.state(context), request, scoped) == summary
-    assert summaries.read_valid(service.state(context), replace(request, revision=2), scoped) is None
-    assert (
-        summaries.read_valid({"request_summaries": {request.request_id: {"schema_version": 999}}}, request, scoped)
-        is None
-    )
+    scoped, _, _ = summaries.prepared_material(context, request.request_id)
+    for raw in ({"schema_version": 999}, {**summary.to_dict(), "text": '{"material_only":false}'}):
+        state = {"request_summaries": {request.request_id: raw}}
+        assert summaries.read_valid(state, request, scoped) is None
+        assert state["request_summaries"][request.request_id] == raw

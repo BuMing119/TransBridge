@@ -69,7 +69,7 @@ class RoutingResult:
     batch: RoutingBatch
 
 
-_ACTIONS = {"CREATE", "FOLLOW_UP", "AMEND", "PAUSE", "RESUME", "CANCEL", "REPLACE"}
+_ACTIONS = {"RESPOND", "CREATE", "FOLLOW_UP", "AMEND", "PAUSE", "RESUME", "CANCEL", "REPLACE"}
 _FIELDS = {
     "local_id",
     "message_id",
@@ -81,6 +81,7 @@ _FIELDS = {
     "expected_revision",
     "constraints",
     "related_to",
+    "response",
 }
 
 
@@ -103,6 +104,15 @@ def parse_proposal(data: dict) -> RoutingProposal:
         seen.add(local_id)
         if directive["action"] not in _ACTIONS:
             raise RequestError("REQUEST_PROTOCOL_INVALID", "unknown directive action")
+        if directive["action"] == "RESPOND":
+            if (
+                set(directive) != {"local_id", "message_id", "span", "action", "response"}
+                or not isinstance(directive["response"], str)
+                or not directive["response"].strip()
+            ):
+                raise RequestError("REQUEST_PROTOCOL_INVALID", "direct replies require text and cannot change requests")
+        elif "response" in directive:
+            raise RequestError("REQUEST_PROTOCOL_INVALID", "response is only valid for RESPOND")
         span = directive["span"]
         if not isinstance(span, (list, tuple)) or len(span) != 2 or any(type(n) is not int for n in span):
             raise RequestError("REQUEST_PROTOCOL_INVALID", "source span must contain two integer offsets")
@@ -148,6 +158,9 @@ def apply_proposal(requests: tuple[UserRequest, ...], batch: RoutingBatch, propo
         action = directive["action"]
         source = sources[directive["message_id"]]
         try:
+            if action == "RESPOND":
+                receipts[local_id] = DirectiveReceipt(local_id, directive_id, "applied")
+                continue
             target_id = str(directive.get("target_id", ""))
             if target_id.startswith("local:"):
                 target_receipt = receipts.get(target_id.removeprefix("local:"))
@@ -174,6 +187,7 @@ def apply_proposal(requests: tuple[UserRequest, ...], batch: RoutingBatch, propo
                     scope=source.scope,
                     constraints=tuple(directive.get("constraints", ())),
                     source_message_ids=(source.message_id,),
+                    work_round_id=source.message_id,
                     related_to=target_id,
                 )
                 if request_id in by_id and by_id[request_id] != created:

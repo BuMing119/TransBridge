@@ -6,12 +6,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from transbridge.application.assistant_requests.history_scope import assign_history_requests
 from transbridge.application.assistant_requests.models import UserRequest, digest
 from transbridge.application.assistant_requests.summaries import RequestSummary
 from transbridge.infra.llm_tool_calling import LlmToolDefinition
 
 from .context_budget import ContextBudget
-from .request_context_assembler import assign_history_requests
 
 
 @dataclass(frozen=True)

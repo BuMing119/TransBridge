@@ -11,12 +11,23 @@ from .transcript import TranscriptManifest
 
 
 def commit_request_change(
-    lifecycle, context, change, with_transcript, *, history=None, append_messages=(), cause=None, transcript_store=None
+    lifecycle,
+    context,
+    change,
+    with_transcript,
+    *,
+    history=None,
+    append_messages=(),
+    cause=None,
+    transcript_store=None,
+    artifact_refs=(),
 ):
     command_errors = []
+    transaction_errors = []
 
     def update(snapshot):
         command_errors.clear()
+        transaction_errors.clear()
         state = snapshot.assistant_data()
         if state.get("request_archives"):
             state = hydrate_request_state(state, context.session_id, transcript_store)
@@ -54,6 +65,10 @@ def commit_request_change(
                 prepared = with_transcript(snapshot, records, **changes)
             else:
                 prepared = replace(snapshot, **changes)
+            if artifact_refs:
+                manifest = TranscriptManifest.from_dict(prepared.transcript_data())
+                artifacts = tuple(dict.fromkeys((*manifest.artifacts, *artifact_refs)))
+                prepared = replace(prepared, transcript_manifest=replace(manifest, artifacts=artifacts).to_dict())
             if transcript_store is not None and (
                 state.get("request_archives")
                 or sum(r.get("status", "open") not in {"open", "stopping"} for r in state.get("requests", ())) > 100
@@ -68,12 +83,13 @@ def commit_request_change(
             return prepared
         except RequestError as exc:
             command_errors.append(exc)
+            transaction_errors.append(exc)
             raise
 
     result = lifecycle.transact(SessionRef(SessionId(context.session_id)), context, update, publish=False)
     if not result.is_success or result.value is None:
-        if command_errors and (cause is None or cause.operation != "routing.applied"):
-            raise command_errors[0]
+        if transaction_errors:
+            raise transaction_errors[-1]
         detail = "; ".join(f"{d.code}: {d.message}" for d in result.diagnostics)
         raise RequestError("ADMISSION_PERSIST_FAILED", detail or "Session command was not saved")
     if command_errors:

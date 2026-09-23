@@ -108,6 +108,7 @@ class AssistantExecutionRef:
     dispatch_id: str
     turn_id: str
     session_id: str = ""
+    work_round_id: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -203,6 +204,7 @@ class UserRequest:
     applied_events: tuple[tuple[str, str], ...] = ()
     automatic_turns: int = 0
     execution_version_json: str = ""
+    work_round_id: str = ""
 
     def __post_init__(self) -> None:
         if not self.request_id or not self.session_id or not self.goal.strip() or not self.items or self.revision < 1:

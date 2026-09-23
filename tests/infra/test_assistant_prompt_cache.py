@@ -3,6 +3,8 @@ import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from transbridge.infra import anthropic_tool_calling, openai_tool_calling
 from transbridge.infra.assistant_prompt_cache import (
     anthropic_assistant_cache_options,
@@ -114,15 +116,21 @@ def test_late_system_message_disables_assistant_cache():
     assert request["request_options"] == {}
 
 
-def test_explicit_openai_rule_breakpoint_stays_fixed_on_append(monkeypatch):
-    monkeypatch.setattr("transbridge.infra.assistant_prompt_cache.estimate_prompt_tokens", lambda *_: 1200)
-    before = _openai(decorate_assistant_messages(_history(), namespace="stable"), model="gpt-5.6")
+@pytest.mark.parametrize("model", ["gpt-4.1", "gpt-5.6", "gpt-6"])
+def test_openai_long_rules_keep_automatic_history_cache_on_append(model):
+    history = _history()
+    history[0]["content"] = "Fixed assistant rules. " * 2000
+    before = _openai(decorate_assistant_messages(history, namespace="stable"), model=model)
     after = _openai(
-        decorate_assistant_messages(_history() + [{"role": "user", "content": "Next"}], namespace="stable"),
-        model="gpt-5.6",
+        decorate_assistant_messages(history + [{"role": "user", "content": "Next"}], namespace="stable"),
+        model=model,
     )
     assert before["messages"] == after["messages"][:-1]
-    assert before["messages"][0]["content"][0]["prompt_cache_breakpoint"] == {"mode": "explicit"}
+    assert before["messages"][0]["content"] == history[0]["content"]
+    assert before["extra_body"] == after["extra_body"]
+    assert set(before["extra_body"]) == {"prompt_cache_key"}
+    assert before["extra_body"]["prompt_cache_key"].startswith("assistant.")
+    assert "prompt_cache_breakpoint" not in str(before["messages"])
 
 
 def test_provider_content_replay_preserves_signed_blocks():

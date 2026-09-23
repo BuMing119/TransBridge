@@ -23,7 +23,7 @@ from transbridge.application.assistant_requests.models import (
     UserRequest,
 )
 from transbridge.application.assistant_requests.recovery import recover_request
-from transbridge.application.assistant_requests.reducer import RequestEvent, reduce_request
+from transbridge.application.assistant_requests.reducer import RequestEvent, converge, reduce_request
 from transbridge.application.assistant_requests.scheduler import RequestScheduler, commit_answer, ready_item_ids
 
 
@@ -226,3 +226,64 @@ def test_unblock_preserves_items_without_the_corresponding_wait():
     assert updated.items[0].status == ItemStatus.PENDING
     assert updated.items[0].waiting_reasons == ()
     assert updated.items[1:] == request.items[1:]
+
+
+def test_failure_settles_transitive_dependencies_but_keeps_independent_work():
+    request = UserRequest(
+        "r",
+        "s",
+        "workflow",
+        (
+            RequestItem("c", "export", dependencies=("b",)),
+            RequestItem("b", "proofread", dependencies=("a",)),
+            RequestItem("a", "translate"),
+            RequestItem("d", "independent report"),
+        ),
+    )
+    updated = reduce_request(request, RequestEvent("fail", "fail", 1, {"item_ids": ["a"]}))
+    by_id = {i.item_id: i for i in updated.items}
+    assert by_id["b"].waiting_reasons == ("dependency_failed:a",)
+    assert by_id["c"].waiting_reasons == ("dependency_failed:b",)
+    assert ready_item_ids(updated) == ("d",)
+    assert updated.status == RequestStatus.OPEN
+    scheduler, updated, admission = admit(updated)
+    finished = commit_answer(
+        updated, admission, "report", {"d": "answered"}, message_id="answer", finish_reason="stop", scheduler=scheduler
+    )
+    assert finished.status == RequestStatus.FAILED
+    assert UserRequest.from_dict(finished.to_dict()) == finished
+
+
+def test_dependency_failure_reaches_terminal_without_resume_or_replay():
+    request = UserRequest(
+        "r",
+        "s",
+        "workflow",
+        (
+            RequestItem("a", "translate", status=ItemStatus.FAILED),
+            RequestItem("b", "export", dependencies=("a",)),
+        ),
+    )
+    updated = converge(request)
+    assert reduce_request(request, RequestEvent("legacy-resume", "resume", 1)).status == RequestStatus.FAILED
+    assert updated.status == RequestStatus.FAILED
+    assert converge(updated) == updated
+    with pytest.raises(RequestError, match="REQUEST_TERMINAL"):
+        reduce_request(updated, RequestEvent("resume", "resume", 1))
+
+
+@pytest.mark.parametrize("status", ["running", "outcome_unknown"])
+def test_dependency_failure_preserves_unsettled_effect_and_completed_items(status):
+    scheduler, request, turn = admit(make_request(execution=True))
+    request = prepare(request, scheduler, turn)
+    request = replace(
+        request,
+        effects=(replace(request.effects[0], status=EffectStatus(status)),),
+        items=(
+            replace(request.items[0], dependencies=("i1",)),
+            replace(request.items[1], status=ItemStatus.FAILED),
+            replace(request.items[2], status=ItemStatus.SATISFIED, dependencies=("i1",)),
+        ),
+    )
+    updated = converge(request)
+    assert updated == request

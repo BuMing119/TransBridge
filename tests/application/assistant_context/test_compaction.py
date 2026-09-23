@@ -237,7 +237,11 @@ def test_failed_later_chunk_exposes_verified_progress(budget):
 
 def test_no_gain_candidate_is_rejected_without_extra_call(budget):
     # A short old group precedes the latest user input, which must remain pinned.
-    original = epoch([item("old", "x" * 700), item("user", "x" * 3800, "user"), item("tail", "x" * 700)])
+    empty = epoch([item("old", "x" * 700), item("user", "", "user"), item("tail", "x" * 700)])
+    high = int((budget.context_window - budget.measure([], []).total) * 0.8)
+    # Keep the same budget boundary when the versioned decision wrapper changes.
+    user_size = high + 100 - budget.count(empty.messages)
+    original = epoch([item("old", "x" * 700), item("user", "x" * user_size, "user"), item("tail", "x" * 700)])
 
     class Verbose(Summarizer):
         def __call__(self, items, **kwargs):
@@ -267,7 +271,7 @@ def test_disabled_compaction_keeps_hard_safe_full_summary_chain(budget):
 
 def test_new_epoch_places_current_state_before_retained_history(budget):
     original = epoch([item(str(n)) for n in range(8)] + [item("user", "now", "user")])
-    latest = state_item({"goal": "preserved exactly"})
+    latest = state_item({"goal": "preserved exactly"}, sequence=2)
     original = replace(original, items=original.items + (latest,))
     result = compact(original, budget, [], {"goal": "preserved exactly"}, Summarizer())
     assert result.items[0] == latest
@@ -279,10 +283,12 @@ def test_new_epoch_places_current_state_before_retained_history(budget):
 
 def test_retained_old_state_does_not_replace_current_snapshot_after_reordering(budget):
     original = epoch([item(str(n)) for n in range(8)] + [item("user", "now", "user")])
-    historical = state_item({"goal": "superseded"})
-    latest = state_item({"goal": "current"})
+    historical = state_item({"goal": "superseded"}, sequence=2)
+    latest = state_item({"goal": "current"}, sequence=3)
     original = replace(original, items=original.items + (historical, latest), state_digest=latest.source_digest)
     result = compact(original, budget, [], {"goal": "current"}, Summarizer())
     assert result.items[0] == latest
     assert historical in result.items
+    visible = [json.loads(m["content"]) for m in result.messages if '"kind":"request_decision_context"' in m["content"]]
+    assert max(visible, key=lambda m: m["state_seq"])["decision_context"] == {"goal": "current"}
     assert compact(result, budget, [], {"goal": "current"}, Summarizer()) is result

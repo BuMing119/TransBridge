@@ -27,8 +27,21 @@ def setup(tmp_path, monkeypatch):
     session_id = services.session_lifecycle.active.aggregate.ref.identity.value
     context = RequestContext("owner", session_id=session_id)
     service = services.gui_session_commands.assistant_requests
-    request = UserRequest("request", session_id, "write", (RequestItem("write", "write", ItemKind.EXECUTION),))
-    service.transact(context, lambda state: state.update(requests=[request.to_dict()]))
+    source = service.accept_input(context, "write", selection={})
+    request = UserRequest(
+        "request",
+        session_id,
+        "write",
+        (RequestItem("write", "write", ItemKind.EXECUTION),),
+        source_message_ids=(source["message_id"],),
+        work_round_id=source["message_id"],
+    )
+
+    def apply(state):
+        state["requests"] = [request.to_dict()]
+        state["ingress"][0]["status"] = "applied"
+
+    service.transact(context, apply)
     service.scheduler.activate(session_id, "view")
     selected = service.scheduler.select_next_turn(
         session_id, "view", (request,), allowed_tools=("request_test_write", "request_test_read")
@@ -48,6 +61,100 @@ def register(fn, *, long=False):
     spec = ToolSpec("request_test_write", "write", "write", {}, execute=fn, permission="write", is_long_running=long)
     ToolRegistry.register(spec)
     return spec
+
+
+@pytest.mark.parametrize("transient", [False, True])
+def test_terminal_receipt_retry_is_scoped_and_never_reexecutes_work(setup, monkeypatch, transient):
+    service, context, gate, ctx, manager = setup
+    start = Event()
+    writes = []
+    original = service.update_request
+    failures = []
+    recovered = False
+
+    def save(*args, **kwargs):
+        if getattr(kwargs.get("cause"), "operation", "") == "task.result" and not recovered:
+            if not transient or not failures:
+                failures.append("save failed")
+                raise OSError("injected result save failure")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(service, "update_request", save)
+
+    def tool(args, execution_context):
+        task_id = manager.register(metadata=task_metadata(execution_context, {}))
+        handle = manager.get_handle(task_id)
+
+        def work():
+            assert start.wait(3)
+            assert handle.execution.commit(handle.execution.ref.run_id, lambda: writes.append("once")).accepted
+
+        manager.start_thread(task_id, work)
+        return ToolResult.ok("queued", {"task_id": task_id})
+
+    result = execute_with_guardrails(register(tool, long=True), {}, ctx, middlewares=[])
+    handle = manager.get_handle(result.data["task_id"])
+    start.set()
+    handle._thread.join(5)
+    assert not handle._thread.is_alive()
+    router = service.request_task_events
+    assert failures and router.diagnostics
+    assert router.has_pending(context.session_id, "request") is (not transient)
+    assert not router.has_pending(context.session_id, "other-request")
+    assert not router.has_pending("other-session", "request")
+    if not transient:
+        from transbridge.application.assistant_requests.models import RequestError
+
+        with pytest.raises(RequestError, match="ADMISSION_PERSIST_FAILED"):
+            gate._validate(gate.current_request(), "request_test_read")
+        unrelated = replace(gate.current_request(), request_id="other-request", effects=(), dispatches=())
+        other_gate = RequestExecutionGate(
+            service, context, replace(gate.admission, request_id=unrelated.request_id), background=True
+        )
+        other_gate._validate(unrelated, "request_test_read")
+    recovered = True
+
+    def history_unavailable(*args, **kwargs):
+        raise AssertionError("receipt retry must use its retained terminal snapshot")
+
+    with monkeypatch.context() as unavailable:
+        unavailable.setattr(manager.runtime, "get", history_unavailable)
+        service.notify(context.session_id)
+    assert not router.has_pending(context.session_id, "request")
+    assert gate.current_request().effects[0].status == "succeeded"
+    gate._validate(gate.current_request(), "request_test_read")
+    router.retry_pending(context.session_id)
+    assert writes == ["once"]
+    assert len(gate.current_request().evidence) == 1
+
+
+def test_saved_terminal_receipt_notification_failure_does_not_block_admission(setup, monkeypatch):
+    service, context, gate, ctx, manager = setup
+    start = Event()
+
+    def tool(args, execution_context):
+        task_id = manager.register(metadata=task_metadata(execution_context, {}))
+        handle = manager.get_handle(task_id)
+
+        def work():
+            assert start.wait(3)
+            assert handle.execution.commit(handle.execution.ref.run_id, lambda: None).accepted
+
+        manager.start_thread(task_id, work)
+        return ToolResult.ok("queued", {"task_id": task_id})
+
+    result = execute_with_guardrails(register(tool, long=True), {}, ctx, middlewares=[])
+
+    def fail_notify(_session):
+        raise RuntimeError("view destroyed")
+
+    monkeypatch.setattr(service, "notify", fail_notify)
+    start.set()
+    manager.get_handle(result.data["task_id"])._thread.join(5)
+    assert gate.current_request().effects[0].status == "succeeded"
+    assert not service.request_task_events.has_pending(context.session_id, "request")
+    assert not service.request_task_events.diagnostics
+    gate._validate(gate.current_request(), "request_test_read")
 
 
 def test_sync_write_is_admitted_persisted_and_current_turn_fenced(setup):
@@ -136,7 +243,8 @@ def test_cancel_before_worker_commit_prevents_mutation_and_converges(setup):
     assert gate.current_request().status == RequestStatus.CANCELLED
 
 
-def test_plan_leaf_writes_have_distinct_effects_and_complete_only_at_parent_end(setup):
+@pytest.mark.parametrize("save_failure", [False, True])
+def test_plan_leaf_writes_have_distinct_effects_and_complete_only_at_parent_end(setup, monkeypatch, save_failure):
     service, context, gate, ctx, manager = setup
     child_gate = gate.for_dispatch()
     child_context = replace(ctx, assistant_gate=child_gate)
@@ -144,6 +252,14 @@ def test_plan_leaf_writes_have_distinct_effects_and_complete_only_at_parent_end(
     writes = []
     spec = register(lambda args, ctx: (ctx.safe_mutate_wait(lambda: writes.append("write")), ToolResult.ok("done"))[1])
     states = []
+    original = service.update_request
+
+    def save(*args, **kwargs):
+        if save_failure and getattr(kwargs.get("cause"), "operation", "") == "task.result":
+            raise OSError("parent receipt unavailable")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(service, "update_request", save)
 
     def plan():
         for _ in range(2):
@@ -151,6 +267,15 @@ def test_plan_leaf_writes_have_distinct_effects_and_complete_only_at_parent_end(
             states.append(gate.current_request().status)
 
     manager.start_thread(parent_id, plan).join(5)
+    if save_failure:
+        from concurrent.futures import ThreadPoolExecutor
+
+        assert service.request_task_events.has_pending(context.session_id, "request")
+        assert gate.current_request().status == RequestStatus.OPEN
+        save_failure = False
+        with ThreadPoolExecutor(2) as pool:
+            tuple(pool.map(service.request_task_events.retry_pending, [context.session_id] * 2))
+        assert not service.request_task_events.has_pending(context.session_id, "request")
     request = gate.current_request()
     assert writes == ["write", "write"] and states == [RequestStatus.OPEN, RequestStatus.OPEN]
     assert len({effect.effect_id for effect in request.effects}) == 2
@@ -271,22 +396,15 @@ def test_request_owned_commits_advance_scope_version_for_next_leaf_but_external_
     ctx._target_version_identity = app.active_version_identity
     ctx._target_project_revision = 1
     ctx._target_variant_revision = 1
-    service.transact(
-        context,
-        lambda state: state.update(
-            ingress=[
-                {
-                    "message_id": "input",
-                    "selection": {
-                        "active_version_identity": ["project", "variant"],
-                        "project_revision": 1,
-                        "variant_revision": 1,
-                    },
-                }
-            ]
-        ),
-    )
-    service.update_request(context, "request", lambda request: replace(request, source_message_ids=("input",)))
+
+    def select_version(state):
+        state["ingress"][0]["selection"] = {
+            "active_version_identity": ["project", "variant"],
+            "project_revision": 1,
+            "variant_revision": 1,
+        }
+
+    service.transact(context, select_version)
     observed = []
 
     def write(args, ctx):

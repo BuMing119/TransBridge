@@ -446,6 +446,10 @@ class ConversationOrchestrator(QObject):
                 self._on_remove_widget(_finished_bubble)
             if thought:
                 self._on_thinking_indicator_show(thought)
+        elif binding is not None and binding.stage == "routing":
+            # Routing prose is not an accepted reply; RESPOND is displayed after its durable commit.
+            if _finished_bubble is not None:
+                self._on_remove_widget(_finished_bubble)
         elif not turn.text and _finished_bubble is not None:
             self._on_remove_widget(_finished_bubble)
             if not turn.tool_calls:

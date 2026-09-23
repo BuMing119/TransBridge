@@ -45,12 +45,12 @@ def test_synthetic_controls_exercise_production_routing_and_state(case_id):
 
 def test_synthetic_success_does_not_claim_live_model_acceptance():
     result = evaluate_corpus(CORPUS, CAPTURES)
-    assert result["synthetic_passed"] == 12
+    assert result["synthetic_passed"] == len(CORPUS["cases"])
     assert result["live_passed"] == 0
-    assert result["live_required"] == 9
+    assert result["live_required"] == sum(not c.get("replay_only") for c in CORPUS["cases"])
     assert result["live_acceptance"] == "not_passed"
     empty = evaluate_corpus(CORPUS, [])
-    assert empty["counts"] == {"not_captured": 12}
+    assert empty["counts"] == {"not_captured": len(CORPUS["cases"])}
     assert empty["live_acceptance"] == "not_passed"
 
 
@@ -188,7 +188,7 @@ def test_cli_replay_never_opens_model_configuration(monkeypatch, capsys):
     assert module.main([*args, "--require-live"]) == 1
     capsys.readouterr()
     assert module.main([]) == 2
-    assert json.loads(capsys.readouterr().out)["counts"] == {"not_captured": 12}
+    assert json.loads(capsys.readouterr().out)["counts"] == {"not_captured": len(CORPUS["cases"])}
 
 
 @pytest.mark.parametrize(
@@ -234,7 +234,7 @@ def test_live_cli_selects_provider_configuration_without_network(
     stdout = capsys.readouterr().out
     saved = output.read_text(encoding="utf-8")
     assert sentinel not in stdout + saved
-    assert len(json.loads(saved)) == 9
+    assert len(json.loads(saved)) == sum(not c.get("replay_only") for c in CORPUS["cases"])
 
 
 def test_anthropic_custom_endpoint_is_rejected_before_client_or_file_access(monkeypatch, tmp_path):
@@ -265,7 +265,7 @@ def test_plain_text_model_response_fails_one_case_without_aborting_the_corpus():
     captures = deepcopy(CAPTURES)
     captures[0]["turn"] = {"text": "好的", "tool_calls": [], "stop_reason": "stop"}
     report = evaluate_corpus(CORPUS, captures)
-    assert report["counts"] == {"failed": 1, "passed": 11}
+    assert report["counts"] == {"failed": 1, "passed": len(CORPUS["cases"]) - 1}
     assert report["results"][0]["rejection"] == "LlmToolProtocolError"
 
 

@@ -6,9 +6,9 @@ import json
 from uuid import uuid4
 
 from transbridge.application.assistant_requests.models import digest
-from transbridge.smart_assistant.request_context_assembler import RequestContextAssembler, _groups
 
-from .models import ContextEpoch, FrozenContextItem, PreparationWait, encode, state_item
+from .models import ContextEpoch, FrozenContextItem, PreparationWait, encode, state_item, state_material
+from .protocol import normalize_records, protocol_groups
 
 _KEYS = ("role", "content", "tool_calls", "tool_call_id", "name", "provider_content")
 _STATUS_KEYS = (
@@ -44,7 +44,7 @@ def authorized_records(history, request, owners=None):
         )
         if source.get("role") == "system" or allowed:
             result.append(source)
-    return RequestContextAssembler._records(result)
+    return normalize_records(result)
 
 
 def source_digest(record):
@@ -137,11 +137,13 @@ def append_context(
     verified_immutable=False,
 ):
     records = authorized_records(history, request, owners)
+    states = [state_material(i) for i in previous.items if i.kind == "state"] if previous else []
+    sequence = max((number for number, _ in states), default=0)
     # ConversationManager replaces its sole system message. Old revisions remain in the
     # factual transcript, but only the newest rule snapshot belongs to the active prompt.
     systems = [project_result(r) for r in records if r["role"] == "system"][-1:]
     body = [r for r in records if r["role"] != "system"]
-    groups = _groups(body)
+    groups = protocol_groups(body)
     previous_sources = dict(previous.source_digests) if previous else {}
     # Only the canonical artifact reader may reuse hashes: it has already verified the complete
     # immutable transcript bytes. Detached callers must still detect same-ID content changes.
@@ -180,8 +182,8 @@ def append_context(
         previous_sources = {key: value for key, value in previous_sources.items() if key in covered}
     additions = []
     new_state = digest(required_state)
-    if new_state != previous.state_digest:
-        additions.append(state_item(required_state))
+    if new_state != previous.state_digest or not sequence:
+        additions.append(state_item(required_state, sequence=sequence + 1))
     for group in groups:
         fresh = [body[index] for index in group if body[index]["message_id"] not in previous_sources]
         if fresh and len(fresh) != len(group):

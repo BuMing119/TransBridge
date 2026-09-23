@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests.conftest import MockAppContext, make_entry
-from transbridge.application.tasks import JobState
+from transbridge.application.tasks import JobEventType, JobState, TaskCancelled, TaskCleanupFailed
 from transbridge.config.llm import LLMConfig
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.smart_assistant.tools.task_manager import TaskManager
@@ -68,6 +68,91 @@ def test_runtime_shutdown_joins_registered_compatibility_worker(manager):
     assert result.timed_out == () and result.backend_released
     assert not worker.is_alive()
     assert manager.get_status(task_id)["status"] == "cancelled"
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_explicit_cleanup_failure_reaches_terminal_notification_even_after_cancel(manager, cancel):
+    entered, release = threading.Event(), threading.Event()
+    notifications, events = [], []
+    manager.on_finished(lambda *args: notifications.append(args))
+    manager.runtime.subscribe(events.append)
+    task_id = manager.register()
+    message = "任务已停止，但回滚失败：恢复投影失败"
+
+    def work():
+        entered.set()
+        assert release.wait(3)
+        try:
+            raise OSError("恢复投影失败")
+        except OSError as exc:
+            raise TaskCleanupFailed(message) from exc
+
+    worker = manager.start_thread(task_id, work)
+    try:
+        assert entered.wait(3)
+        if cancel:
+            assert manager.cancel(task_id)
+            assert manager.get_status(task_id)["status"] == "cancelling"
+            assert not manager.set_status(task_id, "failed")  # only explicit cleanup failures override cancellation
+    finally:
+        release.set()
+        worker.join(3)
+
+    assert not worker.is_alive()
+    assert manager.get_status(task_id)["status"] == "failed"
+    assert notifications == [(task_id, False, message, None)]
+    terminal = [event for event in events if event.event_type is JobEventType.FINISHED]
+    assert len(terminal) == 1
+    assert terminal[0].snapshot.state is JobState.FAILED
+    assert terminal[0].code == "task_cleanup_failed" and terminal[0].message == message
+
+
+@pytest.mark.parametrize("error_type", [TaskCancelled, OSError])
+def test_ordinary_worker_errors_after_cancel_remain_cancelled(manager, error_type):
+    entered, release = threading.Event(), threading.Event()
+    task_id = manager.register()
+
+    def work():
+        entered.set()
+        assert release.wait(3)
+        raise error_type("request interrupted")
+
+    worker = manager.start_thread(task_id, work)
+    try:
+        assert entered.wait(3)
+        assert manager.cancel(task_id)
+    finally:
+        release.set()
+        worker.join(3)
+    assert not worker.is_alive()
+    assert manager.get_status(task_id)["status"] == "cancelled"
+
+
+def test_cleanup_failure_after_failed_commit_keeps_original_failure_and_reports_cleanup(manager):
+    events, notifications = [], []
+    manager.runtime.subscribe(events.append)
+    manager.on_finished(lambda *args: notifications.append(args))
+    task_id = manager.register()
+    handle = manager.get_handle(task_id)
+    message = "commit unavailable; rollback failed: projection unavailable"
+
+    def publish():
+        raise OSError("commit unavailable")
+
+    def work():
+        try:
+            handle.execution.commit(task_id, publish)
+        except OSError as exc:
+            raise TaskCleanupFailed(message) from exc
+
+    worker = manager.start_thread(task_id, work)
+    worker.join(3)
+    assert not worker.is_alive()
+    terminal = [event for event in events if event.event_type is JobEventType.FINISHED]
+    assert len(terminal) == 1 and terminal[0].code == "commit_mutation_failed"
+    assert any(event.code == "task_cleanup_failed" and event.message == message for event in events)
+    assert manager.get_status(task_id)["status"] == "failed"
+    assert notifications == [(task_id, False, message, None)]
 
 
 class RecordingCollection(TranslationEntryCollection):

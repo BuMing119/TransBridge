@@ -20,6 +20,7 @@ from transbridge.application.tasks import TaskCancelled
 from transbridge.application.terminology_profiles import TerminologyProfileWriteProjectionSource
 
 from .base import ToolResult, require_collection
+from .file_undo_capture import capture_file_command
 from .task_manager import TaskManager
 from .task_runtime_bridge import task_metadata
 
@@ -101,12 +102,16 @@ def _tool_write_back(args: dict, ctx, collection) -> ToolResult:
 
         def run():
             try:
-                result = workload(
-                    SimpleNamespace(
-                        ref=execution.ref,
-                        cancellation=manager.runtime.cancellation_token(execution.ref, execution.owner),
-                        publish_commit_guard=lambda: execution,
-                    )
+                result = capture_file_command(
+                    ctx,
+                    plugin_artifact_paths(snapshot, path),
+                    lambda: workload(
+                        SimpleNamespace(
+                            ref=execution.ref,
+                            cancellation=manager.runtime.cancellation_token(execution.ref, execution.owner),
+                            publish_commit_guard=lambda: execution,
+                        )
+                    ),
                 )
                 if result.outcome is OperationOutcome.CANCELLED:
                     raise TaskCancelled("写回已取消，正式目标未改变。")

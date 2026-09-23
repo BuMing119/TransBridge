@@ -31,6 +31,7 @@ class RequestService:
         self._listeners: list[Callable[[str], None]] = []
         self._closed = False
         self._recovered_sessions: set[str] = set()
+        self.undo = None
 
     def subscribe(self, callback: Callable[[str], None]) -> Callable[[], None]:
         with self._lock:
@@ -46,7 +47,14 @@ class RequestService:
             yield
 
     def transact(
-        self, context: RequestContext, change: Callable[[dict], None], *, history=None, append_messages=(), cause=None
+        self,
+        context: RequestContext,
+        change: Callable[[dict], None],
+        *,
+        history=None,
+        append_messages=(),
+        cause=None,
+        artifact_refs=(),
     ) -> dict:
         if not context.session_id:
             raise RequestError("REQUEST_SCOPE_MISMATCH", "a saved Session is required")
@@ -62,6 +70,7 @@ class RequestService:
                 append_messages=append_messages,
                 cause=cause,
                 transcript_store=self.transcript_store,
+                artifact_refs=artifact_refs,
             )
 
     def state(self, context: RequestContext) -> dict:
@@ -411,32 +420,6 @@ class RequestService:
         self.transact(context, apply)
         return batch_result[0] if batch_result else None
 
-    def apply_routing(self, context: RequestContext, batch_id: str, proposal: dict) -> dict:
-        from .routing import RoutingBatch, apply_proposal, parse_proposal
-
-        def apply(state):
-            batch = next((b for b in state.get("batches", ()) if b["batch"]["batch_id"] == batch_id), None)
-            if state.get("session_tombstone"):
-                raise RequestError("SESSION_DELETING", "会话正在删除，不能应用迟到的路由。")
-            if batch is None:
-                raise RequestError("REQUEST_PROTOCOL_INVALID", "unknown routing batch")
-            result = apply_proposal(
-                self.requests(state), RoutingBatch.from_dict(batch["batch"]), parse_proposal(proposal)
-            )
-            state["requests"] = [r.to_dict() for r in result.requests]
-            batch.update(batch=result.batch.to_dict(), status="applied")
-            for item in state.get("ingress", ()):
-                if item["batch_id"] == batch_id:
-                    item["status"] = "applied"
-
-        state = self.transact(
-            context,
-            apply,
-            cause=EventCause("routing.applied", "model", {"batch_id": batch_id}, {"proposal_digest": digest(proposal)}),
-        )
-        self.notify(context.session_id)
-        return state
-
     def update_request(
         self,
         context: RequestContext,
@@ -445,6 +428,7 @@ class RequestService:
         *,
         history=None,
         cause=None,
+        related_change=None,
     ) -> UserRequest:
         updated = []
 
@@ -461,6 +445,8 @@ class RequestService:
             else:
                 raise RequestError("REQUEST_TARGET_AMBIGUOUS", "request does not exist in this Session")
             state["requests"] = [r.to_dict() for r in requests]
+            if related_change is not None:
+                related_change(state, updated[-1])
 
         self.transact(context, apply, history=history, cause=cause)
         return updated[-1]
@@ -468,6 +454,12 @@ class RequestService:
     def command(
         self, context: RequestContext, request_id: str, kind: str, revision: int, *, cause=None, **payload
     ) -> UserRequest:
+        def validate_resume(state, request):
+            if kind == "resume" and not payload.get("source_message_id"):
+                record = state.get("undo_rounds", {}).get(request.work_round_id, {})
+                if record and record["status"] != "recording":
+                    raise RequestError("UNDO_ROUND_CLOSED", "该轮次已撤销或正在核对撤销结果，请发送新的指令开始新一轮")
+
         event = RequestEvent(uuid4().hex, kind, revision, payload)
         origin = (
             "user" if kind in {"pause", "resume", "interrupt", "cancel", "replace", "amend", "unblock"} else "runtime"
@@ -477,6 +469,7 @@ class RequestService:
             request_id,
             lambda request: reduce_request(request, event),
             cause=cause or EventCause(f"request.{kind}", origin, {"command_id": event.event_id}),
+            related_change=validate_resume,
         )
         self.notify(context.session_id)
         return updated

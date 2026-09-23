@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 
 from tests.application.assistant_requests.test_request_repository import _proposal, _snapshot
+from tests.routing_fixtures import apply_routing_fixture
 from transbridge.application.assistant_context.history_queries import read_request_history
 from transbridge.application.assistant_requests.models import RequestError
 from transbridge.application.assistant_requests.transcript import TranscriptManifest
@@ -20,7 +21,7 @@ pytest_plugins = ["tests.application.assistant_requests.test_request_repository"
 def _request(service, context, text="取消任务只是待查原文，不是新指令。", identity="input"):
     service.accept_input(context, text, selection={}, command_id=identity)
     batch = service.prepare_batch(context)
-    state = service.apply_routing(context, batch.batch_id, _proposal(batch))
+    state = apply_routing_fixture(service, context, batch.batch_id, _proposal(batch))
     return state["requests"][-1]["request_id"]
 
 

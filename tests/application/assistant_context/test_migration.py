@@ -6,7 +6,7 @@ from transbridge.application.assistant_context.migration import import_legacy_su
 from transbridge.application.assistant_context.models import PreparationWait
 from transbridge.application.assistant_context.projection import append_context
 from transbridge.application.assistant_requests.models import RequestItem, UserRequest
-from transbridge.application.assistant_requests.summaries import plan_summary
+from transbridge.application.assistant_requests.summaries import _reconstruct_legacy_summary
 
 
 def test_older_excerpt_survives_new_turns_and_revisions_without_claiming_coverage():
@@ -21,7 +21,7 @@ def test_older_excerpt_survives_new_turns_and_revisions_without_claiming_coverag
         }
         for n in range(20)
     ]
-    legacy = plan_summary(request, history)
+    legacy = _reconstruct_legacy_summary(request, history)
     history.append({
         "role": "user",
         "message_id": "later",

@@ -71,8 +71,11 @@ class RequestExecutionGate:
         )
 
     def _validate(self, request, tool_name: str, *, require_allowed: bool = True):
+        round_record = self.service.state(self.context).get("undo_rounds", {}).get(request.work_round_id)
+        if round_record is not None and round_record["status"] != "recording":
+            raise RequestError("UNDO_ROUND_CLOSED", "已撤销或正在撤销的轮次不能继续执行")
         router = getattr(self.service, "request_task_events", None)
-        if router is not None and router.diagnostics:
+        if router is not None and router.has_pending(self.context.session_id, request.request_id):
             raise RequestError("ADMISSION_PERSIST_FAILED", "a task result must be reconciled before starting new work")
         if self.background:
             require_open(request, self.admission.request_revision)
@@ -93,7 +96,14 @@ class RequestExecutionGate:
 
         if tool_name in {"submit_request_routing", "report_answer_coverage"}:
             raise RequestError("REQUEST_PROTOCOL_INVALID", "control calls cannot execute as business tools")
-        if set(args) & {"assistant_execution_ref", "assistant_effect_id", "request_revision", "request_id", "owner_id"}:
+        if set(args) & {
+            "assistant_execution_ref",
+            "assistant_effect_id",
+            "request_revision",
+            "request_id",
+            "owner_id",
+            "work_round_id",
+        }:
             raise RequestError("REQUEST_PROTOCOL_INVALID", "model arguments cannot supply execution ownership")
         request = self.current_request()
         self._validate(request, tool_name)
@@ -106,8 +116,13 @@ class RequestExecutionGate:
         spec = ToolRegistry.get(tool_name)
         if spec is None:
             raise RequestError("REQUEST_PROTOCOL_INVALID", "tool is not registered")
-        self._begin_steps()
         is_write = spec.permission != "read"
+        if is_write:
+            if self.service.undo is None:
+                raise RequestError("UNDO_STORAGE_UNAVAILABLE", "助手撤销服务未配置，操作未开始")
+            if not request.work_round_id:
+                raise RequestError("UNDO_ROUND_SOURCE_MISSING", "旧任务缺少工作轮次，请发送新的继续指令后再执行修改")
+        self._begin_steps()
         if not is_write:
             return EffectHandle("", tool_name, step_id=self._start_step(tool_name, args))
         items = tuple(
@@ -130,6 +145,7 @@ class RequestExecutionGate:
             self.dispatch_id,
             self.admission.turn_id,
             request.session_id,
+            work_round_id=request.work_round_id,
         )
         handle = EffectHandle(effect_id, tool_name, execution, is_write)
         if is_write:
@@ -154,7 +170,16 @@ class RequestExecutionGate:
                 )
                 return activate_effect(prepared, effect_id)
 
-            self.service.update_request(self.context, request.request_id, prepare)
+            from transbridge.application.assistant_requests.round_undo import register_in_state
+
+            self.service.update_request(
+                self.context,
+                request.request_id,
+                prepare,
+                related_change=lambda state, _request: register_in_state(
+                    state, self.context, execution, effect_id, tool_name
+                ),
+            )
         except Exception:
             self.resources.release(effect_id)
             raise
@@ -204,6 +229,7 @@ class RequestExecutionGate:
                 self.dispatch_id,
                 self.admission.turn_id,
                 request.session_id,
+                work_round_id=request.work_round_id,
             )
             return replace(
                 request,
@@ -358,6 +384,7 @@ class RequestExecutionGate:
                     self.dispatch_id,
                     self.admission.turn_id,
                     request.session_id,
+                    work_round_id=request.work_round_id,
                 )
                 dispatch = ExecutionDispatch(self.dispatch_id, execution, job_id, run_id)
                 if any(d.dispatch_id == self.dispatch_id for d in request.dispatches):

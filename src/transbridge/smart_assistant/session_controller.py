@@ -161,6 +161,11 @@ class SessionController:
             self.on_conversation_end()
             return
 
+        from .undo_notices import undo_notices
+
+        for notice in undo_notices(steps):
+            self.on_system_message(notice)
+
         narrow_stop = mode != "plan" and all(
             step.get("tool") == "stop_task"
             and step.get("args", {}).get("action", "stop") == "stop"

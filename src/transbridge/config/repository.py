@@ -106,6 +106,8 @@ class ConfigRepository:
     def update_sections(
         self,
         updates: Mapping[str, Mapping[str, Any | None]],
+        *,
+        expected_revision: int | None = None,
     ) -> ConfigSnapshot:
         llm_keys = set(updates.get("llm", {})) & _ENDPOINT_KEYS
         if llm_keys and llm_keys != _ENDPOINT_KEYS:
@@ -131,6 +133,10 @@ class ConfigRepository:
             self._ensure_migrated_locked()
             parser = self._read_parser(self.path) if self.path.exists() else self._new_parser()
             current_revision = self._validated_revision(parser) if self.path.exists() else 0
+            if expected_revision is not None and current_revision != expected_revision:
+                raise ConfigRepositoryError(
+                    "config_revision_conflict", "configuration changed since the command was prepared"
+                )
             for section, values in updates.items():
                 if not parser.has_section(section):
                     parser.add_section(section)

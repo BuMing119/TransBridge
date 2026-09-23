@@ -48,6 +48,14 @@ class TaskCancelled(RuntimeError):
     """Raised by cooperative workloads at a cancellation safe point."""
 
 
+class TaskCleanupFailed(RuntimeError):
+    """Explicitly report failed rollback/cleanup, including after cancellation.
+
+    Ordinary errors raised while cancelling retain cancellation semantics. Only
+    workloads that have actually failed cleanup should raise this exception.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class CommitPermit:
     """One revision-scoped authority to publish a workload result."""

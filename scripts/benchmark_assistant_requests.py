@@ -17,11 +17,11 @@ from tempfile import TemporaryDirectory
 from time import perf_counter
 from uuid import uuid4
 
+from transbridge.application.assistant_context.projection import append_context
 from transbridge.application.assistant_requests.models import RequestItem, UserRequest
 from transbridge.application.assistant_requests.summary_service import RequestSummaryService
 from transbridge.application.contracts import RequestContext
 from transbridge.bootstrap.persistence import build_persistence_v2_services
-from transbridge.smart_assistant.request_context_assembler import RequestContextAssembler
 
 
 def summary(samples: list[float]) -> dict:
@@ -152,26 +152,24 @@ def run(samples: int, message_count: int, request_count: int, *, profile_only: b
                 "constraints": requests[-1].constraints,
                 "other_requests": [{"id": r.request_id, "goal": r.goal, "status": r.status} for r in requests[:-1]],
             }
-            assembler = RequestContextAssembler()
-            assembler.assemble(records, request_state=state)  # warm up imports/caches
+
+            def assemble(history):
+                return append_context(history, requests[-1], state, config_digest="benchmark")
+
+            assemble(records)  # warm up imports/caches
             result = {
                 "python": platform.python_version(),
                 "platform": platform.platform(),
                 "messages": message_count,
                 "requests": request_count,
             }
-            result["context_assembly"] = measure(lambda _: assembler.assemble(records, request_state=state), samples)
+            result["context_assembly"] = measure(lambda _: assemble(records), samples)
             summaries = RequestSummaryService(service)
-            generated = summaries.refresh(context, requests[-1].request_id)
-            result["summary_generated"] = generated is not None
-            result["summary_refresh"] = measure(lambda _: summaries.refresh(context, requests[-1].request_id), samples)
             result["summary_material_preparation"] = measure(
                 lambda _: summaries.prepared_material(context, requests[-1].request_id), samples
             )
-            canonical, generated, _ = summaries.prepared_material(context, requests[-1].request_id)
-            result["context_with_summary"] = measure(
-                lambda _: assembler.assemble(canonical, request_state=state, summary=generated), samples
-            )
+            canonical, _, _ = summaries.prepared_material(context, requests[-1].request_id)
+            result["canonical_context_projection"] = measure(lambda _: assemble(canonical), samples)
             print(json.dumps({"context_assembly": result["context_assembly"]}), flush=True)
             result["input_admission"] = measure(
                 lambda i: service.accept_input(context, f"New question {i}", selection={}, command_id=f"ingress-{i}"),

@@ -17,6 +17,7 @@ class ConversationManager:
         self._messages: list[dict[str, Any]] = []
         self._message_ids: list[str] = []
         self._loaded_tool_namespaces: set[str] = set()
+        self._owned_control_calls: set[str] = set()
 
     def _append(self, message: dict[str, Any], *, message_id: str | None = None) -> None:
         mid = message_id or str(uuid4())
@@ -38,8 +39,8 @@ class ConversationManager:
     def add_user(self, content: str, *, message_id: str | None = None) -> None:
         self._append({"role": "user", "content": content}, message_id=message_id)
 
-    def add_assistant(self, content: str) -> None:
-        self._append({"role": "assistant", "content": content})
+    def add_assistant(self, content: str, *, message_id: str | None = None) -> None:
+        self._append({"role": "assistant", "content": content}, message_id=message_id)
 
     def add_assistant_turn(self, turn) -> None:
         """Persist a provider-neutral assistant turn, including native calls."""
@@ -107,7 +108,7 @@ class ConversationManager:
                 continue
             for call in message.get("tool_calls", []):
                 call_id = str(call.get("id", ""))
-                if call_id and call_id not in resolved:
+                if call_id and call_id not in resolved and call_id not in self._owned_control_calls:
                     pending.append((call_id, str(call.get("name", "?"))))
         for call_id, tool_name in pending:
             self.add_tool_result(
@@ -118,6 +119,79 @@ class ConversationManager:
                 is_error=True,
             )
         return len(pending)
+
+    def reserve_control_call(self, call_id: str, turn_id: str, *, batch_id: str = "") -> dict:
+        """Application commits this call; local abort must not invent its receipt."""
+        parents = [
+            (index, message)
+            for index, message in enumerate(self._messages)
+            if message.get("role") == "assistant"
+            and any(call.get("id") == call_id for call in message.get("tool_calls", ()))
+        ]
+        if len(parents) != 1:
+            raise ValueError("Control call requires one assistant parent")
+        index, parent = parents[0]
+        parent["control_turn_id"] = turn_id
+        if batch_id:
+            parent["control_batch_id"] = batch_id
+        self._owned_control_calls.add(call_id)
+        return dict(deepcopy(parent), message_id=self._message_ids[index])
+
+    def apply_control_receipt(self, receipt: dict) -> None:
+        """Project a durable receipt verbatim, rejecting conflicting local endings."""
+        identity = receipt["tool_call_id"]
+        existing = next((m for m in self.get_transcript() if m.get("tool_call_id") == identity), None)
+        if existing is not None:
+            if any(existing.get(key) != receipt.get(key) for key in ("message_id", "content", "name", "is_error")):
+                raise ValueError("Control call already has a conflicting local receipt")
+        else:
+            if not any(call.get("id") == identity for m in self._messages for call in m.get("tool_calls", ())):
+                raise ValueError("Control receipt has no local assistant parent")
+            self._append(
+                {key: value for key, value in receipt.items() if key != "message_id"}, message_id=receipt["message_id"]
+            )
+        self._owned_control_calls.discard(identity)
+
+    def contains_tool_call(self, call_id: str) -> bool:
+        return any(call.get("id") == call_id for message in self._messages for call in message.get("tool_calls", ()))
+
+    def merge_saved_records(self, records: list[dict]) -> None:
+        """Catch a reloaded view up to durable history, retaining unsaved local input.
+
+        A background commit may finish after the view captured its load data.
+        Preserve immutable message identities and the authoritative order.
+        """
+        local = dict(zip(self._message_ids, self._messages))
+        merged, identities, known = [], [], set()
+        for record in records:
+            identity = record["message_id"]
+            if identity in known:
+                raise ValueError("Saved history contains duplicate message identities")
+            old = local.get(identity)
+            if old is not None and any(
+                old.get(key) != record.get(key) for key in ("role", "content", "tool_calls", "tool_call_id")
+            ):
+                raise ValueError("Saved history conflicts with a local immutable message")
+            merged.append({
+                key: deepcopy(value)
+                for key, value in record.items()
+                if key not in {"message_id", "sequence", "request_ids"}
+            })
+            identities.append(identity)
+            known.add(identity)
+        for identity, message in local.items():
+            if identity not in known:
+                identities.append(identity)
+                merged.append(deepcopy(message))
+        self._messages, self._message_ids = merged, identities
+        finished = {message.get("tool_call_id") for message in merged if message.get("role") == "tool"}
+        self._owned_control_calls = {
+            call["id"]
+            for message in merged
+            if message.get("control_turn_id")
+            for call in message.get("tool_calls", ())
+            if call["id"] not in finished
+        }
 
     def load_tool_namespaces(self, namespaces: list[str] | tuple[str, ...] | set[str]) -> None:
         self._loaded_tool_namespaces.update(namespace.strip() for namespace in namespaces if namespace.strip())
@@ -159,6 +233,7 @@ class ConversationManager:
         self._messages.clear()
         self._message_ids.clear()
         self._loaded_tool_namespaces.clear()
+        self._owned_control_calls.clear()
 
     # ── 序列化 (FR13) ──────────────────────────────────────
 
@@ -181,6 +256,14 @@ class ConversationManager:
         if len(set(self._message_ids)) != len(self._message_ids):
             raise ValueError("Conversation history contains duplicate message IDs")
         self._loaded_tool_namespaces = set(data.get("loaded_tool_namespaces", []))
+        completed_calls = {message.get("tool_call_id") for message in self._messages if message.get("role") == "tool"}
+        self._owned_control_calls = {
+            call["id"]
+            for message in self._messages
+            if message.get("control_turn_id")
+            for call in message.get("tool_calls", ())
+            if call["id"] not in completed_calls
+        }
         successful_results = {
             str(message.get("tool_call_id", ""))
             for message in self._messages

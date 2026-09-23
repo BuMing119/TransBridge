@@ -5,7 +5,7 @@ import json
 
 from transbridge.smart_assistant.context_budget import ContextBudget
 
-from .models import CompactionSummary, ContextEpoch, FrozenContextItem, PreparationWait, encode
+from .models import CompactionSummary, ContextEpoch, FrozenContextItem, PreparationWait, encode, state_material
 
 EMPTY_SUMMARY = {
     "discussion_context": "",
@@ -44,7 +44,11 @@ def summary_call_budget(budget, max_tokens):
 
 
 def current_state_item(epoch):
-    """The state digest survives moving the current snapshot ahead of retained historical events."""
+    """Sequence, not position or a recurring payload hash, identifies current decision material."""
+    versioned = [(state_material(i)[0], i) for i in epoch.items if i.kind == "state"]
+    if any(sequence for sequence, _ in versioned):
+        return max(versioned, key=lambda pair: pair[0])[1]
+    # Read-only compatibility for pre-sequence epochs, before append_context upgrades them.
     return next(
         (
             i

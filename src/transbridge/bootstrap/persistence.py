@@ -208,12 +208,15 @@ def build_persistence_v2_services(
         projection=session_publisher,
     )
     session_publisher.bind(session_lifecycle)
+    from transbridge.application.assistant_requests.round_undo import RoundUndoService
     from transbridge.application.assistant_requests.service import RequestService
     from transbridge.persistence.assistant_transcript_store import AssistantTranscriptStore
 
     assistant_requests = RequestService(
         session_lifecycle, transcript_store=AssistantTranscriptStore(str(resolved_root), adapter)
     )
+    assistant_requests.undo = RoundUndoService(assistant_requests, project_lifecycle)
+    assistant_requests.undo.file_backup_root = Path(resolved_root) / "assistant-undo-files"
     from transbridge.application.assistant_requests.deletion import deletion_preflight
 
     session_lifecycle.set_delete_preflight(deletion_preflight(assistant_requests))

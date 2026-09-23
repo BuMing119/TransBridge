@@ -42,6 +42,28 @@ def _app_context(commands):
     )
 
 
+def _install_projection(app_context, *, translation=None):
+    app_context._project_projection = ProjectionStore(
+        ProjectionSnapshot(
+            "project:project",
+            7,
+            7,
+            {
+                "project_id": "project",
+                "variant_id": "variant",
+                "entries": [
+                    {
+                        "entry_key": entry.identity.to_dict(),
+                        "translation": entry.translation if translation is None else translation,
+                        "stage": entry.stage if translation is None else 3,
+                    }
+                    for entry in app_context.collection
+                ],
+            },
+        )
+    )
+
+
 def test_assistant_notification_commits_authoritative_entry_states() -> None:
     commands = _Commands()
     app_context = _app_context(commands)
@@ -62,6 +84,7 @@ def test_assistant_notification_restores_last_committed_projection_on_conflict()
     failed = OperationResult.failed(DomainError(ErrorCategory.CONFLICT, "STALE", "版本已变化"))
     commands = _Commands(failed)
     app_context = _app_context(commands)
+    _install_projection(app_context)
     context = ExecutionContext(app_context=app_context)
     entry = next(iter(app_context.collection))
     before = entry.translation
@@ -77,25 +100,7 @@ def test_assistant_rollback_rebuilds_visible_entries_from_latest_authority() -> 
     commands = _Commands()
     app_context = _app_context(commands)
     entry = next(iter(app_context.collection))
-    projection = ProjectionStore(
-        ProjectionSnapshot(
-            "project:project",
-            7,
-            7,
-            {
-                "project_id": "project",
-                "variant_id": "variant",
-                "entries": [
-                    {
-                        "entry_key": entry.identity.to_dict(),
-                        "translation": "并发授权译文",
-                        "stage": 3,
-                    }
-                ],
-            },
-        )
-    )
-    app_context._project_projection = projection
+    _install_projection(app_context, translation="并发授权译文")
     app_context.safe_mutate = lambda callback: callback()
     context = ExecutionContext(app_context=app_context)
     before = context.capture_entry_states()

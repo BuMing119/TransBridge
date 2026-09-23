@@ -224,6 +224,7 @@ def test_session_timeline_stays_reachable_without_requests_or_pending_inputs():
         delivered=SimpleNamespace(emit=lambda callback: callback()),
         context=SimpleNamespace(session_id="original-session"),
         service=SimpleNamespace(state=lambda _: state, requests=lambda _: ()),
+        undo=SimpleNamespace(observe=lambda _: None),
         facade=None,
         view=view,
     )

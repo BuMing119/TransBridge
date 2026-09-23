@@ -12,7 +12,6 @@ from transbridge.application.assistant_requests.models import RequestItem, UserR
 from transbridge.persistence.assistant_context_store import AssistantContextStore
 from transbridge.persistence.assistant_transcript_store import AssistantTranscriptStore
 from transbridge.smart_assistant.context_budget import ContextBudget
-from transbridge.smart_assistant.request_context_assembler import RequestContextAssembler
 
 
 def benchmark(count):
@@ -32,10 +31,8 @@ def benchmark(count):
     budget = ContextBudget(context_window=4_000_000)
     tracemalloc.start()
     begin = perf_counter()
-    RequestContextAssembler(budget).assemble(history, request_state=state)
-    legacy_ms = (perf_counter() - begin) * 1000
-    begin = perf_counter()
     first = append_context(history, request, state, config_digest="fixed")
+    budget.require(first.messages)
     initial_ms = (perf_counter() - begin) * 1000
     history.append({"role": "user", "content": "One more question", "message_id": "new", "request_ids": ["request"]})
     begin = perf_counter()
@@ -58,7 +55,6 @@ def benchmark(count):
     return {
         "mode": "offline_synthetic",
         "messages": count,
-        "legacy_projection_ms": legacy_ms,
         "initial_projection_ms": initial_ms,
         "append_projection_ms": append_ms,
         "initial_storage_ms": initial_store_ms,

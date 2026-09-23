@@ -28,7 +28,7 @@ def case_input(case: dict) -> tuple[RoutingBatch, tuple[UserRequest, ...], list[
     batch = RoutingBatch.from_dict(case["batch"])
     current = tuple(UserRequest.from_dict(raw) for raw in case["requests"])
     visible = tuple(UserRequest.from_dict(raw) for raw in case.get("visible_requests", case["requests"]))
-    return batch, current, routing_messages(batch, visible)
+    return batch, current, routing_messages(batch, visible, history=case.get("history", ()))
 
 
 def input_digest(case: dict) -> str:

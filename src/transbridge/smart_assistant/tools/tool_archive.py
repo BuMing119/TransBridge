@@ -53,8 +53,8 @@ def _tool_extract_archive(args: dict, ctx) -> ToolResult:
             files=args.get("files"),
         )
         return ToolResult.ok(
-            f"已解包 {result['extracted_count']} 个文件到 {args['dest_dir']}",
-            data=result,
+            f"已解包 {result['extracted_count']} 个文件到 {args['dest_dir']}；本次解包尚未提供自动撤销凭证。",
+            data={**result, "undo_limitation": "解包生成目录尚未纳入本轮自动撤销"},
         )
     except Exception as exc:
         return ToolResult.fail(f"解包失败: {exc}", error_category="internal")
@@ -64,10 +64,13 @@ def _tool_pack_archive(args: dict, ctx) -> ToolResult:
     try:
         from transbridge.fileops.archive import pack
 
-        out = pack(
-            args["src_dir"],
-            args["archive_path"],
-            fmt=args.get("fmt", "zip"),
+        from .file_undo_capture import authorize_file_outputs, capture_file_command
+
+        target = authorize_file_outputs(ctx, [args["archive_path"]])[0]
+        out = capture_file_command(
+            ctx,
+            [target],
+            lambda: pack(args["src_dir"], str(target), fmt=args.get("fmt", "zip")),
         )
         return ToolResult.ok(f"已打包为 {out}", data={"archive_path": out})
     except Exception as exc:

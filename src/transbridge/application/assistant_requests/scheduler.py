@@ -1,5 +1,6 @@
 """Event-driven foreground turn leasing and evidence-backed answer completion."""
 
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from threading import RLock
 from uuid import uuid4
@@ -179,6 +180,18 @@ class RequestScheduler:
         with self._lock:
             if self._closed or self._leases.get(admission.session_id) != admission:
                 raise RequestError("TURN_LEASE_STALE", "turn has ended or another view owns the session")
+
+    @contextmanager
+    def serialized(self, admission: TurnAdmission | None = None):
+        """Fence local control-result commits against lease release and handoff.
+
+        Call only in background application operations, after RequestService's
+        command lock. Never hold across model calls or other network waits.
+        """
+        with self._lock:
+            if admission is not None:
+                self.validate(admission)
+            yield
 
     def release(self, admission: TurnAdmission) -> bool:
         with self._lock:

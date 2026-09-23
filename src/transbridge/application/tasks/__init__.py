@@ -51,6 +51,7 @@ from .controls import (
     StopPolicy,
     StopResult,
     TaskCancelled,
+    TaskCleanupFailed,
 )
 from .entrypoints import (
     RuntimeTaskBridge,
@@ -170,6 +171,7 @@ __all__ = [
     "TaskArtifactRef",
     "TaskBackend",
     "TaskCancelled",
+    "TaskCleanupFailed",
     "TaskCenterAction",
     "TaskCenterActionError",
     "TaskCenterActionResult",

@@ -28,6 +28,59 @@ def proposal(*directives):
     return parse_proposal({"protocol_version": 1, "directives": list(directives)})
 
 
+def reply(**extra):
+    return {"local_id": "reply", "message_id": "m", "span": [0, 2], "action": "RESPOND", "response": "你好！", **extra}
+
+
+def test_direct_reply_has_no_request_and_replays_without_duplicates():
+    batch = RoutingBatch("greeting", "session", (RoutingSource("m", "你好"),))
+    p = proposal(reply())
+    result = apply_proposal((), batch, p)
+    assert result.requests == ()
+    assert result.batch.receipts[0].status == "applied"
+    assert result.batch.receipts[0].request_id == ""
+    restored = RoutingBatch.from_dict(json.loads(json.dumps(result.batch.to_dict())))
+    assert apply_proposal(result.requests, restored, p) == result
+
+
+@pytest.mark.parametrize("extra", [{"response": " "}, {"response": None}, {"target_id": "r"}, {"items": []}])
+def test_reply_cannot_be_empty_or_modify_requests(extra):
+    with pytest.raises(RequestError, match="direct replies"):
+        proposal(reply(**extra))
+
+
+def test_greeting_with_work_keeps_execution_request():
+    batch = RoutingBatch("mixed", "session", (RoutingSource("m", "你好，翻译文件"),))
+    result = apply_proposal(
+        (),
+        batch,
+        proposal(
+            reply(),
+            directive(
+                "work",
+                span=[3, 7],
+                goal="翻译文件",
+                items=[{"item_id": "translate", "description": "翻译文件", "kind": "execution"}],
+            ),
+        ),
+    )
+    assert len(result.requests) == 1
+    assert result.requests[0].items[0].kind == "execution"
+    assert result.requests[0].status == "open"
+
+
+def test_direct_reply_cannot_complete_or_resume_existing_work():
+    from transbridge.application.assistant_requests.models import RequestItem, UserRequest
+
+    existing = UserRequest(
+        "work", "session", "翻译文件", (RequestItem("translate", "翻译", kind="execution"),), pause_reasons=("user",)
+    )
+    batch = RoutingBatch("thanks", "session", (RoutingSource("m", "谢谢"),))
+    result = apply_proposal((existing,), batch, proposal(reply(response="已经完成翻译。")))
+    assert result.requests == (existing,)
+    assert not result.requests[0].terminal
+
+
 def test_independent_create_survives_ambiguous_cancel_and_restart_does_not_duplicate():
     batch = RoutingBatch("batch", "session", (RoutingSource("m", "取消那个，然后解释术语"),))
     p = proposal(directive("cancel", action="CANCEL"), directive("explain"))

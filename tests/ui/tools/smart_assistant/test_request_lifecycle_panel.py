@@ -106,9 +106,9 @@ class _AnswerClient:
                 stop_reason="tool_calls",
             )
         state = next(
-            json.loads(message["content"])["request_state"]
+            json.loads(message["content"])["decision_context"]
             for message in reversed(messages)
-            if message.get("role") == "user" and '"kind":"current_request_state"' in message.get("content", "")
+            if message.get("role") == "user" and '"kind":"request_decision_context"' in message.get("content", "")
         )
         if state["goal"] == self.fail_goal:
             raise RuntimeError("injected provider failure")
@@ -204,6 +204,60 @@ def environment(tmp_path, monkeypatch):
 
 def _requests(environment):
     return environment.service.requests(environment.service.state(environment.binding.context))
+
+
+@pytest.mark.parametrize("text", ["你好", "谢谢", "什么是翻译记忆？"])
+def test_direct_conversation_finishes_without_request_or_coverage(environment, monkeypatch, text):
+    from transbridge.persistence.v2.ids import SessionId, SessionRef
+    from transbridge.ui.tools.smart_assistant.message_bubble import MessageBubble
+
+    calls = []
+
+    def respond(messages, _max_tokens, tools, on_chunk=None, **kwargs):
+        assert [t.name for t in tools] == [ROUTING_TOOL]
+        calls.append(messages)
+        source = json.loads(messages[-1]["content"])["inputs"][0]
+        return LlmTurn(
+            tool_calls=(
+                LlmToolCall(
+                    f"direct-reply-{len(calls)}",
+                    ROUTING_TOOL,
+                    {
+                        "protocol_version": 1,
+                        "directives": [
+                            {
+                                "local_id": "reply",
+                                "message_id": source["message_id"],
+                                "span": [0, len(source["text"])],
+                                "action": "RESPOND",
+                                "response": "直接回答：" + source["text"],
+                            }
+                        ],
+                    },
+                ),
+            ),
+            stop_reason="tool_calls",
+        )
+
+    monkeypatch.setattr(environment.client, "chat_stream_with_tools", respond)
+    environment.binding.submit(text)
+    chat = environment.panel.chat
+    _until(lambda: any(m.get("content") == "直接回答：" + text for m in chat._conversation.get_transcript()))
+    _until(lambda: environment.binding.admission is None and environment.binding.view.items.isHidden())
+    assert len(calls) == 1
+    assert _requests(environment) == ()
+    assert any(b._text == "直接回答：" + text for b in chat.findChildren(MessageBubble))
+    assert not any("ANSWER_INCOMPLETE" in b._text for b in chat.findChildren(MessageBubble))
+    context = environment.binding.context
+    snapshot = environment.services.session_lifecycle.read_session(SessionRef(SessionId(context.session_id)), context)
+    assert any(m.get("content") == "直接回答：" + text for m in snapshot.backend_messages())
+    assert snapshot.assistant_data()["ingress"][0]["status"] == "applied"
+    environment.binding.submit("接着解释一下")
+    _until(lambda: any(m.get("content") == "直接回答：接着解释一下" for m in chat._conversation.get_transcript()))
+    assert len(calls) == 2
+    recent = json.loads(calls[-1][-1]["content"])["recent_conversation"]
+    assert any(m["text"] == "直接回答：" + text for m in recent)
+    assert _requests(environment) == ()
 
 
 def _stored_context(environment, request):
@@ -464,7 +518,7 @@ def test_immediate_provider_routes_and_completes_answer_on_gui_thread(environmen
     assert len(environment.client.calls) == 2
     assert all(thread is _APP.thread() and state == "thinking" for thread, state in environment.response_threads)
     assert all(thread is not _APP.thread() for _messages, _tools, thread in environment.client.calls)
-    assert environment.panel.chat._controller.state.value == "idle"
+    _until(lambda: environment.panel.chat._controller.state.value == "idle")
     snapshot = environment.services.session_lifecycle.read_session(
         environment.services.session_lifecycle.active.aggregate.ref, environment.binding.context
     )
@@ -853,7 +907,7 @@ def test_legacy_or_expired_confirmation_is_reproposed_without_replaying_parsed_s
 
     environment.service.transact(environment.binding.context, expire)
     environment.binding.control(request.request_id, "resume")
-    assert request.request_id not in environment.service.state(environment.binding.context)["confirmations"]
+    _until(lambda: request.request_id not in environment.service.state(environment.binding.context)["confirmations"])
     assert environment.binding.admission is None
     assert not _requests(environment)[0].items[0].waiting_reasons
     assert len([w for w in environment.panel.chat._message_list._owned_widgets if isinstance(w, ToolCard)]) == 1
@@ -974,3 +1028,106 @@ def test_stop_generation_requires_explicit_resume_and_retains_goal(environment):
     environment.binding.view.control.emit(request_id, "resume")
     _until(lambda: _requests(environment)[0].terminal)
     assert len(environment.service.state(environment.binding.context)["ingress"]) == 1
+
+
+@pytest.mark.parametrize("action", ["stop", "cancel", "new_input", "hide"])
+def test_control_query_holds_commit_locks_without_blocking_gui_actions(environment, monkeypatch, action):
+    from PyQt6.QtCore import QTimer
+
+    from transbridge.application.assistant_requests import control_operations
+
+    original_chat = environment.client.chat_stream_with_tools
+    original_read = control_operations.read_request_state
+    started, proceed = Event(), Event()
+    query_threads, issued = [], []
+
+    def chat(messages, max_tokens, tools, *args, **kwargs):
+        if not issued and any(tool.name == "read_request_state" for tool in tools):
+            issued.append(True)
+            return LlmTurn(
+                tool_calls=(
+                    LlmToolCall(
+                        "slow-query",
+                        "read_request_state",
+                        {
+                            "section": "items",
+                            "offset": 0,
+                            "limit": 2000,
+                            "expected_digest": "",
+                        },
+                    ),
+                ),
+                stop_reason="tool_calls",
+            )
+        return original_chat(messages, max_tokens, tools, *args, **kwargs)
+
+    def read(*args, **kwargs):
+        query_threads.append(QThread.currentThread())
+        started.set()
+        assert proceed.wait(5), "query worker remained blocked"
+        return original_read(*args, **kwargs)
+
+    monkeypatch.setattr(environment.client, "chat_stream_with_tools", chat)
+    monkeypatch.setattr(control_operations, "read_request_state", read)
+    environment.panel.chat.send_user_message("Inspect stored records")
+    try:
+        _until(started.is_set)
+        request_id = environment.binding.admission.request_id
+        before = monotonic()
+        if action == "stop":
+            environment.binding.management.stop_generation()
+        elif action == "cancel":
+            environment.binding.control(request_id, "cancel")
+        elif action == "new_input":
+            environment.panel.chat.send_user_message("Another input")
+        else:
+            environment.binding.set_active(False)
+        assert monotonic() - before < 0.5, "GUI action waited on the background commit locks"
+        ticks = []
+        QTimer.singleShot(0, lambda: ticks.append(True))
+        _until(lambda: bool(ticks), timeout=0.5)
+    finally:
+        proceed.set()
+    _until(lambda: environment.binding._accepting == 0)
+    assert query_threads and all(thread is not _APP.thread() for thread in query_threads)
+    messages = environment.panel.chat._conversation.get_transcript()
+    results = [m for m in messages if m.get("tool_call_id") == "slow-query"]
+    assert len(results) == 1 and results[0]["is_error"]
+
+
+@pytest.mark.parametrize("hide", [False, True])
+def test_routing_response_waits_off_gui_while_undo_holds_session_command_lock(environment, hide):
+    from PyQt6.QtCore import QTimer
+
+    environment.client.hold_first_routing = True
+    environment.panel.chat.send_user_message("Route while undo commits")
+    _until(environment.client.first_routing_started.is_set)
+    context = environment.binding.context
+    locked, release = Event(), Event()
+
+    def undo_commit():
+        with environment.service.serialized(context):
+            locked.set()
+            assert release.wait(5), "simulated undo commit was not released"
+
+    worker = Thread(target=undo_commit)
+    worker.start()
+    try:
+        assert locked.wait(2)
+        environment.client.routing_release.set()
+        _until(lambda: bool(environment.binding.control_results.pending), timeout=0.5)
+        ticks = []
+        QTimer.singleShot(0, lambda: ticks.append(True))
+        _until(lambda: bool(ticks), timeout=0.5)
+        if hide:
+            environment.binding.set_active(False)
+    finally:
+        release.set()
+        worker.join(timeout=2)
+    if hide:
+        _until(lambda: environment.binding._accepting == 0)
+        assert not _requests(environment)
+    else:
+        _until(lambda: bool(_requests(environment)) and _requests(environment)[0].terminal)
+    results = [m for m in environment.panel.chat._conversation.get_transcript() if m.get("tool_call_id") == "routing-1"]
+    assert len(results) == 1 and bool(results[0]["is_error"]) == hide

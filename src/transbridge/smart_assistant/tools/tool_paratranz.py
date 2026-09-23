@@ -512,16 +512,17 @@ def _tool_switch_paratranz_project(args: dict, ctx) -> ToolResult:
         if not callable(set_binding) or not getattr(ctx, "active_project_id", None):
             return ToolResult.fail("请先打开本地工程，再设置 ParaTranz 同步目标")
         now = datetime.now().astimezone().isoformat()
-        result = set_binding(
-            ParaTranzProjectBinding(
-                int(project_id),
-                str(info.get("name") or f"项目 #{project_id}"),
-                _config_endpoint(ctx),
-                _account_user_id(ctx),
-                now,
-                now,
-            )
+        from .binding_undo_capture import capture_binding_command
+
+        binding = ParaTranzProjectBinding(
+            int(project_id),
+            str(info.get("name") or f"项目 #{project_id}"),
+            _config_endpoint(ctx),
+            _account_user_id(ctx),
+            now,
+            now,
         )
+        result = capture_binding_command(ctx, lambda: set_binding(binding))
         if not result.is_success:
             message = result.diagnostics[0].message if result.diagnostics else "本地工程绑定失败"
             return ToolResult.fail(message)

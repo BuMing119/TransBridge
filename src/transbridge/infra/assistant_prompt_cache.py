@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 import hashlib
 from typing import Any
 
 from transbridge.infra.prompt_cache import (
     PROMPT_CACHE_METADATA_KEY,
     attach_prompt_cache_directive,
-    estimate_prompt_tokens,
     is_official_openai_base_url,
-    openai_cache_capability,
 )
 
 ASSISTANT_CONTEXT_KEY = "_transbridge_assistant_context"
@@ -98,29 +95,16 @@ def validate_assistant_topology(messages, slots, has_metadata) -> bool:
 
 
 def prepare_assistant_openai(*, messages: list[dict], model: str, base_url: str, key: str) -> dict:
-    """Keep history intact; an optional fixed rule breakpoint never follows the tail."""
+    """Keep automatic prefix caching available across the growing history.
+
+    Explicit mode with a system-only breakpoint excludes the appended history
+    from implicit caching, even when that history has a reusable prefix.
+    """
     result = {"messages": messages, "request_options": {}, "cache_mode": "disabled"}
     if not is_official_openai_base_url(base_url) or not model.lower().startswith(_OPENAI_MODELS):
         return result
     result["request_options"] = {"prompt_cache_key": key}
     result["cache_mode"] = "automatic_prefix"
-    first_content = messages[0].get("content", "")
-    if openai_cache_capability(model) != "explicit_breakpoints" or not isinstance(first_content, str):
-        return result
-    tokens = estimate_prompt_tokens(model, first_content)
-    if tokens is None or tokens < 1024:
-        return result
-    converted = deepcopy(messages)
-    converted[0]["content"] = [
-        {
-            "type": "text",
-            "text": first_content,
-            "prompt_cache_breakpoint": {"mode": "explicit"},
-        }
-    ]
-    result["messages"] = converted
-    result["request_options"]["prompt_cache_options"] = {"mode": "explicit"}
-    result["cache_mode"] = "explicit_breakpoints"
     return result
 
 

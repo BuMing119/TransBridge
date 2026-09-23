@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 import logging
 import math
@@ -25,6 +25,7 @@ from .controls import (
     StopPolicy,
     StopResult,
     TaskCancelled,
+    TaskCleanupFailed,
 )
 from .events import JobEvent, JobEventType, Subscription, TaskEventFilter
 from .models import (
@@ -511,6 +512,8 @@ class TaskRuntime:
         actor: OwnerRef,
         target: JobState,
         expected_revision: int | None,
+        *,
+        cleanup_failure: TaskCleanupFailed | None = None,
     ) -> JobSnapshot:
         with self._lock:
             record = self._resolve(ref)
@@ -523,7 +526,12 @@ class TaskRuntime:
                     current=record.state,
                     target=target,
                 )
-            if target not in _TRANSITIONS[record.state]:
+            cleanup_transition = (
+                isinstance(cleanup_failure, TaskCleanupFailed)
+                and target is JobState.FAILED
+                and record.state is JobState.CANCELLING
+            )
+            if target not in _TRANSITIONS[record.state] and not cleanup_transition:
                 code = "terminal_state" if record.state in TERMINAL_STATES else "invalid_transition"
                 raise TransitionError(
                     code,
@@ -541,6 +549,8 @@ class TaskRuntime:
             self._state_changed.notify_all()
             event_type = JobEventType.FINISHED if target in TERMINAL_STATES else JobEventType.STATE_CHANGED
             event = self._event(record, event_type, previous_state=previous)
+            if cleanup_failure is not None:
+                event = replace(event, code="task_cleanup_failed", message=str(cleanup_failure))
             snapshot = event.snapshot
         self._publish(event)
         return snapshot
@@ -668,6 +678,14 @@ class TaskRuntime:
     ) -> None:
         with self._lock:
             state = record.state
+        if isinstance(error, TaskCleanupFailed):
+            try:
+                self._transition(record.ref, record.owner, JobState.FAILED, None, cleanup_failure=error)
+            except TransitionError:
+                # A prior formal commit failure is already terminal; preserve it
+                # while retaining the subsequent rollback failure as evidence.
+                self._record_diagnostic(record, "task_cleanup_failed", str(error))
+            return
         if state in TERMINAL_STATES:
             return
         if cancelled or state is JobState.CANCELLING:

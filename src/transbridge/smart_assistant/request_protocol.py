@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from transbridge.infra.llm_tool_calling import LlmToolDefinition, LlmToolProtocolError, LlmTurn
+from transbridge.smart_assistant.state_query_protocol import STATE_RETRIEVAL_TOOL, parse_state_retrieval
 
 ROUTING_TOOL = "submit_request_routing"
 COVERAGE_TOOL = "report_answer_coverage"
 RETRIEVAL_TOOL = "read_request_result"
 HISTORY_RETRIEVAL_TOOL = "read_request_history"
-CONTROL_TOOLS = frozenset({ROUTING_TOOL, COVERAGE_TOOL, RETRIEVAL_TOOL, HISTORY_RETRIEVAL_TOOL})
+CONTROL_TOOLS = frozenset({ROUTING_TOOL, COVERAGE_TOOL, RETRIEVAL_TOOL, HISTORY_RETRIEVAL_TOOL, STATE_RETRIEVAL_TOOL})
 
 
 def routing_definition() -> LlmToolDefinition:
@@ -33,6 +34,7 @@ def routing_definition() -> LlmToolDefinition:
                             "action": {
                                 "type": "string",
                                 "enum": [
+                                    "RESPOND",
                                     "CREATE",
                                     "FOLLOW_UP",
                                     "AMEND",
@@ -45,6 +47,11 @@ def routing_definition() -> LlmToolDefinition:
                             "target_id": {"type": "string"},
                             "expected_revision": {"type": "integer", "minimum": 1},
                             "related_to": {"type": "string"},
+                            "response": {
+                                "type": "string",
+                                "minLength": 1,
+                                "description": "Complete user-facing reply for RESPOND only; no task is created.",
+                            },
                             "goal": {"type": "string"},
                             "constraints": {"type": "array", "items": {"type": "string"}},
                             "items": {
@@ -159,6 +166,8 @@ def parse_control_turn(turn: LlmTurn, stage: str) -> dict | None:
         raise LlmToolProtocolError("Incomplete request control response")
     if call.name == HISTORY_RETRIEVAL_TOOL:
         parse_history_retrieval(dict(call.arguments))
+    if call.name == STATE_RETRIEVAL_TOOL:
+        parse_state_retrieval(dict(call.arguments))
     return {
         "mode": "request_control",
         "steps": [],

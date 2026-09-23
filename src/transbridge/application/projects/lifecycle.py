@@ -22,7 +22,7 @@ from transbridge.application.contracts import (
     OperationResult,
     RequestContext,
 )
-from transbridge.persistence.v2.variant import VariantChangeSet
+from transbridge.persistence.v2.variant import VariantChangeSet, VariantSnapshot
 
 from .models import (
     ActiveProject,
@@ -87,6 +87,14 @@ class ProjectLifecycleService:
     def active(self) -> ActiveProject | None:
         with self._lock:
             return self._active
+
+    def active_variant_snapshot(self) -> tuple[VariantSnapshot, int] | None:
+        """Capture the Variant and its Project revision under the lifecycle lock."""
+        with self._lock:
+            active = self._active
+            if active is None or active.variant is None:
+                return None
+            return active.variant.snapshot(), active.project.envelope.revision
 
     def prepare_transition(
         self,

@@ -24,7 +24,19 @@ class RequestViewRefresh:
             return
         context = binding.context
         self._pending = True
-        future = binding._queue.submit(binding.service.state, context)
+
+        def read_projection():
+            state = binding.service.state(context)
+            requests = binding.service.requests(state)
+            pending = sum(
+                receipt["status"] == "needs_clarification"
+                for entry in state.get("batches", ())
+                for receipt in entry["batch"].get("receipts", ())
+            )
+            routing = sum(batch.get("status") in {"routing", "user_paused"} for batch in state.get("batches", ()))
+            return requests, pending, routing
+
+        future = binding._queue.submit(read_projection)
 
         def display():
             self._pending = False
@@ -32,17 +44,11 @@ class RequestViewRefresh:
             if binding._closed:
                 return
             try:
-                state = future.result()
+                requests, pending, routing = future.result()
                 if binding.context == context:
-                    binding.view.display(binding.service.requests(state))
-                    pending = sum(
-                        r["status"] == "needs_clarification"
-                        for entry in state.get("batches", ())
-                        for r in entry["batch"].get("receipts", ())
-                    )
-                    binding.view.set_pending(
-                        pending, sum(b.get("status") in {"routing", "user_paused"} for b in state.get("batches", ()))
-                    )
+                    binding.view.display(requests)
+                    binding.undo.observe(requests)
+                    binding.view.set_pending(pending, routing)
                     binding.view.show()
             except Exception:
                 logger.warning("Unable to refresh request list for its saved Session", exc_info=True)

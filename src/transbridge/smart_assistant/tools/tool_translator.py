@@ -9,6 +9,8 @@ import logging
 import os
 import threading
 
+from transbridge.application.tasks import TaskCleanupFailed
+
 from .base import ToolResult, require_collection, require_runtime_context
 from .task_control import action_label, control_tasks, get_scoped_task_status
 from .task_manager import TaskManager
@@ -24,7 +26,7 @@ def _capture_run_entry_states(ctx, collection) -> dict[object, tuple[str, int]]:
     return {entry.identity: (entry.translation, entry.stage) for entry in collection}
 
 
-def _rollback_run_entry_states(ctx, collection, states: dict[object, tuple[str, int]]) -> str | None:
+def _rollback_run_entry_states(ctx, collection, states: dict[object, tuple[str, int]]) -> Exception | None:
     try:
         rollback = getattr(ctx, "rollback_entry_states", None)
         if callable(rollback):
@@ -35,7 +37,7 @@ def _rollback_run_entry_states(ctx, collection, states: dict[object, tuple[str, 
             ExecutionContext(app_context=ctx).rollback_entry_states(states, collection)
     except Exception as exc:  # noqa: BLE001 - the original task failure must remain visible too
         logger.exception("助手任务回滚失败: %s", exc)
-        return str(exc)
+        return exc
     return None
 
 
@@ -257,13 +259,13 @@ class TranslationController:
                     tm.notify_failed(task_id, "任务已被用户停止；本次修改已回滚")
                 else:
                     message = f"任务已停止，但回滚失败：{rollback_error}"
-                    tm.set_status(task_id, "failed")
-                    tm.update_progress(task_id, {"error": message})
-                    tm.notify_failed(task_id, message)
+                    raise TaskCleanupFailed(message) from rollback_error
             except Exception as exc:
                 logger.exception("翻译任务异常: %s", exc)
                 rollback_error = _rollback_run_entry_states(ctx, _collection, run_entry_states)
-                message = str(exc) if rollback_error is None else f"{exc}；回滚失败：{rollback_error}"
+                if rollback_error is not None:
+                    raise TaskCleanupFailed(f"{exc}；回滚失败：{rollback_error}") from rollback_error
+                message = str(exc)
                 tm.set_status(task_id, "failed")
                 tm.update_progress(task_id, {"error": message})
                 tm.notify_failed(task_id, message)
@@ -439,13 +441,13 @@ class TranslationController:
                     tm.notify_failed(task_id, "任务已被用户停止；本次修改已回滚")
                 else:
                     message = f"任务已停止，但回滚失败：{rollback_error}"
-                    tm.set_status(task_id, "failed")
-                    tm.update_progress(task_id, {"error": message})
-                    tm.notify_failed(task_id, message)
+                    raise TaskCleanupFailed(message) from rollback_error
             except Exception as exc:
                 logger.exception("润色任务异常: %s", exc)
                 rollback_error = _rollback_run_entry_states(ctx, collection, run_entry_states)
-                message = str(exc) if rollback_error is None else f"{exc}；回滚失败：{rollback_error}"
+                if rollback_error is not None:
+                    raise TaskCleanupFailed(f"{exc}；回滚失败：{rollback_error}") from rollback_error
+                message = str(exc)
                 tm.set_status(task_id, "failed")
                 tm.update_progress(task_id, {"error": message})
                 tm.notify_failed(task_id, message)
@@ -610,7 +612,9 @@ class TranslationController:
         if not changed:
             return ToolResult.ok("未做任何修改")
 
-        llm.save_to_file()
+        from .config_undo_capture import save_config
+
+        save_config(ctx, llm, ["max_output_tokens" if key == "max_tokens" else key for key in changed])
         return ToolResult.ok(
             f"已更新配置: {', '.join(changed)}",
             data={"changed_fields": changed, "config_revision": llm.config_revision},
@@ -651,7 +655,15 @@ class TranslationController:
         if not changed:
             return ToolResult.ok("未修改任何术语配置", data={"unchanged": True})
 
-        llm.save_to_file()
+        from .config_undo_capture import save_config
+
+        mapping = {
+            "term_sources": "term_priority",
+            "json_path": "local_json_path",
+            "csv_path": "local_csv_path",
+            "excel_path": "local_excel_path",
+        }
+        save_config(ctx, llm, [target for source, target in mapping.items() if args.get(source) is not None])
         return ToolResult.ok(f"已更新术语配置: {', '.join(changed)}", data={"changed": changed})
 
     def set_scope(self, args: dict, ctx) -> ToolResult:

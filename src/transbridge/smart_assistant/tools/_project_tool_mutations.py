@@ -103,13 +103,18 @@ class ProjectToolTarget:
                 for entry in self.collection
             )
             if self.authoritative:
-                result = self.app.project_commands.replace_entry_records(
-                    {
-                        item.identity: EntryStatePatch(item.translation, item.stage, item.external_refs)
-                        for item in records
-                    },
-                    self.app.runtime_context,
-                    **self.expected(),
+                from .undo_capture import capture_variant_command
+
+                result = capture_variant_command(
+                    self.context,
+                    lambda: self.app.project_commands.replace_entry_records(
+                        {
+                            item.identity: EntryStatePatch(item.translation, item.stage, item.external_refs)
+                            for item in records
+                        },
+                        self.app.runtime_context,
+                        **self.expected(),
+                    ),
                 )
                 if not result.is_success:
                     raise ValueError("；".join(item.message for item in result.diagnostics))

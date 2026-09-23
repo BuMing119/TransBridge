@@ -30,6 +30,24 @@ def test_routing_stage_exposes_only_routing_control_despite_loaded_business_name
     assert "request_id" not in schema["properties"]["directives"]["items"]["properties"]
 
 
+@pytest.mark.parametrize("stop_reason", ["length", "max_tokens", "error", "cancelled"])
+def test_truncated_direct_reply_is_not_accepted(stop_reason):
+    arguments = {
+        "protocol_version": 1,
+        "directives": [
+            {
+                "local_id": "reply",
+                "message_id": "m",
+                "span": [0, 2],
+                "action": "RESPOND",
+                "response": "你好",
+            }
+        ],
+    }
+    with pytest.raises(LlmToolProtocolError, match="Incomplete"):
+        turn_to_parsed_response(_turn(ROUTING_TOOL, arguments, stop_reason=stop_reason), request_stage="routing")
+
+
 def test_execution_stage_adds_coverage_and_retrieval_but_not_routing():
     names = [definition.name for definition in build_native_tool_definitions(request_stage="execution")]
     assert COVERAGE_TOOL in names and RETRIEVAL_TOOL in names and HISTORY_RETRIEVAL_TOOL in names
