@@ -6,10 +6,14 @@
 
 ## 当前实施
 
+- [assistant-task-context-consistency](assistant-task-context-consistency/plan.md)：综合任务状态、上下文压缩/缓存、控制结果提交与 UI 边界、取消收尾及可选本轮撤销；8 个 Story 本地完成，S08 清理旧执行旁路后 1440 项通过/1 项跳过；安全逆操作范围与未测收益详见计划；[ADR-043](../docs/adr/043-assistant-turn-results-and-undo.md) 为提议。
+
+- [assistant-conversation-routing](assistant-conversation-routing/plan.md)：聊天与工作请求分流，方案草稿，S01/S02 已实现；1,137 项相关回归及最终 78 项复验通过，真实模型未评测（2026-09-13）。
+
 | Epic | 状态 | Stories | 文档 |
 |---|---|---:|---|
 | project-schema-auto-upgrade | 已实现并完成聚焦 QA（2026-09-12；开发前流程已补录） | 2/2 | [plan](project-schema-auto-upgrade/plan.md) · [ADR-018](../docs/adr/018-project-session-persistence-v2.md) · [ADR-024](../docs/adr/024-rebuildable-project-catalog-index.md) · [增量记录](../docs/changelogs/project-schema-auto-upgrade/story-01-to-02-implementation/2026-09-12-001-旧模式工程发现与安全自动升级.md) |
-| assistant-context-compaction | S10 修复完成，1,141 项回归及默认 128K 调整后 165 项复验通过；S09 真实收益与重复性能样本待验收（2026-09-13） | 9/10，S09 离线部分完成 | [plan](assistant-context-compaction/plan.md) · [ADR-041](../docs/adr/041-assistant-context-compaction.md) · [验证报告](../docs/test-reports/assistant-context-compaction.md) · [S10 最新增量](../docs/changelogs/assistant-context-compaction/story-10-capacity/2026-09-13-002-default-128k.md) |
+| assistant-context-compaction | S11～S13 本地完成；S12 已在综合计划完成后台提交与 Qt 验证，S09 真实收益待验收（2026-09-22） | 12/13，S09 未完整验收 | [plan](assistant-context-compaction/plan.md) · [ADR-041](../docs/adr/041-assistant-context-compaction.md) · [验证报告](../docs/test-reports/assistant-context-compaction.md) · [S11～S13 增量](../docs/changelogs/assistant-context-compaction/story-11-to-13-decision-context/2026-09-22-001-decision-context.md) |
 | assistant-request-observability | 已实现并完成现有链路收尾（2026-09-12；1336 项相关回归通过，真实模型未采集） | 3/3 | [plan](assistant-request-observability/plan.md) · [语料与回放说明](../tests/fixtures/assistant_request_routing/README.md) · [实现增量记录](../docs/changelogs/assistant-request-observability/story-01-to-03-implementation/2026-09-12-001-请求生命周期过程记录与对话验收.md) · [收尾修复记录](../docs/changelogs/assistant-request-observability/story-01-to-03-implementation/2026-09-12-002-请求上下文与确认生命周期收尾.md) |
 | assistant-user-request-lifecycle | 摘要及长期存储已补齐，1,410 项相关回归通过；真实模型评估未执行（2026-09-12） | 8/8 | [plan](assistant-user-request-lifecycle/plan.md) · [ADR-040](../docs/adr/040-assistant-user-request-lifecycle.md) · [实现增量记录](../docs/changelogs/assistant-user-request-lifecycle/story-01-to-08-implementation/2026-09-12-001-用户请求生命周期与长上下文实现.md) · [摘要与存储补齐](../docs/changelogs/assistant-user-request-lifecycle/story-01-to-08-implementation/2026-09-12-002-请求摘要接线与长期存储补齐.md) · [设计增量记录](../docs/changelogs/assistant-user-request-lifecycle/design/2026-09-12-001-用户请求生命周期需求架构与实施规划.md) |
 | assistant-cancellation-lifecycle | 已完成（2026-09-12，799 项相关回归及 Ruff 检查通过） | 4 + QA | [plan](assistant-cancellation-lifecycle/plan.md) · [增量记录](../docs/changelogs/assistant-cancellation-lifecycle/implementation/2026-09-12-001-助手取消与生命周期快照闭环.md) |

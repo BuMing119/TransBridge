@@ -6,6 +6,16 @@
 
 ## 日志结构
 
+- 2026-09-23：[助手结果补记恢复与依赖失败收尾](maintenance/assistant-task-failure-recovery/2026-09-23-001-receipt-retry-and-dependency-failure.md) — 按请求解除结果保存故障，依赖失败递归收尾；1353 项联合回归通过。
+
+- 2026-09-23：[清理旧执行旁路与上下文策略](assistant-task-context-consistency/story-08-legacy-path-cleanup/2026-09-23-001-remove-legacy-execution-paths.md) — 助手写入缺服务/轮次明确失败；删除旧组装、摘要刷新与直接路由提交入口；1440 项通过/1 项跳过。
+
+- 2026-09-22：[后台结果提交、取消收尾与可选本轮撤销](assistant-task-context-consistency/story-02-to-07-implementation/2026-09-22-001-control-results-and-round-undo.md) — 1434 项通过/1 项跳过；完成前述 S12 收尾，扩展本地领域逆操作并明确不可安全恢复范围。
+
+- 2026-09-22：[任务决策材料、版本与详情查询第一版](assistant-context-compaction/story-11-to-13-decision-context/2026-09-22-001-decision-context.md) — 第一版 1,263 项相关回归通过；当时遗留的前台校验问题已在上方综合增量收尾。
+
+- 2026-09-13：[聊天与工作请求分流](assistant-conversation-routing/story-01-to-02-implementation/2026-09-13-001-conversation-routing.md) — 普通回复不建任务，限量历史目标候选，1,137 项相关回归及最终 78 项复验通过。
+
 - 2026-09-13：[移除旧 AI 助手记忆系统](maintenance/legacy-assistant-memory/2026-09-13-001-remove-legacy-memory.md) — 删除旧存储、检索与聊天接线，保留会话历史和上下文摘要。
 - 2026-09-13：[废除旧记忆需求与规划状态](maintenance/legacy-assistant-memory/2026-09-13-002-abolish-planning-status.md) — 同步需求、plan、Story、ADR 和索引，混合文档只废除旧记忆部分。
 - 2026-09-13：[移除旧固定 20 轮上下文窗口](maintenance/legacy-assistant-memory/2026-09-13-003-remove-turn-window.md) — 删除窗口接口、缓存与回退，统一完整历史/transcript，同步废除规划状态。

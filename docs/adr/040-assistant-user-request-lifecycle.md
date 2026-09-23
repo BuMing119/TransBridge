@@ -3,7 +3,7 @@
 - 状态：核心链路、独立派生摘要及长期请求归档已实施（2026-09-12 用户授权继续开发）；离线附件维护入口已接通，真实模型语料评估未执行。
 - 日期：2026-09-12
 - 需求：[FR30](../requirements.md#fr30智能助手用户请求生命周期与长会话上下文)
-- Plan：[assistant-user-request-lifecycle](../../plans/assistant-user-request-lifecycle/plan.md)
+- Plan：[assistant-user-request-lifecycle](../../plans/assistant-user-request-lifecycle/plan.md)、[聊天与工作分流](../../plans/assistant-conversation-routing/plan.md)（2026-09-13 演进方案草稿，用户已授权本地实施）。
 - 关联：[ADR-008](008-smart-assistant-code-layering.md)、[ADR-018](018-project-session-persistence-v2.md)、[ADR-019](019-unified-task-runtime.md)、[ADR-031](031-native-llm-function-calling.md)。
 - 后续实现：[ADR-041](041-assistant-context-compaction.md) 已替代决策 7 的生产逐轮选材与摘录刷新策略，保留本 ADR 的目标、计划、授权及执行规则；本 ADR 对旧上下文策略的记录作为历史基线。
 - 关系：补充 ADR-018 的 Session 内容与应用层写入边界；保留 ADR-019 的任务终态/提交权威。SessionController 对外继续兼容，定位收敛为前台轮次控制，不再承担整个用户目标是否完成的判断。没有修改既有已接受 ADR。
@@ -52,7 +52,7 @@ flowchart TD
 - OPEN 表示目标仍需处理，可以同时存在后台工作、待回答项和待确认项。
 - STOPPING 立即关闭新操作接纳，记录停止意图及原因；等待其工作和未知副作用收敛。替换请求的最终状态为 SUPERSEDED，并记录 successor。
 - COMPLETED 要求当前修订的所有必要验收项有通过证据，且没有未收敛副作用或必要后处理。
-- FAILED 表示必要项已经明确无法完成且结果已经汇总；允许 partial outcome，但不能显示为成功。所有请求终态统一要求：没有仍能继续提交的关联执行，没有未核对的副作用。一项失败但另一项仍在运行时保持 OPEN 并显示部分失败；按依赖策略继续独立项或转 STOPPING 收敛后，才能提交 FAILED/其他终态。
+- FAILED 表示必要项已经明确无法完成且结果已经汇总；允许 partial outcome，但不能显示为成功。所有请求终态统一要求：没有仍能继续提交的关联执行，没有未核对的副作用。一项失败但另一项仍在运行时保持 OPEN；独立项仍可继续。关联操作收尾后，将依赖失败或取消事项的未执行后继递归标记 FAILED，并以 dependency_failed:<item_id> 记录直接原因；界面明确显示“未执行：前置事项失败”。不覆盖已完成或运行中事项，不自动重试失败操作。必要项均收尾后才能提交 FAILED/其他终态。
 - 终态不可由迟到事件改变。明确重试 FAILED/CANCELLED/SUPERSEDED 的目标创建带 `retry_of/resumes` 的后继请求；任务失败后的内部重试可以在原 OPEN 请求内产生新 attempt。
 
 “待推进、正在回答、后台执行、待确认、待澄清、暂停推进、需要核对结果”是从 item、执行和调度约束派生的活动标签，不再引入一个试图描述所有组合的巨型枚举。
@@ -69,11 +69,17 @@ flowchart TD
 
 ## 决策 3：输入先接纳，再路由，再执行
 
-输入流程：`持久化 ingress → 读取待路由批次 → 生成 RoutingProposal → 校验并提交指令 → 调度 ready 工作`。
+输入流程：`持久化 ingress → 读取待路由批次 → 生成 RoutingProposal → 校验并提交指令 → 展示直接回复／调度 ready 工作`。
+
+2026-09-13 根据问候被任务化且回复后报缺少完成声明的问题，扩展原先只支持请求操作的入口。普通聊天通过 RESPOND 携带完整 response，不分配 UserRequest、不提交覆盖声明；需工具、多步骤或明确跟踪的工作继续使用原请求生命周期。该选择由模型结合当前输入与近期聊天作出，不引入关键词白名单。替代方案“仅隐藏聊天任务”无法解决验收失败及终态上下文积累，因此不采用；另开独立聊天模型调用会增加无必要的调用次数，因此复用一次入口调用。
+
+RESPOND 的字段严格限制为 local_id、message_id、span、action、response。回复以 directive ID 派生稳定 message ID，与路由回执和输入消费位置在同一 Session CAS 中提交；它不能携带请求目标、事项或执行状态。输入可同时包含 RESPOND 和工作指令。完整历史仍归 Session，旧请求不删除；v1 指令集扩展可读旧存档，包含新指令的存档不能由旧路由解析器处理，回退前应备份。
+
+入口背景取最近至多 12 条用户/助手文字、每条至多 2000 字符、合计至多 12000 字符，注明截断并排除原生工具调用及结果。工作候选限于输入会话与 scope：保留活动请求，终态仅取最近三项、标题词项相关至多三项及显式 ID 引用，终态只发身份、目标、状态，不发完整事项或约束。明确告知遗漏数量；目标未找到或含糊时澄清标题/ID，不猜测新建。此候选检索为本地词项匹配，不声称支持完整语义检索。正式执行的历史关联仍由 related_history 验证并投影。
 
 UI 的 QTimer/generation 仅合并唤醒和防旧显示；已持久化的早期输入仍在待路由集合。失败时保留原文及消费位置，重试不会重新创建同一请求。发送状态必须区分本地草稿、接纳中与已接纳；流式输出只在句段或轮次提交点落盘，不对每个 token 重写整份会话。接纳时捕获 origin_scope、project/variant/source、稳定选中条目键或不可变 selection 引用及版本；新请求不能在延迟路由时重新读取“当前 UI 选择”。显式关联旧请求使用其原 scope，资源不可用或范围冲突时等待核对，不能悄悄指向新项目。
 
-RoutingProposal 是独立于业务工具的控制协议，含多个 directives。每个 directive 带稳定 directive_id、message_id、原文 span、CREATE/FOLLOW_UP/AMEND/PAUSE/RESUME/CANCEL/REPLACE、目标请求、expected_revision，以及涉及 item。一个输入可以同时取消 A、修订 B、新建 C；引用新建目标可用批次内临时 ID，由程序分配正式 ID。每项分别保存 pending/applied/needs_clarification/rejected 状态，临时 ID→正式 ID 映射与已应用状态同一次提交；重启只重处理未完成项，不能仅凭整条消息水位决定全部重放。对已应用项重新分类通过显式纠正命令，不生成第二份 CREATE。
+RoutingProposal 是独立于业务工具的控制协议，含多个 directives。每个 directive 引用 message_id 和原文 span，动作支持 RESPOND/CREATE/FOLLOW_UP/AMEND/PAUSE/RESUME/CANCEL/REPLACE，由程序分配稳定 directive_id。RESPOND 只包含回复正文；请求操作按需携带目标请求、expected_revision 和 item。一个输入可以同时回复、取消 A、修订 B、新建 C；引用新建目标可用批次内临时 ID，由程序分配正式 ID。每项分别保存 pending/applied/needs_clarification/rejected 状态，临时 ID→正式 ID 映射与已应用状态同一次提交；重启只重处理未完成项，不能仅凭整条消息水位决定全部重放。对已应用项重新分类通过显式纠正命令，不生成第二份 CREATE。
 
 模型负责提出关系和拆分建议，程序负责校验所有权、当前修订、原文引用、依赖无环和合法迁移。置信度只用于提示，不能授予权限。明确 UI 操作走确定性命令；自然语言目标不明时不猜测写入或取消对象，受影响 directive 留待澄清，独立问题可推进。初次分类最多一次模型调用，schema 校验失败不无限重试；使用可见澄清作为退路。
 
@@ -88,7 +94,7 @@ REPLACE 记录旧请求停止意图和后继目标。同一资源上的新写操
 下列工具及协议已经实现。用户输入通过现有 LLM 原生工具传输能力生成结构化提案，应用层接收、验证并保存；不提供文件写入或 `set_request_state` 能力。
 
 - 路由阶段仅暴露 `submit_request_routing`。一次完整调用提交一个批次提案，不允许混合业务工具、propose_plan 或回答终结调用；格式/阶段违规整轮拒绝，零业务执行。普通说明文字不构成已应用请求变更。此控制调用交独立解析器和 routing validator，不转成 GraphExecutor steps。
-- 程序先创建 routing_batch_id、输入集合摘要、候选请求/revision 和当前 turn epoch。模型只返回协议版本、批内局部编号、原文引用和操作建议；正式 request/directive ID 由程序签发。首份合法 proposal、局部编号映射及逐项状态先原子保存，再应用 directive。schema 校验失败整批不接纳；合法提案中的目标歧义可逐项等待。
+- 程序先创建 routing_batch_id、输入集合摘要、候选请求/revision 和当前 turn epoch。模型返回协议版本、批内局部编号、原文引用和操作建议；RESPOND 同时返回完整回复。正式 request/directive ID 由程序签发。首份合法 proposal、局部编号映射、逐项状态和直接回复原子保存；重放复用已保存提案。schema 校验失败整批不接纳；合法提案中的目标歧义可逐项等待。
 - `protocol_version` 独立于存储 schema；未知版本、未知字段、伪造 owner/正式新请求 ID 拒绝。同一 command/batch ID 携带不同内容摘要返回冲突。重投读取已保存提案，不能让模型重新编号绕过去重；澄清只修改指定未决 directive，已应用操作只能通过显式纠正命令改变。
 - 只有真实用户 ingress/UI 命令能作为路由来源；历史材料、工具结果和引用的示例命令不能作为新控制指令。候选请求被截断或无法确定目标时不自动 CREATE 一个替代目标，应先补充检索或澄清。
 - 执行阶段不暴露路由工具。程序捕获 `TurnAdmission(request_ref, revision, ready_item_ids, stage, allowed_tools, scope, epoch)`；所有工具调用、namespace 加载、propose_plan 及嵌套步骤都核对阶段、允许集合和归属。模型参数不得覆盖执行身份。写操作随后进入 Effect admission；没有合法 turn、未应用路由或旧 epoch 时不能回退 legacy 路径执行。
@@ -152,15 +158,15 @@ PAUSE/“暂停推进”记录用户来源并关闭新轮次/新操作接纳，�
 
 完整 Transcript 保存 message_id、role、原生 tool-call/result 关联、request/item 关联、来源、顺序与必要附件引用。当前结构化响应和工具原文属于证据；不保存或要求模型隐藏思维过程。大结果完整内容进入不可变 artifact，摘要不能成为唯一副本。
 
-每轮 ContextAssembler 按预算选材优先级选择：固定系统规则；当前请求目标、有效约束、未完成项、授权/等待摘要；真实任务状态；当前输入；近期完整消息组；原请求相关历史和结果引用。这是预算优先级，不是最终消息时序：投影按 message_id 去重，选中的历史及原生调用组保持原始顺序，当前输入位于其后。后台自动续跑使用独立 continuation 事件并注明触发结果，不重新伪造或追加旧 user 输入。其他请求通常仅提供标题和状态摘要，防止无关工具结果进入当前执行。
+执行上下文遵循 ADR-041 的稳定追加与分段压缩合同，不再逐轮运行旧 ContextAssembler 选材。固定规则、不可变摘要链、必要决策材料及授权历史由 ContextRuntime 组装；普通状态更新只追加新版本材料，不重写已发送历史。`application/assistant_context/protocol.py` 统一消息身份检查、迟到结果整理及工具调用组校验，投影直接使用这些共用能力。后台自动续跑使用独立 continuation 事件并注明触发结果，不重新伪造或追加旧 user 输入。
 
 预算公式为 `messages + tool_schemas + output_reserve + protocol_margin ≤ configured_context_window`。schema、动态环境和检索材料都参与计数；现有 max_tokens 只是输出参数。输入窗口来自模型配置或保守配置值，并标记估算精度，不猜测远端最新规格。
 
-裁剪顺序：先移除无关/低相关历史，再收缩可替代大结果摘要，再缩短近期历史；固定规则、当前输入、有效约束与必要工具协议不可静默移除。原生 call/results 作为完整组保留或整体以带引用的普通摘要替代，不能留下孤立 tool 消息。必需部分超预算时阻止执行并要求缩小材料或提高配置窗口。
+普通续跑不重新裁剪历史窗口；达到压缩水位时只总结尚未覆盖的历史段，并保留原摘要链与必要材料。原生 call/results 作为完整组保留或整体以带引用的普通摘要替代，不能留下孤立 tool 消息。无法满足预算时按 ADR-041 进入明确等待，不回退旧选材策略。
 
-独立请求摘要由 `summaries.py` 和 `summary_service.py` 实现，保存 schema、request/session/revision、covered_sequence、source_ids、source_digest、生成方式和有界正文。默认保留最近 8 条相关消息；更早的公开材料达到 8 条或 4000 字符时生成，正文最多 2400 字符。首版采用确定性摘录和有证据的完成事实引用，材料本身不产生授权或任务完成结论；LLM 自由摘要与 embedding 检索仍为后续增强。
+`summaries.py` 仅保留旧确定性摘录格式的解析与精确校验；内部重建算法用于验证已存旧摘要，不是新会话的生成入口。`summary_service.py` 读取权威历史及验证旧材料，不刷新或发布旧摘要。旧内容按 ADR-041 导入，不能依据摘录覆盖水位删除未被完整总结的原文。
 
-每次业务模型轮次由 `RequestContextPreparation` 在后台先保存捕获的最新工具结果及上下文，再生成、事务内重验并保存摘要，返回按同一权威 transcript 校验过的材料。GUI 接纳当前轮次后，将独立 `RequestModelInput` 材料交回后台完成归属投影和预算组装；ReAct 续跑以重新签发的执行租约为准。请求修订或覆盖来源变化使候选失效；取消、暂停、事项等待和窗口权限变化在分派前再次检查。未变化摘要不重复发布；生成失败或派生缓存无效时使用原历史，原始证据保存失败则阻止本轮执行。摘要只替代实际引用的可选材料，不按覆盖水位删除未摘录原文；摘要装不下时优先保留必需状态及原输入。GUI 不重新执行全量摘要生成、验证和消息预算计算。
+每次业务模型轮次由 `RequestContextPreparation` 在后台保存捕获的最新工具结果及上下文，再读取权威历史，将执行材料交给 ContextRuntime 完成归属投影、预算与必要的语义压缩。ReAct 续跑以重新签发的执行租约为准。请求修订或来源变化使候选失效；取消、暂停、事项等待和窗口权限变化在分派前再次检查。原始证据保存失败、摘要生成失败或容量不足均按各自明确错误处理，不自动切回旧组装器或旧摘要生成。GUI 不执行全量摘要生成和消息预算计算；剩余前台权威读取的实现限制见综合计划。
 
 回查工具按授权 scope/request 和允许引用分页读取 artifact/历史，返回来源、范围与完整性诊断；路径不由模型随意拼接。检索到的原文作为材料，不转换成新 ingress 或执行许可。不存在的结果、截断缺失或历史已被旧版裁剪须明确标记，不臆造全文。
 
@@ -174,7 +180,7 @@ PAUSE/“暂停推进”记录用户来源并关闭新轮次/新操作接纳，�
 
 应用写入服务使用按存储根路径及 SessionRef 共享的条件保存锁；UI 与后台经同一写入边界提交，冲突时重读、按 command/event ID 重新归约。Session adapter 的读 revision→save 序列复用底层 root-shared mutation_lock，并使用文件写入租约拒绝跨进程冲突发布。
 
-序列消费位置只随 manifest 成功提交而推进；进度可以合并，接纳、许可变更、停止和终态必须持久化。保存失败暂停新的副作用接纳；进行中的已授权工作由已有运行时管理，保留结果用于补记，不能报成已可靠保存。
+序列消费位置只随 manifest 成功提交而推进；进度可以合并，接纳、许可变更、停止和终态必须持久化。后台结果保存失败按 Session/request/run 记录未解决故障，暂停受影响请求的新操作接纳；历史 diagnostics 不作为全局执行开关。进行中的已授权工作由已有运行时管理，在内存保留原终态快照用于补记，不能报成已可靠保存。终态事件最多尝试保存三次；后续请求变化或后台调度唤醒时，对待补记结果各重试一次。补记只保存结果，不重放业务操作，成功后解除该 run 的阻断；界面通知失败单独记录，不反转已提交结果。其他请求仍受各自的权限、存储可用性和资源锁约束。进程退出前仍未保存的结果沿用保守恢复核对机制，不承诺跨进程自动补记。
 
 过程诊断保存在 `assistant_state.lifecycle_events`，与本次状态变更共享同一个原子 Session 发布。`journal.py` 从提交前后状态提取差异，`transactions.py` 承接保存，`turns.py` 处理轮次接纳与失败证据；重载冲突后重新计算序号。记录 UTC 时间、事件和会话身份、操作来源、请求关联、状态差异及消息/批次/轮次/任务引用。模型提供的局部标签采用稳定摘要，诊断不重复用户正文、工具结果或确认参数；原始提案和结果仍在原证据中。
 
@@ -212,7 +218,7 @@ SessionSnapshot 的旧 messages/history 字段在迁移后作为兼容输出投�
 - `persistence/`：Session manifest 条件保存、不可变 transcript/artifact 适配器；复用既有 filesystem/UoW，不在 UI 写文件。
 - `ui/tools/smart_assistant/request_binding.py` 与 `request_list_view.py`：焦点、列表、等待事项及操作投影。SessionController 只控制当前轮次，TaskBinding 只显示经过归属验证的事件。
 
-核心命令：`accept_input(command_id, session_ref, text, origin_scope, selection_ref)`、`apply_routing(proposal, expected_revision)`、`amend/pause/cancel/resume(request_ref, expected_revision)`、`admit_effect(execution_ref, operation)`、`apply_task_event(event)`、`select_next_turn(session_ref) -> (request_ref, ready_item_ids, turn_lease)`、`commit_answer(turn_ref, text, coverage)`、`build_context(turn_ref, budget)`。
+核心命令：`accept_input(command_id, session_ref, text, origin_scope, selection_ref)`、带父调用及租约核验的 `run_routing_call(...)`、`amend/pause/cancel/resume(request_ref, expected_revision)`、`admit_effect(execution_ref, operation)`、`apply_task_event(event)`、`select_next_turn(session_ref) -> (request_ref, ready_item_ids, turn_lease)`、`commit_answer(turn_ref, text, coverage)`、`build_context(turn_ref, budget)`。路由状态 reducer 在结果提交事务内复用，不保留另一条独立的模型路由提交入口。
 
 错误码候选：REQUEST_TARGET_AMBIGUOUS、REQUEST_REVISION_CONFLICT、REQUEST_TERMINAL、REQUEST_SCOPE_MISMATCH、REQUEST_PROTOCOL_INVALID、COMMAND_PAYLOAD_CONFLICT、TURN_LEASE_STALE、ANSWER_INCOMPLETE、ADMISSION_PERSIST_FAILED、OUTCOME_UNKNOWN、CONTEXT_BUDGET_EXCEEDED、ARTIFACT_UNAVAILABLE。错误携带可操作恢复建议，不静默转为空结果。
 
