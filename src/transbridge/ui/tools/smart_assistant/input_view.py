@@ -5,10 +5,12 @@ import os
 from pathlib import Path
 
 from PyQt6.QtCore import QSettings, QSize, Qt
+from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QFileDialog,
     QFrame,
     QHBoxLayout,
+    QMenu,
     QPushButton,
     QSizePolicy,
     QTextEdit,
@@ -54,14 +56,16 @@ class ChatInputView:
         self.input: QTextEdit | None = None
         self.upload_label: ElidedLabel | None = None
         self.send_button: QPushButton | None = None
-        self.auto_checkbox: QPushButton | None = None
-        self._chips: QuickActionsChips | None = None
+        self.auto_checkbox: QAction | None = None
         self._card: QFrame | None = None
         self._card_layout: QVBoxLayout | None = None
         self._action_layout: QHBoxLayout | None = None
         self._upload_button: QPushButton | None = None
-        self._clear_button: QPushButton | None = None
+        self._more_button: QPushButton | None = None
         self._closed = False
+        self._running = False
+        self._stop = lambda: None
+        self._details = lambda: None
 
     def build_toolbar(self, layout: QVBoxLayout) -> None:
         card = QFrame()
@@ -74,12 +78,9 @@ class ChatInputView:
         toolbar = QHBoxLayout()
         toolbar.setSpacing(8)
         toolbar.setContentsMargins(0, 0, 0, 0)
-        chips = QuickActionsChips(theme=self._theme)
-        chips.action_clicked.connect(self._set_input)
-        chips.skill_triggered.connect(self._select_skill)
-        toolbar.addWidget(chips, 1)
         self.upload_label = ElidedLabel("")
         self.upload_label.setAccessibleName("已上传参考文件")
+        self.upload_label.hide()
         upload_button = QPushButton("附件")
         upload_button.setAccessibleName("上传参考文件")
         upload_button.setToolTip("上传纠错表/术语参考/风格指南（Excel/CSV/Markdown/TXT/JSON/PDF/Word）")
@@ -87,10 +88,9 @@ class ChatInputView:
         upload_button.setCursor(Qt.CursorShape.PointingHandCursor)
         upload_button.clicked.connect(self._upload)
         toolbar.addWidget(upload_button)
-        toolbar.addWidget(self.upload_label, 1)
+        card_layout.addWidget(self.upload_label)
         card_layout.addLayout(toolbar)
         layout.addWidget(card)
-        self._chips = chips
         self._card = card
         self._card_layout = card_layout
         self._action_layout = toolbar
@@ -102,34 +102,28 @@ class ChatInputView:
             raise RuntimeError("build_toolbar() must run before build_editor()")
         editor = QTextEdit()
         editor.setAccessibleName("消息输入框")
-        editor.setMinimumHeight(96)
-        editor.setMaximumHeight(112)
+        editor.setMinimumHeight(80)
+        editor.setMaximumHeight(88)
         editor.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         editor.document().setMaximumBlockCount(500)
         editor.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        editor.setPlaceholderText("输入消息，或输入 / 使用工具（Ctrl+Enter 发送）")
+        editor.setPlaceholderText("输入要求，或补充当前任务…（Ctrl+Enter 发送）")
         editor.setStyleSheet(INPUT_STRUCTURE_STYLE)
         editor.installEventFilter(event_filter)
         self._card_layout.insertWidget(0, editor)
         self.input = editor
 
-        clear_button = QPushButton()
-        clear_button.setAccessibleName("清空对话")
-        clear_button.setToolTip("清空对话")
-        clear_button.setFixedSize(36, 32)
-        clear_button.setStyleSheet(BUTTON_STRUCTURE_STYLE)
-        clear_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        clear_button.clicked.connect(self._clear)
-        self._action_layout.addWidget(clear_button)
-
-        checkbox = QPushButton("Auto")
-        checkbox.setAccessibleName("自动执行模式")
-        checkbox.setToolTip("自动模式：LLM返回工具/计划时直接执行，不显示确认卡片（admin级工具始终确认）")
+        checkbox = QAction("自动执行常规操作", self._card)
+        checkbox.setToolTip("高权限操作仍需确认")
         checkbox.setCheckable(True)
         checkbox.setChecked(self._auto_mode)
         checkbox.toggled.connect(self._toggle_auto)
         self.auto_checkbox = checkbox
-        self._action_layout.addWidget(checkbox)
+        self._more_button = QPushButton("更多")
+        self._more_button.setStyleSheet(BUTTON_STRUCTURE_STYLE)
+        self._more_button.clicked.connect(self._show_more)
+        self._action_layout.addWidget(self._more_button)
+        self._action_layout.addStretch(1)
 
         send_button = QPushButton("发送")
         send_button.setAccessibleName("发送消息按钮")
@@ -137,27 +131,61 @@ class ChatInputView:
         send_button.setFixedSize(76, 36)
         send_button.setStyleSheet(BUTTON_STRUCTURE_STYLE)
         send_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        send_button.clicked.connect(self._send)
+        send_button.clicked.connect(lambda: self._stop() if self._running else self._send())
         send_button.setEnabled(False)
-        editor.textChanged.connect(lambda: send_button.setEnabled(bool(editor.toPlainText().strip())))
+        editor.textChanged.connect(self._update_primary)
         self.send_button = send_button
-        self._clear_button = clear_button
         self._action_layout.addWidget(send_button)
         self.apply_theme(self._theme)
 
+    def set_running(self, running: bool) -> None:
+        if self._running == running:
+            return
+        self._running = running
+        self._update_primary()
+
+    def _update_primary(self) -> None:
+        if self.send_button is None:
+            return
+        label = "停止" if self._running else "发送"
+        self.send_button.setText(label)
+        self.send_button.setAccessibleName("停止当前生成" if self._running else "发送消息按钮")
+        self.send_button.setToolTip("停止推进，保留已完成的修改" if self._running else "发送消息")
+        self.send_button.setIcon(
+            tabler_icon(self.send_button, "x" if self._running else "send", 18, semantic="on-accent")
+        )
+        self.send_button.setEnabled(self._running or bool(self.input and self.input.toPlainText().strip()))
+
+    def configure_actions(self, *, stop, details) -> None:
+        self._stop, self._details = stop, details
+
+    def _show_more(self) -> None:
+        menu = QMenu(self._more_button)
+        for label, prompt, _icon in QuickActionsChips._ACTIONS:
+            menu.addAction(label, lambda value=prompt: self._set_input(value))
+        skills = menu.addMenu("技能")
+        from transbridge.smart_assistant.skills import SkillRegistry
+
+        for spec in SkillRegistry.list_all():
+            skills.addAction(spec.display_name, lambda value=spec.name: self._select_skill(value))
+        if not skills.actions():
+            skills.addAction("暂无可用技能").setEnabled(False)
+        menu.addSeparator()
+        menu.addAction(self.auto_checkbox)
+        menu.addAction("任务与会话详情", self._details)
+        menu.addSeparator()
+        menu.addAction("清空对话", self._clear)
+        menu.exec(self._more_button.mapToGlobal(self._more_button.rect().bottomLeft()))
+
     def apply_theme(self, theme: SmartAssistantTheme) -> None:
         self._theme = theme
-        if self._chips is not None:
-            self._chips.apply_theme(theme)
         if self._card is not None:
             theme.apply_surface(self._card)
-        for widget in (self.upload_label, self._upload_button, self._clear_button, self.auto_checkbox):
+        for widget in (self.upload_label, self._upload_button, self._more_button):
             if widget is not None:
                 theme.apply_semantic(widget, "muted", background=isinstance(widget, QPushButton))
         if self._upload_button is not None:
             self._upload_button.setIcon(tabler_icon(self._upload_button, "paperclip", 15))
-        if self._clear_button is not None:
-            self._clear_button.setIcon(tabler_icon(self._clear_button, "trash", 15))
         if self.input is not None:
             theme.apply_surface(self.input)
         if self.send_button is not None:
@@ -165,6 +193,7 @@ class ChatInputView:
             self.send_button.setStyleSheet(BUTTON_STRUCTURE_STYLE)
             self.send_button.setIcon(tabler_icon(self.send_button, "send", 18, semantic="on-accent"))
             self.send_button.setIconSize(QSize(18, 18))
+            self._update_primary()
 
     def set_text(self, text: str) -> None:
         if not self._closed and self.input is not None:
@@ -223,6 +252,7 @@ class UploadBinding:
             names = ", ".join(self._documents)
             summary = f"已上传 {len(self._documents)} 个: {names}" if names else ""
             label.set_full_text(summary)
+            label.setVisible(bool(summary))
             label.setToolTip(names)
             label.setAccessibleDescription(summary)
 

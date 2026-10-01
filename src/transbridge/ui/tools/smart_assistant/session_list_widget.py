@@ -145,7 +145,7 @@ class SessionListWidget(QWidget):
         self._rows: dict[str, _SessionRow] = {}
         self._session_data: list[dict] = []
         self.setAccessibleName("会话列表")
-        self.setMinimumWidth(220)
+        self.setMinimumWidth(180)
         self.setMaximumWidth(260)
         self._setup_ui()
         self.apply_theme(self._theme)
@@ -185,6 +185,7 @@ class SessionListWidget(QWidget):
         main_layout.addWidget(self._search_input)
 
         self._scroll = QScrollArea()
+        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._scroll.setWidgetResizable(True)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._list_container = QWidget()
@@ -265,7 +266,7 @@ class SessionListWidget(QWidget):
         self._search_input.setVisible(False if collapsed else bool(self._search_input.text()))
         self._toggle_btn.setText("" if collapsed else "收起侧栏")
         self._toggle_btn.setAccessibleName("展开会话列表" if collapsed else "折叠会话列表")
-        self.setMinimumWidth(48 if collapsed else 220)
+        self.setMinimumWidth(48 if collapsed else 180)
         self.setMaximumWidth(48 if collapsed else 260)
         self.apply_theme(self._theme)
 

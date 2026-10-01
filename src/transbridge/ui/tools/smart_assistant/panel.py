@@ -17,6 +17,7 @@ from transbridge.ui.windows_taskbar import clear_window_app_user_model_id, set_w
 
 from .chat_widget import ChatWidget
 from .panel_header import AssistantPanelHeader
+from .panel_layout import AssistantColumns
 from .session_list_widget import SessionListWidget
 from .task_monitor import TaskMonitorWidget
 from .theme_support import BODY_STRUCTURE_STYLE, PANEL_STRUCTURE_STYLE, SmartAssistantTheme
@@ -115,8 +116,7 @@ class SmartAssistantPanel(QDockWidget):
         layout.setSpacing(0)
 
         # 水平分割：左侧会话列表 + 右侧（聊天区 + 任务监控）
-        h_splitter = QSplitter(Qt.Orientation.Horizontal)
-        h_splitter.setHandleWidth(1)
+        h_splitter = AssistantColumns()
 
         self._session_list = SessionListWidget(theme=self._theme)
         self._session_list.create_session.connect(self._on_create_session)
@@ -135,7 +135,7 @@ class SmartAssistantPanel(QDockWidget):
         if self._session_mgr is not None:
             self._chat.set_session_manager(self._session_mgr)
 
-        # 右侧垂直分割：聊天区 + 任务监控（7:3）
+        # 任务明细默认收起；没有任务时完全隐藏。
         right_splitter = QSplitter(Qt.Orientation.Vertical)
         right_splitter.setHandleWidth(1)
         right_splitter.addWidget(self._chat)
@@ -153,7 +153,7 @@ class SmartAssistantPanel(QDockWidget):
         h_splitter.addWidget(right_splitter)
         h_splitter.setStretchFactor(0, 0)  # 会话列表不拉伸
         h_splitter.setStretchFactor(1, 1)  # 右侧自适应拉伸
-        h_splitter.setSizes([240, 960])
+        h_splitter.setSizes([200, 960])
 
         layout.addWidget(h_splitter, stretch=1)
         self._body = container

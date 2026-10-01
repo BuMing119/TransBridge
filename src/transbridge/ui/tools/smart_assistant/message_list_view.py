@@ -47,6 +47,7 @@ class MessageListView:
         self._max_visible_widgets = max_visible_widgets
         self._theme = theme or SmartAssistantTheme()
         self._owned_widgets: list[QWidget] = []
+        self._attachments: dict[QWidget, tuple[str, ...]] = {}
         self._closed = False
         self._thinking_indicator: ThinkingIndicator | None = None
         self._pending_scroll_value = 0
@@ -65,7 +66,7 @@ class MessageListView:
 
     def apply_theme(self, theme: SmartAssistantTheme) -> None:
         self._theme = theme
-        for widget in tuple(self._owned_widgets):
+        for widget in (*self._owned_widgets, *self._attachments):
             apply_theme = getattr(widget, "apply_theme", None)
             if apply_theme is not None:
                 apply_theme(theme)
@@ -83,8 +84,9 @@ class MessageListView:
             return
         self._owned_widgets.append(widget)
         self._layout.insertWidget(self._layout.count() - 1, widget)
-        self.scroll_to_bottom()
         self._enforce_limit()
+        self._position_attachments()
+        self.scroll_to_bottom()
 
     def add_system_message(self, text: str) -> None:
         if not self._closed:
@@ -96,18 +98,63 @@ class MessageListView:
         for message in messages:
             role = message.get("role", "user")
             content = message.get("content", "")
+            bubble = None
             if role == "assistant":
                 if content:
-                    self.add_bubble(MessageBubble(content, "assistant", theme=self._theme))
+                    bubble = MessageBubble(content, "assistant", theme=self._theme)
             elif role == "user":
                 if content.startswith("【工具执行结果") or content.startswith("【计划执行完成】"):
                     self.add_system_message(content)
                 else:
-                    self.add_bubble(MessageBubble(content, "user", theme=self._theme))
+                    bubble = MessageBubble(content, "user", theme=self._theme)
             elif role == "tool":
                 summary = message.get("display_summary", "")
                 if summary:
                     self.add_system_message(summary)
+            if bubble is not None:
+                bubble.setProperty("message_id", message.get("message_id", ""))
+                self.add_bubble(bubble)
+
+    def attach(self, widget: QWidget, source_ids: tuple[str, ...] = ()) -> None:
+        """Place a presenter-owned projection with its source turn, without taking lifetime ownership."""
+        if self._closed:
+            return
+        self._attachments[widget] = source_ids
+        self._position_attachments()
+
+    def detach(self, widget: QWidget) -> None:
+        self._attachments.pop(widget, None)
+        self._layout.removeWidget(widget)
+        widget.hide()
+
+    def _position_attachments(self) -> None:
+        for widget, sources in self._attachments.items():
+            self._layout.removeWidget(widget)
+            index = self._layout.count() - 1
+            candidates = [self._layout.itemAt(offset).widget() for offset in range(index)]
+            anchor = max(
+                (
+                    offset
+                    for offset, candidate in enumerate(candidates)
+                    if candidate is not None and candidate.property("message_id") in sources
+                ),
+                default=-1,
+            )
+            if anchor < 0:
+                # Requests without a visible source remain accessible in task details.
+                widget.hide()
+                continue
+            for offset, candidate in enumerate(candidates):
+                if (
+                    anchor >= 0
+                    and offset > anchor
+                    and isinstance(candidate, MessageBubble)
+                    and candidate.role == "user"
+                ):
+                    index = offset
+                    break
+            self._layout.insertWidget(index, widget)
+            widget.show()
 
     def remove(self, widget: QWidget) -> None:
         if self._closed:
@@ -123,6 +170,8 @@ class MessageListView:
         if self._closed:
             return
         self.hide_thinking()
+        for widget in tuple(self._attachments):
+            self.detach(widget)
         for widget in tuple(self._owned_widgets):
             self._layout.removeWidget(widget)
             widget.deleteLater()

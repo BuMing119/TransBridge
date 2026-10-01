@@ -186,6 +186,9 @@ class ChatWidget(QWidget):
             self._input = self._input_view.input
             self._send_btn = self._input_view.send_button
             self._auto_cb = self._input_view.auto_checkbox
+            from .conversation_presentation import ConversationPresentation
+
+            self._presentation = ConversationPresentation(self)
 
             # ── Ctrl+O 快捷键：展开/折叠思考过程 ──
             self._shortcut_ctrl_o = QShortcut(QKeySequence("Ctrl+O"), self)
@@ -207,6 +210,7 @@ class ChatWidget(QWidget):
         self._shutdown_complete = True
         # 1/ 先关闭 UI-owned bindings/presenters，迟到事件从此被忽略。
         for attr in (
+            "_presentation",
             "_request_binding",
             "_submission",
             "_confirmation_view",
@@ -250,6 +254,9 @@ class ChatWidget(QWidget):
             self._message_list.apply_theme(theme)
         if self._input_view is not None:
             self._input_view.apply_theme(theme)
+        presentation = getattr(self, "_presentation", None)
+        if presentation is not None:
+            presentation.apply_theme(theme)
         if self._confirmation_view is not None:
             self._confirmation_view.apply_theme(theme)
         if self._back_to_bottom_btn is not None:

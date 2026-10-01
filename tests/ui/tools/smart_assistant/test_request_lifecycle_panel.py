@@ -478,9 +478,9 @@ def test_cancel_during_summary_preparation_cannot_start_old_model_round(environm
     finally:
         proceed.set()
     _until(finished.is_set)
-    QTest.qWait(30)
-    _APP.processEvents()
-    assert _requests(environment)[0].status.value == "cancelled"
+    # Cancellation is committed on the serialized application queue, independently
+    # of the summary worker completing. Wait for that receipt rather than 30 ms.
+    _until(lambda: _requests(environment)[0].status.value == "cancelled")
     assert environment.client.calls == []
     assert environment.binding.admission is None
 
@@ -1020,7 +1020,9 @@ def test_stop_generation_requires_explicit_resume_and_retains_goal(environment):
     environment.panel.chat.send_user_message("Pause generation")
     _until(environment.client.answer_started.is_set)
     request_id = _requests(environment)[0].request_id
-    environment.binding.view.stop_generation.emit()
+    environment.panel.chat._presentation.refresh()
+    assert environment.panel.chat._send_btn.text() == "停止"
+    environment.panel.chat._send_btn.click()
     environment.client.release.set()
     QTest.qWait(60)
     assert environment.binding.admission is None

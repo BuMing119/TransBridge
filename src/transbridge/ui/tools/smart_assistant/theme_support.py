@@ -23,19 +23,14 @@ CHIP_STRUCTURE_STYLE = (
     "background-color: palette(button); color: palette(button-text); }"
 )
 INPUT_STRUCTURE_STYLE = (
-    "QTextEdit { border: 1px solid palette(mid); border-radius: 8px; padding: 6px 10px; "
-    "background-color: palette(base); color: palette(text); }"
+    "QTextEdit { border: none; padding: 6px 4px; background-color: palette(base); color: palette(text); }"
 )
 PANEL_STRUCTURE_STYLE = "QDockWidget#SmartAssistantPanel { border: none; background-color: palette(base); }"
 HEADER_STRUCTURE_STYLE = (
-    "QFrame#smartAssistantHeader { border: 2px solid palette(text); border-bottom: 2px solid palette(text); "
-    "border-top-left-radius: 12px; border-top-right-radius: 12px; background-color: palette(base); }"
-)
-BODY_STRUCTURE_STYLE = (
-    "QFrame#smartAssistantBody { border-left: 2px solid palette(text); border-right: 2px solid palette(text); "
-    "border-bottom: 2px solid palette(text); border-bottom-left-radius: 12px; border-bottom-right-radius: 12px; "
+    "QFrame#smartAssistantHeader { border: none; border-bottom: 1px solid palette(mid); "
     "background-color: palette(base); }"
 )
+BODY_STRUCTURE_STYLE = "QFrame#smartAssistantBody { border: none; background-color: palette(base); }"
 TRANSPARENT_STRUCTURE_STYLE = "background: transparent; border: none;"
 
 

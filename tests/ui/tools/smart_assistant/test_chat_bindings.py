@@ -404,12 +404,12 @@ def test_smart_assistant_panel_uses_responsive_dock_constraints(monkeypatch) -> 
     assert panel.objectName() == "SmartAssistantPanel"
     assert "border: none" in panel.styleSheet()
     assert panel.titleBarWidget().accessibleName() == "智能助手标题栏"
-    assert "border: 2px solid palette(text)" in panel.titleBarWidget().styleSheet()
+    assert panel.titleBarWidget().height() == 52
+    assert "border-bottom: 1px solid palette(mid)" in panel.titleBarWidget().styleSheet()
     assert container.objectName() == "smartAssistantBody"
-    assert "border-left: 2px solid palette(text)" in container.styleSheet()
-    assert "border-bottom: 2px solid palette(text)" in container.styleSheet()
+    assert "border: none" in container.styleSheet()
     assert panel.titleBarWidget()._model._value.full_text == "test-model"
-    assert "已配置" in panel.titleBarWidget()._status.text()
+    assert "已配置" in panel.titleBarWidget().accessibleDescription()
     assert panel.titleBarWidget()._minimize_button.accessibleName() == "最小化智能助手"
     assert not panel.titleBarWidget()._minimize_button.icon().isNull()
     assert right_splitter.sizes()[0] > right_splitter.sizes()[1]

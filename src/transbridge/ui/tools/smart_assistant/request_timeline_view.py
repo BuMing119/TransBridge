@@ -5,8 +5,9 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 import json
 import logging
+from threading import Lock
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QObject, Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import QDialog, QHBoxLayout, QLabel, QListWidget, QPlainTextEdit, QPushButton, QVBoxLayout
 
 logger = logging.getLogger(__name__)
@@ -99,6 +100,38 @@ def format_event(event):
     return f"{event.get('timestamp', '')} · {origin}\n{title}{change}"
 
 
+class _TimelineReader(QObject):
+    """Deliver background reads without retaining or invoking a deleted dialog."""
+
+    loaded = pyqtSignal(object)
+
+    def __init__(self, load_page):
+        super().__init__(QCoreApplication.instance())
+        self._load_page = load_page
+        self._closed = False
+        self._lock = Lock()
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="request-timeline")
+
+    def load(self, sequence):
+        self._executor.submit(self._load_page, sequence).add_done_callback(self._complete)
+
+    def _complete(self, future):
+        # QObject deletion runs on the GUI thread; shutdown marks the reader
+        # closed before scheduling deletion so a late Future never touches Qt.
+        with self._lock:
+            if not self._closed:
+                self.loaded.emit(future)
+
+    @pyqtSlot()
+    def shutdown(self):
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+        self._executor.shutdown(wait=False, cancel_futures=True)
+        self.deleteLater()
+
+
 class RequestTimelineView(QDialog):
     loaded = pyqtSignal(object)
 
@@ -107,12 +140,11 @@ class RequestTimelineView(QDialog):
         self.setWindowTitle("请求过程" if request_only else "会话过程")
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.resize(640, 520)
-        self._load_page = load_page
         self._sequence = 0
         self._events = []
         self._closed = False
         self._busy = False
-        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="request-timeline")
+        self._reader = _TimelineReader(load_page)
         layout = QVBoxLayout(self)
         self.status = QLabel("正在读取已保存的过程……")
         self.status.setTextFormat(Qt.TextFormat.PlainText)
@@ -138,10 +170,10 @@ class RequestTimelineView(QDialog):
         close.clicked.connect(self.close)
         actions.addWidget(close)
         layout.addLayout(actions)
+        self._reader.loaded.connect(self.loaded, Qt.ConnectionType.QueuedConnection)
         self.loaded.connect(self._receive)
         self.finished.connect(self._shutdown)
-        executor = self._executor
-        self.destroyed.connect(lambda: executor.shutdown(wait=False, cancel_futures=True))
+        self.destroyed.connect(self._reader.shutdown)
         self.load_next()
 
     def load_next(self):
@@ -150,16 +182,9 @@ class RequestTimelineView(QDialog):
         self._busy = True
         self.more.setEnabled(False)
         self.status.setText("正在读取已保存的过程……")
-        future = self._executor.submit(self._load_page, self._sequence)
+        self._reader.load(self._sequence)
 
-        def complete(result):
-            try:
-                self.loaded.emit(result)
-            except RuntimeError:
-                logger.debug("Timeline view closed before its read completed")
-
-        future.add_done_callback(complete)
-
+    @pyqtSlot(object)
     def _receive(self, future):
         if self._closed:
             return
@@ -196,4 +221,4 @@ class RequestTimelineView(QDialog):
 
     def _shutdown(self):
         self._closed = True
-        self._executor.shutdown(wait=False, cancel_futures=True)
+        self._reader.shutdown()

@@ -18,10 +18,11 @@ class _HeaderSummary(QWidget):
     def __init__(self, caption: str, value: str, *, theme: SmartAssistantTheme) -> None:
         super().__init__()
         self._theme = theme
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 5, 10, 5)
-        layout.setSpacing(0)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
         self._caption = QLabel(caption)
+        self._caption.setFixedWidth(32)
         self._caption.setFont(QFont("Microsoft YaHei", 8))
         self._value = ElidedLabel(value)
         self._value.setFont(QFont("Microsoft YaHei", 9, QFont.Weight.DemiBold))
@@ -35,7 +36,7 @@ class _HeaderSummary(QWidget):
 
     def apply_theme(self, theme: SmartAssistantTheme) -> None:
         self._theme = theme
-        theme.apply_surface(self, alternate=True)
+        theme.apply_surface(self)
         theme.apply_semantic(self._caption, "muted")
         theme.apply_semantic(self._value, "default")
 
@@ -55,7 +56,7 @@ class AssistantPanelHeader(QFrame):
         self.setObjectName("smartAssistantHeader")
         self.setStyleSheet(HEADER_STRUCTURE_STYLE)
         self.setAccessibleName("智能助手标题栏")
-        self.setFixedHeight(72)
+        self.setFixedHeight(52)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(18, 8, 10, 8)
@@ -69,21 +70,15 @@ class AssistantPanelHeader(QFrame):
 
         brand = QVBoxLayout()
         brand.setSpacing(0)
-        self._title = QLabel("TransBridge 智能助手")
-        self._title.setFont(QFont("Microsoft YaHei", 12, QFont.Weight.Bold))
-        self._status = QLabel("○  待配置")
-        self._status.setFont(QFont("Microsoft YaHei", 8))
+        self._title = ElidedLabel("TransBridge · 智能助手")
+        self._title.setFont(QFont("Microsoft YaHei", 10, QFont.Weight.DemiBold))
         brand.addWidget(self._title)
-        brand.addWidget(self._status)
-        layout.addLayout(brand)
-        layout.addStretch(1)
+        layout.addLayout(brand, 1)
 
-        self._mode = _HeaderSummary("工作模式", "翻译协作", theme=self._theme)
-        self._model = _HeaderSummary("当前模型", "模型未配置", theme=self._theme)
-        self._mode.setFixedWidth(126)
-        self._model.setFixedWidth(150)
-        layout.addWidget(self._mode)
-        layout.addWidget(self._model)
+        self._model = _HeaderSummary("模型", "模型未配置", theme=self._theme)
+        self._model.setMinimumWidth(0)
+        self._model.setMaximumWidth(220)
+        layout.addWidget(self._model, 1)
 
         self._minimize_button = QPushButton()
         self._minimize_button.setAccessibleName("最小化智能助手")
@@ -106,15 +101,13 @@ class AssistantPanelHeader(QFrame):
         value = model_name.strip()
         self._model_configured = bool(value and value != "模型未配置")
         self._model.set_value(value or "模型未配置")
-        self._status.setText("●  已配置" if self._model_configured else "○  待配置")
+        self.setAccessibleDescription("模型已配置" if self._model_configured else "模型待配置")
         self.apply_theme(self._theme)
 
     def apply_theme(self, theme: SmartAssistantTheme) -> None:
         self._theme = theme
         theme.apply_surface(self)
         theme.apply_semantic(self._title, "default")
-        theme.apply_semantic(self._status, "success" if self._model_configured else "muted")
-        self._mode.apply_theme(theme)
         self._model.apply_theme(theme)
         for button in (self._minimize_button, self._close_button):
             theme.apply_surface(button, alternate=True)

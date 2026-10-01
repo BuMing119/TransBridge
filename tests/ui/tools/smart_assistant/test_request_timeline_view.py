@@ -2,13 +2,16 @@
 
 from concurrent.futures import Future
 from copy import deepcopy
+import gc
 from threading import Event
 from time import monotonic
 from types import SimpleNamespace
+import weakref
 
+from PyQt6 import sip
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QWidget
 
 from transbridge.ui.tools.smart_assistant.request_list_view import RequestListView
 from transbridge.ui.tools.smart_assistant.request_timeline_view import RequestTimelineView, format_event
@@ -170,6 +173,32 @@ def test_timeline_buttons_are_independent_from_request_control():
     assert timeline == ["", "request-a"]
     assert controls == []
     view.close()
+
+
+def test_parent_destruction_releases_dialog_while_read_is_still_running():
+    started, release, finished = Event(), Event(), Event()
+
+    def load(_sequence):
+        started.set()
+        try:
+            assert release.wait(5)
+            return {"events": [], "next_sequence": 0, "has_more": False}
+        finally:
+            finished.set()
+
+    parent = QWidget()
+    dialog = RequestTimelineView(load, parent=parent)
+    reference = weakref.ref(dialog)
+    try:
+        _until(started.is_set)
+        sip.delete(parent)
+        del dialog
+        gc.collect()
+        assert reference() is None, "background completion must not retain the destroyed dialog"
+    finally:
+        release.set()
+        _until(finished.is_set)
+        _APP.processEvents()
 
 
 def test_management_uses_captured_session_read_only(monkeypatch):

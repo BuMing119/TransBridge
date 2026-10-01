@@ -67,7 +67,6 @@ class RequestBinding(QObject):
         self.view.stop_generation.connect(self.management.stop_generation)
         self.view.retry_input.connect(self.management.retry_inputs)
         self.view.timeline.connect(self.management.show_timeline)
-        facade._main_layout.insertWidget(0, self.view)
         self.view.hide()
 
     @property
@@ -75,6 +74,7 @@ class RequestBinding(QObject):
         return None if self.admission is None else self.admission.stage
 
     def load(self, values):
+        self.view.display(())
         self.interrupt()
         if self.context is not None:
             old_context = self.context
@@ -133,7 +133,9 @@ class RequestBinding(QObject):
                 if self._closed or self.context.session_id != context.session_id:
                     return  # ingress is safely saved for its original Session
                 self.facade._conversation.add_user(text.strip(), message_id=accepted["message_id"])
-                self.facade._message_list.add_bubble(MessageBubble(text.strip(), "user", theme=self.facade._theme))
+                bubble = MessageBubble(text.strip(), "user", theme=self.facade._theme)
+                bubble.setProperty("message_id", accepted["message_id"])
+                self.facade._message_list.add_bubble(bubble)
                 self.wake()
 
             try:
@@ -145,7 +147,10 @@ class RequestBinding(QObject):
 
     def _selection(self):
         ctx = self.facade._ctx
-        selected = getattr(ctx, "selected_entries", ()) or ()
+        selected = getattr(ctx, "selected_entries", None)
+        if selected is None:
+            selected = getattr(ctx, "selected_ids", ())
+        selected = selected or ()
         return {
             "project_revision": getattr(ctx, "project_revision", None),
             "variant_revision": getattr(ctx, "variant_revision", None),

@@ -176,12 +176,24 @@ def test_smart_assistant_input_is_one_bounded_composer_card(qapp) -> None:
 
     assert layout.count() == 1
     assert layout.itemAt(0).widget() is input_view._card
-    assert input_view.input.maximumHeight() == 112
+    assert 0 < input_view.input.minimumHeight() <= input_view.input.maximumHeight() <= 112
     assert input_view.input.sizePolicy().verticalPolicy().name == "Fixed"
     assert input_view.auto_checkbox.isCheckable()
     assert input_view.send_button.text() == "发送"
     assert input_view.send_button.width() == 76
     assert not input_view.send_button.icon().isNull()
+
+    host.resize(600, 400)
+    host.show()
+    qapp.processEvents()
+    height = input_view.input.height()
+    input_view.input.setPlainText("long message\n" * 1000)
+    qapp.processEvents()
+    assert input_view.input.height() == height
+    assert input_view.input.verticalScrollBar().maximum() > 0
+    input_view.close()
+    host.close()
+    host.deleteLater()
 
 
 def test_log_viewer_long_path_keeps_toolbar_stable(qapp) -> None:

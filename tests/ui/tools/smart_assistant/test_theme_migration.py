@@ -206,7 +206,8 @@ def test_quick_actions_reduce_secondary_tools_at_narrow_width(qapp) -> None:
     chips.show()
     chips.resize(220, 32)
     qapp.processEvents()
-    assert [button.isVisible() for button in chips._buttons] == [True, True, False, False, False]
+    assert [button.isVisible() for button in chips._buttons] == [True, False, False, False, False]
+    assert chips._overflow.isVisible()
 
     chips.resize(500, 32)
     qapp.processEvents()

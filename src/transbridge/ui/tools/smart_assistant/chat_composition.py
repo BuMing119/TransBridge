@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import QPushButton, QScrollArea, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QFrame, QPushButton, QScrollArea, QVBoxLayout, QWidget
 
 from transbridge.smart_assistant.conversation_orchestrator import ConversationOrchestrator
 from transbridge.smart_assistant.session_controller import SessionController
@@ -121,6 +121,7 @@ def initialize_message_area(facade) -> None:
     facade._main_layout.setContentsMargins(14, 12, 14, 12)
     facade._main_layout.setSpacing(12)
     facade._scroll = QScrollArea()
+    facade._scroll.setFrameShape(QFrame.Shape.NoFrame)
     facade._scroll.setAccessibleName("消息滚动区域")
     facade._scroll.setWidgetResizable(True)
     facade._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)

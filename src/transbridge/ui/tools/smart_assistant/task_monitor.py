@@ -169,6 +169,7 @@ class TaskMonitorWidget(QWidget):
         self._init_ui()
         self._apply_collapsed_state()
         self.apply_theme(self._theme)
+        self.hide()
 
     def _init_ui(self) -> None:
         main_layout = QVBoxLayout(self)
@@ -218,6 +219,7 @@ class TaskMonitorWidget(QWidget):
             card.apply_theme(theme)
 
     def refresh(self, tasks: list[dict]) -> None:
+        self.setVisible(bool(tasks))
         for card in self._cards:
             self._list_layout.removeWidget(card)
             card.deleteLater()

@@ -52,18 +52,33 @@ class QuickActionsChips(QWidget):
         self._skill_btn.clicked.connect(self._show_skill_menu)
         self._buttons.append(self._skill_btn)
         layout.addWidget(self._skill_btn)
+        self._overflow = QPushButton("更多")
+        self._overflow.setAccessibleName("更多快捷操作")
+        self._overflow.setStyleSheet(CHIP_STRUCTURE_STYLE)
+        self._overflow.clicked.connect(self._show_overflow)
+        layout.addWidget(self._overflow)
+        self._overflow.hide()
         layout.addStretch()
         self.apply_theme(self._theme)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         width = event.size().width()
-        visible_count = 5 if width >= 390 else 4 if width >= 320 else 3 if width >= 240 else 2
+        visible_count = 5 if width >= 430 else 3 if width >= 340 else 2 if width >= 240 else 1
         for index, button in enumerate(self._buttons):
             button.setVisible(index < visible_count)
+        self._overflow.setVisible(visible_count < len(self._buttons))
+
+    def _show_overflow(self) -> None:
+        menu = QMenu(self)
+        for button in self._buttons:
+            if button.isHidden():
+                menu.addAction(button.text(), button.click)
+        menu.exec(self._overflow.mapToGlobal(self._overflow.rect().bottomLeft()))
 
     def apply_theme(self, theme: SmartAssistantTheme) -> None:
         self._theme = theme
+        theme.apply_semantic(self._overflow, "muted", background=True)
         for button in self._buttons:
             theme.apply_semantic(button, "muted", background=True)
             button.setIcon(tabler_icon(button, str(button.property("tbIconName")), 14))
