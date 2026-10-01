@@ -8,6 +8,7 @@ import hashlib
 
 from transbridge.application.contracts import RequestContext
 from transbridge.application.io.identity import EntryRevision, SourceNamespace
+from transbridge.application.io.paratranz_context_order import PARATRANZ_CONTEXT_ORDER_METADATA, context_orders
 from transbridge.application.projects import (
     EntryStatePatch,
     ParaTranzTargetResolver,
@@ -231,7 +232,7 @@ def local_snapshots(context, project_id: int) -> tuple[LocalEntrySnapshot, ...]:
         raise ValueError("当前没有已加载集合")
     scope = f"project:{project_id}"
     output = []
-    for entry in collection:
+    for entry, order in zip(collection, context_orders(tuple(collection)), strict=True):
         refs = tuple(ref for ref in entry.external_refs if ref.system == "paratranz" and ref.scope == scope)
         if len(refs) > 1:
             raise ValueError(f"条目 {entry.key} 有重复远端引用")
@@ -244,6 +245,7 @@ def local_snapshots(context, project_id: int) -> tuple[LocalEntrySnapshot, ...]:
                 entry.context or "",
                 entry.stage,
                 refs[0] if refs else None,
+                context_order=order,
             )
         )
     return tuple(output)
@@ -280,6 +282,9 @@ def replace_local_snapshots(
                     entry_key=item.entry_key,
                     external_refs=remote_ref,
                     revision=item.revision,
+                    metadata=()
+                    if item.context_order is None
+                    else ((PARATRANZ_CONTEXT_ORDER_METADATA, item.context_order),),
                 )
             )
         else:
@@ -301,6 +306,11 @@ def replace_local_snapshots(
                     context=current.context if authoritative else item.context,
                     external_refs=next_refs,
                     revision=current.revision.next() if changed else current.revision,
+                    metadata=current.metadata
+                    if item.context_order is None
+                    else tuple(
+                        sorted({**dict(current.metadata), PARATRANZ_CONTEXT_ORDER_METADATA: item.context_order}.items())
+                    ),
                 )
             )
     candidate = TranslationEntryCollection(entries)

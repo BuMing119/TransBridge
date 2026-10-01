@@ -21,6 +21,8 @@ import json
 from pathlib import Path
 import tempfile
 
+from transbridge.application.contracts import OperationOutcome, RequestContext
+from transbridge.application.io import FormatId, ParatranzJsonAdapter, SourceDescriptor, WriteRequest
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.converter.translation_entry_collection_export import export_to_categorized_json_files
 from transbridge.paratranz.api.paratranz_files_api import ParatranzFilesAPI
@@ -292,7 +294,24 @@ class ParaTranzUploader:
         result = UploadResult()
 
         with tempfile.TemporaryDirectory() as tmp_dir:
-            entries = collection.to_dict()
+            # Map the complete source once, before any 413-driven partitioning.
+            # Child files keep these exact wire records and global order values.
+            source_path = Path(tmp_dir) / "source.json"
+            written = ParatranzJsonAdapter().write(
+                WriteRequest(
+                    SourceDescriptor(str(source_path), source_path.name, media_type="application/json"),
+                    FormatId.JSON_PARATRANZ,
+                    tuple(collection),
+                    0,
+                    RequestContext("single-paratranz-upload"),
+                    new_template=b"",
+                    options=(("context_source_order", True),),
+                )
+            )
+            if written.outcome is not OperationOutcome.COMPLETED:
+                messages = "; ".join(diagnostic.message for diagnostic in written.diagnostics)
+                raise ValueError(messages or "Unable to prepare ParaTranz JSON for upload.")
+            entries = json.loads(source_path.read_text(encoding="utf-8"))
 
             try:
                 existing, _, name_to_files = self._fetch_file_maps(project_id)

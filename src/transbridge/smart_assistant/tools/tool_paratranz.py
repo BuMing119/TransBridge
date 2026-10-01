@@ -8,6 +8,7 @@ from functools import wraps
 import logging
 
 from transbridge.application.io.identity import EntryRevision, SourceNamespace
+from transbridge.application.io.paratranz_context_order import context_orders
 from transbridge.application.ports.paratranz import ParaTranzEntry, ParaTranzProject
 from transbridge.application.projects import (
     ParaTranzProjectBinding,
@@ -145,6 +146,8 @@ def _paratranz_ref(entry, project_id: int):
 
 
 def _local_sync_snapshots(collection, project_id: int, entry_ids=None):
+    all_entries = tuple(collection)
+    orders = dict(zip((entry.identity for entry in all_entries), context_orders(all_entries), strict=True))
     if entry_ids:
         entries = tuple(collection.get(entry_id) for entry_id in entry_ids)
         missing = tuple(entry_id for entry_id, entry in zip(entry_ids, entries, strict=True) if entry is None)
@@ -165,6 +168,7 @@ def _local_sync_snapshots(collection, project_id: int, entry_ids=None):
             entry.context or "",
             entry.stage,
             _paratranz_ref(entry, project_id),
+            context_order=orders[entry.identity],
         )
         for entry in entries
     )

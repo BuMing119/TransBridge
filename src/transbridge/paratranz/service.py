@@ -183,6 +183,36 @@ class ParaTranzService:
             "upsert entry",
         )
 
+    def update_entry_context(
+        self,
+        project_id: int,
+        entry: ParaTranzEntry,
+        *,
+        cancellation: CancellationPort | None = None,
+    ) -> ParaTranzEntry:
+        """Update only context at a confirmed identity; never send translation state."""
+        remote_id = entry.remote_id
+        if isinstance(remote_id, bool) or not isinstance(remote_id, int) or remote_id < 1:
+            raise ValueError("remote_id must be a positive integer")
+        if not isinstance(entry.context, str):
+            raise TypeError("context must be a string")
+        payload = self._strings.update_string(
+            project_id, remote_id, {"context": entry.context}, cancellation=cancellation
+        )
+        if payload is None:
+            return entry
+        result = self._typed(
+            ParaTranzEntry.from_mapping,
+            self._mapping(payload, "update entry context"),
+            "update entry context",
+        )
+        if (result.remote_id, result.key, result.context) != (remote_id, entry.key, entry.context):
+            raise ExternalServiceError(
+                ExternalServiceCategory.INVALID_RESPONSE,
+                "ParaTranz context update response does not match the requested entry or context",
+            )
+        return result
+
     def delete_entry(
         self,
         project_id: int,

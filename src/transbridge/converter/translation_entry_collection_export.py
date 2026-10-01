@@ -11,6 +11,7 @@ from transbridge.application.io import (
     SourceDescriptor,
     WriteRequest,
 )
+from transbridge.application.io.paratranz_context_order import context_orders
 from transbridge.converter.context_categories import EXPORT_CATEGORIES
 from transbridge.converter.plugin_entry_metadata import restore_plugin_source_order
 from transbridge.converter.translation_entry import TranslationEntry
@@ -73,18 +74,28 @@ def export_to_categorized_json_files(
                     categorized_entries[filename].append(entry)
                     break
 
+    # Preserve the existing dialogue ordering before assigning global fallback
+    # positions. Each dialogue group reuses its original collection slots.
+    all_entries = list(collection)
+    positions = {id(entry): index for index, entry in enumerate(all_entries)}
+    for quest_formid, entries in dial_entries.items():
+        restored = restore_plugin_source_order(entries)
+        for previous, replacement in zip(entries, restored, strict=True):
+            all_entries[positions[id(previous)]] = replacement
+        dial_entries[quest_formid] = restored
+    orders = {id(entry): order for entry, order in zip(all_entries, context_orders(all_entries), strict=True)}
+
     # 将普通分类的条目保存到JSON文件
     for filename, entries in categorized_entries.items():
         if entries:  # 只保存非空文件
             file_path = output_dir / filename
-            _write_paratranz_entries(entries, file_path, ensure_ascii=ensure_ascii, indent=indent)
+            _write_paratranz_entries(entries, file_path, ensure_ascii=ensure_ascii, indent=indent, orders=orders)
 
     # 将INFO和DIAL类型的条目保存到单独的JSON文件
     for quest_formid, entries in dial_entries.items():
         filename = _dial_filename(quest_formid, collection)
         file_path = output_dir / filename
-        source_ordered_entries = restore_plugin_source_order(entries)
-        _write_paratranz_entries(source_ordered_entries, file_path, ensure_ascii=ensure_ascii, indent=indent)
+        _write_paratranz_entries(entries, file_path, ensure_ascii=ensure_ascii, indent=indent, orders=orders)
 
 
 def _write_paratranz_entries(
@@ -93,6 +104,7 @@ def _write_paratranz_entries(
     *,
     ensure_ascii: bool,
     indent: int,
+    orders: dict[int, int],
 ) -> None:
     """Compatibility facade over the V2 offline ParaTranz writer."""
     result = ParatranzJsonAdapter().write(
@@ -103,7 +115,12 @@ def _write_paratranz_entries(
             0,
             RequestContext("legacy-categorized-paratranz-export"),
             new_template=b"",
-            options=(("ensure_ascii", ensure_ascii), ("indent", indent)),
+            options=(
+                ("ensure_ascii", ensure_ascii),
+                ("indent", indent),
+                ("context_source_order", True),
+                ("context_order_values", tuple(orders[id(entry)] for entry in entries)),
+            ),
         )
     )
     if result.outcome is not OperationOutcome.COMPLETED:

@@ -3,6 +3,7 @@
 from dataclasses import replace
 
 from transbridge.application.io.identity import ExternalEntryRef
+from transbridge.application.io.paratranz_context_order import context_orders, format_ordered_context
 from transbridge.application.ports.paratranz import ParaTranzEntry
 from transbridge.application.tasks import TaskCancelled
 
@@ -13,6 +14,10 @@ from .base import ToolResult
 def upload_entries(args, ctx, collection, client, project_id, cancellation):
     target = ProjectToolTarget.capture(ctx)
     target.check()
+    source_entries = tuple(collection)
+    orders = {
+        entry.identity: order for entry, order in zip(source_entries, context_orders(source_entries), strict=True)
+    }
     requested = args.get("entry_ids")
     entries = [collection.get(key) for key in requested] if requested is not None else list(collection)
     if any(entry is None for entry in entries):
@@ -43,7 +48,7 @@ def upload_entries(args, ctx, collection, client, project_id, cancellation):
                     entry.key,
                     entry.original,
                     entry.translation or "",
-                    entry.context or "",
+                    format_ordered_context(entry.context, orders[entry.identity]) or "",
                     entry.stage,
                 ),
                 force_overwrite=bool(args.get("force_overwrite", False)),

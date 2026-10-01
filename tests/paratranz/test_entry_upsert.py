@@ -157,11 +157,12 @@ def test_assistant_upload_reuses_only_the_target_projects_known_identity(monkeyp
 
     result = tool_paratranz._tool_upload_entries({"project_id": 7, "force_overwrite": True}, context)
 
-    assert result.success
     if reference_project == 7:
+        assert result.success
         assert result.data["uploaded"] == 1
         before[801]["translation"] = "new-801"
     else:
+        assert not result.success
         assert result.data["uploaded"] == 0
         assert "duplicate key" in result.data["failed_items"][0]["error"]
     assert strings.records == before

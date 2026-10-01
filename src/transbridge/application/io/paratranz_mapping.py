@@ -11,6 +11,11 @@ from transbridge.application.contracts import Diagnostic
 
 from .identity import EntryKey, ExternalEntryRef, SourceNamespace
 from .mutation import VALID_STAGES
+from .paratranz_context_order import (
+    PARATRANZ_CONTEXT_ORDER_METADATA,
+    format_ordered_context,
+    parse_ordered_context,
+)
 
 PARATRANZ_SYSTEM = "paratranz"
 PARATRANZ_CORE_FIELDS = frozenset({"id", "key", "original", "translation", "stage", "context"})
@@ -66,16 +71,20 @@ class ParatranzEntry:
         """Project the transport record without using its remote ID as local identity."""
         from transbridge.converter.translation_entry import TranslationEntry
 
+        context, order = parse_ordered_context(self.context)
+        metadata = ((PARATRANZ_EXTENSION_METADATA, _json_clone(dict(self.extensions))),)
+        if order is not None:
+            metadata += ((PARATRANZ_CONTEXT_ORDER_METADATA, order),)
         return TranslationEntry(
             id=self.key,
             key=self.key,
             original=self.original,
             translation=self.translation,
             stage=self.stage,
-            context=self.context,
+            context=context,
             entry_key=self.entry_key,
             external_refs=self.external_refs,
-            metadata=((PARATRANZ_EXTENSION_METADATA, _json_clone(dict(self.extensions))),),
+            metadata=metadata,
         )
 
 
@@ -260,6 +269,9 @@ def paratranz_record_from_entry(entry: Any, *, preserve_extensions: bool = True)
     stage = getattr(entry, "stage", 0)
     context = getattr(entry, "context", None)
     ParatranzEntry(entry_key, original, translation, stage, context)
+    order = dict(getattr(entry, "metadata", ())).get(PARATRANZ_CONTEXT_ORDER_METADATA)
+    if order is not None:
+        context = format_ordered_context(context, order)
 
     references = tuple(
         reference for reference in getattr(entry, "external_refs", ()) if reference.system == PARATRANZ_SYSTEM

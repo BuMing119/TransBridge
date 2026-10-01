@@ -6,6 +6,7 @@ from collections import Counter, defaultdict
 from collections.abc import Sequence
 
 from transbridge.application.io.identity import EntryKey
+from transbridge.application.io.paratranz_context_order import format_ordered_context
 
 from .models import (
     ConflictPolicy,
@@ -195,10 +196,23 @@ def _plan_item(
                 policy,
             )
         return _item(key, SyncAction.DELETE_LOCAL, local_summary, remote_summary, reference, "remote_tombstone", policy)
+    same_content = local_summary.content_identity() == remote_summary.content_identity()
+    if (
+        same_content
+        and operation is not SyncOperation.DOWNLOAD
+        and local.context_order is not None
+        and local.context_order != remote.context_order
+        and format_ordered_context(local.context, local.context_order) != local.context
+    ):
+        if remote.external_ref is None or remote.external_ref.opaque_id is None:
+            return _conflict(key, local, remote, policy, "remote_id_missing")
+        return _item(
+            key, SyncAction.UPDATE_REMOTE, remote_summary, local_summary, reference, "context_order_changed", policy
+        )
     unchanged = (
         (local.translation, local.stage, local.external_ref) == (remote.translation, remote.stage, remote.external_ref)
         if local_state_only
-        else local_summary.content_identity() == remote_summary.content_identity()
+        else same_content
     )
     if unchanged:
         return _item(key, SyncAction.SKIP, remote_summary, local_summary, reference, "unchanged", policy)
@@ -243,6 +257,7 @@ def _local_payload(entry: LocalEntrySnapshot) -> dict:
     return {
         "entry_key": entry.entry_key.to_dict(),
         "revision": entry.revision.value,
+        "context_order": entry.context_order,
         "original": entry.original,
         "translation": entry.translation,
         "context": entry.context,
@@ -256,6 +271,7 @@ def _remote_payload(entry: RemoteEntrySnapshot) -> dict:
     return {
         "entry_key": entry.entry_key.to_dict(),
         "remote_revision": entry.remote_revision,
+        "context_order": entry.context_order,
         "original": entry.original,
         "translation": entry.translation,
         "context": entry.context,

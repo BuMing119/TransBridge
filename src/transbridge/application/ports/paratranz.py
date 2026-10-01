@@ -161,6 +161,14 @@ class ParaTranzPort(Protocol):
         cancellation: CancellationPort | None = None,
     ) -> ParaTranzEntry: ...
 
+    def update_entry_context(
+        self,
+        project_id: int,
+        entry: ParaTranzEntry,
+        *,
+        cancellation: CancellationPort | None = None,
+    ) -> ParaTranzEntry: ...
+
     def delete_entry(
         self,
         project_id: int,

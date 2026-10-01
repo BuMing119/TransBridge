@@ -16,6 +16,7 @@ from transbridge.application.contracts import (
     OperationResult,
 )
 from transbridge.application.io.identity import EntryRevision, ExternalEntryRef, SourceNamespace
+from transbridge.application.io.paratranz_context_order import format_ordered_context
 from transbridge.application.io.publish import CommitDecision, PublishCommitGuard
 from transbridge.application.ports.paratranz import (
     CancellationPort,
@@ -242,7 +243,7 @@ class ParaTranzSyncExecutor:
                 continue
             try:
                 _check_cancelled(request.cancellation)
-                result = self._execute_remote(request, item, local_map)
+                result = self._execute_remote(request, item, local_map, remote_map)
                 outcome = _outcome(
                     item_id,
                     item,
@@ -337,6 +338,7 @@ class ParaTranzSyncExecutor:
         request: ExecuteSyncRequest,
         item: SyncPlanItem,
         local_map: dict,
+        remote_map: dict,
     ) -> tuple[ExternalEntryRef | None, str | None]:
         if item.action is SyncAction.DELETE_REMOTE:
             reference = item.external_ref
@@ -353,6 +355,27 @@ class ParaTranzSyncExecutor:
             raise ValueError("local source entry is missing")
         reference = item.external_ref if item.action is SyncAction.UPDATE_REMOTE else None
         remote_id = None if reference is None else reference.opaque_id
+        remote = remote_map.get(item.entry_key)
+        if item.reason == "context_order_changed":
+            if remote is None or local.context_order is None:
+                raise ValueError("context order refresh requires complete local and remote snapshots")
+            result = self._remote.update_entry_context(
+                request.project_id,
+                ParaTranzEntry(
+                    remote_id,
+                    remote.entry_key.local_key,
+                    remote.original,
+                    remote.translation,
+                    format_ordered_context(remote.context, local.context_order),
+                    remote.stage,
+                ),
+                cancellation=request.cancellation,
+            )
+            return reference, _remote_revision(result)
+        order = local.context_order
+        if order is None and remote is not None:
+            order = remote.context_order
+        context = local.context if order is None else format_ordered_context(local.context, order)
         result = self._remote.upsert_entry(
             request.project_id,
             ParaTranzEntry(
@@ -360,7 +383,7 @@ class ParaTranzSyncExecutor:
                 local.entry_key.local_key,
                 local.original,
                 local.translation,
-                local.context,
+                context,
                 local.stage,
             ),
             force_overwrite=item.action is SyncAction.UPDATE_REMOTE,
@@ -397,6 +420,7 @@ class ParaTranzSyncExecutor:
                     remote.context,
                     remote.stage,
                     remote.external_ref,
+                    context_order=remote.context_order,
                 )
             _check_cancelled(request.cancellation)
             expected_hash, _ = self._planner.snapshot_hashes(request.current_local_entries, ())

@@ -67,6 +67,7 @@ class LocalEntrySnapshot:
     stage: int = 0
     external_ref: ExternalEntryRef | None = None
     deleted: bool = False
+    context_order: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.entry_key, EntryKey):
@@ -74,6 +75,7 @@ class LocalEntrySnapshot:
         if not isinstance(self.revision, EntryRevision):
             raise TypeError("local snapshot revision must be an EntryRevision")
         _validate_content(self.original, self.translation, self.context, self.stage, self.deleted)
+        _validate_context_order(self.context_order)
         object.__setattr__(self, "external_ref", _clean_ref(self.external_ref))
 
 
@@ -87,6 +89,7 @@ class RemoteEntrySnapshot:
     stage: int = 0
     external_ref: ExternalEntryRef | None = None
     deleted: bool = False
+    context_order: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.entry_key, EntryKey):
@@ -94,7 +97,13 @@ class RemoteEntrySnapshot:
         if not isinstance(self.remote_revision, str) or not self.remote_revision.strip():
             raise ValueError("remote snapshot revision must be a non-empty string")
         _validate_content(self.original, self.translation, self.context, self.stage, self.deleted)
+        _validate_context_order(self.context_order)
         object.__setattr__(self, "external_ref", _clean_ref(self.external_ref))
+
+
+def _validate_context_order(value: int | None) -> None:
+    if value is not None and (isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 99_999_999):
+        raise ValueError("context order must be an integer between 0 and 99,999,999")
 
 
 def _validate_content(
@@ -120,6 +129,7 @@ class EntrySummary:
     stage: int
     deleted: bool
     revision: str
+    context_order: int | None = None
 
     @classmethod
     def from_local(cls, entry: LocalEntrySnapshot) -> EntrySummary:
@@ -130,6 +140,7 @@ class EntrySummary:
             entry.stage,
             entry.deleted,
             str(entry.revision.value),
+            entry.context_order,
         )
 
     @classmethod
@@ -141,6 +152,7 @@ class EntrySummary:
             entry.stage,
             entry.deleted,
             entry.remote_revision,
+            entry.context_order,
         )
 
     def content_identity(self) -> tuple[str, str, str, int, bool]:
@@ -160,6 +172,7 @@ class EntrySummary:
             "stage": self.stage,
             "deleted": self.deleted,
             "revision": self.revision,
+            "context_order": self.context_order,
         }
 
 

@@ -34,7 +34,9 @@ from .contracts import (
     WriteRequest,
 )
 from .identity import SourceNamespace
+from .paratranz_context_order import context_orders, format_ordered_context, validate_context_order
 from .paratranz_mapping import (
+    ParatranzEntry,
     map_paratranz_records,
     paratranz_record_from_entry,
 )
@@ -303,12 +305,31 @@ class ParatranzJsonAdapter:
         if not isinstance(preserve_extensions, bool):
             return [], (Diagnostic("PARATRANZ_OPTION_INVALID", "preserve_extensions must be boolean."),), (-1,)
 
+        ordered_context = options.get("context_source_order")
+        if ordered_context is not None and not isinstance(ordered_context, bool):
+            return [], (Diagnostic("PARATRANZ_OPTION_INVALID", "context_source_order must be boolean."),), (-1,)
+        try:
+            orders = options.get("context_order_values")
+            if orders is not None:
+                if not isinstance(orders, (tuple, list)) or len(orders) != len(request.entries):
+                    raise ValueError("context_order_values must match the entry count.")
+                for order in orders:
+                    validate_context_order(order)
+            else:
+                orders = context_orders(request.entries)
+        except (TypeError, ValueError) as exc:
+            return [], (Diagnostic("PARATRANZ_CONTEXT_ORDER_INVALID", str(exc)),), (-1,)
+
         records: dict[int, dict[str, object]] = {}
         diagnostics: list[Diagnostic] = []
         failed: set[int] = set()
         for index, entry in enumerate(request.entries):
             try:
                 records[index] = paratranz_record_from_entry(entry, preserve_extensions=preserve_extensions)
+                if ordered_context is True or (ordered_context is None and not isinstance(entry, ParatranzEntry)):
+                    context = records[index].get("context")
+                    if context is not None:
+                        records[index]["context"] = format_ordered_context(context, orders[index])
             except (TypeError, ValueError) as exc:
                 diagnostics.append(
                     Diagnostic(
