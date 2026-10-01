@@ -179,6 +179,74 @@ def test_stale_state_never_reaches_model(budget):
     assert not fake.calls
 
 
+@pytest.mark.parametrize("blank", ["", " \t\n", "\u3000"])
+@pytest.mark.parametrize("field", ["unresolved_questions", "suggested_next_steps", "decisions_with_sources"])
+def test_summary_rejects_blank_entries_even_alongside_valid_content(field, blank):
+    sources = (item("source"),)
+    data = json.loads(semantic(sources))
+    data[field] = (
+        [{"statement": blank, "source_ids": ["source"]}]
+        if field == "decisions_with_sources"
+        else ["A real question or suggestion", blank]
+    )
+    with pytest.raises(PreparationWait, match="COMPACTION_INVALID_OUTPUT"):
+        validate_summary(encode(data), sources)
+
+
+@pytest.mark.parametrize(
+    "field", ["discussion_context", "unresolved_questions", "suggested_next_steps", "decisions_with_sources"]
+)
+def test_summary_accepts_content_in_any_one_field_without_rewriting_it(field):
+    data = {
+        "discussion_context": "",
+        "decisions_with_sources": [],
+        "unresolved_questions": [],
+        "suggested_next_steps": [],
+    }
+    data[field] = (
+        [{"statement": " Keep ordering. ", "source_ids": ["source"]}]
+        if field == "decisions_with_sources"
+        else " Keep ordering. "
+        if field == "discussion_context"
+        else [" Keep ordering. "]
+    )
+    text = encode(data)
+    assert validate_summary(text, (item("source"),)) == text
+
+
+@pytest.mark.parametrize("repair_succeeds", [False, True])
+def test_blank_summary_never_replaces_history_before_valid_repair(budget, repair_succeeds):
+    blank = encode({
+        "discussion_context": "",
+        "decisions_with_sources": [],
+        "unresolved_questions": ["   "],
+        "suggested_next_steps": [],
+    })
+
+    class BlankSummary(Summarizer):
+        def __call__(self, items, **kwargs):
+            self.calls.append(items)
+            return blank
+
+        def repair(self, items, **kwargs):
+            self.calls.append(items)
+            return semantic(items) if repair_succeeds else blank
+
+    original = epoch([item(str(n)) for n in range(8)] + [item("user", "continue", "user")])
+    before = original.to_dict()
+    fake = BlankSummary()
+    if repair_succeeds:
+        result = compact(original, budget, [], {}, fake)
+        assert result.summaries and all(segment.text != blank for segment in result.summaries)
+    else:
+        with pytest.raises(PreparationWait, match="COMPACTION_INVALID_OUTPUT") as error:
+            compact(original, budget, [], {}, fake)
+        assert not hasattr(error.value, "candidate_epoch")
+    assert len(fake.calls) == 2
+    assert fake.calls[0] == fake.calls[1]
+    assert original.to_dict() == before
+
+
 def test_required_state_accepts_json_equivalent_request_item_tuples(budget):
     from transbridge.application.assistant_requests.models import RequestItem
 

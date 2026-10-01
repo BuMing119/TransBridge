@@ -26,6 +26,9 @@ def validate_summary(text, items):
         valid = valid and isinstance(decisions, list)
     if not valid:
         raise PreparationWait("COMPACTION_INVALID_OUTPUT", "摘要字段或类型不符合四字段语义合同。")
+    for field in ("unresolved_questions", "suggested_next_steps"):
+        if any(not entry.strip() for entry in value[field]):
+            raise PreparationWait("COMPACTION_INVALID_OUTPUT", "摘要问题和建议不能是空白文本；没有内容时请使用空列表。")
     allowed = {i.item_id for i in items}
     if not (
         value["discussion_context"].strip()
@@ -39,11 +42,14 @@ def validate_summary(text, items):
             not isinstance(decision, dict)
             or set(decision) != {"statement", "source_ids"}
             or not isinstance(decision["statement"], str)
+            or not decision["statement"].strip()
             or not isinstance(decision["source_ids"], list)
             or not decision["source_ids"]
             or any(not isinstance(s, str) or s not in allowed for s in decision["source_ids"])
         ):
-            raise PreparationWait("COMPACTION_INVALID_OUTPUT", "摘要决定必须引用本次选中原文的准确标识。")
+            raise PreparationWait(
+                "COMPACTION_INVALID_OUTPUT", "摘要决定必须包含非空白陈述，并引用本次选中原文的准确标识。"
+            )
     return text
 
 
