@@ -10,6 +10,7 @@ from .parse_coordinator import ParseCoordinator
 from .project_coordinator import ProjectCoordinator
 from .project_management_coordinator import ProjectManagementCoordinator
 from .project_transfer_coordinator import ProjectTransferCoordinator
+from .source_update_coordinator import SourceUpdateCoordinator
 from .variant_coordinator import VariantCoordinator
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "ProjectManagementCoordinator",
     "VariantCoordinator",
     "ProjectTransferCoordinator",
+    "SourceUpdateCoordinator",
 ]

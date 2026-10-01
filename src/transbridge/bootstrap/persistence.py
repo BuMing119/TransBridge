@@ -22,6 +22,7 @@ from transbridge.application.projects import (
     ProjectSourcePreparationPort,
 )
 from transbridge.application.projects.snapshots import ProjectSnapshotCommands
+from transbridge.application.projects.source_update import ProjectSourceUpdateService
 from transbridge.application.sessions import GuiSessionCommandFacade, SessionLifecycleService
 from transbridge.persistence.current_project import CurrentProjectOpener
 from transbridge.persistence.project_archive import ProjectArchiveService
@@ -40,6 +41,7 @@ from transbridge.persistence.session_lifecycle import (
     SessionUnitOfWorkFactory,
     V2SessionSnapshotRepository,
 )
+from transbridge.persistence.source_update_store import ProjectSourceUpdateStore
 from transbridge.persistence.v2 import (
     OsPersistenceFilesystem,
     PersistenceFilesystemPort,
@@ -77,6 +79,7 @@ class PersistenceV2Services:
     current_project_opener: CurrentProjectOpener
     project_snapshots: ProjectSnapshotCommands
     project_archive: ProjectArchiveService
+    project_source_updates: ProjectSourceUpdateService
     session_lifecycle: SessionLifecycleService
     gui_session_commands: GuiSessionCommandFacade
     project_projection: ProjectionStore
@@ -103,6 +106,7 @@ def build_persistence_v2_services(
     adapter = filesystem or OsPersistenceFilesystem()
     projects = ProjectRepository(resolved_root, adapter)
     variants = VariantRepository(resolved_root, adapter)
+    source_update_store = ProjectSourceUpdateStore(resolved_root, adapter, projects, variants)
     sessions = SessionRepository(resolved_root, adapter)
     session_catalog = SessionCatalogRepository(resolved_root, adapter)
     baselines = BaselineRegistry()
@@ -172,6 +176,13 @@ def build_persistence_v2_services(
     )
     project_source_mutations = ProjectSourceMutationService(
         project_lifecycle,
+        baselines,
+        resolved_source_preparer,
+    )
+    project_source_updates = ProjectSourceUpdateService(
+        project_lifecycle,
+        projects,
+        source_update_store,
         baselines,
         resolved_source_preparer,
     )
@@ -248,6 +259,7 @@ def build_persistence_v2_services(
         current_project_opener=current_project_opener,
         project_snapshots=project_snapshots,
         project_archive=project_archive,
+        project_source_updates=project_source_updates,
         session_lifecycle=session_lifecycle,
         gui_session_commands=gui_session_commands,
         project_projection=project_projection,

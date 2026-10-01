@@ -539,12 +539,18 @@ class ProjectLifecycleService:
         expected_project_revision: int,
         expected_variant_revision: int,
         before_publish: Callable[[], None] | None = None,
+        persisted: bool = False,
+        expected_generation: int | None = None,
     ) -> OperationResult[dict[str, Any]]:
         """Atomically replace active Project and Variant working-copy snapshots."""
 
         from transbridge.persistence.v2.variant import VariantAggregate
 
         with self._lock:
+            if expected_generation is not None and expected_generation != self._generation:
+                return _failed(
+                    "SOURCE_UPDATE_STALE", "预览后工程状态已变化，请重新预览。", ErrorCategory.CONFLICT, context
+                )
             active = self._active
             if active is None or active.variant is None or active.formal_variant_ref is None:
                 return _failed(
@@ -620,7 +626,15 @@ class ProjectLifecycleService:
                 return _from_exception(exc, "ACTIVE_CONTENT_CHANGE_FAILED", context)
 
             old = active
-            self._active = replace(active, project=project, variant=candidate_variant)
+            self._active = replace(
+                active,
+                project=project,
+                variant=candidate_variant,
+                persisted_project_revision=project.envelope.revision
+                if persisted
+                else active.persisted_project_revision,
+                persisted_variant_revision=variant.revision if persisted else active.persisted_variant_revision,
+            )
             self._generation += 1
             diagnostics: list[Diagnostic] = []
             event = LifecycleEvent(
@@ -645,6 +659,16 @@ class ProjectLifecycleService:
                 diagnostics=tuple(diagnostics),
                 run_id=context.run_id,
             )
+
+    def commit_detached_content(self, project_ref, expected_generation: int, publish: Callable[[], None]) -> None:
+        """Serialize an inactive Project mutation against activation and prepared transitions."""
+        with self._lock:
+            if expected_generation != self._generation or (
+                self._active is not None and self._active.project_ref == project_ref
+            ):
+                raise DomainError(ErrorCategory.CONFLICT, "SOURCE_UPDATE_STALE", "预览后工程状态已变化，请重新预览。")
+            publish()
+            self._generation += 1
 
     def commit_project_update(
         self,

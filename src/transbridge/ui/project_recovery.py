@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt
+from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -56,6 +56,8 @@ class _SavedEntriesModel(QAbstractTableModel):
 
 
 class ProjectRecoveryDialog(QDialog):
+    source_update_requested = pyqtSignal()
+
     def __init__(self, recovery: ProjectRecoverySnapshot, parent=None) -> None:
         super().__init__(parent)
         configure_dialog(self)
@@ -66,7 +68,7 @@ class ProjectRecoveryDialog(QDialog):
         layout = QVBoxLayout(self)
         notice = QLabel(
             "来源文件暂不可用或已变化。这里显示已保存的译文，不会更改当前工程或覆盖文件。\n"
-            "恢复原始来源后，可重新检查并打开工程继续编辑。原始正文未保存在版本中，因此不在此推测显示。",
+            "可更新源文件并迁移已保存译文，或恢复原始来源后重新检查。原始正文未保存在版本中，因此不在此推测显示。",
             self,
         )
         notice.setTextFormat(Qt.TextFormat.PlainText)
@@ -105,6 +107,9 @@ class ProjectRecoveryDialog(QDialog):
             lambda: self.copy_button.setEnabled(self.table.selectionModel().hasSelection())
         )
         retry = buttons.addButton("重新检查来源", QDialogButtonBox.ButtonRole.AcceptRole)
+        self.update_source_button = buttons.addButton("更新源文件…", QDialogButtonBox.ButtonRole.ActionRole)
+        self.update_source_button.setAutoDefault(False)
+        self.update_source_button.clicked.connect(self.source_update_requested.emit)
         retry.setAutoDefault(False)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)

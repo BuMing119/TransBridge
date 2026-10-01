@@ -324,6 +324,11 @@ class ProjectCoordinator:
                     on_failure("PROJECT_SOURCE_RECOVERY_AVAILABLE", "来源不可用，已打开只读恢复视图。")
                 self._host.show_message(f"项目「{recovery.name}」已打开只读恢复视图，当前工程保持不变")
                 dialog = ProjectRecoveryDialog(recovery, self._host)
+                source_updates = getattr(self._host, "source_update_coordinator", None)
+                if source_updates is not None:
+                    dialog.source_update_requested.connect(lambda: source_updates.start_recovery(recovery))
+                else:
+                    dialog.update_source_button.setEnabled(False)
                 self._recovery_dialog = dialog
                 dialog.accepted.connect(
                     lambda: QTimer.singleShot(0, lambda: self.open_project_path(recovery.project_path))

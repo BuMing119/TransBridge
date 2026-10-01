@@ -89,6 +89,14 @@ msgstr ""
 msgid "翻译词典…"
 msgstr ""
 
+#: ui/shell/action_catalog.py
+msgid "搜索历史翻译与术语…"
+msgstr ""
+
+#: ui/shell/action_catalog.py
+msgid "按原文或译文搜索所有已保存的本地翻译与术语"
+msgstr ""
+
 #: ui/shell/menu_builder.py
 msgid "检查翻译问题"
 msgstr ""
@@ -99,6 +107,10 @@ msgstr ""
 
 #: ui/shell/action_catalog.py
 msgid "为当前工程添加插件…"
+msgstr ""
+
+#: ui/shell/action_catalog.py
+msgid "更新源文件…"
 msgstr ""
 
 #: ui/shell/menu_builder.py

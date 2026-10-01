@@ -13,6 +13,7 @@ def _source(relative: str) -> str:
 _MUTATION_FILES = (
     "smart_assistant/tools/tool_editor.py",
     "smart_assistant/tools/types.py",
+    "smart_assistant/tools/projection_restore.py",
     "ui/operations/production_support.py",
     "ui/operations/authoritative_batch_download.py",
     "ui/tools/ai_translator/task_session.py",
@@ -27,8 +28,8 @@ _ALLOWED_PROJECTION_WRITES = {
     ("smart_assistant/tools/tool_editor.py", "edit_translation", "translation"),
     ("smart_assistant/tools/tool_editor.py", "edit_translation", "stage"),
     ("smart_assistant/tools/tool_editor.py", "set_stage", "stage"),
-    ("smart_assistant/tools/types.py", "rollback_entry_states.restore", "translation"),
-    ("smart_assistant/tools/types.py", "rollback_entry_states.restore", "stage"),
+    ("smart_assistant/tools/projection_restore.py", "restore_entry_projection.restore", "translation"),
+    ("smart_assistant/tools/projection_restore.py", "restore_entry_projection.restore", "stage"),
     ("ui/operations/production_support.py", "replace_local_snapshots", "collection"),
     ("ui/operations/authoritative_batch_download.py", "publish", "collection"),
     ("ui/tools/ai_translator/task_session.py", "mark_completed", "collection"),

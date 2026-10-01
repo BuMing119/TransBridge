@@ -10,6 +10,7 @@ from .coordinators import (
     ProjectCoordinator,
     ProjectManagementCoordinator,
     ProjectTransferCoordinator,
+    SourceUpdateCoordinator,
     VariantCoordinator,
 )
 from .foundation.adapters import ThemeView
@@ -66,6 +67,7 @@ class MainWindow(QMainWindow):
     legacy_mapping_key = _composition_port("_legacy_mapping_key")
     project_coordinator = _composition_port("_project_coordinator")
     project_management_coordinator = _composition_port("_project_management_coordinator")
+    source_update_coordinator = _composition_port("_source_update_coordinator")
     parse_coordinator = _composition_port("_parse_coordinator")
     operation_coordinator = _composition_port("_operation_coordinator")
     operation_plan_facade = _composition_port("_operation_plan_facade")
@@ -136,6 +138,7 @@ class MainWindow(QMainWindow):
         self._operation_coordinator = OperationCoordinator(self)
         self._project_coordinator = ProjectCoordinator(self)
         self._project_management_coordinator = ProjectManagementCoordinator(self)
+        self._source_update_coordinator = SourceUpdateCoordinator(self)
         self._variant_coordinator = VariantCoordinator(self)
         self._project_transfer_coordinator = ProjectTransferCoordinator(self)
         self._operation_plan_facade = None
@@ -260,6 +263,7 @@ class MainWindow(QMainWindow):
         pb = self._workbench.project_bar
         pb.new_project_requested.connect(self._intent_composition.callback(IntentId.PROJECT_CREATE))
         pb.open_project_requested.connect(self._intent_composition.callback(IntentId.PROJECT_OPEN))
+        pb.source_update_requested.connect(self._intent_composition.callback(IntentId.PROJECT_SOURCE_UPDATE))
         pb.variant_switch_requested.connect(self._variant_coordinator.switch_variant)
         pb.save_requested.connect(self._intent_composition.callback(IntentId.PROJECT_SAVE))
         pb.variant_add_requested.connect(self._intent_composition.callback(IntentId.PROJECT_VARIANT_CREATE))

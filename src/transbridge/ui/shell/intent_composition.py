@@ -89,6 +89,7 @@ class ShellIntentComposition:
             show_context_help=callback(IntentId.HELP_CONTEXT),
             show_task_activity=callback(IntentId.TASK_OPEN_ACTIVITY),
             rename_project=callback(IntentId.PROJECT_RENAME),
+            update_source=callback(IntentId.PROJECT_SOURCE_UPDATE),
             delete_project=callback(IntentId.PROJECT_DELETE),
             exit_app=callback(IntentId.APP_EXIT),
         )
@@ -167,6 +168,11 @@ class ShellIntentComposition:
         register(IntentId.PROJECT_SAVE, _call(host.variant_coordinator.manual_save), availability=self._has_project)
         register(IntentId.PROJECT_REFRESH, _call(host.tool_windows.refresh_projects))
         register(IntentId.PROJECT_RENAME, self._rename_project, availability=self._has_project)
+        register(
+            IntentId.PROJECT_SOURCE_UPDATE,
+            _call(lambda: host.source_update_coordinator.start_current()),
+            availability=self._has_project,
+        )
         register(IntentId.PROJECT_DELETE, self._delete_project)
         register(
             IntentId.PROJECT_VARIANT_CREATE, _call(host.variant_coordinator.new_variant), availability=self._has_project

@@ -40,6 +40,7 @@ class IntentId(StrEnum):
     PROJECT_SAVE = "project.save"
     PROJECT_REFRESH = "project.refresh"
     PROJECT_RENAME = "project.rename"
+    PROJECT_SOURCE_UPDATE = "project.source-update"
     PROJECT_DELETE = "project.delete"
     PROJECT_VARIANT_CREATE = "project.variant.create"
     PROJECT_VARIANT_COPY = "project.variant.copy"
@@ -157,6 +158,7 @@ DEFAULT_ACTION_CATALOG = ActionCatalog((
     ActionDescriptor(IntentId.PROJECT_OPEN, "打开本地翻译工程…", ActionSection.PROJECT),
     ActionDescriptor(IntentId.PROJECT_SAVE, "保存当前工程", ActionSection.PROJECT, shortcut="Ctrl+S"),
     ActionDescriptor(IntentId.PROJECT_RENAME, "重命名当前工程…", ActionSection.PROJECT),
+    ActionDescriptor(IntentId.PROJECT_SOURCE_UPDATE, "更新源文件…", ActionSection.PROJECT),
     ActionDescriptor(
         IntentId.PROJECT_DELETE,
         "删除本地工程…",

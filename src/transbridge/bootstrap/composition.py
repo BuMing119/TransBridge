@@ -165,6 +165,7 @@ def build_runtime(
         "current_project_opener": persistence.current_project_opener,
         "project_snapshots": persistence.project_snapshots,
         "project_archive": persistence.project_archive,
+        "project_source_updates": persistence.project_source_updates,
         "session_lifecycle": persistence.session_lifecycle,
         "gui_session_commands": persistence.gui_session_commands,
         "project_projection": persistence.project_projection,

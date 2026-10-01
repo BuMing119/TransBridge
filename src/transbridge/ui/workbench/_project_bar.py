@@ -27,6 +27,7 @@ class ProjectBar(QWidget):
 
     new_project_requested = pyqtSignal()
     open_project_requested = pyqtSignal()
+    source_update_requested = pyqtSignal()
     variant_switch_requested = pyqtSignal(str)  # variant_name
     save_requested = pyqtSignal()
     variant_add_requested = pyqtSignal()
@@ -213,6 +214,7 @@ class ProjectBar(QWidget):
         menu = QMenu(self)
         menu.addAction("重命名工程…", self._on_rename_project)
         if self._ctx.uses_authoritative_projection:
+            menu.addAction("更新源文件…", self.source_update_requested.emit)
             project_id = self._ctx.active_project_id
             name = self._ctx.project_name
             if project_id and name:
