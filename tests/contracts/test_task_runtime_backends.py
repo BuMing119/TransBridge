@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 import threading
 import time
@@ -252,21 +253,36 @@ def test_shutdown_wait_drains_without_issuing_cancellation(owner):
     assert value.get(ref, owner).state is JobState.COMPLETED
 
 
-def test_shutdown_wait_uses_grace_for_manually_driven_job(owner):
+def test_shutdown_wait_uses_grace_for_manually_driven_job(owner, monkeypatch):
     value = runtime()
     ref = value.submit(spec(), owner).ref
     value.start(ref, owner)
 
-    finisher = threading.Thread(target=lambda: (time.sleep(0.03), value.complete(ref, owner)))
-    finisher.start()
-    started = time.monotonic()
-    result = value.shutdown(grace=1, policy=ShutdownPolicy.WAIT)
-    elapsed = time.monotonic() - started
-    finisher.join(1)
+    waiting = threading.Event()
+    wait_budgets = []
+    original_wait = value._state_changed.wait
 
-    assert elapsed >= 0.02
+    def observed_wait(timeout=None):
+        wait_budgets.append(timeout)
+        waiting.set()
+        return original_wait(timeout)
+
+    monkeypatch.setattr(value._state_changed, "wait", observed_wait)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        shutdown = executor.submit(value.shutdown, grace=1, policy=ShutdownPolicy.WAIT)
+        try:
+            assert waiting.wait(1), "shutdown did not wait for the manually driven job"
+            assert not shutdown.done()
+            assert value.get(ref, owner).state is JobState.RUNNING
+            assert not value.cancellation_token(ref, owner).is_cancelled
+        finally:
+            value.complete(ref, owner)
+        result = shutdown.result(timeout=1)
+
+    assert all(0 < timeout <= 1 for timeout in wait_budgets)
     assert ref in result.joined
     assert ref not in result.timed_out
+    assert result.backend_released
 
 
 def test_shutdown_wait_times_out_manual_job_only_after_grace(owner):

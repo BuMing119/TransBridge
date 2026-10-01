@@ -28,7 +28,7 @@ from transbridge.persistence.terminology.migration import TerminologyMigrationEr
 from transbridge.persistence.terminology.schema import SCHEMA_VERSION
 from transbridge.persistence.v2 import LoadedRecord, ProjectId, ProjectRef, ProjectRepository
 from transbridge.persistence.v2.filesystem import OsPersistenceFilesystem
-from transbridge.persistence.v2.models import AtomicWriteError
+from transbridge.persistence.v2.models import SCHEMA_VERSION as PROJECT_SCHEMA_VERSION, AtomicWriteError
 
 pytestmark = pytest.mark.integration
 
@@ -67,7 +67,7 @@ def _project_v2_bytes() -> bytes:
     ).encode()
 
 
-def test_project_v3_migration_uses_a_copy_and_retains_verified_v2_backup(tmp_path: Path) -> None:
+def test_project_migration_to_current_uses_a_copy_and_retains_verified_v2_backup(tmp_path: Path) -> None:
     fixture = tmp_path / "project-v2-copy.json"
     fixture.write_bytes(_project_v2_bytes())
     root = tmp_path / "repository"
@@ -80,10 +80,10 @@ def test_project_v3_migration_uses_a_copy_and_retains_verified_v2_backup(tmp_pat
     result = repository.load(ref)
 
     assert isinstance(result, LoadedRecord) and result.migrated
-    assert result.value.envelope.schema_version == 3
+    assert result.value.envelope.schema_version == PROJECT_SCHEMA_VERSION
     assert result.migration_report is not None
     assert Path(result.migration_report.backup_path).read_bytes() == fixture.read_bytes()
-    assert json.loads(destination.read_bytes())["schema_version"] == 3
+    assert json.loads(destination.read_bytes())["schema_version"] == PROJECT_SCHEMA_VERSION
 
 
 class _CrashOnProjectReplace(OsPersistenceFilesystem):

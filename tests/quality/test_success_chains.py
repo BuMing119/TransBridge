@@ -14,6 +14,7 @@ from dataclasses import replace
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 from pathlib import Path
 import shutil
 from threading import Thread
@@ -33,7 +34,7 @@ from tests.quality.success_chains import (
     verify_fixture_checksums,
 )
 from transbridge.application.contracts import OperationOutcome, RequestContext
-from transbridge.application.fomod import FOMOD_STAGE_ORDER, FomodRunSpec, PipelineEngine
+from transbridge.application.fomod import FOMOD_STAGE_ORDER, FomodRunSpec, PipelineEngine, publish as fomod_publish
 from transbridge.application.io import (
     EntryKey,
     EntryRevision,
@@ -302,10 +303,15 @@ def test_controlled_http_postprocess_success_chain_deterministic() -> None:
 # --------------------------------------------------------------------------- #
 # FOMOD typed nine-stage success chain
 # --------------------------------------------------------------------------- #
+FOMOD_ZIP_TIMESTAMP = (2024, 1, 1, 0, 0, 0)
+FOMOD_FILE_TIMESTAMP = 1704067200
+
+
 def _archive(path: Path) -> None:
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as output:
-        output.writestr("Mod/fomod/ModuleConfig.xml", "<config/>")
-        output.writestr("Mod/readme.txt", "hello")
+        for name, content in (("Mod/fomod/ModuleConfig.xml", "<config/>"), ("Mod/readme.txt", "hello")):
+            info = zipfile.ZipInfo(name, date_time=FOMOD_ZIP_TIMESTAMP)
+            output.writestr(info, content, compress_type=zipfile.ZIP_DEFLATED)
 
 
 def _make_fomod_run_spec(workdir: Path, run_id: str = "s02-fomod-chain") -> FomodRunSpec:
@@ -324,7 +330,22 @@ def _make_fomod_run_spec(workdir: Path, run_id: str = "s02-fomod-chain") -> Fomo
     )
 
 
-def test_fomod_typed_nine_stage_success_chain_deterministic(tmp_path: Path) -> None:
+def test_fomod_typed_nine_stage_success_chain_deterministic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    real_pack = fomod_publish.pack
+
+    def pack_with_fixed_file_times(src_dir, archive_path, **kwargs):
+        # Extraction creates fresh filesystem timestamps and ZIP preserves them.
+        # Control this environmental input while retaining the real packer and
+        # full artifact fingerprint comparisons below.
+        # This does not promise byte-identical production ZIPs across wall-clock
+        # times; test_fomod_typed_pipeline covers publication without this control.
+        for path in Path(src_dir).rglob("*"):
+            if path.is_file():
+                os.utime(path, (FOMOD_FILE_TIMESTAMP, FOMOD_FILE_TIMESTAMP))
+        return real_pack(src_dir, archive_path, **kwargs)
+
+    monkeypatch.setattr(fomod_publish, "pack", pack_with_fixed_file_times)
+
     def runner():
         workdir = tmp_path / uuid.uuid4().hex
         workdir.mkdir(parents=True)

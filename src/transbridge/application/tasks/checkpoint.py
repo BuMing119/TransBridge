@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from copy import copy
+from dataclasses import dataclass, field
 import hashlib
 import json
 from typing import Any, Protocol, runtime_checkable
@@ -137,18 +138,20 @@ class CheckpointRecord:
         object.__setattr__(self, "graph_results", normalized_results)
 
     def accepts_commit(self, commit_id: str) -> bool:
-        if not commit_id or not commit_id.strip():
+        if not isinstance(commit_id, str) or not commit_id.strip():
             raise ValueError("commit_id must not be empty")
         return commit_id not in self.completed_commit_ids
 
     def mark_committed(self, commit_id: str) -> CheckpointRecord:
         if not self.accepts_commit(commit_id):
             return self
-        return replace(
-            self,
-            revision=self.revision + 1,
-            completed_commit_ids=self.completed_commit_ids | {commit_id},
-        )
+        # All existing fields are immutable and already validated. Reconstructing
+        # the dataclass would revalidate every historical commit and graph result
+        # for each new ID; only the checked ID and monotonic revision change here.
+        updated = copy(self)
+        object.__setattr__(updated, "revision", self.revision + 1)
+        object.__setattr__(updated, "completed_commit_ids", self.completed_commit_ids | {commit_id})
+        return updated
 
     def validate(self, expected: CheckpointExpectation) -> None:
         mismatches = []

@@ -10,6 +10,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QTableWidget
 
+from transbridge.application.tasks.activity import TaskActionAvailability
 from transbridge.config.ui_preferences import GuidanceMode
 from transbridge.converter.translation_entry import STAGE_LABELS, STAGE_QUESTIONABLE, TranslationEntry
 from transbridge.ui.drop_review import DropReviewDialog
@@ -176,7 +177,7 @@ def test_task_center_escape_never_stops_task_and_stop_description_names_object_a
         revision=3,
         state=SimpleNamespace(value="running"),
         display_context=SimpleNamespace(title="AI 翻译 · Demo"),
-        available_actions=SimpleNamespace(pause=False, resume=False, stop=True, cancel=True),
+        available_actions=TaskActionAvailability(stop=True, cancel=True),
     )
     panel.render_activity(state)
     panel._current.setCurrentRow(0)

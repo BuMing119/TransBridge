@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import json
 from pathlib import Path
 import statistics
@@ -196,6 +197,34 @@ def test_repeated_resume_commit_id_is_idempotent():
     assert first.completed_commit_ids == frozenset({"commit-1", "commit-2"})
 
 
+def test_mark_committed_preserves_validated_fields_and_leaves_source_unchanged():
+    source = record()
+    before = source.to_dict()
+
+    updated = source.mark_committed("commit-2")
+
+    assert updated is not source
+    assert source.to_dict() == before
+    assert source.accepts_commit("commit-2") is True
+    assert updated.to_dict() == {
+        **before,
+        "revision": before["revision"] + 1,
+        "completed_commit_ids": ["commit-1", "commit-2"],
+    }
+    assert CheckpointRecord.from_dict(updated.to_dict()) == updated
+
+
+@pytest.mark.parametrize("commit_id", ["", "  \t", None, 1, True, [], b"commit-2"])
+def test_commit_update_rejects_invalid_new_identity_without_mutation(commit_id):
+    source = record()
+    before = source.to_dict()
+    with pytest.raises(ValueError, match="commit_id"):
+        source.accepts_commit(commit_id)
+    with pytest.raises(ValueError, match="commit_id"):
+        source.mark_committed(commit_id)
+    assert source.to_dict() == before
+
+
 @pytest.mark.parametrize(
     "changes",
     [
@@ -312,6 +341,10 @@ def test_concurrent_late_lower_revision_cannot_overwrite_newer_record(tmp_path):
 
 def test_100k_commit_dedup_update_p95_is_under_100ms():
     source = record(completed_commit_ids=frozenset(f"commit-{index}" for index in range(100_000)))
+    # Exclude cyclic garbage left by prior tests from this operation's budget.
+    # GC stays enabled during measurement, so the update's own collection cost
+    # is still included rather than hidden by disabling the collector.
+    gc.collect()
     durations = []
     for index in range(20):
         started = time.perf_counter()

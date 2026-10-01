@@ -57,7 +57,7 @@ def test_ui_areas_stay_object_oriented_and_delegate_business_commands() -> None:
         RequestContext("operator", project_id="project", variant_id="variant"),
     )
 
-    assert [label for _area, label, _icon in TERMINOLOGY_AREAS] == ["概览", "术语", "版本", "报告"]
+    assert [label for _area, label, _icon in TERMINOLOGY_AREAS] == ["术语", "版本", "报告"]
     assert presenter.preflight().ready
     assert presenter.start_build().run_id == "build-run"
     assert presenter.publish().run_id == "publish-run"

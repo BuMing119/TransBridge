@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import weakref
 
-from PyQt6.QtCore import QEvent, QObject
+from PyQt6 import sip
+from PyQt6.QtCore import QEvent, QObject, pyqtSlot
 from PyQt6.QtWidgets import QMessageBox
 
 from transbridge.application.dialogue.index import DialogueIndex, source_unavailable_reason
@@ -15,6 +17,39 @@ from transbridge.ui.workers import ApiWorker
 
 from .dialog import EntryEditorDialog
 from .editing import EntryDraft, content_scope
+
+
+class _IndexDelivery(QObject):
+    """Keep worker cleanup independent of the window's lifetime."""
+
+    def __init__(self, worker, controller, workers, generation, scope):
+        super().__init__(worker)
+        self._worker = worker
+        self._controller = weakref.ref(controller)
+        self._workers = workers
+        self._generation, self._scope = generation, scope
+        worker.result.connect(self._loaded)
+        worker.error.connect(self._failed)
+        worker.finished.connect(self._finished)
+
+    def _owner(self):
+        owner = self._controller()
+        return owner if owner is not None and not sip.isdeleted(owner) and not owner._closed else None
+
+    @pyqtSlot(object)
+    def _loaded(self, index):
+        if (owner := self._owner()) is not None:
+            owner._loaded(self._generation, self._scope, index)
+
+    @pyqtSlot(str)
+    def _failed(self, message):
+        if (owner := self._owner()) is not None:
+            owner._failed(self._generation, message)
+
+    @pyqtSlot()
+    def _finished(self):
+        self._workers.remove(self._worker)
+        self._worker.deleteLater()
 
 
 def unavailable_reason(context) -> str | None:
@@ -114,15 +149,9 @@ class DialogueEditorController(QObject):
         if not entries or unavailable_reason(self.context):
             return
         worker = ApiWorker(self._loader.build, entries, plugin=slot.plugin, snapshot=slot.source_snapshot)
-        worker.result.connect(lambda result: self._loaded(generation, scope, result))
-        worker.error.connect(lambda message: self._failed(generation, message))
-        worker.finished.connect(lambda: self._release_worker(worker))
+        _IndexDelivery(worker, self, self._workers, generation, scope)
         self._workers.append(worker)
         worker.start()
-
-    def _release_worker(self, worker) -> None:
-        self._workers.remove(worker)
-        worker.deleteLater()
 
     def _loaded(self, generation, scope, index) -> None:
         if self._closed or generation != self._generation or scope != content_scope(self.context):
