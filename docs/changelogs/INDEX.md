@@ -6,6 +6,21 @@
 
 ## 日志结构
 
+- 2026-10-01：[回归契约、后台生命周期与检查点更新修正](maintenance/regression-suite/2026-10-01-001-contracts-and-lifetimes.md) — 修正测试/资源/收集冲突；连续 UI 1056 通过，整库连续执行后修复性能瓶颈，最终 contracts 556 通过、2 跳过；保留各轮原始结果。
+
+- 2026-10-01：[更新源文件与全部版本迁移](source-file-update/story-01-03/2026-10-01-001-source-file-update.md) — 工程/恢复入口、差异预览、译文迁移、备份与故障恢复；38 项新增测试通过，联合回归 464 通过。
+- 2026-10-01：[补齐来源更新与序号同步需求](source-file-update/story-01-03/2026-10-01-002-requirements.md) — 补录 FR19.14、FR22.9～FR22.11，修正 FR8 冲突条款并建立需求追溯；仅文档变更。
+- 2026-10-01：[完整回归与来源更新菜单翻译模板补齐](source-file-update/story-01-03/2026-10-01-003-full-regression.md) — 4803 项分组覆盖，4787 通过、7 断言失败、8 跳过、1 回调异常；补齐本次菜单消息，保留基线与其他工作线问题证据。
+
+- 2026-10-01：[ParaTranz 八位上下文序号](paratranz-context-order/story-01-02/2026-10-01-001-context-order.md) — 导出、回读、同步与直接上传接线；80 项最终聚焦验证通过，联合回归 385 通过、1 跳过、1 项既有失败。
+- 2026-10-01：[ParaTranz 远端序号刷新](paratranz-context-order/story-03-04/2026-10-01-001-remote-order-refresh.md) — 仅 context 更新与单文件上传闭环；31 项新增回归通过，联合回归 266 通过、1 跳过、1 项既有失败。
+
+- 2026-10-01：[进度卡来源与空白页主题修复](assistant-conversation-ui/story-01-to-03/2026-10-01-002-progress-and-theme-fixes.md) — 清空/截断后隐藏无来源卡片，补全主题刷新；新增 4 项回归，1240 项联合测试通过。
+
+- 2026-09-25：[对话式助手布局与消息内进度](assistant-conversation-ui/story-01-to-03/2026-09-25-001-conversation-first-layout.md) — 紧凑上下文、消息内请求进度、输入区停止及窄屏操作；1,236 项相关回归、Ruff 与实际 Qt 截图验证通过。
+
+- 2026-09-23：[拒绝空白摘要条目](assistant-context-compaction/story-05-budgeted-compaction/2026-09-23-001-reject-blank-summary.md) — 收紧问题、建议及决定陈述的非空白校验；45 项相关测试通过。
+
 - 2026-09-23：[助手结果补记恢复与依赖失败收尾](maintenance/assistant-task-failure-recovery/2026-09-23-001-receipt-retry-and-dependency-failure.md) — 按请求解除结果保存故障，依赖失败递归收尾；1353 项联合回归通过。
 
 - 2026-09-23：[清理旧执行旁路与上下文策略](assistant-task-context-consistency/story-08-legacy-path-cleanup/2026-09-23-001-remove-legacy-execution-paths.md) — 助手写入缺服务/轮次明确失败；删除旧组装、摘要刷新与直接路由提交入口；1440 项通过/1 项跳过。

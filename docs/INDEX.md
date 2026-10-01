@@ -16,6 +16,8 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 |------|------|------|
 | [requirements.md](requirements.md) | 项目需求概述及历史 FR1～FR16；2026-08-18 已确认综合整改需求 FR17～FR23 与 NFR 增量，覆盖入口一致性、I/O 身份、持久化、任务、翻译工作流、ParaTranz、FOMOD 和发行质量合同；新增 [FR31 自动长期记忆](requirements.md#fr31-assistant-memory) | ⚠️ 历史实现部分核验；整改需求已确认；FR31 为草稿 |
 
+2026-10-01 补齐：[FR19.14 更新源文件与全部翻译版本迁移](requirements.md#fr19-source-update)、[FR22.9～FR22.11 八位上下文序号与远端刷新](requirements.md#fr22-context-order)，并修正 FR8 的来源恢复与持久化边界。实现及本地验证已有记录；真实 ParaTranz 写入、网页排序和用户桌面验收不在完成声明内。
+
 ---
 
 ## 架构决策记录 (ADR)
@@ -46,6 +48,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [ADR-019](adr/019-unified-task-runtime.md) | Unified Task Runtime、互斥终态与幂等恢复 | ✅ 已接受（2026-08-18） |
 | [ADR-021](adr/021-ui-presentation-modularization.md) | UI 展示层模块化：View/Presenter 边界、显式窄依赖、规模门禁（FR25） | ✅ 已接受并实施（2026-08-19） |
 | [ADR-034](adr/034-project-terminology-build-versioning-reporting.md) | 项目全来源术语构建、不可变版本与统一报告事实源（FR5.16） | 📝 提议（2026-08-28） |
+| [ADR-044](adr/044-source-file-update.md) | 源文件更新、全部翻译版本迁移与可恢复事务 | 📝 提议（2026-10-01） |
 
 > 详细架构文档见 [dev/ARCHITECTURE.md](dev/ARCHITECTURE.md)（模块依赖、数据流、全局状态管理、设计决策）。
 

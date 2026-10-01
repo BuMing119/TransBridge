@@ -6,6 +6,12 @@
 
 ## 当前实施
 
+- [source-file-update](source-file-update/plan.md)：通用“更新源文件…”、全部翻译版本迁移与恢复入口完成；38 项新增回归通过，联合回归 464 通过（2026-10-01）。
+
+- [paratranz-context-order](paratranz-context-order/plan.md)：4 个 Story 完成；八位序号、回读、远端仅序号更新与单文件上传闭环。追加 31 项回归通过，最新联合回归 266 通过、1 跳过、1 项已复现的既有失败（2026-10-01）。
+
+- [assistant-conversation-ui](assistant-conversation-ui/plan.md)：对话式助手界面已完成；紧凑上下文、消息内进度与精简输入区，1,236 项相关测试及 Qt 截图验证通过（2026-09-25）。
+
 - [assistant-task-context-consistency](assistant-task-context-consistency/plan.md)：综合任务状态、上下文压缩/缓存、控制结果提交与 UI 边界、取消收尾及可选本轮撤销；8 个 Story 本地完成，S08 清理旧执行旁路后 1440 项通过/1 项跳过；安全逆操作范围与未测收益详见计划；[ADR-043](../docs/adr/043-assistant-turn-results-and-undo.md) 为提议。
 
 - [assistant-conversation-routing](assistant-conversation-routing/plan.md)：聊天与工作请求分流，方案草稿，S01/S02 已实现；1,137 项相关回归及最终 78 项复验通过，真实模型未评测（2026-09-13）。
