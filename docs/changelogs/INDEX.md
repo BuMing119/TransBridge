@@ -1,10 +1,44 @@
 # 变更日志索引
 
+- 2026-10-04：[助手润色写回校对疑问状态](maintenance/proofread-tolerance/2026-10-04-005-assistant-questionable-stage.md) — 译文不变时仍应用 stage=2，保持润色计数含义；145 项相关回归通过。
+
+- 2026-10-04：[继续任务直接启动](ai-proofread-resume/story-04-to-06/2026-10-04-003-direct-continue.md) — 继续按原参数续跑，仅重新开始展示配置；80 项回归通过。
+
+- 2026-10-04：[暂缓任务再次提醒](ai-proofread-resume/story-04-to-06/2026-10-04-002-remind-deferred-task.md) — “稍后处理”后再次点击 AI 翻译重新提示，后台核验任务状态；44 项回归通过。
+
+- 2026-10-04：[明确校对任务恢复与独立重跑](ai-proofread-resume/story-04-to-06/2026-10-04-001-explicit-task-recovery.md) — 按任务隔离进度、三按钮明确操作、临时参数恢复和历史状态校准；703 项回归及最终 82 项复验通过。
+
+- 2026-10-03：[AI 自动应用、完成提示与实时日志](ai-partial-results/story-04-to-06/2026-10-03-001-responsive-auto-apply-and-live-logs.md) — 批量应用与异步准备、部分成功自动保存、stage 2 统计、保存后弹框、运行中实时日志；834 项相关回归通过。
+
 > 本目录按 Epic→Story 分层记录开发增量。每次编码修改由 `/bm-chronicle` 输出独立文件到此目录。
 >
 > 历史发布记录见 [../更新日志.md](../更新日志.md)（2026-01 至 2026-03）。
 
 ## 日志结构
+
+- 2026-10-03：[校对持久化与重启续跑](ai-proofread-resume/story-01-to-03/2026-10-03-001-durable-proofread-resume.md) — 逐批原子保存、按输入和术语复用、强制重跑及旧日志离线救援；939 项综合回归与最终 22 项 UI 复验通过。
+
+- 2026-10-03：[校对重试携带具体校验反馈](maintenance/proofread-tolerance/2026-10-03-004-recovery-validation-feedback.md) — 自动恢复及拆批按条目携带最近校验问题，网络错误不冒充模型错误；378 项相关回归通过。
+
+- 2026-10-03：[逐条校验与实时任务摘要](maintenance/proofread-tolerance/2026-10-03-003-entry-isolation-and-live-summary.md) — 合格条目不再被同批异常连带拒绝，只恢复失败集合；完整校验原因、实时中文日志与最终逐条统计；975 项联合回归通过，真实失败响应离线回放通过。
+
+- 2026-10-03：[结构化响应失败记录与恢复](maintenance/proofread-tolerance/2026-10-03-002-schema-failure-evidence-and-recovery.md) — 失败原文脱敏保存、校验字段诊断与有界拆批恢复；399 项联合回归通过。
+
+- 2026-10-03：[单条预算与校对疑问状态](maintenance/proofread-tolerance/2026-10-03-001-single-entry-budget-and-questionable-syntax.md) — 长条目独立发送，保护语法差异保留原译文并计入成功；715 项联合回归通过。
+
+- 2026-10-03：[无效术语候选拦截](maintenance/term-candidate-validation/2026-10-03-001-reject-nonlexical-terms.md) — 拒绝纯标点/语法候选和英文抽取片段，旧库无效记录停止匹配；627 项综合回归通过，真实 821 条旧库只读核验通过。
+
+- 2026-10-03：[部分成功应用与失败条目重试](ai-partial-results/story-01-to-03/2026-10-03-001-partial-apply-and-entry-retry.md) — 可靠逐条状态、显式应用、失败集合重试、未采纳隔离及输入/配置/术语约束；884 项相关回归和独立 QA 复核通过。
+
+- 2026-10-03：[任务历史与取消生命周期 QA 修复](ai-task-lifecycle-history/story-01-to-04/2026-10-03-002-qa-failure-counts-and-cancel-lifetime.md) — 修正翻译失败统计、校对失败批次归属和取消后的请求资源生命周期；811 项相关测试及独立复验通过。
+
+- 2026-10-03：[AI 任务控制与持久记录](ai-task-lifecycle-history/story-01-to-04/2026-10-03-001-task-controls-and-history.md) — 暂停反馈、关闭重开、项目任务记录、按需导出和独立保存状态；796 项相关测试通过。
+
+- 2026-10-03：[强制术语误匹配修复](proofread-terminology-closure/story-01-to-03-implementation/2026-10-03-003-required-term-matching.md) — 逐条强制校验使用完整词边界与最长非重叠命中，保留宽松参考检索；231 项回归通过。
+
+- 2026-10-03：[Proofread 术语修复批次并发](proofread-terminology-closure/story-01-to-03-implementation/2026-10-03-002-bounded-refinement-concurrency.md) — 有界并发复用现有请求预算，保留暂停、取消、逐批回退及稳定结果顺序；253 项回归通过。
+
+- 2026-10-02：[AI 空原文拆分重试修复](maintenance/ai-empty-source/2026-10-02-001-skip-empty-source.md) — 空白原文不进入 AI 任务、分批和可处理计数；Responses 显式 strict 与代码块诊断；217 项测试通过，实际日志离线回放验证。
 
 - 2026-10-01：[回归契约、后台生命周期与检查点更新修正](maintenance/regression-suite/2026-10-01-001-contracts-and-lifetimes.md) — 修正测试/资源/收集冲突；连续 UI 1056 通过，整库连续执行后修复性能瓶颈，最终 contracts 556 通过、2 跳过；保留各轮原始结果。
 
@@ -59,7 +93,7 @@ docs/changelogs/
 | v3-ui-gap-closure | [plan](../../plans/v3-ui-gap-closure/plan.md) | ✅ S01-05 已完成，综合 QA 通过 | 5 | [S01-05:①V3权威工程UI缺口闭环](v3-ui-gap-closure/story-01-to-05-implementation/2026-09-01-001-V3权威工程UI缺口闭环.md) |
 | authoritative-project-mutation-closure | [plan](../../plans/authoritative-project-mutation-closure/plan.md) | ✅ S01-06 已完成，综合 QA 通过；1 项既有断言失败 | 6 | [S01-06:①权威变更与可恢复保存统一修复](authoritative-project-mutation-closure/story-01-to-06-implementation/2026-08-30-001-权威变更与可恢复保存统一修复.md) · [S03:①配对插件来源移除与重开一致性修复](authoritative-project-mutation-closure/story-03-source-lifecycle/2026-08-31-001-配对插件来源移除与重开一致性修复.md) |
 | core-data-model | [plan](../../plans/core-data-model/plan.md) | ✔️ 已实现 | 5 | — |
-| dialogue-context-editor | [plan](../../plans/dialogue-context-editor/plan.md) | ✅ S01–04 已完成，140 项相关回归与 XT 式记录导航验证通过 | 4 | [S01–04:①词条弹窗与XT式记录导航](dialogue-context-editor/story-01-04-implementation/2026-08-31-001-词条弹窗与XT式记录导航.md) |
+| dialogue-context-editor | [plan](../../plans/dialogue-context-editor/plan.md) | ✅ S01–09 已完成；应用重复处理优化 156 项回归通过 | 9 | [S09:①减少应用开销](dialogue-context-editor/story-09-apply-cost/2026-10-04-001-reduce-snapshot-copies.md) · [S08:③应用后重开](dialogue-context-editor/story-05-08-editing-flow/2026-10-04-003-reopen-after-apply.md) · [S05–08:②输入法提示重叠与计数换行](dialogue-context-editor/story-05-08-editing-flow/2026-10-04-002-ime-placeholder-and-navigation.md) · [S05–08:①应用返回、同原文同步与性能](dialogue-context-editor/story-05-08-editing-flow/2026-10-04-001-editor-flow-and-refresh.md) · [S01–04:①词条弹窗与XT式记录导航](dialogue-context-editor/story-01-04-implementation/2026-08-31-001-词条弹窗与XT式记录导航.md) |
 | dialogue-tree-order | [plan](../../plans/dialogue-tree-order/plan.md) | ✅ S01-02 已完成，相关 QA 与 Vigilant 实物验证通过 | 2 | [S01-02:① ESM 对话树顺序与父 DIAL 元数据](dialogue-tree-order/story-01-02-implementation/2026-08-30-001-ESM对话树顺序与父DIAL元数据实现.md) |
 | file-parsing | [plan](../../plans/file-parsing/plan.md) | ✔️ 已实现 | 11 | [s09:①](file-parsing/story-09-sst-parser/2026-05-08-001-SST解析器编码实现.md) · [②](file-parsing/story-09-sst-parser/2026-05-08-002-SSU9格式支持与文档更新.md) · [③](file-parsing/story-09-sst-parser/2026-05-08-003-SSU8-index修正perEDID.md) · [④](file-parsing/story-09-sst-parser/2026-05-08-004-SSU9解析修复与文档同步.md) · [⑤](file-parsing/story-09-sst-parser/2026-05-08-005-XT解析器归入parser-xt子包.md) · [⑥](file-parsing/story-09-sst-parser/2026-05-09-006-SSU9-extra子记录解析.md) · [⑦](file-parsing/story-09-sst-parser/2026-05-09-007-group_index与边界修复与格式注释.md) · [⑧](file-parsing/story-09-sst-parser/2026-05-09-008-SSU8完整逆向与序列化支持.md) · [s10:①](file-parsing/story-10-sst-migration-source/2026-05-08-001-Story10方案策划.md) · [②](file-parsing/story-10-sst-migration-source/2026-05-08-002-Story10详细展开.md) · [③](file-parsing/story-10-sst-migration-source/2026-05-08-003-try_update_from_sst实现.md) · [④](file-parsing/story-10-sst-migration-source/2026-05-09-004-apply_sst_entries与Step1SST加载UI.md) · [s11:①](file-parsing/story-11-sst-serializer/2026-05-09-001-Story11方案策划SST序列化器.md) · [②](file-parsing/story-11-sst-serializer/2026-05-09-002-Story11详细方案展开SST序列化器.md) · [③](file-parsing/story-11-sst-serializer/2026-05-09-003-SST序列化器编码实现.md) · [④](file-parsing/story-11-sst-serializer/2026-05-15-004-SST-Hash自生成与从零创建.md) · [⑤](file-parsing/story-11-sst-serializer/2026-05-15-005-修复_rebuild_ssu9与屏蔽写出接口.md) · [⑥](file-parsing/story-11-sst-serializer/2026-05-21-006-SST-Hash与序列化增强及写出屏蔽.md) |
 | file-writing | [plan](../../plans/file-writing/plan.md) | ✔️ 已实现 | 7 | — |
@@ -80,7 +114,7 @@ docs/changelogs/
 | ai-token-batching-concurrency | [plan](../../plans/ai-token-batching-concurrency/plan.md) | ✅ S01-07 已完成，相关 QA 通过 | 7 | [S01-05:①实现](ai-token-batching-concurrency/story-01-to-05-implementation/2026-08-26-001-业务内容Token分批与共享并发实现.md) · [S06-07:①准入后刷新与冲突重翻](ai-token-batching-concurrency/story-06-to-07-implementation/2026-08-26-001-准入后术语刷新与冲突定向重翻.md) |
 | llm-reasoning-control | [plan](../../plans/llm-reasoning-control/plan.md) | ✅ S01-03 已完成，相关 QA 通过 | 3 | [S01-03:①实现](llm-reasoning-control/story-01-to-03-implementation/2026-08-27-001-请求级思考控制与能力探测.md) |
 | native-function-calling | [plan](../../plans/native-function-calling/plan.md) | ✅ S01-05 已完成，相关 QA 通过 | 5 | [S01-05:①双协议实现与终验](native-function-calling/story-01-to-05-implementation/2026-08-27-001-原生FunctionCalling双协议实现与终验.md) · [②文本 JSON 协议残留清理](native-function-calling/story-01-to-05-implementation/2026-08-28-002-文本JSON协议残留清理.md) |
-| native-structured-outputs | [plan](../../plans/native-structured-outputs/plan.md) | ✅ S01-05 已完成，Responses 接线修复及相关 QA 通过 | 5 | [S01-05:①双协议实现与终验](native-structured-outputs/story-01-to-05-implementation/2026-08-27-001-原生StructuredOutputs双协议实现与终验.md) · [②提示词 Schema 去重](native-structured-outputs/story-01-to-05-implementation/2026-08-28-002-提示词输出Schema去重.md) · [③OpenAI 结构化响应接入 Responses API](native-structured-outputs/story-01-to-05-implementation/2026-09-02-003-OpenAI结构化响应接入ResponsesAPI.md) |
+| native-structured-outputs | [plan](../../plans/native-structured-outputs/plan.md) | ✅ S01-05 已完成，Responses API 结构化请求支持单一 JSON 围栏严格恢复 | 5 | [S01-05:①双协议实现与终验](native-structured-outputs/story-01-to-05-implementation/2026-08-27-001-原生StructuredOutputs双协议实现与终验.md) · [②提示词 Schema 去重](native-structured-outputs/story-01-to-05-implementation/2026-08-28-002-提示词输出Schema去重.md) · [③OpenAI 结构化响应接入 Responses API](native-structured-outputs/story-01-to-05-implementation/2026-09-02-003-OpenAI结构化响应接入ResponsesAPI.md) · [④OpenAI 结构化响应恢复 Chat Completions](native-structured-outputs/story-01-to-05-implementation/2026-10-03-004-OpenAI结构化响应恢复ChatCompletions.md) · [⑤DeepSeek Chat JSON Output 适配](native-structured-outputs/story-01-to-05-implementation/2026-10-03-005-DeepSeekChatJSONOutput适配.md) · [⑥结构化翻译切回 Responses API](native-structured-outputs/story-01-to-05-implementation/2026-10-03-006-结构化翻译切回ResponsesAPI.md) · [⑦单一 JSON 代码块兼容](native-structured-outputs/story-01-to-05-implementation/2026-10-03-007-单一JSON代码块兼容.md) |
 | terminology-format-compatibility | [plan](../../plans/terminology-format-compatibility/plan.md) | ✅ S01-03 已完成，相关 QA 通过 | 3 | [①实现](terminology-format-compatibility/story-01-to-03-implementation/2026-08-26-001-术语格式最大化兼容实现.md) |
 | existing-translation-terminology | [plan](../../plans/existing-translation-terminology/plan.md) | ✅ S01-02 已完成，相关 QA 通过 | 2 | [s01:①实现](existing-translation-terminology/story-01-dual-path-extraction/2026-08-26-001-双路径术语提取与冲突保护.md) · [s02:①接入](existing-translation-terminology/story-02-translation-bootstrap/2026-08-26-001-翻译启动前存量术语初始化.md) |
 | project-terminology-build-versioning-reporting | [plan](../../plans/project-terminology-build-versioning-reporting/plan.md) | ⚠️ S00-11 生产闭环完成；S12 发布验证未通过，不阻塞运行时 | 13 | [S00-12:①实现与QA](project-terminology-build-versioning-reporting/story-00-to-12-implementation/2026-08-28-001-FR5.16全Story实现与QA收口.md) · [②生产接线与正式基准收口](project-terminology-build-versioning-reporting/story-00-to-12-implementation/2026-08-28-002-FR5.16生产接线与正式基准收口.md) · [③横版工作台与运行时解耦](project-terminology-build-versioning-reporting/story-00-to-12-implementation/2026-08-28-003-术语工作台横版重构与运行时门禁移除.md) · [④本次对话完整增量汇总](project-terminology-build-versioning-reporting/story-00-to-12-implementation/2026-08-28-004-本次对话完整增量汇总.md) |

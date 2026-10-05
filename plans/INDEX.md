@@ -6,6 +6,16 @@
 
 ## 当前实施
 
+- [ai-proofread-resume](ai-proofread-resume/plan.md)：S01～S06 本地完成；按任务隔离校对进度，明确继续／重新开始／稍后处理，恢复临时配置及原范围；703 项回归、105 项扩展与最终 82 项复验通过（2026-10-04）。
+
+- [ai-proofread-tolerance](ai-proofread-tolerance/plan.md)：完成单条预算、疑问状态、逐条隔离恢复、实时日志与最终摘要；追加自动重试携带逐条校验反馈，最新 378 项相关回归通过（2026-10-03）。
+
+- [term-candidate-validation](term-candidate-validation/plan.md)：完成无效术语入库与匹配拦截，保留现有词条强制属性；627 项综合回归及补充计数回归通过（2026-10-03）。
+
+- [ai-partial-results](ai-partial-results/plan.md)：S01～S06 本地完成；批量异步应用、成功结果自动保存、完成提示及实时日志，保留预览和失败集合重试；834 项相关回归通过（2026-10-03）。
+
+- [ai-task-lifecycle-history](ai-task-lifecycle-history/plan.md)：S01～S04 完成；独立 QA 的失败统计、批次原因和取消生命周期缺陷已修复，811 项相关回归及独立复验通过（2026-10-03）。
+
 - [source-file-update](source-file-update/plan.md)：通用“更新源文件…”、全部翻译版本迁移与恢复入口完成；38 项新增回归通过，联合回归 464 通过（2026-10-01）。
 
 - [paratranz-context-order](paratranz-context-order/plan.md)：4 个 Story 完成；八位序号、回读、远端仅序号更新与单文件上传闭环。追加 31 项回归通过，最新联合回归 266 通过、1 跳过、1 项已复现的既有失败（2026-10-01）。
@@ -30,7 +40,7 @@
 | unified-ai-settings-and-batch-dialog | 已完成（2026-09-06，Story 01～07 共享任务视觉 QA 通过） | 7/7 | [plan](unified-ai-settings-and-batch-dialog/plan.md) · [S01-05 增量记录](../docs/changelogs/unified-ai-settings-and-batch-dialog/story-01-to-05-implementation/2026-09-05-001-统一AI设置与任务式翻译界面.md) · [S06-07 增量记录](../docs/changelogs/unified-ai-settings-and-batch-dialog/story-06-to-07-visual-unification/2026-09-06-001-单入口与AI任务视觉统一.md) |
 | smart-assistant-tool-retry-recovery | 已完成（2026-09-05，S01～S04 QA 通过） | 4/4 | [plan](smart-assistant-tool-retry-recovery/plan.md) |
 | v3-ui-gap-closure | 已完成（2026-09-01，综合 QA 通过） | 5/5 | [plan](v3-ui-gap-closure/plan.md) |
-| dialogue-context-editor | XT 式记录导航已完成（2026-08-31） | 4/4 | [plan](dialogue-context-editor/plan.md) · [S01–04 词条弹窗与XT式记录导航](../docs/changelogs/dialogue-context-editor/story-01-04-implementation/2026-08-31-001-词条弹窗与XT式记录导航.md) |
+| dialogue-context-editor | S01–09 已完成；应用重复处理优化，156 项回归通过（2026-10-04） | 9/9 | [plan](dialogue-context-editor/plan.md) · [S09 减少应用开销](../docs/changelogs/dialogue-context-editor/story-09-apply-cost/2026-10-04-001-reduce-snapshot-copies.md) · [S08 应用后重开](../docs/changelogs/dialogue-context-editor/story-05-08-editing-flow/2026-10-04-003-reopen-after-apply.md) · [S05–08 应用返回、同原文同步与性能](../docs/changelogs/dialogue-context-editor/story-05-08-editing-flow/2026-10-04-001-editor-flow-and-refresh.md) · [S01–04 词条弹窗与XT式记录导航](../docs/changelogs/dialogue-context-editor/story-01-04-implementation/2026-08-31-001-词条弹窗与XT式记录导航.md) |
 | authoritative-project-mutation-closure | 已完成（2026-08-30，综合 QA 通过；1 项既有工具数量断言待纠偏） | 6/6 | [plan](authoritative-project-mutation-closure/plan.md) · [S03 配对来源移除修复](../docs/changelogs/authoritative-project-mutation-closure/story-03-source-lifecycle/2026-08-31-001-配对插件来源移除与重开一致性修复.md) |
 | paratranz-sync-operation-ux | 已实现（2026-08-30，聚焦 QA 通过；真实联机未执行） | 4/4 | [plan](paratranz-sync-operation-ux/plan.md) · [S04 未保存拦截移除与快照保护回归](../docs/changelogs/paratranz-sync-operation-ux/story-04-recovery-protection/2026-08-31-001-下载未保存拦截移除与快照保护回归.md) · [S03 检查下载进度与操作锁定](../docs/changelogs/paratranz-sync-operation-ux/story-03-auto-preflight/2026-08-31-001-同步检查下载进度与操作锁定.md) |
 | dialogue-tree-order | 已完成（2026-08-30，相关 QA 与 Vigilant 实物验证通过） | 2/2 | [plan](dialogue-tree-order/plan.md) |

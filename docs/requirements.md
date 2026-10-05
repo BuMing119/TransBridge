@@ -148,9 +148,9 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
   - **FR5.13.4 不可变运行档案**: 执行档案 SHALL 固化输入策略、阶段开关及范围、模型参数、术语来源摘要、预览/提交策略和稳定指纹；运行中修改长期配置仅影响后续任务。
   - **FR5.13.5 Mixed 唯一阶段计划**: 混合预设 SHALL 为每个稳定 entry key 生成唯一阶段计划；翻译候选和已有译文候选可按用户配置进入公共后处理，但同一条目不得意外重复翻译、修复或润色。
   - **FR5.13.6 旧配置迁移**: 旧版本中曾显示但未在独立润色执行的默认勾选项 SHALL NOT 在升级后无提示地产生额外 LLM 调用。系统 SHALL 以兼容默认迁移，并在用户确认启用完整流程前展示实际阶段和成本影响。
-  - **FR5.13.7 统一详细运行面板** — *2026-08-26 | 状态: 已实现（相关 QA 通过）*: 翻译、润色、混合及用户自定义阶段组合 SHALL 使用一致的信息层级展示运行状态。面板 SHALL 按有效执行档案展示实际启用阶段、当前/总进度、成功/失败/待审等可用统计、连续详细日志、可独立打开的完整 LLM 请求/响应日志以及暂停/继续/停止能力；关闭或未执行的阶段不得显示为已完成。混合运行 SHALL 连续转发翻译与校改流水线的内部进度，不得在整个子流程期间停留于 0% 后一次跳变。
+  - **FR5.13.7 统一详细运行面板** — *2026-08-26 | 修订: 2026-10-03 | 状态: 已实现（相关 QA 通过）*: 翻译、润色、混合及用户自定义阶段组合 SHALL 使用一致的信息层级展示运行状态。面板 SHALL 按有效执行档案展示实际启用阶段、当前/总进度和暂停/继续/停止能力。校对日志 SHALL 在运行中展示阶段、节流进度及重试、拆批、恢复事件，暂停时立即显示“正在暂停”；关闭或未执行的阶段不得显示为已完成。结束摘要 SHALL 根据逐条最终状态统计成功（含有疑问子集）、未完成、未处理、已取消及应用/未采纳状态，重试已恢复的历史错误不得计入最终失败，诊断记录数不得冒充条目数。主面板使用简短中文事件、来源名称和纯文本；技术诊断及完整 LLM 请求/响应通过结果详情和独立日志查看。混合运行 SHALL 连续转发翻译与校改流水线的内部进度，不得在整个子流程期间停留于 0% 后一次跳变。
   - **FR5.13.8 术语初始化可观测性** — *2026-08-26 | 状态: 已实现（相关 QA 通过）*: 从已有译文调用 LLM 抽取术语时，翻译和混合运行 SHALL 将其显示为翻译前的独立阶段，并展示真实批次数、当前批次、连续日志和新增术语统计。暂停/停止 SHALL 在安全点阻止后续批次；认证、网络或解析异常 SHALL 在首个失败批次给出可定位提示并终止本次抽取，不得静默循环请求。无需抽取、已有初始化结果或关闭术语检索时 SHALL 明确跳过，不得让总进度长期停留在 0/0。
-  - **FR5.13.9 请求并发与内容 Token 独立语义** — *2026-08-26 | 状态: 已实现（相关 QA 通过）*: `max_concurrent` SHALL 仅表示单次 AI 工作流同时在途的 LLM 请求硬上限，翻译、术语抽取、质量检测、修复、润色、裁决及混合并行分支 SHALL 共享该额度；`max_tokens_per_batch` SHALL 仅表示单个请求内待模型处理的业务内容 Token 上限，不得随并发数改变批次边界。正式翻译按原文计数，术语抽取按原文与译文计数，校改按阶段实际业务字段计数；单条自身超限时 SHALL 在外部请求前跳过并给出诊断。并发等待、Provider 异常、流式回调异常、暂停和取消均不得泄漏请求槽或让已取消任务迟到发起请求。
+  - **FR5.13.9 请求并发与内容 Token 独立语义** — *2026-10-03 | 状态: 已实现*: `max_concurrent` SHALL 仅表示单次 AI 工作流同时在途的 LLM 请求硬上限，翻译、术语抽取、质量检测、修复、润色、裁决及混合并行分支 SHALL 共享该额度；`max_tokens_per_batch` SHALL 表示多条目组批的业务内容 Token 预算，不得随并发数改变批次边界。正式翻译按原文计数，术语抽取按原文与译文计数，校改按阶段实际业务字段计数；单条自身超预算时 SHALL 独立发送，保留完整内容，不因组批预算跳过。模型上下文容量与输出上限仍然有效。并发等待、Provider 异常、流式回调异常、暂停和取消均不得泄漏请求槽或让已取消任务迟到发起请求。
   - **FR5.13.10 具名自定义工作流** — *2026-08-27 | 状态: 已实现*: AI 窗口 SHALL 提供「自定义」业务入口，允许用户创建、选择、重命名、删除、导入和导出多个具名工作流配置。每个自定义配置 SHALL 明确基于翻译、润色或混合业务入口之一，并复用该入口的作用域、预检、Worker、报告和提交边界，不得形成第四套隐式执行引擎。配置文件 SHALL 使用带版本的 JSON 白名单格式，保存处理策略、阶段、运行额度及混合规则；模型、供应商、Base URL、API Key、Token、凭据引用和本地术语路径 SHALL 继承当前全局配置且不得进入导出文件。非法或未来版本的配置 SHALL 整体拒绝且不得部分覆盖现有配置；没有可用具名配置时 SHALL 禁止启动并给出明确原因。
 
 **FR5.14 Embedding 服务与本地模型管理** — *2026-08-27 | 状态: 已实现（相关 QA 通过） | 优先级: P0*: 系统 SHALL 将 Embedding 作为独立的可选语义检索服务，取消本地模型的隐式下载，并在应用内提供可理解、可恢复的 API 配置与预设本地模型管理体验。Embedding 不可用时，精确术语匹配、翻译、编辑、保存和写回等不依赖语义检索的能力 SHALL 继续可用。
@@ -165,14 +165,14 @@ TransBridge 是一款面向 SSE (Skyrim Special Edition) Mod 翻译工作者的�
   - **FR5.14.8 下载、删除与失败恢复**: 模型下载 SHALL 在后台执行，展示真实可得的进度与状态，支持取消/重试，并在完成后以原子方式转为可用安装；网络中断、磁盘空间不足、校验失败或用户取消 SHALL 保留可诊断原因并不破坏已安装模型。删除当前选中模型前 SHALL 二次确认；确认删除后 SHALL 先将 Embedding 持久化为 `disabled`，再仅删除应用自身管理目录内的对应模型。
   - **FR5.14.9 凭据与诊断安全**: Embedding API Key SHALL 继续通过独立凭据引用存储，不得明文进入 INI、日志、错误消息、模型元数据或导出产物。本地模型目录与下载临时目录 SHALL 使用可验证的应用数据根路径，删除和清理操作 SHALL 拒绝超出该边界的路径。
 
-**FR5.15 AI 翻译原生 Structured Outputs** — *2026-08-27 | 状态: 已完成 | 优先级: P0*: AI 翻译窗口的翻译、润色、混合与具名自定义入口 SHALL 对所有期望结构化结果的业务 LLM 请求使用 Provider 原生 Structured Outputs，而不是仅通过提示词要求模型返回 JSON。OpenAI-compatible 协议 SHALL 使用 Responses API `text.format` JSON Schema；Anthropic 协议 SHALL 使用 Messages `output_config.format` JSON Schema。
+**FR5.15 AI 翻译原生 Structured Outputs** — *2026-08-27 | 修订: 2026-10-03 | 状态: 已完成 | 优先级: P0*: AI 翻译窗口的翻译、润色、混合与具名自定义入口 SHALL 对所有期望结构化结果的业务 LLM 请求使用 Provider 原生 Structured Outputs，而不是仅通过提示词要求模型返回 JSON。OpenAI-compatible 结构化请求 SHALL 使用 Responses API `text.format` JSON Schema；Anthropic 请求 SHALL 使用 Messages `output_config.format` JSON Schema。
 
   - **FR5.15.1 四入口一致覆盖**: 翻译、润色和混合入口 SHALL 使用同一套 Provider-neutral 结构化请求契约；具名自定义入口 SHALL 随其 `base_mode` 复用对应契约，不得形成独立的文本 JSON 回退路径。
-  - **FR5.15.2 全流程结构化调用**: 正式翻译、翻译流程内的专有名词抽取、默认 proofread，以及 strict 后处理中的质量检测、修复、润色和裁决，只要模型响应由应用按 JSON 结构消费，就 SHALL 提交与该响应匹配的原生 JSON Schema。连接检查和智能助手原生 function calling 不属于本条改造范围。
-  - **FR5.15.3 Provider 原生协议**: OpenAI-compatible 请求 SHALL 通过 Responses API 提交 `text.format.type=json_schema`、命名 schema 与 schema 定义；Anthropic 请求 SHALL 提交 `output_config.format.type=json_schema`。Schema SHALL 使用两种协议共同支持的 JSON Schema 子集，根节点为 object，object 明确声明 `additionalProperties`，并对业务必需字段声明 `required`。
-  - **FR5.15.4 领域语义仍由应用校验**: Provider 的语法和类型约束 SHALL NOT 替代应用对 entry key 完整性、未知或重复条目、空译文、受保护占位符、术语、裁决枚举及结果归属的验证。模型输出即使满足 JSON Schema，也只有通过现有领域校验后才能提交到翻译结果。
+  - **FR5.15.2 全流程结构化调用**: 正式翻译、翻译流程内的专有名词抽取、默认 proofread，以及 strict 后处理中的质量检测、修复、润色和裁决，只要模型响应由应用按 JSON 结构消费，就 SHALL 提交与该响应匹配的原生 JSON Schema，并对完整响应执行本地复验。连接检查和智能助手原生 function calling 不属于本条改造范围。
+  - **FR5.15.3 Provider 原生协议**: OpenAI-compatible 结构化请求 SHALL 通过 Responses API 提交 `text.format.type=json_schema`、命名 schema 与 schema 定义；Anthropic 请求 SHALL 提交 `output_config.format.type=json_schema`。Schema SHALL 使用两种协议共同支持的 JSON Schema 子集，根节点为 object，object 明确声明 `additionalProperties`，并对业务必需字段声明 `required`。
+  - **FR5.15.4 领域语义仍由应用校验**: Provider 的语法和类型约束 SHALL NOT 替代应用对 entry key 完整性、未知或重复条目、空译文、受保护占位符、术语、裁决枚举及结果归属的验证。模型输出即使满足 JSON Schema，也只有通过现有领域校验后才能提交到翻译结果。Proofread 对可解析且可确定条目归属的响应 SHALL 逐条严格校验 Schema 与领域规则，保留通过的条目，仅恢复失败集合；未知条目不得按位置猜测归属，重复 key 仅拒绝对应条目，缺少 final_translation 或多余条目字段不得通过。重复 JSON 对象成员或无法解析、缺少 results 数组时才按整份结构异常恢复。Proofread 沿用受保护语法检查与有界恢复；最终仅存在语法差异且运行前译文非空时 SHALL 保留运行前译文、标为“有疑问”、计入成功并排除失败重试。取消、调用失败、空译文及其他校验失败不适用该降级规则。
   - **FR5.15.5 流式与运行护栏不回退**: 正式翻译 SHALL 保留流式增量展示、暂停、取消、并发预算、日志和缺项拆批恢复。限流、推理控制、prompt cache 和工作流日志包装器 SHALL 透明转发结构化输出契约；因缓存参数触发无缓存重试时 SHALL 保留相同 schema。
-  - **FR5.15.6 明确失败语义**: Provider 拒绝 schema、模型拒答、输出因 token 上限截断、响应缺少结构化文本或本地解析/语义校验失败时，系统 SHALL 给出可诊断失败并沿用既有安全重试、拆批或保留原译文策略。生产 OpenAI-compatible 结构化请求 SHALL NOT 回退到 Chat Completions；OpenAI-compatible 或 Anthropic 客户端均 SHALL NOT 静默降级为仅靠提示词约束的文本 JSON 请求。
+  - **FR5.15.6 明确失败语义**: Provider 拒绝 schema、模型拒答、输出因 token 上限截断、响应缺少结构化文本或本地解析/语义校验失败时，系统 SHALL 给出可诊断失败并沿用既有安全重试、拆批或保留原译文策略。Schema 诊断 SHALL 保留全部校验规则和字段位置，缺少译文优先于多余字段展示，普通错误消息不复制响应正文。Proofread 自动恢复及拆批请求 SHALL 按当前请求的 entry key 携带最近一轮可归属的校验反馈，包括缺字段、多余字段、类型、漏项、重复项或保护标记不一致；反馈使用有限长度的诊断数据，不复制整份旧响应、异常堆栈或网络错误。网络请求异常不得描述为模型校验失败；原校验标准和有界调用次数保持不变。完整响应若仅由单个 `json` 或无语言标签的 Markdown 代码块包裹，系统 MAY 去掉围栏后继续执行相同的 JSON Schema 与领域校验，并记录不含译文的恢复诊断；附带解释、多个代码块或不完整围栏 SHALL 失败。Proofread 的可归属条目按 FR5.15.4 分别判定，不得因同批其他条目校验失败而拒绝已通过条目；额外顶层字段记录诊断，不覆盖有效 results。生产 OpenAI-compatible 结构化请求 SHALL NOT 回退到 Chat Completions；OpenAI-compatible 或 Anthropic 客户端均 SHALL NOT 静默降级为仅靠提示词约束的文本 JSON 请求。
   - **FR5.15.7 协议隔离**: Provider-neutral 结构化输出指令 SHALL 与智能助手的 `chat_stream_with_tools()` 保持语义和消息历史隔离；Provider 客户端 SHALL 在发出网络请求前剥离内部元数据并映射为原生 schema 参数，不得把翻译结果伪装成工具调用，也不得改变已完成的原生 function calling 行为。
 
 **FR5.16 项目全来源术语库构建、版本管理与质量报告** — *2026-08-28 | 状态: 已确认 | 优先级: P1*: 系统 SHALL 允许用户以当前项目的完整来源清单和当前激活 Variant 为输入，构建和维护一份有版本的项目级术语库，并生成质量分析报告与版本更新日志。功能范围 SHALL 由项目权威状态决定，不得缩减为当前工作台已打开的单个 `TranslationEntryCollection`、当前激活插件或 `AppContext.slots` 的临时内容。
@@ -2010,6 +2010,8 @@ ChatWidget 保留职责：UI 渲染（bubble/card/thinking indicator/system mess
 
 | 日期 | 变更内容 | 来源 |
 |------|---------|------|
+| 2026-10-03 | FR5.15.6 增加单个完整 JSON Markdown 代码块的严格兼容；剥离围栏后仍需 Schema 和领域校验 | 用户要求经 /bm-pilot 实现代码块包裹响应兼容 |
+| 2026-10-03 | FR5.15 恢复 OpenAI-compatible 结构化翻译及后处理使用 Responses API `text.format` JSON Schema；普通文本与工具调用维持 Chat Completions | 用户要求经 /bm-pilot 切回 Responses API |
 | 2026-10-01 | 对齐 FR5.16.30 及验收场景为“术语、版本、报告”三页，共享头部承载项目上下文与当前术语选择；同步原实现计划与 Story，消除旧四页描述 | 修改后完整回归发现测试与文档未跟随 2026-09-10 已实施的紧凑术语工作台改版；依据该改版记录补齐，不新增页面行为 |
 | 2026-10-01 | 补录 FR19.14 通用更新源文件与全部版本迁移、FR22.9～FR22.11 八位上下文序号及显式远端刷新；修正 FR8.3/FR8.4/FR8.9 的持久化、来源变化恢复与版本顺序边界，补齐验收与需求→ADR/plan→验证追溯 | 用户指出 bm-pilot 实现后遗漏正式需求文件；根据本会话已授权功能和实际验证补齐，不新增实现范围 |
 | 2026-09-13 | 新增 FR31.1～FR31.10 自动长期记忆草稿：自动提取、保存和更新，无需用户逐条确认；覆盖作用域、来源、召回、纠错、遗忘、用户管理、后台处理、恢复兼容与发布验收，承接 ADR-042 和 assistant-durable-memory 计划；旧记忆需求保持退役 | 用户要求补齐需求文档，并已反馈日常记忆不应依赖点击保存 |
