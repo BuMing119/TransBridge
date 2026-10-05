@@ -248,6 +248,7 @@ class MainWindow(QMainWindow):
 
     def _init_central(self):
         from .paratranz.widget import ParaTranzWidget
+        from .tools.ai_translator.task_registry import project_directory
 
         self._mode_tabs = WorkspaceShell(self, theme_view=self._theme_view)
         self._mode_tabs.intent_requested.connect(self._intent_composition.dispatch)
@@ -256,6 +257,7 @@ class MainWindow(QMainWindow):
             self._ctx,
             theme_view=self._theme_view,
             terminology_profile_factory=self._terminology_profile_factory,
+            project_directory_provider=lambda: project_directory(self._ctx, self._app_runtime, self._runtime_context),
         )
         self._pt_widget = ParaTranzWidget(self._ctx, theme_view=self._theme_view)
 

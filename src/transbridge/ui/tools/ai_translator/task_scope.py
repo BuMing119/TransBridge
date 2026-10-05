@@ -72,7 +72,8 @@ class TaskScope:
             candidates = [
                 entry
                 for entry in candidates
-                if DEFAULT_STAGE_POLICY.allows_ai(entry.stage, entry.translation, original=entry.original)
+                if entry.original.strip()
+                and DEFAULT_STAGE_POLICY.allows_ai(entry.stage, entry.translation, original=entry.original)
             ]
             translate, polish = [], []
             if mode == "mixed":
@@ -105,7 +106,7 @@ def estimate_tasks(tasks, config) -> str:
 
     total = sum(len(task.collection) for task in tasks)
     eligible = sum(
-        DEFAULT_STAGE_POLICY.allows_ai(e.stage, e.translation, original=e.original)
+        bool(e.original.strip()) and DEFAULT_STAGE_POLICY.allows_ai(e.stage, e.translation, original=e.original)
         for task in tasks
         for e in task.collection
     )

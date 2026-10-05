@@ -53,6 +53,7 @@ class WorkbenchWidget(QWidget):
         *,
         theme_view: ThemeView | None = None,
         terminology_profile_factory=None,
+        project_directory_provider=None,
     ):
         super().__init__(parent)
         self.setObjectName("tbWorkbench")
@@ -63,6 +64,11 @@ class WorkbenchWidget(QWidget):
         self._terminology_profile_factory = terminology_profile_factory
         self._terminology_profile_controller = None
         self._tool_windows: dict = {}
+        from transbridge.ui.tools.ai_translator.task_registry import AiTaskRegistry
+
+        self.ai_tasks = AiTaskRegistry(ctx, self, directory_provider=project_directory_provider, theme_view=theme_view)
+        self._pending_ai_recovery = None
+        self.ai_tasks.recovery_requested.connect(self._request_ai_recovery)
         self._workflow_presenter = WorkbenchWorkflowPresenter()
         self._init_ui()
 
@@ -87,6 +93,9 @@ class WorkbenchWidget(QWidget):
             lambda: self.intent_requested.emit(IntentId.PROJECT_SNAPSHOT_LOAD.value)
         )
         context_layout.addWidget(self._project_bar, 1)
+        self._ai_history_button = QPushButton("AI 任务记录")
+        self._ai_history_button.clicked.connect(self.ai_tasks.open_history)
+        context_layout.addWidget(self._ai_history_button)
 
         self._remote_target = RemoteTargetView(self._ctx, self)
         context_layout.addWidget(self._remote_target, 1)
@@ -186,14 +195,21 @@ class WorkbenchWidget(QWidget):
 
     # ── Tool windows ──────────────────────────────────────────
 
+    def _request_ai_recovery(self, record, restart):
+        self._pending_ai_recovery = (record, restart)
+        self.intent_requested.emit(IntentId.TRANSLATION_AI.value)
+
     def open_tool(self, tool_id: str, *, task_runtime=None, settings_requested=None):
         if tool_id == "ai_batch_translation":
             tool_id = "ai_translator"
 
         if tool_id == "ai_translator":
-            progress_win = self._tool_windows.get("ai_translator_progress")
-            if progress_win is not None and progress_win.is_running():
-                show_and_activate(progress_win)
+            recovery = getattr(self, "_pending_ai_recovery", None)
+            if recovery is None and self.ai_tasks.foreground():
+                return
+            if recovery is None and self.ai_tasks.recovery.reoffer_deferred(
+                lambda: self.open_tool(tool_id, task_runtime=task_runtime, settings_requested=settings_requested)
+            ):
                 return
 
             from transbridge.ui.tools.ai_translator.ai_translator_window import AITranslatorWindow
@@ -205,6 +221,7 @@ class WorkbenchWidget(QWidget):
                 task_runtime=task_runtime,
                 theme_view=self._theme_view,
                 settings_requested=settings_requested,
+                show_window=recovery is None,
                 terminology_profile_controller=self._terminology_profile_controller,
                 terminology_workbench_requested=lambda: self.intent_requested.emit(
                     IntentId.TERMINOLOGY_WORKBENCH.value
@@ -214,8 +231,15 @@ class WorkbenchWidget(QWidget):
                 return
 
             if isinstance(win, AITranslatorWindow):
+                win._task_project_directory_provider = self.ai_tasks.directory_provider
+                win._task_recovery_registry = self.ai_tasks
                 win.progress_window_created.connect(self._on_progress_window_created)
                 self._tool_windows["ai_translator"] = win
+                if recovery is not None:
+                    from transbridge.ui.tools.ai_translator.task_recovery_binding import open_recovery
+
+                    self._pending_ai_recovery = None
+                    open_recovery(win, recovery[0], restart=recovery[1])
             else:
                 _track_ai_progress(self._tool_windows, win)
             return
@@ -226,6 +250,7 @@ class WorkbenchWidget(QWidget):
     def _on_progress_window_created(self, progress_win):
         # The signal is emitted while the configuration window is still active.
         # Defer activation until that window's start handler has closed it.
+        self.ai_tasks.register(progress_win)
         _track_ai_progress(self._tool_windows, progress_win)
 
     # ── Collection toolbar ───────────────────────────────────

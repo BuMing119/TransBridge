@@ -220,6 +220,50 @@ def test_worker_pause_gates_execution_and_stop_unblocks_paused_worker(resume):
     assert worker.was_cancelled is not resume
 
 
+@pytest.mark.parametrize("resume", [False, True])
+def test_worker_confirms_pause_only_when_admitted_calls_have_drained(resume):
+    admitted, release, paused = (threading.Event() for _ in range(3))
+    states = []
+
+    class Executor:
+        def __init__(self, request, **kwargs):
+            self.budget = request.request_budget
+            self.pause = kwargs["pause_event"]
+            self.stop = kwargs["stop_event"]
+
+        def execute(self, task):
+            with self.budget.acquire(pause_event=self.pause, cancel_event=self.stop):
+                admitted.set()
+                assert release.wait(3)
+            self.pause.wait(3)
+            return SourceOutcome(task)
+
+    worker = AiTaskWorker(_request(), (_task(),), executor_factory=Executor)
+
+    def observe(state):
+        states.append(state)
+        if state == "paused":
+            paused.set()
+
+    worker.pause_state_changed.connect(observe, Qt.ConnectionType.DirectConnection)
+    thread = threading.Thread(target=worker.run)
+    thread.start()
+    try:
+        assert admitted.wait(2)
+        worker.pause()
+        assert states == ["pausing"]
+        assert not paused.wait(0.15)
+        release.set()
+        assert paused.wait(2)
+        worker.resume() if resume else worker.stop()
+    finally:
+        release.set()
+        worker.stop()
+        thread.join(2)
+    assert not thread.is_alive()
+    assert states == (["pausing", "paused", "running"] if resume else ["pausing", "paused"])
+
+
 @pytest.fixture
 def make_executor(monkeypatch, tmp_path):
     store_class = source_execution.WorkflowLogStore

@@ -31,6 +31,8 @@ class TranslationRunRequest[EntryT]:
     request_budget: AiRequestBudget
     terminology_binding: object
     runtime_ref: JobRef | None = None
+    reuse_proofread: bool = False
+    recovery_task_id: str | None = None
 
     @property
     def mode(self) -> RunMode:

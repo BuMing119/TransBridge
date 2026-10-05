@@ -10,6 +10,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication, QDialog
 import pytest
 
+from transbridge.ai_translator.translation_entry_outcomes import TranslationEntryOutcome
 from transbridge.config.llm import LLMConfig
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
@@ -46,6 +47,7 @@ def test_unified_mixed_completion_distinguishes_rejecting_candidates_from_cancel
     persistence = MagicMock()
     persistence.commit_translation.return_value = {"ok": True}
     persistence.create_snapshot.return_value = {"ok": True}
+    persistence.save_translation.return_value = {"ok": True}
     monkeypatch.setattr(task_session, "VersionPersistence", lambda *_args: persistence)
     spec = SimpleNamespace(mode="mixed", run_id="run", execution_profile=SimpleNamespace(preview_enabled=True))
     source = SourceTask(
@@ -71,25 +73,43 @@ def test_unified_mixed_completion_distinguishes_rejecting_candidates_from_cancel
             setWindowTitle=lambda _title: None,
         ),
     )
-    window = AiTaskProgressWindow(SimpleNamespace(spec=spec), session, MagicMock())
-    monkeypatch.setattr(window, "_render_reports", lambda: None)
-    window._preparing = False
-    window._worker = SimpleNamespace(was_cancelled=False)
+    window = AiTaskProgressWindow(SimpleNamespace(spec=spec, run_id="run"), session, MagicMock())
+    monkeypatch.setattr(window.run, "_record", lambda: None)
+    window.run.preparing = False
+    window.run.worker = SimpleNamespace(was_cancelled=False, stop=lambda: None)
+    window.show()
     outcome = SourceOutcome(
-        detached, translation=SimpleNamespace(success_count=1), polish={"two": SimpleNamespace(confidence=1)}
+        detached,
+        translation=SimpleNamespace(
+            success_count=1,
+            entry_outcomes={entry.identity: TranslationEntryOutcome(entry.identity, "succeeded", "Translated", 1)},
+        ),
+        polish={
+            "two": SimpleNamespace(
+                confidence=1, accepted=True, processing_status="completed", polished_translation="候选", note=""
+            )
+        },
     )
-    window._completed((outcome,))
+    window.run._completed((outcome,))
+    window.run.worker = None
+    deadline = time.monotonic() + 5
+    while window.run.busy and time.monotonic() < deadline:
+        _APP.processEvents()
+        time.sleep(0.001)
+    assert not window.run.busy
     session.rollback_uncommitted()
     committed = preview_action != "cancel_dialog"
-    assert session.completed is committed and session.can_save is committed
+    assert session.completed is committed and session.saved is committed
+    assert not session.can_save
     assert context.collection.get("one").translation == ("Translated" if committed else "")
     assert context.collection.get("two").translation == "旧译文"
     assert collection.get("one").translation == ""
     assert published == ([context.collection] if committed else [])
     assert persistence.commit_translation.call_count == int(committed)
     if preview_action == "reject_candidates":
-        assert outcome.polish_summary.rejected_entry_ids == ("two",)
-    window._worker = None
+        assert window.run.entries.entries[polish_entry.identity].decision == "rejected"
+        assert polish_entry.identity not in window.run.entries.failed_keys
+    window.run.worker = None
     window.close()
 
 

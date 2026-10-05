@@ -1,8 +1,6 @@
-"""Unified task progress, source reports and atomic result publication."""
+"""A reopenable view of an independently owned AI task."""
 
 from __future__ import annotations
-
-import logging
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -10,9 +8,9 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMessageBox,
+    QPlainTextEdit,
     QProgressBar,
     QPushButton,
-    QTextEdit,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -20,66 +18,68 @@ from PyQt6.QtWidgets import (
 )
 
 from transbridge.ui.windowing import show_and_activate
-from transbridge.ui.workers import ApiWorker
 
 from ._theme_support import AiThemeBinding
+from .task_run import AiTaskRun
+from .task_run_presentation import source_label
 from .task_widget_style import configure_task_button, configure_task_host
-from .task_worker import AiTaskWorker
-
-logger = logging.getLogger(__name__)
 
 
 class AiTaskProgressWindow(QWidget):
     translation_completed = pyqtSignal()
 
-    def __init__(self, request, session, activity, *, client=None, project_id=None, theme_view=None):
+    def __init__(self, request, session, activity, *, client=None, project_id=None, theme_view=None, consistency=None):
         super().__init__(None, Qt.WindowType.Window)
-        self.request = request
-        self.session = session
-        self.activity = activity
-        self._client = client
-        self._project_id = project_id
+        self.run = AiTaskRun(request, session, activity, client=client, project_id=project_id, consistency=consistency)
+        self.request, self.session, self.activity = request, session, activity
         self._theme_view = theme_view
-        self._worker = None
-        self._completion_received = False
-        self._reports_worker = None
-        self._outcomes = {}
-        self._cancelled = False
-        self._preparing = True
         self._dialogs = []
-        self.setWindowTitle("AI 翻译任务 · 运行进度")
-        self.resize(880, 680)
+        self._preview_open = False
+        self._last_selected = None
+        self.setWindowTitle("AI 翻译任务")
+        self.resize(1080, 680)
         configure_task_host(self)
         layout = QVBoxLayout(self)
-        self.status = QLabel("正在创建执行前版本快照…")
+        self.status = QLabel()
+        self.status.setTextFormat(Qt.TextFormat.PlainText)
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         self.bar = QProgressBar()
-        self.bar.setRange(0, len(session.tasks))
         layout.addWidget(self.bar)
         self.sources = QTreeWidget()
         self.sources.setHeaderLabels(["处理内容", "阶段", "进度 / 结果"])
         self.sources.setRootIsDecorated(False)
         self.rows = {}
         for task in session.tasks:
-            row = QTreeWidgetItem([task.label, "等待", f"{len(task.entries)} 条"])
+            row = QTreeWidgetItem([source_label(session.tasks, task.key), "等待", f"{len(task.entries)} 条"])
             row.setData(0, Qt.ItemDataRole.UserRole, task.key)
             self.sources.addTopLevelItem(row)
             self.rows[task.key] = row
         self.sources.setColumnWidth(0, 290)
         layout.addWidget(self.sources)
-        self.logs = QTextEdit()
+        self.logs = QPlainTextEdit()
         self.logs.setReadOnly(True)
         self.logs.document().setMaximumBlockCount(3000)
         layout.addWidget(self.logs, 1)
+        self.result_summary = QLabel()
+        self.result_summary.setTextFormat(Qt.TextFormat.PlainText)
+        self.result_summary.setWordWrap(True)
+        layout.addWidget(self.result_summary)
+        self.record_status = QLabel()
+        self.record_status.setWordWrap(True)
+        self.save_status = QLabel()
+        self.save_status.setWordWrap(True)
+        layout.addWidget(self.record_status)
+        layout.addWidget(self.save_status)
         buttons = QHBoxLayout()
         for name, label, callback in (
-            ("pause_button", "暂停", self._pause),
+            ("pause_button", "暂停", self.run.toggle_pause),
             ("stop_button", "取消任务", self._stop),
-            ("retry_button", "重试失败插件", self._retry),
+            ("retry_button", "重试失败条目", self.run.retry),
+            ("preview_button", "确认结果", self._confirm),
             ("log_button", "LLM 日志", self._open_log),
-            ("report_button", "查看所选报告", self._open_report),
-            ("save_button", "保存翻译", self._save),
+            ("report_button", "查看结果", self._open_report),
+            ("save_button", "保存项目", self.run.save),
         ):
             button = QPushButton(label)
             configure_task_button(button, primary=name == "save_button")
@@ -87,286 +87,160 @@ class AiTaskProgressWindow(QWidget):
             buttons.addWidget(button)
             setattr(self, name, button)
         layout.addLayout(buttons)
-        self.pause_button.setEnabled(False)
-        self.retry_button.setEnabled(False)
-        self.save_button.setEnabled(False)
-        self.report_button.setEnabled(False)
+        self.retry_record_button = QPushButton("重试保存任务记录")
+        self.retry_record_button.clicked.connect(self.run.records.retry)
+        layout.addWidget(self.retry_record_button)
         self._theme = AiThemeBinding(self, theme_view, lambda _: None)
+        self.run.changed.connect(self._refresh)
+        self.run.logged.connect(self.logs.appendPlainText)
+        self.run.preview_requested.connect(self._offer_preview)
+        self.run.translation_completed.connect(self.translation_completed)
+        self.run.completion_notice.connect(self._show_completion)
+        self._refresh()
 
     def prepare(self):
+        self.run.prepare()
+
+    def _refresh(self):
+        run = self.run
+        self.status.setText(run.status)
+        self.result_summary.setText(run.result_summary)
+        self.result_summary.setVisible(bool(run.result_summary))
+        self.record_status.setText(run.records.status)
+        self.save_status.setText(run.save_status)
+        self.retry_record_button.setVisible(bool(run.records.error))
+        self.retry_record_button.setEnabled(not run.records.busy)
+        current, total, pattern = run.progress
+        self.bar.setRange(0, total)
+        self.bar.setValue(current)
+        self.bar.setFormat(pattern)
+        for key, (phase, detail) in run.rows.items():
+            self.rows[key].setText(1, phase)
+            self.rows[key].setText(2, detail)
+        if self._last_selected != run.selected_key and run.selected_key in self.rows:
+            self.sources.setCurrentItem(self.rows[run.selected_key])
+            self._last_selected = run.selected_key
+        self.pause_button.setEnabled(run.worker is not None and not run.completion_received and not run.cancelled)
+        self.pause_button.setText("继续" if run.pause_state != "running" else "暂停")
+        self.stop_button.setText("取消任务" if run.running and not run.completion_received else "关闭")
+        self.stop_button.setEnabled(not run.cancelled or not run.running)
+        self.retry_button.setEnabled(run.can_retry)
+        self.preview_button.setText("确认结果" if run.state == "pending_confirmation" else "应用成功结果")
+        self.preview_button.setVisible(run.state == "pending_confirmation" or bool(run.entries.ready_keys))
+        self.preview_button.setEnabled(run.can_apply_success and not self._preview_open)
+        self.report_button.setEnabled(run.records.record is not None)
+        retry_snapshot = getattr(self.session, "project_saved", False) and not self.session.saved
+        self.save_button.setText(("重试快照" if run.snapshot_failed else "创建快照") if retry_snapshot else "保存项目")
+        self.save_button.setEnabled(self.session.can_save and not self.session.is_busy)
+
+    def _offer_preview(self):
+        if self.isVisible() and not self.isMinimized():
+            self._confirm()
+
+    def _confirm(self):
+        if self._preview_open or self.run.state not in {"pending_confirmation", "failed", "partial"}:
+            return
+        self._preview_open = True
         try:
-            self.session.capture_before(on_success=self._ready, on_error=self._prepare_failed)
-        except Exception as exc:
-            self._prepare_failed(str(exc))
-
-    def _ready(self, _result):
-        self._preparing = False
-        if self._cancelled:
-            self._finish_cancelled()
-            return
-        try:
-            self._start(self.session.tasks)
-        except Exception as exc:
-            self._prepare_failed(str(exc))
-
-    def _prepare_failed(self, error):
-        self._preparing = False
-        if self._cancelled:
-            self._finish_cancelled()
-            return
-        self.status.setText(f"任务未启动：{error}")
-        self.session.rollback_uncommitted()
-        self.activity.fail(error)
-        self.stop_button.setEnabled(False)
-
-    def _start(self, tasks):
-        worker = AiTaskWorker(self.request, tasks, client=self._client, project_id=self._project_id)
-        self._worker = worker
-        self._completion_received = False
-        self.activity.bind_worker(worker)
-        worker.source_started.connect(self._source_started)
-        worker.progress.connect(self._progress)
-        worker.log.connect(lambda key, text: self.logs.append(f"[{self.rows[key].text(0)}] {text}"))
-        worker.completed.connect(lambda outcomes: self._completed(outcomes) if self._worker is worker else None)
-        worker.finished.connect(lambda: self._worker_finished(worker))
-        self.pause_button.setEnabled(True)
-        self.pause_button.setText("暂停")
-        self.stop_button.setEnabled(True)
-        self.retry_button.setEnabled(False)
-        self.status.setText(f"正在执行：{self.request.spec.execution_profile.summary}")
-        worker.start()
-
-    def _source_started(self, key):
-        self.rows[key].setText(1, "执行中")
-        self.sources.setCurrentItem(self.rows[key])
-
-    def _progress(self, key, stage, current, total, message):
-        self.rows[key].setText(1, stage)
-        self.rows[key].setText(2, f"{current}/{total} · {message}")
-        self.status.setText(f"{self.rows[key].text(0)} · {stage} · {message}")
-        completed = sum(outcome.successful for outcome in self._outcomes.values())
-        self.activity.progress(completed, len(self.session.tasks), self.status.text())
-
-    def _completed(self, outcomes):
-        if self._completion_received or self._worker is None:
-            return
-        self._completion_received = True
-        self._cancelled |= self._worker.was_cancelled
-        self.pause_button.setEnabled(False)
-        self.stop_button.setEnabled(False)
-        for outcome in outcomes:
-            self._outcomes[outcome.task.key] = outcome
-            row = self.rows[outcome.task.key]
-            row.setText(1, "完成" if outcome.successful else "失败")
-            row.setText(2, outcome.error or f"{len(outcome.failed_keys)} 条失败")
-        successful = sum(outcome.successful for outcome in self._outcomes.values())
-        self.bar.setValue(successful)
-        complete = len(self._outcomes) == len(self.session.tasks) and successful == len(self.session.tasks)
-        if self._cancelled:
-            self._finish_cancelled()
-        elif not complete:
-            self.status.setText("部分插件失败，整个任务尚未提交。可重试失败插件，成功结果保留在任务中。")
-            # Keep the task activity active while recovery is available.
-            self.activity.progress(successful, len(self.session.tasks), self.status.text())
-            self.retry_button.setEnabled(True)
-        else:
-            try:
-                if not self._apply_preview():
-                    self._cancelled = True
-                    self._finish_cancelled()
-                else:
-                    self.session.mark_completed()
-                    self.status.setText("任务完成，所有来源结果已统一应用。可保存翻译及版本快照。")
-                    self.save_button.setEnabled(True)
-                    self.activity.finish(cancelled=False)
-                    self.translation_completed.emit()
-            except Exception as exc:
-                self.status.setText(f"结果未提交：{exc}")
-                self.session.rollback_uncommitted()
-                self.activity.fail(str(exc))
-                self.logs.append(str(exc))
-        self._render_reports()
-
-    def _worker_finished(self, worker):
-        if self._worker is worker:
-            if not self._completion_received:
-                from .source_execution import SourceOutcome
-
-                self._completed(
-                    tuple(SourceOutcome(task, error="AI 工作线程异常结束，请重试。") for task in worker.tasks)
-                )
-            self._worker = None
-        worker.deleteLater()
-
-    def _finish_cancelled(self):
-        self.status.setText("任务已取消，翻译内容未提交。")
-        self.session.rollback_uncommitted()
-        self.activity.request_cancel()
-        self.activity.finish(cancelled=True)
-        self.stop_button.setEnabled(False)
-        self.pause_button.setEnabled(False)
-        self.retry_button.setEnabled(False)
+            preview = self._apply_preview if self.request.spec.execution_profile.preview_enabled else None
+            self.run.apply_results(preview)
+        finally:
+            self._preview_open = False
+            self._refresh()
 
     def _apply_preview(self):
         from ._polish_preview_dialog import _PolishPreviewDialog
-        from .result_presenter import ResultPresenter
 
-        presenter = ResultPresenter()
-        # No authoritative writes occur until every source preview has been confirmed.
-        for outcome in self._outcomes.values():
-            entries = list(outcome.task.polish_entries)
+        decisions = {}
+        ready = self.run.entries.ready_keys
+        for outcome in self.run.outcomes.values():
+            entries = [
+                entry
+                for entry in outcome.task.polish_entries
+                if entry.identity in ready and self.run.entries.entries[entry.identity].decision == "pending"
+            ]
             if not entries:
                 continue
-            if self.request.spec.execution_profile.preview_enabled:
-                dialog = _PolishPreviewDialog(entries, outcome.polish, parent=self, theme_view=self._theme_view)
-                dialog.setWindowTitle(f"{outcome.task.label} · 校改结果预览")
-                if dialog.exec() != QDialog.DialogCode.Accepted:
-                    return False
-                outcome.polish_summary = presenter.apply_decisions(
-                    outcome.task.collection, entries, dialog.get_results(), results=outcome.polish
-                )
-            else:
-                outcome.polish_summary = presenter.apply_direct(outcome.task.collection, entries, outcome.polish)
+            dialog = _PolishPreviewDialog(entries, outcome.polish, parent=self, theme_view=self._theme_view)
+            dialog.setWindowTitle(f"{outcome.task.label} · 校改结果")
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return False
+            chosen = dialog.get_results()
+            decisions.update({entry.identity: chosen.get(entry.id) is not None for entry in entries})
+        self.run.entries.decide(decisions)
         return True
 
-    def _render_reports(self):
-        from .source_execution import render_source_report
-
-        self.report_button.setEnabled(False)
-        self.retry_button.setEnabled(False)
-        outcomes = tuple(self._outcomes.values())
-
-        def render():
-            errors = []
-            for outcome in outcomes:
-                try:
-                    render_source_report(outcome, self.request)
-                except Exception as exc:
-                    errors.append(f"{outcome.task.label} 报告生成失败：{exc}")
-            return errors
-
-        worker = ApiWorker(render, route_http_errors=False)
-        self._reports_worker = worker
-        worker.result.connect(lambda errors: self.logs.append("\n".join(errors)) if errors else None)
-        worker.error.connect(self.logs.append)
-
-        def finished():
-            self._reports_worker = None
-            self.report_button.setEnabled(True)
-            incomplete = len(self._outcomes) < len(self.session.tasks) or any(
-                not outcome.successful for outcome in self._outcomes.values()
-            )
-            self.retry_button.setEnabled(not self._cancelled and not self.session.completed and incomplete)
-            worker.deleteLater()
-
-        worker.finished.connect(finished)
-        worker.start()
-
-    def _selected_outcome(self):
+    def _selected_key(self):
         row = self.sources.currentItem()
-        return None if row is None else self._outcomes.get(row.data(0, Qt.ItemDataRole.UserRole))
+        return None if row is None else row.data(0, Qt.ItemDataRole.UserRole)
 
     def _open_report(self):
-        from ._translation_report_dialog import _TranslationReportDialog
+        from .task_result_dialog import TaskResultDialog
 
-        outcome = self._selected_outcome()
-        if outcome is None:
+        record = self.run.records.record
+        if record is None:
             return
-        dialog = _TranslationReportDialog(
-            snapshot=outcome.snapshot,
-            report_path=getattr(outcome.report, "excel_path", None),
-            theme_view=self._theme_view,
-        )
-        state = "" if self.session.completed else "未提交 · "
-        dialog.setWindowTitle(f"{outcome.task.label} · {state}AI 任务报告")
+        dialog = TaskResultDialog(record, source_key=self._selected_key(), theme_view=self._theme_view)
         self._dialogs.append(dialog)
         show_and_activate(dialog)
 
     def _open_log(self):
         from ._llm_log_viewer import _LLMLogViewer
 
-        outcome = self._selected_outcome()
-        if outcome is not None and outcome.log_dir:
-            dialog = _LLMLogViewer(outcome.log_dir)
+        outcome = self.run.outcomes.get(self._selected_key())
+        path = self.run.log_paths.get(self._selected_key())
+        if self._selected_key() not in self.run.log_paths and outcome is not None:
+            path = outcome.log_dir
+        if path:
+            dialog = _LLMLogViewer(path)
             self._dialogs.append(dialog)
             show_and_activate(dialog)
-
-    def _save(self):
-        self.save_button.setEnabled(False)
-
-        def saved(_):
-            self.status.setText("翻译已保存，保存后版本快照已创建。")
-
-        def failed(error):
-            self.status.setText(f"保存失败，可重试：{error}")
-            self.save_button.setEnabled(self.session.can_save)
-
-        try:
-            self.session.save_translation(on_success=saved, on_error=failed)
-        except Exception as exc:
-            failed(str(exc))
-
-    def _pause(self):
-        if self._worker is None:
-            return
-        if self._worker.is_paused:
-            self._worker.resume()
-            self.activity.resume()
-            self.pause_button.setText("暂停")
         else:
-            self._worker.pause()
-            self.activity.pause()
-            self.pause_button.setText("继续")
+            dialog = QMessageBox(self)
+            dialog.setWindowTitle("LLM 日志")
+            dialog.setText("日志不可用，请检查日志目录权限。" if path == "" else "正在等待日志目录创建，请稍后打开。")
+            self._dialogs.append(dialog)
+            dialog.open()
+
+    def _show_completion(self, notice):
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle(notice["title"])
+        dialog.setTextFormat(Qt.TextFormat.PlainText)
+        dialog.setText(notice["text"])
+        dialog.setIcon(QMessageBox.Icon.Warning if notice["error"] else QMessageBox.Icon.Information)
+        view = dialog.addButton("查看结果", QMessageBox.ButtonRole.ActionRole)
+        view.clicked.connect(self._open_report)
+        if notice["error"] and self.session.can_save:
+            retry = dialog.addButton(
+                "重试快照" if self.run.snapshot_failed else "重试保存", QMessageBox.ButtonRole.ActionRole
+            )
+            retry.clicked.connect(self.run.save)
+        if self.run.can_retry:
+            retry = dialog.addButton("重试失败条目", QMessageBox.ButtonRole.ActionRole)
+            retry.clicked.connect(self.run.retry)
+        dialog.addButton("关闭", QMessageBox.ButtonRole.RejectRole)
+        self._dialogs.append(dialog)
+        dialog.open()
 
     def _stop(self):
-        self._cancelled = True
-        self.session.rollback_uncommitted()
-        self.activity.request_cancel()
-        if self._worker is not None:
-            self._worker.stop()
-        self.stop_button.setEnabled(False)
-        self.pause_button.setEnabled(False)
-        self.status.setText("正在取消任务，翻译内容不会提交。")
-
-    def _retry(self):
-        if self.is_running() or self._reports_worker is not None or self._cancelled or self.session.completed:
-            return
-        tasks = [
-            task
-            for task in self.session.tasks
-            if not self._outcomes.get(task.key) or not self._outcomes[task.key].successful
-        ]
-        try:
-            keys = {task.key for task in tasks}
-            self.session.reset_sources(keys)
-            self._start(tuple(task for task in self.session.tasks if task.key in keys))
-        except Exception as exc:
-            self.status.setText(f"重试失败：{exc}")
-            self.retry_button.setEnabled(False)
-            self.session.rollback_uncommitted()
-            self.activity.fail(str(exc))
+        if self.run.running and not self.run.completion_received:
+            self.run.cancel()
+        else:
+            self.close()
 
     def is_running(self):
-        return self._preparing or (self._worker is not None and self._worker.isRunning())
+        return self.run.running
 
-    def _close_client(self):
-        client, self._client = self._client, None
-        if client is not None:
-            try:
-                client.close()
-            except Exception as exc:
-                logger.exception("AI task remote client cleanup failed")
-                self.logs.append(f"远端客户端关闭失败：{exc}")
+    def _prepare_failed(self, error):
+        self.run._prepare_failed(error)
 
     def closeEvent(self, event):
-        if self.is_running() or self._reports_worker is not None or self.session.is_busy:
-            QMessageBox.information(self, "任务仍在处理", "任务正在后台处理。可最小化窗口；需要结束时先取消任务。")
-            event.ignore()
-            return
-        if not self.session.completed:
-            self.activity.request_cancel()
-            self.activity.finish(cancelled=True)
-            self.session.rollback_uncommitted()
-        self._close_client()
-        self._theme.close()
+        # Window closure only changes visibility. Registry shutdown owns disposal.
         event.accept()
+
+    def dispose(self):
+        self.run.dispose()
+        for dialog in self._dialogs:
+            dialog.close()
+        self._theme.close()
+        self.close()

@@ -186,11 +186,14 @@ def test_ai_translation_progress_is_activated_after_config_window_closes() -> No
         def activateWindow(self) -> None:
             self.calls.append("activate")
 
-    host = type("Host", (), {"_tool_windows": {"ai_translator": object()}})()
+    registered = []
+    registry = type("Registry", (), {"register": lambda _self, window: registered.append(window)})()
+    host = type("Host", (), {"_tool_windows": {"ai_translator": object()}, "ai_tasks": registry})()
     progress = ProgressWindow()
 
     WorkbenchWidget._on_progress_window_created(host, progress)
 
+    assert registered == [progress]
     assert host._tool_windows == {"ai_translator_progress": progress}
     assert progress.calls == []
     _APP.processEvents()

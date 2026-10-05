@@ -63,10 +63,11 @@ def launch(monkeypatch):
     controller.create_activity = activity
 
     class Session:
-        def __init__(self, ctx, tasks, spec):
+        def __init__(self, ctx, tasks, spec, *, project_dir=None):
             self.tasks = tasks
             self.spec = spec
             self.ctx = ctx
+            self.project_dir = project_dir
 
     class Progress:
         def __init__(self, request, session, activity, **kwargs):
@@ -163,6 +164,28 @@ def test_preflight_failure_in_later_source_blocks_entire_task(launch, monkeypatc
     assert not launch.events
 
 
+@pytest.mark.parametrize("reuse", [True, False])
+def test_new_launch_ignores_legacy_reuse_checkbox(launch, reuse):
+    launch.window._view = SimpleNamespace(resume_proofread=SimpleNamespace(isChecked=lambda: reuse))
+    task_runtime.start_task(launch.window)
+    assert launch.progress[0].request.reuse_proofread is False
+    assert launch.progress[0].request.recovery_task_id is None
+
+
+@pytest.mark.parametrize("restart", [False, True])
+def test_explicit_recovery_launch_binds_only_continue_to_original_task(launch, monkeypatch, restart):
+    from transbridge.ui.tools.ai_translator import task_recovery_binding
+
+    launch.window._recovery_selection = ({"task_id": "original-task", "mode": "translate"}, restart)
+    monkeypatch.setattr(task_recovery_binding, "recovery_sources", lambda *_: (_task("first"),))
+    task_runtime.start_task(launch.window)
+    (progress,) = launch.progress
+    assert progress.request.run_id != "original-task"
+    assert progress.request.reuse_proofread is (not restart)
+    assert progress.request.recovery_task_id == (None if restart else "original-task")
+    assert not launch.messages
+
+
 def test_declining_empty_terms_does_not_freeze_or_start_task(launch, monkeypatch):
     checked = []
     launch.window._task_sources = lambda **_: (_task("first"), _task("second"))
@@ -182,7 +205,7 @@ def test_empty_source_scope_has_no_preflight_or_side_effects(launch):
 
 
 def test_session_construction_failure_releases_controller_and_keeps_window_open(launch, monkeypatch):
-    def session(*_):
+    def session(*_, **_kwargs):
         raise ValueError("来源在启动期间被移除")
 
     monkeypatch.setattr(task_session, "TaskSession", session)
@@ -193,6 +216,30 @@ def test_session_construction_failure_releases_controller_and_keeps_window_open(
     request = launch.controller.begin("translate", launch.config, [_task("retry").entries[0]])
     assert launch.controller.accepts(request.run_id)
     launch.controller.close()
+
+
+def test_project_directory_provider_is_resolved_at_launch_and_passed_to_session(launch, tmp_path):
+    directory = tmp_path / "active-project"
+    provider = Mock(return_value=directory)
+    launch.window._task_project_directory_provider = provider
+    task_runtime.start_task(launch.window)
+    provider.assert_called_once_with()
+    assert launch.progress[0].session.project_dir == directory
+    assert not launch.messages
+
+
+def test_missing_directory_provider_preserves_legacy_session_fallback(launch):
+    task_runtime.start_task(launch.window)
+    assert launch.progress[0].session.project_dir is None
+    assert not launch.messages
+
+
+def test_project_directory_lookup_failure_keeps_configuration_and_releases_run(launch):
+    launch.window._task_project_directory_provider = Mock(side_effect=RuntimeError("项目位置不可用"))
+    task_runtime.start_task(launch.window)
+    assert not launch.progress and not launch.controller.is_running
+    assert launch.messages == [("AI 任务未启动", "项目位置不可用")]
+    assert not any(event[0] == "window-close" for event in launch.events)
 
 
 def test_activity_construction_failure_releases_run_guard(launch):

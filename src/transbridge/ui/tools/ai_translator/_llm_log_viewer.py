@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QComboBox,
@@ -31,11 +31,15 @@ class _LLMLogViewer(QWidget):
         self._log_dir = log_dir
         self._known_files: tuple[str, ...] = ()
         self._active_path = ""
+        self._active_stamp = None
 
         self.setWindowTitle(f"LLM 运行日志 — {os.path.basename(log_dir)}")
         self.resize(900, 640)
         self._init_ui()
         self._refresh_index()
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setInterval(1000)
+        self._refresh_timer.timeout.connect(self._refresh_index)
 
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -72,6 +76,11 @@ class _LLMLogViewer(QWidget):
         self._count_label = count_label
         selector_row.addWidget(count_label)
         layout.addLayout(selector_row)
+
+        self._refresh_status = QLabel("自动刷新 · 上翻阅读时暂停更新正文")
+        self._refresh_status.setWordWrap(True)
+        self._refresh_status.setTextFormat(Qt.TextFormat.PlainText)
+        layout.addWidget(self._refresh_status)
 
         text_edit = QPlainTextEdit()
         text_edit.setReadOnly(True)
@@ -119,26 +128,40 @@ class _LLMLogViewer(QWidget):
         self._count_label.setText(f"{len(files)} 个日志")
         self._log_selector.setEnabled(bool(files))
         if files:
-            self._load_selected(force=True)
+            self._load_selected()
         else:
-            self._show_empty_state("暂无日志，点击“刷新列表”重新扫描")
+            self._show_empty_state("暂无日志，正在等待任务写入…")
 
     def _on_selection_changed(self, _index: int) -> None:
         self._load_selected(force=True)
 
     def _load_selected(self, *, force: bool = False) -> None:
         path = self._log_selector.currentData(Qt.ItemDataRole.UserRole)
-        if not path or (path == self._active_path and not force):
+        if not path:
+            return
+        same_path = str(path) == self._active_path
+        scrollbar = self._text_edit.verticalScrollBar()
+        previous_scroll = scrollbar.value()
+        following = previous_scroll >= scrollbar.maximum() - 1
+        try:
+            stat = os.stat(path)
+            stamp = (stat.st_mtime_ns, stat.st_size)
+            if same_path and not force:
+                if stamp == self._active_stamp:
+                    return
+                if not following:
+                    self._refresh_status.setText("有新日志 · 正在保留阅读位置，滚动到底部或点击刷新以更新")
+                    return
+            content = self._read_visible_text(str(path))
+        except OSError as exc:
+            self._refresh_status.setText(f"无法读取日志：{exc}")
+            self._active_stamp = None
             return
         self._active_path = str(path)
-        try:
-            content = self._read_visible_text(self._active_path)
-        except OSError as exc:
-            self._text_edit.setPlainText(f"无法读取日志：{exc}")
-            return
+        self._active_stamp = stamp
+        self._refresh_status.setText("自动刷新 · 上翻阅读时暂停更新正文")
         self._text_edit.setPlainText(content)
-        scrollbar = self._text_edit.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+        scrollbar.setValue(scrollbar.maximum() if following or not same_path else previous_scroll)
 
     @classmethod
     def _read_visible_text(cls, path: str) -> str:
@@ -159,6 +182,7 @@ class _LLMLogViewer(QWidget):
     def _show_empty_state(self, message: str) -> None:
         self._known_files = ()
         self._active_path = ""
+        self._active_stamp = None
         self._log_selector.blockSignals(True)
         self._log_selector.clear()
         self._log_selector.blockSignals(False)
@@ -202,7 +226,17 @@ class _LLMLogViewer(QWidget):
         return stem
 
     def stop_auto_refresh(self) -> None:
-        """Compatibility hook: this viewer is intentionally manual-only."""
+        self._refresh_timer.stop()
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt compatibility
+        self._refresh_timer.start()
+        self._refresh_index()
+        super().showEvent(event)
+
+    def hideEvent(self, event) -> None:  # noqa: N802 - Qt compatibility
+        self.stop_auto_refresh()
+        super().hideEvent(event)
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt compatibility
+        self.stop_auto_refresh()
         event.accept()

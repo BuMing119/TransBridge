@@ -95,6 +95,18 @@ def _view(qapp: QApplication) -> tuple[QWidget, AITranslatorView, _Callbacks]:
     return parent, view, callbacks
 
 
+def test_new_task_explains_explicit_recovery_without_default_reuse_checkbox(qapp):
+    parent, view, _ = _view(qapp)
+    view.controls.mode_translate.setChecked(True)
+    assert not hasattr(view, "resume_proofread")
+    assert "不会复用旧任务结果" in view.recovery_hint.text()
+    view.controls.mode_polish.setChecked(True)
+    assert view.recovery_hint.isVisible()
+    view.controls.mode_mixed.setChecked(True)
+    assert view.recovery_hint.isVisible()
+    parent.close()
+
+
 def test_single_ai_view_exposes_four_visible_task_pages_without_legacy_entries(qapp: QApplication) -> None:
     parent, view, _callbacks = _view(qapp)
     controls = view.controls

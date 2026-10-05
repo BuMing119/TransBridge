@@ -164,6 +164,9 @@ class WorkflowLoggingLLMClient(LLMClient):
         self._safe_write_chunk(channel, "\n[END CALL]\n\n")
 
     def _write_error(self, channel: str, exc: Exception) -> None:
+        raw_response = _safe_field(exc, "raw_response")
+        if isinstance(raw_response, str):
+            self._safe_write_chunk(channel, f"\n[INVALID RESPONSE FROM LLM]\n{_redact_text(raw_response)}\n")
         details = _exception_details(exc)
         payload = json.dumps(details, ensure_ascii=False, indent=2, default=str)
         self._safe_write_chunk(channel, f"\n[ERROR]\n{payload}\n")
@@ -200,7 +203,7 @@ def _exception_details(exc: Exception) -> dict[str, Any]:
         "exception_type": type(exc).__name__,
         "message": _redact_text(str(exc)),
     }
-    for field in ("status_code", "status", "code", "body", "error", "request_id", "requestId"):
+    for field in ("status_code", "status", "code", "body", "error", "request_id", "requestId", "validation_details"):
         value = _safe_field(exc, field)
         if value is not None:
             details[field] = _redact_value(value)

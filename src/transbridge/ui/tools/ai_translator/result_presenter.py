@@ -62,7 +62,9 @@ class ResultPresenter:
             result = results.get(entry.id)
             accepted_result = result and bool(getattr(result, "accepted", result.confidence > 0))
             if accepted_result and result.polished_translation:
-                self._commit_translation(collection, entry, result.polished_translation)
+                self._commit_translation(
+                    collection, entry, result.polished_translation, getattr(result, "target_stage", None)
+                )
                 accepted_ids.append(entry.id)
             elif result and result.confidence > 0:
                 rejected_ids.append(entry.id)
@@ -91,7 +93,8 @@ class ResultPresenter:
         for entry in entries:
             decision = decisions.get(entry.id)
             if decision is not None:
-                self._commit_translation(collection, entry, decision)
+                result = results.get(entry.id) if results is not None else None
+                self._commit_translation(collection, entry, decision, getattr(result, "target_stage", None))
                 accepted_ids.append(entry.id)
             elif entry.id in decisions:
                 result = results.get(entry.id) if results is not None else None
@@ -134,8 +137,10 @@ class ResultPresenter:
         return PolishReport(snapshot)
 
     @staticmethod
-    def _commit_translation(collection: object, entry: object, translation: str) -> None:
-        updated = replace(entry, translation=translation)
+    def _commit_translation(
+        collection: object, entry: object, translation: str, target_stage: int | None = None
+    ) -> None:
+        updated = replace(entry, translation=translation, stage=entry.stage if target_stage is None else target_stage)
         collection.add(updated, overwrite=True)
 
 

@@ -15,6 +15,8 @@ def build_proofread_pipeline(
     log_store,
     paratranz_client=None,
     project_id=None,
+    term_snapshot_observer=None,
+    checkpoint=None,
 ):
     from transbridge.ai_translator.post_processor.proofread_pipeline import ProofreadPipeline
     from transbridge.ai_translator.term_database import TermDatabaseManager
@@ -34,6 +36,8 @@ def build_proofread_pipeline(
             **terminology_binding.term_database_kwargs(),
         )
         term_manager.load_all()
+        if term_snapshot_observer is not None:
+            term_snapshot_observer(term_manager)
     llm_client = arbitration = None
     if profile.requires_llm:
         provider = create_llm_client(config)
@@ -57,4 +61,5 @@ def build_proofread_pipeline(
         model=config.model,
         max_tokens_per_batch=config.max_tokens_per_batch,
         max_output_tokens=config.max_output_tokens,
+        checkpoint=checkpoint,
     )

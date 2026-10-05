@@ -77,6 +77,9 @@ def build_single_task_view(
     _build_task_tabs(view, parent, callbacks, body, profiles)
     root.addLayout(body, 1)
     _build_footer(view, parent, callbacks, root)
+    view.recovery_hint = QLabel("开始新任务不会复用旧任务结果；中断的校对请从 AI 任务记录中选择继续。", parent)
+    view.recovery_hint.setWordWrap(True)
+    root.addWidget(view.recovery_hint)
     _connect_task_signals(view, callbacks)
 
 
@@ -331,8 +334,8 @@ def _build_runtime_group(view: object, parent: QWidget) -> QGroupBox:
     view.controls.concurrent_spin.setToolTip("本次 AI 工作流共享的最大在途 LLM 请求数")
     form.addRow("最大并发请求", view.controls.concurrent_spin)
     view.controls.tokens_spin = _spin(group, 200, 32000, 2500, 200)
-    view.controls.tokens_spin.setToolTip("每个 LLM 请求中业务内容的 Token 上限")
-    form.addRow("输入 Token 上限", view.controls.tokens_spin)
+    view.controls.tokens_spin.setToolTip("多条目组批预算；单条超出时独立发送")
+    form.addRow("组批 Token 预算", view.controls.tokens_spin)
     view.controls.output_tokens_spin = _spin(group, 0, 65536, 0, 256)
     view.controls.output_tokens_spin.setSpecialValueText("不限制（供应商支持时）")
     form.addRow("输出 Token 上限", view.controls.output_tokens_spin)

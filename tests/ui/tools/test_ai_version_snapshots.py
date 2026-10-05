@@ -139,12 +139,81 @@ def test_post_snapshot_retry_does_not_repeat_translation_commit_or_save() -> Non
     persistence = VersionPersistence(context, ("project", "variant"))
 
     failed = persistence.save_translation((_entry(),), "AI-翻译后")
+    assert persistence.project_saved
+    assert not persistence.snapshot_saved
     commands.fail_snapshot = False
     retried = persistence.save_translation((_entry(),), "AI-翻译后")
+    repeated = persistence.save_translation((_entry(),), "AI-翻译后")
 
     assert not failed.is_success
     assert retried.is_success
+    assert repeated is retried
+    assert persistence.project_saved and persistence.snapshot_saved
     assert [name for name, _value in commands.calls] == ["replace", "save", "snapshot", "snapshot"]
+
+
+def test_failed_project_save_does_not_mark_project_saved_or_create_snapshot() -> None:
+    commands = _Commands()
+    commands.save = lambda _context: SimpleNamespace(is_success=False)
+    context = AppContext(project_commands=commands, runtime_context=object())
+    context._project_projection = object()
+    context._active_project_id = "project"
+    context._active_variant_id = "variant"
+    persistence = VersionPersistence(context, ("project", "variant"))
+
+    failed = persistence.save_translation((_entry(),), "AI-翻译后")
+
+    assert not failed.is_success
+    assert not persistence.project_saved and not persistence.snapshot_saved
+    assert [name for name, _value in commands.calls] == ["replace"]
+
+
+def test_acknowledged_external_save_only_creates_task_snapshot() -> None:
+    commands = _Commands()
+    context = AppContext(project_commands=commands, runtime_context=object())
+    context._project_projection = object()
+    context._active_project_id = "project"
+    context._active_variant_id = "variant"
+    persistence = VersionPersistence(context, ("project", "variant"))
+    persistence.commit_translation((_entry(),))
+    persistence.mark_project_saved()
+    assert persistence.project_saved and not persistence.snapshot_saved
+    result = persistence.save_translation((_entry(),), "AI-翻译后")
+    assert result.is_success and persistence.snapshot_saved
+    assert [name for name, _value in commands.calls] == ["replace", "snapshot"]
+
+
+def test_legacy_snapshot_failure_retains_saved_project_and_retries_only_snapshot(tmp_path, monkeypatch) -> None:
+    context = AppContext()
+    context._active_project = SimpleNamespace(
+        config_path=tmp_path / "project.json", variant_dir=lambda _name: tmp_path, name="legacy"
+    )
+    context._active_variant = "main"
+    context._variant_store = VariantStore(tmp_path / "current.json")
+    persistence = VersionPersistence(context, context.active_version_identity)
+    original_snapshot = context.variant_store.save_snapshot
+
+    def fail_snapshot(*_args):
+        raise OSError("快照目录不可写")
+
+    monkeypatch.setattr(context.variant_store, "save_snapshot", fail_snapshot)
+    try:
+        persistence.save_translation((_entry(),), "after")
+    except OSError:
+        pass
+    else:
+        raise AssertionError("snapshot failure must reach the caller")
+    assert persistence.project_saved and not persistence.snapshot_saved
+    assert VariantStore.load(tmp_path / "current.json").translations == {"entry": "译文"}
+
+    def unexpected_save():
+        raise AssertionError("project must not be saved again")
+
+    monkeypatch.setattr(context.variant_store, "save", unexpected_save)
+    monkeypatch.setattr(context.variant_store, "save_snapshot", original_snapshot)
+    result = persistence.save_translation((_entry(),), "after")
+    assert result.is_file() and persistence.snapshot_saved
+    assert persistence.save_translation((_entry(),), "after") == result
 
 
 def test_legacy_version_collects_before_snapshot_and_saves_before_after_snapshot(tmp_path) -> None:

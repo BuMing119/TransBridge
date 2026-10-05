@@ -70,6 +70,22 @@ class ConfigPresenter:
             return self._capture_empty_custom()
         return self._capture_active_profile()
 
+    def restore_task_config(self, snapshot: dict, mode: str) -> LLMConfig:
+        """Restore a local recovery draft while preserving this session's credentials."""
+        from .task_config_snapshot import restore_execution_snapshot
+
+        if not self._task_draft:
+            raise ValueError("任务恢复只能更新临时任务配置。")
+        config = restore_execution_snapshot(self.build(), snapshot)
+        self._exit_custom()
+        self._custom_mode = mode == "custom"
+        if not self._custom_mode:
+            self._active_preset = mode
+        self._profiles = deepcopy(config.workflow_profiles)
+        self._draft_config = config.copy_for_execution()
+        self._view.render_config(config)
+        return config
+
     def save(self) -> LLMConfig:
         if self._task_draft:
             return self.build()

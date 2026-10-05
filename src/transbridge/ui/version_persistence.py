@@ -14,6 +14,23 @@ class VersionPersistence:
         self._translations_committed = False
         self._translation_commit_result = None
         self._version_saved = False
+        self._saved_snapshot_name: str | None = None
+        self._saved_snapshot_result = None
+
+    @property
+    def project_saved(self) -> bool:
+        return self._version_saved
+
+    @property
+    def snapshot_saved(self) -> bool:
+        return self._saved_snapshot_name is not None
+
+    def mark_project_saved(self) -> None:
+        """Acknowledge an external save of this session's already committed version."""
+        self._require_identity()
+        if not self._translations_committed:
+            raise RuntimeError("任务结果尚未应用，不能确认项目已保存。")
+        self._version_saved = True
 
     def create_snapshot(self, name: str, entries: tuple[object, ...]):
         self._require_identity()
@@ -64,6 +81,8 @@ class VersionPersistence:
 
     def save_translation(self, entries: tuple[object, ...], snapshot_name: str):
         committed = self.commit_translation(entries)
+        if self._saved_snapshot_name == snapshot_name:
+            return self._saved_snapshot_result
         if self._context.uses_authoritative_projection:
             commands, runtime_context = self._v2_ports()
             if committed is not None and not committed.is_success:
@@ -73,13 +92,18 @@ class VersionPersistence:
                 if not saved.is_success:
                     return saved
                 self._version_saved = True
-            return commands.save_snapshot(snapshot_name, runtime_context)
-
-        project, variant_store, variant_name = self._legacy_state()
-        if not self._version_saved:
-            variant_store.save()
-            self._version_saved = True
-        return variant_store.save_snapshot(project.variant_dir(variant_name) / "snapshots", snapshot_name)
+            result = commands.save_snapshot(snapshot_name, runtime_context)
+            if not getattr(result, "is_success", True):
+                return result
+        else:
+            project, variant_store, variant_name = self._legacy_state()
+            if not self._version_saved:
+                variant_store.save()
+                self._version_saved = True
+            result = variant_store.save_snapshot(project.variant_dir(variant_name) / "snapshots", snapshot_name)
+        self._saved_snapshot_name = snapshot_name
+        self._saved_snapshot_result = result
+        return result
 
     def _require_identity(self) -> None:
         current = self._context.active_version_identity

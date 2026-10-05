@@ -10,8 +10,10 @@ from transbridge.infra.limited_llm_client import LimitedLLMClient
 from transbridge.infra.llm_client import AnthropicClient
 from transbridge.infra.llm_structured_outputs import (
     LlmOutputSchema,
+    LlmStructuredOutputInvalidResponseError,
     attach_structured_output_directive,
     extract_structured_output_directive,
+    validate_structured_output,
 )
 from transbridge.ui.tools.ai_translator.workflow_log_store import WorkflowLogStore
 from transbridge.ui.tools.ai_translator.workflow_logging_client import WorkflowLoggingLLMClient
@@ -114,6 +116,35 @@ def test_preparation_failure_keeps_call_id_logs_metrics_and_releases_budget(tmp_
     assert '"exception_type": "ValueError"' in content
     assert "cannot build prompt" in content
     assert "[REQUEST BUDGET]" in content
+    assert content.count("[END CALL]") == 1
+    assert budget.snapshot().in_flight == 0
+
+
+@pytest.mark.parametrize("prepared", [False, True])
+def test_invalid_structured_response_is_logged_with_redacted_payload_and_fields(tmp_path, prepared):
+    from transbridge.ai_translator.structured_schemas import PROOFREAD_OUTPUT_SCHEMA
+
+    raw = '{"results":[],"reason":"explanation","api_key":"private-key","token":"private-token"}'
+
+    class Client:
+        def chat(self, messages, max_tokens=0):
+            return validate_structured_output(raw, PROOFREAD_OUTPUT_SCHEMA)
+
+    budget = AiRequestBudget(1)
+    store = WorkflowLogStore("plugin.esp", workflow="polish", log_base=tmp_path)
+    client = WorkflowLoggingLLMClient(LimitedLLMClient(Client(), budget), store)
+    messages = [{"role": "user", "content": "proofread"}]
+    with pytest.raises(LlmStructuredOutputInvalidResponseError) as caught:
+        if prepared:
+            client.chat_prepared(lambda: messages)
+        else:
+            client.chat(messages)
+    content = _content(store)
+    assert "[INVALID RESPONSE FROM LLM]" in content
+    assert "explanation" in content
+    assert '"unexpected_fields"' in content and '"reason"' in content
+    assert "private-key" not in content and "private-token" not in content
+    assert "explanation" not in str(caught.value)
     assert content.count("[END CALL]") == 1
     assert budget.snapshot().in_flight == 0
 

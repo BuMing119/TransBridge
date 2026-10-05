@@ -106,7 +106,12 @@ def update_window_quick_run(window: object, *, config=None, tasks=None) -> None:
     if window._run_controller.is_running:
         reason = "已有 AI 任务正在启动"
     controls = window._view.controls
-    controls.start_btn.setText("开始 AI 翻译" if mode == "translate" else "开始 AI 任务")
+    selection = getattr(window, "_recovery_selection", None)
+    controls.start_btn.setText(
+        ("重新开始" if selection[1] else "继续任务")
+        if selection
+        else ("开始 AI 翻译" if mode == "translate" else "开始 AI 任务")
+    )
     naming_schemes = getattr(window, "_naming_schemes", None)
     naming_scheme = getattr(naming_schemes, "summary_label", "保持当前译名")
     text = reason or (

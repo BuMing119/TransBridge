@@ -118,7 +118,7 @@ def test_scope_presenter_combines_dimensions_without_copying_entries() -> None:
     assert presenter.candidates()[0] is keep
 
 
-def test_scope_estimate_exposes_request_tokens_oversized_and_shared_concurrency() -> None:
+def test_scope_estimate_counts_oversized_single_request_and_shared_concurrency() -> None:
     entries = [
         TranslationEntry("one", "one", "short", "", 0, "NPC_:FULL"),
         TranslationEntry("long", "long", "x" * 100, "", 0, "NPC_:FULL"),
@@ -140,10 +140,10 @@ def test_scope_estimate_exposes_request_tokens_oversized_and_shared_concurrency(
         max_concurrent=7,
     )
 
-    assert "2 条 / 1 个请求" in estimate.text
+    assert "2 条 / 2 个请求" in estimate.text
     assert "内容 Token 平均" in estimate.text
     assert "共享并发 7" in estimate.text
-    assert "超限 1 条" in estimate.text
+    assert "超限" not in estimate.text
 
 
 def test_step2_adapter_prefers_public_filtered_entries() -> None:

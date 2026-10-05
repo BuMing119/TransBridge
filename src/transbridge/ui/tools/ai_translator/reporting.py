@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+import os
 from pathlib import Path
+import tempfile
 
 from transbridge.application.translation import (
     ReportSnapshot,
@@ -13,6 +15,46 @@ from transbridge.application.translation import (
 from transbridge.paratranz.config_manager import LLMConfig
 
 _logger = logging.getLogger(__name__)
+
+
+def export_snapshot(snapshot: ReportSnapshot, path: Path, format: str, *, cancel_event=None) -> Path:
+    """Export one requested format atomically; cancellation never alters an existing file."""
+    from concurrent.futures import CancelledError
+
+    from transbridge.application.translation.postprocess_report import (
+        CsvReportRenderer,
+        ExcelReportRenderer,
+        JsonReportRenderer,
+    )
+
+    renderers = {
+        "csv": CsvReportRenderer,
+        "xlsx": ExcelReportRenderer,
+        "excel": ExcelReportRenderer,
+        "json": JsonReportRenderer,
+    }
+    if format not in renderers:
+        raise ValueError(f"Unsupported report format: {format}")
+    if cancel_event is not None and cancel_event.is_set():
+        raise CancelledError("Report export cancelled")
+    artifact = renderers[format]().render(snapshot)
+    if cancel_event is not None and cancel_event.is_set():
+        raise CancelledError("Report export cancelled")
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, name = tempfile.mkstemp(prefix=".export-", suffix=".tmp", dir=path.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(artifact.content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if cancel_event is not None and cancel_event.is_set():
+            raise CancelledError("Report export cancelled")
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return path
 
 
 @dataclass(frozen=True, slots=True)

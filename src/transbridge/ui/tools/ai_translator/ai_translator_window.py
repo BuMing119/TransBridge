@@ -155,6 +155,7 @@ class AITranslatorWindow(QWidget):
         settings_requested: Callable[[], None] | None = None,
         terminology_profile_controller=None,
         terminology_workbench_requested: Callable[[], None] | None = None,
+        show_window: bool = True,
     ) -> QWidget | None:
         """打开统一任务，默认勾选当前内容，可扩展到多个插件。"""
         if not ctx.slots:
@@ -170,7 +171,8 @@ class AITranslatorWindow(QWidget):
             terminology_profile_controller=terminology_profile_controller,
             terminology_workbench_requested=terminology_workbench_requested,
         )
-        show_and_activate(window)
+        if show_window:
+            show_and_activate(window)
         return window
 
     @classmethod
@@ -304,7 +306,12 @@ class AITranslatorWindow(QWidget):
             return
         controls = self._view.controls
         controls.start_btn.setEnabled(False)
-        controls.start_btn.setText("开始 AI 翻译" if self._view_port.mode == "translate" else "开始 AI 任务")
+        recovery = getattr(self, "_recovery_selection", None)
+        controls.start_btn.setText(
+            ("重新开始" if recovery[1] else "继续任务")
+            if recovery
+            else ("开始 AI 翻译" if self._view_port.mode == "translate" else "开始 AI 任务")
+        )
         if not self._custom_profiles.block_unavailable_start():
             controls.preflight_label.set_full_text("正在更新本次任务范围…")
         self._task_refresh_timer.start(0)
@@ -345,6 +352,10 @@ class AITranslatorWindow(QWidget):
 
     def _task_sources(self, *, config=None, all_sources=False):
         config = config or self._config_presenter.build()
+        if getattr(self, "_recovery_selection", None) is not None:
+            from .task_recovery_binding import recovery_sources
+
+            return recovery_sources(self, config)
         slots = list(self._ctx.slots.values()) if all_sources else self._view.sources_panel.selected_slots()
         return self._task_scope.build(
             slots,

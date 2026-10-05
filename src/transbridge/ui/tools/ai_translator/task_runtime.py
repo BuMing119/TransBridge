@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import logging
 
 from PyQt6.QtWidgets import QMessageBox
@@ -16,9 +17,22 @@ logger = logging.getLogger(__name__)
 
 def start_task(window) -> None:
     try:
+        from .task_recovery_binding import recovery_sources
+
         config = window._config_presenter.build()
         mode = window._view_port.mode
-        tasks = tuple(task for task in window._task_sources(config=config) if task.entries)
+        selection = getattr(window, "_recovery_selection", None)
+        if selection:
+            mode = selection[0]["mode"]
+            registry = getattr(window, "_task_recovery_registry", None)
+            if registry is not None and any(
+                (getattr(item.request, "recovery_task_id", None) or item.request.run_id) == selection[0]["task_id"]
+                and not item.run.cancelled
+                and not item.session.completed
+                for item in registry.windows.values()
+            ):
+                raise RuntimeError("此任务已在当前程序中打开，请从 AI 任务记录查看或继续现有任务。")
+        tasks = tuple(task for task in recovery_sources(window, config) if task.entries)
     except Exception as exc:
         logger.exception("AI task source preparation failed")
         QMessageBox.warning(window, "AI 任务未启动", str(exc))
@@ -71,13 +85,22 @@ def start_task(window) -> None:
     )
     if request is None:
         return
+    if selection and not selection[1]:
+        request = replace(request, reuse_proofread=True, recovery_task_id=selection[0]["task_id"])
     activity = progress = client = None
     try:
+        from .task_consistency import TaskConsistency
         from .task_progress import AiTaskProgressWindow
         from .task_session import TaskSession
 
         activity = window._run_controller.create_activity(request)
-        session = TaskSession(window._ctx, tasks, request.spec)
+        directory_provider = getattr(window, "_task_project_directory_provider", None)
+        session = TaskSession(
+            window._ctx,
+            tasks,
+            request.spec,
+            project_dir=directory_provider() if directory_provider is not None else None,
+        )
         if remote:
             from transbridge.paratranz.api.paratranz_terms_api import ParatranzTermsAPI
 
@@ -89,6 +112,7 @@ def start_task(window) -> None:
             client=client,
             project_id=remote["id"] if remote else None,
             theme_view=window._theme_view,
+            consistency=TaskConsistency.capture(request, window._ctx),
         )
         window.progress_window_created.emit(progress)
         show_and_activate(progress)

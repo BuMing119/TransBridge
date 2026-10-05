@@ -62,6 +62,7 @@ class WindowLifecycle:
         self._host = host
         self._close_pending = False
         self._close_ready = False
+        self._discard_ai_record_errors = False
         self.auto_saver = AutoSaveManager(host, host)
 
     def start(self) -> None:
@@ -82,7 +83,9 @@ class WindowLifecycle:
         if self._close_pending:
             return False
         self._close_pending = True
+        self._discard_ai_record_errors = False
         self._host.close_pending = True
+        self._host.workbench.setEnabled(False)
         self.auto_saver.stop()
         self._host.workbench.show_step2_progress(0, "正在保存并关闭…")
         if self._running(self._host.project_open_worker):
@@ -98,6 +101,15 @@ class WindowLifecycle:
         return worker is not None and worker.isRunning()
 
     def begin_background_close(self) -> None:
+        ai_tasks = getattr(self._host.workbench, "ai_tasks", None)
+        if ai_tasks is not None:
+            ai_tasks.shutdown()
+            if ai_tasks.busy:
+                self._host.workbench.show_step2_progress(0, "正在结束 AI 任务…")
+                QTimer.singleShot(100, self.begin_background_close)
+                return
+            if not self._check_record_errors(ai_tasks):
+                return
         if self._running(self._host.project_open_worker):
             self._host.project_open_worker.finished.connect(self.begin_background_close)
             return
@@ -114,6 +126,9 @@ class WindowLifecycle:
             self._host.workbench.setEnabled(True)
             self._host.workbench.hide_step2_progress()
             self.auto_saver.start()
+            ai_tasks = getattr(self._host.workbench, "ai_tasks", None)
+            if ai_tasks is not None:
+                ai_tasks.resume()
             from PyQt6.QtWidgets import QMessageBox
 
             QMessageBox.warning(
@@ -122,6 +137,14 @@ class WindowLifecycle:
                 "项目仍有未保存的更改或保存失败，窗口保持打开以避免数据丢失。",
             )
             return
+        ai_tasks = getattr(self._host.workbench, "ai_tasks", None)
+        if ai_tasks is not None:
+            # The final project save can enqueue an updated durable task record.
+            if ai_tasks.busy:
+                QTimer.singleShot(100, lambda: self.finish_background_close(saved))
+                return
+            if not self._check_record_errors(ai_tasks):
+                return
         try:
             self._host.project_coordinator.save_workspace_session()
             if self._host.context.workspace:
@@ -130,6 +153,9 @@ class WindowLifecycle:
             settings.setValue("geometry", self._host.saveGeometry())
             settings.setValue("state", self._host.saveState())
             self._host.tool_windows.dispose(wait_for_worker=False)
+            ai_tasks = getattr(self._host.workbench, "ai_tasks", None)
+            if ai_tasks is not None:
+                ai_tasks.dispose()
             self._host.context.close_projection()
             self._host.status_presenter.close()
         finally:
@@ -137,3 +163,25 @@ class WindowLifecycle:
             self._close_ready = True
             self._host.close_ready = True
             self._host.close()
+
+    def _check_record_errors(self, ai_tasks) -> bool:
+        if self._discard_ai_record_errors or not ai_tasks.record_errors:
+            return True
+        from PyQt6.QtWidgets import QMessageBox
+
+        answer = QMessageBox.question(
+            self._host,
+            "任务记录未保存",
+            "有任务记录保存失败。仍要退出？",
+            QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer == QMessageBox.StandardButton.Discard:
+            self._discard_ai_record_errors = True
+            return True
+        self._close_pending = self._host.close_pending = False
+        self._host.workbench.setEnabled(True)
+        self._host.workbench.hide_step2_progress()
+        self.auto_saver.start()
+        ai_tasks.resume()
+        return False
