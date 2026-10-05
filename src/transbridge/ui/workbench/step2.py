@@ -30,6 +30,7 @@ from transbridge.ui.foundation.adapters import ThemeView
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle
 from transbridge.ui.workbench.entry_action_scope import resolve_entry_action_scope
 from transbridge.ui.workbench.entry_menu import build_entry_menu
+from transbridge.ui.workbench.entry_refresh import EntryRefresh
 from transbridge.ui.workbench.filters_presenter import (
     FiltersPresenter,
     FilterState,
@@ -105,6 +106,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         self._summary = StatisticsSummary(0, 0, 0, 0)
         self._tag_buttons: dict[str | int | None, QPushButton] = {}  # 标签按钮
         self._init_ui()
+        self._entry_refresh = EntryRefresh(self)
         ctx.collection_changed.connect(self.refresh)
         ctx.collection_list_changed.connect(self._update_workflow_actions)
         if getattr(ctx, "uses_authoritative_projection", False):
@@ -258,6 +260,8 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         filter_scope = self._current_filter_scope(collection)
         content_changed = filter_scope != self._filter_scope
         self._filter_scope = filter_scope
+        if not content_changed and self._entry_refresh.try_refresh(collection):
+            return
         self._progress.setRange(0, 100)
         if collection is None:
             self._summary = StatisticsSummary(0, 0, 0, 0)
@@ -480,6 +484,13 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
     def set_editable_entry_keys(self, keys) -> None:
         """Bind popup activation without making Step2 own the editor window."""
         self._table.set_editable_entry_keys(keys)
+
+    def editor_navigation_keys(self):
+        """Return all filtered keys in display order, including pending batches."""
+        return self._entry_refresh.navigation_keys()
+
+    def return_from_editor(self, key) -> None:
+        self._entry_refresh.return_to_preview(key)
 
     def _on_item_changed(self, item: QTableWidgetItem):
         """译文编辑后原地同步 entry、状态文字与行视觉。"""

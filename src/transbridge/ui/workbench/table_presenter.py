@@ -61,3 +61,10 @@ class TablePresenter:
     def invalidate(self) -> None:
         self._generation += 1
         self._session = RenderSession(self._generation, None, ())
+
+    def replace_entries(
+        self, entries: Sequence[TranslationEntry], *, projection_revision: int | None = None
+    ) -> RenderSession:
+        """Replace data after the view verifies membership and order are unchanged."""
+        self._session = RenderSession(self._generation, projection_revision, tuple(entries))
+        return self._session

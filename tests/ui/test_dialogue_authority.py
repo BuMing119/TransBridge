@@ -40,6 +40,7 @@ _APP = QApplication.instance() or QApplication([])
 
 @pytest.fixture
 def authority(monkeypatch):
+    monkeypatch.setattr("transbridge.ui.dialogue.sync_dialog.SyncTranslationDialog.exec", lambda self: 0)
     entries = dialogue_entries()
     target = entries[2]
     project_id = ProjectId("project")

@@ -72,6 +72,10 @@ def test_applying_scene_entry_retains_scene_selection_and_unique_navigation(scen
     scene_editor.apply(advance)
     drain(scene_editor)
     assert scene_editor.context.collection.get(keys[0]).translation == "场景译文"
+    if not advance:
+        assert not scene_editor.dialog.isVisible()
+        assert scene_editor._current is None
+        return
     assert scene_editor._node_identity[-1] == "SCEN:00000012"
     assert scene_editor.view.tree.currentIndex().row() == 3
     assert scene_editor._current.before.entry_key == keys[int(advance)]

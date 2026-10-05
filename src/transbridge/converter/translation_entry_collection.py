@@ -250,6 +250,7 @@ class TranslationEntryCollection:
 
             projected = dict(self._entries)
             changed: list[TranslationEntry] = []
+            expected_revisions = dict(change_set.expected_revisions)
             for patch in change_set.patches:
                 storage_key = patch.entry_key.serialize()
                 entry = projected.get(storage_key)
@@ -261,7 +262,7 @@ class TranslationEntryCollection:
                         "The entry does not exist in this collection.",
                         patch.entry_key,
                     )
-                expected = change_set.expected_revision(patch.entry_key)
+                expected = expected_revisions[patch.entry_key]
                 if entry.revision != expected:
                     return self._mutation_conflict(
                         change_set,

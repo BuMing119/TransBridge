@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 
 from transbridge.application.io import FormatId
-from transbridge.application.io.identity import EntryRevision, ExternalEntryRef, Provenance
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.ui.entry_projection import EntryProjectionUpdate
 from transbridge.ui.projection_types import CollectionSlot
 
 
@@ -49,32 +48,10 @@ def slot_from_hydration(source, *, plugin=None) -> CollectionSlot:
 
 
 def apply_variant_projection(collection: TranslationEntryCollection, states) -> TranslationEntryCollection:
-    projected = {(item["entry_key"]["namespace"], item["entry_key"]["local_key"]): item for item in states}
-
-    def apply(entry: TranslationEntry) -> TranslationEntry:
-        state = projected.get((entry.identity.namespace.value, entry.identity.local_key))
-        if state is None:
-            return entry
-        inferred = set(str(value) for value in state.get("inferred_fields", ()))
-        external_refs = (
-            entry.external_refs
-            if "external_refs" in inferred or "external_refs" not in state
-            else tuple(ExternalEntryRef.from_dict(value) for value in state.get("external_refs", ()))
-        )
-        return replace(
-            entry,
-            translation=str(state.get("translation", "")),
-            stage=int(state.get("stage", 0)),
-            external_refs=external_refs,
-            revision=(entry.revision if "revision" not in state else EntryRevision(int(state["revision"]))),
-            provenance=(
-                entry.provenance
-                if "provenance" not in state
-                else tuple(Provenance.from_dict(value) for value in state.get("provenance", ()))
-            ),
-        )
-
-    return TranslationEntryCollection(apply(entry) for entry in collection)
+    update = EntryProjectionUpdate(states)
+    # Preserve the public contract of fresh collections and matching entries.
+    # Editor commits opt into identity reuse through update.collection.
+    return TranslationEntryCollection(update.entry(entry, reuse_unchanged=False) for entry in collection)
 
 
 __all__ = ["apply_variant_projection", "collection_from_hydration", "slot_from_hydration"]

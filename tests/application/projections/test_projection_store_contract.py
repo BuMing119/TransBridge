@@ -1,6 +1,17 @@
 from __future__ import annotations
 
 from transbridge.application.projections import ProjectionEvent, ProjectionSnapshot, ProjectionStore
+from transbridge.application.projections.models import copy_projection_value
+
+
+def test_selected_values_are_readable_and_copies_preserve_json_shape():
+    snapshot = _snapshot()
+    nested = snapshot.values["nested"]
+    assert len(nested) == 1
+    assert tuple(next(iter(nested))) == ("value",)
+    copied = copy_projection_value(nested)
+    copied[0].append("new")
+    assert snapshot.to_dict()["values"]["nested"] == [["value"]]
 
 
 def _snapshot(revision: int = 2, persisted: int = 1) -> ProjectionSnapshot:

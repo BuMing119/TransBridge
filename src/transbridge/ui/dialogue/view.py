@@ -77,6 +77,11 @@ class DialogueEditorView(QWidget):
         context_layout.addWidget(self.quest_combo)
         vertical = QSplitter(Qt.Orientation.Vertical, self)
         horizontal = QSplitter(Qt.Orientation.Horizontal, self)
+        self.context_splitter = horizontal
+        self.vertical_splitter = vertical
+        self._context_available = True
+        self._context_sizes = [270, 850]
+        self._vertical_sizes = [480, 230]
         self.tree = QTreeView(self)
         self.tree.setAccessibleName("当前任务的话题与场景记录")
         self.tree.setRootIsDecorated(False)
@@ -122,7 +127,6 @@ class DialogueEditorView(QWidget):
         self.original.setPlaceholderText("原文（只读）")
         self.translation = QPlainTextEdit(self)
         self.translation.setAccessibleName("译文草稿")
-        self.translation.setPlaceholderText("输入译文；应用后写入当前工程")
         fields.addWidget(self.original)
         fields.addWidget(self.translation)
         fields.setSizes([400, 600])
@@ -134,8 +138,12 @@ class DialogueEditorView(QWidget):
         actions.addWidget(self.next_button)
         self.draft_label = _label("", self)
         actions.addWidget(self.draft_label, 1)
+        self.navigation_label = _label("", self)
+        self.navigation_label.setWordWrap(False)
+        actions.addWidget(self.navigation_label)
         self.discard_button = self._button("放弃草稿", self.discard_requested.emit)
         self.apply_button = self._button("应用译文", lambda: self.apply_requested.emit(False))
+        self.apply_button.setToolTip("应用当前译文并返回工作台")
         self.apply_next_button = self._button("应用并下一条", lambda: self.apply_requested.emit(True))
         for button in (self.discard_button, self.apply_button, self.apply_next_button):
             actions.addWidget(button)
@@ -184,6 +192,16 @@ class DialogueEditorView(QWidget):
             self.quest_combo.setCurrentIndex(selected)
 
     def set_context_available(self, available: bool, reason: str = "") -> None:
+        if self._context_available and not available and self.context_splitter.isVisible():
+            self._context_sizes = self.context_splitter.sizes()
+            self._vertical_sizes = self.vertical_splitter.sizes()
+        self.context_splitter.setVisible(available)
+        if available and not self._context_available:
+            if self._context_sizes and any(self._context_sizes):
+                self.context_splitter.setSizes(self._context_sizes)
+            if self._vertical_sizes and any(self._vertical_sizes):
+                self.vertical_splitter.setSizes(self._vertical_sizes)
+        self._context_available = available
         self.context_panel.setEnabled(available)
         self.context_panel.setToolTip(reason)
         self.context_panel.setAccessibleDescription(reason)
@@ -223,3 +241,12 @@ class DialogueEditorView(QWidget):
         self.draft_label.setText(f"未应用草稿 {count} 条" if count else "译文已应用到工程")
         self.apply_button.setEnabled(changed)
         self.discard_button.setEnabled(changed)
+
+    def show_navigation(self, position: int, count: int, has_context: bool) -> None:
+        scope = "任务／场景" if has_context else "打开时列表"
+        self.navigation_label.setText(f"{scope} · {position + 1} / {count}")
+        last = position + 1 == count
+        text = "应用并返回" if last else "应用并下一条"
+        self.apply_next_button.setText(text)
+        self.apply_next_button.setAccessibleName(text)
+        self.apply_next_button.setToolTip("已到最后一条，应用后返回工作台" if last else "应用后继续编辑下一条")

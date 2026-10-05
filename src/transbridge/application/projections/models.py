@@ -107,6 +107,12 @@ class _FrozenMapping(Mapping[str, Any]):
 class _FrozenArray:
     values: tuple[Any, ...]
 
+    def __iter__(self):
+        return iter(self.values)
+
+    def __len__(self) -> int:
+        return len(self.values)
+
 
 def _freeze_value(value: Any) -> Any:
     if isinstance(value, Mapping):
@@ -121,18 +127,20 @@ def _freeze_value(value: Any) -> Any:
 
 
 def _thaw_mapping(values: Mapping[str, Any]) -> dict[str, Any]:
-    return {key: _thaw_value(value) for key, value in values.items()}
+    return {key: copy_projection_value(value) for key, value in values.items()}
 
 
-def _thaw_value(value: Any) -> Any:
+def copy_projection_value(value: Any) -> Any:
+    """Copy a selected immutable projection value to ordinary JSON containers."""
     if isinstance(value, _FrozenMapping):
         return _thaw_mapping(value)
     if isinstance(value, _FrozenArray):
-        return [_thaw_value(item) for item in value.values]
+        return [copy_projection_value(item) for item in value.values]
     return value
 
 
 __all__ = [
+    "copy_projection_value",
     "DirtyState",
     "ProjectionDecision",
     "ProjectionEvent",

@@ -107,6 +107,7 @@ def test_projection_revision_without_label_change_does_not_emit_label_signal(mon
     context = context_module.AppContext(project_projection=store)
     notifications: list[None] = []
     context.label_data_changed.connect(lambda: notifications.append(None))
+    monkeypatch.setattr(ProjectionSnapshot, "to_dict", lambda *_: pytest.fail("UI copied the whole snapshot"))
 
     store.rebuild(_projection(3, 1))
 

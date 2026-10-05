@@ -12,9 +12,10 @@ from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal, pyqtSlot
 
-from transbridge.application.io.identity import EntryKey
+from transbridge.application.projections.models import copy_projection_value
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.paratranz.config_manager import ParatranzConfig
+from transbridge.ui.project_labels import project_entry_labels
 from transbridge.ui.projection_types import CollectionSlot
 
 __all__ = ["AppContext", "CollectionSlot"]
@@ -77,7 +78,7 @@ class AppContext(QObject):
         self._filter_state: dict = dict(self.DEFAULT_FILTER_STATE)
         self._label_library: dict[str, dict] = {}  # B1: 标签库 {label_id: {name, color}}
         self._entry_labels: dict[str, set[str]] = {}  # B1: 条目标签 {entry_id: {label_id, ...}}
-        self._entry_labels_exact: dict[str, set[str]] = {}
+        self._entry_labels_exact: dict[tuple[str, str], set[str]] = {}
         self._translation_scope: dict = {  # E8: 翻译作用域
             "stages": [],
             "labels": [],
@@ -161,7 +162,9 @@ class AppContext(QObject):
         collection = self.collection
         if self._project_projection is not None and collection is not None:
             return {
-                entry.id: set(self._entry_labels_exact.get(entry.identity.serialize(), ()))
+                entry.id: set(
+                    self._entry_labels_exact.get((entry.identity.namespace.value, entry.identity.local_key), ())
+                )
                 for entry in collection
                 if entry.id
             }
@@ -700,7 +703,7 @@ class AppContext(QObject):
             self._entry_labels = {}
             self._entry_labels_exact = {}
         else:
-            values = snapshot.to_dict()["values"]
+            values = snapshot.values
             self._projection_dirty = snapshot.dirty
             self._projection_revision = snapshot.revision
             project_id = values.get("project_id")
@@ -711,26 +714,17 @@ class AppContext(QObject):
             self._active_project_id = None if project_id is None else str(project_id)
             project_name = values.get("project_name")
             self._project_name = None if project_name is None else str(project_name)
-            self._project_sources = tuple(dict(value) for value in values.get("sources", ()))
-            self._project_variants = tuple(dict(value) for value in values.get("variants", ()))
+            self._project_sources = tuple(copy_projection_value(value) for value in values.get("sources", ()))
+            self._project_variants = tuple(copy_projection_value(value) for value in values.get("variants", ()))
             variant_id = values.get("variant_id") or values.get("active_variant_id")
             self._active_variant_id = None if variant_id is None else str(variant_id)
-            binding = values.get("paratranz_binding")
+            binding = copy_projection_value(values.get("paratranz_binding"))
             self._paratranz_binding = None if not isinstance(binding, dict) else dict(binding)
             library = values.get("label_library") or {}
-            self._label_library = {str(key): dict(value) for key, value in library.items()}
-            labels: dict[str, set[str]] = {}
-            exact_labels: dict[str, set[str]] = {}
-            for entry in values.get("entries", ()):
-                entry_key = entry.get("entry_key") or {}
-                local_key = entry_key.get("local_key")
-                if local_key is not None:
-                    entry_label_ids = set(str(value) for value in entry.get("labels", ()))
-                    labels[str(local_key)] = entry_label_ids
-                    if entry_key.get("namespace") is not None:
-                        exact_labels[EntryKey.from_dict(entry_key).serialize()] = entry_label_ids
-            self._entry_labels = labels
-            self._entry_labels_exact = exact_labels
+            self._label_library = {str(key): copy_projection_value(value) for key, value in library.items()}
+            self._entry_labels, self._entry_labels_exact = project_entry_labels(
+                values.get("entries", ()), old_entry_labels_exact
+            )
         if (
             old_label_library != self._label_library
             or old_entry_labels != self._entry_labels

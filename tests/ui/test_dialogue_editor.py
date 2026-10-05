@@ -46,6 +46,7 @@ def drain(controller):
 
 @pytest.fixture
 def editor(monkeypatch):
+    monkeypatch.setattr("transbridge.ui.dialogue.sync_dialog.SyncTranslationDialog.exec", lambda self: 0)
     monkeypatch.setattr(context_module.ParatranzConfig, "create_or_load", lambda: SimpleNamespace(token=""))
     context = context_module.AppContext()
     context.variant_store = SimpleNamespace(dirty=False)
