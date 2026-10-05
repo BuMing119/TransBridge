@@ -27,7 +27,14 @@ echo.
 
 :: ── 步骤 2：PyInstaller 打包 ──────────────────────────────────
 echo [2/3] 正在用 PyInstaller 打包应用...
-uv run pyinstaller transbridge.spec --noconfirm
+:: 避免从调用者 PATH 中收集无关软件的同名 DLL（例如 ICU/VC 运行库）。
+for %%I in (uv.exe) do set "UV_EXE=%%~$PATH:I"
+if not defined UV_EXE (
+    echo [错误] 未找到 uv.exe。
+    pause & exit /b 1
+)
+:: 在 Python 进程内设置 PATH，防止启动器重新注入宿主工具的 DLL 搜索目录。
+"%UV_EXE%" run --frozen --no-sync python -c "import os; from PyInstaller.__main__ import run; os.environ['PATH'] = os.path.join(os.environ['SystemRoot'], 'System32') + os.pathsep + os.environ['SystemRoot']; run(['transbridge.spec', '--noconfirm', '--clean'])"
 if errorlevel 1 (
     echo [错误] PyInstaller 打包失败，请查看上方日志。
     pause & exit /b 1
