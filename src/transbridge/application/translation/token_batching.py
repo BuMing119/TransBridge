@@ -60,6 +60,7 @@ class OversizedContentItem:
 @dataclass(frozen=True, slots=True)
 class ContentBatchPlan[T]:
     batches: tuple[ContentBatch[T], ...]
+    # Kept for existing consumers; v2 batching sends every item and leaves this empty.
     oversized: tuple[OversizedContentItem, ...] = ()
 
     @property
@@ -70,7 +71,7 @@ class ContentBatchPlan[T]:
 class StableContentBatcher[T]:
     """Greedily batch an ordered stream using only its business-content budget."""
 
-    VERSION = 1
+    VERSION = 2
 
     def __init__(self, counter: ContentTokenCounter, max_tokens: int, *, max_items: int | None = None) -> None:
         if isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or max_tokens <= 0:
@@ -89,7 +90,6 @@ class StableContentBatcher[T]:
         content: Callable[[T], str | Sequence[str]],
     ) -> ContentBatchPlan[T]:
         batches: list[ContentBatch[T]] = []
-        oversized: list[OversizedContentItem] = []
         current: list[T] = []
         current_keys: list[EntryKey] = []
         current_content: list[tuple[str, ...]] = []
@@ -125,17 +125,6 @@ class StableContentBatcher[T]:
             projected = content(item)
             fields = (projected,) if isinstance(projected, str) else tuple(projected)
             measurement = self._count_fields(fields)
-            if measurement.tokens > self._max_tokens:
-                flush()
-                oversized.append(
-                    OversizedContentItem(
-                        entry_key=entry_key,
-                        content_tokens=measurement.tokens,
-                        max_tokens=self._max_tokens,
-                        is_estimate=measurement.is_estimate,
-                    )
-                )
-                continue
             token_full = bool(current) and current_tokens + measurement.tokens > self._max_tokens
             item_full = self._max_items is not None and len(current) >= self._max_items
             if token_full or item_full:
@@ -145,8 +134,11 @@ class StableContentBatcher[T]:
             current_content.append(fields)
             current_tokens += measurement.tokens
             current_estimate = current_estimate or measurement.is_estimate
+            # A single entry is indivisible; isolate it even from empty neighbours.
+            if measurement.tokens > self._max_tokens:
+                flush()
         flush()
-        return ContentBatchPlan(tuple(batches), tuple(oversized))
+        return ContentBatchPlan(tuple(batches))
 
     def _count_fields(self, value: str | Sequence[str]) -> ContentTokenCount:
         fields = (value,) if isinstance(value, str) else value

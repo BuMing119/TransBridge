@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .term_validation import contains_term, valid_term_pair
+
 if TYPE_CHECKING:
     from transbridge.ai_translator.prompt_builder import PromptBuilder
     from transbridge.ai_translator.term_formats import TermEntry
@@ -64,10 +66,12 @@ class NounExtractor:
             translation = str(item.get("translation") or "").strip()
             key = (term, translation)
             if (
-                term
-                and translation
+                valid_term_pair(term, translation)
                 and key not in seen
-                and any(term in original and translation in translated for original, translated in aligned_pairs)
+                and any(
+                    contains_term(original, term) and contains_term(translated, translation)
+                    for original, translated in aligned_pairs
+                )
             ):
                 seen.add(key)
                 results.append(

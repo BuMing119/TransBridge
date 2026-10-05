@@ -91,3 +91,47 @@ def test_cancel_is_forwarded_to_the_provider_client() -> None:
     extractor.cancel()
 
     assert client.cancel_calls == 1
+
+
+@pytest.mark.parametrize("text", ["...", "……", " ", "<br>", "{name}", "${name}", "%s", "[pagebreak]"])
+def test_extract_rejects_nonlexical_candidates_even_when_present_in_both_texts(text):
+    extractor = NounExtractor(_Client(), _Builder([{"term": text, "translation": text}]))
+    assert extractor.extract([{"original": text, "translation": text}]) == []
+
+
+def test_extract_rejects_word_fragments_on_either_side_and_text_inside_tags():
+    extractor = NounExtractor(
+        _Client(),
+        _Builder([
+            {"term": "Far", "translation": "法尔"},
+            {"term": "法尔", "translation": "Far"},
+            {"term": "name", "translation": "name"},
+            {"term": "font", "translation": "font"},
+        ]),
+    )
+    pairs = [
+        {"original": "Farengar", "translation": "法尔加"},
+        {"original": "法尔加", "translation": "Farengar"},
+        {"original": "{name}", "translation": "{name}"},
+        {"original": "<font>", "translation": "<font>"},
+    ]
+    assert extractor.extract(pairs) == []
+
+
+def test_extract_preserves_names_abbreviations_cjk_and_existing_ambiguous_mapping():
+    items = [
+        {"term": "Eye", "translation": "马格努斯之眼"},
+        {"term": "US", "translation": "US"},
+        {"term": "D'Artagnan", "translation": "达达尼昂"},
+        {"term": "巨龙", "translation": "Dragon"},
+    ]
+    extractor = NounExtractor(_Client(), _Builder(items))
+    pairs = [
+        {"original": "Eye of Magnus", "translation": "马格努斯之眼"},
+        {"original": "US,", "translation": "US!"},
+        {"original": "D'Artagnan's sword", "translation": "达达尼昂之剑"},
+        {"original": "巨龙之剑", "translation": "Dragon sword"},
+    ]
+    assert [(row.term, row.translation) for row in extractor.extract(pairs)] == [
+        (row["term"], row["translation"]) for row in items
+    ]

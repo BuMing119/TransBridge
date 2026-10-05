@@ -26,11 +26,14 @@ from transbridge.infra.llm_reasoning_protocols import (
 from transbridge.infra.llm_structured_outputs import (
     anthropic_output_config,
     ensure_anthropic_structured_output_completion,
-    ensure_openai_responses_structured_output_completion,
     extract_structured_output_directive,
-    openai_responses_text_config,
     raise_if_structured_output_unsupported,
     validate_structured_output,
+)
+from transbridge.infra.openai_responses_structured import (
+    build_structured_response_kwargs,
+    consume_structured_response_stream,
+    validate_structured_response,
 )
 
 if TYPE_CHECKING:
@@ -99,89 +102,6 @@ def _reject_structured_output_tool_request(messages: list[dict]) -> None:
     _clean_messages, output_schema = extract_structured_output_directive(messages)
     if output_schema is not None:
         raise ValueError("Structured Outputs and function calling cannot be combined in one LLM request")
-
-
-def _object_value(value: object, name: str) -> object:
-    if isinstance(value, dict):
-        return value.get(name)
-    return getattr(value, name, None)
-
-
-def _responses_refusal(response: object) -> object | None:
-    for item in _object_value(response, "output") or ():
-        for part in _object_value(item, "content") or ():
-            if _object_value(part, "type") == "refusal":
-                return _object_value(part, "refusal") or _object_value(part, "text") or "refused"
-    return None
-
-
-def _responses_reasoning(reasoning_patch) -> dict | None:
-    if reasoning_patch is None:
-        return None
-    configured = reasoning_patch.extra_body.get("reasoning")
-    if isinstance(configured, dict):
-        return dict(configured)
-    effort = reasoning_patch.standard.get("reasoning_effort")
-    return {"effort": effort} if effort is not None else None
-
-
-def _openai_responses_kwargs(
-    *,
-    model: str,
-    messages: list[dict],
-    output_schema,
-    max_tokens: int,
-    reasoning_patch,
-    request_options: dict,
-    stream: bool = False,
-) -> dict:
-    kwargs: dict = {
-        "model": model,
-        "input": messages,
-        "text": openai_responses_text_config(output_schema),
-        "store": False,
-    }
-    if stream:
-        kwargs["stream"] = True
-    if max_tokens > 0:
-        kwargs["max_output_tokens"] = max_tokens
-    reasoning = _responses_reasoning(reasoning_patch)
-    if reasoning is not None:
-        kwargs["reasoning"] = reasoning
-    extra_body = dict(request_options)
-    if reasoning_patch is not None:
-        extra_body.update({key: value for key, value in reasoning_patch.standard.items() if key != "reasoning_effort"})
-        extra_body.update({key: value for key, value in reasoning_patch.extra_body.items() if key != "reasoning"})
-    if extra_body:
-        kwargs["extra_body"] = extra_body
-    return kwargs
-
-
-def _validate_openai_responses_result(response: object | None, output_schema, *, raw_text: str | None = None) -> str:
-    details = _object_value(response, "incomplete_details")
-    ensure_openai_responses_structured_output_completion(
-        status=_object_value(response, "status"),
-        incomplete_reason=_object_value(details, "reason"),
-        refusal=_responses_refusal(response),
-    )
-    content = str(_object_value(response, "output_text") or "") if raw_text is None else raw_text
-    return validate_structured_output(content, output_schema)
-
-
-def _consume_openai_responses_stream(stream, chunk_callback) -> tuple[str, object | None]:
-    full_text = ""
-    terminal_response = None
-    with stream:
-        for event in stream:
-            event_type = _object_value(event, "type")
-            if event_type == "response.output_text.delta":
-                delta = str(_object_value(event, "delta") or "")
-                if delta:
-                    full_text += delta
-                    chunk_callback(delta)
-            elif event_type in {"response.completed", "response.incomplete", "response.failed"}:
-                terminal_response = _object_value(event, "response")
-    return full_text, terminal_response
 
 
 class LLMClient(ABC):
@@ -290,7 +210,7 @@ class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
                 messages=clean_messages,
             )
             if output_schema is not None:
-                kwargs = _openai_responses_kwargs(
+                kwargs = build_structured_response_kwargs(
                     model=self._model,
                     messages=req["messages"],
                     output_schema=output_schema,
@@ -304,7 +224,7 @@ class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
                     if not _is_cache_rejection(exc):
                         raise
                     clean, _ = extract_prompt_cache_directives(clean_messages)
-                    retry_kwargs = _openai_responses_kwargs(
+                    retry_kwargs = build_structured_response_kwargs(
                         model=self._model,
                         messages=clean,
                         output_schema=output_schema,
@@ -312,13 +232,9 @@ class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
                         reasoning_patch=reasoning_patch,
                         request_options={},
                     )
-                    logger.warning(
-                        "OpenAI Responses 缓存参数被拒绝(%s)，降级为无缓存重试: model=%s",
-                        exc,
-                        self._model,
-                    )
+                    logger.warning("OpenAI Responses 缓存参数被拒绝(%s)，降级为无缓存重试: model=%s", exc, self._model)
                     resp = client.responses.create(**retry_kwargs)
-                return _validate_openai_responses_result(resp, output_schema)
+                return validate_structured_response(resp, output_schema)
 
             kwargs: dict = dict(model=self._model, messages=req["messages"])
             if reasoning_patch is not None:
@@ -405,7 +321,7 @@ class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
                 messages=clean_messages,
             )
             if output_schema is not None:
-                kwargs = _openai_responses_kwargs(
+                kwargs = build_structured_response_kwargs(
                     model=self._model,
                     messages=req["messages"],
                     output_schema=output_schema,
@@ -415,15 +331,14 @@ class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
                     stream=True,
                 )
                 try:
-                    full_text, terminal_response = _consume_openai_responses_stream(
-                        client.responses.create(**kwargs),
-                        chunk_callback,
+                    full_text, terminal_response = consume_structured_response_stream(
+                        client.responses.create(**kwargs), chunk_callback
                     )
                 except Exception as exc:
                     if not _is_cache_rejection(exc):
                         raise
                     clean, _ = extract_prompt_cache_directives(clean_messages)
-                    retry_kwargs = _openai_responses_kwargs(
+                    retry_kwargs = build_structured_response_kwargs(
                         model=self._model,
                         messages=clean,
                         output_schema=output_schema,
@@ -433,19 +348,12 @@ class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
                         stream=True,
                     )
                     logger.warning(
-                        "OpenAI Responses 流式缓存参数被拒绝(%s)，降级为无缓存重试: model=%s",
-                        exc,
-                        self._model,
+                        "OpenAI Responses 流式缓存参数被拒绝(%s)，降级为无缓存重试: model=%s", exc, self._model
                     )
-                    full_text, terminal_response = _consume_openai_responses_stream(
-                        client.responses.create(**retry_kwargs),
-                        chunk_callback,
+                    full_text, terminal_response = consume_structured_response_stream(
+                        client.responses.create(**retry_kwargs), chunk_callback
                     )
-                return _validate_openai_responses_result(
-                    terminal_response,
-                    output_schema,
-                    raw_text=full_text,
-                )
+                return validate_structured_response(terminal_response, output_schema, raw_text=full_text)
 
             kwargs: dict = dict(model=self._model, messages=req["messages"], stream=True)
             if reasoning_patch is not None:

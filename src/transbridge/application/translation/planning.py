@@ -94,6 +94,9 @@ class ActionPlanner:
             if not decision.include_ai:
                 assignments.append(ActionAssignment(entry.key, TranslationAction.SKIP, "stage_policy"))
                 continue
+            if not entry.original.strip():
+                assignments.append(ActionAssignment(entry.key, TranslationAction.SKIP, "empty_source"))
+                continue
             matched = next((rule for rule in ordered_rules if _matches(rule, entry)), None)
             if matched is None:
                 assignments.append(ActionAssignment(entry.key, TranslationAction.SKIP, "no_matching_rule"))

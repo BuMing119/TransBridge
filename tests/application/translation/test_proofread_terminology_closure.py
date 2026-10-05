@@ -59,6 +59,29 @@ class _ProofreadClient:
         pass
 
 
+def test_cancelled_closure_retains_validation_status_without_applying_candidates():
+    from transbridge.application.translation.terminology_closure import ProofreadTerminologyClosure
+
+    originals = (_candidate("valid"), _candidate("unfinished"), _candidate("unstarted"))
+    candidates = (
+        originals[0].with_text("巨龙", "proofread"),
+        originals[1].with_text("错误", "proofread"),
+        originals[2].with_accepted(False),
+    )
+    closure = ProofreadTerminologyClosure(None, model="", max_tokens_per_batch=2000)
+    results, _ = closure.apply(
+        originals,
+        candidates,
+        {item.entry_key: {"Dragon": "巨龙"} for item in originals},
+        is_cancelled=lambda: True,
+    )
+    assert all(not item.accepted for item in results)
+    assert dict(results[0].report_details)["processing_status"] == "completed"
+    assert dict(results[1].report_details)["processing_status"] == "cancelled"
+    assert "processing_status" not in dict(results[2].report_details)
+    assert results[0].text == "巨龙"
+
+
 class _Refiner:
     def __init__(self, values: dict[str, str] | None = None, *, valid: bool = True) -> None:
         self.values = values or {}
@@ -213,7 +236,7 @@ def test_refiner_result_still_missing_term_is_rejected_and_run_start_text_is_res
     assert dict(diagnostic.details)["reason"] == "terminology_still_inconsistent"
 
 
-def test_refiner_placeholder_or_tag_damage_is_rejected() -> None:
+def test_refiner_placeholder_or_tag_damage_retains_original_as_questionable() -> None:
     candidate = _candidate("one", original="Dragon %s <Alias=Hero>", text="旧译 %s <Alias=Hero>")
     client = _ProofreadClient({"one": "龙 %s <Alias=Hero>"})
     refiner = _Refiner({"one": "巨龙"})
@@ -221,7 +244,9 @@ def test_refiner_placeholder_or_tag_damage_is_rejected() -> None:
     outcome = _stage(client, {candidate.entry_key: {"Dragon": "巨龙"}}, refiner)((candidate,))
 
     assert outcome.candidates[0].text == candidate.before_text
-    assert outcome.candidates[0].accepted is False
+    assert outcome.candidates[0].accepted is True
+    assert outcome.candidates[0].stage == 2
+    assert outcome.diagnostics[-1].code == "PROOFREAD_SYNTAX_REVIEW_REQUIRED"
     assert dict(outcome.diagnostics[-1].details)["reason"] == "protected_syntax_mismatch"
 
 
@@ -311,3 +336,77 @@ def test_non_terminology_semantic_fix_remains_the_first_open_proofread_result() 
     assert refiner.calls == []
     assert outcome.candidates[0].text == "门没有开。"
     assert outcome.candidates[0].phases == ("proofread",)
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_refinement_reports_progress_before_calls_and_stops_between_batches(cancel) -> None:
+    candidates = tuple(_candidate(str(index)) for index in range(3))
+    client = _ProofreadClient({str(index): "错误" for index in range(3)})
+    progress = []
+
+    class Refiner(_Refiner):
+        def refine_batch(self, entries, issues_map, *, terms_map=None):
+            assert "术语修复" in progress[-1][2]
+            assert progress[-1][:2] == (len(self.calls), 3)
+            if cancel:
+                stage.cancel()
+            return super().refine_batch(entries, issues_map, terms_map=terms_map)
+
+    refiner = Refiner({str(index): "巨龙" for index in range(3)})
+    stage = _stage(
+        client,
+        {candidate.entry_key: {"Dragon": "巨龙"} for candidate in candidates},
+        refiner,
+        refinement_batch_size=1,
+    )
+    outcome = stage.run(candidates, progress_callback=lambda *args: progress.append(args))
+
+    assert len(refiner.calls) == (1 if cancel else 3)
+    assert not any("校对已完成" in message for _, _, message in progress)
+    if cancel:
+        assert all(not candidate.accepted and candidate.text == "错误" for candidate in outcome.candidates)
+        assert outcome.diagnostics[-1].code == "PROOFREAD_REFINEMENT_CANCELLED"
+        assert "正在整理结果" not in progress[-1][2]
+    else:
+        assert all(candidate.accepted for candidate in outcome.candidates)
+        assert progress[-1][:2] == (3, 3)
+
+
+def test_refinement_progress_callback_failure_does_not_discard_valid_results() -> None:
+    candidate = _candidate("one")
+    stage = _stage(
+        _ProofreadClient({"one": "龙"}), {candidate.entry_key: {"Dragon": "巨龙"}}, _Refiner({"one": "巨龙"})
+    )
+
+    def broken_callback(*_args):
+        raise RuntimeError("progress unavailable")
+
+    outcome = stage.run((candidate,), progress_callback=broken_callback)
+    assert outcome.candidates[0].text == "巨龙"
+    assert outcome.candidates[0].accepted
+    assert all(item.code == "PROOFREAD_PROGRESS_CALLBACK_FAILED" for item in outcome.diagnostics)
+
+
+@pytest.mark.parametrize("explicit_workers", [None, 2])
+def test_stage_forwards_constructor_or_run_concurrency_to_refinement(explicit_workers):
+    import threading
+
+    candidates = tuple(_candidate(str(index)) for index in range(3))
+    workers = explicit_workers or 3
+    barrier = threading.Barrier(workers)
+
+    class Refiner(_Refiner):
+        def refine_batch(self, entries, issues_map, *, terms_map=None):
+            if int(entries[0].key) < workers:
+                barrier.wait(timeout=3)
+            return super().refine_batch(entries, issues_map, terms_map=terms_map)
+
+    stage = _stage(
+        _ProofreadClient({str(index): "龙" for index in range(3)}),
+        {candidate.entry_key: {"Dragon": "巨龙"} for candidate in candidates},
+        Refiner({str(index): "巨龙" for index in range(3)}),
+        max_workers=3,
+        refinement_batch_size=1,
+    )
+    outcome = stage(candidates) if explicit_workers is None else stage.run(candidates, max_workers=explicit_workers)
+    assert all(candidate.accepted for candidate in outcome.candidates)

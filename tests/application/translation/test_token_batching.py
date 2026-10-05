@@ -46,12 +46,10 @@ def test_stable_batcher_counts_only_projected_business_fields_and_keeps_order() 
         content=lambda item: item.fields,
     )
 
-    assert [tuple(item.key.local_key for item in batch.items) for batch in plan.batches] == [("a", "b")]
+    assert [tuple(item.key.local_key for item in batch.items) for batch in plan.batches] == [("a", "b"), ("c",)]
     assert plan.batches[0].content_tokens == 4
-    assert plan.oversized[0].entry_key == _key("c")
-    assert plan.oversized[0].content_tokens == len("占位符 {name}\n第二行")
-    assert "legacy:v1" in plan.oversized[0].message
-    assert "上限 4" in plan.oversized[0].message
+    assert plan.oversized == ()
+    assert plan.batches[1].content_tokens == len("占位符 {name}\n第二行")
 
 
 def test_empty_unicode_and_optional_item_limit_are_deterministic() -> None:
@@ -148,12 +146,27 @@ def test_batch_planner_boundaries_do_not_change_with_concurrency_and_preserve_co
     assert boundaries_by_concurrency[0] == boundaries_by_concurrency[1] == boundaries_by_concurrency[2]
 
 
-def test_batch_planner_reports_single_entry_over_budget_without_sending_it() -> None:
+def test_batch_planner_sends_single_entry_over_budget_alone() -> None:
     oversized = _entry("too-long", "x" * 11, "BOOK:DESC")
 
     plan = BatchPlanner(max_tokens_per_batch=10, token_counter=CharacterCounter()).plan([oversized])
 
-    assert plan.all_batches() == []
-    assert len(plan.oversized) == 1
-    assert plan.oversized[0].entry_key == oversized.identity
-    assert plan.oversized[0].content_tokens == 11
+    assert len(plan.all_batches()) == 1
+    assert plan.all_batches()[0].entries == [oversized]
+    assert plan.all_batches()[0].content_tokens == 11
+    assert plan.oversized == []
+
+
+def test_oversized_entries_remain_isolated_from_empty_and_small_neighbours() -> None:
+    items = [Item(_key(str(i)), (value,)) for i, value in enumerate(("", "xxxxx", "", "xxxxxx", "a", "b"))]
+    batcher = StableContentBatcher(CharacterCounter(), 2)
+    plan = batcher.plan(items, key=lambda item: item.key, content=lambda item: item.fields)
+    assert [tuple(item.key.local_key for item in batch.items) for batch in plan.batches] == [
+        ("0",),
+        ("1",),
+        ("2",),
+        ("3",),
+        ("4", "5"),
+    ]
+    assert plan.items == tuple(items)
+    assert all(len(batch.items) == 1 or batch.content_tokens <= 2 for batch in plan.batches)

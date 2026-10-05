@@ -71,6 +71,19 @@ def test_context_plan_has_no_omissions_duplicates_and_orders_quests() -> None:
     assert any("CONTEXT_FALLBACK_ROUND3" in item for item in plan.diagnostics)
 
 
+@pytest.mark.parametrize("original", ["", " \t\n\u3000"])
+@pytest.mark.parametrize("action", [TranslationAction.TRANSLATE, TranslationAction.POLISH])
+def test_blank_source_is_skipped_before_rules_and_context_batching(original, action) -> None:
+    empty = PlanningEntry(_key("empty"), 0, original, translation="preserve", context="ARMO:DESC")
+    regular = _entry("regular")
+    entries = [empty, regular]
+    actions = ActionPlanner().plan(entries, [ActionRuleSpec("all", 0, action)])
+
+    assert actions.partition(TranslationAction.SKIP) == (empty.key,)
+    assert actions.assignments[0].reason == "empty_source"
+    assert ContextPlanner().plan(entries, actions).keys == (regular.key,)
+
+
 @pytest.mark.parametrize(
     ("context", "round_number", "category"),
     [

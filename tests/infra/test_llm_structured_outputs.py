@@ -13,9 +13,9 @@ from transbridge.infra.llm_structured_outputs import (
     anthropic_output_config,
     attach_structured_output_directive,
     ensure_anthropic_structured_output_completion,
-    ensure_openai_structured_output_completion,
+    ensure_openai_responses_structured_output_completion,
     extract_structured_output_directive,
-    openai_response_format,
+    openai_responses_text_config,
     raise_if_structured_output_unsupported,
     validate_structured_output,
 )
@@ -96,21 +96,45 @@ def test_directive_rejects_existing_malformed_and_duplicate_metadata(output_sche
 
 
 def test_provider_options_have_native_shapes_and_fresh_schema(output_schema: LlmOutputSchema) -> None:
-    openai = openai_response_format(output_schema)
+    openai = openai_responses_text_config(output_schema)
     anthropic = anthropic_output_config(output_schema)
 
-    assert openai == {
-        "type": "json_schema",
-        "json_schema": {"name": "translation_results", "schema": output_schema.schema, "strict": True},
-    }
+    assert openai == {"format": {"type": "json_schema", "name": "translation_results", "schema": output_schema.schema}}
     assert anthropic == {"format": {"type": "json_schema", "schema": output_schema.schema}}
-    openai["json_schema"]["schema"]["properties"].clear()
+    openai["format"]["schema"]["properties"].clear()
     assert output_schema.schema["properties"] == {"answer": {"type": "string"}}
 
 
 def test_validate_structured_output_returns_original_text(output_schema: LlmOutputSchema) -> None:
     raw = '{\n  "answer": "译文"\n}'
     assert validate_structured_output(raw, output_schema) == raw
+
+
+@pytest.mark.parametrize("label", ["json", "JSON", ""])
+def test_single_complete_json_fence_is_unwrapped_after_schema_validation(
+    label: str, output_schema: LlmOutputSchema, caplog
+) -> None:
+    raw = f'\n```{label}\r\n{{"answer":"private translation"}}\r\n```\n'
+
+    assert validate_structured_output(raw, output_schema) == '{"answer":"private translation"}'
+    assert "recovered from a Markdown JSON code block" in caplog.text
+    assert "private translation" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '```json\n{"answer":"ok"}\n``` trailing explanation',
+        'prefix\n```json\n{"answer":"ok"}\n```',
+        '```json\n{"answer":"ok"}\n```\n```json\n{"answer":"ok"}\n```',
+        '```python\n{"answer":"ok"}\n```',
+        '```json\n{"answer":"ok"}',
+        '```json\n{"answer":7}\n```',
+    ],
+)
+def test_invalid_or_nonconforming_fence_is_not_recovered(raw: str, output_schema: LlmOutputSchema) -> None:
+    with pytest.raises(LlmStructuredOutputInvalidResponseError):
+        validate_structured_output(raw, output_schema)
 
 
 @pytest.mark.parametrize(
@@ -127,20 +151,61 @@ def test_invalid_response_errors_do_not_echo_complete_response(raw: str, output_
 
     assert raw not in str(caught.value)
     assert "secret-translation" not in str(caught.value)
+    assert caught.value.raw_response == raw
 
 
-@pytest.mark.parametrize("finish_reason", [None, "content_filter", "tool_calls"])
-def test_openai_invalid_finish_reasons_are_classified(finish_reason) -> None:
+def test_schema_failure_records_unexpected_fields_without_values(output_schema: LlmOutputSchema) -> None:
+    raw = '{"answer":"ok", "reason":"private explanation", "confidence":1}'
+    with pytest.raises(LlmStructuredOutputInvalidResponseError) as caught:
+        validate_structured_output(raw, output_schema)
+    assert caught.value.raw_response == raw
+    assert caught.value.validation_details == {
+        "schema": output_schema.name,
+        "path": "<root>",
+        "validator": "additionalProperties",
+        "unexpected_fields": ["confidence", "reason"],
+        "errors": [
+            {
+                "path": "<root>",
+                "validator": "additionalProperties",
+                "unexpected_fields": ["confidence", "reason"],
+            }
+        ],
+    }
+    assert "private explanation" not in str(caught.value)
+
+
+def test_schema_failure_prioritizes_missing_translation_and_keeps_other_errors() -> None:
+    from transbridge.ai_translator.structured_schemas import PROOFREAD_OUTPUT_SCHEMA
+
+    raw = (
+        '{"results":[{"entry_key":{"namespace":"test","local_key":"entry"},'
+        '"original":"private source","current_translation":"private translation"}]}'
+    )
+    with pytest.raises(LlmStructuredOutputInvalidResponseError) as caught:
+        validate_structured_output(raw, PROOFREAD_OUTPUT_SCHEMA)
+    details = caught.value.validation_details
+    assert details["validator"] == "required"
+    assert details["path"] == "results/0"
+    assert details["missing_fields"] == ["final_translation"]
+    assert {error["validator"] for error in details["errors"]} == {"required", "additionalProperties"}
+    assert details["errors"][-1]["unexpected_fields"] == ["current_translation", "original"]
+    assert "private source" not in repr(details)
+    assert "private translation" not in repr(details)
+
+
+@pytest.mark.parametrize("status", [None, "in_progress", "failed"])
+def test_openai_invalid_statuses_are_classified(status) -> None:
     with pytest.raises(LlmStructuredOutputInvalidResponseError):
-        ensure_openai_structured_output_completion(finish_reason=finish_reason)
+        ensure_openai_responses_structured_output_completion(status=status)
 
 
 def test_openai_refusal_and_truncation_are_classified() -> None:
     with pytest.raises(LlmStructuredOutputRefusalError):
-        ensure_openai_structured_output_completion(finish_reason="stop", refusal="cannot comply")
+        ensure_openai_responses_structured_output_completion(status="completed", refusal="cannot comply")
     with pytest.raises(LlmStructuredOutputTruncatedError):
-        ensure_openai_structured_output_completion(finish_reason="length")
-    ensure_openai_structured_output_completion(finish_reason="stop")
+        ensure_openai_responses_structured_output_completion(status="incomplete", incomplete_reason="max_output_tokens")
+    ensure_openai_responses_structured_output_completion(status="completed")
 
 
 @pytest.mark.parametrize("stop_reason", [None, "stop_sequence", "tool_use"])
@@ -160,7 +225,7 @@ def test_anthropic_refusal_and_truncation_are_classified() -> None:
 @pytest.mark.parametrize(
     ("provider", "message"),
     [
-        ("openai", "Unknown parameter: response_format.json_schema"),
+        ("openai", "Unknown parameter: text.format.json_schema"),
         ("anthropic", "output_config is not supported"),
     ],
 )

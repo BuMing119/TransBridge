@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import threading
 import time
@@ -141,9 +142,10 @@ def test_percentage_prose_does_not_allow_a_real_placeholder_to_be_dropped() -> N
 
     outcome = ProofreadStage(client, max_tokens_per_batch=10_000)((candidate,))
 
-    assert not outcome.candidates[0].accepted
+    assert outcome.candidates[0].accepted
+    assert outcome.candidates[0].stage == 2
     assert outcome.candidates[0].text == candidate.before_text
-    assert [diagnostic.code for diagnostic in outcome.diagnostics] == ["PROOFREAD_PROTECTED_SYNTAX_MISMATCH"]
+    assert [diagnostic.code for diagnostic in outcome.diagnostics] == ["PROOFREAD_SYNTAX_REVIEW_REQUIRED"]
 
 
 def test_terms_are_resolved_after_admission_and_one_pass_accepts_unchanged_values() -> None:
@@ -224,7 +226,7 @@ def test_response_mapping_rejects_only_duplicate_missing_empty_and_unknown_resul
     }
 
 
-def test_only_placeholder_or_program_tag_damage_rejects_a_translation() -> None:
+def test_placeholder_or_program_tag_damage_retains_original_for_review() -> None:
     protected = _candidate("protected", original="Hello %s <Alias=Hero>", text="你好 %s <Alias=Hero>")
     natural = _candidate("natural", original='Count 10 (old) "quoted"', text="计数 10（旧）")
     response = {
@@ -238,11 +240,52 @@ def test_only_placeholder_or_program_tag_damage_rejects_a_translation() -> None:
     outcome = ProofreadStage(client, max_tokens_per_batch=10_000)((protected, natural))
 
     assert outcome.candidates[0].text == protected.text
-    assert outcome.candidates[0].phases == ()
-    assert outcome.candidates[0].accepted is False
+    assert outcome.candidates[0].phases == ("proofread",)
+    assert outcome.candidates[0].accepted is True
     assert outcome.candidates[1].accepted is True
     assert outcome.candidates[1].text == "这段译文可以任意改变数字 999、引号和长度"
-    assert [diagnostic.code for diagnostic in outcome.diagnostics] == ["PROOFREAD_PROTECTED_SYNTAX_MISMATCH"]
+    assert [diagnostic.code for diagnostic in outcome.diagnostics] == ["PROOFREAD_SYNTAX_REVIEW_REQUIRED"]
+
+
+@pytest.mark.parametrize(
+    ("source", "translation"), [("{Sigh}", "（叹气）"), ("<Hiccup>", "（打嗝）"), ("<Coughing>", "（咳嗽）")]
+)
+def test_action_descriptions_complete_with_questionable_original(source, translation) -> None:
+    candidate = replace(_candidate("action", original=source, text=translation), stage=1)
+    client = _PreparedClient(lambda _messages: json.dumps({"results": [_result(candidate, translation)]}))
+    outcome = ProofreadStage(client)((candidate,))
+    assert len(client.messages) == 2  # Preserve the existing bounded recovery.
+    assert outcome.candidates[0].accepted
+    assert outcome.candidates[0].text == translation
+    assert outcome.candidates[0].stage == 2
+    assert dict(outcome.candidates[0].report_details)["questionable"] is True
+    assert not outcome.diagnostics[0].retryable
+
+
+def test_successful_syntax_recovery_uses_model_result_without_questionable_fallback() -> None:
+    candidate = replace(_candidate("syntax", original="Hello %s", text="旧 %s"), stage=1)
+    values = iter(("不含标记", "你好 %s"))
+    client = _PreparedClient(lambda _messages: json.dumps({"results": [_result(candidate, next(values))]}))
+    outcome = ProofreadStage(client)((candidate,))
+    assert outcome.candidates[0].accepted
+    assert outcome.candidates[0].text == "你好 %s"
+    assert not dict(outcome.candidates[0].report_details).get("questionable")
+
+
+def test_syntax_mismatch_with_failed_recovery_call_remains_failed() -> None:
+    candidate = _candidate("syntax", original="Hello %s")
+    calls = 0
+
+    def respond(_messages):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return json.dumps({"results": [_result(candidate, "缺少标记")]})
+        raise TimeoutError("unavailable")
+
+    outcome = ProofreadStage(_PreparedClient(respond))((candidate,))
+    assert not outcome.candidates[0].accepted
+    assert any(item.code == "PROOFREAD_RECOVERY_EXHAUSTED" for item in outcome.diagnostics)
 
 
 def test_malformed_response_and_call_failures_retain_the_original_candidates() -> None:
@@ -268,7 +311,10 @@ def test_malformed_response_and_call_failures_retain_the_original_candidates() -
     assert failed_outcome.candidates[0].accepted is False
     assert failed_outcome.failed is True
     assert failed_outcome.diagnostics[0].code == "PROOFREAD_LLM_CALL_FAILED"
-    assert dict(failed_outcome.diagnostics[0].details) == {"error_type": "TimeoutError"}
+    assert dict(failed_outcome.diagnostics[0].details) == {
+        "error_type": "TimeoutError",
+        "entry_keys": (candidate.entry_key.to_dict(),),
+    }
 
 
 def test_wrapped_json_is_recovered_locally_without_an_extra_model_call() -> None:
@@ -325,6 +371,30 @@ def test_cancelled_model_call_is_not_retried() -> None:
     assert [diagnostic.code for diagnostic in outcome.diagnostics] == ["PROOFREAD_LLM_CALL_CANCELLED"]
 
 
+def test_exhausted_recovery_diagnostic_belongs_only_to_the_failed_subset() -> None:
+    successful = _candidate("successful")
+    failed = _candidate("failed")
+    calls = 0
+
+    def respond(_messages):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return json.dumps({"results": [_result(successful, "updated")]})
+        raise TimeoutError("provider unavailable")
+
+    outcome = ProofreadStage(_PreparedClient(respond))((successful, failed))
+
+    assert outcome.candidates[0].accepted
+    assert not outcome.candidates[1].accepted
+    exhausted = next(item for item in outcome.diagnostics if item.code == "PROOFREAD_RECOVERY_EXHAUSTED")
+    assert dict(exhausted.details) == {
+        "failed_count": 1,
+        "error_type": "TimeoutError",
+        "entry_keys": (failed.entry_key.to_dict(),),
+    }
+
+
 def test_malformed_recovery_splits_once_and_counts_only_persistent_failures() -> None:
     candidates = tuple(_candidate(str(index)) for index in range(4))
     calls: list[list[str]] = []
@@ -351,6 +421,8 @@ def test_malformed_recovery_splits_once_and_counts_only_persistent_failures() ->
         "PROOFREAD_RECOVERY_SUCCEEDED",
         "PROOFREAD_RESPONSE_MALFORMED",
     }
+    malformed = next(item for item in outcome.diagnostics if item.code == "PROOFREAD_RESPONSE_MALFORMED")
+    assert dict(malformed.details)["entry_keys"] == tuple(candidate.entry_key.to_dict() for candidate in candidates[2:])
 
 
 def test_malformed_batch_does_not_fail_the_stage_or_discard_other_batch_results() -> None:
@@ -375,7 +447,7 @@ def test_malformed_batch_does_not_fail_the_stage_or_discard_other_batch_results(
     assert [diagnostic.code for diagnostic in outcome.diagnostics] == ["PROOFREAD_RESPONSE_MALFORMED"]
 
 
-def test_token_and_item_boundaries_keep_oversized_candidates_without_calling_them() -> None:
+def test_token_and_item_boundaries_send_oversized_candidates_alone() -> None:
     small = _candidate("small", original="a", text="b", context="")
     other = _candidate("other", original="c", text="d", context="")
     oversized = _candidate("oversized", original="x" * 100, text="y", context="")
@@ -392,12 +464,14 @@ def test_token_and_item_boundaries_keep_oversized_candidates_without_calling_the
         model="unknown-model",
         max_tokens_per_batch=20,
         max_items=1,
+        max_output_tokens=256,
     )((small, other, oversized))
 
-    assert len(client.messages) == 2
-    assert [candidate.text for candidate in outcome.candidates] == ["updated", "updated", "y"]
-    assert [candidate.accepted for candidate in outcome.candidates] == [True, True, False]
-    assert [diagnostic.code for diagnostic in outcome.diagnostics] == ["PROOFREAD_CONTENT_TOKEN_LIMIT"]
+    assert len(client.messages) == 3
+    assert client.max_tokens == [256, 256, 256]
+    assert [candidate.text for candidate in outcome.candidates] == ["updated", "updated", "updated"]
+    assert all(candidate.accepted for candidate in outcome.candidates)
+    assert outcome.diagnostics == ()
 
 
 class _ConcurrentClient:
@@ -466,8 +540,9 @@ def test_batches_run_concurrently_with_constructor_default_and_explicit_worker_l
 
     assert limited_client.peak == 2
     assert limited_outcome.diagnostics == ()
-    assert [item[:2] for item in progress] == [(1, 5), (2, 5), (3, 5), (4, 5), (5, 5)]
-    assert progress[-1][2] == "校对已完成 5/5 条"
+    assert [item[:2] for item in progress] == [(1, 5), (2, 5), (3, 5), (4, 5), (5, 5), (0, 5), (5, 5)]
+    assert progress[4][2] == "校对 5/5 条"
+    assert progress[-1][2] == "术语检查结束，无需修复"
 
 
 class _AuditedCollection(TranslationEntryCollection):
@@ -542,17 +617,18 @@ def test_workload_rejects_only_invalid_candidates_and_execution_commits_the_vali
     )
 
     assert execution.report_result.outcome is OperationOutcome.COMPLETED
-    assert execution.report_result.counts.succeeded == 1
+    assert execution.report_result.counts.succeeded == 2
     assert execution.report_snapshot is not None
-    assert execution.report_snapshot.accepted_count == 1
+    assert execution.report_snapshot.accepted_count == 2
     candidates = {candidate.entry_key.local_key: candidate for candidate in execution.report_snapshot.candidates}
     assert candidates["valid"].accepted is True
     assert candidates["valid"].text == "valid-updated"
-    assert all(candidates[key].accepted is False for key in ("missing", "empty", "protected"))
+    assert all(candidates[key].accepted is False for key in ("missing", "empty"))
+    assert candidates["protected"].accepted is True
     assert {diagnostic.code for diagnostic in execution.report_result.diagnostics} == {
         "PROOFREAD_RESPONSE_MISSING_KEY",
         "PROOFREAD_RESPONSE_EMPTY_TRANSLATION",
-        "PROOFREAD_PROTECTED_SYNTAX_MISMATCH",
+        "PROOFREAD_SYNTAX_REVIEW_REQUIRED",
     }
     assert execution.commit_result is not None
     assert execution.commit_result.outcome is OperationOutcome.COMPLETED
@@ -561,6 +637,7 @@ def test_workload_rejects_only_invalid_candidates_and_execution_commits_the_vali
     assert collection.get("missing").translation == missing.translation
     assert collection.get("empty").translation == empty.translation
     assert collection.get("protected").translation == protected.translation
+    assert collection.get("protected").stage == 2
 
 
 def test_llm_call_failure_remains_a_workload_stage_failure() -> None:

@@ -6,6 +6,8 @@ import threading
 import time
 from types import SimpleNamespace
 
+import pytest
+
 from transbridge.ai_translator.batch_planner import Batch
 from transbridge.ai_translator.existing_term_extractor import (
     ExistingTermSeedResult,
@@ -202,6 +204,170 @@ def _run(harness: _ConflictHarness, checkpoint: ProgressCheckpoint | None = None
         threading.Event(),
         checkpoint=checkpoint,
     )
+
+
+def test_unchanged_translation_has_real_success_evidence(monkeypatch) -> None:
+    harness = _harness(monkeypatch, conflicts=(), overwrite=True)
+    entry = _entry("normal", translation="translated:normal", stage=1)
+    harness.collection = TranslationEntryCollection([entry])
+    result = _run(harness)
+
+    outcome = result.entry_outcomes[entry.identity]
+    assert outcome.status == "succeeded"
+    assert outcome.text == "translated:normal"
+    assert outcome.stage == 2
+    assert harness.llm.keys_by_call == [("normal",)]
+
+
+@pytest.mark.parametrize("before", ["", "旧译文"])
+def test_failed_translation_never_treats_original_value_as_success(monkeypatch, before) -> None:
+    harness = _harness(monkeypatch, conflicts=(), overwrite=True)
+    entry = _entry("normal", translation=before, stage=1 if before else 0)
+    harness.collection = TranslationEntryCollection([entry])
+    monkeypatch.setattr(harness.llm, "chat_stream", lambda *_args: "{}")
+    result = _run(harness)
+
+    outcome = result.entry_outcomes[entry.identity]
+    assert outcome.status == "failed"
+    assert outcome.text == before
+    assert "模型未返回有效译文" in outcome.reason
+    assert not result.post_process_result.candidates
+
+
+def test_strict_scope_does_not_repair_previously_successful_entries(monkeypatch) -> None:
+    conflict = _conflict(_entry("effective"), "effective_library")
+    harness = _harness(monkeypatch, conflicts=(conflict,))
+    result = harness.translator.translate(
+        harness.collection, ["normal"], lambda *_args: None, threading.Event(), strict_target_scope=True
+    )
+
+    assert harness.llm.keys_by_call == [("normal",)]
+    assert harness.collection.get("effective").translation == "旧冲突译文"
+    assert set(result.entry_outcomes) == {harness.collection.get("normal").identity}
+
+
+def test_term_snapshot_is_observed_before_any_model_call(monkeypatch) -> None:
+    harness = _harness(monkeypatch, conflicts=())
+
+    def reject_changed_terms(manager):
+        assert manager is harness.term_manager
+        assert harness.llm.keys_by_call == []
+        raise ValueError("术语已变化")
+
+    harness.translator._term_snapshot_observer = reject_changed_terms
+    with pytest.raises(ValueError, match="术语已变化"):
+        _run(harness)
+    assert harness.llm.keys_by_call == []
+
+
+@pytest.mark.parametrize("from_dialogue", [False, True])
+def test_generated_terms_are_observed_only_after_successful_storage(monkeypatch, from_dialogue):
+    harness = _harness(monkeypatch, conflicts=())
+    stored, observed = [], []
+    database = SimpleNamespace(add_many_and_save=lambda terms: stored.extend(terms))
+    monkeypatch.setattr(harness.term_manager, "get_dynamic_db", lambda: database, raising=False)
+    monkeypatch.setattr(harness.term_manager, "has_term", lambda _: False, raising=False)
+    harness.translator._term_update_observer = lambda manager, terms: observed.append((
+        manager,
+        list(terms),
+        list(stored),
+    ))
+    entry = _entry("normal")
+    result = TranslationResult()
+    if from_dialogue:
+        harness.translator._extractor = SimpleNamespace(extract=lambda entries: [TermEntry("Noun", "名词", "dialogue")])
+        harness.translator._extract_dialogue_terms([entry], {"normal": "译文"}, result, threading.Lock())
+    else:
+        harness.translator._update_dynamic_terms([entry], {"normal": "译文"}, result, threading.Lock())
+    assert len(observed) == 1
+    manager, terms, already_stored = observed[0]
+    assert manager is harness.term_manager
+    assert terms and terms == already_stored == stored
+
+
+@pytest.mark.parametrize("original,translation", [("...", "..."), ("Name", "{name}")])
+def test_invalid_name_candidate_is_not_saved_or_counted_as_new_term(monkeypatch, original, translation):
+    harness = _harness(monkeypatch, conflicts=())
+    stored, observed = [], []
+    harness.term_manager.get_dynamic_db = lambda: SimpleNamespace(add_many_and_save=stored.extend)
+    harness.translator._term_update_observer = lambda *args: observed.append(args)
+    entry = SimpleNamespace(id="normal", original=original, context="NPC_:FULL")
+    result = TranslationResult()
+    harness.translator._update_dynamic_terms([entry], {"normal": translation}, result, threading.Lock())
+    assert stored == [] and observed == []
+    assert result.new_dynamic_terms == 0
+
+
+def test_failed_postprocess_stage_does_not_publish_initial_translation(monkeypatch, tmp_path) -> None:
+    from transbridge.application.translation import ProofreadStage
+
+    harness = _harness(monkeypatch, conflicts=())
+    harness.translator._cfg.llm_config.enable_post_process = True
+    harness.translator._cfg.llm_config.pp_polish_level = "moderate"
+    harness.translator._cfg.llm_config.target_lang = "zh_CN"
+    harness.translator._cfg.llm_config.game_profile = "skyrim_se"
+    harness.translator._cfg.esp_path = str(tmp_path / "fixture.esp")
+
+    def fail_stage(self, candidates):
+        raise RuntimeError("proofread unavailable")
+
+    monkeypatch.setattr(ProofreadStage, "__call__", fail_stage)
+    result = _run(harness)
+    entry = harness.collection.get("normal")
+
+    assert result.success_count == 1  # First-pass statistics remain compatible.
+    assert entry.translation == "translated:normal"  # Isolated draft only.
+    assert result.entry_outcomes[entry.identity].status == "failed"
+    assert result.entry_outcomes[entry.identity].text == ""
+    assert result.entry_outcomes[entry.identity].reason == "后处理未完成"
+
+
+def test_cancelled_translation_has_no_successful_commit_evidence(monkeypatch) -> None:
+    harness = _harness(monkeypatch, conflicts=())
+    stop = threading.Event()
+
+    def cancel_after_response(*_args):
+        stop.set()
+        return '{"normal":"generated"}'
+
+    monkeypatch.setattr(harness.llm, "chat_stream", cancel_after_response)
+    result = harness.translator.translate(harness.collection, ["normal"], lambda *_args: None, stop)
+    entry = harness.collection.get("normal")
+    assert result.entry_outcomes[entry.identity].status == "cancelled"
+    assert entry.translation == ""
+
+
+@pytest.mark.parametrize("overwrite", [False, True])
+@pytest.mark.parametrize("only_blank", [False, True])
+def test_blank_sources_never_reach_llm_or_progress_and_preserve_values(monkeypatch, overwrite, only_blank) -> None:
+    harness = _harness(monkeypatch, conflicts=(), overwrite=overwrite)
+    blanks = [
+        TranslationEntry("empty", "empty", "", "", 0, "ARMO:DESC"),
+        TranslationEntry("spaces", "spaces", " \t\n\u3000", "preserve", 1, "ARMO:DESC"),
+    ]
+    normal = _entry("normal")
+    entries = blanks if only_blank else [*blanks, normal]
+    harness.collection = TranslationEntryCollection(entries)
+    before = [(e.original, e.translation, e.stage, e.revision) for e in blanks]
+    updates = []
+
+    result = harness.translator.translate(
+        harness.collection,
+        [e.key for e in entries],
+        lambda *args: updates.append(args),
+        threading.Event(),
+    )
+
+    assert result.failed_count == 0
+    assert result.success_count == (0 if only_blank else 1)
+    assert harness.llm.keys_by_call == ([] if only_blank else [("normal",)])
+    stored_blanks = [harness.collection.get(e.key) for e in blanks]
+    assert [(e.original, e.translation, e.stage, e.revision) for e in stored_blanks] == before
+    if only_blank:
+        assert not updates
+    else:
+        assert updates and all(update[1] == 1 for update in updates)
+        assert harness.collection.get(normal.key).translation == "translated:normal"
 
 
 def test_only_effective_library_conflicts_enter_single_entry_repair_and_use_latest_authority(monkeypatch) -> None:

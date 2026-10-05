@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from concurrent.futures import CancelledError
+from contextlib import closing
 from dataclasses import fields, replace
 from typing import Any
 
@@ -15,7 +16,9 @@ from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.infra.token_counting import TiktokenContentTokenCounter
 
 from .postprocess import PostProcessCandidate
+from .proofread_events import ProofreadEventLog
 from .protected_syntax import protected_syntax_matches
+from .terminology_refinement import iter_refinement_results
 from .token_batching import StableContentBatcher
 
 
@@ -42,7 +45,42 @@ class ProofreadTerminologyClosure:
         original_candidates: tuple[PostProcessCandidate, ...],
         proofread_candidates: tuple[PostProcessCandidate, ...],
         terms_by_key: Mapping[object, Mapping[str, str]],
+        *,
+        progress_callback: Callable[[int, int, str], None] | None = None,
+        is_cancelled: Callable[[], bool] = lambda: False,
+        max_workers: int = 1,
+        event_callback: Callable[[str], None] | None = None,
+        batch_callback: Callable[[tuple[PostProcessCandidate, ...]], None] | None = None,
     ) -> tuple[tuple[PostProcessCandidate, ...], tuple[Diagnostic, ...]]:
+        if isinstance(max_workers, bool) or not isinstance(max_workers, int) or max_workers <= 0:
+            raise ValueError("max_workers must be a positive integer")
+        if is_cancelled():
+            return tuple(
+                _cancel_candidate(candidate, terms_by_key.get(candidate.entry_key, {}))
+                for candidate in proofread_candidates
+            ), ()
+        diagnostics: list[Diagnostic] = []
+        events = ProofreadEventLog(event_callback)
+
+        def notify(completed: int, total: int, message: str, event_phase: str = "") -> None:
+            if event_phase:
+                events.progress(event_phase, completed, total)
+            if progress_callback is None:
+                return
+            try:
+                progress_callback(completed, total, message)
+            except Exception as exc:
+                diagnostics.append(
+                    Diagnostic(
+                        "PROOFREAD_PROGRESS_CALLBACK_FAILED",
+                        "The terminology progress callback failed.",
+                        severity=DiagnosticSeverity.WARNING,
+                        details=(("error_type", type(exc).__name__),),
+                    )
+                )
+
+        events.emit("开始检查术语")
+        notify(0, len(proofread_candidates), "正在检查校对结果的术语一致性…")
         before_by_key = {candidate.entry_key: candidate for candidate in original_candidates}
         issues_by_key = {
             candidate.entry_key: _term_issues(candidate, terms_by_key.get(candidate.entry_key, {}))
@@ -51,16 +89,21 @@ class ProofreadTerminologyClosure:
         }
         failed = tuple(candidate for candidate in proofread_candidates if issues_by_key.get(candidate.entry_key))
         if not failed:
-            return proofread_candidates, ()
+            events.emit("术语检查结束，无需修复")
+            notify(len(proofread_candidates), len(proofread_candidates), "术语检查结束，无需修复")
+            return proofread_candidates, tuple(diagnostics)
         if self._refiner is None:
-            diagnostics = tuple(
+            events.emit(f"{len(failed)} 条术语不一致，未配置修复模型")
+            diagnostics.extend(
                 _failure_diagnostic(candidate.entry_key, issues_by_key[candidate.entry_key], "refiner_unavailable")
                 for candidate in failed
             )
-            return _rollback(
-                proofread_candidates, before_by_key, {candidate.entry_key for candidate in failed}
-            ), diagnostics
+            return _rollback(proofread_candidates, before_by_key, {candidate.entry_key for candidate in failed}), tuple(
+                diagnostics
+            )
 
+        events.emit(f"正在修复术语，共 {len(failed)} 条")
+        notify(0, len(failed), f"正在准备术语修复，共 {len(failed)} 条")
         plan = self._batcher.plan(
             failed,
             key=lambda candidate: candidate.entry_key,
@@ -76,22 +119,9 @@ class ProofreadTerminologyClosure:
             ),
         )
         updated = {candidate.entry_key: candidate for candidate in proofread_candidates}
-        diagnostics: list[Diagnostic] = []
-        for oversized in plan.oversized:
-            updated[oversized.entry_key] = _rollback_one(before_by_key[oversized.entry_key])
-            diagnostics.append(
-                Diagnostic(
-                    "PROOFREAD_REFINEMENT_TOKEN_LIMIT",
-                    oversized.message,
-                    category=ErrorCategory.INPUT,
-                    severity=DiagnosticSeverity.WARNING,
-                    details=(("entry_key", oversized.entry_key.to_dict()),),
-                )
-            )
 
-        for batch in plan.batches:
+        def refine(batch):
             entries = [_to_entry(candidate) for candidate in batch.items]
-            entry_by_id = {entry.id: candidate for entry, candidate in zip(entries, batch.items, strict=True)}
             batch_issues = {
                 entry.id: list(issues_by_key[candidate.entry_key])
                 for entry, candidate in zip(entries, batch.items, strict=True)
@@ -100,76 +130,127 @@ class ProofreadTerminologyClosure:
                 entry.id: dict(terms_by_key.get(candidate.entry_key, {}))
                 for entry, candidate in zip(entries, batch.items, strict=True)
             }
-            try:
-                results = self._refiner.refine_batch(entries, batch_issues, terms_map=batch_terms)
-            except (CancelledError, AiRequestCancelledError) as exc:
-                for candidate in failed:
-                    updated[candidate.entry_key] = _rollback_one(before_by_key[candidate.entry_key])
-                diagnostics.append(
-                    Diagnostic(
-                        "PROOFREAD_REFINEMENT_CANCELLED",
-                        "Terminology refinement was cancelled; run-start translations were retained.",
-                        category=ErrorCategory.CANCELLED,
-                        severity=DiagnosticSeverity.WARNING,
-                        details=(("error_type", type(exc).__name__),),
-                    )
-                )
-                break
-            except Exception as exc:
-                for candidate in batch.items:
-                    updated[candidate.entry_key] = _rollback_one(before_by_key[candidate.entry_key])
-                    diagnostics.append(
-                        _failure_diagnostic(
-                            candidate.entry_key,
-                            issues_by_key[candidate.entry_key],
-                            "refiner_call_failed",
-                            error_type=type(exc).__name__,
-                            category=ErrorCategory.EXTERNAL,
-                        )
-                    )
-                continue
+            return self._refiner.refine_batch(entries, batch_issues, terms_map=batch_terms)
 
-            cancelled_result = False
-            for entry_id, candidate in entry_by_id.items():
-                result = results.get(entry_id) if isinstance(results, Mapping) else None
-                refined = getattr(result, "refined_translation", None)
-                reason = _invalid_reason(result, candidate, refined, terms_by_key.get(candidate.entry_key, {}))
-                if reason is not None:
-                    updated[candidate.entry_key] = _rollback_one(before_by_key[candidate.entry_key])
-                    diagnostic_issues = issues_by_key[candidate.entry_key]
-                    if reason == "terminology_still_inconsistent" and isinstance(refined, str):
-                        diagnostic_issues = _term_issues(
-                            replace(candidate, text=refined),
-                            terms_by_key.get(candidate.entry_key, {}),
+        completed = 0
+        cancelled = False
+        notify(completed, len(failed), f"术语修复已处理 {completed}/{len(failed)} 条，正在执行…")
+        with closing(
+            iter_refinement_results(plan.batches, refine, max_workers=max_workers, is_cancelled=is_cancelled)
+        ) as results_stream:
+            for batch, results in results_stream:
+                try:
+                    if isinstance(results, Exception):
+                        raise results
+                except (CancelledError, AiRequestCancelledError) as exc:
+                    cancelled = True
+                    diagnostics.append(
+                        Diagnostic(
+                            "PROOFREAD_REFINEMENT_CANCELLED",
+                            "Terminology refinement was cancelled; candidates were retained without approval.",
+                            category=ErrorCategory.CANCELLED,
+                            severity=DiagnosticSeverity.WARNING,
+                            details=(
+                                ("error_type", type(exc).__name__),
+                                ("entry_keys", tuple(candidate.entry_key.to_dict() for candidate in batch.items)),
+                            ),
                         )
-                    if reason == "cancelled":
-                        cancelled_result = True
-                        diagnostics.append(
-                            Diagnostic(
-                                "PROOFREAD_REFINEMENT_CANCELLED",
-                                "Terminology refinement was cancelled; the run-start translation was retained.",
-                                category=ErrorCategory.CANCELLED,
-                                severity=DiagnosticSeverity.WARNING,
-                                details=(("entry_key", candidate.entry_key.to_dict()),),
-                            )
-                        )
-                    else:
+                    )
+                    break
+                except Exception as exc:
+                    completed += len(batch.items)
+                    for candidate in batch.items:
+                        updated[candidate.entry_key] = _rollback_one(before_by_key[candidate.entry_key])
                         diagnostics.append(
                             _failure_diagnostic(
                                 candidate.entry_key,
-                                diagnostic_issues,
-                                reason,
-                                category=(ErrorCategory.EXTERNAL if reason == "call_failed" else ErrorCategory.INPUT),
+                                issues_by_key[candidate.entry_key],
+                                "refiner_call_failed",
+                                error_type=type(exc).__name__,
+                                category=ErrorCategory.EXTERNAL,
                             )
                         )
+                    events.emit(f"{len(batch.items)} 条术语修复请求失败，保留原译文")
+                    notify(completed, len(failed), f"术语修复已处理 {completed}/{len(failed)} 条", "术语修复")
                     continue
-                updated[candidate.entry_key] = candidate.with_text(refined, "refinement")
-            if cancelled_result:
-                for candidate in failed:
-                    updated[candidate.entry_key] = _rollback_one(before_by_key[candidate.entry_key])
-                break
 
+                cancelled_result = False
+                for candidate in batch.items:
+                    entry_id = candidate.entry_key.serialize()
+                    result = results.get(entry_id) if isinstance(results, Mapping) else None
+                    refined = getattr(result, "refined_translation", None)
+                    reason = _invalid_reason(result, candidate, refined, terms_by_key.get(candidate.entry_key, {}))
+                    if reason is not None:
+                        updated[candidate.entry_key] = (
+                            candidate.with_accepted(False)
+                            if reason == "cancelled"
+                            else _rollback_one(before_by_key[candidate.entry_key])
+                        )
+                        diagnostic_issues = issues_by_key[candidate.entry_key]
+                        if reason == "terminology_still_inconsistent" and isinstance(refined, str):
+                            diagnostic_issues = _term_issues(
+                                replace(candidate, text=refined),
+                                terms_by_key.get(candidate.entry_key, {}),
+                            )
+                        if reason == "cancelled":
+                            cancelled_result = True
+                            diagnostics.append(
+                                Diagnostic(
+                                    "PROOFREAD_REFINEMENT_CANCELLED",
+                                    "Refinement was cancelled; the candidate was retained without approval.",
+                                    category=ErrorCategory.CANCELLED,
+                                    severity=DiagnosticSeverity.WARNING,
+                                    details=(("entry_key", candidate.entry_key.to_dict()),),
+                                )
+                            )
+                        else:
+                            diagnostics.append(
+                                _failure_diagnostic(
+                                    candidate.entry_key,
+                                    diagnostic_issues,
+                                    reason,
+                                    category=(
+                                        ErrorCategory.EXTERNAL if reason == "call_failed" else ErrorCategory.INPUT
+                                    ),
+                                )
+                            )
+                        continue
+                    updated[candidate.entry_key] = candidate.with_text(refined, "refinement")
+                if batch_callback is not None:
+                    batch_callback(tuple(updated[candidate.entry_key] for candidate in batch.items))
+                if cancelled_result:
+                    cancelled = True
+                    break
+                completed += len(batch.items)
+
+                notify(completed, len(failed), f"术语修复已处理 {completed}/{len(failed)} 条", "术语修复")
+
+        if is_cancelled() and not cancelled:
+            cancelled = True
+            diagnostics.append(
+                Diagnostic(
+                    "PROOFREAD_REFINEMENT_CANCELLED",
+                    "Terminology refinement was cancelled; candidates were retained without approval.",
+                    category=ErrorCategory.CANCELLED,
+                    severity=DiagnosticSeverity.WARNING,
+                )
+            )
+        if cancelled:
+            updated = {
+                key: _cancel_candidate(candidate, terms_by_key.get(key, {})) for key, candidate in updated.items()
+            }
+        else:
+            notify(completed, len(failed), f"术语修复已处理 {completed}/{len(failed)} 条，正在整理结果")
         return tuple(updated[candidate.entry_key] for candidate in proofread_candidates), tuple(diagnostics)
+
+
+def _cancel_candidate(candidate: PostProcessCandidate, terms: Mapping[str, str]) -> PostProcessCandidate:
+    """Retain validation evidence independently of permission to apply the candidate."""
+    if candidate.accepted and "proofread" in candidate.phases:
+        details = dict(candidate.report_details)
+        details["processing_status"] = "cancelled" if _term_issues(candidate, terms) else "completed"
+        candidate = candidate.with_report_details(details)
+    return candidate.with_accepted(False)
 
 
 def _term_issues(

@@ -28,6 +28,7 @@ from transbridge.ai_translator.term_formats import (
     term_entry_from_mapping,
     term_entry_to_canonical_dict,
 )
+from transbridge.ai_translator.term_validation import valid_term_pair, valid_term_text
 
 if TYPE_CHECKING:
     from transbridge.application.terminology.effective import EffectiveSnapshotStatus, TerminologyLookupContext
@@ -101,6 +102,8 @@ class DynamicTermDatabase:
         dump_terms_json(self._path, self._entries)
 
     def add(self, term: str, translation: str, source: str, context: str = "") -> None:
+        if not valid_term_pair(term, translation):
+            return
         for e in self._entries:
             if e.term == term:
                 if e.source == "manual":
@@ -415,10 +418,12 @@ class TermDatabaseManager:
         entries = self._effective_terms() if context is None else self._effective_terms(context)
         for entry in entries:
             # 主术语
+            if not valid_term_pair(entry.term, entry.translation):
+                continue
             matcher_map[entry.term] = (entry.term, entry.translation, entry.case_sensitive)
             # 变体映射到主术语的译文
             for variant in entry.variants:
-                if variant and variant not in matcher_map:
+                if valid_term_text(variant) and variant not in matcher_map:
                     matcher_map[variant] = (entry.term, entry.translation, entry.case_sensitive)
         return matcher_map
 
@@ -430,10 +435,12 @@ class TermDatabaseManager:
         return loader.context_for_entry(base, entry)
 
     def match_terms_for_entry(self, entry: object) -> dict[str, str]:
+        from .required_term_matching import match_required_terms
+
         original = getattr(entry, "original", "")
         if not isinstance(original, str) or not original:
             return {}
-        return self.match_terms([original], context=self.lookup_context_for_entry(entry))
+        return match_required_terms(original, self._get_term_matcher_map(self.lookup_context_for_entry(entry)))
 
     # ─────────────────────────── 向量索引 ─────────────────────────────
 
@@ -539,7 +546,7 @@ class TermDatabaseManager:
         matched: dict[str, str] = {}
         for results in batch_results.values():
             for r in results:
-                if r.term not in matched:
+                if valid_term_pair(r.term, r.translation) and r.term not in matched:
                     matched[r.term] = r.translation
 
         return matched
@@ -664,6 +671,8 @@ class TermDatabaseManager:
         # 合并 in-flight 术语（并发批次实时产生的术语）
         if in_flight_terms:
             for term, trans in in_flight_terms.items():
+                if not valid_term_pair(term, trans):
+                    continue
                 if term not in matched:
                     matched[term] = trans
                     priority[term] = 2  # 与反向匹配同级
@@ -689,6 +698,8 @@ class TermDatabaseManager:
                 entry_keys_by_original.setdefault(entry.original, []).append(entry.key)
             for original, results in batch_results.items():
                 for r in results:
+                    if not valid_term_pair(r.term, r.translation):
+                        continue
                     if r.term not in matched:
                         matched[r.term] = r.translation
                         priority[r.term] = 3  # 语义召回优先级最低
@@ -737,7 +748,9 @@ class TermDatabaseManager:
                     matched.setdefault(term, translation)
             if in_flight_terms:
                 for term, translation in in_flight_terms.items():
-                    if self._match_key_applies_to_original(term, entry.original, case_sensitive=False):
+                    if valid_term_pair(term, translation) and self._match_key_applies_to_original(
+                        term, entry.original, case_sensitive=False
+                    ):
                         matched.setdefault(term, translation)
             terms_by_entry[entry.key] = matched
             flat_terms.update(matched)
@@ -831,13 +844,15 @@ class TermDatabaseManager:
         entries = self._effective_terms() if context is None else self._effective_terms(context)
         for entry in entries:
             # 主术语
+            if not valid_term_pair(entry.term, entry.translation):
+                continue
             if entry.case_sensitive:
                 cs_map[_normalized_term_text(entry.term)] = (entry.term, entry.translation)
             else:
                 ci_map[_normalized_primary_term(entry.term)] = (entry.term, entry.translation)
             # 变体
             for variant in entry.variants:
-                if not variant:
+                if not valid_term_text(variant):
                     continue
                 if entry.case_sensitive:
                     cs_map[_normalized_term_text(variant)] = (entry.term, entry.translation)

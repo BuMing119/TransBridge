@@ -172,6 +172,52 @@ def test_proofread_strategy_retries_provider_error_then_retains_originals(tmp_pa
     assert all("provider timeout" in path.read_text(encoding="utf-8") for path in logs)
 
 
+@pytest.mark.parametrize("initial_stage", [1, 2])
+@pytest.mark.parametrize("damaged_syntax", [False, True])
+def test_proofread_preserves_text_and_applies_questionable_stage(initial_stage, damaged_syntax) -> None:
+    from transbridge.smart_assistant.tools._polish_execution import execute_polish
+
+    entry = make_entry("first", original="Hello {name}", translation="你好 {name}", stage=initial_stage)
+    collection = TranslationEntryCollection([entry])
+
+    def respond(messages):
+        entries = json.loads(messages[1]["content"])["entries"]
+        return json.dumps({
+            "results": [
+                {
+                    "entry_key": value["entry_key"],
+                    "final_translation": "你好" if damaged_syntax else value["current_translation"],
+                }
+                for value in entries
+            ]
+        })
+
+    summary = execute_polish(
+        strategy="proofread",
+        intensity="medium",
+        llm_config=_config(),
+        llm_client=_ProviderClient(response=respond),
+        term_manager=SimpleNamespace(match_terms=lambda _values: {}),
+        targets=[entry],
+        collection=collection,
+        stop_event=None,
+    )
+
+    actual = collection.get("first")
+    expected_stage = 2 if damaged_syntax else initial_stage
+    assert summary.results["first"].accepted
+    assert summary.results["first"].target_stage == expected_stage
+    assert actual.stage == expected_stage
+    assert actual.translation == entry.translation
+    assert actual.identity == entry.identity
+    assert summary.polished_count == 0
+    assert summary.failed_count == 0
+    if expected_stage == initial_stage:
+        assert actual.revision == entry.revision
+    if damaged_syntax:
+        assert "PROOFREAD_SYNTAX_REVIEW_REQUIRED" in summary.results["first"].note
+
+
 def test_strict_strategy_is_forwarded_to_the_shared_pipeline_profile() -> None:
     from transbridge.smart_assistant.tools._polish_execution import execute_polish
 

@@ -84,6 +84,7 @@ def build_polish_report_snapshot(
             "refined_translation": _nullable_text(_value(result, "refined_translation", None)),
             "issues": list(issues),
         }
+        target_stage = _value(result, "target_stage", None)
         candidates.append(
             PostProcessCandidate(
                 run_id=run_id,
@@ -92,7 +93,7 @@ def build_polish_report_snapshot(
                 original=str(entry.original or ""),
                 before_text=before_text,
                 text=polished or before_text,
-                stage=int(entry.stage),
+                stage=int(entry.stage if target_stage is None else target_stage),
                 phases=phases,
                 accepted=status == "accepted",
                 context=str(entry.context or ""),

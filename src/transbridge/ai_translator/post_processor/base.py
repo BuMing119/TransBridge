@@ -39,6 +39,7 @@ class PostProcessIssue:
     term: str = ""
     matched_form: str = ""
     standard_translation: str = ""
+    execution_failed: bool = False
 
     # 问题类型常量
     TERM_MISMATCH = "term_mismatch"
@@ -64,6 +65,8 @@ class PostProcessResult:
     refine_results: dict | None = None  # {entry_id: RefineResult}
     polish_results: dict | None = None  # {entry_id: PolishResult}
     decisions: dict | None = None  # {entry_id: ArbiterDecision}
+    processing_statuses: dict[str, str] = field(default_factory=dict)
+    processing_notes: dict[str, str] = field(default_factory=dict)
 
     def add_issue(self, issue: PostProcessIssue) -> None:
         """添加问题。"""

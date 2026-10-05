@@ -65,6 +65,7 @@ class QualityGateResult:
     verdict: QualityVerdict
     reason: str  # 判定理由
     issues: list[str]  # 发现的具体问题列表
+    execution_failed: bool = False
 
 
 # ── 内置默认值（文件缺失或契约违规时使用）──────────────────────────────────
@@ -343,6 +344,7 @@ class QualityGateChecker(BaseChecker):
             return QualityGateResult(
                 verdict=QualityVerdict.UNCERTAIN,
                 reason=f"检测失败: {e}",
+                execution_failed=True,
                 issues=["质量检测出错，建议人工审核"],
             )
 
@@ -379,6 +381,7 @@ class QualityGateChecker(BaseChecker):
                 result = QualityGateResult(
                     verdict=QualityVerdict.UNCERTAIN,
                     reason=f"批量检测失败: {e}",
+                    execution_failed=True,
                     issues=["质量检测出错，建议人工审核"],
                 )
                 issues.extend(self._result_to_issues(entry, result))
@@ -429,7 +432,7 @@ class QualityGateChecker(BaseChecker):
                     continue
                 returned_entry_ids.add(canonical_id)
 
-                verdict_str = item.get("verdict", "uncertain").lower()
+                verdict_str = item.get("verdict", "").lower()
                 if verdict_str == "pass":
                     verdict = QualityVerdict.PASS
                 elif verdict_str == "fail":
@@ -441,6 +444,7 @@ class QualityGateChecker(BaseChecker):
                     verdict=verdict,
                     reason=item.get("reason", ""),
                     issues=item.get("issues", []),
+                    execution_failed=verdict_str not in {"pass", "fail", "uncertain"},
                 )
                 issues.extend(self._result_to_issues(entry, result))
 
@@ -452,6 +456,7 @@ class QualityGateChecker(BaseChecker):
                             QualityGateResult(
                                 verdict=QualityVerdict.UNCERTAIN,
                                 reason="批量质量检测响应重复返回该条目",
+                                execution_failed=True,
                                 issues=["模型返回重复检测结果，请人工确认质量"],
                             ),
                         )
@@ -465,6 +470,7 @@ class QualityGateChecker(BaseChecker):
                         QualityGateResult(
                             verdict=QualityVerdict.UNCERTAIN,
                             reason="批量质量检测响应缺少该条目",
+                            execution_failed=True,
                             issues=["模型未返回检测结果，请人工确认质量"],
                         ),
                     )
@@ -484,6 +490,7 @@ class QualityGateChecker(BaseChecker):
             result = QualityGateResult(
                 verdict=QualityVerdict.UNCERTAIN,
                 reason="批量解析异常，建议人工审核",
+                execution_failed=True,
                 issues=["响应解析失败，请人工确认质量"],
             )
             issues.extend(self._result_to_issues(entry, result))
@@ -516,7 +523,7 @@ class QualityGateChecker(BaseChecker):
             else:
                 data = json.loads(response)
 
-            verdict_str = data.get("verdict", "uncertain").lower()
+            verdict_str = data.get("verdict", "").lower()
             if verdict_str == "pass":
                 verdict = QualityVerdict.PASS
             elif verdict_str == "fail":
@@ -528,11 +535,13 @@ class QualityGateChecker(BaseChecker):
                 verdict=verdict,
                 reason=data.get("reason", ""),
                 issues=data.get("issues", []),
+                execution_failed=verdict_str not in {"pass", "fail", "uncertain"},
             )
         except (AttributeError, TypeError, json.JSONDecodeError):
             return QualityGateResult(
                 verdict=QualityVerdict.UNCERTAIN,
                 reason="无法解析LLM响应",
+                execution_failed=True,
                 issues=[response[:200]],
             )
 
@@ -556,5 +565,6 @@ class QualityGateChecker(BaseChecker):
                 original=entry.original or "",
                 translation=entry.translation or "",
                 suggestion=suggestion,
+                execution_failed=result.execution_failed,
             )
         ]

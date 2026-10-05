@@ -4,14 +4,18 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
+import inspect
 import threading
 
+from transbridge.application.contracts import Diagnostic, ErrorCategory
 from transbridge.application.translation.ai_execution_profile import AiExecutionProfile
 from transbridge.application.translation.postprocess import PostProcessCandidate
+from transbridge.application.translation.proofread_events import ProofreadEventLog
 from transbridge.application.translation.proofread_stage import ProofreadStage
 
 from .base import PostProcessIssue, PostProcessResult
 from .post_processor import PostProcessor, PostProcessorConfig
+from .proofread_diagnostics import diagnostic_note, entry_diagnostics
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +33,9 @@ class ProofreadResult:
     issues: tuple[PostProcessIssue, ...] = ()
     refined_translation: str | None = None
     changes: tuple[dict, ...] = field(default_factory=tuple)
+    processing_status: str = ""
+    candidate_translation: str | None = None
+    target_stage: int | None = None
 
     @property
     def accepted(self) -> bool:
@@ -48,6 +55,7 @@ class ProofreadPipeline:
         self._processor = processor
         self.profile = profile
         self._proofread_stage = proofread_stage
+        self.diagnostics: tuple[Diagnostic, ...] = ()
 
     @classmethod
     def create(
@@ -61,6 +69,7 @@ class ProofreadPipeline:
         max_tokens_per_batch: int = 2000,
         max_output_tokens: int = 0,
         token_counter: object | None = None,
+        checkpoint: object | None = None,
     ) -> ProofreadPipeline:
         config = PostProcessorConfig(
             game_profile=profile.game_profile,
@@ -103,8 +112,8 @@ class ProofreadPipeline:
                     if callable(lookup_context) and callable(match_terms):
                         return dict(match_terms([candidate.original], context=lookup_context(candidate)))
                     return {}
-                except Exception:
-                    return {}
+                except Exception as exc:
+                    raise RuntimeError(f"无法解析校对术语：{candidate.entry_key.serialize()}") from exc
 
             proofread_stage = ProofreadStage(
                 llm_client,
@@ -116,6 +125,7 @@ class ProofreadPipeline:
                 max_tokens_per_batch=max_tokens_per_batch,
                 refinement_batch_size=profile.refinement_batch_size,
                 max_output_tokens=max_output_tokens,
+                checkpoint=checkpoint,
             )
         return cls(processor, profile, proofread_stage=proofread_stage)
 
@@ -130,6 +140,7 @@ class ProofreadPipeline:
         max_workers: int = 1,
     ) -> dict[str, ProofreadResult]:
         originals = tuple(entries)
+        self.diagnostics = ()
         if self.profile.enable_proofread:
             return self._process_proofread(
                 originals,
@@ -162,21 +173,39 @@ class ProofreadPipeline:
         max_workers: int,
     ) -> dict[str, ProofreadResult]:
         total = len(entries)
+        events = ProofreadEventLog(log_callback)
+        events.emit(f"开始校对，共 {total} 条")
         if progress_callback:
             progress_callback("proofread", 0, total, f"开始校对 {total} 个条目...")
         if self._proofread_stage is None:
+            events.emit("未配置可用的校对模型")
             return {
                 str(entry.id): self._proofread_result(entry, valid=False, note="未配置可用的校对模型")
                 for entry in entries
             }
+        initially_paused = pause_event is not None and not pause_event.is_set()
+        if initially_paused:
+            events.emit("校对已暂停")
         while pause_event is not None and not pause_event.is_set():
             if stop_event is not None and stop_event.is_set():
+                events.emit("校对已取消")
                 return {
-                    str(entry.id): self._proofread_result(entry, valid=False, note="校对已停止") for entry in entries
+                    str(entry.id): self._proofread_result(
+                        entry, valid=False, note="未处理", processing_status="not_started"
+                    )
+                    for entry in entries
                 }
             pause_event.wait(0.05)
         if stop_event is not None and stop_event.is_set():
-            return {str(entry.id): self._proofread_result(entry, valid=False, note="校对已停止") for entry in entries}
+            events.emit("校对已取消")
+            return {
+                str(entry.id): self._proofread_result(
+                    entry, valid=False, note="未处理", processing_status="not_started"
+                )
+                for entry in entries
+            }
+        if initially_paused:
+            events.emit("继续校对")
         from transbridge.ai_translator.project_terminology_adapter import plugin_id_from_entry
 
         candidates = tuple(
@@ -208,6 +237,7 @@ class ProofreadPipeline:
             while not monitor_done.wait(0.05):
                 stopped = stop_event is not None and stop_event.is_set()
                 if stopped:
+                    events.emit("正在取消校对")
                     self._proofread_stage.cancel()
                     return
 
@@ -216,43 +246,57 @@ class ProofreadPipeline:
         try:
             runner = getattr(self._proofread_stage, "run", None)
             if callable(runner):
-                outcome = runner(candidates, max_workers=max_workers, progress_callback=on_batch)
+                parameters = inspect.signature(runner).parameters
+                event_kwargs = (
+                    {"event_callback": events.emit}
+                    if "event_callback" in parameters
+                    or any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values())
+                    else {}
+                )
+                outcome = runner(candidates, max_workers=max_workers, progress_callback=on_batch, **event_kwargs)
             else:  # compatibility with the initial stage implementation
                 outcome = self._proofread_stage(candidates)
         finally:
             monitor_done.set()
-        notes_by_key: dict[object, list[str]] = {}
-        global_notes: list[str] = []
-        for diagnostic in outcome.diagnostics:
-            details = dict(diagnostic.details)
-            key_data = details.get("entry_key")
-            if isinstance(key_data, dict):
-                from transbridge.application.io import EntryKey
-
-                try:
-                    key = EntryKey.from_dict(key_data)
-                except (KeyError, TypeError, ValueError):
-                    global_notes.append(diagnostic.message)
-                else:
-                    notes_by_key.setdefault(key, []).append(diagnostic.message)
-            else:
-                global_notes.append(diagnostic.message)
-            if log_callback:
-                log_callback(f"[{diagnostic.code}] {diagnostic.message}")
+        self.diagnostics = tuple(outcome.diagnostics)
+        diagnostics_by_key = entry_diagnostics(self.diagnostics)
+        cancelled = (stop_event is not None and stop_event.is_set()) or any(
+            diagnostic.category is ErrorCategory.CANCELLED for diagnostic in outcome.diagnostics
+        )
         by_key = {candidate.entry_key: candidate for candidate in outcome.candidates}
         projected = {}
         for entry in entries:
             candidate = by_key.get(entry.identity)
-            valid = candidate is not None and candidate.accepted and "proofread" in candidate.phases
-            note = "；".join((*global_notes, *notes_by_key.get(entry.identity, ())))
+            valid = not cancelled and candidate is not None and candidate.accepted and "proofread" in candidate.phases
+            owned = diagnostics_by_key.get(entry.identity, ())
+            note = diagnostic_note(owned)
+            processing_status = (
+                "completed" if candidate and candidate.accepted and "proofread" in candidate.phases else "failed"
+            )
+            if candidate and dict(candidate.report_details).get("processing_status") in {"completed", "cancelled"}:
+                processing_status = dict(candidate.report_details)["processing_status"]
+            if any(dict(item.details).get("reason") == "not_started" for item in owned):
+                processing_status = "not_started"
+            elif any(item.category is ErrorCategory.CANCELLED for item in owned):
+                processing_status = "cancelled"
+            elif cancelled and processing_status not in {"completed", "cancelled"} and not owned:
+                processing_status = "not_started"
+            if cancelled:
+                note = "校对已取消" + (f"；{note}" if note else "")
             projected[str(entry.id)] = self._proofread_result(
                 entry,
                 valid=valid,
                 translation=candidate.text if valid and candidate is not None else None,
                 note=note,
+                processing_status=processing_status,
+                candidate_translation=candidate.text if candidate else None,
+                target_stage=candidate.stage if valid else None,
             )
+        accepted = sum(result.accepted for result in projected.values())
+        message = "校对已取消" if cancelled else f"校对结束：成功 {accepted} 条，未完成 {total - accepted} 条"
+        events.emit(message)
         if progress_callback:
-            progress_callback("proofread", total, total, f"校对完成 {total}/{total}")
+            progress_callback("proofread", total, total, message)
         return projected
 
     @staticmethod
@@ -262,6 +306,9 @@ class ProofreadPipeline:
         valid: bool,
         translation: str | None = None,
         note: str = "",
+        processing_status: str = "",
+        candidate_translation: str | None = None,
+        target_stage: int | None = None,
     ) -> ProofreadResult:
         final_translation = translation if valid and translation is not None else entry.translation or ""
         return ProofreadResult(
@@ -273,6 +320,9 @@ class ProofreadPipeline:
             needs_arbitration=False,
             note=note,
             verdict="pass" if valid else "failed",
+            processing_status=processing_status or ("completed" if valid else "failed"),
+            candidate_translation=candidate_translation,
+            target_stage=target_stage,
         )
 
     def _project(self, entries: tuple[object, ...], result: PostProcessResult) -> dict[str, ProofreadResult]:
@@ -306,12 +356,18 @@ class ProofreadPipeline:
             confidence = float(confidence_value)
             default_verdict = "pending" if self.profile.enable_arbitration or issues_by_id.get(entry_id) else "pass"
             verdict = str(getattr(decision, "verdict", default_verdict))
+            processing_status = result.processing_statuses.get(entry_id, "failed")
+            if processing_status != "completed":
+                confidence = 0.0
+                if verdict == "pass":
+                    verdict = "failed"
             notes = [
                 str(value)
                 for value in (
                     getattr(refined, "note", ""),
                     getattr(polished, "note", ""),
                     getattr(decision, "reason", ""),
+                    result.processing_notes.get(entry_id, ""),
                 )
                 if value
             ]
@@ -327,6 +383,7 @@ class ProofreadPipeline:
                 issues=tuple(issues_by_id.get(entry_id, ())),
                 refined_translation=getattr(refined, "refined_translation", None),
                 changes=tuple(getattr(polished, "changes", ()) or ()),
+                processing_status=processing_status,
             )
         return projected
 

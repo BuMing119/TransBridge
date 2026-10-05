@@ -12,7 +12,7 @@
 
 ## 当前事实与约束
 
-- `ProofreadStage` 已负责结构化 JSON 首轮请求、Token 分批、并发、有界响应恢复和受保护语法验证，文件已接近 500 行，不能继续增加新职责。
+- `_open_proofread_stage.py` 负责结构化 JSON 首轮请求、Token 分批、并发、有界响应恢复和受保护语法验证；`ProofreadStage` 编排首轮和术语闭环，修复批次调度独立在 `terminology_refinement.py`。
 - `ConsistencyChecker` 和 `TermDatabaseManager.match_terms_for_entry` 已提供条目作用域匹配；`LLMRefiner` 已提供只修明确问题的单条/批量 Structured Outputs 合同。
 - 翻译后处理、独立/混合校对和 Smart Assistant 各有 Proofread 装配入口，必须共享同一闭环实现。
 
@@ -38,7 +38,7 @@
 - 首轮 Prompt 明确全面独立校对、术语强制但非完整问题清单、合格不改和保护语法；首轮 JSON 不含 detected issues。
 - 翻译、独立/混合和 Smart Assistant 路径使用相同闭环；Project/Variant/plugin 作用域不串线。
 - 无管理器、无匹配术语或首轮已满足术语时不调用 Refiner。
-- 共享请求预算、最大并发、暂停/取消和稳定 EntryKey 映射保持不变。
+- 首轮与术语修复使用同一最大并发；修复批次有界提交，并复用已有客户端的共享请求预算、暂停/取消和稳定 EntryKey 映射。结果按输入顺序汇总，单批失败独立回退，取消后不再补充批次并等待运行中工作收尾。
 
 ## Story 3：失败矩阵与回归验证
 
@@ -55,6 +55,7 @@ Story 1 先于入口接线和完整测试。风险主要是旧 Refiner 以 legac
 
 ## 完成证据
 
+- 2026-10-03 并发补齐：术语修复已使用配置并发和有界调度，联合回归 253 项通过；详见[增量记录](../../docs/changelogs/proofread-terminology-closure/story-01-to-03-implementation/2026-10-03-002-bounded-refinement-concurrency.md)。
 - Story 1：开放式首轮与术语闭环已拆成独立职责；`PostProcessIssue` 使用结构化术语字段，`RefineResult` 使用结构化有效性/失败分类，Refiner 响应解析也已从原超限模块抽出。
 - Story 2：翻译、独立/混合和 Smart Assistant 三个装配入口统一透传 refinement batch size、Token/输出上限、并发和条目作用域术语；首轮 Prompt 保持结构化 JSON 且不含 detected issues。
 - Story 3：新增闭环与入口测试覆盖条件调用、同条目多问题、跨条目/插件隔离、二次验证、非法响应、回退和稳定 EntryKey；相关模块与扩大回归通过。

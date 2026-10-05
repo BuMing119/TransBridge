@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Literal
 import unicodedata
 
 from transbridge.ai_translator.term_formats import TermEntry
+from transbridge.ai_translator.term_validation import contains_term, valid_term_pair
 from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.application.translation.token_batching import (
     ContentBatch,
@@ -169,19 +170,13 @@ class ExistingTermSeeder:
             )
             if log_callback:
                 log_callback(f"术语初始化：{len(eligible)} 条已有译文，{text_batches_total} 个 LLM 批次")
-            if text_plan.oversized:
-                extraction_error = ValueError(text_plan.oversized[0].message)
-                text_terms: list[_TermCandidate] = []
-                text_batches_completed = 0
-                cancelled = False
-            else:
-                text_terms, text_batches_completed, cancelled, extraction_error = self._extract_text_terms(
-                    list(text_plan.batches),
-                    progress_callback=progress_callback,
-                    log_callback=log_callback,
-                    stop_event=stop_event,
-                    pause_event=pause_event,
-                )
+            text_terms, text_batches_completed, cancelled, extraction_error = self._extract_text_terms(
+                list(text_plan.batches),
+                progress_callback=progress_callback,
+                log_callback=log_callback,
+                stop_event=stop_event,
+                pause_event=pause_event,
+            )
             if cancelled:
                 _notify(
                     progress_callback,
@@ -266,7 +261,7 @@ class ExistingTermSeeder:
         for entry in entries:
             context = entry.context or ""
             context_base = context.split("|", 1)[0]
-            if context_base not in AUTO_TERM_CONTEXTS:
+            if context_base not in AUTO_TERM_CONTEXTS or not valid_term_pair(entry.original, entry.translation):
                 continue
             terms.append(
                 _TermCandidate(
@@ -463,7 +458,9 @@ class ExistingTermSeeder:
             entry_keys = tuple(
                 pair.entry_key
                 for pair in batch.items
-                if entry.term in pair.original and entry.translation in pair.translation
+                if valid_term_pair(entry.term, entry.translation)
+                and contains_term(pair.original, entry.term)
+                and contains_term(pair.translation, entry.translation)
             )
             if not entry_keys:
                 continue

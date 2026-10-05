@@ -2,6 +2,8 @@
 
 **状态**：已完成
 **日期**：2026-08-27
+**修订**：2026-10-03，结构化翻译及后处理恢复使用 Responses API；普通文本与工具调用继续使用 Chat Completions。
+**补充**：2026-10-03，允许完整单一 JSON Markdown 围栏经剥离后重新接受本地 Schema 与领域校验。
 **对应需求**：FR5.15
 **架构决策**：[ADR-032](../../docs/adr/032-native-structured-outputs-for-ai-translation.md)
 
@@ -25,7 +27,7 @@
 - 智能助手通过独立的 `chat_stream_with_tools()` 使用原生 function calling，相关实现已经完成，必须保留。
 - 正式翻译当前返回动态 `{entry_id: translation}` 并对流式文本做增量键值解析；专有名词和 strict 批量阶段返回根数组；proofread 已使用 `{"results": [...]}`。
 - 自定义入口根据 `base_mode` 复用 translate、polish 或 mixed 运行器，不需要第四套接线。
-- `llm_client.py` 已接近 500 行责任审查阈值；Provider Structured Outputs 逻辑必须提取为独立模块。
+- `llm_client.py` 超过 500 行责任审查阈值；Provider Structured Outputs 的契约、验证和 Responses 传输已提取为独立模块。
 - 提示词英文化任务已经完成；Structured Outputs 接线基于其最终英文模板更新 envelope 示例。
 - 当前锁定 OpenAI 2.29.0、Anthropic 0.85.0 和 jsonschema 4.26.0 已支持计划接口，无需依赖升级。
 
@@ -36,6 +38,7 @@
 - [x] 定义不可变 `LlmOutputSchema`，拒绝非法名称、非 object 根 schema 和无效 JSON Schema。
 - [x] 定义 directive 的附加与剥离函数；非法或冲突 directive 在联网前失败，剥离后的 Provider messages 不含内部元数据。
 - [x] 对原始文本执行 JSON object 解析和 Draft 2020-12 schema 复验，并保持现有字符串返回兼容。
+- [x] 对完整单一 `json` 或无语言标签代码块严格剥离围栏；附带解释、多个代码块、不完整围栏或内部 JSON/Schema 无效时保持失败。
 - [x] 定义 unsupported、refusal、truncated、invalid response 等可区分异常，保留原始 cause。
 - [x] `LLMClient` 的 text chat/stream 仅在消息携带 directive 时启用 Structured Outputs，text/tool 方法签名均不改变。
 
@@ -49,7 +52,7 @@
 
 1. 建立 schema 名称、根对象和 `Draft202012Validator.check_schema()` 门禁。
 2. 指令只包含稳定 schema，不包含 entry ID、用户译文或凭据；日志可诊断，Provider messages 必须剥离。
-3. 统一解析和验证完整原始 JSON；错误中只放诊断摘要，不回显完整翻译内容。
+3. 统一解析和验证完整响应；代码块恢复只去除外围标记，仍执行相同 Schema 校验。普通错误消息和恢复提示不回显翻译内容；工作流 LLM 日志脱敏保存校验失败原文、校验位置及多余字段名，便于定位格式问题。
 
 **验证**：schema 构造、合法 object、非 JSON、根数组、schema mismatch 和异常分类单测。
 
@@ -58,6 +61,7 @@
 **验收标准**：
 
 - [x] 普通与流式结构化请求通过 Responses API 发送命名 `text.format` JSON Schema，且不发送 tools。
+- [x] DeepSeek 官方端点也提交相同的 Responses Schema；响应经过本地复验，模型不支持时明确报错。
 - [x] prompt-cache 无缓存重试保留相同 schema、reasoning patch 和输出 token 上限。
 - [x] 普通与流式响应检测 refusal、length/content filter、空内容和无效 JSON，并维护请求计数/取消语义。
 - [x] 现有 text chat、stream 和 function-calling 测试保持通过。
@@ -65,6 +69,7 @@
 **文件落点**：
 
 - 更新 `src/transbridge/infra/llm_structured_outputs.py`
+- 新增 `src/transbridge/infra/openai_responses_structured.py`
 - 最小更新 `src/transbridge/infra/llm_client.py`
 - 新增 `tests/infra/test_openai_structured_outputs.py`
 

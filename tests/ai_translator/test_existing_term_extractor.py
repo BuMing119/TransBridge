@@ -15,6 +15,25 @@ from transbridge.ai_translator.term_formats import TermEntry
 from transbridge.application.translation.token_batching import ContentTokenCount
 
 
+def test_seeding_filters_invalid_names_and_extracted_word_fragments():
+    manager = _TermManager()
+    extractor = _Extractor([
+        TermEntry("Far", "法尔", "auto_dialogue"),
+        TermEntry("...", "...", "auto_dialogue"),
+        TermEntry("Eye", "马格努斯之眼", "auto_dialogue"),
+    ])
+    ExistingTermSeeder(manager, extractor).seed([
+        _entry("{name}", "{name}", "NPC_:FULL"),
+        _entry("...", "...", "NPC_:FULL"),
+        _entry("US", "US", "NPC_:FULL"),
+        _entry("Farengar saw the Eye...", "法尔加看见马格努斯之眼...", "INFO:NAM1"),
+    ])
+    assert {(row.term, row.translation) for row in manager.dynamic.entries} == {
+        ("US", "US"),
+        ("Eye", "马格努斯之眼"),
+    }
+
+
 def _entry(
     original: str,
     translation: str,
@@ -603,7 +622,7 @@ def test_stop_while_paused_does_not_start_waiting_term_requests() -> None:
     assert manager.dynamic.saved_batches == []
 
 
-def test_over_budget_term_pair_reports_stable_key_without_llm_call() -> None:
+def test_over_budget_term_pair_is_sent_alone() -> None:
     manager = _TermManager()
     extractor = _Extractor()
     entries = [_entry("1234", "五六", "INFO:NAM1|1", key="stable-key")]
@@ -615,11 +634,9 @@ def test_over_budget_term_pair_reports_stable_key_without_llm_call() -> None:
         token_counter=_CharacterCounter(),
     ).seed(entries)
 
-    assert extractor.calls == []
-    assert result.text_batches_completed == 0
-    assert result.error is not None
-    assert "stable-key" in result.error
-    assert "Token" in result.error
+    assert extractor.calls == [[{"original": "1234", "translation": "五六"}]]
+    assert result.text_batches_completed == 1
+    assert result.error is None
 
 
 def test_partial_project_detection_requires_existing_and_untranslated_entries() -> None:

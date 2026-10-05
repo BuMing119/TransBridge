@@ -1,4 +1,4 @@
-"""Controlled HTTP success chain for Story S06's post-process candidate pipeline."""
+"""Controlled HTTP chain for the post-process candidate pipeline."""
 
 from __future__ import annotations
 
@@ -23,10 +23,12 @@ class PostProcessHandler(BaseHTTPRequestHandler):
     slow_phase: str | None = None
 
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        assert self.path == "/responses"
         length = int(self.headers["Content-Length"])
         payload = json.loads(self.rfile.read(length))
         self.idempotency_keys.append(self.headers.get("Idempotency-Key", ""))
-        user_payload = json.loads(payload["messages"][1]["content"])
+        assert payload["text"]["format"]["type"] == "json_schema"
+        user_payload = json.loads(payload["input"][1]["content"])
         phase = user_payload["phase"]
         self.phases.append(phase)
         if self.slow_phase == phase:
@@ -43,7 +45,15 @@ class PostProcessHandler(BaseHTTPRequestHandler):
             else:
                 value = "pass"
             values.append({"entry_key": entry["entry_key"], "value": value})
-        self._json_response({"results": values})
+        self._json_response({
+            "status": "completed",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": json.dumps({"results": values})}],
+                }
+            ],
+        })
 
     def _json_response(self, payload: dict) -> None:
         body = json.dumps(payload, separators=(",", ":")).encode()

@@ -28,7 +28,7 @@ def _candidate(local_key: str, *, original: str = "source", text: str = "draft")
     )
 
 
-def test_llm_checker_skips_oversized_business_content_before_call() -> None:
+def test_llm_checker_sends_single_oversized_business_content() -> None:
     class Checker:
         def __init__(self) -> None:
             self.calls = 0
@@ -45,8 +45,8 @@ def test_llm_checker_skips_oversized_business_content_before_call() -> None:
         max_tokens_per_batch=1,
     )((_candidate("oversized"),))
 
-    assert checker.calls == 0
-    assert [item.code for item in outcome.diagnostics] == ["POSTPROCESS_CONTENT_TOKEN_LIMIT"]
+    assert checker.calls == 1
+    assert outcome.diagnostics == ()
 
 
 def test_llm_postprocess_stage_keeps_item_limit_as_secondary_boundary() -> None:
@@ -74,7 +74,7 @@ def test_llm_postprocess_stage_keeps_item_limit_as_secondary_boundary() -> None:
     assert [candidate.text for candidate in outcome.candidates] == [f"updated-{index}" for index in range(5)]
 
 
-def test_dialogue_term_extraction_rebatches_original_and_translation_and_skips_oversized() -> None:
+def test_dialogue_term_extraction_rebatches_and_sends_oversized_alone() -> None:
     class Extractor:
         def __init__(self) -> None:
             self.calls: list[list[dict[str, str]]] = []
@@ -106,6 +106,6 @@ def test_dialogue_term_extraction_rebatches_original_and_translation_and_skips_o
     assert translator._extractor.calls == [
         [{"original": "a", "translation": "甲"}],
         [{"original": "b", "translation": "乙"}],
+        [{"original": "too-long", "translation": "很长"}],
     ]
-    assert len(logs) == 1
-    assert "对话术语抽取已跳过" in logs[0]
+    assert logs == []

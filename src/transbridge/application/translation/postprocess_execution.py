@@ -105,7 +105,8 @@ class PostProcessExecutionService:
                 ),
             )
             for candidate in report.candidates
-            if candidate.accepted and candidate.text != candidate.before_text
+            if candidate.accepted
+            and (candidate.text != candidate.before_text or dict(candidate.report_details).get("questionable"))
         )
         if not candidates:
             return PostProcessExecutionResult(report_result, None, report_snapshot)

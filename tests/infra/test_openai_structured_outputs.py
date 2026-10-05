@@ -74,10 +74,10 @@ class _Stream:
         return iter(self._chunks)
 
 
-def _client() -> OpenAICompatibleClient:
+def _client(*, base_url: str = "https://gateway.example/v1") -> OpenAICompatibleClient:
     client = OpenAICompatibleClient.__new__(OpenAICompatibleClient)
     client._api_key = "test"
-    client._base_url = "https://gateway.example/v1"
+    client._base_url = base_url
     client._model = "test-model"
     client._max_retries = 0
     client._lock = threading.Lock()
@@ -132,6 +132,44 @@ def test_plain_chat_keeps_legacy_request_and_response_behavior() -> None:
     kwargs = client._client.chat.completions.create.call_args.kwargs
     assert "response_format" not in kwargs
     assert "max_tokens" not in kwargs
+
+
+def test_responses_single_json_fence_is_unwrapped() -> None:
+    client = _client()
+    client._client.responses.create.return_value = _response('```json\n{"value":"ok"}\n```')
+
+    assert client.chat(_messages(), max_tokens=32) == '{"value":"ok"}'
+
+
+def test_stream_unwraps_complete_json_fence_after_terminal_validation() -> None:
+    client = _client()
+    raw = '```json\n{"value":"ok"}\n```'
+    client._client.responses.create.return_value = _Stream([
+        _event("response.output_text.delta", delta='```json\n{"value":'),
+        _event("response.output_text.delta", delta='"ok"}\n```'),
+        _event("response.completed", response=_response(raw)),
+    ])
+    received: list[str] = []
+
+    assert client.chat_stream(_messages(), 32, received.append) == '{"value":"ok"}'
+    assert "".join(received) == raw
+
+
+@pytest.mark.parametrize("base_url", ["https://api.deepseek.com", "https://api.deepseek.com/v1"])
+def test_deepseek_structured_translation_uses_responses_schema(base_url: str) -> None:
+    client = _client(base_url=base_url)
+    client._client.responses.create.return_value = _response()
+
+    assert client.chat(_messages(), max_tokens=32) == '{"value":"ok"}'
+
+    kwargs = client._client.responses.create.call_args.kwargs
+    assert kwargs["text"] == _expected_text_config()
+    assert kwargs["max_output_tokens"] == 32
+    client._client.chat.completions.create.assert_not_called()
+
+    client._client.responses.create.return_value = _response('{"value":7}')
+    with pytest.raises(LlmStructuredOutputInvalidResponseError, match="schema validation"):
+        client.chat(_messages(), max_tokens=32)
 
 
 def test_stream_sends_native_schema_validates_completion_and_preserves_callbacks() -> None:

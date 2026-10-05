@@ -23,8 +23,8 @@ from transbridge.application.translation.token_batching import StableContentBatc
 from transbridge.infra.llm_structured_outputs import (
     LlmStructuredOutputError,
     attach_structured_output_directive,
-    ensure_openai_structured_output_completion,
-    openai_response_format,
+    ensure_openai_responses_structured_output_completion,
+    openai_responses_text_config,
     validate_structured_output,
 )
 from transbridge.infra.token_counting import TiktokenContentTokenCounter
@@ -100,7 +100,9 @@ class OpenAiPostProcessHttpPort:
 
     def apply(self, phase: PostProcessLlmPhase, req: PostProcessLlmRequest) -> PostProcessLlmResponse:
         payload = _payload(phase, req)
-        payload["response_format"] = openai_response_format(POSTPROCESS_VALUES_OUTPUT_SCHEMA)
+        payload["input"] = payload.pop("messages")
+        payload["text"] = openai_responses_text_config(POSTPROCESS_VALUES_OUTPUT_SCHEMA)
+        payload["store"] = False
         body = json.dumps(
             payload,
             ensure_ascii=False,
@@ -144,18 +146,8 @@ class OpenAiPostProcessHttpPort:
         response_sha256 = hashlib.sha256(raw).hexdigest()
         try:
             payload = json.loads(raw.decode("utf-8"))
-            if isinstance(payload, dict) and "choices" in payload:
-                choice = payload["choices"][0]
-                message = choice["message"]
-                ensure_openai_structured_output_completion(
-                    finish_reason=choice.get("finish_reason"),
-                    refusal=message.get("refusal"),
-                )
-            content = _response_content(payload)
-            validate_structured_output(
-                json.dumps(content, ensure_ascii=False, separators=(",", ":")),
-                POSTPROCESS_VALUES_OUTPUT_SCHEMA,
-            )
+            content_text = validate_structured_output(_response_content(payload), POSTPROCESS_VALUES_OUTPUT_SCHEMA)
+            content = json.loads(content_text)
             values = _values(content)
         except (
             KeyError,
@@ -209,7 +201,7 @@ def _keys(request: PostProcessLlmRequest) -> tuple[EntryKey, ...]:
 
 
 def _endpoint(request: PostProcessLlmRequest) -> str:
-    return request.base_url.rstrip("/") + "/chat/completions"
+    return request.base_url.rstrip("/") + "/responses"
 
 
 def _payload(phase: PostProcessLlmPhase, request: PostProcessLlmRequest) -> dict[str, Any]:
@@ -246,21 +238,27 @@ def _payload(phase: PostProcessLlmPhase, request: PostProcessLlmRequest) -> dict
     }
 
 
-def _response_content(payload: Any) -> Any:
-    if isinstance(payload, dict) and "results" in payload:
-        return payload
+def _response_content(payload: Any) -> str:
     if not isinstance(payload, dict):
         raise TypeError("response root must be an object")
-    choices = payload["choices"]
-    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
-        raise TypeError("response choices are invalid")
-    message = choices[0]["message"]
-    if not isinstance(message, dict):
-        raise TypeError("response message is invalid")
-    content = message["content"]
-    if isinstance(content, str):
-        return json.loads(content)
-    return content
+    output = payload.get("output")
+    if not isinstance(output, list):
+        raise TypeError("response output must be an array")
+    parts = [
+        part
+        for item in output
+        if isinstance(item, dict) and item.get("type") == "message"
+        for part in item.get("content", ())
+        if isinstance(part, dict)
+    ]
+    refusal = next((part.get("refusal") or "refused" for part in parts if part.get("type") == "refusal"), None)
+    ensure_openai_responses_structured_output_completion(
+        status=payload.get("status"),
+        incomplete_reason=(payload.get("incomplete_details") or {}).get("reason"),
+        refusal=refusal,
+    )
+    text_parts = [part["text"] for part in parts if part.get("type") == "output_text"]
+    return "".join(text_parts)
 
 
 def _values(payload: Any) -> tuple[tuple[EntryKey, str], ...]:
@@ -298,27 +296,14 @@ class CheckerStage:
 
     def __call__(self, candidates: tuple[PostProcessCandidate, ...]) -> PostProcessStageOutcome:
         diagnostics: list[Diagnostic] = []
-        oversized_keys: set[EntryKey] = set()
         if self._batcher is not None:
             plan = self._batcher.plan(
                 candidates,
                 key=lambda candidate: candidate.entry_key,
                 content=lambda candidate: (candidate.original, candidate.text, candidate.context),
             )
-            oversized_keys = {item.entry_key for item in plan.oversized}
-            diagnostics.extend(
-                Diagnostic(
-                    "POSTPROCESS_CONTENT_TOKEN_LIMIT",
-                    item.message,
-                    category=ErrorCategory.INPUT,
-                    severity=DiagnosticSeverity.ERROR,
-                    details=(("entry_key", item.entry_key.to_dict()),),
-                )
-                for item in plan.oversized
-            )
+            candidates = plan.items
         for candidate in candidates:
-            if candidate.entry_key in oversized_keys:
-                continue
             view = _EntryView(candidate)
             try:
                 found = self._checker.check(view)
@@ -338,7 +323,9 @@ class CheckerStage:
                     Diagnostic(
                         issue.issue_type.upper() or "POSTPROCESS_ISSUE",
                         issue.message,
-                        category=ErrorCategory.INPUT,
+                        category=ErrorCategory.EXTERNAL
+                        if getattr(issue, "execution_failed", False)
+                        else ErrorCategory.INPUT,
                         severity=(
                             DiagnosticSeverity.ERROR if issue.severity == "error" else DiagnosticSeverity.WARNING
                         ),
@@ -386,16 +373,7 @@ class LlmPostProcessStage:
             key=lambda candidate: candidate.entry_key,
             content=lambda candidate: (candidate.original, candidate.text, candidate.context),
         )
-        diagnostics = [
-            Diagnostic(
-                "POSTPROCESS_CONTENT_TOKEN_LIMIT",
-                item.message,
-                category=ErrorCategory.INPUT,
-                severity=DiagnosticSeverity.ERROR,
-                details=(("entry_key", item.entry_key.to_dict()),),
-            )
-            for item in plan.oversized
-        ]
+        diagnostics: list[Diagnostic] = []
         updated: list[PostProcessCandidate] = []
         for batch in plan.batches:
             outcome = self._apply_batch(batch.items)
@@ -524,6 +502,7 @@ class _EntryView:
 
     def __init__(self, candidate: PostProcessCandidate) -> None:
         self.entry_id = candidate.entry_key.local_key
+        self.id = candidate.entry_key.local_key
         self.key = candidate.entry_key
         self.original = candidate.original
         self.translation = candidate.text

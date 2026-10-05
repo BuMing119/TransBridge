@@ -25,6 +25,7 @@ from .checkpoint import PostProcessCheckpoint
 from .consistency_checker import ConsistencyChecker
 from .format_validator import FormatValidator
 from .quality_gate import QualityGateChecker
+from .strict_execution_evidence import StrictExecutionEvidence
 
 if TYPE_CHECKING:
     from ...converter.translation_entry import TranslationEntry
@@ -228,9 +229,6 @@ class PostProcessor:
             self._config.max_tokens_per_batch,
             max_items=max_items,
         ).plan(items, key=key, content=content)
-        if plan.oversized:
-            details = "；".join(item.message for item in plan.oversized)
-            raise ValueError(f"{stage}阶段存在超过单请求业务内容 Token 上限的条目：{details}")
         return [list(batch.items) for batch in plan.batches]
 
     def register_default_checkers(
@@ -347,6 +345,8 @@ class PostProcessor:
             后处理结果
         """
         result = PostProcessResult(total_checked=len(entries))
+        evidence = StrictExecutionEvidence(entries)
+        finished = False
         entry_id_by_alias = {alias: entry.id for entry in entries for alias in {str(entry.id), str(entry.key)}}
 
         def _canonical_issue(issue: PostProcessIssue) -> PostProcessIssue:
@@ -411,14 +411,18 @@ class PostProcessor:
             for checker in self._checkers:
                 if isinstance(checker, QualityGateChecker):
                     continue  # QualityGate 稍后并发执行
+                phase = type(checker).__name__
+                evidence.require(phase, entries)
                 if isinstance(checker, ConsistencyChecker):
                     issues = checker.check_batch(entries)
+                    evidence.complete(phase, entries)
                 else:
                     issues = []
                     for entry in entries:
                         if _should_stop():
                             break
                         issues.extend(checker.check(entry))
+                        evidence.complete(phase, (entry,))
                     if _wait_if_paused():
                         break
 
@@ -434,6 +438,8 @@ class PostProcessor:
                     qg_checker = checker
                     break
 
+            if self._config.enable_quality_gate:
+                evidence.require("quality_gate", entries)
             if qg_checker and not _should_stop():
                 qg_batches = self._plan_batches(
                     entries,
@@ -462,6 +468,7 @@ class PostProcessor:
 
                         if checkpoint and checkpoint.is_batch_completed("detect_quality_gate", fp):
                             qg_completed += len(batch)
+                            evidence.complete("quality_gate", batch)
                             continue
 
                         if future.cancelled():
@@ -469,6 +476,7 @@ class PostProcessor:
 
                         try:
                             batch_issues = future.result()
+                            evidence.complete("quality_gate", batch)
                             with issue_lock:
                                 for issue in batch_issues:
                                     result.add_issue(_canonical_issue(issue))
@@ -479,6 +487,7 @@ class PostProcessor:
                                     _persist_checkpoint()
                             _progress("detect", qg_completed, len(entries), f"质量检测 {qg_completed}/{len(entries)}")
                         except Exception as e:
+                            evidence.fail("quality_gate", batch, e)
                             _log(f"⚠ QualityGate 批次异常: {e}")
 
                 issues_by_entry = self._group_issues_by_entry(result.issues)
@@ -495,6 +504,10 @@ class PostProcessor:
                 for eid, rdict in checkpoint.refine_results.items():
                     refine_results[eid] = PostProcessCheckpoint.refine_result_from_dict(rdict)
                 refine_results = _canonical_results(refine_results)
+
+            if self._config.enable_refinement:
+                evidence.require("refine", [entry for entry in entries if entry.id in issues_by_entry])
+            evidence.accept_results("refine", refine_results, "refined_translation")
 
             if self._refiner and issues_by_entry and not _should_stop():
                 entries_to_refine = [e for e in entries if e.id in issues_by_entry]
@@ -539,6 +552,9 @@ class PostProcessor:
                                 batch_results = future.result()
                                 with result_lock:
                                     refine_results.update(_canonical_results(batch_results))
+                                    evidence.accept_results(
+                                        "refine", _canonical_results(batch_results), "refined_translation"
+                                    )
                                     refined_count += len(batch)
                                     if checkpoint:
                                         checkpoint.mark_batch_completed("refine", fp)
@@ -549,6 +565,7 @@ class PostProcessor:
                                         _persist_checkpoint()
                                 _progress("refine", refined_count, total, f"已修复 {refined_count}/{total}")
                             except Exception as e:
+                                evidence.fail("refine", batch, e)
                                 _log(f"⚠ Refine 批次异常: {e}")
 
             if _should_stop():
@@ -561,6 +578,10 @@ class PostProcessor:
                 for eid, pdict in checkpoint.polish_results.items():
                     polish_results[eid] = PostProcessCheckpoint.polish_result_from_dict(pdict)
                 polish_results = _canonical_results(polish_results)
+
+            if self._config.enable_polish:
+                evidence.require("polish", self._select_entries_for_polish(entries, issues_by_entry, refine_results))
+            evidence.accept_results("polish", polish_results, "polished_translation")
 
             if self._polisher and self._config.enable_polish and not _should_stop():
                 entries_to_polish = self._select_entries_for_polish(entries, issues_by_entry, refine_results)
@@ -613,6 +634,9 @@ class PostProcessor:
                                 batch_results = future.result()
                                 with result_lock:
                                     polish_results.update(_canonical_results(batch_results))
+                                    evidence.accept_results(
+                                        "polish", _canonical_results(batch_results), "polished_translation"
+                                    )
                                     polished_count += len(batch)
                                     if checkpoint:
                                         checkpoint.mark_batch_completed("polish", fp)
@@ -623,6 +647,7 @@ class PostProcessor:
                                         _persist_checkpoint()
                                 _progress("polish", polished_count, total, f"已润色 {polished_count}/{total}")
                             except Exception as e:
+                                evidence.fail("polish", batch, e)
                                 _log(f"⚠ Polish 批次异常: {e}")
 
             if _should_stop():
@@ -635,6 +660,10 @@ class PostProcessor:
                 for eid, ddict in checkpoint.decisions.items():
                     decisions[eid] = PostProcessCheckpoint.decision_from_dict(ddict)
                 decisions = _canonical_results(decisions)
+
+            if self._config.enable_llm_arbitration:
+                evidence.require("arbitrate", entries)
+            evidence.accept_results("arbitrate", decisions)
 
             if self._arbiter and not _should_stop():
                 from .llm_arbiter import ArbitrationContext
@@ -675,6 +704,7 @@ class PostProcessor:
                     else:
                         quick_decisions[context.entry.key] = quick
                 decisions.update(_canonical_results(quick_decisions))
+                evidence.accept_results("arbitrate", _canonical_results(quick_decisions))
                 batches = self._plan_batches(
                     needs_llm,
                     stage="裁决",
@@ -713,6 +743,7 @@ class PostProcessor:
                             batch_decisions = future.result()
                             with result_lock:
                                 decisions.update(_canonical_results(batch_decisions))
+                                evidence.accept_results("arbitrate", _canonical_results(batch_decisions))
                                 arbitrate_count += len(batch)
                                 if checkpoint:
                                     checkpoint.mark_batch_completed("arbitrate", fp)
@@ -722,6 +753,7 @@ class PostProcessor:
                                     _persist_checkpoint()
                             _progress("arbitrate", arbitrate_count, total, f"已裁决 {arbitrate_count}/{total}")
                         except Exception as e:
+                            evidence.fail("arbitrate", [context.entry for context in batch], e)
                             _log(f"⚠ Arbitrate 批次异常: {e}")
 
             else:
@@ -731,6 +763,8 @@ class PostProcessor:
                 return result
 
             # ── 阶段4: 执行 ────────────────────────────────────────────────────
+            evidence.check_issues(result.issues)
+            decisions = evidence.guard_decisions(decisions)
             _progress("execute", 0, len(entries), "执行裁决结果...")
 
             execution_result = self._execute_decisions(
@@ -757,10 +791,12 @@ class PostProcessor:
             result.refine_results = refine_results if refine_results else None
             result.polish_results = polish_results if polish_results else None
             result.decisions = decisions if decisions else None
+            finished = True
 
             return result
 
         finally:
+            evidence.publish(result, cancelled=_should_stop(), finished=finished)
             if monitor_done is not None:
                 monitor_done.set()
 

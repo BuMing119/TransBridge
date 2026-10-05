@@ -263,7 +263,7 @@ def test_arbitration_filters_quick_decisions_before_token_batching() -> None:
     assert set(result.decisions) == {"quick", "llm-a", "llm-b"}
 
 
-def test_oversized_quality_gate_item_fails_before_llm_call() -> None:
+def test_oversized_quality_gate_item_is_sent_alone() -> None:
     from transbridge.ai_translator.post_processor.quality_gate import QualityGateChecker
 
     calls: list[list] = []
@@ -283,14 +283,9 @@ def test_oversized_quality_gate_item_fails_before_llm_call() -> None:
     )
     processor.register_checker(quality_gate)
 
-    with pytest.raises(ValueError, match="质量检测阶段.*Token"):
-        processor.process_entries(
-            [TranslationEntry("one", "one", "aa", "bb", 1, "c")],
-            max_workers=1,
-            apply_changes=False,
-        )
-
-    assert calls == []
+    entry = TranslationEntry("one", "one", "aa", "bb", 1, "c")
+    processor.process_entries([entry], max_workers=1, apply_changes=False)
+    assert [[item.id for item in batch] for batch in calls] == [["one"]]
 
 
 def test_postprocessor_config_forwards_model_and_content_token_limit() -> None:
@@ -343,7 +338,9 @@ def test_proofread_pipeline_marks_only_final_technically_invalid_entries_as_fail
 
     assert results[valid.id].verdict == "pass"
     assert results[valid.id].polished_translation == "不要打开大门。"
-    assert results[missing.id].verdict == "failed"
+    assert results[missing.id].verdict == "pass"
+    assert results[missing.id].target_stage == 2
+    assert results[missing.id].processing_status == "completed"
     assert results[missing.id].polished_translation == missing.translation
     assert results[missing.id].needs_arbitration is False
 

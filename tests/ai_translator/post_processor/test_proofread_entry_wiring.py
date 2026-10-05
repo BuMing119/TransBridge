@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import threading
 from types import SimpleNamespace
+
+import pytest
 
 from transbridge.ai_translator.post_processor.post_processor import PostProcessor, PostProcessorConfig
 from transbridge.ai_translator.post_processor.proofread_pipeline import ProofreadPipeline
+from transbridge.application.contracts import Diagnostic, DiagnosticSeverity, ErrorCategory
 from transbridge.application.translation.ai_execution_profile import AiExecutionProfile
 from transbridge.application.translation.postprocess import PostProcessStageOutcome
 from transbridge.config.llm import LLMConfig
@@ -70,6 +74,70 @@ def test_pipeline_does_not_project_rejected_proofread_candidate_as_success() -> 
     assert result.accepted is False
     assert result.verdict == "failed"
     assert result.polished_translation == "使用剑。"
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_pipeline_keeps_diagnostics_in_details_and_reports_actual_outcome(cancel) -> None:
+    stop = threading.Event()
+
+    class Stage:
+        @staticmethod
+        def run(candidates, **_kwargs):
+            if cancel:
+                stop.set()
+            key = candidates[0].entry_key.to_dict()
+            diagnostics = (
+                Diagnostic("PROOFREAD_RECOVERY_SUCCEEDED", "recovered", severity=DiagnosticSeverity.INFO),
+                *(
+                    Diagnostic(
+                        "PROOFREAD_TERMINOLOGY_REFINEMENT_FAILED",
+                        "retained original",
+                        details=(("entry_key", key), ("reason", "terminology_still_inconsistent")),
+                    )
+                    for _ in range(100)
+                ),
+            )
+            return PostProcessStageOutcome("proofread", (candidates[0].with_accepted(False),), diagnostics)
+
+        @staticmethod
+        def cancel():
+            pass
+
+    profile = AiExecutionProfile.from_config("polish", LLMConfig(pp_strategy="proofread"))
+    pipeline = ProofreadPipeline(PostProcessor(PostProcessorConfig()), profile, proofread_stage=Stage())
+    entry = _entry()
+    progress, logs = [], []
+    result = pipeline.process(
+        [entry], stop_event=stop, progress_callback=lambda *args: progress.append(args), log_callback=logs.append
+    )[entry.id]
+
+    assert len(logs) == 2
+    assert logs[0] == "开始校对，共 1 条"
+    assert not any("PROOFREAD_" in message or "条记录" in message for message in logs)
+    assert len(pipeline.diagnostics) == 101
+    assert "terminology_still_inconsistent" in result.note
+    assert "recovered" not in result.note
+    assert not result.accepted and result.polished_translation == entry.translation
+    assert "校对完成" not in progress[-1][3]
+    assert ("已取消" if cancel else "未完成 1 条") in progress[-1][3]
+
+
+def test_cancelled_stage_diagnostic_rejects_even_late_success_without_stop_event() -> None:
+    class Stage:
+        @staticmethod
+        def run(candidates, **_kwargs):
+            return PostProcessStageOutcome(
+                "proofread",
+                (candidates[0].with_text("迟到译文", "proofread"),),
+                (Diagnostic("PROOFREAD_REFINEMENT_CANCELLED", "cancelled", category=ErrorCategory.CANCELLED),),
+            )
+
+    profile = AiExecutionProfile.from_config("polish", LLMConfig(pp_strategy="proofread"))
+    pipeline = ProofreadPipeline(PostProcessor(PostProcessorConfig()), profile, proofread_stage=Stage())
+    entry = _entry()
+    result = pipeline.process([entry])[entry.id]
+    assert not result.accepted and result.polished_translation == entry.translation
+    assert "校对已取消" in result.note
 
 
 def test_smart_assistant_proofread_stage_uses_scoped_terms_and_configured_refinement_size(monkeypatch) -> None:

@@ -37,7 +37,6 @@ def execute_polish(
         AiExecutionProfile,
         apply_profile_settings,
     )
-    from transbridge.converter.translation_entry import TranslationEntry
 
     effective_config = copy.copy(llm_config)
     apply_profile_settings(effective_config, "polish")
@@ -71,16 +70,17 @@ def execute_polish(
         if result is None or not result.accepted:
             failed_count += 1
             continue
-        if result.polished_translation != (entry.translation or ""):
-            updated = TranslationEntry(
-                id=entry.id,
-                key=entry.key,
-                original=entry.original,
+        target_stage = getattr(result, "target_stage", None)
+        stage = entry.stage if target_stage is None else target_stage
+        translation_changed = result.polished_translation != (entry.translation or "")
+        if translation_changed or stage != entry.stage:
+            updated = replace(
+                entry,
                 translation=result.polished_translation,
-                stage=entry.stage,
-                context=entry.context,
+                stage=stage,
             )
             collection.add(updated, overwrite=True)
+        if translation_changed:
             polished_count += 1
     return PolishExecutionSummary(results, polished_count, failed_count)
 

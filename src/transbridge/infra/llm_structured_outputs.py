@@ -4,15 +4,24 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import logging
 import re
 from typing import Any, Literal
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 
+from .structured_validation_details import schema_validation_details
+
 STRUCTURED_OUTPUT_METADATA_KEY = "_transbridge_structured_output"
 
+logger = logging.getLogger(__name__)
+
 _SCHEMA_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_JSON_FENCE_PATTERN = re.compile(
+    r"\A[ \t\r\n]*```(?:json)?[ \t]*\r?\n(?P<body>.*?)\r?\n```[ \t\r\n]*\Z",
+    re.IGNORECASE | re.DOTALL,
+)
 _UNSUPPORTED_STATUS_CODES = frozenset({400, 422})
 _UNSUPPORTED_MARKERS = (
     "not support",
@@ -43,6 +52,14 @@ class LlmStructuredOutputTruncatedError(LlmStructuredOutputError):
 
 class LlmStructuredOutputInvalidResponseError(LlmStructuredOutputError):
     """The Provider returned a response that cannot satisfy the requested schema."""
+
+    def __init__(
+        self, message: str, *, raw_response: str | None = None, validation_details: dict[str, Any] | None = None
+    ) -> None:
+        super().__init__(message)
+        # Keep payloads out of exception text; the workflow logger redacts these fields.
+        self.raw_response = raw_response
+        self.validation_details = dict(validation_details or {})
 
 
 @dataclass(frozen=True, init=False)
@@ -134,29 +151,10 @@ def extract_structured_output_directive(
     return clean_messages, directives[0] if directives else None
 
 
-def openai_response_format(output_schema: LlmOutputSchema) -> dict[str, Any]:
-    """Build the OpenAI-compatible Chat Completions response format."""
-
-    return {
-        "type": "json_schema",
-        "json_schema": {
-            "name": output_schema.name,
-            "schema": output_schema.schema,
-            "strict": True,
-        },
-    }
-
-
 def openai_responses_text_config(output_schema: LlmOutputSchema) -> dict[str, Any]:
-    """Build the OpenAI Responses API structured text configuration."""
+    """Build the Responses API native JSON Schema output configuration."""
 
-    return {
-        "format": {
-            "type": "json_schema",
-            "name": output_schema.name,
-            "schema": output_schema.schema,
-        }
-    }
+    return {"format": {"type": "json_schema", "name": output_schema.name, "schema": output_schema.schema}}
 
 
 def anthropic_output_config(output_schema: LlmOutputSchema) -> dict[str, Any]:
@@ -171,42 +169,47 @@ def anthropic_output_config(output_schema: LlmOutputSchema) -> dict[str, Any]:
 
 
 def validate_structured_output(raw_text: str, output_schema: LlmOutputSchema) -> str:
-    """Validate a complete Provider response and preserve the text API result."""
+    """Validate a complete response, unwrapping only one complete JSON fence."""
 
     if not isinstance(raw_text, str) or not raw_text.strip():
-        raise LlmStructuredOutputInvalidResponseError("Structured output response was empty")
+        raise LlmStructuredOutputInvalidResponseError(
+            "Structured output response was empty", raw_response=raw_text if isinstance(raw_text, str) else None
+        )
+    content = raw_text
+    recovered_fence = False
+    if raw_text.lstrip().startswith("```"):
+        match = _JSON_FENCE_PATTERN.fullmatch(raw_text)
+        if match is None:
+            raise LlmStructuredOutputInvalidResponseError(
+                "Structured output response had an invalid Markdown JSON code block", raw_response=raw_text
+            )
+        content = match.group("body").strip()
+        recovered_fence = True
     try:
-        value = json.loads(raw_text)
+        value = json.loads(content)
     except json.JSONDecodeError as exc:
         raise LlmStructuredOutputInvalidResponseError(
-            f"Structured output response was not valid JSON (line {exc.lineno}, column {exc.colno})"
+            f"Structured output response was not valid JSON (line {exc.lineno}, column {exc.colno})",
+            raw_response=raw_text,
+            validation_details={"line": exc.lineno, "column": exc.colno},
         ) from None
     if not isinstance(value, dict):
-        raise LlmStructuredOutputInvalidResponseError("Structured output response root was not an object")
+        raise LlmStructuredOutputInvalidResponseError(
+            "Structured output response root was not an object", raw_response=raw_text
+        )
 
     validator = Draft202012Validator(output_schema.schema)
-    error = next(validator.iter_errors(value), None)
-    if error is not None:
-        location = "/".join(str(part) for part in error.absolute_path) or "<root>"
+    errors = list(validator.iter_errors(value))
+    if errors:
+        details = schema_validation_details(errors, schema_name=output_schema.name)
         raise LlmStructuredOutputInvalidResponseError(
-            f"Structured output response failed schema validation at {location} ({error.validator})"
+            f"Structured output response failed schema validation at {details['path']} ({details['validator']})",
+            raw_response=raw_text,
+            validation_details=details,
         )
-    return raw_text
-
-
-def ensure_openai_structured_output_completion(
-    *,
-    finish_reason: str | None,
-    refusal: object | None = None,
-) -> None:
-    """Classify OpenAI refusal, truncation, and invalid completion states."""
-
-    if refusal not in (None, ""):
-        raise LlmStructuredOutputRefusalError("OpenAI structured output request was refused")
-    if finish_reason == "length":
-        raise LlmStructuredOutputTruncatedError("OpenAI structured output response was truncated")
-    if finish_reason != "stop":
-        raise LlmStructuredOutputInvalidResponseError("OpenAI structured output response had an invalid finish reason")
+    if recovered_fence:
+        logger.warning("Structured output recovered from a Markdown JSON code block: schema=%s", output_schema.name)
+    return content
 
 
 def ensure_openai_responses_structured_output_completion(
@@ -215,14 +218,14 @@ def ensure_openai_responses_structured_output_completion(
     incomplete_reason: str | None = None,
     refusal: object | None = None,
 ) -> None:
-    """Classify Responses API refusal, truncation, and invalid terminal states."""
+    """Classify Responses API refusal, truncation, and invalid completion states."""
 
     if refusal not in (None, ""):
         raise LlmStructuredOutputRefusalError("OpenAI structured output request was refused")
     if status == "incomplete" and incomplete_reason == "max_output_tokens":
         raise LlmStructuredOutputTruncatedError("OpenAI structured output response was truncated")
     if status != "completed":
-        raise LlmStructuredOutputInvalidResponseError("OpenAI structured output response did not complete successfully")
+        raise LlmStructuredOutputInvalidResponseError("OpenAI structured output response did not complete")
 
 
 def ensure_anthropic_structured_output_completion(*, stop_reason: str | None) -> None:
@@ -249,9 +252,7 @@ def raise_if_structured_output_unsupported(
     text = message if isinstance(message, str) else str(exc)
     lowered = text.lower()
     parameter_markers = (
-        ("response_format", "text.format", "json_schema", "/responses")
-        if provider == "openai"
-        else ("output_config", "json_schema")
+        ("text.format", "json_schema", "/responses") if provider == "openai" else ("output_config", "json_schema")
     )
     if not any(marker in lowered for marker in parameter_markers):
         return
@@ -274,9 +275,7 @@ __all__ = [
     "attach_structured_output_directive",
     "ensure_anthropic_structured_output_completion",
     "ensure_openai_responses_structured_output_completion",
-    "ensure_openai_structured_output_completion",
     "extract_structured_output_directive",
-    "openai_response_format",
     "openai_responses_text_config",
     "raise_if_structured_output_unsupported",
     "validate_structured_output",
