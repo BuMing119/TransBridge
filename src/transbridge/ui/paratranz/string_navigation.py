@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from PyQt6.QtCore import QRect, QSize, Qt
-from PyQt6.QtGui import QBrush, QFont, QPalette
+from PyQt6.QtGui import QBrush, QFont, QPalette, QPen
 from PyQt6.QtWidgets import QApplication, QStyle, QStyledItemDelegate
 
 from transbridge.ui.foundation.adapters import DomainBrushes
@@ -34,6 +34,9 @@ class NavItemDelegate(QStyledItemDelegate):
         else:
             self._normal_brush = QBrush(domain_brushes.translation("source").foreground)
             self._key_brush = QBrush(domain_brushes.label("neutral").foreground)
+        self._normal_pen = QPen(self._normal_brush, 1)
+        self._key_pen = QPen(self._key_brush, 1)
+        self._selected_pen = QPen(self._selected_brush, 1)
 
     def paint(self, painter, option, index) -> None:
         display_option = option.__class__(option)
@@ -48,7 +51,7 @@ class NavItemDelegate(QStyledItemDelegate):
         split = rect.height() * 6 // 10
         original_rect = QRect(rect.x(), rect.y(), rect.width(), split)
         key_rect = QRect(rect.x(), rect.y() + split, rect.width(), rect.height() - split)
-        painter.setPen(self._selected_brush if selected else self._normal_brush)
+        painter.setPen(self._selected_pen if selected else self._normal_pen)
         painter.setFont(option.font)
         painter.drawText(
             original_rect,
@@ -58,7 +61,7 @@ class NavItemDelegate(QStyledItemDelegate):
         key_font = QFont(option.font)
         key_font.setPointSize(max(option.font.pointSize() - 1, 8))
         painter.setFont(key_font)
-        painter.setPen(self._selected_brush if selected else self._key_brush)
+        painter.setPen(self._selected_pen if selected else self._key_pen)
         painter.drawText(
             key_rect,
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,

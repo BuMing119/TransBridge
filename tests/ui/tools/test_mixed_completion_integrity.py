@@ -123,7 +123,7 @@ def test_parallel_stage_errors_reach_error_signal_instead_of_completed(monkeypat
     errors = []
     results = []
     worker.error.connect(errors.append)
-    worker.finished.connect(results.append)
+    worker.completed.connect(results.append)
 
     def translate():
         raise RuntimeError("translator unavailable")
@@ -166,7 +166,7 @@ def test_failed_parallel_run_joins_successful_sibling_before_rollback(monkeypatc
     worker._do_translate = translate
     worker._do_polish = polish
     worker.error.connect(rollback, Qt.ConnectionType.DirectConnection)
-    worker.finished.connect(results.append, Qt.ConnectionType.DirectConnection)
+    worker.completed.connect(results.append, Qt.ConnectionType.DirectConnection)
     runner = threading.Thread(target=worker.run)
     runner.start()
     try:

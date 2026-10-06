@@ -191,8 +191,9 @@ class TerminologyWindow(QWidget):
                 self._sync_tasks = TerminologySyncTaskAdapter(
                     presenter.services.runtime,
                     owner,
-                    self.sync_view.render_activity,
+                    self.sync_view.activity_sink,
                 )
+                self.destroyed.connect(self._sync_tasks.close)
                 self._sync_tasks.start()
         self.versions_view.publish_requested.connect(self._publish)
         self.publish_status = self.versions_view.publish_status
@@ -253,6 +254,8 @@ class TerminologyWindow(QWidget):
                 model.close()
             if self._sync_tasks is not None:
                 self._sync_tasks.close()
+            if hasattr(self, "sync_view"):
+                self.sync_view.dispose()
             self.presenter.close()
         super().closeEvent(event)
 

@@ -71,9 +71,9 @@ class _TranslationWorker(QThread):
         return not self._pause_event.is_set()
 
     def run(self):
-        self._stream_log_dir = self._make_stream_log_dir()
         _file_handles: dict[int, object] = {}
         try:
+            self._stream_log_dir = self._make_stream_log_dir()
 
             def _stream_cb(batch_idx: int, chunk: str):
                 if batch_idx not in _file_handles:
@@ -112,6 +112,12 @@ class _TranslationWorker(QThread):
             self.error.emit(str(exc))
         finally:
             for fh in _file_handles.values():
-                fh.close()
+                try:
+                    fh.close()
+                except Exception:
+                    _logger.exception("AI translation stream log cleanup failed")
             if self._log_store is not None:
-                self._log_store.close()
+                try:
+                    self._log_store.close()
+                except Exception:
+                    _logger.exception("AI translation workflow log cleanup failed")

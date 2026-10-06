@@ -55,7 +55,7 @@ class _TranslationWorker(QObject):
 
 class _MixedWorker(QObject):
     progress = pyqtSignal(object)
-    finished = pyqtSignal(object)
+    completed = pyqtSignal(object)
     error = pyqtSignal(str)
     cancelled = pyqtSignal()
 

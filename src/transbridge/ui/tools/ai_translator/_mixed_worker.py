@@ -2,6 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 import re
 import threading
@@ -9,9 +10,13 @@ from uuid import uuid4
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from transbridge.application.translation.entry_alias import ai_entry_id, ai_entry_key
+
 from .workflow_log_store import WorkflowLogStore
 from .workflow_logging_client import WorkflowLoggingLLMClient
 from .workflow_progress import WorkflowProgressTracker, stages_for_profile
+
+_logger = logging.getLogger(__name__)
 
 
 class MixedProgress:
@@ -42,7 +47,7 @@ class _MixedWorker(QThread):
 
     progress = pyqtSignal(object)
     log = pyqtSignal(str)
-    finished = pyqtSignal(dict)  # {"translate": result, "polish": result}
+    completed = pyqtSignal(dict)  # {"translate": result, "polish": result}
     error = pyqtSignal(str)
     cancelled = pyqtSignal()
 
@@ -143,19 +148,24 @@ class _MixedWorker(QThread):
             else:
                 result = self._run_serial()
             result = self._finalize_report(result)
+            if not self._cancelled.is_set():
+                self._emit_terminal_progress(result)
         except Exception as exc:
+            _logger.exception("Mixed AI workflow failed")
             if not self._cancelled.is_set():
                 self.error.emit(str(exc))
             else:
                 self.cancelled.emit()
         else:
             if not self._cancelled.is_set():
-                self._emit_terminal_progress(result)
-                self.finished.emit(result)
+                self.completed.emit(result)
             else:
                 self.cancelled.emit()
         finally:
-            self._log_store.close()
+            try:
+                self._log_store.close()
+            except Exception:
+                _logger.exception("Mixed AI workflow log cleanup failed")
 
     def _run_serial(self) -> dict:
         result = {}
@@ -225,7 +235,7 @@ class _MixedWorker(QThread):
         )
         result = translator.translate(
             collection=self._ctx.collection,
-            target_entry_ids=[e.key for e in self._translate_entries],
+            target_entry_ids=[ai_entry_key(e) for e in self._translate_entries],
             progress_callback=self._on_translate_progress,
             stop_event=self._cancelled,
             pause_event=self._pause_event,
@@ -313,8 +323,8 @@ class _MixedWorker(QThread):
         )
         details = tuple(
             {
-                "entry_id": entry.id,
-                "key": entry.key,
+                "entry_id": ai_entry_id(entry),
+                "key": ai_entry_key(entry),
                 "original": entry.original,
                 "translation": entry.translation,
                 "polished": candidate.polished_translation,
@@ -323,7 +333,7 @@ class _MixedWorker(QThread):
                 "error": "" if candidate.accepted else candidate.note or candidate.verdict,
             }
             for entry in self._polish_entries
-            if (candidate := candidates.get(entry.id)) is not None
+            if (candidate := candidates.get(ai_entry_id(entry))) is not None
         )
         success = sum(1 for detail in details if detail["success"])
         failed = sum(1 for detail in details if detail["verdict"] in {"error", "failed", "reject"})
@@ -485,7 +495,9 @@ class _MixedWorker(QThread):
                 entry_id for entry_id, value in candidates.items() if not value.accepted and value.confidence > 0
             )
             failed = tuple(
-                str(entry.id) for entry in self._polish_entries if str(entry.id) not in set(accepted) | set(rejected)
+                str(ai_entry_id(entry))
+                for entry in self._polish_entries
+                if str(ai_entry_id(entry)) not in set(accepted) | set(rejected)
             )
             polish_snapshot = build_polish_report_snapshot(
                 candidates,

@@ -203,7 +203,7 @@ class ExportTab(QWidget):
         self._set_busy(True, "正在触发导出，请稍候…")
 
         def _progress(msg: str):
-            self._set_status(msg)
+            w.progress.emit(0, 0, msg)
 
         def _do():
             workflow = ArtifactWorkflow(config)
@@ -217,10 +217,11 @@ class ExportTab(QWidget):
             self._set_busy(False, f"失败：{e}")
 
         w = ApiWorker(_do)
+        w.progress.connect(lambda _current, _total, message: self._set_status(message))
         w.result.connect(_on_done)
         w.error.connect(_on_error)
-        w.start()
         self._workers.append(w)
+        w.start()
 
     def _download_artifacts(self):
         save_path, _ = QFileDialog.getSaveFileName(self, "保存导出包", "export.zip", "ZIP 文件 (*.zip)")

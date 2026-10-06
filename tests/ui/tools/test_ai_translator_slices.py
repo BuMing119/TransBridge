@@ -277,7 +277,8 @@ def test_mixed_cancelled_signal_releases_active_run_and_allows_restart(monkeypat
     class Worker(QObject):
         progress = pyqtSignal(object)
         log = pyqtSignal(str)
-        finished = pyqtSignal(object)
+        completed = pyqtSignal(object)
+        finished = pyqtSignal()
         error = pyqtSignal(str)
         cancelled = pyqtSignal()
 

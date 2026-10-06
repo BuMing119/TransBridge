@@ -10,6 +10,8 @@ import traceback
 
 from PyQt6.QtCore import QCoreApplication, QObject, QThread, pyqtSignal
 
+from .worker_registry import get_api_worker_registry
+
 _logger = logging.getLogger(__name__)
 
 
@@ -122,6 +124,15 @@ class ApiWorker(QThread):
         # shutdown and can leave SIP wrapping an already torn-down Qt object.
         self._api_status_bus = get_api_status_bus()
         self._http_error_bus = get_http_error_bus()
+        self._registry = get_api_worker_registry()
+
+    def start(self, priority=QThread.Priority.InheritPriority) -> None:
+        self._registry.retain(self)
+        try:
+            super().start(priority)
+        except Exception:
+            self._registry.release(self)
+            raise
 
     def make_progress_callback(self):
         """返回一个可在工作线程中调用的进度回调，安全地 emit progress 信号。"""

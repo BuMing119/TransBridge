@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Protocol
 
-from PyQt6.QtCore import QObject, QRunnable, Qt, QThreadPool, pyqtSignal
+from PyQt6.QtCore import Qt, QThreadPool
 from PyQt6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -25,6 +26,7 @@ from transbridge.application.terminology_sync.inbound import InboundReviewDecisi
 from transbridge.application.terminology_sync.models import TerminologySyncMode
 
 from .inbound_review import InboundReviewDrafts, InboundReviewEdit
+from .sync_dispatch import SyncCall, SyncSignals
 from .sync_presenter import TerminologySyncPresenter, TerminologySyncViewState
 
 
@@ -58,24 +60,6 @@ class TerminologySyncView(Protocol):
     def render_sync(self, state: TerminologySyncViewState) -> None: ...
 
 
-class _SyncSignals(QObject):
-    completed = pyqtSignal(object)
-    failed = pyqtSignal(object)
-
-
-class _SyncCall(QRunnable):
-    def __init__(self, call, signals: _SyncSignals) -> None:
-        super().__init__()
-        self._call = call
-        self._signals = signals
-
-    def run(self) -> None:
-        try:
-            self._signals.completed.emit(self._call())
-        except Exception as exc:  # noqa: BLE001 - worker boundary projects a safe message
-            self._signals.failed.emit(exc)
-
-
 class TerminologySyncPanel(QFrame):
     """Mounted workbench card; application presenter remains the only workflow owner."""
 
@@ -85,9 +69,11 @@ class TerminologySyncPanel(QFrame):
         self.setProperty("tbTerminologySoftCard", True)
         self.setAccessibleName("ParaTranz 术语备份与双向同步")
         self._pool = QThreadPool.globalInstance()
-        self._signals = _SyncSignals(self)
+        self._signals = SyncSignals()
         self._signals.completed.connect(self._completed, Qt.ConnectionType.QueuedConnection)
         self._signals.failed.connect(self._failed, Qt.ConnectionType.QueuedConnection)
+        self._signals.activity.connect(self.render_activity, Qt.ConnectionType.QueuedConnection)
+        self.destroyed.connect(self._signals.close)
         self._pending = ""
         self._review_drafts = InboundReviewDrafts()
         self._rendered_inbound_id: str | None = None
@@ -145,6 +131,8 @@ class TerminologySyncPanel(QFrame):
         self.reconcile_button.clicked.connect(self._reconcile)
 
     def render_sync(self, state: TerminologySyncViewState) -> None:
+        if self._signals.closed:
+            return
         self._set_busy(state.busy)
         if state.error:
             self.summary.setText(state.error)
@@ -183,11 +171,27 @@ class TerminologySyncPanel(QFrame):
         self._render_inbound(state)
 
     def render_activity(self, activity: TaskActivityViewState) -> None:
+        if self._signals.closed:
+            return
         self.summary.setText(f"{activity.display_context.title}：{activity.state.value}")
         self._set_busy(not activity.is_terminal)
         if activity.is_terminal:
             ref = JobRef(activity.job_id, activity.owner.owner_id, activity.run_id)
             self._run("result", lambda: self.presenter.complete_job(ref))
+
+    @property
+    def activity_sink(self) -> Callable[[TaskActivityViewState], None]:
+        """A worker-safe callback retained independently of the panel's QObject."""
+        return self._signals.post_activity
+
+    def dispose(self) -> None:
+        """Detach UI delivery without cancelling already submitted application jobs."""
+        if self._signals.closed:
+            return
+        self._signals.close()
+        self._signals.completed.disconnect(self._completed)
+        self._signals.failed.disconnect(self._failed)
+        self._signals.activity.disconnect(self.render_activity)
 
     def _plan(self, mode: TerminologySyncMode) -> None:
         def call():
@@ -215,11 +219,15 @@ class TerminologySyncPanel(QFrame):
         self._run("reconcile", self.presenter.reconcile)
 
     def _run(self, pending: str, call) -> None:
+        if self._signals.closed:
+            return
         self._pending = pending
         self._set_busy(True)
-        self._pool.start(_SyncCall(call, self._signals))
+        self._pool.start(SyncCall(call, self._signals))
 
     def _completed(self, value: object) -> None:
+        if self._signals.closed:
+            return
         pending, self._pending = self._pending, ""
         if isinstance(value, TerminologySyncViewState):
             self.render_sync(value)
@@ -230,6 +238,8 @@ class TerminologySyncPanel(QFrame):
             self._set_busy(False)
 
     def _failed(self, error: object) -> None:
+        if self._signals.closed:
+            return
         self._pending = ""
         self.render_sync(replace(self.presenter.state, busy=False, error=str(error)))
 

@@ -13,6 +13,7 @@ from PyQt6 import sip
 from transbridge.application.contracts import JobRef
 from transbridge.application.tasks import OwnerRef, TaskRuntime
 from transbridge.application.translation.ai_request_budget import AiRequestBudget
+from transbridge.application.translation.entry_alias import ai_entry_id
 from transbridge.application.translation.terminology_run_snapshot import TerminologyRunSnapshotRef
 from transbridge.ui.foundation.adapters import ThemeView
 from transbridge.ui.windowing import show_and_activate
@@ -390,7 +391,7 @@ def start_translation_run(
     worker = _TranslationWorker(
         translator,
         ctx.collection,
-        [entry.id for entry in request.entries],
+        [ai_entry_id(entry) for entry in request.entries],
         checkpoint,
         esp_path=ctx.esp_path,
         log_store=log_store,
@@ -472,7 +473,7 @@ def start_mixed_run(
     def project_result(result: object) -> None:
         register_mixed_result_actions(progress, request.spec, result)
 
-    worker.finished.connect(project_result)
+    worker.completed.connect(project_result)
 
     def completed(result: object) -> None:
         if activity.activity.state is AiLegacyRunState.CANCELLING:
@@ -490,12 +491,10 @@ def start_mixed_run(
         activity.fail(message)
         error(message)
 
-    worker.finished.connect(controller.terminal_guard(run_id, completed))
+    worker.completed.connect(controller.terminal_guard(run_id, completed))
     worker.cancelled.connect(controller.terminal_guard(run_id, cancelled_run))
     worker.error.connect(controller.terminal_guard(run_id, failed))
-    worker.finished.connect(lambda _result: worker.deleteLater())
-    worker.error.connect(lambda _message: worker.deleteLater())
-    worker.cancelled.connect(worker.deleteLater)
+    worker.finished.connect(worker.deleteLater)
     try:
         worker.start()
         show_and_activate(progress, deferred=True)

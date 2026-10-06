@@ -167,7 +167,7 @@ class AiWorkflowProgressWindow(QWidget):
         self._theme_binding = AiThemeBinding(self, theme_view, self._apply_theme)
 
     def is_running(self) -> bool:
-        if self._terminal or _qt_object_deleted(self._worker):
+        if _qt_object_deleted(self._worker):
             return False
         try:
             return bool(self._worker.isRunning())
@@ -386,7 +386,7 @@ class AiMixedProgressWindow(AiWorkflowProgressWindow):
         log_signal = getattr(worker, "log", None)
         if log_signal is not None:
             log_signal.connect(self.append_log)
-        worker.finished.connect(self._on_finished)
+        worker.completed.connect(self._on_finished)
         worker.error.connect(self._on_error)
         worker.cancelled.connect(self._on_cancelled)
 

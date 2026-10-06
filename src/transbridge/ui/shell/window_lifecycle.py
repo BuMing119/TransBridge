@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QObject, QSettings, QTimer
 
+from transbridge.ui.worker_registry import get_api_worker_registry
+
+from .close_input_guard import CloseInputGuard
+
 
 class AutoSaveManager(QObject):
     """Manage periodic/debounced saves without owning project state."""
@@ -63,6 +67,7 @@ class WindowLifecycle:
         self._close_pending = False
         self._close_ready = False
         self._discard_ai_record_errors = False
+        self._input_guard = CloseInputGuard()
         self.auto_saver = AutoSaveManager(host, host)
 
     def start(self) -> None:
@@ -86,6 +91,7 @@ class WindowLifecycle:
         self._discard_ai_record_errors = False
         self._host.close_pending = True
         self._host.workbench.setEnabled(False)
+        self._input_guard.suspend()
         self.auto_saver.stop()
         self._host.workbench.show_step2_progress(0, "正在保存并关闭…")
         if self._running(self._host.project_open_worker):
@@ -101,6 +107,7 @@ class WindowLifecycle:
         return worker is not None and worker.isRunning()
 
     def begin_background_close(self) -> None:
+        self._input_guard.suspend()
         ai_tasks = getattr(self._host.workbench, "ai_tasks", None)
         if ai_tasks is not None:
             ai_tasks.shutdown()
@@ -116,14 +123,25 @@ class WindowLifecycle:
         if self._running(self._host.foreground_worker):
             self._host.foreground_worker.finished.connect(self.begin_background_close)
             return
+        if get_api_worker_registry().busy or self._input_guard.awaiting_dialog:
+            self._host.workbench.show_step2_progress(0, "正在等待后台任务完成…")
+            QTimer.singleShot(100, self.begin_background_close)
+            return
         if not self._host.save_current_project_async(on_finished=self.finish_background_close):
             QTimer.singleShot(0, self.begin_background_close)
 
     def finish_background_close(self, saved: bool) -> None:
+        # Saving itself is an ApiWorker; its native completion handlers and any
+        # follow-up work must drain before projection resources are disposed.
+        if get_api_worker_registry().busy or self._input_guard.awaiting_dialog:
+            self._input_guard.suspend()
+            QTimer.singleShot(100, lambda: self.finish_background_close(saved))
+            return
         if not saved or self._host.context.dirty:
             self._close_pending = False
             self._host.close_pending = False
             self._host.workbench.setEnabled(True)
+            self._input_guard.resume()
             self._host.workbench.hide_step2_progress()
             self.auto_saver.start()
             ai_tasks = getattr(self._host.workbench, "ai_tasks", None)
@@ -162,6 +180,7 @@ class WindowLifecycle:
             self._host.workbench.hide_step2_progress()
             self._close_ready = True
             self._host.close_ready = True
+            self._input_guard.resume()
             self._host.close()
 
     def _check_record_errors(self, ai_tasks) -> bool:
@@ -169,6 +188,7 @@ class WindowLifecycle:
             return True
         from PyQt6.QtWidgets import QMessageBox
 
+        self._input_guard.resume()
         answer = QMessageBox.question(
             self._host,
             "任务记录未保存",
@@ -178,9 +198,11 @@ class WindowLifecycle:
         )
         if answer == QMessageBox.StandardButton.Discard:
             self._discard_ai_record_errors = True
+            self._input_guard.suspend()
             return True
         self._close_pending = self._host.close_pending = False
         self._host.workbench.setEnabled(True)
+        self._input_guard.resume()
         self._host.workbench.hide_step2_progress()
         self.auto_saver.start()
         ai_tasks.resume()

@@ -140,7 +140,7 @@ def test_mixed_worker_finishes_with_snapshot_and_rendered_artifacts(monkeypatch,
     monkeypatch.setattr(worker, "_do_translate", lambda: translate_result)
     monkeypatch.setattr(worker, "_do_polish", lambda: polish_result)
     emitted: list[dict] = []
-    worker.finished.connect(emitted.append)
+    worker.completed.connect(emitted.append)
 
     worker.run()
 
@@ -169,7 +169,7 @@ def test_mixed_report_render_failure_does_not_reverse_the_completed_run(monkeypa
     )
     emitted: list[dict] = []
     errors: list[str] = []
-    worker.finished.connect(emitted.append)
+    worker.completed.connect(emitted.append)
     worker.error.connect(errors.append)
 
     worker.run()

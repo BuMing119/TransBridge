@@ -542,17 +542,32 @@ class StringDetailDialog(QDialog):
         self._workers.append(w)
 
     def closeEvent(self, event: QCloseEvent):
-        subscription = getattr(self, "_theme_subscription", None)
-        if subscription is not None:
-            subscription.close()
-            self._theme_subscription = None
+        event.setAccepted(self._finish_dialog(QDialog.DialogCode.Rejected))
+
+    def reject(self) -> None:
+        self.done(QDialog.DialogCode.Rejected)
+
+    def accept(self) -> None:
+        self.done(QDialog.DialogCode.Accepted)
+
+    def done(self, result: int) -> None:
+        self._finish_dialog(result)
+
+    def _finish_dialog(self, result: int) -> bool:
         lifecycle = getattr(self, "_lifecycle", None)
         if lifecycle is None:
             lifecycle = self._lifecycle = StringDialogLifecycle(
                 self,
                 workers=lambda: tuple(getattr(self, "_workers", ())),
             )
-        lifecycle.close_event(event)
+        if not lifecycle.request_done(result):
+            return False
+        subscription = getattr(self, "_theme_subscription", None)
+        if subscription is not None:
+            subscription.close()
+            self._theme_subscription = None
+        super().done(result)
+        return True
 
     def was_modified(self) -> bool:
         return self._modified

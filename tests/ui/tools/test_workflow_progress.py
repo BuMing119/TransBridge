@@ -29,7 +29,7 @@ def qapp() -> QApplication:
 class _Worker(QObject):
     progress = pyqtSignal(object)
     log = pyqtSignal(str)
-    finished = pyqtSignal(object)
+    completed = pyqtSignal(object)
     error = pyqtSignal(str)
     cancelled = pyqtSignal()
 
