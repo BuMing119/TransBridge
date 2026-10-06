@@ -98,7 +98,7 @@ class TranslationMemoryQueryService:
                 seen.add(entry_id)
                 found.append((entry, "key"))
         text_index = dictionary.text_index.get(normalized)
-        if text_index is not None:
+        if text_index is not None and request.entry_key.original is None:
             entry_id = str(text_index.get("entry_id", ""))
             entry = dictionary.entries.get(entry_id)
             if entry is not None and (
@@ -108,6 +108,16 @@ class TranslationMemoryQueryService:
 
         for entry, matched_via in found:
             dictionary_id = entry.dictionary_id or dictionary.dictionary_id or dictionary.mod_file_id
+            if request.entry_key.original is not None and entry.original != request.original:
+                diagnostics.append(
+                    Diagnostic(
+                        "SOURCE_ORIGINAL_MATCH_REQUIRED",
+                        "Dictionary original does not match the qualified entry; candidate skipped.",
+                        DiagnosticSeverity.WARNING,
+                        details=(("entry_key", request.entry_key.serialize()), ("dictionary_id", dictionary_id)),
+                    )
+                )
+                continue
             if not entry.enabled or not entry.source_locale or not entry.target_locale:
                 diagnostics.append(
                     Diagnostic(

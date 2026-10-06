@@ -315,9 +315,12 @@ class ProofreadStage:
                 "context": candidate.context,
                 "terms": terms,
             })
+        output_example = json.dumps(
+            {"results": [{"entry_key": entries[0]["entry_key"], "final_translation": "..."}]}, ensure_ascii=False
+        )
         output_contract = (
-            'Return JSON only as {"results":[{"entry_key":{"namespace":"...","local_key":"..."},'
-            '"final_translation":"..."}]}. Return every requested entry_key exactly once and no other keys.'
+            "Copy each complete input entry_key exactly, including original when present; never omit identity fields. "
+            f"Return JSON only as {output_example}. Return every requested entry_key exactly once and no other keys."
         )
         system = (
             f"You proofread translations for {self._game_profile} toward {self._target_locale}. "

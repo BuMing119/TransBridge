@@ -105,8 +105,17 @@ class EntrySnapshot:
     provenance: tuple[Provenance, ...]
     metadata: tuple[tuple[str, Any], ...]
     string_id: int | None = None
+    requires_original_match: bool = False
 
     def __post_init__(self) -> None:
+        if not isinstance(self.requires_original_match, bool):
+            raise TypeError("requires_original_match must be a boolean")
+        if self.entry_key.original is not None:
+            if self.entry_key.original != self.original:
+                raise ValueError("entry original must match its identity original")
+            object.__setattr__(self, "requires_original_match", True)
+        elif self.requires_original_match:
+            raise ValueError("original-matched snapshot requires an identity original")
         if self.string_id is not None and (
             isinstance(self.string_id, bool)
             or not isinstance(self.string_id, int)

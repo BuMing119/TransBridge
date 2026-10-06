@@ -1,3 +1,5 @@
+from collections import Counter, defaultdict
+import logging
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -32,7 +34,11 @@ class EETWriter:
         """
         # --- 预构建 Phase 2 回退索引：(original, type_field_base) → entry ---
         fallback_index: dict[tuple[str, str], TranslationEntry] = {}
+        by_id: dict[str, list[TranslationEntry]] = defaultdict(list)
         for entry in collection:
+            by_id[entry.id].append(entry)
+            if entry.requires_original_match:
+                continue
             if not entry.translation:
                 continue
             ctx_base = entry.context.split("|")[0] if entry.context else ""
@@ -42,7 +48,9 @@ class EETWriter:
 
         updated = 0
 
-        for esp in self.root.findall(".//ESP"):
+        nodes = self.root.findall(".//ESP")
+        node_counts = Counter(_node_identity(esp) for esp in nodes)
+        for esp in nodes:
             edid = esp.findtext("EDID", "").strip()
             grup = esp.findtext("GRUP", "").strip()
             champ = esp.findtext("CHAMP", "").strip()
@@ -59,7 +67,17 @@ class EETWriter:
 
             # Phase 1：精确 id 匹配
             full_id = TranslationEntry._build_eet_id(edid, form_id, index, grup, champ)
-            entry = collection.get(full_id)
+            candidates = by_id.get(full_id, ())
+            if any(item.requires_original_match for item in candidates):
+                matches = [item for item in candidates if item.original == original]
+                if len(matches) != 1 or node_counts[(full_id, original)] != 1:
+                    logging.getLogger(__name__).warning(
+                        "SOURCE_ORIGINAL_MATCH_REQUIRED: EET 词条 %s 无法由原文唯一定位，已跳过。", full_id
+                    )
+                    continue
+                entry = matches[0]
+            else:
+                entry = collection.get(full_id)
             if entry is None:
                 # Phase 2：(original, type_field) 回退
                 entry = fallback_index.get((original, type_field))
@@ -102,3 +120,21 @@ class EETWriter:
         保存更新后的 XML。
         """
         self.tree.write(path, encoding="utf-8", xml_declaration=True)
+
+
+def _node_identity(node: ET.Element) -> tuple[str, str]:
+    index_text = (node.findtext("INDEX", "") or "").strip()
+    try:
+        index = int(index_text) if index_text else None
+    except ValueError:
+        index = None
+    return (
+        TranslationEntry._build_eet_id(
+            (node.findtext("EDID", "") or "").strip(),
+            (node.findtext("ID", "") or "").strip(),
+            index,
+            (node.findtext("GRUP", "") or "").strip(),
+            (node.findtext("CHAMP", "") or "").strip(),
+        ),
+        node.findtext("ORIGINAL", "") or "",
+    )

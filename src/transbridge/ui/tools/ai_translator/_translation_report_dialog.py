@@ -374,7 +374,11 @@ class _TranslationReportDialog(QDialog):
 
         self._entry_table.setRowCount(len(candidates))
         for row, candidate in enumerate(candidates):
-            entry_id = candidate.entry_key.local_key
+            entry_id = (
+                candidate.entry_key.serialize()
+                if candidate.entry_key.original is not None
+                else candidate.entry_key.local_key
+            )
             self._entry_row_ids[row] = entry_id
             status = "已接受" if candidate.accepted else "需审核"
             phases = " → ".join(candidate.phases) if candidate.phases else "翻译"
@@ -396,7 +400,11 @@ class _TranslationReportDialog(QDialog):
 
         status_labels = {"accepted": "已接受", "rejected": "已拒绝", "failed": "失败"}
         for row, candidate in enumerate(candidates):
-            self._entry_row_ids[row] = candidate.entry_key.local_key
+            self._entry_row_ids[row] = (
+                candidate.entry_key.serialize()
+                if candidate.entry_key.original is not None
+                else candidate.entry_key.local_key
+            )
             details = dict(getattr(candidate, "report_details", {}))
             status = status_labels.get(str(details.get("result_status", "")), "已拒绝")
             confidence = float(details.get("confidence", 0.0))

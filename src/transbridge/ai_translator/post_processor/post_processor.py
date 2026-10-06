@@ -17,6 +17,7 @@ import time
 from typing import TYPE_CHECKING
 
 from transbridge.application.io.identity import EntryKey, SourceNamespace
+from transbridge.application.translation.entry_alias import ai_entry_id, ai_entry_key
 from transbridge.application.translation.token_batching import StableContentBatcher
 from transbridge.infra.token_counting import TiktokenContentTokenCounter
 
@@ -144,7 +145,7 @@ def _issue_content(issue: object) -> tuple[str, ...]:
 
 def _refinement_content(entry: object, issues_by_entry: dict[str, list[PostProcessIssue]]) -> tuple[str, ...]:
     fields = list(_quality_gate_content(entry))
-    for issue in issues_by_entry.get(str(getattr(entry, "id", "")), ()):
+    for issue in issues_by_entry.get(ai_entry_id(entry), ()):
         fields.extend(_issue_content(issue))
     return tuple(fields)
 
@@ -347,7 +348,11 @@ class PostProcessor:
         result = PostProcessResult(total_checked=len(entries))
         evidence = StrictExecutionEvidence(entries)
         finished = False
-        entry_id_by_alias = {alias: entry.id for entry in entries for alias in {str(entry.id), str(entry.key)}}
+        entry_id_by_alias = {
+            alias: ai_entry_id(entry)
+            for entry in entries
+            for alias in {str(ai_entry_id(entry)), str(ai_entry_key(entry))}
+        }
 
         def _canonical_issue(issue: PostProcessIssue) -> PostProcessIssue:
             entry_id = entry_id_by_alias.get(str(issue.entry_id), str(issue.entry_id))
@@ -464,7 +469,7 @@ class PostProcessor:
                             break
 
                         batch = futures[future]
-                        fp = sorted(e.id for e in batch)
+                        fp = sorted(ai_entry_id(e) for e in batch)
 
                         if checkpoint and checkpoint.is_batch_completed("detect_quality_gate", fp):
                             qg_completed += len(batch)
@@ -506,11 +511,11 @@ class PostProcessor:
                 refine_results = _canonical_results(refine_results)
 
             if self._config.enable_refinement:
-                evidence.require("refine", [entry for entry in entries if entry.id in issues_by_entry])
+                evidence.require("refine", [entry for entry in entries if ai_entry_id(entry) in issues_by_entry])
             evidence.accept_results("refine", refine_results, "refined_translation")
 
             if self._refiner and issues_by_entry and not _should_stop():
-                entries_to_refine = [e for e in entries if e.id in issues_by_entry]
+                entries_to_refine = [e for e in entries if ai_entry_id(e) in issues_by_entry]
                 total = len(entries_to_refine)
 
                 if total > 0:
@@ -526,7 +531,7 @@ class PostProcessor:
                     result_lock = threading.Lock()
 
                     def _refine_worker(batch):
-                        batch_issues = {e.id: issues_by_entry.get(e.id, []) for e in batch}
+                        batch_issues = {ai_entry_id(e): issues_by_entry.get(ai_entry_id(e), []) for e in batch}
                         return self._refiner.refine_batch(batch, batch_issues)
 
                     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -539,7 +544,7 @@ class PostProcessor:
                                 break
 
                             batch = futures[future]
-                            fp = sorted(e.id for e in batch)
+                            fp = sorted(ai_entry_id(e) for e in batch)
 
                             if checkpoint and checkpoint.is_batch_completed("refine", fp):
                                 refined_count += len(batch)
@@ -588,9 +593,9 @@ class PostProcessor:
                 entries_to_polish = [
                     replace(
                         entry,
-                        translation=refine_results[entry.id].refined_translation,
+                        translation=refine_results[ai_entry_id(entry)].refined_translation,
                     )
-                    if entry.id in refine_results and refine_results[entry.id].refined_translation
+                    if ai_entry_id(entry) in refine_results and refine_results[ai_entry_id(entry)].refined_translation
                     else entry
                     for entry in entries_to_polish
                 ]
@@ -621,7 +626,7 @@ class PostProcessor:
                                 break
 
                             batch = futures[future]
-                            fp = sorted(e.id for e in batch)
+                            fp = sorted(ai_entry_id(e) for e in batch)
 
                             if checkpoint and checkpoint.is_batch_completed("polish", fp):
                                 polished_count += len(batch)
@@ -687,10 +692,10 @@ class PostProcessor:
                 for entry in entries:
                     ctx = ArbitrationContext(
                         entry=entry,
-                        original_issues=issues_by_entry.get(entry.id, []),
-                        refine_result=refine_results.get(entry.id),
-                        polish_result=polish_results.get(entry.id),
-                        quality_gate_verdict=qg_verdicts.get(entry.id),
+                        original_issues=issues_by_entry.get(ai_entry_id(entry), []),
+                        refine_result=refine_results.get(ai_entry_id(entry)),
+                        polish_result=polish_results.get(ai_entry_id(entry)),
+                        quality_gate_verdict=qg_verdicts.get(ai_entry_id(entry)),
                     )
                     contexts.append(ctx)
 
@@ -702,7 +707,7 @@ class PostProcessor:
                     if quick is None:
                         needs_llm.append(context)
                     else:
-                        quick_decisions[context.entry.key] = quick
+                        quick_decisions[ai_entry_key(context.entry)] = quick
                 decisions.update(_canonical_results(quick_decisions))
                 evidence.accept_results("arbitrate", _canonical_results(quick_decisions))
                 batches = self._plan_batches(
@@ -730,7 +735,7 @@ class PostProcessor:
                             break
 
                         batch = futures[future]
-                        fp = sorted(c.entry.id for c in batch)
+                        fp = sorted(ai_entry_id(c.entry) for c in batch)
 
                         if checkpoint and checkpoint.is_batch_completed("arbitrate", fp):
                             arbitrate_count += len(batch)
@@ -833,10 +838,14 @@ class PostProcessor:
             return [e for e in entries if e.translation]
         elif scope == "passed":
             # 只润色无问题的条目
-            return [e for e in entries if e.translation and e.id not in issues_by_entry]
+            return [e for e in entries if e.translation and ai_entry_id(e) not in issues_by_entry]
         elif scope == "has_issues":
             # 只润色有问题的条目（修复后润色）
-            return [e for e in entries if e.translation and e.id in issues_by_entry and e.id in refine_results]
+            return [
+                e
+                for e in entries
+                if e.translation and ai_entry_id(e) in issues_by_entry and ai_entry_id(e) in refine_results
+            ]
         else:
             # 默认润色所有
             return [e for e in entries if e.translation]
@@ -868,9 +877,9 @@ class PostProcessor:
         polish_results = polish_results or {}
 
         for entry in entries:
-            issues = issues_by_entry.get(entry.id, [])
-            refine = refine_results.get(entry.id)
-            polish = polish_results.get(entry.id)
+            issues = issues_by_entry.get(ai_entry_id(entry), [])
+            refine = refine_results.get(ai_entry_id(entry))
+            polish = polish_results.get(ai_entry_id(entry))
 
             has_errors = any(i.severity == "error" for i in issues)
             failed_stage = next(
@@ -883,8 +892,8 @@ class PostProcessor:
             )
 
             if failed_stage:
-                decisions[entry.id] = ArbiterDecision(
-                    entry_id=entry.id,
+                decisions[ai_entry_id(entry)] = ArbiterDecision(
+                    entry_id=ai_entry_id(entry),
                     verdict="reject" if self._config.strict_arbitration else "pending",
                     reason=failed_stage,
                     confidence=0.0,
@@ -892,8 +901,8 @@ class PostProcessor:
                 )
             elif not issues:
                 # 无问题 -> 通过
-                decisions[entry.id] = ArbiterDecision(
-                    entry_id=entry.id,
+                decisions[ai_entry_id(entry)] = ArbiterDecision(
+                    entry_id=ai_entry_id(entry),
                     verdict="pass",
                     reason="无检测到的问题",
                     confidence=1.0,
@@ -901,8 +910,8 @@ class PostProcessor:
                 )
             elif refine and refine.confidence > 0.8 and not has_errors:
                 # 修复信心度高且无error -> 通过
-                decisions[entry.id] = ArbiterDecision(
-                    entry_id=entry.id,
+                decisions[ai_entry_id(entry)] = ArbiterDecision(
+                    entry_id=ai_entry_id(entry),
                     verdict="pass",
                     reason=f"修复信心度高({refine.confidence:.2f})",
                     confidence=refine.confidence,
@@ -911,16 +920,16 @@ class PostProcessor:
             elif has_errors:
                 # 有error -> 根据strict模式
                 if self._config.strict_arbitration:
-                    decisions[entry.id] = ArbiterDecision(
-                        entry_id=entry.id,
+                    decisions[ai_entry_id(entry)] = ArbiterDecision(
+                        entry_id=ai_entry_id(entry),
                         verdict="reject",
                         reason="存在未修复的严重问题",
                         confidence=0.8,
                         suggested_action="打回重翻",
                     )
                 else:
-                    decisions[entry.id] = ArbiterDecision(
-                        entry_id=entry.id,
+                    decisions[ai_entry_id(entry)] = ArbiterDecision(
+                        entry_id=ai_entry_id(entry),
                         verdict="pending",
                         reason="存在需要关注的问题",
                         confidence=0.6,
@@ -928,8 +937,8 @@ class PostProcessor:
                     )
             else:
                 # 只有warning -> pending
-                decisions[entry.id] = ArbiterDecision(
-                    entry_id=entry.id,
+                decisions[ai_entry_id(entry)] = ArbiterDecision(
+                    entry_id=ai_entry_id(entry),
                     verdict="pending",
                     reason="存在警告级别的问题",
                     confidence=0.7,
@@ -960,12 +969,12 @@ class PostProcessor:
         exec_result = PostProcessExecutionResult()
 
         for entry in entries:
-            decision = decisions.get(entry.id)
+            decision = decisions.get(ai_entry_id(entry))
             if not decision:
                 continue
 
-            refined = refine_results.get(entry.id)
-            polished = polish_results.get(entry.id)
+            refined = refine_results.get(ai_entry_id(entry))
+            polished = polish_results.get(ai_entry_id(entry))
 
             # 确定最终译文（优先级：润色 > 修复 > 原文）
             if polished and polished.polished_translation:
@@ -1008,10 +1017,8 @@ class PostProcessor:
         Returns:
             成功修复的问题数
         """
-        from ...converter.translation_entry import TranslationEntry
-
         fixed_count = 0
-        entry_map = {e.key: e for e in entries}
+        entry_map = {ai_entry_key(e): e for e in entries}
 
         for issue in issues:
             if issue.entry_id not in entry_map:
@@ -1038,19 +1045,7 @@ class PostProcessor:
 
             # 如果有修复，更新条目
             if fixed_translation != original_translation:
-                updated = TranslationEntry(
-                    id=entry.id,
-                    key=entry.key,
-                    original=entry.original,
-                    translation=fixed_translation,
-                    stage=entry.stage,
-                    context=entry.context,
-                    form_id_with_plugin=entry.form_id_with_plugin,
-                    string_id=entry.string_id,
-                    dsd_type=entry.dsd_type,
-                    dsd_index=entry.dsd_index,
-                    editor_id=entry.editor_id,
-                )
+                updated = replace(entry, translation=fixed_translation)
                 entry_map[issue.entry_id] = updated
                 fixed_count += 1
 
@@ -1132,8 +1127,6 @@ class PostProcessor:
         Returns:
             统计信息
         """
-        from ...converter.translation_entry import TranslationEntry
-
         stats = {"reset_to_untranslated": 0, "kept_for_review": 0}
 
         entry_issues: dict[str, list] = {}
@@ -1151,19 +1144,7 @@ class PostProcessor:
             has_warning = any(i.severity == "warning" for i in issues)
 
             if has_error and self._config.reset_stage_on_error:
-                updated = TranslationEntry(
-                    id=entry.id,
-                    key=entry.key,
-                    original=entry.original,
-                    translation=entry.translation,
-                    stage=0,
-                    context=entry.context,
-                    form_id_with_plugin=entry.form_id_with_plugin,
-                    string_id=entry.string_id,
-                    dsd_type=entry.dsd_type,
-                    dsd_index=entry.dsd_index,
-                    editor_id=entry.editor_id,
-                )
+                updated = replace(entry, stage=0)
                 collection.add(updated, overwrite=True)
                 stats["reset_to_untranslated"] += 1
             elif has_error or has_warning:

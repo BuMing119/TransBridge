@@ -235,7 +235,7 @@ class AiTaskRun(QObject):
                 task=full_tasks[item.task.key],
                 polish={**(previous.polish if previous else {}), **item.polish},
                 failed_keys=tuple(
-                    key.local_key
+                    key.serialize() if key.original is not None else key.local_key
                     for key in self.entries.failed_keys
                     if self.entries.entries[key].source == item.task.key
                 ),

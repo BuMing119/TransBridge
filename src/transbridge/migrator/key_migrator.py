@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import StrEnum
+import logging
 
 from transbridge.application.contracts import Diagnostic, DiagnosticSeverity
 from transbridge.application.io import EntryKey, EntryRevision, Provenance, SourceNamespace
@@ -12,6 +14,8 @@ from transbridge.converter.translation_entry import (
     STAGE_TRANSLATED,
     _normalize_text,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class MigrationDisposition(StrEnum):
@@ -69,6 +73,9 @@ def plan_migration(
     if not old_fingerprint.strip() or not new_fingerprint.strip():
         raise ValueError("migration fingerprints must be explicit")
     sources = tuple(_migration_entry(item) for item in old_entries)
+    by_locator = defaultdict(list)
+    for source in sources:
+        by_locator[source.key.local_key].append(source)
     targets = tuple(_migration_entry(item) for item in new_entries)
     allowed = {(old.value, new.value) for old, new in namespace_mappings}
     diagnostics: list[Diagnostic] = []
@@ -94,15 +101,28 @@ def plan_migration(
             continue
         matching = [
             source
-            for source in sources
-            if source.key.local_key == target.key.local_key
-            and (
+            for source in by_locator.get(target.key.local_key, ())
+            if (
                 source.key.namespace == target.key.namespace
                 or (source.key.namespace.value, target.key.namespace.value) in allowed
             )
             and source.translation
             and DEFAULT_STAGE_POLICY.allows_tm_write(source.stage, source.translation, original=source.original)
         ]
+        requires_original = target.key.original is not None or any(item.key.original is not None for item in matching)
+        if requires_original:
+            matching = [source for source in matching if source.original == target.original]
+            if len(matching) != 1:
+                diagnostics.append(
+                    Diagnostic(
+                        "SOURCE_ORIGINAL_MATCH_REQUIRED",
+                        "Migration cannot uniquely match the exact original; entry skipped.",
+                        DiagnosticSeverity.WARNING,
+                        details=(("entry_key", target.key.serialize()),),
+                    )
+                )
+                unmatched.append(target.key)
+                continue
         if not matching:
             unmatched.append(target.key)
             continue
@@ -234,18 +254,25 @@ def migrate(old_collection, new_collection) -> MigrationResult:
     if old_collection is None or new_collection is None:
         return MigrationResult()
 
-    # 构建 old_collection 的 key → entry 映射
-    old_by_key = {}
+    old_by_key = defaultdict(list)
     for e in old_collection:
         if e.key:
-            old_by_key.setdefault(e.key, e)
+            old_by_key[e.key].append(e)
 
     result = MigrationResult()
     for e in new_collection:
         if not e.key or e.key not in old_by_key:
             result.missed += 1
             continue
-        old = old_by_key[e.key]
+        candidates = old_by_key[e.key]
+        requires_original = e.requires_original_match or any(item.requires_original_match for item in candidates)
+        if requires_original:
+            candidates = [item for item in candidates if item.original == e.original]
+            if len(candidates) != 1:
+                logger.warning("SOURCE_ORIGINAL_MATCH_REQUIRED: 迁移词条 %s 无法由原文唯一定位，已跳过。", e.key)
+                result.missed += 1
+                continue
+        old = candidates[0]
         if not old.translation:
             result.missed += 1
             continue

@@ -1,5 +1,7 @@
 from dataclasses import replace
 
+import pytest
+
 from transbridge.application.contracts import OperationResult, RequestContext
 from transbridge.application.io import FormatId
 from transbridge.application.io.identity import EntryKey, SourceNamespace
@@ -168,6 +170,94 @@ def test_add_source_applies_initial_import_states_in_the_same_authoritative_comm
     entry = lifecycle.active.variant.snapshot().entries[0]
     assert (entry.translation, entry.stage.value, entry.revision.value) == ("导入译文", 3, 1)
     assert service._preparer.last_request.options == ()
+
+
+@pytest.mark.parametrize("key_mode", ["qualified", "legacy", "bare", "wrong_original", "wrong_namespace"])
+def test_real_duplicate_plugin_initial_states_require_complete_original_identity(tmp_path, key_mode) -> None:
+    from tests.plugin_fixtures import write_plugin
+    from transbridge.persistence.project_provisioning import TranslationIoProjectSourcePreparer
+
+    service, lifecycle, _registry, _project_ref, _variant_ref, context = _setup()
+    path = write_plugin(tmp_path / "duplicates.esp", [(0x800, "Same", "A"), (0x800, "Same", "B")])
+    request = ProjectSourceRequest(str(path), FormatId.PLUGIN_SSE)
+    prepared = TranslationIoProjectSourcePreparer().prepare_source(request, context, role="primary", common_options=())
+    service._preparer = _Preparer(prepared)
+    first, second = prepared.baseline.entries
+    desired = {first.entry_key: ("First imported", 3), second.entry_key: ("Second imported", 5)}
+    states = dict(desired)
+    if key_mode == "legacy":
+        states = {replace(key, namespace=SourceNamespace.legacy()): value for key, value in desired.items()}
+    elif key_mode == "bare":
+        states = {first.entry_key.local_key: ("Unproved", 5)}
+    elif key_mode == "wrong_original":
+        states = {replace(key, original=key.original + " changed"): value for key, value in desired.items()}
+    elif key_mode == "wrong_namespace":
+        states = {replace(key, namespace=SourceNamespace("unrelated")): value for key, value in desired.items()}
+
+    added = service.add_source(source_request_with_initial_entry_states(request, states), context)
+
+    assert added.is_success, added.diagnostics
+    actual = {entry.entry_key: entry for entry in lifecycle.active.variant.snapshot().entries}
+    hydrated = {entry.entry_key: entry for entry in added.value.hydration.entries}
+    assert len(actual) == len(hydrated) == 2
+    for key, before in [(first.entry_key, first), (second.entry_key, second)]:
+        expected = desired[key] if key_mode in {"qualified", "legacy"} else (before.translation, before.stage.value)
+        assert (actual[key].translation, actual[key].stage.value) == expected
+        assert (hydrated[key].translation, hydrated[key].stage) == expected
+
+
+def test_first_gui_plugin_load_rebinds_legacy_initial_translations_to_verified_namespace(tmp_path) -> None:
+    from types import SimpleNamespace
+
+    from tests.plugin_fixtures import write_plugin
+    from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+    from transbridge.parser.plugin_parser import PluginParser
+    from transbridge.parser.xt import XT_Entry
+    from transbridge.persistence.project_provisioning import TranslationIoProjectSourcePreparer
+    from transbridge.ui.coordinators.parse_coordinator import ParseCoordinator
+
+    service, lifecycle, _registry, project_ref, variant_ref, context = _setup()
+    service._preparer = TranslationIoProjectSourcePreparer()
+    path = write_plugin(
+        tmp_path / "first-load.esp", [(0x800, "Same", "A"), (0x800, "Same", "B"), (0x801, "Other", "Plain")]
+    )
+    collection = TranslationEntryCollection(PluginParser().parse_plugin(path))
+    assert all(entry.identity.namespace == SourceNamespace.legacy() for entry in collection)
+    assert (
+        collection.apply_xt_entries([
+            XT_Entry(0, "Same", "NPC_:FULL", "A", "First imported", 1),
+            XT_Entry(0, "Same", "NPC_:FULL", "B", "Second imported", 1),
+            XT_Entry(0, "Other", "NPC_:FULL", "Plain", "Ordinary imported", 1),
+        ])
+        == 3
+    )
+    coordinator = ParseCoordinator(
+        SimpleNamespace(
+            context=SimpleNamespace(
+                uses_authoritative_projection=True,
+                project_commands=service,
+                runtime_context=context,
+            )
+        )
+    )
+
+    restored, hydration = coordinator._commit_authoritative_source(
+        str(path),
+        collection,
+        format_id="plugin.sse",
+        expected_authority=((project_ref.identity.value, variant_ref.identity.value), 0, 0),
+    )
+
+    assert all(entry.identity.namespace != SourceNamespace.legacy() for entry in restored)
+    assert {entry.original: entry.translation for entry in restored} == {
+        "A": "First imported",
+        "B": "Second imported",
+        "Plain": "Ordinary imported",
+    }
+    saved = {entry.entry_key: entry for entry in lifecycle.active.variant.snapshot().entries}
+    assert len(saved) == len(hydration.entries) == 3
+    for entry in restored:
+        assert (saved[entry.identity].translation, saved[entry.identity].stage.value) == (entry.translation, 1)
 
 
 def test_multi_variant_source_remove_fails_closed_before_breaking_other_variants() -> None:

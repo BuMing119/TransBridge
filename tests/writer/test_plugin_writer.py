@@ -2,6 +2,8 @@ from pathlib import Path
 import tempfile
 from unittest.mock import Mock
 
+from sse_plugin_interface.datatypes import RawString
+
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.writer.plugin_writer import PluginWriter
@@ -15,6 +17,7 @@ class FakePluginString:
         self.type = type_
         self.string = string
         self.index = index  # 添加 index 属性
+        self.context = None
 
 
 def make_fake_plugin_strings():
@@ -29,8 +32,9 @@ def make_fake_plugin_strings():
 def make_fake_plugin():
     """创建伪造的插件对象"""
     plugin = Mock()
-    plugin.extract_strings_with_context.return_value = make_fake_plugin_strings()
-    plugin.find_string_subrecord.return_value = Mock()
+    plugin.extract_string_pairs_with_context.return_value = [
+        (ps, Mock(string=RawString(ps.string))) for ps in make_fake_plugin_strings()
+    ]
     plugin.save = Mock()
     return plugin
 
@@ -77,8 +81,10 @@ def test_apply_collection_updates():
     # 验证更新数量
     assert updated == 2
 
-    # 验证 find_string_subrecord 被调用两次（两个匹配项）
-    assert plugin.find_string_subrecord.call_count == 2
+    targets = [subrecord for _, subrecord in plugin.extract_string_pairs_with_context.return_value]
+    targets[0].set_string.assert_called_once_with("你好")
+    targets[1].set_string.assert_not_called()
+    targets[2].set_string.assert_called_once_with("欢迎")
 
 
 def test_apply_collection_skip_no_translation():
@@ -114,8 +120,10 @@ def test_apply_collection_skip_no_translation():
     # 验证更新数量
     assert updated == 1
 
-    # 验证 find_string_subrecord 只被调用一次
-    assert plugin.find_string_subrecord.call_count == 1
+    targets = [subrecord for _, subrecord in plugin.extract_string_pairs_with_context.return_value]
+    targets[0].set_string.assert_called_once_with("你好")
+    targets[1].set_string.assert_not_called()
+    targets[2].set_string.assert_not_called()
 
 
 def test_apply_collection_skip_same_translation():
@@ -151,8 +159,10 @@ def test_apply_collection_skip_same_translation():
     # 验证更新数量
     assert updated == 1
 
-    # 验证 find_string_subrecord 只被调用一次
-    assert plugin.find_string_subrecord.call_count == 1
+    targets = [subrecord for _, subrecord in plugin.extract_string_pairs_with_context.return_value]
+    targets[0].set_string.assert_not_called()
+    targets[1].set_string.assert_not_called()
+    targets[2].set_string.assert_called_once_with("欢迎")
 
 
 def test_apply_collection_no_updates():
@@ -170,8 +180,8 @@ def test_apply_collection_no_updates():
     # 验证没有更新
     assert updated == 0
 
-    # 验证 find_string_subrecord 没有被调用
-    plugin.find_string_subrecord.assert_not_called()
+    for _, subrecord in plugin.extract_string_pairs_with_context.return_value:
+        subrecord.set_string.assert_not_called()
 
 
 def test_write():

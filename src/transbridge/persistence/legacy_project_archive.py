@@ -38,8 +38,8 @@ def decode_legacy_archive(
 ) -> tuple[ProjectDto, tuple[VariantSnapshot, ...], tuple[dict, ...]]:
     """Decode a path/size-validated ZIP; missing sources retain unverified state.
 
-    Legacy packages contain JSON records, not source files. Only exact, unique
-    legacy IDs from a freshly verified source hydration may become EntryKeys.
+    Legacy packages contain JSON records, not source files. Qualified cache keys
+    retain their complete identity; bare IDs require a unique verified source.
     The caller owns atomic publication and read-only recovery activation.
     """
 
@@ -227,17 +227,29 @@ def _decode_variant(
         _validate_entry_state(state, member, key)
         row.update(deepcopy(state))
         row["inferred_fields"] = [field for field in row["inferred_fields"] if field not in state]
-    if identity.verified:
-        for key, row in rows.items():
-            candidates = identity.legacy_keys.get(key, frozenset())
-            if len(candidates) != 1:
+    for key, row in rows.items():
+        qualified = _qualified_cache_key(key)
+        if qualified is not None:
+            row["entry_key"] = qualified.to_dict()
+        if identity.verified:
+            if qualified is not None:
+                candidates = frozenset((qualified,)) if qualified in identity.entries else frozenset()
+            else:
+                candidates = identity.legacy_keys.get(key, frozenset())
+            if len(candidates) != 1 or qualified is None and next(iter(candidates)).original is not None:
                 raise ValueError(f"旧条目 ID 无法唯一映射到当前来源：{member}，{key!r}；请恢复匹配的原始源文件后重试")
             entry_key = next(iter(candidates))
             row["entry_key"] = entry_key.to_dict()
             row["external_refs"] = [item.to_dict() for item in identity.entries[entry_key].external_refs]
+    if identity.verified:
         data["source_fingerprints"] = [item.to_dict() for item in identity.fingerprints]
-    elif not rows:
-        data["source_fingerprints"] = []
+    else:
+        # Missing source files keep the saved identities in read-only recovery,
+        # without claiming that their original namespace has been verified.
+        data["source_fingerprints"] = [
+            {"namespace": namespace, "sha256": None}
+            for namespace in sorted({row["entry_key"]["namespace"] for row in rows.values()})
+        ]
     data["entries"] = list(rows.values())
     validated = validate_v2(document, ref)
     if not isinstance(validated, VariantDto):
@@ -245,6 +257,15 @@ def _decode_variant(
     snapshot = VariantSnapshot.from_dto(validated, ref)
     validate_v2(snapshot.to_dto().envelope.to_dict(), ref)
     return snapshot
+
+
+def _qualified_cache_key(value: str) -> EntryKey | None:
+    """Recognize the canonical three-part keys emitted by VariantStore."""
+    try:
+        key = EntryKey.deserialize(value)
+    except ValueError:
+        return None
+    return key if key.original is not None and key.serialize() == value else None
 
 
 def _validate_entry_state(state: dict[str, Any], member: str, key: str) -> None:

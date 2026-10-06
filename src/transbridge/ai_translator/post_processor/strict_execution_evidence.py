@@ -4,19 +4,21 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from transbridge.application.translation.entry_alias import ai_entry_id
+
 
 class StrictExecutionEvidence:
     def __init__(self, entries):
-        self.keys = {str(entry.id) for entry in entries}
+        self.keys = {str(ai_entry_id(entry)) for entry in entries}
         self.required = {}
         self.completed = {}
         self.failures = {}
 
     def require(self, phase, entries):
-        self.required.setdefault(phase, set()).update(str(entry.id) for entry in entries)
+        self.required.setdefault(phase, set()).update(str(ai_entry_id(entry)) for entry in entries)
 
     def complete(self, phase, entries):
-        self.completed.setdefault(phase, set()).update(str(entry.id) for entry in entries)
+        self.completed.setdefault(phase, set()).update(str(ai_entry_id(entry)) for entry in entries)
 
     def accept_results(self, phase, values, text_field=None):
         completed = self.completed.setdefault(phase, set())
@@ -28,7 +30,7 @@ class StrictExecutionEvidence:
 
     def fail(self, phase, entries, error):
         for entry in entries:
-            self.failures[str(entry.id)] = f"{phase} 失败：{error}"
+            self.failures[str(ai_entry_id(entry))] = f"{phase} 失败：{error}"
 
     def check_issues(self, issues):
         for issue in issues:

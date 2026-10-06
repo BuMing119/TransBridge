@@ -9,6 +9,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from transbridge.application.translation.entry_alias import ai_entry_id, ai_entry_key
+
 from .task_scope import SourceTask
 from .workflow_log_store import WorkflowLogStore
 
@@ -83,7 +85,7 @@ class SourceExecutor:
             if self.stop.is_set():
                 result.cancelled = True
                 result.error = "任务已取消"
-                result.failed_keys = tuple(e.key for e in task.entries)
+                result.failed_keys = tuple(ai_entry_key(e) for e in task.entries)
                 return result
             stages = []
             if task.translate_entries:
@@ -113,25 +115,25 @@ class SourceExecutor:
                 raise RuntimeError("翻译阶段未返回结果，不能将该来源标记为成功。")
             diagnostics = tuple(getattr(result.translation, "failed_entries", ()) or ())
             failed = [
-                e.key
+                ai_entry_key(e)
                 for e in task.translate_entries
-                if any(str(d) == e.key or str(d).startswith(f"{e.id}:") for d in diagnostics)
+                if any(str(d) == ai_entry_key(e) or str(d).startswith(f"{ai_entry_id(e)}:") for d in diagnostics)
             ]
             if int(getattr(result.translation, "failed_count", 0)) and not failed:
-                failed.extend(e.key for e in task.translate_entries)
+                failed.extend(ai_entry_key(e) for e in task.translate_entries)
             for entry in task.polish_entries:
-                candidate = result.polish.get(entry.id)
+                candidate = result.polish.get(ai_entry_id(entry))
                 if candidate is None or getattr(candidate, "verdict", "") in {"error", "failed"}:
-                    failed.append(entry.key)
+                    failed.append(ai_entry_key(entry))
             result.failed_keys = tuple(dict.fromkeys(failed))
             if self.stop.is_set():
                 result.cancelled = True
                 result.error = "任务已取消"
-                result.failed_keys = tuple(e.key for e in task.entries)
+                result.failed_keys = tuple(ai_entry_key(e) for e in task.entries)
         except Exception as exc:
             logger.exception("AI 来源 %s 执行失败", task.label)
             result.error = f"{task.label}：{exc}"
-            result.failed_keys = tuple(e.key for e in task.entries)
+            result.failed_keys = tuple(ai_entry_key(e) for e in task.entries)
         finally:
             result.diagnostics = tuple(getattr(result.polish, "diagnostics", ()))
             store.close()
@@ -166,7 +168,7 @@ class SourceExecutor:
         )
         return translator.translate(
             collection=task.collection,
-            target_entry_ids=[e.key for e in task.translate_entries],
+            target_entry_ids=[ai_entry_key(e) for e in task.translate_entries],
             strict_target_scope=True,
             progress_callback=lambda c, t, m, *_: self.progress(task.key, "翻译", c, t, m),
             stop_event=self.stop,
@@ -241,7 +243,9 @@ def build_source_snapshot(outcome: SourceOutcome, request, *, cancelled: bool = 
     snapshot = getattr(outcome.translation, "post_process_result", None)
     if outcome.task.polish_entries:
         summary = outcome.polish_summary
-        failed = tuple(entry.id for entry in outcome.task.polish_entries if entry.key in outcome.failed_keys)
+        failed = tuple(
+            ai_entry_id(entry) for entry in outcome.task.polish_entries if ai_entry_key(entry) in outcome.failed_keys
+        )
         polish = build_polish_report_snapshot(
             outcome.polish,
             list(outcome.task.polish_entries),
@@ -250,14 +254,18 @@ def build_source_snapshot(outcome: SourceOutcome, request, *, cancelled: bool = 
             failed_entry_ids=summary.failed_entry_ids if summary else failed,
             rejected_entry_ids=summary.rejected_entry_ids if summary else (),
             pending_entry_ids=(
-                () if summary else tuple(entry.id for entry in outcome.task.polish_entries if entry.id not in failed)
+                ()
+                if summary
+                else tuple(
+                    ai_entry_id(entry) for entry in outcome.task.polish_entries if ai_entry_id(entry) not in failed
+                )
             ),
         )
         candidates = []
         failed_keys = set()
         counts: dict[str, int] = {"accepted": 0, "rejected": 0, "failed": 0}
         for candidate, entry in zip(polish.candidates, outcome.task.polish_entries, strict=True):
-            result = outcome.polish.get(entry.id)
+            result = outcome.polish.get(ai_entry_id(entry))
             details = dict(candidate.report_details)
             processing = getattr(result, "processing_status", "")
             if result is None:
@@ -320,11 +328,11 @@ def _include_translation_failures(snapshot, outcome):
     # Cancellation marks the entire source failed for atomic application. Only
     # explicit per-entry failures remain failures in its historical record.
     by_id: dict[str, list[str]] = {}
-    by_key = {entry.key: entry.id for entry in outcome.task.translate_entries}
+    by_key = {ai_entry_key(entry): ai_entry_id(entry) for entry in outcome.task.translate_entries}
     for reason in reasons:
         entry_id = by_key.get(reason, reason.partition(": ")[0])
         by_id.setdefault(entry_id, []).append(reason)
-    has_owned_failures = any(entry.id in by_id for entry in outcome.task.translate_entries)
+    has_owned_failures = any(ai_entry_id(entry) in by_id for entry in outcome.task.translate_entries)
     use_source_failures = outcome.translation is None or (
         getattr(outcome.translation, "failed_count", 0) > 0 and not has_owned_failures
     )
@@ -333,8 +341,8 @@ def _include_translation_failures(snapshot, outcome):
     failed_keys = set(outcome.failed_keys) if use_source_failures and not outcome.cancelled else set()
     failures = {}
     for entry in outcome.task.translate_entries:
-        owned = by_id.get(entry.id, ())
-        if owned or entry.key in failed_keys:
+        owned = by_id.get(ai_entry_id(entry), ())
+        if owned or ai_entry_key(entry) in failed_keys:
             failures[entry.identity] = "\n".join(owned) or outcome.error or "翻译失败"
     if not failures:
         return snapshot

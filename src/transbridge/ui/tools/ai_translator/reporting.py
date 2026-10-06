@@ -112,6 +112,10 @@ def render_snapshot_report(snapshot: ReportSnapshot | None, esp_stem: str) -> Tr
 def diagnostic_entry_id(details: tuple[tuple[str, object], ...]) -> str:
     entry_key = dict(details).get("entry_key")
     if isinstance(entry_key, dict):
+        if entry_key.get("original") is not None:
+            from transbridge.application.io.identity import EntryKey
+
+            return EntryKey.from_dict(entry_key).serialize()
         return str(entry_key.get("local_key", ""))
     return ""
 

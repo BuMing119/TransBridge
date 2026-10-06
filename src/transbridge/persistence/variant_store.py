@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import warnings
 
 from ._utils import atomic_write_json, validate_name
-from .v2.variant import plan_legacy_variant_projection
+from .v2.variant import legacy_variant_entry_key, plan_legacy_variant_projection
 
 if TYPE_CHECKING:
     from transbridge.converter.translation_entry import TranslationEntry
@@ -114,16 +114,19 @@ class VariantStore:
         aggregate 而不是 UI 过滤结果。
         """
         included = [entry for entry in entries if entry.id]
-        self.translations = {entry.id: entry.translation for entry in included}
+        self.translations = {legacy_variant_entry_key(entry): entry.translation for entry in included}
         self.entry_states = {
-            entry.id: {
+            legacy_variant_entry_key(entry): {
                 "stage": entry.stage,
                 "revision": entry.revision.value,
                 "provenance": [item.to_dict() for item in entry.provenance],
             }
             for entry in included
         }
-        self.labels = {entry.id: set(entry_labels.get(entry.id, ())) for entry in included}
+        self.labels = {
+            legacy_variant_entry_key(entry): set(entry_labels.get(legacy_variant_entry_key(entry), ()))
+            for entry in included
+        }
         self.label_library = {k: dict(v) for k, v in label_library.items()}
         self.dirty = True
 

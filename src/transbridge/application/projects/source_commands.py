@@ -14,6 +14,7 @@ from transbridge.application.contracts import (
     OperationResult,
     RequestContext,
 )
+from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.persistence.v2.baselines import BaselineRegistry
 from transbridge.persistence.v2.ids import VariantId, VariantRef
 from transbridge.persistence.v2.models import ProjectDto, SchemaEnvelope
@@ -333,15 +334,21 @@ def _variant_refs(project: ProjectDto) -> tuple[VariantRef, ...]:
 
 def source_request_with_initial_entry_states(
     request: ProjectSourceRequest,
-    states: Mapping[str, tuple[str, int]],
+    states: Mapping[EntryKey | str, tuple[str, int]],
 ) -> ProjectSourceRequest:
     """Attach parsed translations to the source command without exposing a second commit."""
 
     if any(key == _INITIAL_ENTRY_STATES_OPTION for key, _value in request.options):
         raise ValueError("source request already contains initial entry states")
     payload = [
-        {"local_key": str(local_key), "translation": str(translation), "stage": int(stage)}
-        for local_key, (translation, stage) in sorted(states.items())
+        {
+            **({"entry_key": key.to_dict()} if isinstance(key, EntryKey) else {"local_key": str(key)}),
+            "translation": str(translation),
+            "stage": int(stage),
+        }
+        for key, (translation, stage) in sorted(
+            states.items(), key=lambda item: item[0].serialize() if isinstance(item[0], EntryKey) else str(item[0])
+        )
     ]
     return ProjectSourceRequest(
         request.location,
@@ -353,19 +360,19 @@ def source_request_with_initial_entry_states(
 
 def _split_initial_entry_states(
     request: ProjectSourceRequest,
-) -> tuple[ProjectSourceRequest, dict[str, tuple[str, int]]]:
+) -> tuple[ProjectSourceRequest, dict[EntryKey | str, tuple[str, int]]]:
     options = dict(request.options)
     payload = options.pop(_INITIAL_ENTRY_STATES_OPTION, ())
     if not isinstance(payload, (list, tuple)):
         raise ValueError("initial source entry states must be a list")
-    states: dict[str, tuple[str, int]] = {}
+    states: dict[EntryKey | str, tuple[str, int]] = {}
     for item in payload:
         if not isinstance(item, dict):
             raise ValueError("initial source entry state must be an object")
-        local_key = str(item.get("local_key", ""))
-        if not local_key or local_key in states:
+        key = EntryKey.from_dict(item["entry_key"]) if "entry_key" in item else str(item.get("local_key", ""))
+        if not key or key in states:
             raise ValueError("initial source entry state keys must be unique and non-empty")
-        states[local_key] = (str(item.get("translation", "")), int(item.get("stage", 0)))
+        states[key] = (str(item.get("translation", "")), int(item.get("stage", 0)))
     sanitized = ProjectSourceRequest(
         request.location,
         request.format_hint,
@@ -375,12 +382,19 @@ def _split_initial_entry_states(
     return sanitized, states
 
 
-def _apply_initial_entry_states(prepared, states: Mapping[str, tuple[str, int]]):
+def _apply_initial_entry_states(prepared, states: Mapping[EntryKey | str, tuple[str, int]]):
     if not states:
         return prepared
 
     def apply(entry):
-        state = states.get(entry.entry_key.local_key)
+        state = states.get(entry.entry_key)
+        if state is None:
+            # The GUI parser uses legacy:v1 before this command assigns the
+            # verified source namespace. Rebind only that source-local identity,
+            # preserving its original discriminator; other namespaces stay exact.
+            state = states.get(replace(entry.entry_key, namespace=SourceNamespace.legacy()))
+        if state is None and entry.entry_key.original is None:
+            state = states.get(entry.entry_key.local_key)
         current_stage = entry.stage.value if hasattr(entry.stage, "value") else int(entry.stage)
         if state is None or state == (entry.translation, current_stage):
             return entry

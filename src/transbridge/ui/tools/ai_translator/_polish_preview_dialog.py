@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from transbridge.application.translation.entry_alias import ai_entry_id
 from transbridge.ui.foundation.adapters import ThemeView
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState
 
@@ -115,7 +116,7 @@ class _PolishPreviewDialog(QDialog):
         self._row_status.clear()
 
         for row, entry in enumerate(self._entries):
-            result = self._results.get(entry.id)
+            result = self._results.get(ai_entry_id(entry))
             if result is None:
                 self._row_status[row] = _STATUS_REJECTED
                 self._add_row(
@@ -262,11 +263,11 @@ class _PolishPreviewDialog(QDialog):
         for row, entry in enumerate(self._entries):
             status = self._row_status.get(row, _STATUS_REJECTED)
             if status == _STATUS_ACCEPTED:
-                polish_result = self._results.get(entry.id)
+                polish_result = self._results.get(ai_entry_id(entry))
                 if polish_result:
-                    result[entry.id] = polish_result.polished_translation
+                    result[ai_entry_id(entry)] = polish_result.polished_translation
                 else:
-                    result[entry.id] = None
+                    result[ai_entry_id(entry)] = None
             else:
-                result[entry.id] = None
+                result[ai_entry_id(entry)] = None
         return result

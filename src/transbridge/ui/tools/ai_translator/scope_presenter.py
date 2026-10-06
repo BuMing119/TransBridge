@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from typing import Literal, Protocol, TypeVar
 
 from transbridge.converter.translation_entry import STAGE_HIDDEN, STAGE_LOCKED
+from transbridge.ui.project_labels import entry_label_key
 
 EntryT = TypeVar("EntryT")
 
@@ -131,13 +132,15 @@ class ScopePresenter:
                 return []
             candidates = list(collection)
             if state.preset == "selection":
-                candidates = [entry for entry in candidates if entry.id in state.selected_entry_ids]
+                candidates = [entry for entry in candidates if entry_label_key(entry) in state.selected_entry_ids]
             if state.stage_filters:
                 candidates = [entry for entry in candidates if entry.stage in state.stage_filters]
             if state.label_filters:
                 labels = self._label_projection_provider()
                 candidates = [
-                    entry for entry in candidates if entry.id and labels.get(entry.id, set()) & state.label_filters
+                    entry
+                    for entry in candidates
+                    if entry.id and labels.get(entry_label_key(entry), set()) & state.label_filters
                 ]
             if state.category_filters:
                 candidates = [entry for entry in candidates if self._category_of(entry) in state.category_filters]
@@ -153,8 +156,8 @@ class ScopePresenter:
         snapshot = list(entries)
         actions = apply_rules(rules, snapshot)
         return MixedScope(
-            tuple(entry for entry in snapshot if actions.get(entry.id) == "translate"),
-            tuple(entry for entry in snapshot if actions.get(entry.id) == "polish"),
+            tuple(entry for entry in snapshot if actions.get(entry_label_key(entry)) == "translate"),
+            tuple(entry for entry in snapshot if actions.get(entry_label_key(entry)) == "polish"),
         )
 
     def estimate(

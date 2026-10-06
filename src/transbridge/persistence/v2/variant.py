@@ -237,6 +237,14 @@ class LegacyProjection:
     stage: int
 
 
+def legacy_variant_entry_key(entry: Any) -> str:
+    """Preserve plain legacy IDs, but never collapse text-disambiguated entries."""
+    identity = getattr(entry, "entry_key", None)
+    if isinstance(identity, EntryKey) and identity.original is not None:
+        return identity.serialize()
+    return entry.id
+
+
 def plan_legacy_variant_projection(
     entries: Iterable[Any],
     translations: Mapping[str, str],
@@ -253,17 +261,20 @@ def plan_legacy_variant_projection(
 
     baseline = None
     if source_baseline is not None:
-        baseline = {entry.id: (entry.translation, entry.stage) for entry in source_baseline if entry.id}
+        baseline = {
+            legacy_variant_entry_key(entry): (entry.translation, entry.stage) for entry in source_baseline if entry.id
+        }
     projections: list[LegacyProjection] = []
     complete = True
     for entry in entries:
         if not entry.id:
             continue
-        if entry.id in translations:
-            translation = translations[entry.id]
-            stage = stages.get(entry.id, entry.stage)
-        elif baseline is not None and entry.id in baseline:
-            translation, stage = baseline[entry.id]
+        key = legacy_variant_entry_key(entry)
+        if key in translations:
+            translation = translations[key]
+            stage = stages.get(key, entry.stage)
+        elif baseline is not None and key in baseline:
+            translation, stage = baseline[key]
         else:
             complete = False
             continue
@@ -484,7 +495,7 @@ def _warning(code: str, message: str, namespace: SourceNamespace, key: EntryKey 
 
 
 def _compatibility_key(key: EntryKey) -> str:
-    return key.local_key if key.namespace == SourceNamespace.legacy() else key.serialize()
+    return key.local_key if key.namespace == SourceNamespace.legacy() and key.original is None else key.serialize()
 
 
 def _freeze_json(value: Any) -> Any:

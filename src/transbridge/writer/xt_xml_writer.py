@@ -1,3 +1,5 @@
+from collections import Counter
+import logging
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -40,7 +42,7 @@ class XTWriter:
         # Phase 2 回退索引：(source, rec) → entry（只保留有译文的）
         fallback_index: dict[tuple[str, str], TranslationEntry] = {}
         for entry in collection:
-            if not entry.translation:
+            if not entry.translation or entry.requires_original_match:
                 continue
             ctx_base = entry.context.split("|")[0] if entry.context else ""
             fb_key = (entry.original, ctx_base)
@@ -49,10 +51,39 @@ class XTWriter:
 
         updated = 0
 
-        for string in self.root.findall(".//Content/String"):
+        nodes = self.root.findall(".//Content/String")
+        node_counts = Counter(_node_identity(node) for node in nodes)
+        for string in nodes:
             edid = string.findtext("EDID", "").strip()
             rec = string.findtext("REC", "").strip()
             source = string.findtext("Source", "") or ""
+
+            candidates_by_identity = {
+                item.identity: item
+                for bucket in (by_editid.get(edid, ()), by_formid.get(edid, ()), by_bracket_formid.get(edid, ()))
+                for item in bucket
+            }
+            if any(item.requires_original_match for item in candidates_by_identity.values()):
+                locator = _node_identity(string)
+                matches = [
+                    item
+                    for item in candidates_by_identity.values()
+                    if item.original == source
+                    and (item.context.split("|")[0] if item.context else "") == rec
+                    and _entry_index(item) == locator[2]
+                    and locator[2] is not None
+                ]
+                if len(matches) != 1 or node_counts[locator] != 1:
+                    logging.getLogger(__name__).warning(
+                        "SOURCE_ORIGINAL_MATCH_REQUIRED: XT 词条 %s 无法由索引和原文唯一定位，已跳过。", edid
+                    )
+                    continue
+                entry = matches[0]
+                dest_node = string.find("Dest")
+                if entry.translation and dest_node is not None:
+                    dest_node.text = entry.translation
+                    updated += 1
+                continue
 
             # Phase 1：从三种 edid 候选桶中找匹配的 entry
             entry = None
@@ -86,3 +117,25 @@ class XTWriter:
 
     def write(self, path: str | Path):
         self.tree.write(path, encoding="utf-8", xml_declaration=True)
+
+
+def _entry_index(entry: TranslationEntry) -> int | None:
+    index = entry.id.partition("|")[2].partition("~")[0]
+    try:
+        return int(index)
+    except ValueError:
+        return None
+
+
+def _node_identity(node: ET.Element) -> tuple[str, str, int | None, str]:
+    rec = node.find("REC")
+    try:
+        index = int(rec.get("id", "0")) + 1 if rec is not None else 1
+    except ValueError:
+        index = None
+    return (
+        (node.findtext("EDID", "") or "").strip(),
+        (node.findtext("REC", "") or "").strip(),
+        index,
+        node.findtext("Source", "") or "",
+    )

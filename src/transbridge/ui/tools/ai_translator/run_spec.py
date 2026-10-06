@@ -19,6 +19,7 @@ from typing import Literal
 
 from transbridge.application.tasks import JobCapabilities, OwnerRef
 from transbridge.application.translation.ai_execution_profile import AiExecutionProfile
+from transbridge.application.translation.entry_alias import ai_entry_id, ai_entry_key
 from transbridge.application.translation.terminology_run_snapshot import TerminologyRunSnapshotRef
 from transbridge.ui.shell.action_catalog import IntentId
 
@@ -332,8 +333,7 @@ def build_run_spec(
 
 
 def _entry_key(entry: object) -> str:
-    for field in ("id", "key"):
-        value = getattr(entry, field, None)
+    for value in (ai_entry_id(entry), ai_entry_key(entry)):
         if value is not None and str(value).strip():
             return str(value)
     raise ValueError("AI run entries require a stable id or key")

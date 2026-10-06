@@ -10,6 +10,7 @@ import os
 import threading
 
 from transbridge.application.tasks import TaskCleanupFailed
+from transbridge.application.translation.entry_alias import ai_entry_key
 
 from .base import ToolResult, require_collection, require_runtime_context
 from .task_control import action_label, control_tasks, get_scoped_task_status
@@ -161,7 +162,7 @@ class TranslationController:
                 from .base import filter_entries
 
                 scoped = filter_entries(collection, {"stage": [0]})
-                entry_ids = [e.key for e in scoped]
+                entry_ids = [ai_entry_key(e) for e in scoped]
                 logger.info("start_translation: 未指定条目，默认作用域=全部未翻译(stage=0)，共 %d 条", len(entry_ids))
 
         # M4: 浅拷贝闭包捕获的可变引用，防止集合切换时读到错误数据
@@ -320,12 +321,12 @@ class TranslationController:
             if not targets:
                 scope_labels = {"all": "有译文", "passed": "已通过检查", "has_issues": "待审核"}
                 return ToolResult.fail(f"没有符合 scope={scope}（{scope_labels.get(scope, scope)}）的条目")
-            entry_ids = [e.key for e in targets]
+            entry_ids = [ai_entry_key(e) for e in targets]
         elif not entry_ids:
             return ToolResult.fail("请指定要润色的 entry_ids")
         else:
             targets = [collection.get(eid) for eid in entry_ids if collection.get(eid)]
-            entry_ids = [e.key for e in targets]
+            entry_ids = [ai_entry_key(e) for e in targets]
 
         if not targets:
             return ToolResult.fail("所有指定的 entry_id 均无效，未找到匹配条目")

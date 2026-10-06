@@ -76,9 +76,7 @@ class PostProcessCheckpoint:
             raise ValueError("post-process checkpoint input fingerprint must be a SHA-256 digest")
         if isinstance(self.revision, bool) or not isinstance(self.revision, int) or self.revision < 0:
             raise ValueError("post-process checkpoint revision must be non-negative")
-        keys = tuple(
-            (entry.entry_key.get("namespace", ""), entry.entry_key.get("local_key", "")) for entry in self.entries
-        )
+        keys = tuple(EntryKey.from_dict(entry.entry_key) for entry in self.entries)
         if len(keys) != len(set(keys)):
             raise ValueError("post-process checkpoint entries must have unique EntryKeys")
 

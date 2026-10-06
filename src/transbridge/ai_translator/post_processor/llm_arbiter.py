@@ -12,6 +12,7 @@ import tomllib
 from typing import TYPE_CHECKING, Literal
 import warnings
 
+from transbridge.application.translation.entry_alias import ai_entry_id, ai_entry_key
 from transbridge.config.language_profiles import load_language_profile
 from transbridge.config.paths import get_data_resource_dir
 
@@ -331,7 +332,7 @@ class LLMArbiter:
                 messages=messages,
                 max_tokens=output_token_limit(self._max_output_tokens, 1000),
             )
-            return self._parse_arbitration_response(ctx.entry.id, response)
+            return self._parse_arbitration_response(ai_entry_id(ctx.entry), response)
         except Exception as e:
             # LLM调用失败，基于规则做保守判定
             return self._fallback_decision(ctx, str(e))
@@ -359,7 +360,7 @@ class LLMArbiter:
         for ctx in contexts:
             quick = self._quick_decide(ctx)
             if quick:
-                decisions[ctx.entry.key] = quick
+                decisions[ai_entry_key(ctx.entry)] = quick
             else:
                 needs_llm.append(ctx)
 
@@ -376,7 +377,7 @@ class LLMArbiter:
             except Exception as e:
                 # 批量失败，逐个使用fallback
                 for ctx in needs_llm:
-                    decisions[ctx.entry.key] = self._fallback_decision(ctx, str(e))
+                    decisions[ai_entry_key(ctx.entry)] = self._fallback_decision(ctx, str(e))
 
         return decisions
 
@@ -394,7 +395,7 @@ class LLMArbiter:
         # 情况1：无问题且无修复/润色 -> 直接通过
         if not issues and not refine and not polish:
             return ArbiterDecision(
-                entry_id=entry.key,
+                entry_id=ai_entry_key(entry),
                 verdict="pass",
                 reason="无检测到的问题，无需修复或润色",
                 confidence=1.0,
@@ -405,14 +406,14 @@ class LLMArbiter:
         if refine and refine.confidence == 0 and refine.note.startswith("LLM修复失败"):
             if self._strict_mode:
                 return ArbiterDecision(
-                    entry_id=entry.key,
+                    entry_id=ai_entry_key(entry),
                     verdict="reject",
                     reason=f"修复失败: {refine.note}",
                     confidence=0.9,
                     suggested_action="打回重翻",
                 )
             return ArbiterDecision(
-                entry_id=entry.key,
+                entry_id=ai_entry_key(entry),
                 verdict="pending",
                 reason=f"修复失败: {refine.note}，需人工处理",
                 confidence=0.8,
@@ -421,7 +422,7 @@ class LLMArbiter:
 
         if polish and polish.confidence == 0 and polish.note:
             return ArbiterDecision(
-                entry_id=entry.key,
+                entry_id=ai_entry_key(entry),
                 verdict="reject" if self._strict_mode else "pending",
                 reason=f"润色失败: {polish.note}",
                 confidence=0.0,
@@ -436,7 +437,7 @@ class LLMArbiter:
             remaining_issues = [i for i in issues if i.issue_type not in fixed_types]
             if not remaining_issues:
                 return ArbiterDecision(
-                    entry_id=entry.key,
+                    entry_id=ai_entry_key(entry),
                     verdict="pass",
                     reason=f"修复信心度高({refine.confidence:.2f})，所有问题已修复",
                     confidence=refine.confidence,
@@ -447,7 +448,7 @@ class LLMArbiter:
         if refine and refine.confidence < 0.5:
             if self._strict_mode:
                 return ArbiterDecision(
-                    entry_id=entry.key,
+                    entry_id=ai_entry_key(entry),
                     verdict="reject",
                     reason=f"修复信心度过低({refine.confidence:.2f})，存在风险",
                     confidence=0.8,
@@ -455,7 +456,7 @@ class LLMArbiter:
                 )
             else:
                 return ArbiterDecision(
-                    entry_id=entry.key,
+                    entry_id=ai_entry_key(entry),
                     verdict="pending",
                     reason=f"修复信心度低({refine.confidence:.2f})，需要人工确认",
                     confidence=0.7,
@@ -466,7 +467,7 @@ class LLMArbiter:
         if error_issues:
             if self._strict_mode:
                 return ArbiterDecision(
-                    entry_id=entry.key,
+                    entry_id=ai_entry_key(entry),
                     verdict="reject",
                     reason=f"存在未修复的严重问题: {error_issues[0].message}",
                     confidence=0.85,
@@ -492,7 +493,7 @@ class LLMArbiter:
             verdict = "pending"
 
         return ArbiterDecision(
-            entry_id=ctx.entry.key,
+            entry_id=ai_entry_key(ctx.entry),
             verdict=verdict,
             reason=f"LLM裁决失败: {error_msg}，使用保守策略",
             confidence=0.5,
@@ -567,7 +568,7 @@ class LLMArbiter:
                 final_translation = entry.translation or ""
 
             lines.append(f"\n{'=' * 60}")
-            lines.append(f"【ENTRY_ID: {entry.id}】")
+            lines.append(f"【ENTRY_ID: {ai_entry_id(entry)}】")
             lines.append(f"Source: {entry.original or ''}")
             lines.append(f"Initial translation: {entry.translation or ''}")
             lines.append(f"Corrected translation: {refine.refined_translation if refine else 'N/A'}")
@@ -711,7 +712,9 @@ class LLMArbiter:
         response: str,
     ) -> dict[str, ArbiterDecision]:
         """解析批量裁决响应。"""
-        context_map = {alias: ctx for ctx in contexts for alias in {str(ctx.entry.id), str(ctx.entry.key)}}
+        context_map = {
+            alias: ctx for ctx in contexts for alias in {str(ai_entry_id(ctx.entry)), str(ai_entry_key(ctx.entry))}
+        }
         decisions = {}
         duplicate_entry_ids: set[str] = set()
 
@@ -726,7 +729,7 @@ class LLMArbiter:
                 ctx = context_map.get(response_id)
                 if ctx is None:
                     continue
-                entry_id = str(ctx.entry.id)
+                entry_id = str(ai_entry_id(ctx.entry))
                 if entry_id in decisions:
                     duplicate_entry_ids.add(entry_id)
                     continue
@@ -745,7 +748,7 @@ class LLMArbiter:
                 )
 
             for ctx in contexts:
-                entry_id = str(ctx.entry.id)
+                entry_id = str(ai_entry_id(ctx.entry))
                 if entry_id in duplicate_entry_ids:
                     decisions[entry_id] = self._fallback_decision(ctx, "批量响应重复返回该条目")
                     continue
@@ -755,6 +758,6 @@ class LLMArbiter:
         except (AttributeError, TypeError, json.JSONDecodeError):
             # JSON解析失败，所有条目使用fallback
             for ctx in contexts:
-                decisions[ctx.entry.id] = self._fallback_decision(ctx, "批量响应解析失败")
+                decisions[ai_entry_id(ctx.entry)] = self._fallback_decision(ctx, "批量响应解析失败")
 
         return decisions

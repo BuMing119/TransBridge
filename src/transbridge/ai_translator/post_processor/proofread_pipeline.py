@@ -8,7 +8,9 @@ import inspect
 import threading
 
 from transbridge.application.contracts import Diagnostic, ErrorCategory
+from transbridge.application.io.identity import EntryKey
 from transbridge.application.translation.ai_execution_profile import AiExecutionProfile
+from transbridge.application.translation.entry_alias import ai_entry_id, ai_entry_key
 from transbridge.application.translation.postprocess import PostProcessCandidate
 from transbridge.application.translation.proofread_events import ProofreadEventLog
 from transbridge.application.translation.proofread_stage import ProofreadStage
@@ -36,6 +38,7 @@ class ProofreadResult:
     processing_status: str = ""
     candidate_translation: str | None = None
     target_stage: int | None = None
+    identity: EntryKey | None = None
 
     @property
     def accepted(self) -> bool:
@@ -180,7 +183,7 @@ class ProofreadPipeline:
         if self._proofread_stage is None:
             events.emit("未配置可用的校对模型")
             return {
-                str(entry.id): self._proofread_result(entry, valid=False, note="未配置可用的校对模型")
+                str(ai_entry_id(entry)): self._proofread_result(entry, valid=False, note="未配置可用的校对模型")
                 for entry in entries
             }
         initially_paused = pause_event is not None and not pause_event.is_set()
@@ -190,7 +193,7 @@ class ProofreadPipeline:
             if stop_event is not None and stop_event.is_set():
                 events.emit("校对已取消")
                 return {
-                    str(entry.id): self._proofread_result(
+                    str(ai_entry_id(entry)): self._proofread_result(
                         entry, valid=False, note="未处理", processing_status="not_started"
                     )
                     for entry in entries
@@ -199,7 +202,7 @@ class ProofreadPipeline:
         if stop_event is not None and stop_event.is_set():
             events.emit("校对已取消")
             return {
-                str(entry.id): self._proofread_result(
+                str(ai_entry_id(entry)): self._proofread_result(
                     entry, valid=False, note="未处理", processing_status="not_started"
                 )
                 for entry in entries
@@ -283,7 +286,7 @@ class ProofreadPipeline:
                 processing_status = "not_started"
             if cancelled:
                 note = "校对已取消" + (f"；{note}" if note else "")
-            projected[str(entry.id)] = self._proofread_result(
+            projected[str(ai_entry_id(entry))] = self._proofread_result(
                 entry,
                 valid=valid,
                 translation=candidate.text if valid and candidate is not None else None,
@@ -312,8 +315,8 @@ class ProofreadPipeline:
     ) -> ProofreadResult:
         final_translation = translation if valid and translation is not None else entry.translation or ""
         return ProofreadResult(
-            entry_id=str(entry.id),
-            entry_key=str(entry.key),
+            entry_id=str(ai_entry_id(entry)),
+            entry_key=str(ai_entry_key(entry)),
             original_translation=entry.translation or "",
             polished_translation=final_translation,
             confidence=1.0 if valid else 0.0,
@@ -323,6 +326,7 @@ class ProofreadPipeline:
             processing_status=processing_status or ("completed" if valid else "failed"),
             candidate_translation=candidate_translation,
             target_stage=target_stage,
+            identity=getattr(entry, "identity", None),
         )
 
     def _project(self, entries: tuple[object, ...], result: PostProcessResult) -> dict[str, ProofreadResult]:
@@ -334,7 +338,7 @@ class ProofreadPipeline:
         decisions = result.decisions or {}
         projected: dict[str, ProofreadResult] = {}
         for entry in entries:
-            entry_id = str(entry.id)
+            entry_id = str(ai_entry_id(entry))
             refined = refine_results.get(entry_id)
             polished = polish_results.get(entry_id)
             decision = decisions.get(entry_id)
@@ -373,7 +377,7 @@ class ProofreadPipeline:
             ]
             projected[entry_id] = ProofreadResult(
                 entry_id=entry_id,
-                entry_key=str(entry.key),
+                entry_key=str(ai_entry_key(entry)),
                 original_translation=entry.translation or "",
                 polished_translation=final_translation,
                 confidence=confidence,
@@ -384,6 +388,7 @@ class ProofreadPipeline:
                 refined_translation=getattr(refined, "refined_translation", None),
                 changes=tuple(getattr(polished, "changes", ()) or ()),
                 processing_status=processing_status,
+                identity=getattr(entry, "identity", None),
             )
         return projected
 

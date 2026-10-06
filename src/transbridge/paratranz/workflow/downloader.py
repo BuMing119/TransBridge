@@ -11,10 +11,13 @@ ParaTranzDownloader：从 ParaTranz 下载译文并合并到本地 TranslationEn
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+import logging
 
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.paratranz.api.paratranz_files_api import ParatranzFilesAPI
 from transbridge.paratranz.config_manager import ParatranzConfig
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -25,6 +28,7 @@ class DownloadResult:
     skipped_no_match: int = 0  # key 在本地集合中不存在的词条数
     skipped_low_stage: int = 0  # stage 不足或译文为空，跳过的词条数
     total_strings: int = 0  # 从 ParaTranz 拉取的词条总数
+    skipped_original_match: int = 0  # ParaTranz 裸 key 无法安全定位要求原文匹配的词条
 
 
 class ParaTranzDownloader:
@@ -54,6 +58,12 @@ class ParaTranzDownloader:
             DownloadResult
         """
         result = DownloadResult()
+        protected_keys = {
+            alias
+            for entry in collection
+            if entry.requires_original_match
+            for alias in (entry.key, entry.id, entry.identity.serialize())
+        }
 
         try:
             files = self._api.list_files(project_id) or []
@@ -94,6 +104,10 @@ class ParaTranzDownloader:
                     result.skipped_low_stage += 1
                     continue
 
+                if key in protected_keys:
+                    result.skipped_original_match += 1
+                    continue
+
                 # 按 key 匹配本地词条（ParaTranz key == 本地 entry.id）
                 entry = collection.get(key)
                 if entry is None:
@@ -114,6 +128,12 @@ class ParaTranzDownloader:
 
                 result.merged += 1
 
+        if result.skipped_original_match:
+            _logger.warning(
+                "ParaTranz project %s: skipped %s remote records whose local entries require original matching",
+                project_id,
+                result.skipped_original_match,
+            )
         if progress_callback:
             progress_callback(total, total, "完成")
 

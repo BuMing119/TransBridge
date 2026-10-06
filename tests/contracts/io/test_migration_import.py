@@ -2,20 +2,57 @@ from __future__ import annotations
 
 from collections import Counter
 import json
+import logging
 from pathlib import Path
 import struct
 
 import pytest
 
+from tests.plugin_fixtures import write_plugin
 from transbridge.application.io import EntryKey, FormatId, SourceNamespace
+from transbridge.application.io.legacy_migration import prepare_legacy_migration
 from transbridge.application.io.migration_import import MigrationImportError, prepare_migration_import
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.parser.plugin_parser import PluginParser
 from transbridge.parser.xt.sst_parser import SST_Parser
 
 
 def _collection(*entries: TranslationEntry) -> TranslationEntryCollection:
     return TranslationEntryCollection(entries)
+
+
+@pytest.mark.parametrize("suffix", ["strings", "dlstrings", "ilstrings"])
+def test_strings_draft_preserves_id_matching_and_existing_translation(tmp_path, suffix):
+    source_text = "导入译文".encode() + b"\0"
+    data = source_text if suffix == "strings" else struct.pack("<I", len(source_text)) + source_text
+    (tmp_path / f"Plugin_Chinese.{suffix}").write_bytes(struct.pack("<IIII", 1, len(data), 7, 0) + data)
+    target = _collection(
+        TranslationEntry("empty", "empty", "Source", "", 0, "NPC_:FULL", string_id=7),
+        TranslationEntry("protected", "protected", "Other", "人工译文", 3, "INFO:NAM1", string_id=7),
+        TranslationEntry("unmatched", "unmatched", "Other", "", 0, "NPC_:FULL", string_id=8),
+    )
+    before = tuple(entry.snapshot() for entry in target)
+
+    draft = prepare_legacy_migration(target, strings_dir=str(tmp_path), plugin_stem="Plugin", strings_lang="chinese")
+
+    assert draft.collection.get("empty").translation == "导入译文"
+    assert draft.collection.get("protected").translation == "人工译文"
+    assert draft.collection.get("protected").stage == 3
+    assert not draft.collection.get("unmatched").translation
+    assert tuple(entry.snapshot() for entry in target) == before
+    assert draft.strings_lookup.get(7) == "导入译文"
+
+
+def test_strings_rejects_partial_file_instead_of_importing_valid_prefix(tmp_path):
+    text = b"Good\0"
+    (tmp_path / "Plugin_Chinese.strings").write_bytes(struct.pack("<IIIIII", 2, len(text), 7, 0, 8, 1000) + text)
+    target = _collection(TranslationEntry("one", "one", "Source", "", 0, None, string_id=7))
+
+    with pytest.raises(MigrationImportError, match="MIGRATION_STRINGS_INVALID"):
+        prepare_legacy_migration(target, strings_dir=str(tmp_path), plugin_stem="Plugin", strings_lang="chinese")
+
+    assert not target.get("one").translation
 
 
 def test_paratranz_draft_maps_only_an_existing_unique_local_key(tmp_path: Path) -> None:
@@ -136,3 +173,62 @@ def test_ssu8_without_translated_text_has_stable_diagnostic(tmp_path: Path) -> N
         prepare_migration_import(source, target)
 
     assert not target.get("npc").translation
+
+
+def test_translated_plugin_draft_uses_text_without_mutating_target(tmp_path):
+    source = write_plugin(tmp_path / "source.esp", [(0x800, "TestNpc", "Hello")])
+    target = TranslationEntryCollection(PluginParser().parse_plugin(source))
+    translated = write_plugin(tmp_path / "translated.esp", [(0x800, "TestNpc", "你好")])
+    entry = next(iter(target))
+
+    draft = prepare_migration_import(translated, target, format_hint=FormatId.PLUGIN_SSE)
+
+    assert draft.format_id is FormatId.PLUGIN_SSE
+    assert draft.state_mapping() == {entry.identity: ("你好", 1)}
+    assert next(iter(target)).translation == ""
+
+
+def test_unchanged_plugin_text_is_not_marked_translated(tmp_path):
+    source = write_plugin(tmp_path / "source.esp", [(0x800, "TestNpc", "Hello")])
+    target = TranslationEntryCollection(PluginParser().parse_plugin(source))
+
+    draft = prepare_migration_import(source, target)
+
+    assert not draft.states
+    assert next(iter(target)).stage == 0
+
+
+@pytest.mark.parametrize("all_conflicted", [False, True])
+def test_plugin_skips_conflicting_record_ids_with_warning(tmp_path, caplog, all_conflicted):
+    source = write_plugin(tmp_path / "source.esp", [(0x800, "TestNpc", "Hello"), (0x801, "OtherNpc", "Other")])
+    target = TranslationEntryCollection(PluginParser().parse_plugin(source))
+    translated = write_plugin(
+        tmp_path / "translated.esp",
+        ([] if all_conflicted else [(0x800, "TestNpc", "你好")])
+        + [(0x801, "OtherNpc", "同文"), (0x801, "OtherNpc", "同文")],
+    )
+
+    with caplog.at_level(logging.WARNING):
+        draft = prepare_migration_import(translated, target)
+
+    expected = {} if all_conflicted else {next(iter(target)).identity: ("你好", 1)}
+    assert draft.state_mapping() == expected
+    assert draft.skipped_conflicts == 2
+    assert draft.skipped_unmatched == 0
+    warnings = [record for record in caplog.records if "SOURCE_LOCATOR_CONFLICT" in record.message]
+    assert len(warnings) == 1
+    assert warnings[0].levelno == logging.WARNING
+    assert str(translated) in warnings[0].message
+    assert "2 条" in warnings[0].message
+    assert all(not entry.translation for entry in target)
+
+
+def test_unmatched_plugin_records_do_not_use_text_fallback(tmp_path):
+    source = write_plugin(tmp_path / "source.esp", [(0x800, "TestNpc", "Hello")])
+    target = TranslationEntryCollection(PluginParser().parse_plugin(source))
+    translated = write_plugin(tmp_path / "translated.esp", [(0x801, "OtherNpc", "你好")])
+
+    with pytest.raises(MigrationImportError, match="MIGRATION_NO_PROVABLE_MATCHES"):
+        prepare_migration_import(translated, target)
+
+    assert next(iter(target)).translation == ""

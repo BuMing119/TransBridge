@@ -6,6 +6,8 @@ import threading
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from transbridge.application.translation.entry_alias import ai_entry_key
+
 from .source_execution import SourceExecutor
 
 
@@ -123,7 +125,7 @@ class AiTaskWorker(QThread):
         except Exception as exc:
             remaining = self.tasks[len(outcomes) :]
             outcomes.extend(
-                SourceOutcome(task, error=str(exc), failed_keys=tuple(e.key for e in task.entries))
+                SourceOutcome(task, error=str(exc), failed_keys=tuple(ai_entry_key(e) for e in task.entries))
                 for task in remaining
             )
         finally:

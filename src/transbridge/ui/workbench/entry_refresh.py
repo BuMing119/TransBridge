@@ -5,6 +5,7 @@ from dataclasses import fields
 from PyQt6.QtCore import QItemSelectionModel, Qt
 
 from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.ui.project_labels import entry_label_key
 
 from .translation_table_columns import COL_KEY
 from .workflow_presenter import StatisticsSummary
@@ -56,8 +57,8 @@ class EntryRefresh:
             return False
         if table._sorting.order(filtered, view._entry_labels) != table._display_order:
             return False
-        # The existing table row index uses legacy IDs; ambiguity requires a full render.
-        ids = [entry.id for entry in filtered]
+        # Ambiguous legacy IDs still require a full render.
+        ids = [entry_label_key(entry) for entry in filtered]
         if len(set(ids)) != len(ids):
             return False
         projection = getattr(view._ctx, "project_projection", None)

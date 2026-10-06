@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 import json
 from pathlib import Path
 from uuid import uuid4
@@ -87,6 +88,116 @@ def _xml_source(path: Path, *, original: str = "Hello", extra_entry: bool = Fals
     )
     assert prepared.hydration is not None
     return {"path": str(path), "key": str(path), "type": "xt"}, prepared
+
+
+def _qualified_plugin_archive(tmp_path: Path):
+    from tests.plugin_fixtures import write_plugin
+    from transbridge.converter.translation_entry import TranslationEntry
+    from transbridge.persistence.variant_store import VariantStore
+
+    path = write_plugin(
+        tmp_path / "duplicate.esp", [(0x800, "Same", "First"), (0x800, "Same", "Second"), (0x801, "Other", "Plain")]
+    )
+    prepared = TranslationIoProjectSourcePreparer().prepare_source(
+        ProjectSourceRequest(str(path), FormatId.PLUGIN_SSE), _context(), role="primary", common_options=()
+    )
+    entries = [
+        TranslationEntry(
+            item.legacy_id,
+            item.entry_key.local_key,
+            item.original,
+            f"Saved {index}",
+            (3, 5, 9)[index],
+            item.context,
+            entry_key=item.entry_key,
+            revision=EntryRevision(index + 7),
+            provenance=(Provenance("save", "editor", "manual"),),
+        )
+        for index, item in enumerate(prepared.hydration.entries)
+    ]
+    # Use the real legacy writer, including independent labels and stage history.
+    store = VariantStore(tmp_path / "主版本" / "current.json")
+    labels = {
+        entry.identity.serialize() if entry.requires_original_match else entry.id: {f"label-{index}"}
+        for index, entry in enumerate(entries)
+    }
+    store.collect_from(entries, labels, {})
+    store.save()
+    snapshot_path = store.save_snapshot(tmp_path / "主版本" / "snapshots", "Before")
+    source = {"key": str(path), "path": str(path), "type": "esp"}
+    current = json.loads(store._path.read_text(encoding="utf-8"))
+    archive = _write_archive(
+        tmp_path / "qualified.transbridge",
+        _project(source),
+        {
+            "主版本/current.json": current,
+            "主版本/snapshots/before.json": json.loads(snapshot_path.read_text(encoding="utf-8")),
+        },
+    )
+    return path, archive, entries, current, source
+
+
+def test_qualified_legacy_archive_round_trips_current_and_historical_state(tmp_path):
+    _path, archive, entries, _current, _source = _qualified_plugin_archive(tmp_path)
+
+    _project_doc, variants, snapshots = _decode(archive)
+
+    actual = {entry.entry_key: entry for entry in variants[0].entries}
+    assert len(actual) == 3
+    for index, entry in enumerate(entries):
+        state = actual[entry.identity]
+        assert (state.translation, state.stage.value, state.revision, state.provenance) == (
+            entry.translation,
+            entry.stage,
+            entry.revision,
+            entry.provenance,
+        )
+        assert state.labels == (f"label-{index}",)
+    historical = snapshots[0]["variant"]["data"]["entries"]
+    assert {json.dumps(row["entry_key"], sort_keys=True) for row in historical} == {
+        json.dumps(entry.identity.to_dict(), sort_keys=True) for entry in entries
+    }
+
+    services = build_persistence_v2_services(
+        tmp_path / "imported", id_factory=lambda: uuid4().hex, timestamp_factory=lambda: "now"
+    )
+    try:
+        imported = services.project_archive.import_project(str(archive), _context())
+        opened = services.current_project_opener.open_path(imported, _context())
+        assert opened.is_success, opened.diagnostics
+        assert not opened.value.get("read_only", False)
+        restored = services.project_lifecycle.active.variant.snapshot()
+        assert {entry.entry_key: entry for entry in restored.entries} == actual
+    finally:
+        services.close()
+
+
+def test_qualified_legacy_archive_keeps_identity_when_source_is_missing(tmp_path):
+    path, archive, entries, _current, _source = _qualified_plugin_archive(tmp_path)
+    path.unlink()
+
+    project, variants, _snapshots = _decode(archive)
+
+    actual = {entry.entry_key: entry.translation for entry in variants[0].entries}
+    for entry in entries[:2]:
+        assert actual[entry.identity] == entry.translation
+    assert project.envelope.data["legacy"]["archive_recovery"] == "source-baseline-required"
+    assert all(fingerprint.sha256 is None for fingerprint in variants[0].source_fingerprints)
+
+
+@pytest.mark.parametrize("key_kind", ["bare", "wrong_original"])
+def test_qualified_legacy_archive_rejects_unproved_saved_identity(tmp_path, key_kind):
+    _path, _archive, entries, _current, source = _qualified_plugin_archive(tmp_path)
+    first = entries[0]
+    bad_key = first.id if key_kind == "bare" else replace(first.identity, original="Not present").serialize()
+    archive = _write_archive(
+        tmp_path / "unproved.transbridge",
+        _project(source),
+        {"主版本/current.json": {"variant": "主版本", "translations": {bad_key: "Wrong"}}},
+    )
+
+    with pytest.raises(ValueError, match="无法唯一映射"):
+        _decode(archive)
 
 
 def test_missing_source_keeps_all_variants_entry_states_and_duplicate_named_snapshots(tmp_path: Path) -> None:

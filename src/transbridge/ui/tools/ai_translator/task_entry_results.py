@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from transbridge.application.contracts import OperationOutcome, RequestContext
 from transbridge.application.io.identity import Provenance
 from transbridge.application.io.mutation import ChangeSet, EntryPatch, MutationStatus
+from transbridge.application.translation.entry_alias import ai_entry_id
 from transbridge.application.translation.postprocess import PostProcessCandidate, ReportSnapshot
 
 
@@ -93,7 +94,7 @@ class TaskEntryResults:
             if result is None:
                 return missing, row.before.translation, row.before.stage, fallback
             return result.status, result.text, result.stage, result.reason
-        result = outcome.polish.get(row.before.id)
+        result = outcome.polish.get(ai_entry_id(row.before))
         if result is None:
             return missing, row.before.translation, row.before.stage, fallback
         processing = getattr(result, "processing_status", "")

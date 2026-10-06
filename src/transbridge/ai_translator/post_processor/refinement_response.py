@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 import json
 from typing import TYPE_CHECKING
 
+from transbridge.application.translation.entry_alias import ai_entry_id, ai_entry_key
+
 if TYPE_CHECKING:
     from ...converter.translation_entry import TranslationEntry
 
@@ -38,7 +40,7 @@ def failed_refine_result(entry: TranslationEntry, note: str, failure_code: str) 
     """Build a structured failure that retains the input translation."""
 
     return RefineResult(
-        entry_id=entry.id,
+        entry_id=ai_entry_id(entry),
         original_translation=entry.translation or "",
         refined_translation=entry.translation or "",
         confidence=0.0,
@@ -61,7 +63,7 @@ def parse_refinement_response(entry: TranslationEntry, response: str) -> RefineR
             raise TypeError("refinement response must contain a non-empty refined_translation")
         fixes = _parse_fixes(data.get("fixes_applied", []))
         return RefineResult(
-            entry_id=entry.id,
+            entry_id=ai_entry_id(entry),
             original_translation=entry.translation or "",
             refined_translation=refined_translation,
             fixes_applied=fixes,
@@ -95,7 +97,7 @@ def parse_batch_refinement_response(
             if entry is None:
                 unknown_entry_ids.add(response_id or "<missing>")
                 continue
-            entry_id = str(entry.id)
+            entry_id = str(ai_entry_id(entry))
             if entry_id in results:
                 duplicate_entry_ids.add(entry_id)
                 continue
@@ -104,7 +106,7 @@ def parse_batch_refinement_response(
         if unknown_entry_ids:
             unknown_text = ", ".join(sorted(unknown_entry_ids))
             return {
-                entry.id: failed_refine_result(
+                ai_entry_id(entry): failed_refine_result(
                     entry,
                     f"批量修复响应包含未知条目: {unknown_text}",
                     "invalid_response",
@@ -112,21 +114,21 @@ def parse_batch_refinement_response(
                 for entry in entries
             }
         for entry in entries:
-            if entry.id in duplicate_entry_ids:
-                results[entry.id] = failed_refine_result(
+            if ai_entry_id(entry) in duplicate_entry_ids:
+                results[ai_entry_id(entry)] = failed_refine_result(
                     entry,
                     "批量修复响应重复返回该条目",
                     "invalid_response",
                 )
-            elif entry.id not in results:
-                results[entry.id] = failed_refine_result(
+            elif ai_entry_id(entry) not in results:
+                results[ai_entry_id(entry)] = failed_refine_result(
                     entry,
                     "批量修复响应缺少该条目",
                     "invalid_response",
                 )
     except (AttributeError, TypeError, json.JSONDecodeError):
         return {
-            entry.id: failed_refine_result(
+            ai_entry_id(entry): failed_refine_result(
                 entry,
                 f"批量响应解析失败: {str(response)[:200]}",
                 "invalid_response",
@@ -137,11 +139,11 @@ def parse_batch_refinement_response(
 
 
 def _unambiguous_entry_aliases(entries: list[TranslationEntry]) -> dict[str, TranslationEntry]:
-    aliases = {str(entry.id): entry for entry in entries}
+    aliases = {str(ai_entry_id(entry)): entry for entry in entries}
     key_counts: dict[str, int] = {}
     for entry in entries:
-        key_counts[str(entry.key)] = key_counts.get(str(entry.key), 0) + 1
-    aliases.update({str(entry.key): entry for entry in entries if key_counts[str(entry.key)] == 1})
+        key_counts[str(ai_entry_key(entry))] = key_counts.get(str(ai_entry_key(entry)), 0) + 1
+    aliases.update({str(ai_entry_key(entry)): entry for entry in entries if key_counts[str(ai_entry_key(entry))] == 1})
     return aliases
 
 
@@ -150,7 +152,7 @@ def _result_from_batch_item(entry: TranslationEntry, item: dict) -> RefineResult
     if not isinstance(refined_translation, str) or not refined_translation.strip():
         return failed_refine_result(entry, "批量修复响应返回空值或缺少译文", "invalid_response")
     return RefineResult(
-        entry_id=str(entry.id),
+        entry_id=str(ai_entry_id(entry)),
         original_translation=entry.translation or "",
         refined_translation=refined_translation,
         fixes_applied=_parse_fixes(item.get("fixes_applied", [])),

@@ -6,6 +6,8 @@ import copy
 from dataclasses import dataclass, replace
 from typing import Literal
 
+from transbridge.application.translation.entry_alias import ai_entry_id
+
 # ``combined`` remains accepted only for persisted Smart Assistant calls created before Proofread became canonical.
 PolishStrategy = Literal["proofread", "combined", "strict"]
 
@@ -66,7 +68,7 @@ def execute_polish(
     polished_count = 0
     failed_count = 0
     for entry in targets:
-        result = results.get(str(entry.id))
+        result = results.get(ai_entry_id(entry))
         if result is None or not result.accepted:
             failed_count += 1
             continue

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 import warnings
 
 from transbridge.application.translation.ai_request_budget import AiRequestCancelledError
+from transbridge.application.translation.entry_alias import ai_entry_id, ai_entry_key
 from transbridge.config.language_profiles import load_language_profile
 from transbridge.config.paths import get_data_resource_dir
 
@@ -307,14 +308,20 @@ class LLMRefiner:
             )
             return self._parse_batch_refinement_response(entries, response)
         except (CancelledError, AiRequestCancelledError) as e:
-            return {entry.id: self._failed_result(entry, f"批量修复已取消: {e}", "cancelled") for entry in entries}
+            return {
+                ai_entry_id(entry): self._failed_result(entry, f"批量修复已取消: {e}", "cancelled") for entry in entries
+            }
         except Exception:
             # 批量失败，降级为逐个处理
             results = {}
             for entry in entries:
-                entry_issues = issues_map.get(entry.id, [])
-                entry_terms = terms_map.get(entry.id, terms_map.get(entry.key, {})) if terms_map is not None else None
-                results[entry.id] = self.refine(entry, entry_issues, terms=entry_terms)
+                entry_issues = issues_map.get(ai_entry_id(entry), [])
+                entry_terms = (
+                    terms_map.get(ai_entry_id(entry), terms_map.get(ai_entry_key(entry), {}))
+                    if terms_map is not None
+                    else None
+                )
+                results[ai_entry_id(entry)] = self.refine(entry, entry_issues, terms=entry_terms)
             return results
 
     def _build_refinement_prompt(
@@ -363,12 +370,12 @@ class LLMRefiner:
 
         for entry in entries:
             lines.append(f"\n{'=' * 60}")
-            lines.append(f"【ENTRY_ID: {entry.id}】")
+            lines.append(f"【ENTRY_ID: {ai_entry_id(entry)}】")
             lines.append(f"Source: {entry.original or ''}")
             lines.append(f"Current translation: {entry.translation or ''}")
             lines.append(f"Context: {entry.context or 'unknown'}")
 
-            issues = issues_map.get(entry.id, [])
+            issues = issues_map.get(ai_entry_id(entry), [])
             if issues:
                 lines.append("Detected issues:")
                 for issue in issues:
@@ -386,7 +393,7 @@ class LLMRefiner:
 
             # 获取该条目的相关术语
             terms = (
-                terms_map.get(entry.id, terms_map.get(entry.key, {}))
+                terms_map.get(ai_entry_id(entry), terms_map.get(ai_entry_key(entry), {}))
                 if terms_map is not None
                 else self._get_relevant_terms(entry)
             )

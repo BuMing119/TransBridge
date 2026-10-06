@@ -21,6 +21,8 @@ import tomllib
 from typing import TYPE_CHECKING, Literal
 import warnings
 
+from transbridge.application.translation.entry_alias import ai_entry_key
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -275,7 +277,7 @@ class PromptBuilder:
     ) -> dict[str, dict[str, str]]:
         """兼容旧调用：只能恢复可在原文中直接定位的平面术语。"""
         return {
-            entry.key: {
+            ai_entry_key(entry): {
                 term: translation
                 for term, translation in matched_terms.items()
                 if term.lower() in entry.original.lower()
@@ -310,10 +312,10 @@ class PromptBuilder:
         input_payload: dict[str, dict[str, object]] = {}
         for entry in entries:
             item: dict[str, object] = {"source": entry.original}
-            entry_terms = scoped_terms.get(entry.key, {})
+            entry_terms = scoped_terms.get(ai_entry_key(entry), {})
             if entry_terms:
                 item["terms"] = dict(entry_terms)
-            input_payload[entry.key] = item
+            input_payload[ai_entry_key(entry)] = item
         input_json = json.dumps(input_payload, ensure_ascii=False, indent=2)
         user_content = self._render(
             self._translation_user_tpl,

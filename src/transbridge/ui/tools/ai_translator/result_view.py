@@ -8,6 +8,7 @@ import weakref
 
 from PyQt6 import sip
 
+from transbridge.application.translation.entry_alias import ai_entry_id
 from transbridge.ui.foundation.adapters import ThemeView
 from transbridge.ui.windowing import show_and_activate
 
@@ -41,7 +42,7 @@ def apply_window_mixed_result(window: object, result: Mapping[str, object]) -> b
             0,
             len(entries),
             0,
-            rejected_entry_ids=tuple(str(entry.id) for entry in entries),
+            rejected_entry_ids=tuple(ai_entry_id(entry) for entry in entries),
         )
         _render_mixed_preview_report(window, result, entries, summary)
         return False

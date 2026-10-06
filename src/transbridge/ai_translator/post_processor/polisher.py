@@ -12,6 +12,7 @@ import tomllib
 from typing import TYPE_CHECKING, Any
 import warnings
 
+from transbridge.application.translation.entry_alias import ai_entry_id, ai_entry_key
 from transbridge.config.language_profiles import load_language_profile
 from transbridge.config.paths import get_data_resource_dir
 
@@ -313,7 +314,7 @@ class LLMPolisher:
         except Exception as e:
             # LLM调用失败，返回原始译文
             return PolishResult(
-                entry_id=entry.id,
+                entry_id=ai_entry_id(entry),
                 original_translation=entry.translation or "",
                 polished_translation=entry.translation or "",
                 confidence=0.0,
@@ -347,8 +348,8 @@ class LLMPolisher:
             # 批量失败，降级为逐个处理
             results = {}
             for entry in entries:
-                results[entry.id] = PolishResult(
-                    entry_id=entry.id,
+                results[ai_entry_id(entry)] = PolishResult(
+                    entry_id=ai_entry_id(entry),
                     original_translation=entry.translation or "",
                     polished_translation=entry.translation or "",
                     confidence=0.0,
@@ -388,7 +389,7 @@ class LLMPolisher:
 
         for entry in entries:
             lines.append(f"\n{'=' * 60}")
-            lines.append(f"【ENTRY_ID: {entry.id}】")
+            lines.append(f"【ENTRY_ID: {ai_entry_id(entry)}】")
             lines.append(f"Source: {entry.original or ''}")
             lines.append(f"Current translation: {entry.translation or ''}")
             lines.append(f"Context: {entry.context or 'unknown'}")
@@ -452,7 +453,7 @@ class LLMPolisher:
                 data = json.loads(response)
 
             return PolishResult(
-                entry_id=entry.id,
+                entry_id=ai_entry_id(entry),
                 original_translation=entry.translation or "",
                 polished_translation=data.get("polished_translation", entry.translation or ""),
                 changes=data.get("changes", []),
@@ -464,7 +465,7 @@ class LLMPolisher:
         except json.JSONDecodeError:
             # JSON解析失败，返回原始译文
             return PolishResult(
-                entry_id=entry.id,
+                entry_id=ai_entry_id(entry),
                 original_translation=entry.translation or "",
                 polished_translation=entry.translation or "",
                 confidence=0.0,
@@ -478,7 +479,7 @@ class LLMPolisher:
         response: str,
     ) -> dict[str, PolishResult]:
         """解析批量润色响应。"""
-        entry_map = {alias: entry for entry in entries for alias in {str(entry.id), str(entry.key)}}
+        entry_map = {alias: entry for entry in entries for alias in {str(ai_entry_id(entry)), str(ai_entry_key(entry))}}
         results = {}
         duplicate_entry_ids: set[str] = set()
 
@@ -493,7 +494,7 @@ class LLMPolisher:
                 entry = entry_map.get(response_id)
                 if not entry:
                     continue
-                entry_id = str(entry.id)
+                entry_id = str(ai_entry_id(entry))
                 if entry_id in results:
                     duplicate_entry_ids.add(entry_id)
                     continue
@@ -509,9 +510,9 @@ class LLMPolisher:
                 )
 
             for entry in entries:
-                if entry.id in duplicate_entry_ids:
-                    results[entry.id] = PolishResult(
-                        entry_id=entry.id,
+                if ai_entry_id(entry) in duplicate_entry_ids:
+                    results[ai_entry_id(entry)] = PolishResult(
+                        entry_id=ai_entry_id(entry),
                         original_translation=entry.translation or "",
                         polished_translation=entry.translation or "",
                         confidence=0.0,
@@ -519,9 +520,9 @@ class LLMPolisher:
                         note="批量润色响应重复返回该条目",
                     )
                     continue
-                if entry.id not in results:
-                    results[entry.id] = PolishResult(
-                        entry_id=entry.id,
+                if ai_entry_id(entry) not in results:
+                    results[ai_entry_id(entry)] = PolishResult(
+                        entry_id=ai_entry_id(entry),
                         original_translation=entry.translation or "",
                         polished_translation=entry.translation or "",
                         confidence=0.0,
@@ -532,8 +533,8 @@ class LLMPolisher:
         except (AttributeError, TypeError, json.JSONDecodeError):
             # JSON解析失败，所有条目标记为失败
             for entry in entries:
-                results[entry.id] = PolishResult(
-                    entry_id=entry.id,
+                results[ai_entry_id(entry)] = PolishResult(
+                    entry_id=ai_entry_id(entry),
                     original_translation=entry.translation or "",
                     polished_translation=entry.translation or "",
                     confidence=0.0,

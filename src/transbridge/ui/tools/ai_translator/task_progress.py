@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from transbridge.application.translation.entry_alias import ai_entry_id
 from transbridge.ui.windowing import show_and_activate
 
 from ._theme_support import AiThemeBinding
@@ -166,7 +167,7 @@ class AiTaskProgressWindow(QWidget):
             if dialog.exec() != QDialog.DialogCode.Accepted:
                 return False
             chosen = dialog.get_results()
-            decisions.update({entry.identity: chosen.get(entry.id) is not None for entry in entries})
+            decisions.update({entry.identity: chosen.get(ai_entry_id(entry)) is not None for entry in entries})
         self.run.entries.decide(decisions)
         return True
 

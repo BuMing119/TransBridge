@@ -119,7 +119,9 @@ def result_action_state(
 
 
 def _entry_key(entry: object) -> str:
-    return str(getattr(entry, "id", getattr(entry, "key", "")))
+    from transbridge.application.translation.entry_alias import ai_entry_id
+
+    return ai_entry_id(entry)
 
 
 __all__ = [

@@ -50,12 +50,27 @@ class SyncPlanner:
         local_groups = _group(local)
         remote_groups = _group(remote)
         duplicate_remote_refs = _duplicate_remote_refs(remote)
+        original_qualified = {
+            (entry.entry_key.namespace, entry.entry_key.local_key)
+            for entry in (*local, *remote)
+            if entry.entry_key.original is not None
+        }
         items: list[SyncPlanItem] = []
         for key in sorted(set(local_groups) | set(remote_groups)):
             locals_for_key = local_groups.get(key, ())
             remotes_for_key = remote_groups.get(key, ())
             local_entry = locals_for_key[0] if locals_for_key else None
             remote_entry = remotes_for_key[0] if remotes_for_key else None
+            if (key.namespace, key.local_key) in original_qualified:
+                # ParaTranz identifies remote records by bare key; also protect
+                # its unqualified sibling from being treated as a deletion.
+                summary = (
+                    EntrySummary.from_local(local_entry) if local_entry else EntrySummary.from_remote(remote_entry)
+                )
+                items.append(
+                    _item(key, SyncAction.SKIP, summary, summary, None, "original_match_required", conflict_policy)
+                )
+                continue
             if len(locals_for_key) > 1:
                 items.append(_conflict(key, local_entry, remote_entry, conflict_policy, "duplicate_local_key"))
                 continue

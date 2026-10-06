@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from uuid import uuid4
 
 from transbridge.application.translation import ReportSnapshot, build_polish_report_snapshot
+from transbridge.application.translation.entry_alias import ai_entry_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,17 +60,17 @@ class ResultPresenter:
         rejected_ids: list[str] = []
         failed_ids: list[str] = []
         for entry in entries:
-            result = results.get(entry.id)
+            result = results.get(ai_entry_id(entry))
             accepted_result = result and bool(getattr(result, "accepted", result.confidence > 0))
             if accepted_result and result.polished_translation:
                 self._commit_translation(
                     collection, entry, result.polished_translation, getattr(result, "target_stage", None)
                 )
-                accepted_ids.append(entry.id)
+                accepted_ids.append(ai_entry_id(entry))
             elif result and result.confidence > 0:
-                rejected_ids.append(entry.id)
+                rejected_ids.append(ai_entry_id(entry))
             else:
-                failed_ids.append(entry.id)
+                failed_ids.append(ai_entry_id(entry))
         return PolishApplySummary(
             len(accepted_ids),
             len(rejected_ids),
@@ -91,19 +92,19 @@ class ResultPresenter:
         rejected_ids: list[str] = []
         failed_ids: list[str] = []
         for entry in entries:
-            decision = decisions.get(entry.id)
+            decision = decisions.get(ai_entry_id(entry))
             if decision is not None:
-                result = results.get(entry.id) if results is not None else None
+                result = results.get(ai_entry_id(entry)) if results is not None else None
                 self._commit_translation(collection, entry, decision, getattr(result, "target_stage", None))
-                accepted_ids.append(entry.id)
-            elif entry.id in decisions:
-                result = results.get(entry.id) if results is not None else None
+                accepted_ids.append(ai_entry_id(entry))
+            elif ai_entry_id(entry) in decisions:
+                result = results.get(ai_entry_id(entry)) if results is not None else None
                 if results is not None and (result is None or getattr(result, "confidence", 0.0) <= 0.0):
-                    failed_ids.append(entry.id)
+                    failed_ids.append(ai_entry_id(entry))
                 else:
-                    rejected_ids.append(entry.id)
+                    rejected_ids.append(ai_entry_id(entry))
             else:
-                failed_ids.append(entry.id)
+                failed_ids.append(ai_entry_id(entry))
         return PolishApplySummary(
             len(accepted_ids),
             len(rejected_ids),

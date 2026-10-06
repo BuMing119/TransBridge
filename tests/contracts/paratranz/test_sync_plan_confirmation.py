@@ -40,6 +40,16 @@ def _ref(value: int | None, *, key_scope: str = "project:7") -> ExternalEntryRef
     return None if value is None else ExternalEntryRef("paratranz", key_scope, value)
 
 
+@pytest.mark.parametrize("operation", list(SyncOperation))
+def test_original_qualified_entries_and_remote_bare_key_are_never_published_or_deleted(operation):
+    first = replace(_local("same", "First translation"), entry_key=EntryKey(NS, "same", "First"), original="First")
+    second = replace(_local("same", "Second translation"), entry_key=EntryKey(NS, "same", "Second"), original="Second")
+    plan = SyncPlanner().plan((first, second), (_remote("same", "Remote"),), operation=operation)
+    assert len(plan.items) == 3
+    assert all(item.action is SyncAction.SKIP and item.reason == "original_match_required" for item in plan.items)
+    assert not plan.destructive
+
+
 def _local(
     key: str,
     translation: str,

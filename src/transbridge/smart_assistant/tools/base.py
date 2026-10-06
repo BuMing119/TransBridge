@@ -19,6 +19,8 @@ import functools
 import logging
 from typing import TYPE_CHECKING
 
+from transbridge.application.translation.entry_alias import ai_entry_key
+
 from .types import (
     ExecutionContext,
     HITLRequest as HITLRequest,
@@ -227,7 +229,14 @@ def filter_entries(
 
     labels = filter_state.get("labels") or filter_state.get("label")  # M1: 兼容两种 key 名
     if labels and entry_labels:
-        results = [e for e in results if any(lbl in entry_labels.get(e.key, set()) for lbl in labels)]
+        results = [
+            e
+            for e in results
+            if any(
+                lbl in entry_labels.get(e.identity.serialize() if e.requires_original_match else e.key, set())
+                for lbl in labels
+            )
+        ]
 
     search_query = filter_state.get("search_query")
     search_field = filter_state.get("search_field", "original")
@@ -277,7 +286,7 @@ def resolve_scope_to_entry_ids(ctx, collection: TranslationEntryCollection) -> l
     }
     entry_labels = getattr(ctx, "entry_labels", None)
     scoped = filter_entries(collection, filter_state, entry_labels=entry_labels)
-    return [e.key for e in scoped]
+    return [ai_entry_key(e) for e in scoped]
 
 
 # ── @require_collection ─────────────────────────────────────────

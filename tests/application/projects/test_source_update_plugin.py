@@ -81,6 +81,29 @@ def _preview(services, path, replacement, context):
     return result.value
 
 
+def test_original_qualified_source_update_preserves_exact_text_only(services, tmp_path):
+    source, replacement = tmp_path / "old-conflict.esp", tmp_path / "new-conflict.esp"
+    _plugin(source, [(0x800, "First"), (0x800, "Second")])
+    context, path = _create(services, source)
+    for item in services.project_lifecycle.active.variant.snapshot().entries:
+        assert services.gui_project_commands.update_entry(
+            item.entry_key, context, translation=f"Translated {item.entry_key.original}", stage=1
+        ).is_success
+    assert services.gui_project_commands.save(context).is_success
+    _plugin(replacement, [(0x800, "Second"), (0x800, "New first")])
+
+    preview = _preview(services, path, replacement, context)
+
+    assert (preview.added, preview.removed, preview.unchanged) == (1, 1, 1)
+    result = services.project_source_updates.commit(preview.token, context)
+    assert result.is_success, result.diagnostics
+    entries = {
+        entry.entry_key.original: entry for entry in services.project_lifecycle.active.variant.snapshot().entries
+    }
+    assert entries["Second"].translation == "Translated Second"
+    assert entries["New first"].translation == ""
+
+
 def test_real_plugin_updates_all_variants_and_preserves_reordered_reviewed_entries(services, tmp_path):
     source, replacement = tmp_path / "old.esp", tmp_path / "new.esp"
     _plugin(source, [(0x800, "One"), (0x801, "Two"), (0x802, "Three")])

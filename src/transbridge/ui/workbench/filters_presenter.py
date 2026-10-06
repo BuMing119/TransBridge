@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from transbridge.converter.context_categories import ALL_DISPLAY_CATEGORIES, context_category
 from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.ui.project_labels import entry_label_key
 
 ALL_CATEGORIES = ALL_DISPLAY_CATEGORIES
 
@@ -109,7 +110,7 @@ class FiltersPresenter:
                 continue
             if translation_kw and translation_kw not in (entry.translation or "").lower():
                 continue
-            labels = entry_labels.get(entry.id, set()) if entry.id else set()
+            labels = entry_labels.get(entry_label_key(entry), set()) if entry.id else set()
             if state.labels and not labels.intersection(state.labels):
                 continue
             if state.focus_labeled and not labels:

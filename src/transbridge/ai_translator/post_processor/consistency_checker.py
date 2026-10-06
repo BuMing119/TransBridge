@@ -5,6 +5,8 @@
 import re
 from typing import TYPE_CHECKING
 
+from transbridge.application.translation.entry_alias import ai_entry_key
+
 from .base import BaseChecker, PostProcessIssue
 
 if TYPE_CHECKING:
@@ -204,7 +206,7 @@ class ConsistencyChecker(BaseChecker):
                 # 生成警告级别的问题
                 issues.append(
                     PostProcessIssue(
-                        entry_id=entry.key,
+                        entry_id=ai_entry_key(entry),
                         issue_type=PostProcessIssue.TERM_MISMATCH,
                         severity="warning",
                         message=message,

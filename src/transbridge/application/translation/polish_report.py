@@ -8,6 +8,7 @@ from typing import Any, Protocol
 
 from transbridge.application.contracts import Diagnostic, DiagnosticSeverity, ErrorCategory, OperationOutcome
 from transbridge.application.io import EntryKey, EntryRevision, SourceNamespace
+from transbridge.application.translation.entry_alias import ai_entry_id
 
 from .postprocess import PostProcessCandidate, ReportSnapshot
 
@@ -57,7 +58,7 @@ def build_polish_report_snapshot(
         raise ValueError("polish report run_id must not be empty")
 
     explicit_sets = _status_sets(accepted_entry_ids, rejected_entry_ids, failed_entry_ids, pending_entry_ids)
-    entry_by_id = {str(entry.id): entry for entry in entries}
+    entry_by_id = {str(ai_entry_id(entry)): entry for entry in entries}
     diagnostics: list[Diagnostic] = []
     candidates: list[PostProcessCandidate] = []
     counts = {"accepted": 0, "rejected": 0, "failed": 0}

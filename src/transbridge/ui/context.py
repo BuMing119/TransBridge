@@ -12,10 +12,11 @@ from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal, pyqtSlot
 
+from transbridge.application.io.identity import EntryKey
 from transbridge.application.projections.models import copy_projection_value
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.paratranz.config_manager import ParatranzConfig
-from transbridge.ui.project_labels import project_entry_labels
+from transbridge.ui.project_labels import entry_label_key, exact_label_key, project_entry_labels
 from transbridge.ui.projection_types import CollectionSlot
 
 __all__ = ["AppContext", "CollectionSlot"]
@@ -78,7 +79,7 @@ class AppContext(QObject):
         self._filter_state: dict = dict(self.DEFAULT_FILTER_STATE)
         self._label_library: dict[str, dict] = {}  # B1: 标签库 {label_id: {name, color}}
         self._entry_labels: dict[str, set[str]] = {}  # B1: 条目标签 {entry_id: {label_id, ...}}
-        self._entry_labels_exact: dict[tuple[str, str], set[str]] = {}
+        self._entry_labels_exact: dict[tuple[str, ...], set[str]] = {}
         self._translation_scope: dict = {  # E8: 翻译作用域
             "stages": [],
             "labels": [],
@@ -162,9 +163,7 @@ class AppContext(QObject):
         collection = self.collection
         if self._project_projection is not None and collection is not None:
             return {
-                entry.id: set(
-                    self._entry_labels_exact.get((entry.identity.namespace.value, entry.identity.local_key), ())
-                )
+                entry_label_key(entry): set(self._entry_labels_exact.get(exact_label_key(entry.identity), ()))
                 for entry in collection
                 if entry.id
             }
@@ -570,7 +569,11 @@ class AppContext(QObject):
         else:
             exact_labels = {}
             for entry in collection:
-                keys = (entry.id, entry.identity.serialize(), entry.key)
+                keys = (
+                    (entry.identity.serialize(),)
+                    if entry.requires_original_match
+                    else (entry.id, entry.identity.serialize(), entry.key)
+                )
                 labels = next((entry_labels[key] for key in keys if key in entry_labels), ())
                 exact_labels[entry.identity] = set(labels)
         expected = {}
@@ -617,10 +620,7 @@ class AppContext(QObject):
         if snapshot is None:
             return any(slot.collection for slot in self._slots.values())
         states = {
-            (
-                str((item.get("entry_key") or {}).get("namespace", "")),
-                str((item.get("entry_key") or {}).get("local_key", "")),
-            ): (
+            EntryKey.from_dict(item["entry_key"]): (
                 str(item.get("translation", "")),
                 int(item.get("stage", 0)),
                 tuple(
@@ -632,10 +632,10 @@ class AppContext(QObject):
             )
             for item in snapshot.to_dict()["values"].get("entries", ())
         }
-        visible: dict[tuple[str, str], tuple[str, int, tuple[str, ...]]] = {}
+        visible: dict[EntryKey, tuple[str, int, tuple[str, ...]]] = {}
         for slot in self._slots.values():
             for entry in slot.collection:
-                identity = (entry.identity.namespace.value, entry.identity.local_key)
+                identity = entry.identity
                 entry_state = (
                     entry.translation or "",
                     entry.stage,

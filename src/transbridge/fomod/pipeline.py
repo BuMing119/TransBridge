@@ -205,7 +205,8 @@ class FomodPipeline:
             # 解析新版
             namespace = _plugin_namespace(rel)
             new_entries = tuple(
-                replace(entry, entry_key=EntryKey(namespace, entry.key)) for entry in parser.parse_plugin(esp_path)
+                replace(entry, entry_key=EntryKey(namespace, entry.key, entry.identity.original))
+                for entry in parser.parse_plugin(esp_path)
             )
             new_collection = TranslationEntryCollection(new_entries)
             new_fingerprint = _hash_file(esp_path)
@@ -215,7 +216,7 @@ class FomodPipeline:
                 old_esp = old_dir / rel
                 if old_esp.exists():
                     old_entries = tuple(
-                        replace(entry, entry_key=EntryKey(namespace, entry.key))
+                        replace(entry, entry_key=EntryKey(namespace, entry.key, entry.identity.original))
                         for entry in parser.parse_plugin(old_esp)
                     )
                     migration = plan_migration(
@@ -397,8 +398,12 @@ class FomodPipeline:
             raise RuntimeError(f"FOMOD_PLUGIN_PARSE_FAILED:{codes}")
 
         staged_entries = []
+        by_locator = {}
+        for entry in collection:
+            by_locator.setdefault((entry.key, entry.identity.original), []).append(entry)
         for parsed_entry in parsed.entries:
-            current = collection.get(parsed_entry.key)
+            matches = by_locator.get((parsed_entry.key, parsed_entry.identity.original), ())
+            current = matches[0] if len(matches) == 1 else None
             if current is None:
                 staged_entries.append(parsed_entry)
                 continue

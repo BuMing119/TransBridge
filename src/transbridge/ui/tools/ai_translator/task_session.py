@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from transbridge.application.io.identity import EntryKey
+from transbridge.application.translation.entry_alias import ai_entry_id
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui.version_persistence import VersionPersistence
 from transbridge.ui.workers import ApiWorker
@@ -320,9 +321,9 @@ class TaskSession:
                     raise ValueError("AI 任务来源包含重复 EntryKey，不能安全合并版本。")
                 identities.add(entry.identity)
                 if entry.id and not getattr(self._ctx, "uses_authoritative_projection", False):
-                    if entry.id in legacy_ids:
+                    if ai_entry_id(entry) in legacy_ids:
                         raise ValueError("旧版工程存在跨插件重复条目 ID，请先迁移到 V2 工程后运行 AI 任务。")
-                    legacy_ids.add(entry.id)
+                    legacy_ids.add(ai_entry_id(entry))
             baseline = None if prepared is None else prepared.get(key)
             if baseline is None or baseline != entries:
                 baseline = deepcopy(entries)

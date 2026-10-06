@@ -247,6 +247,7 @@ class TestTranslationEntry:
             "provenance": [],
             "metadata": {},
             "original": "original_text",
+            "requires_original_match": False,
             "translation": "translated_text",
             "stage": 1,
             "context": "test_context",

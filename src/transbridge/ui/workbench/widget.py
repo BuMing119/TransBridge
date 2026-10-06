@@ -10,7 +10,6 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QShowEvent
 from PyQt6.QtWidgets import (
     QComboBox,
-    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -277,8 +276,8 @@ class WorkbenchWidget(QWidget):
         self._btn_import.setAccessibleName("导入已有译文")
         self._btn_import.setFlat(True)
         ComponentStyle.apply_static(self._btn_import, ComponentKind.BUTTON)
-        self._btn_import.setToolTip("从 JSON 文件导入翻译集合")
-        self._btn_import.clicked.connect(self._on_import_json)
+        self._btn_import.setToolTip("从已翻译插件、JSON、XML、SST 或 Strings 导入当前内容的译文")
+        self._btn_import.clicked.connect(lambda: self.intent_requested.emit(IntentId.SOURCE_MIGRATE.value))
         row.addWidget(self._btn_import)
 
         self._manage_button = QToolButton()
@@ -372,91 +371,6 @@ class WorkbenchWidget(QWidget):
 
     def _on_new_slot(self):
         self.intent_requested.emit(IntentId.WORKBENCH_CONTENT_PREPARE.value)
-
-    def _on_import_json(self):
-        from transbridge.converter.translation_entry_collection import (
-            TranslationEntryCollection,
-        )
-        from transbridge.ui.context import CollectionSlot
-        from transbridge.ui.workers import ApiWorker
-
-        path, _ = QFileDialog.getOpenFileName(self, "导入 JSON 文件", "", "JSON 文件 (*.json);;所有文件 (*)")
-        if not path:
-            return
-
-        self.show_step2_progress(0, "加载 JSON 中…")
-
-        def _do():
-            return TranslationEntryCollection.from_json_file(path)
-
-        def _on_done(collection):
-            self.hide_step2_progress()
-            if self._ctx.uses_authoritative_projection:
-                from dataclasses import replace
-
-                target = self._ctx.active_slot
-                if target is None:
-                    QMessageBox.warning(self, "无法导入", "请先选择要更新的翻译内容。")
-                    return
-                exact = {entry.identity: entry for entry in collection}
-                by_local: dict[str, list] = {}
-                for entry in collection:
-                    by_local.setdefault(entry.identity.local_key, []).append(entry)
-                states = {}
-                replacements = {}
-                for entry in target.collection:
-                    imported = exact.get(entry.identity)
-                    if imported is None:
-                        candidates = by_local.get(entry.identity.local_key, ())
-                        imported = candidates[0] if len(candidates) == 1 else None
-                    if imported is None:
-                        continue
-                    states[entry.identity] = (imported.translation, imported.stage)
-                    replacements[entry.identity] = imported
-                if not states:
-                    QMessageBox.warning(self, "无法导入", "导入文件中没有可映射到当前来源的条目。")
-                    return
-                committed = self._ctx.project_commands.replace_entry_states(
-                    states,
-                    self._ctx.runtime_context,
-                )
-                if not committed.is_success:
-                    diagnostic = committed.diagnostics[0]
-                    QMessageBox.warning(self, "导入失败", diagnostic.message)
-                    return
-                target.collection = TranslationEntryCollection(
-                    replace(
-                        entry,
-                        translation=replacements[entry.identity].translation,
-                        stage=replacements[entry.identity].stage,
-                    )
-                    if entry.identity in replacements
-                    else entry
-                    for entry in target.collection
-                )
-                self._ctx.collection_changed.emit(target.collection)
-                return
-            label = Path(path).stem
-            slot = CollectionSlot(label=label, collection=collection)
-            if path in self._ctx.slots:
-                ret = QMessageBox.question(
-                    self,
-                    "集合已存在",
-                    f"集合「{label}」已存在，是否覆盖？\n选择「否」将保留原有集合。",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                )
-                if ret != QMessageBox.StandardButton.Yes:
-                    return
-            self._ctx.add_slot(path, slot)
-            self._ctx.activate_slot(path)
-
-        def _on_error(msg: str):
-            self.hide_step2_progress()
-
-        w = ApiWorker(_do)
-        w.result.connect(_on_done)
-        w.error.connect(_on_error)
-        w.start()
 
     def _on_remove_slot(self):
         active = self._ctx.active_key

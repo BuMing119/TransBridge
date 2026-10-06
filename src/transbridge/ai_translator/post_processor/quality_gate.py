@@ -21,6 +21,7 @@ import tomllib
 from typing import TYPE_CHECKING
 import warnings
 
+from transbridge.application.translation.entry_alias import ai_entry_id, ai_entry_key
 from transbridge.config.language_profiles import load_language_profile
 from transbridge.config.paths import get_data_resource_dir
 
@@ -398,7 +399,7 @@ class QualityGateChecker(BaseChecker):
 
         for entry in entries:
             terms = self._get_relevant_terms(entry)
-            lines.append(f"\n[ENTRY_ID: {entry.id}]")
+            lines.append(f"\n[ENTRY_ID: {ai_entry_id(entry)}]")
             lines.append(f"Source: {entry.original or ''}")
             lines.append(f"Translation: {entry.translation or ''}")
             lines.append(f"Context: {entry.context or 'unknown'}")
@@ -417,7 +418,9 @@ class QualityGateChecker(BaseChecker):
             data = payload["results"]
 
             issues = []
-            entry_map = {alias: entry for entry in entries for alias in {str(entry.id), str(entry.key)}}
+            entry_map = {
+                alias: entry for entry in entries for alias in {str(ai_entry_id(entry)), str(ai_entry_key(entry))}
+            }
             returned_entry_ids: set[str] = set()
             duplicate_entry_ids: set[str] = set()
 
@@ -426,7 +429,7 @@ class QualityGateChecker(BaseChecker):
                 entry = entry_map.get(response_id)
                 if not entry:
                     continue
-                canonical_id = str(entry.id)
+                canonical_id = str(ai_entry_id(entry))
                 if canonical_id in returned_entry_ids:
                     duplicate_entry_ids.add(canonical_id)
                     continue
@@ -449,7 +452,7 @@ class QualityGateChecker(BaseChecker):
                 issues.extend(self._result_to_issues(entry, result))
 
             for entry in entries:
-                if str(entry.id) in duplicate_entry_ids:
+                if str(ai_entry_id(entry)) in duplicate_entry_ids:
                     issues.extend(
                         self._result_to_issues(
                             entry,
@@ -462,7 +465,7 @@ class QualityGateChecker(BaseChecker):
                         )
                     )
                     continue
-                if str(entry.id) in returned_entry_ids:
+                if str(ai_entry_id(entry)) in returned_entry_ids:
                     continue
                 issues.extend(
                     self._result_to_issues(
@@ -558,7 +561,7 @@ class QualityGateChecker(BaseChecker):
 
         return [
             PostProcessIssue(
-                entry_id=entry.id,
+                entry_id=ai_entry_id(entry),
                 issue_type=PostProcessIssue.LOW_QUALITY,
                 severity=severity,
                 message=f"[{result.verdict.value}] {result.reason} ({details})",

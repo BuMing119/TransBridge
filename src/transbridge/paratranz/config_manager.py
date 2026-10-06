@@ -90,6 +90,7 @@ def apply_rules(rules: list, entries: list) -> dict:
         PlanningEntry,
         TranslationAction,
     )
+    from transbridge.application.translation.entry_alias import ai_entry_id
 
     planning_entries = [
         PlanningEntry(
@@ -115,4 +116,4 @@ def apply_rules(rules: list, entries: list) -> dict:
     ]
     assignments = ActionPlanner().plan(planning_entries, rule_specs).assignments
     by_key = {entry.identity: entry for entry in entries}
-    return {by_key[assignment.key].id: assignment.action.value for assignment in assignments}
+    return {ai_entry_id(by_key[assignment.key]): assignment.action.value for assignment in assignments}

@@ -11,6 +11,7 @@ from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 from transbridge.application.assistant_requests.models import RequestError
 from transbridge.application.assistant_requests.turns import accept_turn, record_turn_failure
+from transbridge.application.translation.entry_alias import ai_entry_key
 from transbridge.smart_assistant.native_tools import build_native_tool_definitions
 from transbridge.smart_assistant.request_protocol import (
     COVERAGE_TOOL,
@@ -157,7 +158,7 @@ class RequestBinding(QObject):
             "active_version_identity": (
                 list(ctx.active_version_identity) if getattr(ctx, "active_version_identity", None) is not None else None
             ),
-            "selected_entry_ids": [str(getattr(entry, "key", entry)) for entry in selected],
+            "selected_entry_ids": [ai_entry_key(entry) if hasattr(entry, "key") else str(entry) for entry in selected],
             "filter_state": deepcopy(getattr(ctx, "filter_state", {}) or {}),
             "translation_scope": deepcopy(getattr(ctx, "translation_scope", {}) or {}),
         }

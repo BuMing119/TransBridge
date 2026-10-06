@@ -63,9 +63,9 @@ def parse_json_source(path: str, args: dict):
     if not isinstance(records, list):
         raise ValueError("JSON 条目必须是数组")
     if format_id is FormatId.JSON_DSD:
-        from transbridge.converter.translation_entry import TranslationEntry
+        from transbridge.converter.dsd_entries import parse_dsd_entries
 
-        collection = TranslationEntryCollection(TranslationEntry.from_dsd_dict(item) for item in records)
+        collection = TranslationEntryCollection(parse_dsd_entries(records))
     else:
         from transbridge.converter.translation_entry import TranslationEntry
 

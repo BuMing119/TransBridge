@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from transbridge.application.io.stage_policy import DEFAULT_STAGE_POLICY
 from transbridge.application.translation.ai_execution_profile import AiExecutionProfile
+from transbridge.application.translation.entry_alias import ai_entry_id
 
 from .scope_presenter import ScopePresenter
 
@@ -79,9 +80,11 @@ class TaskScope:
             if mode == "mixed":
                 actions = apply_rules(config.action_rules, candidates)
                 translate = [
-                    e for e in candidates if actions.get(e.id) == "translate" and (not e.translation or e.stage == 0)
+                    e
+                    for e in candidates
+                    if actions.get(ai_entry_id(e)) == "translate" and (not e.translation or e.stage == 0)
                 ]
-                polish = [e for e in candidates if actions.get(e.id) == "polish" and e.translation]
+                polish = [e for e in candidates if actions.get(ai_entry_id(e)) == "polish" and e.translation]
             elif mode == "polish":
                 polish = [e for e in candidates if e.translation]
             else:

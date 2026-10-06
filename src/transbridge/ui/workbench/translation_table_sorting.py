@@ -8,6 +8,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QTableWidget
 
 from transbridge.converter.translation_entry import TranslationEntry
+from transbridge.ui.project_labels import entry_label_key
 
 from .filters_presenter import entry_category
 from .translation_table_columns import COL_CONTEXT, COL_INDEX, COL_KEY, COL_MARK, COL_ORIGINAL, COL_TRANSLATION
@@ -39,7 +40,7 @@ def ordered_source_rows(
     if column == COL_INDEX:
         return tuple(reversed(rows) if descending else rows)
     if column == COL_MARK:
-        values = [len(entry_labels.get(entry.id, ())) for entry in entries]
+        values = [len(entry_labels.get(entry_label_key(entry), ())) for entry in entries]
     elif column == COL_KEY:
         values = [(entry.key or "").casefold() for entry in entries]
     elif column == COL_ORIGINAL:

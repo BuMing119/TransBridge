@@ -203,6 +203,30 @@ class TestParaTranzUploader:
 
 
 class TestParaTranzDownloader:
+    @pytest.mark.parametrize("originals", [("A",), ("A", "B")])
+    def test_download_skips_original_qualified_entries_even_if_the_bare_key_is_unique(self, originals, caplog):
+        downloader, api = self._make_downloader()
+        api.list_files.return_value = [{"id": 10, "name": "fixture.json"}]
+        api.get_file_translation.return_value = [
+            pt_string("same", original="Unrelated", translation="Wrong", stage=5),
+            pt_string("plain", translation="Ordinary translation", stage=3),
+        ]
+        protected = [
+            TranslationEntry("same", "same", original, "Before", 1, "INFO:NAM1", requires_original_match=True)
+            for original in originals
+        ]
+        collection = make_collection(*protected, make_entry("plain"))
+
+        result = downloader.download_to_collection(1, collection)
+
+        assert result.skipped_original_match == 1
+        assert result.merged == 1 and result.total_strings == 2
+        assert result.skipped_no_match == 0
+        assert collection.get("plain").translation == "Ordinary translation"
+        assert all(collection.get(entry.identity).translation == "Before" for entry in protected)
+        assert all(collection.get(entry.identity).stage == 1 for entry in protected)
+        assert "require original matching" in caplog.text
+
     def _make_downloader(self) -> tuple[ParaTranzDownloader, MagicMock]:
         downloader = ParaTranzDownloader(make_config())
         mock_api = MagicMock()

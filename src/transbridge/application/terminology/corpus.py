@@ -176,7 +176,7 @@ class EvidenceAssembler:
             for translated in source.entries:
                 original = target_by_key.get(translated.entry_key)
                 if original is None and target_by_local is not None:
-                    original = target_by_local.get(translated.entry_key.local_key)
+                    original = target_by_local.get((translated.entry_key.local_key, translated.entry_key.original))
                 if original is None:
                     excluded["relation_entry_missing"] += 1
                     continue
@@ -289,14 +289,14 @@ def _apply_variant(entry: CorpusEntry, state: VariantEntryState | None) -> Corpu
 def _compatible_local_index(
     source: SourceCorpusFragment,
     target: SourceCorpusFragment,
-) -> dict[str, CorpusEntry] | None:
+) -> dict[tuple[str, str | None], CorpusEntry] | None:
     """Allow legacy local-key alignment only for an unambiguous namespace pair."""
 
     source_namespaces = {entry.entry_key.namespace for entry in source.entries}
     target_namespaces = {entry.entry_key.namespace for entry in target.entries}
     if len(source_namespaces) != 1 or len(target_namespaces) != 1:
         return None
-    return {entry.entry_key.local_key: entry for entry in target.entries}
+    return {(entry.entry_key.local_key, entry.entry_key.original): entry for entry in target.entries}
 
 
 __all__ = [

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from transbridge.application.contracts import DiagnosticSeverity, ErrorCategory
 from transbridge.application.io.identity import EntryKey
+from transbridge.application.translation.entry_alias import ai_entry_id, ai_entry_key
 
 if TYPE_CHECKING:
     from transbridge.application.contracts import OperationResult
@@ -91,7 +92,11 @@ def build_translation_entry_outcomes(
         elif key in finished:
             status = "failed"
             entry = current.get(key)
-            identities = (key.local_key,) if entry is None else (key.local_key, entry.id)
+            identities = (
+                (key.serialize() if key.original is not None else key.local_key,)
+                if entry is None
+                else (ai_entry_key(entry), ai_entry_id(entry))
+            )
             reason = next(
                 (message for message in failures if any(message.startswith(f"{value}:") for value in identities)),
                 "翻译未返回有效结果",

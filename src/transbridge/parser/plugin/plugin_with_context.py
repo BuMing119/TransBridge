@@ -39,7 +39,7 @@ class SSEPluginWithContext(SSEPlugin):
             name (str): The name of the plugin.
         """
         super().__init__(name)
-        self._string_subrecords: dict[PluginStringWithContext, StringSubrecord] | None = None
+        self._string_subrecords: list[tuple[PluginStringWithContext, StringSubrecord]] | None = None
 
     @property
     def plugin_name(self) -> str:
@@ -276,7 +276,7 @@ class SSEPluginWithContext(SSEPlugin):
 
     # Extraction methods
 
-    def extract_group_strings_with_context(
+    def extract_group_string_pairs(
         self,
         group: Group,
         extract_localized: bool = False,
@@ -284,7 +284,7 @@ class SSEPluginWithContext(SSEPlugin):
         dial_context_map: dict[str, DialContext] | None = None,
         dlbr_map: dict[str, tuple[str, str]] | None = None,
         strings_lookup: PluginStringsLookup | None = None,
-    ) -> dict[PluginStringWithContext, StringSubrecord]:
+    ) -> list[tuple[PluginStringWithContext, StringSubrecord]]:
         """
         Extracts all strings from a group of records with full context.
 
@@ -300,10 +300,9 @@ class SSEPluginWithContext(SSEPlugin):
                 Map of DIAL FormID to (Quest FormID, DLBR FormID).
 
         Returns:
-            dict[PluginStringWithContext, StringSubrecord]:
-                A dictionary mapping extracted strings to their subrecords.
+            Physical string/subrecord pairs, including identical occurrences.
         """
-        strings: dict[PluginStringWithContext, StringSubrecord] = {}
+        strings: list[tuple[PluginStringWithContext, StringSubrecord]] = []
 
         # For Normal DIAL groups, build a map of DIAL FormID -> context
         if (
@@ -353,7 +352,7 @@ class SSEPluginWithContext(SSEPlugin):
 
         for child in group.children:
             if isinstance(child, Group):
-                child_strings = self.extract_group_strings_with_context(
+                child_strings = self.extract_group_string_pairs(
                     child,
                     extract_localized,
                     dial_context,
@@ -361,7 +360,7 @@ class SSEPluginWithContext(SSEPlugin):
                     dlbr_map,
                     strings_lookup,
                 )
-                strings.update(child_strings)
+                strings.extend(child_strings)
                 continue
             if not isinstance(child, Record):
                 continue
@@ -424,9 +423,25 @@ class SSEPluginWithContext(SSEPlugin):
                         string_id=raw_string_id,  # 传递 string_id
                     )
 
-                    strings[string_data] = subrecord
+                    strings.append((string_data, subrecord))
 
         return strings
+
+    def extract_group_strings_with_context(self, group: Group, *args, **kwargs):
+        """Legacy dictionary facade; use physical pairs when uniqueness matters."""
+        return dict(self.extract_group_string_pairs(group, *args, **kwargs))
+
+    def extract_string_pairs_with_context(self, extract_localized=False, strings_lookup=None):
+        """Capture all physical targets before any text is modified."""
+        pairs = []
+        dlbr_map = self._build_dlbr_map()
+        for group in self.groups:
+            pairs.extend(
+                self.extract_group_string_pairs(
+                    group, extract_localized, dlbr_map=dlbr_map, strings_lookup=strings_lookup
+                )
+            )
+        return pairs
 
     def extract_strings_with_context(
         self,
@@ -448,21 +463,7 @@ class SSEPluginWithContext(SSEPlugin):
         Returns:
             list[PluginStringWithContext]: A list of extracted strings with context.
         """
-        strings: list[PluginStringWithContext] = []
-        dlbr_map = self._build_dlbr_map()
-
-        for group in self._SSEPlugin__groups:
-            current_group: list[PluginStringWithContext] = list(
-                self.extract_group_strings_with_context(
-                    group,
-                    extract_localized,
-                    dlbr_map=dlbr_map,
-                    strings_lookup=strings_lookup,
-                ).keys()
-            )
-            strings.extend(current_group)
-
-        return strings
+        return [ps for ps, _ in self.extract_string_pairs_with_context(extract_localized, strings_lookup)]
 
     def find_string_subrecord(self, form_id: str, type: str, string: str, index: int | None) -> StringSubrecord | None:
         """
@@ -480,22 +481,17 @@ class SSEPluginWithContext(SSEPlugin):
         string_subrecord: StringSubrecord | None = None
 
         if self._string_subrecords is None:
-            string_subrecords: dict[PluginStringWithContext, StringSubrecord] = {}
+            self._string_subrecords = self.extract_string_pairs_with_context()
 
-            for group in self._SSEPlugin__groups:
-                current_group = self.extract_group_strings_with_context(group)
-                string_subrecords |= current_group
-
-            self._string_subrecords = string_subrecords
-
-        for plugin_string, subrecord in self._string_subrecords.items():
+        for plugin_string, subrecord in self._string_subrecords:
             if (
                 plugin_string.form_id[2:] == form_id[2:]  # Ignore master index
                 and plugin_string.type == type
                 and plugin_string.string == string
                 and plugin_string.index == index
             ):
+                if string_subrecord is not None:
+                    return None
                 string_subrecord = subrecord
-                break
 
         return string_subrecord

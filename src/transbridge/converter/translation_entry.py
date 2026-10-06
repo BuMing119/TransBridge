@@ -73,15 +73,31 @@ class TranslationEntry:
     revision: EntryRevision = field(default_factory=EntryRevision)
     provenance: tuple[Provenance, ...] = ()
     metadata: tuple[tuple[str, Any], ...] = ()
+    requires_original_match: bool = False
     _initialized: bool = field(default=False, init=False, repr=False, compare=False)
 
     SCHEMA_VERSION = 2
-    _IDENTITY_FIELDS = frozenset({"id", "key", "entry_key", "external_refs", "revision", "provenance", "metadata"})
+    _IDENTITY_FIELDS = frozenset({
+        "id",
+        "key",
+        "entry_key",
+        "external_refs",
+        "revision",
+        "provenance",
+        "metadata",
+        "requires_original_match",
+    })
     _LEGACY_MUTABLE_FIELDS = frozenset({"original", "translation", "stage", "context"})
 
     def __post_init__(self) -> None:
         local_key = str(self.key or self.id)
         entry_key = self.entry_key or EntryKey(SourceNamespace.legacy(), local_key)
+        if not isinstance(self.requires_original_match, bool):
+            raise TypeError("requires_original_match must be a boolean")
+        if self.requires_original_match and entry_key.original is None:
+            entry_key = replace(entry_key, original=self.original)
+        if entry_key.original is not None and entry_key.original != self.original:
+            raise ValueError("entry original must match its identity original")
         if self.key and self.key != entry_key.local_key:
             raise ValueError("legacy key facade must match EntryKey.local_key")
         refs = tuple(self.external_refs)
@@ -91,6 +107,7 @@ class TranslationEntry:
         object.__setattr__(self, "id", str(self.id))
         object.__setattr__(self, "key", entry_key.local_key)
         object.__setattr__(self, "entry_key", entry_key)
+        object.__setattr__(self, "requires_original_match", entry_key.original is not None)
         object.__setattr__(self, "external_refs", refs)
         object.__setattr__(self, "revision", revision)
         object.__setattr__(self, "provenance", tuple(self.provenance))
@@ -98,6 +115,13 @@ class TranslationEntry:
         object.__setattr__(self, "_initialized", True)
 
     def __setattr__(self, name: str, value: Any) -> None:
+        if (
+            self.__dict__.get("_initialized", False)
+            and name == "original"
+            and self.requires_original_match
+            and self.original != value
+        ):
+            raise AttributeError("original participates in this entry's identity and cannot be changed")
         if self.__dict__.get("_initialized", False) and name in self._IDENTITY_FIELDS:
             if getattr(self, name) != value:
                 raise AttributeError(f"{name} is V2 identity state; use CollectionMutationPort.apply()")
@@ -124,6 +148,7 @@ class TranslationEntry:
             provenance=self.provenance,
             metadata=self.metadata,
             string_id=self.string_id,
+            requires_original_match=self.requires_original_match,
         )
 
     @property
@@ -304,6 +329,8 @@ class TranslationEntry:
         if xt.rec != context_base:
             return None
 
+        if entry.requires_original_match and xt.source != entry.original:
+            return None
         if _normalize_text(xt.source) != _normalize_text(entry.original):
             return None
 
@@ -351,6 +378,9 @@ class TranslationEntry:
         if entry_index is not None and entry_index != sst.index:
             return None
 
+        if entry.requires_original_match and sst.text != entry.original:
+            return None
+
         # ---------- 4. 判断是否满足更新条件 ----------
 
         should_update = entry.stage == STAGE_UNTRANSLATED and not entry.translation and bool(sst.translated_text)
@@ -376,6 +406,7 @@ class TranslationEntry:
             "provenance": [item.to_dict() for item in self.provenance],
             "metadata": dict(self.metadata),
             "original": self.original,
+            "requires_original_match": self.requires_original_match,
             "translation": self.translation,
             "stage": self.stage,
             "context": self.context,
@@ -408,6 +439,7 @@ class TranslationEntry:
             id=str(data.get("id", entry_key.local_key)),
             key=entry_key.local_key,
             original=data.get("original", ""),
+            requires_original_match=data.get("requires_original_match", False),
             translation=data.get("translation", ""),
             stage=data.get("stage", 0),
             context=data.get("context"),

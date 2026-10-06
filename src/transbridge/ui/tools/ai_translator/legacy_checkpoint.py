@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from transbridge.application.translation.entry_alias import ai_entry_id
+
 
 def check_translation_checkpoint(
     parent: object,
@@ -20,7 +22,7 @@ def check_translation_checkpoint(
     if checkpoint is None or not checkpoint.run_id:
         return None
     if entries:
-        expected = {str(getattr(entry, "id", getattr(entry, "key", ""))) for entry in entries}
+        expected = {ai_entry_id(entry) for entry in entries}
         if set(checkpoint.target_entry_ids or ()) != expected or checkpoint.overwrite != overwrite:
             return None
     done = len(checkpoint.completed_fingerprints)

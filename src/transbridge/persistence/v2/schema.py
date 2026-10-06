@@ -178,6 +178,7 @@ _DATA_SCHEMAS: dict[EntityKind, dict[str, Any]] = {
                             "properties": {
                                 "namespace": {"type": "string", "minLength": 1},
                                 "local_key": {"type": "string", "minLength": 1},
+                                "original": {"type": "string"},
                             },
                             "additionalProperties": False,
                         },
@@ -386,10 +387,10 @@ def _validate_semantics(ref: EntityRef, data: dict[str, Any]) -> None:
                 "Variant source namespaces must be unique.",
                 pointer="/data/source_fingerprints",
             )
-        entry_keys: set[tuple[str, str]] = set()
+        entry_keys: set[tuple[str, str, str | None]] = set()
         for index, entry in enumerate(data.get("entries", ())):
             key = entry["entry_key"]
-            identity = (key["namespace"], key["local_key"])
+            identity = (key["namespace"], key["local_key"], key.get("original"))
             if identity in entry_keys:
                 raise SchemaValidationError(
                     "DUPLICATE_VARIANT_ENTRY",

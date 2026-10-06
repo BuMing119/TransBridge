@@ -12,6 +12,8 @@ import json
 import threading
 from typing import Any
 
+from transbridge.application.io.identity import EntryKey
+
 # ── ToolResult v2 ──────────────────────────────────────────────
 
 
@@ -300,18 +302,13 @@ def _projection_entry_states(
         if projected_variant is not None and str(projected_variant) != identity[1]:
             return None
     by_identity = {
-        (
-            str((item.get("entry_key") or {}).get("namespace", "")),
-            str((item.get("entry_key") or {}).get("local_key", "")),
-        ): (str(item.get("translation", "")), int(item.get("stage", 0)))
+        EntryKey.from_dict(item["entry_key"]): (str(item.get("translation", "")), int(item.get("stage", 0)))
         for item in values.get("entries", ())
     }
     result: dict[Any, tuple[str, int]] = {}
     for entry in collection:
         entry_identity = entry.identity
-        namespace = getattr(getattr(entry_identity, "namespace", None), "value", "")
-        local_key = getattr(entry_identity, "local_key", "")
-        state = by_identity.get((str(namespace), str(local_key)))
+        state = by_identity.get(entry_identity)
         if state is not None:
             result[entry_identity] = state
     return result

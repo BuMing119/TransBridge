@@ -4,6 +4,7 @@ from copy import deepcopy
 import json
 
 from transbridge.application.assistant_requests.models import RequestError
+from transbridge.application.translation.entry_alias import ai_entry_key
 
 _VERSION_FIELDS = (
     ("active_version_identity", "_target_version_identity"),
@@ -46,8 +47,10 @@ def apply_captured_scope(request, ingress, context) -> None:
             )
     if "selected_entry_ids" in selection:
         selected = set(selection["selected_entry_ids"])
-        entries = tuple(entry for entry in collection if str(entry.key) in selected) if collection is not None else ()
-        if selected != {str(entry.key) for entry in entries}:
+        entries = (
+            tuple(entry for entry in collection if ai_entry_key(entry) in selected) if collection is not None else ()
+        )
+        if selected != {ai_entry_key(entry) for entry in entries}:
             raise RequestError("REQUEST_SCOPE_MISMATCH", "原输入的选中条目已不存在，请重新核对选择")
         object.__setattr__(context, "selected_entry_ids", tuple(selection["selected_entry_ids"]))
         object.__setattr__(context, "selected_entries", entries)

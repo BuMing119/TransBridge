@@ -2,14 +2,14 @@
 
 from dataclasses import replace
 
-from transbridge.application.io.identity import EntryRevision, ExternalEntryRef, Provenance
+from transbridge.application.io.identity import EntryKey, EntryRevision, ExternalEntryRef, Provenance
 from transbridge.application.projections.models import copy_projection_value
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
 
 class EntryProjectionUpdate:
     def __init__(self, states):
-        self._states = {(item["entry_key"]["namespace"], item["entry_key"]["local_key"]): item for item in states}
+        self._states = {EntryKey.from_dict(item["entry_key"]): item for item in states}
 
     @classmethod
     def from_snapshot(cls, snapshot, *, keys=None):
@@ -17,16 +17,12 @@ class EntryProjectionUpdate:
             raise ValueError("工程权威快照不可用，请重新加载工程后重试。")
         states = snapshot.values.get("entries", ())
         if keys is not None:
-            identities = {(key.namespace.value, key.local_key) for key in keys}
-            states = (
-                state
-                for state in states
-                if (state["entry_key"]["namespace"], state["entry_key"]["local_key"]) in identities
-            )
+            identities = set(keys)
+            states = (state for state in states if EntryKey.from_dict(state["entry_key"]) in identities)
         return cls(states)
 
     def entry(self, entry, *, reuse_unchanged=True):
-        state = self._states.get((entry.identity.namespace.value, entry.identity.local_key))
+        state = self._states.get(entry.identity)
         if state is None:
             return entry
         inferred = set(str(value) for value in state.get("inferred_fields", ()))

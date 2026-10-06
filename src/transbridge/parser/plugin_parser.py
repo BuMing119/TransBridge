@@ -5,6 +5,8 @@ from pathlib import Path
 from sse_plugin_interface.plugin import SSEPlugin
 from sse_plugin_interface.plugin_string import PluginString
 
+from transbridge.application.contracts import Diagnostic
+from transbridge.converter.plugin_entry_conflicts import resolve_plugin_entry_conflicts
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.parser.plugin.plugin_with_context import SSEPluginWithContext
 from transbridge.parser.strings_file import PluginStringsLookup
@@ -21,6 +23,8 @@ class PluginParser:
         self._source_path: Path | None = None
         self._strings_lookup: PluginStringsLookup | None = None
         self.log = logging.getLogger("PluginParser")
+        self.conflict_diagnostics: tuple[Diagnostic, ...] = ()
+        self.conflict_skipped_count = 0
 
     def parse_plugin(
         self,
@@ -45,6 +49,8 @@ class PluginParser:
             List of TranslationEntry objects.
         """
         self._source_path = path
+        self.conflict_diagnostics = ()
+        self.conflict_skipped_count = 0
         self.log.info(f"Starting to parse plugin: {path}")
 
         try:
@@ -60,6 +66,22 @@ class PluginParser:
             self.log.info(f"Loaded strings lookup with {len(strings_lookup)} entries for {path.name}")
 
         strings_with_context = self._plugin.extract_strings_with_context(strings_lookup=strings_lookup)
+        items = self.create_entries(strings_with_context, progress_callback=progress_callback, skip_empty=False)
+        items, self.conflict_diagnostics = resolve_plugin_entry_conflicts(items)
+        self.conflict_skipped_count = len(self.conflict_diagnostics)
+        if self.conflict_skipped_count:
+            self.log.warning(
+                "SOURCE_LOCATOR_CONFLICT: 插件 %s 中 %d 条定位与原文均相同的条目已跳过，保留 %d 条。",
+                path,
+                self.conflict_skipped_count,
+                len(items),
+            )
+        if skip_empty:
+            items = [entry for entry in items if entry.original.strip()]
+        return items
+
+    def create_entries(self, strings_with_context, *, progress_callback=None, skip_empty=True):
+        """Apply the same source identity conventions to parsing and physical writes."""
         total = len(strings_with_context)
         self.log.info(f"Extracted {total} strings from plugin")
 

@@ -28,6 +28,7 @@ from transbridge.converter.translation_entry import (
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui.foundation.adapters import ThemeView
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle
+from transbridge.ui.project_labels import entry_label_key
 from transbridge.ui.workbench.entry_action_scope import resolve_entry_action_scope
 from transbridge.ui.workbench.entry_menu import build_entry_menu
 from transbridge.ui.workbench.entry_refresh import EntryRefresh
@@ -214,7 +215,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
     def get_selected_entries(self) -> list[TranslationEntry]:
         """返回所有有标签的条目，供 AI 翻译浮窗使用。"""
         result = []
-        id_to_entry = {e.id: e for e in self._entries if e.id}
+        id_to_entry = {entry_label_key(e): e for e in self._entries if e.id}
         for entry_id in self._entry_labels:
             if entry_id in id_to_entry and self._entry_labels[entry_id]:
                 result.append(id_to_entry[entry_id])
@@ -222,7 +223,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
 
     def selected_entry_ids(self) -> tuple[str, ...]:
         """Return stable IDs for the compatibility 'marked entries' selection."""
-        return tuple(entry.id for entry in self.get_selected_entries() if entry.id)
+        return tuple(entry_label_key(entry) for entry in self.get_selected_entries() if entry.id)
 
     def selected_row_entry_ids(self) -> tuple[str, ...]:
         """Return actual table-row selection without changing legacy marked-entry scope."""
@@ -298,7 +299,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
             self._category_filters.clear()
             self._stage_filters.clear()
 
-        existing_ids = {e.id for e in collection if e.id}
+        existing_ids = {entry_label_key(e) for e in collection if e.id}
         self._entry_labels = {eid: ls for eid, ls in self._entry_labels.items() if eid in existing_ids}
         if content_changed:
             self._label_filters.clear()
@@ -560,7 +561,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         )
         selected_ids = self.selected_row_entry_ids()
         scope = resolve_entry_action_scope(entry, self._entries, selected_ids)
-        target_entry_ids = tuple(selected.id for selected in scope if selected.id)
+        target_entry_ids = tuple(entry_label_key(selected) for selected in scope if selected.id)
         common_labels = set(self._entry_labels.get(target_entry_ids[0], ()))
         for entry_id in target_entry_ids[1:]:
             common_labels.intersection_update(self._entry_labels.get(entry_id, ()))
@@ -627,7 +628,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
             change = changes[0]
             self._refresh_changed_entry(
                 change.entry,
-                preferred_row=self._table.find_entry_row(preferred_row, change.entry.id),
+                preferred_row=self._table.find_entry_row(preferred_row, entry_label_key(change.entry)),
                 old_stage=change.previous_stage,
             )
             return

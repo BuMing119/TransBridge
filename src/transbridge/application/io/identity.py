@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import total_ordering
 import json
 import math
 import re
@@ -56,17 +57,32 @@ def _stable_token(value: str, label: str) -> str:
     return token
 
 
-@dataclass(frozen=True, order=True, slots=True)
+@total_ordering
+@dataclass(frozen=True, slots=True)
 class EntryKey:
     namespace: SourceNamespace
     local_key: str
+    original: str | None = None
 
     def __post_init__(self) -> None:
         if not self.local_key or not self.local_key.strip():
             raise ValueError("entry local key must not be empty")
+        if self.original is not None and not isinstance(self.original, str):
+            raise TypeError("entry identity original must be a string or None")
+
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, EntryKey):
+            return NotImplemented
+        return self._sort_key() < other._sort_key()
+
+    def _sort_key(self) -> tuple[SourceNamespace, str, bool, str]:
+        return self.namespace, self.local_key, self.original is not None, self.original or ""
 
     def serialize(self) -> str:
-        return json.dumps([self.namespace.value, self.local_key], ensure_ascii=False, separators=(",", ":"))
+        payload = [self.namespace.value, self.local_key]
+        if self.original is not None:
+            payload.append(self.original)
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
     @classmethod
     def deserialize(cls, value: str) -> EntryKey:
@@ -74,16 +90,23 @@ class EntryKey:
             payload = json.loads(value)
         except json.JSONDecodeError as exc:
             raise ValueError("invalid serialized EntryKey") from exc
-        if not isinstance(payload, list) or len(payload) != 2 or not all(isinstance(item, str) for item in payload):
+        if (
+            not isinstance(payload, list)
+            or len(payload) not in (2, 3)
+            or not all(isinstance(item, str) for item in payload)
+        ):
             raise ValueError("invalid serialized EntryKey")
-        return cls(SourceNamespace(payload[0]), payload[1])
+        return cls(SourceNamespace(payload[0]), payload[1], payload[2] if len(payload) == 3 else None)
 
     def to_dict(self) -> dict[str, str]:
-        return {"namespace": self.namespace.value, "local_key": self.local_key}
+        data = {"namespace": self.namespace.value, "local_key": self.local_key}
+        if self.original is not None:
+            data["original"] = self.original
+        return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EntryKey:
-        return cls(SourceNamespace(str(data["namespace"])), str(data["local_key"]))
+        return cls(SourceNamespace(str(data["namespace"])), str(data["local_key"]), data.get("original"))
 
 
 @dataclass(frozen=True, slots=True)

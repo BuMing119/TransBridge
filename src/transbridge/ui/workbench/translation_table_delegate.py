@@ -15,6 +15,7 @@ from transbridge.converter.translation_entry import (
     TranslationEntry,
 )
 from transbridge.ui.foundation.adapters import DomainBrushes, ThemeView
+from transbridge.ui.project_labels import entry_label_key
 
 from ._theme_support import readable_user_color
 from .translation_table_columns import COL_CONTEXT, COL_KEY, COL_MARK, COL_TRANSLATION
@@ -90,7 +91,7 @@ class TranslationThemeDelegate(QStyledItemDelegate):
             state = "translated" if entry.translation else "source"
             text_palette = self._text_palettes[("translation", state)]
         elif index.column() == COL_MARK:
-            labels = self._table._entry_labels.get(entry.id, set()) if entry.id else set()
+            labels = self._table._entry_labels.get(entry_label_key(entry), set()) if entry.id else set()
             if labels:
                 raw = self._table._label_library.get(next(iter(labels)), {}).get("color")
                 foreground = readable_user_color(raw, option.palette)

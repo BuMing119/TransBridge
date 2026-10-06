@@ -4,11 +4,13 @@ from dataclasses import replace
 import importlib
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 import sys
 
 import pytest
 
+from tests.plugin_fixtures import _field, _record
 from transbridge.application.contracts import OperationOutcome, RequestContext
 from transbridge.application.io import (
     EetXmlAdapter,
@@ -103,6 +105,46 @@ def test_plugin_real_parse_modify_write_reparse_chain(tmp_path: Path) -> None:
     matching = [entry for entry in reparsed.entries if entry.identity == changed.identity]
     assert len(matching) == 1
     assert matching[0].original == "Adapter smoke translation"
+
+
+def test_plugin_duplicate_quest_logs_use_original_text_and_write_separately(tmp_path):
+    logs = ["First log", "Second log", "Third log", "Fourth log"]
+    stage = b"INDX" + struct.pack("<HHBB", 4, 10, 0, 0)
+    log_data = b"".join(b"QSDT\x01\x00\x00" + _field(b"CNAM", text) for text in logs)
+    quest = _record(b"QUST", 0x800, _field(b"EDID", "Quest") + _field(b"FULL", "Quest name") + stage + log_data)
+    group = struct.pack("<4sI4siHHI", b"GRUP", 24 + len(quest), b"QUST", 0, 0, 0, 0) + quest
+    source = tmp_path / "quest.esp"
+    source.write_bytes(_record(b"TES4", 0, b"") + group)
+    original_bytes = source.read_bytes()
+    adapter = SsePluginAdapter()
+
+    parsed = adapter.parse(_request(source, FormatId.PLUGIN_SSE))
+
+    assert parsed.outcome is OperationOutcome.COMPLETED
+    assert parsed.stats.parsed == 5
+    assert parsed.stats.skipped == 0
+    assert parsed.stats.failed == 0
+    assert not parsed.diagnostics
+    assert not parsed.entries[0].requires_original_match
+    assert all(entry.requires_original_match for entry in parsed.entries[1:])
+    changed = replace(parsed.entries[0], translation="Translated quest name", stage=1)
+    target = tmp_path / "output.esp"
+
+    translated_logs = tuple(
+        replace(entry, translation=f"Translated {index}", stage=1) for index, entry in enumerate(parsed.entries[1:])
+    )
+    written = adapter.write(_write_request(target, FormatId.PLUGIN_SSE, parsed, (changed, *translated_logs)))
+
+    assert written.outcome is OperationOutcome.COMPLETED
+    assert source.read_bytes() == original_bytes
+    reparsed = adapter.parse(_request(target, FormatId.PLUGIN_SSE))
+    assert [entry.original for entry in reparsed.entries] == [
+        "Translated quest name",
+        "Translated 0",
+        "Translated 1",
+        "Translated 2",
+        "Translated 3",
+    ]
 
 
 def test_source_fingerprint_change_blocks_blind_write(tmp_path: Path) -> None:

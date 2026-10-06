@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
 from transbridge.converter.translation_entry import STAGE_LABELS, TranslationEntry
 from transbridge.ui.foundation.adapters import ThemeView
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle
+from transbridge.ui.project_labels import entry_label_key
 from transbridge.ui.workbench.filters_presenter import entry_category
 from transbridge.ui.workbench.table_presenter import RenderSession
 
@@ -172,7 +173,9 @@ class TranslationTable(QTableWidget):
         self._entry_labels = entry_labels
         self._label_library = label_library
         self._display_order = self._sorting.order(session.entries, entry_labels)
-        self._entry_rows = {session.entries[source_row].id: row for row, source_row in enumerate(self._display_order)}
+        self._entry_rows = {
+            entry_label_key(session.entries[source_row]): row for row, source_row in enumerate(self._display_order)
+        }
         self._pending_selected_entry_ids.intersection_update(self._entry_rows)
         if self._pending_current_entry_id not in self._entry_rows:
             self._pending_current_entry_id = None
@@ -245,7 +248,7 @@ class TranslationTable(QTableWidget):
         self._session = RenderSession(self._session.generation + 1, None, ())
 
     def _render_row(self, row: int, entry: TranslationEntry) -> None:
-        labels = self._entry_labels.get(entry.id, set()) if entry.id else set()
+        labels = self._entry_labels.get(entry_label_key(entry), set()) if entry.id else set()
 
         check = QTableWidgetItem("")
         check.setData(Qt.ItemDataRole.UserRole, entry)
@@ -329,7 +332,7 @@ class TranslationTable(QTableWidget):
     def update_rendered_entry(self, entry: TranslationEntry, preferred_row: int = -1) -> int:
         """Synchronize one materialized row without restarting its render session."""
 
-        row = self.find_entry_row(preferred_row, entry.id)
+        row = self.find_entry_row(preferred_row, entry_label_key(entry))
         if row < 0:
             return -1
         self.blockSignals(True)
@@ -403,7 +406,7 @@ class TranslationTable(QTableWidget):
         if 0 <= preferred_row < self.rowCount():
             candidate = self.item(preferred_row, COL_KEY)
             candidate_entry = None if candidate is None else candidate.data(Qt.ItemDataRole.UserRole)
-            if isinstance(candidate_entry, TranslationEntry) and candidate_entry.id == entry_id:
+            if isinstance(candidate_entry, TranslationEntry) and entry_label_key(candidate_entry) == entry_id:
                 return preferred_row
         row = self._entry_rows.get(entry_id, -1)
         return row if row < self.rowCount() else -1
@@ -420,7 +423,7 @@ class TranslationTable(QTableWidget):
             item = self.item(index.row(), COL_KEY)
             entry = None if item is None else item.data(Qt.ItemDataRole.UserRole)
             if isinstance(entry, TranslationEntry) and entry.id:
-                selected.append(entry.id)
+                selected.append(entry_label_key(entry))
         # Pending rows remain part of the action scope while sorting renders them.
         pending = self._pending_selected_entry_ids.difference(selected)
         selected.extend(sorted(pending, key=self._entry_rows.__getitem__))
@@ -434,14 +437,16 @@ class TranslationTable(QTableWidget):
         current = self.currentItem()
         current_entry = None if current is None else current.data(Qt.ItemDataRole.UserRole)
         if isinstance(current_entry, TranslationEntry):
-            self._pending_current_entry_id = current_entry.id
+            self._pending_current_entry_id = entry_label_key(current_entry)
         self._pending_scroll_value = self.verticalScrollBar().value()
         top_row = self.rowAt(0)
         if top_row < 0:
             top_row = min(self._pending_scroll_value, self.rowCount() - 1)
         item = self.item(top_row, COL_KEY)
         entry = None if item is None else item.data(Qt.ItemDataRole.UserRole)
-        self._pending_scroll_entry_id = entry.id if isinstance(entry, TranslationEntry) and entry.id else None
+        self._pending_scroll_entry_id = (
+            entry_label_key(entry) if isinstance(entry, TranslationEntry) and entry.id else None
+        )
 
     def _restore_view_state(self, start: int, end: int) -> None:
         entries = self._session.entries
@@ -449,7 +454,7 @@ class TranslationTable(QTableWidget):
         restored = QItemSelection()
         range_start: int | None = None
         for row in range(start, min(end, len(entries))):
-            entry_id = entries[self._display_order[row]].id
+            entry_id = entry_label_key(entries[self._display_order[row]])
             if entry_id in self._pending_selected_entry_ids:
                 if range_start is None:
                     range_start = row

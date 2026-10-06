@@ -5,6 +5,8 @@
 import re
 from typing import TYPE_CHECKING
 
+from transbridge.application.translation.entry_alias import ai_entry_id
+
 from .base import BaseChecker, PostProcessIssue
 
 if TYPE_CHECKING:
@@ -80,7 +82,7 @@ class FormatValidator(BaseChecker):
         if len(original_placeholders) != len(translation_placeholders):
             issues.append(
                 PostProcessIssue(
-                    entry_id=entry.id,
+                    entry_id=ai_entry_id(entry),
                     issue_type=PostProcessIssue.PLACEHOLDER_MISMATCH,
                     severity="error",
                     message=(
@@ -99,7 +101,7 @@ class FormatValidator(BaseChecker):
             if orig != trans:
                 issues.append(
                     PostProcessIssue(
-                        entry_id=entry.id,
+                        entry_id=ai_entry_id(entry),
                         issue_type=PostProcessIssue.PLACEHOLDER_MISMATCH,
                         severity="error",
                         message=f"第 {i + 1} 个占位符不匹配：原文 '{orig}'，译文 '{trans}'",
@@ -143,7 +145,7 @@ class FormatValidator(BaseChecker):
             if original_count > translation_count:
                 issues.append(
                     PostProcessIssue(
-                        entry_id=entry.id,
+                        entry_id=ai_entry_id(entry),
                         issue_type=PostProcessIssue.FORMAT_TAG_BROKEN,
                         severity="warning",
                         message=f"格式标记 '{tag}' 缺失：原文 {original_count} 处，译文 {translation_count} 处",
@@ -155,7 +157,7 @@ class FormatValidator(BaseChecker):
             elif original_count < translation_count:
                 issues.append(
                     PostProcessIssue(
-                        entry_id=entry.id,
+                        entry_id=ai_entry_id(entry),
                         issue_type=PostProcessIssue.FORMAT_TAG_BROKEN,
                         severity="warning",
                         message=f"格式标记 '{tag}' 过多：原文 {original_count} 处，译文 {translation_count} 处",
@@ -191,7 +193,7 @@ class FormatValidator(BaseChecker):
                 if open_count % 2 != 0:
                     issues.append(
                         PostProcessIssue(
-                            entry_id=entry.id,
+                            entry_id=ai_entry_id(entry),
                             issue_type=PostProcessIssue.QUOTE_MISMATCH,
                             severity="warning",
                             message=f"引号 '{open_char}' 未正确闭合（共 {open_count} 个，应为偶数）",
@@ -205,7 +207,7 @@ class FormatValidator(BaseChecker):
                 if open_count != close_count:
                     issues.append(
                         PostProcessIssue(
-                            entry_id=entry.id,
+                            entry_id=ai_entry_id(entry),
                             issue_type=PostProcessIssue.QUOTE_MISMATCH,
                             severity="warning",
                             message=f"括号不匹配：'{open_char}' 有 {open_count} 个，'{close_char}' 有 {close_count} 个",
@@ -220,7 +222,7 @@ class FormatValidator(BaseChecker):
         for issue_msg in stack_issues:
             issues.append(
                 PostProcessIssue(
-                    entry_id=entry.id,
+                    entry_id=ai_entry_id(entry),
                     issue_type=PostProcessIssue.QUOTE_MISMATCH,
                     severity="warning",
                     message=issue_msg,
@@ -297,7 +299,7 @@ class FormatValidator(BaseChecker):
             char_details = ", ".join([f"'{c}' (U+{code:04X})" for c, code, _ in illegal_chars])
             issues.append(
                 PostProcessIssue(
-                    entry_id=entry.id,
+                    entry_id=ai_entry_id(entry),
                     issue_type=PostProcessIssue.FORMAT_TAG_BROKEN,
                     severity="error",
                     message=f"发现非法字符: {char_details}",
@@ -318,7 +320,7 @@ class FormatValidator(BaseChecker):
         if found_zero_width:
             issues.append(
                 PostProcessIssue(
-                    entry_id=entry.id,
+                    entry_id=ai_entry_id(entry),
                     issue_type=PostProcessIssue.FORMAT_TAG_BROKEN,
                     severity="warning",
                     message=f"发现零宽字符: {', '.join(found_zero_width)}",

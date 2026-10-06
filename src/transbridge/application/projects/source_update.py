@@ -115,7 +115,7 @@ class ProjectSourceUpdateService:
                     raise ValueError("工程内翻译版本的来源不一致，无法统一更新。")
             old, warnings = self._previous(source, context)
             keys = {
-                item.entry_key.local_key
+                (item.entry_key.local_key, item.entry_key.original)
                 for variant in expected.variants
                 for item in variant.entries
                 if item.entry_key.namespace == namespace

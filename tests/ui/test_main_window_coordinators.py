@@ -143,10 +143,48 @@ def test_authoritative_source_import_commits_initial_states_without_second_varia
     )
 
     payload = captured["options"]["__transbridge_initial_entry_states_v1"]
-    assert payload == [{"local_key": "entry", "translation": "导入译文", "stage": 3}]
+    assert payload == [{"entry_key": key.to_dict(), "translation": "导入译文", "stage": 3}]
     assert captured["kwargs"]["expected_project_revision"] == 1
     assert next(iter(restored)).translation == "导入译文"
     assert hydration.entries[0].translation == "导入译文"
+
+
+def test_authoritative_source_import_preserves_each_same_key_initial_state() -> None:
+    from transbridge.application.projects.source_commands import _split_initial_entry_states
+
+    keys = [EntryKey(SourceNamespace("source:plugin:test"), "same", original) for original in ("A", "B")]
+    entries = [
+        TranslationEntry("same", "same", key.original, f"Imported {index}", (3, 5)[index], "FULL", entry_key=key)
+        for index, key in enumerate(keys)
+    ]
+    captured = {}
+
+    def add_source(request, _context, **_kwargs):
+        _sanitized, states = _split_initial_entry_states(request)
+        captured.update(states)
+        return OperationResult.completed(
+            SimpleNamespace(hydration=SimpleNamespace(entries=tuple(entry.snapshot() for entry in entries)))
+        )
+
+    coordinator = ParseCoordinator(
+        SimpleNamespace(
+            context=SimpleNamespace(
+                uses_authoritative_projection=True,
+                project_commands=SimpleNamespace(add_source=add_source),
+                runtime_context=object(),
+            )
+        )
+    )
+
+    restored, _hydration = coordinator._commit_authoritative_source(
+        "D:/mods/Plugin.esp",
+        TranslationEntryCollection(entries),
+        format_id="plugin.sse",
+        expected_authority=(("project", "variant"), 1, 3),
+    )
+
+    assert captured == {entry.identity: (entry.translation, entry.stage) for entry in entries}
+    assert len(restored) == 2
 
 
 def test_migration_draft_is_non_blocking_and_owned_until_finished(monkeypatch) -> None:
@@ -184,7 +222,7 @@ def test_migration_draft_is_non_blocking_and_owned_until_finished(monkeypatch) -
             pass
 
     host = SimpleNamespace(
-        context=SimpleNamespace(active_slot=object()),
+        context=SimpleNamespace(active_slot=SimpleNamespace(collection=object()), uses_authoritative_projection=False),
         show_message=lambda _message: None,
     )
     monkeypatch.setattr("transbridge.ui.workbench._parse_config_dialog.ParseConfigDialog", Dialog)

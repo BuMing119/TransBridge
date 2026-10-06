@@ -404,7 +404,30 @@ class SsePluginAdapter(_LegacyFormatAdapter):
                 ("stage_policy_version", DEFAULT_STAGE_POLICY.version),
             ),
         )
-        return self._parse_result(request, snapshot, entries, lambda entry: entry.key)
+        namespace = request.source_namespace or _namespace_from_locators(
+            self.format_id, [entry.key for entry in entries]
+        )
+        snapshot = replace(snapshot, metadata=(*snapshot.metadata, ("source_namespace", namespace.value)))
+        mapped = tuple(
+            replace(
+                entry,
+                entry_key=EntryKey(namespace, entry.key, entry.identity.original),
+                metadata=(*entry.metadata, ("io.format", self.format_id.value), ("io.locator", entry.key)),
+            )
+            for entry in entries
+        )
+        return ParseResult(
+            OperationOutcome.COMPLETED,
+            self.format_id,
+            request.source,
+            snapshot,
+            mapped,
+            parser.conflict_diagnostics,
+            ParseStats(parsed=len(mapped), skipped=parser.conflict_skipped_count),
+            self.adapter_id,
+            self.adapter_version,
+            self.capabilities(),
+        )
 
     def validate_write(self, request: WriteRequest) -> OperationResult[None]:
         validation = super().validate_write(request)

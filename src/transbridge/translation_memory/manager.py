@@ -26,6 +26,11 @@ from transbridge.translation_memory.model import (
     DictionaryEntry,
     entry_id,
 )
+from transbridge.translation_memory.original_matching import (
+    dictionary_key,
+    exact_dictionary_candidates,
+    qualified_identity,
+)
 
 # 词典文件后缀（内容为 JSON）
 DICT_SUFFIX = ".tbdict"
@@ -155,13 +160,18 @@ class TranslationMemoryManager:
         """
         if not translation:
             return
+        identity = qualified_identity(complete_key)
+        if identity is not None and identity.original != original:
+            raise ValueError("dictionary entry original does not match its identity")
         with self._lock:
             key = self._key(mod_file_id)
             d = self._dict(key)
             d.scope = scope  # 词典 scope 随写入同步（一本词典一个 scope）
             d.revision += 1
-            nk = _normalize(original) if original else ""
-            seed = nk or complete_key or original
+            nk = _normalize(original) if original and identity is None else ""
+            seed = (
+                json.dumps(["original_match", complete_key]) if identity is not None else nk or complete_key or original
+            )
             if not seed:
                 return
             eid = entry_id(key, seed)
@@ -239,6 +249,11 @@ class TranslationMemoryManager:
     def query(self, complete_key: str, original: str, context: QueryContext | None = None) -> QueryResult:
         """多词典全查兜底：同名 mod 优先（键命中即停），其余 project/global 收集候选仲裁。"""
         ctx = context or QueryContext()
+        identity = qualified_identity(complete_key)
+        if identity is not None:
+            with self._lock:
+                candidates = exact_dictionary_candidates(self._dicts.values(), identity, original, ctx.mod_file_id)
+                return self._arbitrate(candidates) if candidates else QueryResult()
         nk = _normalize(original) if original else ""
 
         with self._lock:
@@ -358,10 +373,9 @@ class TranslationMemoryManager:
                 continue
             if not DEFAULT_STAGE_POLICY.allows_tm_write(e.stage, e.translation, original=e.original):
                 continue
-            # 锁语义：e.key = TranslationEntry 唯一主索引（EditorID:FormID|index~context），
-            # 即词典 key_index 的 complete_key，勿改用 e.id（id 非主索引，见 ADR-002）
+            # Ordinary locators retain their key; ambiguous locators include exact original.
             self.add(
-                e.key,
+                dictionary_key(e),
                 e.original,
                 e.translation,
                 mod_file_id=key,
@@ -400,8 +414,7 @@ class TranslationMemoryManager:
                 continue
             if not e.key and not e.original:
                 continue
-            # 锁语义：e.key 是主索引（=词典 key_index 的 complete_key），勿改用 e.id
-            res = self.query(e.key, e.original, context)
+            res = self.query(dictionary_key(e), e.original, context)
             if res.translation:
                 e.translation = res.translation
                 result.applied += 1
@@ -413,7 +426,7 @@ class TranslationMemoryManager:
                     result.text_hits += 1
                 if res.conflicts:
                     for c in res.conflicts:
-                        c["entry_id"] = e.key
+                        c["entry_id"] = dictionary_key(e)
                         result.conflicts.append(c)
             else:
                 result.misses += 1

@@ -29,6 +29,7 @@ from transbridge.ai_translator.term_formats import (
     term_entry_to_canonical_dict,
 )
 from transbridge.ai_translator.term_validation import valid_term_pair, valid_term_text
+from transbridge.application.translation.entry_alias import ai_entry_key
 
 if TYPE_CHECKING:
     from transbridge.application.terminology.effective import EffectiveSnapshotStatus, TerminologyLookupContext
@@ -621,7 +622,7 @@ class TermDatabaseManager:
         if not entries or max_terms <= 0 or not getattr(self, "_retrieval_enabled", True):
             return ScopedTermMatches(
                 flat_terms={},
-                terms_by_entry={entry.key: {} for entry in entries},
+                terms_by_entry={ai_entry_key(entry): {} for entry in entries},
             )
         if self._uses_project_context():
             return self._match_terms_scoped_contextual(
@@ -655,9 +656,9 @@ class TermDatabaseManager:
 
         # matcher 已包含主术语与 variants；这里只保留归属，不改变候选内容。
         matcher_map = self._get_term_matcher_map()
-        candidate_terms_by_entry: dict[str, set[str]] = {entry.key: set() for entry in entries}
+        candidate_terms_by_entry: dict[str, set[str]] = {ai_entry_key(entry): set() for entry in entries}
         for entry in entries:
-            scoped_terms = candidate_terms_by_entry[entry.key]
+            scoped_terms = candidate_terms_by_entry[ai_entry_key(entry)]
             for match_key, (main_term, _translation, case_sensitive) in matcher_map.items():
                 if main_term in scoped_terms or main_term not in matched:
                     continue
@@ -682,7 +683,7 @@ class TermDatabaseManager:
                         entry.original,
                         case_sensitive=False,
                     ):
-                        candidate_terms_by_entry[entry.key].add(term)
+                        candidate_terms_by_entry[ai_entry_key(entry)].add(term)
 
         # 阶段2：语义召回（仅对子串未命中的原文）
         if enable_semantic and self._vector_index and self._vector_index.available:
@@ -695,7 +696,7 @@ class TermDatabaseManager:
             batch_results = self._vector_index.search_hybrid_batch(unmatched_originals, top_k=3)
             entry_keys_by_original: dict[str, list[str]] = {}
             for entry in entries:
-                entry_keys_by_original.setdefault(entry.original, []).append(entry.key)
+                entry_keys_by_original.setdefault(entry.original, []).append(ai_entry_key(entry))
             for original, results in batch_results.items():
                 for r in results:
                     if not valid_term_pair(r.term, r.translation):
@@ -713,10 +714,10 @@ class TermDatabaseManager:
             matched = {t: matched[t] for t in sorted_terms[:max_terms]}
 
         terms_by_entry = {
-            entry.key: {
+            ai_entry_key(entry): {
                 term: translation
                 for term, translation in matched.items()
-                if term in candidate_terms_by_entry[entry.key]
+                if term in candidate_terms_by_entry[ai_entry_key(entry)]
             }
             for entry in entries
         }
@@ -752,7 +753,7 @@ class TermDatabaseManager:
                         term, entry.original, case_sensitive=False
                     ):
                         matched.setdefault(term, translation)
-            terms_by_entry[entry.key] = matched
+            terms_by_entry[ai_entry_key(entry)] = matched
             flat_terms.update(matched)
         if len(flat_terms) > max_terms:
             selected = tuple(sorted(flat_terms, key=lambda term: (len(term), term.casefold())))[:max_terms]

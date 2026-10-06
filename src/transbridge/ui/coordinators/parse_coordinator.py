@@ -1,4 +1,3 @@
-from dataclasses import replace
 from pathlib import Path
 
 from PyQt6.QtWidgets import QMessageBox
@@ -73,6 +72,8 @@ class ParseCoordinator:
         if not slot:
             self._host.show_message("请先加载集合")
             return
+        authority = self._capture_authoritative_target()
+        original_collection = slot.collection
 
         from ..workbench._parse_config_dialog import ParseConfigDialog
 
@@ -82,15 +83,22 @@ class ParseCoordinator:
             return
 
         def submit() -> None:
+            if (
+                self._host.context.active_slot is not slot
+                or slot.collection is not original_collection
+                or not self._can_publish_authoritative_source(authority)
+            ):
+                self._host.show_message("MIGRATION_TARGET_CHANGED: 当前工程版本或翻译内容已变化，请重新打开导入窗口。")
+                return
             cfg = dlg.get_config()
             json_path = getattr(cfg, "json_path", None)
             sst_path = getattr(cfg, "sst_path", None)
             if not any([cfg.eet_path, cfg.xt_path, cfg.tp_path, cfg.strings_dir, json_path, sst_path]):
                 self._host.show_message("请先选择迁移源文件")
                 return
-            if (json_path or sst_path) and any([cfg.eet_path, cfg.xt_path, cfg.tp_path, cfg.strings_dir]):
+            if (json_path or sst_path or cfg.tp_path) and any([cfg.eet_path, cfg.xt_path, cfg.strings_dir]):
                 self._host.show_message(
-                    "MIGRATION_MIXED_LEGACY_UNSUPPORTED: JSON/SST 原子导入不能与旧迁移来源在同一次草稿中混用。"
+                    "MIGRATION_MIXED_LEGACY_UNSUPPORTED: 插件/JSON/SST 导入请与 XML/Strings 来源分开执行。"
                 )
                 return
             self._run_migrate(slot, cfg)
@@ -416,7 +424,7 @@ class ParseCoordinator:
 
         request = source_request_with_initial_entry_states(
             ProjectSourceRequest(path, FormatId(format_id), options=tuple(options)),
-            {entry.identity.local_key: (entry.translation, entry.stage) for entry in collection},
+            {entry.identity: (entry.translation, entry.stage) for entry in collection},
         )
         added = context.project_commands.add_source(
             request,
@@ -457,210 +465,10 @@ class ParseCoordinator:
         return identity, context.project_revision, context.variant_revision
 
     def _run_migrate(self, slot, cfg):
-        if getattr(cfg, "json_path", None) or getattr(cfg, "sst_path", None):
-            self._run_structured_migrate(slot, cfg)
-            return
+        from .migration_coordinator import run_migration
 
-        from transbridge.parser.strings_file import PluginStringsLookup
-        from transbridge.parser.xt import XT_XmlParser
-
-        self._host.workbench.show_step2_progress(0, "应用迁移源中…")
-
-        def _do():
-            migrate_count = 0
-            updated_slots = []
-            apply_all = cfg.strings_apply_all and cfg.strings_dir
-            slots_to_process = list(self._host.context.slots.values()) if apply_all else [slot]
-
-            for s in slots_to_process:
-                collection = s.collection
-                slot_migrate = 0
-                if s is slot:
-                    if cfg.eet_path and s.eet_path is None:
-                        try:
-                            slot_migrate += collection.update_from_eet_xml(Path(cfg.eet_path))
-                        except Exception:
-                            pass
-                    if cfg.xt_path and s.xt_path is None:
-                        try:
-                            xp = XT_XmlParser.from_file(cfg.xt_path)
-                            slot_migrate += collection.apply_xt_entries(xp.entries)
-                        except Exception:
-                            pass
-                    if cfg.tp_path:
-                        try:
-                            slot_migrate += collection.update_from_translated_plugin(Path(cfg.tp_path))
-                        except Exception:
-                            pass
-                if cfg.strings_dir and s.strings_path is None:
-                    try:
-                        plugin_stem = Path(s.esp_path).stem if s.esp_path else ""
-                        strings_lookup = PluginStringsLookup.from_strings_dir(
-                            Path(cfg.strings_dir), plugin_stem, cfg.strings_lang
-                        )
-                        if strings_lookup:
-                            slot_migrate += collection.update_from_strings_lookup(strings_lookup)
-                            s.strings_lookup = strings_lookup
-                    except Exception:
-                        pass
-                if slot_migrate > 0:
-                    updated_slots.append((s, slot_migrate))
-                migrate_count += slot_migrate
-            return migrate_count, cfg.eet_path, cfg.xt_path, cfg.strings_dir, cfg.strings_lang, updated_slots
-
-        def _on_done(result):
-            migrate_count, new_eet, new_xt, new_strings, new_lang, updated_slots = result
-            if self._host.context.uses_authoritative_projection and updated_slots:
-                states = {
-                    entry.identity: (entry.translation, entry.stage)
-                    for updated_slot, _count in updated_slots
-                    for entry in updated_slot.collection
-                }
-                committed = self._host.context.project_commands.replace_entry_states(
-                    states,
-                    self._host.context.runtime_context,
-                )
-                if not committed.is_success:
-                    diagnostic = committed.diagnostics[0]
-                    self._host.workbench.hide_step2_progress()
-                    self._host.show_message(f"{diagnostic.code}: {diagnostic.message}")
-                    return
-            for s, _ in updated_slots:
-                if s is slot:
-                    if new_eet and s.eet_path is None:
-                        s.eet_path = new_eet
-                    if new_xt and s.xt_path is None:
-                        s.xt_path = new_xt
-                if new_strings and s.strings_path is None:
-                    s.strings_path = new_strings
-                    s.strings_lang = new_lang
-            self._host.workbench.hide_step2_progress()
-            if cfg.strings_apply_all and len(updated_slots) > 1:
-                self._host.show_message(f"迁移完成，共 {len(updated_slots)} 个集合，新增 {migrate_count} 条译文")
-            else:
-                self._host.show_message(f"迁移完成，新增 {migrate_count} 条译文")
-            self._host.context.collection_changed.emit(slot.collection)
-
-        def _on_error(msg: str):
-            self._host.workbench.hide_step2_progress()
-            self._host.show_message(f"迁移失败：{msg}")
-
-        w = ApiWorker(_do)
-        w.result.connect(_on_done)
-        w.error.connect(_on_error)
-        w.start()
-        self._host.workers.append(w)
+        run_migration(self._host, slot, cfg)
 
     def _run_structured_migrate(self, slot, cfg) -> None:
-        """Prepare JSON/SST changes off-thread, then publish one Variant mutation."""
-
-        from transbridge.application.io.migration_import import MigrationImportError, prepare_migration_import
-        from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
-
-        context = self._host.context
-        authority = self._capture_authoritative_target()
-        original_collection = slot.collection
-        sources = tuple(
-            item
-            for item in (
-                (getattr(cfg, "json_path", None), getattr(cfg, "json_format_id", None)),
-                (getattr(cfg, "sst_path", None), getattr(cfg, "sst_format_id", None)),
-            )
-            if item[0]
-        )
-        self._host.workbench.show_step2_progress(0, "验证迁移源中…")
-
-        def _do():
-            proposals = {}
-            formats = []
-            skipped = 0
-            for path, format_hint in sources:
-                draft = prepare_migration_import(
-                    path,
-                    original_collection,
-                    format_hint=format_hint,
-                    context=context.runtime_context,
-                )
-                formats.append(draft.format_id)
-                skipped += draft.skipped_unmatched
-                for entry_key, state in draft.states:
-                    previous = proposals.get(entry_key)
-                    if previous is not None and previous != state:
-                        raise MigrationImportError(
-                            "MIGRATION_ENTRY_KEY_CONFLICT",
-                            f"多个迁移源为同一 EntryKey 提供了不同译文：{entry_key.local_key}",
-                        )
-                    proposals[entry_key] = state
-
-            changed_states = {}
-            staged_entries = []
-            for entry in original_collection:
-                proposed = proposals.get(entry.identity)
-                if proposed is None or entry.translation or entry.stage != 0:
-                    staged_entries.append(entry)
-                    continue
-                translation, stage = proposed
-                changed_states[entry.identity] = proposed
-                staged_entries.append(
-                    replace(
-                        entry,
-                        translation=translation,
-                        stage=stage,
-                        revision=entry.revision.next(),
-                    )
-                )
-            return (
-                changed_states,
-                TranslationEntryCollection(staged_entries),
-                tuple(formats),
-                skipped,
-            )
-
-        def _on_done(result):
-            changed_states, candidate, formats, skipped = result
-            if slot.collection is not original_collection:
-                self._host.workbench.hide_step2_progress()
-                self._host.show_message("MIGRATION_TARGET_CHANGED: 导入期间当前词条集合已变化，草稿未提交。")
-                return
-            if context.uses_authoritative_projection and changed_states:
-                if authority is None:
-                    self._host.workbench.hide_step2_progress()
-                    self._host.show_message("ACTIVE_VARIANT_REQUIRED: 导入草稿没有绑定活动工程版本。")
-                    return
-                identity, project_revision, variant_revision = authority
-                project_id, variant_id = identity
-                committed = context.project_commands.replace_entry_states(
-                    changed_states,
-                    context.runtime_context,
-                    expected_project_revision=project_revision,
-                    expected_variant_revision=variant_revision,
-                    expected_variant_ref=VariantRef(VariantId(variant_id), ProjectId(project_id)),
-                )
-                if not committed.is_success:
-                    diagnostic = committed.diagnostics[0]
-                    self._host.workbench.hide_step2_progress()
-                    self._host.show_message(f"{diagnostic.code}: {diagnostic.message}")
-                    return
-            elif context.uses_authoritative_projection and not self._can_publish_authoritative_source(authority):
-                self._host.workbench.hide_step2_progress()
-                self._host.show_message("MIGRATION_TARGET_CHANGED: 活动工程版本已变化，草稿未提交。")
-                return
-
-            slot.collection = candidate
-            if getattr(cfg, "sst_path", None) and changed_states:
-                slot.sst_path = cfg.sst_path
-            self._host.workbench.hide_step2_progress()
-            suffix = f"；{skipped} 条无法唯一匹配已跳过" if skipped else ""
-            formats_label = " + ".join(item.value for item in formats)
-            self._host.show_message(f"迁移完成（{formats_label}），新增 {len(changed_states)} 条译文{suffix}")
-            context.collection_changed.emit(slot.collection)
-
-        def _on_error(msg: str):
-            self._host.workbench.hide_step2_progress()
-            self._host.show_message(f"迁移失败：{msg}")
-
-        worker = ApiWorker(_do)
-        worker.result.connect(_on_done)
-        worker.error.connect(_on_error)
-        worker.start()
-        self._host.workers.append(worker)
+        """Compatibility entry point for the unified guarded migration path."""
+        self._run_migrate(slot, cfg)

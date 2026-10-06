@@ -43,10 +43,8 @@ def _confidence() -> JsonSchema:
 
 
 def _entry_key() -> JsonSchema:
-    return _object({
-        "namespace": _string(),
-        "local_key": _string(),
-    })
+    fields = {"namespace": _string(), "local_key": _string()}
+    return {"anyOf": [_object(fields), _object({**fields, "original": _string()})]}
 
 
 def _results_envelope(item_schema: JsonSchema) -> JsonSchema:

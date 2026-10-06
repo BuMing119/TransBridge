@@ -4,6 +4,7 @@ from collections import defaultdict
 from collections.abc import Iterable, Iterator
 from dataclasses import replace
 import json
+import logging
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -21,11 +22,10 @@ from transbridge.application.io.mutation import (
 )
 from transbridge.converter.translation_entry import (
     STAGE_TRANSLATED,
-    STAGE_UNTRANSLATED,
     TranslationEntry,
-    _normalize_text,
 )
-from transbridge.parser.eet_parser import EET_Entry, EET_XmlParser
+from transbridge.converter.translation_import_matching import match_eet_updates, match_strings_updates, match_xt_updates
+from transbridge.parser.eet_parser import EET_XmlParser
 from transbridge.parser.plugin_parser import PluginParser
 from transbridge.parser.strings_file import PluginStringsLookup
 from transbridge.parser.xt import SST_Entry, XT_Entry
@@ -34,7 +34,7 @@ from transbridge.parser.xt import SST_Entry, XT_Entry
 class TranslationEntryCollection:
     """
     管理多个 TranslationEntry 的集合。
-    - 以序列化 EntryKey(namespace, local_key) 作为唯一主索引
+    - 以完整序列化 EntryKey 作为唯一主索引，冲突词条包含精确原文
     - legacy id/key 查找为只读扫描 facade，不维护第二套可写索引
     - ExternalEntryRef 索引不参与主身份，且拒绝跨条目冲突
     - 适合作为后续 JSON / DB / 导出层的中间结构
@@ -137,14 +137,47 @@ class TranslationEntryCollection:
             self._external_ref_index = external_index
             self._collection_revision = self._collection_revision.next()
 
+    def _replace_import_entries(self, updates: Iterable[TranslationEntry]) -> int:
+        """Publish matched replacements atomically, with legacy per-update revisions.
+
+        Matchers only replace existing exact identities. They do not use legacy
+        key resolution, create entries, or add ChangeSet provenance/authorization.
+        The caller holds the collection lock throughout matching and publication.
+        """
+        projected = None
+        count = 0
+        for entry in updates:
+            if projected is None:
+                projected = dict(self._entries)
+            key = entry.identity.serialize()
+            existing = projected.get(key)
+            if existing is None:
+                raise ValueError(f"import replacement identity does not exist: {key}")
+            projected[key] = replace(
+                entry,
+                revision=EntryRevision(max(existing.revision.value + 1, entry.revision.value)),
+                external_refs=entry.external_refs or existing.external_refs,
+                provenance=entry.provenance or existing.provenance,
+                metadata=entry.metadata or existing.metadata,
+            )
+            count += 1
+        if projected is not None:
+            external_index, conflicts = self._build_external_index(projected)
+            if conflicts:
+                raise ValueError(f"external reference conflict: {conflicts[0][0]}")
+            self._entries = projected
+            self._external_ref_index = external_index
+            self._collection_revision = EntryRevision(self._collection_revision.value + count)
+        return count
+
     def _normalize_legacy_upsert(self, entry: TranslationEntry) -> TranslationEntry:
-        if entry.identity.namespace.value != "legacy:v1":
+        if entry.identity.namespace.value != "legacy:v1" or entry.requires_original_match:
             return entry
         matches = self._legacy_matches(entry.key, include_id=True)
         if len(matches) != 1:
             return entry
         existing = matches[0]
-        if existing.identity == entry.identity:
+        if existing.identity == entry.identity or existing.requires_original_match:
             return entry
         warnings.warn(
             "Legacy collection.add() resolved a unique local key; use CollectionMutationPort.apply()",
@@ -288,6 +321,14 @@ class TranslationEntryCollection:
                                 ),
                             ),
                         ),
+                    )
+                if entry.requires_original_match and patch.as_dict().get("original", entry.original) != entry.original:
+                    return self._mutation_conflict(
+                        change_set,
+                        previous_revision,
+                        "ENTRY_ORIGINAL_IDENTITY_IMMUTABLE",
+                        "该词条使用原文定位，不能修改原文；请仅编辑译文。",
+                        patch.entry_key,
                     )
                 updated = replace(
                     entry,
@@ -448,61 +489,8 @@ class TranslationEntryCollection:
         :return: 实际发生更新的条目数量
         """
         parser = EET_XmlParser.from_file(path)
-        all_eet: list[EET_Entry] = list(parser)
-        updated_count = 0
-
-        # --- Phase 1：按完整 id 精确匹配 ---
-        eet_by_id: dict[str, list[EET_Entry]] = defaultdict(list)
-        for eet_entry in all_eet:
-            eet_id = TranslationEntry._build_eet_id(
-                eet_entry.edid, eet_entry.id, eet_entry.index, eet_entry.grup, eet_entry.champ
-            )
-            eet_by_id[eet_id].append(eet_entry)
-
-        unmatched: list[TranslationEntry] = []
-
-        for entry in list(self._entries.values()):
-            matched = False
-            for eet_entry in eet_by_id.get(entry.id, []):
-                if eet_entry.original != entry.original or not eet_entry.traduit:
-                    continue
-                updated_entry = replace(
-                    entry,
-                    translation=eet_entry.traduit,
-                    stage=STAGE_TRANSLATED if eet_entry.status == 99 or eet_entry.traduit else STAGE_UNTRANSLATED,
-                )
-                self.add(updated_entry, overwrite=True)
-                updated_count += 1
-                matched = True
-                break
-            if not matched:
-                unmatched.append(entry)
-
-        # --- Phase 2：按 (original, type_field_base) 回退 ---
-        if unmatched:
-            # key = (form_id, grup:champ, original)，优先有译文的条目
-            fallback_index: dict[tuple[str, str], EET_Entry] = {}
-            for eet_entry in all_eet:
-                if not eet_entry.traduit:
-                    continue
-                fb_key = (eet_entry.original, f"{eet_entry.grup}:{eet_entry.champ}")
-                if fb_key not in fallback_index:
-                    fallback_index[fb_key] = eet_entry
-
-            for entry in unmatched:
-                fb_key = (entry.original, self._type_field_base(entry.context))
-                eet_entry = fallback_index.get(fb_key)
-                if eet_entry is None:
-                    continue
-                updated_entry = replace(
-                    entry,
-                    translation=eet_entry.traduit,
-                    stage=STAGE_TRANSLATED if eet_entry.status == 99 or eet_entry.traduit else STAGE_UNTRANSLATED,
-                )
-                self.add(updated_entry, overwrite=True)
-                updated_count += 1
-
-        return updated_count
+        with self._lock:
+            return self._replace_import_entries(match_eet_updates(self._entries.values(), parser))
 
     # ---------- Plugin ----------
 
@@ -549,61 +537,8 @@ class TranslationEntryCollection:
 
         :return: 实际发生更新的条目数量
         """
-        all_xt: list[XT_Entry] = list(xt_entries)
-
-        # --- Phase 1：按 edid 分组 ---
-        xt_by_edid: dict[str, list[XT_Entry]] = defaultdict(list)
-        for xt in all_xt:
-            xt_by_edid[xt.edid].append(xt)
-
-        updated_count = 0
-        unmatched: list[TranslationEntry] = []
-
-        for entry in list(self._entries.values()):
-            left, _, right_with_other = entry.id.partition(":")
-            right = right_with_other.split("|")[0]
-
-            # 扩展候选：editid / bare formid / [formid]
-            candidate_edids = (left, right, f"[{right}]")
-
-            matched = False
-            for edid in candidate_edids:
-                for xt in xt_by_edid.get(edid, []):
-                    updated = TranslationEntry.try_update_from_xt(entry, xt)
-                    if updated is None:
-                        continue
-                    if updated is not entry:
-                        self.add(updated, overwrite=True)
-                        entry = updated
-                        updated_count += 1
-                    matched = True
-                    break
-                if matched:
-                    break
-
-            if not matched:
-                unmatched.append(entry)
-
-        # --- Phase 2：按 (original, type_field_base) 回退 ---
-        if unmatched:
-            fallback_index: dict[tuple[str, str], XT_Entry] = {}
-            for xt in all_xt:
-                if not xt.dest:
-                    continue
-                fb_key = (_normalize_text(xt.source), xt.rec)
-                if fb_key not in fallback_index:
-                    fallback_index[fb_key] = xt
-
-            for entry in unmatched:
-                fb_key = (_normalize_text(entry.original), self._type_field_base(entry.context))
-                xt = fallback_index.get(fb_key)
-                if xt is None or not xt.dest:
-                    continue
-                updated_entry = replace(entry, translation=xt.dest, stage=STAGE_TRANSLATED)
-                self.add(updated_entry, overwrite=True)
-                updated_count += 1
-
-        return updated_count
+        with self._lock:
+            return self._replace_import_entries(match_xt_updates(self._entries.values(), xt_entries))
 
     def apply_sst_entries(
         self,
@@ -616,8 +551,10 @@ class TranslationEntryCollection:
         all_sst: list[SST_Entry] = list(sst_entries)
         # 按 (form_id, index) 构建查找表
         sst_by_key: dict[tuple[int, int], SST_Entry] = {}
+        sst_by_original: dict[tuple[int, int, str], list[SST_Entry]] = defaultdict(list)
         for sst in all_sst:
             key = (sst.form_id, sst.index)
+            sst_by_original[(*key, sst.text)].append(sst)
             if key not in sst_by_key:
                 sst_by_key[key] = sst
 
@@ -636,6 +573,14 @@ class TranslationEntryCollection:
                 continue
 
             sst = sst_by_key.get((entry_form_id, entry_index))
+            if entry.requires_original_match:
+                candidates = sst_by_original.get((entry_form_id, entry_index, entry.original), ())
+                if len(candidates) != 1:
+                    logging.getLogger(__name__).warning(
+                        "SOURCE_ORIGINAL_MATCH_REQUIRED: SST 词条 %s 无法由原文唯一定位，已跳过。", entry.key
+                    )
+                    continue
+                sst = candidates[0]
             if sst is None:
                 continue
             matched += 1
@@ -656,28 +601,54 @@ class TranslationEntryCollection:
         """
         从已翻译的 ESP/ESM 中提取译文并更新集合。
 
-        Phase 1：按 entry.id 精确匹配。
-        Phase 2：对未命中的条目，按 (original, type_field_base) 回退匹配。
+        按 entry.id 精确匹配，使用已翻译插件中解析到的 original 作为译文。
+        插件不包含原文/译文对照，因此不按文本回退匹配未命中的条目。
+        需要原文定位的词条不能从已翻译正文证明对应关系，跳过并 warning。
+        其余来源命中多个目标条目时，在修改前拒绝导入。
 
         :param path: 已翻译插件文件路径
         :param overwrite: 是否覆盖已有译文，默认 False
         :return: 实际发生更新的条目数量
+        :raises ValueError: 来源或目标的 id 匹配存在歧义
         """
         translated_entries = PluginParser().parse_plugin(Path(path), skip_empty=True)
-        all_translated = list(translated_entries)
+        translated_lookup: dict[str, str] = {}
+        for translated in translated_entries:
+            if translated.requires_original_match:
+                logging.getLogger(__name__).warning(
+                    "SOURCE_ORIGINAL_MATCH_REQUIRED: 已翻译插件词条 %s 无法证明原文，已跳过。", translated.key
+                )
+                continue
+            if not translated.original.strip():
+                continue
+            previous = translated_lookup.get(translated.id)
+            if previous is not None and previous != translated.original:
+                raise ValueError(f"已翻译插件存在同一词条的冲突文本：{translated.id}")
+            translated_lookup[translated.id] = translated.original
 
-        # Phase 1：按 id 精确查找（辅助索引）
-        translated_lookup: dict[str, str] = {te.id: te.translation for te in all_translated}
+        entries = list(self._entries.values())
+        matched_ids: set[str] = set()
+        for entry in entries:
+            if entry.requires_original_match:
+                continue
+            if entry.id not in translated_lookup:
+                continue
+            if entry.id in matched_ids:
+                raise ValueError(f"已翻译插件词条对应多个目标词条：{entry.id}")
+            matched_ids.add(entry.id)
 
         updated_count = 0
-        unmatched: list[TranslationEntry] = []
-
-        for entry in list(self._entries.values()):
-            translated_text = translated_lookup.get(entry.id)
-            if translated_text is None or not translated_text:
-                unmatched.append(entry)
+        for entry in entries:
+            if entry.requires_original_match:
+                if entry.id in translated_lookup:
+                    logging.getLogger(__name__).warning(
+                        "SOURCE_ORIGINAL_MATCH_REQUIRED: 目标词条 %s 需要原文匹配，已跳过。", entry.key
+                    )
                 continue
-            if translated_text == entry.original:
+            translated_text = translated_lookup.get(entry.id)
+            if translated_text is None:
+                continue
+            if translated_text in (entry.original, entry.translation):
                 continue
             if entry.translation and not overwrite:
                 continue
@@ -686,31 +657,6 @@ class TranslationEntryCollection:
                 overwrite=True,
             )
             updated_count += 1
-
-        # Phase 2：按 (original, type_field_base) 回退
-        if unmatched:
-            fallback_index: dict[tuple[str, str], str] = {}
-            for te in all_translated:
-                if not te.translation:
-                    continue
-                _, _, rest = te.id.partition(":")
-                _, _, type_part = rest.partition("~")
-                fb_key = (te.original, type_part.split("|")[0])
-                if fb_key not in fallback_index:
-                    fallback_index[fb_key] = te.translation
-
-            for entry in unmatched:
-                if entry.translation and not overwrite:
-                    continue
-                fb_key = (entry.original, self._type_field_base(entry.context))
-                translated_text = fallback_index.get(fb_key)
-                if translated_text is None or translated_text == entry.original:
-                    continue
-                self.add(
-                    replace(entry, translation=translated_text, stage=STAGE_TRANSLATED),
-                    overwrite=True,
-                )
-                updated_count += 1
 
         return updated_count
 
@@ -732,27 +678,10 @@ class TranslationEntryCollection:
         :param overwrite: 是否覆盖已有译文，默认 False
         :return: 实际发生更新的条目数量
         """
-        updated_count = 0
-
-        for entry in list(self._entries.values()):
-            if entry.translation and not overwrite:
-                continue
-            if entry.string_id is None:
-                continue
-
-            translated_text = strings_lookup.get(entry.string_id)
-            if translated_text is None:
-                continue
-            if translated_text == entry.original:
-                continue
-
-            self.add(
-                replace(entry, translation=translated_text, stage=STAGE_TRANSLATED),
-                overwrite=True,
+        with self._lock:
+            return self._replace_import_entries(
+                match_strings_updates(self._entries.values(), strings_lookup, overwrite=overwrite)
             )
-            updated_count += 1
-
-        return updated_count
 
     # ---------- 查询 / 过滤（可扩展） ----------
 
@@ -908,13 +837,9 @@ class TranslationEntryCollection:
         path = Path(path)
         data = json.loads(path.read_text(encoding="utf-8"))
 
-        collection = cls()
-
         if not isinstance(data, list):
             raise ValueError("无效的 DSD JSON 格式：应该是一个条目数组")
 
-        for entry_data in data:
-            entry = TranslationEntry.from_dsd_dict(entry_data)
-            collection.add(entry, overwrite=overwrite)
+        from transbridge.converter.dsd_entries import parse_dsd_entries
 
-        return collection
+        return cls(parse_dsd_entries(data))

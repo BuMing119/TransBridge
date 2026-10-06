@@ -62,9 +62,13 @@ def write_plugin(request: WriteRequest) -> OperationResult[tuple[str, ...]]:
                 ),
                 request.context.run_id,
             )
-        known = {entry.key for entry in source_entries}
+        known = {(entry.key, entry.identity.original): entry for entry in source_entries}
         missing = tuple(
-            entry.entry_key.local_key for entry in request.entries if entry.entry_key.local_key not in known
+            entry.entry_key.local_key
+            for entry in request.entries
+            if (entry.key, entry.identity.original) not in known
+            or entry.original != known[(entry.key, entry.identity.original)].original
+            or entry.requires_original_match != known[(entry.key, entry.identity.original)].requires_original_match
         )
         if missing:
             return _failed_diagnostics(
@@ -77,8 +81,7 @@ def write_plugin(request: WriteRequest) -> OperationResult[tuple[str, ...]]:
                 ),
                 request.context.run_id,
             )
-        localized_ids = {entry.key: entry.string_id for entry in source_entries}
-        if any(entry.string_id != localized_ids[entry.key] for entry in request.entries):
+        if any(entry.string_id != known[(entry.key, entry.identity.original)].string_id for entry in request.entries):
             return _failed_operation(
                 Diagnostic("SOURCE_LOCATOR_CONFLICT", "Localized string IDs differ from the confirmed source."),
                 request.context.run_id,

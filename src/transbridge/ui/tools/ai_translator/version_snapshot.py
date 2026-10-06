@@ -7,6 +7,7 @@ from copy import copy
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from transbridge.application.io.identity import EntryKey
 from transbridge.ui.version_persistence import VersionPersistence
 from transbridge.ui.workers import ApiWorker
 
@@ -160,18 +161,13 @@ class AiVersionSnapshotSession:
         if projected_variant is not None and str(projected_variant) != self._identity[1]:
             return None
         projected = {
-            (
-                str((item.get("entry_key") or {}).get("namespace", "")),
-                str((item.get("entry_key") or {}).get("local_key", "")),
-            ): (str(item.get("translation", "")), int(item.get("stage", 0)))
+            EntryKey.from_dict(item["entry_key"]): (str(item.get("translation", "")), int(item.get("stage", 0)))
             for item in values.get("entries", ())
         }
         states: dict[object, tuple[str, int]] = {}
         for entry in collection:
             identity = entry.identity
-            namespace = getattr(getattr(identity, "namespace", None), "value", "")
-            local_key = getattr(identity, "local_key", "")
-            state = projected.get((str(namespace), str(local_key)))
+            state = projected.get(identity)
             if state is not None:
                 states[identity] = state
         return states

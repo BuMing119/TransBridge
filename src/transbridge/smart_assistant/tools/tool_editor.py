@@ -7,6 +7,8 @@ Story 03B: 重构为 EditorController 类。
 
 from __future__ import annotations
 
+from transbridge.application.translation.entry_alias import ai_entry_key
+
 from .base import ToolResult, filter_entries, require_collection, require_runtime_context, validate_params
 
 _VALID_STAGES = {0, 1, 2, 3, 5, 9, -1}
@@ -166,7 +168,7 @@ class EditorController:
         page = results[offset : offset + limit]
         entries = [
             {
-                "key": e.key,  # 主标识（LLM 请用此值传给 entry_id/entry_ids 参数）
+                "key": ai_entry_key(e),  # 操作标识；冲突项携带原文，源文件 key 不变
                 "id": e.id,  # 辅助标识（跨 ParaTranz 同步可能变化）
                 "original": e.original[:200] if e.original else "",
                 "translation": e.translation[:200] if e.translation else "",
@@ -207,6 +209,14 @@ class EditorController:
 
         if action not in ("select", "deselect", "clear"):
             return ToolResult.fail(f"无效操作: {action}，可选: select, deselect, clear")
+
+        collection = getattr(ctx, "collection", None)
+        if action != "clear" and collection is not None:
+            ambiguous = {
+                alias for entry in collection if entry.requires_original_match for alias in (entry.id, entry.key)
+            }
+            if ambiguous.intersection(entry_ids):
+                return ToolResult.fail("条目标识对应多条原文，请使用查询结果中的完整 key。")
 
         count = ctx.select_entries(entry_ids, action)
         selected = list(ctx.selected_ids) if hasattr(ctx, "selected_ids") else []
@@ -357,6 +367,12 @@ class EditorController:
         if lid is None:
             return ToolResult.fail(f"标签不存在: {label_name}")
 
+        ambiguous_ids = {
+            alias for entry in collection if entry.requires_original_match for alias in (entry.id, entry.key)
+        }
+        if action in {"assign", "unassign"} and ambiguous_ids.intersection(args.get("entry_ids", ())):
+            return ToolResult.fail("词条 ID 对应多条原文，请使用包含原文的完整 EntryKey 选择条目。")
+
         if action == "assign":
             entry_ids = args.get("entry_ids", [])
             if not entry_ids:
@@ -391,7 +407,7 @@ class EditorController:
             filter_state = ctx.filter_state
             entry_labels_read = getattr(ctx, "entry_labels", None) or {}
             entries = filter_entries(collection, filter_state, entry_labels=entry_labels_read)
-            _filtered_ids = [e.key for e in entries]
+            _filtered_ids = [e.identity.serialize() if e.requires_original_match else e.key for e in entries]
             entry_labels, label_library = _copy_label_state(ctx)
             for eid in _filtered_ids:
                 entry_labels.setdefault(eid, set()).add(lid)
