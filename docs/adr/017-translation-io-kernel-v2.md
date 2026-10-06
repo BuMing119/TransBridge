@@ -48,7 +48,7 @@ Adapter 按稳定 `format_id` 注册，例如 `plugin.sse`、`xml.eet`、`xml.xt
 
 统一条目继续使用 `TranslationEntry` 作为领域载体，但身份分成两层：
 
-- `EntryKey`：`source_namespace + local_key` 的稳定内部身份；source namespace 至少区分项目源文件或内容 fingerprint，避免多源碰撞。
+- `EntryKey`：普通词条使用 `source_namespace + local_key`；[ADR-045](045-original-qualified-plugin-entries.md) 扩展插件冲突项为额外比较精确 `original`，保留公开 key/id 原值。source namespace 至少区分项目源文件或内容 fingerprint，避免多源碰撞。
 - `ExternalEntryRef`：`provider + scope + opaque_id`，保存 ParaTranz 等外部系统引用；一个条目 MAY 有多个外部引用。
 
 历史 `id` 字段仅作为兼容 facade；新代码不得假设 `id == key`，不得解析远端 opaque ID 生成内部键。内容摘要、checkpoint 和 mutation 使用 EntryKey；远端 API 更新使用对应 ExternalEntryRef。

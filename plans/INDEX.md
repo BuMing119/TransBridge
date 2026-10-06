@@ -6,6 +6,8 @@
 
 ## 当前实施
 
+- [original-match-entries](original-match-entries/plan.md)：S01～S05 本地完成；保留 key/id，以原文区分冲突词条；补齐词典、DSD、助手、初始状态、旧包与写回旁路，跨模块 1140 项及最终 92 项回归通过，格式检查既有例外见记录（2026-10-06）。
+
 - [ai-proofread-resume](ai-proofread-resume/plan.md)：S01～S06 本地完成；按任务隔离校对进度，明确继续／重新开始／稍后处理，恢复临时配置及原范围；703 项回归、105 项扩展与最终 82 项复验通过（2026-10-04）。
 
 - [ai-proofread-tolerance](ai-proofread-tolerance/plan.md)：完成单条预算、疑问状态、逐条隔离恢复、实时日志与最终摘要；追加自动重试携带逐条校验反馈，最新 378 项相关回归通过（2026-10-03）。

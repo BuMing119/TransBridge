@@ -1,5 +1,15 @@
 # 变更日志索引
 
+- 2026-10-06：[补齐原文限定词条入口](original-match-entries/story-05/2026-10-06-001-complete-entry-paths.md) — 修复词典错填、DSD 丢项、初始状态丢失及助手/旧包/旧写回遗漏；跨模块 1140 项、最后补充路径 92 项通过，Neiva DSD 重读并迁回保持 4 条。
+
+- 2026-10-06：[原文限定的冲突词条](original-match-entries/story-01-to-04/2026-10-06-001-original-qualified-entries.md) — key/id 不变，贯通重复词条解析、编辑、保存、AI 与回写；最终核心 91 项及 AI/报告/恢复 25 项通过，扩展检查的既有失败与长路径限制如实记录。
+
+- 2026-10-06：[批量译文导入与轻量隔离快照](maintenance/translation-import/2026-10-06-002-bulk-import-and-detached-snapshots.md) — 减少复制和索引重建；聚焦回归及五轮基准完成，综合 1585 通过、1 跳过、1 失败，失败归因于既有助手确认竞态。
+
+- 2026-10-06：[修复迁移原子性与后台任务生命周期](maintenance/background-lifecycle/2026-10-06-001-import-and-worker-lifetimes.md) — 导入草稿保护、应用级线程保活与退出等待、GUI 安全派发、详情关闭统一及旧 AI 收尾；1566 项离线集成回归与 8 项报告契约通过。
+
+- 2026-10-06：[修复工作台译文导入闪退与 ESP 译文提取](maintenance/translation-import/2026-10-06-001-import-worker-and-plugin-text.md) — 统一入口、保留线程、原子应用插件译文并拒绝过期目标；106 项相关回归与 7 项 UI 复验通过。
+
 - 2026-10-04：[助手润色写回校对疑问状态](maintenance/proofread-tolerance/2026-10-04-005-assistant-questionable-stage.md) — 译文不变时仍应用 stage=2，保持润色计数含义；145 项相关回归通过。
 
 - 2026-10-04：[继续任务直接启动](ai-proofread-resume/story-04-to-06/2026-10-04-003-direct-continue.md) — 继续按原参数续跑，仅重新开始展示配置；80 项回归通过。
