@@ -7,7 +7,9 @@
 #endif
 #define AppPublisher "BuMing119"
 #define AppExeName "TransBridge.exe"
+#ifndef DistDir
 #define DistDir "..\dist\TransBridge"
+#endif
 
 [Setup]
 AppId={{A3F2C1D4-5B6E-4F7A-8C9D-0E1F2A3B4C5D}
