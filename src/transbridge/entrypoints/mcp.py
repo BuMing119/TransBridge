@@ -9,6 +9,7 @@ import sys
 
 from transbridge import __version__
 from transbridge.application.security import SecretRedactor
+from transbridge.application.security.diagnostic_logging import DiagnosticLogFormatter
 
 
 class RedactingLogFilter(logging.Filter):
@@ -28,7 +29,7 @@ def configure_logging(level: str = "WARNING") -> None:
     """Configure diagnostics on stderr only; stdout is reserved for JSON-RPC."""
 
     handler = logging.StreamHandler(sys.stderr)
-    handler.addFilter(RedactingLogFilter())
+    handler.setFormatter(DiagnosticLogFormatter("%(levelname)s:%(name)s:%(message)s"))
     logging.basicConfig(
         level=getattr(logging, level.upper(), logging.WARNING),
         handlers=(handler,),

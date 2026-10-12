@@ -5,35 +5,16 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 import json
 import logging
-import re
 import threading
 from typing import Any
 
+from transbridge.application.security import SecretRedactor, diagnostic_exception_text, project_business_data
+from transbridge.application.security.diagnostic_logging import client_diagnostic_redactor
 from transbridge.infra.llm_client import LLMClient
 
 from .workflow_log_store import WorkflowLogStore
 
 _logger = logging.getLogger(__name__)
-
-_REDACTED = "***REDACTED***"
-_SECRET_KEYS = {
-    "api_key",
-    "apikey",
-    "authorization",
-    "credential",
-    "credentials",
-    "password",
-    "secret",
-    "token",
-}
-_BEARER_PATTERN = re.compile(r"(?i)\bBearer\s+[^\s,;\]}]+")
-_SECRET_ASSIGNMENT_PATTERN = re.compile(
-    r"(?i)\b(api[-_ ]?key|authorization|credential|password|secret|token)(\s*[:=]\s*)([^\s,;\]}]+)"
-)
-_JSON_SECRET_PATTERN = re.compile(
-    r"""(?i)(["'](?:api[-_ ]?key|authorization|credential|password|secret|token)["']\s*:\s*)(["'])(.*?)(\2)"""
-)
-_OPENAI_KEY_PATTERN = re.compile(r"\bsk-[A-Za-z0-9_-]{8,}\b")
 
 
 class WorkflowLoggingLLMClient(LLMClient):
@@ -92,7 +73,7 @@ class WorkflowLoggingLLMClient(LLMClient):
         self._write_request(channel, messages, max_tokens)
 
         def record_chunk(chunk: str) -> None:
-            self._safe_write_chunk(channel, _redact_text(chunk))
+            self._safe_write_chunk(channel, chunk)
             chunk_callback(chunk)
 
         try:
@@ -119,7 +100,7 @@ class WorkflowLoggingLLMClient(LLMClient):
             return messages
 
         def record_chunk(chunk: str) -> None:
-            self._safe_write_chunk(channel, _redact_text(chunk))
+            self._safe_write_chunk(channel, chunk)
             chunk_callback(chunk)
 
         try:
@@ -147,9 +128,9 @@ class WorkflowLoggingLLMClient(LLMClient):
 
     def _write_request(self, channel: str, messages: list[dict], max_tokens: int) -> None:
         try:
-            request = json.dumps(_redact_value(messages), ensure_ascii=False, indent=2, default=str)
+            request = json.dumps(project_business_data(messages), ensure_ascii=False, indent=2, default=str)
         except (TypeError, ValueError):
-            request = _redact_text(repr(messages))
+            request = repr(project_business_data(messages))
         self._safe_write_chunk(
             channel,
             f"[REQUEST TO LLM]\nmax_tokens={max_tokens}\n{request}\n\n[RESPONSE FROM LLM]\n",
@@ -157,7 +138,7 @@ class WorkflowLoggingLLMClient(LLMClient):
 
     def _write_success(self, channel: str, response: str, *, response_already_logged: bool = False) -> None:
         if not response_already_logged:
-            self._safe_write_chunk(channel, f"{_redact_text(response)}\n")
+            self._safe_write_chunk(channel, f"{response}\n")
         if not response or not response.strip():
             self._safe_write_line(channel, "[EMPTY RESPONSE] Provider returned an empty successful response")
         self._write_budget_metrics(channel)
@@ -166,8 +147,8 @@ class WorkflowLoggingLLMClient(LLMClient):
     def _write_error(self, channel: str, exc: Exception) -> None:
         raw_response = _safe_field(exc, "raw_response")
         if isinstance(raw_response, str):
-            self._safe_write_chunk(channel, f"\n[INVALID RESPONSE FROM LLM]\n{_redact_text(raw_response)}\n")
-        details = _exception_details(exc)
+            self._safe_write_chunk(channel, f"\n[INVALID RESPONSE FROM LLM]\n{raw_response}\n")
+        details = _exception_details(exc, client_diagnostic_redactor(self._delegate))
         payload = json.dumps(details, ensure_ascii=False, indent=2, default=str)
         self._safe_write_chunk(channel, f"\n[ERROR]\n{payload}\n")
         self._write_budget_metrics(channel)
@@ -198,16 +179,17 @@ class WorkflowLoggingLLMClient(LLMClient):
             _logger.warning("记录 LLM 调用错误日志失败，保留原始异常: %s", exc)
 
 
-def _exception_details(exc: Exception) -> dict[str, Any]:
+def _exception_details(exc: Exception, redactor: SecretRedactor | None = None) -> dict[str, Any]:
+    redactor = redactor or SecretRedactor.default()
     details: dict[str, Any] = {
         "exception_type": type(exc).__name__,
-        "message": _redact_text(str(exc)),
+        "message": redactor.redact_text(diagnostic_exception_text(exc)),
     }
     for field in ("status_code", "status", "code", "body", "error", "request_id", "requestId", "validation_details"):
         value = _safe_field(exc, field)
         if value is not None:
-            details[field] = _redact_value(value)
-    exception_request_ids = _request_id_headers(_safe_field(exc, "headers"))
+            details[field] = project_business_data(value) if field == "validation_details" else redactor.redact(value)
+    exception_request_ids = _request_id_headers(_safe_field(exc, "headers"), redactor)
     if exception_request_ids:
         details["request_ids"] = exception_request_ids
 
@@ -217,7 +199,7 @@ def _exception_details(exc: Exception) -> dict[str, Any]:
         for field in ("status_code", "status", "code", "request_id", "requestId"):
             value = _safe_field(response, field)
             if value is not None:
-                response_details[field] = _redact_value(value)
+                response_details[field] = redactor.redact(value)
         body = _safe_field(response, "body")
         if body is None:
             body = _safe_field(response, "text")
@@ -229,9 +211,9 @@ def _exception_details(exc: Exception) -> dict[str, Any]:
                 except Exception:
                     body = None
         if body is not None:
-            response_details["body"] = _redact_value(body)
+            response_details["body"] = redactor.redact(body)
         headers = _safe_field(response, "headers")
-        request_ids = _request_id_headers(headers)
+        request_ids = _request_id_headers(headers, redactor)
         if request_ids:
             response_details["request_ids"] = request_ids
         if response_details:
@@ -248,41 +230,15 @@ def _safe_field(value: object, name: str) -> Any:
         return None
 
 
-def _request_id_headers(headers: object) -> dict[str, str]:
+def _request_id_headers(headers: object, redactor: SecretRedactor) -> dict[str, str]:
     if not isinstance(headers, Mapping):
         return {}
     result: dict[str, str] = {}
     for key, value in headers.items():
         normalized = str(key).casefold().replace("_", "-")
         if normalized in {"request-id", "x-request-id", "x-amzn-requestid", "cf-ray"}:
-            result[str(key)] = _redact_text(str(value))
+            result[str(key)] = redactor.redact_text(str(value))
     return result
-
-
-def _redact_value(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        return {str(key): _REDACTED if _is_secret_key(str(key)) else _redact_value(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_redact_value(item) for item in value]
-    if isinstance(value, str):
-        return _redact_text(value)
-    if value is None or isinstance(value, (bool, int, float)):
-        return value
-    return _redact_text(str(value))
-
-
-def _is_secret_key(name: str) -> bool:
-    normalized = name.casefold().replace("-", "_").replace(" ", "_")
-    return normalized in _SECRET_KEYS or any(normalized.endswith(f"_{key}") for key in _SECRET_KEYS)
-
-
-def _redact_text(value: str) -> str:
-    value = _JSON_SECRET_PATTERN.sub(
-        lambda match: f"{match.group(1)}{match.group(2)}{_REDACTED}{match.group(4)}", value
-    )
-    value = _BEARER_PATTERN.sub(f"Bearer {_REDACTED}", value)
-    value = _SECRET_ASSIGNMENT_PATTERN.sub(lambda match: f"{match.group(1)}{match.group(2)}{_REDACTED}", value)
-    return _OPENAI_KEY_PATTERN.sub(_REDACTED, value)
 
 
 __all__ = ["WorkflowLoggingLLMClient"]

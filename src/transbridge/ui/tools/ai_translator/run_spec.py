@@ -348,28 +348,35 @@ def _config_digest(config: object) -> str:
     return _digest(_safe_config_value(config))
 
 
-def _safe_config_value(value: object) -> object:
+def _safe_config_value(value: object, *, config_object: bool = True) -> object:
+    """Fingerprint settings without interpreting business text or token budgets as secrets."""
+    from transbridge.application.security import SecretValue
+
+    if isinstance(value, SecretValue):
+        return True
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     if isinstance(value, Mapping):
         return {
-            str(key): bool(item) if _is_secret_field(str(key)) else _safe_config_value(item)
+            str(key): (
+                bool(item)
+                if config_object and str(key) in {"api_key", "mcp_auth_token"}
+                else _safe_config_value(item, config_object=config_object and str(key) == "embedding")
+            )
             for key, item in value.items()
         }
     if isinstance(value, (list, tuple)):
-        return [_safe_config_value(item) for item in value]
+        return [_safe_config_value(item, config_object=False) for item in value]
     if hasattr(value, "__dict__"):
-        return {
-            str(key): bool(item) if _is_secret_field(str(key)) else _safe_config_value(item)
-            for key, item in vars(value).items()
-            if not str(key).startswith("_") and str(key) != "config_revision"
-        }
+        return _safe_config_value(
+            {
+                str(key): item
+                for key, item in vars(value).items()
+                if not str(key).startswith("_") and str(key) != "config_revision"
+            },
+            config_object=config_object,
+        )
     return repr(value)
-
-
-def _is_secret_field(name: str) -> bool:
-    normalized = name.casefold()
-    return any(token in normalized for token in ("api_key", "secret", "token", "password", "credential"))
 
 
 def _digest(value: object) -> str:

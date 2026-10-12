@@ -121,7 +121,7 @@ def test_preparation_failure_keeps_call_id_logs_metrics_and_releases_budget(tmp_
 
 
 @pytest.mark.parametrize("prepared", [False, True])
-def test_invalid_structured_response_is_logged_with_redacted_payload_and_fields(tmp_path, prepared):
+def test_invalid_structured_business_response_is_logged_intact(tmp_path, prepared):
     from transbridge.ai_translator.structured_schemas import PROOFREAD_OUTPUT_SCHEMA
 
     raw = '{"results":[],"reason":"explanation","api_key":"private-key","token":"private-token"}'
@@ -143,7 +143,7 @@ def test_invalid_structured_response_is_logged_with_redacted_payload_and_fields(
     assert "[INVALID RESPONSE FROM LLM]" in content
     assert "explanation" in content
     assert '"unexpected_fields"' in content and '"reason"' in content
-    assert "private-key" not in content and "private-token" not in content
+    assert raw in content
     assert "explanation" not in str(caught.value)
     assert content.count("[END CALL]") == 1
     assert budget.snapshot().in_flight == 0
@@ -175,7 +175,6 @@ def test_provider_error_records_diagnostics_and_redacts_credentials(tmp_path: Pa
         {
             "role": "user",
             "content": "Authorization: Bearer prompt-secret sk-abcdefghijk",
-            "api_key": "request-secret",
         }
     ]
 
@@ -198,13 +197,73 @@ def test_provider_error_records_diagnostics_and_redacts_credentials(tmp_path: Pa
         "message-secret",
         "bearer-secret",
         "sk-1234567890",
-        "prompt-secret",
-        "sk-abcdefghijk",
-        "request-secret",
         "header-secret",
     ):
         assert secret not in content
+    assert "Authorization: Bearer prompt-secret sk-abcdefghijk" in content
     assert content.count("[END CALL]") == 1
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_business_request_response_and_chunks_are_preserved(tmp_path, streaming):
+    text = "password: swordfish; token=questreward; sk-abcdefghijk; C:\\mods\\quest.esp"
+
+    class Client:
+        def chat(self, messages, max_tokens=0):
+            assert messages[0]["content"] == text
+            return text
+
+        def chat_stream(self, messages, max_tokens, chunk_callback):
+            assert messages[0]["content"] == text
+            for chunk in ("password: ", text[len("password: ") :]):
+                chunk_callback(chunk)
+            return text
+
+    store = WorkflowLogStore("plugin.esp", workflow="mixed", log_base=tmp_path)
+    client = WorkflowLoggingLLMClient(Client(), store)
+    messages = [{"role": "user", "content": text}]
+    chunks = []
+    actual = client.chat_stream(messages, 100, chunks.append) if streaming else client.chat(messages)
+    assert actual == text
+    if streaming:
+        assert "".join(chunks) == text
+    content = _content(store)
+    assert text in content
+    assert "***REDACTED***" not in content
+
+
+def test_workflow_technical_errors_hide_known_opaque_credential(tmp_path):
+    class Client:
+        def __init__(self):
+            self._api_key = "opaque-service-canary"
+
+        def chat(self, messages, max_tokens=0):
+            raise RuntimeError(f"SDK rejected {self._api_key}")
+
+    store = WorkflowLogStore("plugin.esp", workflow="mixed", log_base=tmp_path)
+    client = WorkflowLoggingLLMClient(LimitedLLMClient(Client(), AiRequestBudget(1)), store)
+    with pytest.raises(RuntimeError):
+        client.chat([{"role": "user", "content": "business data"}])
+    assert "opaque-service-canary" not in _content(store)
+
+
+def test_validation_diagnostics_retain_business_values(tmp_path):
+    class BusinessValidationError(RuntimeError):
+        raw_response = '{"token":"password: swordfish"}'
+        validation_details = {"original": "password: swordfish", "token": "questreward"}
+
+    class Client:
+        def chat(self, messages, max_tokens=0):
+            raise BusinessValidationError("invalid output shape")
+
+    store = WorkflowLogStore("plugin.esp", workflow="mixed", log_base=tmp_path)
+    client = WorkflowLoggingLLMClient(Client(), store)
+    with pytest.raises(BusinessValidationError):
+        client.chat([{"role": "user", "content": "business data"}])
+    content = _content(store)
+    assert BusinessValidationError.raw_response in content
+    assert '"original": "password: swordfish"' in content
+    assert '"token": "questreward"' in content
 
 
 def test_anthropic_missing_output_limit_is_captured_in_the_existing_call_log(tmp_path: Path) -> None:

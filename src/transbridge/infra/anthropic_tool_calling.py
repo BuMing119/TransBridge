@@ -8,6 +8,7 @@ import json
 import logging
 from typing import Any
 
+from transbridge.application.security.diagnostic_logging import credential_diagnostics
 from transbridge.infra.assistant_prompt_cache import anthropic_assistant_cache_options, is_assistant_context
 from transbridge.infra.llm_tool_calling import (
     LlmToolCall,
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 _CACHE_REJECTION_KEYWORDS = ("prompt_cache", "prompt cache", "cache_control", "cache")
 
 
+@credential_diagnostics
 def chat_stream_with_tools(
     owner: Any,
     messages: list[dict[str, Any]],

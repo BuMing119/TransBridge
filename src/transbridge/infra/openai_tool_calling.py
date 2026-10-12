@@ -8,6 +8,7 @@ import json
 import logging
 from typing import Any
 
+from transbridge.application.security.diagnostic_logging import credential_diagnostics
 from transbridge.infra.llm_tool_calling import (
     LlmToolCall,
     LlmToolDefinition,
@@ -261,6 +262,7 @@ def _finalize(accumulator: _StreamAccumulator) -> LlmTurn:
     )
 
 
+@credential_diagnostics
 def chat_stream_with_tools(
     owner: Any,
     messages: list[dict],

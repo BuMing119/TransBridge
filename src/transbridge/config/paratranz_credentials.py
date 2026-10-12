@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import os
 from typing import Any, Protocol
 
-from transbridge.application.security import SecretRedactor
+from transbridge.application.security import SecretRedactor, SecretValue
 
 
 class CredentialStorageError(RuntimeError):
@@ -39,28 +39,6 @@ class SecretStoreCapability:
     writable: bool
     degraded: bool = False
     reason_code: str | None = None
-
-
-class SecretValue:
-    """Opaque secret value whose normal string projections are fail-closed."""
-
-    __slots__ = ("__value",)
-
-    def __init__(self, value: str) -> None:
-        if not isinstance(value, str) or not value:
-            raise ValueError("secret value must be a non-empty string")
-        self.__value = value
-
-    def __repr__(self) -> str:
-        return "SecretValue(***)"
-
-    def __str__(self) -> str:
-        return SecretRedactor.REDACTED
-
-    def _reveal_for_request(self) -> str:
-        """Return plaintext only to ParaTranz request/config compatibility code."""
-
-        return self.__value
 
 
 class CredentialStore(Protocol):
@@ -232,21 +210,5 @@ def default_credential_store() -> CredentialStore:
 
 def redact_credential_data(value: Any, *secrets: SecretValue | None) -> Any:
     """Apply shared structural redaction plus exact known-secret canaries."""
-
-    redacted = SecretRedactor.default().redact(value)
     literals = tuple(secret._reveal_for_request() for secret in secrets if secret is not None)
-
-    def exact(item: Any) -> Any:
-        if isinstance(item, str):
-            for literal in literals:
-                item = item.replace(literal, SecretRedactor.REDACTED)
-            return item
-        if isinstance(item, dict):
-            return {exact(key): exact(child) for key, child in item.items()}
-        if isinstance(item, list):
-            return [exact(child) for child in item]
-        if isinstance(item, tuple):
-            return tuple(exact(child) for child in item)
-        return item
-
-    return exact(redacted)
+    return SecretRedactor(known_secrets=literals).redact(value)

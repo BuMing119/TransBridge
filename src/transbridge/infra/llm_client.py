@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
+from transbridge.application.security.diagnostic_logging import client_diagnostic_redactor, credential_diagnostics
 from transbridge.infra.llm_reasoning_protocols import (
     AnthropicReasoningProtocolMixin,
     OpenAIReasoningProtocolMixin,
@@ -158,7 +159,8 @@ class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
 
     def __repr__(self) -> str:
         masked = ("***" + self._api_key[-4:]) if len(self._api_key) > 4 else "***"
-        return f"{type(self).__name__}(api_key={masked!r}, base_url={self._base_url!r}, model={self._model!r})"
+        endpoint = client_diagnostic_redactor(self).redact_text(self._base_url)
+        return f"{type(self).__name__}(api_key={masked!r}, base_url={endpoint!r}, model={self._model!r})"
 
     def _make_client(self):
         from openai import OpenAI
@@ -191,6 +193,7 @@ class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
     def chat(self, messages: list[dict], max_tokens: int = 0) -> str:
         return self._chat(messages, max_tokens, reasoning_patch=None)
 
+    @credential_diagnostics
     def _chat(self, messages: list[dict], max_tokens: int, *, reasoning_patch) -> str:
         from transbridge.infra.prompt_cache import (
             extract_prompt_cache_directives,
@@ -302,6 +305,7 @@ class OpenAICompatibleClient(OpenAIReasoningProtocolMixin, LLMClient):
             self, messages, max_tokens, tools, chunk_callback, usage_callback=usage_callback, purpose=purpose
         )
 
+    @credential_diagnostics
     def _chat_stream(self, messages: list[dict], max_tokens: int, chunk_callback, *, reasoning_patch) -> str:
         from transbridge.infra.prompt_cache import (
             extract_prompt_cache_directives,
@@ -452,6 +456,7 @@ class AnthropicClient(AnthropicReasoningProtocolMixin, LLMClient):
         except Exception:
             pass
 
+    @credential_diagnostics
     def chat(self, messages: list[dict], max_tokens: int = 0) -> str:
         from transbridge.infra.prompt_cache import build_anthropic_system_blocks
 
@@ -525,6 +530,7 @@ class AnthropicClient(AnthropicReasoningProtocolMixin, LLMClient):
             with self._lock:
                 self._active_requests -= 1
 
+    @credential_diagnostics
     def chat_stream(self, messages: list[dict], max_tokens: int, chunk_callback) -> str:
         from transbridge.infra.prompt_cache import build_anthropic_system_blocks
 

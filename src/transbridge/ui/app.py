@@ -7,6 +7,8 @@ import traceback
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
 
+from transbridge import __version__
+from transbridge.application.security.diagnostic_logging import DiagnosticLogFormatter
 from transbridge.bootstrap import AppRuntime, bind_runtime, build_runtime
 from transbridge.paratranz.config_manager import ParatranzConfig
 
@@ -18,6 +20,7 @@ from .main_window import MainWindow
 _LOG_FORMAT = "%(asctime)s [%(name)s] %(levelname)s: %(message)s"
 
 _logger = logging.getLogger(__name__)
+_file_log_handler: logging.FileHandler | None = None
 
 
 def _application_icon_path() -> Path | None:
@@ -45,16 +48,29 @@ def _apply_application_icon(application: QApplication) -> None:
 
 
 def _setup_logging() -> None:
-    """设置日志（使用用户数据目录）"""
-    log_dir = Path(ParatranzConfig.get_data_dir()) / "log"
+    """Install our file sink even when a dependency has configured root logging."""
+    global _file_log_handler
+
+    log_dir = (Path(ParatranzConfig.get_data_dir()) / "log").resolve()
     log_dir.mkdir(parents=True, exist_ok=True)
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG)
+    previous = _file_log_handler
+    if previous is not None and previous.stream is not None and Path(previous.baseFilename).parent == log_dir:
+        root.addHandler(previous)
+        return
 
     log_file = log_dir / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 
     handler = logging.FileHandler(log_file, encoding="utf-8")
-    handler.setFormatter(logging.Formatter(_LOG_FORMAT))
-
-    logging.basicConfig(level=logging.DEBUG, format=_LOG_FORMAT, handlers=[handler])
+    handler.setLevel(logging.DEBUG)
+    handler.setFormatter(DiagnosticLogFormatter(_LOG_FORMAT))
+    root.addHandler(handler)
+    _file_log_handler = handler
+    if previous is not None:
+        root.removeHandler(previous)
+        previous.close()
+    _logger.info("TransBridge %s GUI logging initialized: %s", __version__, log_file)
 
 
 def _global_exception_hook(exc_type, exc_value, exc_tb):

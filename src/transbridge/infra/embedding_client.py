@@ -18,6 +18,8 @@ from urllib.parse import urlsplit, urlunsplit
 
 import numpy as np
 
+from transbridge.application.security.diagnostic_logging import client_diagnostic_redactor, credential_diagnostics
+
 if TYPE_CHECKING:
     from transbridge.paratranz.config_manager import LLMConfig
 
@@ -200,6 +202,7 @@ class OpenAIEmbeddingClient(EmbeddingClient):
         self._error_message: str | None = None
         self._init_client()
 
+    @credential_diagnostics
     def _init_client(self) -> None:
         """初始化 OpenAI 客户端。"""
         if not self._api_key:
@@ -219,7 +222,9 @@ class OpenAIEmbeddingClient(EmbeddingClient):
             self._error_message = "openai package not installed"
             logger.warning(self._error_message)
         except Exception as e:
-            self._error_message = f"Failed to initialize OpenAI client: {e}"
+            self._error_message = client_diagnostic_redactor(self).redact_text(
+                f"Failed to initialize OpenAI client: {e}"
+            )
             logger.error(self._error_message)
 
     @property
@@ -244,6 +249,7 @@ class OpenAIEmbeddingClient(EmbeddingClient):
             "model": self._model,
         }
 
+    @credential_diagnostics
     def encode(self, texts: list[str]) -> np.ndarray:
         if not self._available:
             raise RuntimeError(f"Embedding client not available: {self._error_message}")
