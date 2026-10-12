@@ -26,6 +26,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 
 | 编号 | 标题 | 状态 |
 |------|------|------|
+| [ADR-046](adr/046-purpose-aware-data-projection.md) | 按来源与用途保护凭据，业务数据保持原样 | 已接受（2026-10-07），实施中 |
 | [ADR-041](adr/041-assistant-context-compaction.md) | 助手稳定上下文与按预算压缩；保留目标与计划系统；[实现增量](changelogs/assistant-context-compaction/story-01-to-09-implementation/2026-09-12-001-稳定上下文与不可变摘要链实现.md) | 本地实现与离线验证完成；真实收益待评测 |
 | [ADR-001](adr/001-unified-translation-entry.md) | TranslationEntry 作为统一翻译数据模型 | ✅ 历史与 V2 身份增量已接受 |
 | [ADR-002](adr/002-collection-central-data-hub.md) | Collection 数据中枢与双索引设计 | ✅ 历史与聚合增量已接受 |
@@ -147,6 +148,8 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 ## 变更日志
 
 > 参见 [changelogs/INDEX.md](changelogs/INDEX.md)
+
+- 2026-10-07：[跨模块流程闭环整改 S01～S08](changelogs/workflow-closure-remediation/story-01-to-08/2026-10-07-001-close-workflow-gaps.md)：8 项修复及旧测试合同更新；最终 211 项复验通过、1 项环境跳过。后续 [S09 并发修复](changelogs/workflow-closure-remediation/story-09/2026-10-07-001-concurrent-notifications-and-controls.md) 补齐回执通知、会话收尾隔离与 AI 控制顺序，1475 项组合回归通过。
 
 | Epic | 最新增量 | 日期 |
 |------|---------|------|

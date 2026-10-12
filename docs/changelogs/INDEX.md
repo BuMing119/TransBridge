@@ -1,5 +1,23 @@
 # 变更日志索引
 
+- 2026-10-12：[补齐草稿关闭、解析迁移、下载结果和任务中心流程](workflow-closure-remediation/story-10-to-14/2026-10-12-001-connect-remaining-workflows.md) — 失败草稿退出保护、批量迁移与错误反馈、下载结果准确统计、真实任务结果及重新准备入口；联合回归 335 通过；全量 5939 通过、2 失败，夹具修正及性能独立复验均通过，Ruff/格式通过。
+
+- 2026-10-12：[工作台交互一致性与失败恢复](ui-interaction-remediation/story-01-to-04/2026-10-12-001-ui-interaction-recovery.md) — 八项 UI 问题修复，补齐插件解析错误传播；扩展回归 1509 通过、1 跳过，1 项模板遗漏已修复，最终相关回归 117 通过，Ruff/格式通过。
+
+- 2026-10-09：[严格写回与套用边界收拢](target-plugin-write/story-04-06/2026-10-09-001-strict-write-boundaries.md) — 普通/批量/助手/FOMOD 保持严格；统一发布、整批路径冲突、冻结源与完整失败证据；相关回归去重 652 通过、1 跳过，Ruff/格式通过。
+
+- 2026-10-09：[直接选择目标 ESP 套用译文](target-plugin-write/story-01-03/2026-10-09-001-target-plugin-write.md) — 无需项目换源；后台精确匹配、逐条保留与报告、模板及输出变化保护；广泛回归 459 通过、1 跳过，最终应用/UI 回归 117 通过。
+
+- 2026-10-09：[工程空白原文写回定位修复](maintenance/write-save-feedback/2026-10-09-002-hydrated-empty-source-locators.md) — 修正建项保留空白而写回过滤导致的 SOURCE_LOCATOR_NOT_FOUND；真实建项至输出 12 项新增回归，相关回归 410 项通过、1 项环境跳过。
+
+- 2026-10-09：[ESP 写回、保存状态与日志修复](maintenance/write-save-feedback/2026-10-09-001-write-save-and-logging.md) — 原文限定词条按物理位置校验、写回结果可见、自动保存状态及收尾竞态修正、可靠主日志初始化；427 项集成回归通过、1 项环境跳过，补充关闭/保存回归 41 项通过。
+
+- 2026-10-07：[并发通知与 AI 控制顺序](workflow-closure-remediation/story-09/2026-10-07-001-concurrent-notifications-and-controls.md) — 修复回执通知丢失、旧会话收尾污染及 AI 控制乱序；新增 26 项并发回归，助手 1312 项及 AI/runtime 163 项组合通过。
+
+- 2026-10-07：[跨模块流程闭环整改](workflow-closure-remediation/story-01-to-08/2026-10-07-001-close-workflow-gaps.md) — 8 项缺陷修复，覆盖取消提交、版本事务恢复、助手重试与终态、术语连接及 FOMOD 身份/装配；最终 211 项复验通过、1 项环境跳过，全库发现的 3 条旧测试合同已修正。
+
+- 2026-10-07：[业务数据保真与凭据用途边界](purpose-aware-data-projection/story-01-to-05/2026-10-07-001-business-data-fidelity.md) — 工具/重试/报告/日志不再误改游戏文本；真实技术异常按来源保护，术语作用域和配置指纹修复；2270 项分组回归及最后 37 项复验通过，4 项平台跳过。
+
 - 2026-10-06：[补齐原文限定词条入口](original-match-entries/story-05/2026-10-06-001-complete-entry-paths.md) — 修复词典错填、DSD 丢项、初始状态丢失及助手/旧包/旧写回遗漏；跨模块 1140 项、最后补充路径 92 项通过，Neiva DSD 重读并迁回保持 4 条。
 
 - 2026-10-06：[原文限定的冲突词条](original-match-entries/story-01-to-04/2026-10-06-001-original-qualified-entries.md) — key/id 不变，贯通重复词条解析、编辑、保存、AI 与回写；最终核心 91 项及 AI/报告/恢复 25 项通过，扩展检查的既有失败与长路径限制如实记录。

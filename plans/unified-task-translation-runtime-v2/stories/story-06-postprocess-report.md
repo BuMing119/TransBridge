@@ -29,4 +29,4 @@ CandidateSet/input snapshot → check issues → RefineCandidate → recheck →
 
 ## 测试、边界与迁移
 
-小型真实/受控 LLM 成功链证明 refine 输出进入 polish/arbiter；覆盖某阶段失败、取消、恢复和 revision conflict。golden 验证 GUI model/Excel/history counts、诊断和 before/after 一致。报告 renderer 失败不回滚已提交业务，但运行结果附 report diagnostic；敏感 prompt/secret 不落报告。
+小型真实/受控 LLM 成功链证明 refine 输出进入 polish/arbiter；覆盖某阶段失败、取消、恢复和 revision conflict。golden 验证 GUI model/Excel/history counts、诊断和 before/after 一致。报告 renderer 失败不回滚已提交业务，但运行结果附 report diagnostic。按 ADR-046，真实凭据不落报告；原文译文、校对说明、问题摘录及诊断定位身份保持原样，技术异常在来源保护，不能根据 prompt/token 等业务字典键推断秘密。

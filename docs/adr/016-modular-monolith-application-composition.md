@@ -1,6 +1,6 @@
 # ADR-016：模块化单体应用层、Ports/Adapters 与 Composition Root
 
-- **状态**：已接受（2026-08-18）
+- **状态**：已接受（2026-08-18）；凭据与业务投射边界由 [ADR-046](046-purpose-aware-data-projection.md) 明确（2026-10-07）
 - **日期**：2026-08-18
 - **对应需求**：FR17、FR21、FR22、FR23、NFR3.1、NFR5.1、NFR6.1
 - **关联 ADR**：ADR-004、ADR-008、ADR-010、ADR-012、ADR-014、ADR-015

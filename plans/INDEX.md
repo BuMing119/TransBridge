@@ -6,6 +6,14 @@
 
 ## 当前实施
 
+- [ui-interaction-remediation](ui-interaction-remediation/plan.md)：方案草稿，S01～S04 本地完成；八项交互问题及插件解析失败反馈已修复，最终相关回归 117 通过；见[增量记录](../docs/changelogs/ui-interaction-remediation/story-01-to-04/2026-10-12-001-ui-interaction-recovery.md)（2026-10-12）。
+
+- [target-plugin-write](target-plugin-write/plan.md)：S01～S06 本地完成；单文件显式新模板套用与普通/批量/助手/FOMOD 严格写回隔离；删除直接写回旁路，补齐整批输出冲突及失败证据；本轮去重回归 652 通过、1 跳过，见[严格入口记录](../docs/changelogs/target-plugin-write/story-04-06/2026-10-09-001-strict-write-boundaries.md)（2026-10-09）。
+
+- [workflow-closure-remediation](workflow-closure-remediation/plan.md)：S01～S16 本地完成；追加退出取消/回滚和同步结果反馈，关联回归 502 通过、2 跳过，最终调整后 39 项复验及全库 Ruff/格式通过。历史批次证据见[本轮记录](../docs/changelogs/workflow-closure-remediation/story-10-to-14/2026-10-12-001-connect-remaining-workflows.md)（2026-10-12）。
+
+- [purpose-aware-data-projection](purpose-aware-data-projection/plan.md)：S01～S05 本地完成；工具、重试、报告和日志业务内容保真，按来源隔离凭据；2270 项分组回归与最终 37 项复验通过，4 项平台跳过，见 ADR-046（2026-10-07）。
+
 - [original-match-entries](original-match-entries/plan.md)：S01～S05 本地完成；保留 key/id，以原文区分冲突词条；补齐词典、DSD、助手、初始状态、旧包与写回旁路，跨模块 1140 项及最终 92 项回归通过，格式检查既有例外见记录（2026-10-06）。
 
 - [ai-proofread-resume](ai-proofread-resume/plan.md)：S01～S06 本地完成；按任务隔离校对进度，明确继续／重新开始／稍后处理，恢复临时配置及原范围；703 项回归、105 项扩展与最终 82 项复验通过（2026-10-04）。

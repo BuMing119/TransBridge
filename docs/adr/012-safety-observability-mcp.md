@@ -1,6 +1,6 @@
 # ADR-012: 安全护栏、可观测性与 MCP Server
 
-- **状态**: 已接受
+- **状态**: 已接受；输出脱敏边界由 [ADR-046](046-purpose-aware-data-projection.md) 部分取代（2026-10-07）
 - **日期**: 2026-05-10
 - **决策者**: BuMing
 - **对应需求**: FR7.13.5, FR7.13.8, FR7.13.9
@@ -105,15 +105,10 @@ class InputValidationGuard(GuardMiddleware):
 **OutputValidationGuard（输出校验）**:
 - 类型检查：验证 execute 返回值包含 success/message/data 三个字段
 - 大小限制：根据 ToolSpec.max_output_size 截断输出（默认 100KB）
-- 敏感信息检测：检查输出中是否包含疑似 API key、token 等模式（`sk-`、`Bearer`、`eyJ`）——命中则脱敏处理
+- 凭据保护：按 ADR-046 投射显式凭据和技术诊断；业务字符串、字典键、身份与 schema 原样保留，不按内容猜测秘密。
 
 ```python
 class OutputValidationGuard(GuardMiddleware):
-    SENSITIVE_PATTERNS = [
-        (r'sk-[a-zA-Z0-9]{20,}', '[API_KEY_REDACTED]'),
-        (r'Bearer\s+[a-zA-Z0-9\-_\.]{20,}', '[TOKEN_REDACTED]'),
-    ]
-
     def after_execute(self, step, result, ctx):
         spec = self._registry.get(step["tool"])
         # 1. 截断过大输出
@@ -121,8 +116,8 @@ class OutputValidationGuard(GuardMiddleware):
         serialized = json.dumps(result, ensure_ascii=False)
         if len(serialized) > max_size:
             result["data"] = {"truncated": True, "message": "输出过大已截断"}
-        # 2. 敏感信息脱敏
-        result = self._redact_sensitive(result)
+        # 2. 按来源保护显式凭据，保持业务值与定位身份
+        result = project_business_data(result)
         return GuardResult(allowed=True, modified_result=result)
 ```
 
@@ -257,7 +252,7 @@ class ExecutionEngine(QObject):
 
 **理由**:
 - 中间件链注入模式与 RetryHandler 一致，开发者无需学习新范式
-- before/after 分离：before 链负责权限控制和输入校验（阻止非法执行），after 链负责输出校验和脱敏（过滤敏感数据）
+- before/after 分离：before 链负责权限控制和输入校验（阻止非法执行），after 链负责输出校验和显式凭据投射，保持业务数据原样。
 - after 链逆序遍历，符合洋葱模型语义（先 before 的后 after）
 - 确认信号机制通过现有 pyqtSignal 管道实现，无需引入新的事件总线
 - 每个中间件单一职责，可按需组合（如仅启用 PermissionGuard + InputValidationGuard，禁用 OutputValidationGuard）
@@ -720,7 +715,7 @@ MCP Server 作为完全独立的 Python 进程（独立于 TransBridge GUI），
 
 - **风险**:
   - PermissionGuard 阻塞等待确认可能导致 ThreadPoolExecutor 线程耗尽（4 worker），若用户长期不响应确认弹窗 → 缓解：设置 60s 超时，超时自动拒绝
-  - 敏感信息检测（OutputValidationGuard）基于正则模式，可能误杀合法输出 → 缓解：仅脱敏不拒绝，记录日志供用户审查
+  - 输出内容误伤风险：按 ADR-046 保持业务数据完整，只对显式凭据和技术来源执行诊断处理；脱敏不是提示词注入防护。
   - MCP stdio 模式下 stdout 被 JSON-RPC 占用，所有日志必须输出到 stderr 或文件 → 约定：MCP 模式下 `logging.getLogger` 全部输出到 stderr
 
 ---
@@ -759,7 +754,7 @@ Layer 2: ToolResult.to_observation(max_chars=2000) → 总长度控制，换行�
 Layer 3: ConversationManager.add_observation() → 兜底安全网
 ```
 
-与 OutputValidationGuard 的关系：OutputValidationGuard 在 `after_execute` 中检查 `data` 的字节大小并脱敏 → `to_observation()` 在其之后运行，对已验证的数据进行格式化序列化。
+与 OutputValidationGuard 的关系：OutputValidationGuard 在 `after_execute` 中检查 `data` 的字节大小并按 ADR-046 投射显式凭据 → `to_observation()` 在其之后运行，对已验证的数据进行格式化序列化，业务正文与身份保持原样。
 
 **4. 观察消息格式**
 

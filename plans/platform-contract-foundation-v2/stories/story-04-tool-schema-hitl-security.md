@@ -13,7 +13,7 @@
 
 ## 数据流与接口
 
-Tool definition → registry validate/freeze → Agent capability resolve → request schema validate → path/auth/HITL preflight → use case → canonical result → redaction → adapter summary。`ToolSpec.parameters` 改为 JSON Schema；计划新增 `ToolInvocation`, `AuthorizationDecision`, `PathGrant`, `ConfirmationToken`, `SecretRedactor`。完整结构化结果与 LLM 展示摘要分开存储。
+Tool definition → registry validate/freeze → Agent capability resolve → request schema validate → path/auth/HITL preflight → use case → canonical business result → purpose-aware projection → adapter summary。`ToolSpec.parameters` 使用 JSON Schema；`ToolInvocation`, `AuthorizationDecision`, `PathGrant`, `ConfirmationToken` 保留执行语义。按 ADR-046，SecretRedactor 仅处理技术诊断，业务内容和 schema 原样传递；完整结构化结果与 LLM 展示摘要分开存储。
 
 ## 实施步骤
 
@@ -21,7 +21,7 @@ Tool definition → registry validate/freeze → Agent capability resolve → re
 2. 用标准 JSON Schema validator 代替 `str/list` 自定义类型；错误定位到 JSON Pointer。
 3. 将 PermissionGuard/HITL 前移至任何 mutation/文件/网络调用之前，确认 token 绑定 request hash 和 owner。
 4. 文件路径 `resolve(strict as policy)` 后检查授权根、junction/symlink 与目标创建父目录；不一律拒绝绝对路径。
-5. 复用单一 redactor 处理日志、ToolResult、MCP、遥测和持久化；Observation 仅截断 display summary。
+5. 复用 ADR-046 的来源分类投射保护显式凭据；ToolResult、MCP、遥测和持久化中的业务正文及身份保真，技术错误单独处理。Observation 仅截断 display summary。
 
 ## 文件、边界与迁移
 
