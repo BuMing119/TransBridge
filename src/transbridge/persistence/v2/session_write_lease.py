@@ -16,6 +16,16 @@ _HELD = local()
 
 @contextmanager
 def session_write_lease(root: str, session_id: str, filesystem: PersistenceFilesystemPort) -> Iterator[None]:
+    with persistence_write_lease(
+        root, f"session-{hashlib.sha256(session_id.encode()).hexdigest()}", filesystem, "SESSION_WRITER_BUSY"
+    ):
+        yield
+
+
+@contextmanager
+def persistence_write_lease(
+    root: str, identity: str, filesystem: PersistenceFilesystemPort, busy_code: str
+) -> Iterator[None]:
     """Fail fast when another process owns this Session's write boundary.
 
     OS locks are released on process death. The persistent lock file is only an
@@ -26,8 +36,7 @@ def session_write_lease(root: str, session_id: str, filesystem: PersistenceFiles
         yield
         return
     paths = RepositoryPaths(root, filesystem)
-    key = hashlib.sha256(session_id.encode()).hexdigest()
-    path = paths.guard(os.path.join(paths.root, ".leases", f"session-{key}.lock"))
+    path = paths.guard(os.path.join(paths.root, ".leases", f"{identity}.lock"))
     lease_key = os.path.normcase(path)
     held = getattr(_HELD, "paths", None)
     if held is None:
@@ -55,7 +64,7 @@ def session_write_lease(root: str, session_id: str, filesystem: PersistenceFiles
                 fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as exc:
             raise ReadOnlyWriteRefused(
-                "SESSION_WRITER_BUSY", "Another process is writing this Session; reload and retry after it releases."
+                busy_code, "Another process owns this persistence write boundary; reload and retry after it releases."
             ) from exc
         held.add(lease_key)
         try:

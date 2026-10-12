@@ -16,7 +16,6 @@ from .filesystem import PublishFilesystemPort
 from .guards import PublishCommitGuard
 from .models import (
     BackupPolicy,
-    ConflictPolicy,
     DebugArtifactPolicy,
     PublishManifest,
     PublishResult,
@@ -133,7 +132,12 @@ class PublishCoordinator:
         if render_result.outcome is OperationOutcome.CANCELLED or _cancelled(request):
             return _cancelled_result(staged.target_path)
         if render_result.outcome is not OperationOutcome.COMPLETED:
-            return _failed(staged.target_path, "RENDER_FAILED", "format adapter did not complete staging render")
+            reason = "; ".join(f"{item.code}: {item.message}" for item in render_result.diagnostics)
+            return _failed(
+                staged.target_path,
+                "RENDER_FAILED",
+                reason or "format adapter did not complete staging render",
+            )
         self._filesystem.fsync_file(staged.path)
         validation = validator.validate(request, staged.path)
         if not validation.valid:
@@ -150,7 +154,7 @@ class PublishCoordinator:
             return _cancelled_result(staged.target_path, validation)
 
         current = self._filesystem.fingerprint(staged.target_path)
-        if current != staged.initial_target_fingerprint and target.conflict_policy is ConflictPolicy.FAIL:
+        if current != staged.initial_target_fingerprint:
             return _failed(
                 staged.target_path,
                 "TARGET_FINGERPRINT_CONFLICT",
@@ -177,10 +181,25 @@ class PublishCoordinator:
         if _cancelled(request):
             return _cancelled_result(staged.target_path, validation, backup_path)
 
-        decision = commit_guard.commit(
-            staged.run_id,
-            lambda: self._filesystem.atomic_replace(staged.path, staged.target_path),
-        )
+        def replace_validated_artifact() -> None:
+            # Overwrite authorizes the observed file, never a later external edit.
+            if (
+                self._filesystem.canonicalize(target.path) != staged.target_path
+                or self._filesystem.fingerprint(staged.target_path) != current
+            ):
+                raise FileExistsError("publish target changed before atomic replace")
+            self._filesystem.atomic_replace(staged.path, staged.target_path)
+
+        try:
+            decision = commit_guard.commit(staged.run_id, replace_validated_artifact)
+        except FileExistsError:
+            return _failed(
+                staged.target_path,
+                "TARGET_FINGERPRINT_CONFLICT",
+                "publish target changed before atomic replace; run preflight again",
+                validation=validation,
+                backup_path=backup_path,
+            )
         if not decision.accepted:
             if _cancelled(request):
                 return _cancelled_result(staged.target_path, validation, backup_path)

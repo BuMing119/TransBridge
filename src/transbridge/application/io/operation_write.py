@@ -399,7 +399,7 @@ def _operation_result(result: PublishResult, run_id: str) -> OperationResult[dic
                 {
                     "object_ref": result.target_path,
                     "label": Path(result.target_path).name,
-                    "status": "succeeded",
+                    "status": "succeeded" if result.outcome is OperationOutcome.COMPLETED else "failed",
                     "code": result.code,
                     "retryable": False,
                 },
@@ -423,7 +423,7 @@ def _operation_result(result: PublishResult, run_id: str) -> OperationResult[dic
             run_id=run_id,
         )
     if result.outcome is OperationOutcome.CANCELLED:
-        return OperationResult.cancelled(run_id=run_id)
+        return OperationResult.cancelled(Diagnostic(result.code, result.message), run_id=run_id)
     return _failed(result.code, result.message, run_id)
 
 

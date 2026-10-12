@@ -353,7 +353,8 @@ def _parser_from_snapshot(snapshot: SourceSnapshot, options: dict):
         parser = PluginParser()
         entries = parser.parse_plugin(
             source,
-            skip_empty=bool(options.get("skip_empty", True)),
+            # Write locators require the complete source, regardless of read/display filters.
+            skip_empty=False,
             language=language,
             discover_sibling_strings=bool(sources),
         )

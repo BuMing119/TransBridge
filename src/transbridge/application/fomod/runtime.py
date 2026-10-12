@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 import hashlib
+import logging
 import os
 from pathlib import Path
 import tempfile
@@ -17,6 +18,7 @@ from transbridge.application.tasks import (
     JobState,
     OwnerRef,
     TaskCancelled,
+    TaskCleanupFailed,
     TaskRuntime,
     TransitionError,
 )
@@ -25,6 +27,8 @@ from transbridge.fileops.archive_policy import ArchivePolicy, ArchivePolicyError
 
 from .models import FomodRunSpec, PipelineResult
 from .pipeline import PipelineEngine
+
+logger = logging.getLogger(__name__)
 
 
 class FomodPipelineFailed(RuntimeError):
@@ -107,6 +111,7 @@ class FomodPipelineWorkload:
             except Exception:
                 # Report consumers are projections and cannot own job terminal state.
                 pass
+        TaskCleanupFailed.raise_for_diagnostics(report.diagnostics)
         if report.outcome is OperationOutcome.CANCELLED:
             raise TaskCancelled("FOMOD pipeline cancelled")
         if report.outcome is OperationOutcome.FAILED:
@@ -190,7 +195,7 @@ class FomodTaskEntrypoint:
     def __init__(self, runtime: TaskRuntime, engine_factory: FomodEngineFactory) -> None:
         self._runtime = runtime
         self._engine_factory = engine_factory
-        self._workloads: dict[str, FomodPipelineWorkload] = {}
+        self._reports: dict[str, PipelineResult] = {}
         self._lock = threading.RLock()
 
     def submit(
@@ -218,37 +223,62 @@ class FomodTaskEntrypoint:
         )
         ref = deferred.ref
         draft = preflight.draft
-        spec = FomodRunSpec(
-            run_id=ref.run_id,
-            new_archive=draft.new_archive,
-            new_archive_hash=preflight.new_archive_hash,
-            output_archive=draft.output_archive,
-            target_locale=draft.target_locale,
-            config_hash=draft.config_hash,
-            old_archive=draft.old_archive,
-            old_archive_hash=preflight.old_archive_hash,
-            output_format=draft.output_format,
-            workspace_root=draft.workspace_root or tempfile.mkdtemp(prefix="tb_fomod_runtime_"),
-            ai_enabled=draft.ai_enabled,
-            expected_output_hash=None if preflight.target_revision == "missing" else preflight.target_revision,
-            expected_output_missing=preflight.target_revision == "missing",
-        )
-        run_guard = TaskRuntimeRunGuard(self._runtime, ref, owner)
-        commit_guard = TaskRuntimeCommitGuard(self._runtime, ref, owner)
-        engine = self._engine_factory(spec, run_guard, commit_guard)
-        workload = FomodPipelineWorkload(spec, engine, on_report=on_report)
-        with self._lock:
-            self._workloads[ref.run_id] = workload
-            while len(self._workloads) > 100:
-                self._workloads.pop(next(iter(self._workloads)))
-        self._runtime.schedule(ref, owner, workload)
+
+        def record_report(report: PipelineResult) -> None:
+            with self._lock:
+                self._reports[ref.run_id] = report
+                while len(self._reports) > 100:
+                    self._reports.pop(next(iter(self._reports)))
+            self._runtime.update_progress(ref, owner, {"operation_outcome": report.outcome.value})
+            if on_report is not None:
+                on_report(report)
+
+        def execute(cancellation) -> PipelineResult:
+            if cancellation.is_cancelled:
+                raise TaskCancelled("FOMOD cancelled before initialization")
+            owned_workspace = None
+            try:
+                workspace = draft.workspace_root
+                if workspace is None:
+                    owned_workspace = workspace = tempfile.mkdtemp(prefix="tb_fomod_runtime_")
+                spec = FomodRunSpec(
+                    run_id=ref.run_id,
+                    new_archive=draft.new_archive,
+                    new_archive_hash=preflight.new_archive_hash,
+                    output_archive=draft.output_archive,
+                    target_locale=draft.target_locale,
+                    config_hash=draft.config_hash,
+                    old_archive=draft.old_archive,
+                    old_archive_hash=preflight.old_archive_hash,
+                    output_format=draft.output_format,
+                    workspace_root=workspace,
+                    ai_enabled=draft.ai_enabled,
+                    expected_output_hash=None if preflight.target_revision == "missing" else preflight.target_revision,
+                    expected_output_missing=preflight.target_revision == "missing",
+                )
+                run_guard = TaskRuntimeRunGuard(self._runtime, ref, owner)
+                commit_guard = TaskRuntimeCommitGuard(self._runtime, ref, owner)
+                engine = self._engine_factory(spec, run_guard, commit_guard)
+                if cancellation.is_cancelled:
+                    raise TaskCancelled("FOMOD cancelled during initialization")
+            except BaseException:
+                if owned_workspace is not None:
+                    try:
+                        # Initialization has not started the pipeline. Remove only
+                        # our empty root; preserve any unexpected evidence inside it.
+                        Path(owned_workspace).rmdir()
+                    except OSError as exc:
+                        raise TaskCleanupFailed(f"FOMOD initialization workspace retained: {owned_workspace}") from exc
+                raise
+            return FomodPipelineWorkload(spec, engine, on_report=record_report)(cancellation)
+
+        self._runtime.schedule(ref, owner, execute)
         return ref
 
     def report(self, ref: JobRef, actor: OwnerRef) -> PipelineResult | None:
         self._runtime.get(ref, actor)
         with self._lock:
-            workload = self._workloads.get(ref.run_id)
-        return None if workload is None else workload.last_report
+            return self._reports.get(ref.run_id)
 
     @staticmethod
     def _is_stale(preflight: FomodTaskPreflight) -> bool:

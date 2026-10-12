@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from enum import StrEnum
 import hashlib
 import os
-from threading import RLock
 
 from transbridge.application.contracts import Diagnostic, DiagnosticSeverity, ErrorCategory
 from transbridge.persistence.v2.atomic_documents import AtomicDocumentStore
@@ -59,7 +58,7 @@ class ProjectCatalogRepairService:
         self._projects = projects
         self._paths = RepositoryPaths(root, filesystem)
         self._documents = AtomicDocumentStore(root, filesystem)
-        self._lock = RLock()
+        self._lock = projects.mutation_lock
 
     def repair_if_missing(self) -> ProjectCatalogRepairReport:
         with self._lock:

@@ -24,6 +24,7 @@ from transbridge.application.ports.paratranz import (
     ParaTranzEntry,
     ParaTranzPort,
 )
+from transbridge.application.tasks.controls import TaskCleanupFailed
 
 from .execution_models import RetryToken, SyncItemOutcome, SyncItemStatus, sync_item_id
 from .models import (
@@ -402,6 +403,8 @@ class ParaTranzSyncExecutor:
         checkpoint: dict[str, SyncItemOutcome],
     ) -> list[SyncItemOutcome]:
         candidate = {entry.entry_key: entry for entry in request.current_local_entries}
+        transaction = None
+        committed = False
         try:
             for _, item in pending:
                 remote = remote_map.get(item.entry_key)
@@ -429,7 +432,9 @@ class ParaTranzSyncExecutor:
             _check_cancelled(request.cancellation)
             decision = transaction.commit(request.run_id, request.commit_guard)
             if not decision.accepted:
+                _check_cancelled(request.cancellation)
                 raise _CommitRejected(decision.reason or "commit_rejected")
+            committed = True
         except _SyncCancelled:
             return [
                 _outcome(
@@ -454,6 +459,14 @@ class ParaTranzSyncExecutor:
                 )
                 for item_id, item in pending
             ]
+        finally:
+            if transaction is not None and not committed:
+                try:
+                    transaction.rollback()
+                except Exception as exc:
+                    raise TaskCleanupFailed(
+                        f"ParaTranz local rollback failed (run_id={request.run_id}): {exc}"
+                    ) from exc
         results = []
         for item_id, item in pending:
             outcome = _outcome(

@@ -53,6 +53,7 @@ class _PreparedState:
     candidate: ActiveProject | None
     leases: tuple[LifecycleLease, ...]
     old_signature: tuple[str, int, str | None, int | None] | None
+    activation: LifecycleActivation | None = None
 
 
 class ProjectLifecycleService:
@@ -221,7 +222,7 @@ class ProjectLifecycleService:
                 )
 
             old = self._active
-            activation = LifecycleActivation.capture(old, prepared.candidate)
+            activation = prepared.activation or LifecycleActivation.capture(old, prepared.candidate)
             uow = None
             try:
                 uow = self._unit_of_work.begin()
@@ -288,6 +289,35 @@ class ProjectLifecycleService:
                 diagnostics=tuple(diagnostics),
                 run_id=context.run_id,
             )
+
+    def commit_catalog_change(self, prepare, context: RequestContext) -> OperationResult[dict[str, Any]]:
+        """Prepare a detached catalog candidate and reuse the activation boundary."""
+        with self._lock:
+            try:
+                candidate, activation = prepare(self._active)
+                token = self._new_token(self._prepared)
+                self._prepared[token] = _PreparedState(
+                    {
+                        "token": token,
+                        "owner_id": context.owner_id,
+                        "expected_generation": self._generation,
+                        "old": None if self._active is None else self._active.summary(),
+                        "candidate": candidate.summary(),
+                        "target": TransitionTarget(candidate.project_ref, candidate.formal_variant_ref).to_dict(),
+                        "leases": [],
+                    },
+                    candidate,
+                    (),
+                    _active_signature(self._active),
+                    activation,
+                )
+                return self.commit_transition(token, context)
+            except Exception as exc:
+                return _from_exception(exc, "VARIANT_CATALOG_CHANGE_FAILED", context)
+
+    def load_catalog_candidate(self, target: TransitionTarget, context: RequestContext) -> ActiveProject:
+        """Load detached state for a catalog command without publishing it."""
+        return self._loader.prepare_candidate(target, context)
 
     def commit_provisioning(
         self,
@@ -446,6 +476,7 @@ class ProjectLifecycleService:
         context: RequestContext,
         *,
         expected_project_revision: int,
+        commit_mutation: Callable[[Callable[[], None]], None] | None = None,
     ) -> OperationResult[dict[str, Any]]:
         """Commit one complete Variant change while holding the lifecycle lock."""
 
@@ -495,12 +526,18 @@ class ProjectLifecycleService:
                 )
 
             old_summary = active.summary()
-            try:
+            revision = active.variant.revision
+
+            def publish() -> None:
+                nonlocal revision
                 revision = active.variant.commit(change_set, context)
+                self._generation += 1
+
+            try:
+                publish() if commit_mutation is None else commit_mutation(publish)
             except Exception as exc:  # noqa: BLE001 - preserve the domain cause in OperationResult
                 return _from_exception(exc, "ACTIVE_VARIANT_CHANGE_FAILED", context)
 
-            self._generation += 1
             diagnostics: list[Diagnostic] = []
             event = LifecycleEvent(
                 "active-variant-updated",

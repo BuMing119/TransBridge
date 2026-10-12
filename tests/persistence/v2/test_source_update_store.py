@@ -15,6 +15,7 @@ from transbridge.persistence.source_update_store import ProjectSourceUpdateStore
 from transbridge.persistence.v2.ids import ProjectId, ProjectRef, VariantId, VariantRef
 from transbridge.persistence.v2.models import SCHEMA_VERSION, ProjectDto, SchemaEnvelope
 from transbridge.persistence.v2.repository import ProjectRepository, VariantRepository
+from transbridge.persistence.v2.schema import serialize_document
 from transbridge.persistence.v2.variant import SourceFingerprint, VariantEntryState, VariantSnapshot
 
 from .fakes import MemoryFilesystem
@@ -191,7 +192,9 @@ def test_recovery_refuses_third_party_changes_and_retains_journal():
     with pytest.raises(Crash):
         store.commit(expected, project, targets, "conflict")
     changed = replace(targets[0], revision=5)
-    variants.save(changed.ref, changed.to_dto())
+    # A normal repository write now recovers pending Project journals first.
+    # Model an external writer that deliberately bypasses that boundary.
+    fs.seed(variants.path_for(changed.ref), serialize_document(changed.to_dto().envelope.to_dict()))
     before = dict(fs.files)
     with pytest.raises(DomainError) as error:
         ProjectSourceUpdateStore(ROOT, fs, projects, variants)

@@ -9,7 +9,7 @@ from typing import Any, TypedDict
 
 from transbridge.persistence.v2.ids import ProjectId, ProjectRef, VariantRef
 from transbridge.persistence.v2.models import ProjectDto, SchemaEnvelope
-from transbridge.persistence.v2.variant import VariantAggregate, VariantSnapshot
+from transbridge.persistence.v2.variant import SourceBaseline, VariantAggregate, VariantSnapshot
 
 
 class DirtyDecision(StrEnum):
@@ -67,6 +67,9 @@ class ActiveProject:
     persisted_variant_revision: int | None
     source_ref: str | None = None
     leases: tuple[LifecycleLease, ...] = ()
+    source_project_hash: str | None = None
+    source_variant_hash: str | None = None
+    source_variant_revision: int | None = None
 
     def __post_init__(self) -> None:
         project_ref = self.project_ref
@@ -153,6 +156,13 @@ class LifecycleActivation:
     source_ref: str | None
     write_candidate_project: bool = True
     write_candidate_variant: bool = True
+    expected_project_revision: int | None = None
+    expected_variant_revision: int | None = None
+    expected_project_hash: str | None = None
+    expected_variant_hash: str | None = None
+    removed_variant: tuple[VariantRef, int, str] | None = None
+    candidate_baselines: tuple[SourceBaseline, ...] | None = None
+    checked_variants: tuple[tuple[VariantRef, int, str], ...] = ()
 
     @classmethod
     def capture(
@@ -175,6 +185,16 @@ class LifecycleActivation:
                 and candidate.variant is not None
                 and candidate.variant.revision != candidate.persisted_variant_revision
             ),
+            None if candidate is None else candidate.persisted_project_revision,
+            None
+            if candidate is None
+            else (
+                candidate.source_variant_revision
+                if candidate.source_variant_revision is not None
+                else candidate.persisted_variant_revision
+            ),
+            None if candidate is None else candidate.source_project_hash,
+            None if candidate is None else candidate.source_variant_hash,
         )
 
 

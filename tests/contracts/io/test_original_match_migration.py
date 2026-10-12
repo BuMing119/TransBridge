@@ -98,13 +98,15 @@ def test_original_change_is_rejected_atomically_in_collection_mutation():
 
 def test_fomod_write_back_keeps_same_key_translations_separate(tmp_path):
     from transbridge.fomod.pipeline import FomodPipeline
+    from transbridge.fomod.plugin_publishing import prepare_plugin_source
 
     source = write_plugin(tmp_path / "source.esp", [(0x800, "Same", "First"), (0x800, "Same", "Second")])
-    entries = PluginParser().parse_plugin(source)
+    captured = prepare_plugin_source(source)
+    entries = captured.collection_entries()
     collection = TranslationEntryCollection(
         replace(entry, translation=f"Translated {entry.original}", stage=1) for entry in entries
     )
-    FomodPipeline.__new__(FomodPipeline)._write_back(source, collection)
+    FomodPipeline.__new__(FomodPipeline)._write_back(source, collection, source=captured)
     assert [entry.original for entry in PluginParser().parse_plugin(source)] == [
         "Translated First",
         "Translated Second",

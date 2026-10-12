@@ -17,6 +17,7 @@ from .filesystem import PersistenceFilesystemPort
 from .ids import EntityKind, ProjectId, ProjectRef, VariantId, VariantRef
 from .migration import migrate_to_current
 from .models import SCHEMA_VERSION, LoadedRecord, ProjectDto, VariantDto
+from .project_record_guard import verified_preimage
 from .repository import (
     ProjectRepository,
     ProjectRevisionConflict,
@@ -52,6 +53,7 @@ class ProjectSaveProtocol:
         self._journal_directory = self._documents.path("project-save-journal")
         self._mutation_lock = projects.mutation_lock
         self.recover_pending()
+        self._mutation_lock.add_recovery(self.recover_pending)
 
     def commit(self, save: LifecycleSave, transaction_id: str) -> None:
         project_ref = ProjectRef(ProjectId(save.project.envelope.identity))
@@ -227,22 +229,7 @@ class ProjectSaveProtocol:
                 self._recover_journal(path)
 
     def _verified_preimage_bytes(self, repository: Any, ref: Any, record: LoadedRecord) -> bytes:
-        raw = self._filesystem.read_bytes(repository.path_for(ref))
-        digest = hashlib.sha256(raw).hexdigest()
-        if digest != record.source_hash:
-            raise DomainError(
-                ErrorCategory.CONFLICT,
-                "ACTIVE_SAVE_PREIMAGE_CHANGED",
-                "A persistence document changed while its recovery preimage was captured.",
-                retryable=True,
-                details={
-                    "entity_type": ref.kind.value,
-                    "identity": ref.identity.value,
-                    "expected_digest": record.source_hash,
-                    "actual_digest": digest,
-                },
-            )
-        return raw
+        return verified_preimage(self._filesystem, repository, ref, record)
 
     def _write_journal(
         self,

@@ -27,6 +27,7 @@ from transbridge.application.fomod import (
 )
 from transbridge.application.io.stage_policy import DEFAULT_STAGE_POLICY, Stage
 from transbridge.application.tasks import TaskCancelled
+from transbridge.application.translation.entry_alias import ai_entry_key
 from transbridge.fomod.stages import (
     PluginTranslationSummary,
     XmlTranslationSummary,
@@ -72,14 +73,15 @@ class PipelineResult:
 _PLUGIN_EXTS = {".esp", ".esm", ".esl"}
 
 
-def _select_fomod_ai_entry_ids(collection) -> list[str]:
+def _select_fomod_ai_entry_ids(collection, *, entry_keys: frozenset | None = None) -> list[str]:
     """Return only FOMOD's untranslated targets allowed by StagePolicy."""
     return [
-        entry.key
+        ai_entry_key(entry)
         for entry in collection
         if entry.stage == Stage.UNTRANSLATED.value
         and not entry.translation
         and DEFAULT_STAGE_POLICY.allows_ai(entry.stage, entry.translation, original=entry.original)
+        and (entry_keys is None or entry.identity in entry_keys)
     ]
 
 
@@ -181,6 +183,7 @@ class FomodPipeline:
         )
         from transbridge.application.io import EntryKey, Provenance
         from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+        from transbridge.fomod.plugin_publishing import prepare_plugin_source
         from transbridge.migrator import KeyMigrationPlan, plan_migration
         from transbridge.parser.plugin_parser import PluginParser
         from transbridge.translation_memory import (
@@ -204,12 +207,10 @@ class FomodPipeline:
             rel = esp_path.relative_to(new_dir)
             # 解析新版
             namespace = _plugin_namespace(rel)
-            new_entries = tuple(
-                replace(entry, entry_key=EntryKey(namespace, entry.key, entry.identity.original))
-                for entry in parser.parse_plugin(esp_path)
-            )
+            publication_source = prepare_plugin_source(esp_path, namespace=namespace, cancellation=stop_event)
+            new_entries = publication_source.collection_entries()
             new_collection = TranslationEntryCollection(new_entries)
-            new_fingerprint = _hash_file(esp_path)
+            new_fingerprint = publication_source.snapshot.sha256
 
             migration = KeyMigrationPlan((), tuple(entry.identity for entry in new_entries), ())
             if old_dir is not None:
@@ -327,7 +328,7 @@ class FomodPipeline:
                     )
 
             # 写回
-            self._write_back(esp_path, new_collection)
+            self._write_back(esp_path, new_collection, source=publication_source, stop_event=stop_event, run_id=run_id)
             result.plugins_processed += 1
 
             if progress_callback:
@@ -345,13 +346,7 @@ class FomodPipeline:
         """用 AutoTranslator 翻译 stage=0 且无译文的条目，返回翻译条数。"""
         if self._llm_config is None:
             return 0
-        untranslated = _select_fomod_ai_entry_ids(collection)
-        if entry_keys is not None:
-            untranslated = [
-                key
-                for key in untranslated
-                if (entry := collection.get(key)) is not None and entry.identity in entry_keys
-            ]
+        untranslated = _select_fomod_ai_entry_ids(collection, entry_keys=entry_keys)
         if not untranslated:
             return 0
         from transbridge.ai_translator.translator import AutoTranslator, TranslatorConfig
@@ -371,63 +366,11 @@ class FomodPipeline:
             raise TaskCancelled("FOMOD AI translation cancelled")
         return tr.success_count
 
-    def _write_back(self, esp_path, collection):
-        """通过统一 I/O use case 写回；失败不得伪装为已完成流水线。"""
-        from transbridge.application.contracts import OperationOutcome, RequestContext
-        from transbridge.application.io import (
-            FormatId,
-            ParseRequest,
-            SourceDescriptor,
-            TranslationIoUseCase,
-            WriteRequest,
-        )
+    def _write_back(self, esp_path, collection, *, source=None, stop_event=None, run_id=None):
+        """严格发布新版插件自身集合，失败或取消阻断后续打包。"""
+        from transbridge.fomod.plugin_publishing import publish_plugin_collection
 
-        source = Path(esp_path)
-        use_case = TranslationIoUseCase()
-        context = RequestContext("fomod-pipeline")
-        parsed = use_case.parse(
-            ParseRequest(
-                SourceDescriptor(str(source), source.name, source.stat().st_size),
-                context,
-                FormatId.PLUGIN_SSE,
-                options=(("language", "english"),),
-            )
-        )
-        if parsed.outcome not in {OperationOutcome.COMPLETED, OperationOutcome.PARTIAL}:
-            codes = ",".join(item.code for item in parsed.diagnostics)
-            raise RuntimeError(f"FOMOD_PLUGIN_PARSE_FAILED:{codes}")
-
-        staged_entries = []
-        by_locator = {}
-        for entry in collection:
-            by_locator.setdefault((entry.key, entry.identity.original), []).append(entry)
-        for parsed_entry in parsed.entries:
-            matches = by_locator.get((parsed_entry.key, parsed_entry.identity.original), ())
-            current = matches[0] if len(matches) == 1 else None
-            if current is None:
-                staged_entries.append(parsed_entry)
-                continue
-            staged_entries.append(
-                replace(
-                    parsed_entry,
-                    translation=current.translation,
-                    stage=current.stage,
-                )
-            )
-        written = use_case.write(
-            WriteRequest(
-                SourceDescriptor(str(source), source.name),
-                FormatId.PLUGIN_SSE,
-                tuple(staged_entries),
-                collection.collection_revision.value,
-                context,
-                source_snapshot=parsed.source_snapshot,
-                options=(("language", "english"),),
-            )
-        )
-        if written.outcome is not OperationOutcome.COMPLETED:
-            codes = ",".join(item.code for item in written.diagnostics)
-            raise RuntimeError(f"FOMOD_PLUGIN_WRITE_FAILED:{codes}")
+        return publish_plugin_collection(esp_path, collection, source=source, cancellation=stop_event, run_id=run_id)
 
     # ── 界面文本翻译 ─────────────────────────────────────────────
 

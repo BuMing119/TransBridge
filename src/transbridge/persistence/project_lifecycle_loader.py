@@ -47,7 +47,12 @@ class V2ProjectCandidateLoader:
     def prepare_candidate(self, target: TransitionTarget, context: RequestContext) -> ActiveProject:
         if target.project_ref is None:
             raise ValueError("candidate loader cannot prepare a close transition")
-        project = self._load_project(target.project_ref)
+        project_record = self._projects.load(target.project_ref)
+        if not isinstance(project_record, LoadedRecord) or not isinstance(project_record.value, ProjectDto):
+            raise DomainError(
+                ErrorCategory.PREREQUISITE, "PROJECT_RECORD_UNAVAILABLE", "Project record is unavailable."
+            )
+        project = project_record.value
         if target.variant_ref is None:
             return ActiveProject(
                 project=project,
@@ -55,6 +60,7 @@ class V2ProjectCandidateLoader:
                 formal_variant_ref=None,
                 persisted_project_revision=project.envelope.revision,
                 persisted_variant_revision=None,
+                source_project_hash=project_record.source_hash,
             )
         if target.variant_ref.identity.value not in project.envelope.data["variant_ids"]:
             raise DomainError(
@@ -63,6 +69,13 @@ class V2ProjectCandidateLoader:
                 "The target Variant is not declared by the target Project.",
             )
         stored = self._load_variant(target, context)
+        formal_record = self._variants.load(target.variant_ref)
+        if not isinstance(formal_record, LoadedRecord):
+            raise DomainError(
+                ErrorCategory.PREREQUISITE, "VARIANT_RECORD_UNAVAILABLE", "Variant record is unavailable."
+            )
+        if target.snapshot_ref is None and formal_record.value != stored.to_dto():
+            raise DomainError(ErrorCategory.CONFLICT, "VARIANT_LOAD_STALE", "Variant changed during preparation.")
         baselines = self._baseline_provider(project, target.variant_ref, context)
         materialized = self._materialize(stored, baselines, context)
         persisted_variant_revision = stored.revision if materialized == stored else None
@@ -73,17 +86,10 @@ class V2ProjectCandidateLoader:
             persisted_project_revision=project.envelope.revision,
             persisted_variant_revision=persisted_variant_revision,
             source_ref=target.snapshot_ref,
+            source_project_hash=project_record.source_hash,
+            source_variant_hash=formal_record.source_hash,
+            source_variant_revision=formal_record.value.envelope.revision,
         )
-
-    def _load_project(self, ref: ProjectRef) -> ProjectDto:
-        result = self._projects.load(ref)
-        if not isinstance(result, LoadedRecord) or not isinstance(result.value, ProjectDto):
-            raise DomainError(
-                ErrorCategory.PREREQUISITE,
-                "PROJECT_RECORD_UNAVAILABLE",
-                "The target Project record is unavailable or read-only.",
-            )
-        return result.value
 
     def _load_variant(self, target: TransitionTarget, context: RequestContext) -> VariantSnapshot:
         assert target.variant_ref is not None

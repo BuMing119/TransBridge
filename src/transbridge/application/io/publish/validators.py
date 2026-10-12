@@ -23,6 +23,7 @@ from transbridge.application.io.stage_policy import DEFAULT_STAGE_POLICY, StageO
 
 from .filesystem import PublishFilesystemPort
 from .models import ValidationReport
+from .plugin_fidelity import validate_plugin_fidelity
 
 
 class ArtifactRenderer(Protocol):
@@ -76,6 +77,9 @@ class FormatRoundTripValidator:
                 code="FORMAT_PROBE_REJECTED",
                 message="staged artifact does not match the requested format",
             )
+
+        if request.format_id is FormatId.PLUGIN_SSE:
+            return validate_plugin_fidelity(request, staging_path)
 
         namespace = _entry_namespace(request.entries)
         parsed = self._adapter.parse(

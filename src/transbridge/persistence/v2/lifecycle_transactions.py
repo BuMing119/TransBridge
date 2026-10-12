@@ -30,6 +30,7 @@ from .baselines import BaselineRegistry
 from .filesystem import PersistenceFilesystemPort
 from .ids import ProjectId, ProjectRef, SessionRef
 from .models import SchemaValidationError
+from .project_activation_journal import ProjectActivationProtocol
 from .project_save_journal import ProjectSaveProtocol
 from .repository import ProjectRepository, ProjectRevisionConflict, VariantRepository
 
@@ -61,6 +62,7 @@ class ProjectLifecycleTransactionStore:
         self._variants = variants
         self._baselines = baselines
         self._project_save = ProjectSaveProtocol(root, filesystem, projects, variants)
+        self._activation = ProjectActivationProtocol(root, filesystem, projects, variants)
         self._transactions: dict[str, _ProjectTransaction] = {}
         self._lock = RLock()
 
@@ -100,7 +102,7 @@ class ProjectLifecycleTransactionStore:
         return any(item.get("name_key") == name_key for item in catalog["projects"].values())
 
     def commit(self, transaction_id: str) -> None:
-        with self._lock:
+        with self._lock, self._projects.mutation_lock:
             # No lifecycle mutation may advance Project/Variant state while a
             # prior two-document save still owns the recovery boundary.
             self._project_save.recover_pending()
@@ -115,34 +117,7 @@ class ProjectLifecycleTransactionStore:
             elif isinstance(mutation, LifecycleProjectUpdate):
                 self._commit_project_update(transaction_id, mutation)
             elif isinstance(mutation, LifecycleActivation):
-                if mutation.candidate_project is not None and mutation.write_candidate_project:
-                    project_ref = ProjectRef(ProjectId(mutation.candidate_project.envelope.identity))
-                    self._projects.save(project_ref, mutation.candidate_project)
-                if (
-                    mutation.candidate_variant is not None
-                    and mutation.candidate_variant_ref is not None
-                    and mutation.write_candidate_variant
-                ):
-                    self._variants.save(
-                        mutation.candidate_variant_ref,
-                        mutation.candidate_variant.to_dto(),
-                    )
-                self._documents.write_json(
-                    "active-project.json",
-                    {
-                        "schema_version": 1,
-                        "project_id": (
-                            None if mutation.candidate_project is None else mutation.candidate_project.envelope.identity
-                        ),
-                        "variant_id": (
-                            None
-                            if mutation.candidate_variant_ref is None
-                            else mutation.candidate_variant_ref.identity.value
-                        ),
-                        "source_ref": mutation.source_ref,
-                    },
-                    transaction_id,
-                )
+                self._commit_activation(mutation, transaction_id)
             else:
                 digest = hashlib.sha256(
                     f"{mutation.project_ref.identity.value}:{mutation.formal_variant_ref.identity.value}:"
@@ -159,6 +134,37 @@ class ProjectLifecycleTransactionStore:
                     transaction_id,
                 )
             self._transactions.pop(transaction_id)
+
+    def _commit_activation(self, mutation, transaction_id):
+        registry = self._baselines
+        if registry is None or mutation.candidate_project is None:
+            self._activation.commit(mutation, transaction_id)
+            return
+        project_ref = ProjectRef(ProjectId(mutation.candidate_project.envelope.identity))
+        refs = tuple(
+            ref
+            for ref in (
+                mutation.candidate_variant_ref if mutation.candidate_baselines is not None else None,
+                None if mutation.removed_variant is None else mutation.removed_variant[0],
+            )
+            if ref is not None
+        )
+        captured = registry.capture_catalog(project_ref, refs)
+
+        def publish():
+            if mutation.candidate_baselines is not None:
+                registry.register(
+                    project_ref, mutation.candidate_variant_ref, mutation.candidate_baselines, allow_empty=True
+                )
+            if mutation.removed_variant is not None:
+                registry.remove(project_ref, mutation.removed_variant[0])
+
+        self._activation.commit(
+            mutation,
+            transaction_id,
+            publish_baselines=publish,
+            restore_baselines=lambda: registry.restore_catalog(project_ref, captured),
+        )
 
     def _commit_project_update(self, transaction_id: str, mutation: LifecycleProjectUpdate) -> None:
         project_ref = ProjectRef(ProjectId(mutation.project.envelope.identity))

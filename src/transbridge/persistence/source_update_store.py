@@ -56,6 +56,7 @@ class ProjectSourceUpdateStore:
         self._paths = RepositoryPaths(root, filesystem)
         self._journal_directory = self._documents.path("source-update-journal")
         self.recover_pending()
+        self._lock.add_recovery(self.recover_pending)
 
     def read(self, ref: ProjectRef) -> SourceUpdateRead:
         with self._lock:

@@ -9,7 +9,6 @@ import logging
 import math
 import secrets
 import threading
-import time
 from typing import Protocol
 
 from transbridge.application.contracts import Deferred, JobRef
@@ -37,6 +36,7 @@ from .models import (
     TaskAccessError,
     TransitionError,
 )
+from .shutdown import TaskDrain, TaskShutdown
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +76,8 @@ class _JobRecord:
     updated_at: datetime
     cancellation: CancellationToken
     backend: TaskBackend | None = None
+    dispatching: bool = False
+    cleanup_error: str | None = None
     checkpoint_requested: bool = False
     progress: dict[str, object] = field(default_factory=dict)
 
@@ -106,20 +108,25 @@ class TaskRuntime:
         self._id_generator = id_generator
         self._clock = clock
         self._lock = threading.RLock()
-        self._shutdown_lock = threading.Lock()
         self._state_changed = threading.Condition(self._lock)
         self._jobs: dict[str, _JobRecord] = {}
         self._commit_permits: dict[str, tuple[str, OwnerRef, int]] = {}
         self._subscriptions: dict[int, tuple[TaskEventFilter, Callable[[JobEvent], None]]] = {}
         self._next_subscription = 0
-        self._closed = False
         self._backend = backend or ThreadBackend()
-        self._shutdown_result: ShutdownResult | None = None
+        self._shutdown = TaskShutdown(
+            condition=self._state_changed,
+            records=lambda: tuple(self._jobs.values()),
+            backend=self._backend,
+            stop=self.stop,
+            finish_cancelled=self.finish_cancelled,
+            diagnostic=self._record_diagnostic,
+            clear_subscriptions=self._subscriptions.clear,
+        )
 
     def submit(self, specification: JobSpec, owner: OwnerRef) -> Deferred[JobRef]:
         with self._lock:
-            if self._closed:
-                raise RuntimeError("task runtime is closed")
+            self._shutdown.check_admission()
             run_id = self._id_generator.new_id()
             if not run_id or not run_id.strip():
                 raise ValueError("id generator returned an empty run_id")
@@ -358,7 +365,7 @@ class TaskRuntime:
             record = self._resolve(ref)
             self._authorize(record, actor)
             record.backend = selected
-        snapshot = self.start(ref, actor)
+            record.dispatching = True
 
         def execute() -> None:
             try:
@@ -371,14 +378,20 @@ class TaskRuntime:
                 self._finish_after_workload(record, cancelled=record.cancellation.is_cancelled)
 
         try:
-            selected.start(ref.run_id, execute)
-        except BaseException as exc:  # noqa: BLE001 - scheduling failure is a failed task
-            self._record_diagnostic(record, "backend_start_failed", str(exc))
+            snapshot = self.start(ref, actor)
             try:
-                self.fail(ref, record.owner)
-            except TransitionError:
-                pass
-            raise
+                selected.start(ref.run_id, execute)
+            except BaseException as exc:  # noqa: BLE001 - scheduling failure is a failed task
+                self._record_diagnostic(record, "backend_start_failed", str(exc))
+                try:
+                    self.fail(ref, record.owner)
+                except TransitionError:
+                    pass
+                raise
+        finally:
+            with self._state_changed:
+                record.dispatching = False
+                self._state_changed.notify_all()
         return snapshot
 
     def controls(self, ref: JobRef, actor: OwnerRef) -> ControlProjection:
@@ -404,12 +417,16 @@ class TaskRuntime:
         event_filter: TaskEventFilter | None = None,
     ) -> Subscription:
         with self._lock:
-            if self._closed:
+            if self._shutdown.closed:
                 raise RuntimeError("task runtime is closed")
             self._next_subscription += 1
             token = self._next_subscription
             self._subscriptions[token] = (event_filter or TaskEventFilter(), callback)
         return Subscription(token, self._remove_subscription)
+
+    def prepare_close(self) -> TaskDrain:
+        """Suspend admission reversibly; the caller cancels and polls before saving."""
+        return self._shutdown.prepare_close()
 
     def shutdown(
         self,
@@ -419,89 +436,7 @@ class TaskRuntime:
     ) -> ShutdownResult:
         """Close admission, apply policy, and report resources that really stopped."""
 
-        if grace < 0:
-            raise ValueError("shutdown grace must not be negative")
-        with self._shutdown_lock:
-            return self._shutdown_once(grace=grace, policy=policy)
-
-    def _shutdown_once(self, *, grace: float, policy: ShutdownPolicy) -> ShutdownResult:
-        with self._lock:
-            if self._shutdown_result is not None:
-                return self._shutdown_result
-            self._closed = True
-            records = tuple(record for record in self._jobs.values() if record.state not in TERMINAL_STATES)
-
-        if policy is not ShutdownPolicy.WAIT:
-            stop_policy = (
-                StopPolicy.PRESERVE_CHECKPOINT
-                if policy is ShutdownPolicy.CHECKPOINT_AND_CANCEL
-                else StopPolicy.DISCARD_CHECKPOINT
-            )
-            for record in records:
-                try:
-                    self.stop(record.ref, record.owner, policy=stop_policy)
-                except TransitionError:
-                    pass
-
-        deadline = time.monotonic() + grace
-        joined: list = []
-        timed_out: list = []
-        backends: list[TaskBackend] = []
-        for record in records:
-            backend = record.backend
-            if backend is not None and all(backend is not item for item in backends):
-                backends.append(backend)
-            remaining = max(0.0, deadline - time.monotonic())
-            if backend is None:
-                with self._state_changed:
-                    while record.state not in TERMINAL_STATES and remaining > 0:
-                        self._state_changed.wait(remaining)
-                        remaining = max(0.0, deadline - time.monotonic())
-                    done = record.state in TERMINAL_STATES
-            else:
-                try:
-                    done = backend.join(record.ref.run_id, remaining)
-                except BaseException as exc:  # noqa: BLE001 - continue releasing other backends
-                    done = False
-                    self._record_diagnostic(record, "backend_join_failed", str(exc))
-            if done:
-                joined.append(record.ref)
-                with self._lock:
-                    current = record.state
-                if current is JobState.CANCELLING:
-                    try:
-                        self.finish_cancelled(record.ref, record.owner)
-                    except TransitionError:
-                        pass
-            else:
-                timed_out.append(record.ref)
-                self._record_diagnostic(
-                    record,
-                    "shutdown_timeout",
-                    "shutdown grace expired; backend resource may still be active",
-                )
-
-        if all(self._backend is not item for item in backends):
-            backends.append(self._backend)
-        released = not timed_out
-        for backend in backends:
-            try:
-                released = backend.close(max(0.0, deadline - time.monotonic())) and released
-            except BaseException as exc:  # noqa: BLE001 - report incomplete release
-                released = False
-                logger.exception("Task backend close failed: %s", exc)
-
-        with self._lock:
-            self._subscriptions.clear()
-            self._shutdown_result = ShutdownResult(
-                policy=policy,
-                admission_closed=True,
-                requested=tuple(record.ref for record in records),
-                joined=tuple(joined),
-                timed_out=tuple(timed_out),
-                backend_released=released,
-            )
-            return self._shutdown_result
+        return self._shutdown.shutdown(grace=grace, policy=policy)
 
     def close(self) -> None:
         self.shutdown(grace=0)
@@ -550,6 +485,7 @@ class TaskRuntime:
             event_type = JobEventType.FINISHED if target in TERMINAL_STATES else JobEventType.STATE_CHANGED
             event = self._event(record, event_type, previous_state=previous)
             if cleanup_failure is not None:
+                record.cleanup_error = str(cleanup_failure) or type(cleanup_failure).__name__
                 event = replace(event, code="task_cleanup_failed", message=str(cleanup_failure))
             snapshot = event.snapshot
         self._publish(event)
@@ -658,7 +594,7 @@ class TaskRuntime:
             backend.cancel_hint(record.ref.run_id)
             if backend.join(record.ref.run_id, 0):
                 with self._lock:
-                    cancelling = record.state is JobState.CANCELLING
+                    cancelling = record.state is JobState.CANCELLING and not record.dispatching
                 if cancelling:
                     self.finish_cancelled(record.ref, record.owner)
         except BaseException as exc:  # noqa: BLE001 - cancellation remains cooperative
@@ -745,6 +681,8 @@ class TaskRuntime:
         event_type: JobEventType = JobEventType.DIAGNOSTIC,
     ) -> None:
         with self._lock:
+            if code == "task_cleanup_failed":
+                record.cleanup_error = message
             event = self._diagnostic_event(record, event_type, code=code, message=message)
         self._publish(event)
 

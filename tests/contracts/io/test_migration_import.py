@@ -22,6 +22,35 @@ def _collection(*entries: TranslationEntry) -> TranslationEntryCollection:
     return TranslationEntryCollection(entries)
 
 
+@pytest.mark.parametrize("kind", ["eet", "xt"])
+@pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig", "utf-16"])
+def test_empty_xml_migration_preserves_supported_encoding_and_target(tmp_path, kind, encoding):
+    root = "DocumentElement" if kind == "eet" else "SSTXMLRessources"
+    source = tmp_path / "empty.xml"
+    source.write_text(f"<{root}/>", encoding=encoding)
+    target = _collection(TranslationEntry("entry", "entry", "Source", "Keep", 3, None))
+    before = tuple(entry.snapshot() for entry in target)
+
+    draft = prepare_legacy_migration(target, **{f"{kind}_path": str(source)})
+
+    assert draft.applied_count == 0
+    assert tuple(entry.snapshot() for entry in draft.collection) == before
+    assert tuple(entry.snapshot() for entry in target) == before
+
+
+@pytest.mark.parametrize("kind,root", [("eet", "SSTXMLRessources"), ("xt", "DocumentElement"), ("xt", "Other")])
+def test_xml_migration_rejects_wrong_root_without_touching_target(tmp_path, kind, root):
+    source = tmp_path / "wrong-format.xml"
+    source.write_text(f"<{root}/>", encoding="utf-8")
+    target = _collection(TranslationEntry("entry", "entry", "Source", "Keep", 3, None))
+    before = tuple(entry.snapshot() for entry in target)
+
+    with pytest.raises(MigrationImportError, match=f"所选格式 xml.{kind}"):
+        prepare_legacy_migration(target, **{f"{kind}_path": str(source)})
+
+    assert tuple(entry.snapshot() for entry in target) == before
+
+
 @pytest.mark.parametrize("suffix", ["strings", "dlstrings", "ilstrings"])
 def test_strings_draft_preserves_id_matching_and_existing_translation(tmp_path, suffix):
     source_text = "导入译文".encode() + b"\0"

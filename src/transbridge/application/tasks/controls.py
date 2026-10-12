@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import StrEnum
 import threading
 
-from transbridge.application.contracts import JobRef
+from transbridge.application.contracts import Diagnostic, JobRef
 
 from .models import JobSnapshot, OwnerRef
 
@@ -54,6 +55,16 @@ class TaskCleanupFailed(RuntimeError):
     Ordinary errors raised while cancelling retain cancellation semantics. Only
     workloads that have actually failed cleanup should raise this exception.
     """
+
+    @classmethod
+    def raise_for_diagnostics(cls, diagnostics: Iterable[Diagnostic]) -> None:
+        failures = [
+            item
+            for item in diagnostics
+            if item.code in {"STAGING_CLEANUP_FAILED", "BUNDLE_STAGING_CLEANUP_FAILED", "BUNDLE_ROLLBACK_FAILED"}
+        ]
+        if failures:
+            raise cls("; ".join(f"{item.code}: {item.message}" for item in failures))
 
 
 @dataclass(frozen=True, slots=True)

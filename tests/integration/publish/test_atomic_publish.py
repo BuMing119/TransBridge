@@ -6,6 +6,7 @@ import errno
 import hashlib
 from pathlib import Path
 import shutil
+import xml.etree.ElementTree as ET
 
 import pytest
 
@@ -295,18 +296,21 @@ def test_explicit_debug_policy_retains_failed_stage_and_reports_path(tmp_path: P
     assert filesystem.files[target][0] == b"old"
 
 
-def test_target_change_conflicts_unless_explicit_overwrite_and_backs_up_latest(tmp_path: Path) -> None:
+@pytest.mark.parametrize("policy", list(ConflictPolicy))
+def test_target_change_conflicts_even_with_explicit_overwrite(tmp_path: Path, policy: ConflictPolicy) -> None:
     filesystem = FakePublishFilesystem(tmp_path)
     target_path = filesystem.canonicalize(str(tmp_path / "target.xml"))
     filesystem.files[target_path] = (b"original", 0o600)
     renderer = BytesRenderer(filesystem)
     renderer.after_render = lambda: filesystem.files.__setitem__(target_path, (b"concurrent", 0o600))
 
-    conflict = _publish(filesystem, target_path, renderer=renderer)
+    conflict = _publish(filesystem, target_path, renderer=renderer, target=PublishTarget(target_path, policy))
 
     assert conflict.code == "TARGET_FINGERPRINT_CONFLICT"
     assert filesystem.files[target_path][0] == b"concurrent"
+    assert not filesystem.replaced
 
+    # A fresh attempt may explicitly overwrite the now-observed target.
     overwrite = _publish(
         filesystem,
         target_path,
@@ -317,6 +321,29 @@ def test_target_change_conflicts_unless_explicit_overwrite_and_backs_up_latest(t
     assert overwrite.backup_path is not None
     assert filesystem.files[overwrite.backup_path][0] == b"concurrent"
     assert filesystem.files[target_path][0] == b"new artifact"
+
+
+@pytest.mark.parametrize("policy", list(ConflictPolicy))
+def test_target_change_inside_commit_guard_is_rejected(tmp_path: Path, policy: ConflictPolicy) -> None:
+    filesystem = FakePublishFilesystem(tmp_path)
+    target_path = filesystem.canonicalize(str(tmp_path / "target.xml"))
+    filesystem.files[target_path] = (b"original", 0o600)
+
+    class RacingGuard:
+        def commit(self, run_id, mutation):
+            filesystem.files[target_path] = (b"external edit after backup", 0o600)
+            return ImmediateCommitGuard(run_id).commit(run_id, mutation)
+
+    result = _publish(filesystem, target_path, target=PublishTarget(target_path, policy), guard=RacingGuard())
+
+    assert result.outcome is OperationOutcome.FAILED
+    assert result.code == "TARGET_FINGERPRINT_CONFLICT"
+    assert result.validation is not None
+    assert result.backup_path is not None
+    assert filesystem.files[result.backup_path][0] == b"original"
+    assert filesystem.files[target_path][0] == b"external edit after backup"
+    assert not filesystem.replaced
+    assert not any(path.endswith(".stage") for path in filesystem.files)
 
 
 def test_expected_target_fingerprint_and_backup_failure_are_fail_closed(tmp_path: Path) -> None:
@@ -588,13 +615,15 @@ def test_round_trip_validator_uses_xt_strings_and_plugin_parsers(
 
 
 @pytest.mark.filterwarnings("ignore:get_by_key is deprecated:DeprecationWarning")
-def test_plugin_partial_reparse_is_not_misreported_as_publish_success(tmp_path: Path) -> None:
+def test_real_plugin_parse_publish_reparse_preserves_translation(tmp_path: Path) -> None:
     source = tmp_path / "sample.esp"
     target = tmp_path / "published.esp"
     shutil.copyfile(Path("tests/parser/data/sample.esp"), source)
     adapter = SsePluginAdapter()
     context = RequestContext("publish-plugin", run_id="publish-plugin")
     parsed = adapter.parse(ParseRequest(SourceDescriptor(str(source), source.name), context, FormatId.PLUGIN_SSE))
+    assert parsed.outcome is OperationOutcome.COMPLETED
+    original_bytes = source.read_bytes()
     changed = replace(parsed.entries[0], translation="Plugin staged", stage=1)
     request = WriteRequest(
         SourceDescriptor(str(target), target.name),
@@ -614,6 +643,76 @@ def test_plugin_partial_reparse_is_not_misreported_as_publish_success(tmp_path: 
         commit_guard=ImmediateCommitGuard("publish-plugin"),
     )
 
+    assert result.outcome is OperationOutcome.COMPLETED, result.message
+    assert result.published
+    assert result.validation is not None
+    assert result.validation.structure_valid
+    assert result.validation.reparse_valid
+    assert result.validation.fidelity_valid
+    reparsed = adapter.parse(ParseRequest(request.target, context, FormatId.PLUGIN_SSE, changed.identity.namespace))
+    assert reparsed.outcome is OperationOutcome.COMPLETED
+    assert len(reparsed.entries) == len(parsed.entries)
+    matching = [entry for entry in reparsed.entries if entry.identity == changed.identity]
+    assert len(matching) == 1
+    assert matching[0].original == changed.translation
+    assert source.read_bytes() == original_bytes
+    assert not list(tmp_path.glob("*.stage"))
+
+
+def test_partial_reparse_is_rejected_even_when_requested_entry_survives(tmp_path: Path) -> None:
+    source = tmp_path / "source.xml"
+    target = tmp_path / "published.xml"
+    shutil.copyfile(_FIXTURE, source)
+    original_bytes = source.read_bytes()
+    target.write_bytes(b"previous published artifact")
+    adapter = EetXmlAdapter()
+    context = RequestContext("publish-partial", run_id="publish-partial")
+    parsed = adapter.parse(ParseRequest(SourceDescriptor(str(source), source.name), context, FormatId.XML_EET))
+    assert parsed.outcome is OperationOutcome.COMPLETED
+    changed = replace(parsed.entries[0], translation="Requested translation", stage=1)
+    request = WriteRequest(
+        SourceDescriptor(str(target), target.name),
+        FormatId.XML_EET,
+        (changed,),
+        1,
+        context,
+        source_snapshot=parsed.source_snapshot,
+    )
+
+    class ConflictingLocatorRenderer(FormatAdapterRenderer):
+        def render(self, request, staging_path):
+            rendered = super().render(request, staging_path)
+            assert rendered.outcome is OperationOutcome.COMPLETED
+            tree = ET.parse(staging_path)
+            # Keep the requested entry intact; two additional records conflict.
+            conflicting = ET.fromstring(ET.tostring(tree.find("ESP")))
+            conflicting.find("EDID").text = "ConflictingGreeting"
+            tree.getroot().extend((conflicting, ET.fromstring(ET.tostring(conflicting))))
+            tree.write(staging_path, encoding="utf-8")
+            partial = adapter.parse(
+                ParseRequest(SourceDescriptor(staging_path), context, FormatId.XML_EET, changed.identity.namespace)
+            )
+            assert partial.outcome is OperationOutcome.PARTIAL
+            assert partial.stats.failed == 2
+            assert partial.entries == (changed,)
+            assert {diagnostic.code for diagnostic in partial.diagnostics} == {"SOURCE_LOCATOR_CONFLICT"}
+            return rendered
+
+    filesystem = OsPublishFilesystem()
+    result = PublishCoordinator(filesystem).publish(
+        request,
+        PublishTarget(str(target), backup_policy=BackupPolicy.NONE),
+        renderer=ConflictingLocatorRenderer(adapter),
+        validator=FormatRoundTripValidator(adapter, filesystem),
+        commit_guard=ImmediateCommitGuard(context.run_id),
+    )
+
     assert result.outcome is OperationOutcome.FAILED
     assert result.code == "REPARSE_FAILED"
-    assert not target.exists()
+    assert not result.published
+    assert result.validation.structure_valid
+    assert not result.validation.reparse_valid
+    assert not result.validation.fidelity_valid
+    assert target.read_bytes() == b"previous published artifact"
+    assert source.read_bytes() == original_bytes
+    assert not list(tmp_path.glob("*.stage"))

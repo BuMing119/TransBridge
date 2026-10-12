@@ -78,6 +78,23 @@ class BaselineRegistry:
         with self._lock:
             self._items.clear()
 
+    def capture_catalog(self, project_ref, variant_refs):
+        """Capture only registrations participating in one catalog publication."""
+        with self._lock:
+            return tuple(
+                (ref, self._items.get((project_ref.identity.value, ref.identity.value))) for ref in variant_refs
+            )
+
+    def restore_catalog(self, project_ref, captured) -> None:
+        """Restore exact process-local preimages after a failed disk publication."""
+        with self._lock:
+            for ref, baselines in captured:
+                key = (project_ref.identity.value, ref.identity.value)
+                if baselines is None:
+                    self._items.pop(key, None)
+                else:
+                    self._items[key] = baselines
+
 
 class LegacyIdentityRegistry:
     """Explicit, process-scoped V1 display/path to V2 identity migration map."""

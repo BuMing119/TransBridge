@@ -106,11 +106,13 @@ def build_persistence_v2_services(
     adapter = filesystem or OsPersistenceFilesystem()
     projects = ProjectRepository(resolved_root, adapter)
     variants = VariantRepository(resolved_root, adapter)
-    source_update_store = ProjectSourceUpdateStore(resolved_root, adapter, projects, variants)
     sessions = SessionRepository(resolved_root, adapter)
     session_catalog = SessionCatalogRepository(resolved_root, adapter)
     baselines = BaselineRegistry()
     identities = LegacyIdentityRegistry()
+    # Recover all Project publication protocols before catalog reads/repair.
+    project_store = ProjectLifecycleTransactionStore(resolved_root, adapter, projects, variants, baselines)
+    source_update_store = ProjectSourceUpdateStore(resolved_root, adapter, projects, variants)
     project_catalog_repair = ProjectCatalogRepairService(resolved_root, adapter, projects)
     project_catalog_repair_report = project_catalog_repair.repair_if_missing()
     if project_catalog_repair_report.status is ProjectCatalogRepairStatus.REBUILT:
@@ -130,13 +132,6 @@ def build_persistence_v2_services(
 
     project_projection = ProjectionStore()
     project_publisher = ProjectProjectionPublisher(project_projection)
-    project_store = ProjectLifecycleTransactionStore(
-        resolved_root,
-        adapter,
-        projects,
-        variants,
-        baselines,
-    )
     project_uow = RepositoryLifecycleUnitOfWorkFactory(project_store, id_factory)
     project_loader = V2ProjectCandidateLoader(projects, variants, baselines.provide)
     project_lifecycle = ProjectLifecycleService(

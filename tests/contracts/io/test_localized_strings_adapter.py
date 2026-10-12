@@ -18,6 +18,7 @@ from transbridge.application.io import (
 )
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.fomod.pipeline import FomodPipeline
+from transbridge.fomod.plugin_publishing import prepare_plugin_source
 
 FIXTURES = Path(__file__).with_name("fixtures") / "strings"
 ESP_FIXTURE = Path("tests/parser/data/sample.esp")
@@ -272,11 +273,12 @@ def test_sse_snapshot_captures_and_rebuilds_all_loose_localized_variants(tmp_pat
 def test_fomod_write_back_uses_same_snapshot_rebuild_and_locked_gate(tmp_path: Path) -> None:
     plugin, originals = _localized_plugin_fixture(tmp_path)
     adapter = SsePluginAdapter()
-    parsed = adapter.parse(_parse_request(plugin, FormatId.PLUGIN_SSE))
-    changed = replace(parsed.entries[0], translation="FOMOD unified I/O", stage=1)
-    translated_collection = TranslationEntryCollection((changed, *parsed.entries[1:]))
+    source = prepare_plugin_source(plugin)
+    entries = source.collection_entries()
+    changed = replace(entries[0], translation="FOMOD unified I/O", stage=1)
+    translated_collection = TranslationEntryCollection((changed, *entries[1:]))
 
-    FomodPipeline()._write_back(plugin, translated_collection)
+    FomodPipeline()._write_back(plugin, translated_collection, source=source)
 
     reparsed = adapter.parse(
         ParseRequest(
@@ -291,11 +293,13 @@ def test_fomod_write_back_uses_same_snapshot_rebuild_and_locked_gate(tmp_path: P
     for suffix, payload in originals.items():
         assert (tmp_path / "Strings" / f"localized_English{suffix}").read_bytes() == payload
 
-    locked = replace(reparsed.entries[0], translation="", stage=9)
-    locked_collection = TranslationEntryCollection((locked, *reparsed.entries[1:]))
+    locked_source = prepare_plugin_source(plugin)
+    locked_entries = locked_source.collection_entries()
+    locked = replace(locked_entries[0], translation="", stage=9)
+    locked_collection = TranslationEntryCollection((locked, *locked_entries[1:]))
     plugin_before = plugin.read_bytes()
     with pytest.raises(RuntimeError, match="STAGE_LOCKED_TRANSLATION_REQUIRED"):
-        FomodPipeline()._write_back(plugin, locked_collection)
+        FomodPipeline()._write_back(plugin, locked_collection, source=locked_source)
     assert plugin.read_bytes() == plugin_before
     for suffix, payload in originals.items():
         assert (tmp_path / "Strings" / f"localized_English{suffix}").read_bytes() == payload

@@ -10,6 +10,7 @@ from threading import RLock
 from typing import cast
 
 from .filesystem import (
+    OsPersistenceFilesystem,
     PersistenceFilesystemPort,
     RepositoryPaths,
     staging_replace,
@@ -32,14 +33,16 @@ from .models import (
     SessionDto,
     VariantDto,
 )
+from .project_record_guard import record_matches
+from .project_write_lock import ProjectWriteLock
 from .schema import parse_json_bytes, serialize_document, validate_v2, version_of
 from .session_write_lease import session_write_lease
 
 _MUTATION_LOCKS_GUARD = RLock()
-_MUTATION_LOCKS: dict[tuple[type[object], str], RLock] = {}
+_MUTATION_LOCKS: dict[tuple[type[object] | int, str], ProjectWriteLock] = {}
 
 
-def _mutation_lock_for(root: str, filesystem: PersistenceFilesystemPort) -> RLock:
+def _mutation_lock_for(root: str, filesystem: PersistenceFilesystemPort):
     """Return the process-wide mutation lock shared by one persistence root.
 
     Project and Variant repositories are constructed independently by the
@@ -48,9 +51,10 @@ def _mutation_lock_for(root: str, filesystem: PersistenceFilesystemPort) -> RLoc
     boundary, including when equivalent OS adapters are constructed separately.
     """
 
-    key = (type(filesystem), os.path.normcase(filesystem.canonicalize(root)))
+    family = OsPersistenceFilesystem if isinstance(filesystem, OsPersistenceFilesystem) else id(filesystem)
+    key = (family, os.path.normcase(filesystem.canonicalize(root)))
     with _MUTATION_LOCKS_GUARD:
-        return _MUTATION_LOCKS.setdefault(key, RLock())
+        return _MUTATION_LOCKS.setdefault(key, ProjectWriteLock(root, filesystem))
 
 
 class JsonRepository[RefT, DtoT]:
@@ -75,7 +79,7 @@ class JsonRepository[RefT, DtoT]:
         return self._paths.root
 
     @property
-    def mutation_lock(self) -> RLock:
+    def mutation_lock(self) -> ProjectWriteLock:
         """Lock shared by repositories targeting the same persistence root."""
 
         return self._mutation_lock
@@ -335,6 +339,19 @@ class JsonRepository[RefT, DtoT]:
         if ref.kind is not self._kind:
             raise TypeError(f"{self._kind.value} repository received a {ref.kind.value} reference")
 
+    def _recover_before_load_side_effects(self, ref) -> None:
+        raw = self._filesystem.read_bytes(self.path_for(ref))
+        try:
+            document = parse_json_bytes(raw)
+            if version_of(document) > SCHEMA_VERSION:
+                return
+            validate_v2(document, ref)
+            if version_of(document) == SCHEMA_VERSION:
+                return
+        except SchemaValidationError:
+            pass
+        self._mutation_lock.recover()
+
 
 class ProjectRepository(JsonRepository[ProjectRef, ProjectDto]):
     def __init__(self, root: str, filesystem: PersistenceFilesystemPort) -> None:
@@ -343,6 +360,17 @@ class ProjectRepository(JsonRepository[ProjectRef, ProjectDto]):
     def save(self, ref: ProjectRef, value: ProjectDto) -> LoadedRecord:
         with self._mutation_lock:
             return super().save(ref, value)
+
+    def load(self, ref: ProjectRef) -> LoadResult:
+        # Legacy loads can publish migrations, and reads must not observe a
+        # different process's partially published activation.
+        with self._mutation_lock.reading():
+            self._recover_before_load_side_effects(ref)
+            return super().load(ref)
+
+    def read_snapshot(self, ref: ProjectRef) -> ProjectDto:
+        with self._mutation_lock.reading():
+            return super().read_snapshot(ref)
 
     def save_if_revision(
         self,
@@ -362,9 +390,7 @@ class ProjectRepository(JsonRepository[ProjectRef, ProjectDto]):
             if not isinstance(current, LoadedRecord):
                 raise ProjectRevisionConflict(expected_revision, None)
             actual_revision = current.value.envelope.revision
-            if actual_revision != expected_revision or (
-                expected_source_hash is not None and current.source_hash != expected_source_hash
-            ):
+            if not record_matches(current, expected_revision, expected_source_hash):
                 raise ProjectRevisionConflict(
                     expected_revision,
                     actual_revision,
@@ -417,6 +443,15 @@ class VariantRepository(JsonRepository[VariantRef, VariantDto]):
         with self._mutation_lock:
             return super().save(ref, value)
 
+    def load(self, ref: VariantRef) -> LoadResult:
+        with self._mutation_lock.reading():
+            self._recover_before_load_side_effects(ref)
+            return super().load(ref)
+
+    def read_snapshot(self, ref: VariantRef) -> VariantDto:
+        with self._mutation_lock.reading():
+            return super().read_snapshot(ref)
+
     def save_if_revision(
         self,
         ref: VariantRef,
@@ -435,9 +470,7 @@ class VariantRepository(JsonRepository[VariantRef, VariantDto]):
             if not isinstance(current, LoadedRecord):
                 raise VariantRevisionConflict(expected_revision, None)
             actual_revision = current.value.envelope.revision
-            if actual_revision != expected_revision or (
-                expected_source_hash is not None and current.source_hash != expected_source_hash
-            ):
+            if not record_matches(current, expected_revision, expected_source_hash):
                 raise VariantRevisionConflict(
                     expected_revision,
                     actual_revision,
@@ -480,8 +513,15 @@ class SessionRepository(JsonRepository[SessionRef, SessionDto]):
     def write_transaction(self, ref: SessionRef) -> Iterator[None]:
         """Keep revision checks and publication inside one shared, fenced boundary."""
         self._check_ref(ref)
-        with self._mutation_lock, session_write_lease(self.root, ref.identity.value, self._filesystem):
-            yield
+        try:
+            with self._mutation_lock, session_write_lease(self.root, ref.identity.value, self._filesystem):
+                yield
+        except ReadOnlyWriteRefused as exc:
+            if exc.code != "PROJECT_WRITER_BUSY":
+                raise
+            raise ReadOnlyWriteRefused(
+                "SESSION_WRITER_BUSY", "Another process owns this Session's root write boundary; reload and retry."
+            ) from exc
 
     def load(self, ref: SessionRef) -> LoadResult:
         # Loading old data publishes migrations, so it uses the same write lease.

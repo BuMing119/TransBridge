@@ -10,7 +10,9 @@ from transbridge.converter.translation_entry_collection import TranslationEntryC
 from transbridge.parser.strings_file import PluginStringsLookup
 from transbridge.parser.xt import XT_XmlParser
 
-from .contracts import FormatId, ParseRequest, SourceDescriptor
+from .catalog import FormatCatalog
+from .contracts import FormatId, ParseRequest, ProbeRequest, ProbeStatus, SourceDescriptor
+from .legacy_adapters import EetXmlAdapter, XtXmlAdapter
 from .migration_import import MigrationImportError
 from .migration_snapshot import detached_entries
 from .strings_adapter import LocalizedStringsAdapter
@@ -43,8 +45,10 @@ def prepare_legacy_migration(
     applied_count = 0
     try:
         if eet_path:
+            _require_xml_format(Path(eet_path), FormatId.XML_EET)
             applied_count += candidate.update_from_eet_xml(Path(eet_path))
         if xt_path:
+            _require_xml_format(Path(xt_path), FormatId.XML_XT)
             applied_count += candidate.apply_xt_entries(XT_XmlParser.from_file(xt_path).entries)
         if strings_dir:
             lookup = _read_strings(Path(strings_dir), plugin_stem, strings_lang, context)
@@ -55,6 +59,21 @@ def prepare_legacy_migration(
     except Exception as exc:
         raise MigrationImportError("MIGRATION_LEGACY_SOURCE_INVALID", f"迁移源无法完整解析：{exc}") from exc
     return LegacyMigrationDraft(candidate, lookup, applied_count)
+
+
+def _require_xml_format(path: Path, format_id: FormatId) -> None:
+    content = path.read_bytes()
+    # The XML adapters also recognize BOM/UTF-16 input. Do not supply a format
+    # hint: an explicit hint may otherwise accept unknown content as that format.
+    adapter = EetXmlAdapter() if format_id is FormatId.XML_EET else XtXmlAdapter()
+    probe = FormatCatalog(adapters=(adapter,)).resolve(
+        ProbeRequest(SourceDescriptor(str(path), path.name, len(content)), content)
+    )
+    if probe.status is not ProbeStatus.EXACT or probe.candidates != (format_id,):
+        raise MigrationImportError(
+            "MIGRATION_LEGACY_SOURCE_INVALID",
+            f"{path.name} 的内容不符合所选格式 {format_id.value}，请选择对应格式的 XML 文件。",
+        )
 
 
 def _read_strings(
