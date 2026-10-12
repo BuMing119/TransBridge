@@ -85,12 +85,12 @@ def test_version_single_source_and_upgradeable_appid() -> None:
 
 
 def test_uninstall_does_not_implicitly_delete_user_projects() -> None:
-    """Uninstall asks before removing user AppData; install-dir data is isolated."""
+    """Upgrade and uninstall leave user-owned directories outside their delete scope."""
     installer = (ROOT / "installer" / "setup.iss").read_text(encoding="utf-8")
-    # The uninstall code must guard user data behind an explicit confirmation.
-    assert "UninstallDelete" in installer
-    assert "DelTree(DataDir" in installer
-    assert "{app}\\data" in installer
+    assert "[UninstallDelete]" not in installer
+    assert "CurUninstallStepChanged" not in installer
+    assert "{userappdata}" not in installer
+    assert "DelTree(DataDir" not in installer
     # No wholesale removal of user roots.
     for unsafe in ("{userprofile}", "{autopf}\\..", "C:\\Users"):
         assert unsafe not in installer

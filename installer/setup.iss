@@ -15,9 +15,16 @@
 AppId={{A3F2C1D4-5B6E-4F7A-8C9D-0E1F2A3B4C5D}
 AppName={#AppName}
 AppVersion={#AppVersion}
+VersionInfoVersion={#AppVersion}
+VersionInfoTextVersion={#AppVersion}
 AppPublisher={#AppPublisher}
 LicenseFile=..\LICENSE
 DefaultDirName={autopf}\{#AppName}
+UsePreviousAppDir=yes
+CloseApplications=yes
+RestartApplications=no
+; The runtime is fully replaced. Do not inherit legacy uninstall actions that delete user data.
+UninstallLogMode=overwrite
 DefaultGroupName={#AppName}
 AllowNoIcons=yes
 OutputDir=output
@@ -45,29 +52,27 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: deskto
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "立即运行 {#AppName}"; Flags: nowait postinstall skipifsilent
 
-[UninstallDelete]
-; Only remove obsolete data accidentally stored inside the installation tree.
-Type: filesandordirs; Name: "{app}\data"
-
 [Code]
-function InitializeUninstall(): Boolean;
-begin
-  Result := True;
-end;
-
-procedure CurUninstallStepChanged(CurStep: TUninstallStep);
+procedure CurStepChanged(CurStep: TSetupStep);
 var
-  DataDir: string;
+  RuntimeDir, AppExe: String;
 begin
-  if CurStep = usPostUninstall then
+  if CurStep <> ssInstall then
+    Exit;
+
+  (* Clean only application-owned binaries immediately before copying new files.
+    Never run the legacy uninstaller: it may delete user data.
+    AppData, {app}\data and all other user-created files remain untouched.
+    DelTree removes reparse points without following them. *)
+  RuntimeDir := ExpandConstant('{app}\_internal');
+  AppExe := ExpandConstant('{app}\{#AppExeName}');
+  if DirExists(RuntimeDir) then
   begin
-    DataDir := ExpandConstant('{userappdata}\TransBridge');
-    if DirExists(DataDir) then
-    begin
-      if MsgBox('是否删除用户数据目录（配置文件、缓存等）？', mbConfirmation, MB_YESNO) = IDYES then
-      begin
-        DelTree(DataDir, True, True, True);
-      end;
-    end;
+    Log('Removing previous application runtime: ' + RuntimeDir);
+    if not DelTree(RuntimeDir, True, True, True) then
+      RaiseException('Cannot remove the previous TransBridge runtime. Close TransBridge and retry. Your user data has not been removed.');
   end;
+  if FileExists(AppExe) then
+    if not DeleteFile(AppExe) then
+      RaiseException('Cannot remove the previous TransBridge executable. Close TransBridge and retry. Your user data has not been removed.');
 end;
