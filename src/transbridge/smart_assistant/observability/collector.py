@@ -83,8 +83,8 @@ class ObservabilityCollector:
                 ToolCallRecord(
                     timestamp=start_time.isoformat(),
                     tool_name=_tname,
-                    input_summary=str(result.data)[:500] if result.data else "",
-                    output_summary=result.message[:500],
+                    input_summary=str(sanitize_for_storage(result.data))[:500] if result.data else "",
+                    output_summary=sanitize_for_storage(result.message)[:500],
                     duration_ms=result.duration_ms,
                     success=result.success,
                     retry_count=0,

@@ -207,9 +207,7 @@ class RequestTimelineView(QDialog):
         self.more.setText("加载更多" if has_more else "刷新后续记录")
         self.more.setEnabled(True)
         self.status.setText(
-            f"已显示 {len(self._events)} 条已保存事件（时间为 UTC）。"
-            if self._events
-            else "没有已保存的过程记录。旧会话可能没有日志；不会从聊天内容补推历史。"
+            f"已显示 {len(self._events)} 条已保存事件（时间为 UTC）。" if self._events else "暂无过程记录。"
         )
         if self.events.currentRow() < 0 and self._events:
             self.events.setCurrentRow(0)

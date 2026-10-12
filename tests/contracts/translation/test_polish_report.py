@@ -223,7 +223,9 @@ def test_rejecting_every_candidate_is_a_completed_review_not_a_run_failure() -> 
     assert snapshot.failure_count == 0
 
 
-def test_polish_report_details_redact_secrets() -> None:
+def test_polish_report_details_redact_explicit_technical_secrets() -> None:
+    from transbridge.application.security import DiagnosticValue
+
     entry = _Entry("secret", "Source", "Draft")
     snapshot = build_polish_report_snapshot(
         {
@@ -232,7 +234,7 @@ def test_polish_report_details_redact_secrets() -> None:
                 "polished_translation": "Candidate",
                 "confidence": 0.9,
                 "needs_arbitration": False,
-                "note": "upstream token=super-secret-token-value",
+                "note": DiagnosticValue("upstream token=super-secret-token-value"),
                 "changes": (),
             }
         },

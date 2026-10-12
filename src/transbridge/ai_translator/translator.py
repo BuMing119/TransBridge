@@ -433,7 +433,7 @@ class AutoTranslator:
         progress_callback(current, total, message, success_count, failed_count, new_terms)
         log_callback(batch_idx, line)  — batch_idx=-1 为轮次级消息，>=0 为批次专属消息
         stream_callback(chunk) — LLM 流式响应片段回调，可为 None
-        stage_progress_callback(stage, current, total, message) — 翻译前准备阶段进度
+        stage_progress_callback(stage, current, total, message) — 术语准备、后处理与结果收尾阶段进度
         pause_event: set=运行中，clear=暂停中（wait() 会阻塞直到 set）
         checkpoint: 传入则从断点继续，跳过已完成批次
         """
@@ -1060,12 +1060,12 @@ class AutoTranslator:
                     f.result()
             _log(f"── 第三轮完成: {time.perf_counter() - t_round:.2f}s ──\n")
 
-        t_total = time.perf_counter() - t_total_start
-
         commit = None
         post_process_commit = None
         required_phases = None
         if not stop_event.is_set() and self._candidate_session is not None:
+            if stage_progress_callback is not None:
+                stage_progress_callback("commit_translation", 0, 1, "正在整理翻译结果")
             from transbridge.application.contracts import OperationOutcome, RequestContext
             from transbridge.application.io.publish import ImmediateCommitGuard
 
@@ -1088,6 +1088,8 @@ class AutoTranslator:
             result.failed_entries.extend(
                 f"{diagnostic.code}: {diagnostic.message}" for diagnostic in commit.diagnostics
             )
+            if stage_progress_callback is not None:
+                stage_progress_callback("commit_translation", 1, 1, "翻译结果已整理")
 
         report_scope_ids = {
             entry.entry_key.serialize() if entry.entry_key.original is not None else entry.entry_key.local_key
@@ -1122,6 +1124,7 @@ class AutoTranslator:
                 TranslationInput,
             )
             from transbridge.application.translation.ai_execution_profile import normalize_postprocess_strategy
+            from transbridge.application.translation.postprocess_progress import PostProcessProgress
 
             from .post_processor import PostProcessor, PostProcessorConfig
 
@@ -1129,6 +1132,7 @@ class AutoTranslator:
             entries_to_check = report_entries
 
             if entries_to_check:
+                post_progress = PostProcessProgress(stage_progress_callback, _log)
                 stages = []
                 stage_names = []
                 strategy = normalize_postprocess_strategy(getattr(self._cfg.llm_config, "pp_strategy", "proofread"))
@@ -1160,6 +1164,8 @@ class AutoTranslator:
                             ),
                             max_output_tokens=self._cfg.llm_config.max_output_tokens,
                             max_workers=self._cfg.llm_config.max_concurrent,
+                            progress_callback=post_progress.for_phase("proofread"),
+                            event_callback=post_progress.event,
                         )
                     )
                     stage_names.append("proofread")
@@ -1189,7 +1195,11 @@ class AutoTranslator:
                                 if phase == "quality_gate"
                                 else {}
                             )
-                            stages.append(CheckerStage(phase, checker, **checker_options))
+                            stages.append(
+                                CheckerStage(
+                                    phase, checker, progress_callback=post_progress.for_phase(phase), **checker_options
+                                )
+                            )
                             stage_names.append(phase)
                     llm_port = LlmClientPostProcessPort(
                         self._llm,
@@ -1222,6 +1232,7 @@ class AutoTranslator:
                                     model=self._cfg.llm_config.model,
                                     max_tokens_per_batch=self._cfg.llm_config.max_tokens_per_batch,
                                     max_items=max_items,
+                                    progress_callback=post_progress.for_phase(phase_name),
                                 )
                             )
                             stage_names.append(phase_name)
@@ -1288,6 +1299,8 @@ class AutoTranslator:
 
         from transbridge.application.translation import build_translation_report_snapshot
 
+        if not stop_event.is_set() and stage_progress_callback is not None:
+            stage_progress_callback("finalize", 0, 1, "正在生成结果报告")
         candidate_checkpoint = candidate_port.load(run_id)
         result.entry_outcomes = build_translation_entry_outcomes(
             translation_inputs,
@@ -1318,7 +1331,9 @@ class AutoTranslator:
             # 被中断时保存翻译断点（若后处理被中断，翻译断点也保留）
             _save_checkpoint()
 
-        _log(f"\n总耗时: {t_total:.2f}s")
+        if not stop_event.is_set() and stage_progress_callback is not None:
+            stage_progress_callback("finalize", 1, 1, "结果报告已生成")
+        _log(f"\n总耗时: {time.perf_counter() - t_total_start:.2f}s")
         return result
 
     def _validate_checkpoint_terminology(self, checkpoint: ProgressCheckpoint) -> None:

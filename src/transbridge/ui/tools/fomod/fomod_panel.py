@@ -82,6 +82,7 @@ class FomodPanel(QDialog):
         self._worker = None
         self._operation_plan_facade = operation_plan_facade
         self._suggested_output = ""
+        self._plan_dialog = None
         self.setWindowTitle("FOMOD 安装包翻译")
         configure_accessible_widget(self, name="FOMOD 安装包翻译", description="配置归档输入、输出和翻译选项")
         self.resize(600, 560)
@@ -283,19 +284,15 @@ class FomodPanel(QDialog):
         return rules
 
     def _run(self):
+        if self._plan_dialog is not None:
+            self._plan_dialog.raise_()
+            return
         new = self._new_edit.text().strip()
         out = self._out_edit.text().strip()
         old = self._old_edit.text().strip() or None
         if not new or not out:
             QMessageBox.warning(self, "提示", "请先选择新版归档和输出路径")
             return
-        self._run_btn.setEnabled(False)
-        self._progress.setVisible(True)
-        self._result_text.clear()
-        self._result_text.append("正在执行...")
-        update_accessible_state(self._result_text, "正在执行")
-        self._result_text.setProperty("tbStatusId", "running")
-        ComponentStyle.apply_state(self._result_text, SemanticState.INFO)
         fmt = self._fmt_combo.currentData()
         lang = self._lang_combo.currentData()
         ai = self._ai_check.isChecked()
@@ -314,27 +311,68 @@ class FomodPanel(QDialog):
             config_hash = hashlib.sha256(
                 json.dumps(config_payload, sort_keys=True, separators=(",", ":")).encode()
             ).hexdigest()
-            self._progress.setVisible(False)
-            self._run_btn.setEnabled(True)
-            facade.begin_fomod(
-                self._ctx,
-                draft=FomodTaskDraft(
-                    new,
-                    out,
-                    lang,
-                    config_hash,
-                    output_format=fmt,
-                    old_archive=old,
-                    ai_enabled=ai,
-                ),
-                rules=rules,
-                parent=self,
-            )
+            self._show_plan_status("waiting", "等待确认，尚未开始构建。")
+            self._run_btn.setEnabled(False)
+            try:
+                dialog = facade.begin_fomod(
+                    self._ctx,
+                    draft=FomodTaskDraft(
+                        new,
+                        out,
+                        lang,
+                        config_hash,
+                        output_format=fmt,
+                        old_archive=old,
+                        ai_enabled=ai,
+                    ),
+                    rules=rules,
+                    parent=self,
+                )
+            except (RuntimeError, TypeError, ValueError) as exc:
+                self._on_failed(str(exc))
+                return
+            self._plan_dialog = dialog
+            dialog.execution_status_changed.connect(self._show_plan_status)
+            dialog.finished.connect(self._plan_closed)
             return
+        self._show_plan_status("running", "正在执行…")
+        self._run_btn.setEnabled(False)
         self._worker = _PipelineWorker(new, old, out, fmt, lang, ai, rules)
         self._worker.done.connect(self._on_done)
         self._worker.failed.connect(self._on_failed)
         self._worker.start()
+
+    def _show_plan_status(self, status, text):
+        self._progress.setVisible(status == "running")
+        self._result_text.setPlainText(text)
+        self._result_text.setProperty("tbStatusId", status)
+        update_accessible_state(self._result_text, text)
+        semantic = {
+            "completed": SemanticState.SUCCESS,
+            "failed": SemanticState.ERROR,
+            "partial": SemanticState.WARNING,
+            "cancelled": SemanticState.WARNING,
+        }.get(status, SemanticState.INFO)
+        ComponentStyle.apply_state(self._result_text, semantic)
+
+    def _plan_closed(self, _result):
+        self._plan_dialog = None
+        self._run_btn.setEnabled(True)
+        if self._result_text.property("tbStatusId") == "waiting":
+            self._show_plan_status("not-run", "已取消确认，尚未开始构建。")
+
+    def done(self, result):
+        if self._plan_dialog is not None:
+            if self._plan_dialog._execution_running:
+                return
+            self._plan_dialog.close()
+        super().done(result)
+
+    def closeEvent(self, event):  # noqa: N802 - Qt override
+        if self._plan_dialog is not None and self._plan_dialog._execution_running:
+            event.ignore()
+        else:
+            super().closeEvent(event)
 
     def _on_done(self, result):
         self._progress.setVisible(False)

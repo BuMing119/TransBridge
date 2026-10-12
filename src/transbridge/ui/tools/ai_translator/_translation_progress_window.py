@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from transbridge.application.translation.postprocess_progress import PHASE_LABELS
 from transbridge.ui.foundation.adapters import ThemeView
 from transbridge.ui.foundation.components import ElidedLabel, reserve_text_width
 from transbridge.ui.windowing import show_and_activate
@@ -177,7 +178,7 @@ class _TranslationProgressWindow(QWidget):
     # ── 槽 ────────────────────────────────────────────────────────────────────
 
     def _on_stage_progress(self, stage: str, current: int, total: int, message: str) -> None:
-        label = "术语抽取" if stage == "terms" else stage
+        label = "术语抽取" if stage == "terms" else PHASE_LABELS.get(stage, stage)
         safe_total = max(1, total)
         self._total_progress_bar.setMaximum(safe_total)
         self._total_progress_bar.setValue(max(0, min(current, safe_total)))

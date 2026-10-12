@@ -12,6 +12,7 @@ import tomllib
 from typing import TYPE_CHECKING
 import warnings
 
+from transbridge.application.security.diagnostic_logging import client_diagnostic_redactor, diagnostic_exception_text
 from transbridge.application.translation.ai_request_budget import AiRequestCancelledError
 from transbridge.application.translation.entry_alias import ai_entry_id, ai_entry_key
 from transbridge.config.language_profiles import load_language_profile
@@ -274,9 +275,17 @@ class LLMRefiner:
             )
             return self._parse_refinement_response(entry, response)
         except (CancelledError, AiRequestCancelledError) as e:
-            return self._failed_result(entry, f"LLM修复已取消: {e}", "cancelled")
+            return self._failed_result(
+                entry,
+                f"LLM修复已取消: {client_diagnostic_redactor(self._llm).redact_text(diagnostic_exception_text(e))}",
+                "cancelled",
+            )
         except Exception as e:
-            return self._failed_result(entry, f"LLM修复失败: {e}", "call_failed")
+            return self._failed_result(
+                entry,
+                f"LLM修复失败: {client_diagnostic_redactor(self._llm).redact_text(diagnostic_exception_text(e))}",
+                "call_failed",
+            )
 
     def refine_batch(
         self,
@@ -308,8 +317,14 @@ class LLMRefiner:
             )
             return self._parse_batch_refinement_response(entries, response)
         except (CancelledError, AiRequestCancelledError) as e:
+            safe_error = client_diagnostic_redactor(self._llm).redact_text(diagnostic_exception_text(e))
             return {
-                ai_entry_id(entry): self._failed_result(entry, f"批量修复已取消: {e}", "cancelled") for entry in entries
+                ai_entry_id(entry): self._failed_result(
+                    entry,
+                    f"批量修复已取消: {safe_error}",
+                    "cancelled",
+                )
+                for entry in entries
             }
         except Exception:
             # 批量失败，降级为逐个处理

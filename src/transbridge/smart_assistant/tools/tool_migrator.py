@@ -7,6 +7,7 @@ FR16.5 apply_dictionary / save_dictionary（translator namespace）。
 from __future__ import annotations
 
 from .base import ToolResult, require_collection
+from .diagnostics import technical_error
 
 _PARAM_SCHEMAS = {
     "migrate_entries": {
@@ -46,7 +47,7 @@ def _tool_apply_dictionary(args: dict, ctx, collection) -> ToolResult:
 
         return apply_dictionary(args, ctx, collection)
     except Exception as exc:
-        return ToolResult.fail(f"词典套用失败: {exc}", error_category="internal")
+        return ToolResult.fail(f"词典套用失败: {technical_error(exc)}", error_category="internal")
 
 
 @require_collection
@@ -74,7 +75,7 @@ def _tool_save_dictionary(args: dict, ctx, collection) -> ToolResult:
         manager.save()
         return ToolResult.ok(f"已存词典，新增 {added} 条", data={"added": added})
     except Exception as exc:
-        return ToolResult.fail(f"存词典失败: {exc}", error_category="internal")
+        return ToolResult.fail(f"存词典失败: {technical_error(exc)}", error_category="internal")
 
 
 def _tool_migrate_entries(args: dict, ctx) -> ToolResult:

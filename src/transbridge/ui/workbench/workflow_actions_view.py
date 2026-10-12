@@ -119,7 +119,7 @@ class WorkflowActionsView(QWidget):
         self._title_label.setAccessibleName("词条列表操作区")
         layout.addWidget(self._title_label)
         self._selection_label = QLabel("已选择 0 条")
-        self._selection_label.setAccessibleName("当前操作范围")
+        self._selection_label.setAccessibleName("已选词条与筛选结果数量")
         layout.addWidget(self._selection_label)
         self._action_reason = ElidedLabel()
         self._action_reason.setAccessibleName("操作可用性说明")
@@ -145,8 +145,8 @@ class WorkflowActionsView(QWidget):
             reserve_text_width(
                 button,
                 {
-                    IntentId.TRANSLATION_REVIEW: ("检查",),
-                    IntentId.PUBLISH_WRITE: ("写回/发布",),
+                    IntentId.TRANSLATION_REVIEW: ("查看有疑问",),
+                    IntentId.PUBLISH_WRITE: ("导出整个文件",),
                 }[intent],
             )
             button.clicked.connect(lambda checked=False, value=intent: self.intent_requested.emit(value.value))
@@ -159,8 +159,11 @@ class WorkflowActionsView(QWidget):
         layout.addWidget(self._more_button)
         self._more_enabled = False
 
-    def set_scope_count(self, count: int) -> None:
-        self._selection_label.setText(f"已选择 {max(0, count)} 条")
+    def set_scope_count(self, count: int, *, filtered_count: int | None = None) -> None:
+        text = f"已选 {max(0, count)} 条"
+        if filtered_count is not None:
+            text += f" / 筛选结果 {max(0, filtered_count)} 条"
+        self._selection_label.setText(text)
 
     def set_actions(self, actions: tuple[ContextActionViewState, ...]) -> None:
         disabled_reasons: list[str] = []
@@ -176,9 +179,14 @@ class WorkflowActionsView(QWidget):
             button = self._buttons[action.intent_id]
             button.setText(action.label)
             button.setEnabled(action.enabled)
-            button.setToolTip(action.reason or action.label)
+            description = action.reason or (
+                "写回/发布当前文件的全部词条，不受表格选择或筛选限制；下一步确认输出路径。"
+                if action.intent_id is IntentId.PUBLISH_WRITE
+                else action.label
+            )
+            button.setToolTip(description)
             button.setAccessibleName(action.label)
-            button.setAccessibleDescription(action.reason or f"对当前范围执行{action.label}")
+            button.setAccessibleDescription(description)
             if not action.enabled and action.reason:
                 disabled_reasons.append(action.reason)
         reason = "；".join(dict.fromkeys(disabled_reasons))

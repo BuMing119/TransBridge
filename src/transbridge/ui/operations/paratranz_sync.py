@@ -67,7 +67,9 @@ class _PreparedSync:
             close()
 
 
-def build_paratranz_sync_features(runtime: AppRuntime) -> tuple[OperationFeatureAdapter, OperationFeatureAdapter]:
+def build_paratranz_sync_features(
+    runtime: AppRuntime, *, on_result=None
+) -> tuple[OperationFeatureAdapter, OperationFeatureAdapter]:
     """Build the two ParaTranz operation adapters without performing remote work."""
 
     sync_cache: dict[int, _PreparedSync] = {}
@@ -286,7 +288,7 @@ def build_paratranz_sync_features(runtime: AppRuntime) -> tuple[OperationFeature
             snapshots = ParaTranzRemoteSnapshotAdapter(prepared.service)
             executor = ParaTranzSyncExecutor(prepared.service, snapshots, local_uow)
             recovery, recovery_name = _recovery_snapshot(request, prepared.plan)
-            entrypoint = ParaTranzSyncTaskEntrypoint(tasks, executor, on_finished=prepared.close)
+            entrypoint = ParaTranzSyncTaskEntrypoint(tasks, executor, on_finished=prepared.close, on_result=on_result)
 
             def prepare(_run_id: str) -> ParaTranzSyncTaskPreparation:
                 current_target, reason = sync_request_target_is_current(request)

@@ -11,8 +11,10 @@ _TECHNICAL = re.compile(
     r"\b[A-Z][A-Z0-9]+(?:_[A-Z0-9]+)+\b|Traceback|\{\s*[\"']|\b0x[0-9a-fA-F]+\b)"
 )
 _EVENT = re.compile(
-    r"^(?:开始|正在|已|校对|翻译|术语|批次|第\s*\d|\d+\s*条|重试|重新|恢复|拆分|拆批|自动|检测|检查|"
-    r"准备|等待|暂停|继续|取消|完成|处理|请求|发现|成功|未完成|本批|本次|模型)"
+    r"^(?:开始|正在|已|校对|翻译|术语|批次|第\s*(?:\d|[一二三四五六七八九十])|\d+\s*条|"
+    r"重试|重新|恢复|拆分|拆批|自动|检测|检查|"
+    r"准备|等待|暂停|继续|取消|完成|处理|请求|发现|成功|未完成|本批|本次|模型|"
+    r"质量|一致性|格式|精修|润色|仲裁|后处理|总耗时|无可检查)"
 )
 
 
@@ -25,7 +27,8 @@ def source_label(tasks, key) -> str:
 def concise_event(text: str) -> str | None:
     """Only human-readable events belong in the progress log; technical logs stay elsewhere."""
     text = str(text).strip()
-    text = re.sub(r"^\[\d+\]\s*", "", text)
+    text = re.sub(r"^\[-?\d+\]\s*", "", text).strip("─ \t\r\n")
+    text = re.sub(r"^[⏸▶⏹⚠✅❌↩]+\s*", "", text)
     if not text or len(text) > 180 or "\n" in text or _TECHNICAL.search(text) or not _EVENT.search(text):
         return None
     return text

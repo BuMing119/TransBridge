@@ -33,6 +33,7 @@ class PluginParser:
         skip_empty: bool = True,
         language: str = "english",
         discover_sibling_strings: bool = True,
+        raise_on_error: bool = False,
     ) -> list[TranslationEntry]:
         """
         Parse a plugin file and return all translatable strings as TranslationItem objects.
@@ -44,11 +45,15 @@ class PluginParser:
             language: Language to look up for localized plugins (default: "english").
             discover_sibling_strings: Whether to inspect the plugin's sibling
                 ``Strings`` directory (default: True for legacy compatibility).
+            raise_on_error: Propagate file loading errors so interactive callers
+                can distinguish failure from a valid plugin with no strings.
 
         Returns:
             List of TranslationEntry objects.
         """
         self._source_path = path
+        self._plugin = None
+        self._strings_lookup = None
         self.conflict_diagnostics = ()
         self.conflict_skipped_count = 0
         self.log.info(f"Starting to parse plugin: {path}")
@@ -57,6 +62,8 @@ class PluginParser:
             self._plugin = SSEPluginWithContext.from_file(path)
         except Exception as e:
             self.log.error(f"Failed to parse plugin {path}: {e}")
+            if raise_on_error:
+                raise
             return []
 
         # Try to load external strings files for localised plugins (e.g. Skyrim.esm)

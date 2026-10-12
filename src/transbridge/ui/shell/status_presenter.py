@@ -4,12 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PyQt6.QtCore import QEvent, Qt, QTimer
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QMainWindow, QStatusBar, QWidget
+from PyQt6.QtCore import QTimer
+from PyQt6.QtWidgets import QMainWindow, QStatusBar
 
 from transbridge.ui.foundation.components import (
-    ComponentKind,
-    ComponentStyle,
     ElidedLabel,
     SemanticState,
     StatusBadge,
@@ -17,6 +15,8 @@ from transbridge.ui.foundation.components import (
 )
 from transbridge.ui.presentation import CallbackSubscription, SubscriptionGroup
 from transbridge.ui.workers import get_api_status_bus
+
+from .notification_view import MessageToast
 
 
 class ApiStatusIndicator(StatusBadge):
@@ -73,71 +73,6 @@ class ApiStatusIndicator(StatusBadge):
         self.set_status(text, semantic_state)
 
 
-class _MessageToast(QFrame):
-    """Short-lived application feedback that does not consume a bottom row."""
-
-    _DISPLAY_MSEC = 5_000
-    _MAXIMUM_WIDTH = 480
-    _MINIMUM_WIDTH = 260
-    _MARGIN = 20
-
-    def __init__(self, parent: QWidget) -> None:
-        super().__init__(parent)
-        ComponentStyle.apply_static(self, ComponentKind.NOTIFICATION)
-        ComponentStyle.apply_state(self, SemanticState.INFO)
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setAccessibleName("应用通知")
-        self.setFixedHeight(46)
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(14, 8, 14, 8)
-        self._label = ElidedLabel(parent=self)
-        self._label.setAccessibleName("应用通知内容")
-        layout.addWidget(self._label, 1)
-
-        self._timer = QTimer(self)
-        self._timer.setSingleShot(True)
-        self._timer.setInterval(self._DISPLAY_MSEC)
-        self._timer.timeout.connect(self.hide)
-        parent.installEventFilter(self)
-        self.hide()
-
-    def show_message(self, message: str) -> None:
-        self._label.set_full_text(message)
-        self._label.setToolTip(message)
-        self.setAccessibleDescription(message)
-        parent = self.parentWidget()
-        if parent is None:
-            return
-        desired = self._label.fontMetrics().horizontalAdvance(message) + 40
-        available = max(1, parent.width() - (self._MARGIN * 2))
-        width = min(available, max(self._MINIMUM_WIDTH, min(desired, self._MAXIMUM_WIDTH)))
-        self.setFixedWidth(width)
-        self._reposition()
-        self.show()
-        self.raise_()
-        self._timer.start()
-
-    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt override
-        if watched is self.parentWidget() and event.type() in {QEvent.Type.Resize, QEvent.Type.Show}:
-            self._reposition()
-        return super().eventFilter(watched, event)
-
-    def shutdown(self) -> None:
-        self._timer.stop()
-        parent = self.parentWidget()
-        if parent is not None:
-            parent.removeEventFilter(self)
-        self.hide()
-
-    def _reposition(self) -> None:
-        parent = self.parentWidget()
-        if parent is None:
-            return
-        x = max(self._MARGIN, parent.width() - self.width() - self._MARGIN)
-        self.move(x, self._MARGIN)
-
-
 class StatusPresenter:
     def __init__(self, window: QMainWindow, context) -> None:
         self._window = window
@@ -166,7 +101,7 @@ class StatusPresenter:
         self.api_indicator = ApiStatusIndicator(status_bar)
         self.api_indicator.hide()
         toast_parent = window.centralWidget() or window
-        self._message_toast = _MessageToast(toast_parent)
+        self._message_toast = MessageToast(toast_parent)
 
     def _connect(self, signal, callback: Callable) -> None:
         signal.connect(callback)
@@ -186,10 +121,10 @@ class StatusPresenter:
         self._connect(bus.request_started, self.api_indicator.on_request_started)
         self._connect(bus.request_finished, self.api_indicator.on_request_finished)
 
-    def show_message(self, message: str) -> None:
+    def show_message(self, message: str, *, error=False, retry=None, retry_label="重试") -> None:
         self.message_label.set_full_text(message)
         self.message_label.setToolTip(message)
-        self._message_toast.show_message(message)
+        self._message_toast.show_message(message, error=error, retry=retry, retry_label=retry_label)
 
     def render_user(self, user) -> None:
         if user:

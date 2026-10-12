@@ -95,6 +95,9 @@ class ConfirmationView:
         def deliver(*args) -> None:
             if self._closed or generation != self._generation or card not in self._pending_cards:
                 return
+            defer = getattr(validate, "defer", None)
+            if defer is not None and defer(lambda: deliver(*args)):
+                return  # Preserve the user's intent until the previous lease has been released.
             self._pending_cards.discard(card)
             if validate():
                 callback(*args)

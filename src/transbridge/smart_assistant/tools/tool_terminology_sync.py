@@ -286,9 +286,11 @@ def _json_value(value):
 
 
 def _failure(exc: Exception) -> ToolResult:
+    from .diagnostics import technical_error
+
     code = getattr(exc, "code", type(exc).__name__.upper())
     category = "permission" if isinstance(exc, PermissionError) else "input"
-    return ToolResult.fail(str(exc), error_category=category, error_code=str(code))
+    return ToolResult.fail(technical_error(exc), error_category=category, error_code=str(code))
 
 
 _MODE_SCHEMA = {"type": "string", "enum": [mode.value for mode in TerminologySyncMode]}

@@ -25,6 +25,13 @@ from transbridge.application.assistant_requests.models import (
 )
 from transbridge.application.assistant_requests.reducer import require_open
 from transbridge.application.assistant_requests.resource_admission import ResourceAdmission
+from transbridge.application.assistant_requests.step_execution import (
+    StepReceiptWriter,
+    finish_attempt,
+    get_dispatch,
+    start_attempt,
+    start_step,
+)
 from transbridge.application.io.publish import CommitDecision
 
 from .request_scope import apply_captured_scope, execution_version
@@ -52,9 +59,13 @@ class RequestExecutionGate:
         self._contexts: dict[str, object] = {}
         self._synthetic_dispatch = False
         self._prepared_step_specs: tuple[tuple[str, str], ...] = ()
+        self._step_permissions: tuple[str, ...] = ()
+        self._step_handles: dict[str, object] = {}
         with service.serialized(context):
             if not hasattr(service, "request_resources"):
                 service.request_resources = ResourceAdmission()
+            if not hasattr(service, "step_receipts"):
+                service.step_receipts = StepReceiptWriter(service)
         self.resources = service.request_resources
 
     def current_request(self):
@@ -71,6 +82,8 @@ class RequestExecutionGate:
         )
 
     def _validate(self, request, tool_name: str, *, require_allowed: bool = True):
+        if self.service.step_receipts.has_pending(self.context, request.request_id):
+            raise RequestError("ADMISSION_PERSIST_FAILED", "a logical step receipt must be saved before new work")
         round_record = self.service.state(self.context).get("undo_rounds", {}).get(request.work_round_id)
         if round_record is not None and round_record["status"] != "recording":
             raise RequestError("UNDO_ROUND_CLOSED", "已撤销或正在撤销的轮次不能继续执行")
@@ -103,6 +116,9 @@ class RequestExecutionGate:
             "request_id",
             "owner_id",
             "work_round_id",
+            "assistant_step_handle",
+            "assistant_step_id",
+            "step_id",
         }:
             raise RequestError("REQUEST_PROTOCOL_INVALID", "model arguments cannot supply execution ownership")
         request = self.current_request()
@@ -122,9 +138,8 @@ class RequestExecutionGate:
                 raise RequestError("UNDO_STORAGE_UNAVAILABLE", "助手撤销服务未配置，操作未开始")
             if not request.work_round_id:
                 raise RequestError("UNDO_ROUND_SOURCE_MISSING", "旧任务缺少工作轮次，请发送新的继续指令后再执行修改")
-        self._begin_steps()
         if not is_write:
-            return EffectHandle("", tool_name, step_id=self._start_step(tool_name, args))
+            return EffectHandle("", tool_name)
         items = tuple(
             i.item_id
             for i in request.items
@@ -185,9 +200,6 @@ class RequestExecutionGate:
             raise
         self._handles[effect_id] = handle
         self._contexts[effect_id] = execution_context
-        if self._synthetic_dispatch:
-            handle = replace(handle, step_id=self._start_step(tool_name, args))
-            self._handles[effect_id] = handle
         return handle
 
     def prepare_steps(self, steps: list[dict]) -> None:
@@ -202,6 +214,11 @@ class RequestExecutionGate:
             }:
                 raise RequestError("REQUEST_PROTOCOL_INVALID", "control or unadmitted tool in business batch")
         self._prepared_step_specs = tuple((str(step["tool"]), digest(step.get("args", {}))) for step in steps)
+        from .tool_registry import ToolRegistry
+
+        self._step_permissions = tuple(
+            spec.permission if (spec := ToolRegistry.get(step["tool"])) is not None else "unknown" for step in steps
+        )
         self._synthetic_dispatch = False
 
     def _begin_steps(self) -> None:
@@ -235,61 +252,84 @@ class RequestExecutionGate:
                 request,
                 dispatches=(
                     *request.dispatches,
-                    ExecutionDispatch(self.dispatch_id, execution, "", "", step_specs=specs),
+                    ExecutionDispatch(
+                        self.dispatch_id, execution, "", "", step_specs=specs, step_permissions=self._step_permissions
+                    ),
                 ),
             )
 
         self.service.update_request(self.context, self.admission.request_id, add_dispatch)
         self._synthetic_dispatch = True
 
-    def _start_step(self, tool_name: str, args: dict) -> str:
+    def begin_step(self, tool_name: str, args: dict, *, retry_allowed=False):
+        self._validate(self.current_request(), tool_name)
+        self._begin_steps()
         if not self._synthetic_dispatch:
-            return ""
+            return None
         started = []
 
         def start(request):
-            dispatch = next(d for d in request.dispatches if d.dispatch_id == self.dispatch_id)
-            match = next(
-                (
-                    str(index)
-                    for index, spec in enumerate(dispatch.step_specs)
-                    if spec == (tool_name, digest(args)) and str(index) not in dispatch.started_steps
-                ),
-                None,
+            self._validate(request, tool_name)
+            updated, handle = start_step(
+                request, self.dispatch_id, tool_name, digest(args), retry_allowed=retry_allowed
             )
-            if match is None:
-                raise RequestError("COMMAND_PAYLOAD_CONFLICT", "step was already started or differs from saved batch")
-            started.append(match)
-            updated = replace(dispatch, started_steps=(*dispatch.started_steps, match))
-            return replace(
-                request,
-                dispatches=tuple(updated if d.dispatch_id == self.dispatch_id else d for d in request.dispatches),
-            )
+            started.append(handle)
+            return updated
 
-        self.service.update_request(self.context, self.admission.request_id, start)
+        try:
+            self.service.update_request(self.context, self.admission.request_id, start)
+        except Exception:
+            if started:
+                # The save may have committed before reporting failure. No tool has run,
+                # so retain an explicit failed receipt instead of abandoning a started step.
+                self.service.step_receipts.save(
+                    self.context, self.admission.request_id, started[0], "failed", "ADMISSION_PERSIST_FAILED"
+                )
+            raise
+        self._step_handles[f"{started[0].dispatch_id}:{started[0].step_id}"] = started[0]
         return started[0]
 
-    def _finish_step(self, handle: EffectHandle, success: bool) -> None:
-        if not handle.step_id:
-            return
-        from transbridge.application.assistant_requests.dispatch import reconcile_dispatches
+    def attempt(self, handle, args, execution_context):
+        def begin(request):
+            self._validate(request, handle.tool_name)
+            self._validate_selection(request, execution_context)
+            if self._step_handles.get(f"{handle.dispatch_id}:{handle.step_id}") is not handle:
+                raise RequestError("REQUEST_PROTOCOL_INVALID", "step handle was not issued by this gate")
+            if handle.retry_allowed:
+                from .tool_registry import ToolRegistry
 
-        def finish(request):
-            dispatch = next(d for d in request.dispatches if d.dispatch_id == self.dispatch_id)
-            if handle.step_id in dispatch.completed_steps:
-                return request
-            completed = (*dispatch.completed_steps, handle.step_id)
-            failed = dispatch.failed_steps if success else (*dispatch.failed_steps, handle.step_id)
-            status = ("failed" if failed else "completed") if len(completed) == len(dispatch.step_specs) else "running"
-            updated = replace(dispatch, completed_steps=completed, failed_steps=failed, status=status)
-            return reconcile_dispatches(
-                replace(
-                    request,
-                    dispatches=tuple(updated if d.dispatch_id == self.dispatch_id else d for d in request.dispatches),
-                )
+                spec = ToolRegistry.get(handle.tool_name)
+                if spec is None or spec.permission != "read" or spec.require_confirmation or spec.is_long_running:
+                    raise RequestError("REQUEST_PROTOCOL_INVALID", "tool is no longer eligible for read-only retry")
+            return start_attempt(request, handle, digest(args))
+
+        saved = self.service.update_request(self.context, self.admission.request_id, begin)
+        return sum(a.step_id == handle.step_id for a in get_dispatch(saved, handle).step_attempts)
+
+    def attempt_finished(self, handle, attempt, result):
+        self.service.update_request(
+            self.context,
+            self.admission.request_id,
+            lambda request: finish_attempt(
+                request, handle, attempt, "completed" if result.success else "failed", result.error_code or ""
+            ),
+        )
+
+    def finish_step(self, handle, result):
+        if handle is not None:
+            self.service.step_receipts.save(
+                self.context,
+                self.admission.request_id,
+                handle,
+                "completed" if result.success else "cancelled" if result.error_category == "cancelled" else "failed",
+                result.error_code or "",
             )
 
-        self.service.update_request(self.context, self.admission.request_id, finish)
+    def interrupt_steps(self):
+        if self._synthetic_dispatch:
+            with self.service.serialized(self.context):
+                dispatch = next(d for d in self.current_request().dispatches if d.dispatch_id == self.dispatch_id)
+                self.service.step_receipts.interrupt(self.context, self.admission.request_id, dispatch)
 
     def _validate_selection(self, request, execution_context) -> None:
         ingress = self.service.state(self.context).get("ingress", ())
@@ -297,11 +337,9 @@ class RequestExecutionGate:
 
     def after(self, handle: EffectHandle, result) -> None:
         if not handle.effect_id:
-            self._finish_step(handle, bool(getattr(result, "success", False)))
             return
         effect = get_effect(self.current_request(), handle.effect_id)
         if effect.job_id:
-            self._finish_step(handle, bool(getattr(result, "success", False)))
             return  # Application TaskEventRouter owns asynchronous terminal delivery.
         success = bool(getattr(result, "success", False))
         partial = bool(getattr(result, "partial", False) or getattr(result, "truncated", False))
@@ -323,11 +361,9 @@ class RequestExecutionGate:
             )
         finally:
             self.resources.release(handle.effect_id)
-        self._finish_step(handle, success)
 
     def failed(self, handle: EffectHandle, error: Exception) -> None:
         if not handle.effect_id:
-            self._finish_step(handle, False)
             return
         effect = get_effect(self.current_request(), handle.effect_id)
         if effect.job_id:

@@ -280,8 +280,6 @@ class MainWindow(QMainWindow):
                 {"project_id": project_id, "name": name},
             )
         )
-        pb.snapshot_save_requested.connect(self._intent_composition.callback(IntentId.PROJECT_SNAPSHOT_SAVE))
-        pb.snapshot_load_requested.connect(self._intent_composition.callback(IntentId.PROJECT_SNAPSHOT_LOAD))
         pb.snapshot_delete_requested.connect(self._intent_composition.callback(IntentId.PROJECT_SNAPSHOT_DELETE))
 
         self._mode_tabs.addTab(self._workbench, "工作台")
@@ -362,8 +360,8 @@ class MainWindow(QMainWindow):
         self._menu.migrate.setEnabled(bool(self._ctx.slots))
         self._operation_coordinator.update_operation_menu_state()
 
-    def show_message(self, msg: str):
-        self._status_presenter.show_message(msg)
+    def show_message(self, msg: str, *, error=False, retry=None, retry_label="重试"):
+        self._status_presenter.show_message(msg, error=error, retry=retry, retry_label=retry_label)
 
     # ── Parse actions ─────────────────────────────────────────
 
@@ -397,7 +395,7 @@ class MainWindow(QMainWindow):
 
         if (
             (self._foreground_worker is not None and self._foreground_worker.isRunning())
-            or (self._save_worker is not None and self._save_worker.isRunning())
+            or self._save_worker is not None
             or (self._project_open_worker is not None and self._project_open_worker.isRunning())
         ):
             self.show_message("另一项后台操作仍在进行，请稍候。")
@@ -423,7 +421,7 @@ class MainWindow(QMainWindow):
                 if on_error is not None:
                     on_error(error)
                 else:
-                    self.show_message(f"后台操作失败：{error}")
+                    self.show_message(f"后台操作失败：{error}", error=True)
             elif "result" in outcome and on_result is not None:
                 on_result(outcome["result"])
             if on_finished is not None:
@@ -472,7 +470,7 @@ class MainWindow(QMainWindow):
             return False
         if on_finished is not None:
             self._save_callbacks.append(on_finished)
-        if self._save_worker is not None and self._save_worker.isRunning():
+        if self._save_worker is not None:
             return True
 
         ctx = self._ctx
@@ -507,7 +505,7 @@ class MainWindow(QMainWindow):
                 set_save_failed = getattr(self._workbench.project_bar, "set_save_failed", None)
                 if set_save_failed is not None:
                     set_save_failed(diagnostic.message)
-                self.show_message(f"{diagnostic.code}: {diagnostic.message}")
+                self.show_message(f"{diagnostic.code}: {diagnostic.message}", error=True)
                 return
             save_succeeded = True
 
@@ -515,7 +513,7 @@ class MainWindow(QMainWindow):
             set_save_failed = getattr(self._workbench.project_bar, "set_save_failed", None)
             if set_save_failed is not None:
                 set_save_failed(error)
-            self.show_message(f"保存失败：{error}")
+            self.show_message(f"保存失败：{error}", error=True)
 
         def _on_done() -> None:
             if self._save_worker is worker:
@@ -523,7 +521,7 @@ class MainWindow(QMainWindow):
             final_dirty = bool(ctx.dirty)
             persistence_is_current = save_succeeded and not final_dirty
             if save_succeeded:
-                self._workbench.project_bar.set_save_dirty(final_dirty)
+                self._workbench.project_bar.set_save_completed(dirty=final_dirty)
                 if not automatic and persistence_is_current:
                     self._workbench.project_bar.flash_saved()
                     self.show_message("项目已保存")

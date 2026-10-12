@@ -218,7 +218,7 @@ DEFAULT_ACTION_CATALOG = ActionCatalog((
     ),
     ActionDescriptor(
         IntentId.TRANSLATION_REVIEW,
-        "检查翻译问题",
+        "查看有疑问词条",
         ActionSection.TRANSLATION,
         placement=IntentPlacement.CONTEXTUAL,
     ),

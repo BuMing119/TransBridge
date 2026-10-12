@@ -364,7 +364,50 @@ class RequestBinding(QObject):
         self.undo.invalidate()
         if self.admission is not None:
             admission = self.admission
-            self.background.submit(lambda: self.service.scheduler.release(admission), wake=True)
+            gate = self.gate
+            context, generation, view_id = self.context, self._turn_generation, self.view_id
+
+            def current():
+                return (
+                    not self._closed
+                    and self._active
+                    and self.context == context
+                    and self.view_id == view_id
+                    and self._turn_generation == generation
+                    and self.admission is None
+                )
+
+            # A confirmation can be clicked before the background writer runs.
+            # A commit may own the scheduler lock, so the UI must never wait for it.
+            if not self.service.scheduler.release(admission, wait=False):
+                self.confirmations.releasing(admission)
+
+            def release_turn():
+                self.service.scheduler.release(admission)
+                if gate is not None:
+                    gate.interrupt_steps()
+
+            def release_failed(error):
+                if not current():
+                    return
+                # Release succeeded even if step receipts could not be saved. Drop
+                # queued confirmation authority without dispatching its UI waiters.
+                self.facade._confirmation_view.invalidate_pending()
+                self.fail(str(error))
+
+            def released(_result):
+                if current():
+                    self.confirmations.released(admission)
+                    if current():
+                        self.wake()
+
+            self.background.submit(
+                release_turn,
+                released,
+                context=context,
+                failed=release_failed,
+                settled=lambda: self.confirmations.discard_release(admission),
+            )
         self.admission = self.batch = self.gate = None
         if interrupt:
             self.facade._controller.handle_round_interrupted()
@@ -401,6 +444,8 @@ class RequestBinding(QObject):
             return
         self.interrupt()
         self._closed = True
+        # Qt may discard queued completion deliveries after QObject destruction.
+        self.confirmations.close()
         if self.context is not None:
             context = self.context
             self._queue.submit(self.service.scheduler.deactivate, context.session_id, self.view_id)

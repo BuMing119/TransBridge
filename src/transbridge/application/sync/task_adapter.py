@@ -14,6 +14,7 @@ from transbridge.application.tasks import (
     JobSpec,
     OwnerRef,
     TaskCancelled,
+    TaskCleanupFailed,
     TaskRuntime,
 )
 
@@ -67,10 +68,12 @@ class ParaTranzSyncTaskEntrypoint:
         executor: ParaTranzSyncExecutor,
         *,
         on_finished: Callable[[], None] | None = None,
+        on_result: Callable[[str, OperationResult], None] | None = None,
     ) -> None:
         self._runtime = runtime
         self._executor = executor
         self._on_finished = on_finished
+        self._on_result = on_result
         self._results: dict[str, OperationResult[dict]] = {}
         self._lock = RLock()
 
@@ -133,13 +136,19 @@ class ParaTranzSyncTaskEntrypoint:
                     self._results[ref.run_id] = result
                     while len(self._results) > 100:
                         self._results.pop(next(iter(self._results)))
+                if self._on_result is not None:
+                    self._on_result(ref.run_id, result)
+                self._runtime.update_progress(ref, owner, {"operation_outcome": result.outcome.value})
                 if result.outcome is OperationOutcome.CANCELLED:
                     raise TaskCancelled("ParaTranz synchronization cancelled")
                 if result.outcome is OperationOutcome.FAILED:
                     raise ParaTranzSyncTaskFailed(result)
             finally:
                 if self._on_finished is not None:
-                    self._on_finished()
+                    try:
+                        self._on_finished()
+                    except Exception as exc:
+                        raise TaskCleanupFailed(f"ParaTranz resource cleanup failed: {exc}") from exc
 
         self._runtime.schedule(ref, owner, execute)
         return ref

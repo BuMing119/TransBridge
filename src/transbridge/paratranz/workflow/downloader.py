@@ -6,11 +6,11 @@ ParaTranzDownloader：从 ParaTranz 下载译文并合并到本地 TranslationEn
   2. 对每个文件调用 get_file_translation，拿到带译文的词条列表
   3. 按 key 字段匹配本地集合（ParaTranz key == 本地 entry.id）
   4. 仅合并 stage >= min_stage 且 translation 非空的词条
-  5. 返回 DownloadResult（合并数、未匹配数、跳过数、总词条数）
+  5. 返回 DownloadResult（合并数、跳过数及逐文件下载失败证据）
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import logging
 
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
@@ -18,6 +18,15 @@ from transbridge.paratranz.api.paratranz_files_api import ParatranzFilesAPI
 from transbridge.paratranz.config_manager import ParatranzConfig
 
 _logger = logging.getLogger(__name__)
+
+
+@dataclass
+class FileDownloadFailure:
+    """一个远端文件未能下载的原因。"""
+
+    file_id: int
+    file_name: str
+    message: str
 
 
 @dataclass
@@ -29,6 +38,8 @@ class DownloadResult:
     skipped_low_stage: int = 0  # stage 不足或译文为空，跳过的词条数
     total_strings: int = 0  # 从 ParaTranz 拉取的词条总数
     skipped_original_match: int = 0  # ParaTranz 裸 key 无法安全定位要求原文匹配的词条
+    downloaded_files: int = 0  # 成功取得有效词条列表的文件数（包括空文件）
+    failed_files: list[FileDownloadFailure] = field(default_factory=list)
 
 
 class ParaTranzDownloader:
@@ -73,6 +84,11 @@ class ParaTranzDownloader:
         if file_ids is not None:
             allowed = set(file_ids)
             files = [f for f in files if f["id"] in allowed]
+            available = {f["id"] for f in files}
+            result.failed_files.extend(
+                FileDownloadFailure(file_id, str(file_id), "所选文件已不在远端项目中，请刷新文件列表后重试")
+                for file_id in sorted(allowed - available)
+            )
 
         total = len(files)
 
@@ -85,13 +101,16 @@ class ParaTranzDownloader:
 
             try:
                 strings = self._api.get_file_translation(project_id, file_id)
-            except RuntimeError:
-                # 单个文件获取失败不影响其他文件
+            except RuntimeError as exc:
+                result.failed_files.append(FileDownloadFailure(file_id, file_name, str(exc)))
+                _logger.warning("ParaTranz file %s (%s) download failed", file_name, file_id, exc_info=True)
                 continue
 
             if not isinstance(strings, list):
+                result.failed_files.append(FileDownloadFailure(file_id, file_name, "远端译文格式无效：预期词条列表"))
                 continue
 
+            result.downloaded_files += 1
             for item in strings:
                 result.total_strings += 1
 

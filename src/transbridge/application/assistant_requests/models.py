@@ -159,6 +159,22 @@ class RequestRevision:
 
 
 @dataclass(frozen=True, slots=True)
+class StepAttempt:
+    step_id: str
+    attempt: int
+    arguments_digest: str
+    status: str = "running"
+    error_code: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class StepReceipt:
+    step_id: str
+    status: str
+    error_code: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class ExecutionDispatch:
     dispatch_id: str
     execution: AssistantExecutionRef
@@ -170,13 +186,18 @@ class ExecutionDispatch:
     started_steps: tuple[str, ...] = ()
     completed_steps: tuple[str, ...] = ()
     failed_steps: tuple[str, ...] = ()
+    step_permissions: tuple[str, ...] = ()
+    step_attempts: tuple[StepAttempt, ...] = ()
+    step_receipts: tuple[StepReceipt, ...] = ()
 
     @classmethod
     def from_dict(cls, data: dict) -> ExecutionDispatch:
         values = {**data, "execution": AssistantExecutionRef.from_dict(data["execution"])}
         values["step_specs"] = tuple(tuple(pair) for pair in data.get("step_specs", ()))
-        for key in ("started_steps", "completed_steps", "failed_steps"):
+        for key in ("started_steps", "completed_steps", "failed_steps", "step_permissions"):
             values[key] = tuple(data.get(key, ()))
+        values["step_attempts"] = tuple(StepAttempt(**v) for v in data.get("step_attempts", ()))
+        values["step_receipts"] = tuple(StepReceipt(**v) for v in data.get("step_receipts", ()))
         return cls(**values)
 
 

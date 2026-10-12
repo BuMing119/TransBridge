@@ -118,6 +118,16 @@ def execute_with_guardrails(
     B6+B1: 消除 GUI/MCP 安全分叉，支持自定义护栏链。
     middlewares=None 时使用默认链；传入 [] 则跳过所有护栏。
     """
+    if getattr(ctx, "assistant_gate", None) is not None and not getattr(ctx, "assistant_step_managed", False):
+        from transbridge.smart_assistant.step_execution import run_step
+
+        return run_step(
+            {"tool": tool_name or spec.name, "args": args},
+            ctx,
+            lambda current_args, context: execute_with_guardrails(
+                spec, current_args, context, middlewares, tool_name=tool_name
+            ),
+        )
     guards = middlewares if middlewares is not None else _build_guard_chain()
     if guards is None:
         logger.critical("护栏模块导入失败，拒绝执行工具: %s", spec.name)
@@ -179,9 +189,9 @@ def execute_with_guardrails(
         raw_result.message = step_result.message
         if step_result.data is not raw_result.data:
             raw_result.data = step_result.data
-        from transbridge.application.security.redaction import SecretRedactor
+        from transbridge.application.security import project_business_data
 
-        return SecretRedactor.default().redact(raw_result)
+        return project_business_data(raw_result)
     elif isinstance(raw_result, dict):
         result = ToolResult(
             success=raw_result.get("success", True),
@@ -196,9 +206,9 @@ def execute_with_guardrails(
         result.message = step_result.message
         if step_result.data is not result.data:
             result.data = step_result.data
-        from transbridge.application.security.redaction import SecretRedactor
+        from transbridge.application.security import project_business_data
 
-        return SecretRedactor.default().redact(result)
+        return project_business_data(result)
     return raw_result
 
 

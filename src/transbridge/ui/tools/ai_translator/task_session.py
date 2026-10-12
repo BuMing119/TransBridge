@@ -54,6 +54,7 @@ class TaskSession:
         self._apply_delivery: ApplyDelivery | None = None
         self._captured = self._completed = self._saved = self._discarded = False
         self._commit_result = None
+        self.commit_mutation: Callable[[Callable[[], None]], None] | None = None
         self._applied_keys: set[EntryKey] = set()
         self._generation = 0
         self._states = self._read_states()
@@ -227,7 +228,8 @@ class TaskSession:
 
     def _commit_entries(self, keys: set[EntryKey], entries: tuple, *, baselines: dict | None = None) -> object:
         persistence = self._persistence if not self._generation else VersionPersistence(self._ctx, self._identity)
-        result = _require_success(persistence.commit_translation(entries))
+        commit_options = {} if self.commit_mutation is None else {"commit_mutation": self.commit_mutation}
+        result = _require_success(persistence.commit_translation(entries, **commit_options))
         # A successful authoritative command may already have reprojected slots.
         # Only replace collections still holding the unchanged pre-run objects.
         current = self._slots()

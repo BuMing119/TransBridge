@@ -8,6 +8,7 @@ from typing import Any, Protocol
 
 from transbridge.application.contracts import Diagnostic, DiagnosticSeverity, ErrorCategory, OperationOutcome
 from transbridge.application.io import EntryKey, EntryRevision, SourceNamespace
+from transbridge.application.security import project_business_data
 from transbridge.application.translation.entry_alias import ai_entry_id
 
 from .postprocess import PostProcessCandidate, ReportSnapshot
@@ -79,7 +80,7 @@ def build_polish_report_snapshot(
             "result_status": status,
             "confidence": confidence,
             "changes": _json_safe(_value(result, "changes", ()) or ()),
-            "note": str(_value(result, "note", "") or ""),
+            "note": str(project_business_data(_value(result, "note", "") or "")),
             "needs_arbitration": bool(_value(result, "needs_arbitration", False)),
             "verdict": str(_value(result, "verdict", "") or ""),
             "refined_translation": _nullable_text(_value(result, "refined_translation", None)),
@@ -250,6 +251,7 @@ def _nullable_text(value: object) -> str | None:
 
 
 def _json_safe(value: object) -> Any:
+    value = project_business_data(value)
     if value is None or isinstance(value, (str, bool, int)):
         return value
     if isinstance(value, float):

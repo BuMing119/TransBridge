@@ -17,6 +17,7 @@ import time
 from typing import TYPE_CHECKING
 
 from transbridge.application.io.identity import EntryKey, SourceNamespace
+from transbridge.application.security.diagnostic_logging import client_diagnostic_redactor, diagnostic_exception_text
 from transbridge.application.translation.entry_alias import ai_entry_id, ai_entry_key
 from transbridge.application.translation.token_batching import StableContentBatcher
 from transbridge.infra.token_counting import TiktokenContentTokenCounter
@@ -492,8 +493,11 @@ class PostProcessor:
                                     _persist_checkpoint()
                             _progress("detect", qg_completed, len(entries), f"质量检测 {qg_completed}/{len(entries)}")
                         except Exception as e:
-                            evidence.fail("quality_gate", batch, e)
-                            _log(f"⚠ QualityGate 批次异常: {e}")
+                            safe_error = client_diagnostic_redactor(
+                                getattr(qg_checker, "_llm", self._llm_client)
+                            ).redact_text(diagnostic_exception_text(e))
+                            evidence.fail("quality_gate", batch, safe_error)
+                            _log(f"⚠ QualityGate 批次异常: {safe_error}")
 
                 issues_by_entry = self._group_issues_by_entry(result.issues)
 
@@ -570,8 +574,11 @@ class PostProcessor:
                                         _persist_checkpoint()
                                 _progress("refine", refined_count, total, f"已修复 {refined_count}/{total}")
                             except Exception as e:
-                                evidence.fail("refine", batch, e)
-                                _log(f"⚠ Refine 批次异常: {e}")
+                                safe_error = client_diagnostic_redactor(
+                                    getattr(self._refiner, "_llm", self._llm_client)
+                                ).redact_text(diagnostic_exception_text(e))
+                                evidence.fail("refine", batch, safe_error)
+                                _log(f"⚠ Refine 批次异常: {safe_error}")
 
             if _should_stop():
                 return result
@@ -652,8 +659,11 @@ class PostProcessor:
                                         _persist_checkpoint()
                                 _progress("polish", polished_count, total, f"已润色 {polished_count}/{total}")
                             except Exception as e:
-                                evidence.fail("polish", batch, e)
-                                _log(f"⚠ Polish 批次异常: {e}")
+                                safe_error = client_diagnostic_redactor(
+                                    getattr(self._polisher, "_llm", self._llm_client)
+                                ).redact_text(diagnostic_exception_text(e))
+                                evidence.fail("polish", batch, safe_error)
+                                _log(f"⚠ Polish 批次异常: {safe_error}")
 
             if _should_stop():
                 return result
@@ -758,8 +768,11 @@ class PostProcessor:
                                     _persist_checkpoint()
                             _progress("arbitrate", arbitrate_count, total, f"已裁决 {arbitrate_count}/{total}")
                         except Exception as e:
-                            evidence.fail("arbitrate", [context.entry for context in batch], e)
-                            _log(f"⚠ Arbitrate 批次异常: {e}")
+                            safe_error = client_diagnostic_redactor(
+                                getattr(self._arbiter, "_llm", self._llm_client)
+                            ).redact_text(diagnostic_exception_text(e))
+                            evidence.fail("arbitrate", [context.entry for context in batch], safe_error)
+                            _log(f"⚠ Arbitrate 批次异常: {safe_error}")
 
             else:
                 decisions = self._rule_based_decide(entries, issues_by_entry, refine_results, polish_results)

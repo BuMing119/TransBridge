@@ -103,7 +103,7 @@ def test_authoritative_save_runs_off_gui_thread_and_reports_completion() -> None
     completions: list[bool] = []
 
     class ProjectBar:
-        def set_save_dirty(self, _dirty: bool) -> None:
+        def set_save_completed(self, *, dirty: bool) -> None:
             pass
 
         def flash_saved(self) -> None:
@@ -408,7 +408,7 @@ def test_automatic_save_is_silent_and_does_not_disable_workbench() -> None:
     dirty_updates: list[bool] = []
 
     class ProjectBar:
-        def set_save_dirty(self, dirty: bool) -> None:
+        def set_save_completed(self, *, dirty: bool) -> None:
             dirty_updates.append(dirty)
 
         def flash_saved(self) -> None:
@@ -534,7 +534,7 @@ def test_authoritative_save_does_not_report_current_when_new_changes_remain() ->
     messages: list[str] = []
 
     class ProjectBar:
-        def set_save_dirty(self, dirty: bool) -> None:
+        def set_save_completed(self, *, dirty: bool) -> None:
             dirty_updates.append(dirty)
 
         def flash_saved(self) -> None:

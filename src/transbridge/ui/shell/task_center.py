@@ -37,11 +37,13 @@ class TaskCenterPanel(QWidget):
     resume_requested = pyqtSignal(str, int)
     cancel_requested = pyqtSignal(str, int)
     action_requested = pyqtSignal(object, object)
+    feature_recovery_requested = pyqtSignal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         configure_accessible_widget(self, name="任务活动中心", description="查看任务状态和可用控制操作")
         self._states = {}
+        self._history_items = {}
         self._initial_focus_set = False
         root = QVBoxLayout(self)
         self._tabs = QTabWidget()
@@ -58,7 +60,13 @@ class TaskCenterPanel(QWidget):
         self._tabs.addTab(self._history, "历史")
         self._tabs.addTab(self._recovery, "恢复")
         root.addWidget(self._tabs)
-        self._reason = QLabel("选择任务可查看当前允许的操作。")
+        self._feature_recovery = QPushButton("查看 AI 校对恢复记录…")
+        self._feature_recovery.setToolTip("打开当前项目的 AI 任务记录，在其中选择继续任务或重新开始。")
+        self._feature_recovery.setAccessibleName("查看当前项目的 AI 校对恢复记录")
+        self._feature_recovery.hide()
+        self._feature_recovery.clicked.connect(self.feature_recovery_requested)
+        root.addWidget(self._feature_recovery)
+        self._reason = QLabel("请选择任务。")
         self._reason.setWordWrap(True)
         self._reason.setAccessibleName("任务操作与恢复说明")
         self._reason.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -72,14 +80,14 @@ class TaskCenterPanel(QWidget):
         self._recover = QPushButton("恢复")
         self._retry = QPushButton("重试")
         self._open_result = QPushButton("打开结果")
-        self._open_log = QPushButton("打开日志")
+        self._open_log = QPushButton("查看诊断")
         self._pause.setAccessibleName("暂停所选任务")
         self._resume.setAccessibleName("继续所选任务")
         self._cancel.setAccessibleName("停止所选任务")
         self._recover.setAccessibleName("恢复所选任务")
         self._retry.setAccessibleName("重试所选任务")
         self._open_result.setAccessibleName("打开所选任务结果")
-        self._open_log.setAccessibleName("打开所选任务日志")
+        self._open_log.setAccessibleName("查看所选任务诊断")
         for button in self._action_buttons():
             ComponentStyle.apply_static(button, ComponentKind.BUTTON)
             button.setEnabled(False)
@@ -98,6 +106,9 @@ class TaskCenterPanel(QWidget):
         self._open_result.clicked.connect(lambda: self._emit_action(TaskCenterAction.OPEN_RESULT))
         self._open_log.clicked.connect(lambda: self._emit_action(TaskCenterAction.OPEN_LOG))
 
+    def set_feature_recovery_available(self, available: bool) -> None:
+        self._feature_recovery.setVisible(available)
+
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - Qt override
         super().showEvent(event)
         if self._initial_focus_set:
@@ -112,11 +123,23 @@ class TaskCenterPanel(QWidget):
             item = QListWidgetItem()
             item.setData(Qt.ItemDataRole.UserRole, state.run_id)
             self._current.addItem(item)
-        item.setText(f"{state.display_context.title}  ·  {state.state.value}")
+        label = {
+            "queued": "等待开始",
+            "running": "运行中",
+            "paused": "已暂停",
+            "cancelling": "正在停止",
+            "cancelled": "已取消",
+            "completed": "已完成",
+            "failed": "失败",
+        }.get(state.state.value, state.state.value)
+        if state.state.value == "completed" and dict(state.progress).get("operation_outcome") == "partial":
+            label = "部分完成"
+        item.setText(f"{state.display_context.title}  ·  {label}")
         item.setToolTip(f"Run ID: {state.run_id}")
         self._update_actions()
 
     def render_history(self, records) -> None:
+        self._history_items = {record.run_id: record for record in records}
         self._history.clear()
         for record in records:
             item = QListWidgetItem(f"{record.display_name}  ·  {record.state_label}")
@@ -136,6 +159,7 @@ class TaskCenterPanel(QWidget):
 
     def show_error(self, message: str) -> None:
         self._reason.setText(message)
+        self._reason.setVisible(True)
         update_accessible_state(self._reason, message)
         self._reason.setProperty("tbStatusId", "error")
         ComponentStyle.apply_state(self._reason, SemanticState.ERROR)
@@ -147,6 +171,8 @@ class TaskCenterPanel(QWidget):
             state = None
         elif selected_list is self._current:
             state = self._states.get(item.data(Qt.ItemDataRole.UserRole))
+            if state is not None and state.is_terminal:
+                state = self._history_items.get(state.run_id, state)
         else:
             state = item.data(Qt.ItemDataRole.UserRole)
         available = None if state is None else state.available_actions
@@ -156,38 +182,39 @@ class TaskCenterPanel(QWidget):
         self._cancel.setEnabled(bool(current_selected and available and (available.stop or available.cancel)))
         self._recover.setEnabled(bool(available and available.recover))
         self._retry.setEnabled(bool(available and available.retry))
+        self._retry.setText(
+            "重新准备…" if isinstance(state, TaskCenterItem) and state.retry_requires_preparation else "重试"
+        )
         self._open_result.setEnabled(bool(available and available.open_result))
         self._open_log.setEnabled(bool(available and available.open_log))
+        for button in self._action_buttons():
+            button.setToolTip("")
+            button.setAccessibleDescription("")
         if state is None:
-            explanation = "选择任务可查看当前允许的操作。"
+            explanation = "请选择任务。"
             self._reason.setText(explanation)
             update_accessible_state(self._reason, explanation)
             for button in self._action_buttons():
-                button.setToolTip("")
                 button.setAccessibleDescription(explanation)
         elif isinstance(state, TaskCenterItem):
-            explanation = state.reason_message or f"当前对象：{state.display_name}。仅显示当前真实可用的操作。"
+            explanation = state.reason_message or ""
             self._reason.setText(explanation)
-            update_accessible_state(self._reason, explanation)
+            self._reason.setAccessibleDescription(explanation)
             self._reason.setProperty("tbStatusId", state.source)
             ComponentStyle.apply_state(self._reason, SemanticState.INFO)
         else:
             title = state.display_context.title
-            capability = (
-                "此任务不支持暂停/恢复。"
-                if not available.pause and not available.resume
-                else "仅显示任务真实声明的控制能力。"
-            )
-            recovery = "停止只请求取消；已完成结果会保留，是否可恢复取决于任务声明的能力。"
-            explanation = f"当前对象：{title}（Run ID {state.run_id}）。{capability}{recovery}"
+            recovery = "停止后保留已完成结果。"
+            explanation = ""
             self._reason.setText(explanation)
-            update_accessible_state(self._reason, explanation)
+            self._reason.setAccessibleDescription(explanation)
             self._reason.setProperty("tbStatusId", state.state.value)
             ComponentStyle.apply_state(self._reason, SemanticState.INFO)
-            self._cancel.setToolTip(f"请求停止“{title}”。{recovery}")
-            self._cancel.setAccessibleDescription(f"当前对象：{title}。{recovery}")
-            self._pause.setAccessibleDescription(f"暂停当前对象：{title}")
-            self._resume.setAccessibleDescription(f"继续当前对象：{title}")
+            self._cancel.setToolTip(f"停止“{title}”。{recovery}")
+            self._cancel.setAccessibleDescription(self._cancel.toolTip())
+            self._pause.setAccessibleDescription(f"暂停：{title}")
+            self._resume.setAccessibleDescription(f"继续：{title}")
+        self._reason.setVisible(bool(explanation))
 
     def _emit_action(self, action: TaskCenterAction) -> None:
         selected_list = self._tabs.currentWidget()
@@ -199,6 +226,8 @@ class TaskCenterPanel(QWidget):
             if selected_list is self._current
             else item.data(Qt.ItemDataRole.UserRole)
         )
+        if selected_list is self._current and state is not None and state.is_terminal:
+            state = self._history_items.get(state.run_id, state)
         if state is not None:
             self.action_requested.emit(state, action)
 
@@ -261,7 +290,7 @@ class TaskCenterController(QObject):
         )
         self._actions = self._resolve_actions(runtime.use_cases)
         self._binding = TaskProjectionBinding(runtime.tasks, self._actor, self.activity_changed.emit)
-        self.activity_changed.connect(panel.render_activity)
+        self.activity_changed.connect(self._render_activity)
         panel.pause_requested.connect(lambda run_id, revision: self._control("pause", run_id, revision))
         panel.resume_requested.connect(lambda run_id, revision: self._control("resume", run_id, revision))
         panel.cancel_requested.connect(lambda run_id, revision: self._control("cancel", run_id, revision))
@@ -279,6 +308,11 @@ class TaskCenterController(QObject):
             self._panel.render_recovery(self._actions.list_recovery(self._actor))
         except Exception as exc:
             self._panel.show_error(f"任务目录读取失败：{exc}")
+
+    def _render_activity(self, state) -> None:
+        self._panel.render_activity(state)
+        if state.is_terminal:
+            self.refresh_catalogs()
 
     def close(self) -> None:
         self._binding.close()

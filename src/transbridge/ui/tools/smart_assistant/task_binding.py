@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import logging
-import re
 
 from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
 
@@ -26,12 +25,10 @@ class _MainThreadDispatcher(QObject):
 
 
 def sanitize_error_message(message: str) -> str:
-    if not message:
-        return message
-    message = re.sub(r'[A-Za-z]:[\\/][^\s,;:"]+', "[path]", message)
-    message = re.sub(r'/(?:home|Users|usr|tmp|var|etc|opt|root|mnt)/[^\s,;:"]+', "[path]", message)
-    message = re.sub(r"\b(sk-[A-Za-z0-9_-]{20,})\b", "[api_key]", message)
-    return re.sub(r"\b(sk-ant-[A-Za-z0-9_-]{20,})\b", "[api_key]", message)
+    """Hide technical task diagnostics using the shared diagnostic policy."""
+    from transbridge.application.security import SecretRedactor
+
+    return SecretRedactor(redact_paths=True).redact_text(message)
 
 
 class TaskBinding:

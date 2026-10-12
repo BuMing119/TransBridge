@@ -329,6 +329,50 @@ class TestParaTranzDownloader:
 
         assert result.merged == 1
         assert collection.get("key:001|1~NPC_:FULL").translation == "奥里"
+        assert result.downloaded_files == 1
+        assert [(failure.file_id, failure.file_name, failure.message) for failure in result.failed_files] == [
+            (10, "人名.json", "timeout")
+        ]
+
+    @pytest.mark.parametrize("response", [RuntimeError("timeout"), None, {"error": "invalid response"}])
+    def test_download_reports_failed_files_without_mutating_collection(self, response):
+        downloader, api = self._make_downloader()
+        api.list_files.return_value = [{"id": 10, "name": "人名.json"}]
+        if isinstance(response, RuntimeError):
+            api.get_file_translation.side_effect = response
+        else:
+            api.get_file_translation.return_value = response
+        collection = make_collection(make_entry("entry", translation="Keep", stage=3))
+
+        result = downloader.download_to_collection(1, collection)
+
+        assert result.merged == result.downloaded_files == 0
+        assert [(failure.file_id, failure.file_name) for failure in result.failed_files] == [(10, "人名.json")]
+        assert result.failed_files[0].message
+        assert collection.get("entry").translation == "Keep"
+
+    def test_download_reports_selected_file_removed_from_remote(self):
+        downloader, api = self._make_downloader()
+        api.list_files.return_value = [{"id": 11, "name": "Other.json"}]
+
+        result = downloader.download_to_collection(1, make_collection(), file_ids=[10])
+
+        assert result.downloaded_files == 0
+        assert result.failed_files[0].file_id == 10
+        assert "刷新文件列表" in result.failed_files[0].message
+        api.get_file_translation.assert_not_called()
+
+    @pytest.mark.parametrize("strings", [[], [pt_string("unknown", translation="Other")], [pt_string("entry")]])
+    def test_valid_download_with_no_merge_is_not_a_file_failure(self, strings):
+        downloader, api = self._make_downloader()
+        api.list_files.return_value = [{"id": 10, "name": "人名.json"}]
+        api.get_file_translation.return_value = strings
+
+        result = downloader.download_to_collection(1, make_collection(make_entry("entry")))
+
+        assert result.merged == 0
+        assert result.downloaded_files == 1
+        assert result.failed_files == []
 
     # ── min_stage 过滤 ──────────────────────────────────────────
 

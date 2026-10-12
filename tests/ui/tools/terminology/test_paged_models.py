@@ -7,9 +7,29 @@ from PyQt6.QtCore import QThreadPool
 from PyQt6.QtWidgets import QApplication
 
 from transbridge.application.terminology import CursorStaleError, Page, SnapshotCursor
+from transbridge.ui.tools.terminology.history_view import HistoryView
 from transbridge.ui.tools.terminology.paged_models import KeysetPagedTableModel, PagedColumn
 
 _APP = QApplication.instance() or QApplication([])
+
+
+def test_history_status_hides_loading_details_but_restores_empty_and_comparison_messages() -> None:
+    model = KeysetPagedTableModel(lambda _ref, _request: Page((), "snapshot"), (PagedColumn("v", "版本", str),))
+    view = HistoryView(model)
+    try:
+        generation = model.set_query("ref")
+        assert view.status.text() == "尚无已发布版本。"
+        assert model.accept_page(generation, Page(("v1",), "snapshot"))
+        assert view.status.isHidden()
+        view.set_status("比较完成：共 2 项变化。")
+        assert not view.status.isHidden()
+        assert "2 项变化" in view.status.text()
+        model.clear()
+        assert not view.status.isHidden()
+        assert view.status.text() == "尚无已发布版本。"
+    finally:
+        model.close()
+        view.close()
 
 
 def _cursor(snapshot: str, query: str, identity: str) -> SnapshotCursor:

@@ -24,6 +24,7 @@ class _Callbacks:
         self.source_requests = 0
         self.preset_requests = 0
         self.import_requests = 0
+        self.history_requests = 0
 
     def on_sources_changed(self) -> None:
         self.source_requests += 1
@@ -59,7 +60,7 @@ class _Callbacks:
         self.import_requests += 1
 
     def on_open_history(self) -> None:
-        return None
+        self.history_requests += 1
 
     def on_batch_start(self) -> None:
         return None
@@ -95,15 +96,17 @@ def _view(qapp: QApplication) -> tuple[QWidget, AITranslatorView, _Callbacks]:
     return parent, view, callbacks
 
 
-def test_new_task_explains_explicit_recovery_without_default_reuse_checkbox(qapp):
-    parent, view, _ = _view(qapp)
-    view.controls.mode_translate.setChecked(True)
+def test_new_task_keeps_recovery_in_task_records_without_a_persistent_hint(qapp):
+    parent, view, callbacks = _view(qapp)
     assert not hasattr(view, "resume_proofread")
-    assert "不会复用旧任务结果" in view.recovery_hint.text()
-    view.controls.mode_polish.setChecked(True)
-    assert view.recovery_hint.isVisible()
-    view.controls.mode_mixed.setChecked(True)
-    assert view.recovery_hint.isVisible()
+    assert not hasattr(view, "recovery_hint")
+    for mode in (view.controls.mode_translate, view.controls.mode_polish, view.controls.mode_mixed):
+        mode.setChecked(True)
+        assert view._history_btn.isVisible()
+        assert view._history_btn.text() == "任务记录"
+        assert "继续未完成的校对" in view._history_btn.accessibleDescription()
+        view._history_btn.click()
+    assert callbacks.history_requests == 3
     parent.close()
 
 

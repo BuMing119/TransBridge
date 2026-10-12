@@ -18,7 +18,38 @@ from transbridge.ui.tools.ai_translator.workflow_progress import (
     WorkflowProgress,
     WorkflowProgressTracker,
     stages_for_profile,
+    translation_tail_stages,
 )
+
+
+@pytest.mark.parametrize("strategy", ["proofread", "strict"])
+def test_mixed_translation_keeps_postprocess_stages_visible(qapp, tmp_path, monkeypatch, strategy):
+    from transbridge.config.llm import LLMConfig
+    from transbridge.ui.tools.ai_translator import _mixed_worker
+
+    monkeypatch.setattr(
+        _mixed_worker,
+        "WorkflowLogStore",
+        lambda path, workflow: WorkflowLogStore(path, workflow=workflow, log_base=tmp_path),
+    )
+    config = LLMConfig(pp_strategy=strategy, pp_enable_polish=True, retrieval_enabled=False)
+    worker = _mixed_worker._MixedWorker(config, [object()], [])
+    updates = []
+    worker.progress.connect(updates.append)
+    try:
+        worker._on_translate_progress(1, 1, "翻译完成", 1, 0, 0)
+        assert updates[-1].overall_current < 1000
+        for phase, label in translation_tail_stages(config):
+            callback_phase = phase.removeprefix("translation_")
+            worker._on_translate_stage_progress(callback_phase, 0, 1, "开始处理")
+            assert updates[-1].stage == phase
+            assert updates[-1].stage_label == label
+            assert updates[-1].current == 0
+            assert updates[-1].overall_current < 1000
+            worker._on_translate_stage_progress(callback_phase, 1, 1, "处理结束")
+        assert updates[-1].overall_current == 1000
+    finally:
+        worker._log_store.close()
 
 
 @pytest.fixture(scope="module")

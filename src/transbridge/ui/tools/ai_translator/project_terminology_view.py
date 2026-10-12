@@ -27,7 +27,7 @@ class ProjectTerminologyPanel(QGroupBox):
         self.version_label.setAccessibleName("当前项目术语版本")
         layout.addWidget(self.version_label)
         hint = QLabel(
-            "任务开始时固定当前已发布版本，并应用上方译名方案；术语按插件范围和文本匹配使用。",
+            "使用已发布的项目术语和所选译名方案。",
             self,
         )
         hint.setWordWrap(True)

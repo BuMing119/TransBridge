@@ -64,6 +64,7 @@ class ProjectBar(QWidget):
         layout.addWidget(QLabel("本地工程 ·"))
         self._project_label = ElidedLabel("无项目")
         self._project_label.setAccessibleName("当前本地翻译工程")
+        self._project_label.setMinimumWidth(120)
         project_font = self._project_label.font()
         project_font.setBold(True)
         self._project_label.setFont(project_font)
@@ -115,6 +116,7 @@ class ProjectBar(QWidget):
 
         self._save_status = ElidedLabel("未打开工程")
         self._save_status.setAccessibleName("保存状态")
+        self._save_status.setMinimumWidth(120)
         self._save_status.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         status_font = self._save_status.font()
         status_font.setPointSize(9)
@@ -375,6 +377,15 @@ class ProjectBar(QWidget):
         target = self._target()
         if target is not None:
             self._apply_save_state(self._save_presenter.begin(target))
+
+    def set_save_completed(self, *, dirty: bool) -> None:
+        """End the save operation, then reflect the authoritative remaining edits."""
+        target = self._target()
+        if target is None:
+            self._apply_save_state(self._save_presenter.clear())
+            return
+        self._save_presenter.succeed(target)
+        self._apply_save_state(self._save_presenter.show_target(target, dirty=dirty))
 
     def set_save_failed(self, diagnostic: str) -> None:
         target = self._target()

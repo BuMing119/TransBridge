@@ -19,6 +19,27 @@ _APPROVAL_REASONS = frozenset({"approval", "approval_revalidation"})
 class RequestConfirmationBinding:
     def __init__(self, binding):
         self.binding = binding
+        self._release_waiters = {}
+
+    def releasing(self, admission):
+        self._release_waiters.setdefault(admission.turn_id, [])
+
+    def released(self, admission):
+        for callback in self._release_waiters.pop(admission.turn_id, ()):
+            callback()
+
+    def discard_release(self, admission):
+        self._release_waiters.pop(admission.turn_id, None)
+
+    def close(self):
+        self._release_waiters.clear()
+
+    def _defer(self, admission, callback):
+        waiting = self._release_waiters.get(admission.turn_id)
+        if waiting is None:
+            return False
+        waiting.append(callback)
+        return True
 
     def capture(self, parsed, *, expected_confirmation=None):
         binding = self.binding
@@ -153,6 +174,7 @@ class RequestConfirmationBinding:
                 binding.facade.add_system_message(f"确认未生效，请重新查看请求：{exc}")
                 return False
 
+        validate.defer = lambda callback: self._defer(original, callback)
         return validate
 
     def _consume(self, saved, admission, *, accepted):

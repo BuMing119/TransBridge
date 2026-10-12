@@ -10,6 +10,7 @@ from PyQt6.QtGui import QFocusEvent, QShortcut
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget
 
+from transbridge.ui.shell import progressive_menu_bar as progressive_menu_module
 from transbridge.ui.shell.action_catalog import (
     DEFAULT_ACTION_CATALOG,
     ActionSection,
@@ -141,7 +142,7 @@ def test_progressive_menu_bar_reveals_existing_top_level_actions_in_place() -> N
     window.close()
 
 
-def test_progressive_menu_bar_keeps_one_account_action_and_collapses_after_pointer_leaves() -> None:
+def test_progressive_menu_bar_keeps_one_account_action_and_collapses_after_pointer_leaves(monkeypatch) -> None:
     calls: list[str] = []
     window = QMainWindow()
     central = QWidget()
@@ -176,8 +177,16 @@ def test_progressive_menu_bar_keeps_one_account_action_and_collapses_after_point
     assert same_account_action is account_action
 
     QTest.mouseMove(central, QPoint(10, 10))
+    # Offscreen mouseMove does not reliably update the system cursor in a full
+    # suite. Fix the pointer input, while exercising the actual Qt timer.
+    monkeypatch.setattr(
+        progressive_menu_module, "QCursor", SimpleNamespace(pos=lambda: central.mapToGlobal(QPoint(10, 10)))
+    )
     bar.schedule_collapse()
-    QTest.qWait(40)
+    for _ in range(100):
+        if not bar.is_expanded:
+            break
+        QTest.qWait(10)
     assert not bar.is_expanded
     assert not bar.collapse_timer.isActive()
     window.close()

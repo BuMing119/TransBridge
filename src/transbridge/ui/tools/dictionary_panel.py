@@ -312,7 +312,14 @@ class DictionaryPanel(QDialog):
             runtime_context = getattr(self._ctx, "runtime_context", None)
             if commands is None or runtime_context is None or expected_identity is None:
                 self._restore_collection_states(collection, original_states)
-                QMessageBox.critical(self, "套用失败", "权威 Variant 写入适配器不可用，词典修改已回滚。")
+                error = QMessageBox(
+                    QMessageBox.Icon.Critical,
+                    "套用失败",
+                    "保存服务不可用，已撤销本次词典套用。",
+                    parent=self,
+                )
+                error.setDetailedText("权威 Variant 写入适配器不可用。")
+                error.exec()
                 return
             project_id, variant_id = expected_identity
             commit = commands.replace_entry_states(

@@ -9,6 +9,7 @@ so controlled HTTP servers can prove the chain without a GUI.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 import hashlib
@@ -19,6 +20,7 @@ from urllib import error, request
 from transbridge.ai_translator.structured_schemas import POSTPROCESS_VALUES_OUTPUT_SCHEMA
 from transbridge.application.contracts import Diagnostic, DiagnosticSeverity, ErrorCategory
 from transbridge.application.io import EntryKey
+from transbridge.application.security import SecretRedactor
 from transbridge.application.translation.token_batching import StableContentBatcher
 from transbridge.infra.llm_structured_outputs import (
     LlmStructuredOutputError,
@@ -285,9 +287,11 @@ class CheckerStage:
         *,
         model: str = "",
         max_tokens_per_batch: int | None = None,
+        progress_callback: Callable[[int, int, str], None] | None = None,
     ) -> None:
         self.phase = phase
         self._checker = checker
+        self._progress = progress_callback
         self._batcher = (
             StableContentBatcher(TiktokenContentTokenCounter(model), max_tokens_per_batch, max_items=1)
             if max_tokens_per_batch is not None
@@ -296,6 +300,8 @@ class CheckerStage:
 
     def __call__(self, candidates: tuple[PostProcessCandidate, ...]) -> PostProcessStageOutcome:
         diagnostics: list[Diagnostic] = []
+        if self._progress is not None:
+            self._progress(0, len(candidates), "")
         if self._batcher is not None:
             plan = self._batcher.plan(
                 candidates,
@@ -303,7 +309,7 @@ class CheckerStage:
                 content=lambda candidate: (candidate.original, candidate.text, candidate.context),
             )
             candidates = plan.items
-        for candidate in candidates:
+        for index, candidate in enumerate(candidates, 1):
             view = _EntryView(candidate)
             try:
                 found = self._checker.check(view)
@@ -317,7 +323,7 @@ class CheckerStage:
                         details=(("error_type", type(exc).__name__),),
                     )
                 )
-                continue
+                found = ()
             for issue in found:
                 diagnostics.append(
                     Diagnostic(
@@ -332,6 +338,8 @@ class CheckerStage:
                         details=(("entry_key", candidate.entry_key.to_dict()),),
                     )
                 )
+            if self._progress is not None:
+                self._progress(index, len(candidates), "")
         return PostProcessStageOutcome(self.phase, candidates, tuple(diagnostics))
 
 
@@ -349,6 +357,7 @@ class LlmPostProcessStage:
         model: str = "fixture-model",
         max_tokens_per_batch: int | None = None,
         max_items: int | None = None,
+        progress_callback: Callable[[int, int, str], None] | None = None,
     ) -> None:
         self.phase = phase.value
         self._phase = phase
@@ -357,6 +366,7 @@ class LlmPostProcessStage:
         self._game_profile = game_profile
         self._base_url = base_url
         self._model = model
+        self._progress = progress_callback
         self._batcher = (
             StableContentBatcher(TiktokenContentTokenCounter(model), max_tokens_per_batch, max_items=max_items)
             if max_tokens_per_batch is not None
@@ -364,10 +374,15 @@ class LlmPostProcessStage:
         )
 
     def __call__(self, candidates: tuple[PostProcessCandidate, ...]) -> PostProcessStageOutcome:
+        if self._progress is not None:
+            self._progress(0, len(candidates), "")
         if not candidates:
             return PostProcessStageOutcome(self.phase, candidates)
         if self._batcher is None:
-            return self._apply_batch(candidates)
+            outcome = self._apply_batch(candidates)
+            if self._progress is not None:
+                self._progress(len(candidates), len(candidates), "")
+            return outcome
         plan = self._batcher.plan(
             candidates,
             key=lambda candidate: candidate.entry_key,
@@ -375,10 +390,14 @@ class LlmPostProcessStage:
         )
         diagnostics: list[Diagnostic] = []
         updated: list[PostProcessCandidate] = []
+        completed = 0
         for batch in plan.batches:
             outcome = self._apply_batch(batch.items)
             updated.extend(outcome.candidates)
             diagnostics.extend(outcome.diagnostics)
+            completed += len(batch.items)
+            if self._progress is not None:
+                self._progress(completed, len(candidates), "")
         return PostProcessStageOutcome(self.phase, tuple(updated), tuple(diagnostics))
 
     def _apply_batch(self, candidates: tuple[PostProcessCandidate, ...]) -> PostProcessStageOutcome:
@@ -396,7 +415,7 @@ class LlmPostProcessStage:
         except PostProcessLlmError as exc:
             diagnostic = Diagnostic(
                 exc.code,
-                exc.safe_message,
+                SecretRedactor.default().redact_text(exc.safe_message),
                 category=ErrorCategory.EXTERNAL,
                 severity=DiagnosticSeverity.ERROR,
             )
@@ -509,6 +528,7 @@ class _EntryView:
         self.context = candidate.context
         self.stage = candidate.stage
         self.report_details = candidate.report_details
+        self.terminology_plugin_id = candidate.terminology_plugin_id
 
 
 def _is_sha256(value: str) -> bool:

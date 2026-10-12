@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -24,7 +25,7 @@ from transbridge.ui.foundation.components import (
     configure_dialog,
 )
 
-from .plan_view import OperationPlanViewState
+from .plan_view import EditableControl, OperationPlanViewState
 from .preflight_view import OperationPreflightResult, PreflightCheckStatus
 
 
@@ -42,12 +43,13 @@ class OperationPlanDialog(QDialog):
         self.setModal(False)
         self._plan = plan
         self._preflight: OperationPreflightResult | None = None
-        self._field_edits: dict[str, QLineEdit] = {}
+        self._field_edits: dict[str, QLineEdit | QCheckBox] = {}
         self.setWindowTitle(plan.title)
         configure_accessible_widget(self, name=plan.title, description="检查操作范围、预检结果并确认执行")
         self.setMinimumWidth(520)
         layout = QVBoxLayout(self)
         self._summary = QLabel()
+        self._summary.setTextFormat(Qt.TextFormat.PlainText)
         self._summary.setWordWrap(True)
         configure_accessible_widget(self._summary, name="操作计划摘要")
         ComponentStyle.apply_static(self._summary, ComponentKind.NOTIFICATION)
@@ -56,6 +58,7 @@ class OperationPlanDialog(QDialog):
         self._fields = QFormLayout(self._fields_group)
         layout.addWidget(self._fields_group)
         self._checks = QLabel("尚未预检")
+        self._checks.setTextFormat(Qt.TextFormat.PlainText)
         self._checks.setWordWrap(True)
         configure_accessible_widget(self._checks, name="操作预检状态", state_text="尚未预检")
         ComponentStyle.apply_static(self._checks, ComponentKind.NOTIFICATION)
@@ -108,7 +111,15 @@ class OperationPlanDialog(QDialog):
             self._fields.removeRow(0)
         self._field_edits.clear()
         for field in plan.editable_fields:
-            editor = QLineEdit(field.value)
+            if field.control is EditableControl.BOOLEAN:
+                editor = QCheckBox(
+                    "我确认覆盖已存在的输出文件（覆盖前备份）"
+                    if field.field_id == "overwrite_confirmed"
+                    else field.label
+                )
+                editor.setChecked(field.value.casefold() == "true")
+            else:
+                editor = QLineEdit(field.value)
             editor.setEnabled(field.enabled)
             editor.setAccessibleName(field.label)
             ComponentStyle.apply_static(editor, ComponentKind.INPUT)
@@ -127,6 +138,8 @@ class OperationPlanDialog(QDialog):
             PreflightCheckStatus.BLOCKED: "×",
         }
         for item in result.checks:
+            if item.status is PreflightCheckStatus.PASSED:
+                continue
             suffix = f"：{item.reason}" if item.reason else ""
             lines.append(f"{icons[item.status]} {item.label}{suffix}")
         self._checks.setText("\n".join(lines) or "✓ 预检通过")
@@ -145,7 +158,10 @@ class OperationPlanDialog(QDialog):
             editor.setEnabled(False)
 
     def edited_values(self) -> tuple[tuple[str, str], ...]:
-        return tuple((field_id, editor.text()) for field_id, editor in self._field_edits.items())
+        return tuple(
+            (field_id, ("true" if editor.isChecked() else "false") if isinstance(editor, QCheckBox) else editor.text())
+            for field_id, editor in self._field_edits.items()
+        )
 
     def _request_preflight(self) -> None:
         self.preflight_requested.emit(self._plan.session_id, self.edited_values())

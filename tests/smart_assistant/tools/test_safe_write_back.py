@@ -261,11 +261,11 @@ def test_authoritative_gui_write_card_never_falls_back_to_legacy_writers(project
     def unexpected(*_args, **_kwargs):
         pytest.fail("An authoritative source must not reach legacy writers or save dialogs")
 
-    monkeypatch.setattr(write_card_module, "PluginWriter", unexpected)
-    monkeypatch.setattr(write_card_module, "EETWriter", unexpected)
-    monkeypatch.setattr(write_card_module, "XTWriter", unexpected)
-    monkeypatch.setattr(write_card_module, "_WriteTargetDialog", unexpected)
-    monkeypatch.setattr(write_card_module, "_BatchConfirmDialog", unexpected)
+    monkeypatch.setattr("transbridge.writer.plugin_writer.PluginWriter", unexpected)
+    monkeypatch.setattr("transbridge.writer.eet_xml_writer.EETWriter", unexpected)
+    monkeypatch.setattr("transbridge.writer.xt_xml_writer.XTWriter", unexpected)
+    monkeypatch.setattr(write_card_module.QFileDialog, "getSaveFileName", unexpected)
+    monkeypatch.setattr(write_card_module.QFileDialog, "getExistingDirectory", unexpected)
     monkeypatch.setattr(
         write_card_module.QMessageBox, "warning", lambda _parent, title, message: warnings.append((title, message))
     )

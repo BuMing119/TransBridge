@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import QApplication, QLineEdit, QPushButton
 import pytest
 
 from tests.ui.operations.test_operation_plan_coordinator_async import _DeferredWorker
-from transbridge.application.contracts import RequestContext
+from transbridge.application.contracts import Diagnostic, OperationCounts, OperationResult, RequestContext
 from transbridge.application.tasks import CallbackThreadBackend, JobSpec, JobState, OwnerRef, TaskRuntime
 from transbridge.ui.operations.facade import OperationFeatureAdapter, OperationPlanFacade
 from transbridge.ui.operations.mappers import (
@@ -283,6 +283,7 @@ def sync_case(qapp):
         lambda _context: RequestContext("gui"),
         features,
         dialog_factories={OperationKind.DOWNLOAD: ParaTranzSyncDialog, OperationKind.UPLOAD: ParaTranzSyncDialog},
+        execution_result_reader=lambda _ref, _owner: case.result,
     )
 
     def worker_factory(fn):
@@ -301,6 +302,7 @@ def sync_case(qapp):
         dialog=None,
         submit_error=None,
         complete_on_submit=False,
+        result=OperationResult.completed({}, counts=OperationCounts(succeeded=1)),
     )
     yield case
     if case.dialog is not None:
@@ -431,3 +433,47 @@ def test_disabled_fields_remain_disabled_after_plan_refresh(dialog):
     assert not dialog._choose_project.isEnabled()
     assert not dialog._apply_deletions.isEnabled()
     assert all(not button.isEnabled() for button in dialog._strategy_buttons.values())
+
+
+@pytest.mark.parametrize("kind", [OperationKind.DOWNLOAD, OperationKind.UPLOAD])
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_partial_receipt_is_delivered_with_counts_and_never_shown_as_full_success(sync_case, qapp, kind, cancelled):
+    case = sync_case
+    case.result = OperationResult.partial(
+        {},
+        counts=OperationCounts(succeeded=2, failed=1, skipped=3, cancelled=int(cancelled)),
+        diagnostics=(Diagnostic("REMOTE_TIMEOUT", "部分条目连接超时"),),
+    )
+    begin = case.facade.begin_download if kind is OperationKind.DOWNLOAD else case.facade.begin_upload
+    case.dialog = subject = begin(SimpleNamespace())
+    qapp.processEvents()
+    case.workers[0].complete()
+    subject._confirm.click()
+    if cancelled:
+        case.tasks.cancel(case.submitted[0], case.owner)
+    case.queued[0]()
+    qapp.processEvents()
+
+    assert ("已取消" if cancelled else "部分完成") in subject._status.text()
+    assert "成功 2 · 失败 1 · 跳过 3" in subject._status.text()
+    assert "部分条目连接超时" in subject._status.text()
+    assert "予以保留" in subject._status.text()
+    assert "REMOTE_TIMEOUT" in subject._status.toolTip()
+    assert not subject._progress.isVisible()
+    assert subject._cancel.isEnabled() and subject._confirm.text() == "重新检查"
+    subject._confirm.click()
+    assert len(case.submitted) == 1
+
+
+def test_missing_receipt_is_unknown_instead_of_full_success(sync_case, qapp):
+    case = sync_case
+    case.result = None
+    case.dialog = subject = case.facade.begin_download(SimpleNamespace())
+    qapp.processEvents()
+    case.workers[0].complete()
+    subject._confirm.click()
+    case.queued[0]()
+    qapp.processEvents()
+    assert "结果待核验" in subject._status.text()
+    assert not subject._progress.isVisible()
+    assert subject._cancel.isEnabled()

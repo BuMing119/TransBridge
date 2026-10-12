@@ -105,7 +105,9 @@ class ChatWorker(AsyncWorker):
         except Exception as exc:
             outcome = "error"
             if not self._cancelled.is_set() and self.on_error:
-                self.on_error(str(exc))
+                from transbridge.application.security import diagnostic_exception_text
+
+                self.on_error(diagnostic_exception_text(exc))
         finally:
             if not received:
                 _usage_cb(fallback.finish(outcome="cancelled" if self._cancelled.is_set() else outcome))

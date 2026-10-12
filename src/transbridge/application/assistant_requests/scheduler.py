@@ -193,12 +193,17 @@ class RequestScheduler:
                 self.validate(admission)
             yield
 
-    def release(self, admission: TurnAdmission) -> bool:
-        with self._lock:
+    def release(self, admission: TurnAdmission, *, wait: bool = True) -> bool:
+        """Release authority; UI callers may defer when a commit owns the lease lock."""
+        if not self._lock.acquire(blocking=wait):
+            return False
+        try:
             if self._leases.get(admission.session_id) != admission:
                 return False
             del self._leases[admission.session_id]
             return True
+        finally:
+            self._lock.release()
 
     def close(self) -> None:
         with self._lock:

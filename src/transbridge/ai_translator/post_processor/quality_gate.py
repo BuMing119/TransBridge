@@ -21,6 +21,7 @@ import tomllib
 from typing import TYPE_CHECKING
 import warnings
 
+from transbridge.application.security.diagnostic_logging import client_diagnostic_redactor, diagnostic_exception_text
 from transbridge.application.translation.entry_alias import ai_entry_id, ai_entry_key
 from transbridge.config.language_profiles import load_language_profile
 from transbridge.config.paths import get_data_resource_dir
@@ -344,7 +345,7 @@ class QualityGateChecker(BaseChecker):
             # LLM调用失败，返回uncertain
             return QualityGateResult(
                 verdict=QualityVerdict.UNCERTAIN,
-                reason=f"检测失败: {e}",
+                reason=f"检测失败: {client_diagnostic_redactor(self._llm).redact_text(diagnostic_exception_text(e))}",
                 execution_failed=True,
                 issues=["质量检测出错，建议人工审核"],
             )
@@ -377,11 +378,12 @@ class QualityGateChecker(BaseChecker):
             return self._parse_batch_response(valid_entries, response)
         except Exception as e:
             # 批量检测失败，降级为逐个检测
+            safe_error = client_diagnostic_redactor(self._llm).redact_text(diagnostic_exception_text(e))
             issues = []
             for entry in valid_entries:
                 result = QualityGateResult(
                     verdict=QualityVerdict.UNCERTAIN,
-                    reason=f"批量检测失败: {e}",
+                    reason=f"批量检测失败: {safe_error}",
                     execution_failed=True,
                     issues=["质量检测出错，建议人工审核"],
                 )

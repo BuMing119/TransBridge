@@ -54,6 +54,34 @@ def test_events_drop_internal_details_and_use_source_label():
     assert source_label((SimpleNamespace(key="internal", label=r"D:\Mods\Remi"),), "internal") == "Remi"
 
 
+def test_global_stage_logs_remain_visible_without_exposing_internal_details():
+    assert concise_event("[-1] \n── 开始质量检查 ──") == "开始质量检查"
+    assert concise_event("[-1] 质量检查完成：检查 1371 条") == "质量检查完成：检查 1371 条"
+    assert concise_event("[-1] ── 第三轮完成: 12.00s ──") == "第三轮完成: 12.00s"
+    assert concise_event("[-1] ── 质量检查已跳过（用户设置）──") == "质量检查已跳过（用户设置）"
+    assert concise_event("[-1] ⏸ 后处理已暂停") == "后处理已暂停"
+    assert concise_event("[-1] \n总耗时: 10.00s") == "总耗时: 10.00s"
+    assert concise_event("[-1] 开始检查\nprivate detail") is None
+    assert concise_event("[-1] 开始检查 SECRET_INTERNAL_DETAIL") is None
+    assert concise_event(r"[-1] ── 开始检查 D:\private\input.txt ──") is None
+
+
+def test_task_progress_moves_from_translation_to_postprocess_and_finalization(make_task):
+    window, _, _ = make_task()
+    worker = window.run.worker
+    worker.progress.emit("first", "翻译", 1371, 1371, "第三轮 | 长文本")
+    worker.progress.emit("first", "proofread", 0, 1371, "开始校对")
+    assert window.run.rows["first"][0] == "校对"
+    assert window.run.progress[:2] == (0, 1371)
+    for phase, label in (("quality_gate", "质量检查"), ("refinement", "精修"), ("arbitration", "仲裁")):
+        worker.progress.emit("first", phase, 1, 3, "正在处理")
+        assert window.run.rows["first"][0] == label
+        assert window.run.progress[:2] == (1, 3)
+    worker.progress.emit("first", "finalize", 0, 1, "正在生成结果报告")
+    assert window.run.rows["first"][0] == "整理结果"
+    assert window.run.progress[:2] == (0, 1)
+
+
 def test_live_events_are_plain_text_and_pause_changes_are_visible(make_task):
     window, _, _ = make_task()
     worker = window.run.worker

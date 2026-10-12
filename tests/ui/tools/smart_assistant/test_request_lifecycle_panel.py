@@ -820,6 +820,29 @@ def test_restored_confirmation_keeps_wait_until_approval_and_preserves_unrelated
     assert environment.binding.admission is None
 
 
+def test_releasing_foreground_authority_does_not_wait_for_background_writer(environment, monkeypatch):
+    request = _seed_long_request(environment)
+    binding = environment.binding
+    selection = environment.service.scheduler.select_next_turn(
+        request.session_id, binding.view_id, (request,), automatic=False
+    )
+    binding.admission = selection.admission
+    binding._set_gate()
+    queued = []
+    monkeypatch.setattr(binding.background, "submit", lambda callback, *args, **kwargs: queued.append(callback))
+
+    binding.release(interrupt=False)
+
+    assert binding.admission is None and queued
+    next_turn = environment.service.scheduler.select_next_turn(
+        request.session_id, binding.view_id, (request,), automatic=False
+    )
+    assert next_turn is not None, "confirmation cannot reacquire admission while old release waits for disk work"
+    environment.service.scheduler.release(next_turn.admission)
+    for callback in queued:
+        callback()
+
+
 def test_approval_consumes_saved_confirmation_before_business_callback(environment, monkeypatch):
     from transbridge.ui.tools.smart_assistant.tool_card import ToolCard
 
@@ -854,6 +877,78 @@ def test_ignoring_confirmation_consumes_it_and_releases_lease_without_business_e
     current = _requests(environment)[0]
     assert current.pause_reasons == ("user_paused",)
     assert not current.items[0].waiting_reasons
+    assert not calls
+    assert environment.panel.chat._controller.state.value == "idle"
+
+
+@pytest.mark.parametrize("receipt_failure,approve", [(False, False), (True, False), (True, True)])
+def test_immediate_ignore_waits_for_busy_release_without_blocking_or_losing_intent(
+    environment, monkeypatch, receipt_failure, approve
+):
+    from transbridge.application.assistant_requests.models import RequestError
+    from transbridge.ui.tools.smart_assistant.tool_card import ToolCard
+
+    binding = environment.binding
+    scheduler = environment.service.scheduler
+    original_release = scheduler.release
+    held, proceed = Event(), Event()
+    holders, calls = [], []
+    messages = []
+    original_message = binding.facade.add_system_message
+
+    def message(text):
+        messages.append((text, QThread.currentThread()))
+        original_message(text)
+
+    def fail_receipt():
+        raise RequestError("ADMISSION_PERSIST_FAILED", "injected interrupted-step receipt save failure")
+
+    def release(admission, *, wait=True):
+        if not wait and not holders and binding.facade._controller.state.value == "awaiting":
+            if receipt_failure:
+                monkeypatch.setattr(binding.gate, "interrupt_steps", fail_receipt)
+
+            def hold_commit():
+                with scheduler.serialized(admission):
+                    held.set()
+                    assert proceed.wait(5)
+
+            worker = Thread(target=hold_commit)
+            holders.append(worker)
+            worker.start()
+            assert held.wait(2)
+        return original_release(admission, wait=wait)
+
+    monkeypatch.setattr(scheduler, "release", release)
+    monkeypatch.setattr(binding.facade, "add_system_message", message)
+    monkeypatch.setattr(environment.panel.chat._confirmation_view, "_tool_executed", lambda step: calls.append(step))
+    environment.client.tool_goal = "Inspect A"
+    environment.panel.chat.send_user_message("Inspect A")
+    try:
+        _until(lambda: held.is_set() and binding.admission is None)
+        card = next(w for w in environment.panel.chat._message_list._owned_widgets if isinstance(w, ToolCard))
+        request = _requests(environment)[0]
+        before = monotonic()
+        (card._exec_btn if approve else card._ignore_btn).click()
+        assert monotonic() - before < 0.5
+        assert request.request_id in environment.service.state(binding.context)["confirmations"]
+        assert not calls
+    finally:
+        proceed.set()
+        for worker in holders:
+            worker.join(3)
+    if receipt_failure:
+        _until(lambda: binding._user_stopped and not binding.confirmations._release_waiters)
+        assert request.request_id in environment.service.state(binding.context)["confirmations"]
+        diagnostics = [(text, thread) for text, thread in messages if "injected interrupted-step" in text]
+        assert diagnostics and all(thread is _APP.thread() for _, thread in diagnostics)
+        lease = scheduler.acquire_routing(binding.context.session_id, binding.view_id)
+        assert lease is not None
+        scheduler.release(lease)
+        assert not card._exec_btn.isEnabled() and not card._ignore_btn.isEnabled()
+    else:
+        _until(lambda: request.request_id not in environment.service.state(binding.context)["confirmations"])
+        assert _requests(environment)[0].pause_reasons == ("user_paused",)
     assert not calls
     assert environment.panel.chat._controller.state.value == "idle"
 

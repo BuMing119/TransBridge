@@ -75,12 +75,12 @@ class AiTaskRegistry(QObject):
                 return True
         return False
 
-    def open_history(self):
+    def open_history(self, *, run_id=None):
         if self.shutting_down:
             return
         from .task_history_dialog import TaskHistoryDialog
 
-        dialog = TaskHistoryDialog(self, theme_view=self.theme_view)
+        dialog = TaskHistoryDialog(self, theme_view=self.theme_view, run_id=run_id)
         self.history_windows.append(dialog)
         show_and_activate(dialog)
 

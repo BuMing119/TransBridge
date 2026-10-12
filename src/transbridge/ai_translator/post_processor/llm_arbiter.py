@@ -12,6 +12,7 @@ import tomllib
 from typing import TYPE_CHECKING, Literal
 import warnings
 
+from transbridge.application.security.diagnostic_logging import client_diagnostic_redactor, diagnostic_exception_text
 from transbridge.application.translation.entry_alias import ai_entry_id, ai_entry_key
 from transbridge.config.language_profiles import load_language_profile
 from transbridge.config.paths import get_data_resource_dir
@@ -335,7 +336,9 @@ class LLMArbiter:
             return self._parse_arbitration_response(ai_entry_id(ctx.entry), response)
         except Exception as e:
             # LLM调用失败，基于规则做保守判定
-            return self._fallback_decision(ctx, str(e))
+            return self._fallback_decision(
+                ctx, client_diagnostic_redactor(self._llm).redact_text(diagnostic_exception_text(e))
+            )
 
     def arbitrate_batch(
         self,
@@ -377,7 +380,9 @@ class LLMArbiter:
             except Exception as e:
                 # 批量失败，逐个使用fallback
                 for ctx in needs_llm:
-                    decisions[ai_entry_key(ctx.entry)] = self._fallback_decision(ctx, str(e))
+                    decisions[ai_entry_key(ctx.entry)] = self._fallback_decision(
+                        ctx, client_diagnostic_redactor(self._llm).redact_text(diagnostic_exception_text(e))
+                    )
 
         return decisions
 

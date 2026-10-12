@@ -35,6 +35,7 @@ class BatchDownloadResult:
     success_count: int = 0
     skipped_count: int = 0  # 未找到同名文件
     failed_count: int = 0
+    partial_count: int = 0
     merged_total: int = 0
     details: list[str] = field(default_factory=list)
     updated_collections: list[tuple[object, TranslationEntryCollection]] = field(default_factory=list)
@@ -462,7 +463,7 @@ class DownloadCard(OpCard):
                 files = api.list_files(project_id) or []
                 file_map = {f["name"]: f["id"] for f in files}
             except Exception as e:
-                raise RuntimeError(f"获取文件列表失败：{e}")
+                raise RuntimeError(f"获取文件列表失败：{e}") from e
 
             total = len(selected_slots)
             for i, slot in enumerate(selected_slots):
@@ -489,10 +490,20 @@ class DownloadCard(OpCard):
                         working_collection,
                         file_ids=file_ids,
                     )
-                    results.success_count += 1
                     results.merged_total += result.merged
-                    results.details.append(f"✓ {slot_name}: 合并 {result.merged} 条 ({file_names_str})")
-                    if authority.authoritative:
+                    if result.failed_files:
+                        if result.downloaded_files:
+                            results.partial_count += 1
+                            outcome = f"⚠ {slot_name}: 部分完成，已合并 {result.merged} 条"
+                        else:
+                            results.failed_count += 1
+                            outcome = f"✗ {slot_name}: 下载失败，未合并译文"
+                        failures = "; ".join(f"{f.file_name}: {f.message}" for f in result.failed_files)
+                        results.details.append(f"{outcome}；失败文件：{failures}")
+                    else:
+                        results.success_count += 1
+                        results.details.append(f"✓ {slot_name}: 合并 {result.merged} 条 ({file_names_str})")
+                    if authority.authoritative and result.merged:
                         results.updated_collections.append((slot, working_collection))
                 except Exception as e:
                     results.failed_count += 1
@@ -510,6 +521,7 @@ class DownloadCard(OpCard):
 
             header = (
                 f"成功：{result.success_count} 个\n"
+                f"部分完成：{result.partial_count} 个\n"
                 f"跳过：{result.skipped_count} 个\n"
                 f"失败：{result.failed_count} 个\n"
                 f"合并词条：{result.merged_total} 条"
@@ -558,13 +570,17 @@ class DownloadCard(OpCard):
 
         def _on_done(result):
             self._ctx.collection_changed.emit(self._ctx.collection)
-            QMessageBox.information(
-                self,
-                "下载合并完成",
+            summary = (
                 f"已合并：{result.merged} 条\n"
                 f"未匹配：{result.skipped_no_match} 条\n"
-                f"跳过（stage 不足）：{result.skipped_low_stage} 条",
+                f"跳过（stage 不足）：{result.skipped_low_stage} 条"
             )
+            if result.failed_files:
+                failures = "\n".join(f"{f.file_name}: {f.message}" for f in result.failed_files)
+                title = "下载部分完成" if result.downloaded_files else "下载失败"
+                QMessageBox.warning(self, title, f"{summary}\n失败文件：\n{failures}")
+            else:
+                QMessageBox.information(self, "下载合并完成", summary)
 
         self._run_worker(
             fn_factory=_download_factory,

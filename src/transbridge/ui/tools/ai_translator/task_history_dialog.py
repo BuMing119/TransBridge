@@ -28,7 +28,7 @@ STATE_LABELS = {
 
 
 class TaskHistoryDialog(QDialog):
-    def __init__(self, registry, *, theme_view=None):
+    def __init__(self, registry, *, theme_view=None, run_id=None):
         super().__init__()
         self.registry = registry
         directory = registry.directory_provider()
@@ -39,6 +39,10 @@ class TaskHistoryDialog(QDialog):
         self.worker = None
         self._records = ()
         self._recovery_records = {}
+        self._requested_run_id = run_id
+        self._auto_open_run_id = run_id
+        self._result_generation = 0
+        self._closed = False
         self.setWindowTitle("AI 任务记录")
         self.resize(1060, 540)
         layout = QVBoxLayout(self)
@@ -88,6 +92,7 @@ class TaskHistoryDialog(QDialog):
         if self.store is None:
             self.status.setText("请先打开项目")
             self._populate()
+            QTimer.singleShot(0, self._open_requested)
             return
         self.status.setText("正在读取任务记录")
 
@@ -110,7 +115,7 @@ class TaskHistoryDialog(QDialog):
 
     def _populate(self):
         selected = self.tasks.currentItem()
-        key = selected.data(0, Qt.ItemDataRole.UserRole) if selected else None
+        key = selected.data(0, Qt.ItemDataRole.UserRole) if selected else self._requested_run_id
         live = {
             run_id: win for run_id, win in self.registry.windows.items() if win.session.project_dir == self.project_dir
         }
@@ -171,8 +176,10 @@ class TaskHistoryDialog(QDialog):
             self.tasks.addTopLevelItem(row)
             if run_id == key:
                 self.tasks.setCurrentItem(row)
-        if self.tasks.currentItem() is None and self.tasks.topLevelItemCount():
+        if self.tasks.currentItem() is None and self.tasks.topLevelItemCount() and self._requested_run_id is None:
             self.tasks.setCurrentItem(self.tasks.topLevelItem(0))
+        if self._requested_run_id is not None and self.tasks.currentItem() is None:
+            self.status.setText("所选任务记录已不存在或不属于当前项目，请刷新或返回原项目。")
         self._update_recovery_buttons()
 
     def _selected_recovery(self, *, restart=False):
@@ -202,7 +209,7 @@ class TaskHistoryDialog(QDialog):
             self.registry.request_recovery(record, restart=restart)
 
     def open_selected(self):
-        if self.registry.shutting_down:
+        if self._closed or self.registry.shutting_down:
             return
         row = self.tasks.currentItem()
         if row is None or self.busy:
@@ -216,14 +223,23 @@ class TaskHistoryDialog(QDialog):
             self.status.setText("该任务尚无完整结果报告，可选择继续任务或重新开始。")
             return
         if self.store is not None:
-            self._dispatch(lambda: self.store.load(run_id), self._open_record)
+            generation = self._result_generation
+            self._dispatch(lambda: self.store.load(run_id), lambda record: self._open_record(record, generation))
 
-    def _open_record(self, record):
+    def _open_record(self, record, generation):
+        if generation != self._result_generation or self._closed or self.registry.shutting_down:
+            return
         from .task_result_dialog import TaskResultDialog
 
         dialog = TaskResultDialog(record, theme_view=self._theme_view)
         self._dialogs.append(dialog)
         show_and_activate(dialog)
+
+    def _open_requested(self):
+        run_id, self._auto_open_run_id = self._auto_open_run_id, None
+        row = self.tasks.currentItem()
+        if run_id is not None and row is not None and row.data(0, Qt.ItemDataRole.UserRole) == run_id:
+            self.open_selected()
 
     def _dispatch(self, action, completed):
         worker = ApiWorker(action, route_http_errors=False)
@@ -234,14 +250,20 @@ class TaskHistoryDialog(QDialog):
         def finished():
             self.worker = None
             worker.deleteLater()
+            if self._auto_open_run_id is not None:
+                QTimer.singleShot(0, self._open_requested)
 
         worker.finished.connect(finished)
         worker.start()
 
     def closeEvent(self, event):
+        self._closed = True
+        self._auto_open_run_id = None
+        self._result_generation += 1
         self.timer.stop()
         event.accept()
 
     def showEvent(self, event):
+        self._closed = False
         self.timer.start()
         super().showEvent(event)

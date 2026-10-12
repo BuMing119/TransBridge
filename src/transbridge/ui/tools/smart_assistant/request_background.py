@@ -9,13 +9,12 @@ class RequestBackground:
     def __init__(self, binding):
         self.binding = binding
 
-    def submit(self, work, received=None, *, context=None, failed=None, wake=False):
+    def submit(self, work, received=None, *, context=None, failed=None, wake=False, settled=None):
         binding = self.binding
         binding._accepting += 1
         future = binding._queue.submit(work)
 
-        def display():
-            binding._accepting -= 1
+        def deliver():
             try:
                 result = future.result()
             except Exception as exc:
@@ -33,6 +32,16 @@ class RequestBackground:
                     return
             if wake:
                 binding.wake()
+
+        def display():
+            binding._accepting -= 1
+            try:
+                deliver()
+            finally:
+                # Resource cleanup must survive stale-context and closed-view
+                # filtering. This callback must not dispatch UI actions.
+                if settled is not None:
+                    settled()
 
         def completed(_future):
             try:

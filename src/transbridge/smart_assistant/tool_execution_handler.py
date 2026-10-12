@@ -15,6 +15,7 @@ from transbridge.application.security.hitl import ConfirmationAuthority
 from transbridge.application.tools.contracts import ToolInvocation
 from transbridge.smart_assistant.reflexion.retry_executor import ToolRetryExecutor
 from transbridge.smart_assistant.reflexion.retry_handler import RetryHandler
+from transbridge.smart_assistant.step_execution import execute_retrying_step, reject_step
 from transbridge.smart_assistant.tools.base import ToolResult
 
 logger = logging.getLogger(__name__)
@@ -206,6 +207,7 @@ class ToolExecutionHandler:
                 error_category="permission",
                 error_code="CONFIRMATION_CHANNEL_UNAVAILABLE",
             )
+            result = reject_step(step, exec_ctx, result)
             self._handle_result(step, result, skip_react_continue=skip_react_continue, mode=mode)
             return False, middlewares
 
@@ -228,6 +230,7 @@ class ToolExecutionHandler:
                 error_category="permission",
                 error_code=code,
             )
+            result = reject_step(step, exec_ctx, result)
             self._handle_result(step, result, skip_react_continue=skip_react_continue, mode=mode)
             return False, middlewares
 
@@ -268,19 +271,12 @@ class ToolExecutionHandler:
         Returns:
             最终执行结果 (ToolResult)。
         """
-        from transbridge.smart_assistant.tools.base import execute_with_guardrails
-
-        retry_allowed = (
-            getattr(spec, "permission", "read") == "read"
-            and not getattr(spec, "require_confirmation", False)
-            and not getattr(spec, "is_long_running", False)
-            and step.get("retry", True) is not False
-        )
-        outcome = self._retry_executor.execute(
+        return execute_retrying_step(
+            spec,
             step,
-            lambda args: execute_with_guardrails(spec, args, exec_ctx, middlewares=middlewares),
-            retry_allowed=retry_allowed,
-            tool_schema=getattr(spec, "parameters", None),
+            exec_ctx,
+            middlewares,
+            self._retry_executor,
             cancelled=cancelled,
             on_retry=on_retry
             or (
@@ -289,7 +285,6 @@ class ToolExecutionHandler:
                 )
             ),
         )
-        return outcome.result
 
     def can_execute_detached(self, steps: list[dict]) -> bool:
         """Return whether all steps are safe to run away from the GUI thread."""
@@ -320,14 +315,22 @@ class ToolExecutionHandler:
         from .tool_registry import ToolRegistry
 
         completed: list[DetachedToolResult] = []
+        execution_context = self._build_execution_context()
         for original_step in steps:
             if cancelled is not None and cancelled():
+                if execution_context.assistant_gate is not None:
+                    execution_context.assistant_gate.interrupt_steps()
                 break
             step = deepcopy(original_step)
             spec = ToolRegistry.get(step.get("tool", ""))
             if spec is None or not self.can_execute_detached([step]):
                 completed.append(
-                    DetachedToolResult(step, ToolResult.fail(f"工具不支持后台执行: {step.get('tool', '?')}"))
+                    DetachedToolResult(
+                        step,
+                        reject_step(
+                            step, execution_context, ToolResult.fail(f"工具不支持后台执行: {step.get('tool', '?')}")
+                        ),
+                    )
                 )
                 continue
             retry_messages: list[str] = []
@@ -343,7 +346,7 @@ class ToolExecutionHandler:
                 spec,
                 step,
                 self._ensure_middlewares(),
-                self._build_execution_context(),
+                execution_context,
                 on_retry=report_retry,
                 cancelled=cancelled,
             )
@@ -377,6 +380,7 @@ class ToolExecutionHandler:
 
         if not spec or not spec.execute:
             result = ToolResult.fail(f"未知工具: {tool_name}")
+            result = reject_step(step, self._build_execution_context(), result)
             self._handle_result(step, result, skip_react_continue=skip_react_continue, mode=mode)
             return result
         if not getattr(spec, "available", True):
@@ -385,6 +389,7 @@ class ToolExecutionHandler:
                 error_category="config",
                 error_code="CAPABILITY_UNAVAILABLE",
             )
+            result = reject_step(step, self._build_execution_context(), result)
             self._handle_result(step, result, skip_react_continue=skip_react_continue, mode=mode)
             return result
 
@@ -446,7 +451,7 @@ class ToolExecutionHandler:
 
         observation = tr.to_structured_observation(tool_name)
         safe_message = str(observation.result.get("message", ""))
-        # UI display (simple status line) uses the same redacted projection.
+        # UI display (simple status line) uses the same typed business projection.
         self._on_system_message(
             f"[{'OK' if tr.success else 'FAIL'}] {tool_name}: {safe_message or ('完成' if tr.success else '失败')}"
         )
@@ -476,7 +481,7 @@ class ToolExecutionHandler:
             self._on_step_completed()
 
     def get_structured_observations(self) -> tuple:
-        """Return complete redacted results, independent from LLM display text."""
+        """Return complete business results, independent from LLM display text."""
 
         return tuple(self._structured_observations)
 

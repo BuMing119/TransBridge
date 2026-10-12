@@ -36,6 +36,8 @@ class ProofreadStage:
         refiner: object | None = None,
         refinement_batch_size: int = 5,
         checkpoint=None,
+        progress_callback: Callable[[int, int, str], None] | None = None,
+        event_callback: Callable[[str], None] | None = None,
     ) -> None:
         # Kept for callers that inspect the configured routing client.
         self._llm_client = llm_client
@@ -43,6 +45,8 @@ class ProofreadStage:
         self._terms_lock = threading.Lock()
         self._resolved_terms: dict[object, dict[str, str]] = {}
         self._default_max_workers = max_workers
+        self._progress_callback = progress_callback
+        self._event_callback = event_callback
         self._checkpoint = checkpoint
         self._checkpoint_session = None
         self._term_resolver = term_resolver or (lambda _: {})
@@ -76,7 +80,14 @@ class ProofreadStage:
         )
 
     def __call__(self, candidates: tuple[PostProcessCandidate, ...]) -> PostProcessStageOutcome:
-        return self.run(candidates, max_workers=self._default_max_workers)
+        if self._progress_callback is not None:
+            self._progress_callback(0, len(candidates), f"开始校对，共 {len(candidates)} 条")
+        return self.run(
+            candidates,
+            max_workers=self._default_max_workers,
+            progress_callback=self._progress_callback,
+            event_callback=self._event_callback,
+        )
 
     def cancel(self) -> None:
         self._cancelled.set()

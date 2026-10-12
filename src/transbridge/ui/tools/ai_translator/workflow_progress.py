@@ -5,6 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from threading import Lock
 
+from transbridge.application.translation.ai_execution_profile import normalize_postprocess_strategy
+from transbridge.application.translation.postprocess_progress import PHASE_LABELS
+
 _STAGE_LABELS = {
     "terms": "术语抽取",
     "translate": "翻译",
@@ -67,6 +70,29 @@ def stages_for_profile(
     if any(key not in {"terms", "translate"} for key, _label in stages):
         stages.append(("execute", _STAGE_LABELS["execute"]))
     return tuple(stages)
+
+
+def translation_tail_stages(config: object) -> tuple[tuple[str, str], ...]:
+    """Keep translation's own post-processing distinct from standalone polish."""
+    phases = ["commit_translation"]
+    if getattr(config, "enable_post_process", True):
+        if normalize_postprocess_strategy(getattr(config, "pp_strategy", "proofread")) == "proofread":
+            phases.append("proofread")
+        else:
+            phases.extend(
+                phase
+                for phase, setting, default in (
+                    ("consistency", "pp_enable_consistency_check", True),
+                    ("format", "pp_enable_format_validation", True),
+                    ("quality_gate", "pp_enable_quality_gate", True),
+                    ("refinement", "pp_enable_refinement", True),
+                    ("polish", "pp_enable_polish", False),
+                    ("arbitration", "pp_enable_arbitration", True),
+                )
+                if getattr(config, setting, default)
+            )
+    phases.append("finalize")
+    return tuple((f"translation_{phase}", PHASE_LABELS[phase]) for phase in phases)
 
 
 class WorkflowProgressTracker:

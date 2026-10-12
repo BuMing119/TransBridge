@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -173,6 +174,12 @@ def test_task_center_renders_and_routes_only_catalog_available_actions(qapp) -> 
     panel._history.setCurrentRow(0)
     assert not any(button.isEnabled() for button in (panel._pause, panel._resume, panel._cancel, panel._recover))
     assert all(button.isEnabled() for button in (panel._retry, panel._open_result, panel._open_log))
+    assert panel._reason.isHidden()
+    reason = "输出文件不存在，请重新执行任务。"
+    panel.render_history((replace(actions.history[0], reason_message=reason),))
+    panel._history.setCurrentRow(0)
+    assert panel._reason.text() == reason
+    assert not panel._reason.isHidden()
 
     panel._open_result.click()
     qapp.processEvents()

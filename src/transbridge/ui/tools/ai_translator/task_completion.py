@@ -22,18 +22,21 @@ class TaskCompletion(QObject):
     def applied(self, selected):
         run = self.run
         run.applying = False
-        if run.cancelled or run.shutting_down:
-            return
         if selected:
             run.entries.mark_applied(selected)
             run.logged.emit(f"已应用 {len(selected)} 条结果")
             run.translation_completed.emit()
+        run.runtime_binding.synchronize()
+        if run.cancelled or run.shutting_down:
+            run._finish_cancelled()
+            return
         if run.entries.failed_keys:
             run.state, run.status = "partial", "处理结束 · 有失败条目"
         else:
             run.session.finish()
             run.state, run.status = "completed", "处理结束"
             run.activity.finish(cancelled=False)
+            run.runtime_binding.synchronize()
             if run.worker is None:
                 run._close_client()
         run._record()

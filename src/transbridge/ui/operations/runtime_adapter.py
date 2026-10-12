@@ -14,6 +14,7 @@ from transbridge.application.tasks import (
     JobSpec,
     OwnerRef,
     TaskCancelled,
+    TaskCleanupFailed,
     TaskRuntime,
 )
 
@@ -105,6 +106,8 @@ class OperationTaskAdapter:
                 self._results[ref.run_id] = result
                 self._order.append(ref.run_id)
                 self._trim()
+            TaskCleanupFailed.raise_for_diagnostics(result.diagnostics)
+            self._runtime.update_progress(ref, owner, {"operation_outcome": result.outcome.value})
             if result.outcome is OperationOutcome.CANCELLED:
                 raise TaskCancelled("operation cancelled before formal side effect")
             if result.outcome is OperationOutcome.FAILED:
@@ -124,7 +127,7 @@ class OperationTaskAdapter:
             return None
         with self._lock:
             request = self._requests[ref.run_id]
-        objects = _object_results(result, request.object_refs)
+        objects = operation_object_results(result, request.object_refs)
         failed = tuple(item for item in objects if item.status is OperationObjectStatus.FAILED)
         retryable = (
             bool(failed) and request.failed_subset_factory is not None and all(item.retryable for item in failed)
@@ -178,8 +181,14 @@ class OperationTaskAdapter:
             self._owners.pop(run_id, None)
 
 
-def _object_results(result: OperationResult, refs: tuple[str, ...]) -> tuple[OperationObjectResult, ...]:
+def operation_object_results(result: OperationResult, refs: tuple[str, ...] = ()) -> tuple[OperationObjectResult, ...]:
+    """Read per-object receipts, including non-committing batch terminal states."""
     value = result.value
+    if value is None:
+        value = next(
+            (dict(item.details) for item in result.diagnostics if item.code == "WRITE_BATCH_RESULTS"),
+            None,
+        )
     if isinstance(value, dict) and isinstance(value.get("outcomes"), (list, tuple)):
         output = []
         for item in value["outcomes"]:

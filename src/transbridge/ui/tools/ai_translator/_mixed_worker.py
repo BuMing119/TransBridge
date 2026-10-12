@@ -14,7 +14,7 @@ from transbridge.application.translation.entry_alias import ai_entry_id, ai_entr
 
 from .workflow_log_store import WorkflowLogStore
 from .workflow_logging_client import WorkflowLoggingLLMClient
-from .workflow_progress import WorkflowProgressTracker, stages_for_profile
+from .workflow_progress import WorkflowProgressTracker, stages_for_profile, translation_tail_stages
 
 _logger = logging.getLogger(__name__)
 
@@ -108,6 +108,9 @@ class _MixedWorker(QThread):
         )
         if not polish_entries:
             progress_stages = tuple(stage for stage in progress_stages if stage[0] in {"terms", "translate"})
+        if any(stage == "translate" for stage, _label in progress_stages):
+            index = next(i for i, (stage, _label) in enumerate(progress_stages) if stage == "translate") + 1
+            progress_stages = progress_stages[:index] + translation_tail_stages(cfg) + progress_stages[index:]
         self._tracker = WorkflowProgressTracker(progress_stages, sequential=execution_order != "parallel")
 
     def cancel(self):
@@ -375,7 +378,7 @@ class _MixedWorker(QThread):
             self.log.emit(f"[翻译批次 {batch_index}] {line}")
 
     def _on_translate_stage_progress(self, stage: str, current: int, total: int, message: str) -> None:
-        """Project translation preparation, especially existing-term extraction."""
+        """Project translation preparation and its own post-processing stages."""
         self._log_store.write_line(f"stage_{stage}", f"{current}/{total} {message}")
         with self._stats_lock:
             if stage == "terms":
@@ -398,7 +401,7 @@ class _MixedWorker(QThread):
                 pending = None
                 new_terms = self._new_terms
         update = self._tracker.update(
-            stage,
+            stage if stage == "terms" else f"translation_{stage}",
             current,
             total,
             message,

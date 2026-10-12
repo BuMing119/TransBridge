@@ -79,9 +79,15 @@ class WorkbenchWidget(QWidget):
         context_card = QFrame(self)
         context_card.setAccessibleName("当前翻译上下文")
         ComponentStyle.apply_static(context_card, ComponentKind.CARD)
-        context_layout = QHBoxLayout(context_card)
+        context_layout = QVBoxLayout(context_card)
         context_layout.setContentsMargins(10, 6, 10, 6)
-        context_layout.setSpacing(12)
+        context_layout.setSpacing(6)
+        project_row = QHBoxLayout()
+        project_row.setSpacing(12)
+        content_row = QHBoxLayout()
+        content_row.setSpacing(12)
+        context_layout.addLayout(project_row)
+        context_layout.addLayout(content_row)
 
         # ── 项目与翻译内容上下文 ───────────────────────────
         self._project_bar = ProjectBar(self._ctx, theme_view=self._theme_view)
@@ -91,16 +97,16 @@ class WorkbenchWidget(QWidget):
         self._project_bar.snapshot_load_requested.connect(
             lambda: self.intent_requested.emit(IntentId.PROJECT_SNAPSHOT_LOAD.value)
         )
-        context_layout.addWidget(self._project_bar, 1)
+        project_row.addWidget(self._project_bar, 1)
         self._ai_history_button = QPushButton("AI 任务记录")
         self._ai_history_button.clicked.connect(self.ai_tasks.open_history)
-        context_layout.addWidget(self._ai_history_button)
+        project_row.addWidget(self._ai_history_button)
 
         self._remote_target = RemoteTargetView(self._ctx, self)
-        context_layout.addWidget(self._remote_target, 1)
 
         self._collection_bar = self._build_collection_bar()
-        context_layout.addWidget(self._collection_bar, 1)
+        content_row.addWidget(self._collection_bar, 3)
+        content_row.addWidget(self._remote_target, 2)
         layout.addWidget(context_card)
 
         self._terminology_profile_bar = None
@@ -160,6 +166,9 @@ class WorkbenchWidget(QWidget):
 
     def collect_labels(self) -> tuple[dict[str, set[str]], dict[str, dict]]:
         return self._step2.collect_labels()
+
+    def confirm_inline_edit_close(self) -> bool:
+        return self._step2.confirm_inline_edit_close()
 
     def selected_entry_ids(self) -> tuple[str, ...]:
         return self._step2.selected_entry_ids()

@@ -82,6 +82,10 @@ class TaskHistoryStore:
         record.update({key: value for key, value in metadata.items() if key not in {"sources", "record_file"}})
         return record
 
+    def contains(self, run_id: str) -> bool:
+        """Cheap discovery; payload validation remains in the asynchronous load."""
+        return (self._directory(run_id) / "metadata.json").is_file()
+
     def update_metadata(self, run_id: str, **fields: Any) -> None:
         allowed = {"state", "applied", "saved"}
         if set(fields) - allowed:
@@ -120,6 +124,7 @@ def restore_report_snapshot(data: dict) -> ReportSnapshot:
             accepted=item["accepted"],
             context=item.get("context", ""),
             report_details=tuple(item.get("report_details", {}).items()),
+            terminology_plugin_id=item.get("terminology_plugin_id"),
         )
 
     return ReportSnapshot(

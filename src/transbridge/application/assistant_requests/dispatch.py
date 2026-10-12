@@ -23,6 +23,9 @@ def record_dispatch_outcome(request, dispatch_id: str, *, status: str, sequence:
 
 
 def reconcile_dispatches(request):
+    from .step_execution import refresh_dispatch
+
+    request = replace(request, dispatches=tuple(refresh_dispatch(request, d) for d in request.dispatches))
     updated = request
     for dispatch in request.dispatches:
         if dispatch.status in ("running", "outcome_unknown"):

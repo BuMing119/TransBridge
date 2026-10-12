@@ -96,6 +96,113 @@ def test_project_directory_resolves_current_v2_project_without_variant_scope(tmp
     assert context.project_id == "old-project" and context.variant_id == "old-version"
 
 
+def test_task_center_opens_requested_history_result_instead_of_newest(qapp, tmp_path):
+    store = TaskHistoryStore(tmp_path / "ai-task-history")
+    record = _record("requested")
+    store.save(record)
+    other = _record("newest")
+    other["created_at"] = "2026-10-12T08:00:00+00:00"
+    store.save(other)
+    registry = SimpleNamespace(
+        directory_provider=lambda: tmp_path,
+        windows={},
+        shutting_down=False,
+        ctx=SimpleNamespace(active_version_identity=("project", "variant")),
+        is_recovery_active=lambda _: False,
+    )
+    dialog = TaskHistoryDialog(registry, run_id="requested")
+    try:
+        _wait(qapp, lambda: not dialog.busy and bool(dialog._dialogs))
+        assert dialog.tasks.currentItem().data(0, Qt.ItemDataRole.UserRole) == "requested"
+        assert len(dialog._dialogs) == 1
+    finally:
+        _wait(qapp, lambda: not dialog.busy)
+        for child in dialog._dialogs:
+            child.close()
+        dialog.close()
+
+
+def test_task_center_missing_history_does_not_open_another_tasks_result(qapp, tmp_path):
+    TaskHistoryStore(tmp_path / "ai-task-history").save(_record("other"))
+    registry = SimpleNamespace(
+        directory_provider=lambda: tmp_path,
+        windows={},
+        shutting_down=False,
+        ctx=SimpleNamespace(active_version_identity=("project", "variant")),
+        is_recovery_active=lambda _: False,
+    )
+    dialog = TaskHistoryDialog(registry, run_id="missing")
+    try:
+        _wait(qapp, lambda: not dialog.busy)
+        qapp.processEvents()
+        assert dialog.tasks.currentItem() is None
+        assert dialog._dialogs == []
+        assert "不存在" in dialog.status.text()
+    finally:
+        dialog.close()
+
+
+@pytest.mark.parametrize("phase", ["list", "report"])
+@pytest.mark.parametrize("reopen_before_read_finishes", [False, True])
+def test_close_invalidates_pending_history_result_open(qapp, tmp_path, monkeypatch, phase, reopen_before_read_finishes):
+    TaskHistoryStore(tmp_path / "ai-task-history").save(_record("requested"))
+    started, release = threading.Event(), threading.Event()
+    list_records, load = TaskHistoryStore.list_records, TaskHistoryStore.load
+    loads = []
+
+    def list_with_barrier(store):
+        if phase == "list":
+            started.set()
+            assert release.wait(3)
+        return list_records(store)
+
+    def load_with_barrier(store, run_id):
+        loads.append(run_id)
+        if phase == "report":
+            started.set()
+            assert release.wait(3)
+        return load(store, run_id)
+
+    monkeypatch.setattr(TaskHistoryStore, "list_records", list_with_barrier)
+    monkeypatch.setattr(TaskHistoryStore, "load", load_with_barrier)
+    registry = SimpleNamespace(
+        directory_provider=lambda: tmp_path,
+        windows={},
+        shutting_down=False,
+        ctx=SimpleNamespace(active_version_identity=("project", "variant")),
+        is_recovery_active=lambda _: False,
+    )
+    dialog = TaskHistoryDialog(registry, run_id="requested")
+    dialog.show()
+    try:
+        _wait(qapp, started.is_set)
+        assert dialog.busy
+        assert dialog.close()
+        if reopen_before_read_finishes:
+            dialog.show()
+        release.set()
+        _wait(qapp, lambda: not dialog.busy)
+        qapp.processEvents()
+        assert not dialog._dialogs
+        assert loads == ([] if phase == "list" else ["requested"])
+        assert dialog.tasks.currentItem().data(0, Qt.ItemDataRole.UserRole) == "requested"
+
+        # Reopening a window does not revive the old request, but a fresh
+        # explicit click must still open the retained result normally.
+        dialog.show()
+        qapp.processEvents()
+        assert not dialog._dialogs
+        dialog.open_selected()
+        _wait(qapp, lambda: not dialog.busy and len(dialog._dialogs) == 1)
+        assert dialog._dialogs[0].record["run_id"] == "requested"
+    finally:
+        release.set()
+        _wait(qapp, lambda: not dialog.busy)
+        for child in dialog._dialogs:
+            child.close()
+        dialog.close()
+
+
 def test_background_record_writer_freezes_translation_failure_reasons(qapp, tmp_path):
     from transbridge.ai_translator.translator import TranslationResult
     from transbridge.converter.translation_entry import TranslationEntry

@@ -12,6 +12,7 @@ from ._postprocess_tool_runtime import (
     resolve_postprocess_request,
 )
 from .base import ToolResult, require_runtime_context
+from .diagnostics import technical_error
 from .task_manager import TaskManager
 from .task_runtime_bridge import task_metadata
 
@@ -135,7 +136,9 @@ class ProofreaderController:
                 from .tool_translator import _rollback_run_entry_states
 
                 rollback_error = _rollback_run_entry_states(ctx, collection, run_entry_states)
-                message = str(exc) if rollback_error is None else f"{exc}；回滚失败：{rollback_error}"
+                message = technical_error(exc)
+                if rollback_error is not None:
+                    message += f"；回滚失败：{technical_error(rollback_error)}"
                 tm.set_status(task_id, "failed")
                 tm.update_progress(task_id, {"error": message})
                 tm.notify_failed(task_id, message)

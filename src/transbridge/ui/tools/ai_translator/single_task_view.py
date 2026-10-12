@@ -77,9 +77,6 @@ def build_single_task_view(
     _build_task_tabs(view, parent, callbacks, body, profiles)
     root.addLayout(body, 1)
     _build_footer(view, parent, callbacks, root)
-    view.recovery_hint = QLabel("开始新任务不会复用旧任务结果；中断的校对请从 AI 任务记录中选择继续。", parent)
-    view.recovery_hint.setWordWrap(True)
-    root.addWidget(view.recovery_hint)
     _connect_task_signals(view, callbacks)
 
 
@@ -360,7 +357,9 @@ def _build_footer(view: object, parent: QWidget, callbacks: object, root: QVBoxL
     configure_task_footer(footer)
     actions = QHBoxLayout(footer)
     actions.setContentsMargins(8, 12, 0, 0)
-    view._history_btn = QPushButton("历史报告", footer)
+    view._history_btn = QPushButton("任务记录", footer)
+    view._history_btn.setToolTip("查看报告或继续未完成的校对。")
+    view._history_btn.setAccessibleDescription(view._history_btn.toolTip())
     configure_task_button(view._history_btn)
     view._history_btn.clicked.connect(callbacks.on_open_history)
     actions.addWidget(view._history_btn)

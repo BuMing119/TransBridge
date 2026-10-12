@@ -14,7 +14,7 @@ from transbridge.application.contracts import (
     OperationResult,
     operation_result_from_tool_result,
 )
-from transbridge.application.security import SecretRedactor
+from transbridge.application.security import project_business_data
 from transbridge.bootstrap.entrypoints import EntrypointBinding, EntrypointOperations
 
 from ..tool_registry import ToolRegistry
@@ -148,7 +148,7 @@ class MCPAdapter:
 
     @staticmethod
     def _operation_payload(result: OperationResult[Any]) -> dict[str, Any]:
-        structured = SecretRedactor.default().redact(result.to_dict())
+        structured = project_business_data(result.to_dict())
         return {
             "content": [
                 {

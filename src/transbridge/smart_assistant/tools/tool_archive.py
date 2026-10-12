@@ -6,6 +6,7 @@ FR16.1-16.3 的 Agent 工具。纯文件操作，不依赖 collection。
 from __future__ import annotations
 
 from .base import ToolResult
+from .diagnostics import technical_error
 
 # ── 参数 schema ────────────────────────────────────────────────
 
@@ -57,7 +58,7 @@ def _tool_extract_archive(args: dict, ctx) -> ToolResult:
             data={**result, "undo_limitation": "解包生成目录尚未纳入本轮自动撤销"},
         )
     except Exception as exc:
-        return ToolResult.fail(f"解包失败: {exc}", error_category="internal")
+        return ToolResult.fail(f"解包失败: {technical_error(exc)}", error_category="internal")
 
 
 def _tool_pack_archive(args: dict, ctx) -> ToolResult:
@@ -74,7 +75,7 @@ def _tool_pack_archive(args: dict, ctx) -> ToolResult:
         )
         return ToolResult.ok(f"已打包为 {out}", data={"archive_path": out})
     except Exception as exc:
-        return ToolResult.fail(f"打包失败: {exc}", error_category="internal")
+        return ToolResult.fail(f"打包失败: {technical_error(exc)}", error_category="internal")
 
 
 def _tool_diff_directories(args: dict, ctx) -> ToolResult:
@@ -90,7 +91,7 @@ def _tool_diff_directories(args: dict, ctx) -> ToolResult:
             data=data,
         )
     except Exception as exc:
-        return ToolResult.fail(f"diff 失败: {exc}", error_category="internal")
+        return ToolResult.fail(f"diff 失败: {technical_error(exc)}", error_category="internal")
 
 
 def _tool_filter_files(args: dict, ctx) -> ToolResult:
@@ -104,7 +105,7 @@ def _tool_filter_files(args: dict, ctx) -> ToolResult:
             data={"kept": kept, "stripped": stripped},
         )
     except Exception as exc:
-        return ToolResult.fail(f"过滤失败: {exc}", error_category="internal")
+        return ToolResult.fail(f"过滤失败: {technical_error(exc)}", error_category="internal")
 
 
 # ── 注册 ───────────────────────────────────────────────────────

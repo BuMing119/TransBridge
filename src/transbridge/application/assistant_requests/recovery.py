@@ -3,8 +3,9 @@
 from dataclasses import replace
 
 from .admission import record_effect_outcome
+from .dispatch import reconcile_dispatches
 from .models import EffectStatus, ItemStatus, UserRequest
-from .reducer import converge
+from .step_execution import recover_steps
 
 
 def recover_request(
@@ -56,10 +57,16 @@ def recover_request(
         for i in updated.items
     )
     dispatches = tuple(
-        replace(d, status="outcome_unknown") if d.status == "running" and d.job_id not in live_job_ids else d
+        recover_steps(updated, d, live_job_ids)
+        if d.step_specs and not d.job_id
+        else replace(d, status="outcome_unknown")
+        if d.status == "running" and d.job_id not in live_job_ids
+        else d
         for d in updated.dispatches
     )
-    return converge(replace(updated, items=items, dispatches=dispatches, lease_epoch=updated.lease_epoch + 1))
+    return reconcile_dispatches(
+        replace(updated, items=items, dispatches=dispatches, lease_epoch=updated.lease_epoch + 1)
+    )
 
 
 def request_recovery_preflight(service):

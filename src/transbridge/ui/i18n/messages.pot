@@ -98,7 +98,7 @@ msgid "按原文或译文搜索所有已保存的本地翻译与术语"
 msgstr ""
 
 #: ui/shell/menu_builder.py
-msgid "检查翻译问题"
+msgid "查看有疑问词条"
 msgstr ""
 
 #: ui/shell/menu_builder.py

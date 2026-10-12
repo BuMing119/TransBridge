@@ -48,6 +48,7 @@ class ShellIntentComposition:
         self._guidance: GuidanceBinding | None = None
         self._task_dock: QDockWidget | None = None
         self._task_center: TaskCenterController | None = None
+        self._task_navigation = None
         self._task_overlay_host_geometry: QRect | None = None
         self._drop_binding: SafeDropBinding | None = None
         self._drop_review: DropReviewDialog | None = None
@@ -96,6 +97,11 @@ class ShellIntentComposition:
 
     def start(self) -> None:
         self._host.workbench.intent_requested.connect(self.dispatch)
+        runtime = self._host.app_runtime
+        if runtime is not None and "task_history_navigators" in runtime.use_cases.names():
+            from .task_navigation import DesktopTaskNavigation
+
+            self._task_navigation = DesktopTaskNavigation(self._host, self.dispatch)
         model = CommandPaletteModel(
             self.router.all_availability,
             dynamic_source=self._dynamic_candidates,
@@ -149,6 +155,8 @@ class ShellIntentComposition:
             self._guidance.close()
         if self._task_center is not None:
             self._task_center.close()
+        if self._task_navigation is not None:
+            self._task_navigation.close()
         if self._task_dock is not None:
             self._task_dock.close()
             self._task_dock.deleteLater()
@@ -246,7 +254,7 @@ class ShellIntentComposition:
         register(IntentId.SETTINGS_ACCOUNT, _call(host.tool_windows.show_user), availability=self._has_current_user)
         register(IntentId.SETTINGS_MESSAGES, _call(host.tool_windows.show_mails), availability=self._has_current_user)
         register(IntentId.TASK_OPEN_ACTIVITY, _call(self._show_task_center), availability=self._has_task_runtime)
-        register(IntentId.TASK_RETRY, _call(self._show_task_center), availability=self._retry_from_task_center)
+        register(IntentId.TASK_RETRY, _call(self._show_task_center), availability=self._has_task_runtime)
         register(IntentId.HELP_CONTEXT, _call(self._show_context_help))
         register(IntentId.HELP_ABOUT, _call(host.show_about))
         register(IntentId.APP_EXIT, _call(host.close))
@@ -297,7 +305,10 @@ class ShellIntentComposition:
         return self._host.tool_windows.open_fomod()
 
     def _review(self, _payload: Mapping[str, str]) -> None:
-        self._host.context.set_filter(stage=[STAGE_QUESTIONABLE])
+        preview = self._host.workbench.preview
+        state = preview.get_filter_state()
+        state["stage"] = [STAGE_QUESTIONABLE]
+        preview.apply_filter_state(state)
 
     def _manage_content(self, payload: Mapping[str, str]) -> None:
         content_id = payload.get("content_id")
@@ -348,10 +359,6 @@ class ShellIntentComposition:
     def _has_task_runtime(self) -> tuple[bool, str | None]:
         enabled = self._host.app_runtime is not None and self._host.runtime_context is not None
         return enabled, None if enabled else "当前入口未连接任务运行时"
-
-    @staticmethod
-    def _retry_from_task_center() -> tuple[bool, str | None]:
-        return False, "请在任务活动中选择明确支持重试的失败任务"
 
     def _dynamic_candidates(self) -> tuple[DynamicCommandCandidate, ...]:
         output: list[DynamicCommandCandidate] = []
@@ -447,6 +454,9 @@ class ShellIntentComposition:
             self._task_dock = dock
             self._task_center = controller
             controller.navigation_requested.connect(self._dispatch_task_navigation)
+            if getattr(self, "_task_navigation", None) is not None:
+                panel.set_feature_recovery_available(True)
+                panel.feature_recovery_requested.connect(self._host.workbench.ai_tasks.open_history)
             controller.start()
         else:
             self._task_center.refresh_catalogs()
@@ -463,8 +473,11 @@ class ShellIntentComposition:
 
     def _dispatch_task_navigation(self, intent) -> None:
         try:
+            navigation = getattr(self, "_task_navigation", None)
+            if navigation is not None and navigation.dispatch(intent):
+                return
             self.dispatch(intent.target, dict(intent.parameters))
-        except (KeyError, TypeError, ValueError) as exc:
+        except (KeyError, TypeError, ValueError, RuntimeError) as exc:
             self._host.show_message(f"任务结果入口当前不可用：{exc}")
 
     def _on_drop_resolution(self, resolution) -> None:

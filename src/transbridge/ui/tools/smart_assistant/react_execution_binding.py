@@ -66,9 +66,9 @@ class ReactExecutionBinding:
         try:
             completed = future.result()
         except Exception as exc:  # noqa: BLE001 - preserve UI loop on worker failure
-            from transbridge.application.security.redaction import SecretRedactor
+            from transbridge.application.security import diagnostic_exception_text
 
-            safe_error = SecretRedactor.default().redact_text(str(exc))
+            safe_error = diagnostic_exception_text(exc)
             logger.error("ReAct tool worker failed (%s): %s", type(exc).__name__, safe_error)
             self._bridge.requested.emit(lambda g=generation: self._finish_failed(g))
             return

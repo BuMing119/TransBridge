@@ -44,9 +44,10 @@ class HistoryView(QWidget):
 
     def set_status(self, message: str) -> None:
         self.status.setText(message)
+        self.status.setVisible(bool(message))
 
     def _sync_status(self, *_args) -> None:
-        self.status.setText("只加载当前可见页" if self.model.rowCount() else "尚无已发布版本。")
+        self.set_status("" if self.model.rowCount() else "尚无已发布版本。")
 
     def _emit_selected(self, signal) -> None:
         index = self.table.currentIndex()

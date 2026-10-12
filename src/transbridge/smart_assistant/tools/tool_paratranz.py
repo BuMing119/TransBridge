@@ -26,6 +26,7 @@ from transbridge.application.tasks import TaskCancelled
 from transbridge.paratranz.sync_snapshot import ParaTranzRemoteSnapshotAdapter
 
 from .base import ToolResult, require_collection
+from .diagnostics import technical_error
 
 logger = logging.getLogger(__name__)
 
@@ -210,7 +211,7 @@ def _tool_list_projects(args: dict, ctx) -> ToolResult:
         raise
     except Exception as exc:
         logger.error("获取项目列表失败")
-        return ToolResult.fail(f"获取项目列表失败: {exc}")
+        return ToolResult.fail(f"获取项目列表失败: {technical_error(exc)}")
 
 
 @_close_paratranz_clients
@@ -235,7 +236,7 @@ def _tool_get_project_info(args: dict, ctx) -> ToolResult:
         raise
     except Exception as exc:
         logger.error("获取项目信息失败")
-        return ToolResult.fail(f"获取项目信息失败: {exc}")
+        return ToolResult.fail(f"获取项目信息失败: {technical_error(exc)}")
 
 
 @_close_paratranz_clients
@@ -281,7 +282,7 @@ def _tool_compare_with_remote(args: dict, ctx, collection) -> ToolResult:
         raise
     except Exception as exc:
         logger.error("对比远程条目失败")
-        return ToolResult.fail(f"对比失败: {exc}")
+        return ToolResult.fail(f"对比失败: {technical_error(exc)}")
 
 
 @_close_paratranz_clients
@@ -330,7 +331,7 @@ def _tool_plan_sync(args: dict, ctx, collection) -> ToolResult:
         raise
     except (TypeError, ValueError) as exc:
         return ToolResult.fail(
-            f"同步计划参数无效: {exc}",
+            f"同步计划参数无效: {technical_error(exc)}",
             error_category="input",
             error_code="SYNC_PLAN_INPUT_INVALID",
         )
@@ -365,7 +366,7 @@ def _tool_upload_entries(args: dict, ctx, collection) -> ToolResult:
         raise
     except Exception as exc:
         logger.exception("上传条目失败")
-        return ToolResult.fail(f"上传失败: {exc}")
+        return ToolResult.fail(f"上传失败: {technical_error(exc)}")
 
 
 @_close_paratranz_clients
@@ -422,7 +423,7 @@ def _tool_download_entries(args: dict, ctx) -> ToolResult:
         raise
     except Exception as exc:
         logger.error("下载条目失败")
-        return ToolResult.fail(f"下载失败: {exc}")
+        return ToolResult.fail(f"下载失败: {technical_error(exc)}")
 
 
 @_close_paratranz_clients
@@ -457,7 +458,7 @@ def _tool_export_artifact(args: dict, ctx) -> ToolResult:
         raise
     except Exception as exc:
         logger.error("导出工件失败")
-        return ToolResult.fail(f"导出失败: {exc}")
+        return ToolResult.fail(f"导出失败: {technical_error(exc)}")
 
 
 @_close_paratranz_clients
@@ -476,7 +477,7 @@ def _tool_get_upload_history(args: dict, ctx) -> ToolResult:
         raise
     except Exception as exc:
         logger.error("获取上传历史失败")
-        return ToolResult.fail(f"获取历史失败: {exc}")
+        return ToolResult.fail(f"获取历史失败: {technical_error(exc)}")
 
 
 # ── Story 15: 项目查询与切换 ───────────────────────────────────
@@ -500,7 +501,7 @@ def _tool_get_paratranz_project(args: dict, ctx) -> ToolResult:
         raise
     except Exception as exc:
         logger.error("获取ParaTranz项目失败")
-        return ToolResult.fail(f"获取项目信息失败: {exc}")
+        return ToolResult.fail(f"获取项目信息失败: {technical_error(exc)}")
 
 
 @_close_paratranz_clients
@@ -538,7 +539,7 @@ def _tool_switch_paratranz_project(args: dict, ctx) -> ToolResult:
         raise
     except Exception as exc:
         logger.error("切换ParaTranz项目失败")
-        return ToolResult.fail(f"切换项目失败: {exc}")
+        return ToolResult.fail(f"切换项目失败: {technical_error(exc)}")
 
 
 # ── 参数 Schema ────────────────────────────────────────────────

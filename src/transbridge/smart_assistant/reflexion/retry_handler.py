@@ -7,7 +7,12 @@ import logging
 import re
 from typing import Any
 
-from transbridge.application.security.redaction import SecretRedactor
+from transbridge.application.security import (
+    SecretRedactor,
+    SecretValue,
+    diagnostic_exception_text,
+    project_business_data,
+)
 from transbridge.smart_assistant.tools.base import ToolResult
 
 logger = logging.getLogger(__name__)
@@ -46,44 +51,26 @@ class RetryHandler:
         self._llm = llm_client
         self._llm_client_provider = llm_client_provider
 
-    _SENSITIVE_KEYS = {
-        "access_token",
-        "api_key",
-        "apikey",
-        "auth",
-        "authorization",
-        "bearer_token",
-        "credential",
-        "password",
-        "refresh_token",
-        "secret",
-        "token",
-    }
-
     @classmethod
-    def _sanitize_args(cls, args):
-        """Redact sensitive values before sending to LLM."""
+    def _sanitize_args(cls, args, schema=None):
+        """Project declared inputs, hiding only explicitly identified credentials."""
+        if cls._is_credential(args, schema):
+            return SecretRedactor.REDACTED
         if isinstance(args, dict):
-            return {
-                key: "[REDACTED]" if cls._is_sensitive_key(str(key)) else cls._sanitize_args(value)
-                for key, value in args.items()
-            }
-        if isinstance(args, list):
-            return [cls._sanitize_args(value) for value in args]
-        if isinstance(args, tuple):
-            return tuple(cls._sanitize_args(value) for value in args)
-        return args
+            projected = {}
+            for key, value in args.items():
+                allowed, child_schema = cls._schema_property(schema, str(key))
+                if allowed:
+                    projected[key] = cls._sanitize_args(value, child_schema)
+            return projected
+        if isinstance(args, (list, tuple)):
+            item_schema = schema.get("items") if isinstance(schema, Mapping) else None
+            return [cls._sanitize_args(value, item_schema) for value in args]
+        return project_business_data(args)
 
-    @classmethod
-    def _is_sensitive_key(cls, key: str) -> bool:
-        normalized = key.strip().lower().replace("-", "_")
-        return normalized in cls._SENSITIVE_KEYS or normalized.endswith((
-            "_api_key",
-            "_credential",
-            "_password",
-            "_secret",
-            "_token",
-        ))
+    @staticmethod
+    def _is_credential(value, schema) -> bool:
+        return isinstance(value, SecretValue) or (isinstance(schema, Mapping) and schema.get("writeOnly") is True)
 
     def should_retry(
         self,
@@ -126,11 +113,10 @@ class RetryHandler:
             return None
         safe_step = deepcopy(step)
         original_args = deepcopy(safe_step.get("args", {}))
-        redactor = SecretRedactor.default()
         failure_payload = failure.to_dict() if isinstance(failure, ToolResult) else {"message": str(failure)}
-        safe_failure = redactor.redact(failure_payload)
-        safe_args = redactor.redact(self._sanitize_args(original_args))
-        safe_schema = redactor.redact(self._sanitize_args(tool_schema or {}))
+        safe_failure = project_business_data(failure_payload)
+        safe_args = self._sanitize_args(original_args, tool_schema)
+        safe_schema = project_business_data(tool_schema or {})
         prompt = (
             f"Tool execution failed (attempt {attempt + 1}/{self.MAX_RETRIES}):\n"
             f"Tool: {safe_step.get('tool', '?')}\n"
@@ -155,7 +141,7 @@ class RetryHandler:
                     raise
                 parsed = json.loads(response[start:end])
         except Exception as exc:
-            safe_error = SecretRedactor.default().redact_text(str(exc))
+            safe_error = diagnostic_exception_text(exc)
             logger.warning("RetryHandler LLM 响应解析失败: %s", safe_error)
             return None
 
@@ -179,22 +165,30 @@ class RetryHandler:
     @classmethod
     def _restore_sensitive_values(cls, original: Any, adjusted: Any, schema: Any = None) -> Any:
         """Preserve only schema-authorized credentials and reject model-created secrets."""
-        if not isinstance(original, dict) or not isinstance(adjusted, dict):
-            return adjusted
-        restored = deepcopy(adjusted)
-        for key in tuple(restored):
-            if key not in original and cls._is_sensitive_key(str(key)):
-                restored.pop(key)
-        for key, value in original.items():
-            allowed, child_schema = cls._schema_property(schema, str(key))
-            if cls._is_sensitive_key(str(key)):
-                if allowed:
-                    restored[key] = deepcopy(value)
-                else:
-                    restored.pop(key, None)
-            elif key in restored and allowed:
-                restored[key] = cls._restore_sensitive_values(value, restored[key], child_schema)
-        return restored
+        if cls._is_credential(original, schema):
+            return deepcopy(original)
+        if isinstance(adjusted, dict):
+            baseline = original if isinstance(original, dict) else {}
+            restored = {}
+            for key in baseline.keys() | adjusted.keys():
+                allowed, child_schema = cls._schema_property(schema, str(key))
+                if not allowed:
+                    continue
+                value = baseline.get(key)
+                if cls._is_credential(value, child_schema):
+                    if key in baseline:
+                        restored[key] = deepcopy(value)
+                elif key in adjusted:
+                    restored[key] = cls._restore_sensitive_values(value, adjusted[key], child_schema)
+            return restored
+        if isinstance(adjusted, list):
+            baseline = original if isinstance(original, (list, tuple)) else ()
+            item_schema = schema.get("items") if isinstance(schema, Mapping) else None
+            return [
+                cls._restore_sensitive_values(baseline[i] if i < len(baseline) else None, value, item_schema)
+                for i, value in enumerate(adjusted)
+            ]
+        return deepcopy(adjusted)
 
     @staticmethod
     def _schema_property(schema: Any, key: str) -> tuple[bool, Any]:
@@ -220,6 +214,6 @@ class RetryHandler:
         try:
             return self._llm_client_provider()
         except Exception as exc:
-            safe_error = SecretRedactor.default().redact_text(str(exc))
+            safe_error = diagnostic_exception_text(exc)
             logger.warning("RetryHandler LLM client 获取失败: %s", safe_error)
             return None

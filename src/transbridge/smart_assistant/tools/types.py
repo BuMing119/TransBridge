@@ -47,19 +47,18 @@ class ToolResult:
         return self.to_structured_observation(tool_name, max_chars).display_summary
 
     def to_structured_observation(self, tool_name: str, max_chars: int = 2000):
-        """Keep the complete redacted result independent from display truncation."""
-        from transbridge.application.security.redaction import SecretRedactor
+        """Keep the complete business result independent from display truncation."""
+        from transbridge.application.security import project_business_data
         from transbridge.application.tools.contracts import StructuredObservation
 
-        redactor = SecretRedactor.default()
-        redacted_fields = {
-            field_name: redactor.redact(getattr(self, field_name)) for field_name in self.__dataclass_fields__
+        projected_fields = {
+            field_name: project_business_data(getattr(self, field_name)) for field_name in self.__dataclass_fields__
         }
-        redacted = replace(self, **redacted_fields)
+        projected = replace(self, **projected_fields)
         return StructuredObservation(
             tool_name=tool_name,
-            result=redacted._to_dict_unredacted(),
-            display_summary=redacted._to_observation_unredacted(tool_name, max_chars),
+            result=projected._to_dict_unredacted(),
+            display_summary=projected._to_observation_unredacted(tool_name, max_chars),
         )
 
     def _to_observation_unredacted(self, tool_name: str, max_chars: int) -> str:
@@ -185,10 +184,10 @@ class ToolResult:
         return result
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the complete result after applying the shared redactor."""
-        from transbridge.application.security.redaction import SecretRedactor
+        """Detach the complete business result and hide explicitly typed secrets."""
+        from transbridge.application.security import project_business_data
 
-        return SecretRedactor.default().redact(self._to_dict_unredacted())
+        return project_business_data(self._to_dict_unredacted())
 
     # B2: 字典兼容方法
     def get(self, key: str, default: Any = None) -> Any:
@@ -221,8 +220,11 @@ class ToolResult:
         return default
 
     def __getitem__(self, key: str) -> Any:
-        d = self.to_dict()
-        return d[key]
+        sentinel = object()
+        value = self.get(key, sentinel)
+        if value is sentinel:
+            raise KeyError(key)
+        return value
 
     @classmethod
     def ok(cls, message: str = "操作成功", data: dict | None = None, warnings: list[str] | None = None) -> ToolResult:
@@ -339,6 +341,7 @@ class ExecutionContext:
     assistant_gate: Any = None
     assistant_effect_id: str = ""
     assistant_required: bool = False
+    assistant_step_managed: bool = False
     _target_collection: Any = field(default=None, init=False, repr=False)
     _target_version_identity: tuple[str, str] | None = field(default=None, init=False, repr=False)
     _target_project_revision: int | None = field(default=None, init=False, repr=False)

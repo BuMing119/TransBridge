@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .base import ToolResult
+from .diagnostics import technical_error
 
 if TYPE_CHECKING:
     from transbridge.converter.translation_entry_collection import TranslationEntryCollection
@@ -166,7 +167,7 @@ def _parse_file(file_type: str, args: dict, ctx) -> ToolResult:
             options,
         )
     except Exception as exc:
-        return ToolResult.fail(f"解析 {dispatch['label']} 失败: {_sanitize_error(str(exc), path)}")
+        return ToolResult.fail(f"解析 {dispatch['label']} 失败: {_sanitize_error(technical_error(exc), path)}")
 
 
 # ── Parser 工具函数 ──────────────────────────────────────────────

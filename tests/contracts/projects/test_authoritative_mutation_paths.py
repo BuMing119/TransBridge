@@ -20,6 +20,7 @@ _MUTATION_FILES = (
     "ui/tools/ai_translator/version_snapshot.py",
     "ui/tools/dictionary_panel.py",
     "ui/workbench/step2.py",
+    "ui/workbench/inline_edit.py",
     "ui/workbench/translation_reset.py",
     "ui/workbench/translation_stage_action.py",
 )
@@ -32,14 +33,14 @@ _ALLOWED_PROJECTION_WRITES = {
     ("smart_assistant/tools/projection_restore.py", "restore_entry_projection.restore", "stage"),
     ("ui/operations/production_support.py", "replace_local_snapshots", "collection"),
     ("ui/operations/authoritative_batch_download.py", "publish", "collection"),
-    ("ui/tools/ai_translator/task_session.py", "mark_completed", "collection"),
+    ("ui/tools/ai_translator/task_session.py", "_commit_entries", "collection"),
     ("ui/tools/ai_translator/version_snapshot.py", "_restore_before_entries", "translation"),
     ("ui/tools/ai_translator/version_snapshot.py", "_restore_before_entries", "stage"),
     ("ui/tools/dictionary_panel.py", "_on_apply_dict", "translation"),
     ("ui/tools/dictionary_panel.py", "_restore_collection_states", "translation"),
     ("ui/tools/dictionary_panel.py", "_restore_collection_states", "stage"),
-    ("ui/workbench/step2.py", "_on_item_changed", "translation"),
-    ("ui/workbench/step2.py", "_on_item_changed", "stage"),
+    ("ui/workbench/inline_edit.py", "_commit", "translation"),
+    ("ui/workbench/inline_edit.py", "_commit", "stage"),
     ("ui/workbench/translation_reset.py", "run", "translation"),
     ("ui/workbench/translation_reset.py", "run", "stage"),
     ("ui/workbench/translation_stage_action.py", "run", "stage"),
@@ -91,7 +92,8 @@ def test_known_translation_adapters_commit_or_fail_closed_for_v2_projects() -> N
 
     task_ai = _source("ui/tools/ai_translator/task_session.py")
     assert "uses_authoritative_projection" in task_ai
-    assert "self._persistence.commit_translation(entries)" in task_ai
+    assert "persistence.commit_translation(entries, **commit_options)" in task_ai
+    assert '"commit_mutation": self.commit_mutation' in task_ai
 
     batch_download = _source("ui/workbench/cards/download_card.py")
     assert "uses_authoritative_projection" in batch_download

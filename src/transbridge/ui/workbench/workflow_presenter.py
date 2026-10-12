@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import PurePath
 
@@ -136,15 +136,7 @@ class StatisticsSummary:
             stages = _SUMMARY_STAGE_FILTERS[key]
         except KeyError:
             raise KeyError(key) from None
-        return FilterState(
-            categories=current.categories,
-            stages=stages,
-            labels=current.labels,
-            search_key=current.search_key,
-            search_original=current.search_original,
-            search_translation=current.search_translation,
-            focus_labeled=current.focus_labeled,
-        )
+        return replace(current, stages=stages)
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,9 +227,11 @@ class WorkbenchWorkflowPresenter:
         needs_review: int,
         write_supported: bool,
         has_ai_content: bool | None = None,
+        has_write_content: bool | None = None,
     ) -> tuple[ContextActionViewState, ...]:
         scope_ready = has_context and visible_entries > 0
         ai_ready = scope_ready if has_ai_content is None else has_ai_content
+        write_ready = scope_ready if has_write_content is None else has_context and has_write_content
         no_scope = "当前翻译内容没有可操作词条"
         return (
             ContextActionViewState(
@@ -248,17 +242,17 @@ class WorkbenchWorkflowPresenter:
             ),
             ContextActionViewState(
                 IntentId.TRANSLATION_REVIEW,
-                "检查",
+                "查看有疑问",
                 has_context and needs_review > 0,
                 None if has_context and needs_review > 0 else f"当前没有“{STAGE_LABELS[STAGE_QUESTIONABLE]}”状态的词条",
             ),
             ContextActionViewState(
                 IntentId.PUBLISH_WRITE,
-                "写回/发布",
-                scope_ready and write_supported,
+                "导出整个文件",
+                write_ready and write_supported,
                 None
-                if scope_ready and write_supported
-                else (no_scope if not scope_ready else "当前翻译内容不支持直接写回"),
+                if write_ready and write_supported
+                else (no_scope if not write_ready else "当前翻译内容不支持直接写回"),
             ),
             ContextActionViewState(
                 IntentId.WORKBENCH_MANAGE,

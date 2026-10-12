@@ -11,7 +11,7 @@ import sys
 from typing import Any, TextIO
 
 from transbridge import __version__
-from transbridge.application.security import SecretRedactor
+from transbridge.application.security import diagnostic_exception_text
 
 from .adapter import MCPAdapter, MCPInvalidParams
 
@@ -115,7 +115,7 @@ class MCPServer:
             if is_notification:
                 logger.warning("MCP notification rejected safely: %s", type(exc).__name__)
                 return None
-            message = SecretRedactor.default().redact_text(str(exc))
+            message = diagnostic_exception_text(exc)
             return self._error(request.get("id"), -32602, message)
         except Exception as exc:  # noqa: BLE001 - never expose raw transport exceptions
             logger.error("MCP request failed safely: %s", type(exc).__name__)

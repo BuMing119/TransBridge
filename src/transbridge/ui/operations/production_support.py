@@ -49,7 +49,11 @@ class SyncRequest:
 
 def context_factory(value: RequestContext | Callable[[object], RequestContext]):
     if isinstance(value, RequestContext):
-        return lambda _ui_context: value
+        return lambda ui_context: replace(
+            value,
+            project_id=getattr(ui_context, "active_project_id", value.project_id),
+            variant_id=getattr(ui_context, "active_variant_id", value.variant_id),
+        )
     if not callable(value):
         raise TypeError("runtime_context must be a RequestContext or callable")
     return value

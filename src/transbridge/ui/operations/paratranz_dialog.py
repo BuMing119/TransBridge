@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from transbridge.application.tasks import JobState
+from transbridge.application.contracts import OperationResult
 from transbridge.application.tasks.activity import TaskActivityViewState
 from transbridge.paratranz.project_catalog import ParaTranzProjectCatalog
 from transbridge.ui.foundation.accessibility import configure_accessible_widget, update_accessible_state
@@ -25,6 +25,7 @@ from transbridge.ui.workbench.remote_target_view import ParaTranzTargetDialog
 
 from .plan_view import EditableFieldState, OperationKind, OperationPlanViewState
 from .preflight_view import OperationPreflightResult, PreflightCheckStatus
+from .sync_result import sync_receipt
 
 
 class ParaTranzSyncDialog(QDialog):
@@ -34,6 +35,7 @@ class ParaTranzSyncDialog(QDialog):
     return_to_edit_requested = pyqtSignal(str, object)
     confirm_requested = pyqtSignal(str, object)
     execution_changed = pyqtSignal(object)
+    execution_result_changed = pyqtSignal(object, object)
     execution_finished = pyqtSignal()
 
     def __init__(self, plan: OperationPlanViewState, context: object, parent=None) -> None:
@@ -158,6 +160,7 @@ class ParaTranzSyncDialog(QDialog):
         root.addLayout(footer)
 
         self.execution_changed.connect(self.render_execution, Qt.ConnectionType.QueuedConnection)
+        self.execution_result_changed.connect(self.render_execution, Qt.ConnectionType.QueuedConnection)
         self.render_plan(plan)
         self.set_preflight_running(True)
         QTimer.singleShot(0, self._request_preflight)
@@ -258,27 +261,30 @@ class ParaTranzSyncDialog(QDialog):
         self._preflight = None
         if running:
             action = "下载并更新本地翻译" if self._plan.kind is OperationKind.DOWNLOAD else "上传到 ParaTranz"
+            self._status.setToolTip("")
             self._set_status(f"正在{action}，请稍候…", SemanticState.INFO)
             self._progress.setRange(0, 0)
         self._progress.setVisible(running or self._preflight_running)
         self._sync_controls()
 
-    def render_execution(self, activity: TaskActivityViewState) -> None:
+    def render_execution(self, activity: TaskActivityViewState, result: OperationResult | None = None) -> None:
         if not self._execution_running or not activity.is_terminal:
             return
         self.set_execution_running(False)
         self._retry_available = True
         self._cancel.setText("关闭")
-        if activity.state is JobState.COMPLETED:
-            action = "下载并更新本地翻译" if self._plan.kind is OperationKind.DOWNLOAD else "上传到 ParaTranz"
-            self._set_status(f"{action}完成。", SemanticState.SUCCESS)
+        action = "下载并更新本地翻译" if self._plan.kind is OperationKind.DOWNLOAD else "上传到 ParaTranz"
+        receipt = sync_receipt(activity, result, action=action)
+        semantic = {
+            "completed": SemanticState.SUCCESS,
+            "failed": SemanticState.ERROR,
+        }.get(receipt.status, SemanticState.WARNING)
+        self._set_status(receipt.text, semantic)
+        self._status.setToolTip(receipt.details)
+        if receipt.status == "completed":
             self._progress.setRange(0, 100)
             self._progress.setValue(100)
             self._progress.show()
-        elif activity.state is JobState.CANCELLED:
-            self._set_status("同步已取消。再次执行前请重新检查。", SemanticState.WARNING)
-        else:
-            self._set_status("同步失败，请在任务中心查看详情；再次执行前请重新检查。", SemanticState.ERROR)
         self._sync_controls()
         self.execution_finished.emit()
 

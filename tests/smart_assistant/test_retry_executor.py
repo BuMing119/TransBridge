@@ -44,7 +44,7 @@ def test_failed_result_is_repaired_with_original_args_and_retried() -> None:
             "properties": {
                 "query": {"type": "string"},
                 "entry_key": {"type": "string"},
-                "api_key": {"type": "string"},
+                "api_key": {"type": "string", "writeOnly": True},
             },
             "required": ["query"],
             "additionalProperties": False,
@@ -135,7 +135,7 @@ def test_analyzer_cannot_introduce_a_new_sensitive_value() -> None:
         retry_allowed=True,
         tool_schema={
             "type": "object",
-            "properties": {"query": {"type": "string"}, "api_key": {"type": "string"}},
+            "properties": {"query": {"type": "string"}, "api_key": {"type": "string", "writeOnly": True}},
             "required": ["query"],
             "additionalProperties": False,
         },

@@ -4,9 +4,20 @@ from types import SimpleNamespace
 import pytest
 
 from tests.conftest import make_test_collection
-from transbridge.application.contracts import DomainError, ErrorCategory, OperationResult
+from transbridge.application.contracts import DomainError, ErrorCategory, OperationResult, RequestContext
 from transbridge.application.io.identity import EntryKey
-from transbridge.ui.operations.production_support import local_snapshots, replace_local_snapshots
+from transbridge.ui.operations.production_support import context_factory, local_snapshots, replace_local_snapshots
+
+
+def test_operation_owner_tracks_current_project_and_variant_without_mutating_startup_context():
+    initial = RequestContext("gui", project_id="old-project", variant_id="old-variant")
+    current = SimpleNamespace(active_project_id="current", active_variant_id="main")
+    factory = context_factory(initial)
+    assert factory(current).project_id == "current"
+    assert factory(current).variant_id == "main"
+    current.active_variant_id = "copy"
+    assert factory(current).variant_id == "copy"
+    assert initial.project_id == "old-project" and initial.variant_id == "old-variant"
 
 
 class _Commands:

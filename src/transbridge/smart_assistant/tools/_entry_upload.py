@@ -10,6 +10,7 @@ from transbridge.application.tasks import TaskCancelled
 
 from ._project_tool_mutations import ProjectToolTarget
 from .base import ToolResult
+from .diagnostics import technical_error
 
 logger = logging.getLogger(__name__)
 
@@ -79,10 +80,10 @@ def upload_entries(args, ctx, collection, client, project_id, cancellation):
                 raise
             cancelled = True
             not_attempted = len(entries) - index - 1
-            failed.append({"key": entry.key, "error": str(exc), "remote_id": remote_id, "cancelled": True})
+            failed.append({"key": entry.key, "error": technical_error(exc), "remote_id": remote_id, "cancelled": True})
             break
         except Exception as exc:
-            failed.append({"key": entry.key, "error": str(exc), "remote_id": remote_id})
+            failed.append({"key": entry.key, "error": technical_error(exc), "remote_id": remote_id})
             if remote_completed:
                 # A remote side effect already happened: never automatically create again.
                 not_attempted = len(entries) - index - 1

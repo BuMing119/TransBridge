@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -10,7 +9,9 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QTableWidget
 
-from transbridge.application.tasks.activity import TaskActionAvailability
+from transbridge.application.tasks import JobSpec, OwnerRef, TaskRuntime
+from transbridge.application.tasks.activity import activity_from_snapshot
+from transbridge.bootstrap.adapters import SystemClock, UuidGenerator
 from transbridge.config.ui_preferences import GuidanceMode
 from transbridge.converter.translation_entry import STAGE_LABELS, STAGE_QUESTIONABLE, TranslationEntry
 from transbridge.ui.drop_review import DropReviewDialog
@@ -172,13 +173,10 @@ def test_task_center_escape_never_stops_task_and_stop_description_names_object_a
     panel = TaskCenterPanel()
     cancelled = []
     panel.cancel_requested.connect(lambda *args: cancelled.append(args))
-    state = SimpleNamespace(
-        run_id="run-one",
-        revision=3,
-        state=SimpleNamespace(value="running"),
-        display_context=SimpleNamespace(title="AI 翻译 · Demo"),
-        available_actions=TaskActionAvailability(stop=True, cancel=True),
-    )
+    tasks = TaskRuntime(id_generator=UuidGenerator(), clock=SystemClock())
+    owner = OwnerRef("gui-owner", "gui")
+    ref = tasks.submit(JobSpec("ai-translate", "project:demo", "fingerprint", "AI 翻译 · Demo"), owner).ref
+    state = activity_from_snapshot(tasks.start(ref, owner))
     panel.render_activity(state)
     panel._current.setCurrentRow(0)
 
@@ -186,8 +184,12 @@ def test_task_center_escape_never_stops_task_and_stop_description_names_object_a
 
     assert cancelled == []
     assert "AI 翻译 · Demo" in panel._cancel.accessibleDescription()
-    assert "是否可恢复" in panel._cancel.accessibleDescription()
-    assert "Run ID run-one" in panel._reason.text()
+    assert "保留已完成结果" in panel._cancel.accessibleDescription()
+    assert panel._reason.isHidden()
+    assert state.run_id in panel._current.item(0).toolTip()
+    panel.show_error("无法读取任务记录，请重试。")
+    assert not panel._reason.isHidden()
+    assert "请重试" in panel._reason.text()
     panel.close()
 
 

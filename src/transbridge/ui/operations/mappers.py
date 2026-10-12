@@ -41,6 +41,7 @@ class OperationPlanDraft:
     backup_required: bool = False
     backup_enabled: bool = False
     expected_side_effects: tuple[str, ...] = ()
+    is_batch: bool = False
 
     def __post_init__(self) -> None:
         if not self.target.strip() or not self.target_revision.strip() or not self.input_fingerprint.strip():
@@ -102,6 +103,7 @@ class _OperationMapper:
             editable_fields=value.editable_fields,
             warnings=value.warnings,
             request_digest=value.request_digest,
+            is_batch=value.is_batch,
         )
 
     def preflight(self, draft: object) -> OperationPreflightResult:

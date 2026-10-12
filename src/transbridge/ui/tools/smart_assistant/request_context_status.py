@@ -1,11 +1,13 @@
 """Present context waiting separately from business failure and task status."""
 
 from transbridge.application.assistant_context.models import PreparationWait
+from transbridge.application.assistant_requests.models import RequestError
+from transbridge.application.security import diagnostic_exception_text
 
 
 def preparation_failed(binding, error):
     if not isinstance(error, PreparationWait):
-        binding.fail(str(error))
+        binding.fail(str(error) if isinstance(error, RequestError) else diagnostic_exception_text(error))
         return
     binding.release()
     orchestrator = binding.facade._orchestrator

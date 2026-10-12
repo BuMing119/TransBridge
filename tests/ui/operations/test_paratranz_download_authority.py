@@ -97,8 +97,13 @@ def test_v2_download_updates_matching_translations_and_survives_reopen(tmp_path,
         close=lambda: None,
     )
     monkeypatch.setattr(ParaTranzService, "from_config", classmethod(lambda _cls, _config: service))
+    receipts = {}
     feature = next(
-        item for item in build_paratranz_sync_features(SimpleNamespace()) if item.kind is OperationKind.DOWNLOAD
+        item
+        for item in build_paratranz_sync_features(
+            SimpleNamespace(), on_result=lambda run, result: receipts.update({run: result})
+        )
+        if item.kind is OperationKind.DOWNLOAD
     )
     queued = []
     tasks = TaskRuntime(
@@ -119,6 +124,8 @@ def test_v2_download_updates_matching_translations_and_survives_reopen(tmp_path,
         queued[0]()
 
         assert tasks.get(ref, owner).state is JobState.COMPLETED
+        assert receipts[ref.run_id].is_success
+        assert dict(tasks.get(ref, owner).progress)["operation_outcome"] == receipts[ref.run_id].outcome.value
         impact = dict(preflight.estimated_impact)
         assert impact["update_local"] == 1
         assert impact["create_local"] == impact["delete_local"] == 0

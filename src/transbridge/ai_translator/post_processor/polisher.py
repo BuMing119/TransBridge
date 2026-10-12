@@ -12,6 +12,7 @@ import tomllib
 from typing import TYPE_CHECKING, Any
 import warnings
 
+from transbridge.application.security.diagnostic_logging import client_diagnostic_redactor, diagnostic_exception_text
 from transbridge.application.translation.entry_alias import ai_entry_id, ai_entry_key
 from transbridge.config.language_profiles import load_language_profile
 from transbridge.config.paths import get_data_resource_dir
@@ -319,7 +320,7 @@ class LLMPolisher:
                 polished_translation=entry.translation or "",
                 confidence=0.0,
                 needs_arbitration=True,
-                note=f"LLM润色失败: {e}",
+                note=f"LLM润色失败: {client_diagnostic_redactor(self._llm).redact_text(diagnostic_exception_text(e))}",
             )
 
     def polish_batch(self, entries: list["TranslationEntry"]) -> dict[str, PolishResult]:
@@ -346,6 +347,7 @@ class LLMPolisher:
             return self._parse_batch_polish_response(entries, response)
         except Exception as e:
             # 批量失败，降级为逐个处理
+            safe_error = client_diagnostic_redactor(self._llm).redact_text(diagnostic_exception_text(e))
             results = {}
             for entry in entries:
                 results[ai_entry_id(entry)] = PolishResult(
@@ -354,7 +356,7 @@ class LLMPolisher:
                     polished_translation=entry.translation or "",
                     confidence=0.0,
                     needs_arbitration=True,
-                    note=f"批量润色失败: {e}",
+                    note=f"批量润色失败: {safe_error}",
                 )
             return results
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 from transbridge.application.translation.entry_alias import ai_entry_key
 
 from .base import ToolResult, filter_entries, require_collection, require_runtime_context, validate_params
+from .diagnostics import technical_error
 
 _VALID_STAGES = {0, 1, 2, 3, 5, 9, -1}
 
@@ -353,7 +354,7 @@ class EditorController:
             try:
                 _commit_label_state(ctx, entry_labels, label_library)
             except Exception as exc:
-                return ToolResult.fail(f"创建标签失败：{exc}")
+                return ToolResult.fail(f"创建标签失败：{technical_error(exc)}")
             return ToolResult.ok(f"已创建标签: {name}", data={"label_id": lid, "name": name, "color": color})
 
         # assign / unassign / batch_assign 共用参数校验
@@ -383,7 +384,7 @@ class EditorController:
             try:
                 _commit_label_state(ctx, entry_labels, label_library)
             except Exception as exc:
-                return ToolResult.fail(f"分配标签失败：{exc}")
+                return ToolResult.fail(f"分配标签失败：{technical_error(exc)}")
             return ToolResult.ok(
                 f"已为 {len(entry_ids)} 条条目分配标签 '{label_name}'", data={"assigned_count": len(entry_ids)}
             )
@@ -400,7 +401,7 @@ class EditorController:
             try:
                 _commit_label_state(ctx, entry_labels, label_library)
             except Exception as exc:
-                return ToolResult.fail(f"移除标签失败：{exc}")
+                return ToolResult.fail(f"移除标签失败：{technical_error(exc)}")
             return ToolResult.ok(f"已从 {removed} 条条目移除标签 '{label_name}'", data={"removed_count": removed})
 
         elif action == "batch_assign":
@@ -414,7 +415,7 @@ class EditorController:
             try:
                 _commit_label_state(ctx, entry_labels, label_library)
             except Exception as exc:
-                return ToolResult.fail(f"批量分配标签失败：{exc}")
+                return ToolResult.fail(f"批量分配标签失败：{technical_error(exc)}")
             return ToolResult.ok(
                 f"已为筛选范围内 {len(entries)} 条条目批量分配标签 '{label_name}'",
                 data={"assigned_count": len(entries), "filter_total": len(entries)},

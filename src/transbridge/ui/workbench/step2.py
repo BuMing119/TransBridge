@@ -20,11 +20,7 @@ from PyQt6.QtWidgets import (
 )
 
 from transbridge.application.terminology_profiles import TerminologyProfileProjector
-from transbridge.converter.translation_entry import (
-    STAGE_TRANSLATED,
-    STAGE_UNTRANSLATED,
-    TranslationEntry,
-)
+from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui.foundation.adapters import ThemeView
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle
@@ -38,6 +34,7 @@ from transbridge.ui.workbench.filters_presenter import (
     entry_category,
 )
 from transbridge.ui.workbench.filters_view import FiltersView
+from transbridge.ui.workbench.inline_edit import InlineEditController
 from transbridge.ui.workbench.labels_presenter import LabelsPresenter
 from transbridge.ui.workbench.labels_view import (
     PRESET_COLORS,
@@ -183,6 +180,10 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         table_layout.addWidget(self._workflow_actions)
         table_layout.addWidget(self._table, stretch=1)
         outer.addWidget(self._table_surface, stretch=1)
+        self._inline_edits = InlineEditController(
+            self._ctx, self._table, refresh_entry=self._refresh_changed_entry, parent=self
+        )
+        outer.addWidget(self._inline_edits.view)
 
         # 底部计数。表格通过 Qt 事件循环自动增量渲染直至全部完成。
         self._count_lbl = QLabel("已选 0 条 / 共 0 条")
@@ -211,6 +212,9 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         self._progress_view.hide_progress()
 
     # ── 公共接口 ──────────────────────────────────────────────────────────────
+
+    def confirm_inline_edit_close(self) -> bool:
+        return self._inline_edits.confirm_close()
 
     def get_selected_entries(self) -> list[TranslationEntry]:
         """返回所有有标签的条目，供 AI 翻译浮窗使用。"""
@@ -279,7 +283,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
             self._tags_widget.hide()
             self._stage_tags_widget.hide()
             self._mark_tags_widget.hide()
-            self._search_widget.hide()
+            self._filters_view.set_content_visible(False)
             self._filtered_total = 0
             self._render_entries = ()
             self._terminology_projection = MappingProxyType({})
@@ -307,7 +311,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         self._build_category_tags()
         self._build_stage_tags()
         self._build_label_tags()
-        self._search_widget.show()
+        self._filters_view.set_content_visible(True)
         self._populate_table()
 
     # ── 表格填充 ──────────────────────────────────────────────────────────────
@@ -373,6 +377,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
     # ── 表格填充 ──────────────────────────────────────────────────────────────
 
     def _populate_table(self):
+        self._filters_view.refresh_active_summary()
         self._filters_presenter.update(self._filters_view.state())
         self._render_entries = tuple(self._filters_presenter.apply(self._entries, self._entry_labels))
         self._filtered_total = len(self._render_entries)
@@ -494,42 +499,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         self._entry_refresh.return_to_preview(key)
 
     def _on_item_changed(self, item: QTableWidgetItem):
-        """译文编辑后原地同步 entry、状态文字与行视觉。"""
-        if item.column() != _COL_TRANS:
-            return
-        if self._table.terminology_profile_active:
-            self._table.restore_projected_translation(item)
-            return
-        # Projection commands notify synchronously. A subscriber may rebuild the
-        # table during the command, which deletes this QTableWidgetItem wrapper.
-        # Capture every value needed from it before crossing that boundary.
-        original_row = item.row()
-        entry = item.data(Qt.ItemDataRole.UserRole)
-        if not isinstance(entry, TranslationEntry) or not entry.id:
-            return
-        new_text = item.text().strip()
-        if new_text == "（无译文）":
-            new_text = ""
-        old_translation = entry.translation
-        old_stage = entry.stage
-        stage = STAGE_TRANSLATED if new_text and entry.stage == STAGE_UNTRANSLATED else entry.stage
-        if getattr(self._ctx, "uses_authoritative_projection", False):
-            result = self._ctx.update_projected_entry(
-                entry.identity,
-                translation=new_text,
-                stage=stage,
-            )
-            if not result.is_success:
-                self._populate_table()
-                return
-        entry.translation = new_text if new_text else ""
-        entry.stage = stage
-        self._refresh_changed_entry(
-            entry,
-            preferred_row=original_row,
-            old_stage=old_stage,
-            translation_filter_may_change=old_translation != entry.translation,
-        )
+        self._inline_edits.item_changed(item)
 
     def _find_rendered_translation_item(
         self,

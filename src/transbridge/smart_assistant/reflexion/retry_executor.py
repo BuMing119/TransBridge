@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import time
 from typing import Any
 
-from transbridge.application.security.redaction import SecretRedactor
+from transbridge.application.security import diagnostic_exception_text
 from transbridge.smart_assistant.tools.base import ToolResult
 
 from .retry_handler import RetryHandler
@@ -112,7 +112,7 @@ class ToolRetryExecutor:
         try:
             raw_result = invoke(dict(step.get("args", {})))
         except Exception as exc:
-            safe_message = SecretRedactor.default().redact_text(str(exc))
+            safe_message = diagnostic_exception_text(exc)
             return ToolResult.fail(
                 f"执行异常: {safe_message}",
                 error_category="internal",

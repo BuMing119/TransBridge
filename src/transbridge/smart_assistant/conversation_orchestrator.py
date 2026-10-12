@@ -7,7 +7,6 @@
 from collections.abc import Callable
 import logging
 import os
-import re
 import threading
 import time
 from typing import Any
@@ -560,17 +559,10 @@ class ConversationOrchestrator(QObject):
 
     @staticmethod
     def _sanitize_error_message(msg: str) -> str:
-        """M68: 脱敏错误消息，移除文件路径和 API 密钥等敏感信息。"""
-        if not msg:
-            return msg
-        # 移除 Windows 绝对路径 (e.g. D:\path\to\file.py:123)
-        msg = re.sub(r'[A-Za-z]:[\\/][^\s,;:"]+', "[path]", msg)
-        # 移除 Unix 绝对路径 (e.g. /home/user/project/file.py)
-        msg = re.sub(r'/(?:home|Users|usr|tmp|var|etc|opt|root|mnt)/[^\s,;:"]+', "[path]", msg)
-        # 移除常见 API 密钥前缀 (OpenAI sk-, Anthropic sk-ant-, 等)
-        msg = re.sub(r"\b(sk-[A-Za-z0-9_-]{20,})\b", "[api_key]", msg)
-        msg = re.sub(r"\b(sk-ant-[A-Za-z0-9_-]{20,})\b", "[api_key]", msg)
-        return msg
+        """Project a caught provider error for the UI, never business tool content."""
+        from transbridge.application.security import SecretRedactor
+
+        return SecretRedactor(redact_paths=True).redact_text(msg)
 
     def shutdown(self, *, wait: bool = True, timeout: float | None = 3.0) -> bool:
         """清理所有内部 Qt 资源：worker、信号桥、流式计时器。

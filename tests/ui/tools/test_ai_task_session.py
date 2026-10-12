@@ -70,8 +70,14 @@ class _Persistence:
         self.snapshots.append((name, deepcopy(entries)))
         return SimpleNamespace(is_success=not self.fail_snapshot)
 
-    def commit_translation(self, entries):
-        self.commits.append(deepcopy(entries))
+    def commit_translation(self, entries, *, commit_mutation=None):
+        def publish():
+            self.commits.append(deepcopy(entries))
+
+        if commit_mutation is None:
+            publish()
+        else:
+            commit_mutation(publish)
         return SimpleNamespace(is_success=not self.fail_commit)
 
     def save_translation(self, entries, name):

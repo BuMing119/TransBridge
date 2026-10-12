@@ -221,11 +221,7 @@ class ProofreadPipeline:
                 text=entry.translation or "",
                 stage=entry.stage,
                 context=entry.context or "",
-                report_details=(
-                    (("terminology_plugin_id", plugin_id),)
-                    if (plugin_id := plugin_id_from_entry(entry)) is not None
-                    else ()
-                ),
+                terminology_plugin_id=plugin_id_from_entry(entry),
             )
             for entry in entries
         )

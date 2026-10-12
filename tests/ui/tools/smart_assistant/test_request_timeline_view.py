@@ -99,12 +99,12 @@ def test_dialog_pages_refreshes_and_reveals_only_explicit_plain_text_diagnostics
         dialog.close()
 
 
-def test_old_session_without_events_is_explicitly_identified():
+def test_empty_timeline_keeps_refresh_available_without_internal_explanations():
     dialog = RequestTimelineView(lambda _: {"events": [], "next_sequence": 0, "has_more": False})
     try:
         _until(lambda: not dialog._busy)
-        assert "旧会话可能没有日志" in dialog.status.text()
-        assert "不会从聊天内容补推历史" in dialog.status.text()
+        assert dialog.status.text() == "暂无过程记录。"
+        assert dialog.more.isEnabled()
     finally:
         dialog.close()
 

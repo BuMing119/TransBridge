@@ -28,9 +28,10 @@ class WorkflowPresentationMixin:
             write_supported=self._workflow_presenter.supports_write(content_kind),
             has_ai_content=bool(self._entries)
             or any(bool(slot.collection) for slot in getattr(self._ctx, "slots", {}).values()),
+            has_write_content=bool(self._entries),
         )
         selected_count = len(self.selected_row_entry_ids())
-        self._workflow_actions.set_scope_count(selected_count or self._filtered_total)
+        self._workflow_actions.set_scope_count(selected_count, filtered_count=self._filtered_total)
         self._workflow_actions.set_actions(states)
 
     def _on_table_selection_changed(self, *_args) -> None:

@@ -59,7 +59,7 @@ def parsing(project, monkeypatch):
     host = SimpleNamespace(
         context=project.ctx,
         workers=[],
-        show_message=messages.append,
+        show_message=lambda message, **_options: messages.append(message),
         workbench=SimpleNamespace(
             show_step2_progress=lambda *_args: None,
             update_step2_progress=lambda *_args: None,

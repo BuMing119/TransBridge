@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import StrEnum
@@ -21,6 +22,7 @@ from transbridge.application.tasks import (
 from transbridge.application.tasks.events import JobEvent, Subscription, TaskEventFilter
 
 from .run_spec import AiRunSpec
+from .worker_controls import SerialAiWorkerControls
 
 
 class AiLegacyRunState(StrEnum):
@@ -158,7 +160,7 @@ class TaskRuntimeAiTaskAdapter:
         self._owner = owner
         self._spec = spec
         self._closed = False
-        self._worker: object | None = None
+        self._controls = SerialAiWorkerControls()
         self._lock = threading.RLock()
         self._subscription: Subscription | None = runtime.subscribe(
             self._on_runtime_event,
@@ -186,66 +188,90 @@ class TaskRuntimeAiTaskAdapter:
         with self._lock:
             if self._closed:
                 return False
-            try:
-                self._runtime.update_progress(
-                    self._ref,
-                    self._owner,
-                    {"current": max(0, current), "total": max(0, total), "message": message},
-                )
-            except TransitionError:
-                return False
-            return True
+        try:
+            self._runtime.update_progress(
+                self._ref,
+                self._owner,
+                {"current": max(0, current), "total": max(0, total), "message": message},
+            )
+        except TransitionError:
+            return False
+        return True
 
     def request_cancel(self) -> bool:
         with self._lock:
             if self._closed:
                 return False
-            try:
-                self._runtime.cancel(self._ref, self._owner)
-            except TransitionError:
-                return False
-            return True
+        try:
+            self._runtime.cancel(self._ref, self._owner)
+        except TransitionError:
+            return False
+        return True
 
     def pause(self) -> bool:
         with self._lock:
             if self._closed:
                 return False
-            try:
-                self._runtime.pause(self._ref, self._owner)
-            except TransitionError:
-                return False
-            return True
+        try:
+            self._runtime.pause(self._ref, self._owner)
+        except TransitionError:
+            return False
+        return True
 
     def resume(self) -> bool:
         with self._lock:
             if self._closed:
                 return False
-            try:
-                self._runtime.resume(self._ref, self._owner)
-            except TransitionError:
-                return False
-            return True
+        try:
+            self._runtime.resume(self._ref, self._owner)
+        except TransitionError:
+            return False
+        return True
 
     def bind_worker(self, worker: object) -> None:
         """Make every advertised TaskRuntime control reach the real QThread worker."""
 
-        with self._lock:
-            self._worker = worker
-            state = self._runtime.get(self._ref, self._owner).state
-        self._forward_state(state)
+        snapshot = self._runtime.get(self._ref, self._owner)
+        self._controls.bind_worker(worker, snapshot)
+
+    def unbind_worker(self, worker: object) -> None:
+        self._controls.unbind_worker(worker)
+
+    def bind_run(self, cancel_callback: Callable[[], None] | None) -> None:
+        """Callback must enqueue cancellation onto the run's owning thread."""
+        snapshot = self._runtime.get(self._ref, self._owner)
+        self._controls.bind_run(cancel_callback, snapshot)
+
+    @property
+    def is_cancelled(self) -> bool:
+        return self._runtime.get(self._ref, self._owner).state in {JobState.CANCELLING, JobState.CANCELLED}
+
+    def require_active(self) -> None:
+        state = self._runtime.get(self._ref, self._owner).state
+        if self._closed or state is not JobState.RUNNING:
+            raise RuntimeError(f"AI 任务当前状态为 {state.value}，不能应用结果或开始新的处理。")
+
+    def commit_mutation(self, mutation: Callable[[], None]) -> None:
+        """Authorize only the final in-memory mutation, never preparation or notifications."""
+        if self._closed:
+            raise RuntimeError("AI 任务已关闭，不能提交结果。")
+        permit = self._runtime.commit_permit(self._ref, self._owner)
+        result = self._runtime.try_commit(permit, mutation)
+        if not result.accepted:
+            raise RuntimeError(f"AI 任务结果未提交：{result.reason}")
 
     def finish(self, *, cancelled: bool = False) -> bool:
         with self._lock:
             if self._closed:
                 return False
-            try:
-                snapshot = self._runtime.get(self._ref, self._owner)
-                if cancelled or snapshot.state is JobState.CANCELLING:
-                    self._runtime.finish_cancelled(self._ref, self._owner)
-                else:
-                    self._runtime.complete(self._ref, self._owner)
-            except TransitionError:
-                return False
+        try:
+            snapshot = self._runtime.get(self._ref, self._owner)
+            if cancelled or snapshot.state is JobState.CANCELLING:
+                self._runtime.finish_cancelled(self._ref, self._owner)
+            else:
+                self._runtime.complete(self._ref, self._owner)
+        except TransitionError:
+            return False
         self._release_subscription()
         return True
 
@@ -253,21 +279,21 @@ class TaskRuntimeAiTaskAdapter:
         with self._lock:
             if self._closed:
                 return False
-            try:
-                snapshot = self._runtime.get(self._ref, self._owner)
-                if snapshot.state is JobState.CANCELLING:
-                    self._runtime.finish_cancelled(self._ref, self._owner)
-                else:
-                    self._runtime.fail(self._ref, self._owner)
-            except TransitionError:
-                return False
+        try:
+            snapshot = self._runtime.get(self._ref, self._owner)
+            if snapshot.state is JobState.CANCELLING:
+                self._runtime.finish_cancelled(self._ref, self._owner)
+            else:
+                self._runtime.fail(self._ref, self._owner)
+        except TransitionError:
+            return False
         self._release_subscription()
         return True
 
     def close(self) -> None:
         with self._lock:
             self._closed = True
-            self._worker = None
+        self._controls.close()
         self._release_subscription()
 
     def _release_subscription(self) -> None:
@@ -277,26 +303,9 @@ class TaskRuntimeAiTaskAdapter:
             subscription.close()
 
     def _on_runtime_event(self, event: JobEvent) -> None:
-        self._forward_state(event.snapshot.state)
-
-    def _forward_state(self, state: JobState) -> None:
-        with self._lock:
-            if self._closed or self._worker is None:
-                return
-            worker = self._worker
-        action = {
-            JobState.PAUSED: "pause",
-            JobState.RUNNING: "resume",
-            JobState.CANCELLING: "stop",
-            JobState.CANCELLED: "stop",
-        }.get(state)
-        if action is None:
-            return
-        callback = getattr(worker, action, None)
-        if not callable(callback) and action == "stop":
-            callback = getattr(worker, "cancel", None)
-        if callable(callback):
-            callback()
+        self._controls.accept(event.snapshot)
+        if event.snapshot.is_terminal:
+            self._release_subscription()
 
 
 def _job_spec(spec: AiRunSpec, *, expose_controls: bool) -> JobSpec:

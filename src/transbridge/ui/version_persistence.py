@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 
 class VersionPersistence:
     """Save and snapshot one active V2 or legacy Project/Variant."""
@@ -46,7 +48,9 @@ class VersionPersistence:
         finally:
             variant_store.dirty = was_dirty
 
-    def commit_translation(self, entries: tuple[object, ...]):
+    def commit_translation(
+        self, entries: tuple[object, ...], *, commit_mutation: Callable[[Callable[[], None]], None] | None = None
+    ):
         """Commit translated entries once without making the version durable."""
 
         self._require_identity()
@@ -65,6 +69,7 @@ class VersionPersistence:
                 expected_project_revision=self._expected_project_revision,
                 expected_variant_revision=self._expected_variant_revision,
                 expected_variant_ref=VariantRef(VariantId(variant_id), ProjectId(project_id)),
+                **({} if commit_mutation is None else {"commit_mutation": commit_mutation}),
             )
             if committed.is_success:
                 self._translations_committed = True
@@ -75,7 +80,14 @@ class VersionPersistence:
             return committed
 
         _project, variant_store, _variant_name = self._legacy_state()
-        variant_store.collect_from(list(entries), self._context.entry_labels, self._context.label_library)
+
+        def publish():
+            variant_store.collect_from(list(entries), self._context.entry_labels, self._context.label_library)
+
+        if commit_mutation is None:
+            publish()
+        else:
+            commit_mutation(publish)
         self._translations_committed = True
         return None
 

@@ -152,6 +152,9 @@ class ProjectTerminologyAdapter:
 
 
 def plugin_id_from_entry(entry: object) -> str | None:
+    plugin_id = getattr(entry, "terminology_plugin_id", None)
+    if isinstance(plugin_id, str) and plugin_id.strip():
+        return plugin_id
     form_id = getattr(entry, "form_id_with_plugin", None)
     if isinstance(form_id, str) and "|" in form_id:
         plugin_id = form_id.rsplit("|", 1)[1].strip()

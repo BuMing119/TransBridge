@@ -20,6 +20,7 @@ from transbridge.application.tasks import TaskCancelled
 from transbridge.application.terminology_profiles import TerminologyProfileWriteProjectionSource
 
 from .base import ToolResult, require_collection
+from .diagnostics import technical_error
 from .file_undo_capture import capture_file_command
 from .task_manager import TaskManager
 from .task_runtime_bridge import task_metadata
@@ -101,44 +102,66 @@ def _tool_write_back(args: dict, ctx, collection) -> ToolResult:
         execution = manager.get_handle(task_id).execution
 
         def run():
+            publication = None
+
+            def publish():
+                nonlocal publication
+                publication = workload(
+                    SimpleNamespace(
+                        ref=execution.ref,
+                        cancellation=manager.runtime.cancellation_token(execution.ref, execution.owner),
+                        publish_commit_guard=lambda: execution,
+                    )
+                )
+                return publication
+
             try:
                 result = capture_file_command(
                     ctx,
                     plugin_artifact_paths(snapshot, path),
-                    lambda: workload(
-                        SimpleNamespace(
-                            ref=execution.ref,
-                            cancellation=manager.runtime.cancellation_token(execution.ref, execution.owner),
-                            publish_commit_guard=lambda: execution,
-                        )
-                    ),
+                    publish,
                 )
                 if result.outcome is OperationOutcome.CANCELLED:
                     raise TaskCancelled("写回已取消，正式目标未改变。")
+                data = _publication_data(result, path)
                 if result.outcome is not OperationOutcome.COMPLETED:
                     message = "；".join(item.message for item in result.diagnostics) or "写回未完整完成"
-                    manager.notify_finished(task_id, False, message, result.value)
+                    manager.notify_finished(task_id, False, message, data)
                     return
+                data["written_count"] = len(draft.entries)
                 manager.notify_finished(
                     task_id,
                     True,
                     "写回完成",
-                    {
-                        "path": path,
-                        "written_count": len(draft.entries),
-                        "artifacts": list(result.artifact_refs),
-                    },
+                    data,
                 )
             except TaskCancelled:
                 raise
             except Exception as exc:
-                manager.notify_finished(task_id, False, f"写回失败: {exc}")
+                data = None if publication is None else _publication_data(publication, path)
+                if data is not None:
+                    data["publication_outcome"] = publication.outcome.value
+                    data["outcome"] = "partial" if publication.artifact_refs else "failed"
+                    data["post_publish_error"] = technical_error(exc)
+                manager.notify_finished(task_id, False, f"写回失败: {technical_error(exc)}", data)
                 raise
 
         manager.start_thread(task_id, run)
         return ToolResult.ok("安全写回任务已启动", data={"task_id": task_id, "path": path})
     except Exception as exc:
-        return ToolResult.fail(f"无法创建写回计划: {exc}")
+        return ToolResult.fail(f"无法创建写回计划: {technical_error(exc)}")
+
+
+def _publication_data(result, path: str) -> dict:
+    """Retain publication evidence even when durability or undo capture fails."""
+    return {
+        **dict(result.value or {}),
+        "path": path,
+        "outcome": result.outcome.value,
+        "artifacts": list(result.artifact_refs),
+        "diagnostics": [item.to_dict() for item in result.diagnostics],
+        "counts": result.counts.to_dict(),
+    }
 
 
 _PARAM_SCHEMAS = {

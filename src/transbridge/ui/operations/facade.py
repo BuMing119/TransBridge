@@ -14,7 +14,7 @@ import json
 from threading import RLock
 from typing import Protocol
 
-from transbridge.application.contracts import RequestContext
+from transbridge.application.contracts import JobRef, OperationResult, RequestContext
 from transbridge.application.tasks import OwnerRef, TaskRuntime
 from transbridge.bootstrap.runtime import AppRuntime
 from transbridge.ui.presentation.task_projection import TaskProjectionBinding
@@ -112,9 +112,11 @@ class OperationPlanFacade:
         *,
         dialog_factory=OperationPlanDialog,
         dialog_factories: Mapping[OperationKind, Callable[[object, object, object | None], object]] | None = None,
+        execution_result_reader: Callable[[JobRef, OwnerRef], OperationResult | None] | None = None,
     ) -> None:
         self._runtime = runtime
         self._runtime_context = runtime_context
+        self._execution_result_reader = execution_result_reader
         self._features = {feature.kind: feature for feature in features}
         required = frozenset(OperationKind)
         registered = frozenset(self._features)
@@ -162,6 +164,13 @@ class OperationPlanFacade:
         """Return whether this facade can preserve parity for the requested scope."""
         feature = self._features.get(OperationKind(kind))
         return feature is not None and feature.supports(context, batch)
+
+    def read_task_result(self, ref: JobRef, actor: OwnerRef) -> OperationResult | None:
+        """Read a retained receipt after its execution window has closed."""
+        self._runtime.tasks.get(ref, actor)
+        if self._execution_result_reader is None:
+            return None
+        return self._execution_result_reader(ref, actor)
 
     def submit(
         self,
@@ -215,10 +224,18 @@ class OperationPlanFacade:
 
         def on_change(activity) -> None:
             if activity.run_id == (ref.run_id or ref.job_id):
-                dialog.execution_changed.emit(activity)
+                result_signal = getattr(dialog, "execution_result_changed", None)
+                if result_signal is not None:
+                    result = None
+                    if activity.is_terminal and self._execution_result_reader is not None:
+                        result = self._execution_result_reader(ref, owner)
+                    result_signal.emit(activity, result)
+                else:
+                    dialog.execution_changed.emit(activity)
 
         binding = TaskProjectionBinding(self._runtime.tasks, owner, on_change)
         dialog.execution_finished.connect(binding.close)
+        dialog.finished.connect(binding.close)
         dialog.destroyed.connect(binding.close)
         binding.start()
 

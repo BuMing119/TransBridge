@@ -66,6 +66,26 @@ def test_caught_llm_stage_exception_remains_failed_and_retryable(stage):
     assert entry.translation == "Existing translation"
 
 
+@pytest.mark.parametrize("stage", ["quality_gate", "refine", "polish", "arbitrate"])
+def test_caught_stage_error_protects_credentials_in_logs_and_final_note(stage):
+    secret = "opaque-stage-credential"
+
+    def fail(entries):
+        raise RuntimeError(f"provider rejected {secret}; password=real-provider-password")
+
+    pipeline = _pipeline(stage, fail)
+    pipeline._processor._llm_client = SimpleNamespace(_api_key=secret)
+    logs = []
+    entry = _entry()
+    result = pipeline.process([entry], log_callback=logs.append)[entry.id]
+    evidence = "\n".join([*logs, result.note])
+    assert "REDACTED" in evidence
+    assert secret not in evidence
+    assert "real-provider-password" not in evidence
+    assert result.processing_status == "failed"
+    assert entry.translation == "Existing translation"
+
+
 @pytest.mark.parametrize("stage", ["refine", "polish", "arbitrate"])
 def test_missing_stage_response_never_passes_using_the_original_translation(stage):
     pipeline = _pipeline(stage, lambda entries: {})

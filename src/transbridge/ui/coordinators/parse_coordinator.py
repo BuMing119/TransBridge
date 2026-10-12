@@ -6,6 +6,7 @@ from transbridge.converter.translation_entry_collection import TranslationEntryC
 
 from ..context import CollectionSlot
 from ..workers import ApiWorker
+from .parse_migration import prepare_parse_migrations
 
 
 def _apply_dictionary_to_collection(collection):
@@ -114,8 +115,6 @@ class ParseCoordinator:
 
     def _run_parse_esp(self, cfg):
         from transbridge.parser.plugin_parser import PluginParser
-        from transbridge.parser.strings_file import PluginStringsLookup
-        from transbridge.parser.xt import XT_XmlParser
 
         esp_path = cfg.esp_paths[0]
         authority = self._capture_authoritative_target()
@@ -125,37 +124,14 @@ class ParseCoordinator:
 
         def _do():
             parser = PluginParser()
-            entries = parser.parse_plugin(Path(esp_path), skip_empty=cfg.skip_empty)
+            entries = parser.parse_plugin(Path(esp_path), skip_empty=cfg.skip_empty, raise_on_error=True)
             collection = TranslationEntryCollection(entries)
-            migrate_count = 0
-            if cfg.eet_path:
-                try:
-                    migrate_count += collection.update_from_eet_xml(Path(cfg.eet_path))
-                except Exception:
-                    pass
-            if cfg.xt_path:
-                try:
-                    xp = XT_XmlParser.from_file(cfg.xt_path)
-                    migrate_count += collection.apply_xt_entries(xp.entries)
-                except Exception:
-                    pass
-            if cfg.tp_path:
-                try:
-                    migrate_count += collection.update_from_translated_plugin(Path(cfg.tp_path))
-                except Exception:
-                    pass
-            if cfg.strings_dir:
-                try:
-                    plugin_stem = Path(esp_path).stem
-                    strings_lookup = PluginStringsLookup.from_strings_dir(
-                        Path(cfg.strings_dir), plugin_stem, cfg.strings_lang
-                    )
-                    if strings_lookup:
-                        migrate_count += collection.update_from_strings_lookup(strings_lookup)
-                except Exception:
-                    pass
+            migration = prepare_parse_migrations(
+                collection, cfg, plugin_path=esp_path, context=self._host.context.runtime_context
+            )
+            collection = migration.collection
             # 自动套用词典（全局词典兜底，填空译文）
-            migrate_count += _apply_dictionary_to_collection(collection)
+            migrate_count = migration.applied_count + _apply_dictionary_to_collection(collection)
             collection, hydration = self._commit_authoritative_source(
                 esp_path,
                 collection,
@@ -164,10 +140,10 @@ class ParseCoordinator:
                 expected_authority=authority,
                 committed_authority=publication,
             )
-            return collection, migrate_count, parser.get_plugin(), parser.get_strings_lookup(), hydration
+            return collection, migrate_count, parser.get_plugin(), parser.get_strings_lookup(), hydration, migration
 
         def _on_done(result):
-            collection, migrate_count, plugin, strings_lookup, hydration = result
+            collection, migrate_count, plugin, strings_lookup, hydration, migration = result
             self._host.workbench.hide_step2_progress()
             self._host.workbench.set_step2_parsing(False)
             label = Path(esp_path).stem
@@ -175,9 +151,9 @@ class ParseCoordinator:
                 label=label,
                 collection=collection,
                 esp_path=esp_path,
-                eet_path=cfg.eet_path,
-                xt_path=cfg.xt_path,
-                strings_path=cfg.strings_dir,
+                eet_path=cfg.eet_path if "eet_path" in migration.completed_sources else None,
+                xt_path=cfg.xt_path if "xt_path" in migration.completed_sources else None,
+                strings_path=cfg.strings_dir if "strings_dir" in migration.completed_sources else None,
                 strings_lang=cfg.strings_lang,
                 migrate_count=migrate_count,
                 plugin=plugin,
@@ -185,12 +161,19 @@ class ParseCoordinator:
                 source_snapshot=None if hydration is None else hydration.source_snapshot,
                 format_id=None if hydration is None else hydration.format_id,
             )
-            self._finish_parse(esp_path, slot, collection, expected_authority=publication[0])
+            self._finish_parse(
+                esp_path, slot, collection, expected_authority=publication[0], migration_failures=migration.failures
+            )
 
         def _on_error(msg: str):
             self._host.workbench.hide_step2_progress()
             self._host.workbench.set_step2_parsing(False)
-            self._host.show_message(f"解析失败：{msg}")
+            self._host.show_message(
+                f"解析失败：{esp_path}\n{msg}",
+                error=True,
+                retry=self.parse_plugin,
+                retry_label="重新选择文件…",
+            )
 
         w = ApiWorker(_do)
         w.result.connect(_on_done)
@@ -207,6 +190,8 @@ class ParseCoordinator:
         self._host.workbench.set_step2_parsing(True)
 
         results = []
+        failures = []
+        migration_failures = []
         current = [0]
         batch_identity = self._host.context.active_version_identity
         publication = [self._capture_authoritative_target(expected_identity=batch_identity)]
@@ -220,7 +205,8 @@ class ParseCoordinator:
                 if current[0] and not self._can_publish_authoritative_source(publication[0]):
                     raise RuntimeError("解析期间活动工程版本或修订已变化。")
                 authority = self._capture_authoritative_target(expected_identity=batch_identity)
-            except RuntimeError:
+            except RuntimeError as exc:
+                failures.append(str(exc))
                 results.extend((path, None, None) for path in esp_paths[current[0] :])
                 _finish_batch()
                 return
@@ -228,10 +214,14 @@ class ParseCoordinator:
 
             def _do():
                 parser = PluginParser()
-                entries = parser.parse_plugin(Path(esp_path), skip_empty=cfg.skip_empty)
+                entries = parser.parse_plugin(Path(esp_path), skip_empty=cfg.skip_empty, raise_on_error=True)
                 collection = TranslationEntryCollection(entries)
+                migration = prepare_parse_migrations(
+                    collection, cfg, plugin_path=esp_path, context=self._host.context.runtime_context
+                )
+                collection = migration.collection
                 # 自动套用词典（全局词典兜底，填空译文）
-                dict_hits = _apply_dictionary_to_collection(collection)
+                migrate_count = migration.applied_count + _apply_dictionary_to_collection(collection)
                 collection, hydration = self._commit_authoritative_source(
                     esp_path,
                     collection,
@@ -240,18 +230,18 @@ class ParseCoordinator:
                     expected_authority=authority,
                     committed_authority=publication,
                 )
-                return collection, dict_hits, parser.get_plugin(), parser.get_strings_lookup(), hydration
+                return collection, migrate_count, parser.get_plugin(), parser.get_strings_lookup(), hydration, migration
 
             def _on_one_done(result):
-                collection, migrate_count, plugin, strings_lookup, hydration = result
+                collection, migrate_count, plugin, strings_lookup, hydration, migration = result
                 label = Path(esp_path).stem
                 slot = CollectionSlot(
                     label=label,
                     collection=collection,
                     esp_path=esp_path,
-                    eet_path=None,
-                    xt_path=None,
-                    strings_path=None,
+                    eet_path=cfg.eet_path if "eet_path" in migration.completed_sources else None,
+                    xt_path=cfg.xt_path if "xt_path" in migration.completed_sources else None,
+                    strings_path=cfg.strings_dir if "strings_dir" in migration.completed_sources else None,
                     strings_lang=cfg.strings_lang,
                     migrate_count=migrate_count,
                     plugin=plugin,
@@ -260,10 +250,13 @@ class ParseCoordinator:
                     format_id=None if hydration is None else hydration.format_id,
                 )
                 results.append((esp_path, slot, collection))
+                if migration.failures:
+                    migration_failures.append((esp_path, slot, migration.failures))
                 current[0] += 1
                 _parse_next()
 
             def _on_one_error(msg: str):
+                failures.append(f"{esp_path}: {msg}")
                 results.append((esp_paths[current[0]], None, None))
                 current[0] += 1
                 _parse_next()
@@ -294,13 +287,30 @@ class ParseCoordinator:
             msg = f"批量解析完成：成功 {success_count} 个"
             if fail_count > 0:
                 msg += f"，失败 {fail_count} 个"
-            self._host.show_message(msg)
+            if migration_failures:
+                msg += f"；{len(migration_failures)} 个集合的迁移部分失败，已保留成功导入"
+                failures.extend(f"{path}\n" + "\n".join(details) for path, _slot, details in migration_failures)
+            if fail_count:
+                self._host.show_message(
+                    msg + "\n" + "\n".join(failures),
+                    error=True,
+                    retry=self.parse_plugin,
+                    retry_label="重新选择文件…",
+                )
+            elif migration_failures:
+                key, slot, _details = migration_failures[0]
+                self._host.show_message(
+                    msg + "\n" + "\n".join(failures),
+                    error=True,
+                    retry=lambda: self._retry_parse_migration(key, slot),
+                    retry_label=f"重试「{slot.label}」的迁移…",
+                )
+            else:
+                self._host.show_message(msg)
 
         _parse_next()
 
     def _run_parse_eet(self, cfg):
-        from transbridge.parser.xt import XT_XmlParser
-
         eet_path = cfg.eet_path
         authority = self._capture_authoritative_target()
         publication = [authority]
@@ -309,18 +319,8 @@ class ParseCoordinator:
 
         def _do():
             collection = TranslationEntryCollection.from_eet_xml(Path(eet_path))
-            migrate_count = 0
-            if cfg.xt_path:
-                try:
-                    xp = XT_XmlParser.from_file(cfg.xt_path)
-                    migrate_count += collection.apply_xt_entries(xp.entries)
-                except Exception:
-                    pass
-            if cfg.tp_path:
-                try:
-                    migrate_count += collection.update_from_translated_plugin(Path(cfg.tp_path))
-                except Exception:
-                    pass
+            migration = prepare_parse_migrations(collection, cfg, context=self._host.context.runtime_context)
+            collection = migration.collection
             collection, hydration = self._commit_authoritative_source(
                 eet_path,
                 collection,
@@ -328,10 +328,10 @@ class ParseCoordinator:
                 expected_authority=authority,
                 committed_authority=publication,
             )
-            return collection, migrate_count, hydration
+            return collection, migration.applied_count, hydration, migration
 
         def _on_done(result):
-            collection, migrate_count, hydration = result
+            collection, migrate_count, hydration, migration = result
             self._host.workbench.hide_step2_progress()
             self._host.workbench.set_step2_parsing(False)
             label = Path(eet_path).stem
@@ -339,17 +339,24 @@ class ParseCoordinator:
                 label=label,
                 collection=collection,
                 eet_path=eet_path,
-                xt_path=cfg.xt_path,
+                xt_path=cfg.xt_path if "xt_path" in migration.completed_sources else None,
                 migrate_count=migrate_count,
                 source_snapshot=None if hydration is None else hydration.source_snapshot,
                 format_id=None if hydration is None else hydration.format_id,
             )
-            self._finish_parse(eet_path, slot, collection, expected_authority=publication[0])
+            self._finish_parse(
+                eet_path, slot, collection, expected_authority=publication[0], migration_failures=migration.failures
+            )
 
         def _on_error(msg: str):
             self._host.workbench.hide_step2_progress()
             self._host.workbench.set_step2_parsing(False)
-            self._host.show_message(f"解析失败：{msg}")
+            self._host.show_message(
+                f"解析失败：{eet_path}\n{msg}",
+                error=True,
+                retry=self.parse_plugin,
+                retry_label="重新选择文件…",
+            )
 
         w = ApiWorker(_do)
         w.result.connect(_on_done)
@@ -357,7 +364,9 @@ class ParseCoordinator:
         w.start()
         self._host.workers.append(w)
 
-    def _finish_parse(self, key: str, slot: CollectionSlot, collection, *, expected_authority=None):
+    def _finish_parse(
+        self, key: str, slot: CollectionSlot, collection, *, expected_authority=None, migration_failures=()
+    ):
         if not self._can_publish_authoritative_source(expected_authority):
             self._host.show_message("解析期间活动工程版本或修订已变化，未发布过期集合，请重新加载当前版本。")
             return
@@ -377,7 +386,23 @@ class ParseCoordinator:
                 return
         self._host.context.add_slot(key, slot)
         self._save_source_to_project(slot)
-        self._host.show_message(f"解析完成，共 {len(collection)} 条词条")
+        message = f"解析完成，共 {len(collection)} 条词条"
+        if migration_failures:
+            self._host.show_message(
+                message + "；迁移部分失败，已保留成功导入\n" + "\n".join(migration_failures),
+                error=True,
+                retry=lambda: self._retry_parse_migration(key, slot),
+                retry_label="重试迁移…",
+            )
+        else:
+            self._host.show_message(message)
+
+    def _retry_parse_migration(self, key: str, slot: CollectionSlot) -> None:
+        if self._host.context.slots.get(key) is not slot:
+            self._host.show_message("原集合已变化，请选择需要重试的集合后应用迁移源。", error=True)
+            return
+        self._host.context.activate_slot(key)
+        self.apply_migration()
 
     def _save_source_to_project(self, slot: CollectionSlot) -> None:
         """将解析的源文件路径保存到 project.json（下次启动自动恢复集合）。"""

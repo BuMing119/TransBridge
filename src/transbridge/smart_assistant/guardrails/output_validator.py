@@ -1,11 +1,13 @@
-"""Output validation backed by the application-wide SecretRedactor."""
+"""Validate tool results without rewriting their business content."""
 
 from __future__ import annotations
 
 import json
 import logging
+from typing import Any
+import warnings
 
-from transbridge.application.security.redaction import SecretRedactor
+from transbridge.application.security import SecretRedactor, project_business_data
 
 from .base import GuardMiddleware, GuardResult
 
@@ -22,7 +24,12 @@ class OutputValidationGuard(GuardMiddleware):
         redactor: SecretRedactor | None = None,
     ) -> None:
         self._max_output_size = max_output_size
-        self._redactor = redactor or SecretRedactor.default()
+        if redactor is not None:
+            warnings.warn(
+                "OutputValidationGuard.redactor is deprecated; protect technical diagnostics at their source.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
     def before_execute(self, step, ctx) -> GuardResult:
         return GuardResult(True)
@@ -35,11 +42,11 @@ class OutputValidationGuard(GuardMiddleware):
                 code="OUTPUT_TYPE_INVALID",
             )
 
-        message = self._redactor.redact_text(result.message or "")
+        message = project_business_data(result.message or "")
         if len(message) > _MAX_MESSAGE_LEN:
             message = message[:_MAX_MESSAGE_LEN] + "...(截断)"
         result.message = message
-        result.data = self._redactor.redact(result.data)
+        result.data = project_business_data(result.data)
 
         if result.data is not None:
             try:
@@ -54,7 +61,11 @@ class OutputValidationGuard(GuardMiddleware):
         return GuardResult(True)
 
 
-def sanitize_for_storage(data: dict) -> dict:
-    """Return a storage-safe copy using the same redaction implementation."""
+def sanitize_for_storage(data: Any) -> Any:
+    """Detach business evidence, projecting explicitly typed secrets/diagnostics.
 
-    return SecretRedactor(redact_paths=True).redact(data)
+    Paths and translation text are evidence, not inferred credentials. Technical
+    errors must be marked or sanitized where the exception is captured.
+    """
+
+    return project_business_data(data)

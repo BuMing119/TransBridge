@@ -7,12 +7,15 @@ import logging
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from transbridge.application.translation.postprocess_progress import PHASE_LABELS
+
 from .source_execution import SourceOutcome
 from .task_completion import TaskCompletion
 from .task_entry_results import TaskEntryResults
 from .task_record_writer import TaskRecordWriter
 from .task_recovery_binding import TaskRecoveryBinding
 from .task_run_presentation import concise_event, source_label, summarize_entries
+from .task_runtime_binding import AiTaskRuntimeBinding
 from .task_worker import AiTaskWorker
 
 logger = logging.getLogger(__name__)
@@ -56,6 +59,7 @@ class AiTaskRun(QObject):
         self.records.changed.connect(self.changed)
         self.completion = TaskCompletion(self)
         self.recovery = TaskRecoveryBinding(request, session)
+        self.runtime_binding = AiTaskRuntimeBinding(self)
         self._project_saved_signal = getattr(session, "project_saved_signal", None)
         if self._project_saved_signal is not None:
             self._project_saved_signal.connect(self._observe_project_saved)
@@ -116,6 +120,8 @@ class AiTaskRun(QObject):
         self.logged.emit("任务未启动")
         self.session.rollback_uncommitted()
         self.activity.fail(error)
+        if self.worker is None:
+            self._close_client()
         self._record()
         self.changed.emit()
 
@@ -174,7 +180,7 @@ class AiTaskRun(QObject):
     def _progress(self, key, stage, current, total, message):
         if self.cancelled or self.completion_received:
             return
-        stage = {"proofread": "校对", "terms": "术语准备"}.get(stage, stage)
+        stage = PHASE_LABELS.get(stage, stage)
         self.rows[key] = (stage, f"{current}/{total} · {message}")
         if self.pause_state == "running":
             self.status = f"{source_label(self.session.tasks, key)} · {stage} · {message}"
@@ -206,7 +212,11 @@ class AiTaskRun(QObject):
             self.activity.pause()
 
     def cancel(self):
-        if self.session.completed or self.cancelled:
+        if (
+            self.cancelled
+            or self.runtime_binding.is_failed
+            or (self.session.completed and not self.runtime_binding.is_cancelled)
+        ):
             return
         if not self.shutting_down:
             self.user_cancelled = True
@@ -308,6 +318,14 @@ class AiTaskRun(QObject):
 
     def _apply_failed(self, error):
         self.applying = False
+        self.runtime_binding.synchronize()
+        if self.runtime_binding.is_failed:
+            self.blocked = True
+            self.session.rollback_uncommitted()
+            if self.worker is None:
+                self._close_client()
+        if self.cancelled:
+            self._finish_cancelled()
         if not self.cancelled:
             self.state, self.status = "failed", f"应用失败：{error}"
             self.logged.emit(self.status)
@@ -320,11 +338,18 @@ class AiTaskRun(QObject):
                 self._completed(tuple(SourceOutcome(task, error="工作线程异常结束") for task in worker.tasks))
             self.worker = None
         worker.deleteLater()
-        if self.session.completed or self.cancelled or self.state in {"error", "pending_confirmation"}:
+        unbind = getattr(self.activity, "unbind_worker", None)
+        if callable(unbind):
+            unbind(worker)
+        if self.cancelled and not self.applying:
+            self._finish_cancelled()
+        if self.session.completed or self.cancelled or self.state == "error" or self.runtime_binding.is_failed:
             self._close_client()
         self.changed.emit()
 
     def _finish_cancelled(self):
+        if self.applying or self.worker is not None or self.state == "cancelled":
+            return
         self.cancelled = True
         self.state, self.status = "cancelled", "已取消"
         self.logged.emit("任务已取消")
@@ -354,6 +379,7 @@ class AiTaskRun(QObject):
             self.changed.emit()
 
     def _require_current(self):
+        self.runtime_binding.require_active()
         try:
             self.session.require_current()
             if self.consistency is not None:
@@ -399,6 +425,7 @@ class AiTaskRun(QObject):
         if self.busy:
             raise RuntimeError("AI 任务仍在结束中")
         self._close_client()
+        self.runtime_binding.close()
         self.activity.close()
         if self._project_saved_signal is not None:
             self._project_saved_signal.disconnect(self._observe_project_saved)

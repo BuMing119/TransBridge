@@ -411,8 +411,10 @@ def test_confirmation_replay_cannot_repeat_real_side_effect() -> None:
 
 
 def test_redactor_covers_tool_result_and_structured_observation() -> None:
+    from transbridge.application.security import DiagnosticValue, SecretValue
+
     canary = "sk-" + "A" * 24
-    result = ToolResult.ok(canary, data={"nested": {"token": canary}})
+    result = ToolResult.ok(DiagnosticValue(canary), data={"nested": {"token": SecretValue(canary)}})
 
     serialized = result.to_dict()
     observation = result.to_structured_observation("secret_tool", max_chars=80)
@@ -464,11 +466,15 @@ def test_output_guard_keeps_large_authoritative_structure() -> None:
 
 
 def test_guarded_tool_result_object_is_redacted_before_return() -> None:
+    from transbridge.application.security import DiagnosticValue, SecretValue
+
     name = f"contract_redaction_{uuid4().hex}"
     canary = "sk-" + "B" * 24
 
     def execute(args, ctx):
-        return ToolResult.ok(canary, data={"token": canary}, warnings=[canary])
+        return ToolResult.ok(
+            DiagnosticValue(canary), data={"token": SecretValue(canary)}, warnings=[DiagnosticValue(canary)]
+        )
 
     spec = ToolSpec(
         name=name,

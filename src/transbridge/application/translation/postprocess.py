@@ -26,7 +26,7 @@ from transbridge.application.contracts import (
     OperationResult,
 )
 from transbridge.application.io import EntryKey, EntryRevision, StageOperation, StagePolicyPort
-from transbridge.application.security import SecretRedactor
+from transbridge.application.security import project_business_data
 
 from .postprocess_checkpoint import (
     PostProcessCheckpoint,
@@ -35,41 +35,27 @@ from .postprocess_checkpoint import (
 )
 from .workload_models import TranslationInput, canonical_hash, translation_input_fingerprint
 
-_REPORT_SENSITIVE_KEYS = frozenset({
-    "api_key",
-    "apikey",
-    "authorization",
-    "password",
-    "passwd",
-    "prompt",
-    "secret",
-    "token",
-})
-
 
 def _normalize_report_value(value: object) -> Any:
-    """Return a detached, JSON-safe and recursively redacted report value."""
-    redactor = SecretRedactor.default()
+    """Detach JSON report data while honoring explicit secret/diagnostic values.
+
+    Entry identities, model explanations and quoted source text are business
+    values. Their spelling does not determine whether they are credentials.
+    """
+    value = project_business_data(value)
     if value is None or isinstance(value, (bool, int)):
         return value
     if isinstance(value, float):
         return value if math.isfinite(value) else None
     if isinstance(value, str):
-        return redactor.redact_text(value)
+        return value
     if isinstance(value, Mapping):
-        normalized: dict[str, Any] = {}
-        for key, item in value.items():
-            safe_key = redactor.redact_text(str(key))
-            if str(key).casefold() in _REPORT_SENSITIVE_KEYS:
-                normalized[safe_key] = redactor.REDACTED
-            else:
-                normalized[safe_key] = _normalize_report_value(item)
-        return normalized
+        return {str(key): _normalize_report_value(item) for key, item in value.items()}
     if isinstance(value, (tuple, list)):
         return [_normalize_report_value(item) for item in value]
     if isinstance(value, (set, frozenset)):
         return sorted((_normalize_report_value(item) for item in value), key=str)
-    return redactor.redact_text(str(value))
+    return str(value)
 
 
 def _normalize_report_mapping(value: Mapping[object, object]) -> dict[str, Any]:
@@ -106,10 +92,19 @@ class PostProcessCandidate:
     accepted: bool = True
     context: str = ""
     report_details: tuple[tuple[str, Any], ...] = ()
+    terminology_plugin_id: str | None = None
 
     def __post_init__(self) -> None:
-        """Detach, redact and normalize report-only metadata for durable JSON."""
-        normalized = _normalize_report_mapping(dict(self.report_details))
+        """Detach report evidence and migrate the old embedded terminology scope."""
+        details = dict(self.report_details)
+        legacy_plugin_id = details.pop("terminology_plugin_id", None)
+        if self.terminology_plugin_id is None and isinstance(legacy_plugin_id, str) and legacy_plugin_id.strip():
+            object.__setattr__(self, "terminology_plugin_id", legacy_plugin_id)
+        if self.terminology_plugin_id is not None and (
+            not isinstance(self.terminology_plugin_id, str) or not self.terminology_plugin_id.strip()
+        ):
+            raise ValueError("terminology plugin ID must be absent or non-empty")
+        normalized = _normalize_report_mapping(details)
         object.__setattr__(self, "report_details", tuple(sorted(normalized.items())))
 
     def with_text(self, text: str, phase: str) -> PostProcessCandidate:
@@ -124,7 +119,7 @@ class PostProcessCandidate:
         return replace(self, report_details=tuple(details.items()))
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        value = {
             "entry_key": self.entry_key.to_dict(),
             "before_revision": self.before_revision.value,
             "original": self.original,
@@ -136,6 +131,9 @@ class PostProcessCandidate:
             "context": self.context,
             "report_details": _normalize_report_mapping(dict(self.report_details)),
         }
+        if self.terminology_plugin_id is not None:
+            value["terminology_plugin_id"] = self.terminology_plugin_id
+        return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,7 +174,7 @@ class ReportSnapshot:
     run_spec_summary: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        """Detach and redact all metadata crossing the durable report boundary."""
+        """Detach report evidence without changing business text or identities."""
         normalized_diagnostics = tuple(_normalize_diagnostic(item) for item in self.diagnostics)
         normalized_stages = tuple(
             replace(
@@ -314,18 +312,14 @@ class PostProcessWorkload:
                         entry.translation or entry.original,
                         entry.stage,
                         context=entry.context,
-                        report_details=(
-                            (("terminology_plugin_id", entry.terminology_plugin_id),)
-                            if entry.terminology_plugin_id is not None
-                            else ()
-                        ),
+                        terminology_plugin_id=entry.terminology_plugin_id,
                     )
                 )
             elif decision.diagnostic is not None:
                 diagnostics.append(decision.diagnostic)
 
         if checkpoint is not None and resume_after_phase is not None:
-            current = self._resumed_candidates(checkpoint)
+            current = self._resumed_candidates(checkpoint, entries)
         else:
             current = tuple(candidates)
 
@@ -439,10 +433,20 @@ class PostProcessWorkload:
             raise ValueError("post-process resume phase does not match the checkpoint")
         return checkpoint
 
-    def _resumed_candidates(self, checkpoint: PostProcessCheckpoint) -> tuple[PostProcessCandidate, ...]:
+    def _resumed_candidates(
+        self, checkpoint: PostProcessCheckpoint, entries: tuple[TranslationInput, ...]
+    ) -> tuple[PostProcessCandidate, ...]:
         from .postprocess_checkpoint import restore_candidates_from_checkpoint
 
-        return restore_candidates_from_checkpoint(checkpoint)
+        # Old checkpoints omitted scope. Their already-validated input fingerprint
+        # binds this reconstruction to the exact original input and EntryKey.
+        scopes = {entry.entry_key: entry.terminology_plugin_id for entry in entries}
+        return tuple(
+            replace(candidate, terminology_plugin_id=scopes.get(candidate.entry_key))
+            if candidate.terminology_plugin_id is None
+            else candidate
+            for candidate in restore_candidates_from_checkpoint(checkpoint)
+        )
 
     def _persist(
         self,

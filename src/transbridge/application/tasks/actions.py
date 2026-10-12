@@ -41,6 +41,7 @@ class TaskCenterItem:
     revision: int | None
     available_actions: TaskActionAvailability
     reason_message: str = ""
+    retry_requires_preparation: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +140,20 @@ class TaskHistoryNavigationRegistry:
             navigator = self._handlers.get(record.job_type)
         return None if navigator is None else navigator.resolve(record, actor, action)
 
+    def prepare_retry(self, record: TaskHistoryRecord, actor: OwnerRef) -> TaskNavigationIntent | None:
+        """Open feature-owned preparation; this never submits or replays a task."""
+        if not record.visible_to(actor):
+            return None
+        with self._lock:
+            navigator = self._handlers.get(record.job_type)
+        prepare = getattr(navigator, "prepare_retry", None)
+        return None if prepare is None else prepare(record, actor)
+
+    def unregister(self, job_type: str, navigator: TaskHistoryNavigator) -> None:
+        with self._lock:
+            if self._handlers.get(job_type) is navigator:
+                self._handlers.pop(job_type)
+
 
 class TaskCenterActions:
     """Projects and executes only actions proven by registered feature handlers."""
@@ -156,11 +171,13 @@ class TaskCenterActions:
         self._retry_intents = retry_intents
         self._recovery_intents = recovery_intents
         self._navigators = navigators
+        self._request_preflight = None
 
     def set_request_preflight(self, callback) -> None:
         """Apply mandatory ownership checks to the registries this facade actually uses."""
         self._retry_intents.set_request_preflight(callback)
         self._recovery_intents.set_request_preflight(callback)
+        self._request_preflight = callback
 
     def list_history(
         self,
@@ -197,6 +214,13 @@ class TaskCenterActions:
         record = self._find_history(item, actor)
         projected = self._history_item(record, actor, retry_context)
         if action is TaskCenterAction.RETRY:
+            if projected.retry_requires_preparation:
+                if self._request_preflight is not None:
+                    self._request_preflight(record.run_id, record.owner, actor)
+                intent = self._navigators.prepare_retry(record, actor)
+                if intent is None:
+                    raise TaskCenterActionError("action_unavailable", "当前任务已不能重新准备，请刷新目录。")
+                return TaskCenterActionResult(navigation=intent)
             if not projected.available_actions.retry or retry_context is None:
                 raise TaskCenterActionError("action_unavailable", projected.reason_message or "此任务当前不可重试。")
             return TaskCenterActionResult(job_ref=self._retry_intents.retry(record, retry_context))
@@ -216,10 +240,21 @@ class TaskCenterActions:
         result, result_reason = self._navigation_availability(record, actor, TaskCenterAction.OPEN_RESULT)
         log, log_reason = self._navigation_availability(record, actor, TaskCenterAction.OPEN_LOG)
         retry = retry_context is not None and self._retry_intents.supports(record.job_type)
-        actions = TaskActionAvailability(retry=retry, open_result=result is not None, open_log=log is not None)
-        reason = ""
+        preparation = None
+        preparation_reason = ""
+        if not retry:
+            try:
+                preparation = self._navigators.prepare_retry(record, actor)
+            except Exception as exc:
+                preparation_reason = f"重新准备入口检查失败：{exc}"
+        actions = TaskActionAvailability(
+            retry=retry or preparation is not None, open_result=result is not None, open_log=log is not None
+        )
+        reason = (
+            "重新准备会打开当前内容的配置窗口，请重新核对范围、预检并确认；不会自动重放旧任务。" if preparation else ""
+        )
         if not any((actions.retry, actions.open_result, actions.open_log)):
-            navigation_reason = result_reason or log_reason
+            navigation_reason = result_reason or log_reason or preparation_reason
             if navigation_reason:
                 reason = navigation_reason
             elif self._retry_intents.supports(record.job_type) and retry_context is None:
@@ -235,6 +270,7 @@ class TaskCenterActions:
             revision=record.terminal_revision,
             available_actions=actions,
             reason_message=reason,
+            retry_requires_preparation=preparation is not None,
         )
 
     def _navigation_availability(

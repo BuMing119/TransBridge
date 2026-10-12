@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import QApplication, QDialog
 from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+from transbridge.paratranz.workflow.downloader import DownloadResult
 from transbridge.ui.projection_types import CollectionSlot
 from transbridge.ui.workbench.cards import download_card as module
 
@@ -61,7 +62,7 @@ class _Downloader:
         assert file_ids == [7]
         entry = next(iter(collection))
         collection.add(replace(entry, translation="远端译文", stage=3), overwrite=True)
-        return SimpleNamespace(merged=1)
+        return DownloadResult(merged=1, downloaded_files=1)
 
 
 def test_authoritative_batch_download_commits_detached_candidates_once(monkeypatch) -> None:

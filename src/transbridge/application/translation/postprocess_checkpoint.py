@@ -37,6 +37,7 @@ class PostProcessCheckpointEntry:
     before_revision: int = 0
     phases: tuple[str, ...] = ()
     context: str = ""
+    terminology_plugin_id: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.entry_key, dict) or not self.entry_key:
@@ -49,9 +50,18 @@ class PostProcessCheckpointEntry:
             raise ValueError("post-process checkpoint candidate hash must be a SHA-256 digest")
         if isinstance(self.before_revision, bool) or not isinstance(self.before_revision, int):
             raise TypeError("post-process checkpoint revision must be an integer")
+        if self.terminology_plugin_id is not None and (
+            not isinstance(self.terminology_plugin_id, str) or not self.terminology_plugin_id.strip()
+        ):
+            raise ValueError("terminology plugin ID must be absent or non-empty")
 
     def candidate_hash(self) -> str:
-        return canonical_hash({"entry_key": self.entry_key, "phase": self.phase, "text": self.text})
+        return canonical_hash({
+            "entry_key": self.entry_key,
+            "phase": self.phase,
+            "text": self.text,
+            **({"terminology_plugin_id": self.terminology_plugin_id} if self.terminology_plugin_id is not None else {}),
+        })
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +134,11 @@ class PostProcessCheckpoint:
                     "before_revision": entry.before_revision,
                     "phases": list(entry.phases),
                     "context": entry.context,
+                    **(
+                        {"terminology_plugin_id": entry.terminology_plugin_id}
+                        if entry.terminology_plugin_id is not None
+                        else {}
+                    ),
                 }
                 for entry in self.entries
             ],
@@ -152,6 +167,11 @@ class PostProcessCheckpoint:
                 before_revision=_int(item.get("before_revision", 0), "before_revision"),
                 phases=tuple(_strings(item.get("phases", ()))),
                 context=_string(item.get("context", ""), "context", allow_empty=True),
+                terminology_plugin_id=(
+                    _string(item["terminology_plugin_id"], "terminology_plugin_id")
+                    if item.get("terminology_plugin_id") is not None
+                    else None
+                ),
             )
             for item in _objects(value.get("entries"))
         )
@@ -299,13 +319,23 @@ def checkpoint_entry_from_candidate(candidate: Any, *, phase: str, accepted: boo
         stage=candidate.stage,
         phase=phase,
         text=text,
-        candidate_sha256=canonical_hash({"entry_key": entry_key, "phase": phase, "text": text}),
+        candidate_sha256=canonical_hash({
+            "entry_key": entry_key,
+            "phase": phase,
+            "text": text,
+            **(
+                {"terminology_plugin_id": candidate.terminology_plugin_id}
+                if candidate.terminology_plugin_id is not None
+                else {}
+            ),
+        }),
         accepted=accepted,
         original=candidate.original,
         before_text=candidate.before_text,
         before_revision=candidate.before_revision.value,
         phases=tuple(candidate.phases),
         context=candidate.context,
+        terminology_plugin_id=candidate.terminology_plugin_id,
     )
 
 
@@ -329,6 +359,7 @@ def restore_candidates_from_checkpoint(checkpoint: PostProcessCheckpoint) -> tup
                 phases=entry.phases,
                 accepted=entry.accepted,
                 context=entry.context,
+                terminology_plugin_id=entry.terminology_plugin_id,
             )
         )
     return tuple(restored)

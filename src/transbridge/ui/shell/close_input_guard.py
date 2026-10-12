@@ -31,3 +31,12 @@ class CloseInputGuard:
             window = reference()
             if window is not None and not sip.isdeleted(window):
                 window.setEnabled(True)
+
+    def close_windows(self, *, exclude) -> bool:
+        """Close standalone operation dialogs after their queued results arrive."""
+        closed = True
+        for reference in tuple(self._windows):
+            window = reference()
+            if window is not None and window is not exclude and not sip.isdeleted(window) and window.isVisible():
+                closed = window.close() and closed
+        return closed

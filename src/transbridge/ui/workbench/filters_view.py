@@ -69,10 +69,10 @@ class FiltersView(QWidget):
         self.search_all.setClearButtonEnabled(True)
         ComponentStyle.apply_static(self.search_all, ComponentKind.INPUT, ComponentDensity.COMPACT)
         header.addWidget(self.search_all, 1)
-        self.clear_button = QPushButton("清除")
-        self.clear_button.setAccessibleName("清除全部搜索条件")
+        self.clear_button = QPushButton("重置筛选")
+        self.clear_button.setAccessibleName("清除全部搜索和筛选条件")
         ComponentStyle.apply_static(self.clear_button, ComponentKind.BUTTON, ComponentDensity.COMPACT)
-        self.clear_button.clicked.connect(self.clear_search)
+        self.clear_button.clicked.connect(self.reset_filters)
         header.addWidget(self.clear_button)
         self.manage_labels_button = QPushButton("管理标签…")
         self.manage_labels_button.setAccessibleName("管理翻译标签")
@@ -81,6 +81,12 @@ class FiltersView(QWidget):
         self.manage_labels_button.clicked.connect(self._on_manage_labels)
         header.addWidget(self.manage_labels_button)
         outer.addWidget(self.search_widget)
+        self.active_summary = QLabel(self)
+        self.active_summary.setTextFormat(Qt.TextFormat.PlainText)
+        self.active_summary.setWordWrap(True)
+        self.active_summary.setAccessibleName("当前启用的筛选条件")
+        outer.addWidget(self.active_summary)
+        self.active_summary.hide()
 
         self.category_widget, self.category_container = self._tag_row("分类：")
         outer.addWidget(self.category_widget)
@@ -148,6 +154,7 @@ class FiltersView(QWidget):
         self.search_widget.setVisible(visible)
         self.advanced_button.setEnabled(visible)
         self.filter_button.setEnabled(visible)
+        self.refresh_active_summary()
         self.stage_widget.setVisible(visible and self.filter_button.isChecked())
         self.category_widget.setVisible(visible and self._advanced_visible)
         self.advanced_search_widget.setVisible(visible and self._advanced_visible)
@@ -342,6 +349,35 @@ class FiltersView(QWidget):
         self.search_timer.stop()
         self._on_changed()
 
+    def reset_filters(self) -> None:
+        self.apply_state(FilterState())
+        self._on_changed()
+
+    def refresh_active_summary(self) -> None:
+        state = self.state()
+        parts = []
+        if state.stages:
+            parts.append("状态：" + "、".join(STAGE_LABELS.get(value, str(value)) for value in sorted(state.stages)))
+        if state.categories:
+            parts.append("分类：" + "、".join(sorted(state.categories)))
+        if state.labels:
+            parts.append(f"标签：{len(state.labels)} 项")
+        if state.focus_labeled:
+            parts.append("仅有标签")
+        for name, value in (
+            ("全部字段", state.search_all),
+            ("Key", state.search_key),
+            ("原文", state.search_original),
+            ("译文", state.search_translation),
+        ):
+            if value:
+                parts.append(f"{name}包含：{value}")
+        summary = "；".join(parts)
+        self.active_summary.setText("已启用 · " + summary)
+        self.active_summary.setToolTip(summary)
+        self.active_summary.setVisible(self._content_visible and bool(parts))
+        self.clear_button.setEnabled(bool(parts))
+
     def state(self) -> FilterState:
         return FilterState(
             categories=frozenset(self.category_filters),
@@ -368,3 +404,4 @@ class FiltersView(QWidget):
         self.search_timer.stop()
         self.focus_labeled = state.focus_labeled
         self.sync_focus_style()
+        self.refresh_active_summary()

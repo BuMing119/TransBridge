@@ -77,6 +77,7 @@ class OperationPlanCoordinator:
         )
         self._owned_windows[plan.session_id] = dialog
         released = False
+        execution_running = False
         preflight_generation = 0
         pending_generation: int | None = None
         in_flight_draft: object | None = None
@@ -108,12 +109,16 @@ class OperationPlanCoordinator:
 
         def preflight(_session_id, fields) -> None:
             nonlocal preflight_generation, pending_generation
+            if released or execution_running:
+                return
             try:
                 apply_edits(fields)
             except (RuntimeError, TypeError, ValueError) as exc:
                 show_error("预检失败", str(exc))
                 return
-            if kind not in {OperationKind.UPLOAD, OperationKind.DOWNLOAD}:
+            if kind not in {OperationKind.UPLOAD, OperationKind.DOWNLOAD} and not bool(
+                getattr(dialog, "requires_async_preflight", False)
+            ):
                 try:
                     dialog.render_preflight(self._presenter.preflight(plan.session_id, owner_id=owner_id))
                 except (RuntimeError, TypeError, ValueError) as exc:
@@ -179,20 +184,31 @@ class OperationPlanCoordinator:
             worker.start()
 
         def return_to_edit(_session_id, fields) -> None:
+            if released or execution_running:
+                return
             try:
                 apply_edits(fields)
             except (RuntimeError, TypeError, ValueError) as exc:
                 show_error("无法返回编辑", str(exc))
 
+        def invalidate_confirmation() -> None:
+            if not released and not execution_running:
+                self._presenter.edit(plan.session_id, draft_holder[0], owner_id=owner_id)
+
         def confirm(_session_id, token) -> None:
+            nonlocal execution_running
+            if released or execution_running:
+                return
             running = getattr(dialog, "set_execution_running", None)
             retain_session = callable(running) and self._execution_observer is not None
             if retain_session:
+                execution_running = True
                 running(True)
             try:
                 ref = self._presenter.confirm(plan.session_id, token, owner_id=owner_id, retain_session=retain_session)
             except (RuntimeError, TypeError, ValueError) as exc:
                 if retain_session:
+                    execution_running = False
                     running(False)
                 show_error("无法开始操作", str(exc))
                 if kind in {OperationKind.UPLOAD, OperationKind.DOWNLOAD}:
@@ -203,6 +219,10 @@ class OperationPlanCoordinator:
                 return
             dialog.accept()
             release()
+
+        def execution_finished() -> None:
+            nonlocal execution_running
+            execution_running = False
 
         def cancel() -> None:
             nonlocal released
@@ -227,7 +247,16 @@ class OperationPlanCoordinator:
         dialog.preflight_requested.connect(preflight)
         dialog.return_to_edit_requested.connect(return_to_edit)
         dialog.confirm_requested.connect(confirm)
+        input_changed_signal = getattr(dialog, "plan_input_changed", None)
+        if input_changed_signal is not None and hasattr(input_changed_signal, "connect"):
+            input_changed_signal.connect(invalidate_confirmation)
         dialog.rejected.connect(cancel)
+        finished_signal = getattr(dialog, "finished", None)
+        if finished_signal is not None and hasattr(finished_signal, "connect"):
+            finished_signal.connect(lambda _result: cancel())
+        execution_finished_signal = getattr(dialog, "execution_finished", None)
+        if execution_finished_signal is not None and hasattr(execution_finished_signal, "connect"):
+            execution_finished_signal.connect(execution_finished)
         destroyed_signal = getattr(dialog, "destroyed", None)
         if destroyed_signal is not None and hasattr(destroyed_signal, "connect"):
             destroyed_signal.connect(destroyed)

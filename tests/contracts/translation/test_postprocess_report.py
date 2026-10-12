@@ -10,6 +10,7 @@ from openpyxl import load_workbook
 
 from transbridge.application.contracts import Diagnostic, OperationOutcome
 from transbridge.application.io import EntryKey, EntryRevision, SourceNamespace, StagePolicy
+from transbridge.application.security import DiagnosticValue, SecretRedactor, SecretValue
 from transbridge.application.translation import (
     CsvReportRenderer,
     ExcelReportRenderer,
@@ -123,16 +124,17 @@ def test_report_never_contains_prompts_or_secrets() -> None:
 def test_snapshot_boundary_recursively_detaches_and_redacts_metadata_and_diagnostics() -> None:
     summary = {
         "model": "fixture-model",
-        "api_key": "sk-abcdefghijklmnopqrstuvwxyz123456",
+        "api_key": SecretValue("sk-abcdefghijklmnopqrstuvwxyz123456"),
         "nested": {
-            "prompt": "system instructions",
+            "prompt": SecretValue("system instructions containing credentials"),
             "ordinary": "keep-me",
-            "items": [{"token": "sensitive-token-value", "label": "keep-label"}],
+            "items": [{"token": SecretValue("sensitive-token-value"), "label": "keep-label"}],
         },
     }
     diagnostic_details = {
-        "authorization": "Bearer abcdefghijklmnopqrstuvwxyz123456",
-        "ordinary": {"secret": "hidden-value", "label": "keep-detail"},
+        "authorization": SecretValue("Bearer abcdefghijklmnopqrstuvwxyz123456"),
+        "ordinary": {"secret": SecretValue("hidden-value"), "label": "keep-detail"},
+        "upstream": DiagnosticValue({"message": "token=super-secret-token-value"}),
     }
     snapshot = replace(
         _run_snapshot(run_id="secret-boundary"),
@@ -140,7 +142,7 @@ def test_snapshot_boundary_recursively_detaches_and_redacts_metadata_and_diagnos
         diagnostics=(
             Diagnostic(
                 "UPSTREAM_FAILED",
-                "upstream token=super-secret-token-value",
+                SecretRedactor.default().redact_text("upstream token=super-secret-token-value"),
                 details=tuple(diagnostic_details.items()),
             ),
         ),
