@@ -1,5 +1,19 @@
 # 变更日志索引
 
+- 2026-10-16：[智能助手流程闭环修复](assistant-ui-remediation/story-18-to-23/2026-10-16-001-assistant-workflow-closure.md) — 输入与停止隔离、持久清空、启动收尾、失败恢复与诊断、请求级技能、动态上下文及配置就绪；联合回归 1715 项通过，最终助手 UI 315 项及中文布局 12 项复验通过，Ruff/格式通过。
+
+- 2026-10-16：[智能助手默认界面精简](assistant-ui-remediation/story-14-to-17/2026-10-16-001-assistant-simplification.md) — 紧凑页首和输入工具栏、任务详情按需展开、保留异常行动、隐藏闲置历史/复制操作；最终助手 UI 300 项复验通过，Ruff/格式通过。
+
+- 2026-10-16：[智能助手八项 UI 设计优化](assistant-ui-remediation/story-06-to-13/2026-10-16-001-assistant-design.md) — 统一任务与真实暂停、常驻模式、修改对照、结果验收与撤销、状态引导、技能预览、响应式布局及会话内历史；联合回归 1628 项通过，Ruff/格式通过。
+
+- 2026-10-16：[智能助手附件、确认反馈与会话阅读修复](assistant-ui-remediation/story-01-to-05/2026-10-16-001-assistant-ux-fixes.md) — 材料快照与预算恢复、真实执行结果、提交范围、历史阅读、会话导航及窗口生命周期；联合回归 1566 项通过，Ruff/格式通过。
+
+- 2026-10-15：[术语系统三批性能优化](terminology-performance/story-01-to-08/2026-10-15-001-terminology-performance.md) — 后台保存、搜索/分页/投影复用、Model/View、刷新合并与读取消；五轮复测及去重 1564 项回归通过，1 项真实账户测试跳过，Ruff/格式通过；冷首屏与部分 50k 事件间隔预算仍未达标。
+
+- 2026-10-15：[术语工作台三批体验修复](terminology-ui-remediation/story-01-to-08/2026-10-15-001-terminology-workbench-ux.md) — 编辑保护、审核发布与同步闭环、真实生效视图、完整筛选与分页；相关集合去重1390项获得通过证据，1项真实账户测试跳过；Windows文件占用失败已单独复验通过，Ruff/格式通过。
+
+- 2026-10-14：[术语构建、方案、同步与检索修复](terminology-system-remediation/story-01-to-05/2026-10-14-001-terminology-system-fixes.md) — 九类问题修复；人工决定重建保留、过期发布拦截、预览导出一致、同步认领与重试恢复、检索开关及索引；联合回归 1275 通过，最终边界复验 29 通过，Ruff/格式通过。
+
 - 2026-10-12：[补齐草稿关闭、解析迁移、下载结果和任务中心流程](workflow-closure-remediation/story-10-to-14/2026-10-12-001-connect-remaining-workflows.md) — 失败草稿退出保护、批量迁移与错误反馈、下载结果准确统计、真实任务结果及重新准备入口；联合回归 335 通过；全量 5939 通过、2 失败，夹具修正及性能独立复验均通过，Ruff/格式通过。
 
 - 2026-10-12：[工作台交互一致性与失败恢复](ui-interaction-remediation/story-01-to-04/2026-10-12-001-ui-interaction-recovery.md) — 八项 UI 问题修复，补齐插件解析错误传播；扩展回归 1509 通过、1 跳过，1 项模板遗漏已修复，最终相关回归 117 通过，Ruff/格式通过。
