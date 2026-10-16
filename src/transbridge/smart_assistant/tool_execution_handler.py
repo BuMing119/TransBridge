@@ -6,7 +6,7 @@
 
 from collections.abc import Callable
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import logging
 import time
@@ -28,6 +28,7 @@ class DetachedToolResult:
     step: dict
     result: ToolResult
     retry_messages: tuple[str, ...] = ()
+    source_step: dict | None = None
 
 
 class ToolExecutionHandler:
@@ -47,6 +48,7 @@ class ToolExecutionHandler:
         on_batch_tool_card: Callable[[list], None] | None = None,
         on_plan_confirmed: Callable[[list], None] | None = None,
         on_step_completed: Callable[[], None] | None = None,
+        on_tool_result: Callable[[dict, ToolResult], None] | None = None,
         on_task_started: Callable[[str, str], None] | None = None,
         on_confirm_permission: Callable[[str, str], bool] | None = None,
         retry_handler: RetryHandler | None = None,
@@ -65,6 +67,7 @@ class ToolExecutionHandler:
         self._on_batch_tool_card = on_batch_tool_card or (lambda _: None)
         self._on_plan_confirmed = on_plan_confirmed or (lambda _: None)
         self._on_step_completed = on_step_completed or (lambda: None)
+        self._on_tool_result = on_tool_result or (lambda _step, _result: None)
         self._on_task_started = on_task_started or (lambda _task_id, _run_id: None)
         self._on_confirm_permission = on_confirm_permission
         self._confirmation_authority = ConfirmationAuthority(ttl_seconds=60.0)
@@ -330,6 +333,7 @@ class ToolExecutionHandler:
                         reject_step(
                             step, execution_context, ToolResult.fail(f"工具不支持后台执行: {step.get('tool', '?')}")
                         ),
+                        source_step=original_step,
                     )
                 )
                 continue
@@ -350,7 +354,7 @@ class ToolExecutionHandler:
                 on_retry=report_retry,
                 cancelled=cancelled,
             )
-            completed.append(DetachedToolResult(step, result, tuple(retry_messages)))
+            completed.append(DetachedToolResult(step, result, tuple(retry_messages), source_step=original_step))
         return tuple(completed)
 
     def complete_detached(self, completed: tuple[DetachedToolResult, ...]) -> None:
@@ -358,7 +362,12 @@ class ToolExecutionHandler:
         for item in completed:
             for message in item.retry_messages:
                 self._on_system_message(message)
-            self._handle_result(item.step, item.result, skip_react_continue=True)
+            self._handle_result(item.step, item.result, skip_react_continue=True, result_step=item.source_step)
+
+    def report_unavailable_results(self, steps: list[dict], message: str) -> None:
+        """Report missing worker outcomes without inventing a business observation."""
+        for step in steps:
+            self._on_tool_result(step, ToolResult.fail(message, error_code="RESULT_UNAVAILABLE"))
 
     # ── 单步执行 ──────────────────────────────────────────
 
@@ -427,7 +436,15 @@ class ToolExecutionHandler:
 
     # ── 结果处理 ──────────────────────────────────────────
 
-    def _handle_result(self, step: dict, result, skip_react_continue: bool = False, mode: str = "react") -> None:
+    def _handle_result(
+        self,
+        step: dict,
+        result,
+        skip_react_continue: bool = False,
+        mode: str = "react",
+        *,
+        result_step: dict | None = None,
+    ) -> None:
         """统一处理工具执行结果，使用 ToolResult.to_observation() 生成富文本观察。
 
         Args:
@@ -451,6 +468,10 @@ class ToolExecutionHandler:
 
         observation = tr.to_structured_observation(tool_name)
         safe_message = str(observation.result.get("message", ""))
+        self._on_tool_result(
+            step if result_step is None else result_step,
+            replace(tr, message=safe_message),
+        )
         # UI display (simple status line) uses the same typed business projection.
         self._on_system_message(
             f"[{'OK' if tr.success else 'FAIL'}] {tool_name}: {safe_message or ('完成' if tr.success else '失败')}"

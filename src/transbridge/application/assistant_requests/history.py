@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from .conversation_visibility import visible_history
 from .models import RequestError, digest
 from .transcript import TranscriptManifest, TranscriptMessage
 
@@ -43,7 +44,7 @@ def stage_transcript(snapshot, records, store, *, visible_messages=None):
     if store is None:
         changes = {"backend_history": tuple(records)}
         if visible_messages is not None:
-            changes["messages"] = tuple(visible_messages)
+            changes["messages"] = tuple(visible_history(visible_messages, snapshot.assistant_data()))
         return replace(snapshot, **changes)
     normalized = [
         {**record, "message_id": record.get("message_id") or f"legacy-{index}-{digest(record)}"}
@@ -59,7 +60,8 @@ def stage_transcript(snapshot, records, store, *, visible_messages=None):
         if old is not None:
             old_record = _record(old)
             if any(
-                old_record.get(key) != message.get(key, [] if key == "tool_calls" else None)
+                old_record.get(key, [] if key == "tool_calls" else None)
+                != message.get(key, [] if key == "tool_calls" else None)
                 for key in ("role", "content", "tool_call_id", "tool_calls")
             ):
                 raise RequestError("COMMAND_PAYLOAD_CONFLICT", "immutable message content changed")
@@ -95,5 +97,6 @@ def stage_transcript(snapshot, records, store, *, visible_messages=None):
     }
     if visible_messages is not None:
         visible = merged if visible_messages == records else visible_messages
+        visible = visible_history(visible, snapshot.assistant_data())
         changes["messages"] = _reuse_frozen(visible, snapshot.visible_messages(), snapshot.messages)
     return replace(snapshot, **changes)

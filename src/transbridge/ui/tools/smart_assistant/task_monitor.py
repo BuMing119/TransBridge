@@ -154,11 +154,13 @@ class _TaskCard(QFrame):
 
 class TaskMonitorWidget(QWidget):
     task_action = pyqtSignal(str, str)
+    tasks_changed = pyqtSignal(object)
 
     def __init__(self, parent=None, *, theme: SmartAssistantTheme | None = None):
         super().__init__(parent)
         self._theme = theme or SmartAssistantTheme()
         self._tasks: dict[str, dict] = {}
+        self._grouped_task_ids = set()
         self._cards: list[_TaskCard] = []
         self._collapsed = True
         self.setAccessibleName("后台任务监控")
@@ -219,17 +221,31 @@ class TaskMonitorWidget(QWidget):
             card.apply_theme(theme)
 
     def refresh(self, tasks: list[dict]) -> None:
+        self._tasks = {task.get("task_id", ""): task for task in tasks}
+        self._render()
+        self.tasks_changed.emit(tuple(tasks))
+
+    def set_grouped_tasks(self, task_ids) -> None:
+        grouped = set(task_ids)
+        if grouped != self._grouped_task_ids:
+            self._grouped_task_ids = grouped
+            self._render()
+
+    @property
+    def visible_task_ids(self):
+        return tuple(key for key in self._tasks if key not in self._grouped_task_ids)
+
+    def _render(self) -> None:
+        tasks = [task for key, task in self._tasks.items() if key not in self._grouped_task_ids]
         self.setVisible(bool(tasks))
         for card in self._cards:
             self._list_layout.removeWidget(card)
             card.deleteLater()
         self._cards.clear()
-        self._tasks = {}
         active_count = 0
         for task in tasks:
             task_id = task.get("task_id", "")
             status = task.get("status", "running")
-            self._tasks[task_id] = task
             active_count += status in ("running", "paused")
             card = _TaskCard(
                 task_id,
@@ -239,7 +255,8 @@ class TaskMonitorWidget(QWidget):
             )
             self._cards.append(card)
             self._list_layout.insertWidget(self._list_layout.count() - 1, card)
-        self._title_label.setText(f"后台任务 ({len(tasks)})")
+        label = "其他后台任务" if self._grouped_task_ids else "后台任务"
+        self._title_label.setText(f"{label} ({len(tasks)})")
         self._empty_label.setVisible(not tasks)
         self._clear_all_btn.setVisible(not self._collapsed and len(tasks) - active_count > 0)
 
@@ -256,7 +273,9 @@ class TaskMonitorWidget(QWidget):
 
     def _apply_collapsed_state(self) -> None:
         self._scroll.setVisible(not self._collapsed)
-        completed_count = sum(task.get("status") not in ("running", "paused") for task in self._tasks.values())
+        completed_count = sum(
+            self._tasks[key].get("status") in {"completed", "failed", "cancelled"} for key in self.visible_task_ids
+        )
         self._clear_all_btn.setVisible(not self._collapsed and completed_count > 0)
         self._collapse_btn.setAccessibleName("展开后台任务" if self._collapsed else "折叠后台任务")
         self.setMinimumHeight(36 if self._collapsed else 140)

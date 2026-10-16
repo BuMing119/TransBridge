@@ -190,6 +190,8 @@ def append_events(state, before, session_id, cause: EventCause | None = None) ->
                 operation = "routing.paused"
             elif new["status"] == "cancelled":
                 operation = "routing.cancelled"
+            elif new["status"] == "rejected":
+                operation = "routing.rejected"
             elif new["status"] == "needs_clarification":
                 operation = "routing.needs_clarification"
             elif cause.operation == "routing.resumed":

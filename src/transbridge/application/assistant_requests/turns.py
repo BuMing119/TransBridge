@@ -65,3 +65,36 @@ def record_turn_failure(service, context, admission, *, batch=None, history=()):
                 record_unchanged=True,
             ),
         )
+
+
+def reject_routing_input(service, context, admission, batch, *, code):
+    """Retain rejected input evidence without blocking later, corrected submissions."""
+    message_ids = {source.message_id for source in batch.sources}
+
+    def reject(state):
+        entry = next(
+            (value for value in state.get("batches", ()) if value["batch"]["batch_id"] == batch.batch_id), None
+        )
+        if entry is None or entry.get("status") != "routing":
+            return
+        entry.update(status="rejected", rejection_code=code)
+        for item in state.get("ingress", ()):
+            if item["message_id"] in message_ids and item.get("batch_id") == batch.batch_id:
+                item.update(status="rejected", rejection_code=code)
+
+    with service.serialized(context), service.scheduler.serialized(admission):
+        if admission.stage != "routing" or admission.session_id != context.session_id:
+            raise RequestError("TURN_LEASE_STALE", "input rejection belongs to another routing turn")
+        service.transact(
+            context,
+            reject,
+            cause=EventCause(
+                "routing.rejected",
+                references={
+                    "turn_id": admission.turn_id,
+                    "batch_id": batch.batch_id,
+                    "message_ids": sorted(message_ids),
+                },
+                details={"code": code},
+            ),
+        )

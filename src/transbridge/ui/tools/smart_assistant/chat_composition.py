@@ -6,6 +6,7 @@ from pathlib import Path
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QFrame, QPushButton, QScrollArea, QVBoxLayout, QWidget
 
+from transbridge.application.assistant_requests.attachments import display_user_content
 from transbridge.smart_assistant.conversation_orchestrator import ConversationOrchestrator
 from transbridge.smart_assistant.session_controller import SessionController
 from transbridge.smart_assistant.tool_execution_handler import ToolExecutionHandler
@@ -52,6 +53,9 @@ def initialize_runtime(facade) -> None:
         on_confirm_permission=lambda title, message: (
             facade._confirmation_view.ask_permission(title, message) if facade._confirmation_view is not None else False
         ),
+        on_tool_result=lambda step, result: (
+            facade._confirmation_view.complete_tool(step, result) if facade._confirmation_view is not None else None
+        ),
         llm_client_provider=lambda: facade._orchestrator.get_llm_client(),
     )
     facade._orchestrator = ConversationOrchestrator(
@@ -67,9 +71,7 @@ def initialize_runtime(facade) -> None:
         on_add_bubble=lambda bubble: (
             facade._message_list.add_bubble(bubble) if facade._message_list is not None else None
         ),
-        on_scroll_to_bottom=lambda: (
-            facade._message_list.scroll_to_bottom() if facade._message_list is not None else None
-        ),
+        on_scroll_to_bottom=lambda: facade._message_list.follow_tail() if facade._message_list is not None else None,
         on_thinking_indicator_show=lambda thought: (
             facade._message_list.show_thinking(thought) if facade._message_list is not None else None
         ),
@@ -84,7 +86,6 @@ def initialize_runtime(facade) -> None:
             facade._message_list.remove(widget) if facade._message_list is not None else None
         ),
         on_retry_offer=lambda message: facade._offer_retry_button(),
-        on_get_uploaded_docs=lambda: facade._uploaded_docs,
         on_response_parsed=lambda parsed: (
             facade._conversation_binding.handle_response(parsed) if facade._conversation_binding is not None else None
         ),
@@ -118,8 +119,8 @@ def initialize_runtime(facade) -> None:
 def initialize_message_area(facade) -> None:
     """Compose the message View, presenters and bindings."""
     facade._main_layout = QVBoxLayout(facade)
-    facade._main_layout.setContentsMargins(14, 12, 14, 12)
-    facade._main_layout.setSpacing(12)
+    facade._main_layout.setContentsMargins(12, 8, 12, 8)
+    facade._main_layout.setSpacing(8)
     facade._scroll = QScrollArea()
     facade._scroll.setFrameShape(QFrame.Shape.NoFrame)
     facade._scroll.setAccessibleName("消息滚动区域")
@@ -149,8 +150,10 @@ def initialize_message_area(facade) -> None:
         timer_parent=facade,
         max_visible_widgets=facade.MAX_VISIBLE_WIDGETS,
         theme=facade._theme,
+        history_provider=facade._conversation.get_transcript,
     )
     facade._update_reading_width()
+    facade._main_layout.insertWidget(0, facade._message_list.navigation)
     facade._streaming_presenter = StreamingPresenter(facade._message_list)
     facade._plan_execution = PlanExecutionBinding(
         context=facade._ctx,
@@ -164,6 +167,9 @@ def initialize_message_area(facade) -> None:
         execution_context=facade._tool_handler.build_execution_context,
         on_lifecycle_changed=lambda: (
             facade._session_binding.auto_save() if facade._session_binding is not None else None
+        ),
+        on_execution_failed=lambda message: (
+            facade._request_binding.fail(message) if facade._request_binding is not None else None
         ),
     )
     facade._confirmation_actions = ConfirmationActions(
@@ -183,6 +189,7 @@ def initialize_message_area(facade) -> None:
         batch_ignored=facade._confirmation_actions.ignore_batch,
         engine=lambda: facade._plan_execution.engine,
         theme=facade._theme,
+        preview_context=facade._tool_handler.build_execution_context,
     )
 
     def abort_session_activity() -> None:
@@ -234,7 +241,7 @@ def initialize_message_area(facade) -> None:
         facade._controller.handle_round_interrupted()
 
     def append_user(text: str) -> None:
-        facade._message_list.add_bubble(MessageBubble(text, "user", theme=facade._theme))
+        facade._message_list.add_bubble(MessageBubble(display_user_content(text), "user", theme=facade._theme))
         facade._conversation.add_user(text)
 
     facade._submission = SubmissionBinding(
@@ -246,6 +253,11 @@ def initialize_message_area(facade) -> None:
         from .request_binding import RequestBinding
 
         facade._request_binding = RequestBinding(facade, facade._assistant_request_service)
+        from .result_review import RequestResultReviewBinding
+
+        facade._request_binding.result_review = RequestResultReviewBinding(
+            facade._request_binding, locate_entries=facade._navigation.get("locate_entries")
+        )
         facade._orchestrator.request_binding = facade._request_binding
         facade._tool_handler.assistant_gate_provider = lambda: facade._request_binding.gate
         facade._confirmation_view.intent_scope = facade._request_binding.confirmation_validator

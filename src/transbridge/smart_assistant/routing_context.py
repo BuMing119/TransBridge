@@ -2,6 +2,8 @@
 
 import re
 
+from transbridge.application.assistant_requests.attachments import display_user_content
+
 from .request_protocol import COVERAGE_TOOL
 
 
@@ -38,7 +40,7 @@ def recent_conversation(batch, history, *, limit=12, character_budget=12000):
     current = {s.message_id for s in batch.sources}
     selected = []
     for message in reversed(history):
-        text = message.get("content", "")
+        text = display_user_content(message.get("content", ""))
         if (
             message.get("message_id") in current
             or message.get("role") not in {"user", "assistant"}

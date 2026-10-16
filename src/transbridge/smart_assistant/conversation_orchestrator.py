@@ -31,11 +31,12 @@ def _create_llm_client(config, _cache: dict | None = None):
             "config_hash" — hash of current (api_key, provider, base_url, model).
 
     Returns:
-        An LLMClient instance, or None if config is None or missing an api_key.
+        An LLMClient instance, or None if the local service configuration is incomplete.
     """
     from transbridge.infra.llm_client import create_llm_client
+    from transbridge.smart_assistant.service_readiness import service_availability
 
-    if config is None or not config.api_key:
+    if not service_availability(config).ready:
         return None
 
     current_hash = hash((config.api_key, config.provider, config.base_url, config.model))
@@ -105,8 +106,6 @@ class ConversationOrchestrator(QObject):
         on_remove_widget: Callable[[Any], None] | None = None,
         # 错误回调
         on_retry_offer: Callable[[str], None] | None = None,
-        # 上下文回调
-        on_get_uploaded_docs: Callable[[], dict] | None = None,
         # React 深度回调
         on_react_depth_check: Callable[[], bool] | None = None,
         # FR12: SessionController 响应回调
@@ -170,7 +169,6 @@ class ConversationOrchestrator(QObject):
         self._on_end_conversation = on_end_conversation or (lambda: None)
         self._on_remove_widget = on_remove_widget or (lambda _: None)
         self._on_retry_offer = on_retry_offer or (lambda _: None)
-        self._on_get_uploaded_docs = on_get_uploaded_docs or (lambda: {})
         self._on_react_depth_check = on_react_depth_check or (lambda: True)
         self._on_response_parsed = on_response_parsed or (lambda _: None)  # FR12
 
@@ -189,21 +187,17 @@ class ConversationOrchestrator(QObject):
 
         config_path = get_config_file_path()
 
-        # M49: Only reload config from disk if the file has been modified
+        # The stamp also fences in-flight context preparation against configuration edits.
         try:
             current_mtime = os.path.getmtime(config_path)
         except OSError:
             current_mtime = 0
 
-        if self._llm_config_mtime is None or current_mtime != self._llm_config_mtime:
-            cfg = LLMConfig.load_from_file()
-            self._llm_config_mtime = current_mtime
-            self._cached_llm_config = cfg
-        else:
-            cfg = self._cached_llm_config
-
-        if not cfg.api_key:
-            return None
+        # A credential-store/environment update need not touch the INI timestamp.
+        # Resolve once per requested round; reuse the client by the complete config hash.
+        cfg = LLMConfig.load_from_file()
+        self._llm_config_mtime = current_mtime
+        self._cached_llm_config = cfg
 
         cache = {
             "client": self._llm_client,
@@ -235,31 +229,23 @@ class ConversationOrchestrator(QObject):
 
         client = self._get_llm_client()
         if client is None:
+            from transbridge.smart_assistant.service_readiness import service_availability
+
+            reason = service_availability(self._cached_llm_config).message
             binding = getattr(self, "request_binding", None)
             if binding is not None:
-                binding.fail("请先在设置中配置 LLM API Key")
+                binding.fail(reason)
             else:
-                self._on_system_message("请先在设置中配置 LLM API Key")
+                self._on_system_message(reason)
             return
 
         self._generation += 1
         generation = self._generation
         self._active_generation = generation
 
-        current_messages = self._conversation.get_history()
-        system_message = next((m for m in current_messages if m.get("role") == "system"), None)
-        has_legacy_tool_prompt = system_message is not None and '"mode": "plan"' in str(
-            system_message.get("content", "")
-        )
-        if system_message is None or has_legacy_tool_prompt:
-            from transbridge.smart_assistant.context_builder import ContextBuilder
-            from transbridge.smart_assistant.prompts import build_system_prompt
+        from transbridge.smart_assistant.round_context import refresh_round_context
 
-            ctx = self._ctx
-            ctx._uploaded_docs = self._on_get_uploaded_docs()
-            context = ContextBuilder(ctx).build()
-            sys_prompt = build_system_prompt(context)
-            self._conversation.add_system(sys_prompt)
+        workspace_snapshot = refresh_round_context(self._conversation, self._ctx)
 
         self._react_depth += 1
         self._on_thinking_indicator_hide()
@@ -303,6 +289,7 @@ class ConversationOrchestrator(QObject):
                     context_window=int(getattr(cfg, "assistant_context_window", 0)),
                     on_ready=prepared,
                     on_error=preparation_failed,
+                    workspace_snapshot=workspace_snapshot,
                 )
                 return
             try:
@@ -311,12 +298,17 @@ class ConversationOrchestrator(QObject):
                     self._conversation.get_transcript(),
                     self._round_max_tokens or 4096,
                     context_window=int(getattr(cfg, "assistant_context_window", 0)),
+                    workspace_snapshot=workspace_snapshot,
                 )
                 if not self._round_messages:
                     return
             except Exception as exc:
                 binding.fail(str(exc))
                 return
+        else:
+            from transbridge.smart_assistant.round_context import legacy_workspace_messages
+
+            self._round_messages = legacy_workspace_messages(self._round_messages, workspace_snapshot)
         try:
             from transbridge.smart_assistant.context_budget import budget_for_config
 
@@ -426,7 +418,7 @@ class ConversationOrchestrator(QObject):
 
         turn = response if isinstance(response, LlmTurn) else LlmTurn(text=str(response or ""))
         try:
-            self._conversation.add_assistant_turn(turn)
+            message_id = self._conversation.add_assistant_turn(turn)
             binding = getattr(self, "request_binding", None)
             parsed = turn_to_parsed_response(turn, request_stage=None if binding is None else binding.stage)
         except LlmToolProtocolError as exc:
@@ -435,6 +427,10 @@ class ConversationOrchestrator(QObject):
                 self._on_remove_widget(_finished_bubble)
             self._on_error(generation, worker, f"无效的原生工具调用: {exc}")
             return
+
+        set_property = getattr(_finished_bubble, "setProperty", None)
+        if isinstance(message_id, str) and message_id and callable(set_property):
+            set_property("message_id", message_id)
 
         thought = parsed.get("summary", "")
         steps = parsed.get("steps", [])

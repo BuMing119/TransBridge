@@ -1,15 +1,16 @@
-"""Brand header for the floating Smart Assistant workspace."""
+"""Compact session header for the floating Smart Assistant workspace."""
 
 from __future__ import annotations
 
 from PyQt6.QtCore import QPoint, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QMouseEvent
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QWidget
 
+from transbridge.smart_assistant.service_readiness import ServiceAvailability
 from transbridge.ui.foundation.components import ElidedLabel
 from transbridge.ui.foundation.tabler_icons import tabler_icon
 
-from .theme_support import BUTTON_STRUCTURE_STYLE, HEADER_STRUCTURE_STYLE, SmartAssistantTheme
+from .theme_support import HEADER_STRUCTURE_STYLE, QUIET_BUTTON_STYLE, SmartAssistantTheme
 
 
 class _HeaderSummary(QWidget):
@@ -51,29 +52,21 @@ class AssistantPanelHeader(QFrame):
         super().__init__()
         self._theme = theme or SmartAssistantTheme()
         self._model_configured = False
+        self._service_availability = ServiceAvailability("", False)
         self._drag_global_origin: QPoint | None = None
         self._drag_window_origin: QPoint | None = None
         self.setObjectName("smartAssistantHeader")
         self.setStyleSheet(HEADER_STRUCTURE_STYLE)
         self.setAccessibleName("智能助手标题栏")
-        self.setFixedHeight(52)
+        self.setFixedHeight(44)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(18, 8, 10, 8)
-        layout.setSpacing(10)
-
-        self._brand_icon = QLabel()
-        self._brand_icon.setFixedSize(30, 30)
-        self._brand_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._brand_icon.setAccessibleName("TransBridge 智能助手")
-        layout.addWidget(self._brand_icon)
-
-        brand = QVBoxLayout()
-        brand.setSpacing(0)
-        self._title = ElidedLabel("TransBridge · 智能助手")
+        layout.setContentsMargins(14, 6, 8, 6)
+        layout.setSpacing(8)
+        self._title = ElidedLabel("新对话")
+        self._title.setAccessibleName("当前会话")
         self._title.setFont(QFont("Microsoft YaHei", 10, QFont.Weight.DemiBold))
-        brand.addWidget(self._title)
-        layout.addLayout(brand, 1)
+        layout.addWidget(self._title, 2)
 
         self._model = _HeaderSummary("模型", "模型未配置", theme=self._theme)
         self._model.setMinimumWidth(0)
@@ -83,26 +76,52 @@ class AssistantPanelHeader(QFrame):
         self._minimize_button = QPushButton()
         self._minimize_button.setAccessibleName("最小化智能助手")
         self._minimize_button.setToolTip("最小化")
-        self._minimize_button.setFixedSize(34, 34)
-        self._minimize_button.setStyleSheet(BUTTON_STRUCTURE_STYLE)
+        self._minimize_button.setFixedSize(32, 32)
+        self._minimize_button.setStyleSheet(QUIET_BUTTON_STYLE + "QPushButton { padding: 0; }")
         self._minimize_button.clicked.connect(self.minimize_requested)
         layout.addWidget(self._minimize_button)
 
         self._close_button = QPushButton()
         self._close_button.setAccessibleName("关闭智能助手")
         self._close_button.setToolTip("关闭")
-        self._close_button.setFixedSize(34, 34)
-        self._close_button.setStyleSheet(BUTTON_STRUCTURE_STYLE)
+        self._close_button.setFixedSize(32, 32)
+        self._close_button.setStyleSheet(QUIET_BUTTON_STYLE + "QPushButton { padding: 0; }")
         self._close_button.clicked.connect(self.close_requested)
         layout.addWidget(self._close_button)
         self.apply_theme(self._theme)
 
     def set_model_name(self, model_name: str) -> None:
+        """Change the identifier only; a name alone cannot prove service readiness."""
         value = model_name.strip()
-        self._model_configured = bool(value and value != "模型未配置")
+        self._model_configured = False
+        self._service_availability = ServiceAvailability(value, False, ("configuration",), "请检查 AI 服务配置。")
         self._model.set_value(value or "模型未配置")
-        self.setAccessibleDescription("模型已配置" if self._model_configured else "模型待配置")
+        self.setAccessibleDescription(self._service_availability.message)
         self.apply_theme(self._theme)
+
+    def set_service_availability(self, status: ServiceAvailability) -> None:
+        self._service_availability = status
+        self._model_configured = status.ready
+        name = status.model_name or "模型未配置"
+        self._model.set_value(name if status.ready or not status.model_name else f"{name} · 待配置")
+        self._model.setToolTip(status.message)
+        self._model._value.setToolTip(f"{name}\n{status.message}")
+        self.setAccessibleDescription(status.message)
+        self.apply_theme(self._theme)
+
+    @property
+    def service_availability(self) -> ServiceAvailability:
+        return self._service_availability
+
+    @property
+    def model_configured(self) -> bool:
+        return self._model_configured
+
+    def set_session_name(self, name: str) -> None:
+        title = name.strip() or "新对话"
+        self._title.set_full_text(title)
+        self._title.setToolTip(title)
+        self._title.setAccessibleDescription(title)
 
     def apply_theme(self, theme: SmartAssistantTheme) -> None:
         self._theme = theme
@@ -110,8 +129,7 @@ class AssistantPanelHeader(QFrame):
         theme.apply_semantic(self._title, "default")
         self._model.apply_theme(theme)
         for button in (self._minimize_button, self._close_button):
-            theme.apply_surface(button, alternate=True)
-        self._brand_icon.setPixmap(tabler_icon(self._brand_icon, "sparkles", 25, semantic="accent").pixmap(25, 25))
+            theme.apply_semantic(button, "muted")
         self._minimize_button.setIcon(tabler_icon(self._minimize_button, "minus", 17))
         self._minimize_button.setIconSize(QSize(17, 17))
         self._close_button.setIcon(tabler_icon(self._close_button, "x", 18))

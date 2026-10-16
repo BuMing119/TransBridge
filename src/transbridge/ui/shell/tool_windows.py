@@ -201,6 +201,8 @@ class ToolWindows:
         if self.assistant_panel is None or self.assistant_panel.is_disposed:
             from transbridge.ui.tools.smart_assistant import SmartAssistantPanel
 
+            from .assistant_navigation import assistant_navigation
+
             previous = self.assistant_panel
             if previous is not None:
                 previous.deleteLater()
@@ -212,6 +214,7 @@ class ToolWindows:
                 session_projection=self._host.session_projection,
                 runtime_context=self._host.runtime_context,
                 theme_view=getattr(self._host, "theme_view", None),
+                navigation=assistant_navigation(self._host, lambda: self.show_ui_settings("ai_service")),
             )
             icon_getter = getattr(self._host, "windowIcon", None)
             application = QApplication.instance()

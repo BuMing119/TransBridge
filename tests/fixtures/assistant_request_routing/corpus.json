@@ -596,7 +596,7 @@
           {
             "action": "CANCEL",
             "target_id": "translate",
-            "status": "needs_clarification",
+            "status": "needs_replan",
             "diagnostic": "REQUEST_REVISION_CONFLICT"
           }
         ]

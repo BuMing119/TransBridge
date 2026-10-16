@@ -11,6 +11,17 @@ class RequestBackground:
 
     def submit(self, work, received=None, *, context=None, failed=None, wake=False, settled=None):
         binding = self.binding
+        generation = getattr(getattr(binding, "inputs", None), "generation", None)
+
+        def current():
+            return not binding._closed and (
+                context is None
+                or (
+                    binding.context == context
+                    and generation == getattr(getattr(binding, "inputs", None), "generation", None)
+                )
+            )
+
         binding._accepting += 1
         future = binding._queue.submit(work)
 
@@ -19,10 +30,10 @@ class RequestBackground:
                 result = future.result()
             except Exception as exc:
                 logger.warning("Assistant background operation failed", exc_info=True)
-                if not binding._closed and (context is None or binding.context == context):
+                if current():
                     (failed or binding.fail)(exc)
                 return
-            if binding._closed or (context is not None and binding.context != context):
+            if not current():
                 return
             if received is not None:
                 try:

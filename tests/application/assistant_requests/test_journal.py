@@ -131,7 +131,7 @@ def test_revision_conflict_receipt_is_visible_without_mutating_target(composed):
     state = apply_routing_fixture(service, context, batch.batch_id, proposal)
     assert service.requests(state)[0].status == "open"
     event = next(e for e in reversed(read_events(state)["events"]) if "receipts" in e["after"])
-    assert event["after"]["receipts"][0]["status"] == "needs_clarification"
+    assert event["after"]["receipts"][0]["status"] == "needs_replan"
     assert event["after"]["receipts"][0]["code"] == "REQUEST_REVISION_CONFLICT"
 
 

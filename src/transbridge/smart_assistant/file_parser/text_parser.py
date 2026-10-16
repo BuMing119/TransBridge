@@ -63,6 +63,7 @@ class TextFileParser(FileParser):
             headers = next(reader, None)
             if headers:
                 rows.append(list(headers))
+                raw_parts.append("\t".join(headers))
             for row in reader:
                 rows.append(list(row))
                 raw_parts.append("\t".join(row))

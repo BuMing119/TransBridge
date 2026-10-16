@@ -1,6 +1,6 @@
 """Skill 执行调度器。
 
-通过 ChatWidget 的公共接口（add_system_prompt / send_user_message）触发 Skill，
+通过 ChatWidget 的公共接口 send_user_message 触发 Skill，
 不再访问 UI 层的私有成员。SkillExecutor 不感知 ChatWidget 的内部实现细节。
 """
 
@@ -18,13 +18,13 @@ logger = logging.getLogger(__name__)
 
 
 class SkillExecutor:
-    """注入 Skill prompt → 限制工具 → 触发 LLM。"""
+    """将技能说明与本次用户输入一起接纳，不改变会话的全局规则。"""
 
     def __init__(self, chat_widget: ChatWidget):
         # chat_widget 类型使用前向引用字符串以避免循环导入。
         self._chat = chat_widget
 
-    def execute(self, spec: SkillSpec) -> None:
+    def execute(self, spec: SkillSpec, *, user_request: str | None = None) -> bool:
         """执行单个 Skill（异步触发）。
 
         m22: 此方法通过 ChatWidget.send_user_message() 触发 LLM 推理，其执行是异步的：
@@ -33,19 +33,27 @@ class SkillExecutor:
         - 本方法本身立即返回，不等待 LLM 响应完成
         调用方不应假设 Skill 执行在 execute() 返回时已完成。
         """
+        request = spec.description if user_request is None else user_request.strip()
+        if not request:
+            return False
         try:
-            # 1. 注入 Skill 的 prompt 模板作为系统指令
-            if spec.prompt_template:
-                prompt_text = f"[Skill: {spec.name}]\n{spec.prompt_template}"
-                self._chat.add_system_message(f"🔧 已激活 Skill: {spec.display_name}")
-                # C25: 使用 ChatWidget 的公共方法 add_system_prompt，而非访问私有 _conversation
-                self._chat.add_system_prompt(prompt_text)
-
-            # 2. 构建用户消息描述 Skill 意图
-            user_msg = f"[Skill: {spec.name}] {spec.description}"
-
-            # 3. 触发 LLM 推理
-            # C25: 使用 ChatWidget 的公共方法 send_user_message，而非 set_input + _on_send
-            self._chat.send_user_message(user_msg)
+            # Persist the skill snapshot with this input, never mutate global rules.
+            user_msg = f"[Skill: {spec.name}] {request}"
+            accepted = (
+                self._chat.send_user_message(
+                    user_msg,
+                    skill_context={
+                        "name": spec.name,
+                        "display_name": spec.display_name,
+                        "prompt": spec.prompt_template,
+                    },
+                )
+                is not False
+            )
+            if accepted:
+                self._chat.add_system_message(f"已提交技能请求：{spec.display_name}")
+            return accepted
         except Exception:
-            logger.exception("Skill 执行异常 [%s]，已跳过以免影响主聊天流程", spec.name)
+            logger.exception("Skill 执行异常 [%s]，本次请求未启动", spec.name)
+            self._chat.add_system_message(f"技能「{spec.display_name}」未能启动，请稍后重试。")
+            return False

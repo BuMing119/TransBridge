@@ -8,6 +8,7 @@ from PyQt6 import sip
 from PyQt6.QtCore import QCoreApplication, QObject, Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import QMessageBox
 
+from .confirmation_preview_binding import ConfirmationPreviewBinding
 from .plan_card import PlanCard
 from .plan_execution_binding import PlanExecutionBinding
 from .theme_support import SmartAssistantTheme
@@ -41,6 +42,7 @@ class ConfirmationView:
         batch_ignored: Callable[[list], None],
         engine: Callable[[], object | None],
         theme: SmartAssistantTheme | None = None,
+        preview_context: Callable[[], object] | None = None,
     ) -> None:
         self._parent = parent
         self._add_widget = add_widget
@@ -55,9 +57,11 @@ class ConfirmationView:
         self._closed = False
         self._generation = 0
         self._pending_cards: WeakSet = WeakSet()
+        self._active_cards: WeakSet = WeakSet()
         self._bridge = _MainThreadBridge(parent)
         self._pending_events: set[threading.Event] = set()
         self._pending_lock = threading.Lock()
+        self._preview_loader = ConfirmationPreviewBinding(self, preview_context)
 
     def add_tool_card(self, step: dict) -> ToolCard | None:
         if self._closed:
@@ -66,6 +70,7 @@ class ConfirmationView:
         self._connect_intent(card, card.executed, self._tool_executed)
         self._connect_intent(card, card.ignored, self._tool_ignored, accepted=False)
         self._add_widget(card)
+        self._preview_loader.load(card, [step])
         return card
 
     def add_plan_card(self, steps: list) -> PlanCard | None:
@@ -75,6 +80,7 @@ class ConfirmationView:
         self._connect_intent(card, card.confirmed, self._plan_confirmed)
         self._connect_intent(card, card.cancelled, self._plan_cancelled, accepted=False)
         self._add_widget(card)
+        self._preview_loader.load(card, steps)
         return card
 
     def add_batch_tool_card(self, steps: list) -> BatchToolCard | None:
@@ -84,6 +90,7 @@ class ConfirmationView:
         self._connect_intent(card, card.all_executed, self._batch_executed)
         self._connect_intent(card, card.all_ignored, self._batch_ignored, accepted=False)
         self._add_widget(card)
+        self._preview_loader.load(card, steps)
         return card
 
     def _connect_intent(self, card, signal, callback: Callable, *, accepted=True) -> None:
@@ -100,9 +107,58 @@ class ConfirmationView:
                 return  # Preserve the user's intent until the previous lease has been released.
             self._pending_cards.discard(card)
             if validate():
-                callback(*args)
+                if accepted:
+                    self._active_cards.add(card)
+                # Execute the original proposal, preserving its call identity even
+                # when Qt converts the emitted dict/list to a new Python object.
+                payload = (card._step,) if isinstance(card, ToolCard) else (card._steps,)
+                callback(*(payload if args else ()))
+            elif not sip.isdeleted(card):
+                card.expire()
 
         signal.connect(deliver)
+
+    def complete_tool(self, step: dict, result) -> None:
+        """Deliver only to the original accepted invocation, never a matching name."""
+        if self._closed:
+            return
+        for card in tuple(self._active_cards):
+            if sip.isdeleted(card) or isinstance(card, PlanCard):
+                continue
+            steps = [card._step] if isinstance(card, ToolCard) else card._steps
+            index = next((index for index, original in enumerate(steps) if original is step), None)
+            if index is None:
+                continue
+            message = result.message or ("操作已完成" if result.success else "执行未成功，未提供具体原因")
+            data = result.data if isinstance(result.data, dict) else {}
+            status = ""
+            if data.get("status") == "cancelled":
+                status = "cancelled"
+            elif result.error_code == "RESULT_UNAVAILABLE":
+                status = "unknown"
+            elif result.success and data.get("task_id"):
+                status = "started"
+            if isinstance(card, ToolCard):
+                card.set_result(result.success, message, status=status)
+                self._active_cards.discard(card)
+            else:
+                card.set_step_result(index, result.success, message, status=status)
+                if len(card._results) == len(steps):
+                    self._active_cards.discard(card)
+
+    def plan_feedback(self, steps: list) -> Callable:
+        """Capture one accepted plan and the generation which owns its updates."""
+        generation = self._generation
+        card = next((card for card in self._active_cards if isinstance(card, PlanCard) and card._steps is steps), None)
+
+        def deliver(event: str, *args) -> None:
+            if self._closed or generation != self._generation or card not in self._active_cards or sip.isdeleted(card):
+                return
+            getattr(card, event)(*args)
+            if event in {"on_all_finished", "set_failure"}:
+                self._active_cards.discard(card)
+
+        return deliver
 
     def invalidate_pending(self) -> None:
         """Expire confirmation capabilities before replacing their owning request."""
@@ -114,6 +170,10 @@ class ConfirmationView:
             if not sip.isdeleted(card):
                 card.expire()
         self._pending_cards.clear()
+        for card in tuple(self._active_cards):
+            if not sip.isdeleted(card):
+                card.interrupt()
+        self._active_cards.clear()
         for event in pending:
             event.set()
 
@@ -190,6 +250,7 @@ class ConfirmationView:
                 return
             self._closed = True
         self.invalidate_pending()
+        self._preview_loader.close()
 
     def _show_dialog(self, node_id: str, prompt: str, choices: list, engine, active: Callable[[], bool]) -> None:
         if not active():

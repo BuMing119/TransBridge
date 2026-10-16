@@ -277,3 +277,35 @@ def test_genuinely_empty_response_still_warns(monkeypatch):
     value._streaming_bubble = Bubble()
     value._on_finished(1, worker, LlmTurn())
     assert systems == ["模型未返回可显示内容，请重试。"]
+
+
+@pytest.mark.parametrize("supports_properties", [True, False])
+def test_finished_bubble_receives_canonical_message_identity_when_supported(monkeypatch, supports_properties):
+    from transbridge.smart_assistant.conversation_manager import ConversationManager
+
+    value, _, _, _, _ = _orchestrator(monkeypatch)
+    conversation = value._conversation = ConversationManager()
+
+    class Bubble:
+        def set_text(self, text):
+            self.text = text
+
+    bubble = Bubble()
+    properties = {}
+    if supports_properties:
+        bubble.setProperty = properties.__setitem__
+    value._generation = value._active_generation = 1
+    worker = value._worker = _Worker(None, [])
+    value._streaming_bubble = bubble
+    value._streaming_text = "answer"
+    try:
+        value._on_finished(1, worker, LlmTurn(text="answer"))
+        identity = conversation.get_transcript()[-1]["message_id"]
+        assert bubble.text == "answer"
+        assert properties == ({"message_id": identity} if supports_properties else {})
+        before = conversation.get_transcript()
+        value._on_finished(1, worker, LlmTurn(text="stale completion"))
+        assert conversation.get_transcript() == before
+        assert properties == ({"message_id": identity} if supports_properties else {})
+    finally:
+        value.shutdown(wait=True, timeout=0.1)

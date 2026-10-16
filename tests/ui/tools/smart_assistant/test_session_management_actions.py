@@ -1,18 +1,20 @@
 from __future__ import annotations
 
+from PyQt6.QtCore import QEvent
 from PyQt6.QtWidgets import QApplication, QInputDialog, QWidget
 import pytest
 
 from tests.application.sessions.test_gui_session_management import build_session_services
 from transbridge.application.contracts import RequestContext
 from transbridge.application.sessions import ControllerSnapshot
+from transbridge.smart_assistant.service_readiness import ServiceAvailability
 from transbridge.ui.tools.smart_assistant import panel as module
 
 _APP = QApplication.instance() or QApplication([])
 
 
 class _Chat(QWidget):
-    def __init__(self, context, *, theme=None):
+    def __init__(self, context, *, theme=None, navigation=None):
         super().__init__()
         self.context = context
         self.messages = []
@@ -43,7 +45,11 @@ def panel_services(tmp_path, monkeypatch):
     commands, lifecycle, repository, projection = build_session_services(tmp_path)
     monkeypatch.setattr(module, "ChatWidget", _Chat)
     monkeypatch.setattr(module.SmartAssistantPanel, "_init_skills", lambda _self: None)
-    monkeypatch.setattr(module.SmartAssistantPanel, "_configured_model_name", staticmethod(lambda: "test-model"))
+    monkeypatch.setattr(
+        module.SmartAssistantPanel,
+        "_configured_service_availability",
+        staticmethod(lambda: ServiceAvailability("test-model", True)),
+    )
     monkeypatch.setattr(module, "set_window_app_user_model_id", lambda *_args: False)
     panel = module.SmartAssistantPanel(
         object(), session_commands=commands, session_projection=projection, runtime_context=RequestContext("owner")
@@ -113,3 +119,32 @@ def test_delete_menu_displays_failure_and_keeps_session_selectable(panel_service
     assert panel.chat.messages == [{"role": "user", "content": "must survive failed delete"}]
     assert warnings[0][0] == "删除会话失败"
     assert "SESSION_DELETE_FAILED" in warnings[0][1]
+
+
+def test_model_summary_refreshes_on_show_and_activation(panel_services):
+    panel, *_ = panel_services
+    configured = [ServiceAvailability("initial-model", True)]
+    panel._window_presentation._read_availability = lambda: configured[0]
+    panel.show()
+    _APP.processEvents()
+    assert panel._header._model._value.full_text == "initial-model"
+    assert panel._header.model_configured
+    configured[0] = ServiceAvailability("updated-model", True)
+    QApplication.sendEvent(panel, QEvent(QEvent.Type.WindowActivate))
+    assert panel._header._model._value.full_text == "updated-model"
+    panel.hide()
+    configured[0] = ServiceAvailability("", False, ("model",), "请配置模型名称。")
+    panel.show()
+    _APP.processEvents()
+    assert panel._header._model._value.full_text == "模型未配置"
+    assert not panel._header.model_configured
+    assert panel._header.accessibleDescription() == "请配置模型名称。"
+
+
+def test_production_save_updates_default_name_in_sidebar(panel_services):
+    panel, commands, *_ = panel_services
+    panel.chat.messages = [{"role": "user", "content": "核对角色名称是否一致"}]
+    assert panel._persist_authoritative_chat()
+    session = commands.list_sessions()[0]
+    assert session["name"] == "核对角色名称是否一致"
+    assert panel._session_list._rows[session["session_id"]].name == session["name"]

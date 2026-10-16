@@ -26,6 +26,7 @@ class StreamingPresenter:
     def flush(self, text: str, bubble: MessageBubble) -> None:
         if self._closed or not self._message_list.contains(bubble):
             return
+        bubble.update_stream_text(text)
         wrapper = bubble._content_wrapper
         if wrapper is None:
             return
@@ -40,6 +41,7 @@ class StreamingPresenter:
             bubble._content = QLabel(text)
             bubble._content.setWordWrap(True)
             bubble._content.setTextFormat(Qt.TextFormat.PlainText)
+            bubble._content.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             layout.addWidget(bubble._content)
         else:
             bubble._content.setText(text)

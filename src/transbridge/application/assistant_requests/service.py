@@ -13,7 +13,7 @@ from transbridge.application.contracts import RequestContext
 from transbridge.persistence.v2.ids import SessionId, SessionRef
 
 from .journal import EventCause
-from .models import RequestError, UserRequest, digest
+from .models import RequestError, UserRequest
 from .reducer import RequestEvent, reduce_request
 from .transactions import commit_request_change
 
@@ -90,116 +90,39 @@ class RequestService:
         return tuple(UserRequest.from_dict(value) for value in state.get("requests", ()))
 
     def accept_input(
-        self, context: RequestContext, text: str, *, selection: dict, command_id: str | None = None
+        self,
+        context: RequestContext,
+        text: str,
+        *,
+        selection: dict,
+        command_id: str | None = None,
+        attachments=None,
+        skill_context=None,
     ) -> dict:
-        command_id = command_id or uuid4().hex
-        content_hash = digest({"text": text, "context": context.to_dict(), "selection": selection})
-        accepted = {}
+        from .input_acceptance import accept_input
 
-        def apply(state):
-            if state.get("session_tombstone"):
-                raise RequestError("SESSION_DELETING", "会话正在删除，不能接纳新输入。")
-            ingress = state.setdefault("ingress", [])
-            old = next((value for value in ingress if value["message_id"] == command_id), None)
-            if old:
-                if old["digest"] != content_hash:
-                    raise RequestError("COMMAND_PAYLOAD_CONFLICT", "input identity reused")
-                accepted.update(old)
-                return
-            item = {
-                "message_id": command_id,
-                "text": text,
-                "sequence": len(ingress) + 1,
-                "context": context.to_dict(),
-                "selection": deepcopy(selection),
-                "digest": content_hash,
-                "status": "pending",
-                "batch_id": "",
-            }
-            ingress.append(item)
-            accepted.update(item)
-
-        self.transact(
+        return accept_input(
+            self,
             context,
-            apply,
-            append_messages=({"role": "user", "content": text, "message_id": command_id},),
-            cause=EventCause("input.accepted", "user", {"message_ids": [command_id]}),
+            text,
+            selection=selection,
+            command_id=command_id,
+            attachments=attachments,
+            skill_context=skill_context,
         )
-        return accepted
 
-    def _append_transcript(self, snapshot, records):
-        from .transcript import TranscriptManifest, TranscriptMessage
+    def input_content(self, context: RequestContext, message_id: str) -> str:
+        from .input_acceptance import input_content
 
-        manifest = TranscriptManifest.from_dict(snapshot.transcript_data())
-        existing = self.transcript_store.read(snapshot.ref.identity.value, manifest)
-        known = {message.message_id: message for message in existing}
-        additions = []
-        for index, message in enumerate(records):
-            message_id = message.get("message_id") or f"legacy-{index}-{digest(message)}"
-            if message_id in known:
-                previous = known[message_id]
-                old = (
-                    {
-                        "role": previous.role,
-                        "content": previous.content,
-                        "tool_call_id": previous.tool_call_id,
-                        "tool_calls": [],
-                    }
-                    if not previous.tool_calls and isinstance(previous.content, (str, type(None)))
-                    else previous.to_dict()
-                )
-                if any(
-                    old.get(key) != message.get(key, [] if key == "tool_calls" else None)
-                    for key in ("role", "content", "tool_call_id", "tool_calls")
-                ):
-                    raise RequestError("COMMAND_PAYLOAD_CONFLICT", "immutable message content changed")
-                continue
-            additions.append(
-                TranscriptMessage(
-                    message_id,
-                    len(existing) + len(additions) + 1,
-                    message["role"],
-                    message.get("content", ""),
-                    tool_call_id=message.get("tool_call_id"),
-                    tool_calls=tuple(message.get("tool_calls", ())),
-                    origin="user" if message["role"] == "user" else "runtime",
-                    metadata={
-                        key: value
-                        for key, value in message.items()
-                        if key not in {"message_id", "role", "content", "tool_calls", "tool_call_id"}
-                    },
-                )
-            )
-            known[message_id] = additions[-1]
-        return self.transcript_store.append(snapshot.ref.identity.value, manifest, tuple(additions))
+        return input_content(self, context, message_id)
 
     def with_transcript(self, snapshot, records, **changes):
-        """Stage complete evidence on a snapshot; the caller commits it once.
+        """Stage evidence and its visible projection in the enclosing Session transaction."""
+        from .history import stage_transcript
 
-        This performs attachment writes only. The Session manifest and visible
-        state remain uncommitted until the enclosing lifecycle transaction saves.
-        Legacy messages gain stable IDs in the backend mirror for later restore.
-        """
-        if self.transcript_store is None:
-            return replace(snapshot, backend_history=tuple(records), **changes)
-        normalized = [
-            {**record, "message_id": record.get("message_id") or f"legacy-{index}-{digest(record)}"}
-            for index, record in enumerate(records)
-        ]
-        # A stale UI projection must not erase another admitted input during a
-        # successful CAS reload. Keep prior missing records before new material.
-        provided_ids = {m["message_id"] for m in normalized}
-        previous = snapshot.backend_messages()
-        missing = [m for m in previous if m.get("message_id") and m["message_id"] not in provided_ids]
-        if missing:
-            old_ids = {m.get("message_id") for m in previous}
-            first_new = next((i for i, m in enumerate(normalized) if m["message_id"] not in old_ids), len(normalized))
-            normalized[first_new:first_new] = missing
-        manifest = self._append_transcript(snapshot, normalized)
-        normalized = snapshot.freeze_history(normalized)
-        if changes.get("messages") is records:
-            changes["messages"] = normalized
-        return replace(snapshot, backend_history=normalized, transcript_manifest=manifest.to_dict(), **changes)
+        visible = changes.pop("messages", None)
+        prepared = replace(snapshot, **changes) if changes else snapshot
+        return stage_transcript(prepared, records, self.transcript_store, visible_messages=visible)
 
     def save_history(self, context: RequestContext, records: list[dict], *, request_id: str | None = None) -> None:
         def apply(state):
@@ -296,6 +219,7 @@ class RequestService:
             ),
         )
         result_ids = []
+        message = {"message_id": command_id, "role": "user", "content": text}
 
         def apply(state):
             result_ids.clear()
@@ -311,11 +235,16 @@ class RequestService:
                     payload=payload,
                 )
             )
+            entry = next((item for item in state.get("ingress", ()) if item["message_id"] == command_id), {})
+            for key in ("skill_context", "skill_contexts"):
+                message.pop(key, None)
+                if key in entry:
+                    message[key] = deepcopy(entry[key])
 
         state = self.transact(
             context,
             apply,
-            append_messages=({"message_id": command_id, "role": "user", "content": text},),
+            append_messages=(message,),
             cause=EventCause(f"request.{kind}", "user", {"message_ids": [command_id]}),
         )
         self.notify(context.session_id)

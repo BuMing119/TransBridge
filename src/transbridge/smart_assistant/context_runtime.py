@@ -14,6 +14,7 @@ from transbridge.application.assistant_requests.models import digest
 from transbridge.application.assistant_requests.summary_service import RequestSummaryService
 from transbridge.persistence.assistant_context_store import AssistantContextStore
 from transbridge.persistence.v2.ids import SessionId, SessionRef
+from transbridge.smart_assistant.round_context import with_workspace_snapshot
 
 
 def configuration_digest(config):
@@ -52,7 +53,10 @@ class ContextRuntime:
         request = require_admitted(self.service, self.admission, state)
         from transbridge.application.assistant_context.state_projection import decision_context
 
-        prepared = replace(prepared, request_state=decision_context(request, self.admission, state))
+        workspace = (prepared.request_state or {}).get("workspace_snapshot")
+        prepared = replace(
+            prepared, request_state=with_workspace_snapshot(decision_context(request, self.admission, state), workspace)
+        )
         history = self.sources._history(snapshot, state)
         owners = {**state.get("result_owners", {}), **state.get("message_owners", {})}
         old_head = state.get("context_heads", {}).get(request.request_id)
@@ -125,7 +129,7 @@ class ContextRuntime:
             candidate = append_context(
                 fresh_history,
                 request,
-                decision_context(request, self.admission, fresh_state),
+                with_workspace_snapshot(decision_context(request, self.admission, fresh_state), workspace),
                 config_digest=fingerprint,
                 previous=candidate,
                 owners=fresh_owners,

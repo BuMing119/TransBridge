@@ -157,7 +157,10 @@ def test_slow_read_does_not_block_qt_or_dialog_close():
         release.set()
 
 
-def test_timeline_buttons_are_independent_from_request_control():
+def test_timeline_buttons_are_independent_from_request_control(monkeypatch):
+    from PyQt6.QtWidgets import QMenu
+
+    monkeypatch.setattr(QMenu, "exec", lambda menu, *_: menu.actions()[0].trigger())
     view = RequestListView()
     controls, timeline = [], []
     view.control.connect(lambda *args: controls.append(args))

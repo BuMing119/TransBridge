@@ -5,6 +5,9 @@ from threading import Event
 from PyQt6.QtWidgets import QMessageBox
 
 from transbridge.application.assistant_requests.models import RequestError
+from transbridge.application.assistant_requests.result_review import describe_undo_scope
+
+from .operation_preview import operation_name
 
 
 class RequestUndoBinding:
@@ -15,21 +18,27 @@ class RequestUndoBinding:
         self._previewing = False
         self._previewed = False
         self._cancelled = Event()
+        self._request = None
 
     def stopped(self, request_id):
+        self._select_target(request_id)
+        self.binding.view.show_undo("正在停止当前请求，等待后台操作收尾。", available=False)
+        self.binding.refresh()
+
+    def _select_target(self, request_id):
         binding = self.binding
         self._cancelled.set()
         self._cancelled = Event()
-        self._target = (binding.context, binding._turn_generation, request_id)
+        self._target = (binding.context, binding._turn_generation, request_id, object())
         self._round_id = ""
+        self._request = None
         self._previewing = self._previewed = False
-        binding.view.show_undo("正在停止当前请求，等待后台操作收尾。", available=False)
-        binding.refresh()
 
     def invalidate(self):
         self._cancelled.set()
         self._target = None
         self._round_id = ""
+        self._request = None
         self._previewing = self._previewed = False
         self.binding.view.show_undo("", available=False)
 
@@ -53,26 +62,75 @@ class RequestUndoBinding:
         if request is None or request.unsettled or (not request.terminal and not request.pause_reasons):
             return
         self._round_id = request.work_round_id
+        self._request = request
         if not self._round_id:
             self.binding.view.show_undo("本轮已停止。旧记录没有可核验的用户轮次归属，不能自动撤销。", available=False)
             return
         if not self._previewed and not self._previewing:
             self._preview(target, clicked=False)
 
-    def request(self):
+    def prepare(self, request_id=None):
+        """Offer scoped undo for completed as well as interrupted requests."""
+        request_id = request_id or (self._target[2] if self._target is not None else None)
+        if request_id is None:
+            self.binding.view.show_undo("请先选择要查看撤销范围的任务。", available=False)
+            return
+        review = getattr(self.binding, "result_review", None)
+        if review is not None:
+            review.show(request_id)
+            return
+        self._select_request(request_id, clicked=False)
+
+    def _select_request(self, request_id, *, clicked):
+        binding = self.binding
+        self._select_target(request_id)
+        target = self._target
+        self._previewing = True
+        binding.view.show_undo("正在核验这次输入的可撤销范围。", available=False)
+
+        def read():
+            requests = binding.service.requests(binding.service.state(target[0]))
+            request = next((request for request in requests if request.request_id == request_id), None)
+            if request is None or request.session_id != target[0].session_id:
+                raise RequestError("UNDO_SCOPE_MISMATCH", "原任务不属于当前会话")
+            if request.unsettled or (not request.terminal and not request.pause_reasons):
+                raise RequestError("UNDO_NOT_SETTLED", "请先停止该任务，并等待后台操作完成收尾")
+            if not request.work_round_id:
+                raise RequestError("UNDO_ROUND_SOURCE_MISSING", "旧记录缺少真实输入归属，不能自动撤销")
+            return request
+
+        def received(request):
+            if self._current(target):
+                self._request = request
+                self._round_id = request.work_round_id
+                self._preview(target, clicked=clicked)
+
+        binding.background.submit(read, received, context=target[0], failed=lambda exc: self._failed(target, exc))
+
+    def request(self, request_id=None):
+        if request_id is not None:
+            self._select_request(request_id, clicked=True)
+            return
         target = self._target
         if self._current(target) and self._round_id and not self._previewing:
             self._preview(target, clicked=True)
 
     def _preview(self, target, *, clicked):
         binding, round_id = self.binding, self._round_id
+        request = self._request
         self._previewing = True
         binding.view.show_undo("正在核验本轮可撤销范围。", available=False)
 
         def preview():
             if binding.service.undo is None:
                 return {"available": False, "reason": "当前会话未提供安全撤销服务"}
-            return binding.service.undo.preview(target[0], round_id)
+            result = binding.service.undo.preview(target[0], round_id)
+            if request is not None and hasattr(request, "goal"):
+                result = {
+                    **result,
+                    "scope_summary": describe_undo_scope(binding.service, target[0], request, result),
+                }
+            return result
 
         def received(result):
             if not self._current(target):
@@ -80,16 +138,18 @@ class RequestUndoBinding:
             self._previewing = False
             self._previewed = True
             if not result["available"]:
-                binding.view.show_undo(
-                    f"该请求已停止。{result.get('reason') or '没有可安全撤销的修改。'}", available=False
-                )
+                binding.view.show_undo(result.get("reason") or "没有可安全撤销的修改。", available=False)
                 return
-            binding.view.show_undo("本轮已停止。已完成的修改保留，可选择撤销。", available=True)
+            binding.view.show_undo(
+                result.get("scope_summary") or "已完成的修改保留，可选择撤销这次输入的已记录修改。", available=True
+            )
             if not clicked:
                 return
             limitations = result.get("limitations", ())
             if limitations:
-                details = "\n".join(f"• {item.get('tool', '操作')}：{item['reason']}" for item in limitations)
+                details = "\n".join(
+                    f"• {operation_name({'tool': item.get('tool', '操作')})}：{item['reason']}" for item in limitations
+                )
                 accepted = (
                     QMessageBox.question(
                         binding.facade,

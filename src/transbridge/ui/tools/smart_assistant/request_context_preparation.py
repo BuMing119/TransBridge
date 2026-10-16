@@ -33,7 +33,7 @@ class RequestContextPreparation:
         self.cancel()
         self._queue.shutdown(wait=False, cancel_futures=True)
 
-    def prepare(self, history, max_tokens, *, context_window, on_ready, on_error):
+    def prepare(self, history, max_tokens, *, context_window, on_ready, on_error, workspace_snapshot=None):
         binding = self.binding
         admission, context = binding.admission, binding.context
         self._cancelled.set()
@@ -55,6 +55,7 @@ class RequestContextPreparation:
                     context_window=context_window,
                     prepared_summary=(summary, request_digest),
                     defer_assembly=True,
+                    workspace_snapshot=workspace_snapshot,
                 )
                 if not isinstance(prepared, RequestModelInput):
                     on_ready(prepared)

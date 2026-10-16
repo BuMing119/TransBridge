@@ -77,9 +77,9 @@ class TestContextBuilder(unittest.TestCase):
         self.assertIn("2", result)  # 总计
         self.assertIn("1", result)  # 已翻译/待翻译
 
-    # ── 上传文件摘要 (C6) ─────────────────────────────────────
+    # ── 附件不进入 system 权限层 ──────────────────────────────
 
-    def test_uploaded_docs_summary_no_raw_text(self):
+    def test_uploaded_docs_are_not_frozen_into_system_context(self):
         col = make_collection([make_entry()])
         mock_doc = MagicMock()
         mock_doc.format = "excel"
@@ -92,9 +92,9 @@ class TestContextBuilder(unittest.TestCase):
         # C6: 不应包含原始文本内容
         self.assertNotIn("MALICIOUS_INJECTION", result)
         self.assertNotIn("IGNORE_ALL_PREVIOUS", result)
-        # C6: 应包含文件名
-        self.assertIn("corrections.xlsx", result)
-        self.assertIn("excel", result)
+        # Current attachments belong to each admitted user input, never stale system context.
+        self.assertNotIn("corrections.xlsx", result)
+        self.assertNotIn("excel", result)
 
     def test_uploaded_docs_empty(self):
         col = make_collection([make_entry()])

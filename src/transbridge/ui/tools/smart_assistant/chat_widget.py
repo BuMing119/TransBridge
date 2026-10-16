@@ -9,6 +9,7 @@ from PyQt6.QtCore import QEvent, QSettings, Qt, QTimer
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import QLabel, QPushButton, QScrollArea, QTextEdit, QVBoxLayout, QWidget
 
+from transbridge.application.assistant_requests.attachments import display_user_content, encode_user_content
 from transbridge.smart_assistant.conversation_manager import ConversationManager
 
 from .chat_composition import initialize_message_area, initialize_runtime
@@ -36,9 +37,10 @@ class ChatWidget(QWidget):
     MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
     MAX_VISIBLE_WIDGETS = 100  # M52: 消息区最大控件数，超出时从头部移除最旧控件
 
-    def __init__(self, ctx, parent=None, *, theme: SmartAssistantTheme | None = None):
+    def __init__(self, ctx, parent=None, *, theme: SmartAssistantTheme | None = None, navigation=None):
         super().__init__(parent)
         self._ctx = ctx
+        self._navigation = navigation or {}
         self._theme = theme or SmartAssistantTheme()
         self.setAccessibleName("智能助手聊天")
 
@@ -56,6 +58,7 @@ class ChatWidget(QWidget):
             documents=self._uploaded_docs,
             notify=self.add_system_message,
             max_bytes=self.MAX_UPLOAD_BYTES,
+            busy_changed=lambda busy: self._input_view.set_preparing_attachments(busy) if self._input_view else None,
         )
 
         # m2: 重试按钮引用，防止多次错误叠加多个重试按钮
@@ -160,7 +163,7 @@ class ChatWidget(QWidget):
             self._input_view = ChatInputView(
                 set_input=self.set_input,
                 select_skill=self._input_actions.select_skill,
-                upload=lambda: self._upload_binding.select_files(self._upload_label),
+                upload=lambda: self._upload_binding.open_manager(self._upload_label),
                 clear=self._clear_conversation,
                 send=self._on_send,
                 toggle_auto=self._input_actions.toggle_auto,
@@ -169,6 +172,7 @@ class ChatWidget(QWidget):
             )
             self._input_view.build_toolbar(self._main_layout)
             self._upload_label = self._input_view.upload_label
+            self._upload_binding.bind_label(self._upload_label)
             self._obs_token_labels: dict[str, QLabel] = {}
         except Exception as e:
             logger.error("UI初始化 Stage 3/4 失败: %s", e)
@@ -208,6 +212,9 @@ class ChatWidget(QWidget):
         if getattr(self, "_shutdown_complete", False):
             return
         self._shutdown_complete = True
+        input_actions = getattr(self, "_input_actions", None)
+        if input_actions is not None:
+            input_actions.close_skill_preview()
         # 1/ 先关闭 UI-owned bindings/presenters，迟到事件从此被忽略。
         for attr in (
             "_presentation",
@@ -301,29 +308,47 @@ class ChatWidget(QWidget):
             blocked = checkbox.blockSignals(True)
             checkbox.setChecked(restored.auto_mode)
             checkbox.blockSignals(blocked)
+            self._input_view.refresh_mode()
 
     @property
     def session_ready(self) -> bool:
         return self._session_binding is not None and self._pending_session_data is None
 
     def add_system_prompt(self, text: str) -> None:
-        """注入 System Prompt 到对话历史（供 SkillExecutor 等外部调用者使用）。
+        """设置会话的静态系统规则；技能说明通过 send_user_message 单独提交。
 
         将文本作为 system 角色消息插入 conversation，替换已有 system 消息。
         注意：此方法仅操作数据层 (_conversation)，不产生 UI 渲染。
         """
         self._conversation.add_system(text)
 
-    def send_user_message(self, text: str) -> None:
+    def send_user_message(self, text: str, *, skill_context=None) -> bool:
         """以编程方式发送用户消息并触发 LLM 推理（供 SkillExecutor 等外部调用者使用）。
 
         封装了完整发送流程：添加用户气泡 → 写入对话历史 → 触发 LLM 轮次。
         与 _on_send() 不同，此方法直接接受文本参数，不依赖 _input 控件状态。
         """
+        availability = self._navigation.get("refresh_service_availability") or self._navigation.get(
+            "service_availability"
+        )
+        if availability is not None:
+            state = availability()
+            if not state.ready:
+                self.add_system_message(state.message)
+                return False
+        try:
+            attachments = self._upload_binding.snapshot()
+        except ValueError as error:
+            self.add_system_message(str(error))
+            return False
         if self._request_binding is not None:
-            self._request_binding.submit(text)
+            return self._request_binding.submit(text, attachments=attachments, skill_context=skill_context)
         elif self._submission is not None:
-            self._submission.submit(text)
+            if skill_context is not None:
+                self.add_system_message("当前会话不支持保存技能范围，请在已保存的会话中启动技能。")
+                return False
+            self._submission.submit(encode_user_content(text, attachments))
+        return True
 
     def add_user_bubble(self, text: str) -> None:
         """Add a user bubble through the stable public facade."""
@@ -331,7 +356,9 @@ class ChatWidget(QWidget):
             if not getattr(self, "_shutdown_complete", False):
                 QTimer.singleShot(50, lambda: self.add_user_bubble(text))
             return
-        self._message_list.add_bubble(MessageBubble(text, "user", theme=self._presentation_theme()))
+        self._message_list.add_bubble(
+            MessageBubble(display_user_content(text), "user", theme=self._presentation_theme())
+        )
 
     def add_assistant_bubble(self, text: str) -> None:
         """Add an assistant bubble through the stable public facade."""
@@ -400,32 +427,13 @@ class ChatWidget(QWidget):
                 self._input_actions.toggle_observability()
             return
 
-        self._input.clear()
-        self.send_user_message(text)
+        if self.send_user_message(text) is not False:
+            self._input.clear()
 
     def _clear_conversation(self) -> None:
-        if self._submission is not None:
-            self._submission.invalidate()
-        if self._confirmation_view is not None:
-            self._confirmation_view.invalidate_pending()
-        self._orchestrator.cancel_current_round()
-        if self._plan_execution is not None:
-            self._plan_execution.abort()
-        if self._react_execution is not None:
-            self._react_execution.abort()
-        self._controller.handle_abort()
-        self._orchestrator.reset_state()
-        if self._message_list is not None:
-            self._message_list.hide_thinking()
-        if self._streaming_presenter is not None:
-            self._streaming_presenter.advance_generation()
-        if self._message_list is not None:
-            self._message_list.clear()
-        self._conversation.clear()
-        # M13联动: 释放上传文件引用
-        self._uploaded_docs.clear()
-        # m2联动: 清空重试按钮引用
-        self._retry_btn = None
+        from .conversation_clear import clear_chat
+
+        clear_chat(self)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -440,7 +448,7 @@ class ChatWidget(QWidget):
         if scroll is None or layout is None:
             return
         viewport_width = max(0, scroll.viewport().width())
-        horizontal_margin = max(20, (viewport_width - 840) // 2)
+        horizontal_margin = max(8 if viewport_width < 600 else 20, (viewport_width - 840) // 2)
         layout.setContentsMargins(horizontal_margin, 20, horizontal_margin, 20)
 
     # ── 会话持久化 (FR13 Story 03) ──────────────────────────
@@ -508,6 +516,9 @@ class ChatWidget(QWidget):
             self._pending_session_data = dict(data)
             return
         self._pending_session_data = None
+        if self._input_actions is not None:
+            self._input_actions.close_skill_preview()
+        self._upload_binding.activate(self._active_session_id_port())
         if self._streaming_presenter is not None:
             self._streaming_presenter.advance_generation()
         self._session_binding.load(data)
@@ -526,7 +537,10 @@ class ChatWidget(QWidget):
     def eventFilter(self, obj, event):
         if obj == self._input and event.type() == QEvent.Type.KeyPress:
             ke = event
-            if ke.key() == Qt.Key.Key_Return and ke.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            if (
+                ke.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                and ke.modifiers() & Qt.KeyboardModifier.ControlModifier
+            ):
                 self._on_send()
                 return True
         return super().eventFilter(obj, event)

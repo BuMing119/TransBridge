@@ -18,6 +18,13 @@ BUTTON_STRUCTURE_STYLE = (
     "QPushButton { border: 1px solid palette(mid); border-radius: 6px; padding: 4px 12px; "
     "background-color: palette(button); color: palette(button-text); }"
 )
+QUIET_BUTTON_STYLE = (
+    "QPushButton { border: 1px solid transparent; border-radius: 5px; padding: 3px 7px; "
+    "background: transparent; color: palette(button-text); }"
+    "QPushButton:hover, QPushButton:checked { background: palette(alternate-base); }"
+    "QPushButton:focus { border-color: palette(highlight); }"
+    "QPushButton:disabled { color: palette(mid); }"
+)
 CHIP_STRUCTURE_STYLE = (
     "QPushButton { border: 1px solid palette(mid); border-radius: 12px; padding: 3px 10px; font-size: 11px; "
     "background-color: palette(button); color: palette(button-text); }"
@@ -263,6 +270,7 @@ __all__ = [
     "HEADER_STRUCTURE_STYLE",
     "INPUT_STRUCTURE_STYLE",
     "PANEL_STRUCTURE_STYLE",
+    "QUIET_BUTTON_STYLE",
     "SmartAssistantTheme",
     "TRANSPARENT_STRUCTURE_STYLE",
 ]

@@ -340,7 +340,7 @@ class _PanelStub:
 
 
 class _ResponsiveChatStub(QWidget):
-    def __init__(self, ctx, parent=None, *, theme=None) -> None:
+    def __init__(self, ctx, parent=None, *, theme=None, navigation=None) -> None:
         super().__init__(parent)
         self.context = ctx
 
@@ -384,32 +384,39 @@ def test_smart_assistant_panel_uses_responsive_dock_constraints(monkeypatch) -> 
     )
     monkeypatch.setattr(SmartAssistantPanel, "_restore_last_session", lambda self: None)
     monkeypatch.setattr(SmartAssistantPanel, "_configured_model_name", staticmethod(lambda: "test-model"))
+    from transbridge.smart_assistant.service_readiness import ServiceAvailability
+
+    monkeypatch.setattr(
+        SmartAssistantPanel,
+        "_configured_service_availability",
+        staticmethod(lambda: ServiceAvailability("test-model", True, message="AI 服务配置就绪。")),
+    )
 
     panel = SmartAssistantPanel(object())
     container = panel.widget()
     horizontal_splitter = container.layout().itemAt(0).widget()
     right_splitter = horizontal_splitter.widget(1)
 
-    assert panel.minimumWidth() == 400
-    assert panel.minimumHeight() == 220
+    assert panel.minimumWidth() == 480
+    assert panel.minimumHeight() == 400
     assert panel.parent() is None
     assert panel.windowFlags() & Qt.WindowType.Window
     assert panel.allowedAreas() == Qt.DockWidgetArea.NoDockWidgetArea
     assert panel.features() == QDockWidget.DockWidgetFeature.DockWidgetClosable
     assert container.minimumWidth() == 0
-    assert container.sizePolicy().verticalPolicy() is QSizePolicy.Policy.Ignored
+    assert container.sizePolicy().verticalPolicy() is QSizePolicy.Policy.Preferred
     assert panel._task_monitor.minimumHeight() == 36
     assert panel._task_monitor.maximumHeight() == 36
     assert panel._task_monitor._collapsed is True
     assert panel.objectName() == "SmartAssistantPanel"
     assert "border: none" in panel.styleSheet()
     assert panel.titleBarWidget().accessibleName() == "智能助手标题栏"
-    assert panel.titleBarWidget().height() == 52
+    assert panel.titleBarWidget().height() == 44
     assert "border-bottom: 1px solid palette(mid)" in panel.titleBarWidget().styleSheet()
     assert container.objectName() == "smartAssistantBody"
     assert "border: none" in container.styleSheet()
     assert panel.titleBarWidget()._model._value.full_text == "test-model"
-    assert "已配置" in panel.titleBarWidget().accessibleDescription()
+    assert "配置就绪" in panel.titleBarWidget().accessibleDescription()
     assert panel.titleBarWidget()._minimize_button.accessibleName() == "最小化智能助手"
     assert not panel.titleBarWidget()._minimize_button.icon().isNull()
     assert right_splitter.sizes()[0] > right_splitter.sizes()[1]

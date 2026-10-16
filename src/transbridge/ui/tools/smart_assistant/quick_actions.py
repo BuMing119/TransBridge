@@ -43,10 +43,10 @@ class QuickActionsChips(QWidget):
             button.clicked.connect(lambda _checked, value=prompt: self.action_clicked.emit(value))
             self._buttons.append(button)
             layout.addWidget(button)
-        self._skill_btn = QPushButton("Skill")
+        self._skill_btn = QPushButton("技能")
         self._skill_btn.setProperty("tbIconName", "sparkles")
-        self._skill_btn.setAccessibleName("选择 Skill")
-        self._skill_btn.setToolTip("选择并执行自定义 Skill")
+        self._skill_btn.setAccessibleName("选择技能")
+        self._skill_btn.setToolTip("查看技能说明并编辑要求，确认后启动")
         self._skill_btn.setStyleSheet(CHIP_STRUCTURE_STYLE)
         self._skill_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._skill_btn.clicked.connect(self._show_skill_menu)
@@ -73,7 +73,9 @@ class QuickActionsChips(QWidget):
         menu = QMenu(self)
         for button in self._buttons:
             if button.isHidden():
-                menu.addAction(button.text(), button.click)
+                action = menu.addAction(button.text(), button.click)
+                action.setEnabled(button.isEnabled())
+                action.setToolTip(button.toolTip())
         menu.exec(self._overflow.mapToGlobal(self._overflow.rect().bottomLeft()))
 
     def apply_theme(self, theme: SmartAssistantTheme) -> None:
@@ -89,13 +91,23 @@ class QuickActionsChips(QWidget):
         skills = SkillRegistry.list_all()
         menu = QMenu(self)
         if not skills:
-            menu.addAction("(无可用 Skill)").setEnabled(False)
+            menu.addAction("暂无可用技能").setEnabled(False)
         else:
             for spec in skills:
                 action = menu.addAction(spec.display_name)
                 action.setToolTip(spec.description)
                 action.triggered.connect(lambda _checked, value=spec: self.skill_triggered.emit(value.name))
         menu.exec(self._skill_btn.mapToGlobal(self._skill_btn.rect().bottomLeft()))
+
+    def set_context(self, *, project_available: bool, selected_count: int) -> None:
+        for index, (_label, prompt, _icon) in enumerate(self._ACTIONS):
+            requires_project = index in {0, 1, 3}
+            available = not requires_project or project_available
+            hint = "" if available else "请先打开项目。"
+            if index == 0 and project_available and not selected_count:
+                available, hint = False, "请先在工作台选择词条。"
+            self._buttons[index].setEnabled(available)
+            self._buttons[index].setToolTip(hint or prompt)
 
 
 __all__ = ["QuickActionsChips"]

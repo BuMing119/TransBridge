@@ -36,6 +36,7 @@ def test_timeout_retry_button_resumes_original_work(environment, monkeypatch, st
     if stage == "execution":
         _until(lambda: any(isinstance(widget, ToolCard) for widget in chat._message_list._owned_widgets))
         card = next(widget for widget in chat._message_list._owned_widgets if isinstance(widget, ToolCard))
+        _until(card._exec_btn.isEnabled)
         card._exec_btn.click()
     _until(lambda: failed and chat._retry_btn is not None and environment.binding.admission is None)
     before = _requests(environment)

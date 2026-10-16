@@ -397,6 +397,16 @@ class RequestExecutionGate:
         return values
 
     def bind_job(self, effect_id: str, job_id: str, run_id: str, *, runtime=None, owner=None) -> None:
+        router = None
+        if runtime is not None:
+            from transbridge.application.assistant_requests.task_events import RequestTaskEventRouter
+
+            # Establish durable-outcome delivery before saving a running dispatch.
+            # A failed subscription must not leave work that can never reconcile.
+            with self.service.serialized(self.context):
+                if not hasattr(self.service, "request_task_events"):
+                    self.service.request_task_events = RequestTaskEventRouter(self.service, runtime)
+                router = self.service.request_task_events
         if effect_id:
             self.service.update_request(
                 self.context,
@@ -428,13 +438,8 @@ class RequestExecutionGate:
                 return replace(request, dispatches=(*request.dispatches, dispatch))
 
             self.service.update_request(self.context, self.admission.request_id, bind_dispatch)
-        if runtime is not None:
-            from transbridge.application.assistant_requests.task_events import RequestTaskEventRouter
-
-            with self.service.serialized(self.context):
-                if not hasattr(self.service, "request_task_events"):
-                    self.service.request_task_events = RequestTaskEventRouter(self.service, runtime)
-                self.service.request_task_events.bind(self, effect_id, job_id, run_id, owner)
+        if router is not None:
+            router.bind(self, effect_id, job_id, run_id, owner)
 
     def validate_start(self, effect_id: str) -> None:
         if effect_id:

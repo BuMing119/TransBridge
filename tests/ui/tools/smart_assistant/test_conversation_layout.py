@@ -5,8 +5,9 @@ import os
 from pathlib import Path
 
 from PyQt6.QtCore import QEvent, QPoint, Qt
-from PyQt6.QtGui import QFontDatabase, QKeyEvent, QPalette
+from PyQt6.QtGui import QFont, QFontDatabase, QKeyEvent, QPalette
 from PyQt6.QtWidgets import QApplication, QMenu
+import pytest
 
 from tests.ui.tools.smart_assistant.test_request_lifecycle_panel import _until
 from tests.ui.tools.smart_assistant.test_theme_migration import _snapshot
@@ -18,6 +19,24 @@ from transbridge.ui.tools.smart_assistant.request_progress_view import RequestPr
 from transbridge.ui.tools.smart_assistant.theme_support import SmartAssistantTheme
 
 pytest_plugins = ["tests.ui.tools.smart_assistant.test_request_lifecycle_panel"]
+
+
+@pytest.fixture(autouse=True)
+def capture_font():
+    """Load the capture font before widgets resolve their initial text metrics."""
+    font_path = Path("C:/Windows/Fonts/msyh.ttc")
+    if not os.environ.get("TB_ASSISTANT_CAPTURE_DIR") or not font_path.exists():
+        yield
+        return
+    original_font = QApplication.font()
+    font_id = QFontDatabase.addApplicationFont(str(font_path))
+    QApplication.setFont(QFont("Microsoft YaHei", 9))
+    try:
+        yield
+    finally:
+        QApplication.setFont(original_font)
+        if font_id >= 0:
+            QFontDatabase.removeApplicationFont(font_id)
 
 
 def _request(identity="r", source="message-a", status=RequestStatus.OPEN):
@@ -34,25 +53,30 @@ def _request(identity="r", source="message-a", status=RequestStatus.OPEN):
     )
 
 
-def test_primary_action_stops_running_turn_and_keyboard_can_submit_followup(environment, monkeypatch):
+def test_separate_stop_and_send_support_click_and_keyboard_followup(environment, monkeypatch):
     chat = environment.panel.chat
     ui = chat._input_view
     stops, sends = [], []
     monkeypatch.setattr(environment.binding.management, "stop_generation", lambda: stops.append(True))
     ui.set_running(True)
-    assert chat._send_btn.isEnabled()
-    assert chat._send_btn.text() == "停止"
-    assert not chat._send_btn.icon().isNull()
-    chat._send_btn.click()
+    assert not chat._send_btn.isEnabled()
+    assert ui.stop_button.isEnabled()
+    assert ui.stop_button.text() == "停止"
+    ui.stop_button.click()
     assert stops == [True]
     monkeypatch.setattr(chat, "send_user_message", sends.append)
+    chat.set_input("点击补充要求")
+    assert chat._send_btn.isEnabled()
+    chat._send_btn.click()
+    assert sends == ["点击补充要求"]
     chat.set_input("补充要求")
     event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.ControlModifier)
     assert chat.eventFilter(chat._input, event)
-    assert sends == ["补充要求"]
+    assert sends == ["点击补充要求", "补充要求"]
     ui.set_running(False)
     assert chat._send_btn.text() == "发送"
     assert not chat._send_btn.isEnabled()
+    assert ui.stop_button.isHidden()
 
 
 def test_progress_anchors_use_message_identity_and_survive_incremental_answers(environment):
@@ -142,7 +166,7 @@ def test_progress_reports_items_and_only_authoritative_undo(environment):
     request = _request()
     presenter.display((request,))
     card = presenter.cards["r"]
-    assert "0 / 2 项事项完成" in card.status.text()
+    assert "已完成 0/2 项" in card.status.text()
     assert card.undo_button.isHidden()
     environment.binding.undo._target = (environment.binding.context, 0, "r")
     presenter.show_undo("已核验", True)
@@ -166,10 +190,6 @@ def test_capture_conversation_layout(environment):
     panel, binding = environment.panel, environment.binding
     binding.set_active(False)
     destination = os.environ.get("TB_ASSISTANT_CAPTURE_DIR")
-    if destination:
-        font_path = Path("C:/Windows/Fonts/msyh.ttc")
-        if font_path.exists():
-            QFontDatabase.addApplicationFont(str(font_path))
     chat = panel.chat
     chat._ctx.project_name = "示例项目 / 任务对白"
     chat._ctx.selected_ids = set(map(str, range(24)))
@@ -212,6 +232,25 @@ def test_capture_conversation_layout(environment):
         chat._presentation.refresh()
         QApplication.processEvents()
         assert panel.grab().save(str(target / "assistant-completed.png"))
+        card = chat._presentation.progress.cards["r"]
+        card.expand.click()
+        QApplication.processEvents()
+        assert panel.grab().save(str(target / "assistant-details.png"))
+        card.expand.click()
+        failed = replace(
+            completed,
+            status=RequestStatus.FAILED,
+            items=(replace(completed.items[0], status=ItemStatus.FAILED), completed.items[1]),
+        )
+        environment.service.transact(binding.context, lambda state: state.update(requests=[failed.to_dict()]))
+        binding.refresh()
+        _until(lambda: card.request.status == RequestStatus.FAILED)
+        panel.resize(480, 620)
+        QApplication.processEvents()
+        assert panel.grab().save(str(target / "assistant-attention.png"))
+        chat._message_list.navigation.open_search()
+        QApplication.processEvents()
+        assert panel.grab().save(str(target / "assistant-search.png"))
     assert chat._presentation.dialog.isHidden()
 
 
@@ -234,6 +273,7 @@ def test_clear_keeps_old_requests_in_details_without_restoring_inline_cards(envi
     card = chat._presentation.progress.cards["r"]
     assert chat._message_list.contains(card)
     chat._clear_conversation()
+    _until(lambda: not binding.inputs.clearing)
     binding.refresh()
     _until(lambda: not binding.management._refresh._pending)
     chat._presentation.refresh()

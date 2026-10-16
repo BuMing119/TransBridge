@@ -28,6 +28,14 @@ class TestConversationManager(unittest.TestCase):
         self.assertEqual(msgs[0]["role"], "user")
         self.assertEqual(msgs[1]["role"], "assistant")
 
+    def test_assistant_turn_returns_its_persisted_identity(self):
+        for turn in (LlmTurn(text="native answer"), {"content": "dictionary answer"}, "legacy answer"):
+            with self.subTest(turn=turn):
+                identity = self.cm.add_assistant_turn(turn)
+                self.assertIsInstance(identity, str)
+                self.assertEqual(identity, self.cm.get_transcript()[-1]["message_id"])
+        self.assertEqual(len({message["message_id"] for message in self.cm.get_transcript()}), 3)
+
     def test_add_system_message(self):
         self.cm.add_system("系统初始化完成")
         msgs = self.cm.get_history()

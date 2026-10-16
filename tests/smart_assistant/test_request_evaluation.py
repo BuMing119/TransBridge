@@ -54,10 +54,12 @@ def test_synthetic_success_does_not_claim_live_model_acceptance():
     assert empty["live_acceptance"] == "not_passed"
 
 
-def test_invalid_revision_returns_real_clarification_and_retains_original_request():
+def test_invalid_revision_requires_replanning_and_retains_original_request():
     case, capture = case_pair("stale_revision")
     # The exact same user command would cancel if incorrectly checked against the old snapshot.
     result = evaluate_capture(case, capture)
+    assert result["status"] == "passed", result
+    assert result["directives"][0]["status"] == "needs_replan"
     assert result["directives"][0]["diagnostic"] == "REQUEST_REVISION_CONFLICT"
     capture["turn"]["tool_calls"][0]["arguments"]["directives"][0]["expected_revision"] = 2
     mutated = evaluate_capture(case, capture)

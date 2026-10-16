@@ -2,6 +2,10 @@
 
 import logging
 
+from transbridge.application.assistant_requests.routing_recovery import unresolved_directives
+
+from .submission_scope import saved_scopes
+
 logger = logging.getLogger(__name__)
 
 
@@ -28,13 +32,11 @@ class RequestViewRefresh:
         def read_projection():
             state = binding.service.state(context)
             requests = binding.service.requests(state)
-            pending = sum(
-                receipt["status"] == "needs_clarification"
-                for entry in state.get("batches", ())
-                for receipt in entry["batch"].get("receipts", ())
-            )
+            unresolved = list(unresolved_directives(state))
+            pending = len(unresolved)
+            replanning = sum(kind == "replan" for _, _, kind in unresolved)
             routing = sum(batch.get("status") in {"routing", "user_paused"} for batch in state.get("batches", ()))
-            return requests, pending, routing
+            return requests, pending, routing, replanning, state.get("context_waits", {}), saved_scopes(state, requests)
 
         future = binding._queue.submit(read_projection)
 
@@ -44,11 +46,13 @@ class RequestViewRefresh:
             if binding._closed:
                 return
             try:
-                requests, pending, routing = future.result()
+                requests, pending, routing, replanning, waits, (scopes, message_scopes) = future.result()
                 if binding.context == context:
+                    binding.view.set_scopes(scopes, message_scopes)
+                    binding.view.context_waits = waits
                     binding.view.display(requests)
                     binding.undo.observe(requests)
-                    binding.view.set_pending(pending, routing)
+                    binding.view.set_pending(pending, routing, replanning)
                     binding.view.show()
             except Exception:
                 logger.warning("Unable to refresh request list for its saved Session", exc_info=True)

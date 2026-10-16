@@ -10,8 +10,9 @@ import logging
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QDockWidget, QFrame, QMessageBox, QSizePolicy, QSplitter, QVBoxLayout
+from PyQt6.QtWidgets import QDockWidget, QFrame, QMessageBox, QSplitter, QVBoxLayout
 
+from transbridge.smart_assistant.service_readiness import read_service_availability
 from transbridge.ui.foundation.adapters import ThemeView
 from transbridge.ui.windows_taskbar import clear_window_app_user_model_id, set_window_app_user_model_id
 
@@ -21,6 +22,7 @@ from .panel_layout import AssistantColumns
 from .session_list_widget import SessionListWidget
 from .task_monitor import TaskMonitorWidget
 from .theme_support import BODY_STRUCTURE_STYLE, PANEL_STRUCTURE_STYLE, SmartAssistantTheme
+from .window_presentation import AssistantWindowPresentation, configured_model_name
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +30,8 @@ logger = logging.getLogger(__name__)
 class SmartAssistantPanel(QDockWidget):
     """智能助手浮动覆盖面板；不允许重新停靠并压缩主工作台。"""
 
-    MINIMUM_DOCK_WIDTH = 400
-    MINIMUM_DOCK_HEIGHT = 220
+    MINIMUM_DOCK_WIDTH = 480
+    MINIMUM_DOCK_HEIGHT = 400
     TASKBAR_APP_USER_MODEL_ID = "TransBridge.SmartAssistant"
 
     visibility_changed = pyqtSignal(bool)
@@ -43,6 +45,7 @@ class SmartAssistantPanel(QDockWidget):
         session_projection=None,
         runtime_context=None,
         theme_view: ThemeView | None = None,
+        navigation=None,
     ):
         super().__init__("智能助手", parent)
         flags = self.windowFlags()
@@ -63,6 +66,7 @@ class SmartAssistantPanel(QDockWidget):
         self._session_commands = session_commands
         self._session_projection = session_projection
         self._runtime_context = runtime_context
+        self._navigation = dict(navigation or {})
         self._session_subscription = None
         self._theme_view = theme_view
         self._theme_subscription = None
@@ -72,8 +76,10 @@ class SmartAssistantPanel(QDockWidget):
         self._taskbar_identity_applied = False
         self._header = AssistantPanelHeader(theme=self._theme)
         self._header.close_requested.connect(self.close)
-        self._header.minimize_requested.connect(self._minimize_panel)
-        self._header.set_model_name(self._configured_model_name())
+        self._window_presentation = AssistantWindowPresentation(
+            self, self._header, self._configured_service_availability
+        )
+        self._header.minimize_requested.connect(self._window_presentation.minimize)
         self.setTitleBarWidget(self._header)
         self._init_skills()
         self._init_session_manager()
@@ -124,7 +130,16 @@ class SmartAssistantPanel(QDockWidget):
         self._session_list.delete_session.connect(self._on_delete_session)
         self._session_list.rename_session.connect(lambda sid, name: self._on_rename_session(sid, name))
 
-        self._chat = ChatWidget(ctx, theme=self._theme)
+        self._chat = ChatWidget(
+            ctx,
+            theme=self._theme,
+            navigation={
+                **self._navigation,
+                "model_configured": lambda: self._header.model_configured,
+                "service_availability": lambda: self._header.service_availability,
+                "refresh_service_availability": self._window_presentation.refresh,
+            },
+        )
         self._chat.configure_session_port(
             active_session_id=self._current_session_id,
             refresh_sessions=self._refresh_session_list,
@@ -138,6 +153,7 @@ class SmartAssistantPanel(QDockWidget):
         # 任务明细默认收起；没有任务时完全隐藏。
         right_splitter = QSplitter(Qt.Orientation.Vertical)
         right_splitter.setHandleWidth(1)
+        right_splitter.setChildrenCollapsible(False)
         right_splitter.addWidget(self._chat)
         self._task_monitor = TaskMonitorWidget(theme=self._theme)
         self._task_monitor.task_action.connect(self._on_task_action)
@@ -159,30 +175,15 @@ class SmartAssistantPanel(QDockWidget):
         self._body = container
         self._theme.apply_surface(container)
         self.setWidget(container)
-        # Dock 在已显示的主窗口中动态加入。忽略内容的纵向 sizeHint，避免
-        # QMainWindow 为保留工作台高度而把新增 Dock 撑到屏幕之外；明确的
-        # Dock 最小高度仍保证输入区和任务标题可达。
-        container_policy = container.sizePolicy()
-        container_policy.setVerticalPolicy(QSizePolicy.Policy.Ignored)
-        container.setSizePolicy(container_policy)
         self._refresh_session_list()
 
     @staticmethod
     def _configured_model_name() -> str:
-        """Read only the public model identifier; credentials never enter the title bar."""
-        try:
-            from transbridge.config.repository import default_config_repository
+        return configured_model_name()
 
-            model = default_config_repository().load().value("llm", "model", "")
-        except Exception:
-            logger.debug("读取智能助手模型名称失败", exc_info=True)
-            return "模型未配置"
-        return str(model).strip() or "模型未配置"
-
-    def _minimize_panel(self) -> None:
-        if not self.isFloating():
-            self.setFloating(True)
-        self.showMinimized()
+    @staticmethod
+    def _configured_service_availability():
+        return read_service_availability()
 
     def _prepare_taskbar_identity(self) -> None:
         if not getattr(self, "_taskbar_identity_applied", False):
@@ -309,15 +310,16 @@ class SmartAssistantPanel(QDockWidget):
     def _refresh_session_list(self):
         if self._session_commands is not None:
             sessions = self._session_commands.list_sessions()
-            self._session_list.set_sessions(sessions)
             current = self._current_session_id()
-            if current is not None:
-                self._session_list.set_active(current)
-            return
-        sessions = self._session_mgr.list_sessions()
+        else:
+            sessions = self._session_mgr.list_sessions()
+            current = self._active_session_id
         self._session_list.set_sessions(sessions)
-        if self._active_session_id:
-            self._session_list.set_active(self._active_session_id)
+        if current:
+            self._session_list.set_active(current)
+        self._header.set_session_name(
+            next((s.get("name", "新对话") for s in sessions if s["session_id"] == current), "新对话")
+        )
 
     def _get_project_name(self) -> str:
         try:
@@ -336,20 +338,9 @@ class SmartAssistantPanel(QDockWidget):
         """处理 TaskMonitorWidget 发出的操作信号。"""
         from transbridge.smart_assistant.tools.task_manager import TaskManager
 
-        tm = TaskManager()
-        if action == "cleanup_completed":
-            for tid in tm.list_all():
-                status = tm.get_status(tid).get("status", "")
-                if status in ("completed", "failed", "cancelled"):
-                    tm.cleanup(tid)
-        elif action == "cleanup" and task_id != "__all__":
-            tm.cleanup(task_id)
-        elif action == "cancel":
-            tm.cancel(task_id)
-        elif action == "pause":
-            tm.pause(task_id)
-        elif action == "resume":
-            tm.resume(task_id)
+        from .task_monitor_actions import apply_monitor_action
+
+        apply_monitor_action(TaskManager(), self._task_monitor, self._chat._session_runtime.scope(), task_id, action)
         # 操作后立即刷新
         self._chat.refresh_task_monitor()
 
@@ -468,7 +459,10 @@ class SmartAssistantPanel(QDockWidget):
             )
         finally:
             self._saving_session_id = None
-        return self._show_session_result(result, "保存会话失败")
+        saved = self._show_session_result(result, "保存会话失败")
+        if saved:
+            self._refresh_session_list()
+        return saved
 
     def _show_session_result(self, result, title: str) -> bool:
         if result.is_success:

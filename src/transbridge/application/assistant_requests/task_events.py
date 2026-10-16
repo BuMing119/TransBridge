@@ -8,12 +8,13 @@ import logging
 from threading import RLock
 
 from transbridge.application.contracts import JobRef
-from transbridge.application.tasks import JobSnapshot, JobState
+from transbridge.application.tasks import JobEventType, JobSnapshot, JobState
 
 from .admission import get_effect, record_effect_outcome
 from .dispatch import reconcile_dispatches, record_dispatch_outcome
 from .journal import EventCause
-from .models import EffectStatus, RequestStatus
+from .models import EffectStatus, RequestStatus, digest
+from .task_diagnostics import append_task_diagnostic
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +36,16 @@ class RequestTaskEventRouter:
         self._pending: set[str] = set()
         self._outcomes: dict[str, JobSnapshot] = {}
         self._delivering: set[str] = set()
+        self._diagnostic_pending: dict[str, tuple[_Binding, JobSnapshot, str]] = {}
+        self._diagnostic_delivering: set[str] = set()
         self._retrying_sessions: set[str] = set()
+        self._closed = False
         self._subscription = runtime.subscribe(self._observe)
-        self._unsubscribe_requests = service.subscribe(self._request_changed)
+        try:
+            self._unsubscribe_requests = service.subscribe(self._request_changed)
+        except Exception:
+            self._subscription.close()
+            raise
         self.diagnostics: list[str] = []
 
     def bind(self, gate, effect_id: str, job_id: str, run_id: str, owner) -> None:
@@ -51,6 +59,9 @@ class RequestTaskEventRouter:
                 binding.gate.context.session_id == session_id and binding.gate.admission.request_id == request_id
                 for run_id, binding in self._bindings.items()
                 if run_id in self._pending
+            ) or any(
+                binding.gate.context.session_id == session_id and binding.gate.admission.request_id == request_id
+                for binding, _, _ in self._diagnostic_pending.values()
             )
 
     def retry_pending(self, session_id: str) -> None:
@@ -64,9 +75,16 @@ class RequestTaskEventRouter:
                 for run_id, binding in self._bindings.items()
                 if run_id in self._pending and binding.gate.context.session_id == session_id
             )
+            diagnostics = tuple(
+                key
+                for key, (binding, _, _) in self._diagnostic_pending.items()
+                if binding.gate.context.session_id == session_id
+            )
         try:
             for binding in bindings:
                 self._deliver(binding, attempts=1)
+            for key in diagnostics:
+                self._deliver_diagnostic(key, attempts=1)
         finally:
             with self._lock:
                 self._retrying_sessions.discard(session_id)
@@ -74,11 +92,72 @@ class RequestTaskEventRouter:
     def _observe(self, event) -> None:
         with self._lock:
             binding = self._bindings.get(event.snapshot.ref.run_id)
-            if binding is None or not event.snapshot.is_terminal:
+            if binding is None:
                 return
+        if event.message and (
+            (event.event_type is JobEventType.DIAGNOSTIC and event.code != "commit_accepted")
+            or (event.event_type is JobEventType.FINISHED and event.snapshot.state is JobState.FAILED)
+        ):
+            self.record_diagnostic(binding.gate, binding.effect_id, event.snapshot, event.message)
+        if not event.snapshot.is_terminal:
+            return
+        with self._lock:
             # Keep the original terminal receipt even if task history is later cleaned.
             self._outcomes.setdefault(binding.ref.run_id, event.snapshot)
         self._deliver(binding, attempts=3)
+
+    def record_diagnostic(self, gate, effect_id: str, snapshot: JobSnapshot, message: str) -> None:
+        """Accept a captured runtime diagnostic even after terminal outcome delivery."""
+        if not message:
+            return
+        if snapshot.owner.session_id != gate.context.session_id or snapshot.owner.owner_id != gate.context.owner_id:
+            raise ValueError("task diagnostic ownership differs from captured request context")
+        binding = _Binding(gate, effect_id, snapshot.ref, snapshot.owner)
+        key = digest((snapshot.ref.run_id, effect_id, message))
+        with self._lock:
+            if self._closed:
+                return
+            self._diagnostic_pending[key] = (binding, snapshot, message)
+        self._deliver_diagnostic(key, attempts=3)
+
+    def _deliver_diagnostic(self, key, *, attempts):
+        with self._lock:
+            pending = self._diagnostic_pending.get(key)
+            if pending is None or key in self._diagnostic_delivering:
+                return
+            self._diagnostic_delivering.add(key)
+        binding, snapshot, message = pending
+        gate = binding.gate
+        saved = False
+        try:
+            for _ in range(attempts):
+                try:
+                    gate.service.update_request(
+                        gate.context,
+                        gate.admission.request_id,
+                        lambda request: append_task_diagnostic(request, snapshot, binding.effect_id, message),
+                        cause=EventCause(
+                            "task.diagnostic",
+                            references={"job_ids": [snapshot.ref.job_id], "run_ids": [snapshot.ref.run_id]},
+                        ),
+                    )
+                except Exception as error:
+                    with self._lock:
+                        self.diagnostics.append(f"{snapshot.ref.run_id}: {error}")
+                    logger.exception("Failed to persist request task diagnostic for %s", snapshot.ref.run_id)
+                else:
+                    with self._lock:
+                        self._diagnostic_pending.pop(key, None)
+                    saved = True
+                    break
+        finally:
+            with self._lock:
+                self._diagnostic_delivering.discard(key)
+        if saved:
+            try:
+                gate.service.notify(gate.context.session_id)
+            except Exception:
+                logger.exception("Task diagnostic saved but notification failed for %s", snapshot.ref.run_id)
 
     def _deliver(self, binding, *, attempts):
         run_id = binding.ref.run_id
@@ -188,6 +267,8 @@ class RequestTaskEventRouter:
         self._subscription.close()
         self._unsubscribe_requests()
         with self._lock:
+            self._closed = True
             self._bindings.clear()
             self._pending.clear()
             self._outcomes.clear()
+            self._diagnostic_pending.clear()

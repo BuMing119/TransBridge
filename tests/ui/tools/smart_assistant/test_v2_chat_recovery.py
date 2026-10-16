@@ -36,6 +36,11 @@ def chat_environment(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(panel_module.SmartAssistantPanel, "_init_skills", lambda _self: None)
     monkeypatch.setattr(panel_module.SmartAssistantPanel, "_configured_model_name", staticmethod(lambda: "test-model"))
+    monkeypatch.setattr(
+        panel_module.SmartAssistantPanel,
+        "_configured_service_availability",
+        staticmethod(lambda: SimpleNamespace(model_name="test-model", ready=True, message="", missing_fields=())),
+    )
     monkeypatch.setattr(panel_module, "set_window_app_user_model_id", lambda *_args: False)
     panels = []
 

@@ -29,6 +29,7 @@ class PlanExecutionBinding:
         execution_context: Callable[[], object] | None = None,
         on_task_started: Callable[[str, str], None] | None = None,
         on_lifecycle_changed: Callable[[], None] | None = None,
+        on_execution_failed: Callable[[str], None] | None = None,
     ) -> None:
         self._context = context
         self._execution_context = execution_context or (lambda: self._context)
@@ -36,6 +37,7 @@ class PlanExecutionBinding:
             lambda task_id, _run_id: self._system_message(f"计划任务已启动: {task_id}")
         )
         self._on_lifecycle_changed = on_lifecycle_changed or (lambda: None)
+        self._failure_callback = on_execution_failed
         self._controller = controller
         self._middlewares = middlewares
         self._observability = observability
@@ -46,6 +48,7 @@ class PlanExecutionBinding:
         self._engine = None
         self._retired_engines: set = set()
         self._runtimes: dict = {}
+        self._feedback: dict = {}
         self._closed = False
         self._generation = 0
 
@@ -60,22 +63,33 @@ class PlanExecutionBinding:
         from transbridge.smart_assistant.plan_task_runtime import PlanTaskRuntime
         from transbridge.smart_assistant.tool_registry import ToolRegistry
 
-        self._controller().handle_user_confirmed(steps, "plan")
+        if self._controller().handle_user_confirmed(steps, "plan") is False:
+            return
         self._hide_thinking()
         self._dispose_engine()
-        runtime = PlanTaskRuntime(self._execution_context())
+        feedback = confirmation_view.plan_feedback(steps)
+        runtime = None
         try:
+            runtime = PlanTaskRuntime(self._execution_context())
             engine = ExecutionEngine(
                 ToolRegistry,
                 runtime.execution_context,
                 middlewares=self._middlewares(),
                 retry_handler=self._retry_handler(),
             )
-        except Exception:
-            runtime.close()
-            raise
-        self._engine = engine
-        self._runtimes[engine] = runtime
+            self._engine = engine
+            self._runtimes[engine] = runtime
+            self._feedback[engine] = feedback
+            self._start_engine(engine, runtime, steps, confirmation_view)
+        except Exception as error:
+            if runtime is not None:
+                try:
+                    runtime.fail_startup(error)
+                except Exception:
+                    logger.exception("Failed to settle plan runtime after startup error")
+            self._finish_failure(error, feedback, "计划未能启动")
+
+    def _start_engine(self, engine, runtime, steps, confirmation_view) -> None:
         generation = self._generation
         engine.on_step_requires_confirmation(
             lambda node_id, prompt, choices, e=engine, g=generation: self._request_engine_decision(
@@ -91,6 +105,16 @@ class PlanExecutionBinding:
             register(
                 lambda *args, e=engine, g=generation, cb=callback: (
                     cb(*args) if not self._closed and self._engine is e and self._generation == g else None
+                )
+            )
+        for register, event in (
+            (engine.on_step_started, "on_step_started"),
+            (engine.on_step_finished, "on_step_finished"),
+            (engine.on_progress, "on_progress"),
+        ):
+            register(
+                lambda *args, e=engine, g=generation, name=event: confirmation_view.dispatch(
+                    lambda: self._present(e, g, name, *args)
                 )
             )
         self._on_task_started(runtime.task_id, runtime.run_id)
@@ -163,6 +187,7 @@ class PlanExecutionBinding:
             return
         if self._closed or self._engine is not engine or self._generation != generation:
             return
+        self._present(engine, generation, "on_all_finished", results)
         cancelled = any(
             isinstance(result.data, dict) and result.data.get("status") == "cancelled" for result in results
         )
@@ -212,17 +237,42 @@ class PlanExecutionBinding:
             return
         if self._closed or self._engine is not engine or self._generation != generation:
             return
-        summary = f"计划执行失败: {type(error).__name__}: {str(error)[:300]}"
-        self._system_message(summary)
-        self._conversation.add_plan_result(summary, success=False)
-        self._observability.end_conversation()
+        self._finish_failure(error, self._feedback.get(engine), "计划执行失败")
+
+    def _finish_failure(self, error: Exception, feedback, title: str) -> None:
+        from transbridge.application.security import diagnostic_exception_text
+
+        summary = f"{title}: {type(error).__name__}: {diagnostic_exception_text(error)[:300]}"
+        logger.error("%s", summary, exc_info=(type(error), error, error.__traceback__))
         self._dispose_engine()
-        controller = self._controller()
-        if getattr(getattr(controller, "state", None), "value", "") == "executing":
-            controller.handle_execution_complete([])
+        # An exception is not an empty successful result. Stop this round before
+        # releasing its request lease; only explicit recovery may execute again.
+        self._controller().handle_round_interrupted()
+        for present in (
+            lambda: feedback("set_failure", summary) if feedback is not None else None,
+            self._observability.end_conversation,
+            lambda: self._conversation.add_plan_result(summary, success=False),
+        ):
+            try:
+                present()
+            except Exception:
+                # A failed history save or view must not keep the request lease.
+                logger.exception("Failed to present plan execution failure")
+        if self._failure_callback is not None:
+            self._failure_callback(summary)
         else:
-            controller.handle_abort()
-        self._on_lifecycle_changed()
+            self._system_message(summary)
+        try:
+            self._on_lifecycle_changed()
+        except Exception:
+            logger.exception("Failed to save presentation after plan execution failure")
+
+    def _present(self, engine, generation: int, event: str, *args) -> None:
+        if self._closed or self._engine is not engine or self._generation != generation:
+            return
+        feedback = self._feedback.get(engine)
+        if feedback is not None:
+            feedback(event, *args)
 
     def _dispose_engine(self) -> None:
         self._generation += 1
@@ -232,9 +282,15 @@ class PlanExecutionBinding:
             self._release_engine(engine)
 
     def _release_engine(self, engine) -> None:
+        self._feedback.pop(engine, None)
         runtime = self._runtimes.pop(engine, None)
-        if runtime is not None:
-            runtime.close()
-        engine.cancel()
-        # Cancellation is cooperative; the GUI must not join in-flight I/O.
-        engine._executor.shutdown(wait=False)
+        for cleanup in (
+            runtime.close if runtime is not None else lambda: None,
+            engine.cancel,
+            # Cancellation is cooperative; the GUI must not join in-flight I/O.
+            lambda: engine._executor.shutdown(wait=False),
+        ):
+            try:
+                cleanup()
+            except Exception:
+                logger.exception("Failed to release a plan execution resource")

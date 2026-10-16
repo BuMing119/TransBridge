@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from typing import Any, Protocol
 
+from transbridge.application.assistant_requests.attachments import attachment_snapshot
 from transbridge.application.contracts import (
     DomainError,
     ErrorCategory,
@@ -131,6 +132,7 @@ class GuiSessionCommandFacade:
 
         def update(snapshot):
             changes = dict(
+                name=_conversation_name(snapshot.name, visible_messages),
                 messages=tuple(visible_messages),
                 backend_summary=backend_summary,
                 controller=controller or snapshot.controller,
@@ -220,6 +222,22 @@ class GuiSessionCommandFacade:
 
 
 __all__ = ["GuiSessionCommandFacade", "SessionCreateRepositoryPort"]
+
+
+def _conversation_name(current: str, messages: list[dict[str, Any]]) -> str:
+    """Name an untouched conversation from its first real user message."""
+    if current not in {"", "新对话", "New conversation"}:
+        return current
+    for message in messages:
+        content = message.get("content", "")
+        if message.get("role") == "user" and isinstance(content, str) and not content.startswith("【"):
+            snapshot = attachment_snapshot(content)
+            if snapshot is not None:
+                content = snapshot["user_request"]
+            candidate = " ".join(content.split())[:30]
+            if candidate:
+                return candidate
+    return current
 
 
 def _merge_job_refs(

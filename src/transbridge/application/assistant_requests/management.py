@@ -12,6 +12,8 @@ from .models import Evidence, ItemStatus, RequestError, UserRequest, digest
 from .recovery import recover_request
 from .reducer import RequestEvent, reduce_request, require_open
 from .routing import RoutingBatch, RoutingResult, RoutingSource, apply_proposal, parse_proposal
+from .routing_recovery import resolution_kind
+from .skill_context import request_skill_contexts
 
 
 def successor_request(request: UserRequest, source_message_id: str, new_id: str) -> UserRequest:
@@ -64,7 +66,7 @@ def clarify_directive(
     batch and its requests together, then consumes the clarification ingress.
     """
     receipt = next((item for item in batch.receipts if item.local_id == local_id), None)
-    if receipt is None or receipt.status != "needs_clarification" or batch.proposal is None:
+    if receipt is None or resolution_kind(batch, receipt) != "target" or batch.proposal is None:
         raise RequestError("REQUEST_CLARIFICATION_INVALID", "only a saved unresolved directive may be clarified")
     directive = next((d for d in batch.proposal.directives if d["local_id"] == local_id), None)
     if directive is None or directive["action"] == "CREATE":
@@ -231,10 +233,12 @@ def apply_management_command(
         return request
 
     batch_id = ""
+    input_metadata = {}
+    input_selection = selection
     if kind == "clarify":
         batch_id = payload["batch_id"]
         saved = next((b for b in state.get("batches", ()) if b["batch"]["batch_id"] == batch_id), None)
-        if saved is None:
+        if saved is None or saved.get("status") == "discarded":
             raise RequestError("REQUEST_CLARIFICATION_INVALID", "saved routing batch does not exist")
         target(payload["target_request_id"])
         result = clarify_directive(
@@ -243,7 +247,7 @@ def apply_management_command(
         saved.update(
             batch=result.batch.to_dict(),
             status="applied"
-            if all(receipt.status == "applied" for receipt in result.batch.receipts)
+            if not any(resolution_kind(result.batch, receipt) for receipt in result.batch.receipts)
             else "needs_clarification",
         )
         by_id = {request.request_id: request for request in result.requests}
@@ -256,6 +260,13 @@ def apply_management_command(
         if new_id in by_id:
             raise RequestError("COMMAND_PAYLOAD_CONFLICT", "successor request identity already exists")
         by_id[new_id] = successor_request(old, source.message_id, new_id)
+        original_ids = set(old.source_message_ids) | {r.source_message_id for r in old.revisions}
+        originals = [item for item in state.get("ingress", ()) if item["message_id"] in original_ids]
+        skills = request_skill_contexts(({**item, "role": "user"} for item in originals), old)
+        if skills:
+            input_metadata["skill_contexts"] = list(skills)
+        if originals:
+            input_selection = originals[-1].get("selection", {})
         request_ids = (new_id,)
     elif kind == "reassign":
         new_source, new_target = reassign_unexecuted_item(
@@ -278,10 +289,11 @@ def apply_management_command(
         "text": source.text,
         "sequence": len(ingress) + 1,
         "context": deepcopy(context_data),
-        "selection": deepcopy(selection),
+        "selection": deepcopy(input_selection),
         "digest": command_digest,
         "status": "applied",
         "batch_id": batch_id,
         "management_kind": kind,
+        **input_metadata,
     })
     return request_ids

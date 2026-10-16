@@ -77,9 +77,9 @@ class RequestControlBinding:
                 for reply in direct_replies(batch):
                     if reply["message_id"] not in known:
                         binding.facade._conversation.add_assistant(reply["content"], message_id=reply["message_id"])
-                        binding.facade._message_list.add_bubble(
-                            MessageBubble(reply["content"], "assistant", theme=binding.facade._theme)
-                        )
+                        bubble = MessageBubble(reply["content"], "assistant", theme=binding.facade._theme)
+                        bubble.setProperty("message_id", reply["message_id"])
+                        binding.facade._message_list.add_bubble(bubble)
             if operation.cancelled.is_set() or binding.admission != admission or not binding._active:
                 return
             if receipt.get("is_error"):

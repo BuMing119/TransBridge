@@ -77,6 +77,7 @@ def test_skill_model_messages_use_stable_english_name_not_localized_display_name
     class Chat:
         system_prompt = ""
         user_message = ""
+        skill_context = None
 
         def add_system_message(self, _message: str) -> None:
             pass
@@ -84,8 +85,9 @@ def test_skill_model_messages_use_stable_english_name_not_localized_display_name
         def add_system_prompt(self, message: str) -> None:
             self.system_prompt = message
 
-        def send_user_message(self, message: str) -> None:
+        def send_user_message(self, message: str, *, skill_context=None) -> None:
             self.user_message = message
+            self.skill_context = skill_context
 
     chat = Chat()
     SkillExecutor(chat).execute(
@@ -99,3 +101,6 @@ def test_skill_model_messages_use_stable_english_name_not_localized_display_name
 
     _assert_english(chat.system_prompt)
     _assert_english(chat.user_message)
+    assert chat.system_prompt == ""
+    assert chat.skill_context["name"] == "translate_with_terms"
+    _assert_english(chat.skill_context["prompt"])

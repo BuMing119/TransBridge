@@ -81,7 +81,7 @@ def test_confirmation_decision_is_one_shot_and_close_expires_pending_cards():
     pending = view.add_tool_card(step)
     view.close()
     view.close()
-    assert consumed._exec_btn.text() == "执行中..."
+    assert consumed._exec_btn.text() == "结果待核对"
     assert pending._exec_btn.text() == "已失效"
     pending.executed.emit(step)
     assert intents == [("tool", step)]

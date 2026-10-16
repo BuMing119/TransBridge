@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
+from transbridge.application.assistant_requests.conversation_visibility import visible_history
 from transbridge.application.assistant_requests.models import RequestError
 from transbridge.application.assistant_requests.turns import accept_turn, record_turn_failure
 from transbridge.application.translation.entry_alias import ai_entry_key
@@ -21,14 +22,15 @@ from transbridge.smart_assistant.request_protocol import (
     STATE_RETRIEVAL_TOOL,
 )
 
-from .message_bubble import MessageBubble
 from .request_background import RequestBackground
 from .request_confirmation_binding import RequestConfirmationBinding
 from .request_context_preparation import RequestContextPreparation
 from .request_control_binding import RequestControlBinding
+from .request_input_binding import RequestInputBinding
 from .request_list_view import RequestListView
 from .request_management_binding import RequestManagementBinding
 from .request_undo_binding import RequestUndoBinding
+from .submission_scope import capture_display_context
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +47,7 @@ class RequestBinding(QObject):
         self.management = RequestManagementBinding(self)
         self.view_id = uuid4().hex
         self.context = None
+        self._stopped_sessions = {}
         self.admission = None
         self.batch = None
         self.gate = None
@@ -56,11 +59,13 @@ class RequestBinding(QObject):
         self._priority = ()
         self._turn_generation = 0
         self._queue = ThreadPoolExecutor(max_workers=1, thread_name_prefix="assistant-input")
+        self.inputs = RequestInputBinding(self)
         self.background = RequestBackground(self)
         self.control_results = RequestControlBinding(self)
         self.delivered.connect(lambda callback: callback())
         self._unsubscribe = service.subscribe(lambda sid: self.delivered.emit(lambda: self._changed(sid)))
         self.view = RequestListView(facade)
+        self.view.message_scopes_changed.connect(facade._message_list.set_scopes)
         self.undo = RequestUndoBinding(self)
         self.view.undo_round.connect(self.undo.request)
         self.view.control.connect(self.control)
@@ -74,7 +79,16 @@ class RequestBinding(QObject):
     def stage(self):
         return None if self.admission is None else self.admission.stage
 
+    @property
+    def _user_stopped(self):
+        return self._stopped_sessions.get(getattr(self.context, "session_id", None), False)
+
+    @_user_stopped.setter
+    def _user_stopped(self, value):
+        self._stopped_sessions[getattr(self.context, "session_id", None)] = bool(value)
+
     def load(self, values):
+        self.inputs.invalidate()
         self.view.display(())
         self.interrupt()
         if self.context is not None:
@@ -95,56 +109,17 @@ class RequestBinding(QObject):
             recover_control_calls(self.service, context)
             self.service.save_history(context, history)
             snapshot = self.service.lifecycle.read_session(SessionRef(SessionId(context.session_id)), context)
-            return snapshot.backend_messages()
+            return visible_history(snapshot.backend_messages(), snapshot.assistant_data())
 
         def restored(records):
             self.facade._conversation.merge_saved_records(records)
+            self.inputs.present_failures()
             self.refresh()
 
         self.background.submit(restore, restored, context=context, wake=True)
 
-    def submit(self, text):
-        if self._closed or not text.strip():
-            return
-        context = self.facade._session_runtime.request_context()
-        if not context.session_id:
-            self.fail("请先创建或选择一个会话。")
-            return
-        self.context = context
-        self._user_stopped = False
-        self.interrupt()
-        selection = self._selection()
-        self._accepting += 1
-
-        def accept():
-            self.service.scheduler.activate(context.session_id, self.view_id)
-            return self.service.accept_input(context, text.strip(), selection=selection)
-
-        future = self._queue.submit(accept)
-
-        def ready(completed):
-            def display():
-                self._accepting -= 1
-                try:
-                    accepted = completed.result()
-                except Exception as exc:
-                    self.facade.set_input(text)
-                    self.fail(f"输入尚未接纳，请重试：{exc}")
-                    return
-                if self._closed or self.context.session_id != context.session_id:
-                    return  # ingress is safely saved for its original Session
-                self.facade._conversation.add_user(text.strip(), message_id=accepted["message_id"])
-                bubble = MessageBubble(text.strip(), "user", theme=self.facade._theme)
-                bubble.setProperty("message_id", accepted["message_id"])
-                self.facade._message_list.add_bubble(bubble)
-                self.wake()
-
-            try:
-                self.delivered.emit(display)
-            except RuntimeError:
-                logger.info("Input persisted after the chat view was destroyed")
-
-        future.add_done_callback(ready)
+    def submit(self, text, *, attachments=None, skill_context=None):
+        return self.inputs.submit(text, attachments=attachments, skill_context=skill_context)
 
     def _selection(self):
         ctx = self.facade._ctx
@@ -153,6 +128,7 @@ class RequestBinding(QObject):
             selected = getattr(ctx, "selected_ids", ())
         selected = selected or ()
         return {
+            "display_context": capture_display_context(ctx),
             "project_revision": getattr(ctx, "project_revision", None),
             "variant_revision": getattr(ctx, "variant_revision", None),
             "active_version_identity": (
@@ -209,7 +185,14 @@ class RequestBinding(QObject):
         accept_turn(self.service, self.context, selection)
 
     def prepare_model_input(
-        self, history, max_tokens, *, context_window=None, prepared_summary=None, defer_assembly=False
+        self,
+        history,
+        max_tokens,
+        *,
+        context_window=None,
+        prepared_summary=None,
+        defer_assembly=False,
+        workspace_snapshot=None,
     ):
         from transbridge.smart_assistant.context_budget import budget_for_config
         from transbridge.smart_assistant.request_model_input import RequestModelInput
@@ -269,6 +252,8 @@ class RequestBinding(QObject):
         from transbridge.application.assistant_context.state_projection import decision_context
 
         constraints = decision_context(request, self.admission, state)
+        if workspace_snapshot is not None:
+            constraints["workspace_snapshot"] = workspace_snapshot
         prepared = RequestModelInput(
             tuple(history),
             tools,
@@ -326,8 +311,11 @@ class RequestBinding(QObject):
         return self.confirmations.validator(accepted=accepted)
 
     def control(self, request_id, command):
+        if command == "retry_context":
+            self.management.retry_context(request_id)
+            return
         context = self.context
-        if command == "resume":
+        if command in {"resume", "restart"}:
             self._user_stopped = False
         self.interrupt()
 
@@ -337,8 +325,13 @@ class RequestBinding(QObject):
 
                 clear_wait(self.service, context, request_id)
             request = next(r for r in self.service.requests(self.service.state(context)) if r.request_id == request_id)
-            if command not in {"reconcile", "reassign"} and not (command == "resume" and request.terminal):
-                self.service.command(context, request_id, command, request.revision)
+            if command not in {"reconcile", "reassign", "restart"} and not (command == "resume" and request.terminal):
+                updated = self.service.command(context, request_id, command, request.revision)
+                if command in {"pause", "resume"}:
+                    from transbridge.smart_assistant.tools.request_task_control import control_request_tasks
+                    from transbridge.smart_assistant.tools.task_manager import TaskManager
+
+                    control_request_tasks(TaskManager(), self.service, context, updated, command)
             return request
 
         def received(request):
@@ -348,8 +341,8 @@ class RequestBinding(QObject):
                 reconcile_outcome(self, request_id)
             elif command == "reassign":
                 self.management.reassign(request_id)
-            elif command == "resume" and request.terminal:
-                self.management.restart(request)
+            elif command == "restart" or (command == "resume" and request.terminal):
+                self.management.restart(request, confirm=command == "restart")
             elif command != "resume" or not self.confirmations.restore(request_id):
                 self.wake()
             if command == "cancel":
@@ -414,6 +407,9 @@ class RequestBinding(QObject):
         self.refresh()
 
     def interrupt(self):
+        review = getattr(self, "result_review", None)
+        if review is not None:
+            review.invalidate()
         self.context_preparation.cancel()
         self.release()
         self.facade._confirmation_view.invalidate_pending()
@@ -444,6 +440,9 @@ class RequestBinding(QObject):
             return
         self.interrupt()
         self._closed = True
+        review = getattr(self, "result_review", None)
+        if review is not None:
+            review.close()
         # Qt may discard queued completion deliveries after QObject destruction.
         self.confirmations.close()
         if self.context is not None:

@@ -22,7 +22,13 @@ def _binding():
         service=SimpleNamespace(
             state=lambda context: {"requests": (context,)}, requests=lambda state: state["requests"]
         ),
-        view=SimpleNamespace(hide=lambda: None, show=lambda: None, display=shown.append, set_pending=lambda *_: None),
+        view=SimpleNamespace(
+            hide=lambda: None,
+            show=lambda: None,
+            display=shown.append,
+            set_pending=lambda *_: None,
+            set_scopes=lambda *_: None,
+        ),
         undo=SimpleNamespace(observe=lambda _: None),
     )
     return binding, jobs, callbacks, shown

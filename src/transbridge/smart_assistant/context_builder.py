@@ -52,20 +52,9 @@ class ContextBuilder:
             f"  - {cat}: {cnt} entries" for cat, cnt in sorted(cat_counter.items(), key=lambda x: -x[1])
         )
 
-        # 已上传参考文件 — C6: 仅注入摘要信息，不注入原始内容
-        docs_lines = ""
-        if hasattr(ctx, "_uploaded_docs") and ctx._uploaded_docs:
-            docs_lines = "Uploaded reference files:\n"
-            for name, doc in ctx._uploaded_docs.items():
-                char_count = len(doc.raw_text) if hasattr(doc, "raw_text") else 0
-                docs_lines += (
-                    f"  - {name} ({doc.format}, {char_count} characters) — "
-                    "available by reference in the conversation context\n"
-                )
-
         return (
             f"Current workspace context:\n"
             f"- Plugin: {esp_name}\n"
             f"- Collection summary: {total} total, {translated} translated, {untranslated} untranslated\n"
-            f"- Category distribution:\n{cat_lines}" + (f"\n{docs_lines}" if docs_lines else "")
+            f"- Category distribution:\n{cat_lines}"
         )

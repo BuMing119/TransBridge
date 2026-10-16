@@ -208,5 +208,8 @@ def apply_proposal(requests: tuple[UserRequest, ...], batch: RoutingBatch, propo
                 request_id = target_id
             receipts[local_id] = DirectiveReceipt(local_id, directive_id, "applied", request_id)
         except (RequestError, ValueError, TypeError) as error:
-            receipts[local_id] = DirectiveReceipt(local_id, directive_id, "needs_clarification", diagnostic=str(error))
+            status = (
+                "needs_clarification" if getattr(error, "code", "") == "REQUEST_TARGET_AMBIGUOUS" else "needs_replan"
+            )
+            receipts[local_id] = DirectiveReceipt(local_id, directive_id, status, diagnostic=str(error))
     return RoutingResult(tuple(by_id.values()), replace(batch, receipts=tuple(receipts.values())))

@@ -6,6 +6,7 @@ import json
 from uuid import uuid4
 
 from transbridge.application.assistant_requests.models import digest
+from transbridge.application.assistant_requests.skill_context import skill_messages
 
 from .models import ContextEpoch, FrozenContextItem, PreparationWait, encode, state_item, state_material
 from .protocol import normalize_records, protocol_groups
@@ -48,7 +49,7 @@ def authorized_records(history, request, owners=None):
 
 
 def source_digest(record):
-    return digest({key: record[key] for key in _KEYS if key in record})
+    return digest({key: record[key] for key in (*_KEYS, "skill_context", "skill_contexts") if key in record})
 
 
 def related_history(history, request, requests, owners, previous=None):
@@ -142,6 +143,7 @@ def append_context(
     # ConversationManager replaces its sole system message. Old revisions remain in the
     # factual transcript, but only the newest rule snapshot belongs to the active prompt.
     systems = [project_result(r) for r in records if r["role"] == "system"][-1:]
+    systems.extend(skill_messages(records, request))
     body = [r for r in records if r["role"] != "system"]
     groups = protocol_groups(body)
     previous_sources = dict(previous.source_digests) if previous else {}

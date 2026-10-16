@@ -271,26 +271,27 @@ class TaskManager:
             _thread=thread,
         )
         handle.pause_event.set()  # 初始非暂停状态
-        handle.execution = TaskRuntimeBridge(
-            self._runtime,
-            ref,
-            owner,
-            handle,
-            lambda: self._notify_updated(task_id),
-            assistant_gate=assistant_gate,
-            assistant_effect_id=assistant_effect_id,
-        )
-        with self._lock:
-            self._tasks[task_id] = handle
-            self._refs[task_id] = ref
-            self._owners[task_id] = owner
         try:
+            handle.execution = TaskRuntimeBridge(
+                self._runtime,
+                ref,
+                owner,
+                handle,
+                lambda: self._notify_updated(task_id),
+                assistant_gate=assistant_gate,
+                assistant_effect_id=assistant_effect_id,
+            )
+            with self._lock:
+                self._tasks[task_id] = handle
+                self._refs[task_id] = ref
+                self._owners[task_id] = owner
             if assistant_gate is not None:
                 assistant_gate.bind_job(assistant_effect_id, ref.job_id, ref.run_id, runtime=self._runtime, owner=owner)
             handle.execution.schedule()
         except Exception:
             self._runtime.cancel(ref, owner)
-            handle.execution.close()
+            if handle.execution is not None:
+                handle.execution.close()
             raise
         return task_id
 
@@ -506,6 +507,18 @@ class TaskManager:
             finished = list(self._listeners.get("finished", []))
             terminal = list(self._listeners.get("terminal", []))
             legacy = list(self._listeners.get("completed" if success else "failed", []))
+        execution = handle.execution if handle is not None else None
+        gate = execution.assistant_gate if execution is not None else None
+        if not success and message and gate is not None:
+            # The terminal state may precede this compatibility notification.
+            # Keep its explanation separately; it must never become a commit receipt.
+            router = getattr(gate.service, "request_task_events", None)
+            if router is not None:
+                try:
+                    snapshot = execution.runtime.get(execution.ref, execution.owner)
+                    router.record_diagnostic(gate, execution.assistant_effect_id, snapshot, message)
+                except Exception:
+                    logger.exception("Could not deliver task failure diagnostic for %s", task_id)
         event_snapshot = self.get_status(task_id)
         dispatch = TaskManager._dispatcher
         for cb in terminal:

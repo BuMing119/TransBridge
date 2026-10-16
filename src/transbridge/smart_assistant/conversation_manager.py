@@ -42,8 +42,8 @@ class ConversationManager:
     def add_assistant(self, content: str, *, message_id: str | None = None) -> None:
         self._append({"role": "assistant", "content": content}, message_id=message_id)
 
-    def add_assistant_turn(self, turn) -> None:
-        """Persist a provider-neutral assistant turn, including native calls."""
+    def add_assistant_turn(self, turn) -> str:
+        """Persist a provider-neutral turn and return its canonical message identity."""
         to_message = getattr(turn, "to_assistant_message", None)
         if callable(to_message):
             message = to_message()
@@ -52,7 +52,7 @@ class ConversationManager:
             message["role"] = "assistant"
         else:
             self.add_assistant(str(turn))
-            return
+            return self._message_ids[-1]
         new_call_ids = {str(call.get("id", "")) for call in message.get("tool_calls", []) if str(call.get("id", ""))}
         historical_call_ids = {
             str(call.get("id", ""))
@@ -68,6 +68,7 @@ class ConversationManager:
             reused = ", ".join(sorted(reused_call_ids))
             raise LlmToolProtocolError(f"The model reused historical tool call ids: {reused}")
         self._append(message)
+        return self._message_ids[-1]
 
     def add_tool_result(
         self,

@@ -71,6 +71,11 @@ class SessionBinding:
         self._clear_messages()
         messages = list(data.get("messages", []))
         backend = data.get("backend_history", data.get("history", messages))
+        from transbridge.application.assistant_requests.conversation_visibility import visible_history
+
+        state = data.get("assistant_state", {})
+        messages = visible_history(messages, state)
+        backend = visible_history(backend, state)
         self._conversation.from_dict({"messages": list(backend)})
         if self._restore_controller is not None and "controller" in data:
             try:

@@ -1,11 +1,15 @@
 """Explicit request management intents from the request list."""
 
-from PyQt6.QtWidgets import QInputDialog
+from uuid import uuid4
 
+from PyQt6.QtWidgets import QInputDialog, QMessageBox
+
+from transbridge.application.assistant_requests.attachments import display_user_content
 from transbridge.application.assistant_requests.journal import EventCause
 
 from .message_bubble import MessageBubble
 from .request_view_refresh import RequestViewRefresh
+from .submission_scope import scope_from_input
 
 
 class RequestManagementBinding:
@@ -14,6 +18,8 @@ class RequestManagementBinding:
         self._timelines = set()
         self._refresh = RequestViewRefresh(binding)
         self._failed_turn = None
+        self._operations = set()
+        self._restart_commands = {}
 
     def capture_failed_turn(self):
         binding = self.binding
@@ -128,70 +134,84 @@ class RequestManagementBinding:
     def sync_inputs(self):
         binding = self.binding
         known = {m["message_id"] for m in binding.facade._conversation.get_transcript()}
-        for entry in binding.service.state(binding.context).get("ingress", ()):
-            if entry["message_id"] not in known:
-                binding.facade._conversation.add_user(entry["text"], message_id=entry["message_id"])
-                binding.facade._message_list.add_bubble(
-                    MessageBubble(entry["text"], "user", theme=binding.facade._theme)
-                )
+        state = binding.service.state(binding.context)
+        hidden = set(state.get("conversation_clear", {}).get("message_ids", ()))
+        for entry in state.get("ingress", ()):
+            if entry["message_id"] not in known | hidden:
+                content = binding.service.input_content(binding.context, entry["message_id"])
+                binding.facade._conversation.add_user(content, message_id=entry["message_id"])
+                bubble = MessageBubble(display_user_content(content), "user", theme=binding.facade._theme)
+                bubble.setProperty("message_id", entry["message_id"])
+                bubble.set_scope(scope_from_input(entry))
+                binding.facade._message_list.add_bubble(bubble)
         self.refresh()
         binding.wake()
 
-    def restart(self, request):
+    def restart(self, request, *, confirm=True):
         binding = self.binding
-        fresh = binding.service.restart(
-            binding.context,
-            request.request_id,
-            text=f"继续已结束的请求：{request.goal}",
-            selection=binding._selection(),
+        context = binding.context
+        key = (context, request.request_id, request.revision)
+        eligible = request.status in {"failed", "cancelled"} if confirm else request.terminal
+        if key in self._operations or not eligible or request.unsettled:
+            return
+        answer = (
+            QMessageBox.question(
+                binding.facade,
+                "重新处理全部要求",
+                f"将为“{request.goal}”创建关联的新任务，重新处理全部 {len(request.items)} 项要求，"
+                "包括之前已完成的事项；可能再次产生修改。原任务及结果会保留。\n是否重新处理？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if confirm
+            else QMessageBox.StandardButton.Yes
         )
-        binding._priority = (fresh.request_id,)
-        self.sync_inputs()
+        if answer != QMessageBox.StandardButton.Yes or binding.context != context or binding._closed:
+            return
+        self._operations.add(key)
+        command_id = self._restart_commands.setdefault(key, uuid4().hex)
+        selection = binding._selection()
+        binding._user_stopped = False
+
+        def work():
+            return binding.service.restart(
+                context,
+                request.request_id,
+                text=f"重新处理全部要求（包括已完成事项），保留原结果：{request.goal}",
+                selection=selection,
+                command_id=command_id,
+            )
+
+        def restarted(fresh):
+            binding._priority = (fresh.request_id,)
+            self.sync_inputs()
+
+        binding.background.submit(work, restarted, context=context, settled=lambda: self._operations.discard(key))
+
+    def retry_context(self, request_id):
+        from transbridge.application.assistant_context.admission import clear_wait
+
+        binding = self.binding
+        context = binding.context
+        key = (context, "context", request_id)
+        if key in self._operations:
+            return
+        self._operations.add(key)
+        binding._user_stopped = False
+        binding.background.submit(
+            lambda: clear_wait(binding.service, context, request_id),
+            lambda _: binding.refresh(),
+            context=context,
+            wake=True,
+            settled=lambda: self._operations.discard(key),
+        )
 
     def clarify(self):
-        binding = self.binding
-        state = binding.service.state(binding.context)
-        pending = [
-            (entry["batch"], receipt)
-            for entry in state.get("batches", ())
-            for receipt in entry["batch"].get("receipts", ())
-            if receipt["status"] == "needs_clarification"
-        ]
-        if not pending:
-            return
-        labels = []
-        for index, (batch, receipt) in enumerate(pending):
-            directive = next(d for d in batch["proposal"]["directives"] if d["local_id"] == receipt["local_id"])
-            source = next(s for s in batch["sources"] if s["message_id"] == directive["message_id"])
-            start, end = directive["span"]
-            labels.append(f"{index + 1}. {source['text'][start:end]}")
-        choice, ok = QInputDialog.getItem(binding.facade, "澄清请求归属", "选择需要澄清的指令", labels, editable=False)
-        if not ok:
-            return
-        batch, receipt = pending[labels.index(choice)]
-        requests = binding.service.requests(state)
-        targets = [f"{index + 1}. {request.goal}" for index, request in enumerate(requests)]
-        if not targets:
-            binding.facade.add_system_message("还没有可关联的请求，请补充说明目标。")
-            return
-        target, ok = QInputDialog.getItem(
-            binding.facade, "澄清请求归属", "这条指令针对哪个请求？", targets, editable=False
-        )
-        if not ok:
-            return
-        binding.interrupt()
-        try:
-            binding.service.clarify(
-                binding.context,
-                batch["batch_id"],
-                receipt["local_id"],
-                requests[targets.index(target)].request_id,
-                text=f"将待澄清指令 {receipt['local_id']} 关联到请求：{target}",
-                selection=binding._selection(),
-            )
-            self.sync_inputs()
-        except Exception as exc:
-            binding.fail(str(exc))
+        from .routing_recovery_binding import RoutingRecoveryBinding
+
+        if not hasattr(self, "_routing_recovery"):
+            self._routing_recovery = RoutingRecoveryBinding(self.binding)
+        self._routing_recovery.show()
 
     def reassign(self, request_id):
         binding = self.binding
@@ -202,11 +222,11 @@ class RequestManagementBinding:
             binding.facade.add_system_message("没有其他可接收事项的未结束请求。")
             return
         labels = [f"{index + 1}. {item.description}" for index, item in enumerate(source.items)]
-        label, ok = QInputDialog.getItem(binding.facade, "调整事项归属", "选择未执行的事项", labels, editable=False)
+        label, ok = QInputDialog.getItem(binding.facade, "移动未执行事项", "选择未执行的事项", labels, editable=False)
         if not ok:
             return
         names = [f"{index + 1}. {r.goal}" for index, r in enumerate(targets)]
-        name, ok = QInputDialog.getItem(binding.facade, "调整事项归属", "选择目标请求", names, editable=False)
+        name, ok = QInputDialog.getItem(binding.facade, "移动未执行事项", "移到哪个任务？", names, editable=False)
         if not ok:
             return
         target = targets[names.index(name)]

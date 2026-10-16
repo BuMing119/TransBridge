@@ -7,6 +7,7 @@ from copy import copy
 from dataclasses import replace
 
 from transbridge.application.contracts import RequestContext
+from transbridge.application.security import diagnostic_exception_text
 from transbridge.application.tasks import JobState, TaskCancelled, TaskEventFilter
 
 from .execution_engine import StepResult
@@ -24,6 +25,8 @@ class PlanTaskRuntime:
 
     def __init__(self, context, *, manager=None) -> None:
         self._manager = manager or TaskManager()
+        captured = context if isinstance(context, ExecutionContext) else ExecutionContext(app_context=context)
+        self.execution_context = copy(captured)
         metadata = task_metadata(context, {"job_type": "assistant-plan", "display_name": "助手计划"})
         metadata.pop("parent_task_id", None)
         # Parent dispatch is not a leaf write. Each tool creates its own effect intent.
@@ -32,13 +35,11 @@ class PlanTaskRuntime:
         self.task_id = self._manager.register(metadata=metadata)
         self._handle = self._manager.get_handle(self.task_id)
         self.run_id = self._handle.execution.ref.run_id
-        captured = context if isinstance(context, ExecutionContext) else ExecutionContext(app_context=context)
         request = captured.request_context
         if isinstance(request, RequestContext):
             child_metadata = dict(request.metadata)
             child_metadata["parent_task_id"] = self.task_id
             request = replace(request, metadata=tuple(sorted(child_metadata.items())))
-        self.execution_context = copy(captured)
         self.execution_context.request_context = request
         self.execution_context.assistant_effect_id = ""
         self._engine = None
@@ -59,12 +60,6 @@ class PlanTaskRuntime:
         self._engine = engine
         self._finished = finished
         self._failed = failed
-        self._subscription = self._manager.runtime.subscribe(
-            self._observe, event_filter=TaskEventFilter(run_id=self.run_id)
-        )
-        self._reconcile()
-        if self._completed:
-            return
 
         def run() -> None:
             try:
@@ -83,11 +78,25 @@ class PlanTaskRuntime:
                 raise
 
         try:
+            self._subscription = self._manager.runtime.subscribe(
+                self._observe, event_filter=TaskEventFilter(run_id=self.run_id)
+            )
+            self._reconcile()
+            if self._completed:
+                return
             self._manager.start_thread(self.task_id, run)
         except Exception as error:
-            self._error = error
-            self._manager.set_status(self.task_id, "failed")
-            self._manager.notify_finished(self.task_id, False, "计划线程无法启动")
+            self.fail_startup(error)
+            self._failed(error)
+
+    def fail_startup(self, error: Exception) -> None:
+        """Settle an admitted workload that could not start, without replaying it."""
+        self._error = error
+        self._completed = True
+        if self._subscription is not None:
+            self._subscription.close()
+        message = f"计划未能启动: {type(error).__name__}: {diagnostic_exception_text(error)[:300]}"
+        self._manager.notify_finished(self.task_id, False, message)
 
     def cancel(self) -> None:
         self._manager.cancel(self.task_id)
@@ -118,7 +127,8 @@ class PlanTaskRuntime:
         if not snapshot.is_terminal or self._completed:
             return
         self._completed = True
-        self._subscription.close()
+        if self._subscription is not None:
+            self._subscription.close()
         if state is JobState.FAILED and self._error is not None:
             self._failed(self._error)
             return

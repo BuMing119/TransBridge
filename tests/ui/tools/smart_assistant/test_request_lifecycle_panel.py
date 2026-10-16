@@ -164,6 +164,12 @@ def environment(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(panel_module.SmartAssistantPanel, "_init_skills", lambda _self: None)
     monkeypatch.setattr(panel_module.SmartAssistantPanel, "_configured_model_name", staticmethod(lambda: "test-model"))
+    monkeypatch.setattr(
+        panel_module.SmartAssistantPanel,
+        "_configured_service_availability",
+        staticmethod(lambda: SimpleNamespace(model_name="test-model", ready=True, message="", missing_fields=())),
+        raising=False,
+    )
     monkeypatch.setattr(panel_module, "set_window_app_user_model_id", lambda *_args: False)
     client = _AnswerClient()
     monkeypatch.setattr(ConversationOrchestrator, "_get_llm_client", lambda _self: client)
@@ -177,6 +183,8 @@ def environment(tmp_path, monkeypatch):
     panel.chat.add_system_prompt("Offline request integration context")
     binding = panel.chat._request_binding
     assert binding is not None
+    # Synthetic view projections must not race the initial saved-session restore.
+    _until(lambda: binding._accepting == 0 and not binding.management._refresh._pending)
     response_threads = []
     original = binding.handle_response
 
@@ -247,6 +255,11 @@ def test_direct_conversation_finishes_without_request_or_coverage(environment, m
     assert len(calls) == 1
     assert _requests(environment) == ()
     assert any(b._text == "直接回答：" + text for b in chat.findChildren(MessageBubble))
+    reply = next(
+        message for message in chat._conversation.get_transcript() if message.get("content") == "直接回答：" + text
+    )
+    bubble = next(widget for widget in chat.findChildren(MessageBubble) if widget._text == reply["content"])
+    assert bubble.property("message_id") == reply["message_id"]
     assert not any("ANSWER_INCOMPLETE" in b._text for b in chat.findChildren(MessageBubble))
     context = environment.binding.context
     snapshot = environment.services.session_lifecycle.read_session(SessionRef(SessionId(context.session_id)), context)
@@ -524,6 +537,13 @@ def test_immediate_provider_routes_and_completes_answer_on_gui_thread(environmen
     )
     messages = snapshot.backend_messages()
     assert any(message.get("content") == "Answer: Explain lifecycle" for message in messages)
+    answer = next(message for message in messages if message.get("content") == "Answer: Explain lifecycle")
+    bubble = next(
+        widget
+        for widget in environment.panel.chat._message_list._owned_widgets
+        if getattr(widget, "text", None) == answer["content"]
+    )
+    assert bubble.property("message_id") == answer["message_id"]
     assert len([message for message in messages if message["role"] == "user"]) == 1
 
 
@@ -708,6 +728,7 @@ def test_confirmation_click_keeps_request_identity_and_does_not_create_ingress(e
     )
     request = _requests(environment)[0]
     before = environment.service.state(environment.binding.context)["ingress"]
+    _until(card._exec_btn.isEnabled)
     card._exec_btn.click()
     _APP.processEvents()
     assert len(calls) == 1
@@ -729,6 +750,7 @@ def test_stale_confirmation_cannot_execute_after_request_revision_change(environ
         widget for widget in environment.panel.chat._message_list._owned_widgets if isinstance(widget, ToolCard)
     )
     request = _requests(environment)[0]
+    _until(card._exec_btn.isEnabled)
     environment.service.update_request(
         environment.binding.context,
         request.request_id,
@@ -769,6 +791,7 @@ def test_confirmation_validator_rejects_other_view_before_changing_waits(environ
     environment.panel.chat.send_user_message("Inspect A")
     _until(lambda: any(isinstance(widget, ToolCard) for widget in environment.panel.chat._message_list._owned_widgets))
     card = next(w for w in environment.panel.chat._message_list._owned_widgets if isinstance(w, ToolCard))
+    _until(card._exec_btn.isEnabled)
     before = _requests(environment)[0]
     environment.service.scheduler.activate(before.session_id, "other-view")
     card._exec_btn.click()
@@ -786,6 +809,7 @@ def test_old_confirmation_does_not_regain_authority_when_same_view_reactivates(e
     environment.panel.chat.send_user_message("Inspect A")
     _until(lambda: any(isinstance(widget, ToolCard) for widget in environment.panel.chat._message_list._owned_widgets))
     card = next(w for w in environment.panel.chat._message_list._owned_widgets if isinstance(w, ToolCard))
+    _until(card._exec_btn.isEnabled)
     request = _requests(environment)[0]
     environment.service.scheduler.activate(request.session_id, "other-view")
     environment.service.scheduler.activate(request.session_id, environment.binding.view_id)
@@ -856,6 +880,7 @@ def test_approval_consumes_saved_confirmation_before_business_callback(environme
     saved = environment.service.state(environment.binding.context)["confirmations"][request.request_id]
     assert saved["item_ids"] == [request.items[0].item_id]
     assert saved["confirmation_id"]
+    _until(card._exec_btn.isEnabled)
     card._exec_btn.click()
     assert len(calls) == 1
     assert request.request_id not in environment.service.state(environment.binding.context)["confirmations"]
@@ -972,6 +997,7 @@ def test_confirmation_persistence_failure_keeps_wait_and_releases_temporary_leas
         return original(*args, **kwargs)
 
     monkeypatch.setattr(environment.service, "transact", transact)
+    _until(card._exec_btn.isEnabled)
     card._exec_btn.click()
     assert not calls
     assert environment.binding.admission is None
@@ -1079,6 +1105,7 @@ def test_request_list_restores_confirmation_after_new_question_and_retains_real_
         widget for widget in environment.panel.chat._message_list._owned_widgets if isinstance(widget, ToolCard)
     ][-1]
     assert new_card is not old_card
+    _until(new_card._exec_btn.isEnabled)
     new_card._exec_btn.click()
     _until(
         lambda: all(request.terminal for request in _requests(environment)),
@@ -1116,8 +1143,8 @@ def test_stop_generation_requires_explicit_resume_and_retains_goal(environment):
     _until(environment.client.answer_started.is_set)
     request_id = _requests(environment)[0].request_id
     environment.panel.chat._presentation.refresh()
-    assert environment.panel.chat._send_btn.text() == "停止"
-    environment.panel.chat._send_btn.click()
+    assert environment.panel.chat._input_view.stop_button.text() == "停止"
+    environment.panel.chat._input_view.stop_button.click()
     environment.client.release.set()
     QTest.qWait(60)
     assert environment.binding.admission is None
