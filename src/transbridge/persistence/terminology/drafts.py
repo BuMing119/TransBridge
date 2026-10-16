@@ -60,6 +60,17 @@ class DraftStore:
         if row is None or actual != expected_revision:
             raise RevisionConflictError(expected_revision, actual)
         current = self._decode(str(row["payload_json"]), TerminologyDraft)
+        if current.ref.revision != expected_revision:
+            raise RevisionConflictError(expected_revision, current.ref.revision)
+        return self.update_current(current, draft)
+
+    def update_current(self, current: TerminologyDraft, draft: TerminologyDraft) -> DraftRef:
+        """Reuse the current draft read under the caller's SQLite write guard."""
+        if not self._connection.in_transaction:
+            raise RuntimeError("draft updates require an active write transaction")
+        self._require_project(draft.ref.project_id)
+        if (draft.ref.project_id, draft.ref.variant_id) != (current.ref.project_id, current.ref.variant_id):
+            raise RepositoryConflictError("draft belongs to another Project/Variant line")
         if draft.ref.draft_id != current.ref.draft_id:
             raise ActiveDraftError("updating an active draft cannot replace its identity")
         if (
@@ -67,23 +78,28 @@ class DraftStore:
             or draft.ref.base_content_digest != current.ref.base_content_digest
         ):
             raise RepositoryConflictError("draft base cannot change during an ordinary update")
-        if draft.ref.revision != expected_revision + 1:
-            raise RevisionConflictError(expected_revision + 1, draft.ref.revision)
+        if draft.ref.revision != current.ref.revision + 1:
+            raise RevisionConflictError(current.ref.revision + 1, draft.ref.revision)
         appended_actions = _appended_actions(current.actions, draft.actions)
         cursor = self._connection.execute(
             "UPDATE drafts SET revision = ?, decision_set_digest = ?, payload_json = ? "
-            "WHERE project_id = ? AND variant_id = ? AND revision = ?",
+            "WHERE project_id = ? AND variant_id = ? AND draft_id = ? AND base_version_id IS ? "
+            "AND base_content_digest = ? AND revision = ? AND decision_set_digest = ?",
             (
                 draft.ref.revision,
                 draft.ref.decision_set_digest,
                 dumps(draft),
                 draft.ref.project_id,
                 draft.ref.variant_id,
-                expected_revision,
+                current.ref.draft_id,
+                current.ref.base_version_id,
+                current.ref.base_content_digest,
+                current.ref.revision,
+                current.ref.decision_set_digest,
             ),
         )
         if cursor.rowcount != 1:
-            raise RevisionConflictError(expected_revision, None)
+            raise RepositoryConflictError("active draft identity changed before update")
         self._insert_actions(draft.ref.draft_id, appended_actions)
         return draft.ref
 
@@ -113,6 +129,26 @@ class DraftStore:
         self._require_project(project_id)
         row = self._row(project_id, variant_id)
         return None if row is None else self._decode(str(row["payload_json"]), TerminologyDraft)
+
+    def active_ref(self, project_id: str, variant_id: str) -> DraftRef | None:
+        """Read the complete active identity without materializing its payload."""
+        self._require_project(project_id)
+        row = self._connection.execute(
+            "SELECT draft_id, base_version_id, base_content_digest, revision, decision_set_digest "
+            "FROM drafts WHERE project_id = ? AND variant_id = ?",
+            (project_id, variant_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return DraftRef(
+            str(row["draft_id"]),
+            project_id,
+            variant_id,
+            None if row["base_version_id"] is None else str(row["base_version_id"]),
+            str(row["base_content_digest"]),
+            int(row["revision"]),
+            str(row["decision_set_digest"]),
+        )
 
     def discard(self, project_id: str, variant_id: str, *, expected_revision: int) -> None:
         self._require_project(project_id)

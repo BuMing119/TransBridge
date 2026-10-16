@@ -138,7 +138,7 @@ def test_open_panel_receives_background_success_and_failure_on_gui_thread(fails)
     _drain_until(lambda: bool(rendered_on))
     assert executed_on[0] != threading.get_ident()
     assert rendered_on == [threading.get_ident()]
-    assert panel.summary.text() == ("read failed" if fails else "result received")
+    assert panel.summary.text() == "操作未完成：" + ("read failed" if fails else "result received")
     assert panel.backup_button.isEnabled()
     panel.dispose()
     panel.deleteLater()

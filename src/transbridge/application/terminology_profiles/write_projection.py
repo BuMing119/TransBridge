@@ -5,16 +5,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 
-from transbridge.application.terminology.effective import (
-    EffectiveSnapshotStatus,
-    EffectiveTerminologySnapshot,
-    TerminologyLookupContext,
-    resolve_snapshot,
-)
+from transbridge.application.terminology.effective import EffectiveTerminologySnapshot
 from transbridge.converter.translation_entry import TranslationEntry
 
-from .models import PublishedTerminologyProfile, logical_term_key
-from .projection import ProjectionDiagnostic, TerminologyProfileProjector, source_contains
+from .entry_projection import ProfileEntryProjector
+from .models import PublishedTerminologyProfile
+from .projection import ProjectionDiagnostic, TerminologyProfileProjector
 from .service import TerminologyProfileService
 
 
@@ -63,70 +59,12 @@ class FrozenProfileWriteProjection:
             return entries, ()
         output = []
         diagnostics = []
-        base = self.base_snapshot
-        if base is None or base.status is not EffectiveSnapshotStatus.READY:
-            diagnostics.append(
-                ProjectionDiagnostic(
-                    "base_terminology_snapshot_unavailable",
-                    "无法读取基础术语快照，不能证明当前译名方案是否完整。",
-                    entries[0].identity.serialize() if entries else "write-request",
-                )
-            )
+        projector = ProfileEntryProjector(self.profile, self.base_snapshot, projector=self.projector)
         for entry in entries:
-            if base is None or base.status is not EffectiveSnapshotStatus.READY:
-                output.append(entry)
-                continue
-            plugin_id = _plugin_id(entry)
-            result = self.projector.project(
-                entry_key=entry.identity.serialize(),
-                original=entry.original,
-                common_translation=entry.translation,
-                content=self.profile.content,
-                plugin_id=plugin_id,
-            )
-            entry_diagnostics = result.diagnostics + self._unmapped_diagnostics(entry, plugin_id, base)
-            projected_translation = entry.translation if entry_diagnostics else result.translation
-            output.append(replace(entry, translation=projected_translation))
-            diagnostics.extend(entry_diagnostics)
+            result = projector.project(entry)
+            output.append(replace(entry, translation=result.translation))
+            diagnostics.extend(result.diagnostics)
         return tuple(output), tuple(diagnostics)
-
-    def _unmapped_diagnostics(
-        self,
-        entry: TranslationEntry,
-        plugin_id: str | None,
-        base: EffectiveTerminologySnapshot,
-    ) -> tuple[ProjectionDiagnostic, ...]:
-        profile = self.profile
-        if profile is None:
-            return ()
-        mapped_keys = {item.term_key for item in profile.content.mappings}
-        context = TerminologyLookupContext(self.project_id, self.variant_id, plugin_id=plugin_id)
-        output = []
-        seen: set[str] = set()
-        for candidate in base.decisions:
-            if not source_contains(entry.original, candidate.original):
-                continue
-            resolution = resolve_snapshot(base, candidate.original, context)
-            decision = resolution.decision
-            if decision is None:
-                continue
-            key = logical_term_key(
-                decision.original,
-                scope_kind=decision.scope.kind.value,
-                plugin_id=decision.scope.plugin_id,
-            )
-            if key in mapped_keys or key in seen:
-                continue
-            seen.add(key)
-            output.append(
-                ProjectionDiagnostic(
-                    "profile_mapping_missing",
-                    f"当前译名方案缺少 {decision.original!r} 的映射，已保留整条项目译文。",
-                    entry.identity.serialize(),
-                    key,
-                )
-            )
-        return tuple(output)
 
 
 class TerminologyProfileWriteProjectionSource:
@@ -154,18 +92,6 @@ class TerminologyProfileWriteProjectionSource:
             self._projector,
             base,
         )
-
-
-def _plugin_id(entry: TranslationEntry) -> str | None:
-    form_id = entry.form_id_with_plugin
-    if isinstance(form_id, str) and "|" in form_id:
-        value = form_id.rsplit("|", 1)[1].strip()
-        return value or None
-    try:
-        value = dict(entry.metadata).get("terminology_plugin_id")
-    except (TypeError, ValueError):
-        return None
-    return value if isinstance(value, str) and value.strip() else None
 
 
 __all__ = ["FrozenProfileWriteProjection", "TerminologyProfileWriteProjectionSource"]

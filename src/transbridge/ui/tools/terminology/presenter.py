@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import PurePath
 from typing import Any, Protocol
@@ -9,10 +10,14 @@ from typing import Any, Protocol
 from transbridge.application.contracts import JobRef, OperationOutcome, RequestContext
 from transbridge.application.tasks import OwnerRef, TaskRuntime
 from transbridge.application.terminology import BuildResult, PageRequest, TerminologyQueryPort
+from transbridge.application.terminology.browse_queries import TerminologyBrowsePort
 from transbridge.application.terminology.conflict_queries import ConflictQuery
+from transbridge.application.terminology.conflict_review import TerminologyConflictDetails, TerminologyReviewCounts
 from transbridge.application.terminology.conflicts import ConflictResolutionOperation
 from transbridge.application.terminology.decisions import DecisionOperation
 from transbridge.application.terminology.input_capture import BuildInputSnapshot, TerminologyBuildInputPort
+from transbridge.application.terminology.models import DraftRef, TerminologyDraft
+from transbridge.application.terminology.publication_review import TerminologyPublishPreview
 
 from .task_adapter import TerminologyTaskAdapter, TerminologyTaskViewState
 from .view_models import (
@@ -33,6 +38,24 @@ class TerminologyCommandPort(Protocol):
 
     def publish(self, context: RequestContext) -> JobRef: ...
 
+    def preview_publish(self, context: RequestContext, config=None) -> TerminologyPublishPreview: ...
+
+    def publish_preview(self, preview: TerminologyPublishPreview, context: RequestContext) -> JobRef: ...
+
+    def active_draft(self, context: RequestContext) -> TerminologyDraft | None: ...
+
+    def discard_draft(self, expected_ref: DraftRef, context: RequestContext) -> None: ...
+
+    def review_counts(self, context: RequestContext) -> TerminologyReviewCounts: ...
+
+    def conflict_details(self, conflict, context: RequestContext) -> TerminologyConflictDetails: ...
+
+    def resolve_review(self, details: TerminologyConflictDetails, operation, context: RequestContext, **values): ...
+
+    def task_failure(self, run_id: str, context: RequestContext) -> str | None: ...
+
+    def task_result(self, run_id: str, context: RequestContext): ...
+
     def render_report(self, context: RequestContext) -> JobRef: ...
 
     def render_changelog(self, context: RequestContext) -> JobRef: ...
@@ -48,6 +71,15 @@ class TerminologyCommandPort(Protocol):
     def latest_build_result(self, project_id: str, variant_id: str) -> BuildResult | None: ...
 
 
+class TerminologyPreflightError(RuntimeError):
+    """Retain the failed capture projection when a build cannot be submitted."""
+
+    def __init__(self, state: TerminologyPreflightViewState) -> None:
+        super().__init__(state.message)
+        self.state = state
+        self.code = state.diagnostic_code or "TERMINOLOGY_PREFLIGHT_FAILED"
+
+
 @dataclass(frozen=True, slots=True)
 class TerminologyUiServices:
     build_inputs: TerminologyBuildInputPort | None = None
@@ -55,6 +87,7 @@ class TerminologyUiServices:
     commands: TerminologyCommandPort | None = None
     runtime: TaskRuntime | None = None
     sync: object | None = None
+    browsing: TerminologyBrowsePort | None = None
 
     @classmethod
     def from_runtime(cls, runtime: object, context: RequestContext | None = None) -> TerminologyUiServices:
@@ -82,6 +115,7 @@ class TerminologyUiServices:
             queries=optional("terminology_queries", "terminology_query"),  # type: ignore[arg-type]
             commands=optional("terminology_ui_commands", "terminology_commands"),  # type: ignore[arg-type]
             runtime=getattr(runtime, "tasks", None),
+            browsing=optional("terminology_browsing"),  # type: ignore[arg-type]
         )
 
 
@@ -92,6 +126,7 @@ class TerminologyPresenter:
         self.services = services
         self.context = context
         self._snapshot: BuildInputSnapshot | None = None
+        self._build_config: dict[str, Any] = {}
         self._task_adapter: TerminologyTaskAdapter | None = None
         self._closed = False
 
@@ -104,22 +139,32 @@ class TerminologyPresenter:
         return self._closed
 
     def preflight(self, *, config: dict[str, Any] | None = None) -> TerminologyPreflightViewState:
+        state, _snapshot = self._capture_preflight(config=config)
+        return state
+
+    def _capture_preflight(
+        self, *, config: dict[str, Any] | None = None
+    ) -> tuple[TerminologyPreflightViewState, BuildInputSnapshot | None]:
         self._require_open()
+        if config is not None:
+            self._build_config = deepcopy(config)
+        self._snapshot = None
         if self.services.build_inputs is None:
-            return TerminologyPreflightViewState.unavailable("术语构建服务尚未接入当前运行环境。")
-        result = self.services.build_inputs.capture_build_input(self.context, config=config or {})
+            return TerminologyPreflightViewState.unavailable("术语构建服务尚未接入当前运行环境。"), None
+        result = self.services.build_inputs.capture_build_input(self.context, config=deepcopy(self._build_config))
         if result.outcome is not OperationOutcome.COMPLETED or result.value is None:
             diagnostic = result.diagnostics[0] if result.diagnostics else None
             code = "TERMINOLOGY_PREFLIGHT_FAILED" if diagnostic is None else diagnostic.code
             notice = business_diagnostic(code, "" if diagnostic is None else diagnostic.message)
             details = () if diagnostic is None else _diagnostic_details(diagnostic)
-            return TerminologyPreflightViewState(
+            state = TerminologyPreflightViewState(
                 False,
                 notice.title,
                 f"{notice.message} {notice.impact} {notice.recovery}".strip(),
                 diagnostic_code=code,
                 technical_details=details,
             )
+            return state, None
         snapshot = result.value
         self._snapshot = snapshot
         sources = tuple(_source_view(source) for source in snapshot.sources)
@@ -133,7 +178,7 @@ class TerminologyPresenter:
             TechnicalDetail("当前术语版本", snapshot.effective_version_id or "尚无已发布版本"),
             TechnicalDetail("配置摘要", snapshot.config_digest),
         )
-        return TerminologyPreflightViewState(
+        state = TerminologyPreflightViewState(
             True,
             f"可以{action_label}",
             "将读取当前工程已登记且启用的来源，并包含当前翻译版本尚未写回的调整。",
@@ -148,15 +193,48 @@ class TerminologyPresenter:
             technical_details=details,
             action_label=action_label,
         )
+        return state, snapshot
 
     def start_build(self) -> JobRef:
-        self._require_open()
-        if self._snapshot is None:
-            raise RuntimeError("构建前需要先完成来源检查")
-        return self._command("start_build", self._snapshot, self.context)
+        state, snapshot = self._capture_preflight()
+        if not state.ready:
+            raise TerminologyPreflightError(state)
+        assert snapshot is not None
+        return self._command("start_build", snapshot, self.context)
 
     def publish(self) -> JobRef:
+        if callable(getattr(self._commands(), "preview_publish", None)):
+            return self.publish_preview(self.preview_publish())
         return self._command("publish", self.context)
+
+    def preview_publish(self):
+        return self._short_command("preview_publish", self.context, config=deepcopy(self._build_config))
+
+    def publish_preview(self, preview) -> JobRef:
+        return self._command("publish_preview", preview, self.context)
+
+    def active_draft(self):
+        return self._short_command("active_draft", self.context)
+
+    def review_counts(self):
+        return self._short_command("review_counts", self.context)
+
+    def discard_draft(self, expected_ref) -> None:
+        self._short_command("discard_draft", expected_ref, self.context)
+
+    def conflict_details(self, conflict):
+        return self._short_command("conflict_details", conflict, self.context)
+
+    def resolve_review(self, details, operation, *, translation=None, plugin_id=None):
+        return self._short_command(
+            "resolve_review", details, operation, self.context, translation=translation, plugin_id=plugin_id
+        )
+
+    def task_failure(self, run_id: str) -> str | None:
+        return self._short_command("task_failure", run_id, self.context)
+
+    def task_result(self, run_id: str):
+        return self._short_command("task_result", run_id, self.context)
 
     def render_report(self) -> JobRef:
         return self._command("render_report", self.context)
@@ -215,6 +293,8 @@ class TerminologyPresenter:
         return self._command("compare", version_ref, self.context)
 
     def restore(self, version_ref) -> JobRef:
+        if self._build_config:
+            return self._command("restore", version_ref, self.context, config=deepcopy(self._build_config))
         return self._command("restore", version_ref, self.context)
 
     def bind_tasks(self, on_change) -> TerminologyTaskAdapter | None:
@@ -285,6 +365,11 @@ class TerminologyPresenter:
         return business_diagnostic(code, message)
 
     def page_loader(self, name: str):
+        if name in {"list_effective_terms", "list_browsable_draft_terms"}:
+            if self.services.browsing is None:
+                raise RuntimeError("术语完整列表查询服务尚未接入")
+            method = getattr(self.services.browsing, name)
+            return lambda query, request=PageRequest(): method(query, request)
         queries = self.services.queries
         if queries is None:
             raise RuntimeError("术语分页查询服务尚未接入")
@@ -292,6 +377,7 @@ class TerminologyPresenter:
         if name == "list_versions":
             return lambda ref, request=PageRequest(): method(ref[0], ref[1], request)
         if name == "list_conflicts":
+            method = getattr(queries, "list_review_conflicts", method)
             return lambda ref, request=PageRequest(): (
                 method(ref.build_ref, request, filters=ref.filters)
                 if isinstance(ref, ConflictQuery)
@@ -313,11 +399,11 @@ class TerminologyPresenter:
             raise RuntimeError("术语命令服务尚未接入当前运行环境")
         return self.services.commands
 
-    def _command(self, name: str, *args: object) -> JobRef:
+    def _command(self, name: str, *args: object, **kwargs: object) -> JobRef:
         method = getattr(self._commands(), name, None)
         if not callable(method):
             raise RuntimeError(f"术语命令服务不支持：{name}")
-        result = method(*args)
+        result = method(*args, **kwargs)
         if hasattr(result, "ref"):
             result = result.ref
         if not isinstance(result, JobRef):
@@ -359,8 +445,9 @@ def _current_version_label(version_id: str | None) -> str:
 def _diagnostic_details(diagnostic) -> tuple[TechnicalDetail, ...]:
     return (
         TechnicalDetail("诊断代码", diagnostic.code),
+        TechnicalDetail("诊断信息", diagnostic.message),
         *(TechnicalDetail(str(key), str(value)) for key, value in diagnostic.details),
     )
 
 
-__all__ = ["TerminologyCommandPort", "TerminologyPresenter", "TerminologyUiServices"]
+__all__ = ["TerminologyCommandPort", "TerminologyPreflightError", "TerminologyPresenter", "TerminologyUiServices"]

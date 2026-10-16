@@ -96,8 +96,8 @@ def test_window_uses_horizontal_object_navigation_without_workflow_tabs() -> Non
     window.workspace.set_current_area(TerminologyArea.OVERVIEW)
     assert window.workspace.current_area() is TerminologyArea.TERMS
     assert window.workspace.surface.isAncestorOf(window.schemes_view)
-    assert window.schemes_view.actions_button.text() == "选用术语源…"
-    assert window.schemes_view.create_action.text() == "从术语源导入副本…"
+    assert window.schemes_view.actions_button.text() == "方案操作…"
+    assert window.schemes_view.create_action.text() == "从外部来源创建方案…"
     window.close()
 
 
@@ -111,8 +111,9 @@ def test_workbench_projects_human_readable_context_into_the_top_project_card() -
     window.workspace.set_context("Skyrim SE 汉化项目", "简体中文", 18)
 
     assert window.workspace.project_name.text() == "Skyrim SE 汉化项目"
-    assert window.workspace.project_caption.text() == "简体中文 · 18 个来源"
-    assert window.workspace.project_caption.isHidden()
+    assert window.workspace.project_caption.text() == "翻译版本：简体中文 · 18 个来源"
+    assert not window.workspace.project_caption.isHidden()
+    assert window.workspace.current_version.text() == "当前术语版本：尚未发布"
     assert window.workspace.brand_context.isHidden()
     assert window.workspace.project_name.accessibleDescription() == "简体中文，18 个来源"
     window.close()
@@ -183,9 +184,14 @@ def test_completed_build_refreshes_the_overview_summary() -> None:
 
     window._on_task_change(state)
 
+    deadline = time.monotonic() + 2
+    while "42" not in window.build_view.result.text() and time.monotonic() < deadline:
+        _APP.processEvents()
+        time.sleep(0.01)
+
     assert window.build_view.result.text() == "从 3 个来源整理出 42 个术语候选。"
     assert "2 组同名异译" in window.build_view.decisions.text()
-    assert window.build_view.result_title.text() == "待处理"
+    assert window.build_view.result_title.text() == "待审核"
     window.close()
 
 
@@ -209,7 +215,8 @@ def test_overview_hides_empty_and_technical_sections_until_they_are_useful() -> 
     )
 
     assert view.alert.isHidden()
-    assert view.preflight_button.isHidden()
+    assert not view.preflight_button.isHidden()
+    assert view.preflight_button.text() == "重新检查"
     assert view.build_button.text() == "开始整理"
     assert view.isHidden()
 
@@ -228,10 +235,10 @@ def test_overview_hides_empty_and_technical_sections_until_they_are_useful() -> 
     assert not view.metrics.isHidden()
     assert not view.result_group.isHidden()
     assert not view.isHidden()
-    assert view.result_title.text() == "已完成"
+    assert view.result_title.text() == "草稿已整理 · 待发布"
     assert view.decisions.isHidden()
-    assert view.impact.isHidden()
-    assert view.next_action.isHidden()
+    assert not view.impact.isHidden()
+    assert not view.next_action.isHidden()
 
     view.set_preflight(TerminologyPreflightViewState.unavailable("缺少可用的术语来源。"))
 

@@ -7,6 +7,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QStandardItem, QStandardItemModel
 from PyQt6.QtWidgets import QApplication, QWidget
 
+from tests.ui.tools.terminology.search_test_support import wait_search
 from transbridge.application.terminology_profiles import (
     ProfileTermMapping,
     PublishedTerminologyProfile,
@@ -43,12 +44,15 @@ def test_browser_searches_the_full_published_copy_and_combines_scope_filter() ->
 
     assert view.model.rowCount() == 1201
     view.search.setText("iTEM 1199")
+    wait_search(view._search)
     assert view.filtered.rowCount() == 1
     assert view.filtered.index(0, 1).data() == "物品 1199"
     assert view.status.text() == "1 / 1,201 条术语"
     view.scope.setCurrentIndex(2)
+    wait_search(view._search)
     assert view.filtered.rowCount() == 0
     view.search.setText("独有")
+    wait_search(view._search)
     assert view.filtered.rowCount() == 1
     assert view.filtered.index(0, 2).data() == "test.esp"
     assert not view.filtered.flags(view.filtered.index(0, 1)) & Qt.ItemFlag.ItemIsEditable
@@ -66,8 +70,55 @@ def test_browser_replaces_and_clears_selected_copy_without_stale_rows() -> None:
     assert view.status.text() == "读取失败"
     view.render(TerminologyProfileBarState(enabled=True))
     assert view.model.rowCount() == 0
-    assert view.status.text() == "尚未选用术语副本"
+    assert view.status.text() == "使用项目默认译名，没有方案映射。"
     view.close()
+
+
+def test_background_source_search_keeps_base_text_scope_status_and_selection():
+    rows = (
+        SimpleNamespace(
+            original="Alpha term",
+            translation="甲",
+            base_translation="Old default",
+            scope_kind="project",
+            plugin_id=None,
+            state="effective",
+        ),
+        SimpleNamespace(
+            original="Beta term",
+            translation="乙",
+            base_translation="",
+            scope_kind="plugin",
+            plugin_id="Beta.esp",
+            state="base_missing",
+        ),
+    )
+    view = SourceBrowser()
+    view._search._small_limit = 0
+    try:
+        view.render_context(SimpleNamespace(mapping_rows=rows, profile_id="profile", diagnostics=()))
+        view.table.setCurrentIndex(view.filtered.index(1, 0))
+        view.search.setText("TERM")
+        wait_search(view._search)
+        assert view.filtered.rowCount() == 2
+        assert view.table.currentIndex().data(Qt.ItemDataRole.UserRole) is rows[1]
+        view.search.setText("OLD DEFAULT")
+        wait_search(view._search)
+        assert view.filtered.rowCount() == 1
+        assert view.filtered.index(0, 0).data() == "Alpha term"
+        view.state_filter.setCurrentIndex(view.state_filter.findData("base_missing"))
+        wait_search(view._search)
+        assert view.filtered.rowCount() == 0
+        view.search.clear()
+        view.scope.setCurrentIndex(view.scope.findData("plugin"))
+        wait_search(view._search)
+        assert view.filtered.rowCount() == 1
+        assert view.filtered.index(0, 0).data() == "Beta term"
+        view.search.setText("Beta.esp")
+        wait_search(view._search)
+        assert view.filtered.rowCount() == 0  # Source search retains its original three text fields.
+    finally:
+        view.close()
 
 
 def test_source_strip_displays_exact_selected_revision_and_switch_failure() -> None:
@@ -75,7 +126,7 @@ def test_source_strip_displays_exact_selected_revision_and_switch_failure() -> N
     state = _state(ProfileTermMapping("Dragon", "巨龙"))
     view.render(state)
     assert view.scheme_combo.currentData() == "source"
-    assert view.metadata.text() == "独立副本 · 1 条术语 · 第 2 版"
+    assert view.metadata.text() == "1 条方案映射 · 已应用修订 2"
     assert view.status_label.isHidden()
     view.render(replace(state, selection_error="切换失败：文件只读"))
     assert not view.status_label.isHidden()
@@ -107,15 +158,19 @@ def test_draft_actions_require_a_selected_row_and_follow_its_enabled_state() -> 
     view.close()
 
 
-def test_project_build_results_never_displace_the_selected_source_table() -> None:
+def test_profile_refresh_preserves_navigation_and_project_actions_remain_available() -> None:
     build = BuildView()
     view = TermsView(DraftView(QStandardItemModel()), QWidget(), build)
     view.render_source(_state(ProfileTermMapping("Dragon", "巨龙")))
+    view.source_button.click()
     view.show()
     _APP.processEvents()
     build.show()  # A delayed project preflight/build completion requests visibility.
     assert view.source_browser.isVisible()
     assert not build.isVisible()
+    assert view._project_actions.isVisible()
+    view.build_details_button.click()
+    assert build.isVisible()
     view.all_terms_button.click()
     assert build.isVisible()
     view.render_source(_state(ProfileTermMapping("Dragon", "巨龙")))

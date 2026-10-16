@@ -18,7 +18,7 @@ class TerminologySchemesView(QFrame):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("terminologySourceBar")
-        self.setAccessibleName("当前术语")
+        self.setAccessibleName("译名方案")
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 4, 0, 0)
         layout.setSpacing(16)
@@ -27,28 +27,28 @@ class TerminologySchemesView(QFrame):
         identity.setSpacing(6)
         selector = QHBoxLayout()
         selector.setSpacing(12)
-        title = QLabel("当前术语", self)
+        title = QLabel("译名方案", self)
         title.setProperty("tbSecondary", True)
         selector.addWidget(title)
         self.scheme_combo = QComboBox(self)
-        self.scheme_combo.setAccessibleName("当前术语副本")
+        self.scheme_combo.setAccessibleName("当前译名方案")
         self.scheme_combo.setMinimumWidth(280)
         self.scheme_combo.setMaximumWidth(480)
         ComponentStyle.apply_static(self.scheme_combo, ComponentKind.INPUT)
         selector.addWidget(self.scheme_combo, 1)
         selector.addStretch(1)
         identity.addLayout(selector)
-        self.metadata = QLabel("未选用", self)
+        self.metadata = QLabel("使用项目默认译名", self)
         self.metadata.setProperty("tbSecondary", True)
         identity.addWidget(self.metadata)
         layout.addLayout(identity, 1)
 
-        self.actions_button = QPushButton("选用术语源…", self)
-        self.actions_button.setAccessibleName("选用术语源")
+        self.actions_button = QPushButton("方案操作…", self)
+        self.actions_button.setAccessibleName("译名方案操作")
         ComponentStyle.apply_static(self.actions_button, ComponentKind.BUTTON)
         self.actions_menu = QMenu(self.actions_button)
-        self.create_action = self.actions_menu.addAction("从术语源导入副本…")
-        self.manage_action = self.actions_menu.addAction("管理术语副本…")
+        self.create_action = self.actions_menu.addAction("从外部来源创建方案…")
+        self.manage_action = self.actions_menu.addAction("管理译名方案…")
         self.actions_button.setMenu(self.actions_menu)
         layout.addWidget(self.actions_button)
 
@@ -65,7 +65,7 @@ class TerminologySchemesView(QFrame):
         self.scheme_combo.blockSignals(True)
         try:
             self.scheme_combo.clear()
-            self.scheme_combo.addItem("无", None)
+            self.scheme_combo.addItem("使用项目默认译名", None)
             for choice in state.choices:
                 self.scheme_combo.addItem(choice.label, choice.profile_id)
             selected = self.scheme_combo.findData(state.selected_profile_id)
@@ -81,21 +81,22 @@ class TerminologySchemesView(QFrame):
         elif not state.enabled:
             self.status_label.setText(state.detail)
         elif state.selected_profile_id is None:
-            self.status_label.setText("无")
+            self.status_label.setText("使用项目默认译名")
         else:
             selected = next(
                 (choice.label for choice in state.choices if choice.profile_id == state.selected_profile_id),
-                "所选译名版本",
+                "所选译名方案",
             )
             self.status_label.setText(selected)
         self.scheme_combo.setAccessibleDescription(self.status_label.text())
         revision = getattr(state, "selected_revision", None)
         self.metadata.setText(
-            f"独立副本 · {len(revision.content.mappings):,} 条术语 · 第 {revision.revision} 版"
+            f"{len(revision.content.mappings):,} 条方案映射 · 已应用修订 {revision.revision}"
             if revision is not None and state.enabled
             else ""
         )
         self.metadata.setVisible(revision is not None and state.enabled)
+        self.metadata.setToolTip("方案映射数量；当前生效术语还取决于项目术语和适用范围。")
         self.status_label.setVisible(not state.enabled or bool(state.selection_error))
         self.show()
 

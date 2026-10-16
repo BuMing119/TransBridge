@@ -14,12 +14,15 @@ from transbridge.application.terminology_profiles.models import (
     ProfileEntryOverride,
     ProfileOccurrenceBinding,
     ProfileState,
+    ProfileSummary,
     ProfileTermMapping,
     PublishedTerminologyProfile,
     TerminologyProfile,
     TerminologyProfileContent,
     TerminologyProfileSelection,
 )
+
+from .profile_reads import ProfileReadStore
 
 _CODEC_VERSION = 1
 
@@ -30,9 +33,19 @@ class SqliteTerminologyProfileRepository:
     def __init__(self, connection: sqlite3.Connection, *, lock=None) -> None:
         self._connection = connection
         self._lock = lock or RLock()
+        self._reads = ProfileReadStore(connection, self._lock, _published_from_row)
         connection.execute("PRAGMA foreign_keys = ON")
         if int(connection.execute("PRAGMA foreign_keys").fetchone()[0]) != 1:
             raise ValueError("terminology profile storage requires SQLite foreign keys")
+
+    def list_profile_summaries(self, project_id: str, *, include_archived: bool = False) -> tuple[ProfileSummary, ...]:
+        return self._reads.summaries(project_id, include_archived=include_archived)
+
+    def get_selected_published(self, project_id: str, variant_id: str) -> PublishedTerminologyProfile | None:
+        return self._reads.selected(project_id, variant_id)
+
+    def read_cache_token(self) -> object:
+        return self._reads.token()
 
     def list_profiles(self, project_id: str, *, include_archived: bool = False) -> tuple[TerminologyProfile, ...]:
         sql = (
@@ -126,9 +139,18 @@ class SqliteTerminologyProfileRepository:
                 raise ValueError("stale draft revision")
         return updated
 
-    def set_archived(self, profile_id: str, *, archived: bool, updated_at: str) -> TerminologyProfile:
+    def set_archived(
+        self,
+        profile_id: str,
+        *,
+        archived: bool,
+        updated_at: str,
+        expected_selections: tuple[TerminologyProfileSelection, ...] | None = None,
+    ) -> TerminologyProfile:
         with self._lock, self._write_transaction():
             current = self._require_profile(profile_id)
+            if expected_selections is not None and self.list_profile_selections(profile_id) != expected_selections:
+                raise ValueError("profile selections changed")
             updated = replace(
                 current,
                 state=ProfileState.ARCHIVED if archived else ProfileState.ACTIVE,
@@ -200,13 +222,7 @@ class SqliteTerminologyProfileRepository:
             raise ValueError("published revision already exists or violates storage constraints") from exc
 
     def get_published(self, profile_id: str, revision: int) -> PublishedTerminologyProfile | None:
-        with self._lock:
-            row = self._connection.execute(
-                "SELECT profile_id, project_id, revision, name, content_digest, content_json, published_at "
-                "FROM terminology_profile_revisions WHERE profile_id = ? AND revision = ?",
-                (profile_id, revision),
-            ).fetchone()
-        return None if row is None else _published_from_row(row)
+        return self._reads.published(profile_id, revision)
 
     def get_selection(self, project_id: str, variant_id: str) -> TerminologyProfileSelection | None:
         with self._lock:
@@ -216,6 +232,15 @@ class SqliteTerminologyProfileRepository:
                 (project_id, variant_id),
             ).fetchone()
         return None if row is None else _selection_from_row(row)
+
+    def list_profile_selections(self, profile_id: str) -> tuple[TerminologyProfileSelection, ...]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT project_id, variant_id, profile_id, revision, selected_at "
+                "FROM terminology_profile_selections WHERE profile_id = ? ORDER BY project_id, variant_id",
+                (profile_id,),
+            ).fetchall()
+        return tuple(_selection_from_row(row) for row in rows)
 
     def set_selection(self, selection: TerminologyProfileSelection) -> None:
         try:

@@ -1380,6 +1380,7 @@ class AutoTranslator:
             return 0
 
         t0 = time.perf_counter()
+        update_terms = update_terms and getattr(self._cfg.llm_config, "retrieval_enabled", True)
         repair_mode = bool(required_terms_by_entry)
         # ── 精确匹配：原文与术语完全相同的条目直接填充，无需发送给 LLM ──────
         # Conflict repair deliberately goes through the model so every required
@@ -1726,7 +1727,7 @@ class AutoTranslator:
             for _ in _stream_translations:
                 if progress_emit:
                     progress_emit()
-            if accepted is not None and id_to_translation:
+            if accepted is not None and update_terms and id_to_translation:
                 auto_term_entries = [
                     e
                     for e in llm_entries

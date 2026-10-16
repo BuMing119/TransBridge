@@ -173,7 +173,9 @@ class TerminologyConnectionFactory:
     @staticmethod
     def _connect(path: Path, *, read_only: bool) -> sqlite3.Connection:
         if read_only:
-            return sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, isolation_level=None)
+            return sqlite3.connect(
+                f"{path.resolve().as_uri()}?mode=ro", uri=True, isolation_level=None, check_same_thread=False
+            )
         return sqlite3.connect(path, isolation_level=None, check_same_thread=False)
 
 

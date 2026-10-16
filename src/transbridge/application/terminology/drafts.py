@@ -52,7 +52,13 @@ class DraftWriteExpectation:
 
     @classmethod
     def from_draft(cls, draft: TerminologyDraft, line: DraftLineState) -> DraftWriteExpectation:
-        return cls(draft.ref.draft_id, draft.ref.revision, draft.ref.decision_set_digest, line)
+        return cls.from_ref(draft.ref, line)
+
+    @classmethod
+    def from_ref(cls, ref: DraftRef, line: DraftLineState) -> DraftWriteExpectation:
+        if (ref.project_id, ref.variant_id) != (line.project_id, line.variant_id):
+            raise ValueError("draft expectation must belong to its Project/Variant line")
+        return cls(ref.draft_id, ref.revision, ref.decision_set_digest, line)
 
 
 class DraftTransactionPort(Protocol):
@@ -194,10 +200,17 @@ class DraftService:
         *,
         expectation: DraftWriteExpectation,
     ) -> TerminologyDraft:
-        current = self._required_active(expectation.line.project_id, expectation.line.variant_id)
-        self._assert_expected(current, expectation)
+        if (draft.ref.project_id, draft.ref.variant_id) != (
+            expectation.line.project_id,
+            expectation.line.variant_id,
+        ):
+            raise RepositoryConflictError("draft belongs to another Project/Variant line")
+        if draft.ref.draft_id != expectation.draft_id:
+            raise DraftWriteConflict(expectation, draft.ref, "updating a draft cannot replace its identity")
         if draft.ref.revision != expectation.draft_revision + 1:
             raise RevisionConflictError(expectation.draft_revision + 1, draft.ref.revision)
+        # The transaction port compares the authoritative current draft and line
+        # while holding the write guard; another read here cannot strengthen it.
         self._transactions.save_draft(draft, expectation=expectation)
         return draft
 

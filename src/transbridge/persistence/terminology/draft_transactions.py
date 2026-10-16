@@ -19,7 +19,7 @@ from transbridge.application.terminology.errors import (
     RepositoryConflictError,
     RevisionConflictError,
 )
-from transbridge.application.terminology.models import DraftRef, TerminologyDraft
+from transbridge.application.terminology.models import BuildResult, DraftRef, TerminologyDraft
 
 if TYPE_CHECKING:
     from .repository import SqliteTerminologyRepository
@@ -39,9 +39,16 @@ class DraftLineStateReader(Protocol):
 class SqliteDraftTransactionAdapter:
     """Implement draft and reconciliation ports with one ``BEGIN IMMEDIATE`` guard."""
 
-    def __init__(self, repository: SqliteTerminologyRepository, line_reader: DraftLineStateReader) -> None:
+    def __init__(
+        self,
+        repository: SqliteTerminologyRepository,
+        line_reader: DraftLineStateReader,
+        *,
+        build: BuildResult | None = None,
+    ) -> None:
         self._repository = repository
         self._line_reader = line_reader
+        self._build = build
 
     def active_draft(self, project_id: str, variant_id: str) -> TerminologyDraft | None:
         with self._repository._lock:
@@ -57,6 +64,7 @@ class SqliteDraftTransactionAdapter:
         self._require_same_line(draft.ref, expected_line)
         with self._repository._lock, self._repository.transaction():
             self._require_line(expected_line)
+            self._put_build(expected_line)
             if not historical_base and (
                 draft.ref.base_version_id != expected_line.effective_version_id
                 or draft.ref.base_content_digest != expected_line.effective_content_digest
@@ -73,7 +81,8 @@ class SqliteDraftTransactionAdapter:
         with self._repository._lock, self._repository.transaction():
             current = self._require_expectation(expectation)
             self._require_same_identity_and_base(current, draft)
-            return self._repository._drafts.update(draft, expected_revision=expectation.draft_revision)
+            self._put_build(expectation.line)
+            return self._repository._drafts.update_current(current, draft)
 
     def replace_draft(
         self,
@@ -118,7 +127,7 @@ class SqliteDraftTransactionAdapter:
             if draft.actions != current.actions:
                 raise RepositoryConflictError("automatic evidence reconciliation cannot append ManualAction rows")
             _validate_reconciliation(draft, reconciliation)
-            self._repository._drafts.update(draft, expected_revision=expectation.draft_revision)
+            self._repository._drafts.update_current(current, draft)
 
     def _require_expectation(self, expectation: DraftWriteExpectation) -> TerminologyDraft:
         current = self._repository._drafts.active(expectation.line.project_id, expectation.line.variant_id)
@@ -132,6 +141,12 @@ class SqliteDraftTransactionAdapter:
         if current.ref.decision_set_digest != expectation.decision_set_digest:
             raise DraftWriteConflict(expectation, current.ref, "active draft decision set changed")
         return current
+
+    def _put_build(self, line: DraftLineState) -> None:
+        if self._build is not None:
+            if (self._build.project_id, self._build.variant_id) != (line.project_id, line.variant_id):
+                raise RepositoryConflictError("build belongs to another draft line")
+            self._repository._builds.put(self._build)
 
     def _require_line(
         self,

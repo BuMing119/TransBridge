@@ -321,6 +321,8 @@ class TerminologyTaskEntrypoint:
         self._lock = threading.RLock()
         self._requests: dict[str, AnyTerminologyWorkloadRequest] = {}
         self._results: dict[str, TerminologyWorkloadResult] = {}
+        self._refs: dict[str, JobRef] = {}
+        self._failures: dict[str, str] = {}
 
     @property
     def runtime(self) -> TaskRuntime:
@@ -339,8 +341,9 @@ class TerminologyTaskEntrypoint:
         run_id = ref.run_id or ref.job_id
         with self._lock:
             self._requests[run_id] = request
+            self._refs[run_id] = ref
 
-        def workload(cancellation: CancellationToken) -> None:
+        def execute(cancellation: CancellationToken) -> None:
             lease = TerminologyRunLease(
                 self._runtime,
                 ref,
@@ -377,6 +380,16 @@ class TerminologyTaskEntrypoint:
             with self._lock:
                 self._results[run_id] = result
 
+        def workload(cancellation: CancellationToken) -> None:
+            try:
+                execute(cancellation)
+            except TaskCancelled:
+                raise
+            except Exception as exc:
+                with self._lock:
+                    self._failures[run_id] = str(exc) or type(exc).__name__
+                raise
+
         self._runtime.schedule(ref, owner, workload)
         return deferred
 
@@ -394,6 +407,18 @@ class TerminologyTaskEntrypoint:
 
     def cancel(self, ref: JobRef, actor: OwnerRef) -> None:
         self._runtime.cancel(ref, actor)
+
+    def failure(self, run_id: str, actor: OwnerRef) -> str | None:
+        with self._lock:
+            ref = self._refs[run_id]
+        self._runtime.get(ref, actor)
+        with self._lock:
+            return self._failures.get(run_id)
+
+    def result_for_run(self, run_id: str, actor: OwnerRef) -> TerminologyWorkloadResult | None:
+        with self._lock:
+            ref = self._refs[run_id]
+        return self.result(ref, actor)
 
     @staticmethod
     def _validate_owner(request: AnyTerminologyWorkloadRequest, owner: OwnerRef) -> None:

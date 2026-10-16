@@ -69,7 +69,14 @@ class TerminologyWorkbenchShell(QWidget):
         self.project_name.setProperty("tbTerminologyProjectTitle", True)
         project_layout.addWidget(self.project_name, 1)
         self.project_caption = QLabel("", project)
-        self.project_caption.hide()
+        self.project_caption.setProperty("tbSecondary", True)
+        self.project_caption.setWordWrap(True)
+        header_layout.addWidget(self.project_caption)
+        self.current_version = QLabel("当前术语版本：尚未发布", header)
+        self.current_version.setProperty("tbSecondary", True)
+        self.current_version.setTextFormat(Qt.TextFormat.PlainText)
+        self.current_version.setWordWrap(True)
+        header_layout.addWidget(self.current_version)
         brand.addWidget(project)
         brand.addStretch(1)
 
@@ -121,13 +128,16 @@ class TerminologyWorkbenchShell(QWidget):
         project = project_name.strip() or "当前项目"
         variant = variant_name.strip() or "当前翻译版本"
         self.project_name.setText(project)
-        self.project_caption.setText(f"{variant} · {source_count} 个来源")
+        self.project_caption.setText(f"翻译版本：{variant} · {source_count} 个来源")
         self.project_name.setAccessibleDescription(f"{variant}，{source_count} 个来源")
 
     def set_scheme_switcher(self, widget: QWidget) -> None:
         """Place output naming selection beside the Project/Variant context."""
 
         self._scheme_slot.addWidget(widget)
+
+    def set_terminology_version(self, version_id: str | None) -> None:
+        self.current_version.setText(f"当前术语版本：{version_id or '尚未发布'}")
 
     def add_area(self, area: TerminologyArea, widget: QWidget) -> None:
         expected = self._area_indices[area]

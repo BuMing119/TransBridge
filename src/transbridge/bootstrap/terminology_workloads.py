@@ -3,29 +3,11 @@
 from __future__ import annotations
 
 from transbridge.application.contracts import JobRef, RequestContext
-from transbridge.application.io import TranslationIoUseCase
-from transbridge.application.tasks import OwnerRef
-from transbridge.application.terminology.build import TerminologyFullBuilder, TranslationIoRegisteredSourceParser
-from transbridge.application.terminology.conflicts import (
-    ConflictResolutionCommand,
-    ConflictResolutionOperation,
-    ConflictService,
-)
-from transbridge.application.terminology.decisions import (
-    DecisionCommand,
-    DecisionOperation,
-    DecisionService,
-    ManualActor,
-)
-from transbridge.application.terminology.drafts import DraftLineState, DraftService, DraftWriteExpectation, new_draft
-from transbridge.application.terminology.identity import build_key, canonical_digest, term_id
-from transbridge.application.terminology.in_memory import InMemoryTerminologyRepository
+from transbridge.application.terminology.build_drafts import decisions_from_build
+from transbridge.application.terminology.identity import build_key, canonical_digest
 from transbridge.application.terminology.input_capture import BuildInputSnapshot
 from transbridge.application.terminology.models import (
     BuildResultRef,
-    ConflictGroup,
-    DecisionStatus,
-    TermDecision,
     TerminologyVersionRef,
 )
 from transbridge.application.terminology.renderers import ArtifactPublishPolicy
@@ -36,12 +18,9 @@ from transbridge.application.terminology.report_queries import TerminologyReport
 from transbridge.application.terminology.reports import NoDraftIdentity, TerminologyReportSnapshotFactory
 from transbridge.application.terminology.runtime import TerminologyExecutionContext, TerminologyWorkloadExecution
 from transbridge.application.terminology.workloads import (
-    BuildCompleteness,
-    BuildLlmStatus,
     BuildWorkloadRequest,
     ChangelogRenderWorkloadRequest,
     HistoryCompareWorkloadRequest,
-    PublishWorkloadRequest,
     ReportRenderWorkloadRequest,
     TerminologyPhase,
     TerminologyProgress,
@@ -49,6 +28,14 @@ from transbridge.application.terminology.workloads import (
     TerminologyWorkloadType,
 )
 
+from .terminology_build import BuildRunner
+from .terminology_context import require_line as _line, task_owner as _owner
+from .terminology_draft_access import LifecycleDraftLineReader as _LifecycleDraftLineReader  # noqa: F401
+from .terminology_publication import PublishRunner, TerminologyPublicationCommands
+from .terminology_review import (
+    RequestManualActor as _RequestManualActor,  # noqa: F401
+    TerminologyReviewCommands,
+)
 from .terminology_storage import empty_digest, expected_state
 
 
@@ -62,6 +49,8 @@ class ProductionTerminologyCommands:
         self._clock = clock
         self._build_inputs = build_inputs
         self._lifecycle = lifecycle
+        self._publication = TerminologyPublicationCommands(entrypoint, repositories, state, ids, clock, build_inputs)
+        self._review = TerminologyReviewCommands(repositories, ids, clock, lifecycle)
 
     def start_build(self, snapshot: BuildInputSnapshot, context: RequestContext) -> JobRef:
         expected = expected_state(snapshot, self._repositories.for_project(snapshot.project_id))
@@ -78,33 +67,14 @@ class ProductionTerminologyCommands:
         )
         return self._entrypoint.submit(request, _owner(context)).ref
 
-    def publish(self, context: RequestContext) -> JobRef:
-        project_id, variant_id = _line(context)
-        repository = self._repositories.for_project(project_id)
-        build_ref = self._latest_build_ref(repository, project_id, variant_id)
-        snapshot = self._fresh_snapshot(context)
-        expected = expected_state(snapshot, repository)
-        draft = repository.active_draft(project_id, variant_id)
-        if draft is None:
-            raise RuntimeError("发布前需要先创建并确认术语草稿")
-        version_id = self._ids.new_id()
-        payload = {
-            "build_ref": build_ref,
-            "draft_ref": draft.ref,
-            "version_id": version_id,
-            "published_at": self._clock.now().isoformat(),
-        }
-        digest = canonical_digest(payload, namespace="terminology.production-publish-request.v1")
-        self._state.put(self._state.publish_payloads, digest, payload)
-        self._state.put(self._state.snapshots, expected.digest, snapshot)
-        request = PublishWorkloadRequest(
-            project_id=project_id,
-            variant_id=variant_id,
-            expected=expected,
-            build_ref=build_ref.build_key,
-            publish_digest=digest,
-        )
-        return self._entrypoint.submit(request, _owner(context)).ref
+    def preview_publish(self, context: RequestContext, config=None):
+        return self._publication.preview_publish(context, config)
+
+    def publish_preview(self, preview, context: RequestContext) -> JobRef:
+        return self._publication.publish_preview(preview, context)
+
+    def publish(self, context: RequestContext, config=None) -> JobRef:
+        return self._publication.publish(context, config)
 
     def render_report(self, context: RequestContext) -> JobRef:
         project_id, variant_id = _line(context)
@@ -135,89 +105,23 @@ class ProductionTerminologyCommands:
     def retry_changelog(self, context: RequestContext) -> JobRef:
         return self._render_changelog(context, overwrite=True)
 
-    def apply_decision(
-        self,
-        operation: DecisionOperation | str,
-        context: RequestContext,
-        *,
-        term_id: str | None = None,
-        original: str | None = None,
-        translation: str | None = None,
-        notes: str | None = None,
-        reason: str | None = None,
-    ):
-        """Apply one short, audited draft transaction on the active line."""
+    def apply_decision(self, operation, context: RequestContext, **values):
+        return self._review.apply_decision(operation, context, **values)
 
-        service, expectation = self._decision_service(context)
-        return service.apply(
-            DecisionCommand(
-                operation=DecisionOperation(operation),
-                expectation=expectation,
-                term_id=term_id,
-                original=original,
-                translation=translation,
-                notes=notes,
-                reason=reason,
-            ),
-            context,
-        )
+    def resolve_conflict(self, conflict, operation, context: RequestContext, **values):
+        return self._review.resolve_conflict(conflict, operation, context, **values)
 
-    def resolve_conflict(
-        self,
-        conflict: ConflictGroup,
-        operation: ConflictResolutionOperation | str,
-        context: RequestContext,
-        *,
-        translation: str | None = None,
-        plugin_id: str | None = None,
-        notes: str | None = None,
-        reason: str | None = None,
-    ):
-        decisions, expectation = self._decision_service(context)
-        return ConflictService(decisions).resolve(
-            ConflictResolutionCommand(
-                operation=ConflictResolutionOperation(operation),
-                conflict=conflict,
-                expectation=expectation,
-                translation=translation,
-                plugin_id=plugin_id,
-                notes=notes,
-                reason=reason,
-            ),
-            context,
-        )
+    def conflict_details(self, conflict, context: RequestContext):
+        return self._review.conflict_details(conflict, context)
 
-    def restore(self, version_ref: TerminologyVersionRef, context: RequestContext) -> JobRef:
-        """Publish historical content as a new immutable version through TaskRuntime."""
+    def resolve_review(self, details, operation, context: RequestContext, **values):
+        return self._review.resolve_review(details, operation, context, **values)
 
-        project_id, variant_id = _line(context)
-        if (version_ref.project_id, version_ref.variant_id) != (project_id, variant_id):
-            raise PermissionError("历史版本不属于当前工程和翻译版本")
-        repository = self._repositories.for_project(project_id)
-        repository.get_version(version_ref)
-        if repository.active_draft(project_id, variant_id) is not None:
-            raise RuntimeError("恢复历史内容前需要先发布或放弃当前草稿")
-        build_ref = self._latest_build_ref(repository, project_id, variant_id)
-        snapshot = self._fresh_snapshot(context)
-        expected = expected_state(snapshot, repository)
-        version_id = self._ids.new_id()
-        payload = {
-            "build_ref": build_ref,
-            "rollback_from": version_ref,
-            "version_id": version_id,
-            "published_at": self._clock.now().isoformat(),
-        }
-        digest = canonical_digest(payload, namespace="terminology.production-restore-request.v1")
-        self._state.put(self._state.publish_payloads, digest, payload)
-        self._state.put(self._state.snapshots, expected.digest, snapshot)
-        request = PublishWorkloadRequest(
-            project_id=project_id,
-            variant_id=variant_id,
-            expected=expected,
-            build_ref=build_ref.build_key,
-            publish_digest=digest,
-        )
-        return self._entrypoint.submit(request, _owner(context)).ref
+    def discard_draft(self, expected_ref, context: RequestContext) -> None:
+        self._review.discard_draft(expected_ref, context)
+
+    def restore(self, version_ref: TerminologyVersionRef, context: RequestContext, config=None) -> JobRef:
+        return self._publication.restore(version_ref, context, config)
 
     def compare(self, version_ref: TerminologyVersionRef, context: RequestContext) -> JobRef:
         """Compare a history version with current effective content in TaskRuntime."""
@@ -246,6 +150,12 @@ class ProductionTerminologyCommands:
 
     def latest_comparison(self, project_id: str, variant_id: str):
         return self._state.latest_comparisons.get((project_id, variant_id))
+
+    def task_failure(self, run_id: str, context: RequestContext) -> str | None:
+        return self._entrypoint.failure(run_id, _owner(context))
+
+    def task_result(self, run_id: str, context: RequestContext):
+        return self._entrypoint.result_for_run(run_id, _owner(context))
 
     def _render_changelog(self, context: RequestContext, *, overwrite: bool) -> JobRef:
         project_id, variant_id = _line(context)
@@ -294,30 +204,10 @@ class ProductionTerminologyCommands:
         return None if effective is None else effective.ref
 
     def active_draft(self, context: RequestContext):
-        project_id, variant_id = _line(context)
-        return self._repositories.for_project(project_id).active_draft(project_id, variant_id)
+        return self._review.active_draft(context)
 
-    def _decision_service(self, context: RequestContext) -> tuple[DecisionService, DraftWriteExpectation]:
-        project_id, variant_id = _line(context)
-        repository = self._repositories.for_project(project_id)
-        active = self._lifecycle.active
-        if active is None or active.variant is None:
-            raise RuntimeError("人工术语调整需要当前工程和翻译版本")
-        if active.project.envelope.identity != project_id or active.variant.ref.identity.value != variant_id:
-            raise PermissionError("人工术语调整不属于当前工程和翻译版本")
-        effective = repository.effective_version(project_id, variant_id)
-        line = DraftLineState(
-            project_id,
-            variant_id,
-            active.variant.revision,
-            None if effective is None else effective.ref.version_id,
-            empty_digest() if effective is None else effective.ref.content_digest,
-        )
-        transactions = repository.draft_transactions(_LifecycleDraftLineReader(self._lifecycle, repository))
-        drafts = DraftService(transactions, self._ids)
-        draft = drafts.active(project_id, variant_id)
-        expectation = DraftWriteExpectation.from_draft(draft, line)
-        return DecisionService(drafts, _RequestManualActor(), self._clock, self._ids), expectation
+    def review_counts(self, context: RequestContext):
+        return self._review.review_counts(context)
 
     def _fresh_snapshot(self, context: RequestContext) -> BuildInputSnapshot:
         result = self._build_inputs.capture_build_input(context, config={})
@@ -332,92 +222,6 @@ class ProductionTerminologyCommands:
         if build is None:
             raise RuntimeError("当前翻译版本还没有术语构建结果")
         return build.ref
-
-
-class BuildRunner:
-    def __init__(self, repositories, state, catalog, ids) -> None:
-        self._repositories = repositories
-        self._state = state
-        self._catalog = catalog
-        self._ids = ids
-
-    def __call__(self, request, runtime: TerminologyExecutionContext) -> TerminologyWorkloadExecution:
-        if not isinstance(request, BuildWorkloadRequest):
-            raise TypeError("build runner received another workload")
-        snapshot = self._state.get(self._state.snapshots, request.build_key)
-        context = self._state.get(self._state.contexts, request.build_key)
-        runtime.progress.update(TerminologyProgress(TerminologyPhase.PARSE, 0, len(snapshot.sources)))
-        staging = InMemoryTerminologyRepository()
-        builder = TerminologyFullBuilder(
-            TranslationIoRegisteredSourceParser(TranslationIoUseCase(self._catalog)),
-            staging,
-        )
-        repository = self._repositories.for_project(request.project_id)
-        effective = repository.effective_version(request.project_id, request.variant_id)
-        outcome = builder.build(
-            snapshot,
-            context,
-            baseline_decisions=() if effective is None else effective.decisions,
-            cancellation=runtime.cancellation,
-        )
-        runtime.checkpoint()
-        runtime.progress.update(
-            TerminologyProgress(TerminologyPhase.PERSIST, len(snapshot.sources), len(snapshot.sources))
-        )
-
-        def mutation() -> None:
-            repository.put_build(outcome.result)
-            self._state.put(self._state.latest_builds, (request.project_id, request.variant_id), outcome.result.ref)
-            ensure_draft(repository, outcome.result, snapshot, self._ids.new_id())
-
-        result = TerminologyWorkloadResult(
-            TerminologyWorkloadType.BUILD,
-            output_ref=outcome.result.ref.build_key,
-            completeness=BuildCompleteness(outcome.result.completeness.value),
-            llm_status=BuildLlmStatus(outcome.result.llm_status.value),
-            diagnostics=outcome.result.diagnostics,
-        )
-        return TerminologyWorkloadExecution(result, mutation)
-
-
-class PublishRunner:
-    def __init__(self, repositories, state) -> None:
-        self._repositories = repositories
-        self._state = state
-
-    def __call__(self, request, runtime: TerminologyExecutionContext) -> TerminologyWorkloadExecution:
-        if not isinstance(request, PublishWorkloadRequest):
-            raise TypeError("publish runner received another workload")
-        payload = self._state.get(self._state.publish_payloads, request.publish_digest)
-        runtime.progress.update(TerminologyProgress(TerminologyPhase.VALIDATE, 1, 2))
-
-        def mutation() -> None:
-            from transbridge.application.terminology.publish import PublishTerminologyRequest, VersionPublisher
-
-            repository = self._repositories.for_project(request.project_id)
-            publisher = VersionPublisher(
-                repository.publisher,
-                StaticPublishState(request.expected),
-                Permit(),
-            )
-            publisher.publish(
-                PublishTerminologyRequest(
-                    project_id=request.project_id,
-                    variant_id=request.variant_id,
-                    expected=request.expected,
-                    build_ref=payload["build_ref"],
-                    version_id=payload["version_id"],
-                    published_at=payload["published_at"],
-                    draft_ref=payload.get("draft_ref"),
-                    rollback_from=payload.get("rollback_from"),
-                )
-            )
-
-        runtime.progress.update(TerminologyProgress(TerminologyPhase.PUBLISH, 2, 2))
-        return TerminologyWorkloadExecution(
-            TerminologyWorkloadResult(TerminologyWorkloadType.PUBLISH, output_ref=payload["version_id"]),
-            mutation,
-        )
 
 
 class ReportRunner:
@@ -523,108 +327,6 @@ class HistoryCompareRunner:
             TerminologyWorkloadResult(TerminologyWorkloadType.HISTORY_COMPARE, output_ref=comparison.content_digest),
             mutation,
         )
-
-
-def decisions_from_build(build) -> tuple[TermDecision, ...]:
-    conflicted = {
-        candidate_id
-        for group in build.conflicts
-        for variant in group.variants
-        for candidate_id in variant.candidate_ids
-    }
-    return tuple(
-        TermDecision(
-            term_id(build.project_id, build.variant_id, candidate.scope, candidate.original),
-            build.project_id,
-            build.variant_id,
-            candidate.original,
-            candidate.normalized_original,
-            candidate.translation,
-            scope=candidate.scope,
-            status=DecisionStatus.ADOPTED,
-            evidence_ids=candidate.evidence_ids,
-        )
-        for candidate in build.candidates
-        if candidate.candidate_id not in conflicted
-    )
-
-
-def ensure_draft(repository, build, snapshot, draft_id: str) -> None:
-    if repository.active_draft(snapshot.project_id, snapshot.variant_id) is not None:
-        return
-    effective = repository.effective_version(snapshot.project_id, snapshot.variant_id)
-    repository.create_draft(
-        new_draft(
-            draft_id=draft_id,
-            project_id=snapshot.project_id,
-            variant_id=snapshot.variant_id,
-            base_version_id=None if effective is None else effective.ref.version_id,
-            base_content_digest=empty_digest() if effective is None else effective.ref.content_digest,
-            decisions=decisions_from_build(build),
-        )
-    )
-
-
-class StaticPublishState:
-    def __init__(self, expected) -> None:
-        self._expected = expected
-
-    def current(self, project_id: str, variant_id: str):
-        del project_id, variant_id
-        return self._expected
-
-
-class Permit:
-    @staticmethod
-    def is_permitted() -> bool:
-        return True
-
-
-class _RequestManualActor:
-    @staticmethod
-    def resolve(context: RequestContext) -> ManualActor:
-        actor = dict(context.metadata).get("manual_actor_id", "").strip()
-        if not actor:
-            raise PermissionError("人工术语调整需要可信的操作人身份")
-        return ManualActor(actor, trusted=True)
-
-
-class _LifecycleDraftLineReader:
-    def __init__(self, lifecycle, repository) -> None:
-        self._lifecycle = lifecycle
-        self._repository = repository
-
-    def read_line(self, _connection, project_id: str, variant_id: str) -> DraftLineState:
-        active = self._lifecycle.active
-        if active is None or active.variant is None:
-            raise RuntimeError("术语草稿需要当前工程和翻译版本")
-        if active.project.envelope.identity != project_id or active.variant.ref.identity.value != variant_id:
-            raise PermissionError("术语草稿不属于当前工程和翻译版本")
-        effective = self._repository.effective_version(project_id, variant_id)
-        return DraftLineState(
-            project_id,
-            variant_id,
-            active.variant.revision,
-            None if effective is None else effective.ref.version_id,
-            empty_digest() if effective is None else effective.ref.content_digest,
-        )
-
-
-def _owner(context: RequestContext) -> OwnerRef:
-    project_id, variant_id = _line(context)
-    return OwnerRef(
-        context.owner_id,
-        dict(context.metadata).get("entrypoint", "gui"),
-        project_id=project_id,
-        variant_id=variant_id,
-        permissions=context.permissions,
-    )
-
-
-def _line(context: RequestContext) -> tuple[str, str]:
-    if context.project_id is None or context.variant_id is None:
-        raise RuntimeError("术语操作需要当前工程和翻译版本")
-    return context.project_id, context.variant_id
 
 
 __all__ = [

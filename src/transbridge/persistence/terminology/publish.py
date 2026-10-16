@@ -6,6 +6,7 @@ from collections.abc import Callable
 import sqlite3
 from typing import TYPE_CHECKING
 
+from transbridge.application.terminology.build_freshness import require_current_build
 from transbridge.application.terminology.errors import (
     DigestCollisionError,
     RepositoryConflictError,
@@ -186,7 +187,9 @@ class AtomicPublishStore:
         ).fetchone()
         if row is None:
             raise TerminologyNotFoundError("build result was not found")
-        build = loads(str(row["payload_json"]), BuildResult).require_publishable()
+        build = require_current_build(
+            loads(str(row["payload_json"]), BuildResult), bundle.expected.build_freshness_digest
+        )
         if (build.project_id, build.variant_id) != (
             bundle.version.ref.project_id,
             bundle.version.ref.variant_id,

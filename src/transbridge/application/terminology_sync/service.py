@@ -17,7 +17,7 @@ from .execution_models import TerminologyBackupExecutionResult, TerminologySyncR
 from .inbound import InboundTerminologyChangeSet
 from .models import TerminologySyncMode, TerminologySyncTarget
 from .plan_models import TerminologySyncPlan, TerminologySyncPlanItem
-from .task_adapter import TerminologySyncTaskDraft, TerminologySyncTaskEntrypoint
+from .task_adapter import TerminologySyncTaskDraft, TerminologySyncTaskEntrypoint, TerminologySyncTaskFailure
 from .use_case import (
     AuthorizedTerminologySyncPlan,
     AuthorizeTerminologySyncPlanRequest,
@@ -104,6 +104,7 @@ class TerminologySyncPlanSummary:
     destructive: bool
     requires_confirmation: bool
     execution_available: bool
+    target: TerminologySyncTarget | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,7 +160,9 @@ class TerminologySyncApplicationService:
             while len(self._plans) > self._max_plans:
                 self._plans.pop(next(iter(self._plans)))
         return _summary(
-            plan, execution_available=plan.mode is TerminologySyncMode.BACKUP or self._bidirectional_tasks is not None
+            plan,
+            execution_available=plan.mode is TerminologySyncMode.BACKUP or self._bidirectional_tasks is not None,
+            target=request.target,
         )
 
     def issue_mapping_replacement_confirmation(
@@ -256,6 +259,19 @@ class TerminologySyncApplicationService:
         return self._runtime.get(ref, actor)
 
     def result(self, ref: JobRef, actor: OwnerRef) -> TerminologyBackupExecutionResult | None:
+        return self._job_entrypoint(ref, actor).result(ref, actor)
+
+    def failure(self, ref: JobRef, actor: OwnerRef) -> TerminologySyncTaskFailure | None:
+        return self._job_entrypoint(ref, actor).failure(ref, actor)
+
+    def result_items(self, ref: JobRef, actor: OwnerRef) -> tuple[TerminologySyncPlanItem, ...]:
+        result = self.result(ref, actor)
+        with self._lock:
+            stored = None if result is None else self._plans.get(result.plan_hash)
+        return () if stored is None else stored.plan.items
+
+    def _job_entrypoint(self, ref: JobRef, actor: OwnerRef) -> TerminologySyncTaskEntrypoint:
+        self._runtime.get(ref, actor)
         with self._lock:
             stored = self._jobs.get(ref.job_id)
         if stored is None:
@@ -263,7 +279,7 @@ class TerminologySyncApplicationService:
         stored_ref, _owner, entrypoint = stored
         if stored_ref != ref:
             raise PermissionError("terminology sync job identity changed")
-        return entrypoint.result(ref, actor)
+        return entrypoint
 
     def retry(self, token: TerminologySyncRetryToken, actor: OwnerRef) -> JobRef:
         if token.owner_id != actor.owner_id:
@@ -361,7 +377,9 @@ def owner_from_context(context: RequestContext, *, entrypoint: str) -> OwnerRef:
     )
 
 
-def _summary(plan: TerminologySyncPlan, *, execution_available: bool) -> TerminologySyncPlanSummary:
+def _summary(
+    plan: TerminologySyncPlan, *, execution_available: bool, target: TerminologySyncTarget | None = None
+) -> TerminologySyncPlanSummary:
     return TerminologySyncPlanSummary(
         ref=TerminologySyncPlanRef(plan.plan_id, plan.plan_hash),
         mode=plan.mode,
@@ -375,6 +393,7 @@ def _summary(plan: TerminologySyncPlan, *, execution_available: bool) -> Termino
         destructive=plan.destructive,
         requires_confirmation=plan.requires_confirmation,
         execution_available=execution_available,
+        target=target,
     )
 
 

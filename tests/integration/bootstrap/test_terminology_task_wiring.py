@@ -277,10 +277,11 @@ def test_production_runtime_closes_build_decision_publish_history_restore_and_re
         assert _wait_for_job(app, second_build, context).committed
         second_draft = repository.active_draft(context.project_id, context.variant_id)
         assert second_draft is not None
+        assert second_draft.decisions == first_version.decisions
         services.commands.apply_decision(
-            DecisionOperation.ADD,
+            DecisionOperation.CHANGE_TRANSLATION,
             context,
-            original="Dragon",
+            term_id=second_draft.decisions[0].term_id,
             translation="飞龙",
         )
         second_publish = services.commands.publish(context)

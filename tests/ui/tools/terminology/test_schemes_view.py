@@ -47,9 +47,9 @@ def test_scheme_switcher_keeps_selection_visible_and_management_in_a_menu() -> N
     assert controller.parent() is view
     assert view.scheme_combo.currentData() == "classic"
     assert view.scheme_combo.currentText() == "经典译名"
-    assert view.scheme_combo.accessibleName() == "当前术语副本"
-    assert view.actions_button.text() == "选用术语源…"
-    assert view.create_action.text() == "从术语源导入副本…"
+    assert view.scheme_combo.accessibleName() == "当前译名方案"
+    assert view.actions_button.text() == "方案操作…"
+    assert view.create_action.text() == "从外部来源创建方案…"
     assert controller._imports._select_after_create
     assert view.actions_button.isEnabled()
     assert view.status_label.isHidden()
@@ -70,9 +70,9 @@ def test_scheme_switcher_displays_none_when_no_library_is_selected() -> None:
     state = TerminologyProfileBarState(enabled=True, can_manage=True)
     view.render(state)
 
-    assert view.scheme_combo.currentText() == "无"
+    assert view.scheme_combo.currentText() == "使用项目默认译名"
     assert view.scheme_combo.currentData() is None
-    assert view.scheme_combo.accessibleDescription() == "无"
+    assert view.scheme_combo.accessibleDescription() == "使用项目默认译名"
     assert view.metadata.isHidden()
     assert view.metadata.text() == ""
 
@@ -80,7 +80,7 @@ def test_scheme_switcher_displays_none_when_no_library_is_selected() -> None:
     view.render(selected)
     assert view.scheme_combo.currentText() == "经典译名"
     view.render(replace(selected, selected_profile_id=None))
-    assert view.scheme_combo.currentText() == "无"
+    assert view.scheme_combo.currentText() == "使用项目默认译名"
     assert view.scheme_combo.count() == 2
     assert selections == []
     view.close()

@@ -404,6 +404,7 @@ class BuildResult:
     completeness: BuildCompleteness = BuildCompleteness.FULL
     freshness: BuildFreshness = BuildFreshness.CURRENT
     llm_status: LlmExtractionStatus = LlmExtractionStatus.SKIPPED
+    input_digest: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "project_id", _required(self.project_id, "project ID"))
@@ -424,6 +425,8 @@ class BuildResult:
         object.__setattr__(self, "completeness", BuildCompleteness(self.completeness))
         object.__setattr__(self, "freshness", BuildFreshness(self.freshness))
         object.__setattr__(self, "llm_status", LlmExtractionStatus(self.llm_status))
+        if self.input_digest is not None:
+            object.__setattr__(self, "input_digest", _required(self.input_digest, "build input digest"))
 
     def require_publishable(self, *, allow_partial: bool = False) -> Self:
         if self.freshness is BuildFreshness.STALE:

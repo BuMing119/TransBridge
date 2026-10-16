@@ -14,6 +14,7 @@ class AiNamingSchemeBinding(QObject):
         self._controls = controls
         self._refresh_task = refresh_task
         self._summary_label = "保持当前译名"
+        self._profile_key = None if controller is None else self._task_profile_key(controller.state)
         controls.naming_scheme_combo.currentIndexChanged.connect(self._selection_changed)
         controls.naming_scheme_manage_btn.clicked.connect(self.open_manager)
         if controller is None:
@@ -37,7 +38,9 @@ class AiNamingSchemeBinding(QObject):
             (choice for choice in state.choices if choice.profile_id == state.selected_profile_id),
             None,
         )
-        if not state.enabled:
+        if state.loading:
+            status = state.detail
+        elif not state.enabled:
             status = "当前工程未启用译名方案；任务将使用现有译文和“术语库”页中的术语来源。"
         elif selected is None:
             status = "保持项目译文中的现有译名；选择方案会同步工作台，并影响之后创建的任务与导出。"
@@ -58,7 +61,19 @@ class AiNamingSchemeBinding(QObject):
 
     def _state_changed(self, state) -> None:
         self.render(state)
-        self._refresh_task()
+        key = self._task_profile_key(state)
+        if key != self._profile_key:
+            self._profile_key = key
+            self._refresh_task()
+
+    @staticmethod
+    def _task_profile_key(state):
+        profile = state.selected_revision
+        return (
+            None
+            if profile is None
+            else (profile.project_id, profile.profile_id, profile.revision, profile.content_digest)
+        )
 
     def open_manager(self) -> None:
         if self._controller is not None:

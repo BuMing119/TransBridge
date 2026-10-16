@@ -48,5 +48,12 @@ class InboundReviewDrafts:
         self._sets.setdefault(change_set_id, {}).update((edit.item.item_id, edit) for edit in edits)
 
     def choices(self, change_set_id: str) -> tuple[DraftImportChoice, ...]:
-        edits = self._sets.get(change_set_id, {})
-        return tuple(edits[item_id].to_choice() for item_id in sorted(edits))
+        return choices_from_edits(self.snapshot(change_set_id))
+
+    def snapshot(self, change_set_id: str) -> tuple[InboundReviewEdit, ...]:
+        """Freeze raw values on Qt; validation, ordering and hashing run in the worker."""
+        return tuple(self._sets.get(change_set_id, {}).values())
+
+
+def choices_from_edits(edits):
+    return tuple(edit.to_choice() for edit in sorted(edits, key=lambda edit: edit.item.item_id))

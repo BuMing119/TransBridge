@@ -86,6 +86,7 @@ class ConflictService:
             decision_command = DecisionCommand(
                 operation=DecisionOperation.PLUGIN_EXCEPTION,
                 expectation=command.expectation,
+                term_id=command.term_id,
                 original=conflict.normalized_original,
                 translation=_required(command.translation, "plugin translation"),
                 scope=TermScope(ScopeKind.PLUGIN, plugin_id),
@@ -176,47 +177,7 @@ class EvidenceReconciler:
     ) -> ConflictReconciliation:
         current = self._drafts.active(expectation.line.project_id, expectation.line.variant_id)
         self._drafts.require_expected(current, expectation)
-        updated: list[TermDecision] = []
-        projected: list[DecisionEvidenceReconciliation] = []
-        for decision in current.decisions:
-            relevant = tuple(
-                candidate
-                for candidate in candidates
-                if candidate.normalized_original == decision.normalized_original and candidate.scope == decision.scope
-            )
-            evidence_ids = tuple(sorted({item for candidate in relevant for item in candidate.evidence_ids}))
-            if decision.suppressed:
-                status = EvidenceReconciliationStatus.SUPPRESSED
-                reconciled = replace(decision, evidence_ids=evidence_ids)
-                possibly_stale = not evidence_ids
-            elif not relevant:
-                status = EvidenceReconciliationStatus.NO_EVIDENCE
-                reconciled = replace(decision, evidence_ids=())
-                possibly_stale = True
-            elif any(
-                normalize_translation(candidate.translation) != normalize_translation(decision.translation)
-                for candidate in relevant
-            ):
-                status = EvidenceReconciliationStatus.NEEDS_REVIEW
-                reconciled = replace(
-                    decision,
-                    evidence_ids=evidence_ids,
-                    status=DecisionStatus.REVIEW_REQUIRED,
-                )
-                possibly_stale = False
-            else:
-                status = EvidenceReconciliationStatus.ALIGNED
-                reconciled = replace(decision, evidence_ids=evidence_ids)
-                possibly_stale = False
-            updated.append(reconciled)
-            projected.append(
-                DecisionEvidenceReconciliation(
-                    decision.term_id,
-                    status,
-                    evidence_ids,
-                    possibly_stale=possibly_stale,
-                )
-            )
+        updated, projected = reconcile_evidence(current.decisions, candidates)
         next_draft = revised_draft(
             current,
             decisions=tuple(updated),
@@ -236,6 +197,40 @@ class EvidenceReconciler:
         return ConflictReconciliation(next_draft, reconciliation)
 
 
+def reconcile_evidence(
+    decisions: tuple[TermDecision, ...],
+    candidates: tuple[TermCandidate, ...],
+) -> tuple[tuple[TermDecision, ...], tuple[DecisionEvidenceReconciliation, ...]]:
+    """Project current evidence without replacing human-authored terminology."""
+
+    by_term: dict[tuple[str, TermScope], list[TermCandidate]] = {}
+    for candidate in candidates:
+        by_term.setdefault((candidate.normalized_original, candidate.scope), []).append(candidate)
+    updated: list[TermDecision] = []
+    projected: list[DecisionEvidenceReconciliation] = []
+    for decision in decisions:
+        relevant = by_term.get((decision.normalized_original, decision.scope), ())
+        evidence_ids = tuple(sorted({item for candidate in relevant for item in candidate.evidence_ids}))
+        reconciled = replace(decision, evidence_ids=evidence_ids)
+        if decision.suppressed:
+            status = EvidenceReconciliationStatus.SUPPRESSED
+        elif not relevant:
+            status = EvidenceReconciliationStatus.NO_EVIDENCE
+        elif any(
+            normalize_translation(candidate.translation) != normalize_translation(decision.translation)
+            for candidate in relevant
+        ):
+            status = EvidenceReconciliationStatus.NEEDS_REVIEW
+            reconciled = replace(reconciled, status=DecisionStatus.REVIEW_REQUIRED)
+        else:
+            status = EvidenceReconciliationStatus.ALIGNED
+        updated.append(reconciled)
+        projected.append(
+            DecisionEvidenceReconciliation(decision.term_id, status, evidence_ids, possibly_stale=not evidence_ids)
+        )
+    return tuple(updated), tuple(projected)
+
+
 def _required(value: str | None, label: str) -> str:
     if value is None or not value.strip():
         raise ValueError(f"{label} must not be empty")
@@ -252,4 +247,5 @@ __all__ = [
     "EvidenceReconciler",
     "EvidenceReconciliationTransactionPort",
     "EvidenceReconciliationStatus",
+    "reconcile_evidence",
 ]

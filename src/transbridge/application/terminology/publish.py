@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Protocol
 
+from .build_freshness import require_current_build
 from .diff import CanonicalDiffEngine
 from .errors import RepositoryConflictError
 from .identity import canonical_digest
@@ -42,6 +43,7 @@ class PublishTerminologyRequest:
     rollback_from: TerminologyVersionRef | None = None
     markdown_target: str = "terminology-changelog.md"
     excel_target: str = "terminology-changelog.xlsx"
+    reviewed_content_digest: str | None = None
 
     def __post_init__(self) -> None:
         for value, label in (
@@ -180,13 +182,12 @@ class VersionPublisher:
         self._diff = diff_engine or CanonicalDiffEngine()
         self._narrative = narrative or ChangeNarrativeProjector()
 
-    def publish(
-        self,
-        request: PublishTerminologyRequest,
-        *,
-        fault_injector: Callable[[str], None] | None = None,
-    ) -> PublishTerminologyResult:
-        build = self._repository.get_build(request.build_ref).require_publishable()
+    def prepare(self, request: PublishTerminologyRequest) -> AtomicPublishBundle:
+        """Freeze exactly the candidate version and changes a publication would commit."""
+
+        build = require_current_build(
+            self._repository.get_build(request.build_ref), request.expected.build_freshness_digest
+        )
         if (build.project_id, build.variant_id) != (request.project_id, request.variant_id):
             raise ValueError("build does not belong to the publication Project/Variant")
         parent = self._repository.effective_version(request.project_id, request.variant_id)
@@ -254,11 +255,24 @@ class VersionPublisher:
             content.conflicts,
             content.manual_actions,
         )
+        if (
+            request.reviewed_content_digest is not None
+            and version.ref.content_digest != request.reviewed_content_digest
+        ):
+            raise PublishGuardRejectedError("发布内容已变化，请重新检查发布影响")
         artifacts = (
             _pending_artifact(changelog, ArtifactKind.CHANGELOG_MARKDOWN, request.markdown_target),
             _pending_artifact(changelog, ArtifactKind.CHANGELOG_EXCEL, request.excel_target),
         )
-        bundle = AtomicPublishBundle(version, changelog, artifacts, request.expected, request.draft_ref)
+        return AtomicPublishBundle(version, changelog, artifacts, request.expected, request.draft_ref)
+
+    def publish(
+        self,
+        request: PublishTerminologyRequest,
+        *,
+        fault_injector: Callable[[str], None] | None = None,
+    ) -> PublishTerminologyResult:
+        bundle = self.prepare(request)
 
         def guard() -> bool:
             return (
@@ -271,7 +285,7 @@ class VersionPublisher:
             business_guard=guard,
             fault_injector=fault_injector,
         )
-        return PublishTerminologyResult(published, changelog, artifacts)
+        return PublishTerminologyResult(published, bundle.changelog, bundle.artifacts)
 
     def record_renderer_result(self, artifact_id: str, *, diagnostic: str | None = None) -> ArtifactLedgerEntry:
         current = self._repository.get_artifact(artifact_id)

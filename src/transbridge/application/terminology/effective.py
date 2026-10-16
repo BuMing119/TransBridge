@@ -146,6 +146,33 @@ def resolve_snapshot(
     term: str,
     context: TerminologyLookupContext,
 ) -> EffectiveTermResolution:
+    normalized = normalize_original(term)
+    matching = tuple(item for item in snapshot.decisions if item.normalized_original == normalized)
+    return _resolve_matching(snapshot, matching, context)
+
+
+class EffectiveTerminologyIndex:
+    """Reusable source-name index over one immutable snapshot, with explicit scope resolution."""
+
+    def __init__(self, snapshot: EffectiveTerminologySnapshot) -> None:
+        self.snapshot = snapshot
+        grouped: dict[str, list[TermDecision]] = {}
+        for decision in snapshot.decisions:
+            grouped.setdefault(decision.normalized_original, []).append(decision)
+        self._by_original = {key: tuple(values) for key, values in grouped.items()}
+        self.originals = tuple(
+            sorted({item.original for item in snapshot.decisions}, key=lambda value: (normalize_original(value), value))
+        )
+
+    def resolve(self, term: str, context: TerminologyLookupContext) -> EffectiveTermResolution:
+        return _resolve_matching(self.snapshot, self._by_original.get(normalize_original(term), ()), context)
+
+
+def _resolve_matching(
+    snapshot: EffectiveTerminologySnapshot,
+    matching: tuple[TermDecision, ...],
+    context: TerminologyLookupContext,
+) -> EffectiveTermResolution:
     if (snapshot.local_project_id, snapshot.local_variant_id) != (
         context.local_project_id,
         context.local_variant_id,
@@ -156,10 +183,6 @@ def resolve_snapshot(
         # path when the project asset cannot be used.  The workbench surfaces
         # the diagnostics and remains fail-closed for writes separately.
         return EffectiveTermResolution(None, False, snapshot)
-    normalized = normalize_original(term)
-    if not normalized:
-        return EffectiveTermResolution(None, False, snapshot)
-    matching = tuple(item for item in snapshot.decisions if item.normalized_original == normalized)
     scoped: list[tuple[TermDecision, ...]] = []
     if context.plugin_id is not None:
         scoped.append(
@@ -193,6 +216,7 @@ __all__ = [
     "EffectiveSnapshotStatus",
     "EffectiveTermResolution",
     "EffectiveTerminologyPort",
+    "EffectiveTerminologyIndex",
     "EffectiveTerminologySnapshot",
     "EffectiveTerminologySnapshotPort",
     "SnapshotEffectiveTerminologyPort",

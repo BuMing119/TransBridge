@@ -56,15 +56,16 @@ def test_import_dialog_explains_snapshot_and_defaults_to_not_switching() -> None
     assert dialog.profile_name == "社区方案"
     assert not dialog.select_after_create
     assert any("独立副本" in label.text() for label in dialog.findChildren(QLabel))
-    assert "采用来源译名 1 个" in dialog.summary_label.text()
+    assert "采用来源译名 1 条映射" in dialog.summary_label.text()
     assert "来源独有且未导入 1 个" in dialog.summary_label.text()
-    assert dialog.table.item(0, 3).text() == "采用来源译名"
+    assert dialog.table.model().index(0, 4).data() == "采用来源译名"
+    assert dialog.table.model().rowCount() == 2
     dialog.close()
     adoption = TerminologySourceImportDialog(preview, "社区术语", select_after_create=True)
     assert adoption.select_after_create
-    assert adoption.create_button.text() == "导入并选用"
+    assert adoption.create_button.text() == "创建并选用"
     adoption.select_check.setChecked(False)
     assert not adoption.select_after_create
-    assert adoption.create_button.text() == "导入副本"
+    assert adoption.create_button.text() == "创建译名方案"
     adoption.close()
     _APP.processEvents()

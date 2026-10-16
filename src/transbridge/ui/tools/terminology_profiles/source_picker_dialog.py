@@ -27,15 +27,15 @@ class TerminologySourcePickerDialog(QDialog):
     def __init__(self, context, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._selections = list(configured_source_selections(context))
-        self.setWindowTitle("选择术语来源")
-        self.setAccessibleName("创建译名方案的术语来源")
+        self.setWindowTitle("选择外部来源")
+        self.setAccessibleName("创建译名方案的外部来源")
         self.resize(680, 460)
 
         layout = QVBoxLayout(self)
-        title = QLabel("从哪一份术语创建译名方案？", self)
+        title = QLabel("从哪个外部来源创建译名方案？", self)
         title.setProperty("tbTerminologyPageTitle", True)
         explanation = QLabel(
-            "每次只读取一个来源，并先显示采用、保留和冲突预览。创建后的方案是独立副本，来源变化不会自动改写它。",
+            "每次只读取一个外部来源，并先显示采用、保留和冲突预览。创建后的方案是独立副本，来源变化不会自动改写它。",
             self,
         )
         explanation.setWordWrap(True)
@@ -44,7 +44,7 @@ class TerminologySourcePickerDialog(QDialog):
         layout.addWidget(explanation)
 
         self.source_list = QListWidget(self)
-        self.source_list.setAccessibleName("可用于创建译名方案的术语来源")
+        self.source_list.setAccessibleName("可用于创建译名方案的外部来源")
         ComponentStyle.apply_static(self.source_list, ComponentKind.TABLE)
         layout.addWidget(self.source_list, 1)
         for selection in self._selections:
@@ -62,6 +62,7 @@ class TerminologySourcePickerDialog(QDialog):
         layout.addLayout(local_row)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel, self)
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
         self.continue_button = QPushButton("继续预览", self)
         self.continue_button.setDefault(True)
         ComponentStyle.apply_static(self.continue_button, ComponentKind.BUTTON)
@@ -92,7 +93,7 @@ class TerminologySourcePickerDialog(QDialog):
     def _browse(self) -> None:
         path, _selected_filter = QFileDialog.getOpenFileName(
             self,
-            "选择术语文件",
+            "选择外部术语文件",
             "",
             "术语文件 (*.json *.csv *.xls *.xlsx);;JSON (*.json);;CSV (*.csv);;Excel (*.xls *.xlsx)",
         )

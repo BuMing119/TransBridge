@@ -24,6 +24,14 @@ class TerminologySyncTaskDraft:
     retry_token: TerminologySyncRetryToken | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class TerminologySyncTaskFailure:
+    """A bounded failure summary retained even when execution produced no item result."""
+
+    code: str
+    message: str
+
+
 class TerminologySyncTaskIncomplete(RuntimeError):
     def __init__(self, result: TerminologyBackupExecutionResult) -> None:
         self.result = result
@@ -36,6 +44,7 @@ class TerminologySyncTaskEntrypoint:
         self._runtime = runtime
         self._executor = executor
         self._results: dict[str, TerminologyBackupExecutionResult] = {}
+        self._failures: dict[str, TerminologySyncTaskFailure] = {}
         self._lock = RLock()
 
     def submit(self, draft: TerminologySyncTaskDraft, owner: OwnerRef) -> JobRef:
@@ -63,13 +72,15 @@ class TerminologySyncTaskEntrypoint:
         ref = deferred.ref
 
         def execute(cancellation) -> None:
-            result = self._executor.execute(
+            result = self._execute_with_feedback(
+                ref,
+                self._executor.execute,
                 ExecuteTerminologyBackupRequest(
                     authorized,
                     ref.run_id,
                     cancellation=cancellation,
                     retry_token=draft.retry_token,
-                )
+                ),
             )
             with self._lock:
                 self._results[ref.run_id] = result
@@ -110,13 +121,15 @@ class TerminologySyncTaskEntrypoint:
         ref = deferred.ref
 
         def execute(cancellation) -> None:
-            result = self._executor.reconcile(
+            result = self._execute_with_feedback(
+                ref,
+                self._executor.reconcile,
                 ExecuteTerminologyBackupRequest(
                     authorized,
                     ref.run_id,
                     cancellation=cancellation,
                     retry_token=token,
-                )
+                ),
             )
             with self._lock:
                 self._results[ref.run_id] = result
@@ -133,9 +146,27 @@ class TerminologySyncTaskEntrypoint:
         with self._lock:
             return self._results.get(ref.run_id)
 
+    def failure(self, ref: JobRef, actor: OwnerRef) -> TerminologySyncTaskFailure | None:
+        self._runtime.get(ref, actor)
+        with self._lock:
+            return self._failures.get(ref.run_id)
+
+    def _execute_with_feedback(self, ref: JobRef, execute, request) -> TerminologyBackupExecutionResult:
+        try:
+            return execute(request)
+        except Exception as exc:
+            with self._lock:
+                self._failures[ref.run_id] = TerminologySyncTaskFailure(
+                    str(getattr(exc, "code", type(exc).__name__)), str(exc) or type(exc).__name__
+                )
+                while len(self._failures) > 100:
+                    self._failures.pop(next(iter(self._failures)))
+            raise
+
 
 __all__ = [
     "TerminologySyncTaskDraft",
     "TerminologySyncTaskEntrypoint",
     "TerminologySyncTaskIncomplete",
+    "TerminologySyncTaskFailure",
 ]

@@ -6,10 +6,12 @@ from copy import deepcopy
 import hashlib
 from pathlib import Path
 from threading import RLock
+from typing import TYPE_CHECKING
 
 from transbridge.application.contracts import DomainError, ErrorCategory
 from transbridge.application.io import FormatCapabilitySnapshot, FormatId, SourceDescriptor, SourceSnapshot
 from transbridge.application.projects import ProjectLifecycleService
+from transbridge.application.terminology.build_freshness import build_input_digest
 from transbridge.application.terminology.identity import canonical_digest
 from transbridge.application.terminology.input_capture import (
     BuildInputSnapshot,
@@ -21,6 +23,9 @@ from transbridge.application.terminology.runtime import TerminologyBusinessGuard
 from transbridge.application.terminology.workloads import TerminologyExpectedState
 from transbridge.persistence.terminology import SqliteTerminologyRepository, TerminologyPaths
 from transbridge.persistence.v2.models import ProjectDto, SchemaEnvelope
+
+if TYPE_CHECKING:
+    from transbridge.application.terminology.publish import PublishTerminologyRequest
 
 _SOURCE_HASH_CHUNK_BYTES = 1024 * 1024
 
@@ -170,7 +175,7 @@ class ProductionState:
         self.contexts: dict[str, object] = {}
         self.latest_builds: dict[tuple[str, str], object] = {}
         self.latest_reports: dict[tuple[str, str], object] = {}
-        self.publish_payloads: dict[str, dict[str, object]] = {}
+        self.publish_payloads: dict[str, PublishTerminologyRequest] = {}
         self.report_payloads: dict[str, dict[str, object]] = {}
         self.changelog_payloads: dict[str, dict[str, object]] = {}
         self.compare_payloads: dict[str, dict[str, object]] = {}
@@ -244,6 +249,7 @@ def expected_state(
         effective_content_digest="no-effective" if effective is None else effective.ref.content_digest,
         base_content_digest="no-base" if draft is None else draft.ref.base_content_digest,
         decision_set_digest="no-draft" if draft is None else draft.ref.decision_set_digest,
+        build_freshness_digest=build_input_digest(snapshot),
     )
 
 

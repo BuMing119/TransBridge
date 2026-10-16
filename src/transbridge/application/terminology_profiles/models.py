@@ -45,6 +45,18 @@ class ProfileState(StrEnum):
     ARCHIVED = "archived"
 
 
+@dataclass(frozen=True, slots=True)
+class ProfileSummary:
+    """Selector metadata, without decoding a potentially large editable draft."""
+
+    profile_id: str
+    project_id: str
+    name: str
+    state: ProfileState
+    draft_revision: int
+    latest_published_revision: int | None
+
+
 @dataclass(frozen=True, order=True, slots=True)
 class ProfileTermMapping:
     original: str
@@ -206,6 +218,7 @@ __all__ = [
     "ProfileEntryOverride",
     "ProfileOccurrenceBinding",
     "ProfileState",
+    "ProfileSummary",
     "ProfileTermMapping",
     "PublishedTerminologyProfile",
     "TerminologyProfile",

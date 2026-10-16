@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .paged_models import KeysetPagedTableModel
+from .pagination_bar import PaginationBar
 
 
 class ConflictsView(QWidget):
@@ -50,15 +51,25 @@ class ConflictsView(QWidget):
         filters.addWidget(self.risk)
         filters.addWidget(self.apply_filter)
         layout.addLayout(filters)
+        self.review_button = QPushButton("查看证据并审核…", self)
+        self.review_button.setEnabled(False)
+        self.review_button.clicked.connect(self._review_selected)
+        layout.addWidget(self.review_button)
         self.table = QTableView(self)
         self.table.setModel(model)
         self.table.setProperty("tbComponentKind", "table")
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setSortingEnabled(False)
         self.table.doubleClicked.connect(lambda index: self.review_requested.emit(index.data(Qt.ItemDataRole.UserRole)))
+        self.table.selectionModel().selectionChanged.connect(
+            lambda: self.review_button.setEnabled(self.table.currentIndex().isValid())
+        )
         layout.addWidget(self.table, 1)
+        self.pagination = PaginationBar(model, self)
+        layout.addWidget(self.pagination)
         self.status = QLabel("尚无需要关注的内容；创建或更新后会在这里显示。", self)
         layout.addWidget(self.status)
         model.loading_changed.connect(self._set_loading)
@@ -69,6 +80,11 @@ class ConflictsView(QWidget):
 
     def _emit_query(self) -> None:
         self.query_changed.emit(self.search.text().strip(), str(self.risk.currentData()))
+
+    def _review_selected(self):
+        index = self.table.currentIndex()
+        if index.isValid():
+            self.review_requested.emit(index.data(Qt.ItemDataRole.UserRole))
 
     def _set_loading(self, loading: bool) -> None:
         self.status.setText("正在载入…" if loading else self._settled_status())

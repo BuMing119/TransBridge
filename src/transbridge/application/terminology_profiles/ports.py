@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from .models import (
+    ProfileSummary,
     PublishedTerminologyProfile,
     TerminologyProfile,
     TerminologyProfileContent,
@@ -13,6 +14,12 @@ from .models import (
 
 
 class TerminologyProfileRepository(Protocol):
+    def list_profile_summaries(
+        self, project_id: str, *, include_archived: bool = False
+    ) -> tuple[ProfileSummary, ...]: ...
+
+    def get_selected_published(self, project_id: str, variant_id: str) -> PublishedTerminologyProfile | None: ...
+
     def list_profiles(self, project_id: str, *, include_archived: bool = False) -> tuple[TerminologyProfile, ...]: ...
 
     def get_profile(self, profile_id: str) -> TerminologyProfile | None: ...
@@ -30,7 +37,14 @@ class TerminologyProfileRepository(Protocol):
         updated_at: str,
     ) -> TerminologyProfile: ...
 
-    def set_archived(self, profile_id: str, *, archived: bool, updated_at: str) -> TerminologyProfile: ...
+    def set_archived(
+        self,
+        profile_id: str,
+        *,
+        archived: bool,
+        updated_at: str,
+        expected_selections: tuple[TerminologyProfileSelection, ...] | None = None,
+    ) -> TerminologyProfile: ...
 
     def insert_published(
         self,
@@ -42,6 +56,8 @@ class TerminologyProfileRepository(Protocol):
     def get_published(self, profile_id: str, revision: int) -> PublishedTerminologyProfile | None: ...
 
     def get_selection(self, project_id: str, variant_id: str) -> TerminologyProfileSelection | None: ...
+
+    def list_profile_selections(self, profile_id: str) -> tuple[TerminologyProfileSelection, ...]: ...
 
     def set_selection(self, selection: TerminologyProfileSelection) -> None: ...
 

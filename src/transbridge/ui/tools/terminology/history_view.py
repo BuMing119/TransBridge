@@ -5,7 +5,9 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QHBoxLayout, QHeaderView, QLabel, QPushButton, QTableView, QVBoxLayout, QWidget
 
+from .change_review_dialog import CanonicalDiffView
 from .paged_models import KeysetPagedTableModel
+from .pagination_bar import PaginationBar
 
 
 class HistoryView(QWidget):
@@ -36,15 +38,26 @@ class HistoryView(QWidget):
         self.table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table, 1)
+        self.pagination = PaginationBar(model, self)
+        layout.addWidget(self.pagination)
         self.status = QLabel("尚无已发布版本。", self)
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
+        self.comparison = CanonicalDiffView(self)
+        self.comparison.setMinimumHeight(320)
+        self.comparison.hide()
+        layout.addWidget(self.comparison, 1)
         model.rowsInserted.connect(self._sync_status)
         model.modelReset.connect(self._sync_status)
 
     def set_status(self, message: str) -> None:
         self.status.setText(message)
         self.status.setVisible(bool(message))
+
+    def set_comparison(self, comparison) -> None:
+        self.comparison.set_comparison(comparison)
+        self.comparison.show()
+        self.set_status(f"比较完成：共 {len(comparison.changes)} 项变化，可搜索并选择查看完整前后内容。")
 
     def _sync_status(self, *_args) -> None:
         self.set_status("" if self.model.rowCount() else "尚无已发布版本。")

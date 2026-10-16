@@ -44,7 +44,16 @@ def inbound_panel(request):
     service = _InboundService(getattr(request, "param", 1))
     presenter = TerminologySyncPresenter(service, RequestContext("owner"), OwnerRef("owner", "gui"))
     panel = TerminologySyncPanel(presenter)
-    panel._run = lambda pending, call: panel._completed(call())
+
+    def run(_pending, call):
+        try:
+            value = call()
+        except Exception as error:
+            panel._failed(error)
+        else:
+            panel._completed(value)
+
+    panel._run = run
     panel.render_sync(presenter.load_inbound())
     yield panel, service
     panel.close()

@@ -95,6 +95,7 @@ def test_shared_service_keeps_one_plan_ref_and_pages_bounded_items() -> None:
 
     assert summary.ref.plan_hash == first.snapshot_digest
     assert summary.counts == (("create_remote", 3),)
+    assert summary.target == _Contexts.target
     assert [item.item_id for item in first.items] == ["item-0", "item-1"]
     assert [item.item_id for item in second.items] == ["item-2"]
     assert second.next_cursor is None

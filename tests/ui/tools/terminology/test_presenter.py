@@ -143,6 +143,13 @@ def test_progressive_notices_explain_impact_history_and_recovery() -> None:
     assert "无需重新发布" in log_failed.recovery
 
 
+def test_terminology_error_is_not_misclassified_by_log_substring():
+    notice = business_diagnostic("TERMINOLOGY_COMMAND_FAILED", "草稿已变化")
+    assert notice.message == "草稿已变化"
+    assert "已发布" not in notice.title
+    assert notice.retry_label is None
+
+
 class _Commands:
     def __init__(self) -> None:
         self.calls = []

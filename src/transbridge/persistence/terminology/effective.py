@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 import sqlite3
 
 from transbridge.application.terminology.effective import (
@@ -21,12 +22,60 @@ class SqliteEffectiveTerminologySnapshotPort:
 
     def __init__(self, repository: SqliteTerminologyRepository) -> None:
         self._repository = repository
+        self._cache: OrderedDict[object, EffectiveTerminologySnapshot] = OrderedDict()
+        self._token: object = None
+
+    def read_cache_token(self) -> object:
+        return self._repository.read_cache_token()
 
     def snapshot(
         self,
         local_project_id: str,
         local_variant_id: str,
         version_id: str | None = None,
+    ) -> EffectiveTerminologySnapshot:
+        if local_project_id != self._repository.project_id:
+            raise ValueError("effective terminology repository belongs to another Project")
+        try:
+            with self._repository._lock:
+                for _ in range(3):
+                    token = self.read_cache_token()
+                    if token != self._token:
+                        self._cache.clear()
+                        self._token = token
+                    ref = (
+                        self._repository.effective_version_ref(local_project_id, local_variant_id)
+                        if version_id is None
+                        else version_id
+                    )
+                    key = (local_project_id, local_variant_id, ref, self._repository.storage_state)
+                    result = self._cache.get(key)
+                    if result is None:
+                        result = self._snapshot_uncached(local_project_id, local_variant_id, version_id)
+                    if self.read_cache_token() != token:
+                        continue
+                    if result.status in {EffectiveSnapshotStatus.READY, EffectiveSnapshotStatus.NO_PROJECT_VERSION}:
+                        self._cache[key] = result
+                        self._cache.move_to_end(key)
+                        while len(self._cache) > 2:
+                            self._cache.popitem(last=False)
+                    return result
+        except (TerminologyStorageError, sqlite3.Error):
+            return EffectiveTerminologySnapshot(
+                local_project_id,
+                local_variant_id,
+                EffectiveSnapshotStatus.CORRUPT,
+                diagnostics=("terminology version could not be read safely",),
+            )
+        return EffectiveTerminologySnapshot(
+            local_project_id,
+            local_variant_id,
+            EffectiveSnapshotStatus.UNAVAILABLE,
+            diagnostics=("terminology changed repeatedly while reading; retry",),
+        )
+
+    def _snapshot_uncached(
+        self, local_project_id: str, local_variant_id: str, version_id: str | None
     ) -> EffectiveTerminologySnapshot:
         if local_project_id != self._repository.project_id:
             raise ValueError("effective terminology repository belongs to another Project")

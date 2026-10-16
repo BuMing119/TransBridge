@@ -6,6 +6,7 @@ from dataclasses import replace
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from .profile_refresh import ProfileRefreshCoordinator
 from .terminology_profile_bar import (
     TerminologyProfileBar,
     TerminologyProfileBarState,
@@ -18,7 +19,7 @@ class TerminologyProfileUiController(QObject):
 
     state_changed = pyqtSignal(object)
 
-    def __init__(self, ctx, factory, bar: TerminologyProfileBar, preview, parent=None) -> None:
+    def __init__(self, ctx, factory, bar: TerminologyProfileBar, preview, parent=None, *, thread_pool=None) -> None:
         super().__init__(parent)
         self._ctx = ctx
         self._factory = factory
@@ -27,7 +28,15 @@ class TerminologyProfileUiController(QObject):
         self._service = None
         self._project_id: str | None = None
         self._manager = None
+        self._manager_identity = None
         self._state = TerminologyProfileBarState()
+        self._state_identity = None
+        self._refresh_pending = False
+        self._refresh = ProfileRefreshCoordinator(
+            self, factory, identity=lambda: self.identity, owner=bar, thread_pool=thread_pool
+        )
+        self._refresh.ready.connect(self._refreshed)
+        self._refresh.failed.connect(self._refresh_failed)
         bar.selection_requested.connect(self.select)
         bar.manage_requested.connect(self.open_manager)
         ctx.project_changed.connect(self.refresh)
@@ -37,6 +46,10 @@ class TerminologyProfileUiController(QObject):
     @property
     def state(self) -> TerminologyProfileBarState:
         return self._state
+
+    @property
+    def refresh_pending(self) -> bool:
+        return self._refresh_pending
 
     @property
     def identity(self) -> tuple[str, str] | None:
@@ -63,7 +76,7 @@ class TerminologyProfileUiController(QObject):
         if not any(getattr(decision, "is_effective", False) for decision in base_snapshot.decisions):
             raise RuntimeError("当前已发布的项目术语中没有可用于创建方案的有效术语。")
         if not getattr(source, "entries", ()):
-            raise RuntimeError("该术语来源没有可保存的有效术语。")
+            raise RuntimeError("该外部来源没有可保存的有效术语。")
         return TerminologyProfileImportService(self._service).preview(
             project_id,
             variant_id,
@@ -76,7 +89,7 @@ class TerminologyProfileUiController(QObject):
 
         identity = getattr(self._ctx, "active_version_identity", None)
         if identity is None or self._service is None:
-            raise RuntimeError("当前工程上下文已经变化，请重新读取术语来源。")
+            raise RuntimeError("当前工程上下文已经变化，请重新读取外部来源。")
         project_id, variant_id = (str(identity[0]), str(identity[1]))
         read_base = getattr(self._factory, "base_terminology_snapshot", None)
         if not callable(read_base):
@@ -86,7 +99,7 @@ class TerminologyProfileUiController(QObject):
             current_base.version_id != preview.base_version_id
             or current_base.content_digest != preview.base_content_digest
         ):
-            raise RuntimeError("项目术语在预览后发生了变化，请重新读取术语来源。")
+            raise RuntimeError("项目术语在预览后发生了变化，请重新读取外部来源。")
         from transbridge.application.terminology_profiles import TerminologyProfileImportService
 
         result = TerminologyProfileImportService(self._service).create_and_publish(
@@ -100,29 +113,47 @@ class TerminologyProfileUiController(QObject):
         return result
 
     def refresh(self) -> None:
-        identity = getattr(self._ctx, "active_version_identity", None)
+        identity = self.identity
+        if self._manager is not None and identity != self._manager_identity:
+            manager = self._manager
+            self._manager = None
+            self._manager_identity = None
+            manager.context_changed()
         if identity is None:
+            self._refresh.invalidate()
+            self._refresh_pending = False
             self._service = None
             self._project_id = None
+            self._state_identity = None
             self._preview.set_terminology_profile(None)
             self._render(TerminologyProfileBarState())
             return
-        project_id, variant_id = (str(identity[0]), str(identity[1]))
-        try:
-            if self._service is None or self._project_id != project_id:
-                self._service = self._factory.profile_service_for(project_id)
-                self._project_id = project_id
-            profiles = self._service.list_profiles(project_id)
-            selected = self._service.selected_revision(project_id, variant_id)
-        except Exception as exc:  # noqa: BLE001 - UI adapter boundary
+        if identity != self._state_identity:
+            self._state = TerminologyProfileBarState()
             self._preview.set_terminology_profile(None)
-            self._render(
-                TerminologyProfileBarState(
-                    enabled=False,
-                    detail=f"译名方案不可用：{exc}",
-                )
-            )
-            return
+        if self._project_id != identity[0]:
+            self._service = None
+            self._project_id = None
+        self._state_identity = identity
+        self._loading("正在读取译名方案…")
+        self._refresh.request(identity, service=self._service)
+
+    def _loading(self, message):
+        self._refresh_pending = True
+        self._render(
+            replace(self._state, enabled=False, can_manage=False, detail=message, selection_error="", loading=True)
+        )
+
+    def _refresh_failed(self, identity, error):
+        self._refresh_pending = False
+        self._preview.set_terminology_profile(None)
+        self._render(TerminologyProfileBarState(detail=f"译名方案不可用：{error}"))
+
+    def _refreshed(self, identity, result):
+        self._refresh_pending = False
+        self._service = result.service
+        self._project_id = identity[0]
+        profiles, selected, base = result.profiles, result.selected, result.base
 
         choices = []
         for profile in profiles:
@@ -135,11 +166,13 @@ class TerminologyProfileUiController(QObject):
             choices.append(TerminologyProfileChoice(profile.profile_id, label))
         selected_id = None if selected is None else selected.profile_id
         detail = (
-            "当前显示项目译文，可直接编辑。"
+            "使用项目默认译名；当前项目译文可直接编辑。"
             if selected is None
-            else f"正在预览“{selected.name}”方案；只调整已登记译名，不会修改项目译文。"
+            else f"正在预览“{selected.name}”译名方案；只调整已登记译名，不会修改项目译文。"
         )
-        self._preview.set_terminology_profile(selected)
+        if result.selection_error:
+            detail = f"切换失败，已保留原方案：{result.selection_error}"
+        self._preview.set_terminology_profile(selected, base_snapshot=base)
         self._render(
             TerminologyProfileBarState(
                 choices=tuple(choices),
@@ -148,46 +181,44 @@ class TerminologyProfileUiController(QObject):
                 can_manage=True,
                 detail=detail,
                 selected_revision=selected,
+                selection_error=f"切换失败：{result.selection_error}" if result.selection_error else "",
             )
         )
 
     def select(self, profile_id: str | None) -> None:
-        identity = getattr(self._ctx, "active_version_identity", None)
-        if identity is None or self._service is None:
+        identity = self.identity
+        if identity is None or self._service is None or identity != self._state_identity:
             self.refresh()
             return
-        project_id, variant_id = (str(identity[0]), str(identity[1]))
-        try:
-            if profile_id is None:
-                self._service.clear_selection(project_id, variant_id)
-            else:
-                self._service.select(project_id, variant_id, str(profile_id))
-        except Exception as exc:  # noqa: BLE001 - UI adapter boundary
-            self.refresh()
-            state = replace(
-                self._state,
-                detail=f"切换失败，已保留原方案：{exc}",
-                selection_error=f"切换失败：{exc}",
-            )
-            self._render(state)
-            return
-        self.refresh()
+        self._loading("正在切换译名方案…")
+        self._refresh.request(
+            identity, service=self._service, selection=None if profile_id is None else str(profile_id)
+        )
 
     def open_manager(self) -> None:
         identity = getattr(self._ctx, "active_version_identity", None)
-        if identity is None or self._service is None:
+        if identity is None or self._service is None or self._refresh_pending:
             self.refresh()
             return
         if self._manager is not None and self._manager.isVisible():
+            self._manager.select_profile(self._state.selected_profile_id)
             self._manager.raise_()
             self._manager.activateWindow()
             return
         from transbridge.ui.tools.terminology_profiles import TerminologyProfileManagerDialog
 
-        manager = TerminologyProfileManagerDialog(self._service, str(identity[0]), self._bar.window())
+        manager = TerminologyProfileManagerDialog(
+            self._service,
+            str(identity[0]),
+            self._bar.window(),
+            selected_profile_id=self._state.selected_profile_id,
+            project_name=getattr(self._ctx, "project_name", None),
+            variant_names={str(item["id"]): str(item["name"]) for item in getattr(self._ctx, "project_variants", ())},
+        )
         manager.profiles_changed.connect(self._profiles_changed)
         manager.finished.connect(lambda _result, current=manager: self._clear_manager(current))
         self._manager = manager
+        self._manager_identity = self.identity
         manager.open()
 
     def _clear_manager(self, manager) -> None:

@@ -26,6 +26,7 @@ class TerminologyProfileBarState:
     detail: str = "打开工程后可选择译名方案。"
     selected_revision: PublishedTerminologyProfile | None = None
     selection_error: str = ""
+    loading: bool = False
 
 
 class TerminologyProfileBar(QWidget):
@@ -68,7 +69,7 @@ class TerminologyProfileBar(QWidget):
         self.combo.blockSignals(True)
         try:
             self.combo.clear()
-            self.combo.addItem("不应用方案（保持项目译文）", None)
+            self.combo.addItem("使用项目默认译名", None)
             for choice in state.choices:
                 self.combo.addItem(choice.label, choice.profile_id)
             selected = self.combo.findData(state.selected_profile_id)

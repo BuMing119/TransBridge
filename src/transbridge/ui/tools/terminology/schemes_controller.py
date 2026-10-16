@@ -25,7 +25,7 @@ class TerminologySchemesController(QObject):
             view.actions_button,
             profile_controller,
             ConfiguredTermSourceReader,
-            idle_button_text="选用术语源…",
+            idle_button_text="方案操作…",
             select_after_create=True,
         )
         view.create_requested.connect(self.create_from_source)
@@ -37,13 +37,18 @@ class TerminologySchemesController(QObject):
         profile_controller.state_changed.connect(view.render)
         view.render(profile_controller.state)
 
+    def close(self) -> None:
+        self._imports.dispose()
+        self._profiles = None
+        self._context = None
+
     def create_from_source(self) -> None:
         if self._profiles is None or self._context is None:
             return
         try:
             dialog = TerminologySourcePickerDialog(self._context, self._view)
         except Exception as exc:  # noqa: BLE001 - configuration errors must remain visible
-            QMessageBox.warning(self._view, "无法读取术语来源", str(exc))
+            QMessageBox.warning(self._view, "无法读取外部来源", str(exc))
             return
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return

@@ -118,7 +118,7 @@ def _measure_qt_feedback(app: QApplication) -> tuple[tuple[float, ...], tuple[fl
 
         started = time.perf_counter()
         window._run_command(command, "任务已开始")
-        if window.build_view.message.text() != "正在准备并提交任务…":
+        if window.operation_notice.message.text() != "正在准备并提交任务…":
             raise RuntimeError("terminology window did not expose immediate preparation feedback")
         visible_samples.append(time.perf_counter() - started)
         deadline = time.monotonic() + 2.0

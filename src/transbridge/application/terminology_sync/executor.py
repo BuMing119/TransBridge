@@ -29,6 +29,7 @@ from .execution_models import (
     TerminologySyncItemStatus,
     TerminologySyncRetryToken,
 )
+from .execution_retry import build_retry_token, validate_retry_inputs, validate_retry_token
 from .inbound import InboundChangeSetStorePort, InboundTerminologyChangeSet, build_inbound_change_set
 from .mapping import content_equal, remote_content
 from .models import (
@@ -95,13 +96,13 @@ class TerminologyBackupExecutor:
             raise ValueError("authorized backup plan requires an owner")
         retry = request.retry_token
         if retry is not None:
-            self._validate_retry(retry, request.authorized_plan)
+            validate_retry_token(retry, request.authorized_plan)
             if retry.unknown_item_ids:
                 return self._reconcile_required_result(request, retry)
         self._require_current_binding(plan)
         current_inputs = self._fresh_inputs.load_for_plan(plan.plan_hash)
-        if retry is not None and retry.confirmed_item_ids:
-            self._validate_confirmed_retry_inputs(plan, current_inputs, retry)
+        if retry is not None:
+            validate_retry_inputs(plan, current_inputs, retry, self._planner)
         else:
             current_plan = self._planner.plan(current_inputs)
             if current_plan.plan_hash != plan.plan_hash:
@@ -131,7 +132,7 @@ class TerminologyBackupExecutor:
                     )
                 )
                 continue
-            if not item.action.executable_remote:
+            if not item.action.executable_remote and item.action is not TerminologySyncAction.ADOPT_LINK:
                 outcomes.append(self._skipped(item, "NO_REMOTE_WRITE", "plan item has no remote side effect"))
                 continue
             outcome = self._execute_item(current_inputs, item, request.cancellation)
@@ -151,7 +152,7 @@ class TerminologyBackupExecutor:
 
         completed_at = self._clock()
         run_outcome = _run_outcome(outcomes, cancelled=cancelled)
-        retry_token = self._retry_token(
+        retry_token = build_retry_token(
             request.authorized_plan,
             outcomes,
             previous=retry,
@@ -189,7 +190,7 @@ class TerminologyBackupExecutor:
         if token is None or not token.unknown_item_ids:
             raise ValueError("reconcile requires a retry token with unknown items")
         plan = request.authorized_plan.plan
-        self._validate_retry(token, request.authorized_plan)
+        validate_retry_token(token, request.authorized_plan)
         self._require_current_binding(plan)
         inputs = self._fresh_inputs.load_for_plan(plan.plan_hash)
         current_baseline_revision = None if inputs.baseline is None else inputs.baseline.revision
@@ -346,6 +347,18 @@ class TerminologyBackupExecutor:
                 (term for term in inputs.remote_snapshot.items if term.remote_id == item.remote_id),
                 None,
             )
+            if item.action is TerminologySyncAction.ADOPT_LINK:
+                assert remote_term is not None
+                return TerminologySyncItemOutcome(
+                    item.item_id,
+                    item.action,
+                    TerminologySyncItemStatus.SUCCEEDED,
+                    "LINK_ADOPTED",
+                    "confirmed identical local and remote terminology linked without a remote write",
+                    remote_id=remote_term.remote_id,
+                    remote_revision=remote_term.server_revision,
+                    remote_observed_digest=remote_term.observed_digest,
+                )
             if item.action is TerminologySyncAction.CREATE_REMOTE:
                 result = self._remote.create_term(
                     inputs.line.target.remote_project_id,
@@ -541,82 +554,6 @@ class TerminologyBackupExecutor:
             source_run_outcome=run_outcome,
             created_at=completed_at,
         )
-
-    def _retry_token(
-        self,
-        authorized: AuthorizedTerminologySyncPlan,
-        outcomes: list[TerminologySyncItemOutcome],
-        *,
-        previous: TerminologySyncRetryToken | None,
-        baseline_revision: int,
-    ) -> TerminologySyncRetryToken | None:
-        confirmed = tuple(
-            sorted(
-                set(() if previous is None else previous.confirmed_item_ids)
-                | {item.item_id for item in outcomes if item.status is TerminologySyncItemStatus.SUCCEEDED}
-            )
-        )
-        unknown = tuple(item.item_id for item in outcomes if item.status is TerminologySyncItemStatus.UNKNOWN)
-        failed = any(
-            item.status in {TerminologySyncItemStatus.FAILED, TerminologySyncItemStatus.CANCELLED} for item in outcomes
-        )
-        if not unknown and not failed:
-            return None
-        plan = authorized.plan
-        return TerminologySyncRetryToken(
-            plan.line_id,
-            plan.target_identity,
-            plan.plan_hash,
-            authorized.owner_id,
-            confirmed,
-            unknown,
-            baseline_revision,
-        )
-
-    @staticmethod
-    def _validate_retry(token: TerminologySyncRetryToken, authorized: AuthorizedTerminologySyncPlan) -> None:
-        plan = authorized.plan
-        expected = (plan.line_id, plan.target_identity, plan.plan_hash, authorized.owner_id)
-        actual = (token.line_id, token.target_identity, token.plan_hash, token.owner_id)
-        if actual != expected or token.compute_digest() != token.token_digest:
-            raise ValueError("retry token does not belong to the authorized terminology sync plan")
-
-    @staticmethod
-    def _validate_confirmed_retry_inputs(
-        plan: TerminologySyncPlan,
-        inputs: TerminologySyncPlannerInput,
-        token: TerminologySyncRetryToken,
-    ) -> None:
-        if (
-            inputs.line.line_id != plan.line_id
-            or inputs.line.target.target_id != plan.target_identity
-            or inputs.profile.mode is not plan.mode
-            or inputs.profile.revision != plan.profile_revision
-            or inputs.local_snapshot.version_id != plan.local_version_id
-            or inputs.local_snapshot.content_digest != plan.local_content_digest
-            or (None if inputs.baseline is None else inputs.baseline.revision) != token.baseline_revision
-        ):
-            raise TerminologySyncPlanStaleError("terminology sync scope changed before retry")
-        links = {item.item_id: item for item in inputs.item_links}
-        if any(
-            item_id not in links
-            or links[item_id].last_outcome not in {TerminologySyncOutcome.CONFIRMED, TerminologySyncOutcome.RECONCILED}
-            for item_id in token.confirmed_item_ids
-        ):
-            raise TerminologySyncPlanStaleError("confirmed retry outcomes are not durable")
-        remote_by_id = {term.remote_id: term for term in inputs.remote_snapshot.items}
-        for item in plan.items:
-            if item.item_id in token.confirmed_item_ids or not item.action.executable_remote:
-                continue
-            if item.action is TerminologySyncAction.CREATE_REMOTE:
-                if item.local is not None and any(
-                    content_equal(item.local, remote_content(term.entry)) for term in inputs.remote_snapshot.items
-                ):
-                    raise TerminologySyncPlanStaleError("unconfirmed create now has a matching remote term")
-                continue
-            current = remote_by_id.get(item.remote_id)
-            if current is None or item.remote is None or not content_equal(item.remote, remote_content(current.entry)):
-                raise TerminologySyncPlanStaleError("an unconfirmed remote item changed before retry")
 
     @staticmethod
     def _reconcile_required_result(

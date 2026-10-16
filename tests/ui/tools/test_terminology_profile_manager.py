@@ -5,6 +5,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication, QInputDialog
 
 from transbridge.application.terminology_profiles import (
@@ -40,8 +41,8 @@ def _service() -> tuple[TerminologyProfileService, str, TerminologyProfileConten
 def test_manager_saves_mapping_without_dropping_overrides_or_bindings_and_publishes() -> None:
     service, profile_id, original = _service()
     dialog = TerminologyProfileManagerDialog(service, "project-a")
-    target = dialog.mapping_table.item(0, 2)
-    target.setText("神龙")
+    model = dialog.mapping_table.model()
+    assert model.setData(model.index(0, 2), "神龙")
 
     dialog._save_draft()
     profile = next(item for item in service.list_profiles("project-a") if item.profile_id == profile_id)
@@ -49,7 +50,7 @@ def test_manager_saves_mapping_without_dropping_overrides_or_bindings_and_publis
     assert profile.draft.overrides == original.overrides
     assert profile.draft.bindings == original.bindings
 
-    dialog.mapping_table.item(0, 2).setText("远古巨龙")
+    assert model.setData(model.index(0, 2), "远古巨龙")
     dialog._publish()
     service.select("project-a", "variant-a", profile_id)
     published = service.selected_revision("project-a", "variant-a")
@@ -59,21 +60,22 @@ def test_manager_saves_mapping_without_dropping_overrides_or_bindings_and_publis
     assert published.content.bindings == original.bindings
     profile = next(item for item in service.list_profiles("project-a") if item.profile_id == profile_id)
     assert profile.latest_published_revision == 1
-    assert dialog.windowTitle() == "管理不同译名版本"
+    assert dialog.windowTitle() == "管理译名方案"
     assert "可选择" in dialog.profile_combo.currentText()
     assert "r1" not in dialog.profile_combo.currentText()
     assert dialog.save_button.text() == "保存修改"
     assert dialog.publish_button.text() == "应用修改"
-    assert [dialog.mapping_table.horizontalHeaderItem(index).text() for index in range(3)] == [
+    assert [model.headerData(index, Qt.Orientation.Horizontal) for index in range(3)] == [
         "原文术语",
         "当前译文中的叫法",
-        "此版本采用的译名",
+        "方案译名",
     ]
     dialog.close()
     _APP.processEvents()
 
 
 def test_manager_create_copy_rename_and_archive(monkeypatch) -> None:
+    monkeypatch.setattr("transbridge.ui.tools.terminology_profiles.manager_dialog.confirm_archive", lambda *_args: True)
     service, profile_id, _content = _service()
     dialog = TerminologyProfileManagerDialog(service, "project-a")
     answers = iter((("社区版", True), ("社区版副本", True), ("社区修订版", True)))

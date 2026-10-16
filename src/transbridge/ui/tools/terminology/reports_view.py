@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import pyqtSignal
+from pathlib import Path
+
+from PyQt6.QtCore import Qt, QUrl, pyqtSignal
+from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from .build_view import TechnicalDetailsBox
@@ -62,9 +65,20 @@ class ReportsView(QWidget):
         recent_title = QLabel("最近生成", recent)
         recent_title.setProperty("tbTerminologySectionTitle", True)
         self.recent_status = QLabel("本次会话尚未生成报告。", recent)
+        self.recent_status.setWordWrap(True)
+        self.recent_status.setTextFormat(Qt.TextFormat.PlainText)
+        self.recent_status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.recent_status.setProperty("tbSecondary", True)
         recent_layout.addWidget(recent_title)
         recent_layout.addWidget(self.recent_status)
+        self._artifact_path = None
+        self.open_artifact = QPushButton("打开生成的文件", recent)
+        self.open_folder = QPushButton("打开所在目录", recent)
+        for button in (self.open_artifact, self.open_folder):
+            button.hide()
+            recent_layout.addWidget(button)
+        self.open_artifact.clicked.connect(lambda: self._open_artifact(folder=False))
+        self.open_folder.clicked.connect(lambda: self._open_artifact(folder=True))
         layout.addWidget(recent)
 
         quality.clicked.connect(self.quality_report_requested)
@@ -91,6 +105,22 @@ class ReportsView(QWidget):
         if notice.retry_label:
             self.retry.setText(notice.retry_label)
         self.details.set_details(notice.technical_details)
+
+    def set_artifact(self, path: str) -> None:
+        self._artifact_path = Path(path)
+        self.recent_status.setText(f"已生成：{path}")
+        self.open_artifact.show()
+        self.open_folder.show()
+        self.retry.hide()
+        self.notice_title.clear()
+        self.notice_message.clear()
+        self.details.set_details(())
+
+    def _open_artifact(self, *, folder: bool) -> None:
+        if self._artifact_path is not None:
+            path = self._artifact_path.parent if folder else self._artifact_path
+            if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
+                self.recent_status.setText(f"无法打开：{path}。请复制路径后手动打开。")
 
 
 def _export_row(parent: QWidget, title: str, description: str, action: QPushButton) -> QFrame:

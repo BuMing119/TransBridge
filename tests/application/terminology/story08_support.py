@@ -20,6 +20,7 @@ def build() -> BuildResult:
         "project-1",
         "variant-1",
         BuildSummary(1, 0, 0, 0),
+        input_digest="current",
     )
 
 

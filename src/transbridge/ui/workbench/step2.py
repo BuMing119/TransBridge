@@ -4,8 +4,6 @@
 支持多选标签筛选、文本搜索、行内编辑、三态标记（★/?/✓）。
 """
 
-from types import MappingProxyType
-
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QDialog,
@@ -19,7 +17,6 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from transbridge.application.terminology_profiles import TerminologyProfileProjector
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui.foundation.adapters import ThemeView
@@ -42,6 +39,7 @@ from transbridge.ui.workbench.labels_view import (
 )
 from transbridge.ui.workbench.progress_view import ProgressView
 from transbridge.ui.workbench.table_presenter import TablePresenter
+from transbridge.ui.workbench.terminology_preview import TerminologyPreviewCoordinator, preview_identity
 from transbridge.ui.workbench.translation_reset import TranslationResetAction
 from transbridge.ui.workbench.translation_stage_action import TranslationStageAction
 from transbridge.ui.workbench.translation_table import (
@@ -94,9 +92,6 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         self._filtered_total = 0
         self._render_generation = 0
         self._render_entries: tuple[TranslationEntry, ...] = ()
-        self._terminology_profile = None
-        self._terminology_projector = TerminologyProfileProjector()
-        self._terminology_projection = MappingProxyType({})
         self._pending_locate_entry_id: str | None = None
         self._filter_scope: tuple[object, ...] | None = None
         self._filters_presenter = FiltersPresenter()
@@ -104,6 +99,12 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         self._summary = StatisticsSummary(0, 0, 0, 0)
         self._tag_buttons: dict[str | int | None, QPushButton] = {}  # 标签按钮
         self._init_ui()
+        self._terminology_preview = TerminologyPreviewCoordinator(
+            self, identity=lambda: preview_identity(ctx, self._filter_scope)
+        )
+        self._terminology_preview.changed.connect(self._populate_table)
+        ctx.project_changed.connect(self._terminology_preview.invalidate_context)
+        ctx.variant_changed.connect(self._terminology_preview.invalidate_context)
         self._entry_refresh = EntryRefresh(self)
         ctx.collection_changed.connect(self.refresh)
         ctx.collection_list_changed.connect(self._update_workflow_actions)
@@ -128,6 +129,10 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         self._progress.setSizePolicy(progress_policy)
         ComponentStyle.apply_static(self._progress, ComponentKind.PROGRESS)
         outer.addWidget(self._progress)
+        self._terminology_status = QLabel(self)
+        self._terminology_status.setWordWrap(True)
+        self._terminology_status.hide()
+        outer.addWidget(self._terminology_status)
 
         # 可点击的紧凑摘要；它只改变 FilterState，不直接操作数据。
         self._summary_view = StatisticsSummaryView(self, theme_view=self._theme_view)
@@ -286,8 +291,9 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
             self._filters_view.set_content_visible(False)
             self._filtered_total = 0
             self._render_entries = ()
-            self._terminology_projection = MappingProxyType({})
-            self._table.set_terminology_projection({}, profile_label=self._profile_label())
+            self._terminology_preview.set_entries(())
+            self._terminology_status.hide()
+            self._table.set_terminology_projection({}, profile_label=self._terminology_preview.profile_label)
             session = self._table_presenter.render((), {}, {})
             self._render_generation = session.generation
             self._update_count_label()
@@ -296,7 +302,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
 
         self._progress.setValue(100)
         self._entries = list(collection)
-        self._rebuild_terminology_projection()
+        self._terminology_preview.set_entries(self._entries)
         self._summary = StatisticsSummary.from_entries(self._entries)
         self._summary_view.set_summary(self._summary)
         if content_changed:
@@ -377,6 +383,8 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
     # ── 表格填充 ──────────────────────────────────────────────────────────────
 
     def _populate_table(self):
+        self._terminology_status.setText(self._terminology_preview.message)
+        self._terminology_status.setVisible(bool(self._terminology_preview.message))
         self._filters_view.refresh_active_summary()
         self._filters_presenter.update(self._filters_view.state())
         self._render_entries = tuple(self._filters_presenter.apply(self._entries, self._entry_labels))
@@ -385,7 +393,9 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         snapshot = projection.snapshot() if projection is not None else None
         self._table.set_terminology_projection(
             self._terminology_projection,
-            profile_label=self._profile_label(),
+            profile_label=self._terminology_preview.profile_label,
+            pending=self._terminology_preview.pending,
+            error=self._terminology_preview.error,
         )
         session = self._table_presenter.render(
             self._render_entries,
@@ -443,49 +453,19 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         if item.column() == _COL_TRANS:
             self._table.editItem(item)
 
-    def set_terminology_profile(self, profile) -> None:
+    def set_terminology_profile(self, profile, *, base_snapshot=None) -> None:
         """Apply one frozen published profile to display without changing entries."""
 
-        if profile == self._terminology_profile:
-            return
-        self._terminology_profile = profile
-        self._rebuild_terminology_projection()
-        self._populate_table()
+        if self._terminology_preview.set_profile(profile, base_snapshot):
+            self._populate_table()
 
-    def _rebuild_terminology_projection(self) -> None:
-        profile = self._terminology_profile
-        if profile is None:
-            self._terminology_projection = MappingProxyType({})
-            return
-        values = {}
-        for entry in self._entries:
-            key = entry.identity.serialize()
-            values[key] = self._terminology_projector.project(
-                entry_key=key,
-                original=entry.original or "",
-                common_translation=entry.translation or "",
-                content=profile.content,
-                plugin_id=self._terminology_plugin_id(entry),
-            )
-        self._terminology_projection = MappingProxyType(values)
+    @property
+    def _terminology_profile(self):
+        return self._terminology_preview.profile
 
-    @staticmethod
-    def _terminology_plugin_id(entry: TranslationEntry) -> str | None:
-        metadata = dict(entry.metadata)
-        configured = metadata.get("terminology_plugin_id")
-        if configured is not None and str(configured).strip():
-            return str(configured).strip()
-        form_id = (entry.form_id_with_plugin or "").strip()
-        if "|" not in form_id:
-            return None
-        plugin_id = form_id.rpartition("|")[2].strip()
-        return plugin_id or None
-
-    def _profile_label(self) -> str | None:
-        profile = self._terminology_profile
-        if profile is None:
-            return None
-        return profile.name
+    @property
+    def _terminology_projection(self):
+        return self._terminology_preview.projection
 
     def set_editable_entry_keys(self, keys) -> None:
         """Bind popup activation without making Step2 own the editor window."""
@@ -715,5 +695,6 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
     def closeEvent(self, event) -> None:
         """Release owned debounce and incremental-render callbacks before hide."""
         self._filters_view.search_timer.stop()
+        self._terminology_preview.close()
         self._table.close_rendering()
         super().closeEvent(event)

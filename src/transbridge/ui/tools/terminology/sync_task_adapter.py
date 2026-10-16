@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from threading import RLock
 
 from transbridge.application.contracts import JobRef
 from transbridge.application.tasks import JobSnapshot, OwnerRef, TaskRuntime
@@ -20,6 +21,9 @@ class TerminologySyncTaskAdapter:
         self._runtime = runtime
         self._actor = actor
         self._on_change = on_change
+        self._lock = RLock()
+        self._seeding = False
+        self._seed = None
         self._binding = TaskProjectionBinding(runtime, actor, self._project)
 
     @property
@@ -27,7 +31,18 @@ class TerminologySyncTaskAdapter:
         return self._binding.closed
 
     def start(self) -> None:
-        self._binding.start()
+        with self._lock:
+            self._seeding = True
+            self._seed = None
+        try:
+            self._binding.start()
+        finally:
+            with self._lock:
+                self._seeding = False
+        with self._lock:
+            if self._seed is not None:
+                self._on_change(self._seed[1])
+                self._seed = None
 
     def close(self) -> None:
         self._binding.close()
@@ -38,7 +53,14 @@ class TerminologySyncTaskAdapter:
     def _project(self, activity) -> None:
         if not activity.job_type.startswith("operation.terminology_sync."):
             return
-        self._on_change(activity)
+        with self._lock:
+            if self._seeding:
+                ref = JobRef(activity.job_id, activity.owner.owner_id, activity.run_id)
+                snapshot = self._runtime.get(ref, self._actor)
+                if self._seed is None or snapshot.created_at >= self._seed[0]:
+                    self._seed = (snapshot.created_at, activity)
+                return
+            self._on_change(activity)
 
 
 __all__ = ["TerminologySyncTaskAdapter"]

@@ -4,14 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from threading import Lock
 from typing import Protocol
 
 from transbridge.application.terminology.effective import (
     EffectiveSnapshotStatus,
+    EffectiveTerminologyIndex,
     EffectiveTerminologyPort,
     EffectiveTerminologySnapshot,
     TerminologyLookupContext,
-    resolve_snapshot,
 )
 from transbridge.application.terminology.identity import normalize_original
 from transbridge.application.terminology.models import TermDecision
@@ -70,6 +71,8 @@ class ProjectTerminologyAdapter:
     ) -> None:
         self._effective = effective
         self._gate = gate or DisabledEffectiveTerminologyGate()
+        self._index: EffectiveTerminologyIndex | None = None
+        self._index_lock = Lock()
 
     def enabled(self, context: TerminologyLookupContext) -> bool:
         return self._gate.enabled(context)
@@ -98,12 +101,12 @@ class ProjectTerminologyAdapter:
         )
         if snapshot.status is not EffectiveSnapshotStatus.READY:
             return ProjectTerminologyLoad(legacy, snapshot.status, "legacy-global", snapshot.diagnostics)
-        terms = _candidate_terms(snapshot, legacy)
+        index = self._snapshot_index(snapshot)
         merged: dict[str, TermEntry] = {}
         for entry in legacy:
             merged[normalize_original(entry.term)] = entry
-        for term in terms:
-            resolution = resolve_snapshot(snapshot, term, context)
+        for term in index.originals:
+            resolution = index.resolve(term, context)
             key = normalize_original(term)
             if resolution.decision is not None:
                 merged[key] = project_term_entry(resolution.decision)
@@ -115,6 +118,14 @@ class ProjectTerminologyAdapter:
             _scope_snapshot_identity(snapshot, context),
             snapshot.diagnostics,
         )
+
+    def _snapshot_index(self, snapshot: EffectiveTerminologySnapshot) -> EffectiveTerminologyIndex:
+        # Keep only the latest immutable version. Legacy entries are merged afresh
+        # so in-flight additions and source priority changes remain visible.
+        with self._index_lock:
+            if self._index is None or self._index.snapshot.snapshot_identity != snapshot.snapshot_identity:
+                self._index = EffectiveTerminologyIndex(snapshot)
+            return self._index
 
     def resolve(
         self,
@@ -178,12 +189,6 @@ def project_term_entry(decision: TermDecision) -> TermEntry:
         note=decision.notes,
         external_id=decision.term_id,
     )
-
-
-def _candidate_terms(snapshot: EffectiveTerminologySnapshot, legacy: tuple[TermEntry, ...]) -> tuple[str, ...]:
-    values = {entry.term for entry in legacy}
-    values.update(item.original for item in snapshot.decisions)
-    return tuple(sorted(values, key=lambda value: (normalize_original(value), value)))
 
 
 def _scope_snapshot_identity(

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from transbridge.application.contracts import RequestContext
 from transbridge.application.io import default_format_catalog
 from transbridge.application.projects import ProjectLifecycleService
+from transbridge.application.terminology.browse_queries import TerminologyBrowseQueries
 from transbridge.application.terminology.effective import SnapshotEffectiveTerminologyPort
 from transbridge.application.terminology.input_capture import BuildInputCaptureService
 from transbridge.application.terminology.ports import PageRequest
@@ -20,6 +21,7 @@ from transbridge.application.terminology_profiles import (
     TerminologyProfileService,
     is_profiled_version_id,
 )
+from transbridge.application.terminology_profiles.browse_queries import ProfiledTerminologyBrowseSnapshotPort
 from transbridge.application.terminology_sync.draft_import import InboundDraftImportService
 from transbridge.application.terminology_sync.draft_import_models import DraftImportChoice, DraftImportSelection
 from transbridge.application.terminology_sync.executor import TerminologyBackupExecutor, TerminologySyncFreshInputPort
@@ -97,9 +99,16 @@ class ProductionTerminologyComposition:
 
         queries = None if context.project_id is None else self.repositories.for_project(context.project_id)
         sync = None
+        browsing = None
         if context.project_id is not None and context.variant_id is not None:
             sync = self.sync_service_for(context)
-        return TerminologyUiServices(self.build_inputs, queries, self.commands, self.tasks.runtime, sync)
+            browsing = TerminologyBrowseQueries(
+                queries,
+                ProfiledTerminologyBrowseSnapshotPort(
+                    SqliteEffectiveTerminologySnapshotPort(queries), self.profile_service_for(context.project_id)
+                ),
+            )
+        return TerminologyUiServices(self.build_inputs, queries, self.commands, self.tasks.runtime, sync, browsing)
 
     def sync_service_for(self, context: RequestContext) -> TerminologySyncApplicationService:
         if context.project_id is None or context.variant_id is None:
@@ -637,7 +646,7 @@ def build_production_terminology(
     )
     commit_port = ProductionTerminologyCommitPort(lifecycle, repositories, state, leases)
     registry = TerminologyWorkloadRegistry()
-    registry.bind(TerminologyWorkloadType.BUILD, BuildRunner(repositories, state, capabilities.catalog, ids))
+    registry.bind(TerminologyWorkloadType.BUILD, BuildRunner(repositories, state, capabilities.catalog, ids, lifecycle))
     registry.bind(TerminologyWorkloadType.HISTORY_COMPARE, HistoryCompareRunner(repositories, state))
     registry.bind(TerminologyWorkloadType.PUBLISH, PublishRunner(repositories, state))
     registry.bind(TerminologyWorkloadType.REPORT_RENDER, ReportRunner(repositories, state))

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -32,11 +33,13 @@ from transbridge.application.terminology_sync.models import (
     TerminologySyncTarget,
     TerminologySyncTargetBinding,
 )
+from transbridge.application.terminology_sync.plan_models import TerminologySyncAction
 from transbridge.application.terminology_sync.planner import TerminologySyncPlanner, TerminologySyncPlannerInput
 from transbridge.application.terminology_sync.use_case import (
     AuthorizedTerminologySyncPlan,
     TerminologySyncPlanStaleError,
 )
+from transbridge.persistence.terminology import SqliteTerminologyRepository
 
 
 class _FreshInputs:
@@ -304,3 +307,186 @@ def test_fresh_binding_contract_rejects_revision_or_target_drift_before_remote_w
             )
         assert remote.create_calls == 0
         assert state.commits == []
+
+
+def test_adopt_existing_remote_is_durable_and_next_local_edit_updates_it(tmp_path: Path) -> None:
+    inputs = _inputs()
+    inputs = replace(inputs, profile=replace(inputs.profile, revision=inputs.line.profile_revision))
+    remote_term = ParaTranzTerm(101, TermEntry("Sword", "剑", "paratranz"), "remote-1", "b" * 64)
+    inputs = replace(inputs, remote_snapshot=replace(inputs.remote_snapshot, items=(remote_term,)))
+    plan = TerminologySyncPlanner().plan(inputs)
+    assert plan.items[0].action is TerminologySyncAction.ADOPT_LINK
+    assert plan.requires_confirmation
+    remote = _Remote()
+    fresh = _FreshInputs(inputs)
+    repository = SqliteTerminologyRepository.open(str(tmp_path), inputs.line.project_id)
+    try:
+        repository.sync_state.activate_line(inputs.line, inputs.profile)
+        executor = TerminologyBackupExecutor(remote, repository.sync_state, fresh)
+        result = executor.execute(
+            ExecuteTerminologyBackupRequest(AuthorizedTerminologySyncPlan(plan, "owner-1", "CONFIRMED"), "adopt")
+        )
+        assert remote.create_calls == 0
+        assert result.outcomes[0].status is TerminologySyncItemStatus.SUCCEEDED
+    finally:
+        repository.close()
+
+    repository = SqliteTerminologyRepository.open(str(tmp_path), inputs.line.project_id)
+    try:
+        links = repository.sync_state.list_item_links(inputs.line.line_id).items
+        assert len(links) == 1
+        assert links[0].remote_id == 101
+        assert links[0].remote_revision == remote_term.server_revision
+        assert links[0].remote_observed_digest == remote_term.observed_digest
+        assert links[0].common_content_digest == plan.items[0].local.digest
+        assert links[0].last_outcome is TerminologySyncOutcome.CONFIRMED
+        edited = replace(inputs.local_snapshot.decisions[0], translation="长剑")
+        fresh.value = replace(
+            inputs,
+            baseline=repository.sync_state.get_baseline(inputs.line.line_id),
+            item_links=links,
+            local_snapshot=replace(
+                inputs.local_snapshot, version_id="version-2", content_digest="edited-digest", decisions=(edited,)
+            ),
+        )
+        next_plan = TerminologySyncPlanner().plan(fresh.value)
+        assert next_plan.items[0].action is TerminologySyncAction.UPDATE_REMOTE
+        assert next_plan.items[0].remote_id == 101
+
+        class UpdatingRemote(_Remote):
+            def update_term(self, project_id, write, *, cancellation=None):
+                assert write.remote_id == 101 and write.entry.translation == "长剑"
+                return ParaTranzTermWriteResult(
+                    TermWriteOperation.UPDATE, 101, "remote-2", "c" * 64, None, TermWriteStatus.CONFIRMED
+                )
+
+        updated = TerminologyBackupExecutor(UpdatingRemote(), repository.sync_state, fresh).execute(
+            ExecuteTerminologyBackupRequest(AuthorizedTerminologySyncPlan(next_plan, "owner-1", "CONFIRMED"), "update")
+        )
+        assert updated.outcomes[0].status is TerminologySyncItemStatus.SUCCEEDED
+        saved = repository.sync_state.list_item_links(inputs.line.line_id).items
+        assert len(saved) == 1 and saved[0].revision == 1
+        assert saved[0].common_content_digest == next_plan.items[0].local.digest
+    finally:
+        repository.close()
+
+
+def _failed_create_for_retry():
+    remote = _Remote(ExternalServiceError(ExternalServiceCategory.RATE_LIMITED, "try later"))
+    executor, state, plan, fresh = _executor(remote)
+    authorized = AuthorizedTerminologySyncPlan(plan, "owner-1", "NOT_REQUIRED")
+    first = executor.execute(ExecuteTerminologyBackupRequest(authorized, "first"))
+    assert first.retry_token is not None and first.retry_token.confirmed_item_ids == ()
+    fresh.value = replace(fresh.value, baseline=state.commits[-1].baseline)
+    remote.error = None
+    return executor, remote, state, authorized, fresh, first.retry_token
+
+
+def test_retry_after_zero_success_accepts_its_own_new_baseline() -> None:
+    executor, remote, state, authorized, _, token = _failed_create_for_retry()
+
+    result = executor.execute(ExecuteTerminologyBackupRequest(authorized, "retry", retry_token=token))
+
+    assert result.outcomes[0].status is TerminologySyncItemStatus.SUCCEEDED
+    assert result.retry_token is None
+    assert remote.create_calls == 2
+    assert state.commits[-1].baseline.revision == 1
+    assert state.commits[-1].item_links[0].link.remote_id == 101
+
+
+@pytest.mark.parametrize("change", ["version", "target", "binding", "remote", "unstable", "baseline", "profile"])
+def test_zero_success_retry_still_rejects_real_input_changes(change: str) -> None:
+    executor, remote, state, authorized, fresh, token = _failed_create_for_retry()
+    inputs = fresh.value
+    if change == "version":
+        inputs = replace(inputs, local_snapshot=replace(inputs.local_snapshot, version_id="version-2"))
+    elif change == "target":
+        target = replace(inputs.line.target, remote_project_id=456)
+        line_id = sync_line_id(
+            project_id=inputs.line.project_id,
+            variant_id=inputs.line.variant_id,
+            target_identity=target.target_id,
+            profile_revision=inputs.line.profile_revision,
+        )
+        inputs = replace(inputs, line=replace(inputs.line, line_id=line_id, target=target))
+    elif change == "binding":
+        inputs = replace(inputs, binding_revision=inputs.binding_revision + 1)
+    elif change == "remote":
+        changed = ParaTranzTerm(101, TermEntry("Sword", "different", "paratranz"), "r1", "c" * 64)
+        inputs = replace(
+            inputs, remote_snapshot=replace(inputs.remote_snapshot, items=(changed,), observed_digest="d" * 64)
+        )
+    elif change == "unstable":
+        inputs = replace(inputs, remote_snapshot=replace(inputs.remote_snapshot, stable=False))
+    elif change == "baseline":
+        inputs = replace(inputs, baseline=replace(inputs.baseline, revision=inputs.baseline.revision + 1))
+    else:
+        inputs = replace(inputs, profile=replace(inputs.profile, revision=inputs.profile.revision + 1))
+    fresh.value = inputs
+
+    with pytest.raises(TerminologySyncPlanStaleError):
+        executor.execute(ExecuteTerminologyBackupRequest(authorized, "retry", retry_token=token))
+
+    assert remote.create_calls == 1
+    assert len(state.commits) == 1
+
+
+@pytest.mark.parametrize("remote_conflict", [False, True])
+def test_partial_retry_preserves_success_and_rechecks_pending_create(remote_conflict: bool) -> None:
+    inputs = _inputs()
+    second = replace(
+        inputs.local_snapshot.decisions[0], term_id="local-2", original="Shield", normalized_original="shield"
+    )
+    inputs = replace(
+        inputs, local_snapshot=replace(inputs.local_snapshot, decisions=(*inputs.local_snapshot.decisions, second))
+    )
+    plan = TerminologySyncPlanner().plan(inputs)
+
+    class PartialRemote(_Remote):
+        def create_term(self, project_id, write, *, cancellation=None):
+            self.create_calls += 1
+            if self.create_calls == 2:
+                raise ExternalServiceError(ExternalServiceCategory.RATE_LIMITED, "try later")
+            return ParaTranzTermWriteResult(
+                TermWriteOperation.CREATE, 100 + self.create_calls, None, "b" * 64, None, TermWriteStatus.CONFIRMED
+            )
+
+    remote, state, fresh = PartialRemote(), _State(), _FreshInputs(inputs)
+    executor = TerminologyBackupExecutor(remote, state, fresh)
+    authorized = AuthorizedTerminologySyncPlan(plan, "owner-1", "NOT_REQUIRED")
+    first = executor.execute(ExecuteTerminologyBackupRequest(authorized, "partial"))
+    assert first.retry_token is not None and len(first.retry_token.confirmed_item_ids) == 1
+    confirmed_item = next(item for item in plan.items if item.item_id in first.retry_token.confirmed_item_ids)
+    created = ParaTranzTerm(
+        101, TermEntry(confirmed_item.local.original, confirmed_item.local.translation, "paratranz"), None, "b" * 64
+    )
+    fresh.value = replace(
+        inputs,
+        baseline=state.commits[-1].baseline,
+        item_links=tuple(update.link for update in state.commits[-1].item_links),
+        remote_snapshot=replace(inputs.remote_snapshot, items=(created,), observed_digest="c" * 64),
+    )
+
+    if remote_conflict:
+        pending = next(item for item in plan.items if item.item_id not in first.retry_token.confirmed_item_ids)
+        conflicting = ParaTranzTerm(
+            999, TermEntry(pending.local.original, "different remote translation", "paratranz"), None, "d" * 64
+        )
+        fresh.value = replace(
+            fresh.value,
+            remote_snapshot=replace(
+                fresh.value.remote_snapshot, items=(created, conflicting), observed_digest="e" * 64
+            ),
+        )
+        with pytest.raises(TerminologySyncPlanStaleError, match="matching remote term"):
+            executor.execute(ExecuteTerminologyBackupRequest(authorized, "retry", retry_token=first.retry_token))
+        assert remote.create_calls == 2
+        assert len(state.commits) == 1
+        return
+
+    result = executor.execute(ExecuteTerminologyBackupRequest(authorized, "retry", retry_token=first.retry_token))
+
+    assert remote.create_calls == 3
+    assert result.retry_token is None
+    assert {outcome.code for outcome in result.outcomes} == {"ALREADY_CONFIRMED", "REMOTE_CONFIRMED"}
+    assert len(state.commits[-1].item_links) == 1

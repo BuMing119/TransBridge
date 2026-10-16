@@ -12,7 +12,7 @@ from transbridge.ai_translator.project_terminology_adapter import (
 from transbridge.ai_translator.project_terminology_runtime import resolve_project_terminology
 from transbridge.ai_translator.term_database import TermDatabaseManager
 from transbridge.ai_translator.term_formats import TermEntry
-from transbridge.ai_translator.translator import AutoTranslator, TranslationResult
+from transbridge.ai_translator.translator import AutoTranslator, TranslationResult, TranslatorConfig
 from transbridge.application.terminology.effective import (
     EffectiveSnapshotStatus,
     SnapshotEffectiveTerminologyPort,
@@ -27,6 +27,7 @@ from transbridge.application.terminology.models import (
     TermScope,
 )
 from transbridge.application.terminology.publish import PublishTerminologyRequest, VersionPublisher
+from transbridge.config.llm import LLMConfig
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.persistence.terminology import (
@@ -130,6 +131,7 @@ def test_formal_publish_is_consumed_by_the_next_real_translator_batch_with_scope
             return SimpleNamespace(accepted=len(values))
 
     translator = object.__new__(AutoTranslator)
+    translator._cfg = TranslatorConfig(LLMConfig(retrieval_enabled=True), "plugin-a.esp")
     translator._term_mgr = manager
     translator._candidate_session = _CandidateSession()
     result = TranslationResult()

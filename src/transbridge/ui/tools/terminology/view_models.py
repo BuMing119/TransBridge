@@ -151,7 +151,7 @@ def business_diagnostic(code: str, message: str = "") -> TerminologyNotice:
             "默认不能发布为当前完整术语库，已有版本保持不变。",
             "修复未读取来源后重新构建。",
         )
-    if "LOG" in normalized or "CHANGELOG" in normalized or "ARTIFACT" in normalized:
+    if "CHANGELOG" in normalized:
         return TerminologyNotice(
             "新版已发布，但更新日志生成失败",
             "术语库新版已经生效，失败仅影响更新日志文件。",

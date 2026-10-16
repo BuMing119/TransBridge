@@ -8,6 +8,7 @@ import uuid
 
 from .models import (
     ProfileState,
+    ProfileSummary,
     PublishedTerminologyProfile,
     TerminologyProfile,
     TerminologyProfileContent,
@@ -38,6 +39,13 @@ class TerminologyProfileService:
 
     def list_profiles(self, project_id: str, *, include_archived: bool = False) -> tuple[TerminologyProfile, ...]:
         return self._repository.list_profiles(project_id, include_archived=include_archived)
+
+    def list_profile_summaries(self, project_id: str, *, include_archived: bool = False) -> tuple[ProfileSummary, ...]:
+        return self._repository.list_profile_summaries(project_id, include_archived=include_archived)
+
+    def read_cache_token(self) -> object:
+        reader = getattr(self._repository, "read_cache_token", None)
+        return None if reader is None else reader()
 
     def create(self, project_id: str, name: str, *, copy_from: str | None = None) -> TerminologyProfile:
         content = TerminologyProfileContent()
@@ -132,11 +140,26 @@ class TerminologyProfileService:
             raise TerminologyProfileConflictError("profile was published concurrently; reload and retry") from exc
         return revision
 
-    def archive(self, profile_id: str) -> TerminologyProfile:
-        profile = self._require_profile(profile_id)
-        archived = self._repository.set_archived(profile_id, archived=True, updated_at=self._timestamp())
-        self._repository.clear_profile_selections(profile.profile_id)
-        return archived
+    def list_profile_selections(self, profile_id: str) -> tuple[TerminologyProfileSelection, ...]:
+        self._require_profile(profile_id)
+        return self._repository.list_profile_selections(profile_id)
+
+    def archive(
+        self,
+        profile_id: str,
+        *,
+        expected_selections: tuple[TerminologyProfileSelection, ...] | None = None,
+    ) -> TerminologyProfile:
+        self._require_profile(profile_id)
+        try:
+            return self._repository.set_archived(
+                profile_id,
+                archived=True,
+                updated_at=self._timestamp(),
+                expected_selections=expected_selections,
+            )
+        except ValueError as exc:
+            raise TerminologyProfileConflictError("使用此方案的翻译版本已变化，请重新查看归档影响。") from exc
 
     def restore(self, profile_id: str) -> TerminologyProfile:
         self._require_profile(profile_id)
@@ -167,13 +190,7 @@ class TerminologyProfileService:
         self._repository.clear_selection(project_id, variant_id)
 
     def selected_revision(self, project_id: str, variant_id: str) -> PublishedTerminologyProfile | None:
-        selection = self._repository.get_selection(project_id, variant_id)
-        if selection is None:
-            return None
-        profile = self._repository.get_profile(selection.profile_id)
-        if profile is None or profile.state is ProfileState.ARCHIVED or profile.project_id != project_id:
-            return None
-        return self._repository.get_published(selection.profile_id, selection.revision)
+        return self._repository.get_selected_published(project_id, variant_id)
 
     def published_revision(self, profile_id: str, revision: int) -> PublishedTerminologyProfile | None:
         return self._repository.get_published(profile_id, revision)
@@ -190,7 +207,7 @@ class TerminologyProfileService:
             raise ValueError("profile name must not be empty")
         if any(
             item.profile_id != excluding and item.name.casefold() == normalized
-            for item in self._repository.list_profiles(project_id, include_archived=True)
+            for item in self._repository.list_profile_summaries(project_id, include_archived=True)
         ):
             raise TerminologyProfileConflictError(f"profile name already exists: {name.strip()}")
 

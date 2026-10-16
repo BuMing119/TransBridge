@@ -145,8 +145,13 @@ class DecisionService:
         if operation is DecisionOperation.PLUGIN_EXCEPTION:
             if command.scope is None or command.scope.kind is not ScopeKind.PLUGIN:
                 raise ValueError("plugin exception requires an explicit plugin scope")
-            added = self._new_decision(draft, command)
-            return _insert(draft.decisions, added), ManualActionType.RESOLVE_CONFLICT, added.term_id, None
+            if command.term_id is not None:
+                current = _required_decision(draft, command.term_id)
+                if current.scope != command.scope or current.normalized_original != normalize_original(
+                    command.original or ""
+                ):
+                    raise ValueError("plugin exception target must match the reviewed original and plugin")
+            return self._unify(draft, command)
         if operation is DecisionOperation.UNIFY_TRANSLATION:
             return self._unify(draft, command)
         if operation is DecisionOperation.IGNORE_CONFLICT:

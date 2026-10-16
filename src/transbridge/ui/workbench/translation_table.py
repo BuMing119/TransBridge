@@ -60,6 +60,8 @@ class TranslationTable(QTableWidget):
         self._label_library: Mapping[str, Mapping[str, str]] = {}
         self._translation_projection: Mapping[str, object] = {}
         self._terminology_profile_label: str | None = None
+        self._terminology_pending = False
+        self._terminology_error = ""
         self._pending_entry_id: str | None = None
         self._pending_selected_entry_ids: set[str] = set()
         self._pending_current_entry_id: str | None = None
@@ -128,11 +130,14 @@ class TranslationTable(QTableWidget):
     def terminology_profile_active(self) -> bool:
         return self._terminology_profile_label is not None
 
-    def set_terminology_projection(self, values: Mapping[str, object], *, profile_label: str | None) -> None:
+    def set_terminology_projection(
+        self, values: Mapping[str, object], *, profile_label: str | None, pending: bool = False, error: str = ""
+    ) -> None:
         """Install one immutable display projection before starting a render."""
 
         self._translation_projection = values
         self._terminology_profile_label = profile_label
+        self._terminology_pending, self._terminology_error = pending, error
 
     def activate_entry_editor(self, item: QTableWidgetItem) -> bool:
         entry = item.data(Qt.ItemDataRole.UserRole)
@@ -296,14 +301,18 @@ class TranslationTable(QTableWidget):
             changed = bool(getattr(projected, "is_derived", False))
             diagnostics = tuple(getattr(projected, "diagnostics", ()))
             status = (
-                f"有 {len(diagnostics)} 项术语无法安全定位，已保留整条项目译文"
+                "正在生成方案预览，暂时显示项目译文"
+                if self._terminology_pending
+                else f"方案预览失败：{self._terminology_error}，已保留项目译文"
+                if self._terminology_error
+                else f"有 {len(diagnostics)} 项术语无法安全定位，已保留整条项目译文"
                 if diagnostics
                 else "已按方案调整"
                 if changed
                 else "此条无需调整"
             )
             details = "" if not diagnostics else "\n" + "\n".join(str(item.message) for item in diagnostics[:3])
-            translation.setToolTip(f"{profile} · {status}。如需编辑正文，请切换为“不应用方案”。{details}")
+            translation.setToolTip(f"{profile} · {status}。如需编辑正文，请选择“使用项目默认译名”。{details}")
 
         stage_label = STAGE_LABELS.get(entry.stage, f"状态 {entry.stage}")
         if tuple(getattr(projected, "diagnostics", ())):

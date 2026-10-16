@@ -6,9 +6,12 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QHBoxLayout, QHeaderView, QPushButton, QTableView, QVBoxLayout, QWidget
 
 from .paged_models import KeysetPagedTableModel
+from .pagination_bar import PaginationBar
+from .term_filters import TermFilterBar
 
 
 class DraftView(QWidget):
+    query_changed = pyqtSignal(object)
     add_requested = pyqtSignal()
     edit_requested = pyqtSignal(object)
     suppress_requested = pyqtSignal(object)
@@ -19,6 +22,9 @@ class DraftView(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
+        self.filters = TermFilterBar(self, draft=True)
+        self.filters.changed.connect(self.query_changed)
+        layout.addWidget(self.filters)
         self.add_button = QPushButton("＋  新增术语", self)
         self.add_button.setProperty("tbComponentKind", "button")
         self.row_actions = QWidget(self)
@@ -50,6 +56,9 @@ class DraftView(QWidget):
         self.model.dataChanged.connect(self._update_actions)
         self.table.doubleClicked.connect(lambda _index: self._emit_selected(self.edit_requested))
         layout.addWidget(self.table, 1)
+        if isinstance(model, KeysetPagedTableModel):
+            self.pagination = PaginationBar(model, self)
+            layout.addWidget(self.pagination)
         self._update_actions()
 
     def _update_actions(self, *_args) -> None:

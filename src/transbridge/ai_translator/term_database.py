@@ -195,7 +195,9 @@ class TermDatabaseManager:
     def load_all(self) -> dict[str, str]:
         """按 term_priority 顺序加载并合并，优先级从低到高（后者覆盖前者）。返回 {term: translation}。"""
         if not self._retrieval_enabled:
+            self._legacy_terms = []
             self._merged_terms = []
+            self._project_terminology_status = None
             self._load_log = []
             self._load_completed = True
             return {}
@@ -364,6 +366,8 @@ class TermDatabaseManager:
         该窄接口供冲突裁决读取权威译法，避免调用方依赖内部合并缓存。
         首版只解析主术语的规范化同名匹配，不把 variant 当作候选冲突。
         """
+        if not getattr(self, "_retrieval_enabled", True):
+            return None
         loader = getattr(self, "_effective_loader", None)
         base_context = getattr(self, "_terminology_context", None)
         lookup_context = context or base_context
@@ -394,6 +398,8 @@ class TermDatabaseManager:
 
     def _effective_terms(self, context: TerminologyLookupContext | None = None) -> list[TermEntry]:
         """返回合并后的术语列表，并补充翻译过程中动态追加的新条目。"""
+        if not getattr(self, "_retrieval_enabled", True):
+            return []
         if not self._merged_terms and not getattr(self, "_load_completed", False):
             self.load_all()
         loader = getattr(self, "_effective_loader", None)
@@ -491,7 +497,7 @@ class TermDatabaseManager:
 
     def rebuild_vector_index(self, context: TerminologyLookupContext | None = None) -> bool:
         """手动重建向量索引（术语库更新后调用）。"""
-        if self._vector_index is None:
+        if not getattr(self, "_retrieval_enabled", True) or self._vector_index is None:
             return False
         with self._vector_lock:
             identity = self._snapshot_identity(context)
@@ -531,7 +537,11 @@ class TermDatabaseManager:
         Returns:
             {term: translation} 合并后的术语表
         """
-        if self._vector_index is None or not self._vector_index.available:
+        if (
+            not getattr(self, "_retrieval_enabled", True)
+            or self._vector_index is None
+            or not self._vector_index.available
+        ):
             return {}
         with self._vector_lock:
             identity = self._snapshot_identity(context)

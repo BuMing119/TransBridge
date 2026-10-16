@@ -39,10 +39,11 @@ from transbridge.application.terminology.models import (
 from transbridge.application.terminology.ports import Page, PageRequest, SnapshotCursor
 
 from .artifacts import ArtifactLedger
+from .builds import BuildStore
 from .cache import TerminologyCache
 from .changelog import ChangelogDocumentStore
 from .codec import dumps, loads
-from .conflict_queries import conflict_page
+from .conflict_queries import conflict_page, review_conflict_page
 from .connection import (
     StorageMode,
     TerminologyConnectionFactory,
@@ -101,6 +102,7 @@ class SqliteTerminologyRepository:
         self.storage_state = opened.state
         self._connection = opened.connection
         self._lock = RLock()
+        self._builds = BuildStore(self._connection, project_id, self._decode)
         self.cache = TerminologyCache(self._connection)
         self.artifacts = ArtifactLedger(self._connection)
         self.changelogs = ChangelogDocumentStore(self._connection)
@@ -135,35 +137,28 @@ class SqliteTerminologyRepository:
         with self._lock:
             self._connection.close()
 
+    def read_cache_token(self) -> tuple[int, int, bool]:
+        """Invalidate decoded reads after local writes, rollback or external commits."""
+        with self._lock:
+            return (
+                int(self._connection.execute("PRAGMA data_version").fetchone()[0]),
+                self._connection.total_changes,
+                self._connection.in_transaction,
+            )
+
     def transaction(self) -> SqliteTerminologyTransaction:
         return SqliteTerminologyTransaction(self)
 
-    def draft_transactions(self, line_reader: DraftLineStateReader) -> SqliteDraftTransactionAdapter:
+    def draft_transactions(
+        self, line_reader: DraftLineStateReader, *, build: BuildResult | None = None
+    ) -> SqliteDraftTransactionAdapter:
         from .draft_transactions import SqliteDraftTransactionAdapter
 
-        return SqliteDraftTransactionAdapter(self, line_reader)
+        return SqliteDraftTransactionAdapter(self, line_reader, build=build)
 
     def put_build(self, result: BuildResult) -> BuildResultRef:
-        self._require_project(result.project_id)
         with self._lock, self.transaction():
-            row = self._connection.execute(
-                "SELECT payload_json FROM builds WHERE build_key = ?",
-                (result.ref.build_key,),
-            ).fetchone()
-            if row is not None:
-                existing = self._decode(str(row["payload_json"]), BuildResult)
-                if existing != result:
-                    raise DigestCollisionError(result.ref.build_key)
-                return existing.ref
-            self._connection.execute(
-                "INSERT INTO builds(build_key, content_digest, project_id, variant_id, payload_json) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (result.ref.build_key, result.ref.content_digest, result.project_id, result.variant_id, dumps(result)),
-            )
-            self._insert_children("build_evidence", result.ref.build_key, result.evidence, "evidence_id")
-            self._insert_children("build_candidates", result.ref.build_key, result.candidates, "candidate_id")
-            self._insert_children("build_conflicts", result.ref.build_key, result.conflicts, "conflict_group_id")
-        return result.ref
+            return self._builds.put(result)
 
     def get_build(self, ref: BuildResultRef) -> BuildResult:
         with self._lock:
@@ -205,6 +200,11 @@ class SqliteTerminologyRepository:
     def active_draft(self, project_id: str, variant_id: str) -> TerminologyDraft | None:
         with self._lock:
             return self._drafts.active(project_id, variant_id)
+
+    def active_ref(self, project_id: str, variant_id: str) -> DraftRef | None:
+        """Return the full mutable draft identity without decoding its contents."""
+        with self._lock:
+            return self._drafts.active_ref(project_id, variant_id)
 
     def discard_draft(self, project_id: str, variant_id: str, *, expected_revision: int) -> None:
         with self._lock, self.transaction():
@@ -403,6 +403,18 @@ class SqliteTerminologyRepository:
         self._require_build_ref(ref)
         with self._lock:
             return conflict_page(self._connection, ref, request, filters)
+
+    def list_review_conflicts(
+        self, ref: BuildResultRef, request: PageRequest = PageRequest(), *, filters: ConflictFilter = ConflictFilter()
+    ) -> Page[ConflictGroup]:
+        with self._lock:
+            build = self.get_build(ref)
+            latest = self.latest_build(build.project_id, build.variant_id)
+            if latest is None or latest.ref != ref:
+                raise CursorStaleError("术语构建已变化，请刷新异译列表")
+            draft = self._drafts.active(build.project_id, build.variant_id)
+            effective = self.effective_version(build.project_id, build.variant_id)
+            return review_conflict_page(self._connection, build, draft, effective, request, filters)
 
     def list_terms(self, ref: TerminologyVersionRef, request: PageRequest = PageRequest()) -> Page[TermDecision]:
         self._require_version_ref(ref)

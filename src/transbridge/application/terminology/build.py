@@ -10,6 +10,7 @@ from typing import Protocol
 from transbridge.application.contracts import OperationOutcome, RequestContext
 from transbridge.application.io import ParseRequest, ParseResult, SourceNamespace, TranslationIoUseCase
 
+from .build_freshness import build_input_digest
 from .corpus import EvidenceAssembler, SourceCorpusFragment
 from .extraction import CancellationPort, TerminologyExtractionService
 from .identity import build_key, canonical_digest
@@ -231,6 +232,7 @@ class TerminologyFullBuilder:
             "completeness": completeness,
             "llm_status": global_result.llm_status,
             "review_term_ids": global_result.reconciliation.review_term_ids,
+            "input_digest": build_input_digest(snapshot),
         }
         content_digest = canonical_digest(semantic_result, namespace="terminology.build-result-content.v1")
         ref = BuildResultRef(build_key(snapshot), content_digest)
@@ -246,6 +248,7 @@ class TerminologyFullBuilder:
             diagnostics=stable_diagnostics,
             completeness=completeness,
             llm_status=global_result.llm_status,
+            input_digest=semantic_result["input_digest"],
         )
         self._repository.put_build(result)
         return FullBuildOutcome(

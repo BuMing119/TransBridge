@@ -6,6 +6,7 @@ from dataclasses import replace
 
 from .models import (
     ProfileState,
+    ProfileSummary,
     PublishedTerminologyProfile,
     TerminologyProfile,
     TerminologyProfileContent,
@@ -33,6 +34,33 @@ class InMemoryTerminologyProfileRepository:
 
     def get_profile(self, profile_id: str) -> TerminologyProfile | None:
         return self._profiles.get(profile_id)
+
+    def list_profile_summaries(self, project_id: str, *, include_archived: bool = False) -> tuple[ProfileSummary, ...]:
+        return tuple(
+            ProfileSummary(
+                item.profile_id,
+                item.project_id,
+                item.name,
+                item.state,
+                item.draft_revision,
+                item.latest_published_revision,
+            )
+            for item in self.list_profiles(project_id, include_archived=include_archived)
+        )
+
+    def get_selected_published(self, project_id: str, variant_id: str) -> PublishedTerminologyProfile | None:
+        selection = self.get_selection(project_id, variant_id)
+        if selection is None:
+            return None
+        profile = self.get_profile(selection.profile_id)
+        if profile is None or profile.state is ProfileState.ARCHIVED or profile.project_id != project_id:
+            return None
+        return self.get_published(selection.profile_id, selection.revision)
+
+    def read_cache_token(self) -> object:
+        return tuple(self._selections.items()), tuple(
+            (item.profile_id, item.state, item.latest_published_revision) for item in self._profiles.values()
+        )
 
     def insert_profile(self, profile: TerminologyProfile) -> None:
         if profile.profile_id in self._profiles:
@@ -65,14 +93,25 @@ class InMemoryTerminologyProfileRepository:
         self._profiles[profile_id] = updated
         return updated
 
-    def set_archived(self, profile_id: str, *, archived: bool, updated_at: str) -> TerminologyProfile:
+    def set_archived(
+        self,
+        profile_id: str,
+        *,
+        archived: bool,
+        updated_at: str,
+        expected_selections: tuple[TerminologyProfileSelection, ...] | None = None,
+    ) -> TerminologyProfile:
         profile = self._require(profile_id)
+        if expected_selections is not None and self.list_profile_selections(profile_id) != expected_selections:
+            raise ValueError("profile selections changed")
         updated = replace(
             profile,
             state=ProfileState.ARCHIVED if archived else ProfileState.ACTIVE,
             updated_at=updated_at,
         )
         self._profiles[profile_id] = updated
+        if archived:
+            self.clear_profile_selections(profile_id)
         return updated
 
     def insert_published(
@@ -111,6 +150,14 @@ class InMemoryTerminologyProfileRepository:
 
     def get_selection(self, project_id: str, variant_id: str) -> TerminologyProfileSelection | None:
         return self._selections.get((project_id, variant_id))
+
+    def list_profile_selections(self, profile_id: str) -> tuple[TerminologyProfileSelection, ...]:
+        return tuple(
+            sorted(
+                (item for item in self._selections.values() if item.profile_id == profile_id),
+                key=lambda item: (item.project_id, item.variant_id),
+            )
+        )
 
     def set_selection(self, selection: TerminologyProfileSelection) -> None:
         revision = self.get_published(selection.profile_id, selection.revision)

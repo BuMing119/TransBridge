@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import fields, is_dataclass
 from enum import Enum
+from functools import lru_cache
 import hashlib
 import json
 import math
@@ -12,13 +13,14 @@ from threading import RLock
 from typing import Any, Protocol
 import unicodedata
 
+from .canonical_json import encode_normalized_json
 from .errors import DigestCollisionError
 from .models import ExtractionMethod, TermScope
 
 NORMALIZATION_SCHEMA = "terminology.normalization.v1"
 CANONICAL_SCHEMA = "terminology.canonical-json.v1"
 IDENTITY_SCHEMA = "terminology.identity.v1"
-BUILD_KEY_SCHEMA = "terminology.build-key.v1"
+BUILD_KEY_SCHEMA = "terminology.build-key.v2"
 
 _VOLATILE_BUILD_FIELDS = frozenset({
     "captured_at",
@@ -32,6 +34,7 @@ _VOLATILE_BUILD_FIELDS = frozenset({
     "timestamp",
     "ui_order",
 })
+_SCALAR_TYPES = frozenset({str, int, bool, type(None)})
 
 
 class HashProvider(Protocol):
@@ -60,9 +63,7 @@ def canonical_bytes(value: Any, *, schema: str = CANONICAL_SCHEMA) -> bytes:
     """Encode a value using deterministic, finite JSON with an explicit schema."""
 
     payload = {"schema": _non_empty(schema, "canonical schema"), "value": _canonical_value(value)}
-    return json.dumps(payload, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")).encode(
-        "utf-8"
-    )
+    return encode_normalized_json(payload).encode("utf-8")
 
 
 def canonical_digest(
@@ -223,16 +224,23 @@ def _canonical_value(
     excluded_fields: frozenset[str] = frozenset(),
     sort_sequences: bool = False,
 ) -> Any:
+    value_type = type(value)
+    # Keep subclasses on the general path: an Enum or custom scalar may expose
+    # canonical_payload, and its existing canonical representation must win.
+    if value_type in _SCALAR_TYPES:
+        return value
+    if value_type is float:
+        if not math.isfinite(value):
+            raise ValueError("canonical JSON numbers must be finite")
+        return value
     canonical_payload = getattr(value, "canonical_payload", None)
     if callable(canonical_payload):
         return _canonical_value(canonical_payload(), excluded_fields=excluded_fields, sort_sequences=sort_sequences)
     if is_dataclass(value) and not isinstance(value, type):
         return {
-            field.name: _canonical_value(
-                getattr(value, field.name), excluded_fields=excluded_fields, sort_sequences=sort_sequences
-            )
-            for field in fields(value)
-            if field.name not in excluded_fields
+            name: _canonical_value(getattr(value, name), excluded_fields=excluded_fields, sort_sequences=sort_sequences)
+            for name in _field_names(value_type)
+            if name not in excluded_fields
         }
     if isinstance(value, Enum):
         return _canonical_value(value.value, excluded_fields=excluded_fields, sort_sequences=sort_sequences)
@@ -260,6 +268,11 @@ def _canonical_value(
             raise ValueError("canonical JSON numbers must be finite")
         return value
     raise TypeError(f"unsupported canonical value: {type(value).__name__}")
+
+
+@lru_cache(maxsize=256)
+def _field_names(cls: type) -> tuple[str, ...]:
+    return tuple(field.name for field in fields(cls))
 
 
 def _canonical_sort_key(value: Any) -> bytes:

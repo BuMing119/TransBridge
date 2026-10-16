@@ -15,6 +15,7 @@ from transbridge.application.terminology.effective import (
     EffectiveTerminologySnapshotPort,
 )
 from transbridge.application.terminology.models import DecisionStatus
+from transbridge.application.terminology.query_control import QueryCancellation
 
 from .models import PublishedTerminologyProfile, logical_term_key
 
@@ -43,7 +44,11 @@ class ProfiledEffectiveTerminologySnapshotPort:
         local_project_id: str,
         local_variant_id: str,
         version_id: str | None = None,
+        *,
+        cancellation: QueryCancellation | None = None,
     ) -> EffectiveTerminologySnapshot:
+        if cancellation is not None:
+            cancellation.raise_if_cancelled()
         if version_id is not None and not is_profiled_version_id(version_id):
             # Old checkpoint/version references always retain the pre-profile
             # semantics even if a profile is selected today.
@@ -79,7 +84,7 @@ class ProfiledEffectiveTerminologySnapshotPort:
 
         if base.status is not EffectiveSnapshotStatus.READY:
             return base
-        return _profiled_snapshot(base, profile)
+        return _profiled_snapshot(base, profile, cancellation)
 
 
 def is_profiled_version_id(value: str | None) -> bool:
@@ -122,11 +127,18 @@ def decode_profiled_version_id(value: str) -> dict[str, str | int]:
 def _profiled_snapshot(
     base: EffectiveTerminologySnapshot,
     profile: PublishedTerminologyProfile,
+    cancellation: QueryCancellation | None = None,
 ) -> EffectiveTerminologySnapshot:
-    mappings = {item.term_key: item for item in profile.content.mappings}
+    mappings = {}
+    for item in profile.content.mappings:
+        if cancellation is not None:
+            cancellation.raise_if_cancelled()
+        mappings[item.term_key] = item
     decisions = []
     missing = 0
     for decision in base.decisions:
+        if cancellation is not None:
+            cancellation.raise_if_cancelled()
         mapping = mappings.get(
             logical_term_key(
                 decision.original,

@@ -39,7 +39,7 @@ class TerminologySourceImportController(QObject):
         profile_controller,
         reader_factory: Callable[[], object],
         *,
-        idle_button_text: str = "从术语来源创建译名方案…",
+        idle_button_text: str = "从外部来源创建译名方案…",
         select_after_create: bool = False,
     ) -> None:
         super().__init__(parent)
@@ -52,6 +52,10 @@ class TerminologySourceImportController(QObject):
         self._active_task: _ReadTask | None = None
         self._default_name = ""
         self._expected_identity: tuple[str, str] | None = None
+        self._closed = False
+
+    def dispose(self) -> None:
+        self._closed = True
 
     def start(self, request, *, default_name: str) -> None:
         self.start_with_reader(request, default_name=default_name)
@@ -63,7 +67,7 @@ class TerminologySourceImportController(QObject):
         default_name: str,
         reader_factory: Callable[[], object] | None = None,
     ) -> None:
-        if self._active_task is not None:
+        if self._closed or self._active_task is not None:
             return
         if self._profiles is None:
             QMessageBox.warning(self._parent, "无法创建译名方案", "请先打开一个已保存的工程翻译版本。")
@@ -74,7 +78,7 @@ class TerminologySourceImportController(QObject):
             return
         self._default_name = default_name
         self._button.setEnabled(False)
-        self._button.setText("正在读取来源…")
+        self._button.setText("正在读取外部来源…")
         task = _ReadTask(reader_factory or self._reader_factory, request)
         task.signals.succeeded.connect(self._source_ready)
         task.signals.failed.connect(self._source_failed)
@@ -82,6 +86,8 @@ class TerminologySourceImportController(QObject):
         QThreadPool.globalInstance().start(task)
 
     def _source_ready(self, source) -> None:
+        if self._closed:
+            return
         self._reset_button()
         if self._profiles.identity != self._expected_identity:
             QMessageBox.warning(self._parent, "工程已变化", "读取期间工程或翻译版本发生了变化，请重新操作。")
@@ -98,6 +104,8 @@ class TerminologySourceImportController(QObject):
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
+        if self._closed:
+            return
         try:
             result = self._profiles.create_from_source_import(
                 dialog.profile_name,
@@ -109,16 +117,18 @@ class TerminologySourceImportController(QObject):
             return
         adopted = preview.matched_term_count - preview.conflict_count
         kept = preview.base_mapping_count - adopted
-        suffix = "，并已设为当前方案" if result.selection is not None else "，现在可在译名方案中选择"
+        suffix = "，并已用于当前翻译版本" if result.selection is not None else "，现在可在译名方案中选择"
         QMessageBox.information(
             self._parent,
             "译名方案已创建",
-            f"已创建“{result.profile.name}”（采用 {adopted} 个来源译名，{kept} 个保持当前译名）{suffix}。",
+            f"已创建“{result.profile.name}”（{adopted} 条映射采用来源译名，{kept} 条保持项目默认译名）{suffix}。",
         )
 
     def _source_failed(self, message: str) -> None:
+        if self._closed:
+            return
         self._reset_button()
-        QMessageBox.warning(self._parent, "术语来源读取失败", message)
+        QMessageBox.warning(self._parent, "外部来源读取失败", message)
 
     def _reset_button(self) -> None:
         self._active_task = None
