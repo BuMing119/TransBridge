@@ -42,8 +42,8 @@ class TerminologyWorkbenchShell(QWidget):
         header = QFrame(self.surface)
         header.setObjectName("terminologyHeader")
         header_layout = QVBoxLayout(header)
-        header_layout.setContentsMargins(20, 12, 20, 12)
-        header_layout.setSpacing(12)
+        header_layout.setContentsMargins(20, 10, 20, 8)
+        header_layout.setSpacing(6)
 
         brand = QHBoxLayout()
         brand.setSpacing(8)
@@ -71,12 +71,14 @@ class TerminologyWorkbenchShell(QWidget):
         self.project_caption = QLabel("", project)
         self.project_caption.setProperty("tbSecondary", True)
         self.project_caption.setWordWrap(True)
-        header_layout.addWidget(self.project_caption)
+        context_row = QHBoxLayout()
+        context_row.addWidget(self.project_caption, 1)
+        header_layout.addLayout(context_row)
         self.current_version = QLabel("当前术语版本：尚未发布", header)
         self.current_version.setProperty("tbSecondary", True)
         self.current_version.setTextFormat(Qt.TextFormat.PlainText)
-        self.current_version.setWordWrap(True)
-        header_layout.addWidget(self.current_version)
+        self.current_version.setWordWrap(False)
+        context_row.addWidget(self.current_version)
         brand.addWidget(project)
         brand.addStretch(1)
 
@@ -119,6 +121,9 @@ class TerminologyWorkbenchShell(QWidget):
         self.pages.setObjectName("terminologyObjectPages")
         self.pages.setAccessibleName("术语工作区")
         surface_layout.addWidget(self.pages, 1)
+        self._notice_slot = QVBoxLayout()
+        self._notice_slot.setContentsMargins(0, 0, 0, 0)
+        surface_layout.addLayout(self._notice_slot)
 
     @property
     def labels(self) -> tuple[str, ...]:
@@ -135,6 +140,9 @@ class TerminologyWorkbenchShell(QWidget):
         """Place output naming selection beside the Project/Variant context."""
 
         self._scheme_slot.addWidget(widget)
+
+    def set_operation_notice(self, widget: QWidget) -> None:
+        self._notice_slot.addWidget(widget)
 
     def set_terminology_version(self, version_id: str | None) -> None:
         self.current_version.setText(f"当前术语版本：{version_id or '尚未发布'}")

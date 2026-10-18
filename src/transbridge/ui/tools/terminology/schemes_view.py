@@ -12,7 +12,9 @@ class TerminologySchemesView(QFrame):
     """Switch output naming in context and keep creation behind management."""
 
     create_requested = pyqtSignal()
+    create_from_base_requested = pyqtSignal()
     manage_requested = pyqtSignal()
+    rename_requested = pyqtSignal()
     selection_requested = pyqtSignal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -43,7 +45,14 @@ class TerminologySchemesView(QFrame):
         identity.addWidget(self.metadata)
         layout.addLayout(identity, 1)
 
-        self.actions_button = QPushButton("方案操作…", self)
+        self.new_button = QPushButton("新建方案…", self)
+        self.new_button.setToolTip("基于当前已发布的项目术语创建独立译名方案")
+        self.edit_button = QPushButton("编辑方案…", self)
+        self.rename_button = QPushButton("重命名…", self)
+        for button in (self.new_button, self.edit_button, self.rename_button):
+            ComponentStyle.apply_static(button, ComponentKind.BUTTON)
+            layout.addWidget(button)
+        self.actions_button = QPushButton("更多…", self)
         self.actions_button.setAccessibleName("译名方案操作")
         ComponentStyle.apply_static(self.actions_button, ComponentKind.BUTTON)
         self.actions_menu = QMenu(self.actions_button)
@@ -60,6 +69,9 @@ class TerminologySchemesView(QFrame):
         self.scheme_combo.currentIndexChanged.connect(self._selection_changed)
         self.create_action.triggered.connect(self.create_requested)
         self.manage_action.triggered.connect(self.manage_requested)
+        self.new_button.clicked.connect(self.create_from_base_requested)
+        self.edit_button.clicked.connect(self.manage_requested)
+        self.rename_button.clicked.connect(self.rename_requested)
 
     def render(self, state) -> None:
         self.scheme_combo.blockSignals(True)
@@ -76,6 +88,15 @@ class TerminologySchemesView(QFrame):
         self.actions_button.setEnabled(state.can_manage)
         self.create_action.setEnabled(state.can_manage)
         self.manage_action.setEnabled(state.can_manage)
+        self.new_button.setEnabled(state.can_manage)
+        self.edit_button.setEnabled(state.can_manage)
+        self.edit_button.setText("编辑方案…" if state.selected_profile_id is not None else "管理方案…")
+        self.rename_button.setEnabled(state.can_manage and state.selected_profile_id is not None)
+        self.rename_button.setToolTip(
+            "重命名当前译名方案"
+            if state.selected_profile_id is not None
+            else "项目默认译名不是独立方案；可先点击“新建方案”创建并命名。"
+        )
         if state.selection_error:
             self.status_label.setText(state.selection_error)
         elif not state.enabled:

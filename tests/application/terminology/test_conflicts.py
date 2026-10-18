@@ -112,6 +112,44 @@ def test_every_conflict_resolution_is_explicit_and_audited(operation, values, st
     assert materialized.conflicts[0].status is status
 
 
+def test_guarded_batch_rejects_a_later_unreviewed_add_without_saving_earlier_edits():
+    transactions, drafts, _, context, draft, current_line, conflict = _setup()
+    decisions = DecisionService(drafts, TrustedActors(), FixedClock(), SequenceIds(), conflicts=(conflict,))
+    commands = tuple(
+        DecisionCommand(
+            operation=DecisionOperation.ADD,
+            expectation=expectation(draft, current_line),
+            original=original,
+            translation="人工译名",
+        )
+        for original in ("Safe", "SWORD")
+    )
+    with pytest.raises(ValueError, match="异译"):
+        decisions.apply_many(commands, context)
+    assert transactions.draft == draft
+
+
+@pytest.mark.parametrize(
+    ("operation", "values"),
+    [
+        (ConflictResolutionOperation.UNIFY, {"translation": "统一译名"}),
+        (ConflictResolutionOperation.PLUGIN_EXCEPTION, {"translation": "插件译名", "plugin_id": "plugin-a"}),
+        (ConflictResolutionOperation.IGNORE, {}),
+    ],
+)
+def test_guarded_decision_service_accepts_explicit_evidence_bound_review(operation, values):
+    _, drafts, _, context, draft, current_line, conflict = _setup()
+    decisions = DecisionService(drafts, TrustedActors(), FixedClock(), SequenceIds(), conflicts=(conflict,))
+    resolved = ConflictService(decisions).resolve(
+        ConflictResolutionCommand(
+            operation=operation, conflict=conflict, expectation=expectation(draft, current_line), **values
+        ),
+        context,
+    )
+    assert resolved.draft.conflict_resolutions == (resolved.conflict,)
+    assert resolved.conflict.status is not ConflictStatus.UNRESOLVED
+
+
 def test_automatic_evidence_reconciliation_preserves_manual_value_and_never_appends_action():
     transactions, drafts, decisions, context, draft, current_line, _ = _setup()
     draft = decisions.apply(

@@ -11,9 +11,14 @@ from .models import (
     TerminologyProfileContent,
     TerminologyProfileSelection,
 )
+from .publication import ProfilePublicationPreview
 
 
 class TerminologyProfileRepository(Protocol):
+    def commit_publication(
+        self, preview: ProfilePublicationPreview, *, published_at: str
+    ) -> PublishedTerminologyProfile: ...
+
     def list_profile_summaries(
         self, project_id: str, *, include_archived: bool = False
     ) -> tuple[ProfileSummary, ...]: ...

@@ -357,3 +357,29 @@ def test_plugin_scoped_mapping_uses_entry_plugin_identity_and_disables_common_re
     assert entry.translation == "龙来了"
     menu.close()
     widget.close()
+
+
+def test_name_only_publication_refreshes_selector_current_description_and_preview():
+    service, profile_id = _service_with_profile()
+    service.select("project-a", "variant-a", profile_id)
+    historical = service.selected_revision("project-a", "variant-a")
+    bar, preview, context = TerminologyProfileBar(), _Preview(), _ProfileContext()
+    controller = TerminologyProfileUiController(context, _Factory(service), bar, preview)
+    wait_profile(controller)
+    service.rename(profile_id, "新名称")
+    controller.refresh()
+    wait_profile(controller)
+    assert bar.combo.currentText() == "新名称（名称未发布）"
+    review = service.preview_publication(
+        profile_id, historical.content, expected_revision=1, target_variant_id="variant-a"
+    )
+    service.publish_reviewed(review)
+    controller.refresh()
+    wait_profile(controller)
+    assert bar.combo.currentText() == "新名称"
+    assert "新名称" in controller.state.detail
+    assert "官中" not in controller.state.detail
+    assert preview.profile.name == "新名称"
+    assert service.published_revision(profile_id, 1).name == "官中"
+    bar.close()
+    preview.close()

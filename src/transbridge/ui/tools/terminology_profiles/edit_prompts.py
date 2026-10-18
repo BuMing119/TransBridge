@@ -10,7 +10,7 @@ def choose_unsaved_action(parent, name: str) -> QMessageBox.StandardButton:
     box.setWindowTitle("未保存的修改")
     box.setIcon(QMessageBox.Icon.Warning)
     box.setText(f"“{name}”有未保存的修改。")
-    box.setInformativeText("保存只更新此工程的方案草稿；应用修改后才会生效。")
+    box.setInformativeText("保存只更新此工程的方案草稿；发布后才会生效。")
     buttons = QMessageBox.StandardButton
     box.setStandardButtons(buttons.Save | buttons.Discard | buttons.Cancel)
     box.button(buttons.Save).setText("保存")

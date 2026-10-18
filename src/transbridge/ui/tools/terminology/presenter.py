@@ -20,6 +20,7 @@ from transbridge.application.terminology.models import DraftRef, TerminologyDraf
 from transbridge.application.terminology.publication_review import TerminologyPublishPreview
 
 from .task_adapter import TerminologyTaskAdapter, TerminologyTaskViewState
+from .term_editing import TermEditingCommands
 from .view_models import (
     SourceScopeViewState,
     TechnicalDetail,
@@ -43,6 +44,14 @@ class TerminologyCommandPort(Protocol):
     def publish_preview(self, preview: TerminologyPublishPreview, context: RequestContext) -> JobRef: ...
 
     def active_draft(self, context: RequestContext) -> TerminologyDraft | None: ...
+
+    def prepare_draft(self, context: RequestContext, *, config=None) -> TerminologyDraft | None: ...
+
+    def edit_term(self, term_id: str, context: RequestContext, **values) -> TerminologyDraft: ...
+
+    def batch_terms(
+        self, term_ids: tuple[str, ...], operation: str, context: RequestContext, **values
+    ) -> TerminologyDraft: ...
 
     def discard_draft(self, expected_ref: DraftRef, context: RequestContext) -> None: ...
 
@@ -129,6 +138,7 @@ class TerminologyPresenter:
         self._build_config: dict[str, Any] = {}
         self._task_adapter: TerminologyTaskAdapter | None = None
         self._closed = False
+        self.term_editing = TermEditingCommands(self._short_command, context, lambda: deepcopy(self._build_config))
 
     @property
     def snapshot(self) -> BuildInputSnapshot | None:
@@ -249,28 +259,14 @@ class TerminologyPresenter:
             return method(self.context)
         return self.render_changelog()
 
-    def add_term(self, original: str, translation: str, *, notes: str = ""):
-        return self._short_command(
-            "apply_decision",
-            DecisionOperation.ADD,
-            self.context,
-            original=original,
-            translation=translation,
-            notes=notes,
-        )
+    def add_term(self, original: str, translation: str, *, notes: str = "", scope=None, variants=()):
+        return self.term_editing.add_term(original, translation, scope=scope, variants=variants, notes=notes)
 
     def change_translation(self, term_id: str, translation: str):
-        return self._short_command(
-            "apply_decision",
-            DecisionOperation.CHANGE_TRANSLATION,
-            self.context,
-            term_id=term_id,
-            translation=translation,
-        )
+        return self.term_editing.change_translation(term_id, translation)
 
     def set_suppressed(self, term_id: str, *, suppressed: bool):
-        operation = DecisionOperation.SUPPRESS if suppressed else DecisionOperation.REENABLE
-        return self._short_command("apply_decision", operation, self.context, term_id=term_id)
+        return self.term_editing.set_suppressed(term_id, suppressed=suppressed)
 
     def resolve_conflict(
         self,

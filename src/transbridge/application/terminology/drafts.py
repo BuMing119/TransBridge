@@ -114,6 +114,7 @@ class OpenDraftCommand:
     base_version_id: str | None
     base_content_digest: str
     decisions: tuple[TermDecision, ...] = ()
+    conflict_resolutions: tuple[ConflictGroup, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.base_content_digest.strip():
@@ -230,6 +231,7 @@ class DraftService:
             base_version_id=command.base_version_id,
             base_content_digest=command.base_content_digest,
             decisions=command.decisions,
+            conflict_resolutions=command.conflict_resolutions,
         )
         self._transactions.create_draft(draft, expected_line=command.line, historical_base=historical_base)
         return draft

@@ -50,7 +50,7 @@ class ProductionTerminologyCommands:
         self._build_inputs = build_inputs
         self._lifecycle = lifecycle
         self._publication = TerminologyPublicationCommands(entrypoint, repositories, state, ids, clock, build_inputs)
-        self._review = TerminologyReviewCommands(repositories, ids, clock, lifecycle)
+        self._review = TerminologyReviewCommands(repositories, ids, clock, lifecycle, build_inputs)
 
     def start_build(self, snapshot: BuildInputSnapshot, context: RequestContext) -> JobRef:
         expected = expected_state(snapshot, self._repositories.for_project(snapshot.project_id))
@@ -107,6 +107,15 @@ class ProductionTerminologyCommands:
 
     def apply_decision(self, operation, context: RequestContext, **values):
         return self._review.apply_decision(operation, context, **values)
+
+    def prepare_draft(self, context: RequestContext, config=None):
+        return self._review.prepare_draft(context, config)
+
+    def edit_term(self, term_id, context: RequestContext, **values):
+        return self._review.edit_term(term_id, context, **values)
+
+    def batch_terms(self, term_ids, operation, context: RequestContext, **values):
+        return self._review.batch_terms(term_ids, operation, context, **values)
 
     def resolve_conflict(self, conflict, operation, context: RequestContext, **values):
         return self._review.resolve_conflict(conflict, operation, context, **values)

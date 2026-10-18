@@ -8,6 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication, QInputDialog
 
+from tests.ui.workbench.terminology_async_support import wait_until
 from transbridge.application.terminology_profiles import (
     InMemoryTerminologyProfileRepository,
     ProfileEntryOverride,
@@ -38,7 +39,10 @@ def _service() -> tuple[TerminologyProfileService, str, TerminologyProfileConten
     return service, profile.profile_id, content
 
 
-def test_manager_saves_mapping_without_dropping_overrides_or_bindings_and_publishes() -> None:
+def test_manager_saves_mapping_without_dropping_overrides_or_bindings_and_publishes(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "transbridge.ui.tools.terminology_profiles.manager_workflows.confirm_publication", lambda *_args: True
+    )
     service, profile_id, original = _service()
     dialog = TerminologyProfileManagerDialog(service, "project-a")
     model = dialog.mapping_table.model()
@@ -52,6 +56,7 @@ def test_manager_saves_mapping_without_dropping_overrides_or_bindings_and_publis
 
     assert model.setData(model.index(0, 2), "远古巨龙")
     dialog._publish()
+    wait_until(lambda: not dialog._workflows.active)
     service.select("project-a", "variant-a", profile_id)
     published = service.selected_revision("project-a", "variant-a")
     assert published is not None
@@ -64,7 +69,7 @@ def test_manager_saves_mapping_without_dropping_overrides_or_bindings_and_publis
     assert "可选择" in dialog.profile_combo.currentText()
     assert "r1" not in dialog.profile_combo.currentText()
     assert dialog.save_button.text() == "保存修改"
-    assert dialog.publish_button.text() == "应用修改"
+    assert dialog.publish_button.text() == "预览并发布…"
     assert [model.headerData(index, Qt.Orientation.Horizontal) for index in range(3)] == [
         "原文术语",
         "当前译文中的叫法",

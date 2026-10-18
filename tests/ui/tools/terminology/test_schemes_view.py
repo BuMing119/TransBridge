@@ -31,12 +31,14 @@ class _Profiles(QObject):
         )
         self.selected = []
         self.manager_opened = 0
+        self.manager_intents = []
 
     def select(self, profile_id) -> None:
         self.selected.append(profile_id)
 
-    def open_manager(self) -> None:
+    def open_manager(self, **intent) -> None:
         self.manager_opened += 1
+        self.manager_intents.append(intent)
 
 
 def test_scheme_switcher_keeps_selection_visible_and_management_in_a_menu() -> None:
@@ -48,7 +50,7 @@ def test_scheme_switcher_keeps_selection_visible_and_management_in_a_menu() -> N
     assert view.scheme_combo.currentData() == "classic"
     assert view.scheme_combo.currentText() == "经典译名"
     assert view.scheme_combo.accessibleName() == "当前译名方案"
-    assert view.actions_button.text() == "方案操作…"
+    assert view.actions_button.text() == "更多…"
     assert view.create_action.text() == "从外部来源创建方案…"
     assert controller._imports._select_after_create
     assert view.actions_button.isEnabled()
@@ -60,6 +62,22 @@ def test_scheme_switcher_keeps_selection_visible_and_management_in_a_menu() -> N
 
     assert profiles.selected == [None]
     assert profiles.manager_opened == 1
+    view.close()
+
+
+def test_direct_scheme_actions_distinguish_default_from_named_profile():
+    profiles = _Profiles()
+    view = TerminologySchemesView()
+    controller = TerminologySchemesController(view, SimpleNamespace(), profiles, view)
+    view.rename_button.click()
+    view.new_button.click()
+    view.edit_button.click()
+    assert profiles.manager_intents == [{"rename": True}, {"create_from_base": True}, {}]
+    view.render(replace(profiles.state, selected_profile_id=None))
+    assert not view.rename_button.isEnabled()
+    assert view.new_button.isEnabled()
+    assert "不是独立方案" in view.rename_button.toolTip()
+    assert controller.parent() is view
     view.close()
 
 

@@ -163,6 +163,8 @@ class TerminologyProfileUiController(QObject):
             label = profile.name
             if selected is not None and profile.profile_id == selected.profile_id and selected.revision != revision:
                 label = f"{profile.name}（有更新）"
+            elif selected is not None and profile.profile_id == selected.profile_id and selected.name != profile.name:
+                label = f"{profile.name}（名称未发布）"
             choices.append(TerminologyProfileChoice(profile.profile_id, label))
         selected_id = None if selected is None else selected.profile_id
         detail = (
@@ -195,31 +197,38 @@ class TerminologyProfileUiController(QObject):
             identity, service=self._service, selection=None if profile_id is None else str(profile_id)
         )
 
-    def open_manager(self) -> None:
+    def open_manager(self, *, original: str | None = None, scope=None, rename=False, create_from_base=False) -> None:
         identity = getattr(self._ctx, "active_version_identity", None)
         if identity is None or self._service is None or self._refresh_pending:
             self.refresh()
             return
         if self._manager is not None and self._manager.isVisible():
-            self._manager.select_profile(self._state.selected_profile_id)
+            if not self._manager.select_profile(self._state.selected_profile_id):
+                return
             self._manager.raise_()
             self._manager.activateWindow()
+            self._manager.open_intent(original=original, scope=scope, rename=rename, create_from_base=create_from_base)
             return
         from transbridge.ui.tools.terminology_profiles import TerminologyProfileManagerDialog
 
+        project_id, variant_id = str(identity[0]), str(identity[1])
+        read_base = getattr(self._factory, "base_terminology_snapshot", None)
         manager = TerminologyProfileManagerDialog(
             self._service,
-            str(identity[0]),
+            project_id,
             self._bar.window(),
             selected_profile_id=self._state.selected_profile_id,
             project_name=getattr(self._ctx, "project_name", None),
             variant_names={str(item["id"]): str(item["name"]) for item in getattr(self._ctx, "project_variants", ())},
+            variant_id=variant_id,
+            base_snapshot_reader=(lambda: read_base(project_id, variant_id)) if callable(read_base) else None,
         )
         manager.profiles_changed.connect(self._profiles_changed)
         manager.finished.connect(lambda _result, current=manager: self._clear_manager(current))
         self._manager = manager
         self._manager_identity = self.identity
         manager.open()
+        manager.open_intent(original=original, scope=scope, rename=rename, create_from_base=create_from_base)
 
     def _clear_manager(self, manager) -> None:
         if self._manager is manager:

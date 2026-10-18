@@ -21,10 +21,13 @@ from .models import (
     TerminologyDraft,
     TermScope,
 )
+from .review_guards import require_reviewed_edit
+from .term_edit import edit_decision, replace_identity
 
 
 class DecisionOperation(StrEnum):
     ADD = "add"
+    EDIT = "edit"
     CHANGE_TRANSLATION = "change_translation"
     REPLACE_ORIGINAL = "replace_original"
     CHANGE_SCOPE = "change_scope"
@@ -87,22 +90,53 @@ class DecisionService:
         actors: ManualActorPort,
         clock: ClockPort,
         ids: IdGeneratorPort,
+        *,
+        conflicts: tuple[ConflictGroup, ...] = (),
     ) -> None:
         self._drafts = drafts
         self._actors = actors
         self._clock = clock
         self._ids = ids
+        self._conflicts = conflicts
 
     def apply(self, command: DecisionCommand, context: RequestContext) -> TerminologyDraft:
-        self._validate_context(command.expectation, context)
+        return self.apply_many((command,), context)
+
+    def apply_many(self, commands: tuple[DecisionCommand, ...], context: RequestContext) -> TerminologyDraft:
+        """Validate every edit before atomically saving one audited draft revision."""
+        if not commands:
+            raise ValueError("请至少选择一条术语")
+        expectation = commands[0].expectation
+        if any(command.expectation != expectation for command in commands):
+            raise ValueError("批量操作必须基于同一份草稿")
+        self._validate_context(expectation, context)
         actor = self._actors.resolve(context)
         if not isinstance(actor, ManualActor) or actor.trusted is not True:
             raise ValueError("manual actor identity is not trusted")
         current = self._drafts.active(
-            command.expectation.line.project_id,
-            command.expectation.line.variant_id,
+            expectation.line.project_id,
+            expectation.line.variant_id,
         )
-        self._drafts.require_expected(current, command.expectation)
+        self._drafts.require_expected(current, expectation)
+        staged = current
+        for command in commands:
+            staged = self._stage(staged, command, actor)
+        previous_action_ids = {item.action_id for item in current.actions}
+        # Drafts sort actions by ID, so additions need identity comparison, not a tail slice.
+        action_ids = tuple(item.action_id for item in staged.actions if item.action_id not in previous_action_ids)
+        # Keep the established single-command digest contract for existing callers.
+        digest_context = {"manual_action": action_ids[0]} if len(action_ids) == 1 else {"manual_actions": action_ids}
+        updated = revised_draft(
+            current,
+            decisions=staged.decisions,
+            actions=staged.actions,
+            conflict_resolutions=staged.conflict_resolutions,
+            digest_context=digest_context,
+        )
+        return self._drafts.save(updated, expectation=expectation)
+
+    def _stage(self, current: TerminologyDraft, command: DecisionCommand, actor: ManualActor) -> TerminologyDraft:
+        require_reviewed_edit(current, command, self._conflicts)
         decisions, action_type, action_term_id, replacement_term_id = self._apply_operation(current, command)
         before = _decision_digest(current.decisions)
         after = _decision_digest(decisions)
@@ -121,7 +155,7 @@ class DecisionService:
             reason=command.reason,
             replacement_term_id=replacement_term_id,
         )
-        updated = revised_draft(
+        return replace(
             current,
             decisions=decisions,
             actions=(*current.actions, action),
@@ -129,9 +163,7 @@ class DecisionService:
                 current.conflict_resolutions,
                 command.conflict_resolution,
             ),
-            digest_context={"manual_action": action.action_id},
         )
-        return self._drafts.save(updated, expectation=command.expectation)
 
     def _apply_operation(
         self,
@@ -158,6 +190,8 @@ class DecisionService:
             return self._ignore(draft, command)
 
         current = _required_decision(draft, command.term_id)
+        if operation is DecisionOperation.EDIT:
+            return edit_decision(draft, current, command)
         replacement_id = None
         if operation is DecisionOperation.CHANGE_TRANSLATION:
             updated = replace(
@@ -189,7 +223,8 @@ class DecisionService:
                 replacement_of=current.term_id,
                 evidence_ids=(),
             )
-            decisions = _replace(draft.decisions, replace(current, suppressed=True), replacement)
+            decisions = replace_identity(draft.decisions, current, replacement)
+            replacement_id = replacement_id if replacement_id != current.term_id else None
             return decisions, ManualActionType.REPLACE_ORIGINAL, current.term_id, replacement_id
         elif operation is DecisionOperation.CHANGE_SCOPE:
             if command.scope is None:
@@ -207,7 +242,8 @@ class DecisionService:
                 status=DecisionStatus.MANUAL_CONFIRMED,
                 replacement_of=current.term_id,
             )
-            decisions = _replace(draft.decisions, replace(current, suppressed=True), replacement)
+            decisions = replace_identity(draft.decisions, current, replacement)
+            replacement_id = replacement_id if replacement_id != current.term_id else None
             return decisions, ManualActionType.CHANGE_SCOPE, current.term_id, replacement_id
         elif operation is DecisionOperation.CHANGE_VARIANTS:
             if command.variants is None:
@@ -349,10 +385,8 @@ def _insert(decisions: tuple[TermDecision, ...], added: TermDecision) -> tuple[T
 def _replace(
     decisions: tuple[TermDecision, ...],
     updated: TermDecision,
-    added: TermDecision | None = None,
 ) -> tuple[TermDecision, ...]:
-    replaced = tuple(updated if item.term_id == updated.term_id else item for item in decisions)
-    return replaced if added is None else _insert(replaced, added)
+    return tuple(updated if item.term_id == updated.term_id else item for item in decisions)
 
 
 def _decision_digest(decisions: tuple[TermDecision, ...]) -> str:

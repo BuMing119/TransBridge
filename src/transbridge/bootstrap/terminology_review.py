@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from transbridge.application.contracts import RequestContext
+from transbridge.application.contracts import OperationOutcome, RequestContext
+from transbridge.application.terminology.batch_edits import batch_commands
+from transbridge.application.terminology.build_freshness import build_input_digest, require_current_build
 from transbridge.application.terminology.conflict_review import TerminologyConflictDetails, TerminologyReviewCounts
 from transbridge.application.terminology.conflicts import (
     ConflictResolutionCommand,
@@ -15,7 +17,7 @@ from transbridge.application.terminology.decisions import (
     DecisionService,
     ManualActor,
 )
-from transbridge.application.terminology.drafts import DraftService, DraftWriteExpectation
+from transbridge.application.terminology.drafts import DraftService, DraftWriteExpectation, OpenDraftCommand
 from transbridge.application.terminology.errors import RepositoryConflictError, TerminologyNotFoundError
 from transbridge.application.terminology.models import ConflictStatus, DecisionStatus, DraftRef, TermScope
 
@@ -24,11 +26,12 @@ from .terminology_draft_access import LifecycleDraftLineReader
 
 
 class TerminologyReviewCommands:
-    def __init__(self, repositories, ids, clock, lifecycle) -> None:
+    def __init__(self, repositories, ids, clock, lifecycle, build_inputs=None) -> None:
         self._repositories = repositories
         self._ids = ids
         self._clock = clock
         self._lifecycle = lifecycle
+        self._build_inputs = build_inputs
 
     def active_draft(self, context: RequestContext):
         project_id, variant_id = require_line(context)
@@ -55,11 +58,73 @@ class TerminologyReviewCommands:
             sum(item.status is ConflictStatus.UNRESOLVED for item in conflicts),
         )
 
-    def apply_decision(self, operation, context: RequestContext, **values):
-        service, expectation = self._decision_service(context)
+    def prepare_draft(self, context: RequestContext, config=None):
+        project_id, variant_id = require_line(context)
+        repository = self._repositories.for_project(project_id)
+        reader = LifecycleDraftLineReader(self._lifecycle, repository)
+        line = reader.read_line(None, project_id, variant_id)
+        current = repository.active_draft(project_id, variant_id)
+        if current is not None:
+            if (current.ref.base_version_id, current.ref.base_content_digest) != (
+                line.effective_version_id,
+                line.effective_content_digest,
+            ):
+                raise RepositoryConflictError("草稿基线已经变化，请重新生成草稿")
+            return current
+        effective = repository.effective_version(project_id, variant_id)
+        if effective is None:
+            return None
+        build = repository.latest_build(project_id, variant_id)
+        if build is None or build.ref != effective.build_ref:
+            raise RepositoryConflictError("来源整理结果已经变化，请重新生成草稿后编辑")
+        if self._build_inputs is None:
+            raise RuntimeError("无法确认当前来源状态，请重新打开工程后重试")
+        captured = self._build_inputs.capture_build_input(context, config=config or {})
+        if captured.outcome is not OperationOutcome.COMPLETED or captured.value is None:
+            message = captured.diagnostics[0].message if captured.diagnostics else "无法读取当前工程来源"
+            raise RuntimeError(message)
+        if (captured.value.project_id, captured.value.variant_id) != (project_id, variant_id):
+            raise RepositoryConflictError("当前工程或翻译版本已变化，请重新打开术语窗口")
+        require_current_build(build, build_input_digest(captured.value))
+        return DraftService(repository.draft_transactions(reader), self._ids).open(
+            OpenDraftCommand(
+                line,
+                effective.ref.version_id,
+                effective.ref.content_digest,
+                effective.decisions,
+                tuple(item for item in effective.conflicts if item.status is not ConflictStatus.UNRESOLVED),
+            )
+        )
+
+    def apply_decision(self, operation, context: RequestContext, *, expected_ref=None, **values):
+        service, expectation = self._decision_service(context, expected_ref=expected_ref)
         return service.apply(
             DecisionCommand(operation=DecisionOperation(operation), expectation=expectation, **values), context
         )
+
+    def edit_term(self, term_id, context: RequestContext, *, expected_ref=None, **values):
+        service, expectation = self._decision_service(context, expected_ref=expected_ref)
+        draft, _ = self._edit_state(context)
+        if not any(item.term_id == term_id for item in draft.decisions):
+            raise ValueError("术语已变化或不存在，请刷新后重试")
+        return service.apply(
+            DecisionCommand(operation=DecisionOperation.EDIT, expectation=expectation, term_id=term_id, **values),
+            context,
+        )
+
+    def batch_terms(self, term_ids, operation, context: RequestContext, *, expected_ref=None):
+        service, expectation = self._decision_service(context, expected_ref=expected_ref)
+        draft, conflicts = self._edit_state(context)
+        return service.apply_many(batch_commands(draft, expectation, tuple(term_ids), operation, conflicts), context)
+
+    def _edit_state(self, context):
+        project_id, variant_id = require_line(context)
+        repository = self._repositories.for_project(project_id)
+        draft = repository.active_draft(project_id, variant_id)
+        if draft is None:
+            raise TerminologyNotFoundError("当前没有可编辑的草稿，请先生成草稿")
+        build = repository.latest_build(project_id, variant_id)
+        return draft, () if build is None else build.conflicts
 
     def resolve_conflict(self, conflict, operation, context: RequestContext, **values):
         details = self.conflict_details(conflict, context)
@@ -145,7 +210,9 @@ class TerminologyReviewCommands:
         if expected_ref is not None and ref != expected_ref:
             raise RepositoryConflictError("草稿已变化，请重新审核")
         expectation = DraftWriteExpectation.from_ref(ref, line)
-        return DecisionService(drafts, RequestManualActor(), self._clock, self._ids), expectation
+        build = repository.latest_build(project_id, variant_id)
+        conflicts = () if build is None else build.conflicts
+        return DecisionService(drafts, RequestManualActor(), self._clock, self._ids, conflicts=conflicts), expectation
 
 
 class RequestManualActor:

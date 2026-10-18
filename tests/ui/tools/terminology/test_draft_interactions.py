@@ -4,9 +4,10 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox, QWidget
 
 from transbridge.application.terminology.conflicts import ConflictResolutionOperation
-from transbridge.application.terminology.models import DecisionStatus
+from transbridge.application.terminology.models import DecisionStatus, TermDecision
 from transbridge.ui.tools.terminology.conflict_review_dialog import ConflictReviewDialog
 from transbridge.ui.tools.terminology.draft_interactions import DraftInteractionController
+from transbridge.ui.tools.terminology.term_edit_dialog import TermEditDialog
 from transbridge.ui.tools.terminology.window import _decision_status_label
 
 _APP = QApplication.instance() or QApplication([])
@@ -89,18 +90,32 @@ def test_conflict_dialog_shows_full_evidence_and_selects_actual_plugin():
 
 def test_confirming_unchanged_translation_resolves_review_required(monkeypatch):
     calls = []
-    monkeypatch.setattr(
-        "transbridge.ui.tools.terminology.draft_interactions.QInputDialog.getText",
-        lambda *args, **kwargs: ("巨龙", True),
+    decision = TermDecision("dragon", "project", "variant", "Dragon", "dragon", "巨龙")
+    draft = SimpleNamespace(ref="draft-1", decisions=(decision,))
+    presenter = SimpleNamespace(
+        term_editing=SimpleNamespace(
+            prepare_draft=lambda: draft,
+            edit_term=lambda *args, **kwargs: calls.append((args, kwargs)),
+        )
     )
-    presenter = SimpleNamespace(change_translation=lambda *args: calls.append(args))
-    decision = SimpleNamespace(term_id="dragon", translation="巨龙", status=DecisionStatus.REVIEW_REQUIRED)
-    controller = DraftInteractionController(QWidget(), presenter, lambda command: command())
+
+    def save(dialog):
+        dialog.save_button.click()
+        return dialog.result()
+
+    monkeypatch.setattr(TermEditDialog, "exec", save)
+    controller = DraftInteractionController(
+        QWidget(),
+        presenter,
+        lambda command, on_saved, on_error: on_saved(command()),
+        lambda command, on_ready, _message: on_ready(command()),
+    )
     controller.edit(decision)
-    assert calls == [("dragon", "巨龙")]
+    assert calls[0][0] == ("dragon",)
+    assert calls[0][1]["translation"] == "巨龙"
+    assert calls[0][1]["expected_ref"] == "draft-1"
     assert _decision_status_label(decision) == "待复核"
-    decision.status = DecisionStatus.MANUAL_CONFIRMED
-    assert _decision_status_label(decision) == "已确认 · 待发布"
+    assert _decision_status_label(SimpleNamespace(status=DecisionStatus.MANUAL_CONFIRMED)) == "已确认 · 待发布"
 
 
 def test_review_keeps_existing_plugin_choice_and_names_suppressed_decision():

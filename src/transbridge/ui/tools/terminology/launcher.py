@@ -22,6 +22,7 @@ class TerminologyLauncher:
     def __init__(self, host: object) -> None:
         self._host = host
         self._window: TerminologyWindow | None = None
+        self._retiring: dict[int, TerminologyWindow] = {}
 
     @property
     def window(self) -> TerminologyWindow | None:
@@ -31,7 +32,11 @@ class TerminologyLauncher:
         from .window import TerminologyWindow
 
         if self._window is not None and not self._window.presenter.closed:
-            return show_and_activate(self._window)
+            if self._window.context_is_current:
+                return show_and_activate(self._window)
+            old_window = self._window
+            self._retiring[id(old_window)] = old_window
+            old_window.invalidate_context()
         runtime = getattr(self._host, "app_runtime", None)
         if runtime is None:
             getattr(self._host, "show_message")("术语工作台需要应用运行服务，当前不可用。")
@@ -49,17 +54,25 @@ class TerminologyLauncher:
         )
         identity = id(window)
         window.destroyed.connect(lambda _obj=None: self._clear(identity))
+        window.closed.connect(lambda: self._retired_closed(identity))
         self._window = window
         show_and_activate(window)
         return window
 
     def close(self) -> None:
-        if self._window is not None:
-            self._window.close()
+        for window in tuple(self._retiring.values()):
+            window.close()
+        if self._window is not None and self._window.close():
             self._window.deleteLater()
             self._window = None
 
+    def _retired_closed(self, identity: int) -> None:
+        window = self._retiring.pop(identity, None)
+        if window is not None:
+            window.deleteLater()
+
     def _clear(self, identity: int) -> None:
+        self._retiring.pop(identity, None)
         if self._window is not None and id(self._window) == identity:
             self._window = None
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, pyqtSignal
 
-from transbridge.application.terminology_profiles import ProfileTermMapping
+from transbridge.application.terminology_profiles import ProfileTermMapping, normalize_term
 
 _HEADERS = ("原文术语", "当前译文中的叫法", "方案译名", "生效范围", "插件文件")
 SCOPE_LABELS = {"project": "整个工程", "plugin": "仅指定插件"}
@@ -32,6 +32,7 @@ class ProfileMappingModel(QAbstractTableModel):
         self._rows: list[tuple[str, ...]] = []
         self._baseline: tuple[tuple[str, ...], ...] = ()
         self._changed_rows: set[int] = set()
+        self._published_rows: set[tuple[str, ...]] = set()
 
     @property
     def is_dirty(self) -> bool:
@@ -92,15 +93,32 @@ class ProfileMappingModel(QAbstractTableModel):
         self._notify_dirty(was_dirty)
         return True
 
-    def load(self, mappings) -> None:
+    def load(self, mappings, *, published=None) -> None:
         baseline = tuple(_raw_mapping(mapping) for mapping in mappings)
         was_dirty = self.is_dirty
         self.beginResetModel()
         self._baseline = baseline
         self._rows = list(baseline)
+        self._published_rows = set(baseline if published is None else (_raw_mapping(item) for item in published))
         self._changed_rows.clear()
         self.endResetModel()
         self._notify_dirty(was_dirty)
+
+    def row_changed_from_published(self, row: int) -> bool:
+        return self._rows[row] not in self._published_rows
+
+    def search_snapshot(self) -> tuple:
+        """Freeze raw inputs without accessing Qt from background search workers."""
+        return tuple(self._rows), frozenset(self._published_rows)
+
+    def matching_original_rows(self, original: str, *, scope=None) -> tuple[int, ...]:
+        normalized = normalize_term(original)
+        return tuple(
+            row
+            for row, values in enumerate(self._rows)
+            if normalize_term(values[0]) == normalized
+            and (scope is None or (values[3], values[4].strip() or None) == (scope.kind.value, scope.plugin_id))
+        )
 
     def append_mapping(self, mapping: ProfileTermMapping | None = None) -> None:
         was_dirty = self.is_dirty

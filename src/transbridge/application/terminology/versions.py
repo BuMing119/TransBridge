@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .models import BuildResult, ConflictGroup, ManualAction, TermDecision, TerminologyDraft, TerminologyVersion
+from .review_guards import require_reviewed_effective_terms
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +42,7 @@ class VersionMaterializer:
         unknown = set(resolutions).difference(item.conflict_group_id for item in build.conflicts)
         if unknown:
             raise ValueError("draft resolves a conflict that is absent from the pinned build")
+        require_reviewed_effective_terms(draft.decisions, conflicts)
         return VersionContent(draft.decisions, conflicts, draft.actions)
 
     def from_version(self, build: BuildResult, source: TerminologyVersion) -> VersionContent:
@@ -50,6 +52,7 @@ class VersionMaterializer:
         if (source.ref.project_id, source.ref.variant_id) != (build.project_id, build.variant_id):
             raise ValueError("rollback source and build must belong to the same Project/Variant")
         self._validate_decisions(source.decisions, build.project_id, build.variant_id)
+        require_reviewed_effective_terms(source.decisions, source.conflicts)
         return VersionContent(source.decisions, source.conflicts, ())
 
     @staticmethod

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -20,7 +21,7 @@ from transbridge.application.terminology.decisions import (
     DecisionService,
     ManualActor,
 )
-from transbridge.application.terminology.drafts import OpenDraftCommand
+from transbridge.application.terminology.drafts import OpenDraftCommand, revised_draft
 from transbridge.application.terminology.models import ManualActionType, ScopeKind, TermScope
 
 
@@ -138,4 +139,55 @@ def test_untrusted_or_empty_actor_is_rejected_without_manual_action():
             original="Sword",
             translation="剑",
         )
+    assert transactions.draft == draft
+
+
+@pytest.mark.parametrize("new_ids", [("000-new",), ("900-new", "000-new")])
+def test_digest_context_references_only_new_action_ids_when_ids_sort_before_history(new_ids):
+    transactions, initial, context, draft, current_line = _setup()
+    draft = _apply(initial, context, draft, current_line, DecisionOperation.ADD, original="Sword", translation="剑")
+    generated = iter(new_ids)
+    ids = SimpleNamespace(new_id=lambda: next(generated))
+    service = DecisionService(draft_service(transactions), TrustedActors(), FixedClock(), ids)
+    commands = tuple(
+        DecisionCommand(
+            operation=DecisionOperation.CHANGE_TRANSLATION,
+            expectation=expectation(draft, current_line),
+            term_id=draft.decisions[0].term_id,
+            translation=f"人工译名 {index}",
+        )
+        for index in range(len(new_ids))
+    )
+
+    updated = service.apply(commands[0], context) if len(commands) == 1 else service.apply_many(commands, context)
+
+    assert {action.action_id for action in updated.actions} == {draft.actions[0].action_id, *new_ids}
+    context_ids = {"manual_action": new_ids[0]} if len(new_ids) == 1 else {"manual_actions": tuple(sorted(new_ids))}
+    expected = revised_draft(
+        draft,
+        decisions=updated.decisions,
+        actions=updated.actions,
+        conflict_resolutions=updated.conflict_resolutions,
+        digest_context=context_ids,
+    )
+    assert updated.ref.decision_set_digest == expected.ref.decision_set_digest
+    assert updated.decisions[0].translation == f"人工译名 {len(new_ids) - 1}"
+    assert transactions.draft == updated
+
+
+@pytest.mark.parametrize("duplicate", ["historical", "within_batch"])
+def test_duplicate_action_ids_reject_all_changes_before_save(duplicate):
+    transactions, initial, context, draft, current_line = _setup()
+    draft = _apply(initial, context, draft, current_line, DecisionOperation.ADD, original="Sword", translation="剑")
+    identity = draft.actions[0].action_id if duplicate == "historical" else "000-new"
+    ids = SimpleNamespace(new_id=lambda: identity)
+    service = DecisionService(draft_service(transactions), TrustedActors(), FixedClock(), ids)
+    command = DecisionCommand(
+        operation=DecisionOperation.CHANGE_TRANSLATION,
+        expectation=expectation(draft, current_line),
+        term_id=draft.decisions[0].term_id,
+        translation="不应保存",
+    )
+    with pytest.raises(ValueError, match="unique action IDs"):
+        service.apply_many((command,) if duplicate == "historical" else (command, command), context)
     assert transactions.draft == draft

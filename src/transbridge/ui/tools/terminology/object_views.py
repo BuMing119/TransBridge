@@ -20,6 +20,7 @@ from .conflicts_view import ConflictsView
 from .draft_view import DraftView
 from .history_view import HistoryView
 from .source_browser import SourceBrowser
+from .workflow_bar import TerminologyWorkflowBar
 
 
 class TermsView(QWidget):
@@ -38,6 +39,10 @@ class TermsView(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 12, 20, 12)
         layout.setSpacing(10)
+        self.workflow = TerminologyWorkflowBar(self)
+        layout.addWidget(self.workflow)
+        self._draft = draft
+        self._build = build
         self._project_actions = QWidget(self)
         heading = QHBoxLayout(self._project_actions)
         heading.setContentsMargins(0, 0, 0, 0)
@@ -46,7 +51,7 @@ class TermsView(QWidget):
         heading.addWidget(draft.add_button)
         heading.addWidget(build.build_button)
         heading.addStretch(1)
-        self.build_details_button = QPushButton("整理状态与结果", self)
+        self.build_details_button = QPushButton("来源检查与整理详情", self)
         self.build_details_button.setCheckable(True)
         heading.addWidget(self.build_details_button)
         layout.addWidget(self._project_actions)
@@ -64,8 +69,8 @@ class TermsView(QWidget):
         self._choice_group = QButtonGroup(self)
         self._choice_group.setExclusive(True)
         self.effective_button = QPushButton("当前生效", self)
-        self.all_terms_button = QPushButton("草稿编辑", self)
-        self.attention_button = QPushButton("异译审核", self)
+        self.all_terms_button = QPushButton("编辑草稿", self)
+        self.attention_button = QPushButton("处理异译", self)
         self.source_button = QPushButton("方案映射", self)
         for index, button in enumerate((
             self.effective_button,
@@ -74,14 +79,18 @@ class TermsView(QWidget):
             self.source_button,
         )):
             button.setCheckable(True)
-            button.setProperty("tbTerminologyFilter", True)
+            button.setProperty("tbTerminologyFilter", index != 2)
             button.clicked.connect(lambda _checked=False, value=index: self._set_page(value))
             self._choice_group.addButton(button, index)
-            choices.addWidget(button)
-        self.review_button = QPushButton("待复核", self)
+            if index != 2:
+                choices.addWidget(button)
+        self.review_button = QPushButton("复核术语", self)
         self.review_button.clicked.connect(lambda: self._show_review(draft))
-        choices.insertWidget(2, self.review_button)
         choices.addStretch(1)
+        choices.addWidget(self.review_button)
+        choices.addWidget(self.attention_button)
+        self.review_button.hide()
+        self.attention_button.hide()
         layout.addLayout(choices)
 
         card = QFrame(self)
@@ -101,6 +110,23 @@ class TermsView(QWidget):
 
     def show_attention(self) -> None:
         self._set_page(2)
+
+    def show_draft(self) -> None:
+        self._set_page(1)
+
+    def render_workflow(self, state) -> None:
+        self.workflow.render(state)
+        self._draft.add_button.setVisible(state.has_draft)
+        self._build.build_button.setText("重新整理来源" if state.has_draft or state.has_version else "从来源生成草稿")
+        self._build.build_button.setToolTip("读取项目已登记来源，整理术语并生成或更新待审核草稿。")
+        self._build.build_button.setProperty("tbTerminologyPrimary", not (state.has_draft or state.has_version))
+        self._build.build_button.style().unpolish(self._build.build_button)
+        self._build.build_button.style().polish(self._build.build_button)
+        self.review_button.setText(f"复核术语（{state.review_count}）")
+        self.attention_button.setText(f"处理异译（{state.conflict_count}）")
+        self.review_button.setVisible(state.has_draft and state.review_count > 0)
+        self.attention_button.setVisible(state.has_draft and state.conflict_count > 0)
+        self.all_terms_button.setText("编辑草稿" if state.has_draft else "开始编辑")
 
     def _set_page(self, index: int) -> None:
         self.pages.setCurrentIndex(index)
@@ -160,7 +186,7 @@ class VersionsView(QWidget):
         current_description = QLabel("发布后，后续翻译会优先采用此版本。", current)
         current_description.setProperty("tbSecondary", True)
         controls = QHBoxLayout()
-        publish = QPushButton("检查影响并发布新版…", current)
+        publish = self.publish_button = QPushButton("检查影响并发布新版…", current)
         publish.setProperty("tbTerminologyPrimary", True)
         publish.clicked.connect(self.publish_requested)
         controls.addWidget(publish)

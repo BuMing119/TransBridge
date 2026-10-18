@@ -195,6 +195,29 @@ class TerminologyProfileService:
     def published_revision(self, profile_id: str, revision: int) -> PublishedTerminologyProfile | None:
         return self._repository.get_published(profile_id, revision)
 
+    def preview_publication(self, profile_id, content, *, expected_revision, target_variant_id=None):
+        from .publication import preview_publication
+
+        return preview_publication(
+            self._repository,
+            profile_id,
+            content,
+            expected_revision=expected_revision,
+            target_variant_id=target_variant_id,
+        )
+
+    def publish_reviewed(self, preview):
+        try:
+            return self._repository.commit_publication(preview, published_at=self._timestamp())
+        except ValueError as exc:
+            raise TerminologyProfileConflictError(str(exc)) from exc
+
+    def create_from_project_terminology(self, project_id, variant_id, name, snapshot):
+        from .base_scheme import content_from_project_terminology
+
+        content = content_from_project_terminology(snapshot, project_id=project_id, variant_id=variant_id)
+        return self.create_with_content(project_id, name, content)
+
     def _require_profile(self, profile_id: str) -> TerminologyProfile:
         profile = self._repository.get_profile(profile_id)
         if profile is None:

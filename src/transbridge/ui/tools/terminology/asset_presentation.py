@@ -41,28 +41,36 @@ class WorkbenchAssetPresentation:
         version_id = "" if assets.version_ref is None else assets.version_ref.version_id
         view.versions_view.set_context(version_id)
         view.workspace.set_terminology_version(version_id)
+        view._workflow.render(assets)
         if assets.review_counts is not None:
             count = assets.review_counts
-            view.terms_view.attention_button.setText(f"异译审核（{count.unresolved_conflicts}）")
-            view.terms_view.review_button.setText(f"待复核（{count.review_required_terms}）")
             view.build_view.attention_metric.setText(f"{count.total} 项")
             view.build_view.decisions.setText(
                 f"{count.review_required_terms} 条术语待复核，{count.unresolved_conflicts} 组异译待决定。"
             )
             view.build_view.decisions.setVisible(count.total > 0)
             if assets.draft is not None:
-                view.build_view.result_title.setText("待审核" if count.total else "草稿已确认 · 待发布")
+                view.build_view.result_title.setText(view._workflow.state.title)
 
     def apply_completion(self, assets, workload=None):
         view = self.window
+        summary = None
         if assets.build is not None and workload is TerminologyWorkloadType.BUILD:
-            view.build_view.set_summary(view.presenter.project_build(assets.build))
+            summary = view.presenter.project_build(assets.build)
+            view.build_view.set_summary(summary)
         result = assets.task_result
         if result is not None and str(result.freshness) == "stale":
             view.operation_notice.show_error(
                 business_diagnostic("TERMINOLOGY_BUILD_STALE", "; ".join(result.diagnostics))
             )
             return
+        if workload is TerminologyWorkloadType.BUILD:
+            view._workflow.build_completed()
+            view.operation_notice.show_message(
+                "来源整理未完整完成，请查看来源详情并重新整理。"
+                if summary is None or summary.is_partial or summary.is_stale
+                else "来源整理完成。请在草稿中检查术语，完成待办后检查影响并发布。"
+            )
         if workload is TerminologyWorkloadType.PUBLISH:
             if view._profile_controller is not None:
                 view._profile_controller.refresh()

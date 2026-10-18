@@ -69,6 +69,7 @@ class SourceBrowser(QWidget):
     """A searchable full published copy; no invented source provenance or counts."""
 
     draft_requested = pyqtSignal()
+    edit_requested = pyqtSignal(object)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -129,6 +130,19 @@ class SourceBrowser(QWidget):
         self.draft_button = QPushButton("前往草稿补充或确认基础术语", self)
         self.draft_button.clicked.connect(self.draft_requested)
         layout.addWidget(self.draft_button)
+        self.edit_button = QPushButton("编辑选中方案译名…", self)
+        self.edit_button.setEnabled(False)
+        self.edit_button.clicked.connect(self._edit_selected)
+        self.table.doubleClicked.connect(lambda _index: self._edit_selected())
+        self.table.selectionModel().selectionChanged.connect(
+            lambda *_args: self.edit_button.setEnabled(self.table.currentIndex().isValid())
+        )
+        layout.addWidget(self.edit_button)
+
+    def _edit_selected(self):
+        index = self.table.currentIndex()
+        if index.isValid():
+            self.edit_requested.emit(index.data(Qt.ItemDataRole.UserRole))
 
     def render(self, state) -> None:
         revision = getattr(state, "selected_revision", None) if state.enabled else None

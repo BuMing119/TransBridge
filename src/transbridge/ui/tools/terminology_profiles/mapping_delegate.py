@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QSignalBlocker, Qt
-from PyQt6.QtWidgets import QComboBox, QStyledItemDelegate
+from PyQt6.QtWidgets import QAbstractItemDelegate, QComboBox, QStyledItemDelegate
 
 from .mapping_model import SCOPE_LABELS
 
@@ -42,9 +42,12 @@ class ProfileMappingDelegate(QStyledItemDelegate):
             self._active_editor = None
         super().destroyEditor(editor, index)
 
-    def commit_pending(self) -> None:
+    def commit_pending(self, *, close=False) -> None:
         if self._active_editor is not None:
-            self.commitData.emit(self._active_editor)
+            editor = self._active_editor
+            self.commitData.emit(editor)
+            if close and self._active_editor is editor:
+                self.closeEditor.emit(editor, QAbstractItemDelegate.EndEditHint.NoHint)
 
 
 __all__ = ["ProfileMappingDelegate"]

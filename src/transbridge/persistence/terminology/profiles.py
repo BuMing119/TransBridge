@@ -21,6 +21,7 @@ from transbridge.application.terminology_profiles.models import (
     TerminologyProfileContent,
     TerminologyProfileSelection,
 )
+from transbridge.application.terminology_profiles.publication import ProfilePublicationPreview, commit_publication
 
 from .profile_reads import ProfileReadStore
 
@@ -223,6 +224,12 @@ class SqliteTerminologyProfileRepository:
 
     def get_published(self, profile_id: str, revision: int) -> PublishedTerminologyProfile | None:
         return self._reads.published(profile_id, revision)
+
+    def commit_publication(
+        self, preview: ProfilePublicationPreview, *, published_at: str
+    ) -> PublishedTerminologyProfile:
+        with self._lock, self._write_transaction():
+            return commit_publication(self, preview, published_at=published_at)
 
     def get_selection(self, project_id: str, variant_id: str) -> TerminologyProfileSelection | None:
         with self._lock:

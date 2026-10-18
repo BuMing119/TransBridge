@@ -25,10 +25,12 @@ class TerminologySchemesController(QObject):
             view.actions_button,
             profile_controller,
             ConfiguredTermSourceReader,
-            idle_button_text="方案操作…",
+            idle_button_text="更多…",
             select_after_create=True,
         )
         view.create_requested.connect(self.create_from_source)
+        view.create_from_base_requested.connect(self.create_from_base)
+        view.rename_requested.connect(self.rename)
         view.manage_requested.connect(self.open_manager)
         view.selection_requested.connect(self.select)
         if profile_controller is None or context is None:
@@ -64,6 +66,14 @@ class TerminologySchemesController(QObject):
     def open_manager(self) -> None:
         if self._profiles is not None:
             self._profiles.open_manager()
+
+    def create_from_base(self) -> None:
+        if self._profiles is not None:
+            self._profiles.open_manager(create_from_base=True)
+
+    def rename(self) -> None:
+        if self._profiles is not None:
+            self._profiles.open_manager(rename=True)
 
     def select(self, profile_id: str | None) -> None:
         if self._profiles is not None:

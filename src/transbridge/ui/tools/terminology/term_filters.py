@@ -1,6 +1,6 @@
 """Explicit, full-collection filtering controls shared by terminology tables."""
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import QSignalBlocker, pyqtSignal
 from PyQt6.QtWidgets import QComboBox, QHBoxLayout, QLineEdit, QPushButton, QWidget
 
 from transbridge.application.terminology.browse_queries import TermBrowseStatus, TermFilter
@@ -49,5 +49,8 @@ class TermFilterBar(QWidget):
         self.changed.emit(TermFilter(self.search.text().strip(), self.scope.currentData(), self.status.currentData()))
 
     def show_review_required(self):
-        self.status.setCurrentIndex(self.status.findData(TermBrowseStatus.REVIEW_REQUIRED))
+        with QSignalBlocker(self.search), QSignalBlocker(self.scope), QSignalBlocker(self.status):
+            self.search.clear()
+            self.scope.setCurrentIndex(self.scope.findData(None))
+            self.status.setCurrentIndex(self.status.findData(TermBrowseStatus.REVIEW_REQUIRED))
         self.apply()

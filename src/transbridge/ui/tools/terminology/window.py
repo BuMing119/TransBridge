@@ -26,6 +26,7 @@ from .object_views import TermsView, VersionsView
 from .operation_notice import OperationNotice
 from .presenter import TerminologyPresenter
 from .reports_view import ReportsView
+from .save_close import DraftSaveCloseGuard
 from .schemes_controller import TerminologySchemesController
 from .schemes_view import TerminologySchemesView
 from .sync_presenter import TerminologySyncPresenter
@@ -37,12 +38,15 @@ from .term_browsing import TermBrowsingController
 from .version_interactions import VersionInteractionController
 from .view_models import TerminologyArea, TerminologyPreflightViewState, business_diagnostic, phase_label
 from .workbench_shell import TerminologyWorkbenchShell
+from .workflow_controller import TerminologyWorkflowController
 
 
 class TerminologyWindow(QWidget):
     """One Project/Variant-scoped window; closing detaches UI ownership only."""
 
     task_changed = pyqtSignal(object)
+    closed = pyqtSignal()
+    context_invalidated = pyqtSignal()
 
     def __init__(
         self,
@@ -55,22 +59,32 @@ class TerminologyWindow(QWidget):
         super().__init__(parent, Qt.WindowType.Window)
         self.presenter = presenter
         self.setWindowTitle("项目术语")
+        self.setProperty("tbTaskDialog", True)
         self.resize(1180, 760)
         self.setMinimumSize(920, 620)
         self.setAccessibleName("项目术语工作台")
         self._actions = AsyncActionRunner(self, on_error=self._show_command_error)
         self._preflight_started = False
         self._task_refs: dict[str, JobRef] = {}
+        self._displayed_run_id: str | None = None
         self._finished_runs: set[str] = set()
         self._conflict_filter = ConflictFilter()
         self._closed = False
+        self._invalidated = False
         self._sync_tasks: TerminologySyncTaskAdapter | None = None
         self._ui_context = ui_context
         self._context_binding = TerminologyWindowContext(
             self, ui_context, profile_controller, (presenter.context.project_id, presenter.context.variant_id)
         )
         self._profile_controller = self._context_binding.profiles
-        self._draft_actions = DraftInteractionController(self, presenter, self._run_draft_command, self._run_read)
+        self._draft_actions = DraftInteractionController(
+            self,
+            presenter,
+            self._run_draft_command,
+            self._run_read,
+            on_prepared=lambda draft: self._workflow.prepared(draft),
+            on_build_required=lambda: self._workflow.build_required(),
+        )
         self._version_actions = VersionInteractionController(
             self, presenter, self._run_read, self._run_command, self._bind_existing_assets
         )
@@ -90,8 +104,25 @@ class TerminologyWindow(QWidget):
             on_saved=self._draft_saved,
             on_error=self._show_command_error,
         )
+        self._workflow = TerminologyWorkflowController(self)
+        self._save_close = DraftSaveCloseGuard(self, self._draft_writes)
+        self._context_binding.invalidated.connect(self.invalidate_context)
         self.task_changed.connect(self._on_task_change, Qt.ConnectionType.QueuedConnection)
         presenter.bind_tasks(self.task_changed.emit)
+
+    @property
+    def context_is_current(self) -> bool:
+        return not self._closed and self._context_binding.identity is not None
+
+    def invalidate_context(self) -> None:
+        if self._invalidated:
+            return
+        self._invalidated = True
+        self._context_binding.dispose()
+        self._actions.close()
+        self._asset_refresh.close()
+        self.context_invalidated.emit()
+        self._save_close.context_changed()
 
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -99,7 +130,7 @@ class TerminologyWindow(QWidget):
         self.workspace = TerminologyWorkbenchShell(self)
         layout.addWidget(self.workspace, 1)
         self.operation_notice = OperationNotice(self.workspace)
-        self.workspace.set_scheme_switcher(self.operation_notice)
+        self.workspace.set_operation_notice(self.operation_notice)
 
         self.conflicts_model = make_table_model(self.presenter, "conflicts", self)
         self.draft_model = make_table_model(self.presenter, "draft", self)
@@ -126,7 +157,7 @@ class TerminologyWindow(QWidget):
         self.build_view = BuildView(self)
         self.build_view.preflight_requested.connect(self.run_preflight)
         self.build_view.build_requested.connect(self._start_build)
-        self.build_view.cancel_requested.connect(self._cancel_latest)
+        self.build_view.cancel_requested.connect(self._cancel_displayed)
         self.build_view.terms_requested.connect(lambda: self.workspace.set_current_area(TerminologyArea.TERMS))
         self.build_view.versions_requested.connect(lambda: self.workspace.set_current_area(TerminologyArea.VERSIONS))
         self.terms_view = TermsView(
@@ -181,7 +212,7 @@ class TerminologyWindow(QWidget):
         self.workspace.add_area(TerminologyArea.REPORTS, self.reports_view)
 
     def run_preflight(self) -> None:
-        if self._closed:
+        if not self.context_is_current:
             return
         self._preflight_started = True
         self.build_view.preflight_button.setEnabled(False)
@@ -217,6 +248,9 @@ class TerminologyWindow(QWidget):
             self.run_preflight()
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt API
+        if not self._closed and not self._save_close.allow_close():
+            event.ignore()
+            return
         if not self._closed:
             self._closed = True
             self._context_binding.dispose()
@@ -231,6 +265,7 @@ class TerminologyWindow(QWidget):
             if hasattr(self, "sync_view"):
                 self.sync_view.dispose()
             self.presenter.close()
+            self.closed.emit()
         super().closeEvent(event)
 
     def _preflight_ready(self, state: object) -> None:
@@ -252,7 +287,7 @@ class TerminologyWindow(QWidget):
         self.operation_notice.show_error(notice)
 
     def _bind_existing_assets(self, workload=None, run_id=None) -> None:
-        if self._closed:
+        if not self.context_is_current:
             return
         self._asset_refresh.request(workload, run_id)
 
@@ -267,6 +302,7 @@ class TerminologyWindow(QWidget):
         self._asset_view.apply(assets, workload)
 
     def _start_build(self) -> None:
+        self._workflow.follow_build = True
         self._run_command(self.presenter.start_build, "构建任务已开始，可在此窗口或任务中心查看进度。")
 
     def _publish(self) -> None:
@@ -288,17 +324,21 @@ class TerminologyWindow(QWidget):
     def _restore_history(self, version_ref: object) -> None:
         self._version_actions.restore(version_ref)
 
-    def _run_draft_command(self, command) -> None:
-        if self._closed:
+    def _run_draft_command(self, command, on_saved=None, on_error=None) -> None:
+        if not self.context_is_current:
+            error = RuntimeError("工程或翻译版本已变化，请切回原版本并重新打开术语工作台。")
+            (on_error or self._show_command_error)(error)
             return
-        self._draft_writes.submit(command)
+        self._draft_writes.submit(command, on_saved=on_saved, on_error=on_error)
 
     def _draft_saved(self, _result) -> None:
+        if not self.context_is_current:
+            return
         self.operation_notice.show_message("人工调整已保存到草稿；发布后生效。")
         self._bind_existing_assets()
 
     def _run_read(self, command, on_success, message: str) -> None:
-        if self._closed:
+        if not self.context_is_current:
             return
         self.operation_notice.show_message(message)
         self._actions.run(command, lambda value: self._read_ready(value, on_success))
@@ -308,7 +348,7 @@ class TerminologyWindow(QWidget):
         callback(value)
 
     def _run_command(self, command, message: str) -> None:
-        if self._closed:
+        if not self.context_is_current:
             return
         self.operation_notice.show_message("正在准备并提交任务…")
         self._actions.run(command, lambda value: self._command_ready(value, message))
@@ -321,6 +361,8 @@ class TerminologyWindow(QWidget):
         if run_id in self._finished_runs:
             return
         self._task_refs[run_id] = value
+        if run_id == self._displayed_run_id:
+            self.build_view.cancel_button.setEnabled(True)
         self.operation_notice.show_message(message)
 
     def _show_command_error(self, error: Exception) -> None:
@@ -333,14 +375,25 @@ class TerminologyWindow(QWidget):
         self.publish_status.setText(f"{notice.title}：{notice.message} {notice.recovery}")
         self.publish_details.set_details(notice.technical_details)
 
-    def _cancel_latest(self) -> None:
-        if self._task_refs:
-            self.presenter.cancel_task(next(reversed(self._task_refs.values())))
+    def _cancel_displayed(self) -> None:
+        ref = self._task_refs.get(self._displayed_run_id)
+        if self.context_is_current and ref is not None:
+            self.presenter.cancel_task(ref)
 
     def _on_task_change(self, value: object) -> None:
-        if self._closed or not isinstance(value, TerminologyTaskViewState):
+        if not self.context_is_current or not isinstance(value, TerminologyTaskViewState):
             return
-        status = value.message
+        if value.run_id in self._finished_runs:
+            return
+        self._displayed_run_id = None if value.is_terminal else value.run_id
+        operation = {
+            TerminologyWorkloadType.BUILD: "来源整理",
+            TerminologyWorkloadType.PUBLISH: "术语发布",
+            TerminologyWorkloadType.HISTORY_COMPARE: "版本比较",
+            TerminologyWorkloadType.REPORT_RENDER: "质量报告生成",
+            TerminologyWorkloadType.CHANGELOG_RENDER: "更新日志生成",
+        }.get(value.workload_type, "术语任务")
+        status = f"{operation}：{value.message}"
         self.operation_notice.show_message(status)
         detail = f"{phase_label(value.phase)}"
         if value.current_object:
@@ -352,6 +405,7 @@ class TerminologyWindow(QWidget):
             total=value.total,
             terminal=value.is_terminal,
         )
+        self.build_view.cancel_button.setEnabled(self._displayed_run_id in self._task_refs)
         if value.is_terminal:
             self._task_refs.pop(value.run_id, None)
             self._finished_runs.add(value.run_id)

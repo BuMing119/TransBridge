@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from functools import wraps
+from threading import RLock
 
 from .models import (
     ProfileState,
@@ -12,14 +14,26 @@ from .models import (
     TerminologyProfileContent,
     TerminologyProfileSelection,
 )
+from .publication import ProfilePublicationPreview, commit_publication
+
+
+def _synchronized(method):
+    @wraps(method)
+    def call(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return call
 
 
 class InMemoryTerminologyProfileRepository:
     def __init__(self) -> None:
+        self._lock = RLock()
         self._profiles: dict[str, TerminologyProfile] = {}
         self._published: dict[tuple[str, int], PublishedTerminologyProfile] = {}
         self._selections: dict[tuple[str, str], TerminologyProfileSelection] = {}
 
+    @_synchronized
     def list_profiles(self, project_id: str, *, include_archived: bool = False) -> tuple[TerminologyProfile, ...]:
         return tuple(
             sorted(
@@ -32,9 +46,11 @@ class InMemoryTerminologyProfileRepository:
             )
         )
 
+    @_synchronized
     def get_profile(self, profile_id: str) -> TerminologyProfile | None:
         return self._profiles.get(profile_id)
 
+    @_synchronized
     def list_profile_summaries(self, project_id: str, *, include_archived: bool = False) -> tuple[ProfileSummary, ...]:
         return tuple(
             ProfileSummary(
@@ -48,6 +64,7 @@ class InMemoryTerminologyProfileRepository:
             for item in self.list_profiles(project_id, include_archived=include_archived)
         )
 
+    @_synchronized
     def get_selected_published(self, project_id: str, variant_id: str) -> PublishedTerminologyProfile | None:
         selection = self.get_selection(project_id, variant_id)
         if selection is None:
@@ -57,22 +74,26 @@ class InMemoryTerminologyProfileRepository:
             return None
         return self.get_published(selection.profile_id, selection.revision)
 
+    @_synchronized
     def read_cache_token(self) -> object:
         return tuple(self._selections.items()), tuple(
             (item.profile_id, item.state, item.latest_published_revision) for item in self._profiles.values()
         )
 
+    @_synchronized
     def insert_profile(self, profile: TerminologyProfile) -> None:
         if profile.profile_id in self._profiles:
             raise ValueError("profile already exists")
         self._profiles[profile.profile_id] = profile
 
+    @_synchronized
     def rename_profile(self, profile_id: str, name: str, *, updated_at: str) -> TerminologyProfile:
         profile = self._require(profile_id)
         updated = replace(profile, name=name, updated_at=updated_at)
         self._profiles[profile_id] = updated
         return updated
 
+    @_synchronized
     def save_draft(
         self,
         profile_id: str,
@@ -93,6 +114,7 @@ class InMemoryTerminologyProfileRepository:
         self._profiles[profile_id] = updated
         return updated
 
+    @_synchronized
     def set_archived(
         self,
         profile_id: str,
@@ -114,6 +136,7 @@ class InMemoryTerminologyProfileRepository:
             self.clear_profile_selections(profile_id)
         return updated
 
+    @_synchronized
     def insert_published(
         self,
         revision: PublishedTerminologyProfile,
@@ -145,12 +168,26 @@ class InMemoryTerminologyProfileRepository:
                     selected_at=revision.published_at,
                 )
 
+    @_synchronized
     def get_published(self, profile_id: str, revision: int) -> PublishedTerminologyProfile | None:
         return self._published.get((profile_id, revision))
 
+    @_synchronized
+    def commit_publication(
+        self, preview: ProfilePublicationPreview, *, published_at: str
+    ) -> PublishedTerminologyProfile:
+        profiles, published, selections = self._profiles.copy(), self._published.copy(), self._selections.copy()
+        try:
+            return commit_publication(self, preview, published_at=published_at)
+        except BaseException:
+            self._profiles, self._published, self._selections = profiles, published, selections
+            raise
+
+    @_synchronized
     def get_selection(self, project_id: str, variant_id: str) -> TerminologyProfileSelection | None:
         return self._selections.get((project_id, variant_id))
 
+    @_synchronized
     def list_profile_selections(self, profile_id: str) -> tuple[TerminologyProfileSelection, ...]:
         return tuple(
             sorted(
@@ -159,6 +196,7 @@ class InMemoryTerminologyProfileRepository:
             )
         )
 
+    @_synchronized
     def set_selection(self, selection: TerminologyProfileSelection) -> None:
         revision = self.get_published(selection.profile_id, selection.revision)
         profile = self.get_profile(selection.profile_id)
@@ -172,9 +210,11 @@ class InMemoryTerminologyProfileRepository:
             raise ValueError("selected profile revision is unavailable")
         self._selections[(selection.project_id, selection.variant_id)] = selection
 
+    @_synchronized
     def clear_selection(self, project_id: str, variant_id: str) -> None:
         self._selections.pop((project_id, variant_id), None)
 
+    @_synchronized
     def clear_profile_selections(self, profile_id: str) -> None:
         for key in tuple(self._selections):
             if self._selections[key].profile_id == profile_id:

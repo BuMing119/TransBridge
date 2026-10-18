@@ -96,7 +96,9 @@ def test_window_uses_horizontal_object_navigation_without_workflow_tabs() -> Non
     window.workspace.set_current_area(TerminologyArea.OVERVIEW)
     assert window.workspace.current_area() is TerminologyArea.TERMS
     assert window.workspace.surface.isAncestorOf(window.schemes_view)
-    assert window.schemes_view.actions_button.text() == "方案操作…"
+    assert window.schemes_view.actions_button.text() == "更多…"
+    assert window.schemes_view.new_button.text() == "新建方案…"
+    assert window.schemes_view.rename_button.text() == "重命名…"
     assert window.schemes_view.create_action.text() == "从外部来源创建方案…"
     window.close()
 

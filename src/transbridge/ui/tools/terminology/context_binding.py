@@ -9,6 +9,7 @@ class TerminologyWindowContext(QObject):
     """Bind profile actions and updates to the same identity as the window presenter."""
 
     state_changed = pyqtSignal(object)
+    invalidated = pyqtSignal()
 
     def __init__(self, window, context, profiles, identity: tuple[str | None, str | None]) -> None:
         super().__init__(window)
@@ -43,9 +44,15 @@ class TerminologyWindowContext(QObject):
         if self._current():
             self._profiles.select(profile_id)
 
-    def open_manager(self) -> None:
+    def open_manager(self, *, original=None, scope=None, rename=False, create_from_base=False) -> None:
         if self._current():
-            self._profiles.open_manager()
+            if original is None and not rename and not create_from_base:
+                self._profiles.open_manager()
+            else:
+                options = dict(original=original, rename=rename, create_from_base=create_from_base)
+                if scope is not None:
+                    options["scope"] = scope
+                self._profiles.open_manager(**options)
 
     def refresh(self) -> None:
         if self._current():
@@ -65,7 +72,7 @@ class TerminologyWindowContext(QObject):
 
     def _live_identity(self):
         if self._context is not None:
-            return getattr(self._context, "active_version_identity", None)
+            return getattr(self._context, "active_version_identity", None) or (None, None)
         return getattr(self._profiles, "identity", self._identity)
 
     def _current(self) -> bool:
@@ -74,8 +81,7 @@ class TerminologyWindowContext(QObject):
         if self._live_identity() == self._identity:
             return True
         self.dispose()
-        self._window.setEnabled(False)
-        self._window.close()
+        self.invalidated.emit()
         return False
 
     def _require_profiles(self):

@@ -58,7 +58,7 @@ def test_fast_terminal_event_cannot_be_overwritten_by_late_submission_acknowledg
     window._on_task_change(state)
     window._command_ready(JobRef("job", "operator", "run"), "任务已开始")
     assert not window._task_refs
-    assert window.operation_notice.message.text() == "已停止"
+    assert window.operation_notice.message.text() == "来源整理：已停止"
     window.close()
 
 
@@ -66,12 +66,17 @@ def test_coalesced_assets_keep_build_publish_comparison_and_both_report_feedback
     window = _window()
     calls = []
     monkeypatch.setattr(window._browsing, "refresh", lambda: calls.append("shared"))
-    monkeypatch.setattr(window.presenter, "project_build", lambda _value: "build-summary")
-    monkeypatch.setattr(window.build_view, "set_summary", lambda value: calls.append(value))
+    summary = SimpleNamespace(title="build-summary", is_partial=False, is_stale=False)
+    monkeypatch.setattr(window.presenter, "project_build", lambda _value: summary)
+    monkeypatch.setattr(window.build_view, "set_summary", lambda value: calls.append(value.title))
     monkeypatch.setattr(window.history_view, "set_comparison", lambda value: calls.append(value))
     monkeypatch.setattr(window.reports_view, "set_artifact", lambda value: calls.append(value))
     window._profile_controller = SimpleNamespace(refresh=lambda: calls.append("profile-refresh"))
-    assets = WorkbenchAssets(build=object(), comparison="comparison", version_ref=SimpleNamespace(version_id="v2"))
+    assets = WorkbenchAssets(
+        build=SimpleNamespace(completeness="full", freshness="current"),
+        comparison="comparison",
+        version_ref=SimpleNamespace(version_id="v2"),
+    )
     completions = tuple(
         (kind, SimpleNamespace(freshness="current", committed=True, output_ref=output))
         for kind, output in (

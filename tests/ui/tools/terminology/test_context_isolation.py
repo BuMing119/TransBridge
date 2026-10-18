@@ -77,7 +77,7 @@ def test_visible_window_invalidates_immediately_and_reopen_uses_one_context(monk
 
     assert window.presenter.closed
     assert not window.isVisible()
-    assert not window.isEnabled()
+    assert not window.workspace.isEnabled()
     assert all(model.closed for model in window._models)
     assert window.schemes_view.scheme_combo.itemText(1) == "project-a"
     # An already queued menu action or source-read completion cannot mutate B.

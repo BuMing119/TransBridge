@@ -12,7 +12,7 @@ class OperationNotice(QFrame):
         self.setAccessibleName("术语操作反馈")
         self.setProperty("tbTerminologySoftCard", True)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 8, 20, 8)
+        layout.setContentsMargins(20, 5, 20, 5)
         self.message = QLabel(self)
         self.message.setWordWrap(True)
         self.message.setTextFormat(Qt.TextFormat.PlainText)
