@@ -10,7 +10,7 @@
 
 - [terminology-performance](terminology-performance/plan.md)：S01～S08 三批实现、五轮性能复测和相关回归完成；最终去重 1564 项通过、1 项真实账户测试跳过，Ruff/格式通过；冷首屏及部分 50k 事件间隔仍超预算，见[增量记录](../docs/changelogs/terminology-performance/story-01-to-08/2026-10-15-001-terminology-performance.md)（2026-10-15）。
 
-- [terminology-ui-remediation](terminology-ui-remediation/plan.md)：S01～S08 三批本地完成；编辑保护、审核同步闭环、命名与大列表已修复；相关集合去重1390项获得通过证据，1项真实账户测试跳过，Ruff/格式通过；见[增量记录](../docs/changelogs/terminology-ui-remediation/story-01-to-08/2026-10-15-001-terminology-workbench-ux.md)（2026-10-15）。
+- [terminology-ui-remediation](terminology-ui-remediation/plan.md)：S01～S13 及后续七项流程修复、后端异译保护已完成；最终全仓 6715 项通过、10 项按环境或配置跳过，Ruff/格式通过（2026-10-18）。见[最新增量记录](../docs/changelogs/terminology-ui-remediation/story-09-to-13/2026-10-18-002-terminology-regression-fixes.md)。
 
 - [terminology-system-remediation](terminology-system-remediation/plan.md)：S01～S05 本地完成；九类术语问题已修复，联合回归 1275 通过，最终边界复验 29 通过，Ruff/格式通过；见[增量记录](../docs/changelogs/terminology-system-remediation/story-01-to-05/2026-10-14-001-terminology-system-fixes.md)（2026-10-14）。
 

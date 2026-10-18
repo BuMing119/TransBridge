@@ -1,5 +1,9 @@
 # 变更日志索引
 
+- 2026-10-18：[术语流程边界回归修复](terminology-ui-remediation/story-09-to-13/2026-10-18-002-terminology-regression-fixes.md) — 修复上下文切换保存、任务取消、精确方案定位、异步搜索、身份恢复和后端异译校验；更新旧输入框布局测试契约，最终全仓 6715 项通过、10 项按环境或配置跳过，Ruff/格式通过。
+
+- 2026-10-16：[术语操作流程与功能补齐](terminology-ui-remediation/story-09-to-13/2026-10-16-001-terminology-workflow-completion.md) — 保存关闭保护、发布后继续编辑、完整词条与批量操作、方案重命名及发布采用审查、任务式工作台；分组回归去重 783 项通过，Ruff/格式通过。
+
 - 2026-10-16：[智能助手流程闭环修复](assistant-ui-remediation/story-18-to-23/2026-10-16-001-assistant-workflow-closure.md) — 输入与停止隔离、持久清空、启动收尾、失败恢复与诊断、请求级技能、动态上下文及配置就绪；联合回归 1715 项通过，最终助手 UI 315 项及中文布局 12 项复验通过，Ruff/格式通过。
 
 - 2026-10-16：[智能助手默认界面精简](assistant-ui-remediation/story-14-to-17/2026-10-16-001-assistant-simplification.md) — 紧凑页首和输入工具栏、任务详情按需展开、保留异常行动、隐藏闲置历史/复制操作；最终助手 UI 300 项复验通过，Ruff/格式通过。
