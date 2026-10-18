@@ -14,6 +14,7 @@ from transbridge.ui.tools.ai_translator._llm_log_viewer import _LLMLogViewer
 from transbridge.ui.tools.ai_translator._translation_progress_window import _TranslationProgressWindow
 from transbridge.ui.tools.ai_translator.config_view import AITranslatorView
 from transbridge.ui.tools.ai_translator.run_view import AiMixedProgressWindow
+from transbridge.ui.tools.smart_assistant.composer_editor import ComposerEditor
 from transbridge.ui.tools.smart_assistant.input_view import ChatInputView
 from transbridge.ui.tools.smart_assistant.task_monitor import _TaskCard
 from transbridge.ui.tools.smart_assistant.tool_card import ToolCard
@@ -174,26 +175,43 @@ def test_smart_assistant_input_is_one_bounded_composer_card(qapp) -> None:
     input_view.build_toolbar(layout)
     input_view.build_editor(layout, host)
 
-    assert layout.count() == 1
-    assert layout.itemAt(0).widget() is input_view._card
-    assert 0 < input_view.input.minimumHeight() <= input_view.input.maximumHeight() <= 112
-    assert input_view.input.sizePolicy().verticalPolicy().name == "Fixed"
-    assert input_view.auto_checkbox.isCheckable()
-    assert input_view.send_button.text() == "发送"
-    assert input_view.send_button.width() == 76
-    assert not input_view.send_button.icon().isNull()
+    try:
+        assert layout.count() == 1
+        assert layout.itemAt(0).widget() is input_view._card
+        assert input_view.input.minimumHeight() == ComposerEditor.MINIMUM_HEIGHT
+        assert input_view.input.maximumHeight() <= ComposerEditor.MAXIMUM_HEIGHT
+        assert input_view.input.sizePolicy().verticalPolicy() is QSizePolicy.Policy.Preferred
+        assert input_view.auto_checkbox.isCheckable()
+        assert input_view.send_button.text() == "发送"
+        assert input_view.send_button.minimumWidth() == input_view.send_button.maximumWidth() == 96
+        assert not input_view.send_button.icon().isNull()
 
-    host.resize(600, 400)
-    host.show()
-    qapp.processEvents()
-    height = input_view.input.height()
-    input_view.input.setPlainText("long message\n" * 1000)
-    qapp.processEvents()
-    assert input_view.input.height() == height
-    assert input_view.input.verticalScrollBar().maximum() > 0
-    input_view.close()
-    host.close()
-    host.deleteLater()
+        host.resize(600, 400)
+        host.show()
+        qapp.processEvents()
+        host_size = host.size()
+        compact_height = input_view.input.height()
+        send_size = input_view.send_button.size()
+        assert compact_height == ComposerEditor.MINIMUM_HEIGHT
+        assert input_view.send_button.isVisible()
+
+        message = "long message\n" * 1000
+        input_view.input.setPlainText(message)
+        qapp.processEvents()
+
+        assert compact_height < input_view.input.height() == ComposerEditor.MAXIMUM_HEIGHT
+        assert input_view.input.verticalScrollBar().maximum() > 0
+        assert input_view.input.toPlainText() == message
+        assert host.size() == host_size
+        assert input_view.send_button.size() == send_size
+        assert input_view.send_button.isVisible()
+        assert input_view._card.rect().contains(input_view.send_button.geometry())
+        for point in (input_view.send_button.rect().topLeft(), input_view.send_button.rect().bottomRight()):
+            assert host.rect().contains(input_view.send_button.mapTo(host, point))
+    finally:
+        input_view.close()
+        host.close()
+        host.deleteLater()
 
 
 def test_log_viewer_long_path_keeps_toolbar_stable(qapp) -> None:
