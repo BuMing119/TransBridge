@@ -6,8 +6,7 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6 import sip
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QPersistentModelIndex, Qt
 from PyQt6.QtWidgets import QApplication
 import pytest
 
@@ -37,22 +36,25 @@ def change(context, entries, index, **values):
     context.collection = TranslationEntryCollection(entries)
 
 
-def test_patch_preserves_items_selection_scroll_and_updates_pending_batch(preview):
+def test_patch_preserves_indices_selection_scroll_and_updates_offscreen_rows(preview):
     view, context, entries = preview
     table = view._table
-    item = table.item(0, COL_TRANSLATION)
+    item = QPersistentModelIndex(table.model().index(0, COL_TRANSLATION))
+    resets = []
+    table.model().modelReset.connect(lambda: resets.append(True))
     table.selectRow(0)
     generation = table.render_session.generation
     change(context, entries, 0, translation="edited", stage=3)
-    assert table.item(0, COL_TRANSLATION) is item
-    assert item.text() == "edited"
+    assert table.model().index(0, COL_TRANSLATION) == item
+    assert item.isValid() and resets == []
+    assert item.data(Qt.ItemDataRole.DisplayRole) == "edited"
     assert table.selected_entry_ids() == ("0",)
     assert table.render_session.generation == generation
     change(context, entries, 550, translation="later", stage=2)
     while table.has_pending_batch:
         _APP.processEvents()
-    assert table.item(550, COL_TRANSLATION).text() == "later"
-    assert table.item(550, COL_KEY).data(Qt.ItemDataRole.UserRole) is entries[550]
+    assert table.model().index(550, COL_TRANSLATION).data(Qt.ItemDataRole.DisplayRole) == "later"
+    assert table.model().index(550, COL_KEY).data(Qt.ItemDataRole.UserRole) is entries[550]
     assert view._summary.needs_review == 1
     assert view._table_presenter.session.entries == table.render_session.entries
 
@@ -61,9 +63,9 @@ def test_patch_preserves_items_selection_scroll_and_updates_pending_batch(previe
 def test_filter_membership_change_falls_back_without_showing_stale_row(preview, filter_state):
     view, context, entries = preview
     view.apply_filter_state(filter_state)
-    item = view._table.item(0, COL_TRANSLATION)
+    item = QPersistentModelIndex(view._table.model().index(0, COL_TRANSLATION))
     change(context, entries, 0, translation="new", stage=3)
-    assert sip.isdeleted(item)
+    assert not item.isValid()
     assert entries[0].identity not in view.editor_navigation_keys()
     assert len(view.editor_navigation_keys()) == 599
 
@@ -71,9 +73,9 @@ def test_filter_membership_change_falls_back_without_showing_stale_row(preview, 
 def test_translation_sort_change_falls_back_and_navigation_uses_sorted_full_result(preview):
     view, context, entries = preview
     view._table.horizontalHeader().sectionClicked.emit(COL_TRANSLATION)
-    item = view._table.item(0, COL_TRANSLATION)
+    item = QPersistentModelIndex(view._table.model().index(0, COL_TRANSLATION))
     change(context, entries, 0, translation="zzz")
-    assert sip.isdeleted(item)
+    assert not item.isValid()
     assert len(view.editor_navigation_keys()) == 600
     assert view.editor_navigation_keys()[-1] == entries[0].identity
 
@@ -92,18 +94,18 @@ def test_return_preserves_scroll_filter_and_sort_and_handles_filtered_out_entry(
     view.return_from_editor(entries[0].identity)
     assert view._table.verticalScrollBar().value() == before
     assert view.editor_navigation_keys() == order
-    assert view._table.currentItem().data(Qt.ItemDataRole.UserRole).identity == entries[0].identity
+    assert view._table.currentIndex().data(Qt.ItemDataRole.UserRole).identity == entries[0].identity
     view.apply_filter_state({"search_key": "key-0001"})
     view.return_from_editor(entries[0].identity)
     assert view.editor_navigation_keys() == (entries[1].identity,)
 
 
-def test_return_to_pending_row_restores_current_item_after_batch_without_scrolling(preview):
+def test_return_to_offscreen_row_restores_current_index_without_scrolling(preview):
     view, _context, entries = preview
     table = view._table
-    assert table.rowCount() == 250
+    assert table.rowCount() == 600
     view.return_from_editor(entries[550].identity)
     while table.has_pending_batch:
         _APP.processEvents()
-    assert table.currentItem().data(Qt.ItemDataRole.UserRole).identity == entries[550].identity
+    assert table.currentIndex().data(Qt.ItemDataRole.UserRole).identity == entries[550].identity
     assert table.verticalScrollBar().value() == 0

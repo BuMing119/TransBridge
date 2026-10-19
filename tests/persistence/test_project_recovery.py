@@ -187,7 +187,7 @@ def test_recovery_does_not_scan_remaining_sources_after_the_first_failure(projec
     services, context, source, _raw, path, _key = project
     source.rename(source.with_name("moved.xml"))
     original_sources = current_project.authoritative_baseline_sources
-    original_loader = services.current_project_opener._baseline_loader
+    original_loader = current_project._load_baseline
     later_source = {"location": "must-not-be-opened"}
     monkeypatch.setattr(
         current_project,

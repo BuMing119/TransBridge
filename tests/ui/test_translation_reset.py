@@ -106,8 +106,8 @@ def test_cancel_translation_is_a_direct_action_and_resets_only_clicked_entry(pre
     assert entries[1].original == before[1]["original"]
     assert entries[0].to_dict() == before[0]
     assert entries[2].to_dict() == before[2]
-    assert widget._table.item(1, COL_TRANSLATION).text() == "（无译文）"
-    assert "未翻译" in widget._table.item(1, COL_CONTEXT).text()
+    assert widget._table.model().index(1, COL_TRANSLATION).data(Qt.ItemDataRole.DisplayRole) == "（无译文）"
+    assert "未翻译" in widget._table.model().index(1, COL_CONTEXT).data(Qt.ItemDataRole.DisplayRole)
     assert widget._summary.untranslated == 1
     assert "1 条" in confirmations[0]
     assert dirty == [True]
@@ -117,11 +117,11 @@ def test_cancel_translation_is_a_direct_action_and_resets_only_clicked_entry(pre
 def test_cancel_translation_uses_selected_ids_after_sorting(preview, clicked_selected):
     widget, entries, confirmations = preview
     table = widget._table
-    table.item(0, COL_CHECK).setCheckState(Qt.CheckState.Checked)
-    table.item(2, COL_CHECK).setCheckState(Qt.CheckState.Checked)
+    table.model().setData(table.model().index(0, COL_CHECK), Qt.CheckState.Checked, Qt.ItemDataRole.CheckStateRole)
+    table.model().setData(table.model().index(2, COL_CHECK), Qt.CheckState.Checked, Qt.ItemDataRole.CheckStateRole)
     table.horizontalHeader().sectionClicked.emit(COL_KEY)
     table.horizontalHeader().sectionClicked.emit(COL_KEY)
-    assert table.item(0, COL_KEY).data(Qt.ItemDataRole.UserRole) is entries[2]
+    assert table.model().index(0, COL_KEY).data(Qt.ItemDataRole.UserRole) is entries[2]
 
     _cancel_action(widget, 0 if clicked_selected else 1).trigger()
 
@@ -136,8 +136,8 @@ def test_cancel_translation_uses_selected_ids_after_sorting(preview, clicked_sel
 def test_stage_change_uses_selected_ids_and_preserves_translations(preview, clicked_selected):
     widget, entries, _ = preview
     table = widget._table
-    table.item(0, COL_CHECK).setCheckState(Qt.CheckState.Checked)
-    table.item(2, COL_CHECK).setCheckState(Qt.CheckState.Checked)
+    table.model().setData(table.model().index(0, COL_CHECK), Qt.CheckState.Checked, Qt.ItemDataRole.CheckStateRole)
+    table.model().setData(table.model().index(2, COL_CHECK), Qt.CheckState.Checked, Qt.ItemDataRole.CheckStateRole)
     generation = widget._render_generation
 
     _stage_action(widget, 0 if clicked_selected else 1, "已检查").trigger()
@@ -152,8 +152,12 @@ def test_stage_change_uses_selected_ids_and_preserves_translations(preview, clic
 def test_mixed_stage_selection_can_apply_the_clicked_rows_existing_stage(preview):
     widget, entries, _ = preview
     entries[0].stage = STAGE_CHECKED
-    widget._table.item(0, COL_CHECK).setCheckState(Qt.CheckState.Checked)
-    widget._table.item(1, COL_CHECK).setCheckState(Qt.CheckState.Checked)
+    widget._table.model().setData(
+        widget._table.model().index(0, COL_CHECK), Qt.CheckState.Checked, Qt.ItemDataRole.CheckStateRole
+    )
+    widget._table.model().setData(
+        widget._table.model().index(1, COL_CHECK), Qt.CheckState.Checked, Qt.ItemDataRole.CheckStateRole
+    )
 
     action = _stage_action(widget, 0, "已检查")
     assert not action.isChecked()
@@ -225,8 +229,8 @@ def test_right_click_on_selected_row_keeps_multi_selection(preview, monkeypatch)
     widget.show()
     _APP.processEvents()
     table = widget._table
-    table.item(0, COL_CHECK).setCheckState(Qt.CheckState.Checked)
-    table.item(2, COL_CHECK).setCheckState(Qt.CheckState.Checked)
+    table.model().setData(table.model().index(0, COL_CHECK), Qt.CheckState.Checked, Qt.ItemDataRole.CheckStateRole)
+    table.model().setData(table.model().index(2, COL_CHECK), Qt.CheckState.Checked, Qt.ItemDataRole.CheckStateRole)
     opened = []
 
     def execute(menu, _position):
@@ -234,7 +238,7 @@ def test_right_click_on_selected_row_keeps_multi_selection(preview, monkeypatch)
         next(action for action in menu.actions() if action.text() == "取消翻译").trigger()
 
     monkeypatch.setattr(QMenu, "exec", execute)
-    position = table.visualItemRect(table.item(2, COL_KEY)).center()
+    position = table.visualRect(table.model().index(2, COL_KEY)).center()
     QTest.mouseClick(table.viewport(), Qt.MouseButton.RightButton, pos=position)
     # QTest does not synthesize the platform context-menu event on offscreen Qt.
     _APP.sendEvent(
@@ -248,7 +252,7 @@ def test_right_click_on_selected_row_keeps_multi_selection(preview, monkeypatch)
     assert entries[1].translation == "译文 1"
 
 
-def test_cancel_translation_includes_selected_rows_still_loading_after_sort(preview):
+def test_cancel_translation_includes_selected_rows_outside_viewport_after_sort(preview):
     widget, _, confirmations = preview
     collection = TranslationEntryCollection(
         TranslationEntry(str(index), f"key-{index:04d}", "Original", "Translation", STAGE_TRANSLATED, "NPC_:FULL")
@@ -262,7 +266,7 @@ def test_cancel_translation_includes_selected_rows_still_loading_after_sort(prev
     assert table.rowCount() == 600
     table.selectAll()
     table.horizontalHeader().sectionClicked.emit(COL_KEY)
-    assert table.rowCount() == 250
+    assert table.rowCount() == 600
 
     _cancel_action(widget, 0).trigger()
 
@@ -440,7 +444,7 @@ def test_authoritative_batch_commits_once_and_keeps_other_sources_and_labels(pre
     for row, entry in enumerate(entries):
         assert entry.translation == states[entry.identity].translation == ""
         assert entry.stage == states[entry.identity].stage.value == STAGE_UNTRANSLATED
-        assert widget._table.item(row, COL_TRANSLATION).text() == "（无译文）"
+        assert widget._table.model().index(row, COL_TRANSLATION).data(Qt.ItemDataRole.DisplayRole) == "（无译文）"
     assert widget.collect_labels() == labels
     assert not warnings
 
@@ -459,7 +463,7 @@ def test_authoritative_stage_batch_commits_once_and_keeps_translations_and_other
     for row, entry in enumerate(entries):
         assert entry.translation == states[entry.identity].translation == f"译文 {row}"
         assert entry.stage == states[entry.identity].stage.value == STAGE_CHECKED
-        assert "已检查" in widget._table.item(row, COL_CONTEXT).text()
+        assert "已检查" in widget._table.model().index(row, COL_CONTEXT).data(Qt.ItemDataRole.DisplayRole)
     assert not warnings
 
 
@@ -508,9 +512,9 @@ def test_authoritative_failure_keeps_visible_and_stored_translations(preview, au
     if failure == "missing_service":
         monkeypatch.setattr(widget._ctx, "_project_commands", None)
     elif failure == "missing_identity":
-        monkeypatch.setattr(widget._ctx, "_active_project_id", None)
+        monkeypatch.setattr(type(widget._ctx), "active_version_identity", property(lambda _context: None))
     elif failure == "stale":
-        monkeypatch.setattr(widget._ctx, "_variant_revision", 99)
+        monkeypatch.setattr(type(widget._ctx), "variant_revision", property(lambda _context: 99))
     else:
         monkeypatch.setattr(
             lifecycle,

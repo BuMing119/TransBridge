@@ -62,6 +62,7 @@ def test_visible_disk_task_runs_off_gui_thread_and_restores_progress() -> None:
             self.enabled = enabled
 
     harness = SimpleNamespace(
+        _ctx=SimpleNamespace(project_opening=False, project_view_failed=False),
         _foreground_worker=None,
         _project_open_worker=None,
         _save_worker=None,
@@ -234,12 +235,14 @@ def test_current_window_project_open_shows_and_clears_start_center_progress() ->
     release.set()
     _wait_until(lambda: host.project_open_worker is None)
 
-    assert progress == ["正在校验并加载本地工程…", None]
+    assert progress[0] == "正在校验并加载本地工程…"
+    assert progress[-1] is None
+    assert all(isinstance(message, str) for message in progress[:-1])
     assert not host.workbench.progress_visible
     assert restored_sources == ["D:/mods/OtherMod.esp"]
     assert messages == ["项目「OtherMod」已打开", "workbench"]
     assert operation_threads["prepare"] is not _APP.thread()
-    assert operation_threads["activate"] is _APP.thread()
+    assert operation_threads["activate"] is not _APP.thread()
 
 
 def test_api_worker_signal_buses_are_owned_by_the_qt_application() -> None:

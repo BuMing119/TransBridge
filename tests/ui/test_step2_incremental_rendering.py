@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PyQt6.QtCore import QPersistentModelIndex, Qt
 from PyQt6.QtWidgets import QApplication
 
 from transbridge.application.projections import ProjectionSnapshot, ProjectionStore
@@ -46,7 +47,7 @@ def _drain_render(app: QApplication, widget: Step2PreviewWidget, expected: int) 
         app.processEvents()
 
 
-def test_large_collection_automatically_renders_every_batch(monkeypatch) -> None:
+def test_large_collection_exposes_every_model_row_without_eager_cell_items(monkeypatch) -> None:
     app = _application()
     monkeypatch.setattr(context_module.ParatranzConfig, "create_or_load", lambda: _Config())
     widget = Step2PreviewWidget(context_module.AppContext())
@@ -56,7 +57,8 @@ def test_large_collection_automatically_renders_every_batch(monkeypatch) -> None
     widget.refresh(_entries(1_200))
     app.processEvents()
 
-    assert 0 < widget._table.rowCount() < 1_200
+    assert widget._table.rowCount() == 1_200
+    assert not widget._table.has_pending_batch
     assert widget.get_filtered_count() == 1_200
 
     _drain_render(app, widget, 1_200)
@@ -65,7 +67,7 @@ def test_large_collection_automatically_renders_every_batch(monkeypatch) -> None
     assert widget.get_filtered_count() == 1_200
 
 
-def test_locate_entry_selects_when_automatic_render_reaches_it(monkeypatch) -> None:
+def test_locate_entry_selects_an_offscreen_model_row(monkeypatch) -> None:
     app = _application()
     monkeypatch.setattr(context_module.ParatranzConfig, "create_or_load", lambda: _Config())
     widget = Step2PreviewWidget(context_module.AppContext())
@@ -75,7 +77,7 @@ def test_locate_entry_selects_when_automatic_render_reaches_it(monkeypatch) -> N
     _drain_render(app, widget, 1_200)
 
     assert widget._table.rowCount() == 1_200
-    assert widget._table.currentRow() == 1_199
+    assert widget._table.currentIndex().row() == 1_199
 
 
 class _RebuildingCommands:
@@ -84,8 +86,8 @@ class _RebuildingCommands:
 
     def update_entry(self, _key, _runtime_context, **_changes):
         assert self.context is not None
-        # Reproduce a synchronous subscriber refresh that deletes the edited
-        # QTableWidgetItem before update_projected_entry returns.
+        # Reproduce a synchronous subscriber refresh that resets the edited
+        # model before update_projected_entry returns.
         self.context.label_data_changed.emit()
         return SimpleNamespace(is_success=True)
 
@@ -131,12 +133,12 @@ def test_translation_edit_survives_synchronous_table_rebuild(monkeypatch) -> Non
     widget.refresh(collection)
     app.processEvents()
 
-    edited_item = widget._table.item(0, COL_TRANSLATION)
-    edited_item.setText("Translated")
+    edited_item = widget._table.model().index(0, COL_TRANSLATION)
+    widget._table.model().setData(edited_item, "Translated", Qt.ItemDataRole.EditRole)
     app.processEvents()
 
     assert collection.get_by_id("0").translation == "Translated"
-    assert widget._table.item(0, COL_TRANSLATION).text() == "Translated"
+    assert widget._table.model().index(0, COL_TRANSLATION).data(Qt.ItemDataRole.DisplayRole) == "Translated"
     context.close_projection()
 
 
@@ -162,14 +164,16 @@ def test_translation_projection_update_does_not_restart_full_render(monkeypatch)
     app.processEvents()
     generation = widget._render_generation
 
-    widget._table.item(0, COL_TRANSLATION).setText("Translated")
+    widget._table.model().setData(
+        widget._table.model().index(0, COL_TRANSLATION), "Translated", Qt.ItemDataRole.EditRole
+    )
     app.processEvents()
 
     assert widget._render_generation == generation
     assert collection.get_by_id("0").translation == "Translated"
     assert collection.get_by_id("0").stage == STAGE_TRANSLATED
-    assert widget._table.item(0, COL_TRANSLATION).text() == "Translated"
-    assert "已翻译" in widget._table.item(0, COL_CONTEXT).text()
+    assert widget._table.model().index(0, COL_TRANSLATION).data(Qt.ItemDataRole.DisplayRole) == "Translated"
+    assert "已翻译" in widget._table.model().index(0, COL_CONTEXT).data(Qt.ItemDataRole.DisplayRole)
     context.close_projection()
 
 
@@ -183,13 +187,19 @@ def test_stage_change_updates_one_row_without_restarting_render(monkeypatch) -> 
     table = widget._table
     entry = collection.get_by_id("1")
     generation = widget._render_generation
-    row_items = tuple(table.item(1, column) for column in range(table.columnCount()))
+    row_indices = tuple(
+        QPersistentModelIndex(table.model().index(1, column)) for column in range(table.model().columnCount())
+    )
+    resets = []
+    table.model().modelReset.connect(lambda: resets.append(True))
 
     widget._on_stage_change(entry, STAGE_QUESTIONABLE)
     app.processEvents()
 
     assert widget._render_generation == generation
-    assert tuple(table.item(1, column) for column in range(table.columnCount())) == row_items
+    assert all(index.isValid() for index in row_indices)
+    assert tuple(table.model().index(1, column) for column in range(table.model().columnCount())) == row_indices
+    assert resets == []
     assert entry.stage == STAGE_QUESTIONABLE
-    assert "有疑问" in table.item(1, COL_CONTEXT).text()
+    assert "有疑问" in table.model().index(1, COL_CONTEXT).data(Qt.ItemDataRole.DisplayRole)
     assert widget._summary.needs_review == 1

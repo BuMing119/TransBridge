@@ -5,24 +5,20 @@ AppContext: 全局应用上下文，持有配置、当前用户、当前项目�
 
 from __future__ import annotations
 
-from collections import deque
-import json
-import threading
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, Qt, pyqtSignal, pyqtSlot
 
-from transbridge.application.io.identity import EntryKey
-from transbridge.application.projections.models import copy_projection_value
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.paratranz.config_manager import ParatranzConfig
-from transbridge.ui.project_labels import entry_label_key, exact_label_key, project_entry_labels
+from transbridge.ui.project_labels import entry_label_key, exact_label_key
+from transbridge.ui.project_view_binding import ProjectViewBinding
 from transbridge.ui.projection_types import CollectionSlot
 
 __all__ = ["AppContext", "CollectionSlot"]
 
 if TYPE_CHECKING:
-    from transbridge.application.projections import ProjectionSnapshot, ProjectionStore, ProjectionSubscription
+    from transbridge.application.projections import ProjectionSnapshot, ProjectionStore
     from transbridge.persistence.project import ProjectHandle
     from transbridge.persistence.v2.ids import VariantRef
     from transbridge.persistence.variant_store import VariantStore
@@ -39,6 +35,7 @@ class AppContext(QObject):
     navigate_to = pyqtSignal(int)  # 请求切换主 tab（0=工作台, 1=ParaTranz 管理）
     project_list_changed = pyqtSignal()  # 请求刷新项目列表（ParaTranz）
     workspace_changed = pyqtSignal()  # 持久化项目列表变动
+    project_installed = pyqtSignal()  # Complete project view installed
     project_changed = pyqtSignal()  # 翻译项目/Variant 目录投影变动
     paratranz_binding_changed = pyqtSignal(object)  # 当前本地工程的 ParaTranz 绑定投影
     variant_changed = pyqtSignal(str)  # 旧模式为名称，V2 模式为稳定 Variant ID
@@ -94,22 +91,9 @@ class AppContext(QObject):
         self._runtime_context = runtime_context
         self._effective_terminology_factory = effective_terminology_factory
         self._terminology_profile_service_factory = terminology_profile_service_factory
-        self._projection_subscription: ProjectionSubscription | None = None
-        self._projection_dirty = False
-        self._projection_revision: int | None = None
-        self._project_revision: int | None = None
-        self._variant_revision: int | None = None
-        self._active_project_id: str | None = None
-        self._project_name: str | None = None
-        self._project_sources: tuple[dict[str, object], ...] = ()
-        self._project_variants: tuple[dict[str, object], ...] = ()
-        self._active_variant_id: str | None = None
-        self._paratranz_binding: dict[str, object] | None = None
-
-        if self._project_projection is not None:
-            self._projection_subscription = self._project_projection.subscribe(self._on_project_projection)
-
         self.__init_safe_mutate()
+        self._project_view = ProjectViewBinding(self, project_projection)
+        self._project_view.start()
 
     # ── Story 03: 筛选/标签/作用域 ViewModel ─────────────────────
 
@@ -441,28 +425,28 @@ class AppContext(QObject):
     @property
     def dirty(self) -> bool:
         if self._project_projection is not None:
-            return self._projection_dirty
+            return self._project_view.state.dirty
         return self._variant_store is not None and self._variant_store.dirty
 
     @property
     def active_variant_id(self) -> str | None:
-        return self._active_variant_id
+        return self._project_view.state.variant_id
 
     @property
     def active_project_id(self) -> str | None:
-        return self._active_project_id
+        return self._project_view.state.project_id
 
     @property
     def project_revision(self) -> int | None:
-        return self._project_revision
+        return self._project_view.state.project_revision
 
     @property
     def variant_revision(self) -> int | None:
-        return self._variant_revision
+        return self._project_view.state.variant_revision
 
     @property
     def paratranz_binding(self) -> dict[str, object] | None:
-        return None if self._paratranz_binding is None else dict(self._paratranz_binding)
+        return None if self._project_view.state.binding is None else dict(self._project_view.state.binding)
 
     def resolve_paratranz_target(
         self,
@@ -479,8 +463,8 @@ class AppContext(QObject):
         if user_id is None:
             user_id = getattr(self._config, "user_id", None)
         return ParaTranzTargetResolver().resolve(
-            binding=self._paratranz_binding,
-            binding_revision=self._project_revision,
+            binding=self._project_view.state.binding,
+            binding_revision=self._project_view.state.project_revision,
             explicit_project_id=explicit_project_id,
             explicit_project_name=explicit_project_name,
             endpoint=str(getattr(self._config, "base_url", "")),
@@ -494,7 +478,7 @@ class AppContext(QObject):
         return self._project_remote_bindings.set_paratranz_binding(
             binding,
             self._runtime_context,
-            expected_project_revision=self._project_revision,
+            expected_project_revision=self._project_view.state.project_revision,
         )
 
     def clear_paratranz_binding(self):
@@ -502,19 +486,19 @@ class AppContext(QObject):
             raise RuntimeError("authoritative Project remote binding adapter is unavailable")
         return self._project_remote_bindings.clear_paratranz_binding(
             self._runtime_context,
-            expected_project_revision=self._project_revision,
+            expected_project_revision=self._project_view.state.project_revision,
         )
 
     @property
     def project_name(self) -> str | None:
         if self._project_projection is not None:
-            return self._project_name
+            return self._project_view.state.name
         return None if self._active_project is None else self._active_project.name
 
     @property
     def project_variants(self) -> tuple[dict[str, object], ...]:
         if self._project_projection is not None:
-            return tuple(dict(value) for value in self._project_variants)
+            return tuple(dict(value) for value in self._project_view.state.variants)
         if self._active_project is None:
             return ()
         return tuple(
@@ -524,17 +508,39 @@ class AppContext(QObject):
 
     @property
     def project_sources(self) -> tuple[dict[str, object], ...]:
-        return tuple(dict(value) for value in self._project_sources)
+        return tuple(dict(value) for value in self._project_view.state.sources)
 
     @property
     def uses_authoritative_projection(self) -> bool:
         return self._project_projection is not None
 
+    @property
+    def project_opening(self) -> bool:
+        return self._project_view.opening
+
+    @property
+    def project_installing(self) -> bool:
+        return self._project_view.installing
+
+    @property
+    def project_view_failed(self) -> bool:
+        return self._project_view.failed
+
+    @project_view_failed.setter
+    def project_view_failed(self, failed: bool) -> None:
+        self._project_view.failed = bool(failed)
+
+    def begin_project_open(self) -> int:
+        return self._project_view.begin()
+
+    def install_project_open(self, token: int, snapshot: ProjectionSnapshot, slots, *, state=None) -> bool:
+        return self._project_view.install(token, snapshot, slots, state=state)
+
+    def finish_project_open(self, token: int) -> bool:
+        return self._project_view.finish(token)
+
     def close_projection(self) -> None:
-        subscription = self._projection_subscription
-        self._projection_subscription = None
-        if subscription is not None:
-            subscription.close()
+        self._project_view.close()
 
     def update_projected_entry(
         self,
@@ -545,6 +551,9 @@ class AppContext(QObject):
     ):
         if self._project_commands is None or self._runtime_context is None:
             raise RuntimeError("authoritative Variant command adapter is unavailable")
+        rejected = self._project_view.edit_rejection()
+        if rejected is not None:
+            return rejected
         return self._project_commands.update_entry(
             local_key,
             self._runtime_context,
@@ -563,6 +572,9 @@ class AppContext(QObject):
     ):
         if self._project_commands is None or self._runtime_context is None:
             raise RuntimeError("authoritative Variant command adapter is unavailable")
+        rejected = self._project_view.edit_rejection()
+        if rejected is not None:
+            return rejected
         collection = self.collection
         if collection is None:
             exact_labels = entry_labels
@@ -595,9 +607,9 @@ class AppContext(QObject):
         """Return the stable Project/Variant identity used by long-running UI actions."""
 
         if self._project_projection is not None:
-            if self._active_project_id is None or self._active_variant_id is None:
+            if self._project_view.state.project_id is None or self._project_view.state.variant_id is None:
                 return None
-            return self._active_project_id, self._active_variant_id
+            return self._project_view.state.project_id, self._project_view.state.variant_id
         if self._active_project is None or self._active_variant is None:
             return None
         project_key = str(getattr(self._active_project, "config_path", None) or self._active_project.name)
@@ -613,48 +625,7 @@ class AppContext(QObject):
 
     def authoritative_projection_diverged(self) -> bool:
         """Return whether a visible workbench state bypassed the V2 aggregate."""
-
-        if self._project_projection is None:
-            return False
-        snapshot = self._project_projection.snapshot()
-        if snapshot is None:
-            return any(slot.collection for slot in self._slots.values())
-        states = {
-            EntryKey.from_dict(item["entry_key"]): (
-                str(item.get("translation", "")),
-                int(item.get("stage", 0)),
-                tuple(
-                    sorted(
-                        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-                        for value in item.get("external_refs", ())
-                    )
-                ),
-            )
-            for item in snapshot.to_dict()["values"].get("entries", ())
-        }
-        visible: dict[EntryKey, tuple[str, int, tuple[str, ...]]] = {}
-        for slot in self._slots.values():
-            for entry in slot.collection:
-                identity = entry.identity
-                entry_state = (
-                    entry.translation or "",
-                    entry.stage,
-                    tuple(
-                        sorted(
-                            json.dumps(
-                                value.to_dict(),
-                                ensure_ascii=False,
-                                sort_keys=True,
-                                separators=(",", ":"),
-                            )
-                            for value in entry.external_refs
-                        )
-                    ),
-                )
-                if identity in visible and visible[identity] != entry_state:
-                    return True
-                visible[identity] = entry_state
-        return visible != states
+        return self._project_view.diverged()
 
     @property
     def effective_terminology_factory(self):
@@ -668,90 +639,8 @@ class AppContext(QObject):
 
         return self._terminology_profile_service_factory
 
-    def _on_project_projection(self, snapshot: ProjectionSnapshot | None) -> None:
-        if QThread.currentThread() != self.thread():
-            self.safe_mutate(lambda: self._apply_project_projection(snapshot))
-            return
-        self._apply_project_projection(snapshot)
-
     def _apply_project_projection(self, snapshot: ProjectionSnapshot | None) -> None:
-        old_dirty = self._projection_dirty
-        old_revision = self._projection_revision
-        old_label_library = self._label_library
-        old_entry_labels = self._entry_labels
-        old_entry_labels_exact = self._entry_labels_exact
-        old_project = (
-            self._active_project_id,
-            self._project_name,
-            self._project_sources,
-            self._project_variants,
-        )
-        old_variant = self._active_variant_id
-        old_binding = self._paratranz_binding
-        if snapshot is None:
-            self._projection_dirty = False
-            self._projection_revision = None
-            self._project_revision = None
-            self._variant_revision = None
-            self._active_project_id = None
-            self._project_name = None
-            self._project_sources = ()
-            self._project_variants = ()
-            self._active_variant_id = None
-            self._paratranz_binding = None
-            self._label_library = {}
-            self._entry_labels = {}
-            self._entry_labels_exact = {}
-        else:
-            values = snapshot.values
-            self._projection_dirty = snapshot.dirty
-            self._projection_revision = snapshot.revision
-            project_id = values.get("project_id")
-            project_revision = values.get("project_revision")
-            self._project_revision = None if project_revision is None else int(project_revision)
-            variant_revision = values.get("variant_revision")
-            self._variant_revision = None if variant_revision is None else int(variant_revision)
-            self._active_project_id = None if project_id is None else str(project_id)
-            project_name = values.get("project_name")
-            self._project_name = None if project_name is None else str(project_name)
-            self._project_sources = tuple(copy_projection_value(value) for value in values.get("sources", ()))
-            self._project_variants = tuple(copy_projection_value(value) for value in values.get("variants", ()))
-            variant_id = values.get("variant_id") or values.get("active_variant_id")
-            self._active_variant_id = None if variant_id is None else str(variant_id)
-            binding = copy_projection_value(values.get("paratranz_binding"))
-            self._paratranz_binding = None if not isinstance(binding, dict) else dict(binding)
-            library = values.get("label_library") or {}
-            self._label_library = {str(key): copy_projection_value(value) for key, value in library.items()}
-            self._entry_labels, self._entry_labels_exact = project_entry_labels(
-                values.get("entries", ()), old_entry_labels_exact
-            )
-        if (
-            old_label_library != self._label_library
-            or old_entry_labels != self._entry_labels
-            or old_entry_labels_exact != self._entry_labels_exact
-        ):
-            self.label_data_changed.emit()
-        dirty_content_changed = (
-            snapshot is not None and old_revision is not None and snapshot.revision != old_revision and snapshot.dirty
-        )
-        if old_dirty != self._projection_dirty or dirty_content_changed:
-            self.dirty_changed.emit()
-        if old_project != (
-            self._active_project_id,
-            self._project_name,
-            self._project_sources,
-            self._project_variants,
-        ):
-            self.project_changed.emit()
-        if old_variant != self._active_variant_id and self._active_variant_id is not None:
-            self.variant_changed.emit(self._active_variant_id)
-        if old_binding != self._paratranz_binding:
-            # One-way compatibility projection during migration.  New target
-            # resolution never reads this session field as an authority.
-            self.paratranz_project_id = (
-                None if self._paratranz_binding is None else int(self._paratranz_binding["project_id"])
-            )
-            self.paratranz_binding_changed.emit(self.paratranz_binding)
+        self._project_view.receive(snapshot)
 
     # ── C10: 跨线程安全状态变更 ─────────────────────────────────
 
@@ -759,8 +648,6 @@ class AppContext(QObject):
 
     def __init_safe_mutate(self) -> None:
         """初始化安全变更机制。延迟调用以兼容 QObject.__init__ 顺序。"""
-        self._mutation_lock = threading.Lock()
-        self._mutation_pending: deque = deque()
         self.mutation_requested.connect(self._on_mutation, Qt.ConnectionType.QueuedConnection)
 
     @pyqtSlot(object)

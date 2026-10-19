@@ -32,7 +32,7 @@ def project_projection(active: ActiveProject | None) -> ProjectionSnapshot | Non
         "active_variant_id": active.project.envelope.data.get("active_variant_id"),
         "variants": [item.to_dict() for item in variants],
         "entries": [] if variant is None else [entry.to_dict() for entry in variant.entries],
-        "label_library": ({} if variant is None else variant.to_dto().envelope.data.get("label_library", {})),
+        "label_library": {} if variant is None else variant.label_library_data(),
         "paratranz_binding": None if paratranz_binding is None else paratranz_binding.to_dict(),
     })
     aggregate_revision = active.project.envelope.revision

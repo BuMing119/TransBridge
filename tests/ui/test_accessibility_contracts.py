@@ -7,7 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication, QTableWidget
+from PyQt6.QtWidgets import QAbstractItemView, QApplication
 
 from transbridge.application.tasks import JobSpec, OwnerRef, TaskRuntime
 from transbridge.application.tasks.activity import activity_from_snapshot
@@ -162,9 +162,9 @@ def test_translation_table_supports_keyboard_edit_and_visible_text_status() -> N
     table.start_render(RenderSession(1, 1, (entry,)), {}, {})
 
     assert table.accessibleName() == "翻译词条表"
-    assert table.editTriggers() & QTableWidget.EditTrigger.EditKeyPressed
-    assert STAGE_LABELS[STAGE_QUESTIONABLE] in table.item(0, COL_CONTEXT).text()
-    assert table.horizontalHeaderItem(COL_CONTEXT).text() == "类型 / 状态"
+    assert table.editTriggers() & QAbstractItemView.EditTrigger.EditKeyPressed
+    assert STAGE_LABELS[STAGE_QUESTIONABLE] in table.model().index(0, COL_CONTEXT).data(Qt.ItemDataRole.DisplayRole)
+    assert table.model().headerData(COL_CONTEXT, Qt.Orientation.Horizontal) == "类型 / 状态"
     table.close_rendering()
     table.close()
 

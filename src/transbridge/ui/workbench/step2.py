@@ -4,7 +4,7 @@
 支持多选标签筛选、文本搜索、行内编辑、三态标记（★/?/✓）。
 """
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QModelIndex, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QDialog,
     QFrame,
@@ -12,7 +12,6 @@ from PyQt6.QtWidgets import (
     QMenu,
     QProgressBar,
     QPushButton,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -43,7 +42,6 @@ from transbridge.ui.workbench.terminology_preview import TerminologyPreviewCoord
 from transbridge.ui.workbench.translation_reset import TranslationResetAction
 from transbridge.ui.workbench.translation_stage_action import TranslationStageAction
 from transbridge.ui.workbench.translation_table import (
-    COL_KEY as _COL_KEY,
     COL_MARK as _COL_MARK,
     COL_TRANSLATION as _COL_TRANS,
     TranslationTable,
@@ -168,9 +166,9 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
             theme_view=self._theme_view,
         )
         self._table_presenter = TablePresenter(self._table)
-        self._table.itemDoubleClicked.connect(self._on_double_clicked)
+        self._table.doubleClicked.connect(self._on_double_clicked)
         self._table.entry_edit_requested.connect(self.entry_edit_requested.emit)
-        self._table.itemChanged.connect(self._on_item_changed)
+        self._table.translation_edit_requested.connect(self._on_translation_edit_requested)
         self._table.selectionModel().selectionChanged.connect(self._on_table_selection_changed)
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._on_context_menu)
@@ -190,7 +188,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         )
         outer.addWidget(self._inline_edits.view)
 
-        # 底部计数。表格通过 Qt 事件循环自动增量渲染直至全部完成。
+        # 底部计数。模型包含全部条目，视图只绘制可见行。
         self._count_lbl = QLabel("已选 0 条 / 共 0 条")
         count_font = self._count_lbl.font()
         count_font.setPointSize(9)
@@ -239,7 +237,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         return self._table.selected_entry_ids()
 
     def filtered_entries(self) -> tuple[TranslationEntry, ...]:
-        """Return the full filtered projection, independent of rendered batches."""
+        """Return the full filtered projection, including offscreen rows."""
         return self._render_entries
 
     def get_filtered_count(self) -> int:
@@ -383,6 +381,8 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
     # ── 表格填充 ──────────────────────────────────────────────────────────────
 
     def _populate_table(self):
+        if getattr(self._ctx, "project_installing", False):
+            return
         self._terminology_status.setText(self._terminology_preview.message)
         self._terminology_status.setVisible(bool(self._terminology_preview.message))
         self._filters_view.refresh_active_summary()
@@ -446,12 +446,12 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
 
     # ── 事件处理 ──────────────────────────────────────────────────────────────
 
-    def _on_double_clicked(self, item: QTableWidgetItem):
+    def _on_double_clicked(self, index: QModelIndex):
         """打开词条编辑窗口；未绑定窗口时保留译文行内编辑。"""
-        if self._table.activate_entry_editor(item):
+        if self._table.activate_entry_editor(index):
             return
-        if item.column() == _COL_TRANS:
-            self._table.editItem(item)
+        if index.column() == _COL_TRANS:
+            self._table.edit(index)
 
     def set_terminology_profile(self, profile, *, base_snapshot=None) -> None:
         """Apply one frozen published profile to display without changing entries."""
@@ -472,22 +472,14 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
         self._table.set_editable_entry_keys(keys)
 
     def editor_navigation_keys(self):
-        """Return all filtered keys in display order, including pending batches."""
+        """Return all filtered keys in display order, including offscreen rows."""
         return self._entry_refresh.navigation_keys()
 
     def return_from_editor(self, key) -> None:
         self._entry_refresh.return_to_preview(key)
 
-    def _on_item_changed(self, item: QTableWidgetItem):
-        self._inline_edits.item_changed(item)
-
-    def _find_rendered_translation_item(
-        self,
-        preferred_row: int,
-        entry_id: str,
-    ) -> tuple[int, QTableWidgetItem | None]:
-        """Return the current item without dereferencing a deleted Qt wrapper."""
-        return self._table.find_translation_item(preferred_row, entry_id)
+    def _on_translation_edit_requested(self, entry: TranslationEntry, text: str, row: int):
+        self._inline_edits.edit_requested(entry, text, row)
 
     # ── 右键菜单 ────────────────────────────────────────────────────────
 
@@ -502,8 +494,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
             menu.deleteLater()
 
     def _build_context_menu(self, row: int):
-        item = self._table.item(row, _COL_KEY)
-        entry = item.data(Qt.ItemDataRole.UserRole) if item else None
+        entry = self._table.entry_at_row(row)
         if not isinstance(entry, TranslationEntry) or not entry.id:
             return QMenu(self)
         reset = TranslationResetAction(
@@ -657,6 +648,8 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
     def _reload_projected_labels(self) -> None:
         self._label_library = self._ctx.label_library
         self._entry_labels = self._ctx.entry_labels
+        if getattr(self._ctx, "project_installing", False):
+            return
         if hasattr(self, "_filters_view"):
             self._build_label_tags()
         if hasattr(self, "_table"):
@@ -664,14 +657,11 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
 
     def _update_count_label(self):
         labeled = sum(1 for ls in self._entry_labels.values() if ls)
-        shown = self._table.rowCount()
         filtered = self._filtered_total
         total = len(self._entries)
 
-        if filtered == total and shown == total:
+        if filtered == total:
             self._count_lbl.setText(f"有标签 {labeled} 条 | 共 {total} 条")
-        elif shown < filtered:
-            self._count_lbl.setText(f"有标签 {labeled} 条 | 已加载 {shown} 条（筛选结果 {filtered} 条，共 {total} 条）")
         else:
             self._count_lbl.setText(f"有标签 {labeled} 条 | 筛选结果 {filtered} 条（共 {total} 条）")
 

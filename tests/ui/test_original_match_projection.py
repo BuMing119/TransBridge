@@ -1,14 +1,15 @@
 from dataclasses import replace
 from types import SimpleNamespace
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 
-from transbridge.application.projections import ProjectionSnapshot
+from transbridge.application.projections import ProjectionSnapshot, ProjectionStore
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.smart_assistant.tools.base import filter_entries
 from transbridge.smart_assistant.tools.types import _projection_entry_states
-from transbridge.ui.context import AppContext
+from transbridge.ui.context import AppContext, CollectionSlot
 from transbridge.ui.entry_projection import EntryProjectionUpdate
 from transbridge.ui.project_labels import entry_label_key, exact_label_key, project_entry_labels
 from transbridge.ui.tools.ai_translator.scope_presenter import ScopePresenter
@@ -95,8 +96,8 @@ def test_table_selection_and_row_refresh_distinguish_originals() -> None:
         table.selectRow(0)
         assert table.selected_entry_ids() == (entry_label_key(first),)
         table.update_rendered_entry(replace(first, translation="first-only", stage=1))
-        assert table.item(0, COL_TRANSLATION).text() == "first-only"
-        assert table.item(1, COL_TRANSLATION).text() != "first-only"
+        assert table.model().index(0, COL_TRANSLATION).data(Qt.ItemDataRole.DisplayRole) == "first-only"
+        assert table.model().index(1, COL_TRANSLATION).data(Qt.ItemDataRole.DisplayRole) != "first-only"
     finally:
         table.close_rendering()
         table.close()
@@ -127,23 +128,29 @@ def test_ai_and_assistant_rollback_use_full_identity() -> None:
     assert session._authoritative_entry_states(entries) == expected
 
 
-def test_authoritative_projection_divergence_checks_each_original() -> None:
+def test_authoritative_projection_divergence_checks_each_original(monkeypatch) -> None:
     first, second = _entries()
     snapshot = _projection((first, second))
-    context = SimpleNamespace(
-        _project_projection=SimpleNamespace(snapshot=lambda: snapshot),
-        _slots={
-            "source": SimpleNamespace(
-                collection=(
+    monkeypatch.setattr(
+        "transbridge.paratranz.config_manager.ParatranzConfig.create_or_load", lambda: SimpleNamespace(token="")
+    )
+    context = AppContext(project_projection=ProjectionStore(snapshot))
+    try:
+        context.add_slot(
+            "source",
+            CollectionSlot(
+                "source",
+                TranslationEntryCollection((
                     replace(first, translation="translation-0", stage=1),
                     replace(second, translation="translation-1", stage=1),
-                )
-            )
-        },
-    )
-    assert not AppContext.authoritative_projection_diverged(context)
-    context._slots["source"].collection = (
-        replace(first, translation="translation-1", stage=1),
-        replace(second, translation="translation-1", stage=1),
-    )
-    assert AppContext.authoritative_projection_diverged(context)
+                )),
+            ),
+        )
+        assert not context.authoritative_projection_diverged()
+        context.collection = TranslationEntryCollection((
+            replace(first, translation="translation-1", stage=1),
+            replace(second, translation="translation-1", stage=1),
+        ))
+        assert context.authoritative_projection_diverged()
+    finally:
+        context.close_projection()

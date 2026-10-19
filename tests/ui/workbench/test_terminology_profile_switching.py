@@ -270,29 +270,29 @@ def test_profile_switch_projects_read_only_text_without_mutating_common_entry(mo
     community = _published("community", "社区版", "神龙")
     widget.set_terminology_profile(official, base_snapshot=_base_for(official))
     assert widget._terminology_preview.pending
-    pending = widget._table.item(0, COL_TRANSLATION)
-    assert pending.text() == "龙来了"
-    assert "正在生成方案预览" in pending.toolTip()
+    pending = widget._table.model().index(0, COL_TRANSLATION)
+    assert pending.data(Qt.ItemDataRole.DisplayRole) == "龙来了"
+    assert "正在生成方案预览" in pending.data(Qt.ItemDataRole.ToolTipRole)
     assert not pending.flags() & Qt.ItemFlag.ItemIsEditable
     wait_preview(widget)
-    item = widget._table.item(0, COL_TRANSLATION)
-    assert item.text() == "巨龙来了"
+    item = widget._table.model().index(0, COL_TRANSLATION)
+    assert item.data(Qt.ItemDataRole.DisplayRole) == "巨龙来了"
     assert not item.flags() & Qt.ItemFlag.ItemIsEditable
     assert entry.translation == "龙来了"
     widget.set_editable_entry_keys((entry.identity,))
-    assert not widget._table.activate_entry_editor(widget._table.item(0, COL_KEY))
+    assert not widget._table.activate_entry_editor(widget._table.model().index(0, COL_KEY))
 
-    item.setText("错误写回")
+    assert not widget._table.model().setData(item, "错误写回", Qt.ItemDataRole.EditRole)
     _APP.processEvents()
-    assert item.text() == "巨龙来了"
+    assert item.data(Qt.ItemDataRole.DisplayRole) == "巨龙来了"
     assert entry.translation == "龙来了"
 
     widget.set_terminology_profile(community, base_snapshot=_base_for(community))
     wait_preview(widget)
-    assert widget._table.item(0, COL_TRANSLATION).text() == "神龙来了"
+    assert widget._table.model().index(0, COL_TRANSLATION).data(Qt.ItemDataRole.DisplayRole) == "神龙来了"
     widget.set_terminology_profile(official, base_snapshot=_base_for(official))
     wait_preview(widget)
-    assert widget._table.item(0, COL_TRANSLATION).text() == "巨龙来了"
+    assert widget._table.model().index(0, COL_TRANSLATION).data(Qt.ItemDataRole.DisplayRole) == "巨龙来了"
     assert entry.translation == "龙来了"
 
     unlocatable = _published("unlocatable", "待确认", "飞龙")
@@ -308,16 +308,16 @@ def test_profile_switch_projects_read_only_text_without_mutating_common_entry(mo
     )
     widget.set_terminology_profile(unlocatable, base_snapshot=_base_for(unlocatable))
     wait_preview(widget)
-    item = widget._table.item(0, COL_TRANSLATION)
-    assert item.text() == "龙来了"
-    assert "无法安全定位" in item.toolTip()
+    item = widget._table.model().index(0, COL_TRANSLATION)
+    assert item.data(Qt.ItemDataRole.DisplayRole) == "龙来了"
+    assert "无法安全定位" in item.data(Qt.ItemDataRole.ToolTipRole)
 
     widget.set_terminology_profile(None)
     _APP.processEvents()
-    item = widget._table.item(0, COL_TRANSLATION)
-    assert item.text() == "龙来了"
+    item = widget._table.model().index(0, COL_TRANSLATION)
+    assert item.data(Qt.ItemDataRole.DisplayRole) == "龙来了"
     assert item.flags() & Qt.ItemFlag.ItemIsEditable
-    assert widget._table.activate_entry_editor(widget._table.item(0, COL_KEY))
+    assert widget._table.activate_entry_editor(widget._table.model().index(0, COL_KEY))
     widget.close()
 
 
@@ -350,7 +350,7 @@ def test_plugin_scoped_mapping_uses_entry_plugin_identity_and_disables_common_re
     widget.set_terminology_profile(profile, base_snapshot=_base_for(profile))
     wait_preview(widget)
 
-    assert widget._table.item(0, COL_TRANSLATION).text() == "天际巨龙来了"
+    assert widget._table.model().index(0, COL_TRANSLATION).data(Qt.ItemDataRole.DisplayRole) == "天际巨龙来了"
     menu = widget._build_context_menu(0)
     reset = next(action for action in menu.actions() if action.text() == "取消翻译")
     assert not reset.isEnabled()

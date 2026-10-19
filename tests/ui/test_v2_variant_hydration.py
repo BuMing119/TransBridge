@@ -5,6 +5,7 @@ from threading import Event
 from time import monotonic
 from types import SimpleNamespace
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 import pytest
@@ -122,8 +123,8 @@ def test_real_cold_start_and_variant_combo_rehydrate_eet_and_allow_save(window_c
         assert slot.source_snapshot is not None
         window.context.activate_slot(location)
         table = window.workbench.preview._table
-        _until(lambda: table.rowCount() == 1 and table.item(0, COL_TRANSLATION) is not None)
-        assert table.item(0, COL_TRANSLATION).text() == "Variant B"
+        _until(lambda: table.rowCount() == 1 and table.model().index(0, COL_TRANSLATION).isValid())
+        assert table.model().index(0, COL_TRANSLATION).data(Qt.ItemDataRole.DisplayRole) == "Variant B"
     saved = []
     assert window.save_current_project_async(on_finished=saved.append)
     _until(lambda: bool(saved))

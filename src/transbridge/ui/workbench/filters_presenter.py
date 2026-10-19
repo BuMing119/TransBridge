@@ -83,6 +83,8 @@ class FiltersPresenter:
         entry_labels: Mapping[str, set[str]],
     ) -> list[TranslationEntry]:
         state = self._state
+        if state == FilterState():
+            return list(entries)
         all_kw = state.search_all.lower()
         key_kw = state.search_key.lower()
         original_kw = state.search_original.lower()
@@ -110,10 +112,11 @@ class FiltersPresenter:
                 continue
             if translation_kw and translation_kw not in (entry.translation or "").lower():
                 continue
-            labels = entry_labels.get(entry_label_key(entry), set()) if entry.id else set()
-            if state.labels and not labels.intersection(state.labels):
-                continue
-            if state.focus_labeled and not labels:
-                continue
+            if state.labels or state.focus_labeled:
+                labels = entry_labels.get(entry_label_key(entry), set()) if entry.id else set()
+                if state.labels and not labels.intersection(state.labels):
+                    continue
+                if state.focus_labeled and not labels:
+                    continue
             result.append(entry)
         return result

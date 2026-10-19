@@ -136,6 +136,17 @@ class ShellIntentComposition:
         *,
         confirmed: bool = True,
     ) -> IntentDispatchResult:
+        opening = getattr(self._host.context, "project_opening", False)
+        failed = getattr(self._host.context, "project_view_failed", False)
+        if opening or failed:
+            resolved = IntentId(intent_id)
+            allowed = resolved.value.startswith(("settings.", "help.")) or resolved is IntentId.APP_EXIT
+            if failed and not opening and resolved is IntentId.PROJECT_OPEN:
+                allowed = True
+            if not allowed:
+                reason = "项目仍在打开，请稍候再执行此操作。" if opening else "工作台未能加载，请重新打开工程。"
+                self._host.show_message(reason)
+                return IntentDispatchResult(resolved, False, reason)
         if intent_id == IntentId.TRANSLATION_AI_BATCH:
             intent_id = IntentId.TRANSLATION_AI
         result = self.router.dispatch(intent_id, payload, confirmed=confirmed)

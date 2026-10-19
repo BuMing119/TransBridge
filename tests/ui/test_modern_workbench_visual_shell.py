@@ -102,7 +102,7 @@ def test_navigation_renders_visible_bordered_paratranz_brand_icon() -> None:
         for y in range(image.height())
         for x in range(image.width())
     )
-    border_pixel = image.pixelColor(9, 0)
+    border_pixel = image.pixelColor(image.width() // 2, 0)
     assert border_pixel.alpha() > 0
     assert border_pixel.red() < 245
     navigation.close()
@@ -164,7 +164,8 @@ def test_navigation_account_entry_opens_menu_and_routes_truthful_provider_state(
     assert entry.accessibleName() == "账户与服务"
     assert "服务连接" in entry.accessibleDescription()
     assert entry.focusPolicy() is Qt.FocusPolicy.StrongFocus
-    assert navigation._account_hint.text() == "⋯"
+    assert not navigation._account_hint.pixmap().isNull()
+    assert navigation._account_hint.pixmap().deviceIndependentSize().width() == 14
     assert entry.height() >= 48
     for child in (
         navigation._avatar,
@@ -227,9 +228,9 @@ def test_paratranz_avatar_is_center_cropped_to_a_circle() -> None:
     avatar = NavigationRail._circular_avatar(source)
     image = avatar.toImage()
 
-    assert avatar.size().width() == avatar.size().height() == 32
+    assert avatar.deviceIndependentSize().width() == avatar.deviceIndependentSize().height() == 32
     assert image.pixelColor(0, 0).alpha() == 0
-    assert image.pixelColor(16, 16).green() == 160
+    assert image.pixelColor(image.width() // 2, image.height() // 2).green() == 160
 
 
 def test_translation_table_uses_dense_columns_without_persistent_cell_widgets() -> None:
@@ -238,9 +239,9 @@ def test_translation_table_uses_dense_columns_without_persistent_cell_widgets() 
     table.start_render(RenderSession(1, None, (entry,)), {}, {})
     _APP.processEvents()
 
-    assert table.columnCount() == NUM_COLUMNS == 7
+    assert table.model().columnCount() == NUM_COLUMNS == 7
     assert [
-        table.horizontalHeaderItem(column).text()
+        table.model().headerData(column, Qt.Orientation.Horizontal)
         for column in (
             COL_CHECK,
             COL_INDEX,
@@ -255,11 +256,11 @@ def test_translation_table_uses_dense_columns_without_persistent_cell_widgets() 
     assert header.sectionResizeMode(COL_CHECK) is QHeaderView.ResizeMode.Fixed
     assert header.sectionResizeMode(COL_INDEX) is QHeaderView.ResizeMode.Interactive
     assert header.sectionResizeMode(COL_MARK) is QHeaderView.ResizeMode.Interactive
-    assert all(table.cellWidget(0, column) is None for column in range(NUM_COLUMNS))
-    assert table.item(0, COL_INDEX).text() == "1"
-    assert "已翻译" in table.item(0, COL_CONTEXT).text()
+    assert all(table.indexWidget(table.model().index(0, column)) is None for column in range(NUM_COLUMNS))
+    assert table.model().index(0, COL_INDEX).data(Qt.ItemDataRole.DisplayRole) == "1"
+    assert "已翻译" in table.model().index(0, COL_CONTEXT).data(Qt.ItemDataRole.DisplayRole)
 
-    table.item(0, COL_CHECK).setCheckState(Qt.CheckState.Checked)
+    table.model().setData(table.model().index(0, COL_CHECK), Qt.CheckState.Checked, Qt.ItemDataRole.CheckStateRole)
     assert table.selected_entry_ids() == (entry.id,)
     table.close()
 

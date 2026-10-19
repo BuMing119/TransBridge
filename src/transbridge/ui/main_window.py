@@ -195,7 +195,7 @@ class MainWindow(QMainWindow):
 
     def _open_initial_import_when_idle(self, path: str) -> None:
         workers = (self._foreground_worker, self._save_worker, self._project_open_worker)
-        if any(worker is not None and worker.isRunning() for worker in workers):
+        if getattr(self._ctx, "project_opening", False) or any(worker is not None for worker in workers):
             QTimer.singleShot(100, lambda: self._open_initial_import_when_idle(path))
             return
         self._project_transfer_coordinator.import_transbridge(path)
@@ -396,7 +396,9 @@ class MainWindow(QMainWindow):
         if (
             (self._foreground_worker is not None and self._foreground_worker.isRunning())
             or self._save_worker is not None
-            or (self._project_open_worker is not None and self._project_open_worker.isRunning())
+            or self._project_open_worker is not None
+            or getattr(self._ctx, "project_opening", False)
+            or getattr(self._ctx, "project_view_failed", False)
         ):
             self.show_message("另一项后台操作仍在进行，请稍候。")
             return False
@@ -460,11 +462,18 @@ class MainWindow(QMainWindow):
     def save_current_project_async(self, *, automatic: bool = False, on_finished=None) -> bool:
         """Queue one Project save and coalesce callers while it is active."""
 
+        if getattr(self._ctx, "project_view_failed", False):
+            safe_to_close = getattr(self, "_close_pending", False) and not self._ctx.dirty
+            if not automatic and not safe_to_close:
+                self.show_message("工作台未能加载，请重新打开工程后再保存。")
+            if on_finished is not None:
+                QTimer.singleShot(0, lambda: on_finished(safe_to_close))
+            return True
         if self._foreground_worker is not None and self._foreground_worker.isRunning():
             if not automatic:
                 self.show_message("另一项后台操作仍在进行，请稍候。")
             return False
-        if self._project_open_worker is not None and self._project_open_worker.isRunning():
+        if self._project_open_worker is not None or getattr(self._ctx, "project_opening", False):
             if not automatic:
                 self.show_message("项目仍在打开，请稍候。")
             return False

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QTableWidget
+from PyQt6.QtWidgets import QTableView
 
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.ui.project_labels import entry_label_key
@@ -57,7 +57,7 @@ def ordered_source_rows(
 class TranslationTableSorting:
     """Own the three-state header interaction without enabling Qt item sorting."""
 
-    def __init__(self, table: QTableWidget, on_changed: Callable[[], None]) -> None:
+    def __init__(self, table: QTableView, on_changed: Callable[[], None]) -> None:
         self._column: int | None = None
         self._descending = False
         self._header = table.horizontalHeader()
@@ -67,7 +67,12 @@ class TranslationTableSorting:
         self._header.setAccessibleName("词条排序表头")
         self._header.setAccessibleDescription("点击同一列依次切换升序、降序、默认顺序；仅改变显示。")
         for column, hint in _SORT_HINTS.items():
-            table.horizontalHeaderItem(column).setToolTip(f"{hint}。点击切换：升序 → 降序 → 默认。仅改变显示顺序。")
+            table.model().setHeaderData(
+                column,
+                Qt.Orientation.Horizontal,
+                f"{hint}。点击切换：升序 → 降序 → 默认。仅改变显示顺序。",
+                Qt.ItemDataRole.ToolTipRole,
+            )
         self._header.sectionClicked.connect(self._on_clicked)
 
     def _on_clicked(self, column: int) -> None:

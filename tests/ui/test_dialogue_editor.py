@@ -80,9 +80,9 @@ def test_double_click_opens_correct_response_after_main_table_sorting(editor):
     row = next(
         row
         for row in range(table.rowCount())
-        if table.item(row, COL_KEY).data(Qt.ItemDataRole.UserRole).identity == target.identity
+        if table.model().index(row, COL_KEY).data(Qt.ItemDataRole.UserRole).identity == target.identity
     )
-    point = table.visualItemRect(table.item(row, COL_TRANSLATION)).center()
+    point = table.visualRect(table.model().index(row, COL_TRANSLATION)).center()
     QTest.mouseClick(table.viewport(), Qt.MouseButton.LeftButton, pos=point)
     QTest.mouseDClick(table.viewport(), Qt.MouseButton.LeftButton, pos=point)
     _APP.processEvents()
@@ -101,7 +101,7 @@ def test_double_click_opens_correct_response_after_main_table_sorting(editor):
 def test_double_click_any_entry_cell_opens_once_even_after_table_refresh(editor, column, refresh_between_clicks):
     table = editor.preview._table
     target = dialogue_entries()[2]
-    point = table.visualItemRect(table.item(2, column)).center()
+    point = table.visualRect(table.model().index(2, column)).center()
     requested = []
     editor.preview.entry_edit_requested.connect(requested.append)
     QTest.mouseClick(table.viewport(), Qt.MouseButton.LeftButton, pos=point)
@@ -120,7 +120,7 @@ def test_double_click_any_entry_cell_opens_once_even_after_table_refresh(editor,
 
 def test_double_click_checkbox_keeps_selection_without_opening_editor(editor):
     table = editor.preview._table
-    point = table.visualItemRect(table.item(2, COL_CHECK)).center()
+    point = table.visualRect(table.model().index(2, COL_CHECK)).center()
     QTest.mouseClick(table.viewport(), Qt.MouseButton.LeftButton, pos=point)
     QTest.mouseDClick(table.viewport(), Qt.MouseButton.LeftButton, pos=point)
     assert not editor.dialog.isVisible()
@@ -211,8 +211,8 @@ def test_eet_opens_editor_with_disabled_task_tree_and_can_apply_translation(edit
         ),
     )
     table = editor.preview._table
-    item = table.item(2, COL_TRANSLATION)
-    point = table.visualItemRect(item).center()
+    item = table.model().index(2, COL_TRANSLATION)
+    point = table.visualRect(item).center()
     QTest.mouseClick(table.viewport(), Qt.MouseButton.LeftButton, pos=point)
     QTest.mouseDClick(table.viewport(), Qt.MouseButton.LeftButton, pos=point)
     assert editor.dialog.isVisible()
@@ -227,7 +227,7 @@ def test_eet_opens_editor_with_disabled_task_tree_and_can_apply_translation(edit
     editor.view.translation.setPlainText("EET 译文")
     editor.apply()
     assert context.collection.get(target).translation == "EET 译文"
-    assert table.item(2, COL_TRANSLATION).text() == "EET 译文"
+    assert table.model().index(2, COL_TRANSLATION).data(Qt.ItemDataRole.DisplayRole) == "EET 译文"
 
 
 def test_plugin_with_eet_overlay_reenables_and_late_worker_cannot_reenable_eet(editor):
@@ -264,7 +264,7 @@ def test_multiline_draft_survives_topic_switch_and_applies_to_main_table(editor)
     assert not editor._drafts
     table = editor.preview._table
     row = table.find_entry_row(-1, editor.context.collection.get(target).id)
-    assert table.item(row, COL_TRANSLATION).text() == text
+    assert table.model().index(row, COL_TRANSLATION).data(Qt.ItemDataRole.DisplayRole) == text
 
 
 def test_draft_is_retained_across_source_switch_and_close_requires_a_decision(editor, monkeypatch):
@@ -314,7 +314,7 @@ def test_navigation_crosses_topic_boundary_and_f2_remains_inline(editor):
     assert editor._current.before.entry_key == dialogue_entries()[3].identity
     editor.dialog.close()
     table = editor.preview._table
-    table.setCurrentCell(1, COL_TRANSLATION)
+    table.setCurrentIndex(table.model().index(1, COL_TRANSLATION))
     table.setFocus()
     QTest.keyClick(table, Qt.Key.Key_F2)
     assert table.findChildren(QLineEdit)
@@ -326,7 +326,7 @@ def test_ordinary_entry_opens_popup_without_task_tree_and_empty_content_clears_e
     drain(editor)
     assert not editor.dialog.isVisible()
     table = editor.preview._table
-    point = table.visualItemRect(table.item(0, COL_ORIGINAL)).center()
+    point = table.visualRect(table.model().index(0, COL_ORIGINAL)).center()
     QTest.mouseClick(table.viewport(), Qt.MouseButton.LeftButton, pos=point)
     QTest.mouseDClick(table.viewport(), Qt.MouseButton.LeftButton, pos=point)
     assert editor.dialog.isVisible()
@@ -388,7 +388,7 @@ def test_main_window_double_click_opens_child_window_without_adding_navigation(m
         drain(window._dialogue_editor)
         assert not window._dialogue_editor.dialog.isVisible()
         table = window.workbench.preview._table
-        point = table.visualItemRect(table.item(0, COL_ORIGINAL)).center()
+        point = table.visualRect(table.model().index(0, COL_ORIGINAL)).center()
         QTest.mouseClick(table.viewport(), Qt.MouseButton.LeftButton, pos=point)
         QTest.mouseDClick(table.viewport(), Qt.MouseButton.LeftButton, pos=point)
         dialog = window._dialogue_editor.dialog
@@ -399,7 +399,7 @@ def test_main_window_double_click_opens_child_window_without_adding_navigation(m
         assert window._dialogue_editor.view.original.toPlainText() == entry.original
         dialog.close()
         assert not dialog.isVisible()
-        assert table.currentRow() == 0
+        assert table.currentIndex().row() == 0
     finally:
         drain(window._dialogue_editor)
         window.close()

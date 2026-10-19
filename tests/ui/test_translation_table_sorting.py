@@ -17,7 +17,7 @@ from transbridge.converter.translation_entry_collection import TranslationEntryC
 from transbridge.ui import context as context_module
 from transbridge.ui.workbench.step2 import Step2PreviewWidget
 from transbridge.ui.workbench.table_presenter import RenderSession
-from transbridge.ui.workbench.translation_table import ROW_BATCH_SIZE, TranslationTable
+from transbridge.ui.workbench.translation_table import TranslationTable
 from transbridge.ui.workbench.translation_table_columns import (
     COL_CHECK,
     COL_CONTEXT,
@@ -48,7 +48,7 @@ def _drain(table: TranslationTable) -> None:
 
 
 def _ids(table: TranslationTable) -> list[str]:
-    return [table.item(row, COL_KEY).data(Qt.ItemDataRole.UserRole).id for row in range(table.rowCount())]
+    return [table.model().index(row, COL_KEY).data(Qt.ItemDataRole.UserRole).id for row in range(table.rowCount())]
 
 
 def _click(table: TranslationTable, column: int) -> None:
@@ -70,6 +70,30 @@ def table():
     _APP.processEvents()
 
 
+def test_project_replacement_discards_old_rows_and_can_be_superseded(table):
+    old = _entries(12)
+    table.start_render(RenderSession(1, 1, old), {}, {})
+    table.selectRow(3)
+    table.start_render(RenderSession(2, 2, _entries(600)), {}, {})
+    assert table.rowCount() == 600
+    assert not table.has_pending_batch
+    latest = (TranslationEntry("latest", "new", "New original", "Final translation", 1, None),)
+    table.start_render(RenderSession(3, 3, latest), {}, {})
+    _drain(table)
+    assert _ids(table) == ["latest"]
+    assert table.model().index(0, COL_TRANSLATION).data(Qt.ItemDataRole.DisplayRole) == "Final translation"
+
+
+def test_closing_view_clears_rows_without_a_late_render_callback(table):
+    table.start_render(RenderSession(1, 1, _entries(600)), {}, {})
+    assert table.rowCount() == 600
+    assert not table.has_pending_batch
+    table.close_rendering()
+    _APP.processEvents()
+    assert table.rowCount() == 0
+    assert not table.has_pending_batch
+
+
 def test_header_click_cycles_ascending_descending_default_without_source_mutation(table):
     entries = _entries(12)
     session = RenderSession(7, 42, entries)
@@ -83,7 +107,7 @@ def test_header_click_cycles_ascending_descending_default_without_source_mutatio
     assert header.isSortIndicatorShown()
     assert header.sortIndicatorSection() == COL_KEY
     assert header.sortIndicatorOrder() == Qt.SortOrder.AscendingOrder
-    assert table.item(0, COL_INDEX).text() == "12"
+    assert table.model().index(0, COL_INDEX).data(Qt.ItemDataRole.DisplayRole) == "12"
     _click(table, COL_CHECK)
     assert header.sortIndicatorSection() == COL_KEY
     assert header.sortIndicatorOrder() == Qt.SortOrder.AscendingOrder
@@ -97,7 +121,7 @@ def test_header_click_cycles_ascending_descending_default_without_source_mutatio
     assert not header.isSortIndicatorShown()
     assert table.render_session is session
     assert [entry.to_dict() for entry in entries] == snapshot
-    assert not table.isSortingEnabled()  # Qt must not reorder incomplete item batches.
+    assert not table.isSortingEnabled()  # The view owns its three-state sorting cycle.
 
 
 def test_index_and_label_counts_sort_numerically(table):
@@ -110,9 +134,13 @@ def test_index_and_label_counts_sort_numerically(table):
     _click(table, COL_MARK)
     assert _ids(table) == [entry.id for entry in entries]
     _click(table, COL_INDEX)
-    assert [table.item(row, COL_INDEX).text() for row in range(12)] == [str(i) for i in range(1, 13)]
+    assert [table.model().index(row, COL_INDEX).data(Qt.ItemDataRole.DisplayRole) for row in range(12)] == [
+        str(i) for i in range(1, 13)
+    ]
     _click(table, COL_INDEX)
-    assert [table.item(row, COL_INDEX).text() for row in range(12)] == [str(i) for i in range(12, 0, -1)]
+    assert [table.model().index(row, COL_INDEX).data(Qt.ItemDataRole.DisplayRole) for row in range(12)] == [
+        str(i) for i in range(12, 0, -1)
+    ]
 
 
 @pytest.mark.parametrize(
@@ -153,17 +181,17 @@ def test_context_sorts_category_then_numeric_stage():
     assert expected.index(2) < expected.index(3) < expected.index(0)
 
 
-def test_sort_during_loading_preserves_selection_and_cancels_old_batches(table):
+def test_sort_preserves_selection_outside_the_visible_viewport(table):
     entries = _entries(1_200)
     table.start_render(RenderSession(1, None, entries), {}, {})
-    table.item(10, COL_CHECK).setCheckState(Qt.CheckState.Checked)
+    table.model().setData(table.model().index(10, COL_CHECK), Qt.CheckState.Checked, Qt.ItemDataRole.CheckStateRole)
     _click(table, COL_KEY)
-    assert table.rowCount() == ROW_BATCH_SIZE
-    assert table.has_pending_batch
+    assert table.rowCount() == len(entries)
+    assert not table.has_pending_batch
     assert table.selected_entry_ids() == (entries[10].id,)
-    assert _ids(table)[0] == entries[-1].id  # Includes entries outside the old rendered batch.
+    assert _ids(table)[0] == entries[-1].id
 
-    # The selected entry is not materialized yet. A second click must retain it.
+    # The selected entry is outside the viewport. Repeated sorts must retain it.
     _click(table, COL_KEY)
     _click(table, COL_KEY)
     _click(table, COL_KEY)
@@ -172,7 +200,7 @@ def test_sort_during_loading_preserves_selection_and_cancels_old_batches(table):
     assert table.selected_entry_ids() == (entries[10].id,)
     selected_row = table.find_entry_row(10, entries[10].id)
     assert selected_row == len(entries) - 11
-    assert table.item(selected_row, COL_CHECK).checkState() == Qt.CheckState.Checked
+    assert table.model().index(selected_row, COL_CHECK).data(Qt.ItemDataRole.CheckStateRole) == Qt.CheckState.Checked
 
 
 def test_sort_is_retained_across_filter_refresh_and_default_restores_filtered_source_order(table):
@@ -197,30 +225,30 @@ def test_locate_and_refresh_entry_use_sorted_identity(table):
     _click(table, COL_KEY)
     table.locate_entry(entries[0].id)
     _drain(table)
-    assert table.currentRow() == 599
+    assert table.currentIndex().row() == 599
     changed = replace(entries[0], translation="Changed", stage=STAGE_TRANSLATED)
     assert table.update_rendered_entry(changed, preferred_row=0) == 599
-    assert table.item(599, COL_TRANSLATION).text() == "Changed"
-    assert "已翻译" in table.item(599, COL_CONTEXT).text()
-    assert table.item(0, COL_TRANSLATION).text() == "（无译文）"
+    assert table.model().index(599, COL_TRANSLATION).data(Qt.ItemDataRole.DisplayRole) == "Changed"
+    assert "已翻译" in table.model().index(599, COL_CONTEXT).data(Qt.ItemDataRole.DisplayRole)
+    assert table.model().index(0, COL_TRANSLATION).data(Qt.ItemDataRole.DisplayRole) == "（无译文）"
 
 
-def test_sort_preserves_all_selected_ids_during_and_after_loading(table):
+def test_sort_preserves_all_selected_ids_and_current_entry(table):
     entries = _entries(1_000)
     table.start_render(RenderSession(1, None, entries), {}, {})
     _drain(table)
-    table.setCurrentCell(100, COL_TRANSLATION)
+    table.setCurrentIndex(table.model().index(100, COL_TRANSLATION))
     table.selectAll()
     _click(table, COL_KEY)
     assert set(table.selected_entry_ids()) == {entry.id for entry in entries}
     _drain(table)
     assert len(table.selectionModel().selectedRows()) == len(entries)
-    assert table.currentRow() == 899
+    assert table.currentIndex().row() == 899
     assert table.verticalScrollBar().value() == 0
 
 
 @pytest.mark.parametrize("clear_only", [False, True])
-def test_new_selection_supersedes_pending_restoration(table, clear_only):
+def test_new_selection_supersedes_restored_selection(table, clear_only):
     entries = _entries(1_000)
     table.start_render(RenderSession(1, None, entries), {}, {})
     _drain(table)
@@ -229,8 +257,8 @@ def test_new_selection_supersedes_pending_restoration(table, clear_only):
     if clear_only:
         table.clearSelection()
     else:
-        item = table.item(0, COL_KEY)
-        QTest.mouseClick(table.viewport(), Qt.MouseButton.LeftButton, pos=table.visualItemRect(item).center())
+        item = table.model().index(0, COL_KEY)
+        QTest.mouseClick(table.viewport(), Qt.MouseButton.LeftButton, pos=table.visualRect(item).center())
     _drain(table)
     assert table.selected_entry_ids() == (() if clear_only else (entries[-1].id,))
 
@@ -250,24 +278,24 @@ def test_sort_only_changes_view_and_edit_targets_correct_entry(monkeypatch):
         assert tuple(collection) == before
         assert widget.filtered_entries() is filtered
         assert changes == []
-        widget._table.item(0, COL_TRANSLATION).setText("译文")
+        widget._table.model().setData(widget._table.model().index(0, COL_TRANSLATION), "译文", Qt.ItemDataRole.EditRole)
         assert before[-1].translation == "译文"
         assert before[0].translation == ""
-        assert widget._table.item(0, COL_KEY).data(Qt.ItemDataRole.UserRole) is before[-1]
+        assert widget._table.model().index(0, COL_KEY).data(Qt.ItemDataRole.UserRole) is before[-1]
     finally:
         widget.close()
         widget.deleteLater()
         _APP.processEvents()
 
 
-def test_large_sort_yields_to_event_loop_and_can_close_mid_render(table):
+def test_large_sort_keeps_event_loop_responsive_and_closes_without_late_rows(table):
     table.start_render(RenderSession(1, None, _entries(10_000)), {}, {})
     heartbeat_rows = []
     QTimer.singleShot(0, lambda: heartbeat_rows.append(table.rowCount()))
     _click(table, COL_KEY)
-    assert table.rowCount() == ROW_BATCH_SIZE
+    assert table.rowCount() == 10_000
     _APP.processEvents()
-    assert heartbeat_rows and heartbeat_rows[0] < 10_000
+    assert heartbeat_rows == [10_000]
     table.close_rendering()
     _APP.processEvents()
     assert not table.has_pending_batch
@@ -284,16 +312,16 @@ def test_clicking_header_commits_the_active_editor_before_reordering(monkeypatch
     _APP.processEvents()
     table = widget._table
     try:
-        item = table.item(0, COL_TRANSLATION)
-        table.setCurrentItem(item)
-        table.editItem(item)
+        item = table.model().index(0, COL_TRANSLATION)
+        table.setCurrentIndex(item)
+        table.edit(item)
         editor = table.findChild(QLineEdit)
         assert editor is not None
         editor.setText("Edited before sort")
         _click(table, COL_KEY)
         _APP.processEvents()
         assert entries[0].translation == "Edited before sort"
-        assert table.item(2, COL_TRANSLATION).text() == "Edited before sort"
+        assert table.model().index(2, COL_TRANSLATION).data(Qt.ItemDataRole.DisplayRole) == "Edited before sort"
     finally:
         widget.close()
         widget.deleteLater()

@@ -129,8 +129,8 @@ class WindowLifecycle:
             self._host.workbench.show_step2_progress(0, "正在取消后台任务并清理未提交内容…")
             QTimer.singleShot(100, self.begin_background_close)
             return
-        if self._running(self._host.project_open_worker):
-            self._host.project_open_worker.finished.connect(self.begin_background_close)
+        if self._host.project_open_worker is not None or getattr(self._host.context, "project_opening", False):
+            QTimer.singleShot(100, self.begin_background_close)
             return
         if self._running(self._host.foreground_worker):
             self._host.foreground_worker.finished.connect(self.begin_background_close)
@@ -194,6 +194,7 @@ class WindowLifecycle:
             get_api_worker_registry().busy
             or self._input_guard.awaiting_dialog
             or self._running(self._host.project_open_worker)
+            or getattr(self._host.context, "project_opening", False)
             or self._running(self._host.foreground_worker)
             or (ai_tasks is not None and ai_tasks.busy)
         ):
@@ -260,8 +261,13 @@ class WindowLifecycle:
         if self._task_close is not None:
             self._task_close.abort()
         self._close_pending = self._host.close_pending = False
-        self._host.workbench.setEnabled(True)
         self._input_guard.resume()
+        self._host.workbench.setEnabled(
+            not (
+                getattr(self._host.context, "project_opening", False)
+                or getattr(self._host.context, "project_view_failed", False)
+            )
+        )
         self._host.workbench.hide_step2_progress()
         self.auto_saver.start()
         ai_tasks = getattr(self._host.workbench, "ai_tasks", None)

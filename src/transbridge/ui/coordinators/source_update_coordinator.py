@@ -33,6 +33,12 @@ class SourceUpdateCoordinator:
         self._start(recovery.project_path, context, recovery=True)
 
     def _available(self) -> bool:
+        if getattr(self._host.context, "project_view_failed", False):
+            self._host.show_message("工作台未能加载，请重新打开工程后再更新源文件。")
+            return False
+        if getattr(self._host.context, "project_opening", False):
+            self._host.show_message("项目仍在打开，请稍候再更新源文件。")
+            return False
         if self._busy:
             self._host.show_message("源文件更新正在进行，请先完成或取消当前预览。")
             return False

@@ -140,6 +140,9 @@ class TaskRecoveryDiscovery(QObject):
     def discover(self):
         if self.registry.shutting_down or self.worker is not None:
             return
+        if getattr(self.registry.ctx, "project_opening", False):
+            self.timer.start(100)
+            return
         scope = self.scope()
         if scope == self._scope:
             return

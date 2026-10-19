@@ -11,6 +11,8 @@ from transbridge.ui.windowing import show_and_activate
 
 
 def project_directory(ctx, runtime=None, runtime_context=None):
+    if getattr(ctx, "project_opening", False):
+        return None
     if runtime is not None and runtime_context is not None and "project_source_updates" in runtime.use_cases.names():
         context = replace(runtime_context, project_id=ctx.active_project_id, variant_id=None)
         path = runtime.use_cases.resolve("project_source_updates").active_project_path(context)
@@ -42,6 +44,7 @@ class AiTaskRegistry(QObject):
 
         if (
             self.shutting_down
+            or getattr(self.ctx, "project_opening", False)
             or self.is_recovery_active(record["task_id"])
             or (not restart and record.get("state") not in RECOVERABLE_STATES)
             or not record.get("supported", True)

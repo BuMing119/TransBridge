@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 import pytest
 
@@ -40,10 +41,10 @@ def editing(monkeypatch):
 def test_failed_edit_retains_complete_input_then_retries(editing):
     widget, _context, entry, response = editing
     text = "  " + "完整译文" * 40 + "\n第二行  "
-    widget._table.item(0, COL_TRANSLATION).setText(text)
+    widget._table.model().setData(widget._table.model().index(0, COL_TRANSLATION), text, Qt.ItemDataRole.EditRole)
     view = widget._inline_edits.view
     assert entry.translation == "Old"
-    assert widget._table.item(0, COL_TRANSLATION).text() == "Old"
+    assert widget._table.model().index(0, COL_TRANSLATION).data(Qt.ItemDataRole.DisplayRole) == "Old"
     assert not view.isHidden()
     assert "文件暂时不可写" in view.message.text()
     assert view.text.toPlainText() == text
@@ -57,7 +58,7 @@ def test_failed_edit_retains_complete_input_then_retries(editing):
 
 def test_changed_entry_blocks_retry_without_losing_draft(editing):
     widget, _context, entry, response = editing
-    widget._table.item(0, COL_TRANSLATION).setText("Draft")
+    widget._table.model().setData(widget._table.model().index(0, COL_TRANSLATION), "Draft", Qt.ItemDataRole.EditRole)
     entry.translation = "New committed value"
     response.is_success = True
     widget._inline_edits.retry()
@@ -70,7 +71,7 @@ def test_changed_entry_blocks_retry_without_losing_draft(editing):
 
 def test_collection_switch_blocks_old_draft_and_explicit_discard_clears_it(editing):
     widget, context, entry, response = editing
-    widget._table.item(0, COL_TRANSLATION).setText("Draft")
+    widget._table.model().setData(widget._table.model().index(0, COL_TRANSLATION), "Draft", Qt.ItemDataRole.EditRole)
     other = TranslationEntry("1", "key", "Other", "Other translation", 1, "NPC_:FULL")
     context.add_slot(
         "other",
@@ -96,7 +97,7 @@ def test_commit_exception_keeps_input_and_diagnostic(editing, monkeypatch, caplo
         raise OSError("disk unavailable")
 
     monkeypatch.setattr(context, "update_projected_entry", fail)
-    widget._table.item(0, COL_TRANSLATION).setText("Draft")
+    widget._table.model().setData(widget._table.model().index(0, COL_TRANSLATION), "Draft", Qt.ItemDataRole.EditRole)
     assert entry.translation == "Old"
     assert widget._inline_edits.view.text.toPlainText() == "Draft"
     assert "disk unavailable" in widget._inline_edits.view.message.text()
@@ -118,8 +119,12 @@ def test_multiple_original_qualified_entries_keep_independent_drafts(editing):
         for original in ("First", "Second")
     ]
     context.collection = TranslationEntryCollection(entries)
-    widget._table.item(0, COL_TRANSLATION).setText("Draft first")
-    widget._table.item(1, COL_TRANSLATION).setText("Draft second")
+    widget._table.model().setData(
+        widget._table.model().index(0, COL_TRANSLATION), "Draft first", Qt.ItemDataRole.EditRole
+    )
+    widget._table.model().setData(
+        widget._table.model().index(1, COL_TRANSLATION), "Draft second", Qt.ItemDataRole.EditRole
+    )
     view = widget._inline_edits.view
     assert view.drafts.count() == 2
     view.drafts.setCurrentIndex(0)
@@ -137,7 +142,7 @@ def test_project_and_variant_switch_require_returning_to_original_scope(editing,
     widget, context, entry, response = editing
     active = [("project", "v1")]
     monkeypatch.setattr(type(context), "active_version_identity", property(lambda _: active[0]))
-    widget._table.item(0, COL_TRANSLATION).setText("Draft")
+    widget._table.model().setData(widget._table.model().index(0, COL_TRANSLATION), "Draft", Qt.ItemDataRole.EditRole)
     active[0] = target
     context.project_changed.emit()
     response.is_success = True

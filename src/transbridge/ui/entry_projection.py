@@ -22,29 +22,35 @@ class EntryProjectionUpdate:
         return cls(states)
 
     def entry(self, entry, *, reuse_unchanged=True):
-        state = self._states.get(entry.identity)
-        if state is None:
+        values = self.projected_values(entry.identity, entry)
+        if not values:
             return entry
+        changes = {name: value for name, value in values.items() if getattr(entry, name) != value}
+        return replace(entry, **changes) if changes or not reuse_unchanged else entry
+
+    def projected_values(self, identity, source):
+        """Resolve one immutable hydration input before constructing its UI entry."""
+        state = self._states.get(identity)
+        if state is None:
+            return {}
         inferred = set(str(value) for value in state.get("inferred_fields", ()))
-        values = {
+        return {
             "translation": str(state.get("translation", "")),
             "stage": int(state.get("stage", 0)),
             "external_refs": (
-                entry.external_refs
+                source.external_refs
                 if "external_refs" in inferred or "external_refs" not in state
                 else tuple(
                     ExternalEntryRef.from_dict(copy_projection_value(value)) for value in state.get("external_refs", ())
                 )
             ),
-            "revision": entry.revision if "revision" not in state else EntryRevision(int(state["revision"])),
+            "revision": source.revision if "revision" not in state else EntryRevision(int(state["revision"])),
             "provenance": (
-                entry.provenance
+                source.provenance
                 if "provenance" not in state
                 else tuple(Provenance.from_dict(copy_projection_value(value)) for value in state.get("provenance", ()))
             ),
         }
-        changes = {name: value for name, value in values.items() if getattr(entry, name) != value}
-        return replace(entry, **changes) if changes or not reuse_unchanged else entry
 
     def collection(self, collection):
         entries = []

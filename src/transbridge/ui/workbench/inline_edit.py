@@ -22,8 +22,6 @@ from transbridge.application.io.mutation import EntrySnapshot
 from transbridge.converter.translation_entry import STAGE_TRANSLATED, STAGE_UNTRANSLATED, TranslationEntry
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState
 
-from .translation_table_columns import COL_TRANSLATION
-
 
 def _scope(context) -> tuple:
     return context.active_version_identity, context.active_key
@@ -82,7 +80,7 @@ class InlineEditRecoveryView(QFrame):
 
 
 class InlineEditController(QObject):
-    """Own the commit boundary without retaining deletable QTableWidgetItems."""
+    """Own the commit boundary without retaining view indices or mutable editor widgets."""
 
     def __init__(self, context, table, *, refresh_entry, parent):
         super().__init__(parent)
@@ -96,18 +94,12 @@ class InlineEditController(QObject):
         context.variant_changed.connect(self._show_selected)
         context.project_changed.connect(self._show_selected)
 
-    def item_changed(self, item) -> None:
-        if item.column() != COL_TRANSLATION:
-            return
+    def edit_requested(self, entry: TranslationEntry, text: str, row: int) -> None:
         if self.table.terminology_profile_active:
-            self.table.restore_projected_translation(item)
             return
-        entry = item.data(Qt.ItemDataRole.UserRole)
         if not isinstance(entry, TranslationEntry) or not entry.id:
             return
-        # Capture before committing: projection notifications may delete item.
-        row = item.row()
-        text = item.text()
+        # Capture before committing: projection notifications can replace the model session.
         draft = _FailedEdit(
             _scope(self.context),
             entry.snapshot(),

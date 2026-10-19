@@ -22,7 +22,7 @@ class EntryRefresh:
 
     Full filtering and sorting are checked before choosing the bounded row patch.
     Changes to membership, ordering, source data or derived terminology retain the
-    existing full render path. Pending batches read the replacement session.
+    existing full render path. Model notifications update only the changed rows.
     """
 
     def __init__(self, preview):
@@ -66,7 +66,7 @@ class EntryRefresh:
         session = view._table_presenter.replace_entries(
             filtered, projection_revision=getattr(snapshot, "revision", None)
         )
-        table._session = session
+        table.replace_session(session)
         view._entries = entries
         view._render_entries = filtered
         view._summary = StatisticsSummary.from_entries(entries)
@@ -89,16 +89,13 @@ class EntryRefresh:
         table = self.preview._table
         for row, source_row in enumerate(table._display_order):
             if table.render_session.entries[source_row].identity == key:
-                if row < table.rowCount():
-                    auto_scroll = table.hasAutoScroll()
-                    table.setAutoScroll(False)
-                    try:
-                        table.selectionModel().setCurrentIndex(
-                            table.model().index(row, COL_KEY), QItemSelectionModel.SelectionFlag.NoUpdate
-                        )
-                    finally:
-                        table.setAutoScroll(auto_scroll)
-                else:
-                    table._pending_current_entry_id = table.render_session.entries[source_row].id
+                auto_scroll = table.hasAutoScroll()
+                table.setAutoScroll(False)
+                try:
+                    table.selectionModel().setCurrentIndex(
+                        table.model().index(row, COL_KEY), QItemSelectionModel.SelectionFlag.NoUpdate
+                    )
+                finally:
+                    table.setAutoScroll(auto_scroll)
                 break
         table.setFocus(Qt.FocusReason.OtherFocusReason)

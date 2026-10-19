@@ -68,6 +68,8 @@ def test_project_coordinator_keeps_existing_workbench_when_showing_recovery():
     messages = []
     progress = []
     host = QWidget()
+    existing_collection = object()
+    host.context = SimpleNamespace(collection=existing_collection)
     host.project_open_worker = None
     host.save_worker = None
     host.foreground_worker = None
@@ -99,8 +101,10 @@ def test_project_coordinator_keeps_existing_workbench_when_showing_recovery():
         time.sleep(0.005)
     assert host.project_open_worker is None
     assert not successes
-    assert progress == ["shown", "hidden"]
+    assert progress[0] == "shown" and progress[-1] == "hidden"
     assert "只读恢复" in messages[-1]
-    assert coordinator._recovery_dialog.table.model().rowCount() == 2
-    coordinator._recovery_dialog.close()
+    assert host.context.collection is existing_collection
+    dialogs = host.findChildren(ProjectRecoveryDialog)
+    assert len(dialogs) == 1 and dialogs[0].table.model().rowCount() == 2
+    dialogs[0].close()
     host.close()

@@ -83,4 +83,4 @@ def test_completion_dialog_offers_retry_for_failed_entries(qapp, make_window):
     dialog = window._dialogs[-1]
     assert isinstance(dialog, QMessageBox)
     assert "成功结果已保存" in dialog.windowTitle()
-    assert {button.text() for button in dialog.buttons()} == {"查看结果", "重试失败条目", "关闭"}
+    assert {button.text() for button in dialog.buttons()} == {"查看结果", "重试失败条目", "关闭提示"}

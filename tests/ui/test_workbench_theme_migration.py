@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import gc
 import os
 from pathlib import Path
 from time import perf_counter
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QEvent, QPersistentModelIndex, Qt
+from PyQt6.QtGui import QPalette
 from PyQt6.QtWidgets import QApplication, QLineEdit, QStyleOptionViewItem
 import pytest
 
@@ -35,6 +37,15 @@ class _Config:
 @pytest.fixture(scope="module")
 def qapp() -> QApplication:
     return QApplication.instance() or QApplication([])
+
+
+@pytest.fixture(autouse=True)
+def restore_application_theme(qapp: QApplication):
+    palette = QPalette(qapp.palette())
+    stylesheet = qapp.styleSheet()
+    yield
+    qapp.setPalette(palette)
+    qapp.setStyleSheet(stylesheet)
 
 
 def _theme(qapp: QApplication, tmp_path: Path) -> tuple[ThemeService, ThemeView]:
@@ -87,16 +98,21 @@ def test_theme_switch_preserves_table_identity_selection_scroll_edit_and_generat
     table = widget._table
     table.selectRow(320)
     table.verticalScrollBar().setValue(300)
-    translation_item = table.item(320, COL_TRANSLATION)
+    translation_item = table.model().index(320, COL_TRANSLATION)
     table.openPersistentEditor(translation_item)
     qapp.processEvents()
     editor = table.indexWidget(table.model().index(320, COL_TRANSLATION))
     assert isinstance(editor, QLineEdit)
     editor.setText("尚未提交的编辑草稿")
 
-    item_ids = tuple(id(table.item(320, column)) for column in range(table.columnCount()))
+    indices = tuple(
+        QPersistentModelIndex(table.model().index(320, column)) for column in range(table.model().columnCount())
+    )
+    resets = []
+    table.model().modelReset.connect(lambda: resets.append(True))
     entry_ids = tuple(
-        id(table.item(320, column).data(Qt.ItemDataRole.UserRole)) for column in range(table.columnCount())
+        id(table.model().index(320, column).data(Qt.ItemDataRole.UserRole))
+        for column in range(table.model().columnCount())
     )
     selected = widget.selected_row_entry_ids()
     scroll = table.verticalScrollBar().value()
@@ -107,9 +123,14 @@ def test_theme_switch_preserves_table_identity_selection_scroll_edit_and_generat
 
     assert result.snapshot is not None
     assert table.theme_revision == result.snapshot.revision
-    assert tuple(id(table.item(320, column)) for column in range(table.columnCount())) == item_ids
+    assert all(index.isValid() for index in indices)
+    assert tuple(table.model().index(320, column) for column in range(table.model().columnCount())) == indices
+    assert resets == []
     assert (
-        tuple(id(table.item(320, column).data(Qt.ItemDataRole.UserRole)) for column in range(table.columnCount()))
+        tuple(
+            id(table.model().index(320, column).data(Qt.ItemDataRole.UserRole))
+            for column in range(table.model().columnCount())
+        )
         == entry_ids
     )
     assert widget.selected_row_entry_ids() == selected
@@ -137,8 +158,8 @@ def test_filter_and_stage_states_have_text_and_accessible_metadata(
     widget._filters_view.apply_state(FilterState(focus_labeled=True))
     assert widget._filters_view.focus_button.isChecked()
     assert widget._filters_view.focus_button.accessibleDescription() == "已启用"
-    assert "已翻译" in widget._table.item(0, COL_CONTEXT).text()
-    assert "未翻译" in widget._table.item(1, COL_CONTEXT).text()
+    assert "已翻译" in widget._table.model().index(0, COL_CONTEXT).data(Qt.ItemDataRole.DisplayRole)
+    assert "未翻译" in widget._table.model().index(1, COL_CONTEXT).data(Qt.ItemDataRole.DisplayRole)
     assert widget._table.accessibleDescription()
 
     widget.close()
@@ -165,7 +186,7 @@ def test_status_cell_text_and_theme_visual_follow_the_same_stage(
     widget._table.itemDelegate().initStyleOption(option, index)
     expected = theme_view.domain_brushes(service.snapshot()).stage(str(STAGE_QUESTIONABLE))
 
-    assert "有疑问" in widget._table.item(0, COL_CONTEXT).text()
+    assert "有疑问" in widget._table.model().index(0, COL_CONTEXT).data(Qt.ItemDataRole.DisplayRole)
     assert option.backgroundBrush.color() == expected.background.color()
     assert option.palette.brush(option.palette.ColorRole.Text).color() == expected.foreground.color()
 
@@ -174,11 +195,16 @@ def test_status_cell_text_and_theme_visual_follow_the_same_stage(
     service.close()
 
 
-def test_10k_materialized_rows_switch_theme_without_model_rebuild(
+def test_10k_model_rows_switch_theme_without_model_rebuild(
     qapp: QApplication,
     tmp_path: Path,
     monkeypatch,
 ) -> None:
+    # Qt themes apply application-wide; release widgets from earlier tests before
+    # measuring this table, just as the standalone Foundation benchmark does.
+    gc.collect()
+    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    qapp.processEvents()
     monkeypatch.setattr(context_module.ParatranzConfig, "create_or_load", lambda: _Config())
     service, theme_view = _theme(qapp, tmp_path)
     widget = Step2PreviewWidget(context_module.AppContext(), theme_view=theme_view)
@@ -186,7 +212,9 @@ def test_10k_materialized_rows_switch_theme_without_model_rebuild(
     _drain_render(qapp, widget, 10_000)
     table = widget._table
     generation = table.render_session.generation
-    sentinel = table.item(9_999, COL_TRANSLATION)
+    sentinel = QPersistentModelIndex(table.model().index(9_999, COL_TRANSLATION))
+    resets = []
+    table.model().modelReset.connect(lambda: resets.append(True))
     stylesheet_applies = 0
     real_set_stylesheet = qapp.setStyleSheet
 
@@ -197,20 +225,25 @@ def test_10k_materialized_rows_switch_theme_without_model_rebuild(
 
     monkeypatch.setattr(qapp, "setStyleSheet", counted_set_stylesheet)
 
-    started = perf_counter()
-    result = service.set_preference(ThemePreference(ThemeMode.DARK, DEFAULT_THEME_ID), persist=False)
-    qapp.processEvents()
-    elapsed = perf_counter() - started
+    try:
+        started = perf_counter()
+        result = service.set_preference(ThemePreference(ThemeMode.DARK, DEFAULT_THEME_ID), persist=False)
+        qapp.processEvents()
+        elapsed = perf_counter() - started
 
-    assert result.snapshot is not None
-    assert elapsed <= 0.250
-    assert stylesheet_applies == 0
-    assert table.render_session.generation == generation
-    assert table.item(9_999, COL_TRANSLATION) is sentinel
-
-    widget.close()
-    theme_view.close()
-    service.close()
+        assert result.snapshot is not None
+        assert elapsed <= 0.250
+        assert stylesheet_applies == 0
+        assert table.render_session.generation == generation
+        assert sentinel.isValid() and resets == []
+        assert table.model().index(9_999, COL_TRANSLATION) == sentinel
+    finally:
+        widget.close()
+        widget.deleteLater()
+        theme_view.close()
+        service.close()
+        qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        qapp.processEvents()
 
 
 def test_composition_roots_accept_the_shared_optional_theme_view(

@@ -339,18 +339,21 @@ class JsonRepository[RefT, DtoT]:
         if ref.kind is not self._kind:
             raise TypeError(f"{self._kind.value} repository received a {ref.kind.value} reference")
 
-    def _recover_before_load_side_effects(self, ref) -> None:
+    def _recover_before_load_side_effects(self, ref) -> LoadedRecord | None:
         raw = self._filesystem.read_bytes(self.path_for(ref))
         try:
             document = parse_json_bytes(raw)
             if version_of(document) > SCHEMA_VERSION:
                 return
-            validate_v2(document, ref)
+            value = validate_v2(document, ref)
             if version_of(document) == SCHEMA_VERSION:
-                return
+                # The caller still owns the read lease. Reuse this validated
+                # read rather than parsing and validating the same file again.
+                return LoadedRecord(ref, value, hashlib.sha256(raw).hexdigest())
         except SchemaValidationError:
             pass
         self._mutation_lock.recover()
+        return None
 
 
 class ProjectRepository(JsonRepository[ProjectRef, ProjectDto]):
@@ -365,8 +368,8 @@ class ProjectRepository(JsonRepository[ProjectRef, ProjectDto]):
         # Legacy loads can publish migrations, and reads must not observe a
         # different process's partially published activation.
         with self._mutation_lock.reading():
-            self._recover_before_load_side_effects(ref)
-            return super().load(ref)
+            loaded = self._recover_before_load_side_effects(ref)
+            return loaded if loaded is not None else super().load(ref)
 
     def read_snapshot(self, ref: ProjectRef) -> ProjectDto:
         with self._mutation_lock.reading():
@@ -445,8 +448,8 @@ class VariantRepository(JsonRepository[VariantRef, VariantDto]):
 
     def load(self, ref: VariantRef) -> LoadResult:
         with self._mutation_lock.reading():
-            self._recover_before_load_side_effects(ref)
-            return super().load(ref)
+            loaded = self._recover_before_load_side_effects(ref)
+            return loaded if loaded is not None else super().load(ref)
 
     def read_snapshot(self, ref: VariantRef) -> VariantDto:
         with self._mutation_lock.reading():

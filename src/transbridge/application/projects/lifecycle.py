@@ -7,10 +7,11 @@ and export revision leases are one-shot and owner-bound.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import replace
 import logging
 import secrets
 from threading import RLock
+from types import EllipsisType
 from typing import Any, cast
 
 from transbridge.application.contracts import (
@@ -34,9 +35,7 @@ from .models import (
     LifecycleProjectUpdate,
     LifecycleSave,
     LifecycleSnapshot,
-    PreparedTransition,
     TransitionTarget,
-    project_with_active_variant,
 )
 from .ports import (
     CandidateLoaderPort,
@@ -45,15 +44,13 @@ from .ports import (
     NullLifecycleLeasePort,
 )
 from .provisioning import ProjectProvisioningCommit
-
-
-@dataclass(frozen=True, slots=True)
-class _PreparedState:
-    public: PreparedTransition
-    candidate: ActiveProject | None
-    leases: tuple[LifecycleLease, ...]
-    old_signature: tuple[str, int, str | None, int | None] | None
-    activation: LifecycleActivation | None = None
+from .transition_preparation import (
+    ActiveSignature,
+    PreparedState,
+    active_signature,
+    prepare_transition_candidate,
+    release_leases,
+)
 
 
 class ProjectLifecycleService:
@@ -74,7 +71,7 @@ class ProjectLifecycleService:
         self._token_factory = token_factory or (lambda: secrets.token_urlsafe(24))
         self._event_publisher = event_publisher
         self._generation = 0
-        self._prepared: dict[str, _PreparedState] = {}
+        self._prepared: dict[str, PreparedState] = {}
         self._exports: dict[str, ExportRevisionLease] = {}
         self._issued_tokens: set[str] = set()
         self._lock = RLock()
@@ -103,6 +100,8 @@ class ProjectLifecycleService:
         context: RequestContext,
         *,
         dirty_decision: DirtyDecision | None = None,
+        prepare_candidate: Callable[[ActiveProject | None], None] | None = None,
+        expected_active_signature: ActiveSignature | EllipsisType = Ellipsis,
     ) -> OperationResult[dict[str, Any]]:
         with self._lock:
             if dirty_decision is not None and not isinstance(dirty_decision, DirtyDecision):
@@ -137,6 +136,15 @@ class ProjectLifecycleService:
                     ErrorCategory.PERMISSION,
                     context,
                 )
+            if expected_active_signature is not Ellipsis and expected_active_signature != active_signature(
+                self._active
+            ):
+                return _failed(
+                    "PREPARED_TRANSITION_STALE",
+                    "The active lifecycle changed while the target Project was being prepared.",
+                    ErrorCategory.CONFLICT,
+                    context,
+                )
             if self._active is not None and self._active.dirty:
                 if dirty_decision is None:
                     return _failed(
@@ -160,36 +168,20 @@ class ProjectLifecycleService:
                     if saved.outcome is not OperationOutcome.COMPLETED:
                         return cast(OperationResult[dict[str, Any]], saved)
 
-            acquired: tuple[LifecycleLease, ...] = ()
             try:
-                acquired = self._leases.acquire(target, context)
-                if any(lease.owner_id != context.owner_id for lease in acquired):
-                    raise DomainError(
-                        ErrorCategory.PERMISSION,
-                        "LIFECYCLE_LEASE_OWNER_MISMATCH",
-                        "A lifecycle lease was issued to a different owner.",
-                    )
-                candidate = None if target.project_ref is None else self._loader.prepare_candidate(target, context)
-                candidate = self._validate_candidate(target, candidate, acquired)
-                token = self._new_token(self._prepared)
-                public: PreparedTransition = {
-                    "token": token,
-                    "owner_id": context.owner_id,
-                    "expected_generation": self._generation,
-                    "old": None if self._active is None else self._active.summary(),
-                    "candidate": None if candidate is None else candidate.summary(),
-                    "target": target.to_dict(),
-                    "leases": [lease.lease_id for lease in acquired],
-                }
-                self._prepared[token] = _PreparedState(
-                    public,
-                    candidate,
-                    acquired,
-                    _active_signature(self._active),
+                prepared = prepare_transition_candidate(
+                    target,
+                    context,
+                    loader=self._loader,
+                    leases=self._leases,
+                    active=self._active,
+                    generation=self._generation,
+                    create_token=lambda: self._new_token(self._prepared),
+                    prepare_candidate=prepare_candidate,
                 )
-                return OperationResult.completed(public, run_id=context.run_id)
+                self._prepared[prepared.public["token"]] = prepared
+                return OperationResult.completed(prepared.public, run_id=context.run_id)
             except Exception as exc:  # noqa: BLE001 - map adapter failures without leaking details
-                self._safe_release(acquired)
                 return _from_exception(exc, "LIFECYCLE_PREPARE_FAILED", context)
 
     def commit_transition(self, token: str, context: RequestContext) -> OperationResult[dict[str, Any]]:
@@ -210,9 +202,9 @@ class ProjectLifecycleService:
                     context,
                 )
             self._prepared.pop(token)
-            if prepared.public[
-                "expected_generation"
-            ] != self._generation or prepared.old_signature != _active_signature(self._active):
+            if prepared.public["expected_generation"] != self._generation or prepared.old_signature != active_signature(
+                self._active
+            ):
                 self._safe_release(prepared.leases)
                 return _failed(
                     "PREPARED_TRANSITION_STALE",
@@ -296,7 +288,7 @@ class ProjectLifecycleService:
             try:
                 candidate, activation = prepare(self._active)
                 token = self._new_token(self._prepared)
-                self._prepared[token] = _PreparedState(
+                self._prepared[token] = PreparedState(
                     {
                         "token": token,
                         "owner_id": context.owner_id,
@@ -308,7 +300,7 @@ class ProjectLifecycleService:
                     },
                     candidate,
                     (),
-                    _active_signature(self._active),
+                    active_signature(self._active),
                     activation,
                 )
                 return self.commit_transition(token, context)
@@ -330,7 +322,7 @@ class ProjectLifecycleService:
         """Publish a new Project while holding the lifecycle generation lock."""
 
         with self._lock:
-            if expected_generation != self._generation or expected_active_signature != _active_signature(self._active):
+            if expected_generation != self._generation or expected_active_signature != active_signature(self._active):
                 return _failed(
                     "PROJECT_PROVISIONING_STALE",
                     "The active lifecycle changed after the Project preview was prepared.",
@@ -986,27 +978,6 @@ class ProjectLifecycleService:
                 )
             return OperationResult.completed(lease, run_id=context.run_id)
 
-    def _validate_candidate(
-        self,
-        target: TransitionTarget,
-        candidate: ActiveProject | None,
-        leases: tuple[LifecycleLease, ...],
-    ) -> ActiveProject | None:
-        if target.project_ref is None:
-            if candidate is not None:
-                raise ValueError("close transition must not materialize a candidate")
-            return None
-        if candidate is None or candidate.project_ref != target.project_ref:
-            raise ValueError("candidate Project does not match the transition target")
-        if candidate.formal_variant_ref != target.variant_ref:
-            raise ValueError("candidate Variant does not match the transition target")
-        if target.snapshot_ref is not None and candidate.source_ref != target.snapshot_ref:
-            raise ValueError("snapshot candidate does not retain its read-only source reference")
-        if candidate.leases:
-            raise ValueError("candidate loader must not retain hidden lifecycle leases")
-        project = project_with_active_variant(candidate.project, target.variant_ref)
-        return replace(candidate, project=project, source_ref=target.snapshot_ref, leases=leases)
-
     def _new_token(self, existing: dict[str, Any]) -> str:
         token = self._token_factory()
         if not token or token in existing or token in self._issued_tokens:
@@ -1015,13 +986,7 @@ class ProjectLifecycleService:
         return token
 
     def _safe_release(self, leases: tuple[LifecycleLease, ...]) -> bool:
-        if not leases:
-            return False
-        try:
-            self._leases.release(leases)
-        except Exception:  # noqa: BLE001 - release failure is surfaced as a warning where possible
-            return True
-        return False
+        return release_leases(self._leases, leases)
 
 
 def _failed[T](
@@ -1056,17 +1021,6 @@ def _rollback(unit_of_work: Any | None) -> None:
         # The active state has not been exchanged; adapter cleanup failure must
         # not replace the original lifecycle diagnostic.
         return
-
-
-def _active_signature(active: ActiveProject | None) -> tuple[str, int, str | None, int | None] | None:
-    if active is None:
-        return None
-    return (
-        active.project_ref.identity.value,
-        active.project.envelope.revision,
-        None if active.formal_variant_ref is None else active.formal_variant_ref.identity.value,
-        None if active.variant is None else active.variant.revision,
-    )
 
 
 __all__ = ["ProjectLifecycleService"]

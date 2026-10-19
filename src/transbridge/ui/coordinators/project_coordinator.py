@@ -198,6 +198,12 @@ class ProjectCoordinator:
     def open_project_path(self, path: str) -> None:
         """Open a selected/recent Project through the same lifecycle intent."""
 
+        if (
+            getattr(self._host.context, "project_opening", False)
+            or getattr(self._host, "project_open_worker", None) is not None
+        ):
+            self._host.show_message("已有项目正在后台打开，请稍候。")
+            return
         if self._host.context.uses_authoritative_projection:
             if self._host.current_project_opener is None or self._host.runtime_context is None:
                 self._host.show_message("当前项目打开服务不可用。")
@@ -272,99 +278,19 @@ class ProjectCoordinator:
         on_success=None,
         on_failure=None,
     ) -> None:
-        """Prepare a current Project off the GUI thread, then commit on the GUI thread."""
+        """Run preparation, activation and detached view construction in one worker."""
+        from .project_open_operation import ProjectOpenOperation
 
-        if self._host.project_open_worker is not None and self._host.project_open_worker.isRunning():
-            self._host.show_message("已有项目正在后台打开，请稍候。")
-            return
-        if self._host.save_worker is not None and self._host.save_worker.isRunning():
-            self._host.show_message("项目仍在保存，请稍候再打开其他项目。")
-            return
-        foreground_worker = getattr(self._host, "foreground_worker", None)
-        if foreground_worker is not None and foreground_worker.isRunning():
-            self._host.show_message("已有前台任务正在运行，请稍候再打开其他项目。")
-            return
-        self._host.workbench.show_step2_progress(0, "正在校验项目源文件…")
-        if hasattr(self._host, "show_project_open_progress"):
-            self._host.show_project_open_progress("正在校验并加载本地工程…")
-
-        def _show_failure(code: str, message: str) -> None:
-            if on_failure is None:
-                self._host.show_message(f"{code}: {message}")
-            if show_error_dialog:
-                QMessageBox.warning(self._host, "无法打开项目", message)
-            if on_failure is not None:
-                on_failure(code, message)
-
-        def _prepare_project():
-            return prepare()
-
-        def _on_prepared(prepared):
-            if not prepared.is_success or prepared.value is None:
-                _on_opened(prepared)
-                return
-            opened = self._host.current_project_opener.activate(
-                prepared.value,
-                self._host.runtime_context,
-                dirty_decision=dirty_decision,
-            )
-            _on_opened(opened)
-
-        def _on_opened(opened):
-            self._host.workbench.hide_step2_progress()
-            if not opened.is_success or opened.value is None:
-                diagnostic = opened.diagnostics[0]
-                _show_failure(diagnostic.code, diagnostic.message)
-                return
-            recovery = opened.value.get("recovery")
-            if recovery is not None:
-                from transbridge.ui.project_recovery import ProjectRecoveryDialog
-
-                if on_failure is not None:
-                    on_failure("PROJECT_SOURCE_RECOVERY_AVAILABLE", "来源不可用，已打开只读恢复视图。")
-                self._host.show_message(f"项目「{recovery.name}」已打开只读恢复视图，当前工程保持不变")
-                dialog = ProjectRecoveryDialog(recovery, self._host)
-                source_updates = getattr(self._host, "source_update_coordinator", None)
-                if source_updates is not None:
-                    dialog.source_update_requested.connect(lambda: source_updates.start_recovery(recovery))
-                else:
-                    dialog.update_source_button.setEnabled(False)
-                self._recovery_dialog = dialog
-                dialog.accepted.connect(
-                    lambda: QTimer.singleShot(0, lambda: self.open_project_path(recovery.project_path))
-                )
-                dialog.finished.connect(lambda _result: setattr(self, "_recovery_dialog", None))
-                dialog.open()
-                return
-            hydration_error = self._restore_plugin_sources(
-                opened.value["sources"],
-                opened.value.get("hydrations"),
-            )
-            if hydration_error is not None:
-                _show_failure("PROJECT_HYDRATION_FAILED", hydration_error)
-                return
-            self._host.show_message(f"项目「{opened.value['name']}」{success_verb}")
-            if on_success is not None:
-                on_success(opened.value)
-
-        def _on_prepare_error(message):
-            self._host.workbench.hide_step2_progress()
-            _show_failure("PROJECT_PREPARE_FAILED", message)
-
-        worker = ApiWorker(_prepare_project)
-        worker.result.connect(_on_prepared)
-        worker.error.connect(_on_prepare_error)
-
-        def _on_finished() -> None:
-            if hasattr(self._host, "hide_project_open_progress"):
-                self._host.hide_project_open_progress()
-            if self._host.project_open_worker is worker:
-                self._host.project_open_worker = None
-
-        worker.finished.connect(_on_finished)
-        self._host.project_open_worker = worker
-        worker.start()
-        self._host.workers.append(worker)
+        if not hasattr(self, "_project_open"):
+            self._project_open = ProjectOpenOperation(self._host, self._restore_plugin_sources, self.open_project_path)
+        self._project_open.start(
+            prepare,
+            dirty_decision=dirty_decision,
+            success_verb=success_verb,
+            show_error_dialog=show_error_dialog,
+            on_success=on_success,
+            on_failure=on_failure,
+        )
 
     def _show_start_center_empty(self) -> None:
         if hasattr(self._host, "show_start_center_empty"):

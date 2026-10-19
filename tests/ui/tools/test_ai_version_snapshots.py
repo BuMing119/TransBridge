@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 from PyQt6.QtCore import QCoreApplication, QEvent
 from PyQt6.QtWidgets import QApplication, QPushButton
+import pytest
 
 from transbridge.application.contracts import DomainError, ErrorCategory, OperationResult
 from transbridge.application.projections import ProjectionSnapshot, ProjectionStore
@@ -47,14 +48,40 @@ def _entry() -> TranslationEntry:
     return TranslationEntry("entry", "entry", "source", "译文", 1, "INFO:FULL")
 
 
-def test_v2_save_translation_commits_saves_then_snapshots() -> None:
+@pytest.fixture
+def v2_context(monkeypatch):
+    monkeypatch.setattr(
+        "transbridge.paratranz.config_manager.ParatranzConfig.create_or_load",
+        lambda: SimpleNamespace(token=""),
+    )
+    contexts = []
+
+    def create(commands, *, project_id="project", project_revision=None, variant_revision=None):
+        store = ProjectionStore(
+            ProjectionSnapshot(
+                "project:" + project_id,
+                0,
+                0,
+                {
+                    "project_id": project_id,
+                    "variant_id": "variant",
+                    "project_revision": project_revision,
+                    "variant_revision": variant_revision,
+                },
+            )
+        )
+        context = AppContext(project_projection=store, project_commands=commands, runtime_context=object())
+        contexts.append(context)
+        return context
+
+    yield create
+    for context in contexts:
+        context.close_projection()
+
+
+def test_v2_save_translation_commits_saves_then_snapshots(v2_context) -> None:
     commands = _Commands()
-    context = AppContext(project_commands=commands, runtime_context=object())
-    context._project_projection = object()
-    context._active_project_id = "project"
-    context._active_variant_id = "variant"
-    context._project_revision = 3
-    context._variant_revision = 4
+    context = v2_context(commands, project_revision=3, variant_revision=4)
 
     result = VersionPersistence(context, ("project", "variant")).save_translation((_entry(),), "AI-翻译后")
 
@@ -67,12 +94,9 @@ def test_v2_save_translation_commits_saves_then_snapshots() -> None:
     assert commands.expected[0]["expected_variant_ref"].identity.value == "variant"
 
 
-def test_v2_translation_commit_can_precede_save_without_repeating_mutation() -> None:
+def test_v2_translation_commit_can_precede_save_without_repeating_mutation(v2_context) -> None:
     commands = _Commands()
-    context = AppContext(project_commands=commands, runtime_context=object())
-    context._project_projection = object()
-    context._active_project_id = "project"
-    context._active_variant_id = "variant"
+    context = v2_context(commands)
     persistence = VersionPersistence(context, ("project", "variant"))
 
     committed = persistence.commit_translation((_entry(),))
@@ -85,7 +109,7 @@ def test_v2_translation_commit_can_precede_save_without_repeating_mutation() -> 
     assert [name for name, _value in commands.calls] == ["replace", "save", "snapshot"]
 
 
-def test_failed_v2_translation_commit_can_be_retried() -> None:
+def test_failed_v2_translation_commit_can_be_retried(v2_context) -> None:
     class Commands(_Commands):
         def __init__(self) -> None:
             super().__init__()
@@ -98,10 +122,7 @@ def test_failed_v2_translation_commit_can_be_retried() -> None:
             return OperationResult.completed({"revision": 1}, run_id="run")
 
     commands = Commands()
-    context = AppContext(project_commands=commands, runtime_context=object())
-    context._project_projection = object()
-    context._active_project_id = "project"
-    context._active_variant_id = "variant"
+    context = v2_context(commands)
     persistence = VersionPersistence(context, ("project", "variant"))
 
     failed = persistence.commit_translation((_entry(),))
@@ -113,12 +134,9 @@ def test_failed_v2_translation_commit_can_be_retried() -> None:
     assert [name for name, _value in commands.calls] == ["replace", "replace", "save", "snapshot"]
 
 
-def test_version_identity_change_blocks_save_before_any_command() -> None:
+def test_version_identity_change_blocks_save_before_any_command(v2_context) -> None:
     commands = _Commands()
-    context = AppContext(project_commands=commands, runtime_context=object())
-    context._project_projection = object()
-    context._active_project_id = "other-project"
-    context._active_variant_id = "variant"
+    context = v2_context(commands, project_id="other-project")
 
     try:
         VersionPersistence(context, ("project", "variant")).save_translation((_entry(),), "AI-翻译后")
@@ -129,13 +147,10 @@ def test_version_identity_change_blocks_save_before_any_command() -> None:
     assert commands.calls == []
 
 
-def test_post_snapshot_retry_does_not_repeat_translation_commit_or_save() -> None:
+def test_post_snapshot_retry_does_not_repeat_translation_commit_or_save(v2_context) -> None:
     commands = _Commands()
     commands.fail_snapshot = True
-    context = AppContext(project_commands=commands, runtime_context=object())
-    context._project_projection = object()
-    context._active_project_id = "project"
-    context._active_variant_id = "variant"
+    context = v2_context(commands)
     persistence = VersionPersistence(context, ("project", "variant"))
 
     failed = persistence.save_translation((_entry(),), "AI-翻译后")
@@ -152,13 +167,10 @@ def test_post_snapshot_retry_does_not_repeat_translation_commit_or_save() -> Non
     assert [name for name, _value in commands.calls] == ["replace", "save", "snapshot", "snapshot"]
 
 
-def test_failed_project_save_does_not_mark_project_saved_or_create_snapshot() -> None:
+def test_failed_project_save_does_not_mark_project_saved_or_create_snapshot(v2_context) -> None:
     commands = _Commands()
     commands.save = lambda _context: SimpleNamespace(is_success=False)
-    context = AppContext(project_commands=commands, runtime_context=object())
-    context._project_projection = object()
-    context._active_project_id = "project"
-    context._active_variant_id = "variant"
+    context = v2_context(commands)
     persistence = VersionPersistence(context, ("project", "variant"))
 
     failed = persistence.save_translation((_entry(),), "AI-翻译后")
@@ -168,12 +180,9 @@ def test_failed_project_save_does_not_mark_project_saved_or_create_snapshot() ->
     assert [name for name, _value in commands.calls] == ["replace"]
 
 
-def test_acknowledged_external_save_only_creates_task_snapshot() -> None:
+def test_acknowledged_external_save_only_creates_task_snapshot(v2_context) -> None:
     commands = _Commands()
-    context = AppContext(project_commands=commands, runtime_context=object())
-    context._project_projection = object()
-    context._active_project_id = "project"
-    context._active_variant_id = "variant"
+    context = v2_context(commands)
     persistence = VersionPersistence(context, ("project", "variant"))
     persistence.commit_translation((_entry(),))
     persistence.mark_project_saved()

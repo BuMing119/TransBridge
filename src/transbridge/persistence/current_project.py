@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 from pathlib import Path
+from types import EllipsisType
 
 from transbridge.application.contracts import (
     DomainError,
@@ -22,7 +24,7 @@ from transbridge.application.projects import (
     PreparedSourceHydration,
     ProjectSourceRequest,
 )
-from transbridge.application.projects.source_content import authoritative_baseline_sources
+from transbridge.application.projects.source_content import authoritative_baseline_sources, source_content_identity
 from transbridge.application.projects.source_registry import legacy_source_role
 from transbridge.persistence.project_provisioning import TranslationIoProjectSourcePreparer
 from transbridge.persistence.project_recovery import (
@@ -80,9 +82,8 @@ class CurrentProjectOpener:
         self._variants = variants
         self._baselines = baselines
         self._commands = commands
-        self._baseline_loader = baseline_loader or (
-            lambda source, context: _load_baseline(source, context, source_preparer=source_preparer)
-        )
+        self._baseline_loader = baseline_loader
+        self._source_preparer = source_preparer
 
     @property
     def directory(self) -> str:
@@ -158,6 +159,15 @@ class CurrentProjectOpener:
                     "VARIANT_RECORD_UNAVAILABLE",
                     "项目的活动版本记录不存在。",
                 )
+            try:
+                stored = VariantSnapshot.from_dto(self._variants.read_snapshot(variant_ref), variant_ref)
+            except (OSError, PersistenceV2Error, ValueError) as exc:
+                raise DomainError(
+                    ErrorCategory.PREREQUISITE,
+                    "VARIANT_RECORD_UNAVAILABLE",
+                    "保存的版本记录不可读取，无法打开工程或恢复视图。",
+                    cause=exc,
+                ) from exc
             sources = tuple(project.envelope.data.get("sources", ()))
             baseline_sources = authoritative_baseline_sources(
                 sources, tuple(project.envelope.data.get("source_relations", ()))
@@ -166,7 +176,16 @@ class CurrentProjectOpener:
             source_diagnostics = []
             for source in baseline_sources:
                 try:
-                    loaded_sources.append(self._baseline_loader(source, context))
+                    loaded_sources.append(
+                        self._baseline_loader(source, context)
+                        if self._baseline_loader is not None
+                        else _load_baseline(
+                            source,
+                            context,
+                            source_preparer=self._source_preparer,
+                            source_fingerprints=stored.source_fingerprints,
+                        )
+                    )
                 except (OSError, DomainError) as exc:
                     source_diagnostics.append(source_recovery_diagnostic(source, exc))
                     # Recovery only needs persisted translations, not more source diagnostics.
@@ -190,15 +209,25 @@ class CurrentProjectOpener:
                 for value in project.envelope.data.get("variant_ids", ())
             )
             recovery = None
-            try:
-                stored = VariantSnapshot.from_dto(self._variants.read_snapshot(variant_ref), variant_ref)
-            except (OSError, PersistenceV2Error, ValueError) as exc:
-                raise DomainError(
-                    ErrorCategory.PREREQUISITE,
-                    "VARIANT_RECORD_UNAVAILABLE",
-                    "保存的版本记录不可读取，无法打开工程或恢复视图。",
-                    cause=exc,
-                ) from exc
+            missing_namespaces = {item.namespace for item in stored.source_fingerprints} - {
+                baseline.fingerprint.namespace for baseline in baselines
+            }
+            baseline_keys = {entry.entry_key for baseline in baselines for entry in baseline.entries}
+            missing_entries = any(
+                entry.entry_key not in baseline_keys and not entry.tombstone for entry in stored.entries
+            )
+            if (missing_namespaces or missing_entries) and not source_diagnostics:
+                source_diagnostics.append(
+                    source_recovery_diagnostic(
+                        {},
+                        DomainError(
+                            ErrorCategory.CONFLICT,
+                            "PROJECT_SOURCE_IDENTITY_MISMATCH",
+                            "无法可靠匹配已保存的来源或词条身份；已保留原记录并打开只读恢复视图。"
+                            "可通过更新源文件核对迁移结果。",
+                        ),
+                    )
+                )
             unverified = any(
                 item.sha256 is None or item.namespace.value == "legacy:v1" for item in stored.source_fingerprints
             )
@@ -266,9 +295,13 @@ class CurrentProjectOpener:
         context: RequestContext,
         *,
         dirty_decision: DirtyDecision | None = None,
+        prepare_view: Callable | None = None,
+        expected_active_signature: tuple[str, int, str | None, int | None] | None | EllipsisType = ...,
     ) -> OperationResult[dict]:
         """Commit a prepared Project on the caller thread."""
 
+        captured = None
+        committed = False
         try:
             if prepared.recovery is not None:
                 # A recovery result is deliberately detached from the editable
@@ -286,21 +319,33 @@ class CurrentProjectOpener:
                     diagnostics=prepared.recovery.diagnostics,
                     run_id=context.run_id,
                 )
-            for variant_ref in prepared.variant_refs:
-                self._baselines.register(
-                    prepared.project_ref,
-                    variant_ref,
-                    prepared.baselines,
-                    allow_empty=not prepared.sources,
-                )
+            captured = self._baselines.capture_catalog(prepared.project_ref, prepared.variant_refs)
+            self._baselines.replace_many(
+                prepared.project_ref,
+                prepared.variant_refs,
+                prepared.baselines,
+                allow_empty=not prepared.sources,
+            )
+            view_payload = None
+
+            def prepare_candidate(candidate):
+                nonlocal view_payload
+                if prepare_view is not None:
+                    from transbridge.application.projections.adapters import project_projection
+
+                    view_payload = prepare_view(project_projection(candidate))
+
             switched = self._commands.switch_v2(
                 prepared.project_ref,
                 prepared.variant_ref,
                 context,
                 dirty_decision=dirty_decision,
+                prepare_candidate=prepare_candidate,
+                expected_active_signature=expected_active_signature,
             )
             if not switched.is_success:
                 return switched
+            committed = True
             return OperationResult.completed(
                 {
                     "project_id": prepared.project_ref.identity.value,
@@ -308,11 +353,15 @@ class CurrentProjectOpener:
                     "name": prepared.name,
                     "sources": prepared.sources,
                     "hydrations": prepared.hydrations,
+                    "view_payload": view_payload,
                 },
                 run_id=context.run_id,
             )
         except Exception as exc:
             return OperationResult.from_exception(exc, run_id=context.run_id)
+        finally:
+            if captured is not None and not committed:
+                self._baselines.restore_catalog(prepared.project_ref, captured, expected_baselines=prepared.baselines)
 
 
 def _load_baseline(
@@ -320,6 +369,7 @@ def _load_baseline(
     context: RequestContext,
     *,
     source_preparer=None,
+    source_fingerprints=(),
 ) -> PreparedProjectSource:
     path = Path(str(source.get("location") or source.get("path") or "")).resolve(strict=True)
     raw_format = source.get("format_id", FormatId.PLUGIN_SSE.value)
@@ -331,15 +381,33 @@ def _load_baseline(
             "SOURCE_FORMAT_UNSUPPORTED",
             "项目来源记录包含不支持的格式。",
         ) from exc
-    options = tuple((source.get("format_options") or source.get("options") or {}).items())
+    options = dict(source.get("format_options") or source.get("options") or {})
+    expected_fingerprint = source.get("fingerprint")
+    if source_fingerprints:
+        fingerprint = expected_fingerprint
+        if fingerprint is None:
+            with path.open("rb") as stream:
+                fingerprint = hashlib.file_digest(stream, "sha256").hexdigest()
+            expected_fingerprint = fingerprint
+        matches = {item.namespace.value for item in source_fingerprints if item.sha256 == fingerprint}
+        recorded = options.get("source_namespace") or source_content_identity(source)
+        namespace = recorded if recorded in matches else next(iter(matches)) if len(matches) == 1 else None
+        if matches and (namespace is None or options.get("source_namespace", namespace) != namespace):
+            raise DomainError(
+                ErrorCategory.CONFLICT,
+                "PROJECT_SOURCE_IDENTITY_AMBIGUOUS",
+                "来源内容对应多个或冲突的已保存身份，无法安全恢复译文；请在恢复视图中核对来源。",
+            )
+        if namespace is not None:
+            options["source_namespace"] = namespace
     role = legacy_source_role(source) or "primary"
     preparer = source_preparer or TranslationIoProjectSourcePreparer()
     return preparer.prepare_source(
         ProjectSourceRequest(
             str(path),
             format_hint=format_id,
-            expected_fingerprint=source.get("fingerprint"),
-            options=options,
+            expected_fingerprint=expected_fingerprint,
+            options=tuple(options.items()),
         ),
         context,
         role=role,

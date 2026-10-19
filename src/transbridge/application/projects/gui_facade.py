@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from types import EllipsisType
 from typing import Any
 
 from transbridge.application.contracts import (
@@ -19,9 +20,10 @@ from transbridge.persistence.v2.ids import ProjectRef, VariantRef
 from transbridge.persistence.v2.variant import VariantChangeSet
 
 from .lifecycle import ProjectLifecycleService
-from .models import DirtyDecision, TransitionTarget
+from .models import ActiveProject, DirtyDecision, TransitionTarget
 from .provisioning import ProjectProvisioningRequest, ProjectProvisioningService, ProjectSourceRequest
 from .source_commands import ProjectSourceMutationService, SourceMutationResult
+from .transition_preparation import ActiveSignature
 from .variant_commands import (
     EntryStatePatch,
     normalize_label_library,
@@ -195,11 +197,15 @@ class GuiProjectCommandFacade:
         context: RequestContext,
         *,
         dirty_decision: DirtyDecision | None = None,
+        prepare_candidate: Callable[[ActiveProject | None], None] | None = None,
+        expected_active_signature: ActiveSignature | EllipsisType = Ellipsis,
     ) -> OperationResult[dict | None]:
         prepared = self._lifecycle.prepare_transition(
             TransitionTarget(project_ref, variant_ref),
             context,
             dirty_decision=dirty_decision,
+            prepare_candidate=prepare_candidate,
+            expected_active_signature=expected_active_signature,
         )
         if prepared.outcome is not OperationOutcome.COMPLETED or prepared.value is None:
             return prepared

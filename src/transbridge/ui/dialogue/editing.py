@@ -38,6 +38,10 @@ class EntryDraft:
 
 def commit_drafts(context, drafts, *, projection=None, projection_sync=None) -> str | None:
     """Commit captured entries together, validating every snapshot before any mutation."""
+    if getattr(context, "project_opening", False):
+        return "工程仍在加载，草稿已保留。请等待工作台恢复后再应用。"
+    if getattr(context, "project_view_failed", False):
+        return "工作台尚未恢复，草稿已保留。请重新打开工程后再应用。"
     drafts = tuple(drafts)
     if not drafts:
         return None

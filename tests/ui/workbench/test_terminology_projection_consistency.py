@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 import pytest
 
@@ -90,7 +91,7 @@ def test_preview_and_write_share_fallback_diagnostics_and_override_priority(monk
 
     expected = "Complete override" if override else entry.translation
     assert preview.translation == written[0].translation == expected
-    assert widget._table.item(0, COL_TRANSLATION).text() == expected
+    assert widget._table.model().index(0, COL_TRANSLATION).data(Qt.ItemDataRole.DisplayRole) == expected
     assert preview.diagnostics == diagnostics
     assert preview.used_override == override
     assert bool(diagnostics) is not override

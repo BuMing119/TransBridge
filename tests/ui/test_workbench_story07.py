@@ -256,14 +256,14 @@ def test_filter_rerender_preserves_visible_row_selection_identity(monkeypatch) -
     widget._table.verticalScrollBar().setValue(240)
     _APP.processEvents()
     scroll_before = widget._table.verticalScrollBar().value()
-    top_before = widget._table.item(widget._table.rowAt(0), 1).data(Qt.ItemDataRole.UserRole).id
+    top_before = widget._table.model().index(widget._table.rowAt(0), 1).data(Qt.ItemDataRole.UserRole).id
 
     widget.apply_filter_state({"search_key": "key-", "stage": [1]})
     while widget._table.rowCount() < 400:
         _APP.processEvents()
 
     assert widget.selected_row_entry_ids() == (entries[300].id,)
-    restored_top_item = widget._table.item(int(top_before), 1)
-    assert widget._table.visualItemRect(restored_top_item).intersects(widget._table.viewport().rect())
+    restored_top_item = widget._table.model().index(int(top_before), 1)
+    assert widget._table.visualRect(restored_top_item).intersects(widget._table.viewport().rect())
     assert abs(widget._table.verticalScrollBar().value() - scroll_before) <= 1
     widget.close()

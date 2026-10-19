@@ -46,13 +46,14 @@ def test_filter_revision_is_independent_from_render_and_preserves_entry_identity
     assert result[0] is entries[1]
 
 
-def test_public_filtered_entries_is_not_limited_to_rendered_batch(monkeypatch) -> None:
+def test_public_filtered_entries_and_model_include_rows_outside_viewport(monkeypatch) -> None:
     monkeypatch.setattr(context_module.ParatranzConfig, "create_or_load", lambda: _Config())
     widget = Step2PreviewWidget(context_module.AppContext())
 
     widget.refresh(_collection(600))
 
-    assert widget._table.rowCount() == 250
+    assert widget._table.rowCount() == 600
+    assert not widget._table.has_pending_batch
     assert len(widget.filtered_entries()) == 600
     widget.close()
 
@@ -87,7 +88,8 @@ def test_authoritative_remove_keeps_view_until_confirmed_commit(monkeypatch, dec
     warnings = []
     commands = []
 
-    def confirm(_parent, _title, message, _buttons):
+    def confirm(_parent, _title, message, _buttons, default_button):
+        assert default_button == QMessageBox.StandardButton.No
         confirmations.append(message)
         return decision
 
@@ -134,14 +136,15 @@ def _flush_deferred_deletes() -> None:
     _APP.processEvents()
 
 
-def test_destroy_mid_render_cancels_owned_batch_callback(monkeypatch) -> None:
+def test_destroy_after_render_releases_view_and_model_without_late_callbacks(monkeypatch) -> None:
     monkeypatch.setattr(context_module.ParatranzConfig, "create_or_load", lambda: _Config())
     widget = Step2PreviewWidget(context_module.AppContext())
     table = widget._table
     widget.refresh(_collection(1_200))
 
-    assert table.rowCount() == 250
-    assert table.has_pending_batch
+    model = table.model()
+    assert table.rowCount() == 1_200
+    assert not table.has_pending_batch
 
     widget.deleteLater()
     _flush_deferred_deletes()
@@ -149,16 +152,19 @@ def test_destroy_mid_render_cancels_owned_batch_callback(monkeypatch) -> None:
 
     assert sip.isdeleted(widget)
     assert sip.isdeleted(table)
+    assert sip.isdeleted(model)
 
 
-def test_step2_releases_batch_timer_for_100_lifecycles(monkeypatch) -> None:
+def test_step2_releases_view_and_model_for_100_lifecycles(monkeypatch) -> None:
     monkeypatch.setattr(context_module.ParatranzConfig, "create_or_load", lambda: _Config())
 
     for _ in range(100):
         widget = Step2PreviewWidget(context_module.AppContext())
         table = widget._table
+        model = table.model()
         widget.refresh(_collection(600))
-        assert table.has_pending_batch
+        assert table.rowCount() == 600
+        assert not table.has_pending_batch
 
         widget.close()
         assert not table.has_pending_batch
@@ -166,6 +172,7 @@ def test_step2_releases_batch_timer_for_100_lifecycles(monkeypatch) -> None:
         _flush_deferred_deletes()
         assert sip.isdeleted(widget)
         assert sip.isdeleted(table)
+        assert sip.isdeleted(model)
 
 
 def test_ai_translation_progress_is_activated_after_config_window_closes() -> None:

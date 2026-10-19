@@ -130,7 +130,8 @@ class ProjectActivationProtocol:
         if current is not None:
             previous = verified_preimage(self._filesystem, repository, ref, current)
         payload = previous if not write else None if target is None else serialize_document(target.envelope.to_dict())
-        if payload is not None:
+        # Unchanged payloads are the validated, hash-verified preimage above.
+        if write and payload is not None:
             validate_v2(parse_json_bytes(payload), ref)
         return _record_data(
             "project" if isinstance(ref, ProjectRef) else "variant",

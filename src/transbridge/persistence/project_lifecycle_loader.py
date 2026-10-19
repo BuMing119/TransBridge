@@ -68,14 +68,7 @@ class V2ProjectCandidateLoader:
                 "VARIANT_NOT_DECLARED_BY_PROJECT",
                 "The target Variant is not declared by the target Project.",
             )
-        stored = self._load_variant(target, context)
-        formal_record = self._variants.load(target.variant_ref)
-        if not isinstance(formal_record, LoadedRecord):
-            raise DomainError(
-                ErrorCategory.PREREQUISITE, "VARIANT_RECORD_UNAVAILABLE", "Variant record is unavailable."
-            )
-        if target.snapshot_ref is None and formal_record.value != stored.to_dto():
-            raise DomainError(ErrorCategory.CONFLICT, "VARIANT_LOAD_STALE", "Variant changed during preparation.")
+        stored, formal_record = self._load_variant(target, context)
         baselines = self._baseline_provider(project, target.variant_ref, context)
         materialized = self._materialize(stored, baselines, context)
         persisted_variant_revision = stored.revision if materialized == stored else None
@@ -91,8 +84,9 @@ class V2ProjectCandidateLoader:
             source_variant_revision=formal_record.value.envelope.revision,
         )
 
-    def _load_variant(self, target: TransitionTarget, context: RequestContext) -> VariantSnapshot:
+    def _load_variant(self, target: TransitionTarget, context: RequestContext) -> tuple[VariantSnapshot, LoadedRecord]:
         assert target.variant_ref is not None
+        snapshot = None
         if target.snapshot_ref is not None:
             if self._snapshot_loader is None:
                 raise DomainError(
@@ -107,7 +101,6 @@ class V2ProjectCandidateLoader:
                     "SNAPSHOT_FORMAL_VARIANT_MISMATCH",
                     "The snapshot does not belong to the formal target Variant.",
                 )
-            return snapshot
         result = self._variants.load(target.variant_ref)
         if not isinstance(result, LoadedRecord) or not isinstance(result.value, VariantDto):
             raise DomainError(
@@ -115,7 +108,12 @@ class V2ProjectCandidateLoader:
                 "VARIANT_RECORD_UNAVAILABLE",
                 "The target Variant record is unavailable or read-only.",
             )
-        return VariantSnapshot.from_dto(result.value, target.variant_ref)
+        # Snapshot normalization may add optional fields absent from older
+        # records. Keep the exact loaded record's digest for commit-time stale
+        # checks instead of comparing its DTO with a normalized round-trip.
+        if snapshot is None:
+            snapshot = VariantSnapshot.from_dto(result.value, target.variant_ref)
+        return snapshot, result
 
     def _materialize(
         self,
@@ -123,7 +121,22 @@ class V2ProjectCandidateLoader:
         baselines: tuple[SourceBaseline, ...],
         context: RequestContext,
     ) -> VariantSnapshot:
+        if {item.namespace for item in stored.source_fingerprints} - {
+            baseline.fingerprint.namespace for baseline in baselines
+        }:
+            raise DomainError(
+                ErrorCategory.CONFLICT,
+                "VARIANT_SOURCE_IDENTITY_MISMATCH",
+                "Opening a Variant cannot remove a saved source identity; recover or update its source explicitly.",
+            )
         baseline_entries = tuple(entry for baseline in baselines for entry in baseline.entries)
+        baseline_keys = {entry.entry_key for entry in baseline_entries}
+        if any(entry.entry_key not in baseline_keys and not entry.tombstone for entry in stored.entries):
+            raise DomainError(
+                ErrorCategory.CONFLICT,
+                "VARIANT_ENTRY_IDENTITY_MISMATCH",
+                "Opening a Variant cannot discard saved entries; recover or update its source explicitly.",
+            )
         baseline_fingerprints = tuple(baseline.fingerprint for baseline in baselines)
         temporary = VariantAggregate(VariantSnapshot(stored.ref, baseline_fingerprints, baseline_entries))
         result = VariantMaterializer().materialize(stored, baselines, temporary, context)

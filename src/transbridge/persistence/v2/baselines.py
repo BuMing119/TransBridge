@@ -85,11 +85,13 @@ class BaselineRegistry:
                 (ref, self._items.get((project_ref.identity.value, ref.identity.value))) for ref in variant_refs
             )
 
-    def restore_catalog(self, project_ref, captured) -> None:
+    def restore_catalog(self, project_ref, captured, *, expected_baselines=None) -> None:
         """Restore exact process-local preimages after a failed disk publication."""
         with self._lock:
             for ref, baselines in captured:
                 key = (project_ref.identity.value, ref.identity.value)
+                if expected_baselines is not None and self._items.get(key) is not expected_baselines:
+                    continue
                 if baselines is None:
                     self._items.pop(key, None)
                 else:

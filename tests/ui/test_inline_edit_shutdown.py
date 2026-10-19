@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import QMessageBox
 import pytest
@@ -40,7 +41,9 @@ def _assert_exit_cancelled(host, registry, lifecycle):
 @pytest.mark.parametrize("discard", [False, True])
 def test_failed_inline_draft_requires_explicit_discard_before_close(guarded_shutdown, monkeypatch, discard):
     widget, context, entry, _response, host, registry, lifecycle, scheduled = guarded_shutdown
-    widget._table.item(0, COL_TRANSLATION).setText("Unsaved draft")
+    widget._table.model().setData(
+        widget._table.model().index(0, COL_TRANSLATION), "Unsaved draft", Qt.ItemDataRole.EditRole
+    )
     assert entry.translation == "Old" and not context.dirty
     answer = QMessageBox.StandardButton.Discard if discard else QMessageBox.StandardButton.Cancel
     question = Mock(return_value=answer)
@@ -72,7 +75,9 @@ def test_final_save_checks_drafts_created_after_close_started(guarded_shutdown, 
     assert registry.shutting_down and host.close_pending
     question.assert_not_called()
 
-    widget._table.item(0, COL_TRANSLATION).setText("Late draft")
+    widget._table.model().setData(
+        widget._table.model().index(0, COL_TRANSLATION), "Late draft", Qt.ItemDataRole.EditRole
+    )
     assert entry.translation == "Old" and not context.dirty
     callback = host.save_current_project_async.call_args.kwargs["on_finished"]
     callback(True)
@@ -95,7 +100,7 @@ def test_final_save_checks_drafts_created_after_close_started(guarded_shutdown, 
 @pytest.mark.parametrize("resolve", ["retry", "discard"])
 def test_resolved_draft_allows_normal_close_without_another_prompt(guarded_shutdown, monkeypatch, resolve):
     widget, _context, entry, response, host, _registry, lifecycle, _scheduled = guarded_shutdown
-    widget._table.item(0, COL_TRANSLATION).setText("Draft")
+    widget._table.model().setData(widget._table.model().index(0, COL_TRANSLATION), "Draft", Qt.ItemDataRole.EditRole)
     response.is_success = True
     getattr(widget._inline_edits, resolve)()
     assert entry.translation == ("Draft" if resolve == "retry" else "Old")
@@ -111,10 +116,14 @@ def test_resolved_draft_allows_normal_close_without_another_prompt(guarded_shutd
 
 def test_discard_confirmation_does_not_cover_a_newer_draft(guarded_shutdown, monkeypatch):
     widget, _context, _entry, _response, host, registry, lifecycle, _scheduled = guarded_shutdown
-    widget._table.item(0, COL_TRANSLATION).setText("Draft before confirmation")
+    widget._table.model().setData(
+        widget._table.model().index(0, COL_TRANSLATION), "Draft before confirmation", Qt.ItemDataRole.EditRole
+    )
 
     def answer(*_args):
-        widget._table.item(0, COL_TRANSLATION).setText("New draft while confirming")
+        widget._table.model().setData(
+            widget._table.model().index(0, COL_TRANSLATION), "New draft while confirming", Qt.ItemDataRole.EditRole
+        )
         return QMessageBox.StandardButton.Discard
 
     monkeypatch.setattr(QMessageBox, "question", answer)
@@ -129,7 +138,9 @@ def test_discard_confirmation_does_not_cover_a_newer_draft(guarded_shutdown, mon
 def test_final_draft_confirmation_rechecks_late_project_edit(guarded_shutdown, monkeypatch, discard):
     widget, _context, _entry, _response, host, registry, lifecycle, scheduled = guarded_shutdown
     lifecycle.close_event(QCloseEvent())
-    widget._table.item(0, COL_TRANSLATION).setText("Late draft")
+    widget._table.model().setData(
+        widget._table.model().index(0, COL_TRANSLATION), "Late draft", Qt.ItemDataRole.EditRole
+    )
 
     def answer(*_args):
         host.context.dirty = True
@@ -156,7 +167,9 @@ def test_final_draft_confirmation_drains_new_background_work_before_disposal(gua
     worker = Mock()
     worker.isRunning.return_value = False
     lifecycle.close_event(QCloseEvent())
-    widget._table.item(0, COL_TRANSLATION).setText("Late draft")
+    widget._table.model().setData(
+        widget._table.model().index(0, COL_TRANSLATION), "Late draft", Qt.ItemDataRole.EditRole
+    )
 
     def answer(*_args):
         if kind == "api":

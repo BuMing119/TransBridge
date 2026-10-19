@@ -138,7 +138,7 @@ def test_stale_project_revision_fails_without_projection_mutation(authority, mon
     context, store, aggregate, _, target, _ = authority
     draft = EntryDraft.capture(context, context.collection.get(target.identity))
     draft.text = "未提交"
-    monkeypatch.setattr(context, "_project_revision", -1)
+    monkeypatch.setattr(type(context), "project_revision", property(lambda _context: -1))
     assert draft.commit(context, projection=store)
     assert draft.text == "未提交"
     assert context.collection.get(target.identity).translation == ""
@@ -163,7 +163,7 @@ def test_version_change_rejects_draft_even_with_same_entry_keys(authority, monke
     context, store, aggregate, _, target, _ = authority
     draft = EntryDraft.capture(context, context.collection.get(target.identity))
     draft.text = "wrong variant"
-    monkeypatch.setattr(context, "_active_variant_id", "different")
+    monkeypatch.setattr(type(context), "active_version_identity", property(lambda _context: ("project", "different")))
     assert "切换" in draft.commit(context, projection=store)
     assert aggregate.snapshot().revision == 0
 
@@ -203,9 +203,9 @@ def test_main_table_and_dialogue_editor_share_the_authoritative_projection(autho
 
     try:
         drain()
-        item = preview._table.item(2, COL_TRANSLATION)
+        item = preview._table.model().index(2, COL_TRANSLATION)
         assert item.data(Qt.ItemDataRole.UserRole) is context.collection.get(target.identity)
-        item.setText("主表输入")
+        preview._table.model().setData(item, "主表输入", Qt.ItemDataRole.EditRole)
         assert context.collection.get(target.identity).translation == "主表输入"
         editor.open_entry(target.identity)
         drain()
@@ -217,7 +217,7 @@ def test_main_table_and_dialogue_editor_share_the_authoritative_projection(autho
         drain()
         stored = next(e for e in aggregate.snapshot().entries if e.entry_key == target.identity)
         assert stored.translation == "关联编辑输入"
-        assert preview._table.item(2, COL_TRANSLATION).text() == "关联编辑输入"
+        assert preview._table.model().index(2, COL_TRANSLATION).data(Qt.ItemDataRole.DisplayRole) == "关联编辑输入"
         assert context.collection.get(target.identity).revision == stored.revision
         editor.dialog.close()
         editor.open_entry(target.identity)

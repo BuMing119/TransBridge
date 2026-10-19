@@ -167,12 +167,16 @@ class VariantSnapshot:
             "project_id": self.ref.project_id.value,
             "translations": translations,
             "labels": labels,
-            "label_library": {key: _thaw_json(value) for key, value in self.label_library},
+            "label_library": self.label_library_data(),
             "source_fingerprints": [item.to_dict() for item in self.source_fingerprints],
             "entries": [entry.to_dict() for entry in self.entries],
             "snapshot_revision": self.revision,
         }
         return VariantDto(SchemaEnvelope(SCHEMA_VERSION, self.ref.kind, self.ref.identity.value, self.revision, data))
+
+    def label_library_data(self) -> dict[str, Any]:
+        """Copy label metadata without serializing the Variant's entries."""
+        return {key: _thaw_json(value) for key, value in self.label_library}
 
     @classmethod
     def from_dto(cls, dto: VariantDto, ref: VariantRef | None = None) -> VariantSnapshot:
