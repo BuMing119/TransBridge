@@ -6,6 +6,8 @@
 
 ## 当前实施
 
+- [project-open-performance](project-open-performance/plan.md)：S01～S05 本地实现；完整后台打开、重复校验消除、一致视图安装与按需表格模型。旧来源身份按哈希恢复，无法可靠匹配的词条保留在只读恢复中；验证结果及性能预算边界见[增量记录](../docs/changelogs/project-open-performance/story-01-to-05/2026-10-19-001-project-open-performance.md)（2026-10-19）。
+
 - [assistant-ui-remediation](assistant-ui-remediation/plan.md)：S01～S23 本地完成；保留精简默认界面，补齐会话隔离、持久清空、失败恢复与诊断、请求级技能、动态上下文及配置引导。联合回归 1715 项通过，最终助手 UI 315 项及中文布局 12 项复验通过，Ruff/格式通过，见[最新增量记录](../docs/changelogs/assistant-ui-remediation/story-18-to-23/2026-10-16-001-assistant-workflow-closure.md)（2026-10-16）。
 
 - [terminology-performance](terminology-performance/plan.md)：S01～S08 三批实现、五轮性能复测和相关回归完成；最终去重 1564 项通过、1 项真实账户测试跳过，Ruff/格式通过；冷首屏及部分 50k 事件间隔仍超预算，见[增量记录](../docs/changelogs/terminology-performance/story-01-to-08/2026-10-15-001-terminology-performance.md)（2026-10-15）。

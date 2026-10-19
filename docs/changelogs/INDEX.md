@@ -1,5 +1,7 @@
 # 变更日志索引
 
+- 2026-10-19：[工程后台打开与按需表格](project-open-performance/story-01-to-05/2026-10-19-001-project-open-performance.md) — 减少重复校验，后台准备与提交，一次安装视图，QTableView 模型按需显示；保留旧来源身份，无法匹配的记录进入只读恢复；功能回归、五轮性能结果及预算限制见记录。
+
 - 2026-10-18：[术语流程边界回归修复](terminology-ui-remediation/story-09-to-13/2026-10-18-002-terminology-regression-fixes.md) — 修复上下文切换保存、任务取消、精确方案定位、异步搜索、身份恢复和后端异译校验；更新旧输入框布局测试契约，最终全仓 6715 项通过、10 项按环境或配置跳过，Ruff/格式通过。
 
 - 2026-10-16：[术语操作流程与功能补齐](terminology-ui-remediation/story-09-to-13/2026-10-16-001-terminology-workflow-completion.md) — 保存关闭保护、发布后继续编辑、完整词条与批量操作、方案重命名及发布采用审查、任务式工作台；分组回归去重 783 项通过，Ruff/格式通过。
