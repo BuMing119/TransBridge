@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from transbridge.infra.llm_tool_calling import LlmToolDefinition, LlmToolProtocolError, LlmTurn
 from transbridge.smart_assistant.state_query_protocol import STATE_RETRIEVAL_TOOL, parse_state_retrieval
 
@@ -84,19 +86,36 @@ def routing_definition() -> LlmToolDefinition:
 def coverage_definition() -> LlmToolDefinition:
     return LlmToolDefinition(
         COVERAGE_TOOL,
-        "Finish an answer with the complete user-facing answer text in this same turn. "
+        "Finish a tracked answer with the complete user-facing text in the answer argument. "
         "Identify only answer items covered by that text. Never claim execution items completed. "
         "Do not mix with business tools or a plan.",
         {
             "type": "object",
             "properties": {
+                "answer": {"type": "string", "minLength": 1, "description": "Complete user-facing answer."},
                 "item_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": True},
                 "dispositions": {"type": "object", "additionalProperties": {"type": "string"}},
             },
-            "required": ["item_ids", "dispositions"],
+            "required": ["answer", "item_ids", "dispositions"],
             "additionalProperties": False,
         },
     )
+
+
+def normalize_answer_turn(turn: LlmTurn) -> LlmTurn:
+    """Expose a tool-only final answer as message text, retaining its original call.
+
+    Older providers may still emit the answer beside the coverage call. Keep
+    accepting that shape; new calls carry the text inside the native schema.
+    """
+    if len(turn.tool_calls) != 1 or turn.tool_calls[0].name != COVERAGE_TOOL:
+        return turn
+    arguments = turn.tool_calls[0].arguments
+    if "answer" not in arguments:
+        return turn
+    if not isinstance(arguments["answer"], str) or not arguments["answer"].strip():
+        raise LlmToolProtocolError("Answer coverage requires nonempty answer text")
+    return replace(turn, text=arguments["answer"])
 
 
 def retrieval_definition() -> LlmToolDefinition:
@@ -152,6 +171,7 @@ def parse_history_retrieval(arguments: dict) -> dict:
 
 
 def parse_control_turn(turn: LlmTurn, stage: str) -> dict | None:
+    turn = normalize_answer_turn(turn)
     controls = [call for call in turn.tool_calls if call.name in CONTROL_TOOLS]
     if stage == "routing" and (len(turn.tool_calls) != 1 or not controls or controls[0].name != ROUTING_TOOL):
         raise LlmToolProtocolError("Routing requires exactly one submit_request_routing call")

@@ -1,7 +1,7 @@
 """Keep static rules stable while capturing the current workspace for each round."""
 
 from .context_builder import ContextBuilder
-from .prompts import build_system_prompt
+from .prompts import ANSWER_PROTOCOL, build_system_prompt
 
 _START = "## Current workspace context\n"
 _END = "\n## Native tool calls"
@@ -20,6 +20,11 @@ def refresh_round_context(conversation, ctx):
     elif _START in content and _END in content:
         prefix, _, rest = content.partition(_START)
         _, _, suffix = rest.partition(_END)
+        # Saved generated prompts predate tracked answer completion. Replace the
+        # obsolete clause in place while preserving explicit custom session rules.
+        suffix = suffix.replace(
+            "- If no tool is needed, respond in natural language without calling a tool.", ANSWER_PROTOCOL
+        )
         conversation.add_system(prefix + _START + _WORKSPACE_RULE + "\n" + _END + suffix)
     # Custom/legacy skill system messages are preserved as explicit session rules.
     # Newly selected skills are scoped through accepted input metadata instead.

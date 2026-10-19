@@ -79,6 +79,22 @@ def test_generated_workspace_migrates_without_removing_static_or_manual_rules():
     assert conversation.get_history()[0]["content"] == "Explicit manual system instructions"
 
 
+def test_saved_generated_prompt_migrates_obsolete_answer_rule_once():
+    from transbridge.smart_assistant.prompts import ANSWER_PROTOCOL
+
+    legacy_rule = "- If no tool is needed, respond in natural language without calling a tool."
+    legacy = build_system_prompt("Old workspace").replace(ANSWER_PROTOCOL, legacy_rule)
+    conversation = ConversationManager()
+    conversation.add_system(legacy + "\nCustom rule: preserve identifiers.")
+    refresh_round_context(conversation, SimpleNamespace(collection=None))
+    updated = conversation.get_transcript()[0]
+    assert legacy_rule not in updated["content"]
+    assert ANSWER_PROTOCOL in updated["content"]
+    assert updated["content"].endswith("Custom rule: preserve identifiers.")
+    refresh_round_context(conversation, SimpleNamespace(collection=None))
+    assert conversation.get_transcript()[0] == updated
+
+
 def test_legacy_round_receives_fresh_workspace_without_persisting_it(monkeypatch):
     from transbridge.smart_assistant.conversation_orchestrator import ConversationOrchestrator
 

@@ -2,6 +2,14 @@
 
 from .tool_registry import ToolRegistry
 
+ANSWER_PROTOCOL = """- Follow the latest request_decision_context and its ready_item_ids for tracked work.
+  Finish ready items of kind=answer with `report_answer_coverage`, supplying the complete user-facing `answer`
+  and the exact covered item IDs. Use this control even when no business tool is needed for the answer.
+  Use `answered` only for items actually addressed, or `blocked` when user input is required.
+  Plain text alone does not complete a tracked answer. Never claim an execution item through answer coverage;
+  execute the required business tools and use their actual results as evidence.
+- Without a tracked request, answer ordinary conversation naturally; routing uses RESPOND without creating a task."""
+
 _SYSTEM_PROMPT = """You are TransBridge's intelligent operations assistant.
 Help users complete localization tasks supported by the application.
 
@@ -26,7 +34,7 @@ and retain important cross-session information.
 - In a planning scenario, call `propose_plan` exactly once to submit a DAG plan containing
   `id`, `tool`, `args`, and `depends_on`
   for user confirmation. Do not mix `propose_plan` with business-tool calls in the same round.
-- If no tool is needed, respond in natural language without calling a tool.
+{answer_protocol}
 
 ## Response style
 - For a simple greeting such as "hello", "hi", or "are you there?", reply briefly and warmly
@@ -91,6 +99,7 @@ def build_system_prompt(context: str = "", namespace: str | None = None) -> str:
     del namespace
     return _SYSTEM_PROMPT.format(
         context=context,
+        answer_protocol=ANSWER_PROTOCOL,
         routing=_build_routing_table(),
         directory=ToolRegistry.build_tool_directory(),
     )

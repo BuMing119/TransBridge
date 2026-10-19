@@ -22,6 +22,7 @@ from transbridge.smart_assistant.request_protocol import (
     STATE_RETRIEVAL_TOOL,
 )
 
+from .request_answer_binding import RequestAnswerBinding
 from .request_background import RequestBackground
 from .request_confirmation_binding import RequestConfirmationBinding
 from .request_context_preparation import RequestContextPreparation
@@ -42,6 +43,7 @@ class RequestBinding(QObject):
         super().__init__(facade)
         self.facade = facade
         self.service = service
+        self.answers = RequestAnswerBinding(self)
         self.confirmations = RequestConfirmationBinding(self)
         self.context_preparation = RequestContextPreparation(self)
         self.management = RequestManagementBinding(self)
@@ -225,6 +227,7 @@ class RequestBinding(QObject):
         tools = build_native_tool_definitions(
             self.facade._conversation.get_loaded_tool_namespaces(), request_stage=self.stage
         )
+        tools = self.answers.tools(tools)
         if self.stage == "execution" and self._prepared_turn == self.admission.turn_id:
             request_id = self.admission.request_id
             self.service.scheduler.release(self.admission)
@@ -275,9 +278,7 @@ class RequestBinding(QObject):
                 self.control_results.start(parsed)
                 return True
             if control == COVERAGE_TOOL:
-                from .request_answer_binding import accept_answer
-
-                accept_answer(self, parsed, turn)
+                self.answers.accept(parsed, turn)
                 return True
             if control == HISTORY_RETRIEVAL_TOOL:
                 from .request_history_binding import retrieve_history
@@ -293,6 +294,8 @@ class RequestBinding(QObject):
                 self.control_results.start(parsed)
                 return True
             if not parsed.get("steps"):
+                if self.answers.recover(turn):
+                    return True
                 raise RequestError("ANSWER_INCOMPLETE", "回答未附完成声明，请点击继续重试。")
             self.service.scheduler.validate(self.admission)
             self.service.save_history(self.context, conversation.get_transcript(), request_id=self.admission.request_id)
@@ -353,6 +356,7 @@ class RequestBinding(QObject):
 
     def release(self, *, interrupt=True):
         self._turn_generation += 1
+        self.answers.reset()
         self.control_results.cancel()
         self.undo.invalidate()
         if self.admission is not None:

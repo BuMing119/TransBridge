@@ -12,6 +12,7 @@ from transbridge.smart_assistant.request_protocol import (
     ROUTING_TOOL,
     coverage_definition,
     history_retrieval_definition,
+    normalize_answer_turn,
     retrieval_definition,
     routing_definition,
 )
@@ -75,6 +76,22 @@ def test_complete_answer_control_preserves_answer_text_and_has_no_business_steps
     assert parsed["summary"] == "完整回答"
     assert parsed["arguments"] == arguments
     assert parsed["tool_call_id"] == "control-1"
+
+
+def test_coverage_carries_complete_answer_when_provider_returns_only_tool_arguments():
+    arguments = {"answer": "完整回答", "item_ids": ["i1"], "dispositions": {"i1": "answered"}}
+    raw = _turn(COVERAGE_TOOL, arguments)
+    normalized = normalize_answer_turn(raw)
+    assert raw.text == "" and normalized.text == "完整回答"
+    assert normalized.tool_calls == raw.tool_calls
+    assert turn_to_parsed_response(raw, request_stage="execution")["summary"] == "完整回答"
+    assert "answer" in coverage_definition().input_schema["required"]
+
+
+@pytest.mark.parametrize("answer", [None, 1, [], "", "  "])
+def test_coverage_rejects_invalid_answer_even_with_side_text(answer):
+    with pytest.raises(LlmToolProtocolError, match="nonempty answer"):
+        turn_to_parsed_response(_turn(COVERAGE_TOOL, {"answer": answer}, text="side text"), request_stage="execution")
 
 
 @pytest.mark.parametrize("control", sorted(CONTROL_TOOLS))

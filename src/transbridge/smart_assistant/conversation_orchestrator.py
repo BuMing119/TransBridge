@@ -415,11 +415,16 @@ class ConversationOrchestrator(QObject):
         self._consecutive_errors = 0
         from transbridge.infra.llm_tool_calling import LlmToolProtocolError, LlmTurn
         from transbridge.smart_assistant.native_tools import turn_to_parsed_response
+        from transbridge.smart_assistant.request_protocol import normalize_answer_turn
 
         turn = response if isinstance(response, LlmTurn) else LlmTurn(text=str(response or ""))
         try:
-            message_id = self._conversation.add_assistant_turn(turn)
+            turn = normalize_answer_turn(turn)
             binding = getattr(self, "request_binding", None)
+            answers = getattr(binding, "answers", None)
+            duplicate_of = answers.duplicate_of(turn) if answers is not None else ""
+            message = {**turn.to_assistant_message(), "display_duplicate_of": duplicate_of} if duplicate_of else turn
+            message_id = self._conversation.add_assistant_turn(message)
             parsed = turn_to_parsed_response(turn, request_stage=None if binding is None else binding.stage)
         except LlmToolProtocolError as exc:
             self._conversation.close_pending_tool_calls("模型返回了无效的工具调用组合。")
@@ -434,6 +439,11 @@ class ConversationOrchestrator(QObject):
 
         thought = parsed.get("summary", "")
         steps = parsed.get("steps", [])
+        if duplicate_of and _finished_bubble is not None:
+            self._on_remove_widget(_finished_bubble)
+            _finished_bubble = None
+        if _finished_bubble is not None and turn.text and not steps:
+            _finished_bubble.set_text(turn.text)
 
         # 工具调用的参数不显示在流式气泡中；tool-only 轮次删除空占位。
         if steps:

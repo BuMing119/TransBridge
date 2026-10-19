@@ -30,8 +30,13 @@ def run_control_call(service, context, admission, parsed, parent, *, stop_reason
     change = None
     result = read
     if name == "report_answer_coverage":
-        if set(arguments) != {"item_ids", "dispositions"} or set(arguments["item_ids"]) != set(
-            arguments["dispositions"]
+        if (
+            set(arguments) not in ({"item_ids", "dispositions"}, {"answer", "item_ids", "dispositions"})
+            or not isinstance(arguments["item_ids"], list)
+            or not all(isinstance(item, str) for item in arguments["item_ids"])
+            or not isinstance(arguments["dispositions"], dict)
+            or set(arguments["item_ids"]) != set(arguments["dispositions"])
+            or ("answer" in arguments and (not isinstance(arguments["answer"], str) or not arguments["answer"].strip()))
         ):
             raise RequestError("REQUEST_PROTOCOL_INVALID", "answer coverage fields disagree")
         result = {"accepted": True}

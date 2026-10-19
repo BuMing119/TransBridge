@@ -5,9 +5,10 @@ def visible_record(message):
     role = message.get("role")
     if role == "assistant" and (
         message.get("control_batch_id")
+        or message.get("display_duplicate_of")
         or any(call.get("name") == "submit_request_routing" for call in message.get("tool_calls", ()))
     ):
-        return None  # Routing prose is not an accepted user-facing reply.
+        return None  # Routing prose and exact declaration-repair copies are not new replies.
     content = message.get("content", "")
     if role == "tool":
         content = message.get("display_summary", "")
