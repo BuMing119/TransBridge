@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from transbridge.ui.foundation.components import ComponentKind, ComponentStyle
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState
 
 from .models import DialogueTableModel, TopicTreeModel
 
@@ -127,24 +127,37 @@ class DialogueEditorView(QWidget):
         self.original.setPlaceholderText("原文（只读）")
         self.translation = QPlainTextEdit(self)
         self.translation.setAccessibleName("译文草稿")
-        fields.addWidget(self.original)
-        fields.addWidget(self.translation)
+        self.original_label = _label("原文（只读）", self)
+        self.translation_label = _label("译文草稿", self)
+        for label, field in ((self.original_label, self.original), (self.translation_label, self.translation)):
+            panel = QWidget(fields)
+            field_layout = QVBoxLayout(panel)
+            field_layout.setContentsMargins(0, 0, 0, 0)
+            label.setBuddy(field)
+            field_layout.addWidget(label)
+            field_layout.addWidget(field, 1)
+            fields.addWidget(panel)
+        fields.setChildrenCollapsible(False)
         fields.setSizes([400, 600])
         editor_layout.addWidget(fields, 1)
+        draft_status = QHBoxLayout()
+        self.draft_label = _label("", self)
+        draft_status.addWidget(self.draft_label, 1)
+        self.navigation_label = _label("", self)
+        self.navigation_label.setWordWrap(False)
+        draft_status.addWidget(self.navigation_label)
+        editor_layout.addLayout(draft_status)
         actions = QHBoxLayout()
         self.previous_button = self._button("上一条", lambda: self.move_requested.emit(-1))
         self.next_button = self._button("下一条", lambda: self.move_requested.emit(1))
         actions.addWidget(self.previous_button)
         actions.addWidget(self.next_button)
-        self.draft_label = _label("", self)
-        actions.addWidget(self.draft_label, 1)
-        self.navigation_label = _label("", self)
-        self.navigation_label.setWordWrap(False)
-        actions.addWidget(self.navigation_label)
+        actions.addStretch(1)
         self.discard_button = self._button("放弃草稿", self.discard_requested.emit)
-        self.apply_button = self._button("应用译文", lambda: self.apply_requested.emit(False))
+        self.apply_button = self._button("应用并返回", lambda: self.apply_requested.emit(False))
         self.apply_button.setToolTip("应用当前译文并返回工作台")
         self.apply_next_button = self._button("应用并下一条", lambda: self.apply_requested.emit(True))
+        ComponentStyle.apply_state(self.apply_next_button, SemanticState.PRIMARY)
         for button in (self.discard_button, self.apply_button, self.apply_next_button):
             actions.addWidget(button)
         editor_layout.addLayout(actions)

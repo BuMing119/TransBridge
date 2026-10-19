@@ -95,8 +95,17 @@ class ComponentStyle:
     ) -> QWidget:
         kind = ComponentKind(component_kind)
         normalized_density = ComponentDensity(density)
+        changed = (
+            widget.property("tbComponentKind") != kind.value or widget.property("tbDensity") != normalized_density.value
+        )
         widget.setProperty("tbComponentKind", kind.value)
         widget.setProperty("tbDensity", normalized_density.value)
+        if changed and widget.testAttribute(Qt.WidgetAttribute.WA_WState_Polished):
+            style = widget.style()
+            style.unpolish(widget)
+            style.polish(widget)
+            widget.updateGeometry()
+            widget.update()
         return widget
 
     @staticmethod

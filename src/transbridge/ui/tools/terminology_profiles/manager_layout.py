@@ -1,6 +1,6 @@
 """Build the focused scheme manager's controls and editor layout."""
 
-from PyQt6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout
+from PyQt6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy, QVBoxLayout
 
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle
 
@@ -25,6 +25,10 @@ def build_manager_layout(view):
     row.addWidget(QLabel("编辑方案", view))
     view.profile_combo = QComboBox(view)
     view.profile_combo.setAccessibleName("要管理的译名方案")
+    view.profile_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+    view.profile_combo.setMinimumContentsLength(12)
+    view.profile_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+    view.profile_combo.currentTextChanged.connect(view.profile_combo.setToolTip)
     view.profile_combo.currentIndexChanged.connect(view._profile_selected)
     ComponentStyle.apply_static(view.profile_combo, ComponentKind.INPUT)
     row.addWidget(view.profile_combo, 1)

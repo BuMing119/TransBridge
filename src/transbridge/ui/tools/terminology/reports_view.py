@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget
 
 from .build_view import TechnicalDetailsBox
 from .view_models import TerminologyNotice
@@ -19,7 +19,17 @@ class ReportsView(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        layout = QVBoxLayout(self)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea(self)
+        scroll.setAccessibleName("术语报告与生成状态")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        root.addWidget(scroll)
+        content = QWidget(scroll)
+        scroll.setWidget(content)
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(26, 26, 26, 30)
         layout.setSpacing(18)
         title = QLabel("报告", self)
@@ -131,7 +141,9 @@ def _export_row(parent: QWidget, title: str, description: str, action: QPushButt
     identity = QVBoxLayout()
     identity.setSpacing(2)
     title_label = QLabel(title, row)
+    title_label.setWordWrap(True)
     description_label = QLabel(description, row)
+    description_label.setWordWrap(True)
     description_label.setProperty("tbSecondary", True)
     identity.addWidget(title_label)
     identity.addWidget(description_label)

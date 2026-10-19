@@ -304,6 +304,7 @@ class VariantCoordinator:
                 "确认删除",
                 f"确定要删除版本「{display_name}」吗？\n此操作不可撤销。",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return
@@ -336,6 +337,7 @@ class VariantCoordinator:
             "确认删除",
             f"确定要删除版本「{name}」吗？\n该版本的所有快照也将被删除，此操作不可撤销。",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         if ret != QMessageBox.StandardButton.Yes:
             return

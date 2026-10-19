@@ -2,7 +2,7 @@
 MailsDialog: 私信（Mails）对话框，左侧对话列表 + 右侧消息流。
 """
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QSignalBlocker, Qt
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QDialog,
@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
 )
 
 from transbridge.paratranz.api.paratranz_mails_api import ParatranzMailsAPI
-from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, ElidedLabel, SemanticState
 
 from ..workers import ApiWorker
 
@@ -55,9 +55,13 @@ class MailsDialog(QDialog):
         self._my_uid = (ctx.current_user or {}).get("id")
         self._mail_gen = 0
         self._conv_gen = 0
+        self._drafts: dict[int, str] = {}
+        self._sending_uids: set[int] = set()
+        self._closed = False
         self.setWindowTitle("私信")
         self.resize(820, 560)
         self._init_ui()
+        self.finished.connect(self._on_finished)
         self._load_mails()
 
     def _init_ui(self):
@@ -76,12 +80,15 @@ class MailsDialog(QDialog):
         refresh_btn.clicked.connect(self._load_mails)
         new_btn = QPushButton("新建私信")
         new_btn.clicked.connect(self._new_mail)
+        for button in (refresh_btn, new_btn):
+            ComponentStyle.apply_static(button, ComponentKind.BUTTON)
+            button.setAutoDefault(False)
         toolbar.addWidget(refresh_btn)
         toolbar.addStretch()
         toolbar.addWidget(new_btn)
         left_layout.addLayout(toolbar)
         self._conv_list = QListWidget()
-        self._conv_list.itemClicked.connect(self._on_conv_clicked)
+        self._conv_list.currentItemChanged.connect(self._on_conv_clicked)
         left_layout.addWidget(self._conv_list, stretch=1)
         splitter.addWidget(left)
 
@@ -91,12 +98,22 @@ class MailsDialog(QDialog):
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(4, 0, 0, 0)
 
-        self._conv_label = QLabel("（选择联系人查看对话）")
+        self._conv_label = ElidedLabel("（选择联系人查看对话）")
         conversation_font = QFont(self._conv_label.font())
         conversation_font.setWeight(QFont.Weight.DemiBold)
         self._conv_label.setFont(conversation_font)
         self._conv_label.setAccessibleName("当前私信对话")
         right_layout.addWidget(self._conv_label)
+        self._conversation_status = QLabel("")
+        self._conversation_status.setWordWrap(True)
+        self._conversation_status.setTextFormat(Qt.TextFormat.PlainText)
+        right_layout.addWidget(self._conversation_status)
+        self._retry_btn = QPushButton("重试加载")
+        ComponentStyle.apply_static(self._retry_btn, ComponentKind.BUTTON)
+        self._retry_btn.setAutoDefault(False)
+        self._retry_btn.clicked.connect(lambda: self._load_conversation(self._current_uid))
+        self._retry_btn.hide()
+        right_layout.addWidget(self._retry_btn, alignment=Qt.AlignmentFlag.AlignRight)
 
         # 消息流（滚动区域，最新消息在底部）
         self._msg_scroll = QScrollArea()
@@ -112,11 +129,15 @@ class MailsDialog(QDialog):
         self._send_input = QTextEdit()
         self._send_input.setMaximumHeight(80)
         self._send_input.setPlaceholderText("支持 Markdown")
+        self._send_input.setEnabled(False)
         right_layout.addWidget(self._send_input)
 
         send_row = QHBoxLayout()
         send_row.addStretch()
         self._send_btn = QPushButton("发送")
+        ComponentStyle.apply_static(self._send_btn, ComponentKind.BUTTON)
+        ComponentStyle.apply_state(self._send_btn, SemanticState.PRIMARY)
+        self._send_btn.setAutoDefault(False)
         self._send_btn.setEnabled(False)
         self._send_btn.clicked.connect(self._send_message)
         send_row.addWidget(self._send_btn)
@@ -136,13 +157,15 @@ class MailsDialog(QDialog):
             return _extract_list(api.list_mails(page_size=100))
 
         def _on_done(mails):
-            if self._mail_gen != gen:
+            if self._closed or self._mail_gen != gen:
                 return
             self._on_mails_loaded(mails)
 
         w = ApiWorker(_fetch)
         w.result.connect(_on_done)
-        w.error.connect(lambda e: QMessageBox.warning(self, "加载失败", e))
+        w.error.connect(
+            lambda e: QMessageBox.warning(self, "加载失败", e) if not self._closed and self._mail_gen == gen else None
+        )
         w.start()
         self._workers.append(w)
 
@@ -178,61 +201,92 @@ class MailsDialog(QDialog):
             reverse=True,
         )
 
-        self._conv_list.clear()
-        for info in sorted_convs:
-            last = info["last"]
-            name = info["name"]
-            preview = str(last.get("content", ""))[:30]
-            unread = last.get("status") == 0
-            item = QListWidgetItem(f"{'[未读] ' if unread else ''}{name}\n{preview}")
-            item.setData(Qt.ItemDataRole.UserRole, {"uid": info["uid"], "name": name})
-            self._conv_list.addItem(item)
+        with QSignalBlocker(self._conv_list):
+            self._conv_list.clear()
+            for info in sorted_convs:
+                last = info["last"]
+                name = info["name"]
+                preview = str(last.get("content", ""))[:30]
+                unread = last.get("status") == 0
+                item = QListWidgetItem(f"{'[未读] ' if unread else ''}{name}\n{preview}")
+                item.setData(Qt.ItemDataRole.UserRole, {"uid": info["uid"], "name": name})
+                self._conv_list.addItem(item)
+                if info["uid"] == self._current_uid:
+                    self._conv_list.setCurrentItem(item)
 
-    def _on_conv_clicked(self, item: QListWidgetItem):
+    def _on_conv_clicked(self, item: QListWidgetItem | None, _previous=None):
+        if item is None:
+            return
         data = item.data(Qt.ItemDataRole.UserRole)
         if data is None:
             return
         uid = data["uid"]
         name = data["name"]
-        self._current_uid = uid
-        self._current_name = name
-        self._conv_label.setText(name)
-        self._send_btn.setEnabled(True)
+        self._activate_conversation(uid, name)
         self._load_conversation(uid)
 
-    def _load_conversation(self, uid: int):
+    def _activate_conversation(self, uid: int, name: str):
+        if self._current_uid is not None:
+            self._drafts[self._current_uid] = self._send_input.toPlainText()
+        self._conv_gen += 1
+        self._current_uid = uid
+        self._current_name = name
+        self._conv_label.set_full_text(name)
+        self._conv_label.setToolTip(name)
+        self._send_input.setPlainText(self._drafts.get(uid, ""))
+        self._send_input.setEnabled(True)
+        self._send_btn.setEnabled(uid not in self._sending_uids)
+        self._clear_messages()
+        self._conversation_status.clear()
+        self._retry_btn.hide()
+
+    def _load_conversation(self, uid: int | None):
+        if self._closed or uid is None or uid != self._current_uid:
+            return
         config = self._ctx.config
         self._conv_gen += 1
         gen = self._conv_gen
+        self._clear_messages()
+        self._conversation_status.setText("正在加载对话…")
+        self._retry_btn.hide()
 
         def _fetch():
             api = ParatranzMailsAPI(token=config.token, config=config)
             return api.get_conversation(uid)
 
         def _on_done(messages):
-            if self._conv_gen != gen:
+            if self._closed or self._conv_gen != gen:
                 return
             self._on_conversation_loaded(messages)
 
+        def _on_error(error):
+            if not self._closed and self._conv_gen == gen:
+                self._conversation_status.setText(f"加载对话失败：{error}")
+                self._retry_btn.show()
+
         w = ApiWorker(_fetch)
         w.result.connect(_on_done)
-        w.error.connect(lambda _: None)
+        w.error.connect(_on_error)
         w.start()
         self._workers.append(w)
 
-    def _on_conversation_loaded(self, messages):
-        # 清空消息区
+    def _clear_messages(self):
         while self._msg_layout.count() > 1:
             it = self._msg_layout.takeAt(0)
             if it.widget():
+                it.widget().hide()
                 it.widget().deleteLater()
 
+    def _on_conversation_loaded(self, messages):
+        self._clear_messages()
         my_uid = self._my_uid
         # 按时间升序排列（最新消息在底部）
         msgs = sorted(
             messages if isinstance(messages, list) else [],
             key=lambda m: m.get("createdAt", ""),
         )
+        self._conversation_status.setText(f"共 {len(msgs)} 条消息" if msgs else "（暂无消息）")
+        self._retry_btn.hide()
         for msg in msgs:
             is_mine = msg.get("from") == my_uid
             content = msg.get("html") or msg.get("content") or ""
@@ -265,25 +319,44 @@ class MailsDialog(QDialog):
         self._msg_scroll.verticalScrollBar().setValue(self._msg_scroll.verticalScrollBar().maximum())
 
     def _send_message(self):
-        if self._current_uid is None:
+        if self._closed or self._current_uid is None or self._current_uid in self._sending_uids:
             return
-        content = self._send_input.toPlainText().strip()
+        draft = self._send_input.toPlainText()
+        content = draft.strip()
         if not content:
             return
         config = self._ctx.config
         to_uid = self._current_uid
+        name = self._current_name
+        self._drafts[to_uid] = draft
+        self._sending_uids.add(to_uid)
+        self._send_btn.setEnabled(False)
 
         def _send():
             api = ParatranzMailsAPI(token=config.token, config=config)
             return api.send_mail(to_uid, content)
 
         def _on_done(_):
-            self._send_input.clear()
-            self._load_conversation(to_uid)
+            self._sending_uids.discard(to_uid)
+            if self._drafts.get(to_uid) == draft:
+                self._drafts.pop(to_uid, None)
+            if not self._closed and self._current_uid == to_uid:
+                if self._send_input.toPlainText() == draft:
+                    self._send_input.clear()
+                self._send_btn.setEnabled(True)
+                self._load_conversation(to_uid)
+
+        def _on_error(error):
+            self._sending_uids.discard(to_uid)
+            if self._closed:
+                return
+            if self._current_uid == to_uid:
+                self._send_btn.setEnabled(True)
+            QMessageBox.critical(self, "发送失败", f"发给 {name} 的私信未发送成功：\n{error}")
 
         w = ApiWorker(_send)
         w.result.connect(_on_done)
-        w.error.connect(lambda e: QMessageBox.critical(self, "发送失败", e))
+        w.error.connect(_on_error)
         w.start()
         self._workers.append(w)
 
@@ -296,7 +369,12 @@ class MailsDialog(QDialog):
         except ValueError:
             QMessageBox.warning(self, "输入错误", "用户 ID 必须是整数")
             return
-        self._current_uid = uid
-        self._current_name = str(uid)
-        self._conv_label.setText(f"用户 {uid}（新对话）")
-        self._send_btn.setEnabled(True)
+        with QSignalBlocker(self._conv_list):
+            self._conv_list.setCurrentRow(-1)
+        self._activate_conversation(uid, f"用户 {uid}（新对话）")
+        self._conversation_status.setText("新对话，输入消息后发送。")
+
+    def _on_finished(self, _result):
+        self._closed = True
+        self._mail_gen += 1
+        self._conv_gen += 1

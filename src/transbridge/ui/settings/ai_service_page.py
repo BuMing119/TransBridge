@@ -14,6 +14,7 @@ class AiServicePage(SettingsPage):
         super().__init__(parent)
         self._config = config
         form = QFormLayout(self)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         note = QLabel("这些设置供所有 AI 任务共用。任务窗口只显示服务状态，不显示密钥。", self)
         note.setWordWrap(True)
         form.addRow(note)

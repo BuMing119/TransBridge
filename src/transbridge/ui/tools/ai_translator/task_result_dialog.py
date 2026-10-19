@@ -21,10 +21,12 @@ from PyQt6.QtWidgets import (
 )
 
 from transbridge.application.translation.task_history import restore_report_snapshot
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, ElidedLabel, SemanticState
 from transbridge.ui.workers import ApiWorker
 
 from ._theme_support import AiThemeBinding
 from .reporting import export_snapshot
+from .task_widget_style import configure_task_button, configure_task_host, configure_task_input, configure_task_title
 
 RESULT_LABELS = {
     "applied": "已应用",
@@ -91,33 +93,55 @@ class TaskResultDialog(QDialog):
         self._shutdown = False
         self._cancel = threading.Event()
         self.setWindowTitle("AI 任务结果")
+        configure_task_host(self)
         self.resize(1080, 720)
         layout = QVBoxLayout(self)
         applied = "已应用到项目" if record.get("applied") else "未应用到项目"
         saved = "项目已保存" if record.get("project_saved", record.get("saved")) else "项目未保存"
         version = record.get("version_label") or record.get("variant_id", "")
-        layout.addWidget(
-            QLabel(f"{record.get('created_at', '')[:19].replace('T', ' ')} · {version} · {applied} · {saved}")
-        )
+        self.project_status = QLabel(f"{applied} · {saved}")
+        self.project_status.setWordWrap(True)
+        configure_task_title(self.project_status, "section")
+        layout.addWidget(self.project_status)
+        self.context_label = ElidedLabel(f"{record.get('created_at', '')[:19].replace('T', ' ')} · {version}")
+        self.context_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.context_label.setToolTip(self.context_label.full_text)
+        self.context_label.setAccessibleName("任务时间与版本")
+        configure_task_title(self.context_label, "meta")
+        layout.addWidget(self.context_label)
         filters = QHBoxLayout()
         self.sources = QComboBox()
+        self.sources.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.sources.setMinimumContentsLength(12)
+        self.sources.setAccessibleName("结果来源")
         for source in record.get("sources", ()):
             self.sources.addItem(source["label"], source["key"])
+            self.sources.setItemData(self.sources.count() - 1, source["label"], Qt.ItemDataRole.ToolTipRole)
         self.sources.currentIndexChanged.connect(self._populate)
-        filters.addWidget(self.sources)
+        filters.addWidget(self.sources, 1)
         self.search = QLineEdit()
+        self.search.setClearButtonEnabled(True)
+        self.search.setAccessibleName("搜索任务结果")
         self.search.setPlaceholderText("搜索原文、译文或条目")
         self.search.textChanged.connect(self._populate)
-        filters.addWidget(self.search, 1)
+        filters.addWidget(self.search, 2)
         self.filter = QComboBox()
+        self.filter.setAccessibleName("结果状态筛选")
         self.filter.addItems(["全部", *dict.fromkeys(RESULT_LABELS.values()), "通过"])
         self.filter.currentTextChanged.connect(self._populate)
         filters.addWidget(self.filter)
+        for control in (self.sources, self.search, self.filter):
+            configure_task_input(control)
         layout.addLayout(filters)
         self.summary = QLabel()
+        self.summary.setWordWrap(True)
+        self.summary.setAccessibleName("结果条目计数")
+        configure_task_title(self.summary, "hint")
         layout.addWidget(self.summary)
         splitter = QSplitter(Qt.Orientation.Vertical)
         self.table = QTableView()
+        self.table.setAccessibleName("任务结果条目")
+        ComponentStyle.apply_static(self.table, ComponentKind.TABLE)
         self.model = TaskEntriesModel(self)
         self.table.setModel(self.model)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -129,32 +153,42 @@ class TaskResultDialog(QDialog):
         self.table.selectionModel().currentRowChanged.connect(self._detail)
         splitter.addWidget(self.table)
         self.detail = QTextEdit()
+        self.detail.setAccessibleName("所选条目详情")
         self.detail.setReadOnly(True)
         splitter.addWidget(self.detail)
         splitter.setSizes([300, 240])
         layout.addWidget(splitter, 1)
         self.diagnostics = QTextEdit()
+        self.diagnostics.setAccessibleName("任务诊断")
         self.diagnostics.setReadOnly(True)
         self.diagnostics.setMaximumHeight(100)
         layout.addWidget(self.diagnostics)
         self.export_status = QLabel()
+        self.export_status.setTextFormat(Qt.TextFormat.PlainText)
         self.export_status.setWordWrap(True)
+        self.export_status.setAccessibleName("结果导出状态")
+        ComponentStyle.apply_static(self.export_status, ComponentKind.LABEL)
+        self.export_status.hide()
         layout.addWidget(self.export_status)
         buttons = QHBoxLayout()
         self.export_buttons = []
         for label, format in (("导出 Excel", "xlsx"), ("导出 CSV", "csv")):
             button = QPushButton(label)
+            configure_task_button(button, primary=format == "xlsx")
+            button.setToolTip("导出当前来源的完整结果，包含被搜索或状态筛选隐藏的条目。")
             button.clicked.connect(lambda _=False, format=format: self._choose_export(format))
             buttons.addWidget(button)
             self.export_buttons.append(button)
         self.cancel_button = QPushButton("取消导出")
+        configure_task_button(self.cancel_button)
         self.cancel_button.clicked.connect(self.cancel_export)
-        self.cancel_button.setEnabled(False)
+        self.cancel_button.hide()
         buttons.addWidget(self.cancel_button)
         buttons.addStretch()
-        close = QPushButton("关闭")
-        close.clicked.connect(self.close)
-        buttons.addWidget(close)
+        self.close_button = QPushButton("关闭")
+        configure_task_button(self.close_button)
+        self.close_button.clicked.connect(self.close)
+        buttons.addWidget(self.close_button)
         layout.addLayout(buttons)
         self._theme = AiThemeBinding(self, theme_view, lambda _: None)
         index = self.sources.findData(source_key)
@@ -174,6 +208,7 @@ class TaskResultDialog(QDialog):
         if not hasattr(self, "model"):
             return
         source = self._source()
+        self.sources.setToolTip(self.sources.currentText())
         snapshot = source.get("snapshot") or {}
         entries = snapshot.get("entries", ())
         query, status = self.search.text().casefold(), self.filter.currentText()
@@ -190,11 +225,33 @@ class TaskResultDialog(QDialog):
             )
         ]
         self.model.set_entries(visible)
-        self.summary.setText(f"{len(visible)} / {len(entries)} 条")
+        self.summary.setText(f"当前显示 {len(visible)} / {len(entries)} 条 · 导出包含本来源全部结果")
         self.detail.clear()
+        self.detail.setPlaceholderText(
+            "此来源暂无可显示的结果。"
+            if not entries
+            else "没有匹配的条目，请清除搜索或将状态筛选改为“全部”。"
+            if not visible
+            else "请选择一条结果，查看完整原文、译文及处理原因。"
+        )
         notes = [source.get("error", "")]
         notes.extend(f"{item['code']}：{item['message']}" for item in snapshot.get("diagnostics", ()))
         self.diagnostics.setPlainText("\n".join(dict.fromkeys(note for note in notes if note)))
+        self.diagnostics.setVisible(bool(self.diagnostics.toPlainText()))
+        self._update_export_actions()
+
+    def _update_export_actions(self):
+        available = bool(self._source().get("snapshot")) and not self.busy and not self._shutdown
+        for button in self.export_buttons:
+            button.setEnabled(available)
+        self.cancel_button.setVisible(self.busy)
+        self.cancel_button.setEnabled(self.busy and not self._cancel.is_set())
+
+    def _set_export_status(self, text, state):
+        self.export_status.setText(text)
+        self.export_status.setAccessibleDescription(text)
+        self.export_status.setVisible(bool(text))
+        ComponentStyle.apply_state(self.export_status, state)
 
     def _detail(self, index, _previous):
         if not index.isValid() or index.row() >= len(self.model.entries):
@@ -224,29 +281,28 @@ class TaskResultDialog(QDialog):
             return
         snapshot_data = self._source().get("snapshot")
         if not snapshot_data:
-            self.export_status.setText("没有可导出的条目")
+            self._set_export_status("没有可导出的条目", SemanticState.WARNING)
             return
         self._cancel.clear()
-        self.export_status.setText("正在导出")
-        for button in self.export_buttons:
-            button.setEnabled(False)
-        self.cancel_button.setEnabled(True)
+        self._set_export_status("正在导出当前来源的完整结果…", SemanticState.INFO)
         worker = ApiWorker(
             lambda: export_snapshot(restore_report_snapshot(snapshot_data), path, format, cancel_event=self._cancel),
             route_http_errors=False,
         )
         self.worker = worker
-        worker.result.connect(lambda result: self.export_status.setText(f"已导出：{result}"))
+        self._update_export_actions()
+        worker.result.connect(lambda result: self._set_export_status(f"已导出：{result}", SemanticState.SUCCESS))
         worker.error.connect(
-            lambda error: self.export_status.setText("导出已取消" if self._cancel.is_set() else f"导出失败：{error}")
+            lambda error: self._set_export_status(
+                "导出已取消" if self._cancel.is_set() else f"导出失败：{error}",
+                SemanticState.INFO if self._cancel.is_set() else SemanticState.ERROR,
+            )
         )
 
         def finished():
             self.worker = None
             worker.deleteLater()
-            for button in self.export_buttons:
-                button.setEnabled(True)
-            self.cancel_button.setEnabled(False)
+            self._update_export_actions()
 
         worker.finished.connect(finished)
         worker.start()
@@ -254,15 +310,14 @@ class TaskResultDialog(QDialog):
     def cancel_export(self):
         if self.worker is not None:
             self._cancel.set()
-            self.export_status.setText("正在取消导出")
+            self._set_export_status("正在取消导出", SemanticState.INFO)
+            self._update_export_actions()
 
     def shutdown(self):
         self._shutdown = True
         self.cancel_export()
-        for button in self.export_buttons:
-            button.setEnabled(False)
+        self._update_export_actions()
 
     def resume_exports(self):
         self._shutdown = False
-        for button in self.export_buttons:
-            button.setEnabled(not self.busy)
+        self._update_export_actions()

@@ -61,7 +61,7 @@ class TerminologyWindow(QWidget):
         self.setWindowTitle("项目术语")
         self.setProperty("tbTaskDialog", True)
         self.resize(1180, 760)
-        self.setMinimumSize(920, 620)
+        self.setMinimumSize(760, 560)
         self.setAccessibleName("项目术语工作台")
         self._actions = AsyncActionRunner(self, on_error=self._show_command_error)
         self._preflight_started = False

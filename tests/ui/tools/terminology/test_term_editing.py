@@ -227,7 +227,7 @@ def test_batch_applies_to_explicit_selection_and_asks_about_impact(harness, monk
     controller = _controller(harness)
     questions = []
 
-    def answer(_parent, _title, text):
+    def answer(_parent, _title, text, *_buttons):
         questions.append(text)
         return QMessageBox.StandardButton.Yes
 

@@ -3,6 +3,7 @@
 from PyQt6.QtCore import QObject, QTimer
 from PyQt6.QtWidgets import QMessageBox
 
+from .conflict_review_dialog import ConflictReviewDialog
 from .term_edit_dialog import TermEditDialog
 
 
@@ -76,7 +77,8 @@ class DraftSaveCloseGuard(QObject):
     def _unsaved_forms(self):
         return [
             dialog
-            for dialog in self._window.findChildren(TermEditDialog)
+            for kind in (TermEditDialog, ConflictReviewDialog)
+            for dialog in self._window.findChildren(kind)
             if dialog.isVisible() and dialog.has_unsaved_inputs
         ]
 

@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
 
 from transbridge.config.ui_preferences import ThemeMode
 from transbridge.ui.foundation.accessibility import configure_accessible_widget
-from transbridge.ui.foundation.components import ComponentKind, ComponentStyle
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState
 from transbridge.ui.foundation.preview import ThemePreviewWidget
 
 from .advanced_page import AdvancedSettingsPage
@@ -50,6 +50,9 @@ def build_settings_center(dialog: object, initial_section: SettingsSection) -> N
     dialog._section_list.setObjectName("tbSettingsNavigation")
     dialog._section_list.setAccessibleName(dialog._tr("设置分类"))
     dialog._section_list.setFixedWidth(190)
+    dialog._section_list.setWordWrap(True)
+    dialog._section_list.setTextElideMode(Qt.TextElideMode.ElideNone)
+    dialog._section_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     dialog._stack = QStackedWidget(dialog)
     dialog._stack.setObjectName("tbSettingsPages")
     dialog._settings_pages = {}
@@ -84,6 +87,7 @@ def build_settings_center(dialog: object, initial_section: SettingsSection) -> N
             ai_page.test_status,
             lambda: _prepare_llm(ai_page, config),
             "测试 AI 连接",
+            (ai_page.provider_combo, ai_page.model_edit, ai_page.api_key_edit, ai_page.base_url_edit),
         )
         embedding_page = EmbeddingSettingsPage(
             config,
@@ -101,6 +105,14 @@ def build_settings_center(dialog: object, initial_section: SettingsSection) -> N
             embedding_page.test_status,
             lambda: _prepare_embedding(embedding_page, config),
             "测试 Embedding 连接",
+            (
+                embedding_page.mode_combo,
+                embedding_page.provider_combo,
+                embedding_page.model_edit,
+                embedding_page.api_key_edit,
+                embedding_page.base_url_edit,
+                embedding_page.local_model_edit,
+            ),
         )
         embedding_page.manage_models_button.clicked.connect(lambda: _manage_embedding_models(embedding_page))
         _add_page(dialog, SettingsSection.AI_DEFAULTS, AiDefaultsPage(config, dialog))
@@ -133,6 +145,7 @@ def build_settings_center(dialog: object, initial_section: SettingsSection) -> N
             page.test_status,
             lambda: _prepare_paratranz(page, source),
             "验证 ParaTranz 连接",
+            (page.token_edit, page.base_url_edit, page.timeout_spin, page.disconnect_check),
         )
     _insert_page(dialog, SettingsSection.PARATRANZ, page)
 
@@ -140,6 +153,15 @@ def build_settings_center(dialog: object, initial_section: SettingsSection) -> N
     body.addWidget(dialog._stack, 1)
     root.addLayout(body, 1)
     dialog._section_list.currentRowChanged.connect(dialog._stack.setCurrentIndex)
+
+    dialog._feedback = QLabel(dialog)
+    dialog._feedback.setWordWrap(True)
+    dialog._feedback.setTextFormat(Qt.TextFormat.PlainText)
+    configure_accessible_widget(dialog._feedback, name=dialog._tr("设置结果"), state_text=dialog._last_notice)
+    ComponentStyle.apply_static(dialog._feedback, ComponentKind.NOTIFICATION)
+    dialog._feedback.setText(dialog._last_notice)
+    dialog._feedback.setVisible(bool(dialog._last_notice))
+    root.addWidget(dialog._feedback)
 
     dialog._buttons = QDialogButtonBox(dialog)
     dialog._apply_button = dialog._buttons.addButton(dialog._tr("应用"), QDialogButtonBox.ButtonRole.AcceptRole)
@@ -155,15 +177,12 @@ def build_settings_center(dialog: object, initial_section: SettingsSection) -> N
     dialog._cancel_button.clicked.connect(dialog.reject)
     for button in (dialog._apply_button, dialog._default_button, dialog._cancel_button):
         ComponentStyle.apply_static(button, ComponentKind.BUTTON)
+    ComponentStyle.apply_state(dialog._apply_button, SemanticState.PRIMARY)
     dialog._apply_button.setDefault(True)
     root.addWidget(dialog._buttons)
     dialog.select_section(initial_section)
     dialog._section_list.currentRowChanged.connect(lambda _row: _sync_default_action(dialog))
     _sync_default_action(dialog)
-    dialog.setTabOrder(dialog._section_list, dialog._mode_combo)
-    dialog.setTabOrder(dialog._mode_combo, dialog._theme_combo)
-    dialog.setTabOrder(dialog._theme_combo, dialog._api_button)
-    dialog.setTabOrder(dialog._api_button, dialog._default_button)
     dialog.setTabOrder(dialog._default_button, dialog._apply_button)
     dialog.setTabOrder(dialog._apply_button, dialog._cancel_button)
 
@@ -178,6 +197,7 @@ def _sync_default_action(dialog: object) -> None:
 
 def _appearance_page(dialog: object) -> QWidget:
     scroll = QScrollArea(dialog)
+    scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
     dialog._scroll = scroll
     scroll.setWidgetResizable(True)
     configure_accessible_widget(
@@ -244,12 +264,6 @@ def _appearance_page(dialog: object) -> QWidget:
 
     dialog._api_button.clicked.connect(open_services)
     layout.addWidget(dialog._api_button)
-    dialog._feedback = QLabel(content)
-    dialog._feedback.setWordWrap(True)
-    configure_accessible_widget(dialog._feedback, name=dialog._tr("设置结果"), state_text=dialog._last_notice)
-    ComponentStyle.apply_static(dialog._feedback, ComponentKind.NOTIFICATION)
-    dialog._feedback.setText(dialog._last_notice)
-    layout.addWidget(dialog._feedback)
     layout.addStretch(1)
     scroll.setWidget(content)
     return scroll
@@ -278,14 +292,19 @@ def _scroll_page(page: QWidget, parent: QWidget) -> QWidget:
     if isinstance(page, QScrollArea):
         return page
     scroll = QScrollArea(parent)
+    scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
     scroll.setWidgetResizable(True)
     scroll.setFrameShape(QScrollArea.Shape.NoFrame)
     scroll.setWidget(page)
     return scroll
 
 
-def _connect_check(dialog: object, button: QPushButton, status: QLabel, prepare, idle_text: str) -> None:
-    controller = SettingsConnectionController(button, status, prepare, idle_text=idle_text)
+def _connect_check(
+    dialog: object, button: QPushButton, status: QLabel, prepare, idle_text: str, watched_inputs: tuple[QWidget, ...]
+) -> None:
+    controller = SettingsConnectionController(
+        button, status, prepare, idle_text=idle_text, watched_inputs=watched_inputs
+    )
     dialog._connection_controllers.append(controller)
 
 

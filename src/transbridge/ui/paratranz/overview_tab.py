@@ -25,6 +25,7 @@ from transbridge.paratranz.api.paratranz_project_api import ParatranzProjectAPI
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, ElidedLabel, SemanticState
 
 from ..workers import ApiWorker
+from ._delete_confirmation import confirm_cloud_removal
 
 
 def _extract_list(data) -> list:
@@ -86,9 +87,12 @@ class EditProjectDialog(QDialog):
 
         btn_row = QHBoxLayout()
         btn_row.addStretch()
-        ok_btn = QPushButton("保存")
+        ok_btn = QPushButton("保存修改")
+        ComponentStyle.apply_static(ok_btn, ComponentKind.BUTTON)
+        ComponentStyle.apply_state(ok_btn, SemanticState.PRIMARY)
         ok_btn.clicked.connect(self._validate)
         cancel_btn = QPushButton("取消")
+        ComponentStyle.apply_static(cancel_btn, ComponentKind.BUTTON)
         cancel_btn.clicked.connect(self.reject)
         btn_row.addWidget(ok_btn)
         btn_row.addWidget(cancel_btn)
@@ -129,6 +133,7 @@ class OverviewTab(QWidget):
         self._ctx = ctx
         self._workers: list[ApiWorker] = []
         self._gen = 0
+        self._context_gen = 0
         self._init_ui()
         ctx.project_selected.connect(self.set_project)
         ctx.paratranz_permissions_changed.connect(self._refresh_permissions)
@@ -234,6 +239,8 @@ class OverviewTab(QWidget):
         self._del_btn.setVisible(False)
 
     def set_project(self, project: dict | None):
+        self._gen += 1
+        self._context_gen += 1
         if not project:
             self._set_empty()
             return
@@ -316,12 +323,13 @@ class OverviewTab(QWidget):
         self._del_btn.setVisible(is_admin)
 
     def _edit_project(self):
+        context_gen = self._context_gen
         project = self._ctx.current_project
         if not project:
             return
 
         dlg = EditProjectDialog(project, self)
-        if not dlg.exec():
+        if not dlg.exec() or self._context_gen != context_gen:
             return
 
         data = dlg.get_data()
@@ -333,6 +341,8 @@ class OverviewTab(QWidget):
             return api.update_project(project_id, data)
 
         def _on_done(updated: dict):
+            if self._context_gen != context_gen:
+                return
             # 合并更新字段到上下文中的项目对象（API 可能返回 None）
             merged = {**project, **updated} if isinstance(updated, dict) else {**project, **data}
             self._ctx.current_project = merged
@@ -340,21 +350,23 @@ class OverviewTab(QWidget):
 
         w = ApiWorker(_update)
         w.result.connect(_on_done)
-        w.error.connect(lambda e: QMessageBox.critical(self, "更新失败", e))
+        w.error.connect(
+            lambda e: QMessageBox.critical(self, "更新失败", e) if self._context_gen == context_gen else None
+        )
         w.start()
         self._workers.append(w)
 
     def _delete_project(self):
+        context_gen = self._context_gen
         project = self._ctx.current_project
         if not project:
             return
-        reply = QMessageBox.question(
+        reply = confirm_cloud_removal(
             self,
-            "确认删除",
             f"确定要删除项目「{project.get('name', '')}」吗？此操作不可撤销！",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            action_text="删除项目",
         )
-        if reply != QMessageBox.StandardButton.Yes:
+        if reply != QMessageBox.StandardButton.Yes or self._context_gen != context_gen:
             return
 
         config = self._ctx.config
@@ -365,12 +377,17 @@ class OverviewTab(QWidget):
             return api.delete_project(project_id)
 
         def _on_done(_):
+            if self._context_gen != context_gen:
+                self._ctx.project_list_changed.emit()
+                return
             self._ctx.current_project = None
             self._ctx.project_list_changed.emit()
             QMessageBox.information(self, "成功", "项目已删除")
 
         w = ApiWorker(_delete)
         w.result.connect(_on_done)
-        w.error.connect(lambda e: QMessageBox.critical(self, "删除失败", e))
+        w.error.connect(
+            lambda e: QMessageBox.critical(self, "删除失败", e) if self._context_gen == context_gen else None
+        )
         w.start()
         self._workers.append(w)

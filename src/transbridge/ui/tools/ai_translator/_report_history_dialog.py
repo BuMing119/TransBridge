@@ -26,8 +26,10 @@ from PyQt6.QtWidgets import (
 
 from transbridge.config.paths import get_data_dir
 from transbridge.ui.foundation.adapters import ThemeView
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState
 
 from ._theme_support import AiThemeBinding
+from .task_widget_style import configure_task_button, configure_task_host
 
 
 def _parse_report_filename(filename: str) -> dict:
@@ -105,6 +107,7 @@ class _ReportHistoryDialog(QDialog):
 
     def __init__(self, parent=None, *, theme_view: ThemeView | None = None):
         super().__init__(parent)
+        configure_task_host(self)
         self.setWindowTitle("历史报告")
         self.resize(750, 480)
         self._reports: list[dict] = []
@@ -114,6 +117,7 @@ class _ReportHistoryDialog(QDialog):
         # 表格
         headers = ["文件名", "类型", "插件名", "生成时间", "文件大小"]
         self._table = QTableWidget()
+        ComponentStyle.apply_static(self._table, ComponentKind.TABLE)
         self._table.setColumnCount(len(headers))
         self._table.setHorizontalHeaderLabels(headers)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -134,11 +138,16 @@ class _ReportHistoryDialog(QDialog):
         # 底部按钮
         bar = QHBoxLayout()
         self._btn_delete = QPushButton("删除选中")
+        configure_task_button(self._btn_delete)
+        ComponentStyle.apply_state(self._btn_delete, SemanticState.ERROR)
+        self._btn_delete.setAutoDefault(False)
         self._btn_delete.clicked.connect(self._on_delete_selected)
         self._btn_delete.setEnabled(False)
         bar.addWidget(self._btn_delete)
         bar.addStretch()
         btn_close = QPushButton("关闭")
+        configure_task_button(btn_close)
+        btn_close.setDefault(True)
         btn_close.clicked.connect(self.accept)
         bar.addWidget(btn_close)
         layout.addLayout(bar)
@@ -156,7 +165,12 @@ class _ReportHistoryDialog(QDialog):
         return self._theme_binding.revision
 
     def _populate(self):
+        selected_paths = {
+            self._reports[item.row()]["path"] for item in self._table.selectedItems() if item.row() < len(self._reports)
+        }
         self._reports = _scan_reports()
+        self._table.setRowCount(0)
+        self._btn_delete.setEnabled(False)
         if not self._reports:
             self._table.hide()
             self._empty_label.show()
@@ -172,8 +186,11 @@ class _ReportHistoryDialog(QDialog):
             ts_str = r["timestamp"].strftime("%Y-%m-%d %H:%M:%S") if r["timestamp"] else "?"
             self._table.setItem(i, 3, QTableWidgetItem(ts_str))
             self._table.setItem(i, 4, QTableWidgetItem(_format_size(r["size"])))
+            for column in range(self._table.columnCount()):
+                self._table.item(i, column).setSelected(r["path"] in selected_paths)
 
         self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self._btn_delete.setEnabled(bool(self._table.selectedItems()))
 
     def _on_double_click(self, row: int, col: int):
         if 0 <= row < len(self._reports):
@@ -183,7 +200,7 @@ class _ReportHistoryDialog(QDialog):
 
     def _on_context_menu(self, pos):
         row = self._table.currentRow()
-        if row < 0:
+        if not 0 <= row < len(self._reports):
             return
         menu = QMenu(self)
         open_action = menu.addAction("打开")
@@ -202,33 +219,44 @@ class _ReportHistoryDialog(QDialog):
 
     def _on_delete_selected(self):
         """删除所有选中的行。"""
-        rows = sorted(set(i.row() for i in self._table.selectedItems()), reverse=True)
-        if not rows:
+        rows = sorted({item.row() for item in self._table.selectedItems() if item.row() < len(self._reports)})
+        reports = [self._reports[row] for row in rows]
+        if not reports:
             return
         reply = QMessageBox.question(
             self,
             "删除报告",
             f"确定要删除 {len(rows)} 份报告吗？",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        for row in rows:
-            self._delete_row(row, confirm=False)
+        self._delete_reports(reports)
 
     def _delete_row(self, row: int, confirm: bool = True):
-        path = self._reports[row]["path"]
+        if not 0 <= row < len(self._reports):
+            return
+        report = self._reports[row]
         if confirm:
             reply = QMessageBox.question(
                 self,
                 "删除报告",
-                f"确定要删除报告「{self._reports[row]['filename']}」吗？",
+                f"确定要删除报告「{report['filename']}」吗？",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
-        try:
-            os.remove(path)
-        except OSError:
-            QMessageBox.warning(self, "删除失败", f"无法删除文件:\n{path}")
+        self._delete_reports([report])
+
+    def _delete_reports(self, reports):
+        failures = []
+        for report in reports:
+            try:
+                os.remove(report["path"])
+            except OSError as exc:
+                failures.append(f"{report['path']}\n{exc}")
         self._populate()
+        if failures:
+            QMessageBox.warning(self, "删除失败", "以下报告未删除，可处理原因后重试：\n\n" + "\n\n".join(failures))

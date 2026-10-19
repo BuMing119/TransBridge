@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QSignalBlocker, Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -33,17 +33,19 @@ _COL_ISSUES = 2
 _COL_REFINED = 3
 _COL_POLISHED = 4
 _COL_DECISION = 5
+_COL_SELECTION = 6
 
 _STATUS_ACCEPTED = "accepted"
 _STATUS_REJECTED = "rejected"
 _STATUS_PENDING = "pending"
+_STATUS_FAILED = "failed"
 
 
 class _PolishPreviewDialog(QDialog):
     """润色结果预览对话框。
 
-    六列展示：原文、当前译文、检测问题、纠错候选、最终候选和裁决。
-    每行可接受（使用润色结果）或拒绝（保留原译文）。
+    展示原文、当前译文、检测问题、纠错候选、最终候选、裁决和采用选择。
+    每行可反复选择采用候选或保留原译文；生成失败的条目不可采用。
     """
 
     def __init__(
@@ -64,6 +66,14 @@ class _PolishPreviewDialog(QDialog):
         self._populate()
         self._theme_binding = AiThemeBinding(self, theme_view, self._apply_theme)
 
+    def keyPressEvent(self, event) -> None:
+        # Reviewing a cell must not activate a bulk choice through QDialog's
+        # implicit default button. Explicitly focused buttons keep Enter support.
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and self._table.hasFocus():
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
     def _init_ui(self):
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
@@ -71,11 +81,11 @@ class _PolishPreviewDialog(QDialog):
         # ── 工具栏 ──────────────────────────────────────────────────────────
         toolbar = QHBoxLayout()
 
-        self._accept_all_btn = QPushButton("✓ 全部接受")
+        self._accept_all_btn = QPushButton("全部采用候选")
         self._accept_all_btn.clicked.connect(self._on_accept_all)
         toolbar.addWidget(self._accept_all_btn)
 
-        self._reject_all_btn = QPushButton("✗ 全部拒绝")
+        self._reject_all_btn = QPushButton("全部保留原译文")
         self._reject_all_btn.clicked.connect(self._on_reject_all)
         toolbar.addWidget(self._reject_all_btn)
 
@@ -85,16 +95,31 @@ class _PolishPreviewDialog(QDialog):
         toolbar.addWidget(self._stats_lbl)
 
         layout.addLayout(toolbar)
+        hint = QLabel("在“采用候选”列勾选采用、取消勾选保留原译文；确认应用前可随时更改。")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
 
         # ── 表格 ────────────────────────────────────────────────────────────
         self._table = QTableWidget()
-        self._table.setColumnCount(6)
-        self._table.setHorizontalHeaderLabels(["原文", "当前译文", "检测问题", "纠错候选", "最终候选", "裁决"])
+        self._table.setColumnCount(7)
+        self._table.setHorizontalHeaderLabels([
+            "原文",
+            "当前译文",
+            "检测问题",
+            "纠错候选",
+            "最终候选",
+            "裁决",
+            "采用候选",
+        ])
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._table.horizontalHeader().setSectionResizeMode(_COL_SELECTION, QHeaderView.ResizeMode.Fixed)
+        self._resize_choice_column()
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.setTabKeyNavigation(False)
         self._table.verticalHeader().setVisible(False)
         self._table.cellClicked.connect(self._on_cell_clicked)
+        self._table.itemChanged.connect(self._on_choice_changed)
         layout.addWidget(self._table)
 
         # ── 底部按钮 ────────────────────────────────────────────────────────
@@ -118,7 +143,7 @@ class _PolishPreviewDialog(QDialog):
         for row, entry in enumerate(self._entries):
             result = self._results.get(ai_entry_id(entry))
             if result is None:
-                self._row_status[row] = _STATUS_REJECTED
+                self._row_status[row] = _STATUS_FAILED
                 self._add_row(
                     row,
                     entry.original,
@@ -132,7 +157,7 @@ class _PolishPreviewDialog(QDialog):
                 continue
 
             failed = result.confidence <= 0
-            self._row_status[row] = _STATUS_REJECTED if failed else _STATUS_PENDING
+            self._row_status[row] = _STATUS_FAILED if failed else _STATUS_PENDING
             issues = "\n".join(f"[{issue.severity}] {issue.message}" for issue in getattr(result, "issues", ())) or "无"
             decision = f"{getattr(result, 'verdict', 'pending')} ({result.confidence:.2f})"
             if result.note:
@@ -171,54 +196,92 @@ class _PolishPreviewDialog(QDialog):
 
         for col, item in enumerate(items):
             self._table.setItem(row, col, item)
+        choice = QTableWidgetItem()
+        choice.setFlags(choice.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+        if failed:
+            choice.setFlags(choice.flags() & ~Qt.ItemFlag.ItemIsEnabled & ~Qt.ItemFlag.ItemIsUserCheckable)
+            choice.setToolTip("未生成有效候选，将保留原译文。")
+        else:
+            choice.setToolTip("勾选采用候选，取消勾选保留原译文；可随时更改。")
+        with QSignalBlocker(self._table):
+            self._table.setItem(row, _COL_SELECTION, choice)
+        self._refresh_row(row)
 
     def _on_cell_clicked(self, row: int, col: int):
         if col != _COL_POLISHED:
             return
-        if self._row_status.get(row) == _STATUS_REJECTED:
+        if self._row_status.get(row) == _STATUS_FAILED:
             return
 
         current_status = self._row_status.get(row, _STATUS_PENDING)
-        if current_status == _STATUS_ACCEPTED:
-            self._row_status[row] = _STATUS_REJECTED
-            self._table.item(row, _COL_POLISHED).setData(Qt.ItemDataRole.UserRole, _STATUS_REJECTED)
-        else:
-            self._row_status[row] = _STATUS_ACCEPTED
-            self._table.item(row, _COL_POLISHED).setData(Qt.ItemDataRole.UserRole, _STATUS_ACCEPTED)
-
-        self._refresh_row(row)
+        self._set_row_status(row, _STATUS_REJECTED if current_status == _STATUS_ACCEPTED else _STATUS_ACCEPTED)
         self._update_stats()
+
+    def _on_choice_changed(self, item: QTableWidgetItem) -> None:
+        if item.column() != _COL_SELECTION or item.checkState() == Qt.CheckState.PartiallyChecked:
+            return
+        self._set_row_status(
+            item.row(), _STATUS_ACCEPTED if item.checkState() == Qt.CheckState.Checked else _STATUS_REJECTED
+        )
+        self._update_stats()
+
+    def _set_row_status(self, row: int, status: str) -> None:
+        if self._row_status.get(row) == _STATUS_FAILED:
+            return
+        self._row_status[row] = status
+        self._table.item(row, _COL_POLISHED).setData(Qt.ItemDataRole.UserRole, status)
+        self._refresh_row(row)
 
     def _on_accept_all(self):
         for row in range(self._table.rowCount()):
-            if self._row_status.get(row) != _STATUS_REJECTED:
-                self._row_status[row] = _STATUS_ACCEPTED
-                self._table.item(row, _COL_POLISHED).setData(Qt.ItemDataRole.UserRole, _STATUS_ACCEPTED)
-                self._refresh_row(row)
+            self._set_row_status(row, _STATUS_ACCEPTED)
         self._update_stats()
 
     def _on_reject_all(self):
         for row in range(self._table.rowCount()):
-            self._row_status[row] = _STATUS_REJECTED
-            if self._table.item(row, _COL_POLISHED):
-                self._table.item(row, _COL_POLISHED).setData(Qt.ItemDataRole.UserRole, _STATUS_REJECTED)
-            self._refresh_row(row)
+            self._set_row_status(row, _STATUS_REJECTED)
         self._update_stats()
 
     def _update_stats(self):
         accepted = sum(1 for s in self._row_status.values() if s == _STATUS_ACCEPTED)
         rejected = sum(1 for s in self._row_status.values() if s == _STATUS_REJECTED)
         pending = sum(1 for s in self._row_status.values() if s == _STATUS_PENDING)
+        failed = sum(1 for s in self._row_status.values() if s == _STATUS_FAILED)
         total = len(self._row_status)
-        self._stats_lbl.setText(f"接受: {accepted}  |  拒绝: {rejected}  |  待处理: {pending}  |  共 {total} 条")
+        self._stats_lbl.setText(f"采用 {accepted} · 保留 {rejected} · 待选 {pending} · 失败 {failed} · 共 {total} 条")
         self._stats_lbl.setAccessibleName("润色选择状态")
         self._stats_lbl.setAccessibleDescription(self._stats_lbl.text())
 
     def _apply_theme(self, binding: AiThemeBinding) -> None:
+        self._resize_choice_column()
         for row in range(self._table.rowCount()):
             self._refresh_row(row, binding)
 
+    def _resize_choice_column(self) -> None:
+        # Reserve checkbox and longest label space so choosing an option never moves the click target.
+        self._table.setColumnWidth(_COL_SELECTION, self._table.fontMetrics().horizontalAdvance("保留原译文") + 48)
+
     def _refresh_row(self, row: int, binding: AiThemeBinding | None = None) -> None:
+        status = self._row_status[row]
+        choice = self._table.item(row, _COL_SELECTION)
+        if choice is not None:
+            with QSignalBlocker(self._table):
+                choice.setText(
+                    {
+                        _STATUS_ACCEPTED: "采用候选",
+                        _STATUS_REJECTED: "保留原译文",
+                        _STATUS_PENDING: "待选择",
+                        _STATUS_FAILED: "生成失败",
+                    }[status]
+                )
+                if status != _STATUS_FAILED:
+                    choice.setCheckState(
+                        {
+                            _STATUS_ACCEPTED: Qt.CheckState.Checked,
+                            _STATUS_REJECTED: Qt.CheckState.Unchecked,
+                            _STATUS_PENDING: Qt.CheckState.PartiallyChecked,
+                        }[status]
+                    )
         binding = binding or getattr(self, "_theme_binding", None)
         if binding is None or binding.domain is None:
             return

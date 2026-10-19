@@ -23,6 +23,7 @@ from transbridge.ui.foundation.adapters import DomainBrushes, ThemeView
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState
 
 from ..workers import ApiWorker
+from ._delete_confirmation import confirm_cloud_removal
 from ._layout_stability import configure_stable_table_columns
 from ._strings_common import _STAGE_LABELS, _extract_list
 from .string_detail_dialog import StringDetailDialog
@@ -48,6 +49,7 @@ class StringsTab(QWidget):
         self._project_id: int | None = None
         self._files_gen = 0
         self._strings_gen = 0
+        self._loaded_query: dict | None = None
         self._init_ui()
         ctx.project_selected.connect(self._on_project_changed)
         ctx.paratranz_permissions_changed.connect(self._refresh_permissions)
@@ -60,31 +62,36 @@ class StringsTab(QWidget):
         filter_row.addWidget(QLabel("文件:"))
         self._file_combo = QComboBox()
         self._file_combo.setMinimumWidth(140)
-        filter_row.addWidget(self._file_combo)
+        self._file_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self._file_combo.setMinimumContentsLength(8)
+        filter_row.addWidget(self._file_combo, 1)
 
         filter_row.addWidget(QLabel("状态:"))
         self._stage_combo = QComboBox()
         for val, name in _STAGE_LABELS.items():
             self._stage_combo.addItem(name, val)
         filter_row.addWidget(self._stage_combo)
+        layout.addLayout(filter_row)
 
-        filter_row.addWidget(QLabel("页码:"))
+        page_row = QHBoxLayout()
+        page_row.addWidget(QLabel("页码:"))
         self._page_spin = QSpinBox()
         self._page_spin.setRange(1, 9999)
-        self._page_spin.setFixedWidth(60)
-        filter_row.addWidget(self._page_spin)
+        self._page_spin.setMinimumWidth(60)
+        page_row.addWidget(self._page_spin)
 
-        filter_row.addWidget(QLabel("每页:"))
+        page_row.addWidget(QLabel("每页:"))
         self._page_size_combo = QComboBox()
         for sz in (50, 100, 200, 500):
             self._page_size_combo.addItem(str(sz), sz)
-        filter_row.addWidget(self._page_size_combo)
+        page_row.addWidget(self._page_size_combo)
 
-        refresh_btn = QPushButton("查询")
-        refresh_btn.clicked.connect(self.load_strings)
-        filter_row.addWidget(refresh_btn)
-        filter_row.addStretch()
-        layout.addLayout(filter_row)
+        self._query_btn = QPushButton("查询")
+        self._query_btn.setEnabled(False)
+        self._query_btn.clicked.connect(self.load_strings)
+        page_row.addStretch()
+        page_row.addWidget(self._query_btn)
+        layout.addLayout(page_row)
 
         # 工具栏
         toolbar = QHBoxLayout()
@@ -99,6 +106,7 @@ class StringsTab(QWidget):
         ComponentStyle.apply_state(self._batch_del_btn, SemanticState.ERROR)
         self._batch_del_btn.clicked.connect(self._batch_delete)
         hint = QLabel("双击词条可查看详情/编辑")
+        hint.setWordWrap(True)
         hint.setAccessibleName("词条操作提示")
         ComponentStyle.apply_state(hint, SemanticState.INFO)
         toolbar.addWidget(self._create_btn)
@@ -106,8 +114,13 @@ class StringsTab(QWidget):
             btn.setEnabled(False)
             toolbar.addWidget(btn)
         toolbar.addStretch()
-        toolbar.addWidget(hint)
         layout.addLayout(toolbar)
+        layout.addWidget(hint)
+        self._query_status = QLabel("选择项目查看词条")
+        self._query_status.setTextFormat(Qt.TextFormat.PlainText)
+        self._query_status.setWordWrap(True)
+        self._query_status.setAccessibleName("词条查询状态")
+        layout.addWidget(self._query_status)
 
         # 词条列表
         self._table = QTableWidget(0, 7)
@@ -128,11 +141,18 @@ class StringsTab(QWidget):
         layout.addWidget(self._table, stretch=1)
 
     def _on_project_changed(self, project):
+        self._files_gen += 1
+        self._strings_gen += 1
         self._project_id = project.get("id") if project else None
         self._strings = []
+        self._files = []
+        self._loaded_query = None
         self._table.setRowCount(0)
         self._file_combo.clear()
         self._file_combo.addItem("全部文件", None)
+        self._page_spin.setValue(1)
+        self._query_btn.setEnabled(bool(self._project_id))
+        self._query_status.setText("选择项目查看词条")
         self._create_btn.setEnabled(bool(self._project_id) and self._ctx.is_admin())
         if self._project_id:
             self._load_files_for_filter()
@@ -158,42 +178,77 @@ class StringsTab(QWidget):
             for f in files:
                 self._file_combo.addItem(f.get("name", str(f.get("id"))), f.get("id"))
 
+        def _on_error(error):
+            if self._files_gen != gen:
+                return
+            answer = QMessageBox.warning(
+                self,
+                "无法加载文件列表",
+                f"文件列表加载失败：{error}\n\n点击“重试”重新加载文件筛选；取消后仍可查询全部文件的词条。",
+                QMessageBox.StandardButton.Retry | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if answer == QMessageBox.StandardButton.Retry and self._files_gen == gen and self._project_id == pid:
+                self._load_files_for_filter()
+
         w = ApiWorker(_fetch)
         w.result.connect(_on_done)
-        w.error.connect(lambda _: None)
+        w.error.connect(_on_error)
         w.start()
         self._workers.append(w)
+
+    def _query_options(self) -> dict:
+        stage = self._stage_combo.currentData()
+        return {
+            "file_id": self._file_combo.currentData(),
+            "stage": stage if stage != -2 else None,
+            "page": self._page_spin.value(),
+            "page_size": self._page_size_combo.currentData(),
+        }
 
     def load_strings(self):
         if not self._project_id:
             return
         config = self._ctx.config
         pid = self._project_id
-        file_id = self._file_combo.currentData()
-        stage_val = self._stage_combo.currentData()
-        stage = stage_val if stage_val != -2 else None
-        page = self._page_spin.value()
-        page_size = self._page_size_combo.currentData()
+        query = self._query_options()
         self._strings_gen += 1
         gen = self._strings_gen
+        self._strings = []
+        self._loaded_query = None
+        self._table.setRowCount(0)
+        self._query_status.setText(f"正在加载第 {query['page']} 页…")
 
         def _fetch():
             api = ParatranzStringsAPI(token=config.token, config=config)
-            return _extract_list(api.list_strings(pid, page=page, page_size=page_size, file=file_id, stage=stage))
+            return _extract_list(
+                api.list_strings(
+                    pid, page=query["page"], page_size=query["page_size"], file=query["file_id"], stage=query["stage"]
+                )
+            )
 
         def _on_done(strings):
             if self._strings_gen != gen:
                 return
+            self._loaded_query = query
             self._on_strings_loaded(strings)
+
+        def _on_error(error):
+            if self._strings_gen == gen:
+                self._query_status.setText(f"第 {query['page']} 页加载失败：{error}\n请点击查询重试。")
 
         w = ApiWorker(_fetch)
         w.result.connect(_on_done)
-        w.error.connect(lambda e: QMessageBox.warning(self, "加载失败", e))
+        w.error.connect(_on_error)
         w.start()
         self._workers.append(w)
 
     def _on_strings_loaded(self, strings: list):
         self._strings = strings
+        if self._loaded_query is None:
+            self._loaded_query = self._query_options()
+        page = self._loaded_query["page"]
+        self._query_status.setText(f"第 {page} 页 · 共 {len(strings)} 条" if strings else f"第 {page} 页没有匹配的词条")
         self._table.setRowCount(len(strings))
         for row, s in enumerate(strings):
             stage = s.get("stage", 0)
@@ -251,20 +306,13 @@ class StringsTab(QWidget):
         row = item.row()
         if not self._strings or row >= len(self._strings):
             return
-        file_id = self._file_combo.currentData()
-        stage_val = self._stage_combo.currentData()
-        stage = stage_val if stage_val != -2 else None
-        page = self._page_spin.value()
-        page_size = self._page_size_combo.currentData()
+        query = self._loaded_query or self._query_options()
         dlg = StringDetailDialog(
             self._strings,
             row,
             self._ctx,
             self._project_id,
-            file_id=file_id,
-            stage=stage,
-            page=page,
-            page_size=page_size,
+            **query,
             parent=self,
             theme_view=self._theme_view,
             domain_brushes=self._domain_brushes,
@@ -275,64 +323,72 @@ class StringsTab(QWidget):
             self.load_strings()
 
     def _batch_set_stage(self):
+        pid = self._project_id
         rows = list({i.row() for i in self._table.selectedItems()})
         ids = [self._table.item(r, 0).data(Qt.ItemDataRole.UserRole).get("id") for r in rows]
 
         dlg = _BatchStageDialog(len(ids), self)
         if not dlg.exec():
             return
+        if pid != self._project_id:
+            self._query_status.setText("项目已切换，未提交此前的词条修改。请重新选择词条。")
+            return
         target_stage = dlg.get_stage()
         config = self._ctx.config
-        pid = self._project_id
 
         def _update():
             api = ParatranzStringsAPI(token=config.token, config=config)
             return api.batch_strings(pid, "update", ids, stage=target_stage)
 
         w = ApiWorker(_update)
-        w.result.connect(lambda _: self.load_strings())
-        w.error.connect(lambda e: QMessageBox.critical(self, "操作失败", e))
+        w.result.connect(lambda _: self.load_strings() if self._project_id == pid else None)
+        w.error.connect(lambda e: QMessageBox.critical(self, "操作失败", e) if self._project_id == pid else None)
         w.start()
         self._workers.append(w)
 
     def _batch_delete(self):
+        pid = self._project_id
         rows = list({i.row() for i in self._table.selectedItems()})
         ids = [self._table.item(r, 0).data(Qt.ItemDataRole.UserRole).get("id") for r in rows]
-        reply = QMessageBox.question(
+        reply = confirm_cloud_removal(
             self,
-            "确认删除",
             f"确定要删除选中的 {len(ids)} 条词条吗？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            action_text="删除词条",
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
+        if pid != self._project_id:
+            self._query_status.setText("项目已切换，未删除此前选择的词条。请重新选择词条。")
+            return
         config = self._ctx.config
-        pid = self._project_id
 
         def _delete():
             api = ParatranzStringsAPI(token=config.token, config=config)
             return api.batch_strings(pid, "delete", ids)
 
         w = ApiWorker(_delete)
-        w.result.connect(lambda _: self.load_strings())
-        w.error.connect(lambda e: QMessageBox.critical(self, "删除失败", e))
+        w.result.connect(lambda _: self.load_strings() if self._project_id == pid else None)
+        w.error.connect(lambda e: QMessageBox.critical(self, "删除失败", e) if self._project_id == pid else None)
         w.start()
         self._workers.append(w)
 
     def _create_string(self):
+        pid = self._project_id
         dlg = _CreateStringDialog(self._files, self)
         if not dlg.exec():
             return
+        if pid != self._project_id:
+            self._query_status.setText("项目已切换，未在当前项目创建词条。请重新填写。")
+            return
         data = dlg.get_data()
         config = self._ctx.config
-        pid = self._project_id
 
         def _create():
             api = ParatranzStringsAPI(token=config.token, config=config)
             return api.create_string(pid, data)
 
         w = ApiWorker(_create)
-        w.result.connect(lambda _: self.load_strings())
-        w.error.connect(lambda e: QMessageBox.critical(self, "创建失败", e))
+        w.result.connect(lambda _: self.load_strings() if self._project_id == pid else None)
+        w.error.connect(lambda e: QMessageBox.critical(self, "创建失败", e) if self._project_id == pid else None)
         w.start()
         self._workers.append(w)

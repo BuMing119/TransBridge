@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QPoint, QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QMouseEvent
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QWidget
+from PyQt6.QtGui import QMouseEvent
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget
 
 from transbridge.smart_assistant.service_readiness import ServiceAvailability
 from transbridge.ui.foundation.components import ElidedLabel
@@ -23,10 +23,9 @@ class _HeaderSummary(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         self._caption = QLabel(caption)
-        self._caption.setFixedWidth(32)
-        self._caption.setFont(QFont("Microsoft YaHei", 8))
+        self._caption.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
         self._value = ElidedLabel(value)
-        self._value.setFont(QFont("Microsoft YaHei", 9, QFont.Weight.DemiBold))
+        self._value.setStyleSheet("QLabel { font-weight: 600; }")
         layout.addWidget(self._caption)
         layout.addWidget(self._value)
         self.apply_theme(theme)
@@ -37,7 +36,8 @@ class _HeaderSummary(QWidget):
 
     def apply_theme(self, theme: SmartAssistantTheme) -> None:
         self._theme = theme
-        theme.apply_surface(self)
+        theme.apply_surface(self, alternate=True)
+        self.setAutoFillBackground(False)
         theme.apply_semantic(self._caption, "muted")
         theme.apply_semantic(self._value, "default")
 
@@ -65,7 +65,7 @@ class AssistantPanelHeader(QFrame):
         layout.setSpacing(8)
         self._title = ElidedLabel("新对话")
         self._title.setAccessibleName("当前会话")
-        self._title.setFont(QFont("Microsoft YaHei", 10, QFont.Weight.DemiBold))
+        self._title.setStyleSheet("QLabel { font-weight: 600; }")
         layout.addWidget(self._title, 2)
 
         self._model = _HeaderSummary("模型", "模型未配置", theme=self._theme)
@@ -125,7 +125,7 @@ class AssistantPanelHeader(QFrame):
 
     def apply_theme(self, theme: SmartAssistantTheme) -> None:
         self._theme = theme
-        theme.apply_surface(self)
+        theme.apply_surface(self, alternate=True)
         theme.apply_semantic(self._title, "default")
         self._model.apply_theme(theme)
         for button in (self._minimize_button, self._close_button):

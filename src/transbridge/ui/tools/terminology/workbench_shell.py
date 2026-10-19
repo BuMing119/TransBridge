@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtCore import QEvent, QSize, Qt, QTimer
 from PyQt6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QFrame,
     QHBoxLayout,
@@ -61,10 +62,9 @@ class TerminologyWorkbenchShell(QWidget):
         project_layout = QHBoxLayout(project)
         project_layout.setContentsMargins(16, 0, 0, 0)
         project_layout.setSpacing(12)
-        project_icon = QLabel(project)
-        project_icon.setPixmap(tabler_icon(project_icon, "folder", 21).pixmap(QSize(21, 21)))
-        project_icon.setAccessibleName("当前项目")
-        project_layout.addWidget(project_icon)
+        self._project_icon = QLabel(project)
+        self._project_icon.setAccessibleName("当前项目")
+        project_layout.addWidget(self._project_icon)
         self.project_name = QLabel("正在读取当前项目", project)
         self.project_name.setProperty("tbTerminologyProjectTitle", True)
         project_layout.addWidget(self.project_name, 1)
@@ -99,10 +99,9 @@ class TerminologyWorkbenchShell(QWidget):
         self._buttons.setExclusive(True)
         self._area_buttons: dict[TerminologyArea, QToolButton] = {}
         self._area_indices: dict[TerminologyArea, int] = {}
-        for index, (area, label, icon_id) in enumerate(TERMINOLOGY_AREAS):
+        for index, (area, label, _icon_id) in enumerate(TERMINOLOGY_AREAS):
             button = QToolButton(self.navigation)
             button.setText(label)
-            button.setIcon(tabler_icon(button, icon_id, 20))
             button.setIconSize(QSize(20, 20))
             button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
             button.setProperty("tbTerminologyCompactNav", True)
@@ -124,6 +123,31 @@ class TerminologyWorkbenchShell(QWidget):
         self._notice_slot = QVBoxLayout()
         self._notice_slot.setContentsMargins(0, 0, 0, 0)
         surface_layout.addLayout(self._notice_slot)
+        self._icon_refresh_timer = QTimer(self)
+        self._icon_refresh_timer.setSingleShot(True)
+        self._icon_refresh_timer.timeout.connect(self._refresh_icons)
+        self._refresh_icons()
+
+    def _refresh_icons(self) -> None:
+        # QSS can replace per-widget disabled roles; artwork uses the theme palette.
+        palette = QApplication.palette()
+        self._project_icon.setPixmap(
+            tabler_icon(self._project_icon, "folder", 21, palette=palette).pixmap(QSize(21, 21))
+        )
+        for area, _label, icon_id in TERMINOLOGY_AREAS:
+            button = self._area_buttons[area]
+            button.setIcon(tabler_icon(button, icon_id, 20, palette=palette))
+
+    def changeEvent(self, event: QEvent) -> None:  # noqa: N802 - Qt override
+        super().changeEvent(event)
+        timer = getattr(self, "_icon_refresh_timer", None)
+        if timer is not None and event.type() in {
+            QEvent.Type.ApplicationPaletteChange,
+            QEvent.Type.PaletteChange,
+            QEvent.Type.StyleChange,
+        }:
+            # Child palettes and QSS finish updating before artwork is rendered.
+            timer.start(0)
 
     @property
     def labels(self) -> tuple[str, ...]:

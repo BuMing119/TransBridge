@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from copy import deepcopy
+from dataclasses import replace
 
 from PyQt6.QtCore import QObject
-from PyQt6.QtWidgets import QLabel, QPushButton
+from PyQt6.QtWidgets import QLabel, QPushButton, QWidget
 
+from transbridge.ui.foundation.accessibility import configure_accessible_widget, update_accessible_state
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState
 from transbridge.ui.tools.ai_translator.config_presenter import ConnectionTestResult, check_llm_connection
 from transbridge.ui.workers import ApiWorker
+
+from .page_common import signal_dirty
 
 _ACTIVE_WORKERS: set[ApiWorker] = set()
 
@@ -24,6 +29,7 @@ class SettingsConnectionController(QObject):
         prepare: Callable[[], Callable[[], ConnectionTestResult]],
         *,
         idle_text: str,
+        watched_inputs: Iterable[QWidget] = (),
     ) -> None:
         super().__init__(button)
         self._button = button
@@ -32,7 +38,13 @@ class SettingsConnectionController(QObject):
         self._idle_text = idle_text
         self._worker: ApiWorker | None = None
         self._closed = False
+        self._input_revision = 0
+        self._check_revision = 0
+        ComponentStyle.apply_static(button, ComponentKind.BUTTON)
+        configure_accessible_widget(status, name="连接检查结果", state_text=status.text())
         button.clicked.connect(self.start)
+        for widget in watched_inputs:
+            signal_dirty(widget, self._invalidate_result)
 
     @property
     def is_running(self) -> bool:
@@ -47,6 +59,7 @@ class SettingsConnectionController(QObject):
             self._present(ConnectionTestResult("critical", "配置无效", "请检查当前页面的配置。"))
             return False
         worker = ApiWorker(operation, route_http_errors=False)
+        self._check_revision = self._input_revision
         self._worker = worker
         _ACTIVE_WORKERS.add(worker)
         worker.result.connect(self._on_result)
@@ -55,7 +68,7 @@ class SettingsConnectionController(QObject):
         worker.finished.connect(lambda: _release_worker(worker))
         self._button.setEnabled(False)
         self._button.setText("正在测试…")
-        self._status.setText("正在后台检查连接…")
+        self._set_status("正在后台检查连接…", "running", SemanticState.INFO)
         worker.start()
         return True
 
@@ -75,12 +88,16 @@ class SettingsConnectionController(QObject):
                 pass
 
     def _on_result(self, result: object) -> None:
+        if self._check_revision != self._input_revision:
+            return
         if isinstance(result, ConnectionTestResult):
             self._present(result)
         else:
             self._on_error("invalid result")
 
     def _on_error(self, _message: str) -> None:
+        if self._check_revision != self._input_revision:
+            return
         self._present(ConnectionTestResult("critical", "连接失败", "连接失败，请检查服务地址和凭据。"))
 
     def _on_finished(self) -> None:
@@ -88,18 +105,47 @@ class SettingsConnectionController(QObject):
         if not self._closed:
             self._button.setEnabled(True)
             self._button.setText(self._idle_text)
+            if self._check_revision != self._input_revision:
+                self._set_status("配置已更改，请重新验证。", "pending", SemanticState.INFO)
+
+    def _invalidate_result(self) -> None:
+        if self._closed:
+            return
+        self._input_revision += 1
+        message = (
+            "配置已更改，本次检查针对修改前的配置；完成后请重新验证。"
+            if self.is_running
+            else "配置已更改，请重新验证。"
+        )
+        self._set_status(message, "pending", SemanticState.INFO)
 
     def _present(self, result: ConnectionTestResult) -> None:
         if self._closed:
             return
         message = result.message if result.level != "critical" else "连接失败，请检查服务地址、模型和凭据。"
+        state = {
+            "critical": SemanticState.ERROR,
+            "warning": SemanticState.WARNING,
+            "success": SemanticState.SUCCESS,
+        }.get(result.level, SemanticState.INFO)
+        self._set_status(message, state.value, state)
+
+    def _set_status(self, message: str, status_id: str, state: SemanticState) -> None:
         self._status.setText(message)
-        self._status.setProperty("tbStatusId", "error" if result.level == "critical" else "success")
+        self._status.setProperty("tbStatusId", status_id)
+        ComponentStyle.apply_state(self._status, state)
+        update_accessible_state(self._status, message)
 
 
 def llm_operation(config: object) -> Callable[[], ConnectionTestResult]:
     snapshot = _execution_copy(config)
-    return lambda: check_llm_connection(snapshot)
+
+    def check() -> ConnectionTestResult:
+        result = check_llm_connection(snapshot)
+        # The legacy LLM check uses info only after receiving a model reply.
+        return replace(result, level="success") if result.level == "info" else result
+
+    return check
 
 
 def embedding_operation(config: object) -> Callable[[], ConnectionTestResult]:
@@ -125,7 +171,7 @@ def check_embedding_connection(config: object) -> ConnectionTestResult:
         vectors = client.encode(["TransBridge semantic retrieval check"])
         if getattr(vectors, "shape", (0, 0))[0] != 1:
             raise RuntimeError("invalid embedding result")
-        return ConnectionTestResult("info", "语义检索可用", f"编码成功，向量维度 {int(vectors.shape[1])}。")
+        return ConnectionTestResult("success", "语义检索可用", f"编码成功，向量维度 {int(vectors.shape[1])}。")
     except Exception:
         return ConnectionTestResult("critical", "语义检索检查失败", "语义检索服务不可用。")
 
@@ -148,7 +194,7 @@ def paratranz_operation(
         finally:
             api.close()
         nickname = user.get("nickname") or user.get("username") or "当前账户" if isinstance(user, dict) else "当前账户"
-        return ConnectionTestResult("info", "ParaTranz 连接成功", f"验证成功：{nickname}")
+        return ConnectionTestResult("success", "ParaTranz 连接成功", f"验证成功：{nickname}")
 
     return check
 

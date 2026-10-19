@@ -5,7 +5,7 @@ ProjectListPanel: ParaTranz 管理模式左侧项目列表面板。
 
 from datetime import datetime
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QSignalBlocker, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -27,6 +27,7 @@ from transbridge.application.projects import ParaTranzProjectBinding
 from transbridge.paratranz.api.paratranz_project_api import ParatranzProjectAPI
 from transbridge.paratranz.project_catalog import ParaTranzCatalogKey, ParaTranzProjectCatalog
 from transbridge.paratranz.service import ParaTranzService
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState
 
 from ..workers import ApiWorker
 
@@ -89,9 +90,12 @@ class NewProjectDialog(QDialog):
 
         btn_row = QHBoxLayout()
         btn_row.addStretch()
-        ok_btn = QPushButton("创建")
+        ok_btn = QPushButton("创建项目")
+        ComponentStyle.apply_static(ok_btn, ComponentKind.BUTTON)
+        ComponentStyle.apply_state(ok_btn, SemanticState.PRIMARY)
         ok_btn.clicked.connect(self._validate)
         cancel_btn = QPushButton("取消")
+        ComponentStyle.apply_static(cancel_btn, ComponentKind.BUTTON)
         cancel_btn.clicked.connect(self.reject)
         btn_row.addWidget(ok_btn)
         btn_row.addWidget(cancel_btn)
@@ -125,6 +129,7 @@ class ProjectListPanel(QWidget):
         super().__init__(parent)
         self._ctx = ctx
         self._all_projects: list[dict] = []
+        self._load_status: str | None = None
         self._workers: list[ApiWorker] = []
         self._gen = 0
         self._bind_gen = 0
@@ -150,56 +155,64 @@ class ProjectListPanel(QWidget):
         # 搜索
         self._search = QLineEdit()
         self._search.setPlaceholderText("搜索项目…")
+        self._search.setClearButtonEnabled(True)
+        self._search.setAccessibleName("搜索 ParaTranz 项目")
         self._search.textChanged.connect(self._apply_filter)
         layout.addWidget(self._search)
 
         # 工具栏
         toolbar = QHBoxLayout()
         refresh_btn = QPushButton("刷新")
-        refresh_btn.setFixedHeight(26)
+        refresh_btn.setMinimumHeight(26)
         refresh_btn.clicked.connect(self.load_projects)
-        self._bind_btn = QPushButton("设为当前工程同步目标")
-        self._bind_btn.setFixedHeight(26)
-        self._bind_btn.setEnabled(False)
-        self._bind_btn.setToolTip("只有点击此按钮才会修改本地工程绑定；浏览项目不会改变同步目标")
-        self._bind_btn.clicked.connect(self._bind_selected_project)
         new_btn = QPushButton("新建")
-        new_btn.setFixedHeight(26)
+        new_btn.setMinimumHeight(26)
         new_btn.clicked.connect(self._create_project)
         toolbar.addWidget(refresh_btn)
-        toolbar.addWidget(self._bind_btn)
         toolbar.addStretch()
         toolbar.addWidget(new_btn)
         layout.addLayout(toolbar)
 
         # 项目列表
         self._list = QListWidget()
-        self._list.itemClicked.connect(self._on_item_clicked)
+        self._list.currentItemChanged.connect(self._on_item_clicked)
+        self._list.itemSelectionChanged.connect(self._update_bind_button)
         layout.addWidget(self._list, stretch=1)
+
+        self._bind_btn = QPushButton("设为同步目标")
+        self._bind_btn.setMinimumHeight(26)
+        self._bind_btn.setEnabled(False)
+        self._bind_btn.setAccessibleName("设为当前工程同步目标")
+        self._bind_btn.setToolTip("只有点击此按钮才会修改本地工程绑定；浏览项目不会改变同步目标")
+        self._bind_btn.clicked.connect(self._bind_selected_project)
+        layout.addWidget(self._bind_btn)
 
         self._status = QLabel("加载中…")
         self._status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._status.setWordWrap(True)
         layout.addWidget(self._status)
 
-        if self._ctx.config.token:
-            self.load_projects()
+        self.load_projects()
 
     def load_projects(self):
         config = self._ctx.config
+        self._gen += 1
+        gen = self._gen
+        self._all_projects = []
         if not config.token:
-            self._status.setText("未配置 Token")
+            self._load_status = "未配置 Token"
+            self._apply_filter()
             return
 
         show_mine = self._tab_bar.currentIndex() == 1
         uid = config.user_id if show_mine else None
         if show_mine and uid is None:
-            self._status.setText("未获取到用户 ID，请重新验证 Token")
+            self._load_status = "未获取到用户 ID，请重新验证 Token"
+            self._apply_filter()
             return
 
-        self._status.setText("加载中…")
-        self._list.clear()
-        self._gen += 1
-        gen = self._gen
+        self._load_status = "加载中…"
+        self._apply_filter()
 
         def _fetch():
             api = ParatranzProjectAPI(token=config.token, config=config)
@@ -218,38 +231,67 @@ class ProjectListPanel(QWidget):
                 return
             self._on_projects_loaded(projects, is_mine=show_mine)
 
+        def _on_error(error):
+            if self._gen == gen:
+                self._load_status = f"加载失败：{error}"
+                self._update_status()
+
         w = ApiWorker(_fetch)
         w.result.connect(_on_done)
-        w.error.connect(lambda e: self._status.setText(f"加载失败：{e}"))
+        w.error.connect(_on_error)
         w.start()
         self._workers.append(w)
 
     def _on_projects_loaded(self, projects: list, is_mine: bool = False):
         self._all_projects = projects
+        self._load_status = None
         if is_mine:
             self._ctx.mine_project_ids = {p["id"] for p in projects if p.get("id") is not None}
         self._apply_filter()
-        self._status.setText(f"共 {len(projects)} 个项目")
 
     def _apply_filter(self):
         keyword = self._search.text().strip().lower()
-        self._list.clear()
-        for p in self._all_projects:
-            name = p.get("name", "")
-            if keyword and keyword not in name.lower():
-                continue
-            item = QListWidgetItem(name)
-            item.setData(Qt.ItemDataRole.UserRole, p)
-            src = p.get("source", "?")
-            dest = p.get("dest", "?")
-            item.setToolTip(f"{src} → {dest}  |  成员数: {p.get('total', '?')}")
-            self._list.addItem(item)
+        current_id = (self._ctx.current_project or {}).get("id")
+        with QSignalBlocker(self._list):
+            self._list.clear()
+            for p in self._all_projects:
+                name = p.get("name", "")
+                if keyword and keyword not in name.lower():
+                    continue
+                item = QListWidgetItem(name)
+                item.setData(Qt.ItemDataRole.UserRole, p)
+                src = p.get("source", "?")
+                dest = p.get("dest", "?")
+                item.setToolTip(f"{src} → {dest}  |  成员数: {p.get('total', '?')}")
+                self._list.addItem(item)
+                if current_id is not None and p.get("id") == current_id:
+                    self._list.setCurrentItem(item)
+        self._update_bind_button()
+        self._update_status()
 
-    def _on_item_clicked(self, item: QListWidgetItem):
-        project = item.data(Qt.ItemDataRole.UserRole)
+    def _update_bind_button(self):
+        self._bind_btn.setEnabled(
+            self._list.isEnabled() and bool(self._list.selectedItems()) and self._ctx.active_project_id is not None
+        )
+
+    def _update_status(self):
+        if not self._list.isEnabled():
+            return  # Membership validation owns the status until it finishes.
+        total = len(self._all_projects)
+        visible = self._list.count()
+        if self._load_status:
+            message = self._load_status
+        elif self._search.text().strip():
+            message = f"匹配 {visible} / {total} 个项目" if visible else f"没有匹配的项目（共 {total} 个）"
+        else:
+            message = f"共 {total} 个项目" if total else "暂无项目"
+        self._status.setText(message)
+
+    def _on_item_clicked(self, item: QListWidgetItem | None, _previous=None):
+        self._update_bind_button()
+        project = None if item is None else item.data(Qt.ItemDataRole.UserRole)
         if project:
             self._ctx.current_project = project
-            self._bind_btn.setEnabled(self._ctx.active_project_id is not None)
             self.project_chosen.emit(project)
 
     def _bind_selected_project(self):
@@ -341,8 +383,8 @@ class ProjectListPanel(QWidget):
         if bind_gen != self._bind_gen:
             return
         self._list.setEnabled(True)
-        self._bind_btn.setEnabled(self._list.currentItem() is not None and self._ctx.active_project_id is not None)
-        self._status.setText(f"共 {len(self._all_projects)} 个项目")
+        self._update_bind_button()
+        self._update_status()
 
     def _create_project(self):
         dlg = NewProjectDialog(self)

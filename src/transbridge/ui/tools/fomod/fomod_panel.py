@@ -11,16 +11,13 @@ import hashlib
 import json
 from pathlib import Path
 
-from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
-    QCheckBox,
-    QComboBox,
     QDialog,
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -29,14 +26,16 @@ from PyQt6.QtWidgets import (
 )
 
 from transbridge.config.language_profiles import discover_language_profiles
-from transbridge.fileops import DEFAULT_PRESET, PRESETS
 from transbridge.ui.foundation.accessibility import configure_accessible_widget, update_accessible_state
 from transbridge.ui.foundation.components import (
     ComponentKind,
     ComponentStyle,
     SemanticState,
     configure_dialog,
+    reserve_text_width,
 )
+
+from .form_view import build_archive_form
 
 
 class _PipelineWorker(QThread):
@@ -83,6 +82,7 @@ class FomodPanel(QDialog):
         self._operation_plan_facade = operation_plan_facade
         self._suggested_output = ""
         self._plan_dialog = None
+        self._execution_status = "idle"
         self.setWindowTitle("FOMOD 安装包翻译")
         configure_accessible_widget(self, name="FOMOD 安装包翻译", description="配置归档输入、输出和翻译选项")
         self.resize(600, 560)
@@ -90,134 +90,110 @@ class FomodPanel(QDialog):
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
+        self._form_scroll = build_archive_form(self, discover_language_profiles())
+        layout.addWidget(self._form_scroll, 1)
 
-        # 第 1 步：选文件
-        file_group = QGroupBox("第 1 步：选择文件")
-        fg = QVBoxLayout(file_group)
-        self._new_edit = QLineEdit()
-        self._new_edit.setPlaceholderText("新版 FOMOD 归档（.7z/.zip/.rar）")
-        configure_accessible_widget(self._new_edit, name="新版 FOMOD 归档")
-        new_row = QHBoxLayout()
-        new_row.addWidget(self._new_edit)
-        new_btn = QPushButton("选择新版")
-        new_btn.clicked.connect(self._pick_new)
-        new_row.addWidget(new_btn)
-        fg.addLayout(new_row)
-
-        self._old_edit = QLineEdit()
-        self._old_edit.setPlaceholderText("旧版中文成品（可选，有则自动复用翻译）")
-        configure_accessible_widget(self._old_edit, name="旧版中文 FOMOD 归档")
-        old_row = QHBoxLayout()
-        old_row.addWidget(self._old_edit)
-        old_btn = QPushButton("选择旧版")
-        old_btn.clicked.connect(self._pick_old)
-        old_row.addWidget(old_btn)
-        fg.addLayout(old_row)
-        layout.addWidget(file_group)
-
-        # 第 2 步：产出配置（使用端，机制黑盒）
-        cfg_group = QGroupBox("第 2 步：产出配置")
-        cg = QVBoxLayout(cfg_group)
-
-        # 过滤规则预设
-        filter_row = QHBoxLayout()
-        filter_row.addWidget(QLabel("过滤预设:"))
-        self._preset_combo = QComboBox()
-        self._preset_combo.addItems(list(PRESETS.keys()))
-        self._preset_combo.setCurrentText(DEFAULT_PRESET)
-        filter_row.addWidget(self._preset_combo)
-        cg.addLayout(filter_row)
-
-        # 自定义扩展名（白名单/黑名单）
-        ext_row = QHBoxLayout()
-        ext_row.addWidget(QLabel("自定义保留:"))
-        self._keep_ext_edit = QLineEdit()
-        self._keep_ext_edit.setPlaceholderText("额外保留扩展名，逗号分隔，如 .dds")
-        ext_row.addWidget(self._keep_ext_edit)
-        cg.addLayout(ext_row)
-        ext_row2 = QHBoxLayout()
-        ext_row2.addWidget(QLabel("自定义剔除:"))
-        self._strip_ext_edit = QLineEdit()
-        self._strip_ext_edit.setPlaceholderText("额外剔除扩展名，逗号分隔")
-        ext_row2.addWidget(self._strip_ext_edit)
-        cg.addLayout(ext_row2)
-
-        # 打包格式 + 目标语言
-        opts_row = QHBoxLayout()
-        opts_row.addWidget(QLabel("打包格式:"))
-        self._fmt_combo = QComboBox()
-        self._fmt_combo.addItem("zip", "zip")
-        self._fmt_combo.addItem("7z", "7z")
-        self._fmt_combo.currentIndexChanged.connect(self._refresh_suggested_output)
-        opts_row.addWidget(self._fmt_combo)
-        opts_row.addSpacing(16)
-        opts_row.addWidget(QLabel("目标语言:"))
-        self._lang_combo = QComboBox()
-        for profile in discover_language_profiles():
-            self._lang_combo.addItem(f"{profile.display_name} ({profile.locale})", profile.locale)
-        opts_row.addWidget(self._lang_combo)
-        cg.addLayout(opts_row)
-
-        # AI 补翻译开关
-        self._ai_check = QCheckBox("AI 补翻译新增词条")
-        self._ai_check.setChecked(True)
-        self._ai_check.setToolTip("关闭后仅自动复用旧翻译/词典，剩余词条保留待翻译")
-        cg.addWidget(self._ai_check)
-
-        # 输出路径
-        self._out_edit = QLineEdit()
-        self._out_edit.setPlaceholderText("输出中文安装包路径")
-        configure_accessible_widget(self._out_edit, name="FOMOD 输出归档")
-        out_row = QHBoxLayout()
-        out_row.addWidget(self._out_edit)
-        out_btn = QPushButton("选择输出")
-        out_btn.clicked.connect(self._pick_out)
-        out_row.addWidget(out_btn)
-        cg.addLayout(out_row)
-        layout.addWidget(cfg_group)
-
-        # 第 3 步：执行 + 进度
-        run_group = QGroupBox("第 3 步：执行")
-        rg = QVBoxLayout(run_group)
-        self._progress = QProgressBar()
-        self._progress.setRange(0, 0)
-        self._progress.setVisible(False)
-        configure_accessible_widget(self._progress, name="FOMOD 翻译进度", state_text="尚未开始")
-        ComponentStyle.apply_static(self._progress, ComponentKind.PROGRESS)
-        rg.addWidget(self._progress)
-        self._run_btn = QPushButton("开始翻译")
-        ComponentStyle.apply_static(self._run_btn, ComponentKind.BUTTON)
-        ComponentStyle.apply_state(self._run_btn, SemanticState.PRIMARY)
-        self._run_btn.setAccessibleName("开始 FOMOD 翻译")
-        self._run_btn.clicked.connect(self._run)
-        rg.addWidget(self._run_btn)
-        layout.addWidget(run_group)
-
-        # 结果摘要
-        result_group = QGroupBox("结果")
-        resg = QVBoxLayout(result_group)
+        self._result_group = QGroupBox("执行结果")
+        results = QVBoxLayout(self._result_group)
         self._result_text = QTextEdit()
         self._result_text.setReadOnly(True)
-        self._result_text.setPlaceholderText("结果摘要将显示在这里")
+        self._result_text.setMinimumHeight(64)
+        self._result_text.setMaximumHeight(120)
         configure_accessible_widget(self._result_text, name="FOMOD 翻译结果", state_text="尚无结果")
         ComponentStyle.apply_static(self._result_text, ComponentKind.NOTIFICATION)
-        resg.addWidget(self._result_text)
-        layout.addWidget(result_group)
-
-        close_btn = QPushButton("关闭")
-        close_btn.clicked.connect(self.close)
-        layout.addWidget(close_btn)
-        for editor in (
-            self._new_edit,
-            self._old_edit,
-            self._keep_ext_edit,
-            self._strip_ext_edit,
-            self._out_edit,
-            self._preset_combo,
-            self._fmt_combo,
-            self._lang_combo,
+        results.addWidget(self._result_text)
+        self._result_group.hide()
+        layout.addWidget(self._result_group)
+        self._progress = QProgressBar()
+        self._progress.setRange(0, 0)
+        self._progress.hide()
+        configure_accessible_widget(self._progress, name="FOMOD 翻译进度", state_text="尚未开始")
+        ComponentStyle.apply_static(self._progress, ComponentKind.PROGRESS)
+        layout.addWidget(self._progress)
+        self._ready_hint = QLabel()
+        self._ready_hint.setWordWrap(True)
+        self._ready_hint.setAccessibleName("下一步操作")
+        layout.addWidget(self._ready_hint)
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        self._close_btn = QPushButton("关闭")
+        ComponentStyle.apply_static(self._close_btn, ComponentKind.BUTTON)
+        self._close_btn.clicked.connect(self.close)
+        actions.addWidget(self._close_btn)
+        facade = self._operation_plan_facade or getattr(self._ctx, "operation_plan_facade", None)
+        self._start_label = "检查并继续…" if hasattr(facade, "begin_fomod") else "开始翻译"
+        self._run_btn = QPushButton(self._start_label)
+        ComponentStyle.apply_static(self._run_btn, ComponentKind.BUTTON)
+        ComponentStyle.apply_state(self._run_btn, SemanticState.PRIMARY)
+        self._run_btn.setAccessibleName("检查 FOMOD 构建配置" if hasattr(facade, "begin_fomod") else "开始 FOMOD 翻译")
+        reserve_text_width(self._run_btn, (self._start_label, "等待确认…", "正在构建…"))
+        self._run_btn.clicked.connect(self._run)
+        actions.addWidget(self._run_btn)
+        layout.addLayout(actions)
+        self._advanced_toggle.toggled.connect(self._set_advanced_expanded)
+        self._new_edit.textChanged.connect(self._refresh_suggested_output)
+        self._fmt_combo.currentIndexChanged.connect(self._refresh_suggested_output)
+        for signal in (
+            self._new_edit.textChanged,
+            self._old_edit.textChanged,
+            self._out_edit.textChanged,
+            self._keep_ext_edit.textChanged,
+            self._strip_ext_edit.textChanged,
+            self._preset_combo.currentIndexChanged,
+            self._fmt_combo.currentIndexChanged,
+            self._lang_combo.currentIndexChanged,
+            self._ai_check.toggled,
         ):
-            ComponentStyle.apply_static(editor, ComponentKind.INPUT)
+            signal.connect(self._inputs_changed)
+        self._inputs_changed()
+
+    def _set_advanced_expanded(self, expanded):
+        self._advanced_body.setVisible(expanded)
+        self._advanced_toggle.setArrowType(Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow)
+        self._advanced_toggle.setText("收起高级过滤规则" if expanded else "高级过滤规则")
+
+    def _inputs_changed(self):
+        if self._execution_status not in {"idle", "waiting", "running"} and self._plan_dialog is None:
+            self._result_group.setTitle("上次执行结果")
+            self._execution_status = "idle"
+        keep_count, strip_count = (
+            len({item.strip().lower().lstrip(".") for item in editor.text().split(",") if item.strip()})
+            for editor in (self._keep_ext_edit, self._strip_ext_edit)
+        )
+        self._filter_summary.setText(
+            f"预设：{self._preset_combo.currentText()} · 额外保留 {keep_count} 类 · 额外剔除 {strip_count} 类"
+        )
+        self._update_action_state()
+
+    def _update_action_state(self):
+        busy = self._plan_dialog is not None or self._execution_status in {"waiting", "running"}
+        ready = bool(self._new_edit.text().strip() and self._out_edit.text().strip())
+        self._form_body.setEnabled(not busy)
+        self._run_btn.setEnabled(ready and not busy)
+        self._run_btn.setText(
+            {"waiting": "等待确认…", "running": "正在构建…"}.get(self._execution_status, self._start_label)
+        )
+        hint = {
+            "waiting": "请在确认窗口检查输入与输出，再开始构建。",
+            "running": "正在翻译并生成安装包，进度与结果会显示在这里。",
+            "completed": "已完成，输出位置见执行结果。",
+            "failed": "构建未完成，请查看原因，调整配置后重试。",
+            "partial": "已部分完成，请先查看结果中的未完成原因。",
+            "cancelled": "操作已取消，请查看结果后再决定是否重试。",
+            "not-run": "已取消确认，尚未开始构建；可以调整配置后继续。",
+        }.get(self._execution_status)
+        if hint is None:
+            hint = (
+                "请选择新版安装包。"
+                if not self._new_edit.text().strip()
+                else "请指定输出位置。"
+                if not ready
+                else "已填写必需信息。"
+            )
+            if ready and self._start_label == "检查并继续…":
+                hint += " 下一步检查输入与输出，确认后才会开始构建。"
+        self._ready_hint.setText(hint)
+        self._run_btn.setToolTip(hint)
 
     def prefill_new_archive(self, path: str) -> None:
         """Populate a reviewed safe-drop path without starting the pipeline."""
@@ -250,8 +226,14 @@ class FomodPanel(QDialog):
             return
         source_text = self._new_edit.text().strip()
         if not source_text:
+            self._suggested_output = ""
+            self._out_edit.clear()
             return
         source = Path(source_text)
+        if not source.name or source.name in {".", ".."}:
+            self._suggested_output = ""
+            self._out_edit.clear()
+            return
         output_format = str(self._fmt_combo.currentData() or "zip")
         self._suggested_output = str(source.with_name(f"{source.stem}-translated.{output_format}"))
         self._out_edit.setText(self._suggested_output)
@@ -312,7 +294,6 @@ class FomodPanel(QDialog):
                 json.dumps(config_payload, sort_keys=True, separators=(",", ":")).encode()
             ).hexdigest()
             self._show_plan_status("waiting", "等待确认，尚未开始构建。")
-            self._run_btn.setEnabled(False)
             try:
                 dialog = facade.begin_fomod(
                     self._ctx,
@@ -336,13 +317,15 @@ class FomodPanel(QDialog):
             dialog.finished.connect(self._plan_closed)
             return
         self._show_plan_status("running", "正在执行…")
-        self._run_btn.setEnabled(False)
         self._worker = _PipelineWorker(new, old, out, fmt, lang, ai, rules)
         self._worker.done.connect(self._on_done)
         self._worker.failed.connect(self._on_failed)
         self._worker.start()
 
     def _show_plan_status(self, status, text):
+        self._execution_status = status
+        self._result_group.setTitle("执行结果")
+        self._result_group.show()
         self._progress.setVisible(status == "running")
         self._result_text.setPlainText(text)
         self._result_text.setProperty("tbStatusId", status)
@@ -354,12 +337,14 @@ class FomodPanel(QDialog):
             "cancelled": SemanticState.WARNING,
         }.get(status, SemanticState.INFO)
         ComponentStyle.apply_state(self._result_text, semantic)
+        self._update_action_state()
 
     def _plan_closed(self, _result):
         self._plan_dialog = None
-        self._run_btn.setEnabled(True)
         if self._result_text.property("tbStatusId") == "waiting":
             self._show_plan_status("not-run", "已取消确认，尚未开始构建。")
+        else:
+            self._update_action_state()
 
     def done(self, result):
         if self._plan_dialog is not None:
@@ -375,8 +360,6 @@ class FomodPanel(QDialog):
             super().closeEvent(event)
 
     def _on_done(self, result):
-        self._progress.setVisible(False)
-        self._run_btn.setEnabled(True)
         d = result.to_dict() if hasattr(result, "to_dict") else result
         summary = (
             "翻译完成！\n\n"
@@ -387,15 +370,7 @@ class FomodPanel(QDialog):
             f"保留文件: {d.get('kept_count', 0)} / 剔除: {d.get('stripped_count', 0)}\n"
             f"输出: {d.get('archive_path', '')}\n"
         )
-        self._result_text.setPlainText(summary)
-        update_accessible_state(self._result_text, "翻译完成", description=summary)
-        self._result_text.setProperty("tbStatusId", "completed")
-        ComponentStyle.apply_state(self._result_text, SemanticState.SUCCESS)
+        self._show_plan_status("completed", summary)
 
     def _on_failed(self, msg):
-        self._progress.setVisible(False)
-        self._run_btn.setEnabled(True)
-        self._result_text.setPlainText(f"执行失败: {msg}")
-        update_accessible_state(self._result_text, "执行失败", description=str(msg))
-        self._result_text.setProperty("tbStatusId", "failed")
-        ComponentStyle.apply_state(self._result_text, SemanticState.ERROR)
+        self._show_plan_status("failed", f"执行失败: {msg}")

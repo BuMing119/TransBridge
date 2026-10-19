@@ -399,6 +399,7 @@ class WorkbenchWidget(QWidget):
             "移除集合",
             f"确定要移除翻译内容「{label}」吗？\n{scope}",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         if ret == QMessageBox.StandardButton.Yes:
             if self._ctx.uses_authoritative_projection:

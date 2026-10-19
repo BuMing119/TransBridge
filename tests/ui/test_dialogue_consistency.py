@@ -84,6 +84,18 @@ def test_one_conflict_rejects_entire_batch(context):
     assert not context.notices
 
 
+@pytest.mark.parametrize("blocked_state", ["project_opening", "project_view_failed"])
+def test_detached_editor_preserves_draft_while_project_view_is_unavailable(context, blocked_state):
+    target = list(context.collection)[1]
+    draft = EntryDraft.capture(context, target)
+    draft.text = "draft pending"
+    setattr(context, blocked_state, True)
+    assert "草稿已保留" in draft.commit(context)
+    assert context.collection.get(target.identity).translation == ""
+    assert draft.text == "draft pending"
+    assert not context.notices
+
+
 def test_cancel_keeps_applied_source_and_does_not_mutate_candidates(context, monkeypatch):
     entries = list(context.collection)
     monkeypatch.setattr(SyncTranslationDialog, "exec", lambda _: 0)

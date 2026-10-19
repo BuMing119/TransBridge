@@ -13,6 +13,7 @@ class TerminologyWorkflowController:
         terms = window.terms_view
         terms.workflow.edit_requested.connect(window._draft_actions.continue_editing)
         terms.workflow.publish_requested.connect(window._publish)
+        window.versions_view.workflow_requested.connect(self.continue_workflow)
         terms.all_terms_button.clicked.connect(self.edit_page)
         window.draft_view.batch_requested.connect(window._draft_actions.batch)
         window.effective_view.edit_requested.connect(window._draft_actions.edit_effective)
@@ -63,6 +64,22 @@ class TerminologyWorkflowController:
         if self.state is not None and not self.state.has_draft:
             self.window._draft_actions.continue_editing()
 
+    def continue_workflow(self):
+        if self.state is None:
+            return
+        view = self.window
+        view.workspace.set_current_index(0)
+        action = self.state.next_action
+        if action == "build":
+            view.terms_view.build_details_button.setChecked(True)
+            view.build_view.build_button.setFocus()
+        elif action == "conflicts":
+            view.terms_view.attention_button.click()
+        elif action == "review":
+            view.terms_view.review_button.click()
+        elif action == "edit":
+            view.terms_view.workflow.edit_button.click()
+
     def edit_scheme(self, item):
         profiles = self.window._profile_controller
         if profiles is not None:
@@ -79,6 +96,9 @@ class TerminologyWorkflowController:
 
     def saving_changed(self, pending):
         ready = self.state is not None and self.state.can_publish and not pending
+        self.window.terms_view.workflow.set_pending(pending)
+        if self.state is not None:
+            self.window.versions_view.render_workflow(self.state, pending)
         self.window.terms_view.workflow.publish_button.setEnabled(ready)
         self.window.versions_view.publish_button.setEnabled(ready)
         self.window.versions_view.discard_button.setEnabled(bool(self.state and self.state.has_draft and not pending))

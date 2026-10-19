@@ -350,6 +350,7 @@ class SettingsDialog(QDialog):
         self._last_notice = message
         if hasattr(self, "_feedback"):
             self._feedback.setText(message)
+            self._feedback.setVisible(bool(message))
             self._feedback.setProperty("tbStatusId", "error" if error else "info")
             update_accessible_state(self._feedback, message)
             ComponentStyle.apply_state(self._feedback, SemanticState.ERROR if error else SemanticState.INFO)

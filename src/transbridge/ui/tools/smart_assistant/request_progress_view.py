@@ -1,11 +1,11 @@
 """Conversation-local request projections; controls retain authoritative request identities."""
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QMenu, QProgressBar, QPushButton, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QMenu, QProgressBar, QPushButton, QVBoxLayout, QWidget
 
 from .submission_scope import SubmissionScopeView
 from .task_presentation import related_tasks, task_progress_text, task_summary
-from .theme_support import BUTTON_STRUCTURE_STYLE, QUIET_BUTTON_STYLE, SmartAssistantTheme
+from .theme_support import BUTTON_STRUCTURE_STYLE, PROGRESS_STRUCTURE_STYLE, QUIET_BUTTON_STYLE, SmartAssistantTheme
 
 
 def request_status(request):
@@ -37,7 +37,7 @@ def request_status(request):
     return label
 
 
-class RequestProgressCard(QWidget):
+class RequestProgressCard(QFrame):
     def __init__(self, request, *, control, timeline, undo, theme, locate=None, review=None):
         super().__init__()
         self.request = request
@@ -48,6 +48,8 @@ class RequestProgressCard(QWidget):
         self._attention_command = ""
         self._attention_state = "muted"
         self.setAccessibleName("任务进度与结果")
+        self.setObjectName("smartAssistantProgress")
+        self.setStyleSheet(PROGRESS_STRUCTURE_STYLE)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 6, 10, 6)
         layout.setSpacing(5)
@@ -277,7 +279,7 @@ class RequestProgressCard(QWidget):
 
     def apply_theme(self, theme: SmartAssistantTheme):
         self._theme = theme
-        theme.apply_surface(self)
+        theme.apply_surface(self, alternate=True)
         theme.apply_semantic(self.goal, "default")
         theme.apply_semantic(self.status, "muted")
         theme.apply_semantic(self.items, "default")

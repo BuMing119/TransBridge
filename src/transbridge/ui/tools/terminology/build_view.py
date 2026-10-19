@@ -15,6 +15,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle
+
 from .view_models import TechnicalDetail, TerminologyPreflightViewState, TerminologySummaryViewState
 
 
@@ -62,6 +64,7 @@ class BuildView(QWidget):
         self.preflight_button = QPushButton("重新检查", self)
         self.preflight_button.hide()
         self.build_button = QPushButton("创建术语库", self)
+        _style_button(self.build_button)
         self.build_button.setProperty("tbTerminologyPrimary", True)
         self.build_button.setEnabled(False)
         self.cancel_button = QPushButton("停止", self)
@@ -251,7 +254,7 @@ def _card(parent: QWidget) -> QFrame:
 
 
 def _style_button(button: QPushButton) -> None:
-    button.setProperty("tbComponentKind", "button")
+    ComponentStyle.apply_static(button, ComponentKind.BUTTON)
 
 
 __all__ = ["BuildView", "TechnicalDetailsBox"]

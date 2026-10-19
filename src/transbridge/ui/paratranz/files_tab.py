@@ -26,6 +26,7 @@ from transbridge.paratranz.api.paratranz_files_api import ParatranzFilesAPI
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, ElidedLabel, SemanticState
 
 from ..workers import ApiWorker
+from ._delete_confirmation import confirm_cloud_removal
 from ._layout_stability import configure_stable_table_columns
 
 
@@ -43,6 +44,8 @@ class FilesTab(QWidget):
         self._files: list[dict] = []
         self._project_id: int | None = None
         self._gen = 0
+        self._context_gen = 0
+        self._operation_gen = 0
         self._operation_busy = False
         self._init_ui()
         ctx.project_selected.connect(self._on_project_changed)
@@ -52,7 +55,7 @@ class FilesTab(QWidget):
         layout = QVBoxLayout(self)
 
         # 工具栏
-        toolbar = QHBoxLayout()
+        toolbar = QVBoxLayout()
         self._refresh_btn = QPushButton("刷新")
         self._refresh_btn.clicked.connect(self.load_files)
         self._upload_btn = QPushButton("上传新文件")
@@ -69,16 +72,15 @@ class FilesTab(QWidget):
         ComponentStyle.apply_state(self._delete_btn, SemanticState.ERROR)
         self._delete_btn.clicked.connect(self._delete_file)
 
-        for btn in (
-            self._refresh_btn,
-            self._upload_btn,
-            self._reupload_btn,
-            self._import_btn,
-            self._download_btn,
-            self._delete_btn,
+        for buttons in (
+            (self._refresh_btn, self._upload_btn, self._reupload_btn),
+            (self._import_btn, self._download_btn, self._delete_btn),
         ):
-            toolbar.addWidget(btn)
-        toolbar.addStretch()
+            row = QHBoxLayout()
+            for button in buttons:
+                row.addWidget(button)
+            row.addStretch()
+            toolbar.addLayout(row)
         layout.addLayout(toolbar)
 
         # 进度行
@@ -127,8 +129,8 @@ class FilesTab(QWidget):
         splitter.addWidget(self._table)
 
         # 下半：文件详情
-        detail_box = QGroupBox("文件详情")
-        detail_layout = QFormLayout(detail_box)
+        self._detail_box = QGroupBox("文件详情 · 选择文件查看详情")
+        detail_layout = QFormLayout(self._detail_box)
         self._det_id = QLabel("—")
         self._det_hash = QLabel("—")
         self._det_words = QLabel("—")
@@ -142,7 +144,7 @@ class FilesTab(QWidget):
             ("更新时间", self._det_updated),
         ):
             detail_layout.addRow(label + ":", widget)
-        splitter.addWidget(detail_box)
+        splitter.addWidget(self._detail_box)
         splitter.setSizes([400, 160])
 
         layout.addWidget(splitter, stretch=1)
@@ -161,10 +163,14 @@ class FilesTab(QWidget):
         self._delete_btn.setEnabled(has_selection and is_admin)
 
     def _on_project_changed(self, project: dict | None):
+        self._gen += 1
+        self._context_gen += 1
+        self._operation_gen += 1
         self._project_id = project.get("id") if project else None
         self._files = []
         self._table.setRowCount(0)
-        self._update_buttons(False)
+        self._hide_progress()
+        self._on_selection_changed()
         if self._project_id:
             self.load_files()
 
@@ -194,7 +200,9 @@ class FilesTab(QWidget):
 
         w = ApiWorker(_fetch)
         w.result.connect(_on_done)
-        w.error.connect(lambda e: QMessageBox.warning(self, "加载失败", e))
+        w.error.connect(
+            lambda e: QMessageBox.warning(self, "加载失败", f"{e}\n\n点击“刷新”重试。") if self._gen == gen else None
+        )
         w.start()
         self._workers.append(w)
 
@@ -218,6 +226,7 @@ class FilesTab(QWidget):
                 item = QTableWidgetItem(val)
                 item.setData(Qt.ItemDataRole.UserRole, f)
                 self._table.setItem(row, col, item)
+        self._on_selection_changed()
 
     def _selected_file(self) -> dict | None:
         rows = self._table.selectedItems()
@@ -229,11 +238,16 @@ class FilesTab(QWidget):
         f = self._selected_file()
         self._update_buttons(f is not None)
         if f:
+            self._detail_box.setTitle("文件详情")
             self._det_id.setText(str(f.get("id", "—")))
             self._det_hash.setText(f.get("hash", "—") or "—")
             self._det_words.setText(str(f.get("words", "—")))
             self._det_created.setText(str(f.get("createdAt", "—"))[:19])
             self._det_updated.setText(str(f.get("updatedAt", "—"))[:19])
+        else:
+            self._detail_box.setTitle("文件详情 · 选择文件查看详情")
+            for label in (self._det_id, self._det_hash, self._det_words, self._det_created, self._det_updated):
+                label.setText("—")
 
     def _show_progress(self, msg: str):
         self._operation_busy = True
@@ -257,15 +271,21 @@ class FilesTab(QWidget):
             btn.setEnabled(enabled)
 
     def _run_file_op(self, fn, *, progress_msg: str, success_msg: str, error_title: str, on_success=None):
+        self._operation_gen += 1
+        operation_gen = self._operation_gen
         self._show_progress(progress_msg)
 
         def _on_done(result):
+            if self._operation_gen != operation_gen:
+                return
             self._hide_progress()
             QMessageBox.information(self, "成功", success_msg)
-            if on_success:
+            if on_success and self._operation_gen == operation_gen:
                 on_success(result)
 
         def _on_error(e):
+            if self._operation_gen != operation_gen:
+                return
             self._hide_progress()
             QMessageBox.critical(self, error_title, e)
 
@@ -276,11 +296,11 @@ class FilesTab(QWidget):
         self._workers.append(w)
 
     def _upload_new(self):
+        pid, context_gen = self._project_id, self._context_gen
         path, _ = QFileDialog.getOpenFileName(self, "选择文件")
-        if not path:
+        if not path or self._context_gen != context_gen:
             return
         config = self._ctx.config
-        pid = self._project_id
 
         def _upload():
             api = ParatranzFilesAPI(token=config.token, config=config)
@@ -295,14 +315,14 @@ class FilesTab(QWidget):
         )
 
     def _reupload(self):
+        pid, context_gen = self._project_id, self._context_gen
         f = self._selected_file()
         if not f:
             return
         path, _ = QFileDialog.getOpenFileName(self, "选择新原文文件")
-        if not path:
+        if not path or self._context_gen != context_gen:
             return
         config = self._ctx.config
-        pid = self._project_id
         fid = f.get("id")
 
         def _reupload():
@@ -318,14 +338,14 @@ class FilesTab(QWidget):
         )
 
     def _import_translation(self):
+        pid, context_gen = self._project_id, self._context_gen
         f = self._selected_file()
         if not f:
             return
         path, _ = QFileDialog.getOpenFileName(self, "选择译文文件")
-        if not path:
+        if not path or self._context_gen != context_gen:
             return
         config = self._ctx.config
-        pid = self._project_id
         fid = f.get("id")
 
         def _import():
@@ -341,16 +361,16 @@ class FilesTab(QWidget):
         )
 
     def _download_translation(self):
+        pid, context_gen = self._project_id, self._context_gen
         f = self._selected_file()
         if not f:
             return
         save_path, _ = QFileDialog.getSaveFileName(
             self, "保存译文文件", f.get("name", "translation") + ".json", "JSON 文件 (*.json)"
         )
-        if not save_path:
+        if not save_path or self._context_gen != context_gen:
             return
         config = self._ctx.config
-        pid = self._project_id
         fid = f.get("id")
 
         def _download():
@@ -361,44 +381,36 @@ class FilesTab(QWidget):
             Path(save_path).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
             return save_path
 
-        self._show_progress("正在下载翻译数据…")
-
-        def _on_done(p):
-            self._hide_progress()
-            QMessageBox.information(self, "成功", f"已保存至：{p}")
-
-        def _on_error(e):
-            self._hide_progress()
-            QMessageBox.critical(self, "下载失败", e)
-
-        w = ApiWorker(_download)
-        w.result.connect(_on_done)
-        w.error.connect(_on_error)
-        w.start()
-        self._workers.append(w)
+        self._run_file_op(
+            _download,
+            progress_msg="正在下载翻译数据…",
+            success_msg=f"已保存至：{save_path}",
+            error_title="下载失败",
+        )
 
     def _delete_file(self):
+        pid, context_gen = self._project_id, self._context_gen
         f = self._selected_file()
         if not f:
             return
-        reply = QMessageBox.question(
+        reply = confirm_cloud_removal(
             self,
-            "确认删除",
             f"确定要删除文件「{f.get('name', '')}」吗？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            action_text="删除文件",
         )
-        if reply != QMessageBox.StandardButton.Yes:
+        if reply != QMessageBox.StandardButton.Yes or self._context_gen != context_gen:
             return
         config = self._ctx.config
-        pid = self._project_id
         fid = f.get("id")
 
         def _delete():
             api = ParatranzFilesAPI(token=config.token, config=config)
             return api.delete_file(pid, fid)
 
-        w = ApiWorker(_delete)
-        w.result.connect(lambda _: (QMessageBox.information(self, "成功", "文件已删除"), self.load_files()))
-        w.error.connect(lambda e: QMessageBox.critical(self, "删除失败", e))
-        w.start()
-        self._workers.append(w)
+        self._run_file_op(
+            _delete,
+            progress_msg="正在删除文件…",
+            success_msg="文件已删除",
+            error_title="删除失败",
+            on_success=lambda _: self.load_files(),
+        )

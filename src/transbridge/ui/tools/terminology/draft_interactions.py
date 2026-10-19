@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtWidgets import QDialog, QMessageBox
+from PyQt6.QtWidgets import QMessageBox
 
 from transbridge.application.terminology.identity import normalize_original
 from transbridge.application.terminology.models import DecisionStatus, TermScope
@@ -156,6 +156,8 @@ class DraftInteractionController:
             self._parent,
             action,
             f"确定对选中的 {len(items)} 条术语{action}吗？\n{examples}\n\n{effect}\n所有修改均需发布后生效。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No if operation == "suppress" else QMessageBox.StandardButton.NoButton,
         )
         if answer == QMessageBox.StandardButton.Yes:
             self._run_draft_command(
@@ -171,14 +173,18 @@ class DraftInteractionController:
 
     def _review_ready(self, details) -> None:
         dialog = ConflictReviewDialog(details, self._parent)
-        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.choice is None:
-            return
-        choice = dialog.choice
-        self._run_draft_command(
-            lambda: self.presenter.resolve_review(
-                details, choice.operation, translation=choice.translation, plugin_id=choice.plugin_id
+
+        def save(choice):
+            self._run_draft_command(
+                lambda: self.presenter.resolve_review(
+                    details, choice.operation, translation=choice.translation, plugin_id=choice.plugin_id
+                ),
+                on_saved=dialog.saved,
+                on_error=dialog.save_failed,
             )
-        )
+
+        dialog.save_requested.connect(save)
+        dialog.exec()
 
 
 def _find_current(draft, selected, *, follow_replacements=False):

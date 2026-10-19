@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import QObject, Qt, QTimer
 from PyQt6.QtGui import QKeySequence, QShortcut
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QMenu, QPushButton, QScrollArea, QWidget
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QMenu, QPushButton, QScrollArea
 
 from transbridge.smart_assistant.service_readiness import read_service_availability
 from transbridge.ui.foundation.components import ElidedLabel
@@ -13,7 +13,7 @@ from transbridge.ui.foundation.tabler_icons import tabler_icon
 from .onboarding_view import OnboardingView
 from .request_progress_view import RequestProgressPresenter
 from .task_presentation import related_tasks
-from .theme_support import QUIET_BUTTON_STYLE
+from .theme_support import CONTEXT_STRUCTURE_STYLE, QUIET_BUTTON_STYLE
 
 
 class ConversationPresentation(QObject):
@@ -22,9 +22,11 @@ class ConversationPresentation(QObject):
         self.facade = facade
         self._closed = False
         self._request_count = 0
-        self.toolbar = QWidget(facade)
+        self.toolbar = QFrame(facade)
+        self.toolbar.setObjectName("smartAssistantContext")
+        self.toolbar.setStyleSheet(CONTEXT_STRUCTURE_STYLE)
         toolbar_layout = QHBoxLayout(self.toolbar)
-        toolbar_layout.setContentsMargins(0, 0, 0, 0)
+        toolbar_layout.setContentsMargins(0, 0, 0, 3)
         toolbar_layout.setSpacing(6)
         self.context_label = ElidedLabel("")
         self.context_label.setAccessibleName("当前项目与选区")

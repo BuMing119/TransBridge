@@ -108,6 +108,7 @@ class ThemePreviewWidget(QFrame):
 
         self._table = QTableWidget(2, 2, self)
         self._table.setAccessibleName("主题预览表格")
+        self._table.setTabKeyNavigation(False)
         self._table.setHorizontalHeaderLabels(("状态", "说明"))
         self._table.setItem(0, 0, QTableWidgetItem("已选择"))
         self._table.setItem(0, 1, QTableWidgetItem("当前行"))

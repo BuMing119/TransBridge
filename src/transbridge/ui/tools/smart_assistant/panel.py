@@ -52,6 +52,7 @@ class SmartAssistantPanel(QDockWidget):
         flags &= ~Qt.WindowType.WindowType_Mask
         self.setWindowFlags(flags | Qt.WindowType.Window)
         self.setObjectName("SmartAssistantPanel")
+        self.setProperty("tbTaskDialog", True)
         self.setStyleSheet(PANEL_STRUCTURE_STYLE)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setAccessibleName("智能助手")
@@ -118,7 +119,7 @@ class SmartAssistantPanel(QDockWidget):
         container.setObjectName("smartAssistantBody")
         container.setStyleSheet(BODY_STRUCTURE_STYLE)
         layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(1, 0, 1, 1)
         layout.setSpacing(0)
 
         # 水平分割：左侧会话列表 + 右侧（聊天区 + 任务监控）

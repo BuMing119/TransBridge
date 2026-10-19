@@ -21,6 +21,7 @@ from transbridge.paratranz.api.paratranz_members_api import ParatranzMembersAPI
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState
 
 from ..workers import ApiWorker
+from ._delete_confirmation import confirm_cloud_removal
 from ._layout_stability import configure_stable_table_columns
 
 _PERM_LABELS = {1: "翻译者", 2: "校对者", 3: "管理员", 4: "所有者"}
@@ -43,6 +44,7 @@ class MembersTab(QWidget):
         self._workers: list[ApiWorker] = []
         self._project_id: int | None = None
         self._gen = 0
+        self._context_gen = 0
         self._init_ui()
         ctx.project_selected.connect(self._on_project_changed)
         ctx.paratranz_permissions_changed.connect(self._refresh_permissions)
@@ -84,6 +86,7 @@ class MembersTab(QWidget):
 
     def _on_project_changed(self, project):
         self._gen += 1
+        self._context_gen += 1
         self._project_id = project.get("id") if project else None
         self._table.setRowCount(0)
         self._refresh_permissions()
@@ -111,7 +114,9 @@ class MembersTab(QWidget):
 
         w = ApiWorker(_fetch)
         w.result.connect(_on_done)
-        w.error.connect(lambda e: QMessageBox.warning(self, "加载失败", e))
+        w.error.connect(
+            lambda e: QMessageBox.warning(self, "加载失败", f"{e}\n\n点击“刷新”重试。") if self._gen == gen else None
+        )
         w.start()
         self._workers.append(w)
 
@@ -144,6 +149,7 @@ class MembersTab(QWidget):
         return rows[0].data(Qt.ItemDataRole.UserRole) if rows else None
 
     def _add_member(self):
+        pid, context_gen = self._project_id, self._context_gen
         dlg = QDialog(self)
         dlg.setWindowTitle("添加成员")
         layout = QFormLayout(dlg)
@@ -162,45 +168,54 @@ class MembersTab(QWidget):
         btn_row.addWidget(ok_btn)
         btn_row.addWidget(cancel_btn)
         layout.addRow(btn_row)
-        ok_btn.clicked.connect(dlg.accept)
+        uid = None
+
+        def _validate():
+            nonlocal uid
+            try:
+                uid = int(uid_input.text().strip())
+            except ValueError:
+                QMessageBox.warning(dlg, "输入错误", "用户 ID 必须是整数")
+                uid_input.setFocus()
+                uid_input.selectAll()
+                return
+            dlg.accept()
+
+        ok_btn.clicked.connect(_validate)
         cancel_btn.clicked.connect(dlg.reject)
-        if not dlg.exec():
-            return
-        try:
-            uid = int(uid_input.text().strip())
-        except ValueError:
-            QMessageBox.warning(self, "输入错误", "用户 ID 必须是整数")
+        if not dlg.exec() or self._context_gen != context_gen:
             return
         perm = perm_combo.currentData()
         config = self._ctx.config
-        pid = self._project_id
 
         def _add():
             api = ParatranzMembersAPI(token=config.token, config=config)
             return api.add_member(pid, uid, perm)
 
         w = ApiWorker(_add)
-        w.result.connect(lambda _: self.load_members())
-        w.error.connect(lambda e: QMessageBox.critical(self, "添加失败", e))
+        w.result.connect(lambda _: self.load_members() if self._context_gen == context_gen else None)
+        w.error.connect(
+            lambda e: QMessageBox.critical(self, "添加失败", e) if self._context_gen == context_gen else None
+        )
         w.start()
         self._workers.append(w)
 
     def _remove_member(self):
+        pid, context_gen = self._project_id, self._context_gen
         m = self._selected_member()
         if not m:
             return
         user = m.get("user") or {}
         name = user.get("nickname", str(m.get("uid", ""))) if isinstance(user, dict) else ""
-        reply = QMessageBox.question(
+        reply = confirm_cloud_removal(
             self,
-            "确认移除",
             f"确定要移除成员「{name}」吗？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            action_text="移除成员",
+            title="确认移除",
         )
-        if reply != QMessageBox.StandardButton.Yes:
+        if reply != QMessageBox.StandardButton.Yes or self._context_gen != context_gen:
             return
         config = self._ctx.config
-        pid = self._project_id
         member_id = m.get("id")
 
         def _remove():
@@ -208,7 +223,9 @@ class MembersTab(QWidget):
             return api.delete_member(pid, member_id)
 
         w = ApiWorker(_remove)
-        w.result.connect(lambda _: self.load_members())
-        w.error.connect(lambda e: QMessageBox.critical(self, "移除失败", e))
+        w.result.connect(lambda _: self.load_members() if self._context_gen == context_gen else None)
+        w.error.connect(
+            lambda e: QMessageBox.critical(self, "移除失败", e) if self._context_gen == context_gen else None
+        )
         w.start()
         self._workers.append(w)

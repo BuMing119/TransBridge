@@ -110,6 +110,38 @@ def test_preview_is_isolated_from_application_and_business_widgets(qapp, tmp_pat
     qapp.setPalette(original_palette)
 
 
+@pytest.mark.parametrize("section", list(SettingsSection))
+def test_save_validation_feedback_stays_visible_on_every_settings_page(qapp, tmp_path: Path, section) -> None:
+    service, dialog = _dialog(qapp, _preferences(tmp_path), llm_config=LLMConfig(), initial_section=section)
+    try:
+        dialog.resize(720, 480)
+        dialog.show()
+        qapp.processEvents()
+        assert not dialog._feedback.isVisible()
+        dialog._settings_pages[SettingsSection.AI_SERVICE].base_url_edit.setText("invalid-url")
+
+        dialog._apply_button.click()
+        qapp.processEvents()
+
+        assert dialog.isVisible() and not dialog.disposed
+        assert dialog.current_section is section
+        assert dialog._feedback.isVisible()
+        assert "Base URL" in dialog._feedback.text()
+        assert dialog._feedback.accessibleDescription() == dialog.last_notice
+        assert dialog.rect().contains(dialog._feedback.geometry())
+        assert dialog.rect().contains(dialog._buttons.geometry())
+        assert dialog._feedback.geometry().bottom() < dialog._buttons.geometry().top()
+
+        dialog.select_section(SettingsSection.APPEARANCE)
+        dialog._scroll.verticalScrollBar().setValue(dialog._scroll.verticalScrollBar().maximum())
+        qapp.processEvents()
+        assert dialog._feedback.isVisible()
+        assert dialog._feedback.parentWidget() is dialog
+    finally:
+        dialog.reject()
+        service.close()
+
+
 def test_apply_persists_and_updates_existing_and_new_widgets(qapp, tmp_path: Path) -> None:
     original_palette = QPalette(qapp.palette())
     preferences = _preferences(tmp_path)
@@ -489,10 +521,16 @@ def test_credential_save_failure_never_closes_or_reveals_backend_details(
         raise RuntimeError("secret-canary at C:/private/config")
 
     monkeypatch.setattr(LLMConfig, "save_to_file", fail)
-    service, dialog = _dialog(qapp, _preferences(tmp_path), llm_config=LLMConfig(model="m"))
+    service, dialog = _dialog(
+        qapp, _preferences(tmp_path), llm_config=LLMConfig(model="m"), initial_section=SettingsSection.AI_SERVICE
+    )
+    dialog.show()
+    qapp.processEvents()
 
     assert not dialog.apply_draft()
     assert dialog.result() == 0
+    assert dialog._feedback.isVisible()
+    assert dialog._feedback.text() == dialog.last_notice
     assert "secret-canary" not in dialog.last_notice
     assert "C:/private" not in dialog.last_notice
     dialog.reject()

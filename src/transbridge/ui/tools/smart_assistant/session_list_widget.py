@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QEnterEvent, QFont
+from PyQt6.QtGui import QEnterEvent
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -23,7 +23,13 @@ from PyQt6.QtWidgets import (
 from transbridge.ui.foundation.components import ElidedLabel
 from transbridge.ui.foundation.tabler_icons import tabler_icon
 
-from .theme_support import BUTTON_STRUCTURE_STYLE, TRANSPARENT_STRUCTURE_STYLE, SmartAssistantTheme
+from .theme_support import (
+    BUTTON_STRUCTURE_STYLE,
+    SESSION_ROW_STRUCTURE_STYLE,
+    SIDEBAR_STRUCTURE_STYLE,
+    TRANSPARENT_STRUCTURE_STYLE,
+    SmartAssistantTheme,
+)
 
 
 class _SessionRow(QFrame):
@@ -47,6 +53,8 @@ class _SessionRow(QFrame):
         self._is_active = is_active
         self._hovered = False
         self.setFixedHeight(84)
+        self.setObjectName("smartAssistantSession")
+        self.setStyleSheet(SESSION_ROW_STRUCTURE_STYLE)
         self.setProperty("tbSurface", "card")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setMouseTracking(True)
@@ -59,11 +67,9 @@ class _SessionRow(QFrame):
         name = self.name
         self._name_label = ElidedLabel(name)
         self._name_label.setToolTip(name)
-        self._name_label.setFont(QFont("Microsoft YaHei", 10, QFont.Weight.Bold))
-        self._name_label.setStyleSheet(TRANSPARENT_STRUCTURE_STYLE)
+        self._name_label.setStyleSheet(TRANSPARENT_STRUCTURE_STYLE + "font-weight: 600;")
         count = session_meta.get("message_count", 0)
         self._sub_label = QLabel(f"{count} 条消息 · {self._format_time(session_meta.get('last_active_at', ''))}")
-        self._sub_label.setFont(QFont("Microsoft YaHei", 8))
         self._sub_label.setStyleSheet(TRANSPARENT_STRUCTURE_STYLE)
         text_layout.addWidget(self._name_label)
         text_layout.addWidget(self._sub_label)
@@ -79,7 +85,10 @@ class _SessionRow(QFrame):
 
     def apply_theme(self, theme: SmartAssistantTheme) -> None:
         self._theme = theme
-        self.setProperty("active", self._is_active)
+        if self.property("active") != self._is_active:
+            self.setProperty("active", self._is_active)
+            self.style().unpolish(self)
+            self.style().polish(self)
         self.setProperty("hovered", self._hovered)
         theme.apply_surface(self, alternate=self._is_active or self._hovered or self.hasFocus())
         theme.apply_semantic(self._name_label, "default")
@@ -178,6 +187,9 @@ class SessionListWidget(QWidget):
         self._rows: dict[str, _SessionRow] = {}
         self._session_data: list[dict] = []
         self.setAccessibleName("会话列表")
+        self.setObjectName("smartAssistantSessions")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(SIDEBAR_STRUCTURE_STYLE)
         self.setMinimumWidth(180)
         self.setMaximumWidth(260)
         self._setup_ui()
@@ -185,14 +197,14 @@ class SessionListWidget(QWidget):
 
     def _setup_ui(self) -> None:
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setContentsMargins(0, 0, 1, 0)
         main_layout.setSpacing(0)
         self._header = QFrame()
         self._header.setFixedHeight(52)
         header_layout = QHBoxLayout(self._header)
         header_layout.setContentsMargins(14, 0, 10, 0)
         self._title = QLabel("会话")
-        self._title.setFont(QFont("Microsoft YaHei", 10, QFont.Weight.Bold))
+        self._title.setStyleSheet("QLabel { font-weight: 600; }")
         header_layout.addWidget(self._title)
         header_layout.addStretch()
         self._search_btn = QPushButton()

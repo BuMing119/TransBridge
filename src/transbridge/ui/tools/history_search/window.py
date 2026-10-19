@@ -33,6 +33,7 @@ from transbridge.application.history_search import (
     HistorySourceType,
 )
 from transbridge.application.tasks import JobEventType, JobState, OwnerRef, TaskEventFilter
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle
 from transbridge.ui.windows_taskbar import clear_window_app_user_model_id, set_window_app_user_model_id
 
 
@@ -104,7 +105,7 @@ class HistorySearchWindow(QDialog):
         self.setAccessibleName("历史翻译与术语搜索")
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.resize(1180, 760)
-        self.setMinimumSize(820, 560)
+        self.setMinimumSize(760, 560)
         self._build_ui()
         self._render_index_status()
         if self._index.status().ready:
@@ -121,13 +122,16 @@ class HistorySearchWindow(QDialog):
         self.search_edit.setPlaceholderText("输入原文或译文；留空显示全部")
         self.search_edit.setClearButtonEnabled(True)
         self.search_edit.textChanged.connect(self._schedule_query)
-        controls.addWidget(self.search_edit, 1)
+        self.search_edit.returnPressed.connect(self._start_query)
+        root.addWidget(self.search_edit)
         controls.addWidget(QLabel("范围", self))
         self.scope_combo = QComboBox(self)
-        self.scope_combo.setMinimumContentsLength(18)
+        self.scope_combo.setMinimumContentsLength(12)
+        self.scope_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.scope_combo.addItem("全部来源", None)
         self.scope_combo.currentIndexChanged.connect(self._schedule_query)
-        controls.addWidget(self.scope_combo)
+        self.scope_combo.currentTextChanged.connect(self.scope_combo.setToolTip)
+        controls.addWidget(self.scope_combo, 1)
         controls.addWidget(QLabel("类型", self))
         self.kind_combo = QComboBox(self)
         self.kind_combo.addItem("全部", None)
@@ -142,6 +146,7 @@ class HistorySearchWindow(QDialog):
 
         splitter = QSplitter(Qt.Orientation.Vertical, self)
         self.results = QTableWidget(0, 6, splitter)
+        ComponentStyle.apply_static(self.results, ComponentKind.TABLE)
         self.results.setHorizontalHeaderLabels(("来源 ID", "类型", "原文", "译文", "范围", "状态"))
         self.results.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.results.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
@@ -165,6 +170,7 @@ class HistorySearchWindow(QDialog):
         detail_layout.setContentsMargins(0, 6, 0, 0)
         detail_layout.addWidget(QLabel("来源详情（合并结果仍保留每个真实来源）", detail))
         self.sources = QListWidget(detail)
+        self.sources.setProperty("tbTaskList", True)
         detail_layout.addWidget(self.sources)
         splitter.addWidget(detail)
         splitter.setSizes((520, 170))
@@ -185,6 +191,11 @@ class HistorySearchWindow(QDialog):
         close_button = QPushButton("关闭", self)
         close_button.clicked.connect(self.close)
         footer.addWidget(close_button)
+        for button in (self.refresh_button, self.diagnostics_button, self.copy_button, close_button):
+            button.setAutoDefault(False)
+            ComponentStyle.apply_static(button, ComponentKind.BUTTON)
+        for editor in (self.search_edit, self.scope_combo, self.kind_combo):
+            ComponentStyle.apply_static(editor, ComponentKind.INPUT)
         root.addLayout(footer)
 
     def refresh_index(self) -> None:
@@ -220,9 +231,14 @@ class HistorySearchWindow(QDialog):
 
     def _schedule_query(self) -> None:
         self._generation += 1
+        self._clear_results()
+        self.status_label.setText("正在等待搜索…")
         self._debounce.start()
 
     def _start_query(self) -> None:
+        self._debounce.stop()
+        self._generation += 1
+        self._clear_results()
         generation = self._generation
         kind_value = self.kind_combo.currentData()
         kind = None if kind_value is None else HistoryEntryKind(kind_value)
@@ -234,6 +250,11 @@ class HistorySearchWindow(QDialog):
         )
         self.status_label.setText("正在搜索…")
         self._pool.start(_QueryRunnable(generation, lambda: self._index.query(request), self._signals, self._cancelled))
+
+    def _clear_results(self) -> None:
+        self.results.setRowCount(0)
+        self.sources.clear()
+        self.copy_button.setEnabled(False)
 
     def _accept_query(self, generation: int, page) -> None:
         if generation != self._generation:
@@ -286,7 +307,7 @@ class HistorySearchWindow(QDialog):
 
     def _selected_hit(self) -> HistorySearchHit | None:
         row = self.results.currentRow()
-        if row < 0:
+        if row < 0 or not self.results.selectionModel().hasSelection():
             return None
         item = self.results.item(row, 0)
         value = None if item is None else item.data(Qt.ItemDataRole.UserRole)
@@ -345,11 +366,14 @@ class HistorySearchWindow(QDialog):
             for scope in self._index.scopes():
                 prefix = "项目" if scope.kind is HistorySearchScopeKind.PROJECT else "词典"
                 self.scope_combo.addItem(f"{prefix}｜{scope.label}", scope)
+                row = self.scope_combo.count() - 1
+                self.scope_combo.setItemData(row, self.scope_combo.itemText(row), Qt.ItemDataRole.ToolTipRole)
                 if selected_key == (scope.kind, scope.scope_id):
                     selected_index = self.scope_combo.count() - 1
             self.scope_combo.setCurrentIndex(selected_index)
         finally:
             self.scope_combo.blockSignals(False)
+        self.scope_combo.setToolTip(self.scope_combo.currentText())
 
     def _set_diagnostics(self, diagnostics) -> None:
         self._diagnostics = tuple(diagnostics)

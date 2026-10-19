@@ -44,6 +44,7 @@ def confirm_archive(parent, name: str, selections, variant_names: dict[str, str]
     buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, dialog)
     buttons.button(QDialogButtonBox.StandardButton.Ok).setText("归档")
     buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+    buttons.button(QDialogButtonBox.StandardButton.Cancel).setDefault(True)
     buttons.accepted.connect(dialog.accept)
     buttons.rejected.connect(dialog.reject)
     layout.addWidget(buttons)

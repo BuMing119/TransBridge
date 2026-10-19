@@ -188,10 +188,12 @@ def tabler_pixmap(icon_id: str, size: int | QSize, color: QColor, *, dpr: float 
     return pixmap
 
 
-def tabler_icon(widget: QWidget, icon_id: str, size: int, *, semantic: str = "navigation") -> QIcon:
-    """Build a QIcon whose modes follow the widget's current palette."""
+def tabler_icon(
+    widget: QWidget, icon_id: str, size: int, *, semantic: str = "navigation", palette: QPalette | None = None
+) -> QIcon:
+    """Build themed modes using the supplied palette or the widget's current one."""
 
-    palette = widget.palette()
+    palette = widget.palette() if palette is None else palette
     dpr = widget.devicePixelRatioF()
     if semantic == "success":
         normal = active = palette.color(QPalette.ColorRole.LinkVisited)

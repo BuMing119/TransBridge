@@ -7,6 +7,10 @@ from PyQt6.QtWidgets import QApplication, QWidget
 
 from transbridge.infra.markdown_renderer import MarkdownRenderTheme
 from transbridge.ui.foundation.adapters import DomainBrushes, RichTextThemeAdapter
+from transbridge.ui.foundation.builtins import DEFAULT_THEME_ID, create_builtin_registry
+from transbridge.ui.foundation.components import ComponentStyle, SemanticState
+from transbridge.ui.foundation.control_visual_style import compile_control_visual_styles
+from transbridge.ui.foundation.model import ThemeScheme
 from transbridge.ui.foundation.qt_palette import qcolor
 from transbridge.ui.foundation.theme_service import ThemeSnapshot
 
@@ -34,10 +38,29 @@ INPUT_STRUCTURE_STYLE = (
 )
 PANEL_STRUCTURE_STYLE = "QDockWidget#SmartAssistantPanel { border: none; background-color: palette(base); }"
 HEADER_STRUCTURE_STYLE = (
-    "QFrame#smartAssistantHeader { border: none; border-bottom: 1px solid palette(mid); "
+    "QFrame#smartAssistantHeader { border: 1px solid palette(mid); background-color: palette(alternate-base); }"
+)
+BODY_STRUCTURE_STYLE = (
+    "QFrame#smartAssistantBody { border: 1px solid palette(mid); border-top: none; background-color: palette(base); }"
+)
+SIDEBAR_STRUCTURE_STYLE = (
+    "QWidget#smartAssistantSessions { border: none; border-right: 1px solid palette(mid); "
+    "background-color: palette(alternate-base); }"
+)
+SESSION_ROW_STRUCTURE_STYLE = (
+    "QFrame#smartAssistantSession { border: 1px solid palette(mid); border-left: 3px solid transparent; "
+    "border-radius: 6px; background-color: palette(base); }"
+    'QFrame#smartAssistantSession[active="true"] { border-left-color: palette(link); }'
+    "QFrame#smartAssistantSession:focus { border-color: palette(link); }"
+)
+CONTEXT_STRUCTURE_STYLE = (
+    "QFrame#smartAssistantContext { border: none; border-bottom: 1px solid palette(mid); "
     "background-color: palette(base); }"
 )
-BODY_STRUCTURE_STYLE = "QFrame#smartAssistantBody { border: none; background-color: palette(base); }"
+PROGRESS_STRUCTURE_STYLE = (
+    "QFrame#smartAssistantProgress { border: 1px solid palette(mid); border-radius: 6px; "
+    "background-color: palette(alternate-base); }"
+)
 TRANSPARENT_STRUCTURE_STYLE = "background: transparent; border: none;"
 
 
@@ -169,20 +192,15 @@ class SmartAssistantTheme:
         )
 
     def apply_accent(self, widget: QWidget) -> None:
-        """Apply the theme focus colour as an accessible primary action surface."""
-        widget.setProperty("tbSemanticState", "accent")
-        snapshot = self._snapshot
-        if snapshot is not None:
-            semantic = snapshot.tokens.semantic
-            self._apply_palette(widget, semantic.selection_text, semantic.focus)
-            return
-        palette = widget.palette()
-        self._apply_palette(
-            widget,
-            palette.color(QPalette.ColorRole.HighlightedText),
-            palette.color(QPalette.ColorRole.Highlight),
-            colors_are_qt=True,
+        """Use the same primary action rules as other task windows, including standalone views."""
+        definition = self._snapshot or create_builtin_registry().resolve(DEFAULT_THEME_ID, ThemeScheme.LIGHT)
+        app = QApplication.instance()
+        palette = self._snapshot.palette if self._snapshot is not None else app.palette() if app else widget.palette()
+        widget.setPalette(palette)
+        widget.setStyleSheet(
+            BUTTON_STRUCTURE_STYLE + compile_control_visual_styles(definition) + "QPushButton { padding: 4px 8px; }"
         )
+        ComponentStyle.apply_state(widget, SemanticState.PRIMARY)
 
     def apply_semantic(self, widget: QWidget, state: str, *, background: bool = False) -> None:
         widget.setProperty("tbSemanticState", state)

@@ -376,6 +376,7 @@ class ParseCoordinator:
                 "集合已存在",
                 f"集合「{slot.label}」已存在，是否覆盖？\n选择「否」将保留原有集合。",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
             )
             if ret != QMessageBox.StandardButton.Yes:
                 self._host.show_message("已取消，保留原有集合")

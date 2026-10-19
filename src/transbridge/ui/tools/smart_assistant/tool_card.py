@@ -47,7 +47,10 @@ class ToolCard(QWidget):
         for button in (self._exec_btn, self._ignore_btn):
             button.setStyleSheet(BUTTON_STRUCTURE_STYLE)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
-        reserve_text_width(self._exec_btn, ("执行", "执行中..."))
+        reserve_text_width(
+            self._exec_btn,
+            ("执行", "执行中...", "执行失败", "已完成", "已取消", "已启动任务", "结果待核对", "已失效", "已忽略"),
+        )
         self._exec_btn.clicked.connect(self._on_execute)
         self._ignore_btn.clicked.connect(self._on_ignore)
         row.addStretch()

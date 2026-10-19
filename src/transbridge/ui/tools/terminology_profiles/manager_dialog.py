@@ -99,10 +99,13 @@ class TerminologyProfileManagerDialog(QDialog):
                 if profile.state is ProfileState.ARCHIVED:
                     suffix = "已归档"
                 self.profile_combo.addItem(f"{profile.name} · {suffix}", profile.profile_id)
+                row = self.profile_combo.count() - 1
+                self.profile_combo.setItemData(row, self.profile_combo.itemText(row), Qt.ItemDataRole.ToolTipRole)
             index = self.profile_combo.findData(select_profile_id)
             self.profile_combo.setCurrentIndex(index if index >= 0 else (0 if self._profiles else -1))
         finally:
             self.profile_combo.blockSignals(False)
+        self.profile_combo.setToolTip(self.profile_combo.currentText())
         if not preserve_editor:
             self._load_selected_profile()
 

@@ -6,12 +6,11 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
+    QFormLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
-    QSpinBox,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -25,6 +24,7 @@ from transbridge.paratranz.api.paratranz_history_api import ParatranzHistoryAPI
 
 from ..workers import ApiWorker
 from ._layout_stability import configure_stable_table_columns
+from .history_pager import HistoryPager
 
 
 def _extract_list(data) -> list:
@@ -61,36 +61,28 @@ class HistoryTab(QWidget):
         layout = QVBoxLayout(w)
 
         # 筛选栏
+        filters = QFormLayout()
+        filters.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         filter_row = QHBoxLayout()
-        filter_row.addWidget(QLabel("类型:"))
         self._type_combo = QComboBox()
         for val, name in (("", "全部"), ("text", "词条"), ("term", "术语"), ("import", "导入"), ("comment", "评论")):
             self._type_combo.addItem(name, val)
-        filter_row.addWidget(self._type_combo)
+        filter_row.addWidget(self._type_combo, 1)
 
-        filter_row.addWidget(QLabel("用户ID:"))
         self._uid_input = QLineEdit()
         self._uid_input.setPlaceholderText("可选")
-        self._uid_input.setFixedWidth(80)
-        filter_row.addWidget(self._uid_input)
 
-        filter_row.addWidget(QLabel("词条ID:"))
         self._tid_input = QLineEdit()
         self._tid_input.setPlaceholderText("可选")
-        self._tid_input.setFixedWidth(80)
-        filter_row.addWidget(self._tid_input)
-
-        filter_row.addWidget(QLabel("页码:"))
-        self._page_spin = QSpinBox()
-        self._page_spin.setRange(1, 9999)
-        self._page_spin.setFixedWidth(60)
-        filter_row.addWidget(self._page_spin)
+        self._tid_input.setToolTip("仅词条历史支持按词条 ID 查询；指定后不分页。")
 
         self._hist_refresh_btn = QPushButton("查询")
         self._hist_refresh_btn.clicked.connect(self.load_history)
         filter_row.addWidget(self._hist_refresh_btn)
-        filter_row.addStretch()
-        layout.addLayout(filter_row)
+        filters.addRow("类型", filter_row)
+        filters.addRow("用户 ID", self._uid_input)
+        filters.addRow("词条 ID", self._tid_input)
+        layout.addLayout(filters)
 
         self._hist_table = QTableWidget(0, 7)
         self._hist_table.setHorizontalHeaderLabels([
@@ -110,6 +102,12 @@ class HistoryTab(QWidget):
         self._hist_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._hist_table.itemDoubleClicked.connect(self._on_hist_row_double_clicked)
         layout.addWidget(self._hist_table, stretch=1)
+        self._hist_pager = HistoryPager(w)
+        self._page_spin = self._hist_pager.page
+        self._hist_pager.page_requested.connect(self._request_history_page)
+        layout.addWidget(self._hist_pager)
+        for signal in (self._type_combo.currentIndexChanged, self._uid_input.textChanged, self._tid_input.textChanged):
+            signal.connect(self._history_filter_changed)
         return w
 
     def _build_revision_tab(self) -> QWidget:
@@ -132,15 +130,35 @@ class HistoryTab(QWidget):
         )
         self._rev_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         layout.addWidget(self._rev_table, stretch=1)
+        self._rev_pager = HistoryPager(w)
+        self._rev_pager.page_requested.connect(self._request_revision_page)
+        layout.addWidget(self._rev_pager)
         return w
 
     def _on_project_changed(self, project):
+        self._hist_gen += 1
+        self._rev_gen += 1
         self._project_id = project.get("id") if project else None
         self._hist_table.setRowCount(0)
         self._rev_table.setRowCount(0)
+        self._hist_pager.reset()
+        self._rev_pager.reset()
         if self._project_id:
             self.load_history()
             self.load_revisions()
+
+    def _history_filter_changed(self, *_args):
+        self._hist_gen += 1
+        self._hist_table.setRowCount(0)
+        self._hist_pager.reset("筛选已更改，点击查询查看结果" if self._project_id else "请先选择项目")
+
+    def _request_history_page(self, page: int) -> None:
+        self._hist_pager.set_page(page)
+        self.load_history()
+
+    def _request_revision_page(self, page: int) -> None:
+        self._rev_pager.set_page(page)
+        self.load_revisions()
 
     def load_history(self):
         if not self._project_id:
@@ -153,21 +171,34 @@ class HistoryTab(QWidget):
         tid_text = self._tid_input.text().strip()
         tid = int(tid_text) if tid_text.isdigit() else None
         page = self._page_spin.value()
+        # ParaTranz returns a single unpaged history when a text ID is specified.
+        paginated = not (tid is not None and history_type in (None, "text"))
+        if not paginated:
+            page = 1
         self._hist_gen += 1
         gen = self._hist_gen
+        self._hist_table.setRowCount(0)
+        self._hist_pager.loading(page)
 
         def _fetch():
             api = ParatranzHistoryAPI(token=config.token, config=config)
-            return _extract_list(api.get_project_history(pid, page=page, uid=uid, tid=tid, history_type=history_type))
+            return _extract_list(
+                api.get_project_history(
+                    pid, page=page, page_size=HistoryPager.PAGE_SIZE, uid=uid, tid=tid, history_type=history_type
+                )
+            )
 
         def _on_done(records):
             if self._hist_gen != gen:
                 return
             self._on_history_loaded(records)
+            self._hist_pager.show_result(page, len(records), paginated=paginated)
 
         w = ApiWorker(_fetch)
         w.result.connect(_on_done)
-        w.error.connect(lambda e: QMessageBox.warning(self, "加载失败", e))
+        w.error.connect(
+            lambda e: self._hist_pager.show_error(page, e, paginated=paginated) if self._hist_gen == gen else None
+        )
         w.start()
         self._workers.append(w)
 
@@ -201,21 +232,25 @@ class HistoryTab(QWidget):
             return
         config = self._ctx.config
         pid = self._project_id
+        page = self._rev_pager.page.value()
         self._rev_gen += 1
         gen = self._rev_gen
+        self._rev_table.setRowCount(0)
+        self._rev_pager.loading(page)
 
         def _fetch():
             api = ParatranzHistoryAPI(token=config.token, config=config)
-            return _extract_list(api.list_file_revisions(pid))
+            return _extract_list(api.list_file_revisions(pid, page=page, page_size=HistoryPager.PAGE_SIZE))
 
         def _on_done(records):
             if self._rev_gen != gen:
                 return
             self._on_revisions_loaded(records)
+            self._rev_pager.show_result(page, len(records))
 
         w = ApiWorker(_fetch)
         w.result.connect(_on_done)
-        w.error.connect(lambda _: None)
+        w.error.connect(lambda e: self._rev_pager.show_error(page, e) if self._rev_gen == gen else None)
         w.start()
         self._workers.append(w)
 

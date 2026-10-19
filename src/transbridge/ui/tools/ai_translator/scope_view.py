@@ -6,13 +6,15 @@ from collections import Counter
 from collections.abc import Callable
 from typing import Protocol
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QEvent, QSize, Qt
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QMenu,
     QPushButton,
     QSizePolicy,
@@ -36,6 +38,50 @@ class ScopeCallbacks(Protocol):
     def on_scope_stage_clicked(self, stage: int | None) -> None: ...
     def on_scope_label_clicked(self, label_id: str | None) -> None: ...
     def on_scope_category_clicked(self, category: str | None) -> None: ...
+
+
+class _ScopePresetRow(QWidget):
+    """Keep complete preset labels reachable as the task column gets narrower."""
+
+    def __init__(self, buttons: tuple[QPushButton, ...]) -> None:
+        super().__init__()
+        self._buttons = buttons
+        self._columns = 0
+        self._grid = QGridLayout(self)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setSpacing(6)
+        self._grid.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
+        self._reflow(0)
+
+    def minimumSizeHint(self) -> QSize:
+        size = self._grid.minimumSize()
+        size.setWidth(max(button.minimumSizeHint().width() for button in self._buttons))
+        return size
+
+    def resizeEvent(self, event) -> None:
+        self._reflow(event.size().width())
+        super().resizeEvent(event)
+
+    def event(self, event) -> bool:
+        result = super().event(event)
+        if event.type() == QEvent.Type.LayoutRequest and hasattr(self, "_grid"):
+            self._reflow(self.width())
+        return result
+
+    def _reflow(self, width: int) -> None:
+        button_width = max(button.minimumSizeHint().width() for button in self._buttons)
+        spacing = self._grid.spacing()
+        columns = max(1, min(len(self._buttons), (width + spacing) // max(1, button_width + spacing)))
+        if columns == self._columns:
+            return
+        self._columns = columns
+        for button in self._buttons:
+            self._grid.removeWidget(button)
+        for column in range(len(self._buttons)):
+            self._grid.setColumnStretch(column, int(column < columns))
+        for index, button in enumerate(self._buttons):
+            self._grid.addWidget(button, index // columns, index % columns)
+        self.updateGeometry()
 
 
 def render_scope_tags(
@@ -147,22 +193,22 @@ def build_scope_view(view: TranslatorViewOwner, callbacks: ScopeCallbacks) -> No
     scope_layout.setSpacing(4)
 
     # 快捷预设按钮
-    preset_row = QHBoxLayout()
-    preset_row.addWidget(QLabel("快捷："))
     view.controls.preset_untranslated = QPushButton("全部未翻译")
     view.controls.preset_untranslated.setCursor(Qt.CursorShape.PointingHandCursor)
     view.controls.preset_untranslated.clicked.connect(lambda: callbacks.on_preset("untranslated"))
-    preset_row.addWidget(view.controls.preset_untranslated)
     view.controls.preset_selection = QPushButton("当前选择 0")
     view.controls.preset_selection.setCursor(Qt.CursorShape.PointingHandCursor)
     view.controls.preset_selection.clicked.connect(lambda: callbacks.on_preset("selection"))
-    preset_row.addWidget(view.controls.preset_selection)
     view.controls.preset_table_view = QPushButton("当前主表视图")
     view.controls.preset_table_view.setCursor(Qt.CursorShape.PointingHandCursor)
     view.controls.preset_table_view.clicked.connect(lambda: callbacks.on_preset("table_view"))
-    preset_row.addWidget(view.controls.preset_table_view)
-    preset_row.addStretch()
-    scope_layout.addLayout(preset_row)
+    scope_layout.addWidget(
+        _ScopePresetRow((
+            view.controls.preset_untranslated,
+            view.controls.preset_selection,
+            view.controls.preset_table_view,
+        ))
+    )
 
     # 翻译状态维度标签
     stage_row = QHBoxLayout()

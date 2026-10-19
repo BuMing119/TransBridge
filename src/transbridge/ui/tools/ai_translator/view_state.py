@@ -128,6 +128,14 @@ class TranslatorViewPort:
         enabled = self._view.controls.pp_enable_check.isChecked()
         strict = enabled and self._view.controls.pp_strategy_combo.currentIndex() == 1
         self._view.controls.pp_strategy_combo.setEnabled(enabled)
+        self._view.controls.pp_stages.setVisible(strict)
+        self._view.controls.pp_strategy_note.setText(
+            "已关闭质量检查与优化；已设置的选项会保留，重新启用后生效。"
+            if not enabled
+            else "严格策略按所选阶段分别检测、修复、润色和裁决，可能增加模型调用次数与耗时。"
+            if strict
+            else "校对会在同一阶段纠错、统一术语并优化表达；可调整下方润色强度。"
+        )
         for widget in (
             self._view.controls.pp_consistency_check,
             self._view.controls.pp_format_check,
@@ -146,5 +154,7 @@ class TranslatorViewPort:
         workflow_enabled = self._view.controls.pp_enable_check.isChecked()
         strict = workflow_enabled and self._view.controls.pp_strategy_combo.currentIndex() == 1
         enabled = workflow_enabled and (not strict or self._view.controls.pp_polish_check.isChecked())
+        self._view.controls.pp_polish_scope_label.setVisible(strict)
+        self._view.controls.pp_polish_scope_combo.setVisible(strict)
         self._view.controls.pp_polish_scope_combo.setEnabled(strict and enabled)
         self._view.controls.pp_polish_level_combo.setEnabled(enabled)

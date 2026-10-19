@@ -244,6 +244,7 @@ class Step1SourceWidget(QWidget):
             "移除集合",
             f"确定要移除集合「{label}」吗？\n已解析的数据将从内存中清除。",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         if ret == QMessageBox.StandardButton.Yes:
             self._ctx.remove_slot(active)
@@ -285,6 +286,7 @@ class Step1SourceWidget(QWidget):
                     "集合已存在",
                     f"集合「{label}」已存在，是否覆盖？\n选择「否」将保留原有集合。",
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
                 )
                 if ret != QMessageBox.StandardButton.Yes:
                     self._status_lbl.setText("已取消，保留原有集合")
@@ -601,6 +603,7 @@ class Step1SourceWidget(QWidget):
                 "集合已存在",
                 f"集合「{slot.label}」已存在，是否覆盖？\n选择「否」将保留原有集合。",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
             )
             if ret != QMessageBox.StandardButton.Yes:
                 self._status_lbl.setText("已取消，保留原有集合")

@@ -209,6 +209,7 @@ class ProjectTransferCoordinator:
                     "项目已存在",
                     f"项目「{project_name}」已存在。\n覆盖将丢失现有数据，是否继续？",
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
                 )
                 if answer != QMessageBox.StandardButton.Yes:
                     return

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .control_visual_style import compile_control_visual_styles
 from .task_visual_style import compile_task_visual_styles
 
 if TYPE_CHECKING:
@@ -186,24 +187,6 @@ QFrame[tbTerminologyListRow="true"] {{
     border: 0;
     border-bottom: 1px solid {header_surface.canonical};
 }}
-QPushButton[tbTerminologyPrimary="true"] {{
-    color: {on_accent.canonical};
-    background: {focus.canonical};
-    border: 1px solid {focus.canonical};
-    border-radius: {radius}px;
-    min-height: {control_height}px;
-    padding: 0 14px;
-    font-weight: 600;
-}}
-QPushButton[tbTerminologyPrimary="true"]:hover {{
-    color: {on_accent.canonical};
-    background: {selected_row.canonical};
-}}
-QPushButton[tbTerminologyPrimary="true"]:disabled {{
-    color: {disabled_text.canonical};
-    background: {disabled_surface.canonical};
-    border-color: {subtle_border.canonical};
-}}
 QPushButton[tbTerminologyFilter="true"] {{
     color: {muted.canonical};
     background: transparent;
@@ -281,43 +264,7 @@ QMenuBar[tbComponentKind="menu"]::item:pressed {{
 
 {compile_task_visual_styles(snapshot)}
 
-QPushButton[tbComponentKind="button"], QToolButton[tbComponentKind="button"] {{
-    color: {text.canonical};
-    background: {surface.canonical};
-    border: 1px solid {subtle_border.canonical};
-    border-radius: {radius}px;
-    min-height: {control_height - 2}px;
-    padding: 0 12px;
-}}
-QPushButton[tbComponentKind="button"]:hover, QToolButton[tbComponentKind="button"]:hover {{
-    color: {focus.canonical};
-    background: {control_hover.canonical};
-    border-color: {focus.canonical};
-}}
-QPushButton[tbComponentKind="button"]:pressed, QToolButton[tbComponentKind="button"]:pressed {{
-    background: {nav_selected.canonical};
-}}
-QPushButton[tbComponentKind="button"]:disabled, QToolButton[tbComponentKind="button"]:disabled {{
-    color: {disabled_text.canonical};
-    background: {disabled_surface.canonical};
-    border-color: {subtle_border.canonical};
-}}
-QPushButton[tbSemanticState="primary"], QToolButton[tbSemanticState="primary"] {{
-    color: {focus.canonical};
-    background: {control_hover.canonical};
-    border-color: {focus.canonical};
-    font-weight: 600;
-}}
-QPushButton[tbSemanticState="primary"]:hover, QToolButton[tbSemanticState="primary"]:hover {{
-    color: {focus.canonical};
-    background: {selected_row.canonical};
-    border-color: {focus.canonical};
-}}
-QPushButton[tbSemanticState="primary"]:pressed, QToolButton[tbSemanticState="primary"]:pressed {{
-    color: {focus.canonical};
-    background: {nav_selected.canonical};
-    border-color: {focus.canonical};
-}}
+{compile_control_visual_styles(snapshot)}
 
 QLabel#startCenterTitle {{
     color: {text.canonical};
@@ -377,13 +324,14 @@ QPushButton#startCenterPrimaryAction:pressed {{
     background: {focus.canonical};
     border-color: {focus.canonical};
 }}
+QPushButton#startCenterPrimaryAction QLabel:enabled {{ color: {on_accent.canonical}; }}
 QPushButton#startCenterPrimaryAction QLabel[tbStartActionIcon="true"] {{ background: transparent; }}
 QPushButton#startCenterPrimaryAction:disabled {{
     color: {disabled_text.canonical};
     background: {disabled_surface.canonical};
     border-color: {subtle_border.canonical};
 }}
-QPushButton#startCenterPrimaryAction:disabled QLabel {{ color: {disabled_text.canonical}; }}
+QPushButton#startCenterPrimaryAction QLabel:disabled {{ color: {disabled_text.canonical}; }}
 QPushButton[tbStartAdvanced="true"] {{
     color: {focus.canonical};
     background: transparent;

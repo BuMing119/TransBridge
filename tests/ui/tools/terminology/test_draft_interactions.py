@@ -59,7 +59,10 @@ def test_excluding_a_conflict_is_an_explicit_draft_mutation(monkeypatch):
         conflict_details=lambda _conflict: details, resolve_review=lambda *args, **kwargs: calls.append((args, kwargs))
     )
     controller = DraftInteractionController(
-        QWidget(), presenter, lambda command: command(), lambda call, success, _message: success(call())
+        QWidget(),
+        presenter,
+        lambda command, on_saved, on_error: on_saved(command()),
+        lambda call, success, _message: success(call()),
     )
 
     def exclude():
@@ -75,6 +78,7 @@ def test_excluding_a_conflict_is_an_explicit_draft_mutation(monkeypatch):
 def test_conflict_dialog_shows_full_evidence_and_selects_actual_plugin():
     details = _details(503)
     dialog = ConflictReviewDialog(details)
+    dialog.save_requested.connect(dialog.saved)
     model = dialog.evidence.model()
     assert model.rowCount() == 503
     assert model.index(502, 4).data() == "entry-502"
@@ -126,6 +130,7 @@ def test_review_keeps_existing_plugin_choice_and_names_suppressed_decision():
         SimpleNamespace(scope=SimpleNamespace(plugin_id="Other.esp"), translation="特例译名", suppressed=False),
     )
     dialog = ConflictReviewDialog(details)
+    dialog.save_requested.connect(dialog.saved)
     assert "整个工程：已停用" in dialog.current_label.text()
     assert dialog.operation.currentData() is ConflictResolutionOperation.PLUGIN_EXCEPTION
     assert dialog.plugin.currentText() == "Other.esp"

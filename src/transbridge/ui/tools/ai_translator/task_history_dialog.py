@@ -2,8 +2,17 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout
+from PyQt6.QtCore import QPoint, QSignalBlocker, Qt, QTimer
+from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+)
 
 from transbridge.application.translation.task_history import TaskHistoryStore
 from transbridge.ui.windowing import show_and_activate
@@ -11,6 +20,7 @@ from transbridge.ui.workers import ApiWorker
 
 from ._theme_support import AiThemeBinding
 from .task_recovery_prompt import RECOVERABLE_STATES, matches_version, read_recovery_records, recovery_summary
+from .task_widget_style import configure_task_button, configure_task_host, configure_task_title
 
 STATE_LABELS = {
     "preparing": "准备中",
@@ -44,15 +54,20 @@ class TaskHistoryDialog(QDialog):
         self._result_generation = 0
         self._closed = False
         self.setWindowTitle("AI 任务记录")
+        configure_task_host(self)
         self.resize(1060, 540)
         layout = QVBoxLayout(self)
         self.status = QLabel()
+        self.status.setTextFormat(Qt.TextFormat.PlainText)
         self.status.setWordWrap(True)
+        self.status.setAccessibleName("任务记录读取状态")
         layout.addWidget(self.status)
         hint = QLabel("有恢复信息的校对任务可继续或重新开始，继续时重新校验已保存进度；旧任务记录仅供查看。")
         hint.setWordWrap(True)
+        configure_task_title(hint, "hint")
         layout.addWidget(hint)
         self.tasks = QTreeWidget()
+        self.tasks.setAccessibleName("AI 任务记录")
         self.tasks.setHeaderLabels(["时间", "处理内容", "状态", "结果", "项目", "版本"])
         self.tasks.setRootIsDecorated(False)
         for column, width in enumerate((170, 200, 130, 240, 100)):
@@ -62,12 +77,16 @@ class TaskHistoryDialog(QDialog):
         layout.addWidget(self.tasks)
         buttons = QHBoxLayout()
         self.open_button = QPushButton("查看任务")
+        configure_task_button(self.open_button, primary=True)
+        self.open_button.setDefault(True)
         self.open_button.clicked.connect(self.open_selected)
         self.refresh_button = QPushButton("刷新")
         self.refresh_button.clicked.connect(self.refresh)
         buttons.addWidget(self.open_button)
         self.continue_button = QPushButton("继续任务")
         self.restart_button = QPushButton("重新开始")
+        for button in (self.continue_button, self.restart_button, self.refresh_button):
+            configure_task_button(button)
         self.continue_button.clicked.connect(lambda: self._recover_selected(False))
         self.restart_button.clicked.connect(lambda: self._recover_selected(True))
         buttons.addWidget(self.continue_button)
@@ -128,8 +147,16 @@ class TaskHistoryDialog(QDialog):
                 "created_at": window.run.records.created_at,
                 "sources": [{"label": task.label} for task in window.session.tasks],
             }
-        self.tasks.clear()
-        for record in sorted(records.values(), key=lambda item: item.get("created_at", ""), reverse=True):
+        existing = {
+            self.tasks.topLevelItem(index).data(0, Qt.ItemDataRole.UserRole): self.tasks.topLevelItem(index)
+            for index in range(self.tasks.topLevelItemCount())
+        }
+        anchor = self.tasks.itemAt(QPoint(2, 2))
+        vertical, horizontal = self.tasks.verticalScrollBar().value(), self.tasks.horizontalScrollBar().value()
+        blocker = QSignalBlocker(self.tasks)
+        rows = {}
+        ordered = sorted(records.values(), key=lambda item: item.get("created_at", ""), reverse=True)
+        for index, record in enumerate(ordered):
             run_id = record["run_id"]
             window = live.get(run_id)
             recovery = self._recovery_records.get(run_id)
@@ -162,22 +189,39 @@ class TaskHistoryDialog(QDialog):
                     )
                 else:
                     project_state = "已保存部分结果" if recovery.get("applied_entries") else "保存状态待核验"
-            row = QTreeWidgetItem([
+            values = [
                 record.get("created_at", "")[:19].replace("T", " "),
                 "、".join(item["label"] for item in record.get("sources", ())),
                 state,
                 summary,
                 project_state,
                 str(record.get("version_label") or record.get("variant_id") or ""),
-            ])
+            ]
+            row = existing.pop(run_id, None)
+            if row is None:
+                row = QTreeWidgetItem()
+                self.tasks.insertTopLevelItem(index, row)
+            elif self.tasks.indexOfTopLevelItem(row) != index:
+                self.tasks.takeTopLevelItem(self.tasks.indexOfTopLevelItem(row))
+                self.tasks.insertTopLevelItem(index, row)
             row.setData(0, Qt.ItemDataRole.UserRole, run_id)
-            for column in range(6):
-                row.setToolTip(column, row.text(column))
-            self.tasks.addTopLevelItem(row)
-            if run_id == key:
-                self.tasks.setCurrentItem(row)
-        if self.tasks.currentItem() is None and self.tasks.topLevelItemCount() and self._requested_run_id is None:
-            self.tasks.setCurrentItem(self.tasks.topLevelItem(0))
+            for column, value in enumerate(values):
+                row.setText(column, value)
+                row.setToolTip(column, value)
+            rows[run_id] = row
+        for row in existing.values():
+            self.tasks.takeTopLevelItem(self.tasks.indexOfTopLevelItem(row))
+        current = rows.get(key)
+        if current is None and rows and self._requested_run_id is None:
+            current = self.tasks.topLevelItem(0)
+        if self.tasks.currentItem() is not current:
+            self.tasks.setCurrentItem(current)
+        if anchor is not None and anchor.treeWidget() is self.tasks:
+            self.tasks.scrollToItem(anchor, QAbstractItemView.ScrollHint.PositionAtTop)
+        elif selected is not None:
+            self.tasks.verticalScrollBar().setValue(vertical)
+        self.tasks.horizontalScrollBar().setValue(horizontal)
+        del blocker
         if self._requested_run_id is not None and self.tasks.currentItem() is None:
             self.status.setText("所选任务记录已不存在或不属于当前项目，请刷新或返回原项目。")
         self._update_recovery_buttons()
@@ -198,6 +242,9 @@ class TaskHistoryDialog(QDialog):
         return record
 
     def _update_recovery_buttons(self):
+        available = not self.registry.shutting_down and not self._closed and not self.busy
+        self.open_button.setEnabled(available and self.tasks.currentItem() is not None)
+        self.refresh_button.setEnabled(available)
         self.continue_button.setEnabled(not self.registry.shutting_down and self._selected_recovery() is not None)
         self.restart_button.setEnabled(
             not self.registry.shutting_down and self._selected_recovery(restart=True) is not None
@@ -244,12 +291,14 @@ class TaskHistoryDialog(QDialog):
     def _dispatch(self, action, completed):
         worker = ApiWorker(action, route_http_errors=False)
         self.worker = worker
+        self._update_recovery_buttons()
         worker.result.connect(completed)
         worker.error.connect(lambda error: self.status.setText(f"读取失败：{error}"))
 
         def finished():
             self.worker = None
             worker.deleteLater()
+            self._update_recovery_buttons()
             if self._auto_open_run_id is not None:
                 QTimer.singleShot(0, self._open_requested)
 
@@ -266,4 +315,5 @@ class TaskHistoryDialog(QDialog):
     def showEvent(self, event):
         self._closed = False
         self.timer.start()
+        self._update_recovery_buttons()
         super().showEvent(event)

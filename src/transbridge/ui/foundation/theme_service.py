@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import QApplication, QStyleFactory
 from transbridge.config.ui_preferences import DEFAULT_THEME_ID, ThemeMode, UiPreferenceRepository
 
 from .model import ThemeError, ThemeScheme, ThemeTokens
+from .palette_refresh import refresh_palette_styles
 from .qt_palette import compile_palette
 from .registry import ThemeRegistry
 from .visual_style import compile_application_stylesheet
@@ -191,6 +192,8 @@ class ThemeService(QObject):
             self._application.setPalette(palette)
             if stylesheet_changed:
                 self._application.setStyleSheet(stylesheet)
+            elif previous_palette != palette:
+                self._refresh_palette_styles()
         except Exception:
             try:
                 self._application.setPalette(
@@ -200,6 +203,8 @@ class ThemeService(QObject):
                     self._application.setStyleSheet(
                         previous_stylesheet if self._snapshot is not None else self._last_good_stylesheet
                     )
+                else:
+                    self._refresh_palette_styles()
             except Exception:
                 pass
             return ThemeApplyResult(
@@ -221,6 +226,9 @@ class ThemeService(QObject):
         self.theme_changed.emit(candidate.revision, candidate)
         status = ThemeApplyStatus.FALLBACK if fallback_applied else ThemeApplyStatus.APPLIED
         return ThemeApplyResult(status, persisted, candidate, diagnostics)
+
+    def _refresh_palette_styles(self) -> None:
+        refresh_palette_styles(self._application)
 
     def _resolve(self, preference: ThemePreference, *, system_scheme: Qt.ColorScheme | None = None):
         scheme = self._effective_scheme(preference.mode, system_scheme=system_scheme)

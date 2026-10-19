@@ -20,11 +20,12 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from transbridge.ui.foundation.tabler_icons import tabler_icon
+from transbridge.ui.foundation.tabler_icons import tabler_icon, tabler_pixmap
 from transbridge.ui.shell.action_catalog import IntentId
 
 _AVATAR_SIZE = 32
 _NAV_ICON_SIZE = 18
+_RASTER_RENDER_SCALE = 4
 
 
 def _ui_asset_path(name: str) -> Path | None:
@@ -45,7 +46,7 @@ def _outlined_asset_icon(widget: QWidget, asset_path: Path, size: int = _NAV_ICO
     source = QPixmap(str(asset_path))
     if source.isNull():
         return QIcon()
-    render_scale = 4
+    render_scale = _RASTER_RENDER_SCALE
     render_size = size * render_scale
     source = source.scaled(
         render_size,
@@ -68,14 +69,10 @@ def _outlined_asset_icon(widget: QWidget, asset_path: Path, size: int = _NAV_ICO
     painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
     painter.drawPixmap(0, 0, source)
     painter.end()
-    return QIcon(
-        outlined.scaled(
-            size,
-            size,
-            Qt.AspectRatioMode.IgnoreAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-    )
+    # Retain the supersampled artwork so Qt can choose physical pixels for
+    # each screen without enlarging an already-downsampled 18 px bitmap.
+    outlined.setDevicePixelRatio(render_scale)
+    return QIcon(outlined)
 
 
 class NavigationButton(QToolButton):
@@ -164,7 +161,7 @@ class NavigationRail(QFrame):
         identity.addWidget(self._user_name)
         identity.addLayout(presence)
         user_layout.addLayout(identity, 1)
-        self._account_hint = QLabel("⋯", self._user_panel)
+        self._account_hint = QLabel(self._user_panel)
         self._account_hint.setProperty("tbSecondary", True)
         self._account_hint.setToolTip("打开账户与服务")
         user_layout.addWidget(self._account_hint)
@@ -227,6 +224,11 @@ class NavigationRail(QFrame):
         return button
 
     def _refresh_icons(self) -> None:
+        self._account_hint.setPixmap(
+            tabler_pixmap(
+                "dots", 14, self._account_hint.palette().color(QPalette.ColorRole.Text), dpr=_RASTER_RENDER_SCALE
+            )
+        )
         for button, icon_id in self._icon_buttons:
             if button is self._paratranz_button:
                 asset_path = _ui_asset_path("paratranz.png")
@@ -312,24 +314,27 @@ class NavigationRail(QFrame):
 
     @staticmethod
     def _circular_avatar(source: QPixmap) -> QPixmap:
+        render_size = _AVATAR_SIZE * _RASTER_RENDER_SCALE
         scaled = source.scaled(
-            _AVATAR_SIZE,
-            _AVATAR_SIZE,
+            render_size,
+            render_size,
             Qt.AspectRatioMode.KeepAspectRatioByExpanding,
             Qt.TransformationMode.SmoothTransformation,
         )
-        left = max(0, (scaled.width() - _AVATAR_SIZE) // 2)
-        top = max(0, (scaled.height() - _AVATAR_SIZE) // 2)
-        cropped = scaled.copy(left, top, _AVATAR_SIZE, _AVATAR_SIZE)
-        result = QPixmap(_AVATAR_SIZE, _AVATAR_SIZE)
+        scaled.setDevicePixelRatio(1)
+        left = max(0, (scaled.width() - render_size) // 2)
+        top = max(0, (scaled.height() - render_size) // 2)
+        cropped = scaled.copy(left, top, render_size, render_size)
+        result = QPixmap(render_size, render_size)
         result.fill(Qt.GlobalColor.transparent)
         painter = QPainter(result)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         clip = QPainterPath()
-        clip.addEllipse(0, 0, _AVATAR_SIZE, _AVATAR_SIZE)
+        clip.addEllipse(0, 0, render_size, render_size)
         painter.setClipPath(clip)
         painter.drawPixmap(0, 0, cropped)
         painter.end()
+        result.setDevicePixelRatio(_RASTER_RENDER_SCALE)
         return result
 
     @staticmethod

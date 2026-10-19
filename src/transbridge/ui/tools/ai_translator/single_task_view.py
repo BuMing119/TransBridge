@@ -182,7 +182,6 @@ def _build_task_tabs(
     task_layout = QVBoxLayout(view._task_surface)
     task_layout.setContentsMargins(0, 0, 0, 0)
     task_layout.setSpacing(0)
-    task_layout.addWidget(_build_naming_scheme_group(view, callbacks, view._task_surface))
     view.controls.tabs = QTabWidget(view._task_surface)
     configure_task_tabs(view.controls.tabs)
     view.controls.tabs.setAccessibleName("AI 任务配置")
@@ -191,6 +190,7 @@ def _build_task_tabs(
     basic_layout = QVBoxLayout(basic)
     basic_layout.setContentsMargins(14, 12, 14, 12)
     basic_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+    basic_layout.addWidget(_build_naming_scheme_group(view, callbacks, basic))
     language_form = QFormLayout()
     view.controls.target_lang_combo = QComboBox(basic)
     configure_task_input(view.controls.target_lang_combo)
@@ -315,11 +315,11 @@ def _build_terms_group(view: object, callbacks: object, parent: QWidget) -> QGro
     view.controls.max_terms_spin = _spin(group, 10, 500, 50)
     limit_row.addWidget(view.controls.max_terms_spin)
     limit_row.addStretch(1)
-    edit_terms = QPushButton("查看/编辑动态术语库", group)
+    layout.addLayout(limit_row)
+    edit_terms = QPushButton("查看动态术语库", group)
     configure_task_button(edit_terms)
     edit_terms.clicked.connect(callbacks.on_view_terms)
-    limit_row.addWidget(edit_terms)
-    layout.addLayout(limit_row)
+    layout.addWidget(edit_terms, alignment=Qt.AlignmentFlag.AlignLeft)
     return group
 
 
@@ -327,6 +327,7 @@ def _build_runtime_group(view: object, parent: QWidget) -> QGroupBox:
     group = QGroupBox("本次任务运行参数", parent)
     configure_task_panel(group)
     form = QFormLayout(group)
+    form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
     view.controls.concurrent_spin = _spin(group, 1, 50, 20)
     view.controls.concurrent_spin.setToolTip("本次 AI 工作流共享的最大在途 LLM 请求数")
     form.addRow("最大并发请求", view.controls.concurrent_spin)

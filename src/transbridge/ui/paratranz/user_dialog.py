@@ -2,6 +2,7 @@
 UserInfoDialog: 当前用户信息查看与编辑对话框。
 """
 
+from PyQt6.QtCore import QEvent
 from PyQt6.QtWidgets import (
     QDialog,
     QFormLayout,
@@ -57,6 +58,14 @@ class UserInfoDialog(QDialog):
         self._bio_input.setPlaceholderText("最长 140 字符")
         self._avatar_input = QLineEdit()
         self._avatar_input.setPlaceholderText("头像 URL（可选）")
+        self._profile_inputs = {
+            "nickname": self._nickname_input,
+            "bio": self._bio_input,
+            "avatar": self._avatar_input,
+        }
+        self._profile_preedit: set[QLineEdit] = set()
+        for editor in self._profile_inputs.values():
+            editor.installEventFilter(self)
         edit_form.addRow("昵称:", self._nickname_input)
         edit_form.addRow("个人介绍:", self._bio_input)
         edit_form.addRow("头像 URL:", self._avatar_input)
@@ -90,7 +99,7 @@ class UserInfoDialog(QDialog):
         if self._user:
             self._fill(self._user)
 
-    def _fill(self, user: dict):
+    def _fill(self, user: dict, *, edit_baseline: dict[str, str] | None = None):
         self._lbl_username.setText(user.get("username", "—"))
         credit = user.get("credit", "—")
         credit_text = f"{credit}（账户受限）" if isinstance(credit, (int, float)) and credit < 0 else str(credit)
@@ -99,15 +108,24 @@ class UserInfoDialog(QDialog):
         e = user.get("edited", 0)
         r = user.get("reviewed", 0)
         self._lbl_stats.setText(f"{t} / {e} / {r}")
-        self._nickname_input.setText(user.get("nickname", "") or "")
-        self._bio_input.setText(user.get("bio", "") or "")
-        self._avatar_input.setText(user.get("avatar", "") or "")
+        for field, editor in self._profile_inputs.items():
+            if editor not in self._profile_preedit and (edit_baseline is None or editor.text() == edit_baseline[field]):
+                editor.setText(user.get(field, "") or "")
+
+    def eventFilter(self, watched, event):  # noqa: N802 - Qt override
+        if event.type() == QEvent.Type.InputMethod:
+            if event.preeditString():
+                self._profile_preedit.add(watched)
+            else:
+                self._profile_preedit.discard(watched)
+        return super().eventFilter(watched, event)
 
     def _load_full_user(self):
         uid = self._user.get("id")
         if not uid:
             return
         config = self._ctx.config
+        edit_baseline = {field: editor.text() for field, editor in self._profile_inputs.items()}
 
         def _fetch():
             api = ParatranzUserAPI(token=config.token, config=config)
@@ -119,7 +137,7 @@ class UserInfoDialog(QDialog):
             user, activities = result
             if user:
                 self._user = user
-                self._fill(user)
+                self._fill(user, edit_baseline=edit_baseline)
             acts = activities if isinstance(activities, list) else []
             self._activity_table.setRowCount(len(acts))
             for row, act in enumerate(acts):

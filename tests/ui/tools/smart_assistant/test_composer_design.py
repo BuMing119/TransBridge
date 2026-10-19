@@ -2,8 +2,9 @@
 
 from pathlib import Path
 
-from PyQt6.QtCore import QPoint
+from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtGui import QFont, QFontDatabase
+from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QStyle, QStyleOptionButton, QVBoxLayout, QWidget
 import pytest
 
@@ -202,24 +203,42 @@ def test_running_empty_composer_emphasizes_stop_then_followup_when_ready(qapp):
     view.configure_actions(stop=lambda: stopped.append(True), details=lambda: None)
     try:
         view.set_running(True)
-        assert view.stop_button.property("tbSemanticState") == "accent"
+        assert view.stop_button.property("tbSemanticState") == "primary"
         assert view.send_button.property("tbSemanticState") == "muted"
         assert not view.send_button.isEnabled()
         view.stop_button.click()
         assert stopped == [True]
         view.set_text("保留原来的标点")
-        assert view.send_button.property("tbSemanticState") == "accent"
+        assert view.send_button.property("tbSemanticState") == "primary"
         assert view.stop_button.property("tbSemanticState") == "muted"
         assert view.send_button.text() == "发送补充"
         view.send_button.click()
         assert sent == ["保留原来的标点"]
         view.set_preparing_attachments(True)
         assert not view.send_button.isEnabled()
-        assert view.stop_button.property("tbSemanticState") == "accent"
+        assert view.stop_button.property("tbSemanticState") == "primary"
         view.set_preparing_attachments(False)
         assert view.send_button.isEnabled()
         view.set_running(False)
         assert not view.stop_button.isVisible()
         assert view.send_button.text() == "发送"
+    finally:
+        host.close()
+
+
+def test_tab_reaches_composer_actions_and_shift_tab_returns_without_editing_draft(qapp):
+    host, view, _modes, sent = _composer(qapp)
+    draft = "保留这段尚未发送的说明"
+    view.set_text(draft)
+    view.input.setFocus()
+    qapp.processEvents()
+    try:
+        QTest.keyClick(view.input, Qt.Key.Key_Tab)
+        assert not view.input.hasFocus()
+        assert view.input.toPlainText() == draft
+        assert not sent
+        QTest.keyClick(qapp.focusWidget(), Qt.Key.Key_Backtab)
+        assert view.input.hasFocus()
+        assert view.input.toPlainText() == draft
     finally:
         host.close()

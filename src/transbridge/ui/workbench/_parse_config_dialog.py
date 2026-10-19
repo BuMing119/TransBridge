@@ -21,9 +21,13 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QRadioButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
+
+from transbridge.ui.foundation.accessibility import configure_accessible_widget, update_accessible_state
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState, configure_dialog
 
 
 @dataclass
@@ -53,6 +57,7 @@ class ParseConfigDialog(QDialog):
                   "migrate" — 仅迁移源（应用到已有集合）
         """
         super().__init__(parent)
+        configure_dialog(self)
         self._mode = mode
         self._esp_paths: list[str] = []
         self.setWindowTitle("解析插件" if mode == "parse" else "应用迁移源")
@@ -63,7 +68,7 @@ class ParseConfigDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
 
-        form = QFormLayout()
+        self._form = form = QFormLayout()
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
         # ── 来源模式切换（仅 parse 模式） ──
@@ -91,7 +96,7 @@ class ParseConfigDialog(QDialog):
             self._esp_input.setPlaceholderText("选择 .esp / .esm / .esl 文件（可多选）…")
             self._esp_input.setReadOnly(True)
             esp_browse = QPushButton("浏览")
-            esp_browse.setFixedWidth(60)
+            esp_browse.setMinimumWidth(60)
             esp_browse.clicked.connect(self._browse_esp)
             esp_row.addWidget(self._esp_input)
             esp_row.addWidget(esp_browse)
@@ -106,10 +111,10 @@ class ParseConfigDialog(QDialog):
         self._eet_input.setPlaceholderText(placeholder)
         self._eet_input.setReadOnly(True)
         eet_browse = QPushButton("浏览")
-        eet_browse.setFixedWidth(60)
+        eet_browse.setMinimumWidth(60)
         eet_browse.clicked.connect(self._browse_eet)
-        eet_clear = QPushButton("✕")
-        eet_clear.setFixedWidth(28)
+        eet_clear = QPushButton("×")
+        eet_clear.setFixedWidth(40)
         eet_clear.setToolTip("清除")
         eet_clear.clicked.connect(lambda: self._eet_input.clear())
         eet_row.addWidget(self._eet_input)
@@ -125,10 +130,10 @@ class ParseConfigDialog(QDialog):
         self._xt_input.setPlaceholderText("可选，迁移旧 XT 译文")
         self._xt_input.setReadOnly(True)
         xt_browse = QPushButton("浏览")
-        xt_browse.setFixedWidth(60)
+        xt_browse.setMinimumWidth(60)
         xt_browse.clicked.connect(self._browse_xt)
-        xt_clear = QPushButton("✕")
-        xt_clear.setFixedWidth(28)
+        xt_clear = QPushButton("×")
+        xt_clear.setFixedWidth(40)
         xt_clear.setToolTip("清除")
         xt_clear.clicked.connect(lambda: self._xt_input.clear())
         xt_row.addWidget(self._xt_input)
@@ -144,10 +149,10 @@ class ParseConfigDialog(QDialog):
         self._tp_input.setPlaceholderText("可选，从已汉化插件提取译文")
         self._tp_input.setReadOnly(True)
         tp_browse = QPushButton("浏览")
-        tp_browse.setFixedWidth(60)
+        tp_browse.setMinimumWidth(60)
         tp_browse.clicked.connect(self._browse_translated_plugin)
-        tp_clear = QPushButton("✕")
-        tp_clear.setFixedWidth(28)
+        tp_clear = QPushButton("×")
+        tp_clear.setFixedWidth(40)
         tp_clear.setToolTip("清除")
         tp_clear.clicked.connect(lambda: self._tp_input.clear())
         tp_row.addWidget(self._tp_input)
@@ -164,10 +169,10 @@ class ParseConfigDialog(QDialog):
             self._json_input.setPlaceholderText("选择 ParaTranz / DSD / TransBridge JSON…")
             self._json_input.setReadOnly(True)
             json_browse = QPushButton("浏览")
-            json_browse.setFixedWidth(60)
+            json_browse.setMinimumWidth(60)
             json_browse.clicked.connect(self._browse_json)
-            json_clear = QPushButton("✕")
-            json_clear.setFixedWidth(28)
+            json_clear = QPushButton("×")
+            json_clear.setFixedWidth(40)
             json_clear.setToolTip("清除")
             json_clear.clicked.connect(self._clear_json)
             self._json_format = QComboBox()
@@ -189,10 +194,10 @@ class ParseConfigDialog(QDialog):
             self._sst_input.setPlaceholderText("选择 SSU8 / SSU9 SST 文件…")
             self._sst_input.setReadOnly(True)
             sst_browse = QPushButton("浏览")
-            sst_browse.setFixedWidth(60)
+            sst_browse.setMinimumWidth(60)
             sst_browse.clicked.connect(self._browse_sst)
-            sst_clear = QPushButton("✕")
-            sst_clear.setFixedWidth(28)
+            sst_clear = QPushButton("×")
+            sst_clear.setFixedWidth(40)
             sst_clear.setToolTip("清除")
             sst_clear.clicked.connect(self._clear_sst)
             self._sst_format = QComboBox()
@@ -213,10 +218,10 @@ class ParseConfigDialog(QDialog):
         self._strings_input.setPlaceholderText("可选，从 Strings 文件导入翻译（本地化插件）")
         self._strings_input.setReadOnly(True)
         strings_browse = QPushButton("浏览")
-        strings_browse.setFixedWidth(60)
+        strings_browse.setMinimumWidth(60)
         strings_browse.clicked.connect(self._browse_strings_dir)
-        strings_clear = QPushButton("✕")
-        strings_clear.setFixedWidth(28)
+        strings_clear = QPushButton("×")
+        strings_clear.setFixedWidth(40)
         strings_clear.setToolTip("清除")
         strings_clear.clicked.connect(lambda: self._strings_input.clear())
         strings_row.addWidget(self._strings_input)
@@ -235,14 +240,16 @@ class ParseConfigDialog(QDialog):
             "polish",
             "russian",
         ])
-        self._strings_lang.setFixedWidth(100)
-        strings_row.addWidget(self._strings_lang)
+        self._strings_lang.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        strings_options = QHBoxLayout()
+        strings_options.addWidget(self._strings_lang, 1)
 
         self._strings_apply_all = QCheckBox("全部")
         self._strings_apply_all.setToolTip("勾选后将 Strings 路径应用到所有已加载集合")
-        strings_row.addWidget(self._strings_apply_all)
+        strings_options.addWidget(self._strings_apply_all)
 
         form.addRow("Strings 目录", self._strings_row)
+        form.addRow("Strings 语言", strings_options)
 
         # ── 跳过空串 ──
         self._skip_empty = QComboBox()
@@ -257,6 +264,15 @@ class ParseConfigDialog(QDialog):
         line.setFrameShadow(QFrame.Shadow.Sunken)
         layout.addWidget(line)
 
+        self._feedback = QLabel(self)
+        self._feedback.setTextFormat(Qt.TextFormat.PlainText)
+        self._feedback.setWordWrap(True)
+        self._feedback.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        configure_accessible_widget(self._feedback, name="输入检查结果")
+        ComponentStyle.apply_static(self._feedback, ComponentKind.NOTIFICATION)
+        self._feedback.hide()
+        layout.addWidget(self._feedback)
+
         # ── 按钮 ──
         btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         label = "开始解析" if self._mode == "parse" else "应用迁移"
@@ -266,15 +282,35 @@ class ParseConfigDialog(QDialog):
         btn_box.accepted.connect(self._validate_and_accept)
         btn_box.rejected.connect(self.reject)
         layout.addWidget(btn_box)
-
-        # 迁移模式下隐藏 EET 清除按钮（必填）
-        if self._mode == "migrate":
-            self._eet_input.setPlaceholderText("选择 EET XML 文件…")
+        for editor in self.findChildren(QLineEdit):
+            ComponentStyle.apply_static(editor, ComponentKind.INPUT)
+            editor.textChanged.connect(self._clear_feedback)
+        for combo in self.findChildren(QComboBox):
+            ComponentStyle.apply_static(combo, ComponentKind.INPUT)
+        for button in self.findChildren(QPushButton):
+            ComponentStyle.apply_static(button, ComponentKind.BUTTON)
+        ComponentStyle.apply_state(self._ok_btn, SemanticState.PRIMARY)
+        self._ok_btn.setDefault(True)
 
     def _on_source_mode_changed(self):
         esp_mode = self._rb_esp.isChecked()
         if hasattr(self, "_esp_row"):
-            self._esp_row.setVisible(esp_mode)
+            self._form.setRowVisible(self._esp_row, esp_mode)
+        self._form.labelForField(self._eet_row).setText("EET XML" if esp_mode else "EET XML *")
+        self._eet_input.setPlaceholderText("可选，迁移旧 EET 译文" if esp_mode else "请选择作为解析来源的 EET XML 文件")
+        self._clear_feedback()
+
+    def _clear_feedback(self):
+        self._feedback.clear()
+        self._feedback.hide()
+        self._feedback.setAccessibleDescription("")
+
+    def _show_input_error(self, message, editor):
+        self._feedback.setText(message)
+        self._feedback.show()
+        ComponentStyle.apply_state(self._feedback, SemanticState.ERROR)
+        update_accessible_state(self._feedback, message)
+        editor.setFocus(Qt.FocusReason.OtherFocusReason)
 
     # ── File browsers ──────────────────────────────────────────
 
@@ -337,10 +373,26 @@ class ParseConfigDialog(QDialog):
             is_eet = hasattr(self, "_rb_eet_only") and self._rb_eet_only.isChecked()
             if is_eet:
                 if not self._eet_input.text().strip():
-                    return  # TODO: show error
+                    self._show_input_error("请选择作为解析来源的 EET XML 文件。", self._eet_input)
+                    return
             else:
                 if not self._esp_paths and not self._esp_input.text().strip():
+                    self._show_input_error("请选择至少一个 ESP/ESM/ESL 插件文件。", self._esp_input)
                     return
+        else:
+            config = self.get_config()
+            if not any((
+                config.eet_path,
+                config.xt_path,
+                config.tp_path,
+                config.json_path,
+                config.sst_path,
+                config.strings_dir,
+            )):
+                self._show_input_error(
+                    "请选择至少一个迁移来源（EET、XT、已翻译插件、JSON、SST 或 Strings 目录）。", self._eet_input
+                )
+                return
         self.accept()
 
     # ── Public API ─────────────────────────────────────────────

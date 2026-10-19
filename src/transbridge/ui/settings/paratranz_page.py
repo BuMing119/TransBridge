@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from PyQt6.QtWidgets import QCheckBox, QFormLayout, QLabel, QLineEdit, QPushButton, QSpinBox
 
+from transbridge.ui.foundation.accessibility import configure_accessible_widget
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState
+
 from .draft import ParaTranzSettingsDraft
 from .page_common import SettingsPage, password_editor
 
@@ -20,12 +23,16 @@ class ParaTranzSettingsPage(SettingsPage):
         super().__init__(parent)
         self._draft = draft
         form = QFormLayout(self)
-        status = "已连接" if token_configured else "未连接"
+        status = "凭据已配置" if token_configured else "尚未配置凭据"
         if token_read_only:
             status += "（凭据由环境变量提供）"
         self.status_label = QLabel(status, self)
-        self.status_label.setProperty("tbStatusId", "success" if token_configured else "warning")
-        form.addRow("连接状态", self.status_label)
+        self.status_label.setWordWrap(True)
+        state = SemanticState.INFO if token_configured else SemanticState.WARNING
+        self.status_label.setProperty("tbStatusId", state.value)
+        ComponentStyle.apply_state(self.status_label, state)
+        configure_accessible_widget(self.status_label, name="ParaTranz 凭据状态", state_text=status)
+        form.addRow("凭据状态", self.status_label)
         self.token_edit = password_editor(token_configured, read_only=token_read_only, parent=self)
         form.addRow("API Token", self.token_edit)
         self.base_url_edit = QLineEdit(draft.base_url, self)
@@ -43,8 +50,9 @@ class ParaTranzSettingsPage(SettingsPage):
         self.disconnect_check.toggled.connect(self._sync_disconnect)
         form.addRow(self.disconnect_check)
         self.test_button = QPushButton("验证 ParaTranz 连接", self)
+        ComponentStyle.apply_static(self.test_button, ComponentKind.BUTTON)
         form.addRow(self.test_button)
-        self.test_status = QLabel("", self)
+        self.test_status = QLabel("尚未验证当前配置。", self)
         self.test_status.setWordWrap(True)
         form.addRow("验证结果", self.test_status)
 

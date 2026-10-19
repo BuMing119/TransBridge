@@ -15,6 +15,7 @@ from transbridge.ui.foundation.components import ComponentDensity, ComponentKind
 from transbridge.ui.workbench.filters_presenter import ALL_CATEGORIES, FilterState, entry_category
 
 from ._theme_support import readable_user_color
+from .filter_flow_layout import FilterFlowLayout
 
 
 class FiltersView(QWidget):
@@ -119,22 +120,21 @@ class FiltersView(QWidget):
         self.focus_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.focus_button.clicked.connect(self.toggle_focus)
         self.focus_button.setEnabled(False)
-        label_layout.insertWidget(label_layout.count() - 1, self.focus_button)
+        label_layout.insertWidget(label_layout.count() - 1, self.focus_button, alignment=Qt.AlignmentFlag.AlignTop)
         outer.addWidget(self.label_widget)
         self._advanced_visible = False
         self._content_visible = False
         self.set_content_visible(False)
 
     @staticmethod
-    def _tag_row(title: str) -> tuple[QWidget, QHBoxLayout]:
+    def _tag_row(title: str) -> tuple[QWidget, FilterFlowLayout]:
         widget = QWidget()
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
-        layout.addWidget(QLabel(title))
-        container = QHBoxLayout()
-        container.setSpacing(3)
-        layout.addLayout(container)
+        layout.addWidget(QLabel(title), alignment=Qt.AlignmentFlag.AlignTop)
+        container = FilterFlowLayout()
+        layout.addLayout(container, 1)
         layout.addStretch()
         return widget, container
 
@@ -175,7 +175,7 @@ class FiltersView(QWidget):
         self.stage_widget.setVisible(self._content_visible and visible)
 
     @staticmethod
-    def _clear_layout(layout: QHBoxLayout) -> None:
+    def _clear_layout(layout: FilterFlowLayout) -> None:
         while layout.count():
             item = layout.takeAt(0)
             if item.widget():
@@ -186,7 +186,13 @@ class FiltersView(QWidget):
         if not entries:
             self.category_widget.hide()
             return
-        counter = Counter(entry_category(entry) for entry in entries)
+        counter = Counter()
+        categories = {}
+        for entry in entries:
+            context = entry.context or ""
+            if context not in categories:
+                categories[context] = entry_category(entry)
+            counter[categories[context]] += 1
         self._add_tag(
             self.category_container,
             f"全部 {len(entries)}",
@@ -268,7 +274,7 @@ class FiltersView(QWidget):
 
     def _add_tag(
         self,
-        layout: QHBoxLayout,
+        layout: FilterFlowLayout,
         text: str,
         active: bool,
         callback: Callable[..., None],

@@ -15,6 +15,7 @@ class ComposerEditor(QTextEdit):
         self._resizing = False
         self._preferred_height = self.MINIMUM_HEIGHT
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.setTabChangesFocus(True)
         self.setMinimumHeight(self.MINIMUM_HEIGHT)
         self.setMaximumHeight(self.MINIMUM_HEIGHT)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)

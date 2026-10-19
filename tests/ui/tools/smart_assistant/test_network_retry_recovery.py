@@ -39,6 +39,8 @@ def test_timeout_retry_button_resumes_original_work(environment, monkeypatch, st
         _until(card._exec_btn.isEnabled)
         card._exec_btn.click()
     _until(lambda: failed and chat._retry_btn is not None and environment.binding.admission is None)
+    draft = "保留尚未发送的补充要求"
+    chat._input_view.set_text(draft)
     before = _requests(environment)
     if stage == "execution":
         assert before[0].pause_reasons
@@ -52,6 +54,7 @@ def test_timeout_retry_button_resumes_original_work(environment, monkeypatch, st
         chat._retry_btn.click()
     _until(lambda: _requests(environment) and _requests(environment)[0].terminal)
     requests = _requests(environment)
+    assert chat._input_view.input.toPlainText() == draft
     assert len(requests) == 1
     if before:
         assert requests[0].request_id == before[0].request_id

@@ -53,9 +53,8 @@ def test_theme_service_installs_one_compiled_skin_and_restores_previous_style(
     assert "palette(light)" in light
     primary_rule = re.search(r'QPushButton\[tbSemanticState="primary"\].*?\{(.*?)\}', light, re.DOTALL)
     assert primary_rule is not None
-    assert "color: palette(link);" in primary_rule.group(1)
-    assert "background: palette(light);" in primary_rule.group(1)
-    assert "background: palette(link);" not in primary_rule.group(1)
+    assert "color: palette(base);" in primary_rule.group(1)
+    assert "background: palette(link);" in primary_rule.group(1)
 
     stylesheet_applies: list[str] = []
     real_set_stylesheet = qapp.setStyleSheet

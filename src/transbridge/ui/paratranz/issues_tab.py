@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
 )
 
 from transbridge.paratranz.api.paratranz_issues_api import ParatranzIssuesAPI
-from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, ElidedLabel
+from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, ElidedLabel, SemanticState
 
 from ..workers import ApiWorker
 
@@ -86,6 +86,8 @@ class IssuesTab(QWidget):
         self._gen = 0
         self._detail_gen = 0
         self._access_ok = True
+        self._drafts: dict[tuple[int, int], str] = {}
+        self._busy_issues: set[tuple[int, int]] = set()
         self._init_ui()
         ctx.project_selected.connect(self._on_project_changed)
         ctx.paratranz_permissions_changed.connect(self._refresh_permissions)
@@ -114,14 +116,20 @@ class IssuesTab(QWidget):
         refresh_btn.clicked.connect(self.load_issues)
         self._new_btn = QPushButton("新建讨论")
         self._new_btn.clicked.connect(self._create_issue)
+        for button in (refresh_btn, self._new_btn):
+            ComponentStyle.apply_static(button, ComponentKind.BUTTON)
         toolbar.addWidget(refresh_btn)
         toolbar.addStretch()
         toolbar.addWidget(self._new_btn)
         left_layout.addLayout(toolbar)
 
         self._list = QListWidget()
-        self._list.itemClicked.connect(self._on_issue_clicked)
+        self._list.currentItemChanged.connect(self._on_issue_clicked)
         left_layout.addWidget(self._list, stretch=1)
+        self._list_status = QLabel("选择项目查看讨论")
+        self._list_status.setTextFormat(Qt.TextFormat.PlainText)
+        self._list_status.setWordWrap(True)
+        left_layout.addWidget(self._list_status)
 
         splitter.addWidget(left)
 
@@ -149,6 +157,11 @@ class IssuesTab(QWidget):
         self._replies_view = QTextEdit()
         self._replies_view.setReadOnly(True)
         right_layout.addWidget(self._replies_view, stretch=1)
+        self._detail_retry = QPushButton("重试加载回复")
+        ComponentStyle.apply_static(self._detail_retry, ComponentKind.BUTTON)
+        self._detail_retry.clicked.connect(self._load_issue_detail)
+        self._detail_retry.hide()
+        right_layout.addWidget(self._detail_retry, alignment=Qt.AlignmentFlag.AlignRight)
 
         right_layout.addWidget(QLabel("发送回复："))
         self._reply_input = QTextEdit()
@@ -162,6 +175,9 @@ class IssuesTab(QWidget):
         self._reply_btn.clicked.connect(self._send_reply)
         self._close_btn = QPushButton("关闭讨论")
         self._close_btn.clicked.connect(self._toggle_close)
+        for button in (self._reply_btn, self._close_btn):
+            ComponentStyle.apply_static(button, ComponentKind.BUTTON)
+        ComponentStyle.apply_state(self._reply_btn, SemanticState.PRIMARY)
         btn_row.addWidget(self._reply_btn)
         btn_row.addWidget(self._close_btn)
         right_layout.addLayout(btn_row)
@@ -187,12 +203,10 @@ class IssuesTab(QWidget):
 
     def _on_project_changed(self, project):
         self._gen += 1
+        self._clear_detail()
         self._project_id = project.get("id") if project else None
         self._list.clear()
-        self._set_title("（选择一个讨论查看详情）")
-        self._content_view.clear()
-        self._replies_view.clear()
-        self._set_detail_enabled(False)
+        self._list_status.setText("选择项目查看讨论" if not project else "")
         self._access_ok = True
 
         if project and self._project_id:
@@ -230,6 +244,9 @@ class IssuesTab(QWidget):
         status = self._status_filter
         self._gen += 1
         gen = self._gen
+        self._clear_detail()
+        self._list.clear()
+        self._list_status.setText("正在加载讨论…")
 
         def _fetch():
             api = ParatranzIssuesAPI(token=config.token, config=config)
@@ -242,36 +259,66 @@ class IssuesTab(QWidget):
 
         w = ApiWorker(_fetch)
         w.result.connect(_on_done)
-        w.error.connect(lambda e: QMessageBox.warning(self, "加载失败", e))
+        w.error.connect(
+            lambda e: self._list_status.setText(f"加载失败：{e}\n请点击刷新重试。") if self._gen == gen else None
+        )
         w.start()
         self._workers.append(w)
 
     def _on_issues_loaded(self, issues: list):
         self._list.clear()
+        self._list_status.setText(f"共 {len(issues)} 个讨论" if issues else "当前分类暂无讨论")
         for issue in issues:
             title = issue.get("title", "（无标题）")
             item = QListWidgetItem(title)
             item.setData(Qt.ItemDataRole.UserRole, issue)
             self._list.addItem(item)
 
-    def _on_issue_clicked(self, item: QListWidgetItem):
+    def _issue_key(self) -> tuple[int, int] | None:
+        if self._project_id is None or not self._current_issue:
+            return None
+        return self._project_id, self._current_issue.get("id")
+
+    def _clear_detail(self):
+        key = self._issue_key()
+        if key is not None:
+            self._drafts[key] = self._reply_input.toPlainText()
+        self._detail_gen += 1
+        self._current_issue = None
+        self._set_title("（选择一个讨论查看详情）")
+        self._content_view.clear()
+        self._replies_view.clear()
+        self._reply_input.clear()
+        self._detail_retry.hide()
+        self._set_detail_enabled(False)
+
+    def _on_issue_clicked(self, item: QListWidgetItem | None, _previous=None):
+        self._clear_detail()
+        if item is None:
+            return
         issue = item.data(Qt.ItemDataRole.UserRole)
         if not issue:
             return
         self._current_issue = issue
         self._set_title(str(issue.get("title", "—")))
         self._content_view.setPlainText(issue.get("content", "") or "")
-        self._replies_view.clear()
-        self._set_detail_enabled(True)
+        key = self._issue_key()
+        self._reply_input.setPlainText(self._drafts.get(key, ""))
+        self._set_detail_enabled(key not in self._busy_issues)
         is_closed = issue.get("status", 0) == 1
         self._close_btn.setText("重开讨论" if is_closed else "关闭讨论")
+        self._load_issue_detail()
 
-        # 加载详情（含回复）
+    def _load_issue_detail(self):
+        if not self._current_issue or not self._project_id or not self._access_ok:
+            return
         config = self._ctx.config
         pid = self._project_id
-        iid = issue.get("id")
+        iid = self._current_issue.get("id")
         self._detail_gen += 1
         detail_gen = self._detail_gen
+        self._replies_view.setPlainText("正在加载回复…")
+        self._detail_retry.hide()
 
         def _fetch():
             api = ParatranzIssuesAPI(token=config.token, config=config)
@@ -290,75 +337,109 @@ class IssuesTab(QWidget):
                 text += f"[{created}] {name}:\n{content}\n\n"
             self._replies_view.setPlainText(text or "（暂无回复）")
 
+        def _on_error(error):
+            if self._detail_gen == detail_gen:
+                self._replies_view.setPlainText(f"加载回复失败：{error}")
+                self._detail_retry.show()
+
         w = ApiWorker(_fetch)
         w.result.connect(_on_detail)
-        w.error.connect(lambda _: None)
+        w.error.connect(_on_error)
         w.start()
         self._workers.append(w)
 
     def _send_reply(self):
-        if not self._current_issue:
+        key = self._issue_key()
+        if key is None or not self._access_ok or key in self._busy_issues:
             return
-        content = self._reply_input.toPlainText().strip()
+        draft = self._reply_input.toPlainText()
+        content = draft.strip()
         if not content:
             return
         config = self._ctx.config
         pid = self._project_id
         iid = self._current_issue.get("id")
+        self._drafts[key] = draft
+        self._busy_issues.add(key)
+        self._set_detail_enabled(False)
 
         def _reply():
             api = ParatranzIssuesAPI(token=config.token, config=config)
             return api.reply_issue(pid, iid, content)
 
         def _on_done(_):
-            self._reply_input.clear()
-            # 重新加载详情
-            self._on_issue_clicked(self._list.selectedItems()[0] if self._list.selectedItems() else None)
+            self._finish_issue_operation(key)
+            if self._drafts.get(key) == draft:
+                self._drafts.pop(key, None)
+            if self._issue_key() == key:
+                if self._reply_input.toPlainText() == draft:
+                    self._reply_input.clear()
+                self._load_issue_detail()
+
+        def _on_error(error):
+            self._finish_issue_operation(key)
+            QMessageBox.critical(self, "回复失败", f"项目 {pid} 的讨论 {iid} 回复失败：\n{error}")
 
         w = ApiWorker(_reply)
         w.result.connect(_on_done)
-        w.error.connect(lambda e: QMessageBox.critical(self, "回复失败", e))
+        w.error.connect(_on_error)
         w.start()
         self._workers.append(w)
 
     def _toggle_close(self):
-        if not self._current_issue:
+        key = self._issue_key()
+        if key is None or not self._access_ok or key in self._busy_issues:
             return
-        is_closed = self._current_issue.get("status", 0) == 1
+        issue = self._current_issue
+        is_closed = issue.get("status", 0) == 1
         new_status = 0 if is_closed else 1
         config = self._ctx.config
         pid = self._project_id
         iid = self._current_issue.get("id")
+        self._busy_issues.add(key)
+        self._set_detail_enabled(False)
 
         def _toggle():
             api = ParatranzIssuesAPI(token=config.token, config=config)
             return api.update_issue(pid, iid, {"status": new_status})
 
         def _on_done(_):
-            self._current_issue["status"] = new_status
-            self._close_btn.setText("重开讨论" if new_status == 1 else "关闭讨论")
-            self.load_issues()
+            self._finish_issue_operation(key)
+            issue["status"] = new_status
+            if self._issue_key() == key:
+                self.load_issues()
+
+        def _on_error(error):
+            self._finish_issue_operation(key)
+            QMessageBox.critical(self, "操作失败", f"项目 {pid} 的讨论 {iid} 状态更新失败：\n{error}")
 
         w = ApiWorker(_toggle)
         w.result.connect(_on_done)
-        w.error.connect(lambda e: QMessageBox.critical(self, "操作失败", e))
+        w.error.connect(_on_error)
         w.start()
         self._workers.append(w)
 
+    def _finish_issue_operation(self, key):
+        self._busy_issues.discard(key)
+        if self._issue_key() == key:
+            self._set_detail_enabled(self._access_ok)
+
     def _create_issue(self):
+        pid = self._project_id
+        if not pid or not self._access_ok:
+            return
         dlg = NewIssueDialog(self)
-        if not dlg.exec():
+        if not dlg.exec() or self._project_id != pid or not self._access_ok:
             return
         data = dlg.get_data()
         config = self._ctx.config
-        pid = self._project_id
 
         def _create():
             api = ParatranzIssuesAPI(token=config.token, config=config)
             return api.create_issue(pid, data["title"], data["content"])
 
         w = ApiWorker(_create)
-        w.result.connect(lambda _: self.load_issues())
+        w.result.connect(lambda _: self.load_issues() if self._project_id == pid else None)
         w.error.connect(lambda e: QMessageBox.critical(self, "创建失败", e))
         w.start()
         self._workers.append(w)

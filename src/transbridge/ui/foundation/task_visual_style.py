@@ -14,7 +14,6 @@ def compile_task_visual_styles(snapshot: ThemeSnapshot) -> str:
     primitive = snapshot.tokens.primitives
     radius = round(primitive.radii.md)
     radius_large = round(primitive.radii.lg)
-    control_height = round(primitive.sizes.control_height)
     small_size = primitive.typography.small_size
     return f"""
 *[tbTaskDialog="true"], *[tbTaskDialog="true"] QWidget {{
@@ -134,19 +133,6 @@ QGroupBox[tbTaskPanel="true"]::title {{
     subcontrol-origin: margin;
     left: 10px;
     padding: 0 5px;
-}}
-QPushButton[tbComponentKind="button"][tbTaskPrimary="true"] {{
-    color: palette(base);
-    background: palette(link);
-    border-color: palette(link);
-    min-height: {control_height + 4}px;
-    font-weight: 600;
-}}
-QPushButton[tbComponentKind="button"][tbTaskPrimary="true"]:hover,
-QPushButton[tbComponentKind="button"][tbTaskPrimary="true"]:pressed {{
-    color: palette(base);
-    background: palette(link);
-    border-color: palette(link);
 }}
 """.strip()
 

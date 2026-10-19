@@ -10,13 +10,14 @@ from __future__ import annotations
 from typing import Any
 
 from PyQt6.QtCore import QEvent, QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont, QPalette, QResizeEvent
+from PyQt6.QtGui import QFont, QPalette
 from PyQt6.QtWidgets import (
     QApplication,
     QBoxLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -30,7 +31,7 @@ from transbridge.ui.foundation.components import (
     SemanticState,
     ThemedCard,
 )
-from transbridge.ui.foundation.tabler_icons import tabler_icon
+from transbridge.ui.foundation.tabler_icons import tabler_icon, tabler_pixmap
 
 from .start_center_projects import StartCenterProjectsPanel
 
@@ -72,7 +73,7 @@ class _TaskActionButton(QPushButton):
         primary: bool = False,
     ) -> None:
         super().__init__("", parent)
-        self._primary_labels: tuple[QLabel, ...] = ()
+        self._action_icons: tuple[tuple[QLabel, str, int], ...] = ()
         ComponentStyle.apply_static(self, ComponentKind.BUTTON)
         if primary:
             ComponentStyle.apply_state(self, SemanticState.PRIMARY)
@@ -87,9 +88,7 @@ class _TaskActionButton(QPushButton):
         layout.setSpacing(16)
         icon = QLabel(self)
         icon.setProperty("tbStartActionIcon", True)
-        icon.setPixmap(
-            tabler_icon(icon, icon_id, 30, semantic="on-accent" if primary else "navigation").pixmap(QSize(30, 30))
-        )
+        icon.setPixmap(tabler_icon(icon, icon_id, 30).pixmap(QSize(30, 30)))
         icon.setFixedSize(40, 40)
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         icon.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
@@ -120,22 +119,37 @@ class _TaskActionButton(QPushButton):
         arrow.setAlignment(Qt.AlignmentFlag.AlignCenter)
         arrow.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         layout.addWidget(arrow)
-        self._primary_labels = (title_label, description_label, arrow) if primary else ()
-        self._refresh_primary_foreground()
+        self._action_icons = ((icon, icon_id, 30), (arrow, "chevron-right", 22))
+        self._refresh_icons()
         if primary:
-            QTimer.singleShot(0, self._refresh_primary_foreground)
+            QApplication.instance().paletteChanged.connect(self._apply_primary_palette)
+        QTimer.singleShot(0, self._refresh_icons)
         configure_accessible_widget(self, name=title, description=description)
 
-    def _refresh_primary_foreground(self) -> None:
-        if not self._primary_labels:
+    def _apply_primary_palette(self, palette: QPalette) -> None:
+        # QSS resolves palette roles into per-widget palettes; refresh the whole
+        # composite so its background, text and artwork change together.
+        for widget in (self, *self.findChildren(QLabel)):
+            style = widget.style()
+            style.unpolish(widget)
+            widget.setPalette(palette)
+            style.polish(widget)
+            widget.update()
+        self._refresh_icons()
+
+    def _refresh_icons(self) -> None:
+        if not self._action_icons:
             return
-        foreground = QApplication.palette().color(QPalette.ColorRole.Button)
-        for label in self._primary_labels:
-            palette = QPalette(label.palette())
-            for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
-                palette.setColor(group, QPalette.ColorRole.WindowText, foreground)
-                palette.setColor(group, QPalette.ColorRole.Text, foreground)
-            label.setPalette(palette)
+        palette = QApplication.palette()
+        for label, icon_id, size in self._action_icons:
+            if not self.isEnabled():
+                foreground = palette.color(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text)
+            elif self.property("tbStartActionPrimary"):
+                foreground = palette.color(QPalette.ColorRole.Base)
+            else:
+                role = QPalette.ColorRole.Shadow if label.property("tbStartActionArrow") else QPalette.ColorRole.Text
+                foreground = palette.color(role)
+            label.setPixmap(tabler_pixmap(icon_id, size, foreground, dpr=label.devicePixelRatioF()))
 
     def changeEvent(self, event: QEvent) -> None:  # noqa: N802 - Qt override
         super().changeEvent(event)
@@ -143,8 +157,9 @@ class _TaskActionButton(QPushButton):
             QEvent.Type.ApplicationPaletteChange,
             QEvent.Type.PaletteChange,
             QEvent.Type.StyleChange,
+            QEvent.Type.EnabledChange,
         }:
-            QTimer.singleShot(0, self._refresh_primary_foreground)
+            QTimer.singleShot(0, self._refresh_icons)
 
 
 def _task_button(
@@ -180,11 +195,20 @@ class StartCenterLanding(QWidget):
         self._creation_unavailable_reason = ""
         self._project_opening = False
 
-        root = QHBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self._scroll_area = QScrollArea(self)
+        self._scroll_area.setWidgetResizable(True)
+        self._scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
+        self._scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll_area.setAccessibleName("开始中心内容")
+        outer.addWidget(self._scroll_area)
+        scroll_body = QWidget(self._scroll_area)
+        root = QHBoxLayout(scroll_body)
         root.setContentsMargins(32, 32, 32, 28)
         root.addStretch(1)
 
-        self._content = QWidget(self)
+        self._content = QWidget(scroll_body)
         self._content.setMaximumWidth(_CONTENT_MAXIMUM_WIDTH)
         self._content.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         content_layout = QVBoxLayout(self._content)
@@ -264,7 +288,9 @@ class StartCenterLanding(QWidget):
 
         self._recovery_banner.hide()
         self._return_button.hide()
-        self._set_compact_layout(False)
+        self._scroll_area.setWidget(scroll_body)
+        self._scroll_area.viewport().installEventFilter(self)
+        self._set_compact_layout(self._scroll_area.viewport().width() < _WIDE_LAYOUT_BREAKPOINT)
 
     def _build_task_panel(self) -> ThemedCard:
         panel = ThemedCard(self._content)
@@ -408,9 +434,10 @@ class StartCenterLanding(QWidget):
             self._recovery_label.clear()
             self._recovery_banner.hide()
 
-    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - Qt override
-        super().resizeEvent(event)
-        self._set_compact_layout(event.size().width() < _WIDE_LAYOUT_BREAKPOINT)
+    def eventFilter(self, watched, event: QEvent) -> bool:  # noqa: N802 - Qt override
+        if watched is self._scroll_area.viewport() and event.type() == QEvent.Type.Resize:
+            self._set_compact_layout(event.size().width() < _WIDE_LAYOUT_BREAKPOINT)
+        return super().eventFilter(watched, event)
 
     def _set_compact_layout(self, compact: bool) -> None:
         if compact == self._is_compact and self._body_layout.direction() == (
@@ -425,6 +452,9 @@ class StartCenterLanding(QWidget):
         panel_minimum_height = 0 if compact else 600
         self._task_panel.setMinimumHeight(panel_minimum_height)
         self._projects_panel.setMinimumHeight(panel_minimum_height)
+        self._project_list.setMinimumHeight(240 if compact else 400)
+        self._content.layout().setSpacing(18 if compact else 30)
+        self._body_layout.setSpacing(20 if compact else 32)
         self._body_layout.setStretch(0, 0)
         self._body_layout.setStretch(1, 1)
 

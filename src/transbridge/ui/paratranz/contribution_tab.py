@@ -148,9 +148,11 @@ class ContributionTab(QWidget):
         layout.addWidget(summary_box)
 
     def _on_project_changed(self, project):
+        self._gen += 1
         self._project_id = project.get("id") if project else None
-        self._table.setRowCount(0)
         self._scores = []
+        self._table.setRowCount(0)
+        self._update_summary()
         if self._project_id:
             self.load_scores()
 
@@ -182,7 +184,7 @@ class ContributionTab(QWidget):
 
         w = ApiWorker(_fetch)
         w.result.connect(_on_done)
-        w.error.connect(lambda e: QMessageBox.warning(self, "加载失败", e))
+        w.error.connect(lambda e: QMessageBox.warning(self, "加载失败", e) if self._gen == gen else None)
         w.start()
         self._workers.append(w)
 

@@ -29,6 +29,7 @@ from transbridge.paratranz.api.paratranz_terms_api import ParatranzTermsAPI
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState, reserve_text_width
 
 from ..workers import ApiWorker
+from ._delete_confirmation import confirm_cloud_removal
 from ._layout_stability import configure_stable_table_columns
 
 
@@ -46,6 +47,7 @@ class TermFormDialog(QDialog):
     def __init__(self, term: dict | None = None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("添加术语" if term is None else "编辑术语")
+        self._is_new = term is None
         self.setMinimumWidth(360)
         self._init_ui(term or {})
 
@@ -79,9 +81,12 @@ class TermFormDialog(QDialog):
 
         btn_row = QHBoxLayout()
         btn_row.addStretch()
-        ok_btn = QPushButton("保存")
+        ok_btn = QPushButton("添加术语" if self._is_new else "保存修改")
+        ComponentStyle.apply_static(ok_btn, ComponentKind.BUTTON)
+        ComponentStyle.apply_state(ok_btn, SemanticState.PRIMARY)
         ok_btn.clicked.connect(self._validate)
         cancel_btn = QPushButton("取消")
+        ComponentStyle.apply_static(cancel_btn, ComponentKind.BUTTON)
         cancel_btn.clicked.connect(self.reject)
         btn_row.addWidget(ok_btn)
         btn_row.addWidget(cancel_btn)
@@ -162,6 +167,7 @@ class TermsTab(QWidget):
         self._terms: list[dict] = []
         self._project_id: int | None = None
         self._gen = 0
+        self._context_gen = 0
         self._page = 1
         self._total = 0
         self._init_ui()
@@ -230,6 +236,8 @@ class TermsTab(QWidget):
         layout.addLayout(page_bar)
 
     def _on_project_changed(self, project):
+        self._gen += 1
+        self._context_gen += 1
         self._project_id = project.get("id") if project else None
         self._page = 1
         self._total = 0
@@ -261,7 +269,9 @@ class TermsTab(QWidget):
 
         w = ApiWorker(_fetch)
         w.result.connect(_on_done)
-        w.error.connect(lambda e: QMessageBox.warning(self, "加载失败", e))
+        w.error.connect(
+            lambda e: QMessageBox.warning(self, "加载失败", f"{e}\n\n点击“刷新”重试。") if self._gen == gen else None
+        )
         w.start()
         self._workers.append(w)
 
@@ -318,33 +328,35 @@ class TermsTab(QWidget):
         self._history_btn.setEnabled(has)
 
     def _add_term(self):
+        pid, context_gen = self._project_id, self._context_gen
         dlg = TermFormDialog(parent=self)
-        if not dlg.exec():
+        if not dlg.exec() or self._context_gen != context_gen:
             return
         data = dlg.get_data()
         config = self._ctx.config
-        pid = self._project_id
 
         def _create():
             api = ParatranzTermsAPI(token=config.token, config=config)
             return api.create_term(pid, data)
 
         w = ApiWorker(_create)
-        w.result.connect(lambda _: self._reset_and_load())
-        w.error.connect(lambda e: QMessageBox.critical(self, "添加失败", e))
+        w.result.connect(lambda _: self._reset_and_load() if self._context_gen == context_gen else None)
+        w.error.connect(
+            lambda e: QMessageBox.critical(self, "添加失败", e) if self._context_gen == context_gen else None
+        )
         w.start()
         self._workers.append(w)
 
     def _edit_term(self):
+        pid, context_gen = self._project_id, self._context_gen
         t = self._selected_term()
         if not t:
             return
         dlg = TermFormDialog(t, parent=self)
-        if not dlg.exec():
+        if not dlg.exec() or self._context_gen != context_gen:
             return
         data = dlg.get_data()
         config = self._ctx.config
-        pid = self._project_id
         tid = t.get("id")
 
         def _update():
@@ -352,25 +364,26 @@ class TermsTab(QWidget):
             return api.update_term(pid, tid, data)
 
         w = ApiWorker(_update)
-        w.result.connect(lambda _: self.load_terms())
-        w.error.connect(lambda e: QMessageBox.critical(self, "编辑失败", e))
+        w.result.connect(lambda _: self.load_terms() if self._context_gen == context_gen else None)
+        w.error.connect(
+            lambda e: QMessageBox.critical(self, "编辑失败", e) if self._context_gen == context_gen else None
+        )
         w.start()
         self._workers.append(w)
 
     def _delete_term(self):
+        pid, context_gen = self._project_id, self._context_gen
         t = self._selected_term()
         if not t:
             return
-        reply = QMessageBox.question(
+        reply = confirm_cloud_removal(
             self,
-            "确认删除",
             f"确定要删除术语「{t.get('term', '')}」吗？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            action_text="删除术语",
         )
-        if reply != QMessageBox.StandardButton.Yes:
+        if reply != QMessageBox.StandardButton.Yes or self._context_gen != context_gen:
             return
         config = self._ctx.config
-        pid = self._project_id
         tid = t.get("id")
 
         def _delete():
@@ -378,8 +391,10 @@ class TermsTab(QWidget):
             return api.delete_term(pid, tid)
 
         w = ApiWorker(_delete)
-        w.result.connect(lambda _: self._reset_and_load())
-        w.error.connect(lambda e: QMessageBox.critical(self, "删除失败", e))
+        w.result.connect(lambda _: self._reset_and_load() if self._context_gen == context_gen else None)
+        w.error.connect(
+            lambda e: QMessageBox.critical(self, "删除失败", e) if self._context_gen == context_gen else None
+        )
         w.start()
         self._workers.append(w)
 

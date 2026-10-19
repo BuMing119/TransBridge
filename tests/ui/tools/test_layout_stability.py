@@ -7,6 +7,7 @@ from types import SimpleNamespace
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtGui import QFont, QFontDatabase
 from PyQt6.QtWidgets import QApplication, QSizePolicy, QVBoxLayout, QWidget
 import pytest
 
@@ -155,6 +156,44 @@ def test_smart_assistant_dynamic_text_keeps_action_columns_stable(qapp) -> None:
         lambda: task._name_label.set_full_text(task_name),
         width=900,
     )
+
+
+@pytest.mark.parametrize("font_size", (9, 14))
+@pytest.mark.parametrize(
+    "transition", ("execute", "ignore", "expire", "interrupt", "success", "failure", "cancelled", "started", "unknown")
+)
+def test_tool_card_status_changes_keep_action_geometry_with_cjk_font(qapp, font_size, transition) -> None:
+    font_path = Path("C:/Windows/Fonts/msyh.ttc")
+    if not font_path.exists():
+        pytest.skip("This regression requires the Windows Chinese font used by the desktop application")
+    font_id = QFontDatabase.addApplicationFont(str(font_path))
+    if font_id < 0:
+        pytest.skip("The Chinese font could not be loaded")
+    previous_font = QFont(qapp.font())
+    card = None
+    try:
+        qapp.setFont(QFont("Microsoft YaHei", font_size))
+        card = ToolCard({"tool": "translate"})
+        change = {
+            "execute": card._on_execute,
+            "ignore": card._on_ignore,
+            "expire": card.expire,
+            "interrupt": card.interrupt,
+            "success": lambda: card.set_result(True, "完成"),
+            "failure": lambda: card.set_result(False, "工具失败：" + "详细错误" * 200),
+            "cancelled": lambda: card.set_result(False, "已取消", status="cancelled"),
+            "started": lambda: card.set_result(True, "任务已启动", status="started"),
+            "unknown": lambda: card.set_result(False, "结果待核对", status="unknown"),
+        }[transition]
+        _assert_horizontal_stable(qapp, card, card._exec_btn, change, width=500)
+        assert card._exec_btn.width() >= card._exec_btn.sizeHint().width()
+    finally:
+        if card is not None:
+            card.close()
+            card.deleteLater()
+        qapp.processEvents()
+        qapp.setFont(previous_font)
+        QFontDatabase.removeApplicationFont(font_id)
 
 
 def test_smart_assistant_input_is_one_bounded_composer_card(qapp) -> None:

@@ -297,13 +297,22 @@ class DictionaryPanel(QDialog):
         if result.conflicts:
             from transbridge.ui.tools.conflict_dialog import DictionaryConflictDialog
 
-            dlg = DictionaryConflictDialog(result.conflicts, self)
+            # apply_to_collection has already filled the automatic winner; its
+            # conflicts list contains only the other translations.
+            choices = []
+            for entry_id in dict.fromkeys(item["entry_id"] for item in result.conflicts):
+                entry = collection.get(entry_id)
+                if entry is not None:
+                    choices.append({"entry_id": entry_id, "translation": entry.translation, "wins": True})
+            choices.extend(result.conflicts)
+            dlg = DictionaryConflictDialog(choices, self)
             if dlg.exec() == QDialog.DialogCode.Accepted:
-                for entry_id, chosen in dlg.result():
+                selections = dlg.result()
+                for entry_id, chosen in selections:
                     entry = collection.get(entry_id)
                     if entry is not None:
                         entry.translation = chosen
-                msg += f"\n\n已处理 {len(result.conflicts)} 处译文冲突"
+                msg += f"\n\n已处理 {len(selections)} 处译文冲突"
 
         if bool(getattr(self._ctx, "uses_authoritative_projection", False)):
             from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
@@ -362,7 +371,13 @@ class DictionaryPanel(QDialog):
             QMessageBox.critical(self, "导入失败", str(exc))
             return
         if not ok:
-            ret = QMessageBox.question(self, "同名词典", "存在同名词典，是否覆盖？")
+            ret = QMessageBox.question(
+                self,
+                "同名词典",
+                "存在同名词典，是否覆盖？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
             if ret == QMessageBox.StandardButton.Yes:
                 try:
                     self._manager.import_dict(Path(path), overwrite=True)

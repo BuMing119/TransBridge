@@ -20,7 +20,6 @@ from .composer_editor import ComposerEditor
 from .execution_mode_view import ExecutionModeButton
 from .quick_actions import QuickActionsChips
 from .theme_support import (
-    BUTTON_STRUCTURE_STYLE,
     CARD_STRUCTURE_STYLE,
     INPUT_STRUCTURE_STYLE,
     QUIET_BUTTON_STYLE,
@@ -179,7 +178,6 @@ class ChatInputView:
         for button, primary in zip((self.send_button, self.stop_button), appearance, strict=True):
             if primary:
                 self._theme.apply_accent(button)
-                button.setStyleSheet(BUTTON_STRUCTURE_STYLE + "QPushButton { padding: 4px 8px; }")
             else:
                 self._theme.apply_surface(button, secondary_text=True)
                 self._theme.apply_semantic(button, "muted")

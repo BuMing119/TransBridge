@@ -412,9 +412,9 @@ def test_smart_assistant_panel_uses_responsive_dock_constraints(monkeypatch) -> 
     assert "border: none" in panel.styleSheet()
     assert panel.titleBarWidget().accessibleName() == "智能助手标题栏"
     assert panel.titleBarWidget().height() == 44
-    assert "border-bottom: 1px solid palette(mid)" in panel.titleBarWidget().styleSheet()
+    assert "border: 1px solid palette(mid)" in panel.titleBarWidget().styleSheet()
     assert container.objectName() == "smartAssistantBody"
-    assert "border: none" in container.styleSheet()
+    assert "border: 1px solid palette(mid)" in container.styleSheet()
     assert panel.titleBarWidget()._model._value.full_text == "test-model"
     assert "配置就绪" in panel.titleBarWidget().accessibleDescription()
     assert panel.titleBarWidget()._minimize_button.accessibleName() == "最小化智能助手"
