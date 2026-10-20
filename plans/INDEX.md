@@ -8,7 +8,7 @@
 
 - [project-open-performance](project-open-performance/plan.md)：S01～S05 本地实现；完整后台打开、重复校验消除、一致视图安装与按需表格模型。旧来源身份按哈希恢复，无法可靠匹配的词条保留在只读恢复中；验证结果及性能预算边界见[增量记录](../docs/changelogs/project-open-performance/story-01-to-05/2026-10-19-001-project-open-performance.md)（2026-10-19）。
 
-- [assistant-ui-remediation](assistant-ui-remediation/plan.md)：S01～S23 本地完成；保留精简默认界面，补齐会话隔离、持久清空、失败恢复与诊断、请求级技能、动态上下文及配置引导。联合回归 1715 项通过，最终助手 UI 315 项及中文布局 12 项复验通过，Ruff/格式通过，见[最新增量记录](../docs/changelogs/assistant-ui-remediation/story-18-to-23/2026-10-16-001-assistant-workflow-closure.md)（2026-10-16）。
+- [assistant-ui-remediation](assistant-ui-remediation/plan.md)：S01～S26 本地实现、验证与增量记录完成；补齐固定工程/版本绑定、跨工程只读浏览、统一执行前确认、侧栏分组及系统默认窗口外框。后端 170 项、原生窗口 15 项通过，完整 UI 组合保留 1 项超时，未宣称全绿；见[最新增量记录](../docs/changelogs/assistant-ui-remediation/story-24-to-26/2026-10-20-001-project-bound-conversations.md)与[验证报告](../docs/test-reports/assistant-project-conversations-qa-2026-10-19.md)（2026-10-20）。
 
 - [terminology-performance](terminology-performance/plan.md)：S01～S08 三批实现、五轮性能复测和相关回归完成；最终去重 1564 项通过、1 项真实账户测试跳过，Ruff/格式通过；冷首屏及部分 50k 事件间隔仍超预算，见[增量记录](../docs/changelogs/terminology-performance/story-01-to-08/2026-10-15-001-terminology-performance.md)（2026-10-15）。
 
@@ -62,7 +62,7 @@
 | v3-ui-gap-closure | 已完成（2026-09-01，综合 QA 通过） | 5/5 | [plan](v3-ui-gap-closure/plan.md) |
 | dialogue-context-editor | S01–09 已完成；应用重复处理优化，156 项回归通过（2026-10-04） | 9/9 | [plan](dialogue-context-editor/plan.md) · [S09 减少应用开销](../docs/changelogs/dialogue-context-editor/story-09-apply-cost/2026-10-04-001-reduce-snapshot-copies.md) · [S08 应用后重开](../docs/changelogs/dialogue-context-editor/story-05-08-editing-flow/2026-10-04-003-reopen-after-apply.md) · [S05–08 应用返回、同原文同步与性能](../docs/changelogs/dialogue-context-editor/story-05-08-editing-flow/2026-10-04-001-editor-flow-and-refresh.md) · [S01–04 词条弹窗与XT式记录导航](../docs/changelogs/dialogue-context-editor/story-01-04-implementation/2026-08-31-001-词条弹窗与XT式记录导航.md) |
 | authoritative-project-mutation-closure | 已完成（2026-08-30，综合 QA 通过；1 项既有工具数量断言待纠偏） | 6/6 | [plan](authoritative-project-mutation-closure/plan.md) · [S03 配对来源移除修复](../docs/changelogs/authoritative-project-mutation-closure/story-03-source-lifecycle/2026-08-31-001-配对插件来源移除与重开一致性修复.md) |
-| paratranz-sync-operation-ux | 已实现（2026-08-30，聚焦 QA 通过；真实联机未执行） | 4/4 | [plan](paratranz-sync-operation-ux/plan.md) · [S04 未保存拦截移除与快照保护回归](../docs/changelogs/paratranz-sync-operation-ux/story-04-recovery-protection/2026-08-31-001-下载未保存拦截移除与快照保护回归.md) · [S03 检查下载进度与操作锁定](../docs/changelogs/paratranz-sync-operation-ux/story-03-auto-preflight/2026-08-31-001-同步检查下载进度与操作锁定.md) |
+| paratranz-sync-operation-ux | 已完成：安全部分同步、完整往返、逐条确认与检查诊断日志（2026-10-20） | 12/12 | [plan](paratranz-sync-operation-ux/plan.md) · [S12 诊断日志](../docs/changelogs/paratranz-sync-operation-ux/story-12/2026-10-20-001-sync-diagnostic-logging.md) · [S11 逐条确认](../docs/changelogs/paratranz-sync-operation-ux/story-11/2026-10-20-001-readable-translation-review.md) · [S08～S10 上传往返](../docs/changelogs/paratranz-sync-operation-ux/story-08-to-10/2026-10-20-001-upload-roundtrip.md) · [S05～S07 下载复核](../docs/changelogs/paratranz-sync-operation-ux/story-05-to-07/2026-10-20-001-actionable-download-review.md) |
 | dialogue-tree-order | 已完成（2026-08-30，相关 QA 与 Vigilant 实物验证通过） | 2/2 | [plan](dialogue-tree-order/plan.md) |
 | project-terminology-paratranz-sync | S00～S08 功能实现完成、离线 QA 通过；正式发行门禁 OFF（live 合同与 FR5.16 S12 待通过） | 9/9（发行未完成） | [plan](project-terminology-paratranz-sync/plan.md) |
 | project-terminology-build-versioning-reporting | S00-11 生产闭环完成；S12 正式性能收口未通过，全部门禁 OFF | 12/13 | [plan](project-terminology-build-versioning-reporting/plan.md) |
@@ -142,7 +142,7 @@
 | ui-workbench | ✔️ 已实现 | 22 | [plan](ui-workbench/plan.md) · [s01](ui-workbench/stories/story-01-app-context.md) ... [s18](ui-workbench/plan.md#story-18) · [s20](ui-workbench/plan.md#story-20) · [s21](ui-workbench/plan.md#story-21) · [s22](ui-workbench/plan.md#story-22) |
 | ui-presentation-modularization | 已完成（2026-08-19） | 8 | [plan](ui-presentation-modularization/plan.md) |
 | ui-foundation-framework | 已完成（2026-08-24） | 9 | [plan](ui-foundation-framework/plan.md) |
-| guided-ui-workflows | 已完成（2026-08-24） | 13/13 | [plan](guided-ui-workflows/plan.md) · [S10 QA](../docs/test-reports/guided-ui-workflows-s10-qa-2026-08-24.md) |
+| guided-ui-workflows | 已完成（2026-08-24）；S02/S04 多插件扩展已补录（2026-10-20） | 13/13 | [plan](guided-ui-workflows/plan.md) · [S10 QA](../docs/test-reports/guided-ui-workflows-s10-qa-2026-08-24.md) · [多插件建项 QA](../docs/test-reports/guided-multi-plugin-project-qa-2026-10-20.md) |
 | modern-workbench-visual-shell | 已完成（2026-08-24，S06 渐进式菜单通过 QA） | 6/6 | [plan](modern-workbench-visual-shell/plan.md) |
 | batch-operations | ✔️ | 7/7 | [plan](batch-operations/plan.md) · [s01](batch-operations/stories/story-01-batch-esp.md) [s02](batch-operations/stories/story-02-batch-upload.md) [s03](batch-operations/stories/story-03-batch-download.md) [s04](batch-operations/stories/story-04-batch-write.md) [s05](batch-operations/stories/story-05-batch-translation.md) [s06](batch-operations/stories/story-06-multi-slot.md) [s07](batch-operations/stories/story-07-strings-batch.md) |
 | vector-term-retrieval | ✔️ | — | [plan](vector-term-retrieval/plan.md) |

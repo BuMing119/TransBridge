@@ -1,6 +1,6 @@
 # 智能助手使用体验修复
 
-状态：S01～S23 本地实现、验证及增量记录完成。用户于 2026-10-16 再次调用 bm-pilot 后，已按九项修复方向补齐流程闭环，保留简洁默认界面。
+状态：S01～S26 本地实现、验证与增量记录完成。S24～S26 对齐用户确认的会话绑定、只读浏览、执行前切换、侧栏分组及最终系统默认外框。完整 UI 组合保留一次未稳定复现的 6 秒终态等待超时，详见本阶段 QA；不宣称整组全绿。第五阶段为实际实施的补录，不追溯声称开发前已有该计划。
 
 关联：[对话式界面](../assistant-conversation-ui/plan.md)、[ADR-040](../../docs/adr/040-assistant-user-request-lifecycle.md)、[ADR-041](../../docs/adr/041-assistant-context-compaction.md)、[ADR-043](../../docs/adr/043-assistant-turn-results-and-undo.md)。
 
@@ -176,6 +176,54 @@ runtime 注册、执行器构造及启动失败均在原卡反馈并退出执行
 模型名与服务可用性分离，统一检查模型/地址/凭据等必要条件；缺项时保留配置入口，发送前给出具体说明。文件：window_presentation、panel_header、onboarding/panel 必要接线与独立就绪投影；覆盖空配置、部分配置、配置变更、无宿主设置入口。
 
 实施归属：主会话负责 S18/S19 及共享接线；三个互斥子任务负责 S20、S21、S22/S23。Qt 测试串行运行，纯应用测试可并行。已有大文件仅作局部接线；新职责抽取完整、独立可测切片。当前无公共架构选型或外部写入，不新增 ADR。
+
+## 第五阶段：会话工程绑定与可辨识导航（2026-10-19）
+
+方案已由用户明确确认。对应 [FR13.5～FR13.8、FR19.5/FR19.6](../../docs/requirements.md)、[ADR-018](../../docs/adr/018-project-session-persistence-v2.md)；沿用 ADR-040/043 的请求与撤销身份约束。本阶段不增加任意重绑会话、AI 自主切换本地工程、自动迁移旧聊天、跨工程无人值守执行或 ParaTranz 同步目标改造。
+
+### 阶段状态
+
+- [x] 根据当前 Git 差异、用户已确认方案及已有测试识别本阶段归属；排除开工前已有的 pyproject.toml/uv.lock 版本变更。
+- [x] 复用已完成的会话绑定、只读预览、统一执行入口与 UI 实现。
+- [x] 对齐正式需求、ADR 与本计划的验收和兼容边界，按最新截图改为系统默认外框。
+- [x] 独立审查异步切换、持久化与窗口交互；修复实证问题并补测试。
+- [x] 完成相关联合回归、Windows 原生自动交互、Ruff 与文件职责复核；一次未稳定复现的请求等待超时作为验证限制保留。
+- [x] 创建可追溯 QA 报告和逐文件增量，更新直接索引，清理自建临时目录。
+
+### S24 会话工程边界与统一执行校验
+
+- 验收：新会话绑定创建时的 Project/Variant，一个工程可有多个会话；工作台换项目不能改写会话绑定。浏览其他工程历史不得激活执行或写回预览数据；读取前先核验 owner，归档请求也能只读展示。
+- 验收：发送、技能/快捷输入、继续、重试、重新处理、澄清、确认和撤销均受同一工程/版本边界约束。跨范围暂停自动调度；用户显式操作通过校验后才恢复。即使工作台已手工切到匹配范围，也不能由预览刷新自动恢复任务。
+- 实施：将桌面 RequestContext 接到实际工作台身份；通过 Session 应用门面提供带 owner 校验的只读读取；由 `SessionWorkspace`、`session_execution_access` 与独立请求加载模块承接预览/执行边界，保留应用层已有 scope 校验。
+- 文件：`application/sessions/gui_facade.py`、`scope_cache.py`、`legacy_owner.py`，`persistence/session_lifecycle.py`、`persistence/v2/session_catalog.py`，助手目录的 `panel_sessions.py`、`session_workspace.py`、`session_execution_access.py`、`request_session_loading.py` 及 request/session/confirmation 入口最小接线。
+- 验证：`test_gui_session_scope.py`、`test_scope_cache.py`、`test_request_session_scope.py`、`test_execution_entrypoint_scope.py`、`test_session_workspace_navigation.py`；覆盖 owner 不匹配、旧存档、归档、会话切换代际、迟到回调、执行中换工程、失败保存和未绑定状态。
+
+### S25 按工程浏览与精确切换
+
+- 验收：按工程分组，当前工程默认展开，其他工程及未归属历史仍可打开查看；点击会话只决定浏览目标。搜索覆盖会话/工程/版本，长名称不丢失，刷新保留展开和键盘焦点。
+- 验收：跨工程或同工程跨版本执行时弹窗显示真实目标。取消不发送且保留草稿；切换失败、目标删除、工程忙碌、投影未安装完成均不得执行；成功安装准确 Project/Variant 后再收集目标选区并恢复原操作。切换期间选中其他会话时，旧完成回调不能代替新会话发送。
+- 实施：Shell 提供显示元数据和精确本地工程导航端口；通过现有 coordinator/worker 准备、激活并安装视图，完成回调只能在真实安装后交付；侧栏工作台身份与当前浏览会话分离。独立 `SessionDirectory` 后台读取会话目录及工程标签，连续刷新合并为最新代际；失败保留列表并明确诊断，不把读取失败当作空目录而新建会话。
+- 文件：`ui/shell/assistant_project_navigation.py`、`assistant_navigation.py`，`ui/coordinators/project_coordinator.py`、`project_open_operation.py`，`persistence/current_project.py`，助手 `session_directory.py`、`session_list_widget.py`、`session_groups.py`、`session_row.py`、`session_scope_notice.py` 与 `panel.py` 最小接线。
+- 验证：`test_assistant_project_navigation.py`、`test_session_project_groups.py`、`test_session_navigation.py`、`test_session_workspace_navigation.py`、`test_session_scope_notice.py`、`test_session_directory.py`，以及已有项目打开/未保存选择/来源恢复回归。
+
+### S26 统一窗口与导航层次
+
+- 验收：遵循用户最终截图要求，使用与主窗口一致的系统默认标题栏和外框，圆角、阴影与外边界由操作系统管理；移除自绘黑框和形状遮罩。内部会话标题/模型、侧栏和聊天区层次清楚。选中会话使用完整底色，不再只依靠左边蓝线；当前工程与“仅浏览”状态不互相混淆。
+- 验收：180/200/260px 侧栏、10/14pt 中文字体及浅/深主题下文字和菜单不溢出；只保留必要边界，次级按钮默认无描边。匹配当前工作台时不提示切换；跨工程、跨版本、加载中与未绑定分别说明。
+- 实施：助手保持独立可复用窗口，系统负责移动、缩放和窗口按钮，内部页首只承担会话信息职责；`theme_support.py` 负责主题取色，行/分组保持可测试边界。视觉测试使用实际像素和几何；Windows 原生自动测试独立核验系统外框、命中区、尺寸和窗口生命周期。
+- 文件：`panel.py`、`panel_header.py`、`theme_support.py`、导航与状态提示模块，`test_window_frame.py`、`test_session_sidebar_layout.py`、`test_visual_hierarchy.py` 及原生窗口回归；撤销此前新增的自绘外框模块。
+
+实施依赖：S24 的身份和只读读取先行，S25 再接精确切换，S26 在同一行为合同上做视觉与原生交互验收。已实现代码不为补录流程重复开发；验收中的实证缺陷按最小根因修复。完整命令与结果记录在 [本阶段 QA 报告](../../docs/test-reports/assistant-project-conversations-qa-2026-10-19.md)。
+
+兼容与回退：复用已有 `project_id`/`variant_id`，不改 Session schema，不根据历史聊天推断归属。旧未绑定会话在打开工程后只读保留；无工作台时的普通交流保留既有能力。工程/版本删除或损坏时保留历史和真实诊断，禁止回落到另一个版本。元数据展示和会话目录是派生信息，不成为执行授权依据。新版可读取旧目录；旧版目录解码器不能识别新增可选字段，降级前须备份并单独兼容转换目录，不改会话原始记录，本次不执行降级。视觉模块可独立回退；回退整个绑定功能会恢复跨工程误用风险，不能只撤掉 UI 确认而保留旧的执行旁路。
+
+未决产品问题：无；真实模型效果、远端 ParaTranz、安装包发布及人工屏幕阅读器验收不属本阶段。Windows 原生自动化结果与人工验收分别记录。
+
+### 第五阶段交付证据（2026-10-20）
+
+后端与工程打开 170 passed；Windows 原生及窗口契约 15 passed。完整助手 UI/关闭组合最后一轮 505 passed、1 failed、12 skipped，唯一失败是快速追加输入后等待第三请求终态的 6 秒超时，前两轮同例通过。两轮定向复验均为 2 passed；有界诊断的保存状态全部完成，但未完全解释原延迟来源，不以重跑替代原失败记录。12 项原生测试在 offscreen 跳过，已在 Windows 单独验证。
+
+目录后台读取、真正缺 owner 的旧历史、系统默认窗口与键盘测试控制器状态均完成根因修正。全库 Ruff 和 1948 文件格式检查通过。无需 Session schema 迁移；目录降级限制见上文。文件级证据见[本阶段增量](../../docs/changelogs/assistant-ui-remediation/story-24-to-26/2026-10-20-001-project-bound-conversations.md)及[专项 QA](../../docs/test-reports/assistant-project-conversations-qa-2026-10-19.md)。没有提交、推送或发布。
 
 ## 兼容与验证约束
 

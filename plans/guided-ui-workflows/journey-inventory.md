@@ -48,7 +48,7 @@ J02～J07 的固定代表性旅程合计：当前 `D=20、M=15`，P0 最终 `D=8
 - **当前任务反馈**：解析进度借用 Step2 进度条；不进入统一任务投影。
 - **当前返回上下文**：解析成功后激活新的 collection slot；legacy 工程与解析不是原子事务。
 - **代码证据**：`MainWindow.__init__`、`ProjectCoordinator.new_project()`、`ParseCoordinator.parse_plugin()`。
-- **P0 冻结目标**：开始中心的 `project.create_from_source`；先选插件，再在同页编辑建议工程名/迁移来源，正式提交前零持久化；成功进入 Workbench，失败保留 draft；不经过菜单、ParaTranz/LLM 配置或 legacy 建项。
+- **现行交付目标**：开始中心通过 `project.create` 的 `mode=plugin` 进入建项；先选一个或多个插件，再在同页编辑首插件建议的工程名与迁移来源，全部插件进入同一个工程及默认版本。单次确认串联后台 prepare/commit，正式提交前零持久化；成功加载全部内容进入 Workbench，失败保留全部 draft 输入；不经过菜单、ParaTranz/LLM 配置或 legacy 建项。2026-10-20 多选扩展的验证见 [专项 QA](../../docs/test-reports/guided-multi-plugin-project-qa-2026-10-20.md)，不改变上文历史旅程测量数据。
 
 ### J02 继续上次工程
 

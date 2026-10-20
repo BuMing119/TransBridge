@@ -22,8 +22,8 @@
 
 | Intent ID | 用户动作 | 权威 command owner | 允许的备用入口 |
 |---|---|---|---|
-| `project.create_from_source` | 选择插件并创建本地工程 | S02 application provisioning use case | 开始中心、Workbench 空状态、文件菜单 |
-| `project.create_empty` | 创建空工程 | 同一 S02 use case，显式无 source | 开始中心高级入口、文件菜单 |
+| `project.create` | 进入统一建项流程；插件模式可一次多选并创建同一工程 | S02 application provisioning use case | 开始中心、Workbench 无工程状态、文件菜单 |
+| `workbench.content.prepare` | 为当前工程添加插件 | 既有 ParseCoordinator 与当前工程来源命令 | Workbench 管理菜单、翻译菜单 |
 | `project.open` | 打开已有本地工程 | current-project application facade | 开始中心、最近工程、文件菜单 |
 | `project.return_to_start` | 返回开始中心但不关闭工程 | shell display-context owner | Workbench 工程菜单 |
 | `translation.import_source` | 为当前翻译内容导入已有译文 | parse/migration application port | Workbench 上下文、文件菜单 |
@@ -38,7 +38,7 @@
 | `task.retry` | 以新 Run ID 重试 | typed retry factory | 失败结果、任务卡 |
 | `shell.toggle_assistant` | 显示/隐藏智能助手 | shell ToolWindows owner | 视图菜单、一个快捷键 |
 
-任何 QAction、按钮、空状态链接或命令搜索结果都只能提交一次 intent。备用入口不得复制 enabled 规则、构造业务 request 或直接执行副作用。
+任何 QAction、按钮、空状态链接或命令搜索结果都只能提交一次 intent。备用入口不得复制 enabled 规则、构造业务 request 或直接执行副作用。建项“选择插件”提交 `project.create` 的 `mode=plugin` payload；空工程是同页高级子选择，调用同一 S02 用例的空来源请求，不另设公开建项 intent。
 
 ## 3. 页面状态合同
 
@@ -57,7 +57,8 @@
 
 ## 4. 主动作与渐进披露
 
-- 开始中心无可恢复工程时，统一以“新建本地翻译工程”进入建项页，再选择插件或空工程。最近工程、恢复项和 FOMOD 是次级入口。
+- 开始中心通过统一建项流程选择一个或多个插件，或由高级入口显式创建空工程。插件列表全部属于同一个工程和默认版本，工程名由首个插件建议且可编辑；确认前显示数量、可滚动的文件列表及摘要。已有工程、恢复项和 FOMOD 保留既有入口。
+- 建项只需一次“确定”，后台先准备所有来源，再统一提交；单插件与空工程的交互继续兼容，创建后用已准备的来源快照加载全部插件，不重复解析。
 - Workbench 主动作由业务状态决定：导入已有译文、开始翻译、检查问题或写回/发布，同一时刻只突出一个。
 - AI 快速运行默认只显示模式、作用域、估算、覆盖策略和开始动作；provider、模型、Embedding、术语和后处理进入高级配置。
 - 上传、下载、写回和 FOMOD 共享“编辑计划 → 预检 → 提交 → 任务/结果”语义；正式副作用前只有一个提交点。
@@ -74,8 +75,8 @@
 
 ## 6. 取消、返回与错误恢复
 
-- 选择来源或编辑计划时取消：零网络、零正式文件写入、零 repository 可见状态变化。
-- S02 建项失败：保留可编辑 draft，清理 staging，原 active project/generation 不变。
+- 选择来源或编辑计划时取消：零网络、零正式文件写入、零 repository 可见状态变化；取消文件选择保留先前 draft，不把空选择自动解释成创建空工程。
+- S02 任一来源准备或提交失败：保留全部路径、名称、迁移来源与解析选项，来源错误指出失败文件；清理 staging，原 active project/generation 不变，不创建只含部分插件的工程。
 - 从 Workbench 返回开始中心：只改变 shell display context，不关闭工程、不丢 dirty、不取消任务。
 - 操作计划返回编辑：保留所有有效输入和预检诊断；修改影响 identity 的字段后使旧预检失效。
 - 任务失败：显示稳定 diagnostic、已成功/失败对象和真实可用的下一步。没有 checkpoint/retry factory 时不得显示恢复/重试按钮。

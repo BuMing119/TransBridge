@@ -3,6 +3,7 @@
 - **Feature slug**：`guided-ui-workflows`
 - **状态**：已完成（2026-08-24，S01～S13 全部终验通过）
 - **日期**：2026-08-22
+- **S02／S04 多插件扩展**：已实现并补录（2026-10-20）；[专项 QA](../../docs/test-reports/guided-multi-plugin-project-qa-2026-10-20.md)
 - **对应需求**：[FR26、NFR1.6](../../docs/requirements.md)
 - **架构约束**：[ADR-018](../../docs/adr/018-project-session-persistence-v2.md)、[ADR-019](../../docs/adr/019-unified-task-runtime.md)、[ADR-021](../../docs/adr/021-ui-presentation-modularization.md)
 - **前置条件**：FR25 已完成；FR24 基础能力可并行，页面迁移按本计划交互冻结门禁推进
@@ -14,7 +15,7 @@
 P0 核心交付完成后应满足：
 
 1. 无可恢复工程时以统一的“新建本地翻译工程”为入口，并在建项页选择插件或空工程；无 ParaTranz/LLM 配置仍可完成纯本地旅程。
-2. 插件驱动建项通过 application 权威事务完成，不由 UI 直接写工程文件，不留下孤儿工程。
+2. 插件驱动建项支持一次选择一个或多个插件，全部导入同一个工程及默认版本；通过 application 权威事务统一发布，不由 UI 直接写工程文件，不留下孤儿或部分工程。
 3. 页面根据 projection/task 状态提供一个主动作、原因和恢复路径，引导强度可配置。
 4. 删除“小工具”产品分类，AI、词典、智能助手和 FOMOD 按真实任务角色归位。
 5. Workbench、AI、同步/写回与任务结果保持上下文连续，并满足 FR24/FR25 性能和生命周期预算。
@@ -102,15 +103,16 @@ S10 通过即可标记“P0 核心完成”，不等待 S11～S13。全部 P1 �
 
 **验收标准**：
 
-- [x] application 接收不可变建项 draft/request，校验工程名、源、迁移输入、format 与 fingerprint。
+- [x] application 接收不可变建项 draft/request，校验工程名、全部原始来源、迁移输入、format 与 fingerprint；`source` 保留单源调用兼容，`additional_sources` 扩展多源，`sources` 提供统一顺序。
 - [x] 源解析/迁移候选、Project、默认 Variant、baseline 和 active pointer 在 staging/UnitOfWork 边界内协调。
 - [x] 全部成功后一次发布 project/variant/projection；失败保持原 active generation 和 repository 可见状态。
-- [x] 重名、非法路径、损坏源、解析失败、迁移不兼容、写失败和激活失败均产生稳定诊断且可安全重试。
-- [x] 空工程使用同一命令，只显式声明无 source；UI、MCP 或 legacy facade 不直接构造 V2 DTO 并保存。
+- [x] 重名、非法路径、重复路径/身份、任一损坏源、解析失败、迁移不兼容、写失败和激活失败均产生稳定诊断且可安全重试；来源解析诊断包含失败文件。
+- [x] 所有原始插件按原始来源解析；已有译文按 namespace 分组匹配对应插件，hydration 保留全部独立基线来源（含未折叠迁移来源），界面加载不重复解析。
+- [x] 空工程使用同一命令，只显式声明无原始来源；UI、MCP 或 legacy facade 不直接构造 V2 DTO 并保存。
 
-**文件落点**：新增 application project provisioning contracts/use case；扩展 project ports、persistence V2 staging/UoW、GUI facade/composition；新增 application/persistence/fault tests。
+**文件落点**：`application/projects/provisioning.py` 负责两阶段服务，`provisioning_models.py` 承载不可变契约，`provisioning_sources.py` 负责来源准备/迁移配对；保留原公开 import，复用现有 project ports、persistence V2 staging/UoW、GUI facade/composition。多源验证落在 `tests/application/projects/test_provisioning.py` 和 `tests/persistence/v2/test_project_provisioning_multiple_sources.py`，原持久化测试继续保留。
 
-**验证**：正常、空工程、重名、解析/迁移/写入/激活故障注入、重复提交、非 ASCII/长路径；断言无孤儿记录、旧 active 不变且事件只发布一次。
+**验证**：正常、空工程、重名、解析/迁移/写入/激活故障注入、重复提交、非 ASCII/长路径；多选 ESP/ESM/ESL 保存重开、第二个插件损坏、多迁移配对与版本/catalog/指针故障均断言无部分工程、旧 active 不变且只提交一次。多源结果及未运行项见专项 QA；历史性能终验不视作本次大批量插件性能证据。
 
 ## Story-03：任务能力矩阵、活动投影、历史与恢复合同
 
@@ -142,13 +144,14 @@ S10 通过即可标记“P0 核心完成”，不等待 S11～S13。全部 P1 �
 - [x] 无可恢复工程、自动恢复失败或用户主动返回时显示开始中心；正常自动恢复继续直接进入 Workbench。
 - [x] 缺少 ParaTranz/LLM/Embedding 配置不弹出阻塞本地旅程的启动模态框。
 - [x] 主动作选择插件；最近工程和真实可恢复任务来自只读 projection，并解释缺失/不可恢复原因。
-- [x] 建项 draft 可建议工程名、选择迁移来源、折叠高级解析项并返回编辑；提交只调用 S02 use case。
+- [x] “选择插件”使用多选窗口；draft 根据首个插件建议工程名，显示插件数量和可滚动文件列表，支持选择迁移来源与高级解析项；单次“确定”在后台连续调用 S02 prepare/commit。
 - [x] 用户主动返回开始中心不隐式关闭工程、丢弃 dirty 状态或取消后台任务。
-- [x] 校验/提交失败保留 draft 和修复入口，不生成孤儿工程。
+- [x] 取消文件选择保留当前 draft；校验/提交失败保留全部路径、名称、迁移来源和选项，不生成孤儿或部分工程；重新选择后递增 revision，正确刷新来源展示。
+- [x] 创建提交期间保护旧工作台，在后台准备完整来源，复用工程视图安装事务整体替换工程信息和插件集合，保留 EntryKey、字符串 ID 和源快照；空工程替换为空集合，失败或未保存内容保留并明确提示。
 
-**文件落点**：新增 shell start center、guided coordinator；修改 MainWindow/app/project coordinator/tool windows；新增 launch/recent/recovery/guided tests。
+**文件落点**：`ui/shell/start_center_controller.py`、`start_center.py`、`start_center_landing.py` 与 `ui/coordinators/guided_project_coordinator.py`、`project_creation_operation.py`；复用 `ui/source_hydration.py`。回归包括 `tests/ui/test_project_creation_transition.py`、`test_start_center_multi_plugin.py`、原 guided、draft focus、responsive layout、primary contrast 和 source hydration 测试。
 
-**验证**：首次启动、正常恢复、恢复失败、无 token、本地写回、返回开始页、dirty、运行中任务、故障和重复提交。
+**验证**：首次启动、正常恢复、恢复失败、无 token、本地写回、返回开始页、dirty、运行中任务、故障和重复提交；新增多选三种插件、取消、重选、失败保留输入、50 个插件列表滚动及全部 collection 加载验证。原生 Windows 文件选择器手工验收与大插件性能未测，不以离屏布局替代。
 
 ## Story-05：状态引导、配置强度与 compact 等价性
 
@@ -341,7 +344,7 @@ S05/S08/S09 ─────────┘
 ## 明确假设与未决项
 
 - 默认保留 FR8.4 自动恢复；开始中心在无恢复目标、恢复失败或用户主动返回时出现。
-- 工程名由首插件文件名建议；创建空工程为高级入口并走同一 S02 use case。
+- 工程名由首个所选插件文件名建议；所选插件属于同一个工程，不自动拆建多个工程。创建空工程为高级入口并走同一 S02 use case；不改变 V2 schema，无数据迁移要求。
 - `guidance_mode` 暂定 `auto|guided|compact`，具体 schema version 在 S05 对齐 ConfigRepository。
 - FOMOD 暂作为开始中心/“同步与发布”专项能力；S01 可依据使用频率调整入口层级。
 - 全局命令搜索可能使用 `Ctrl+K`；最终组合由 S12 冲突盘点确定。

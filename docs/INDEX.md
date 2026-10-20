@@ -45,7 +45,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | [ADR-015](adr/015-generic-file-entry-tools.md) | 通用文件与词条工具（fileops/migrator 独立包 / archive·editor·translator namespace / 键对齐与词典套用严格分离） | ✅ 历史与 ArchivePolicy 增量已接受 |
 | [ADR-016](adr/016-modular-monolith-application-composition.md) | 模块化单体应用层、Ports/Adapters 与 Composition Root | ✅ 已接受（2026-08-18） |
 | [ADR-017](adr/017-translation-io-kernel-v2.md) | Translation I/O Kernel V2、双层身份与原子发布 | ✅ 已接受（2026-08-18） |
-| [ADR-018](adr/018-project-session-persistence-v2.md) | Project/Variant/Session 状态所有权与持久化 V2 | ✅ 已接受（2026-08-18） |
+| [ADR-018](adr/018-project-session-persistence-v2.md) | Project/Variant/Session 状态所有权与持久化 V2；2026-10-20 补录会话工程绑定、只读浏览与执行前精确切换 | ✅ 已接受（2026-08-18，保留原接受日期） |
 | [ADR-019](adr/019-unified-task-runtime.md) | Unified Task Runtime、互斥终态与幂等恢复 | ✅ 已接受（2026-08-18） |
 | [ADR-021](adr/021-ui-presentation-modularization.md) | UI 展示层模块化：View/Presenter 边界、显式窄依赖、规模门禁（FR25） | ✅ 已接受并实施（2026-08-19） |
 | [ADR-034](adr/034-project-terminology-build-versioning-reporting.md) | 项目全来源术语构建、不可变版本与统一报告事实源（FR5.16） | 📝 提议（2026-08-28） |
@@ -76,7 +76,7 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | Epic / Feature | 状态 | Story 数 |
 |----------------|------|---------|
 | [ui-presentation-modularization](../plans/ui-presentation-modularization/plan.md) | FR25 已完成 | 8 |
-| [guided-ui-workflows](../plans/guided-ui-workflows/plan.md) | FR26 已完成；[S10 QA](test-reports/guided-ui-workflows-s10-qa-2026-08-24.md) | 13 |
+| [guided-ui-workflows](../plans/guided-ui-workflows/plan.md) | FR26 已完成；[S10 QA](test-reports/guided-ui-workflows-s10-qa-2026-08-24.md)；2026-10-20 [多插件建项 QA](test-reports/guided-multi-plugin-project-qa-2026-10-20.md) | 13 |
 | [ui-foundation-framework](../plans/ui-foundation-framework/plan.md) | FR24 待实现；FR25/FR26 接入、Story 与终验门禁已对齐 | 9 |
 
 ### 历史交付记录
@@ -228,6 +228,8 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 ## 测试报告
 
 > 参见 [test-reports/](test-reports/)
+
+2026-10-20：[助手会话工程绑定与窗口导航 QA](test-reports/assistant-project-conversations-qa-2026-10-19.md)，对应 S24～S26；记录工程隔离、后台目录、旧历史兼容、系统默认外框、实际回归结果及原生自动化边界。
 
 | 时间 | 范围 | 结果 |
 |------|------|------|

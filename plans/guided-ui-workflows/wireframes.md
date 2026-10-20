@@ -9,9 +9,9 @@
 │ [开始]                                         [任务 1] [设置] [帮助] │
 ├──────────────────────────────────────────────────────────────────────┤
 │ 开始翻译                                                            │
-│ 选择一个 ESP / ESM / ESL；工程名称和常用设置会自动准备。              │
+│ 可多选 ESP / ESM / ESL，一次导入同一个本地翻译工程。                  │
 │                                                                      │
-│                  [ 新建本地翻译工程 ]                                │
+│                  [ 选择插件（可多选） ]                              │
 │                                                                      │
 │ 继续工作                                                             │
 │ ┌ 上次：MyMod · 默认版本 · 有未保存恢复信息 ┐  [继续]                 │
@@ -37,26 +37,29 @@
 ## 2. 插件建项 draft（开始中心同页推进）
 
 ```text
-┌ 创建本地翻译工程 ────────────────────────────────────────────────────┐
-│ 插件       MyMod.esp                         [重新选择]               │
+┌ [返回开始] 创建本地翻译工程 ─────────────────────────────────────────┐
+│ 插件       已选择 3 个插件                                           │
+│            ┌ MyMod.esm、Addon.esp、Patch.esl（可滚动）───────────┐   │
+│            └ 文件名可见，完整路径通过提示与无障碍文本提供 ───────┘   │
 │ 工程名称   [ MyMod_______________________ ]                          │
-│ 已有译文   [ 不导入 ▾ ]  [选择 EET/XT/Strings/已翻译插件]            │
+│ 默认版本   [ 默认________________________ ]                          │
+│ 已有译文   不导入                               [选择已有译文]       │
 │                                                                      │
 │ ▸ 高级解析设置                                                       │
 │                                                                      │
-│ 摘要：将创建本地工程 “MyMod”、默认翻译版本并解析 1 个插件。           │
-│ [返回]                                      [创建并开始翻译]          │
+│ 摘要：将创建本地工程 “MyMod”、默认版本；3 个插件导入同一工程。       │
+│                                                    [确定]           │
 │                                                                      │
-│ 失败：PROJECT_… 原因…… [修改高亮字段] [查看技术详情]                 │
+│ 失败：PROJECT_… 原因…… 来源：D:/mods/Addon.esp                       │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
 | 状态 | 主动作 | 规则 |
 |---|---|---|
 | draft 无效 | disabled + 原因 | 焦点落第一个无效字段，不写 staging |
-| validating/staging | 取消请求（若真实支持） | 防重复提交；旧 active 不变 |
-| success | 进入新 Workbench | 一次发布 project/version/projection |
-| failure | 修复并重试 | 保留 draft，清 staging，新提交使用新 operation identity |
+| validating/staging | 确定禁用，显示后台进度 | 一次确认串联 prepare/commit；防重复提交，准备期旧 active 不变 |
+| success | 进入新 Workbench | 所有插件一次发布到同一 project/version，再用 hydration 加载全部内容 |
+| failure | 修复并重试 | 保留全部 draft 输入，定位失败来源；清 staging，不发布部分工程 |
 
 ## 3. Workbench
 
@@ -78,7 +81,7 @@
 
 | 状态 | 主动作 | 原因/恢复 | 保存状态 |
 |---|---|---|---|
-| 无工程 | `project.create_from_source` | 打开已有工程 | 不显示虚假“已保存” |
+| 无工程 | `project.create` | 打开已有工程 | 不显示虚假“已保存” |
 | 空工程 | `translation.import_source` | 说明支持的来源 | 已保存/dirty 真实投影 |
 | 有未翻译 | `translation.ai.run` | 无 AI 配置时就地修复，也可手工翻译 | 持续可见 |
 | 待检查 | `translation.review` | 聚焦问题筛选 | 持续可见 |
@@ -172,7 +175,7 @@
 ## 7. 跨页面连续性
 
 ```text
-开始中心 --project.create_from_source--> 建项 draft --success--> Workbench
+开始中心 --project.create / mode=plugin--> 建项 draft --success--> Workbench
    ^                                              |              |
    | project.return_to_start                      | AI           | 发布/同步
    |                                              v              v
