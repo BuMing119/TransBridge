@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import RLock
@@ -186,6 +187,16 @@ class ProductionTerminologyComposition:
         for resource in reversed(resources):
             resource.close()
         self.repositories.close()
+
+    @contextmanager
+    def deletion_scope(self, project_id: str):
+        with self.repositories.deletion_scope(project_id):
+            yield
+        with self._sync_lock:
+            self._profile_services.pop(project_id, None)
+            for key in tuple(self._sync_services):
+                if key[1] == project_id:
+                    del self._sync_services[key]
 
     def effective_adapter(self, project_id: str, variant_id: str):
         """Create an adapter enabled by the existence of a published version."""

@@ -94,6 +94,7 @@ def test_cancelling_close_does_not_unlock_a_busy_or_failed_project_view(state):
     enabled = []
     lifecycle = WindowLifecycle.__new__(WindowLifecycle)
     lifecycle._task_close = None
+    lifecycle._recovery = SimpleNamespace(reset=lambda: None)
     lifecycle._input_guard = SimpleNamespace(resume=lambda: None)
     lifecycle.auto_saver = SimpleNamespace(start=lambda: None)
     lifecycle._host = SimpleNamespace(

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QKeyEvent
@@ -19,6 +20,8 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPushButton,
     QStackedWidget,
     QVBoxLayout,
@@ -212,6 +215,15 @@ class StartCenterWidget(QWidget):
         layout.addLayout(header)
         form = QFormLayout()
         self._source_label = QLabel(page)
+        self._source_label.setWordWrap(True)
+        self._source_label.setTextFormat(Qt.TextFormat.PlainText)
+        self._source_list = QListWidget(page)
+        self._source_list.setAccessibleName("已选择的插件")
+        self._source_list.setMaximumHeight(144)
+        self._source_list.hide()
+        source_row = QVBoxLayout()
+        source_row.addWidget(self._source_label)
+        source_row.addWidget(self._source_list)
         self._name_edit = QLineEdit(page)
         self._name_edit.setAccessibleName("本地翻译工程名称")
         ComponentStyle.apply_static(self._name_edit, ComponentKind.INPUT)
@@ -230,7 +242,7 @@ class StartCenterWidget(QWidget):
         migration_row = QHBoxLayout()
         migration_row.addWidget(self._migration_label, 1)
         migration_row.addWidget(self._migration_button)
-        form.addRow("插件", self._source_label)
+        form.addRow("插件", source_row)
         form.addRow("工程名称", self._name_edit)
         form.addRow("默认翻译版本", self._variant_edit)
         form.addRow("已有译文", migration_row)
@@ -280,9 +292,23 @@ class StartCenterWidget(QWidget):
 
         if state.revision < self._draft_revision:
             return
+        entering_draft = self._pages.currentWidget() is not self._draft_page
+        previous_diagnostic = self._draft_error.text()
         self._draft_revision = state.revision
         self._pages.setCurrentWidget(self._draft_page)
-        self._source_label.setText(state.source_path or "无源文件（空工程）")
+        paths = state.source_paths
+        multiple = len(paths) > 1
+        self._source_label.setText(
+            f"已选择 {len(paths)} 个插件" if multiple else (state.source_path or "无源文件（空工程）")
+        )
+        if paths != getattr(self, "_displayed_source_paths", ()):
+            self._source_list.clear()
+            for path in paths:
+                item = QListWidgetItem(Path(path).name, self._source_list)
+                item.setToolTip(path)
+                item.setData(Qt.ItemDataRole.AccessibleTextRole, path)
+            self._displayed_source_paths = paths
+        self._source_list.setVisible(multiple)
         if self._name_edit.text() != state.project_name:
             self._name_edit.setText(state.project_name)
         if self._variant_edit.text() != state.default_variant_name:
@@ -306,12 +332,14 @@ class StartCenterWidget(QWidget):
         self._draft_primary.setEnabled(state.can_submit and not state.in_flight)
         self._name_edit.setEnabled(not state.in_flight)
         self._variant_edit.setEnabled(not state.in_flight)
-        if diagnostic:
+        # Ordinary draft updates must preserve the user's editing focus.
+        if diagnostic and (entering_draft or diagnostic != previous_diagnostic):
             self._draft_error.setFocus(Qt.FocusReason.OtherFocusReason)
-        elif self._draft_primary.isEnabled():
-            self._draft_primary.setFocus(Qt.FocusReason.OtherFocusReason)
-        else:
-            self._name_edit.setFocus(Qt.FocusReason.OtherFocusReason)
+        elif entering_draft:
+            if self._draft_primary.isEnabled():
+                self._draft_primary.setFocus(Qt.FocusReason.OtherFocusReason)
+            else:
+                self._name_edit.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _emit_draft_primary(self) -> None:
         self.prepare_requested.emit()

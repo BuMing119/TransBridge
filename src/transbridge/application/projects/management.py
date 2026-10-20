@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Protocol
@@ -49,6 +51,12 @@ class ProjectManagementCommands:
         self._lifecycle = lifecycle
         self._persistence = persistence
         self._baselines = baselines
+        self._deletion_scope: Callable[[str], AbstractContextManager[None]] = lambda _project_id: nullcontext()
+
+    def bind_deletion_scope(self, scope: Callable[[str], AbstractContextManager[None]]) -> None:
+        """Bind the composition-owned resources that must drain before deletion."""
+
+        self._deletion_scope = scope
 
     def rename(self, name: str, context: RequestContext) -> OperationResult[dict[str, object]]:
         try:
@@ -116,11 +124,12 @@ class ProjectManagementCommands:
             active = self._lifecycle.active
             is_active = active is not None and active.project_ref == project_ref
             expected_revision = active.persisted_project_revision if is_active else None
-            deletion = self._persistence.delete(
-                project_ref,
-                expected_revision=expected_revision,
-                expected_name=project_display_name(expected_name),
-            )
+            with self._deletion_scope(project_id):
+                deletion = self._persistence.delete(
+                    project_ref,
+                    expected_revision=expected_revision,
+                    expected_name=project_display_name(expected_name),
+                )
             for variant_id in deletion.variant_ids:
                 self._baselines.remove(project_ref, VariantRef(VariantId(variant_id), project_ref.identity))
             lifecycle_result = self._lifecycle.accept_project_deletion(project_ref, context)

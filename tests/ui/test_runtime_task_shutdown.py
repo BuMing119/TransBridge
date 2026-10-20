@@ -109,7 +109,8 @@ def test_save_failure_reopens_admission_without_restarting_cancelled_jobs(runtim
     host.save_current_project_async.call_args.kwargs["on_finished"](False)
     assert not host.close_pending and not host.close_ready
     host.close.assert_not_called()
-    warning.assert_called_once()
+    host.choose_recovery.assert_called_once_with(host)
+    warning.assert_not_called()
     assert tasks.get(old, OWNER).state is JobState.CANCELLED
     new = tasks.submit(spec(), OWNER).ref
     assert tasks.get(new, OWNER).state is JobState.QUEUED

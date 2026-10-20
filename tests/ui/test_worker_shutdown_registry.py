@@ -77,6 +77,8 @@ def host(monkeypatch):
     monkeypatch.setattr(window_lifecycle, "QSettings", Mock())
     monkeypatch.setattr(QMessageBox, "warning", Mock())
     window = CloseHost()
+    window.choose_recovery = Mock(return_value=None)
+    monkeypatch.setattr(window_lifecycle, "choose_recovery_destination", window.choose_recovery)
     window.show()
     yield window
     window.lifecycle.auto_saver.stop()
@@ -215,6 +217,7 @@ def test_save_failure_restores_main_and_auxiliary_input(host):
         assert host.isVisible() and host.isEnabled() and auxiliary.isEnabled()
         assert host.order == ["save"]
         assert not host.close_ready
+        host.choose_recovery.assert_called_once_with(host)
     finally:
         auxiliary.close()
 

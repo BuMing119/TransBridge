@@ -202,6 +202,7 @@ def build_runtime(
                 runtime_settings.get("terminology_max_unstreamed_total_bytes", 256 * 1024 * 1024)
             ),
         )
+        persistence.project_management.bind_deletion_scope(terminology.deletion_scope)
         production_use_cases = {
             "terminology_repository": terminology.repositories,
             "terminology_repository_factory": terminology.repositories,

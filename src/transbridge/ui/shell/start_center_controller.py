@@ -7,7 +7,8 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import QFileDialog
 
-from transbridge.ui.coordinators.guided_project_coordinator import GuidedProjectCoordinator
+from transbridge.ui.coordinators.guided_project_coordinator import GuidedDraftPhase, GuidedProjectCoordinator
+from transbridge.ui.coordinators.project_creation_operation import ProjectCreationOperation
 from transbridge.ui.shell.action_catalog import IntentId
 
 from .project_window_launcher import launch_project_in_new_window
@@ -32,6 +33,7 @@ class StartCenterController:
         self._intent_dispatch = dispatch
         self._project_window_launcher = project_window_launcher or launch_project_in_new_window
         self._recovery_diagnostic_message = ""
+        self._creation_operation = ProjectCreationOperation(host)
         self.guided_project: GuidedProjectCoordinator | None = None
 
     def start(self) -> None:
@@ -147,6 +149,15 @@ class StartCenterController:
         raise KeyError(intent_id)
 
     def _dispatch(self, operation, message, on_result, on_error) -> bool:
+        if self.guided_project is not None and self.guided_project.state.phase is GuidedDraftPhase.COMMITTING:
+            return self._creation_operation.start(
+                operation,
+                message,
+                on_result,
+                on_error,
+                has_sources=bool(self.guided_project.state.source_paths or self.guided_project.state.migration_sources),
+                preview_token=self.guided_project.state.preview_token,
+            )
         return self._host.start_foreground_task(
             operation,
             message=message,
@@ -156,20 +167,23 @@ class StartCenterController:
         )
 
     def _choose_source(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
+        paths, _ = QFileDialog.getOpenFileNames(
             self._host,
-            "选择要翻译的插件",
+            "选择要翻译的插件（可多选）",
             "",
             "Bethesda 插件 (*.esp *.esm *.esl);;所有文件 (*)",
         )
-        if path:
-            self._begin_project(path)
+        if paths:
+            self._begin_project(tuple(paths))
 
-    def _begin_project(self, source_path: str | None) -> None:
+    def _begin_project(self, source_path: str | tuple[str, ...] | None) -> None:
         if self.guided_project is None:
             self._host.show_message("PROJECT_PROVISIONING_UNAVAILABLE: 建项服务不可用。")
             return
-        self.guided_project.begin(source_path)
+        if isinstance(source_path, tuple):
+            self.guided_project.begin_sources(source_path)
+        else:
+            self.guided_project.begin(source_path)
         self._show_start_center_view()
 
     def _show_start_center_view(self) -> None:
@@ -195,54 +209,8 @@ class StartCenterController:
         if self.guided_project is None:
             return
         state = self.guided_project.state
-        # S02 already parsed and published the authoritative baseline.  This
-        # shell must not create a second legacy collection by reparsing here.
-        if state.source_path is not None:
-            project_id = str(_value.get("project_id", ""))
-            hydration = self._host.project_commands.consume_create_hydration(
-                project_id,
-                self._host.runtime_context,
-            )
-            if not hydration.is_success or hydration.value is None:
-                diagnostic = hydration.diagnostics[0]
-                self._host.show_message(f"{diagnostic.code}: {diagnostic.message}")
-                return
-            self._hydrate_collection(hydration.value.source)
         self.show_workbench()
         self._host.show_message(f"本地工程“{state.project_name}”已创建")
-
-    def _hydrate_collection(self, source) -> None:
-        from transbridge.converter.translation_entry import TranslationEntry
-        from transbridge.converter.translation_entry_collection import TranslationEntryCollection
-        from transbridge.ui.projection_types import CollectionSlot
-
-        entries = tuple(
-            TranslationEntry(
-                id=item.legacy_id,
-                key=item.entry_key.local_key,
-                original=item.original,
-                translation=item.translation,
-                stage=item.stage,
-                context=item.context,
-                entry_key=item.entry_key,
-                external_refs=item.external_refs,
-                revision=item.revision,
-                provenance=item.provenance,
-                metadata=item.metadata,
-            )
-            for item in source.entries
-        )
-        collection = TranslationEntryCollection(entries)
-        self._host.context.add_slot(
-            source.location,
-            CollectionSlot(
-                label=Path(source.location).stem,
-                collection=collection,
-                esp_path=source.location,
-                source_snapshot=source.source_snapshot,
-                format_id=source.format_id,
-            ),
-        )
 
     def _show_recovery_details(self, storage_key: str) -> None:
         recovery = next(

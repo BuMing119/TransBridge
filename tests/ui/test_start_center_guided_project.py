@@ -10,7 +10,6 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QLabel
 
 from transbridge.application.contracts import DomainError, ErrorCategory, OperationResult
-from transbridge.application.io import EntryKey, SourceNamespace
 from transbridge.ui.coordinators.guided_project_coordinator import (
     GuidedDraftPhase,
     GuidedProjectCoordinator,
@@ -714,38 +713,9 @@ def test_recent_projects_prefer_v2_read_only_catalog() -> None:
     assert recent[0].active and recent[0].available
 
 
-def test_created_project_relies_on_projection_and_does_not_parse_source_again() -> None:
+def test_created_project_only_navigates_after_the_view_has_been_installed() -> None:
     calls = []
-    slots = []
-    entry_key = EntryKey(SourceNamespace("source:test"), "entry-1")
-    hydrated_entry = SimpleNamespace(
-        legacy_id="legacy-1",
-        entry_key=entry_key,
-        original="Original text",
-        translation="",
-        stage=0,
-        context="FULL",
-        external_refs=(),
-        revision=0,
-        provenance=(),
-        metadata=(),
-    )
-    source = SimpleNamespace(
-        location="D:/mods/MyMod.esp",
-        entries=(hydrated_entry,),
-        source_snapshot=object(),
-        format_id=object(),
-    )
     host = SimpleNamespace(
-        project_coordinator=SimpleNamespace(restore_parse_esp=lambda _path: calls.append("duplicate-parse")),
-        project_commands=SimpleNamespace(
-            consume_create_hydration=lambda project_id, context: SimpleNamespace(
-                is_success=True,
-                value=SimpleNamespace(source=source),
-            )
-        ),
-        runtime_context=object(),
-        context=SimpleNamespace(add_slot=lambda key, slot: slots.append((key, slot))),
         show_message=lambda message: calls.append(message),
     )
     controller = StartCenterController.__new__(StartCenterController)
@@ -758,6 +728,3 @@ def test_created_project_relies_on_projection_and_does_not_parse_source_again() 
     controller._on_created({"project_id": "project-1"})
 
     assert calls == ["workbench", "本地工程“MyMod”已创建"]
-    assert len(slots) == 1
-    assert len(slots[0][1].collection) == 1
-    assert next(iter(slots[0][1].collection)).original == "Original text"

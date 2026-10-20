@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+
+import pytest
 
 from transbridge.application.contracts import OperationOutcome, RequestContext
 from transbridge.application.io import (
@@ -78,7 +81,7 @@ class _Sources:
 
     def prepare_source(self, request, context, *, role, common_options):
         self.calls.append((request.location, role))
-        namespace = SourceNamespace(f"source:{role}")
+        namespace = SourceNamespace(f"source:{role}:{Path(request.location).name}")
         content = role.encode()
         source_snapshot = SourceSnapshot.from_bytes(
             SourceDescriptor(request.location),
@@ -393,3 +396,106 @@ def test_older_preview_is_rejected_after_another_project_commits() -> None:
     assert lifecycle.active is not None
     assert lifecycle.active.project.envelope.data["name"] == "工程二"
     assert [name for name, _ in store.calls] == ["begin", "provision", "commit"]
+
+
+def test_multiple_original_sources_commit_together_and_hydrate_once() -> None:
+    service, lifecycle, store, sources = _harness()
+    request = ProjectProvisioningRequest(
+        "多个插件",
+        source=ProjectSourceRequest("C:/mods/first.esp"),
+        additional_sources=(
+            ProjectSourceRequest("C:/mods/second.esm"),
+            ProjectSourceRequest("C:/mods/third.esl"),
+        ),
+    )
+
+    prepared = service.prepare(request, _context())
+
+    assert prepared.is_success and prepared.value is not None
+    assert prepared.value.source_count == prepared.value.entry_count == 3
+    assert store.calls == []
+    assert sources.calls == [(source.location, "primary") for source in request.sources]
+    assert service.commit(prepared.value.token, _context()).is_success
+    assert [name for name, _ in store.calls] == ["begin", "provision", "commit"]
+    snapshot = lifecycle.active.variant.snapshot()
+    assert len(snapshot.source_fingerprints) == len(snapshot.entries) == 3
+    assert all(entry.translation == "" and entry.stage is Stage.UNTRANSLATED for entry in snapshot.entries)
+    assert lifecycle.active.project.envelope.data["source_relations"] == []
+
+    hydration = service.consume_hydration(prepared.value.project_id, _context())
+    assert hydration.is_success and hydration.value is not None
+    assert [source.location for source in hydration.value.sources] == [source.location for source in request.sources]
+    assert hydration.value.source is hydration.value.sources[0]
+    assert len(sources.calls) == 3
+    assert not service.consume_hydration(prepared.value.project_id, _context()).is_success
+
+
+@pytest.mark.parametrize("duplicate", ["C:/mods/first.esp", "C:/MODS/FIRST.ESP", "C:/mods/nested/../first.esp"])
+def test_duplicate_original_source_paths_fail_before_publication(duplicate: str) -> None:
+    service, lifecycle, store, _sources = _harness()
+    prepared = service.prepare(
+        ProjectProvisioningRequest(
+            "重复来源",
+            source=ProjectSourceRequest("C:/mods/first.esp"),
+            additional_sources=(ProjectSourceRequest(duplicate),),
+        ),
+        _context(),
+    )
+
+    assert prepared.diagnostics[0].code == "PROJECT_SOURCE_PATH_DUPLICATE"
+    assert lifecycle.active is None
+    assert store.calls == []
+
+
+def test_duplicate_original_plugin_identity_is_not_treated_as_translation() -> None:
+    service, lifecycle, store, _sources = _harness(sources=_SameIdentitySources([]))
+    prepared = service.prepare(
+        ProjectProvisioningRequest(
+            "重复插件",
+            source=ProjectSourceRequest("C:/mods/first.esp"),
+            additional_sources=(ProjectSourceRequest("C:/mods/second.esp"),),
+        ),
+        _context(),
+    )
+
+    assert prepared.diagnostics[0].code == "PROJECT_SOURCE_IDENTITY_DUPLICATE"
+    assert lifecycle.active is None
+    assert store.calls == []
+
+
+def test_multiple_original_sources_commit_failure_retains_previous_project() -> None:
+    service, lifecycle, store, _sources = _harness()
+    initial = service.prepare(ProjectProvisioningRequest("已有工程"), _context())
+    assert initial.value is not None
+    assert service.commit(initial.value.token, _context()).is_success
+    previous = lifecycle.active
+    prepared = service.prepare(
+        ProjectProvisioningRequest(
+            "新工程",
+            source=ProjectSourceRequest("C:/mods/first.esp"),
+            additional_sources=(ProjectSourceRequest("C:/mods/second.esp"),),
+        ),
+        _context(),
+    )
+    assert prepared.value is not None
+    store.fail_commit = True
+
+    committed = service.commit(prepared.value.token, _context())
+
+    assert committed.diagnostics[0].code == "PROJECT_PROVISIONING_COMMIT_FAILED"
+    assert lifecycle.active is previous
+    assert lifecycle.generation == 1
+    assert store.calls[-1][0] == "rollback"
+    assert not service.consume_hydration(prepared.value.project_id, _context()).is_success
+
+
+def test_additional_sources_are_part_of_the_request_fingerprint() -> None:
+    source = ProjectSourceRequest("C:/mods/first.esp")
+    second = ProjectSourceRequest("C:/mods/second.esp")
+    request = ProjectProvisioningRequest("工程", source=source)
+    multiple = ProjectProvisioningRequest("工程", source=source, additional_sources=(second,))
+
+    assert request.sources == (source,)
+    assert multiple.sources == (source, second)
+    assert request.request_fingerprint != multiple.request_fingerprint
+    assert ProjectProvisioningRequest("工程", additional_sources=(second,)).sources == (second,)

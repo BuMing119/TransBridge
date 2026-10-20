@@ -113,7 +113,7 @@ class TranslationIoProjectSourcePreparer:
         )
         diagnostics = tuple(replace(item, severity=DiagnosticSeverity.WARNING) for item in parsed.diagnostics)
         hydration = None
-        if role == "primary" and all(hasattr(entry, "snapshot") for entry in parsed.entries):
+        if all(hasattr(entry, "snapshot") for entry in parsed.entries):
             hydration = PreparedSourceHydration(
                 location=str(path),
                 fingerprint=parsed.source_snapshot.sha256,

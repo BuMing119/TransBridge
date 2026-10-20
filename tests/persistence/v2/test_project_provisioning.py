@@ -335,7 +335,9 @@ def test_source_preparer_treats_migration_plugin_text_as_translation(tmp_path: P
 
     assert prepared.baseline.entries[0].translation == "Original text"
     assert prepared.baseline.entries[0].stage is Stage.TRANSLATED
-    assert prepared.hydration is None
+    assert prepared.hydration is not None
+    assert prepared.hydration.entries[0].entry_key == prepared.baseline.entries[0].entry_key
+    assert prepared.hydration.entries[0].original == "Original text"
 
 
 def test_plugin_commit_reuses_prepare_hydration_without_second_parse(tmp_path: Path) -> None:

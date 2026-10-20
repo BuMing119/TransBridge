@@ -24,9 +24,10 @@ class ProfileReadStore:
         self._token: object = None
         self._published: OrderedDict[tuple[str, int], PublishedTerminologyProfile] = OrderedDict()
 
-    def token(self) -> tuple[int, int, bool]:
+    def token(self) -> tuple[int, int, int, bool]:
         with self._lock:
             return (
+                getattr(self._connection, "generation", 0),
                 int(self._connection.execute("PRAGMA data_version").fetchone()[0]),
                 self._connection.total_changes,
                 self._connection.in_transaction,

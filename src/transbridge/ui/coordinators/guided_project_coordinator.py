@@ -39,6 +39,7 @@ class GuidedProjectDraftState:
     in_flight: bool = False
     diagnostic_code: str = ""
     diagnostic_message: str = ""
+    additional_source_paths: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.revision < 0:
@@ -55,11 +56,18 @@ class GuidedProjectDraftState:
         return bool(self.project_name.strip() and self.default_variant_name.strip())
 
     @property
+    def source_paths(self) -> tuple[str, ...]:
+        """Keep the single-path entry point compatible with existing callers."""
+        return (() if self.source_path is None else (self.source_path,)) + self.additional_source_paths
+
+    @property
     def summary(self) -> str:
         source_count = self.preview_source_count
         if source_count is None:
-            source_count = (1 if self.source_path else 0) + len(self.migration_sources)
+            source_count = len(self.source_paths) + len(self.migration_sources)
         kind = "空工程" if self.source_path is None else f"插件 {Path(self.source_path).name}"
+        if len(self.source_paths) > 1:
+            kind = f"{len(self.source_paths)} 个插件（导入同一个工程）"
         summary = (
             f"将创建本地工程“{self.project_name or '未命名'}”、翻译版本"
             f"“{self.default_variant_name or '未命名'}”，来源：{kind}。"
@@ -121,11 +129,20 @@ class GuidedProjectCoordinator:
         return self._state
 
     def begin(self, source_path: str | None) -> GuidedProjectDraftState:
+        return self.begin_sources(() if source_path is None else (source_path,))
+
+    def begin_sources(self, source_paths: tuple[str, ...]) -> GuidedProjectDraftState:
         self._invalidate_operation()
         self._discard_preview()
-        normalized = None if source_path is None else str(Path(source_path))
-        suggested = "新工程" if normalized is None else Path(normalized).stem
-        self._state = GuidedProjectDraftState(normalized, suggested)
+        normalized = tuple(str(Path(path)) for path in source_paths)
+        first = normalized[0] if normalized else None
+        suggested = "新工程" if first is None else Path(first).stem
+        self._state = GuidedProjectDraftState(
+            first,
+            suggested,
+            revision=self._state.revision + 1,
+            additional_source_paths=normalized[1:],
+        )
         self._publish()
         return self._state
 
@@ -260,6 +277,7 @@ class GuidedProjectCoordinator:
             source=source,
             migration_sources=migrations,
             parse_options=self._state.parse_options,
+            additional_sources=tuple(ProjectSourceRequest(path) for path in self._state.additional_source_paths),
         )
 
     def _finish_prepare(self, generation: int, result: object, *, commit_on_success: bool = False) -> None:

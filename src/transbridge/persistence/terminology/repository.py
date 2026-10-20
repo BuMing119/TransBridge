@@ -51,6 +51,7 @@ from .connection import (
     TerminologyStorageReadOnlyError,
     translate_sqlite_error,
 )
+from .connection_lifecycle import ProjectTerminologyConnection
 from .drafts import DraftStore
 from .inbound_review import SqliteInboundReviewStore
 from .paths import TerminologyPaths
@@ -100,8 +101,10 @@ class SqliteTerminologyRepository:
         self.project_id = project_id
         self.path = opened.path
         self.storage_state = opened.state
-        self._connection = opened.connection
         self._lock = RLock()
+        self._connection = ProjectTerminologyConnection(
+            opened, reopen=lambda: factory.open(project_id, writable=writable), lock=self._lock
+        )
         self._builds = BuildStore(self._connection, project_id, self._decode)
         self.cache = TerminologyCache(self._connection)
         self.artifacts = ArtifactLedger(self._connection)
@@ -137,10 +140,16 @@ class SqliteTerminologyRepository:
         with self._lock:
             self._connection.close()
 
-    def read_cache_token(self) -> tuple[int, int, bool]:
+    def deletion_scope(self):
+        """Release this project's handle until deletion commits or rolls back."""
+
+        return self._connection.deletion_scope()
+
+    def read_cache_token(self) -> tuple[int, int, int, bool]:
         """Invalidate decoded reads after local writes, rollback or external commits."""
         with self._lock:
             return (
+                self._connection.generation,
                 int(self._connection.execute("PRAGMA data_version").fetchone()[0]),
                 self._connection.total_changes,
                 self._connection.in_transaction,

@@ -1,3 +1,5 @@
+import logging
+
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QMainWindow, QMessageBox
 
@@ -389,6 +391,7 @@ class MainWindow(QMainWindow):
         on_result=None,
         on_error=None,
         on_finished=None,
+        before_start=None,
         disable_workbench: bool = True,
     ) -> bool:
         """Run one visible disk task without blocking the GUI event loop."""
@@ -402,18 +405,16 @@ class MainWindow(QMainWindow):
         ):
             self.show_message("另一项后台操作仍在进行，请稍候。")
             return False
+        if before_start is not None:
+            before_start()
         self._workbench.show_step2_progress(0, message)
         if disable_workbench:
             self._workbench.setEnabled(False)
-        worker = ApiWorker(fn, route_http_errors=False)
-        self._foreground_worker = worker
+        worker = None
         outcome: dict[str, object] = {}
 
-        worker.result.connect(lambda result: outcome.__setitem__("result", result))
-        worker.error.connect(lambda error: outcome.__setitem__("error", error))
-
         def _cleanup() -> None:
-            if self._foreground_worker is worker:
+            if worker is None or self._foreground_worker is worker:
                 self._foreground_worker = None
                 self._workbench.hide_step2_progress()
                 if disable_workbench:
@@ -429,8 +430,20 @@ class MainWindow(QMainWindow):
             if on_finished is not None:
                 on_finished()
 
-        worker.finished.connect(_cleanup)
-        worker.start()
+        try:
+            worker = ApiWorker(fn, route_http_errors=False)
+            self._foreground_worker = worker
+            worker.result.connect(lambda result: outcome.__setitem__("result", result))
+            worker.error.connect(lambda error: outcome.__setitem__("error", error))
+            worker.finished.connect(_cleanup)
+            worker.start()
+        except Exception as exc:
+            logging.getLogger(__name__).exception("Cannot start foreground worker")
+            outcome["error"] = f"无法启动后台操作：{exc}"
+            _cleanup()
+            if worker is not None:
+                worker.deleteLater()
+            return True
         self._workers.append(worker)
         return True
 
@@ -503,8 +516,7 @@ class MainWindow(QMainWindow):
         set_save_saving = getattr(self._workbench.project_bar, "set_save_saving", None)
         if set_save_saving is not None:
             set_save_saving()
-        worker = ApiWorker(save_fn, route_http_errors=False)
-        self._save_worker = worker
+        worker = None
         save_succeeded = False
 
         def _on_saved(result) -> None:
@@ -529,6 +541,9 @@ class MainWindow(QMainWindow):
                 self._save_worker = None
             final_dirty = bool(ctx.dirty)
             persistence_is_current = save_succeeded and not final_dirty
+            auto_saver = getattr(self, "_auto_saver", None)
+            if auto_saver is not None:
+                auto_saver.record_save_result(save_succeeded)
             if save_succeeded:
                 self._workbench.project_bar.set_save_completed(dirty=final_dirty)
                 if not automatic and persistence_is_current:
@@ -544,10 +559,20 @@ class MainWindow(QMainWindow):
             for callback in callbacks:
                 callback(persistence_is_current)
 
-        worker.result.connect(_on_saved)
-        worker.error.connect(_on_error)
-        worker.finished.connect(_on_done)
-        worker.start()
+        try:
+            worker = ApiWorker(save_fn, route_http_errors=False)
+            self._save_worker = worker
+            worker.result.connect(_on_saved)
+            worker.error.connect(_on_error)
+            worker.finished.connect(_on_done)
+            worker.start()
+        except Exception as exc:
+            logging.getLogger(__name__).exception("Cannot start project save worker")
+            _on_error(f"无法开始保存：{exc}")
+            _on_done()
+            if worker is not None:
+                worker.deleteLater()
+            return True
         self._workers.append(worker)
         return True
 

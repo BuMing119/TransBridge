@@ -7,8 +7,10 @@ import logging
 from PyQt6.QtCore import QObject, QSettings, QTimer
 
 from transbridge.ui.worker_registry import get_api_worker_registry
+from transbridge.ui.workers import ApiWorker
 
 from .close_input_guard import CloseInputGuard
+from .save_recovery import SaveRecovery, choose_recovery_destination, write_recovery_bundle
 from .task_close import TaskCloseGuard
 
 logger = logging.getLogger(__name__)
@@ -22,11 +24,30 @@ class AutoSaveManager(QObject):
         self._host = host
         self._debounce_ms = debounce_ms
         self._stopped = False
+        self._failed_identity = None
+        self._result_reported = False
         self._interval_timer = QTimer(self)
         self._interval_timer.timeout.connect(self.trigger_debounce)
         self._debounce_timer = QTimer(self)
         self._debounce_timer.setSingleShot(True)
         self._debounce_timer.timeout.connect(self._auto_save)
+        for name in ("project_changed", "variant_changed"):
+            signal = getattr(host.context, name, None)
+            if signal is not None:
+                signal.connect(self.trigger_debounce)
+
+    def _identity(self):
+        context = self._host.context
+        return (
+            getattr(context, "active_project_id", None) or id(getattr(context, "active_project", None)),
+            getattr(context, "active_variant_id", None) or getattr(context, "active_variant", None),
+        )
+
+    def record_save_result(self, succeeded: bool) -> None:
+        """Pause failed saves until an explicit successful save or a context switch."""
+        self._result_reported = True
+        self._failed_identity = None if succeeded else self._identity()
+        self.trigger_debounce()
 
     def start(self, interval_minutes: int = 5) -> None:
         self._stopped = False
@@ -41,12 +62,15 @@ class AutoSaveManager(QObject):
         if self._stopped:
             return
         context = self._host.context
-        if not context.dirty:
+        if not context.dirty or self._failed_identity == self._identity():
             self._debounce_timer.stop()
             return
+        self._failed_identity = None
         self._debounce_timer.start(self._debounce_ms)
 
     def _auto_save(self) -> None:
+        if self._stopped or self._failed_identity == self._identity():
+            return
         context = self._host.context
         variant_store = context.variant_store
         if context.uses_authoritative_projection:
@@ -54,6 +78,7 @@ class AutoSaveManager(QObject):
                 return
         elif variant_store is None or not variant_store.dirty:
             return
+        self._result_reported = False
         accepted = self._host.save_current_project_async(
             automatic=True,
             on_finished=self._on_auto_save_finished,
@@ -61,9 +86,10 @@ class AutoSaveManager(QObject):
         if not accepted and context.dirty:
             self._debounce_timer.start(self._debounce_ms)
 
-    def _on_auto_save_finished(self, _saved: bool) -> None:
-        if not self._stopped and self._host.context.dirty:
-            self._debounce_timer.start(self._debounce_ms)
+    def _on_auto_save_finished(self, saved: bool) -> None:
+        if not self._result_reported:
+            self.record_save_result(saved)
+        self.trigger_debounce()
 
 
 class WindowLifecycle:
@@ -72,6 +98,9 @@ class WindowLifecycle:
         self._close_pending = False
         self._close_ready = False
         self._discard_ai_record_errors = False
+        self._recovery = SaveRecovery(host.context)
+        self._recovery_destination = None
+        self._recovery_worker = None
         self._input_guard = CloseInputGuard()
         runtime = getattr(getattr(host, "app_runtime", None), "tasks", None)
         self._task_close = TaskCloseGuard(runtime) if runtime is not None else None
@@ -95,6 +124,8 @@ class WindowLifecycle:
         if self._close_pending:
             return False
         self._close_pending = True
+        self._recovery.reset()
+        self._recovery_destination = None
         self._discard_ai_record_errors = False
         self._host.close_pending = True
         self._host.workbench.setEnabled(False)
@@ -202,16 +233,68 @@ class WindowLifecycle:
             QTimer.singleShot(100, lambda: self.finish_background_close(saved))
             return False
         if not saved or self._host.context.dirty:
-            self._cancel_close()
-            from PyQt6.QtWidgets import QMessageBox
-
-            QMessageBox.warning(
-                self._host,
-                "无法关闭",
-                "项目仍有未保存的更改或保存失败，窗口保持打开以避免数据丢失。",
-            )
+            if self._recovery.verified:
+                return True
+            if self._recovery.has_backup:
+                self._recovery_failed("备份完成后内容又有变化，窗口保持打开。请重新保存或备份后退出。")
+                return False
+            if self._recovery_destination is None:
+                self._input_guard.resume()
+                destination = choose_recovery_destination(self._host)
+                if destination is None:
+                    self._cancel_close()
+                    return False
+                self._recovery_destination = destination
+                self._input_guard.suspend()
+                # The dialogs run nested event loops; drain any new work before capturing.
+                QTimer.singleShot(0, lambda: self.finish_background_close(False))
+            elif self._recovery_worker is None:
+                self._start_recovery()
             return False
         return True
+
+    def _start_recovery(self) -> None:
+        try:
+            capture = self._recovery.capture()
+        except Exception as exc:
+            logger.exception("Cannot capture project recovery")
+            self._recovery_failed(f"无法备份当前内容：{exc}")
+            return
+        self._host.workbench.show_step2_progress(0, "正在备份全部翻译内容并校验…")
+        worker = None
+        outcome = {}
+
+        def finished():
+            self._recovery_worker = None
+            if "error" in outcome or "path" not in outcome:
+                self._recovery_failed(f"恢复备份失败，窗口保持打开：{outcome.get('error', '未收到备份结果')}")
+            elif not self._recovery.accept(capture):
+                self._recovery_failed(f"备份期间内容有变化，窗口保持打开。已导出的副本：{outcome['path']}")
+            else:
+                self.finish_background_close(False)
+
+        try:
+            worker = ApiWorker(
+                lambda: write_recovery_bundle(self._recovery_destination, capture),
+                route_http_errors=False,
+            )
+            self._recovery_worker = worker
+            worker.result.connect(lambda path: outcome.__setitem__("path", path))
+            worker.error.connect(lambda error: outcome.__setitem__("error", error))
+            worker.finished.connect(finished)
+            worker.start()
+        except Exception as exc:
+            logger.exception("Cannot start recovery export")
+            self._recovery_worker = None
+            if worker is not None:
+                worker.deleteLater()
+            self._recovery_failed(f"无法开始恢复备份，窗口保持打开：{exc}")
+
+    def _recovery_failed(self, message: str) -> None:
+        self._cancel_close()
+        from PyQt6.QtWidgets import QMessageBox
+
+        QMessageBox.warning(self._host, "无法关闭", message)
 
     def _check_runtime_tasks(self) -> bool:
         if self._task_close is None:
@@ -261,6 +344,8 @@ class WindowLifecycle:
         if self._task_close is not None:
             self._task_close.abort()
         self._close_pending = self._host.close_pending = False
+        self._recovery.reset()
+        self._recovery_destination = None
         self._input_guard.resume()
         self._host.workbench.setEnabled(
             not (

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 import hashlib
 from pathlib import Path
@@ -22,6 +23,8 @@ from transbridge.application.terminology.input_capture import (
 from transbridge.application.terminology.runtime import TerminologyBusinessGuardResult
 from transbridge.application.terminology.workloads import TerminologyExpectedState
 from transbridge.persistence.terminology import SqliteTerminologyRepository, TerminologyPaths
+from transbridge.persistence.v2.filesystem import OsPersistenceFilesystem, RepositoryPaths
+from transbridge.persistence.v2.ids import ProjectId, ProjectRef
 from transbridge.persistence.v2.models import ProjectDto, SchemaEnvelope
 
 if TYPE_CHECKING:
@@ -35,16 +38,48 @@ class ProjectTerminologyRepositories:
 
     def __init__(self, root: str | Path) -> None:
         self.paths = TerminologyPaths(Path(root).resolve(strict=False))
+        self._records = RepositoryPaths(str(self.paths.root), OsPersistenceFilesystem())
         self._items: dict[str, SqliteTerminologyRepository] = {}
+        self._deleting: set[str] = set()
+        self._deleted: set[str] = set()
         self._lock = RLock()
 
     def for_project(self, project_id: str) -> SqliteTerminologyRepository:
         with self._lock:
+            if project_id in self._deleted:
+                # A later archive import may legitimately restore the same identity.
+                record = self._records.record(ProjectRef(ProjectId(project_id)))
+                if Path(record).is_file():
+                    self._deleted.remove(project_id)
+            if project_id in self._deleting or project_id in self._deleted:
+                raise DomainError(
+                    ErrorCategory.CONFLICT,
+                    "PROJECT_TERMINOLOGY_CLOSED",
+                    "工程正在删除或已经删除，无法访问项目术语数据库。",
+                )
             repository = self._items.get(project_id)
             if repository is None:
                 repository = SqliteTerminologyRepository.open(str(self.paths.root), project_id)
                 self._items[project_id] = repository
             return repository
+
+    @contextmanager
+    def deletion_scope(self, project_id: str):
+        with self._lock:
+            if project_id in self._deleting:
+                raise DomainError(ErrorCategory.CONFLICT, "PROJECT_DELETE_IN_PROGRESS", "工程正在删除，请稍候。")
+            self._deleting.add(project_id)
+            repository = self._items.get(project_id)
+        try:
+            scope = nullcontext() if repository is None else repository.deletion_scope()
+            with scope:
+                yield
+            with self._lock:
+                self._items.pop(project_id, None)
+                self._deleted.add(project_id)
+        finally:
+            with self._lock:
+                self._deleting.remove(project_id)
 
     def close(self) -> None:
         with self._lock:

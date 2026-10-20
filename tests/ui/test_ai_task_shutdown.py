@@ -42,6 +42,8 @@ def shutdown_host(qapp, monkeypatch):
     )
     warning = Mock()
     monkeypatch.setattr(QMessageBox, "warning", warning)
+    host.choose_recovery = Mock(return_value=None)
+    monkeypatch.setattr(window_lifecycle, "choose_recovery_destination", host.choose_recovery)
     lifecycle = WindowLifecycle(host)
     yield host, registry, lifecycle, scheduled, warning
     lifecycle.auto_saver.stop()
@@ -172,7 +174,8 @@ def test_failed_or_still_dirty_project_save_restores_application(shutdown_host, 
     host.context.dirty = dirty
     host.save_current_project_async.call_args.kwargs["on_finished"](saved)
 
-    warning.assert_called_once()
+    host.choose_recovery.assert_called_once_with(host)
+    warning.assert_not_called()
     registry.resume.assert_called_once()
     assert not registry.shutting_down
     assert not host.close_pending and not host.close_ready

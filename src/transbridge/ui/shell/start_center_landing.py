@@ -304,7 +304,7 @@ class StartCenterLanding(QWidget):
 
         self.choose_plugin_button = _task_button(
             "选择插件",
-            "选择 ESP、ESM 或 ESL，自动准备工程和可编辑内容",
+            "可多选 ESP、ESM 或 ESL，一次导入同一个工程",
             "language",
             panel,
             primary=True,
