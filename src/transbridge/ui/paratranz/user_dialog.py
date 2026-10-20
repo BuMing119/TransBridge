@@ -109,8 +109,13 @@ class UserInfoDialog(QDialog):
         r = user.get("reviewed", 0)
         self._lbl_stats.setText(f"{t} / {e} / {r}")
         for field, editor in self._profile_inputs.items():
-            if editor not in self._profile_preedit and (edit_baseline is None or editor.text() == edit_baseline[field]):
-                editor.setText(user.get(field, "") or "")
+            value = user.get(field, "") or ""
+            if (
+                editor.text() != value
+                and editor not in self._profile_preedit
+                and (edit_baseline is None or editor.text() == edit_baseline[field])
+            ):
+                editor.setText(value)
 
     def eventFilter(self, watched, event):  # noqa: N802 - Qt override
         if event.type() == QEvent.Type.InputMethod:

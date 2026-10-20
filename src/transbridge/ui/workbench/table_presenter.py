@@ -14,6 +14,7 @@ class RenderSession:
     generation: int
     projection_revision: int | None
     entries: tuple[TranslationEntry, ...]
+    content_scope: tuple[object, ...] | None = None
 
 
 class TranslationTablePort(Protocol):
@@ -48,12 +49,14 @@ class TablePresenter:
         label_library: Mapping[str, Mapping[str, str]],
         *,
         projection_revision: int | None = None,
+        content_scope: tuple[object, ...] | None = None,
     ) -> RenderSession:
         self._generation += 1
         self._session = RenderSession(
             self._generation,
             projection_revision,
             tuple(entries),
+            content_scope,
         )
         self._view.start_render(self._session, entry_labels, label_library)
         return self._session
@@ -66,5 +69,7 @@ class TablePresenter:
         self, entries: Sequence[TranslationEntry], *, projection_revision: int | None = None
     ) -> RenderSession:
         """Replace data after the view verifies membership and order are unchanged."""
-        self._session = RenderSession(self._generation, projection_revision, tuple(entries))
+        self._session = RenderSession(
+            self._generation, projection_revision, tuple(entries), self._session.content_scope
+        )
         return self._session

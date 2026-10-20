@@ -44,13 +44,28 @@ class TranslationTableModel(QAbstractTableModel):
         self._is_row_selected = is_row_selected or (lambda _row: False)
         self._header_tooltips = {}
         self._generation = 1
+        self._editing_allowed = True
 
-    def install(self, session, order, entry_labels, label_library):
+    def install(self, session, order, entry_labels, label_library) -> bool:
+        """Install data and report whether existing Qt indexes were invalidated."""
+        current_keys = tuple(self.session.entries[row].identity for row in self.order)
+        incoming_keys = tuple(session.entries[row].identity for row in order)
+        same_scope = session.content_scope is not None and session.content_scope == self.session.content_scope
+        same_editability = self._editing_allowed == (self.profile_label is None)
+        self._editing_allowed = self.profile_label is None
+        if same_scope and same_editability and current_keys and current_keys == incoming_keys:
+            # Legacy callers can mutate entries in place. Always notify readers;
+            # equality against the old session would miss these mutations.
+            self.session, self.order = session, order
+            self.entry_labels, self.label_library = entry_labels, label_library
+            self.dataChanged.emit(self.index(0, 0), self.index(len(order) - 1, NUM_COLUMNS - 1), [])
+            return False
         self.beginResetModel()
         self._generation += 1
         self.session, self.order = session, order
         self.entry_labels, self.label_library = entry_labels, label_library
         self.endResetModel()
+        return True
 
     def replace_session(self, session):
         """Replace equal-sized source data without invalidating persistent indexes."""

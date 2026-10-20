@@ -45,6 +45,16 @@ class TranslationThemeDelegate(QStyledItemDelegate):
     def revision(self) -> int:
         return self._revision
 
+    def setEditorData(self, editor, index) -> None:  # noqa: N802 - Qt override
+        value = index.data(Qt.ItemDataRole.EditRole)
+        if index.column() == COL_TRANSLATION:
+            # Row metadata refreshes also notify the translation cell. Reapplying
+            # its unchanged committed value would discard the user's live draft.
+            if editor.property("tbTranslationValue") == value:
+                return
+            editor.setProperty("tbTranslationValue", value)
+        super().setEditorData(editor, index)
+
     def apply_theme(self, snapshot) -> None:
         try:
             domain = self._domain_factory(snapshot)

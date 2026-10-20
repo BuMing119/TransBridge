@@ -162,15 +162,36 @@ def test_editing_connection_fields_invalidates_results_and_ignores_late_replies(
     )
     page = dialog._settings_pages[section]
     controller = next(control for control in dialog._connection_controllers if control._button is page.test_button)
+    editors = (
+        (page.base_url_edit, page.token_edit)
+        if section is SettingsSection.PARATRANZ
+        else (page.base_url_edit, page.model_edit, page.api_key_edit)
+    )
 
     def edit_text(editor, value):
         editor.setFocus()
         editor.selectAll()
-        QTest.keyClicks(editor, value)
+        for character in value:
+            assert layout_app.focusWidget() is editor
+            QTest.keyClicks(layout_app.focusWidget(), character)
+            layout_app.processEvents()
+        assert layout_app.focusWidget() is editor
+        assert editor.text() == value
 
     def finish_check():
+        editor = layout_app.focusWidget()
+        editing = editor in editors
+        if editing:
+            editor.setSelection(1, 3)
+            text = editor.text()
         release.set()
         _wait(layout_app, lambda: not controller.is_running)
+        if editing:
+            assert layout_app.focusWidget() is editor
+            assert editor.text() == text
+            assert editor.cursorPosition() == 4
+            assert editor.selectionStart() == 1
+            assert editor.selectedText() == text[1:4]
 
     def assert_pending():
         assert page.test_status.property("tbStatusId") == "pending"
@@ -181,6 +202,7 @@ def test_editing_connection_fields_invalidates_results_and_ignores_late_replies(
     try:
         dialog.resize(720, 480)
         dialog.show()
+        dialog.activateWindow()
         layout_app.processEvents()
         if section is SettingsSection.EMBEDDING:
             page.mode_combo.setCurrentIndex(page.mode_combo.findData("api"))

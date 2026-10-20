@@ -157,8 +157,11 @@ class TranslationTable(QTableView):
         self._entry_rows = {
             entry_label_key(session.entries[source_row]): row for row, source_row in enumerate(self._display_order)
         }
-        self._translation_model.install(session, self._display_order, entry_labels, label_library)
-        self._restore_view_state(selected, current, top if preserve_scroll else None, scroll if preserve_scroll else 0)
+        reset = self._translation_model.install(session, self._display_order, entry_labels, label_library)
+        if reset:
+            self._restore_view_state(
+                selected, current, top if preserve_scroll else None, scroll if preserve_scroll else 0
+            )
         total = len(session.entries)
         self._on_progress(total, total)
         self._on_batch()

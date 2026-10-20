@@ -402,6 +402,7 @@ class Step2PreviewWidget(WorkflowPresentationMixin, QWidget):
             self._entry_labels,
             self._label_library,
             projection_revision=getattr(snapshot, "revision", None),
+            content_scope=self._filter_scope,
         )
         self._render_generation = session.generation
         if self._pending_locate_entry_id is not None:
