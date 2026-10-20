@@ -13,6 +13,7 @@ from .preflight_view import (
     PreflightCheckState,
     PreflightCheckStatus,
 )
+from .sync_review_view import SyncReviewRow
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +79,7 @@ class DomainPreflightPort(Protocol):
 class DomainPreflightResult:
     checks: tuple[PreflightCheckState, ...]
     estimated_impact: tuple[tuple[str, int], ...] = ()
+    sync_review: tuple[SyncReviewRow, ...] = ()
 
 
 class _OperationMapper:
@@ -123,6 +125,7 @@ class _OperationMapper:
             tuple(checks),
             value.expected_side_effects,
             estimated_impact=estimated_impact,
+            sync_review=domain.sync_review if isinstance(domain, DomainPreflightResult) else (),
         )
 
     @staticmethod

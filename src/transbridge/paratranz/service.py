@@ -213,6 +213,37 @@ class ParaTranzService:
             )
         return result
 
+    def update_entry_translation(
+        self,
+        project_id: int,
+        entry: ParaTranzEntry,
+        *,
+        cancellation: CancellationPort | None = None,
+    ) -> ParaTranzEntry:
+        """Update translation state only; source fields never enter the request."""
+        remote_id = entry.remote_id
+        if isinstance(remote_id, bool) or not isinstance(remote_id, int) or remote_id < 1:
+            raise ValueError("remote_id must be a positive integer")
+        payload = self._strings.update_string(
+            project_id,
+            remote_id,
+            {"translation": entry.translation, "stage": entry.stage},
+            cancellation=cancellation,
+        )
+        if payload is None:
+            return entry
+        result = self._typed(
+            ParaTranzEntry.from_mapping,
+            self._mapping(payload, "update entry translation"),
+            "update entry translation",
+        )
+        if (result.remote_id, result.translation, result.stage) != (remote_id, entry.translation, entry.stage):
+            raise ExternalServiceError(
+                ExternalServiceCategory.INVALID_RESPONSE,
+                "ParaTranz translation update response does not match the requested identity or translation state",
+            )
+        return result
+
     def delete_entry(
         self,
         project_id: int,

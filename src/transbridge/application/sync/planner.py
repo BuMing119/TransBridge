@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from transbridge.application.io.identity import EntryKey
 from transbridge.application.io.paratranz_context_order import format_ordered_context
 
+from .download_review import DownloadDecision
 from .models import (
     ConflictPolicy,
     DeletionPolicy,
@@ -20,6 +21,7 @@ from .models import (
     SyncPlanItem,
     canonical_hash,
 )
+from .upload_review import UploadDecision
 
 
 class SyncPlanner:
@@ -38,6 +40,8 @@ class SyncPlanner:
         conflict_policy: ConflictPolicy = ConflictPolicy.ABORT,
         deletion_policy: DeletionPolicy = DeletionPolicy.APPLY,
         scope: str = "paratranz:unscoped",
+        download_decisions: tuple[DownloadDecision, ...] = (),
+        upload_decisions: tuple[UploadDecision, ...] = (),
     ) -> SyncPlan:
         operation = SyncOperation(operation)
         conflict_policy = ConflictPolicy(conflict_policy)
@@ -47,6 +51,41 @@ class SyncPlanner:
         local = tuple(local_entries)
         remote = tuple(remote_entries)
         local_hash, remote_hash = self.snapshot_hashes(local, remote)
+        if upload_decisions and operation is not SyncOperation.UPLOAD:
+            raise ValueError("manual upload decisions require an upload operation")
+        if operation is SyncOperation.DOWNLOAD:
+            from .download_planner import plan_download
+
+            items, review = plan_download(
+                local,
+                remote,
+                policy=conflict_policy,
+                deletion_policy=deletion_policy,
+                local_state_only=self._local_state_only,
+                scope=scope,
+                decisions=tuple(download_decisions),
+            )
+            return _assemble_plan(
+                scope, operation, conflict_policy, deletion_policy, local_hash, remote_hash, items, review
+            )
+        if download_decisions:
+            raise ValueError("manual download decisions require a download operation")
+        if operation is SyncOperation.UPLOAD:
+            from .upload_planner import plan_upload
+
+            items, review = plan_upload(
+                local, remote, policy=conflict_policy, scope=scope, decisions=tuple(upload_decisions)
+            )
+            return _assemble_plan(
+                scope,
+                operation,
+                conflict_policy,
+                deletion_policy,
+                local_hash,
+                remote_hash,
+                items,
+                upload_review=review,
+            )
         local_groups = _group(local)
         remote_groups = _group(remote)
         duplicate_remote_refs = _duplicate_remote_refs(remote)
@@ -92,38 +131,7 @@ class SyncPlanner:
                     local_state_only=self._local_state_only and operation is SyncOperation.DOWNLOAD,
                 )
             )
-        item_tuple = tuple(items)
-        counts = Counter(item.action.value for item in item_tuple)
-        full_counts = tuple(sorted((action.value, counts[action.value]) for action in SyncAction))
-        conflicts = counts[SyncAction.CONFLICT.value]
-        destructive = any(item.action.destructive for item in item_tuple)
-        payload = {
-            "scope": scope,
-            "operation": operation.value,
-            "conflict_policy": conflict_policy.value,
-            "deletion_policy": deletion_policy.value,
-            "local_snapshot_hash": local_hash,
-            "remote_snapshot_hash": remote_hash,
-            "items": [item.to_dict() for item in item_tuple],
-            "counts": dict(full_counts),
-            "conflicts": conflicts,
-            "destructive": destructive,
-        }
-        plan_hash = canonical_hash(payload)
-        return SyncPlan(
-            plan_id=f"sync-{plan_hash[:20]}",
-            scope=scope,
-            operation=operation,
-            conflict_policy=conflict_policy,
-            deletion_policy=deletion_policy,
-            local_snapshot_hash=local_hash,
-            remote_snapshot_hash=remote_hash,
-            items=item_tuple,
-            counts=full_counts,
-            conflicts=conflicts,
-            destructive=destructive,
-            plan_hash=plan_hash,
-        )
+        return _assemble_plan(scope, operation, conflict_policy, deletion_policy, local_hash, remote_hash, tuple(items))
 
     def snapshot_hashes(
         self,
@@ -133,6 +141,52 @@ class SyncPlanner:
         local_payload = sorted((_local_payload(item) for item in local_entries), key=_payload_sort_key)
         remote_payload = sorted((_remote_payload(item) for item in remote_entries), key=_payload_sort_key)
         return canonical_hash(local_payload), canonical_hash(remote_payload)
+
+
+def _assemble_plan(
+    scope,
+    operation,
+    conflict_policy,
+    deletion_policy,
+    local_hash,
+    remote_hash,
+    item_tuple,
+    review=(),
+    upload_review=(),
+):
+    counts = Counter(item.action.value for item in item_tuple)
+    full_counts = tuple(sorted((action.value, counts[action.value]) for action in SyncAction))
+    conflicts = counts[SyncAction.CONFLICT.value]
+    destructive = any(item.action.destructive for item in item_tuple)
+    payload = {
+        "scope": scope,
+        "operation": operation.value,
+        "conflict_policy": conflict_policy.value,
+        "deletion_policy": deletion_policy.value,
+        "local_snapshot_hash": local_hash,
+        "remote_snapshot_hash": remote_hash,
+        "items": [item.to_dict() for item in item_tuple],
+        "counts": dict(full_counts),
+        "conflicts": conflicts,
+        "destructive": destructive,
+    }
+    plan_hash = canonical_hash(payload)
+    return SyncPlan(
+        plan_id=f"sync-{plan_hash[:20]}",
+        scope=scope,
+        operation=operation,
+        conflict_policy=conflict_policy,
+        deletion_policy=deletion_policy,
+        local_snapshot_hash=local_hash,
+        remote_snapshot_hash=remote_hash,
+        items=item_tuple,
+        counts=full_counts,
+        conflicts=conflicts,
+        destructive=destructive,
+        plan_hash=plan_hash,
+        download_review=review,
+        upload_review=upload_review,
+    )
 
 
 def _group(entries):
@@ -226,7 +280,7 @@ def _plan_item(
         )
     unchanged = (
         (local.translation, local.stage, local.external_ref) == (remote.translation, remote.stage, remote.external_ref)
-        if local_state_only
+        if local_state_only or (operation is SyncOperation.DOWNLOAD and key.original is not None)
         else same_content
     )
     if unchanged:

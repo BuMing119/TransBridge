@@ -27,8 +27,8 @@ class OrderedRemote(ControlledRemote):
         )
 
 
-@pytest.mark.parametrize("local_order,expected", [(None, 428), (123, 123)])
-def test_update_remote_retains_or_refreshes_order(local_order, expected):
+@pytest.mark.parametrize("local_order", [None, 123])
+def test_update_remote_preserves_remote_order(local_order):
     remote = OrderedRemote((ParaTranzEntry(71, "a", "original-a", "old", "00000428|BOOK:FULL", 1),))
     local = (replace(_local("a", "new"), context="BOOK:FULL", context_order=local_order),)
     plan = SyncPlanner().plan(
@@ -40,7 +40,7 @@ def test_update_remote_retains_or_refreshes_order(local_order, expected):
     )
     result = _executor(remote, list(local)).execute(_request(plan, local, confirmation="CONFIRMED"))
     assert result.outcome is OperationOutcome.COMPLETED
-    assert remote.entries["a"].context == f"{expected:08d}|BOOK:FULL"
+    assert remote.entries["a"].context == "00000428|BOOK:FULL"
 
 
 @pytest.mark.parametrize(

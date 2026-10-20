@@ -178,3 +178,43 @@ def test_paratranz_download_preserves_source_text_while_applying_translation_for
     assert (entry.translation, entry.stage) == ("远端译文", 1)
     patches = commands.calls[0][0]
     assert patches[entry.identity].translation == "远端译文"
+
+
+def test_partial_download_keeps_deferred_entry_and_its_metadata_unchanged() -> None:
+    from transbridge.application.io.identity import ExternalEntryRef
+    from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+
+    entries = tuple(make_test_collection(2))
+    deferred = replace(
+        entries[1],
+        external_refs=(
+            ExternalEntryRef("other", "source", "old", (("note", "preserve"),)),
+            ExternalEntryRef("paratranz", "project:7", 42, (("note", "preserve"),)),
+        ),
+        metadata=(("custom", "unchanged"),),
+    )
+    context = SimpleNamespace(
+        collection=TranslationEntryCollection([entries[0], deferred]), uses_authoritative_projection=False
+    )
+    snapshots = local_snapshots(context, 7)
+    replace_local_snapshots(
+        context,
+        (replace(snapshots[0], translation="已更新", revision=snapshots[0].revision.next()), snapshots[1]),
+        7,
+    )
+    assert context.collection.get(deferred.id) == deferred
+    assert context.collection.get(deferred.id).metadata == (("custom", "unchanged"),)
+    assert context.collection.get(entries[0].id).translation == "已更新"
+
+
+def test_legacy_download_rejects_project_switch_at_commit_even_with_identical_entries() -> None:
+    context = SimpleNamespace(
+        collection=make_test_collection(1),
+        active_version_identity=("new-project", "variant"),
+        uses_authoritative_projection=False,
+    )
+    original = context.collection
+    snapshots = tuple(replace(item, translation="旧工程的云端译文") for item in local_snapshots(context, 7))
+    with pytest.raises(RuntimeError, match="活动工程"):
+        replace_local_snapshots(context, snapshots, 7, active_version_identity=("old-project", "variant"))
+    assert context.collection is original

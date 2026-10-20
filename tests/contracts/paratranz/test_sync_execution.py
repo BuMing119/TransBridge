@@ -109,6 +109,17 @@ class ControlledRemote:
             self.token.cancelled = True
         return result
 
+    def update_entry_translation(self, project_id, entry, *, cancellation=None):
+        existing = next(value for value in self.entries.values() if value.remote_id == entry.remote_id)
+        return self.upsert_entry(
+            project_id,
+            ParaTranzEntry(
+                entry.remote_id, existing.key, existing.original, entry.translation, existing.context, entry.stage
+            ),
+            force_overwrite=True,
+            cancellation=cancellation,
+        )
+
     def delete_entry(self, project_id, remote_id, *, cancellation=None):
         self.calls.append(("delete", str(remote_id)))
         key = next(key for key, entry in self.entries.items() if entry.remote_id == remote_id)

@@ -123,6 +123,7 @@ def test_production_builder_installs_all_four_features_without_remote_work() -> 
         "set_as_default": "true",
         "conflict_policy": "prefer_local",
         "apply_remote_deletions": "true",
+        "upload_decisions": "{}",
     }
     cancelled.rejected.emit()
     assert facade.active_plan_count == 0

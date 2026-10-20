@@ -2,57 +2,49 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 import logging
-from typing import Protocol
 
-from transbridge.application.contracts import (
-    Diagnostic,
-    DiagnosticSeverity,
-    ErrorCategory,
-    OperationCounts,
-    OperationOutcome,
-    OperationResult,
-)
-from transbridge.application.io.identity import EntryRevision, ExternalEntryRef, SourceNamespace
-from transbridge.application.io.paratranz_context_order import format_ordered_context
-from transbridge.application.io.publish import CommitDecision, PublishCommitGuard
+from transbridge.application.contracts import OperationResult
+from transbridge.application.io.identity import SourceNamespace
+from transbridge.application.io.publish import PublishCommitGuard
 from transbridge.application.ports.paratranz import (
     CancellationPort,
     ExternalServiceError,
-    ParaTranzEntry,
     ParaTranzPort,
 )
 from transbridge.application.tasks.controls import TaskCleanupFailed
 
 from .execution_models import RetryToken, SyncItemOutcome, SyncItemStatus, sync_item_id
+from .execution_result import (
+    append_cancelled as _append_cancelled,
+    cancel_diagnostic as _cancel_diagnostic,
+    external_failed_result as _external_failed_result,
+    failed_result as _failed_result,
+    item_outcome as _outcome,
+    operation_result as _operation_result,
+    remote_failure as _remote_failure,
+)
+from .local_candidate import RemoteSourceIndex, build_local_candidate
+from .local_transaction import (
+    CallbackLocalSyncUnitOfWork as CallbackLocalSyncUnitOfWork,
+    LocalSyncTransactionPort as LocalSyncTransactionPort,
+    LocalSyncUnitOfWorkPort as LocalSyncUnitOfWorkPort,
+)
 from .models import (
     EntrySummary,
     LocalEntrySnapshot,
     RemoteEntrySnapshot,
     SyncAction,
+    SyncOperation,
     SyncPlanItem,
-    canonical_hash,
 )
 from .planner import SyncPlanner
+from .remote_execution import RemoteTargetIndex, execute_remote
+from .upload_associations import commit_upload_associations
 from .use_case import AuthorizedSyncPlan, RemoteSyncSnapshotPort
 
 _logger = logging.getLogger(__name__)
-
-
-class LocalSyncTransactionPort(Protocol):
-    """One isolated candidate aggregate transaction."""
-
-    def stage(self, entries: tuple[LocalEntrySnapshot, ...]) -> None: ...
-
-    def commit(self, run_id: str, guard: PublishCommitGuard) -> CommitDecision: ...
-
-    def rollback(self) -> None: ...
-
-
-class LocalSyncUnitOfWorkPort(Protocol):
-    def begin(self, *, expected_snapshot_hash: str) -> LocalSyncTransactionPort: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,54 +69,6 @@ class ExecuteSyncRequest:
         object.__setattr__(self, "current_local_entries", tuple(self.current_local_entries))
         if any(entry.entry_key.namespace != self.namespace for entry in self.current_local_entries):
             raise ValueError("all current local entries must belong to the requested namespace")
-
-
-class CallbackLocalSyncUnitOfWork:
-    """Small adapter for repositories that expose atomic aggregate load/replace callbacks."""
-
-    def __init__(
-        self,
-        load: Callable[[], tuple[LocalEntrySnapshot, ...]],
-        replace: Callable[[tuple[LocalEntrySnapshot, ...]], None],
-    ) -> None:
-        self._load = load
-        self._replace = replace
-
-    def begin(self, *, expected_snapshot_hash: str) -> LocalSyncTransactionPort:
-        return _CallbackTransaction(self._load, self._replace, expected_snapshot_hash)
-
-
-class _CallbackTransaction:
-    def __init__(self, load, replace, expected_snapshot_hash: str) -> None:
-        self._load = load
-        self._replace = replace
-        self._expected_snapshot_hash = expected_snapshot_hash
-        self._candidate: tuple[LocalEntrySnapshot, ...] | None = None
-        self._closed = False
-
-    def stage(self, entries: tuple[LocalEntrySnapshot, ...]) -> None:
-        if self._closed or self._candidate is not None:
-            raise RuntimeError("local sync transaction is not stageable")
-        self._candidate = tuple(entries)
-
-    def commit(self, run_id: str, guard: PublishCommitGuard) -> CommitDecision:
-        if self._closed or self._candidate is None:
-            raise RuntimeError("local sync transaction has no staged candidate")
-
-        def mutation() -> None:
-            current_hash, _ = SyncPlanner().snapshot_hashes(self._load(), ())
-            if current_hash != self._expected_snapshot_hash:
-                raise RuntimeError("local aggregate changed before commit")
-            self._replace(self._candidate or ())
-
-        try:
-            return guard.commit(run_id, mutation)
-        finally:
-            self._closed = True
-
-    def rollback(self) -> None:
-        self._candidate = None
-        self._closed = True
 
 
 class ParaTranzSyncExecutor:
@@ -196,7 +140,8 @@ class ParaTranzSyncExecutor:
             return _failed_result(request.run_id, "STALE_SYNC_PLAN", "The sync snapshots changed before execution.")
 
         local_map = {entry.entry_key: entry for entry in request.current_local_entries}
-        remote_map = {entry.entry_key: entry for entry in remote_entries}
+        remote_targets = RemoteTargetIndex(remote_entries)
+        remote_sources = RemoteSourceIndex(remote_entries)
         outcomes: list[SyncItemOutcome] = []
         pending_local: list[tuple[str, SyncPlanItem]] = []
         cancelled = False
@@ -204,14 +149,15 @@ class ParaTranzSyncExecutor:
         for item_id, item in item_ids.items():
             prior = checkpoint.get(item_id)
             if prior is not None:
+                deferred = prior.code in {"DOWNLOAD_CONFLICT_DEFERRED", "UPLOAD_CONFLICT_DEFERRED"}
                 outcomes.append(
                     SyncItemOutcome(
                         item_id,
                         item.entry_key,
                         item.action,
                         SyncItemStatus.SKIPPED,
-                        "RETRY_ALREADY_CONFIRMED",
-                        "The item was already confirmed by the retry checkpoint.",
+                        prior.code if deferred else "RETRY_ALREADY_CONFIRMED",
+                        prior.message if deferred else "The item was already confirmed by the retry checkpoint.",
                         external_ref=prior.external_ref,
                         remote_revision=prior.remote_revision,
                     )
@@ -229,13 +175,16 @@ class ParaTranzSyncExecutor:
                 checkpoint[item_id] = outcome
                 continue
             if item.action is SyncAction.CONFLICT:
+                deferred = plan.operation in {SyncOperation.DOWNLOAD, SyncOperation.UPLOAD}
                 outcomes.append(
                     _outcome(
                         item_id,
                         item,
-                        SyncItemStatus.FAILED,
-                        "UNRESOLVED_CONFLICT",
-                        "The item has an unresolved conflict.",
+                        SyncItemStatus.SKIPPED if deferred else SyncItemStatus.FAILED,
+                        f"{plan.operation.value.upper()}_CONFLICT_DEFERRED" if deferred else "UNRESOLVED_CONFLICT",
+                        "The conflicting item was preserved pending review."
+                        if deferred
+                        else "The item has an unresolved conflict.",
                     )
                 )
                 continue
@@ -244,7 +193,7 @@ class ParaTranzSyncExecutor:
                 continue
             try:
                 _check_cancelled(request.cancellation)
-                result = self._execute_remote(request, item, local_map, remote_map)
+                result = execute_remote(self._remote, request, item, local_map, remote_targets)
                 outcome = _outcome(
                     item_id,
                     item,
@@ -273,6 +222,7 @@ class ParaTranzSyncExecutor:
                 if request.cancellation is not None and request.cancellation.is_cancelled:
                     cancelled = True
                     break
+                _logger.exception("ParaTranz remote execution failed (run_id=%s, item_id=%s)", request.run_id, item_id)
                 outcomes.append(
                     _outcome(
                         item_id,
@@ -288,12 +238,15 @@ class ParaTranzSyncExecutor:
         elif pending_local:
             local_outcomes = self._commit_local(
                 request,
-                remote_map,
+                remote_sources,
                 pending_local,
                 checkpoint,
             )
             outcomes.extend(local_outcomes)
 
+        association_error = None
+        if plan.operation is SyncOperation.UPLOAD:
+            association_error = commit_upload_associations(self._local_uow, request, checkpoint, item_ids)
         token_outcomes = dict(checkpoint)
         for outcome in outcomes:
             if outcome.status.confirmed or outcome.status is SyncItemStatus.FAILED:
@@ -303,7 +256,7 @@ class ParaTranzSyncExecutor:
             owner_id=request.authorized_plan.owner_id,
             outcomes=tuple(token_outcomes.values()),
         )
-        return _operation_result(request.run_id, tuple(outcomes), retry_token)
+        return _operation_result(request.run_id, tuple(outcomes), retry_token, association_error)
 
     def _verify_freshness(
         self,
@@ -319,116 +272,39 @@ class ParaTranzSyncExecutor:
                 raise RuntimeError("sync snapshots changed")
             return
         local = {entry.entry_key: entry for entry in request.current_local_entries}
-        remote = {entry.entry_key: entry for entry in remote_entries}
+        remote_targets = RemoteTargetIndex(remote_entries)
+        remote_sources = RemoteSourceIndex(remote_entries)
         for item_id, item in item_ids.items():
             if item_id in confirmed or item.action in {SyncAction.SKIP, SyncAction.CONFLICT}:
                 continue
             if item.action in {SyncAction.CREATE_REMOTE, SyncAction.UPDATE_REMOTE, SyncAction.DELETE_REMOTE}:
                 if not _summary_matches(item.after, local.get(item.entry_key), local_side=True):
                     raise RuntimeError("local source changed")
-                if not _summary_matches(item.before, remote.get(item.entry_key), local_side=False):
+                if not _summary_matches(item.before, remote_targets.get_for_item(item), local_side=False):
                     raise RuntimeError("remote target changed")
             else:
-                if not _summary_matches(item.after, remote.get(item.entry_key), local_side=False):
+                if not _summary_matches(item.after, remote_sources.get_for_item(item), local_side=False):
                     raise RuntimeError("remote source changed")
                 if not _summary_matches(item.before, local.get(item.entry_key), local_side=True):
                     raise RuntimeError("local target changed")
 
-    def _execute_remote(
-        self,
-        request: ExecuteSyncRequest,
-        item: SyncPlanItem,
-        local_map: dict,
-        remote_map: dict,
-    ) -> tuple[ExternalEntryRef | None, str | None]:
-        if item.action is SyncAction.DELETE_REMOTE:
-            reference = item.external_ref
-            if reference is None or isinstance(reference.opaque_id, bool) or not isinstance(reference.opaque_id, int):
-                raise ValueError("ParaTranz delete requires an integer remote id")
-            self._remote.delete_entry(
-                request.project_id,
-                reference.opaque_id,
-                cancellation=request.cancellation,
-            )
-            return reference, "deleted"
-        local = local_map.get(item.entry_key)
-        if local is None:
-            raise ValueError("local source entry is missing")
-        reference = item.external_ref if item.action is SyncAction.UPDATE_REMOTE else None
-        remote_id = None if reference is None else reference.opaque_id
-        remote = remote_map.get(item.entry_key)
-        if item.reason == "context_order_changed":
-            if remote is None or local.context_order is None:
-                raise ValueError("context order refresh requires complete local and remote snapshots")
-            result = self._remote.update_entry_context(
-                request.project_id,
-                ParaTranzEntry(
-                    remote_id,
-                    remote.entry_key.local_key,
-                    remote.original,
-                    remote.translation,
-                    format_ordered_context(remote.context, local.context_order),
-                    remote.stage,
-                ),
-                cancellation=request.cancellation,
-            )
-            return reference, _remote_revision(result)
-        order = local.context_order
-        if order is None and remote is not None:
-            order = remote.context_order
-        context = local.context if order is None else format_ordered_context(local.context, order)
-        result = self._remote.upsert_entry(
-            request.project_id,
-            ParaTranzEntry(
-                remote_id,
-                local.entry_key.local_key,
-                local.original,
-                local.translation,
-                context,
-                local.stage,
-            ),
-            force_overwrite=item.action is SyncAction.UPDATE_REMOTE,
-            cancellation=request.cancellation,
-        )
-        reference = None
-        if result.remote_id is not None:
-            reference = ExternalEntryRef("paratranz", f"project:{request.project_id}", result.remote_id)
-        return reference, _remote_revision(result)
-
     def _commit_local(
         self,
         request: ExecuteSyncRequest,
-        remote_map: dict,
+        remote_sources: RemoteSourceIndex,
         pending: list[tuple[str, SyncPlanItem]],
         checkpoint: dict[str, SyncItemOutcome],
     ) -> list[SyncItemOutcome]:
-        candidate = {entry.entry_key: entry for entry in request.current_local_entries}
         transaction = None
         committed = False
         try:
-            for _, item in pending:
-                remote = remote_map.get(item.entry_key)
-                if item.action is SyncAction.DELETE_LOCAL:
-                    candidate.pop(item.entry_key, None)
-                    continue
-                if remote is None or remote.deleted:
-                    raise RuntimeError("remote source entry is unavailable")
-                current = candidate.get(item.entry_key)
-                revision = EntryRevision() if current is None else current.revision.next()
-                candidate[item.entry_key] = LocalEntrySnapshot(
-                    item.entry_key,
-                    revision,
-                    remote.original,
-                    remote.translation,
-                    remote.context,
-                    remote.stage,
-                    remote.external_ref,
-                    context_order=remote.context_order,
-                )
+            candidate = build_local_candidate(
+                request.current_local_entries, remote_sources, tuple(item for _, item in pending)
+            )
             _check_cancelled(request.cancellation)
             expected_hash, _ = self._planner.snapshot_hashes(request.current_local_entries, ())
             transaction = self._local_uow.begin(expected_snapshot_hash=expected_hash)
-            transaction.stage(tuple(sorted(candidate.values(), key=lambda entry: entry.entry_key)))
+            transaction.stage(candidate)
             _check_cancelled(request.cancellation)
             decision = transaction.commit(request.run_id, request.commit_guard)
             if not decision.accepted:
@@ -502,139 +378,3 @@ def _summary_matches(summary: EntrySummary | None, entry, *, local_side: bool) -
         return False
     actual = EntrySummary.from_local(entry) if local_side else EntrySummary.from_remote(entry)
     return actual == summary
-
-
-def _remote_revision(entry: ParaTranzEntry) -> str:
-    return canonical_hash({
-        "id": entry.remote_id,
-        "key": entry.key,
-        "original": entry.original,
-        "translation": entry.translation,
-        "context": entry.context,
-        "stage": entry.stage,
-    })
-
-
-def _outcome(
-    item_id: str,
-    item: SyncPlanItem,
-    status: SyncItemStatus,
-    code: str,
-    message: str,
-    *,
-    retryable: bool = False,
-    external_ref: ExternalEntryRef | None = None,
-    remote_revision: str | None = None,
-) -> SyncItemOutcome:
-    return SyncItemOutcome(
-        item_id,
-        item.entry_key,
-        item.action,
-        status,
-        code,
-        message,
-        retryable,
-        external_ref,
-        remote_revision,
-    )
-
-
-def _remote_failure(item_id: str, item: SyncPlanItem, error: ExternalServiceError) -> SyncItemOutcome:
-    retryable = error.category.value in {"rate_limited", "timeout", "unavailable", "transport"}
-    return _outcome(
-        item_id,
-        item,
-        SyncItemStatus.FAILED,
-        f"REMOTE_{error.category.value.upper()}",
-        "The remote operation was not committed.",
-        retryable=retryable,
-        external_ref=item.external_ref,
-    )
-
-
-def _append_cancelled(item_ids, checkpoint, outcomes) -> None:
-    seen = {outcome.item_id for outcome in outcomes}
-    for item_id, item in item_ids.items():
-        if item_id in seen or item_id in checkpoint:
-            continue
-        outcomes.append(
-            _outcome(item_id, item, SyncItemStatus.CANCELLED, "SYNC_CANCELLED", "The item was not executed.")
-        )
-
-
-def _cancel_diagnostic() -> Diagnostic:
-    return Diagnostic(
-        "SYNC_CANCELLED",
-        "The synchronization was cancelled.",
-        category=ErrorCategory.CANCELLED,
-    )
-
-
-def _failed_result(run_id: str, code: str, message: str) -> OperationResult[dict]:
-    diagnostic = Diagnostic(code, message, category=ErrorCategory.CONFLICT)
-    return OperationResult(
-        OperationOutcome.FAILED,
-        diagnostics=(diagnostic,),
-        counts=OperationCounts(failed=1),
-        run_id=run_id,
-    )
-
-
-def _external_failed_result(run_id: str, error: ExternalServiceError) -> OperationResult[dict]:
-    retryable = error.category.value in {"rate_limited", "timeout", "unavailable", "transport"}
-    diagnostic = Diagnostic(
-        f"REMOTE_{error.category.value.upper()}",
-        "The remote snapshot could not be loaded.",
-        category=ErrorCategory.EXTERNAL,
-        retryable=retryable,
-    )
-    return OperationResult(
-        OperationOutcome.FAILED,
-        diagnostics=(diagnostic,),
-        counts=OperationCounts(failed=1),
-        run_id=run_id,
-    )
-
-
-def _operation_result(
-    run_id: str,
-    outcomes: tuple[SyncItemOutcome, ...],
-    retry_token: RetryToken,
-) -> OperationResult[dict]:
-    counts = OperationCounts(
-        succeeded=sum(item.status is SyncItemStatus.SUCCEEDED for item in outcomes),
-        failed=sum(item.status is SyncItemStatus.FAILED for item in outcomes),
-        skipped=sum(item.status is SyncItemStatus.SKIPPED for item in outcomes),
-        cancelled=sum(item.status is SyncItemStatus.CANCELLED for item in outcomes),
-    )
-    diagnostics = tuple(
-        Diagnostic(
-            item.code,
-            item.message,
-            DiagnosticSeverity.ERROR,
-            ErrorCategory.CANCELLED if item.status is SyncItemStatus.CANCELLED else ErrorCategory.EXTERNAL,
-            item.retryable,
-            (("action", item.action.value), ("entry_key", item.entry_key.serialize())),
-        )
-        for item in outcomes
-        if item.status in {SyncItemStatus.FAILED, SyncItemStatus.CANCELLED}
-    )
-    value = {
-        "outcomes": [item.to_dict() for item in outcomes],
-        "retry_token": retry_token.to_dict(),
-    }
-    if counts.failed or counts.cancelled:
-        if counts.succeeded:
-            return OperationResult.partial(value, counts=counts, diagnostics=diagnostics, run_id=run_id)
-        retry_diagnostic = Diagnostic(
-            "SYNC_RETRY_AVAILABLE",
-            "The unsuccessful synchronization can be resumed with its retry token.",
-            DiagnosticSeverity.ERROR,
-            ErrorCategory.EXTERNAL,
-            True,
-            (("retry_token", retry_token.to_dict()),),
-        )
-        diagnostics = diagnostics + (retry_diagnostic,)
-        outcome = OperationOutcome.CANCELLED if counts.cancelled and not counts.failed else OperationOutcome.FAILED
-        return OperationResult(outcome, diagnostics=diagnostics, counts=counts, run_id=run_id)
-    return OperationResult.completed(value, counts=counts, run_id=run_id)

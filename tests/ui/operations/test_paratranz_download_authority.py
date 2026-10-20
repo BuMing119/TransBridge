@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from itertools import count
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -29,7 +30,10 @@ from transbridge.ui.operations.plan_view import OperationKind
 
 
 @pytest.mark.parametrize("remote_only", [False, True], ids=["source-text-differs", "extra-remote-entries"])
-def test_v2_download_updates_matching_translations_and_survives_reopen(tmp_path, monkeypatch, remote_only):
+@pytest.mark.parametrize("with_conflict", [False, True], ids=["unique", "partial-then-resolve"])
+def test_v2_download_updates_matching_translations_and_survives_reopen(
+    tmp_path, monkeypatch, remote_only, with_conflict
+):
     sequence = count()
     root = tmp_path / "data"
     services = build_persistence_v2_services(
@@ -85,6 +89,11 @@ def test_v2_download_updates_matching_translations_and_survives_reopen(tmp_path,
     remote = [ParaTranzEntry(7, first.key, "Remote original differs", "云端译文", "Remote context", 1)]
     if remote_only:
         remote.append(ParaTranzEntry(8, "not-in-this-plugin", "Another plugin", "其他插件译文", "", 1))
+    if with_conflict:
+        remote.extend((
+            ParaTranzEntry(9, second.key, second.original, "候选甲", second.context, 1),
+            ParaTranzEntry(10, second.key, second.original, "候选乙", second.context, 2),
+        ))
     reads = []
 
     def list_entries(project_id, **_kwargs):
@@ -107,7 +116,7 @@ def test_v2_download_updates_matching_translations_and_survives_reopen(tmp_path,
     )
     queued = []
     tasks = TaskRuntime(
-        id_generator=SimpleNamespace(new_id=lambda: "download-run"),
+        id_generator=SimpleNamespace(new_id=lambda: f"download-run-{next(sequence)}"),
         clock=SimpleNamespace(now=lambda: datetime.now(UTC)),
         backend=CallbackThreadBackend(lambda _run_id, target: queued.append(target)),
     )
@@ -116,7 +125,10 @@ def test_v2_download_updates_matching_translations_and_survives_reopen(tmp_path,
         draft = feature.create_draft(context, False, {})
         preflight = feature.mapper.preflight(draft)
         assert preflight.ready
-        assert any("云端独有条目跳过" in check.reason for check in preflight.checks)
+        assert any(
+            check.check_id == "PARATRANZ_LOCAL_SOURCE_SCOPE" and "云端多出的内容不会下载" in check.reason
+            for check in preflight.checks
+        )
         fields = {field.field_id: field for field in draft.editable_fields}
         assert not fields["apply_remote_deletions"].enabled
         assert all("新增" not in label for _value, label in fields["conflict_policy"].options)
@@ -129,13 +141,33 @@ def test_v2_download_updates_matching_translations_and_survives_reopen(tmp_path,
         impact = dict(preflight.estimated_impact)
         assert impact["update_local"] == 1
         assert impact["create_local"] == impact["delete_local"] == 0
-        assert impact["skip"] == 1 + int(remote_only)
+        assert impact["skip"] == int(not with_conflict) + int(remote_only)
+        assert impact["deferred"] == int(with_conflict)
         assert {entry.identity for entry in context.collection} == {first.identity, second.identity}
         downloaded = context.collection.get(first.id)
         assert (downloaded.translation, downloaded.stage) == ("云端译文", 1)
         assert (downloaded.original, downloaded.context) == (first.original, first.context)
         assert context.collection.get(second.id).translation == second.translation
         assert reads == [42, 42, 42]  # Existing preflight/authorization/execution reads only.
+        if with_conflict:
+            assert context.collection.get(second.id) == second
+            row = preflight.sync_review[0]
+            choice = next(candidate for candidate in row.candidates if candidate.translation == "候选乙")
+            # The real UI consumes these revisions from the lifecycle projection.
+            active = services.project_lifecycle.active
+            context.project_revision = active.project.envelope.revision
+            context.variant_revision = active.variant.snapshot().revision
+            followup = feature.create_draft(
+                context, False, {"download_decisions": json.dumps({row.row_id: choice.candidate_id})}
+            )
+            followup_check = feature.mapper.preflight(followup)
+            assert followup_check.ready
+            assert dict(followup_check.estimated_impact)["update_local"] == 1
+            resolved_ref = feature.submit(followup, followup_check, owner, tasks)
+            queued[1]()
+            assert tasks.get(resolved_ref, owner).state is JobState.COMPLETED
+            assert context.collection.get(second.id).translation == "候选乙"
+            assert context.collection.get(first.id).translation == "云端译文"
         assert services.gui_project_commands.save(request_context).is_success
     finally:
         services.close()
@@ -151,6 +183,8 @@ def test_v2_download_updates_matching_translations_and_survives_reopen(tmp_path,
         assert set(states) == {first.identity, second.identity}
         assert states[first.identity].translation == "云端译文"
         assert states[first.identity].external_refs[0].opaque_id == 7
-        assert states[second.identity].translation == second.translation
+        assert states[second.identity].translation == ("候选乙" if with_conflict else second.translation)
+        if with_conflict:
+            assert states[second.identity].external_refs[0].opaque_id == 10
     finally:
         reopened.close()

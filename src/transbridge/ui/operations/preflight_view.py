@@ -8,6 +8,7 @@ from enum import StrEnum
 from transbridge.application.security.hitl import ConfirmationToken
 
 from .plan_view import OperationKind
+from .sync_review_view import SyncReviewRow
 
 
 class PreflightCheckStatus(StrEnum):
@@ -40,6 +41,7 @@ class OperationPreflightResult:
     expected_side_effects: tuple[str, ...]
     confirmation_token: ConfirmationToken | None = None
     estimated_impact: tuple[tuple[str, int], ...] = ()
+    sync_review: tuple[SyncReviewRow, ...] = ()
 
     def __post_init__(self) -> None:
         if len(self.request_digest) != 64 or not self.target_revision.strip():

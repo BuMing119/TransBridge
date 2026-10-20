@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime
+import json
 import os
 from threading import Thread
 from types import SimpleNamespace
@@ -15,6 +16,7 @@ import pytest
 
 from tests.ui.operations.test_operation_plan_coordinator_async import _DeferredWorker
 from transbridge.application.contracts import Diagnostic, OperationCounts, OperationResult, RequestContext
+from transbridge.application.sync import SyncOperation
 from transbridge.application.tasks import CallbackThreadBackend, JobSpec, JobState, OwnerRef, TaskRuntime
 from transbridge.ui.operations.facade import OperationFeatureAdapter, OperationPlanFacade
 from transbridge.ui.operations.mappers import (
@@ -32,6 +34,9 @@ from transbridge.ui.operations.plan_view import (
     OperationPlanViewState,
 )
 from transbridge.ui.operations.preflight_view import OperationPreflightResult, PreflightCheckState, PreflightCheckStatus
+from transbridge.ui.operations.sync_review_dialog import SyncReviewDialog
+from transbridge.ui.operations.sync_review_projection import review_rows
+from transbridge.ui.operations.sync_review_view import KEEP_LOCAL, KEEP_REMOTE, SyncReviewCandidate, SyncReviewRow
 
 
 @pytest.fixture(scope="module")
@@ -100,6 +105,7 @@ def test_dialog_uses_project_name_and_automatically_requests_preflight(qapp) -> 
         "set_as_default": "false",
         "conflict_policy": "prefer_remote",
         "apply_remote_deletions": "false",
+        "download_decisions": "{}",
     }
     dialog.set_preflight_running(False)
     dialog.close()
@@ -126,7 +132,7 @@ def test_dialog_renders_plain_language_impact_and_enables_one_primary_action(qap
 
     assert dialog._impact.text() == "更新 126  ·  新增 23  ·  保留 8,017"
     assert dialog._confirm.isEnabled()
-    assert dialog._status.text() == "检查完成，可以开始。"
+    assert dialog._status.text() == "已核对，可以更新本地翻译。"
     dialog.close()
 
 
@@ -477,3 +483,381 @@ def test_missing_receipt_is_unknown_instead_of_full_success(sync_case, qapp):
     assert "结果待核验" in subject._status.text()
     assert not subject._progress.isVisible()
     assert subject._cancel.isEnabled()
+
+
+def _review_rows() -> tuple[SyncReviewRow, ...]:
+    return (
+        SyncReviewRow(
+            "local-snapshot",
+            "duplicate-key",
+            "Original",
+            "本地译文",
+            "local-context",
+            "存在多个云端候选",
+            (
+                SyncReviewCandidate("candidate-a", "cloud.json · ID 7", "Original", "云端译文 A"),
+                SyncReviewCandidate("candidate-b", "cloud.json · ID 8", "Original", "云端译文 B"),
+            ),
+        ),
+    )
+
+
+@pytest.mark.parametrize("operation", [SyncOperation.DOWNLOAD, SyncOperation.UPLOAD])
+@pytest.mark.parametrize("availability", ["none", "blocked", "available"])
+def test_review_guidance_only_suggests_choices_that_are_available(operation, availability):
+    entry = SimpleNamespace(
+        entry_key=SimpleNamespace(local_key="test-key", original=None),
+        original="Original",
+        translation="译文",
+        context="对话",
+        external_ref=SimpleNamespace(opaque_id=7),
+    )
+    candidates = (
+        ()
+        if availability == "none"
+        else (
+            SimpleNamespace(
+                token="cloud",
+                entry=entry,
+                selectable=availability == "available",
+                reason="remote_already_linked",
+            ),
+        )
+    )
+    row = SimpleNamespace(
+        row_id="local",
+        local=entry,
+        candidates=candidates,
+        reason="stale_remote_reference" if operation is SyncOperation.UPLOAD else "original_match_required",
+        allow_remote_choice=availability == "available",
+        resolved=False,
+    )
+    plan = SimpleNamespace(operation=operation, download_review=(row,), upload_review=(row,))
+    projected = review_rows(plan)[0]
+
+    assert not projected.preserves_local_source
+    assert "候选" not in projected.reason and "关联" not in projected.reason
+    if availability == "available":
+        assert "请对照原文和使用场景" in projected.reason
+    else:
+        assert "请选择" not in projected.reason and "选择你要" not in projected.reason
+        assert ("先不上传" if operation is SyncOperation.UPLOAD else "先保留你的译文") in projected.reason
+
+
+def _render_review(subject, *, actionable: int = 2, rows=None) -> None:
+    download = subject._plan.kind is OperationKind.DOWNLOAD
+    impact = (
+        (("update_local", actionable), ("keep_local", 3), ("remote_only", 4), ("deferred", 1))
+        if download
+        else (("update_remote", actionable), ("keep_remote", 3), ("local_only", 4), ("deferred", 1))
+    )
+    subject.render_preflight(
+        OperationPreflightResult(
+            subject._plan.kind,
+            subject._plan.request_digest,
+            "remote:18668:7",
+            (PreflightCheckState("conflicts", "待处理项", PreflightCheckStatus.WARNING, "发现不能自动对应的条目"),),
+            (),
+            object(),
+            impact,
+            sync_review=_review_rows() if rows is None else rows,
+        )
+    )
+    subject.set_preflight_running(False)
+
+
+def test_conflict_notice_is_not_repeated_but_other_warnings_remain_visible(dialog):
+    scope_warning = "云端多出的内容不会下载。"
+    dialog.render_preflight(
+        OperationPreflightResult(
+            OperationKind.DOWNLOAD,
+            dialog._plan.request_digest,
+            "remote:7",
+            (
+                PreflightCheckState(
+                    "PARATRANZ_PLAN_FRESH", "翻译确认", PreflightCheckStatus.WARNING, "重复的待确认提示"
+                ),
+                PreflightCheckState(
+                    "PARATRANZ_LOCAL_SOURCE_SCOPE", "下载范围", PreflightCheckStatus.WARNING, scope_warning
+                ),
+            ),
+            (),
+            object(),
+            (("update_local", 2), ("deferred", 1)),
+            sync_review=_review_rows(),
+        )
+    )
+    dialog.set_preflight_running(False)
+
+    assert "重复的待确认提示" not in dialog._status.text()
+    assert scope_warning in dialog._status.text()
+    assert dialog._review.isEnabled() and dialog._confirm.isEnabled()
+
+
+@pytest.mark.parametrize("kind", [OperationKind.DOWNLOAD, OperationKind.UPLOAD])
+def test_sync_can_confirm_safe_updates_with_actionable_review_entry(dialog, kind):
+    dialog.render_plan(replace(dialog._plan, kind=kind))
+    _render_review(dialog)
+    assert dialog._confirm.isEnabled()
+    download = kind is OperationKind.DOWNLOAD
+    assert dialog._confirm.text() == ("更新可处理条目" if download else "上传可处理条目")
+    assert dialog._review.isVisible() and dialog._review.isEnabled()
+    assert dialog._review.text() == "确认 1 条翻译…"
+    assert ("保留本地 3" if download else "保留云端 3") in dialog._impact.text()
+    assert ("不下载 4" if download else "不上传 4") in dialog._impact.text()
+    assert "待确认 1" in dialog._impact.text()
+    assert ("保持本地不变" if download else "保持云端不变") in dialog._status.text()
+    confirmed = []
+    dialog.confirm_requested.connect(lambda *_args: confirmed.append(True))
+    dialog._confirm.click()
+    assert confirmed == [True]
+
+
+@pytest.mark.parametrize("kind", [OperationKind.DOWNLOAD, OperationKind.UPLOAD])
+def test_all_deferred_sync_guides_review_instead_of_claiming_up_to_date(dialog, kind):
+    dialog.render_plan(replace(dialog._plan, kind=kind))
+    _render_review(dialog, actionable=0)
+    assert not dialog._confirm.isEnabled()
+    assert dialog._review.isEnabled()
+    assert "请点击下方按钮查看" in dialog._status.text()
+    assert "已一致" not in dialog._status.text()
+    assert "无需更新" not in dialog._status.text()
+
+
+@pytest.mark.parametrize("kind", [OperationKind.DOWNLOAD, OperationKind.UPLOAD])
+def test_review_applies_decisions_via_new_preflight_without_confirming_execution(dialog, monkeypatch, qapp, kind):
+    dialog.render_plan(replace(dialog._plan, kind=kind))
+    _render_review(dialog)
+    requested, executed = [], []
+    dialog.preflight_requested.connect(lambda _session, values: requested.append(dict(values)))
+    dialog.confirm_requested.connect(lambda *_args: executed.append(True))
+
+    def choose(subject):
+        subject._table.selectRow(0)
+        subject._detail.candidates.setCurrentIndex(2)
+        subject._detail.use_remote.click()
+        return 1
+
+    monkeypatch.setattr(SyncReviewDialog, "exec", choose)
+    dialog._review.click()
+    assert not dialog._review.isEnabled()
+    assert not dialog._confirm.isEnabled()
+    qapp.processEvents()
+    assert len(requested) == 1
+    field_id = "download_decisions" if kind is OperationKind.DOWNLOAD else "upload_decisions"
+    assert json.loads(requested[0][field_id]) == {"local-snapshot": "candidate-b"}
+    assert ("upload_decisions" if kind is OperationKind.DOWNLOAD else "download_decisions") not in requested[0]
+    assert not executed
+
+
+def test_review_cancel_preserves_decisions_and_does_not_trigger_preflight(dialog, monkeypatch):
+    _render_review(dialog)
+    requested = []
+    dialog.preflight_requested.connect(lambda *_args: requested.append(True))
+
+    def cancel(subject):
+        subject._table.selectRow(0)
+        subject._detail.keep.click()
+        return 0
+
+    monkeypatch.setattr(SyncReviewDialog, "exec", cancel)
+    dialog._review.click()
+    assert json.loads(dict(dialog.edited_values())["download_decisions"]) == {}
+    assert not requested
+    assert dialog._confirm.isEnabled()
+
+
+@pytest.mark.parametrize("kind", [OperationKind.DOWNLOAD, OperationKind.UPLOAD])
+def test_preflight_replaces_old_decisions_with_validated_snapshot(dialog, kind):
+    field_id = "download_decisions" if kind is OperationKind.DOWNLOAD else "upload_decisions"
+    keep = KEEP_LOCAL if kind is OperationKind.DOWNLOAD else KEEP_REMOTE
+    plan = replace(
+        dialog._plan,
+        kind=kind,
+        editable_fields=dialog._plan.editable_fields
+        + (EditableFieldState(field_id, "本次处理选择", '{"old-snapshot":"candidate-a"}'),),
+    )
+    dialog.render_plan(plan)
+    assert json.loads(dict(dialog.edited_values())[field_id]) == {"old-snapshot": "candidate-a"}
+    _render_review(dialog, rows=(replace(_review_rows()[0], decision=keep),))
+    assert json.loads(dict(dialog.edited_values())[field_id]) == {"local-snapshot": keep}
+
+
+@pytest.mark.parametrize("phase", ["preflight", "execution"])
+@pytest.mark.parametrize("kind", [OperationKind.DOWNLOAD, OperationKind.UPLOAD])
+def test_review_is_unavailable_while_busy(dialog, monkeypatch, phase, kind):
+    dialog.render_plan(replace(dialog._plan, kind=kind))
+    _render_review(dialog)
+    entered = []
+    monkeypatch.setattr(SyncReviewDialog, "exec", lambda self: entered.append(True))
+    if phase == "preflight":
+        dialog.set_preflight_running(True)
+    else:
+        dialog.set_execution_running(True)
+    assert not dialog._review.isEnabled()
+    dialog._review_items()
+    assert not entered
+
+
+@pytest.mark.parametrize("kind", [OperationKind.DOWNLOAD, OperationKind.UPLOAD])
+def test_completed_sync_retains_actionable_review_and_reports_deferred_separately(dialog, monkeypatch, qapp, kind):
+    dialog.render_plan(replace(dialog._plan, kind=kind))
+    _render_review(dialog)
+    dialog.set_execution_running(True)
+    activity = SimpleNamespace(is_terminal=True, state=JobState.COMPLETED, run_id="run", diagnostic_refs=())
+    dialog.render_execution(
+        activity,
+        OperationResult.completed({"deferred_count": 1}, counts=OperationCounts(succeeded=2, skipped=1)),
+    )
+    assert dialog._review.isEnabled()
+    assert ("已更新 2 · 暂缓 1" if kind is OperationKind.DOWNLOAD else "已上传 2 · 暂缓 1") in dialog._status.text()
+    assert "失败" not in dialog._status.text()
+    requested = []
+    dialog.preflight_requested.connect(lambda _session, values: requested.append(dict(values)))
+
+    def keep(subject):
+        subject._table.selectRow(0)
+        subject._detail.keep.click()
+        return 1
+
+    monkeypatch.setattr(SyncReviewDialog, "exec", keep)
+    dialog._review.click()
+    qapp.processEvents()
+    field_id = "download_decisions" if kind is OperationKind.DOWNLOAD else "upload_decisions"
+    keep_choice = KEEP_LOCAL if kind is OperationKind.DOWNLOAD else KEEP_REMOTE
+    assert json.loads(requested[0][field_id]) == {"local-snapshot": keep_choice}
+    _render_review(dialog, rows=(replace(_review_rows()[0], decision=keep_choice),))
+    assert dialog._confirm.isEnabled()
+
+
+def test_upload_blocking_check_still_disables_execution(dialog):
+    plan = replace(dialog._plan, kind=OperationKind.UPLOAD)
+    dialog.render_plan(plan)
+    dialog.render_preflight(
+        OperationPreflightResult(
+            OperationKind.UPLOAD,
+            plan.request_digest,
+            "remote:7",
+            (PreflightCheckState("permission", "权限", PreflightCheckStatus.BLOCKED, "当前用户没有上传权限"),),
+            (),
+            None,
+            (("update_remote", 2), ("conflict", 1)),
+        )
+    )
+    dialog.set_preflight_running(False)
+    assert not dialog._check_ready
+    assert dialog._confirm.text() == "重新检查"
+    assert not dialog._review.isVisible()
+    assert "download_decisions" not in dict(dialog.edited_values())
+
+
+def test_remote_project_and_status_are_literal_text(dialog):
+    plan = replace(dialog._plan, title="<b>Project</b>", scope_summary="<img src='example'>")
+    dialog.render_plan(plan)
+    dialog.render_preflight_error("<b>Untrusted error</b>")
+    for label in (dialog._headline, dialog._scope, dialog._target_name, dialog._status):
+        assert label.textFormat() is Qt.TextFormat.PlainText
+    assert dialog._status.text() == "<b>Untrusted error</b>"
+
+
+def test_preflight_drops_now_unavailable_candidate_decision(dialog):
+    row = _review_rows()[0]
+    candidate = replace(row.candidates[0], selectable=False, disabled_reason="已绑定到另一条本地记录")
+    _render_review(dialog, rows=(replace(row, candidates=(candidate,), decision=candidate.candidate_id),))
+    assert json.loads(dict(dialog.edited_values())["download_decisions"]) == {}
+
+
+@pytest.mark.parametrize("kind", [OperationKind.DOWNLOAD, OperationKind.UPLOAD])
+def test_completed_manual_update_removes_applied_choice_before_reviewing_remaining_row(dialog, monkeypatch, qapp, kind):
+    dialog.render_plan(replace(dialog._plan, kind=kind))
+    row_a = replace(_review_rows()[0], decision="candidate-a")
+    row_b = replace(_review_rows()[0], row_id="second-local-snapshot", key="second-key")
+    _render_review(dialog, rows=(row_a, row_b))
+    dialog.set_execution_running(True)
+    dialog.render_execution(
+        SimpleNamespace(is_terminal=True, state=JobState.COMPLETED, run_id="run", diagnostic_refs=()),
+        OperationResult.completed({"deferred_count": 1}, counts=OperationCounts(succeeded=2, skipped=1)),
+    )
+    assert dialog._review_rows == (row_b,)
+    field_id = "download_decisions" if kind is OperationKind.DOWNLOAD else "upload_decisions"
+    assert json.loads(dict(dialog.edited_values())[field_id]) == {}
+    requested = []
+    dialog.preflight_requested.connect(lambda _session, values: requested.append(dict(values)))
+
+    def choose_remaining(subject):
+        assert subject._model.rowCount() == 1
+        subject._table.selectRow(0)
+        subject._detail.candidates.setCurrentIndex(2)
+        subject._detail.use_remote.click()
+        return 1
+
+    monkeypatch.setattr(SyncReviewDialog, "exec", choose_remaining)
+    dialog._review.click()
+    qapp.processEvents()
+    assert json.loads(requested[0][field_id]) == {"second-local-snapshot": "candidate-b"}
+
+
+@pytest.mark.parametrize("state", [JobState.COMPLETED, JobState.FAILED, JobState.CANCELLED])
+@pytest.mark.parametrize("kind", [OperationKind.DOWNLOAD, OperationKind.UPLOAD])
+def test_unverified_execution_rechecks_before_accepting_further_review_choices(dialog, monkeypatch, state, kind):
+    dialog.render_plan(replace(dialog._plan, kind=kind))
+    row = replace(_review_rows()[0], decision="candidate-a")
+    _render_review(dialog, rows=(row,))
+    dialog.set_execution_running(True)
+    dialog.render_execution(SimpleNamespace(is_terminal=True, state=state, run_id="run", diagnostic_refs=()), None)
+    assert dialog._review_rows == (row,)
+    assert dialog._review.text() == "刷新这 1 条翻译…"
+    requested, entered = [], []
+    dialog.preflight_requested.connect(lambda *_args: requested.append(True))
+    monkeypatch.setattr(SyncReviewDialog, "exec", lambda self: entered.append(True))
+    dialog._review.click()
+    assert requested == [True]
+    assert not entered
+
+
+def test_upload_keep_choices_do_not_claim_cloud_matches_local(dialog):
+    dialog.render_plan(replace(dialog._plan, kind=OperationKind.UPLOAD))
+    dialog.render_preflight(
+        OperationPreflightResult(
+            OperationKind.UPLOAD,
+            dialog._plan.request_digest,
+            "remote:7",
+            (),
+            (),
+            object(),
+            (("update_remote", 0), ("keep_remote", 3), ("local_only", 2), ("deferred", 0)),
+            sync_review=(replace(_review_rows()[0], decision=KEEP_REMOTE),),
+        )
+    )
+    dialog.set_preflight_running(False)
+    assert not dialog._confirm.isEnabled()
+    assert dialog._review.isEnabled()
+    assert "按当前选择无需上传" in dialog._status.text()
+    assert "已一致" not in dialog._status.text()
+
+
+def test_upload_partial_success_explains_remote_writes_and_requires_refresh_before_review(dialog, monkeypatch):
+    dialog.render_plan(replace(dialog._plan, kind=OperationKind.UPLOAD))
+    row = replace(_review_rows()[0], decision="candidate-a")
+    _render_review(dialog, rows=(row,))
+    dialog.set_execution_running(True)
+    dialog.render_execution(
+        SimpleNamespace(is_terminal=True, state=JobState.COMPLETED, run_id="run", diagnostic_refs=()),
+        OperationResult.partial(
+            {"deferred_count": 1},
+            counts=OperationCounts(succeeded=2, failed=1, skipped=1),
+            diagnostics=(Diagnostic("UPLOAD_ASSOCIATION_COMMIT_FAILED", "Could not commit local upload associations"),),
+        ),
+    )
+    assert "已上传 2 · 暂缓 1（保持云端不变）" in dialog._status.text()
+    assert "云端更改已提交，但本地云端关联未保存" in dialog._status.text()
+    assert "Could not commit local upload associations" not in dialog._status.text()
+    assert "Could not commit local upload associations" in dialog._status.toolTip()
+    assert "不会自动回滚" in dialog._status.text()
+    assert dialog._review_rows == (row,)
+    requested, entered = [], []
+    dialog.preflight_requested.connect(lambda *_args: requested.append(True))
+    monkeypatch.setattr(SyncReviewDialog, "exec", lambda self: entered.append(True))
+    dialog._review.click()
+    assert requested == [True]
+    assert not entered

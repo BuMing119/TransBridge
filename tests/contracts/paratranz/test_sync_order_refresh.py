@@ -5,6 +5,7 @@ import pytest
 from tests.contracts.paratranz.test_sync_context_order import OrderedRemote
 from tests.contracts.paratranz.test_sync_execution import NAMESPACE, _executor, _local, _request
 from transbridge.application.contracts import OperationOutcome
+from transbridge.application.io.identity import ExternalEntryRef
 from transbridge.application.ports.paratranz import ExternalServiceCategory, ExternalServiceError, ParaTranzEntry
 from transbridge.application.sync import RetryToken, SyncOperation, SyncPlanner
 from transbridge.application.sync.models import SyncAction
@@ -27,7 +28,12 @@ class ContextRemote(OrderedRemote):
 
 
 def _setup(*, context="BOOK:FULL", remote_order=None, local_order=428):
-    local = replace(_local("a", "Translated"), context=context, context_order=local_order)
+    local = replace(
+        _local("a", "Translated"),
+        context=context,
+        context_order=local_order,
+        external_ref=ExternalEntryRef("paratranz", "project:7", 71),
+    )
     wire_context = context if remote_order is None else f"{remote_order:08d}|{context}"
     remote = ContextRemote((ParaTranzEntry(71, "a", local.original, local.translation, wire_context, local.stage),))
     return local, remote
@@ -42,7 +48,7 @@ def _plan(local, remote, operation=SyncOperation.UPLOAD, *, local_state_only=Fal
     )
 
 
-@pytest.mark.parametrize("operation", [SyncOperation.UPLOAD, SyncOperation.BIDIRECTIONAL])
+@pytest.mark.parametrize("operation", [SyncOperation.BIDIRECTIONAL])
 @pytest.mark.parametrize("old_order", [None, 123])
 def test_order_only_plan_refreshes_context_with_confirmation(operation, old_order):
     local, remote = _setup(remote_order=old_order)
@@ -67,6 +73,18 @@ def test_same_order_missing_local_order_or_free_text_skips(kwargs):
     assert _plan((local,), remote).items[0].action is SyncAction.SKIP
 
 
+@pytest.mark.parametrize("old_order", [None, 123])
+def test_upload_never_refreshes_remote_context_order(old_order):
+    local, remote = _setup(remote_order=old_order)
+    before = remote.entries["a"]
+    plan = _plan((local,), remote)
+    assert plan.items[0].action is SyncAction.SKIP
+    result = _executor(remote, [local]).execute(_request(plan, (local,)))
+    assert result.outcome is OperationOutcome.COMPLETED
+    assert remote.calls == []
+    assert remote.entries["a"] == before
+
+
 def test_download_does_not_refresh_remote_order():
     local, remote = _setup()
     plan = _plan((local,), remote, SyncOperation.DOWNLOAD)
@@ -77,6 +95,7 @@ def test_download_does_not_refresh_remote_order():
 
 def test_refresh_requires_remote_identity():
     local, remote = _setup()
+    local = replace(local, external_ref=None)
     snapshot = replace(remote.fetch(7, NAMESPACE, limit=10)[0], external_ref=None)
     plan = SyncPlanner().plan((local,), (snapshot,), operation=SyncOperation.UPLOAD)
     assert plan.items[0].action is SyncAction.CONFLICT
@@ -85,10 +104,10 @@ def test_refresh_requires_remote_identity():
 
 def test_different_source_content_never_uses_order_only_update():
     local, remote = _setup()
-    local = replace(local, original="Different original")
+    local = replace(local, original="Different original", external_ref=None)
     plan = _plan((local,), remote, local_state_only=True)
     assert plan.items[0].action is SyncAction.CONFLICT
-    assert plan.items[0].reason == "content_changed"
+    assert plan.items[0].reason == "original_mismatch"
 
 
 def test_changed_remote_translation_rejects_order_refresh_plan():
@@ -106,7 +125,7 @@ def test_partial_order_refresh_retry_does_not_repeat_completed_patch():
     b = replace(a, entry_key=replace(a.entry_key, local_key="b"), context_order=429)
     remote.entries["b"] = replace(remote.entries["a"], remote_id=72, key="b")
     local = (a, b)
-    plan = _plan(local, remote)
+    plan = _plan(local, remote, SyncOperation.BIDIRECTIONAL)
     remote.fail_keys.add("b")
     first = _executor(remote, list(local)).execute(_request(plan, local, confirmation="CONFIRMED"))
     assert first.outcome is OperationOutcome.PARTIAL

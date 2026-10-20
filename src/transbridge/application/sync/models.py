@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 import hashlib
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from transbridge.application.io.identity import EntryKey, EntryRevision, ExternalEntryRef
+
+if TYPE_CHECKING:
+    from .download_review import DownloadReviewRow
+    from .upload_review import UploadReviewRow
 
 
 class SyncOperation(StrEnum):
@@ -217,6 +221,8 @@ class SyncPlan:
     conflicts: int
     destructive: bool
     plan_hash: str
+    download_review: tuple[DownloadReviewRow, ...] = field(default=(), repr=False, compare=False)
+    upload_review: tuple[UploadReviewRow, ...] = field(default=(), repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not self.plan_id.strip():

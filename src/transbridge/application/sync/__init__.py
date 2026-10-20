@@ -5,6 +5,7 @@ from .artifact import (
     ArtifactPublishRequest,
     ParaTranzArtifactPublisher,
 )
+from .download_review import DownloadCandidate, DownloadDecision, DownloadDecisionStaleError, DownloadReviewRow
 from .execution_models import RetryToken, SyncItemOutcome, SyncItemStatus, sync_item_id
 from .executor import (
     CallbackLocalSyncUnitOfWork,
@@ -31,6 +32,7 @@ from .task_adapter import (
     ParaTranzSyncTaskFailed,
     ParaTranzSyncTaskPreparation,
 )
+from .upload_review import UploadCandidate, UploadDecision, UploadDecisionStaleError, UploadReviewRow
 from .use_case import (
     AuthorizedSyncPlan,
     AuthorizeSyncPlanRequest,
@@ -49,6 +51,14 @@ __all__ = [
     "ConflictPolicy",
     "DeletionPolicy",
     "CreateSyncPlanRequest",
+    "DownloadCandidate",
+    "DownloadDecision",
+    "DownloadDecisionStaleError",
+    "DownloadReviewRow",
+    "UploadCandidate",
+    "UploadDecision",
+    "UploadDecisionStaleError",
+    "UploadReviewRow",
     "EntrySummary",
     "ExecuteSyncRequest",
     "LocalEntrySnapshot",

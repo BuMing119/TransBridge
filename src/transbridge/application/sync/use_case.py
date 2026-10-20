@@ -13,6 +13,7 @@ from transbridge.application.security.hitl import (
     ConfirmationToken,
 )
 
+from .download_review import DownloadDecision
 from .models import (
     ConflictPolicy,
     DeletionPolicy,
@@ -22,6 +23,7 @@ from .models import (
     SyncPlan,
 )
 from .planner import SyncPlanner
+from .upload_review import UploadDecision
 
 
 class RemoteSyncSnapshotPort(Protocol):
@@ -45,6 +47,8 @@ class CreateSyncPlanRequest:
     deletion_policy: DeletionPolicy = DeletionPolicy.APPLY
     remote_limit: int = 100_000
     cancellation: CancellationPort | None = None
+    download_decisions: tuple[DownloadDecision, ...] = ()
+    upload_decisions: tuple[UploadDecision, ...] = ()
 
     def __post_init__(self) -> None:
         if isinstance(self.project_id, bool) or not isinstance(self.project_id, int) or self.project_id < 1:
@@ -52,6 +56,8 @@ class CreateSyncPlanRequest:
         if isinstance(self.remote_limit, bool) or not isinstance(self.remote_limit, int) or self.remote_limit < 1:
             raise ValueError("remote_limit must be a positive integer")
         object.__setattr__(self, "local_entries", tuple(self.local_entries))
+        object.__setattr__(self, "download_decisions", tuple(self.download_decisions))
+        object.__setattr__(self, "upload_decisions", tuple(self.upload_decisions))
         if any(entry.entry_key.namespace != self.namespace for entry in self.local_entries):
             raise ValueError("all local entries must belong to the requested source namespace")
 
@@ -122,6 +128,8 @@ class ParaTranzSyncPlanningUseCase:
             conflict_policy=request.conflict_policy,
             deletion_policy=request.deletion_policy,
             scope=_sync_scope(request.project_id, request.namespace),
+            download_decisions=request.download_decisions,
+            upload_decisions=request.upload_decisions,
         )
 
     def issue_confirmation(self, plan: SyncPlan, *, owner_id: str) -> ConfirmationToken:

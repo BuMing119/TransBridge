@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QButtonGroup,
@@ -24,8 +26,12 @@ from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, 
 from transbridge.ui.workbench.remote_target_view import ParaTranzTargetDialog
 
 from .plan_view import EditableFieldState, OperationKind, OperationPlanViewState
-from .preflight_view import OperationPreflightResult, PreflightCheckStatus
+from .preflight_view import OperationPreflightResult
+from .sync_preflight_presentation import present_sync_preflight
 from .sync_result import sync_receipt
+from .sync_review_dialog import SyncReviewDialog
+from .sync_review_direction import sync_review_direction
+from .sync_review_view import SyncReviewRow
 
 
 class ParaTranzSyncDialog(QDialog):
@@ -57,6 +63,9 @@ class ParaTranzSyncDialog(QDialog):
         self._execution_running = False
         self._check_ready = False
         self._retry_available = False
+        self._review_rows: tuple[SyncReviewRow, ...] = ()
+        self._sync_decisions: dict[str, str] = {}
+        self._review_needs_refresh = False
         self._strategy_buttons: dict[str, QRadioButton] = {}
 
         self.setWindowTitle(plan.title)
@@ -122,7 +131,7 @@ class ParaTranzSyncDialog(QDialog):
         ComponentStyle.apply_state(self._backup, SemanticState.INFO)
         root.addWidget(self._backup)
 
-        impact_caption = QLabel("预计影响", self)
+        impact_caption = QLabel("这次会改变什么", self)
         impact_font = impact_caption.font()
         impact_font.setBold(True)
         impact_caption.setFont(impact_font)
@@ -137,6 +146,9 @@ class ParaTranzSyncDialog(QDialog):
         ComponentStyle.apply_state(self._status, SemanticState.INFO)
         configure_accessible_widget(self._status, name="同步检查状态", state_text=self._status.text())
         root.addWidget(self._status)
+        self._review = QPushButton("确认这几条翻译…", self)
+        self._review.clicked.connect(self._review_items)
+        root.addWidget(self._review)
         self._progress = QProgressBar(self)
         ComponentStyle.apply_static(self._progress, ComponentKind.PROGRESS)
         configure_accessible_widget(self._progress, name="同步进度")
@@ -158,6 +170,8 @@ class ParaTranzSyncDialog(QDialog):
         footer.addWidget(self._cancel)
         footer.addWidget(self._confirm)
         root.addLayout(footer)
+        for label in (self._headline, self._scope, self._target_name, self._target_detail, self._backup, self._status):
+            label.setTextFormat(Qt.TextFormat.PlainText)
 
         self.execution_changed.connect(self.render_execution, Qt.ConnectionType.QueuedConnection)
         self.execution_result_changed.connect(self.render_execution, Qt.ConnectionType.QueuedConnection)
@@ -170,12 +184,16 @@ class ParaTranzSyncDialog(QDialog):
         try:
             self._plan = plan
             self._preflight = None
+            self._review_rows = ()
+            self._review_needs_refresh = False
             self._check_ready = False
             self._retry_available = False
             self.setWindowTitle(plan.title)
             self._headline.setText(plan.title)
             self._scope.setText(plan.scope_summary)
             fields = {field.field_id: field for field in plan.editable_fields}
+            decisions = fields.get(sync_review_direction(plan.kind).decisions_field)
+            self._sync_decisions = json.loads(decisions.value) if decisions is not None else {}
             project = fields.get("paratranz_project_id")
             if project is not None:
                 self._project_id = project.value
@@ -199,38 +217,22 @@ class ParaTranzSyncDialog(QDialog):
         if result.request_digest != self._plan.request_digest:
             return
         self._preflight = result
-        impact = dict(result.estimated_impact)
-        self._impact.setText(self._impact_text(impact))
-        blocked = [item.reason for item in result.checks if item.status is PreflightCheckStatus.BLOCKED]
-        warnings = [
-            item.reason for item in result.checks if item.status is PreflightCheckStatus.WARNING and item.reason
-        ]
-        actionable = sum(
-            impact.get(key, 0)
-            for key in (
-                "create_local",
-                "update_local",
-                "delete_local",
-                "create_remote",
-                "update_remote",
-                "delete_remote",
+        self._review_rows = result.sync_review
+        self._review_needs_refresh = False
+        self._sync_decisions = {
+            row.row_id: row.decision
+            for row in self._review_rows
+            if row.decision == sync_review_direction(self._plan.kind).keep_choice
+            or (
+                row.can_select_remote
+                and any(candidate.candidate_id == row.decision and candidate.selectable for candidate in row.candidates)
             )
-        )
-        if blocked:
-            self._set_status(blocked[0], SemanticState.ERROR)
-        elif actionable == 0:
-            self._set_status(
-                "本地内容与 ParaTranz 已一致，无需更新。"
-                if self._plan.kind is OperationKind.DOWNLOAD
-                else "ParaTranz 内容与本地已一致，无需上传。",
-                SemanticState.SUCCESS,
-            )
-        elif warnings:
-            self._set_status(warnings[0], SemanticState.WARNING)
-        else:
-            self._set_status("检查完成，可以开始。", SemanticState.SUCCESS)
-        self._check_ready = result.ready and result.confirmation_token is not None and actionable > 0
-        self._retry_available = bool(blocked)
+        }
+        presentation = present_sync_preflight(result)
+        self._impact.setText(presentation.impact)
+        self._set_status(presentation.status, presentation.semantic)
+        self._check_ready = presentation.can_confirm
+        self._retry_available = presentation.can_retry
         self._sync_controls()
 
     def render_preflight_error(self, message: str) -> None:
@@ -274,13 +276,29 @@ class ParaTranzSyncDialog(QDialog):
         self._retry_available = True
         self._cancel.setText("关闭")
         action = "下载并更新本地翻译" if self._plan.kind is OperationKind.DOWNLOAD else "上传到 ParaTranz"
-        receipt = sync_receipt(activity, result, action=action)
+        receipt = sync_receipt(activity, result, action=action, kind=self._plan.kind)
         semantic = {
             "completed": SemanticState.SUCCESS,
             "failed": SemanticState.ERROR,
         }.get(receipt.status, SemanticState.WARNING)
         self._set_status(receipt.text, semantic)
         self._status.setToolTip(receipt.details)
+        verified = (
+            receipt.status == "completed"
+            and result is not None
+            and not (result.counts.failed or result.counts.cancelled)
+        )
+        if verified:
+            self._review_rows = tuple(
+                row
+                for row in self._review_rows
+                if not row.decision or row.decision == sync_review_direction(self._plan.kind).keep_choice
+            )
+            remaining_ids = {row.row_id for row in self._review_rows}
+            self._sync_decisions = {
+                row_id: decision for row_id, decision in self._sync_decisions.items() if row_id in remaining_ids
+            }
+        self._review_needs_refresh = not verified
         if receipt.status == "completed":
             self._progress.setRange(0, 100)
             self._progress.setValue(100)
@@ -300,8 +318,17 @@ class ParaTranzSyncDialog(QDialog):
             field = fields.get(field_id)
             widget.setEnabled(not busy and field is not None and field.enabled)
         self._cancel.setEnabled(not busy)
+        self._review.setVisible(bool(self._review_rows))
+        self._review.setEnabled(not busy and bool(self._review_rows))
+        review_count = len(self._review_rows)
+        self._review.setText(
+            f"刷新这 {review_count:,} 条翻译…" if self._review_needs_refresh else f"确认 {review_count:,} 条翻译…"
+        )
         self._confirm.setEnabled(not busy and (self._check_ready or self._retry_available))
-        self._confirm.setText("重新检查" if self._retry_available else self._action_text(self._plan.kind))
+        action = self._action_text(self._plan.kind)
+        if any(not row.decision for row in self._review_rows):
+            action = sync_review_direction(self._plan.kind).safe_action
+        self._confirm.setText("重新检查" if self._retry_available else action)
 
     def done(self, result: int) -> None:
         if not self._preflight_running and not self._execution_running:
@@ -316,13 +343,28 @@ class ParaTranzSyncDialog(QDialog):
     def edited_values(self) -> tuple[tuple[str, str], ...]:
         selected = self._strategy_group.checkedButton()
         policy = "" if selected is None else str(selected.property("policyValue") or "")
-        return (
+        values = (
             ("paratranz_project_id", self._project_id),
             ("paratranz_project_name", self._project_name),
             ("set_as_default", "true" if self._set_default.isChecked() else "false"),
             ("conflict_policy", policy),
             ("apply_remote_deletions", "true" if self._apply_deletions.isChecked() else "false"),
         )
+        return values + (
+            (sync_review_direction(self._plan.kind).decisions_field, json.dumps(self._sync_decisions, sort_keys=True)),
+        )
+
+    def _review_items(self) -> None:
+        if self._preflight_running or self._execution_running or not self._review_rows:
+            return
+        if self._review_needs_refresh:
+            self._request_preflight()
+            return
+        dialog = SyncReviewDialog(self._review_rows, self, kind=self._plan.kind)
+        if dialog.exec():
+            self._sync_decisions = dialog.decisions()
+            self._controls_changed()
+        dialog.deleteLater()
 
     def _render_strategy(self, field: EditableFieldState | None) -> None:
         if field is None:
@@ -391,7 +433,7 @@ class ParaTranzSyncDialog(QDialog):
             self._catalog,
             config_revision,
             self,
-            explanation="选择本次同步使用的云端项目。项目编号只用于内部识别。",
+            explanation="选择这次要上传或下载翻译的 ParaTranz 项目。",
             confirmation_text="使用这个项目",
         )
         if not dialog.exec():
@@ -412,32 +454,13 @@ class ParaTranzSyncDialog(QDialog):
         update_accessible_state(self._status, text)
         ComponentStyle.apply_state(self._status, state)
 
-    def _impact_text(self, impact: dict[str, int]) -> str:
-        if self._plan.kind is OperationKind.DOWNLOAD:
-            parts = (
-                ("更新", impact.get("update_local", 0)),
-                ("新增", impact.get("create_local", 0)),
-                ("删除", impact.get("delete_local", 0)),
-                ("保留", impact.get("skip", 0)),
-                ("需处理", impact.get("conflict", 0)),
-            )
-        else:
-            parts = (
-                ("更新", impact.get("update_remote", 0)),
-                ("新增", impact.get("create_remote", 0)),
-                ("删除", impact.get("delete_remote", 0)),
-                ("保留", impact.get("skip", 0)),
-                ("需处理", impact.get("conflict", 0)),
-            )
-        return "  ·  ".join(f"{label} {value:,}" for label, value in parts if value) or "没有内容变化"
-
     @staticmethod
     def _target_detail_text(target: str) -> str:
         if "当前工程已绑定" in target:
-            return "当前工程已绑定"
+            return "当前工程默认使用的项目"
         if "本次选择" in target:
             return "本次选择"
-        return "尚未绑定到当前工程"
+        return "尚未设置默认项目"
 
     @staticmethod
     def _action_text(kind: OperationKind) -> str:

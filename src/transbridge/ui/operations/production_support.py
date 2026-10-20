@@ -22,6 +22,7 @@ from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
 from .mappers import OperationPlanDraft
 from .plan_view import OperationKind
 from .preflight_view import PreflightCheckState, PreflightCheckStatus
+from .sync_review_projection import decode_decisions, encode_decisions
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +46,8 @@ class SyncRequest:
     active_version_identity: tuple[str, str] | None = None
     project_revision: int | None = None
     variant_revision: int | None = None
+    download_decisions: tuple[tuple[str, str], ...] = ()
+    upload_decisions: tuple[tuple[str, str], ...] = ()
 
 
 def context_factory(value: RequestContext | Callable[[object], RequestContext]):
@@ -108,6 +111,12 @@ def sync_request(context, kind: OperationKind, batch: bool, values=None):
         )
     if kind is OperationKind.DOWNLOAD and bool(getattr(context, "uses_authoritative_projection", False)):
         deletion_policy = DeletionPolicy.PRESERVE
+    decisions = ()
+    decision_field = "download_decisions" if kind is OperationKind.DOWNLOAD else "upload_decisions"
+    try:
+        decisions = decode_decisions(values.get(decision_field, "{}"))
+    except ValueError as exc:
+        explicit_error = str(exc)
     resolve = getattr(context, "resolve_paratranz_target", None)
     if callable(resolve):
         target = resolve(
@@ -175,6 +184,8 @@ def sync_request(context, kind: OperationKind, batch: bool, values=None):
         active_version_identity=getattr(context, "active_version_identity", None),
         project_revision=getattr(context, "project_revision", None),
         variant_revision=getattr(context, "variant_revision", None),
+        download_decisions=decisions if kind is OperationKind.DOWNLOAD else (),
+        upload_decisions=decisions if kind is OperationKind.UPLOAD else (),
     )
     return request, ready, reason
 
@@ -185,6 +196,8 @@ def sync_request_target_is_current(request: SyncRequest) -> tuple[bool, str]:
         "conflict_policy": request.conflict_policy.value,
         "deletion_policy": request.deletion_policy.value,
         "set_as_default": request.persist_as_default,
+        "download_decisions": encode_decisions(request.download_decisions),
+        "upload_decisions": encode_decisions(request.upload_decisions),
     }
     if request.target_source == "explicit" and request.project_id > 0:
         values.update({
@@ -264,6 +277,11 @@ def replace_local_snapshots(
     project_revision: int | None = None,
     variant_revision: int | None = None,
 ) -> None:
+    if (
+        active_version_identity is not None
+        and getattr(context, "active_version_identity", active_version_identity) != active_version_identity
+    ):
+        raise RuntimeError("活动工程或翻译版本已变化；本地内容未更改，请重新打开同步。")
     original_collection = context.collection
     authoritative = bool(getattr(context, "uses_authoritative_projection", False))
     existing = {entry.identity: entry for entry in original_collection or ()}
@@ -292,6 +310,19 @@ def replace_local_snapshots(
                 )
             )
         else:
+            current_refs = tuple(
+                ref for ref in current.external_refs if ref.system == "paratranz" and ref.scope == active_scope
+            )
+            if (
+                item.revision == current.revision
+                and (item.original, item.translation, item.context, item.stage)
+                == (current.original, current.translation or "", current.context or "", current.stage)
+                and tuple(ref.index_key for ref in remote_ref) == tuple(ref.index_key for ref in current_refs)
+            ):
+                # Skipped and deferred snapshots must remain byte-for-byte
+                # equivalent at the domain boundary, including order metadata.
+                entries.append(current)
+                continue
             unrelated = tuple(
                 ref for ref in current.external_refs if not (ref.system == "paratranz" and ref.scope == active_scope)
             )
