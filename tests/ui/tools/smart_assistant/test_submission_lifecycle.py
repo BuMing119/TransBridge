@@ -70,7 +70,7 @@ def _waiting(panel, manager):
 
 def test_real_panel_cancellation_closes_old_task_without_resuming_it(chat_environment, manager, monkeypatch):
     panel = chat_environment.panel()
-    _until(lambda: panel.chat.session_ready)
+    _until(lambda: panel.chat.session_ready and panel._workspace.ready())
     task_id, _, starts, captured = _waiting(panel, manager)
     spec = ToolSpec(
         "stop_task",
@@ -101,7 +101,7 @@ def test_real_panel_cancellation_closes_old_task_without_resuming_it(chat_enviro
 
 def test_lifecycle_snapshot_reconnects_only_live_same_session_task(chat_environment, manager):
     panel = chat_environment.panel()
-    _until(lambda: panel.chat.session_ready)
+    _until(lambda: panel.chat.session_ready and panel._workspace.ready())
     task_id, run_id, _, captured = _waiting(panel, manager)
     session_id = panel._current_session_id()
     # Admission itself must persist identity, before any terminal notification.
@@ -115,6 +115,7 @@ def test_lifecycle_snapshot_reconnects_only_live_same_session_task(chat_environm
     assert captured.request_context.session_id == session_id
     assert panel.chat._tool_handler.build_execution_context().request_context.session_id != session_id
     panel._switch_to(session_id)
+    _until(lambda: panel._workspace.ready() and panel._current_session_id() == session_id)
     assert panel.chat._controller.state.value == "awaiting_task"
     assert panel.chat._controller.is_awaiting_task(task_id, run_id)
     assert manager.cancel(task_id)
@@ -131,7 +132,7 @@ def test_lifecycle_snapshot_reconnects_only_live_same_session_task(chat_environm
 
 def test_forged_foreign_task_snapshot_degrades_without_subscribing_to_foreign_history(chat_environment, manager):
     panel = chat_environment.panel()
-    _until(lambda: panel.chat.session_ready)
+    _until(lambda: panel.chat.session_ready and panel._workspace.ready())
     foreign = manager.register(metadata={"owner_id": "other", "session_id": "other-session"})
     run_id = manager.get_status(foreign)["run_id"]
     snapshot = ControllerSnapshot(
@@ -161,7 +162,7 @@ def test_scoped_stop_skips_redundant_confirmation_but_batch_requires_it(monkeypa
 
 def test_real_panel_session_switch_invalidates_queued_user_round(chat_environment):
     panel = chat_environment.panel()
-    _until(lambda: panel.chat.session_ready)
+    _until(lambda: panel.chat.session_ready and panel._workspace.ready())
     starts = []
     panel.chat._controller._on_llm_round_start = lambda: starts.append(True)
     panel.chat.send_user_message("old session request")
@@ -174,7 +175,7 @@ def test_real_panel_session_switch_invalidates_queued_user_round(chat_environmen
 
 def test_interrupted_round_reason_survives_repeated_gui_restore(chat_environment, manager):
     panel = chat_environment.panel()
-    _until(lambda: panel.chat.session_ready)
+    _until(lambda: panel.chat.session_ready and panel._workspace.ready())
     context = panel.chat._tool_handler.build_execution_context()
     task_id = manager.register(metadata=task_metadata(context, {}))
     interrupted = ControllerSnapshot(
@@ -194,7 +195,7 @@ def test_interrupted_round_reason_survives_repeated_gui_restore(chat_environment
 
 def test_detached_synchronous_plan_remains_scoped_cancellable_and_persisted(chat_environment, manager, monkeypatch):
     panel = chat_environment.panel()
-    _until(lambda: panel.chat.session_ready)
+    _until(lambda: panel.chat.session_ready and panel._workspace.ready())
     entered, release = threading.Event(), threading.Event()
     later = []
 

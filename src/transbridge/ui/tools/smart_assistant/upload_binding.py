@@ -29,6 +29,7 @@ class UploadBinding(QObject):
         self._busy_changed = busy_changed
         self._sessions = {}
         self._session_id = None
+        self._initial_binding = True
         self._used = False
         self._generation = 0
         self._pending = {}
@@ -53,6 +54,13 @@ class UploadBinding(QObject):
 
     def activate(self, session_id):
         if session_id == self._session_id or self._closed:
+            return
+        if self._initial_binding:
+            # The first session adopts the still-unbound composer, including
+            # workers started while the initial session directory was loading.
+            self._initial_binding = False
+            self._session_id = session_id
+            self._refresh()
             return
         self._sessions[self._session_id] = (dict(self.documents), self._used)
         self._invalidate()
@@ -99,10 +107,10 @@ class UploadBinding(QObject):
                 self._notify(f"最多添加 {MAX_ATTACHMENTS} 个参考文件，请先移除不需要的附件。")
                 break
             path = Path(raw)
-            generation, session_id = self._generation, self._session_id
+            generation = self._generation
             future = self._executor.submit(self._parse, path)
             self._pending[future] = path.name
-            future.add_done_callback(lambda result, p=path, g=generation, s=session_id: self._deliver(result, p, g, s))
+            future.add_done_callback(lambda result, p=path, g=generation: self._deliver(result, p, g))
         self._refresh()
 
     def _parse(self, path):
@@ -119,14 +127,16 @@ class UploadBinding(QObject):
             raise ValueError(f"提取文本超过 {MAX_ATTACHMENT_CHARACTERS:,} 字，未添加且未截断，请拆分文件")
         return document
 
-    def _deliver(self, future, path, generation, session_id):
+    def _deliver(self, future, path, generation):
         try:
-            self.delivered.emit(lambda: self._received(future, path, generation, session_id))
+            self.delivered.emit(lambda: self._received(future, path, generation))
         except RuntimeError:
             logger.debug("Attachment parsing finished after its view was destroyed")
 
-    def _received(self, future, path, generation, session_id):
-        if self._closed or generation != self._generation or session_id != self._session_id:
+    def _received(self, future, path, generation):
+        # A generation owns the composer across its initial binding only.
+        # Subsequent session changes, clear and close all invalidate it.
+        if self._closed or generation != self._generation:
             return
         self._pending.pop(future, None)
         try:

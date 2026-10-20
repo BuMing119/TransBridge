@@ -208,21 +208,9 @@ class ProjectCoordinator:
             if self._host.current_project_opener is None or self._host.runtime_context is None:
                 self._host.show_message("当前项目打开服务不可用。")
                 return
-            dirty_decision = None
-            if self._host.context.dirty:
-                from transbridge.application.projects import DirtyDecision
-
-                answer = QMessageBox.question(
-                    self._host,
-                    "保存确认",
-                    "当前项目有未保存修改。打开其他项目前是否保存？",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
-                )
-                if answer == QMessageBox.StandardButton.Cancel:
-                    return
-                dirty_decision = (
-                    DirtyDecision.SAVE if answer == QMessageBox.StandardButton.Yes else DirtyDecision.DISCARD
-                )
+            accepted, dirty_decision = self.confirm_project_switch()
+            if not accepted:
+                return
             self._start_current_project_open(
                 lambda: self._host.current_project_opener.prepare_path(path, self._host.runtime_context),
                 dirty_decision=dirty_decision,
@@ -268,6 +256,52 @@ class ProjectCoordinator:
 
         self._host.save_current_project_async(on_finished=_start_legacy_open)
 
+    def confirm_project_switch(self):
+        """Use the same save/discard/cancel decision for every Project navigation."""
+        from transbridge.application.projects import DirtyDecision
+
+        if not self._host.context.dirty:
+            return True, None
+        answer = QMessageBox.question(
+            self._host,
+            "保存确认",
+            "当前工程版本有未保存修改。切换前是否保存？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+        )
+        if answer == QMessageBox.StandardButton.Cancel:
+            return False, None
+        return True, DirtyDecision.SAVE if answer == QMessageBox.StandardButton.Yes else DirtyDecision.DISCARD
+
+    def open_project_identity(self, context, on_finished) -> None:
+        """Open an assistant's exact binding through the normal background transaction."""
+        accepted, decision = self.confirm_project_switch()
+        if not accepted:
+            on_finished(False)
+            return
+        completed = False
+
+        def finish(success):
+            nonlocal completed
+            if completed:
+                return
+            completed = True
+            matches = self._host.context.active_version_identity == (context.project_id, context.variant_id)
+            ready = success and matches and not getattr(self._host.context, "project_view_failed", False)
+            if ready:
+                self._show_workbench()
+            on_finished(ready)
+
+        started = self._start_current_project_open(
+            lambda: self._host.current_project_opener.prepare_identity(context.project_id, context.variant_id, context),
+            dirty_decision=decision,
+            success_verb="已打开",
+            on_success=lambda _opened: finish(True),
+            on_failure=lambda _code, _message: finish(False),
+            request_context=context,
+        )
+        if not started:
+            finish(False)
+
     def _start_current_project_open(
         self,
         prepare,
@@ -277,19 +311,21 @@ class ProjectCoordinator:
         show_error_dialog: bool = True,
         on_success=None,
         on_failure=None,
-    ) -> None:
+        request_context=None,
+    ) -> bool:
         """Run preparation, activation and detached view construction in one worker."""
         from .project_open_operation import ProjectOpenOperation
 
         if not hasattr(self, "_project_open"):
             self._project_open = ProjectOpenOperation(self._host, self._restore_plugin_sources, self.open_project_path)
-        self._project_open.start(
+        return self._project_open.start(
             prepare,
             dirty_decision=dirty_decision,
             success_verb=success_verb,
             show_error_dialog=show_error_dialog,
             on_success=on_success,
             on_failure=on_failure,
+            request_context=request_context,
         )
 
     def _show_start_center_empty(self) -> None:

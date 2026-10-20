@@ -16,8 +16,8 @@ from transbridge.persistence.v2.lifecycle_transactions import SessionLifecycleTr
 from transbridge.persistence.v2.session_catalog import SessionCatalogRepository
 
 
-def build_session_services(root: Path):
-    filesystem = OsPersistenceFilesystem()
+def build_session_services(root: Path, filesystem=None):
+    filesystem = filesystem or OsPersistenceFilesystem()
     repository = SessionRepository(str(root), filesystem)
     catalog = SessionCatalogRepository(str(root), filesystem)
     ids = count()

@@ -6,9 +6,11 @@ from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
 from transbridge.application.assistant_requests.attachments import display_user_content
 from transbridge.application.assistant_requests.journal import EventCause
+from transbridge.application.assistant_requests.models import RequestError
 
 from .message_bubble import MessageBubble
 from .request_view_refresh import RequestViewRefresh
+from .session_execution_access import ensure_execution, execution_allowed
 from .submission_scope import scope_from_input
 
 
@@ -29,13 +31,11 @@ class RequestManagementBinding:
     def retry_failed_turn(self):
         binding = self.binding
         target = self._failed_turn
-        if (
-            target is None
-            or binding._closed
-            or not binding._active
-            or binding.context != target[0]
-            or binding.admission is not None
-        ):
+        if target is None or binding._closed or binding.context != target[0] or binding.admission is not None:
+            return
+        if not ensure_execution(binding.facade, "重试请求", self.retry_failed_turn):
+            return
+        if not binding._active:
             return
         self._failed_turn = None
         request_id = target[1]
@@ -112,10 +112,13 @@ class RequestManagementBinding:
 
     def retry_inputs(self):
         binding = self.binding
+        if not ensure_execution(binding.facade, "继续处理输入", self.retry_inputs):
+            return
         binding._user_stopped = False
         context = binding.context
 
         def retry():
+            self._require_scope(context)
             binding.service.transact(
                 context,
                 lambda state: [
@@ -154,6 +157,8 @@ class RequestManagementBinding:
         eligible = request.status in {"failed", "cancelled"} if confirm else request.terminal
         if key in self._operations or not eligible or request.unsettled:
             return
+        if not ensure_execution(binding.facade, "重新处理请求", lambda: self.restart(request, confirm=confirm)):
+            return
         answer = (
             QMessageBox.question(
                 binding.facade,
@@ -166,7 +171,12 @@ class RequestManagementBinding:
             if confirm
             else QMessageBox.StandardButton.Yes
         )
-        if answer != QMessageBox.StandardButton.Yes or binding.context != context or binding._closed:
+        if (
+            answer != QMessageBox.StandardButton.Yes
+            or binding.context != context
+            or binding._closed
+            or not execution_allowed(binding.facade)
+        ):
             return
         self._operations.add(key)
         command_id = self._restart_commands.setdefault(key, uuid4().hex)
@@ -174,6 +184,7 @@ class RequestManagementBinding:
         binding._user_stopped = False
 
         def work():
+            self._require_scope(context)
             return binding.service.restart(
                 context,
                 request.request_id,
@@ -196,10 +207,17 @@ class RequestManagementBinding:
         key = (context, "context", request_id)
         if key in self._operations:
             return
+        if not ensure_execution(binding.facade, "重试上下文", lambda: self.retry_context(request_id)):
+            return
         self._operations.add(key)
         binding._user_stopped = False
+
+        def retry():
+            self._require_scope(context)
+            return clear_wait(binding.service, context, request_id)
+
         binding.background.submit(
-            lambda: clear_wait(binding.service, context, request_id),
+            retry,
             lambda _: binding.refresh(),
             context=context,
             wake=True,
@@ -209,12 +227,17 @@ class RequestManagementBinding:
     def clarify(self):
         from .routing_recovery_binding import RoutingRecoveryBinding
 
+        if not ensure_execution(self.binding.facade, "处理待澄清要求", self.clarify):
+            return
         if not hasattr(self, "_routing_recovery"):
             self._routing_recovery = RoutingRecoveryBinding(self.binding)
         self._routing_recovery.show()
 
     def reassign(self, request_id):
         binding = self.binding
+        if not ensure_execution(binding.facade, "移动未执行事项", lambda: self.reassign(request_id)):
+            return
+        context = binding.context
         requests = binding.service.requests(binding.service.state(binding.context))
         source = next(r for r in requests if r.request_id == request_id)
         targets = [r for r in requests if r.request_id != request_id and not r.terminal]
@@ -223,11 +246,11 @@ class RequestManagementBinding:
             return
         labels = [f"{index + 1}. {item.description}" for index, item in enumerate(source.items)]
         label, ok = QInputDialog.getItem(binding.facade, "移动未执行事项", "选择未执行的事项", labels, editable=False)
-        if not ok:
+        if not ok or binding.context != context or binding._closed or not execution_allowed(binding.facade):
             return
         names = [f"{index + 1}. {r.goal}" for index, r in enumerate(targets)]
         name, ok = QInputDialog.getItem(binding.facade, "移动未执行事项", "移到哪个任务？", names, editable=False)
-        if not ok:
+        if not ok or binding.context != context or binding._closed or not execution_allowed(binding.facade):
             return
         target = targets[names.index(name)]
         binding.interrupt()
@@ -245,3 +268,8 @@ class RequestManagementBinding:
             self.sync_inputs()
         except Exception as exc:
             binding.fail(str(exc))
+
+    def _require_scope(self, context):
+        binding = self.binding
+        if binding._closed or binding.context != context or not execution_allowed(binding.facade):
+            raise RequestError("SESSION_SCOPE_MISMATCH", "工程已切换，请回到会话所属工程后重试。")

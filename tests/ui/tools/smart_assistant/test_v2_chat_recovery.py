@@ -161,8 +161,10 @@ def test_real_worker_round_autosaves_v2_without_cancelling_or_reloading(chat_env
     client = _Client()
     monkeypatch.setattr(ConversationOrchestrator, "_get_llm_client", lambda _self: client)
     panel = chat_environment.panel()
-    _until(lambda: panel.chat.session_ready)
+    _until(lambda: panel.chat.session_ready and panel._workspace.ready())
     ref = chat_environment.lifecycle.active.aggregate.ref
+    assert panel._current_session_id() == ref.identity.value
+    session_generation = panel.chat._session_binding._generation
     panel.chat.add_system_prompt("Offline test context")
     panel.chat.send_user_message("Please answer")
     _until(client.started.is_set)
@@ -174,6 +176,7 @@ def test_real_worker_round_autosaves_v2_without_cancelling_or_reloading(chat_env
     assert panel._persist_authoritative_chat()
     assert panel.chat._controller.state.value == "thinking"
     assert panel.chat._orchestrator._active_generation == generation
+    assert panel.chat._session_binding._generation == session_generation
     assert not client.cancelled
     client.release.set()
     _until(lambda: panel.chat._controller.state.value == "idle" and not worker.is_alive())
@@ -182,7 +185,7 @@ def test_real_worker_round_autosaves_v2_without_cancelling_or_reloading(chat_env
     assert saved["history"][-1] == {"role": "assistant", "content": "Persisted reply"}
     assert saved["controller"]["state"] == "idle"
     assert not client.cancelled
-    assert panel.chat._session_binding._generation == 1
+    assert panel.chat._session_binding._generation == session_generation
 
 
 def test_chat_initialization_does_not_create_legacy_memory_or_model_client(chat_environment, monkeypatch, tmp_path):
@@ -196,7 +199,9 @@ def test_chat_initialization_does_not_create_legacy_memory_or_model_client(chat_
     assert not (tmp_path / "assistant" / "memory").exists()
 
 
-def test_real_panel_switch_and_close_save_unsaved_history_without_losing_recovered_messages(chat_environment):
+def test_real_panel_switch_and_close_save_unsaved_history_without_losing_recovered_messages(
+    chat_environment, monkeypatch
+):
     first, visible, backend = _seed(chat_environment)
     context = RequestContext("owner")
     assert chat_environment.commands.create_and_activate("Other", context).is_success
@@ -207,12 +212,30 @@ def test_real_panel_switch_and_close_save_unsaved_history_without_losing_recover
     extra = {"role": "user", "content": "Unsent first session change"}
     panel.chat._conversation.add_user(extra["content"])
 
-    panel._session_list.switch_session.emit(second.identity.value)
+    entered, release = Event(), Event()
+    read = chat_environment.commands.read_conversation
 
-    first_saved = chat_environment.repository.load(first).value.envelope.data
-    assert first_saved["history"] == [*backend, extra]
-    assert first_saved["messages"] == [*visible, extra]
-    assert first_saved["backend_summary"] == "Retained summary"
+    def blocking_read(*args):
+        entered.set()
+        assert release.wait(5)
+        return read(*args)
+
+    monkeypatch.setattr(chat_environment.commands, "read_conversation", blocking_read)
+    try:
+        panel._session_list.switch_session.emit(second.identity.value)
+        _until(entered.is_set)
+        assert panel._sessions.loading
+        assert not panel._workspace.ready()
+        assert chat_environment.lifecycle.active.aggregate.ref == first
+        assert panel.chat.recovery_snapshot()[0] == [*backend, extra]
+        first_saved = chat_environment.repository.load(first).value.envelope.data
+        assert first_saved["history"] == [*backend, extra]
+        assert first_saved["messages"] == [*visible, extra]
+        assert first_saved["backend_summary"] == "Retained summary"
+    finally:
+        release.set()
+    _until(lambda: panel._workspace.ready() and panel._current_session_id() == second.identity.value)
+    assert chat_environment.lifecycle.active.aggregate.ref == second
     assert panel.chat.recovery_snapshot()[0] == []
     panel.chat._conversation.add_user("Close must save this")
     panel.close()
@@ -220,6 +243,8 @@ def test_real_panel_switch_and_close_save_unsaved_history_without_losing_recover
     second_saved = chat_environment.repository.load(second).value.envelope.data
     assert second_saved["history"] == [{"role": "user", "content": "Close must save this"}]
     panel._session_list.switch_session.emit(first.identity.value)
+    _until(lambda: panel._workspace.ready() and panel._current_session_id() == first.identity.value)
+    assert chat_environment.lifecycle.active.aggregate.ref == first
     assert panel.chat.recovery_snapshot()[0] == [*backend, extra]
 
 

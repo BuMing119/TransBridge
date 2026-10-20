@@ -42,7 +42,8 @@ def test_same_chat_window_repaints_surfaces_and_keeps_draft(layout_app, chat_env
         lambda self, *args, **kwargs: original(self, *args, **kwargs, theme_view=theme_view),
     )
     panel = chat_environment.panel()
-    _until(lambda: panel.chat.session_ready)
+    # The initial asynchronous restore must finish before installing synthetic history.
+    _until(lambda: panel.chat.session_ready and panel._workspace.ready())
     panel.chat.load_history([{"role": "user", "content": "请检查本批合成译文。", "message_id": "one"}])
     panel.chat._input_view.set_text("保留尚未发送的补充说明")
     bubble = panel.chat._message_list._owned_widgets[0]

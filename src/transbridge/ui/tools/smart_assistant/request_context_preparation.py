@@ -11,6 +11,8 @@ from transbridge.application.assistant_requests.scheduler import ready_item_ids
 from transbridge.application.assistant_requests.summary_service import RequestSummaryService
 from transbridge.smart_assistant.request_model_input import RequestModelInput
 
+from .session_execution_access import execution_allowed
+
 logger = logging.getLogger(__name__)
 
 
@@ -41,7 +43,11 @@ class RequestContextPreparation:
 
         def active(expected):
             return (
-                not binding._closed and binding._active and binding.context == context and binding.admission == expected
+                not binding._closed
+                and binding._active
+                and binding.context == context
+                and binding.admission == expected
+                and execution_allowed(binding.facade)
             )
 
         def assemble(material):
@@ -176,6 +182,8 @@ class RequestContextPreparation:
     def _still_admitted(self, admission, context):
         """GUI delivery rechecks authority after expensive detached assembly."""
         binding = self.binding
+        if not execution_allowed(binding.facade):
+            return False
         try:
             binding.service.scheduler.validate(admission)
         except RequestError as exc:

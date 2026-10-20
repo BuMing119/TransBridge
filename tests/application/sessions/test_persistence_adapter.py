@@ -80,6 +80,19 @@ def test_legacy_owner_scope_is_rebound_to_request_but_never_claimed_full_recover
     assert loaded.recovery.value == "degraded"
     assert "owner_scope_inferred_from_request" in loaded.degradation_reasons
     assert "backend_history_missing" in loaded.degradation_reasons
+    assert repository.save_calls == []
+
+
+def test_explicit_owner_is_not_rebound_by_a_stale_legacy_diagnostic() -> None:
+    repository = _Repository(_snapshot())
+    repository.dto.envelope.data["degradation_reasons"] = ["owner_scope_missing"]
+    adapter = V2SessionSnapshotRepository(repository)
+
+    loaded = adapter.load(SessionRef(SessionId("session-a")), RequestContext("another-owner"))
+
+    assert loaded.owner.owner_id == "owner"
+    assert "owner_scope_inferred_from_request" not in loaded.degradation_reasons
+    assert repository.save_calls == []
 
 
 class _TransactionStore:

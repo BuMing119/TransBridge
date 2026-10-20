@@ -17,7 +17,9 @@ def test_composer_keyboard_order_menu_escape_and_send_shortcut(layout_app, chat_
     sent, stopped = [], []
     monkeypatch.setattr(ChatWidget, "_on_send", lambda self: sent.append(self._input.toPlainText()))
     panel = chat_environment.panel()
-    _until(lambda: panel.chat.session_ready)
+    # Session discovery is asynchronous. Let its controller restoration finish
+    # before entering the running state used to exercise the Tab order.
+    _until(lambda: panel.chat.session_ready and panel._workspace.ready() and not panel._sessions.directory.pending)
     panel.resize(720, 560)
     panel.show()
     panel.activateWindow()
@@ -25,7 +27,12 @@ def test_composer_keyboard_order_menu_escape_and_send_shortcut(layout_app, chat_
     view = panel.chat._input_view
     view.set_text("保留补充说明")
     view.configure_actions(stop=lambda: stopped.append(True), details=lambda: None)
-    view.set_running(True)
+    monkeypatch.setattr(panel.chat._controller, "_on_llm_round_start", lambda: None)
+    panel.chat._controller.handle_user_message("Keyboard navigation exercise")
+    # The periodic presenter derives composer state from the controller. Refresh
+    # it explicitly so the test does not depend on beating its 150 ms timer.
+    panel.chat._presentation.refresh()
+    assert view.stop_button.isVisible() and view.stop_button.isEnabled()
     settle_layout(layout_app)
 
     QTest.keyClick(view.input, Qt.Key.Key_Return)

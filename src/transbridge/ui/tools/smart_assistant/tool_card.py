@@ -17,6 +17,7 @@ class ToolCard(QWidget):
         super().__init__(parent)
         self._step = step
         self._pending = True
+        self._expired = False
         self._theme = theme or SmartAssistantTheme()
         self.setObjectName("ToolCard")
         self.setProperty("tbSurface", "card")
@@ -110,6 +111,7 @@ class ToolCard(QWidget):
         self.setAccessibleDescription("操作已中断跟进，结果待核对")
 
     def expire(self) -> None:
+        self._expired = True
         self._pending = False
         self._exec_btn.setEnabled(False)
         self._ignore_btn.setEnabled(False)
@@ -119,12 +121,27 @@ class ToolCard(QWidget):
     def _on_execute(self) -> None:
         if not self._pending:
             return
+        self.mark_executing()
+        self.executed.emit(self._step)
+
+    def mark_executing(self) -> None:
+        if self._expired:
+            return
         self._pending = False
         self._exec_btn.setEnabled(False)
         self._ignore_btn.setEnabled(False)
         self._exec_btn.setText("执行中...")
         self.setAccessibleDescription("工具执行中")
-        self.executed.emit(self._step)
+
+    def restore_pending(self) -> None:
+        """Keep a current proposal usable when switching its project was cancelled."""
+        if self._expired:
+            return
+        self._pending = True
+        self._exec_btn.setEnabled(True)
+        self._ignore_btn.setEnabled(True)
+        self._exec_btn.setText("执行")
+        self.setAccessibleDescription("等待选择执行或忽略")
 
     def _on_ignore(self) -> None:
         if not self._pending:
@@ -145,6 +162,7 @@ class BatchToolCard(QWidget):
         super().__init__(parent)
         self._steps = steps
         self._pending = True
+        self._expired = False
         self._theme = theme or SmartAssistantTheme()
         self.setObjectName("BatchToolCard")
         self.setProperty("tbSurface", "card")
@@ -201,6 +219,7 @@ class BatchToolCard(QWidget):
         theme.apply_semantic(self._skip_btn, "muted", background=True)
 
     def expire(self) -> None:
+        self._expired = True
         self._pending = False
         self._exec_btn.setEnabled(False)
         self._skip_btn.setEnabled(False)
@@ -244,12 +263,27 @@ class BatchToolCard(QWidget):
     def _on_execute(self) -> None:
         if not self._pending:
             return
+        self.mark_executing()
+        self.all_executed.emit(self._steps)
+
+    def mark_executing(self) -> None:
+        if self._expired:
+            return
         self._pending = False
         self._exec_btn.setEnabled(False)
         self._skip_btn.setEnabled(False)
         self._exec_btn.setText("执行中...")
         self.setAccessibleDescription("批量工具执行中")
-        self.all_executed.emit(self._steps)
+
+    def restore_pending(self) -> None:
+        """Keep a current proposal usable when switching its project was cancelled."""
+        if self._expired:
+            return
+        self._pending = True
+        self._exec_btn.setEnabled(True)
+        self._skip_btn.setEnabled(True)
+        self._exec_btn.setText("全部执行")
+        self.setAccessibleDescription("等待选择全部执行或跳过")
 
     def _on_ignore(self) -> None:
         if not self._pending:

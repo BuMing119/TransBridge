@@ -4,13 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from contextlib import nullcontext
-from dataclasses import replace
 from threading import RLock
 from typing import Protocol, runtime_checkable
 
 from transbridge.application.contracts import DomainError, ErrorCategory, RequestContext
-from transbridge.application.sessions.models import RecoveryStatus, SessionSnapshot
-from transbridge.application.tasks.models import OwnerRef
+from transbridge.application.sessions.legacy_owner import session_snapshot_for_context
+from transbridge.application.sessions.models import SessionSnapshot
 
 from .v2.ids import SessionRef
 from .v2.models import LoadedRecord, SessionDto
@@ -34,26 +33,7 @@ class V2SessionSnapshotRepository:
                     "SESSION_RECORD_UNAVAILABLE",
                     "The Session record is unavailable or read-only.",
                 )
-            snapshot = SessionSnapshot.from_dto(result.value, ref)
-            if "owner_scope_missing" in snapshot.degradation_reasons:
-                owner = OwnerRef(
-                    context.owner_id,
-                    "legacy-session-migration",
-                    None if snapshot.project_id is None else snapshot.project_id.value,
-                    None if snapshot.variant_id is None else snapshot.variant_id.value,
-                    snapshot.ref.identity.value,
-                    context.permissions,
-                )
-                snapshot = replace(
-                    snapshot,
-                    owner=owner,
-                    recovery=RecoveryStatus.DEGRADED,
-                    degradation_reasons=tuple(
-                        reason for reason in snapshot.degradation_reasons if reason != "owner_scope_missing"
-                    )
-                    + ("owner_scope_inferred_from_request",),
-                )
-            return snapshot
+            return session_snapshot_for_context(result.value, ref, context)
 
     def save(
         self,

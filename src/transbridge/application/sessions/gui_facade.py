@@ -16,14 +16,19 @@ from transbridge.application.contracts import (
 )
 from transbridge.application.tasks.models import TERMINAL_STATES, OwnerRef
 from transbridge.persistence.v2.ids import ProjectId, SessionId, SessionRef, VariantId
+from transbridge.persistence.v2.models import SessionDto
 from transbridge.persistence.v2.session_catalog import SessionCatalogEntry, SessionCatalogRepository
 
+from .legacy_owner import session_snapshot_for_context
 from .lifecycle import SessionLifecycleService
 from .models import ControllerSnapshot, RecoveryStatus, SessionJobRef, SessionSnapshot
+from .scope_cache import SessionScopeCache
 
 
 class SessionCreateRepositoryPort(Protocol):
     def save(self, ref: SessionRef, value): ...
+
+    def read_snapshot(self, ref: SessionRef) -> SessionDto: ...
 
 
 class GuiSessionCommandFacade:
@@ -42,6 +47,7 @@ class GuiSessionCommandFacade:
         self._catalog = catalog
         self._id_factory = id_factory
         self._timestamp_factory = timestamp_factory
+        self._scope_cache = SessionScopeCache(repository, self._read_snapshot)
         self.assistant_requests = assistant_requests
 
     def create_and_activate(
@@ -86,6 +92,8 @@ class GuiSessionCommandFacade:
                     now,
                     0,
                     snapshot.recovery.value,
+                    context.project_id,
+                    context.variant_id,
                 )
             )
         except Exception as exc:  # noqa: BLE001
@@ -107,6 +115,35 @@ class GuiSessionCommandFacade:
         if result.is_success:
             self._upsert_active_catalog()
         return result
+
+    def read_conversation(self, ref: SessionRef, context: RequestContext) -> OperationResult[dict[str, Any]]:
+        """Preview owned history without activating, reconciling or writing its Session.
+
+        The workspace scope deliberately does not constrain browsing. All displayed
+        scope and execution state come from the target record; callers must activate
+        the matching workspace and Session before using any execution controls.
+        """
+        from transbridge.application.projections.adapters import session_projection
+
+        try:
+            snapshot = self._read_snapshot(ref, context)
+            if snapshot.owner.owner_id != context.owner_id:
+                raise DomainError(
+                    ErrorCategory.PERMISSION, "SESSION_OWNER_MISMATCH", "The Session belongs to another owner."
+                )
+            projection = session_projection(snapshot)
+            values = projection.to_dict()["values"]
+            if values["assistant_state"].get("request_archives"):
+                from transbridge.application.assistant_requests.archival import hydrate_request_state
+
+                values["assistant_state"] = hydrate_request_state(
+                    values["assistant_state"],
+                    ref.identity.value,
+                    getattr(self.assistant_requests, "transcript_store", None),
+                )
+            return OperationResult.completed(values, run_id=context.run_id)
+        except Exception as exc:
+            return OperationResult.from_exception(exc, run_id=context.run_id)
 
     def save_conversation(
         self,
@@ -160,16 +197,44 @@ class GuiSessionCommandFacade:
         return self._lifecycle
 
     def list_sessions(self) -> list[dict[str, Any]]:
-        return [
-            {
+        rows = []
+        entries = self._catalog.list()
+        self._scope_cache.retain({item.session_id for item in entries})
+        for item in entries:
+            row = {
                 "session_id": item.session_id,
                 "name": item.name,
                 "last_active_at": item.last_active_at,
                 "message_count": item.message_count,
                 "recovery": item.recovery,
+                "project_id": None,
+                "variant_id": None,
+                "available": True,
             }
-            for item in self._catalog.list()
-        ]
+            try:
+                project_id, variant_id = self._scope_cache.read(SessionRef(SessionId(item.session_id)))
+                row.update({"project_id": project_id, "variant_id": variant_id})
+            except DomainError as exc:
+                row.update({"available": False, "read_error": str(exc)})
+            rows.append(row)
+        return rows
+
+    def _read_snapshot(self, ref: SessionRef, context: RequestContext | None = None) -> SessionSnapshot:
+        try:
+            # load() may migrate or quarantine a record. Browsing must never write.
+            dto = self._repository.read_snapshot(ref)
+            return (
+                SessionSnapshot.from_dto(dto, ref)
+                if context is None
+                else session_snapshot_for_context(dto, ref, context)
+            )
+        except Exception as exc:
+            raise DomainError(
+                ErrorCategory.PREREQUISITE,
+                "SESSION_RECORD_UNAVAILABLE",
+                "The Session record cannot be read. Restore or repair its saved conversation before continuing.",
+                cause=exc,
+            ) from exc
 
     def rename(self, ref: SessionRef, name: str, context: RequestContext) -> OperationResult[dict[str, Any]]:
         """Keep the list metadata and authoritative conversation name consistent."""
@@ -217,6 +282,8 @@ class GuiSessionCommandFacade:
                 snapshot.last_active_at,
                 len(snapshot.messages),
                 snapshot.recovery.value,
+                None if snapshot.project_id is None else snapshot.project_id.value,
+                None if snapshot.variant_id is None else snapshot.variant_id.value,
             )
         )
 

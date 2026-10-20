@@ -38,20 +38,20 @@ INPUT_STRUCTURE_STYLE = (
 )
 PANEL_STRUCTURE_STYLE = "QDockWidget#SmartAssistantPanel { border: none; background-color: palette(base); }"
 HEADER_STRUCTURE_STYLE = (
-    "QFrame#smartAssistantHeader { border: 1px solid palette(mid); background-color: palette(alternate-base); }"
-)
-BODY_STRUCTURE_STYLE = (
-    "QFrame#smartAssistantBody { border: 1px solid palette(mid); border-top: none; background-color: palette(base); }"
-)
-SIDEBAR_STRUCTURE_STYLE = (
-    "QWidget#smartAssistantSessions { border: none; border-right: 1px solid palette(mid); "
+    "QFrame#smartAssistantHeader { border: none; border-bottom: 1px solid palette(mid); "
     "background-color: palette(alternate-base); }"
 )
+BODY_STRUCTURE_STYLE = "QFrame#smartAssistantBody { border: none; background-color: palette(base); }"
+SIDEBAR_STRUCTURE_STYLE = "QWidget#smartAssistantSessions { border: none; border-right: 1px solid palette(mid); }"
 SESSION_ROW_STRUCTURE_STYLE = (
-    "QFrame#smartAssistantSession { border: 1px solid palette(mid); border-left: 3px solid transparent; "
-    "border-radius: 6px; background-color: palette(base); }"
-    'QFrame#smartAssistantSession[active="true"] { border-left-color: palette(link); }'
+    "QFrame#smartAssistantSession { border: 1px solid transparent; border-radius: 8px; }"
     "QFrame#smartAssistantSession:focus { border-color: palette(link); }"
+)
+SIDEBAR_BUTTON_STYLE = (
+    "QPushButton, QToolButton { border: 1px solid transparent; border-radius: 6px; "
+    "padding: 0; background: transparent; color: palette(button-text); }"
+    "QPushButton:hover, QToolButton:hover { background: palette(light); }"
+    "QPushButton:focus, QToolButton:focus { border-color: palette(link); }"
 )
 CONTEXT_STRUCTURE_STYLE = (
     "QFrame#smartAssistantContext { border: none; border-bottom: 1px solid palette(mid); "
@@ -201,6 +201,45 @@ class SmartAssistantTheme:
             BUTTON_STRUCTURE_STYLE + compile_control_visual_styles(definition) + "QPushButton { padding: 4px 8px; }"
         )
         ComponentStyle.apply_state(widget, SemanticState.PRIMARY)
+
+    def apply_navigation_item(self, widget: QWidget, *, selected: bool = False, hovered: bool = False) -> None:
+        """Give navigation selection its own fill while retaining the sidebar's neutral surface."""
+        app = QApplication.instance()
+        palette = QPalette(self._snapshot.palette if self._snapshot else app.palette() if app else widget.palette())
+        neutral = (
+            qcolor(self._snapshot.tokens.semantic.surface_alt)
+            if self._snapshot
+            else palette.color(QPalette.ColorRole.AlternateBase)
+        )
+        background = (
+            palette.color(QPalette.ColorRole.Highlight)
+            if selected
+            else palette.color(QPalette.ColorRole.Light)
+            if hovered
+            else neutral
+        )
+        for role in (QPalette.ColorRole.Base, QPalette.ColorRole.Window, QPalette.ColorRole.Button):
+            palette.setColor(role, background)
+        widget.setPalette(palette)
+        widget.setStyleSheet(
+            SESSION_ROW_STRUCTURE_STYLE + f"QFrame#smartAssistantSession {{ background-color: {background.name()}; }}"
+        )
+        widget.update()
+
+    def apply_session_sidebar(self, widget: QWidget) -> None:
+        self.apply_surface(widget, alternate=True)
+        background = widget.palette().color(QPalette.ColorRole.Base).name()
+        widget.setStyleSheet(
+            SIDEBAR_STRUCTURE_STYLE + f"QWidget#smartAssistantSessions {{ background-color: {background}; }}"
+        )
+
+    def apply_scope_notice(self, widget: QWidget) -> None:
+        self.apply_surface(widget, alternate=True)
+        background = widget.palette().color(QPalette.ColorRole.Base).name()
+        widget.setStyleSheet(
+            "QFrame#sessionScopeNotice { border: none; border-radius: 8px; "
+            f"background-color: {background}; }} QLabel {{ border: none; background: transparent; }}"
+        )
 
     def apply_semantic(self, widget: QWidget, state: str, *, background: bool = False) -> None:
         widget.setProperty("tbSemanticState", state)

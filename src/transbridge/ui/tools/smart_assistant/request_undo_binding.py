@@ -8,6 +8,7 @@ from transbridge.application.assistant_requests.models import RequestError
 from transbridge.application.assistant_requests.result_review import describe_undo_scope
 
 from .operation_preview import operation_name
+from .session_execution_access import ensure_execution, execution_allowed
 
 
 class RequestUndoBinding:
@@ -108,6 +109,8 @@ class RequestUndoBinding:
         binding.background.submit(read, received, context=target[0], failed=lambda exc: self._failed(target, exc))
 
     def request(self, request_id=None):
+        if not ensure_execution(self.binding.facade, "撤销本轮修改", lambda: self.request(request_id)):
+            return
         if request_id is not None:
             self._select_request(request_id, clicked=True)
             return
@@ -168,6 +171,8 @@ class RequestUndoBinding:
 
     def _undo(self, target, round_id, *, allow_partial):
         binding = self.binding
+        if not self._current(target) or not execution_allowed(binding.facade):
+            return
         cancelled = self._cancelled
         self._previewing = True
         binding.view.show_undo("正在撤销已核验的本轮修改。", available=False)
@@ -186,7 +191,7 @@ class RequestUndoBinding:
             binding.refresh()
 
         def apply():
-            if cancelled.is_set():
+            if cancelled.is_set() or not execution_allowed(binding.facade):
                 raise RequestError("UNDO_VIEW_CHANGED", "视图已切换，尚未执行的撤销已取消")
             result = binding.service.undo.undo(target[0], round_id, allow_partial=allow_partial)
             from transbridge.persistence.v2.ids import SessionId, SessionRef

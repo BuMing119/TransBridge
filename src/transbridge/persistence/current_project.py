@@ -116,6 +116,8 @@ class CurrentProjectOpener:
         self,
         path: str | os.PathLike[str],
         context: RequestContext,
+        *,
+        target_variant_id: str | None = None,
     ) -> OperationResult[PreparedCurrentProject]:
         """Perform file I/O and source parsing without mutating active GUI state."""
 
@@ -145,12 +147,18 @@ class CurrentProjectOpener:
                     "项目记录不可用或为只读状态。",
                     cause=exc,
                 ) from exc
-            variant_id = project.envelope.data.get("active_variant_id")
+            variant_id = target_variant_id or project.envelope.data.get("active_variant_id")
             if not isinstance(variant_id, str) or not variant_id:
                 raise DomainError(
                     ErrorCategory.PREREQUISITE,
                     "ACTIVE_VARIANT_REQUIRED",
                     "项目没有活动版本。",
+                )
+            if target_variant_id is not None and target_variant_id not in project.envelope.data.get("variant_ids", ()):
+                raise DomainError(
+                    ErrorCategory.PREREQUISITE,
+                    "PROJECT_VARIANT_UNAVAILABLE",
+                    "此对话绑定的版本已不存在或不属于该工程，请选择仍可用的工程版本。",
                 )
             variant_ref = VariantRef(VariantId(variant_id), project_ref.identity)
             if not Path(self._variants.path_for(variant_ref)).exists():
@@ -266,6 +274,21 @@ class CurrentProjectOpener:
                 diagnostics=tuple(source_diagnostics),
                 run_id=context.run_id,
             )
+        except Exception as exc:
+            return OperationResult.from_exception(exc, run_id=context.run_id)
+
+    def prepare_identity(
+        self,
+        project_id: str,
+        variant_id: str,
+        context: RequestContext,
+    ) -> OperationResult[PreparedCurrentProject]:
+        """Prepare one exact Project/Variant without opening an intermediate version."""
+
+        try:
+            project_ref = ProjectRef(ProjectId(project_id))
+            VariantId(variant_id)
+            return self.prepare_path(self._projects.path_for(project_ref), context, target_variant_id=variant_id)
         except Exception as exc:
             return OperationResult.from_exception(exc, run_id=context.run_id)
 

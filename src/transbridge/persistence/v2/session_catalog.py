@@ -9,7 +9,7 @@ import os
 from threading import RLock
 
 from .filesystem import PersistenceFilesystemPort
-from .ids import SessionId
+from .ids import ProjectId, SessionId, VariantId
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,6 +19,8 @@ class SessionCatalogEntry:
     last_active_at: str
     message_count: int
     recovery: str
+    project_id: str | None = None
+    variant_id: str | None = None
 
     def __post_init__(self) -> None:
         SessionId(self.session_id)
@@ -26,6 +28,12 @@ class SessionCatalogEntry:
             raise ValueError("Session catalog name and timestamp must not be empty")
         if self.message_count < 0:
             raise ValueError("Session catalog message count must not be negative")
+        if self.project_id is not None:
+            ProjectId(self.project_id)
+        if self.variant_id is not None:
+            VariantId(self.variant_id)
+            if self.project_id is None:
+                raise ValueError("Session catalog Variant scope requires a Project scope")
 
 
 class SessionCatalogRepository:

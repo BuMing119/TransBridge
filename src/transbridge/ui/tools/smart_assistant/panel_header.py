@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QPoint, QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QMouseEvent
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSizePolicy, QWidget
 
 from transbridge.smart_assistant.service_readiness import ServiceAvailability
 from transbridge.ui.foundation.components import ElidedLabel
 from transbridge.ui.foundation.tabler_icons import tabler_icon
 
-from .theme_support import HEADER_STRUCTURE_STYLE, QUIET_BUTTON_STYLE, SmartAssistantTheme
+from .theme_support import HEADER_STRUCTURE_STYLE, SmartAssistantTheme
 
 
 class _HeaderSummary(QWidget):
@@ -43,26 +41,26 @@ class _HeaderSummary(QWidget):
 
 
 class AssistantPanelHeader(QFrame):
-    """Custom QDockWidget title bar with truthful application state."""
-
-    close_requested = pyqtSignal()
-    minimize_requested = pyqtSignal()
+    """Session and model summary inside the native window's client area."""
 
     def __init__(self, *, theme: SmartAssistantTheme | None = None) -> None:
         super().__init__()
         self._theme = theme or SmartAssistantTheme()
         self._model_configured = False
         self._service_availability = ServiceAvailability("", False)
-        self._drag_global_origin: QPoint | None = None
-        self._drag_window_origin: QPoint | None = None
         self.setObjectName("smartAssistantHeader")
         self.setStyleSheet(HEADER_STRUCTURE_STYLE)
-        self.setAccessibleName("智能助手标题栏")
+        self.setAccessibleName("会话与模型信息")
         self.setFixedHeight(44)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(14, 6, 8, 6)
         layout.setSpacing(8)
+        self._identity = QLabel()
+        self._identity.setFixedSize(20, 20)
+        self._identity.setAccessibleName("智能助手")
+        self._identity.setToolTip("智能助手")
+        layout.addWidget(self._identity)
         self._title = ElidedLabel("新对话")
         self._title.setAccessibleName("当前会话")
         self._title.setStyleSheet("QLabel { font-weight: 600; }")
@@ -73,21 +71,6 @@ class AssistantPanelHeader(QFrame):
         self._model.setMaximumWidth(220)
         layout.addWidget(self._model, 1)
 
-        self._minimize_button = QPushButton()
-        self._minimize_button.setAccessibleName("最小化智能助手")
-        self._minimize_button.setToolTip("最小化")
-        self._minimize_button.setFixedSize(32, 32)
-        self._minimize_button.setStyleSheet(QUIET_BUTTON_STYLE + "QPushButton { padding: 0; }")
-        self._minimize_button.clicked.connect(self.minimize_requested)
-        layout.addWidget(self._minimize_button)
-
-        self._close_button = QPushButton()
-        self._close_button.setAccessibleName("关闭智能助手")
-        self._close_button.setToolTip("关闭")
-        self._close_button.setFixedSize(32, 32)
-        self._close_button.setStyleSheet(QUIET_BUTTON_STYLE + "QPushButton { padding: 0; }")
-        self._close_button.clicked.connect(self.close_requested)
-        layout.addWidget(self._close_button)
         self.apply_theme(self._theme)
 
     def set_model_name(self, model_name: str) -> None:
@@ -119,6 +102,8 @@ class AssistantPanelHeader(QFrame):
 
     def set_session_name(self, name: str) -> None:
         title = name.strip() or "新对话"
+        if title == "New conversation":
+            title = "新对话"
         self._title.set_full_text(title)
         self._title.setToolTip(title)
         self._title.setAccessibleDescription(title)
@@ -127,48 +112,9 @@ class AssistantPanelHeader(QFrame):
         self._theme = theme
         theme.apply_surface(self, alternate=True)
         theme.apply_semantic(self._title, "default")
+        theme.apply_semantic(self._identity, "primary")
+        self._identity.setPixmap(tabler_icon(self._identity, "sparkles", 20).pixmap(20, 20))
         self._model.apply_theme(theme)
-        for button in (self._minimize_button, self._close_button):
-            theme.apply_semantic(button, "muted")
-        self._minimize_button.setIcon(tabler_icon(self._minimize_button, "minus", 17))
-        self._minimize_button.setIconSize(QSize(17, 17))
-        self._close_button.setIcon(tabler_icon(self._close_button, "x", 18))
-        self._close_button.setIconSize(QSize(18, 18))
-
-    def mousePressEvent(self, event: QMouseEvent) -> None:
-        dock = self.parentWidget()
-        if event.button() == Qt.MouseButton.LeftButton and dock is not None and dock.isFloating():
-            self._drag_global_origin = event.globalPosition().toPoint()
-            self._drag_window_origin = dock.pos()
-            event.accept()
-            return
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        dock = self.parentWidget()
-        if (
-            dock is not None
-            and dock.isFloating()
-            and self._drag_global_origin is not None
-            and self._drag_window_origin is not None
-            and event.buttons() & Qt.MouseButton.LeftButton
-        ):
-            dock.move(self._drag_window_origin + event.globalPosition().toPoint() - self._drag_global_origin)
-            event.accept()
-            return
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        self._drag_global_origin = None
-        self._drag_window_origin = None
-        super().mouseReleaseEvent(event)
-
-    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            # The assistant is an overlay, never a layout-consuming dock.
-            event.accept()
-            return
-        super().mouseDoubleClickEvent(event)
 
 
 __all__ = ["AssistantPanelHeader"]

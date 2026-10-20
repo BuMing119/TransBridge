@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from time import monotonic
+
 from PyQt6.QtCore import QEvent
+from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QInputDialog, QWidget
 import pytest
 
@@ -11,6 +14,14 @@ from transbridge.smart_assistant.service_readiness import ServiceAvailability
 from transbridge.ui.tools.smart_assistant import panel as module
 
 _APP = QApplication.instance() or QApplication([])
+
+
+def _until(predicate):
+    deadline = monotonic() + 5
+    while not predicate() and monotonic() < deadline:
+        _APP.processEvents()
+        QTest.qWait(5)
+    assert predicate()
 
 
 class _Chat(QWidget):
@@ -54,7 +65,7 @@ def panel_services(tmp_path, monkeypatch):
     panel = module.SmartAssistantPanel(
         object(), session_commands=commands, session_projection=projection, runtime_context=RequestContext("owner")
     )
-    _APP.processEvents()
+    _until(panel._workspace.ready)
     yield panel, commands, lifecycle, repository
     panel.dispose()
     panel.deleteLater()
@@ -87,6 +98,7 @@ def test_delete_menu_switches_to_existing_or_new_session(panel_services, with_ot
     panel.chat.messages = [{"role": "user", "content": "deleted conversation"}]
 
     panel._session_list.delete_session.emit(target.identity.value)
+    _until(lambda: panel._workspace.ready() and panel._current_session_id() != target.identity.value)
 
     assert lifecycle.active is not None
     current = lifecycle.active.aggregate.ref
@@ -147,4 +159,10 @@ def test_production_save_updates_default_name_in_sidebar(panel_services):
     assert panel._persist_authoritative_chat()
     session = commands.list_sessions()[0]
     assert session["name"] == "核对角色名称是否一致"
+    _until(
+        lambda: (
+            session["session_id"] in panel._session_list._rows
+            and panel._session_list._rows[session["session_id"]].name == session["name"]
+        )
+    )
     assert panel._session_list._rows[session["session_id"]].name == session["name"]

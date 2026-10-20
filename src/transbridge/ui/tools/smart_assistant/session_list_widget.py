@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QEnterEvent
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -20,155 +16,15 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from transbridge.ui.foundation.components import ElidedLabel
 from transbridge.ui.foundation.tabler_icons import tabler_icon
 
+from .session_groups import SessionGroup
+from .session_row import SessionRow, session_display_name
 from .theme_support import (
-    BUTTON_STRUCTURE_STYLE,
-    SESSION_ROW_STRUCTURE_STYLE,
+    SIDEBAR_BUTTON_STYLE,
     SIDEBAR_STRUCTURE_STYLE,
-    TRANSPARENT_STRUCTURE_STYLE,
     SmartAssistantTheme,
 )
-
-
-class _SessionRow(QFrame):
-    clicked = pyqtSignal(str)
-    delete_requested = pyqtSignal(str)
-    rename_requested = pyqtSignal(str, str)
-    move_requested = pyqtSignal(str, int)
-
-    def __init__(
-        self,
-        session_meta: dict,
-        is_active: bool = False,
-        parent=None,
-        *,
-        theme: SmartAssistantTheme | None = None,
-    ):
-        super().__init__(parent)
-        self._theme = theme or SmartAssistantTheme()
-        self._sid = session_meta["session_id"]
-        self.name = str(session_meta.get("name", "未命名"))
-        self._is_active = is_active
-        self._hovered = False
-        self.setFixedHeight(84)
-        self.setObjectName("smartAssistantSession")
-        self.setStyleSheet(SESSION_ROW_STRUCTURE_STYLE)
-        self.setProperty("tbSurface", "card")
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setMouseTracking(True)
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 10, 8, 10)
-        layout.setSpacing(8)
-        text_layout = QVBoxLayout()
-        text_layout.setSpacing(4)
-        name = self.name
-        self._name_label = ElidedLabel(name)
-        self._name_label.setToolTip(name)
-        self._name_label.setStyleSheet(TRANSPARENT_STRUCTURE_STYLE + "font-weight: 600;")
-        count = session_meta.get("message_count", 0)
-        self._sub_label = QLabel(f"{count} 条消息 · {self._format_time(session_meta.get('last_active_at', ''))}")
-        self._sub_label.setStyleSheet(TRANSPARENT_STRUCTURE_STYLE)
-        text_layout.addWidget(self._name_label)
-        text_layout.addWidget(self._sub_label)
-        layout.addLayout(text_layout, 1)
-        self._menu_btn = QPushButton()
-        self._menu_btn.setAccessibleName(f"会话 {name} 的更多操作")
-        self._menu_btn.setFixedSize(26, 26)
-        self._menu_btn.setStyleSheet(BUTTON_STRUCTURE_STYLE)
-        self._menu_btn.setToolTip("会话操作（F2 重命名，Delete 删除）")
-        self._menu_btn.clicked.connect(self._on_menu)
-        layout.addWidget(self._menu_btn)
-        self.apply_theme(self._theme)
-
-    def apply_theme(self, theme: SmartAssistantTheme) -> None:
-        self._theme = theme
-        if self.property("active") != self._is_active:
-            self.setProperty("active", self._is_active)
-            self.style().unpolish(self)
-            self.style().polish(self)
-        self.setProperty("hovered", self._hovered)
-        theme.apply_surface(self, alternate=self._is_active or self._hovered or self.hasFocus())
-        theme.apply_semantic(self._name_label, "default")
-        theme.apply_semantic(self._sub_label, "muted")
-        theme.apply_semantic(self._menu_btn, "muted", background=True)
-        self._menu_btn.setIcon(tabler_icon(self._menu_btn, "dots", 15))
-        status = "当前会话" if self._is_active else "会话"
-        self.setAccessibleName(f"{status}：{self.name}")
-        self.setAccessibleDescription(self._sub_label.text())
-
-    def enterEvent(self, event: QEnterEvent | None) -> None:
-        self._hovered = True
-        self.apply_theme(self._theme)
-        super().enterEvent(event)
-
-    def leaveEvent(self, event) -> None:
-        self._hovered = False
-        self.apply_theme(self._theme)
-        super().leaveEvent(event)
-
-    def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit(self._sid)
-        super().mousePressEvent(event)
-
-    def keyPressEvent(self, event) -> None:
-        key = event.key()
-        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
-            self.clicked.emit(self._sid)
-        elif key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
-            self.move_requested.emit(self._sid, -1 if key == Qt.Key.Key_Up else 1)
-        elif key == Qt.Key.Key_F2:
-            self.rename_requested.emit(self._sid, self.name)
-        elif key == Qt.Key.Key_Delete:
-            self.delete_requested.emit(self._sid)
-        elif key == Qt.Key.Key_Menu or (
-            key == Qt.Key.Key_F10 and event.modifiers() & Qt.KeyboardModifier.ShiftModifier
-        ):
-            self._on_menu()
-        else:
-            super().keyPressEvent(event)
-            return
-        event.accept()
-
-    def focusInEvent(self, event) -> None:
-        self.apply_theme(self._theme)
-        super().focusInEvent(event)
-
-    def focusOutEvent(self, event) -> None:
-        self.apply_theme(self._theme)
-        super().focusOutEvent(event)
-
-    def _on_menu(self) -> None:
-        menu = QMenu(self)
-        rename_action = menu.addAction("重命名")
-        menu.addSeparator()
-        delete_action = menu.addAction("删除")
-        action = menu.exec(self._menu_btn.mapToGlobal(self._menu_btn.rect().bottomLeft()))
-        if action == rename_action:
-            self.rename_requested.emit(self._sid, self.name)
-        elif action == delete_action:
-            self.delete_requested.emit(self._sid)
-
-    def set_active(self, active: bool) -> None:
-        self._is_active = active
-        self.apply_theme(self._theme)
-
-    @staticmethod
-    def _format_time(iso_str: str) -> str:
-        if not iso_str:
-            return ""
-        try:
-            date_part, time_part = iso_str[:10], iso_str[11:16]
-            return (
-                f"今天 {time_part}"
-                if date_part == datetime.now().strftime("%Y-%m-%d")
-                else f"{date_part[5:]} {time_part}"
-            )
-        except (ValueError, IndexError):
-            return iso_str[:16]
 
 
 class SessionListWidget(QWidget):
@@ -184,7 +40,11 @@ class SessionListWidget(QWidget):
         self._theme = theme or SmartAssistantTheme()
         self._collapsed = False
         self._active_sid: str | None = None
-        self._rows: dict[str, _SessionRow] = {}
+        self._rows: dict[str, SessionRow] = {}
+        self._groups: dict[str | None, SessionGroup] = {}
+        self._expanded_projects: dict[str | None, bool] = {}
+        self._workbench_project_id: str | None = None
+        self._workbench_variant_id: str | None = None
         self._session_data: list[dict] = []
         self.setAccessibleName("会话列表")
         self.setObjectName("smartAssistantSessions")
@@ -213,8 +73,8 @@ class SessionListWidget(QWidget):
         self._add_btn = QPushButton()
         self._add_btn.setAccessibleName("新建会话")
         for button in (self._search_btn, self._add_btn):
-            button.setFixedSize(24, 24)
-            button.setStyleSheet(BUTTON_STRUCTURE_STYLE)
+            button.setFixedSize(28, 28)
+            button.setStyleSheet(SIDEBAR_BUTTON_STYLE)
             header_layout.addWidget(button)
         self._search_btn.clicked.connect(self._toggle_search)
         self._add_btn.clicked.connect(self._on_create)
@@ -233,6 +93,7 @@ class SessionListWidget(QWidget):
             button.setAccessibleName(label)
             button.setToolTip(label)
             button.setFixedSize(36, 36)
+            button.setStyleSheet(SIDEBAR_BUTTON_STYLE)
             compact_layout.addWidget(button)
         compact_layout.addStretch(1)
         self.compact_add_button.clicked.connect(self._on_create)
@@ -256,7 +117,7 @@ class SessionListWidget(QWidget):
         self._list_container = QWidget()
         self._list_layout = QVBoxLayout(self._list_container)
         self._list_layout.setContentsMargins(10, 8, 10, 8)
-        self._list_layout.setSpacing(10)
+        self._list_layout.setSpacing(16)
         self._list_layout.addStretch()
         self._scroll.setWidget(self._list_container)
         main_layout.addWidget(self._scroll, 1)
@@ -264,18 +125,23 @@ class SessionListWidget(QWidget):
         self._toggle_btn = QPushButton("收起侧栏")
         self._toggle_btn.setAccessibleName("折叠会话列表")
         self._toggle_btn.setFixedHeight(42)
-        self._toggle_btn.setStyleSheet(BUTTON_STRUCTURE_STYLE)
+        self._toggle_btn.setStyleSheet(SIDEBAR_BUTTON_STYLE)
         self._toggle_btn.clicked.connect(self._toggle)
-        main_layout.addWidget(self._toggle_btn)
+        footer = QVBoxLayout()
+        footer.setContentsMargins(8, 6, 8, 8)
+        footer.addWidget(self._toggle_btn)
+        main_layout.addLayout(footer)
 
     def apply_theme(self, theme: SmartAssistantTheme) -> None:
         self._theme = theme
-        for widget in (self, self._header, self._scroll, self._list_container):
+        theme.apply_session_sidebar(self)
+        for widget in (self._header, self._scroll, self._list_container):
             theme.apply_surface(widget, alternate=True)
         theme.apply_surface(self._search_input)
         theme.apply_semantic(self._title, "default")
         for button in (self._search_btn, self._add_btn, self._toggle_btn):
-            theme.apply_semantic(button, "muted", background=True)
+            theme.apply_semantic(button, "muted")
+            button.setAutoFillBackground(False)
         self._search_btn.setIcon(tabler_icon(self._search_btn, "search", 15))
         self._add_btn.setIcon(tabler_icon(self._add_btn, "plus", 15))
         for button, icon_name in (
@@ -288,9 +154,22 @@ class SessionListWidget(QWidget):
         self._toggle_btn.setIcon(tabler_icon(self._toggle_btn, collapse_icon, 15))
         for row in self._rows.values():
             row.apply_theme(theme)
+        for group in self._groups.values():
+            group.apply_theme(theme)
 
     def set_sessions(self, sessions: list[dict]) -> None:
         self._session_data = list(sessions)
+        self._rebuild_rows(self._filtered_sessions())
+
+    def set_workbench(self, project_id: str | None, variant_id: str | None) -> None:
+        """Update the execution scope independently of the conversation being browsed."""
+        if (project_id, variant_id) == (self._workbench_project_id, self._workbench_variant_id):
+            return
+        project_changed = project_id != self._workbench_project_id
+        self._workbench_project_id = project_id
+        self._workbench_variant_id = variant_id
+        if project_changed:
+            self._expanded_projects[project_id] = True
         self._rebuild_rows(self._filtered_sessions())
 
     def _rebuild_rows(self, sessions: list[dict]) -> None:
@@ -302,29 +181,69 @@ class SessionListWidget(QWidget):
             ),
             None,
         )
-        for row in self._rows.values():
-            row.deleteLater()
+        focused_group = next((pid for pid, group in self._groups.items() if group.header.hasFocus()), None)
+        group_had_focus = any(group.header.hasFocus() for group in self._groups.values())
         self._rows.clear()
+        self._groups.clear()
         while self._list_layout.count() > 1:
             item = self._list_layout.takeAt(0)
             if item.widget():
+                item.widget().hide()
                 item.widget().deleteLater()
+        grouped: dict[str | None, list[dict]] = {}
+        for meta in sessions:
+            grouped.setdefault(meta.get("project_id"), []).append(meta)
+        ordered = sorted(grouped, key=lambda pid: (pid != self._workbench_project_id, pid is None))
+        searching = bool(self._search_input.text().strip())
+        for project_id in ordered:
+            metadata = grouped[project_id]
+            name = next((str(meta["project_name"]) for meta in metadata if meta.get("project_name")), project_id)
+            group = SessionGroup(
+                project_id,
+                name or "未归属对话",
+                len(metadata),
+                current=project_id is not None and project_id == self._workbench_project_id,
+                expanded=searching or self._expanded_projects.get(project_id, project_id == self._workbench_project_id),
+                theme=self._theme,
+            )
+            group.expansion_changed.connect(self._remember_expansion)
+            self._groups[project_id] = group
+            self._list_layout.insertWidget(self._list_layout.count() - 1, group)
+            self._add_rows(group, metadata)
+            group.show()
+        if focused is not None and focused[0] in self._rows:
+            row = self._rows[focused[0]]
+            if not row.parentWidget().isHidden():
+                row.show()
+                (row._menu_btn if focused[1] else row).setFocus()
+        elif group_had_focus and focused_group in self._groups:
+            self._groups[focused_group].header.setFocus()
+
+    def _add_rows(self, group: SessionGroup, sessions: list[dict]) -> None:
         for meta in sessions:
             sid = meta["session_id"]
-            row = _SessionRow(meta, is_active=sid == self._active_sid, theme=self._theme)
+            outside_workbench = (meta.get("project_id"), meta.get("variant_id")) != (
+                self._workbench_project_id,
+                self._workbench_variant_id,
+            )
+            row = SessionRow(
+                meta, is_active=sid == self._active_sid, theme=self._theme, outside_workbench=outside_workbench
+            )
             row.clicked.connect(self._on_switch)
             row.delete_requested.connect(self._on_delete)
             row.rename_requested.connect(lambda row_sid, name: self.rename_session.emit(row_sid, name))
             row.move_requested.connect(self._move_focus)
             self._rows[sid] = row
-            self._list_layout.insertWidget(self._list_layout.count() - 1, row)
-        if focused is not None and focused[0] in self._rows:
-            row = self._rows[focused[0]]
-            row.show()
-            (row._menu_btn if focused[1] else row).setFocus()
+            group.rows_layout.addWidget(row)
+
+    def _remember_expansion(self, project_id: str | None, expanded: bool) -> None:
+        if not self._search_input.text().strip():
+            self._expanded_projects[project_id] = expanded
 
     def _move_focus(self, session_id: str, direction: int) -> None:
-        identities = list(self._rows)
+        identities = [sid for sid, row in self._rows.items() if not row.parentWidget().isHidden()]
+        if session_id not in identities:
+            return
         index = identities.index(session_id) + direction
         if 0 <= index < len(identities):
             row = self._rows[identities[index]]
@@ -335,7 +254,13 @@ class SessionListWidget(QWidget):
         query = self._search_input.text().strip().casefold()
         if not query:
             return list(self._session_data)
-        return [meta for meta in self._session_data if query in str(meta.get("name", "")).casefold()]
+        fields = ("name", "project_name", "project_id", "variant_name", "variant_id")
+        return [
+            meta
+            for meta in self._session_data
+            if query in session_display_name(str(meta.get("name") or "")).casefold()
+            or any(query in str(meta.get(field) or "").casefold() for field in fields)
+        ]
 
     def _apply_filter(self) -> None:
         self._rebuild_rows(self._filtered_sessions())

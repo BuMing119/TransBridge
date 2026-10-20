@@ -77,7 +77,9 @@ class SessionBinding:
         messages = visible_history(messages, state)
         backend = visible_history(backend, state)
         self._conversation.from_dict({"messages": list(backend)})
-        if self._restore_controller is not None and "controller" in data:
+        if data.get("_preview") and self._restore_controller is not None:
+            self._restore_controller(ControllerSnapshot())
+        elif self._restore_controller is not None and "controller" in data:
             try:
                 controller = ControllerSnapshot.from_dict(data["controller"])
             except (AttributeError, KeyError, TypeError, ValueError):

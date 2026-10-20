@@ -9,7 +9,6 @@ from uuid import uuid4
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
-from transbridge.application.assistant_requests.conversation_visibility import visible_history
 from transbridge.application.assistant_requests.models import RequestError
 from transbridge.application.assistant_requests.turns import accept_turn, record_turn_failure
 from transbridge.application.translation.entry_alias import ai_entry_key
@@ -30,7 +29,9 @@ from .request_control_binding import RequestControlBinding
 from .request_input_binding import RequestInputBinding
 from .request_list_view import RequestListView
 from .request_management_binding import RequestManagementBinding
+from .request_session_loading import RequestSessionLoading
 from .request_undo_binding import RequestUndoBinding
+from .session_execution_access import ensure_execution, execution_allowed
 from .submission_scope import capture_display_context
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,7 @@ class RequestBinding(QObject):
         self.confirmations = RequestConfirmationBinding(self)
         self.context_preparation = RequestContextPreparation(self)
         self.management = RequestManagementBinding(self)
+        self.session_loading = RequestSessionLoading(self)
         self.view_id = uuid4().hex
         self.context = None
         self._stopped_sessions = {}
@@ -90,35 +92,7 @@ class RequestBinding(QObject):
         self._stopped_sessions[getattr(self.context, "session_id", None)] = bool(value)
 
     def load(self, values):
-        self.inputs.invalidate()
-        self.view.display(())
-        self.interrupt()
-        if self.context is not None:
-            old_context = self.context
-            self.background.submit(lambda: self.service.scheduler.deactivate(old_context.session_id, self.view_id))
-        self.context = self.facade._session_runtime.request_context()
-        if not self.context.session_id:
-            return
-        context = self.context
-        history = self.facade._conversation.get_transcript()
-
-        def restore():
-            from transbridge.application.assistant_requests.control_operations import recover_control_calls
-            from transbridge.persistence.v2.ids import SessionId, SessionRef
-
-            self.service.scheduler.activate(context.session_id, self.view_id)
-            self.service.ensure_recovered(context)
-            recover_control_calls(self.service, context)
-            self.service.save_history(context, history)
-            snapshot = self.service.lifecycle.read_session(SessionRef(SessionId(context.session_id)), context)
-            return visible_history(snapshot.backend_messages(), snapshot.assistant_data())
-
-        def restored(records):
-            self.facade._conversation.merge_saved_records(records)
-            self.inputs.present_failures()
-            self.refresh()
-
-        self.background.submit(restore, restored, context=context, wake=True)
+        self.session_loading.load(values)
 
     def submit(self, text, *, attachments=None, skill_context=None):
         return self.inputs.submit(text, attachments=attachments, skill_context=skill_context)
@@ -143,7 +117,8 @@ class RequestBinding(QObject):
 
     def refresh(self):
         if self.context is not None and self.context.session_id and not self._closed:
-            self.management.refresh()
+            if not self.session_loading.refresh_preview():
+                self.management.refresh()
 
     def _changed(self, session_id):
         if self.context is not None and self.context.session_id == session_id:
@@ -158,6 +133,8 @@ class RequestBinding(QObject):
             or self.context is None
             or self._accepting
             or self.admission is not None
+            or self.session_loading.preview
+            or not execution_allowed(self.facade)
         ):
             return
         if session_id is not None and session_id != self.context.session_id:
@@ -172,6 +149,8 @@ class RequestBinding(QObject):
             or self.context is None
             or self._accepting
             or self.admission is not None
+            or self.session_loading.preview
+            or not execution_allowed(self.facade)
         ):
             return
         from .request_turn_selection import select_next
@@ -200,6 +179,8 @@ class RequestBinding(QObject):
         from transbridge.smart_assistant.request_model_input import RequestModelInput
         from transbridge.smart_assistant.request_router import routing_messages
 
+        if self.session_loading.preview or not execution_allowed(self.facade):
+            raise RequestError("SESSION_CONTEXT_SCOPE_MISMATCH", "请先切换到此对话对应的工程后继续处理。")
         if self.admission is None:
             raise RequestError("TURN_LEASE_STALE", "no request admitted for this model turn")
         self.service.scheduler.validate(self.admission)
@@ -314,6 +295,12 @@ class RequestBinding(QObject):
         return self.confirmations.validator(accepted=accepted)
 
     def control(self, request_id, command):
+        requires_scope = command not in {"pause", "cancel"}
+        if requires_scope:
+            if not ensure_execution(self.facade, "继续处理任务", lambda: self.control(request_id, command)):
+                return
+            if self.session_loading.preview:
+                return
         if command == "retry_context":
             self.management.retry_context(request_id)
             return
@@ -323,6 +310,8 @@ class RequestBinding(QObject):
         self.interrupt()
 
         def apply():
+            if requires_scope and (self.context != context or not execution_allowed(self.facade)):
+                raise RequestError("SESSION_CONTEXT_SCOPE_MISMATCH", "工程已切换，请回到此对话对应的工程后重试。")
             if command == "resume":
                 from transbridge.application.assistant_context.admission import clear_wait
 
@@ -338,6 +327,8 @@ class RequestBinding(QObject):
             return request
 
         def received(request):
+            if requires_scope and not execution_allowed(self.facade):
+                return
             if command == "reconcile":
                 from .request_outcome_binding import reconcile_outcome
 
@@ -465,6 +456,16 @@ class RequestBinding(QObject):
             if self.context is not None:
                 context = self.context
                 self.background.submit(lambda: self.service.scheduler.deactivate(context.session_id, self.view_id))
-        elif self.context is not None and not self._closed:
+        elif (
+            self.context is not None
+            and not self._closed
+            and not self.session_loading.preview
+            and execution_allowed(self.facade)
+        ):
             context = self.context
-            self.background.submit(lambda: self.service.scheduler.activate(context.session_id, self.view_id), wake=True)
+
+            def activate():
+                if self.context == context and self._active and execution_allowed(self.facade):
+                    self.service.scheduler.activate(context.session_id, self.view_id)
+
+            self.background.submit(activate, context=context, wake=True)

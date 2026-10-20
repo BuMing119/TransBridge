@@ -16,6 +16,19 @@ def _idle(binding):
     _until(lambda: not binding._accepting)
 
 
+def _switch_session(environment, session_id):
+    panel, binding = environment.panel, environment.binding
+    panel._on_switch_session(session_id)
+    _until(
+        lambda: (
+            panel._workspace.ready()
+            and panel._current_session_id() == session_id
+            and binding.context.session_id == session_id
+            and not binding._accepting
+        )
+    )
+
+
 @pytest.mark.parametrize("switch", [False, True])
 def test_failed_admission_preserves_new_draft_and_current_execution_state(environment, monkeypatch, switch):
     panel, binding = environment.panel, environment.binding
@@ -44,8 +57,7 @@ def test_failed_admission_preserves_new_draft_and_current_execution_state(enviro
     assert not binding._user_stopped
     assert binding.inputs.failures[original][0].text == "original input"
     if switch:
-        panel._on_switch_session(original)
-        _idle(binding)
+        _switch_session(environment, original)
         chat.set_input("new draft")
     restore = next(
         widget
@@ -75,8 +87,7 @@ def test_stop_belongs_to_its_original_session(environment):
         )
     )
     assert environment.client.calls
-    panel._on_switch_session(original)
-    _idle(binding)
+    _switch_session(environment, original)
     assert binding._user_stopped
 
 
@@ -102,8 +113,7 @@ def test_retry_unsaved_input_keeps_identity_material_and_skill(environment, monk
         session_id = binding.context.session_id
         environment.panel._on_create_session("temporary")
         _idle(binding)
-        environment.panel._on_switch_session(session_id)
-        _idle(binding)
+        _switch_session(environment, session_id)
     wakes = []
     monkeypatch.setattr(binding, "wake", lambda *_args: wakes.append(True))
     chat.set_input("unrelated new draft")
@@ -142,11 +152,10 @@ def test_clear_survives_reopen_and_stale_save_without_deleting_evidence(environm
     assert not snapshot.visible_messages()
     panel._on_create_session("second")
     _idle(binding)
-    panel._on_switch_session(original_context.session_id)
-    _idle(binding)
+    _switch_session(environment, original_context.session_id)
     assert not chat._conversation.get_transcript()
     assert not chat._message_list._owned_widgets
-    chat.send_user_message("new after clear")
+    assert chat.send_user_message("new after clear")
     _idle(binding)
     assert [m["content"] for m in chat._conversation.get_transcript()] == ["new after clear"]
     assert [m["content"] for m in chat._message_list._history_snapshot()] == ["new after clear"]

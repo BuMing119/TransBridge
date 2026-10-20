@@ -1,5 +1,6 @@
 """In-conversation paging and full-history search, without restoring old execution controls."""
 
+from contextlib import contextmanager
 import logging
 import weakref
 
@@ -32,6 +33,8 @@ class HistoryNavigation(QWidget):
         self._hit = -1
         self._notice = ""
         self._return_focus = None
+        self._replacing_records = False
+        self._searched_text = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
@@ -108,12 +111,16 @@ class HistoryNavigation(QWidget):
             return False
 
     def reset(self):
+        if self._replacing_records:
+            self._has_earlier = False
+            return
         self.records = []
         self.active = False
         self._has_earlier = False
         self.start = self._new_messages = 0
         self._hits, self._hit = [], -1
         self._notice = ""
+        self._searched_text = None
         self._return_focus = None
         self.search_toggle.setChecked(False)
         self.search_panel.hide()
@@ -122,10 +129,63 @@ class HistoryNavigation(QWidget):
 
     def records_changed(self, *, has_earlier, new_message=False):
         self._has_earlier = has_earlier
+        if self._replacing_records:
+            return
         if self.active and new_message:
             self._new_messages += 1
             self.latest.setAccessibleDescription("新消息已到达，当前历史页保持不变")
         self._update()
+
+    @contextmanager
+    def replacing_records(self):
+        """Reload this conversation without resetting its search editor or reading page."""
+        previous_count = len(self.records)
+        target = self.records[self._hits[self._hit]] if 0 <= self._hit < len(self._hits) else None
+        self._replacing_records = True
+        try:
+            yield
+        finally:
+            self._replacing_records = False
+            self._refresh_records(previous_count, target)
+
+    def _refresh_records(self, previous_count, target):
+        if not self.active and self._searched_text is None:
+            self._update()
+            return
+        if not self._read():
+            return
+        if self.active:
+            self._new_messages += max(0, len(self.records) - previous_count)
+        target_index = None
+        if self._searched_text is not None:
+            self._hits = [
+                index
+                for index, record in enumerate(self.records)
+                if self._searched_text in record["content"].casefold()
+            ]
+            self._hit = min(max(0, self._hit), len(self._hits) - 1)
+            if self._hits:
+                if target is not None:
+                    self._hit = next(
+                        (
+                            offset
+                            for offset, index in enumerate(self._hits)
+                            if self.records[index] == target
+                            or (
+                                target.get("message_id")
+                                and self.records[index].get("message_id") == target["message_id"]
+                            )
+                        ),
+                        self._hit,
+                    )
+                target_index = self._hits[self._hit]
+            else:
+                self._notice = "未找到匹配消息"
+        if self.active:
+            self.start = min(self.start, max(0, len(self.records) - self.page_size))
+            self._show(target_index=target_index)
+        else:
+            self._update()
 
     def open_search(self):
         """Reveal search from a conversation menu or its scoped keyboard shortcut."""
@@ -172,6 +232,7 @@ class HistoryNavigation(QWidget):
         text = self.query.text().strip().casefold()
         if not self._read():
             return 0
+        self._searched_text = text or None
         self._hits = [
             index for index, record in enumerate(self.records) if text and text in record["content"].casefold()
         ]
@@ -226,6 +287,7 @@ class HistoryNavigation(QWidget):
 
     def _query_changed(self):
         self._notice = ""
+        self._searched_text = None
         self._hits, self._hit = [], -1
         self._update()
 

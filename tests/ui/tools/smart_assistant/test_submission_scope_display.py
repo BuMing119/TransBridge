@@ -38,6 +38,8 @@ def test_submitted_scope_survives_changed_workbench_and_session_reload(environme
     chat._ctx.project_name = "Original project"
     chat._ctx.selected_ids = {"entry-a", "entry-b"}
     chat._ctx.active_version_identity = ("source", "version-1")
+    environment.panel._on_create_session("Original project chat")
+    _until(lambda: not binding._accepting and not binding.management._refresh._pending)
     chat.send_user_message("检查选中的词条")
     _until(lambda: environment.service.state(binding.context).get("requests"))
     _until(lambda: not binding._accepting and not binding.management._refresh._pending)

@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QPushButton
 from transbridge.application.assistant_requests.attachments import display_user_content
 
 from .message_bubble import MessageBubble
+from .session_execution_access import ensure_execution, execution_allowed
 from .submission_scope import scope_from_input
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,17 @@ class RequestInputBinding:
             return False
         if binding._closed or not text.strip():
             return False
+        material = deepcopy(attachments)
+        skill = deepcopy(skill_context)
+
+        def resume():
+            if self.submit(text, attachments=material, skill_context=skill, _recovery=_recovery):
+                editor = getattr(facade, "_input", None)
+                if editor is not None and editor.toPlainText().strip() == text.strip():
+                    editor.clear()
+
+        if not ensure_execution(facade, "发送", resume):
+            return False
         context = facade._session_runtime.request_context()
         if _recovery is not None and _recovery.context != context:
             facade.add_system_message("请先切回这条输入原来的会话和项目，再重试提交。")
@@ -68,6 +80,8 @@ class RequestInputBinding:
         binding._accepting += 1
 
         def accept():
+            if binding._closed or binding.context != context or not execution_allowed(facade):
+                raise ValueError("工程或会话已改变，输入尚未发送；请返回原会话后重试。")
             binding.service.scheduler.activate(context.session_id, binding.view_id)
             kwargs = {"selection": selection, "attachments": material, "command_id": command_id}
             if skill is not None:

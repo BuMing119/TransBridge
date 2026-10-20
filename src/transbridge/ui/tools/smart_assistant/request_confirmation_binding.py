@@ -12,6 +12,8 @@ from transbridge.application.assistant_requests.models import ItemStatus, Reques
 from transbridge.application.assistant_requests.reducer import RequestEvent, reduce_request
 from transbridge.smart_assistant.native_tools import build_native_tool_definitions
 
+from .session_execution_access import execution_allowed
+
 logger = logging.getLogger(__name__)
 _APPROVAL_REASONS = frozenset({"approval", "approval_revalidation"})
 
@@ -129,6 +131,7 @@ class RequestConfirmationBinding:
                 or not binding._active
                 or binding.context.session_id != original.session_id
                 or not binding.facade._controller.accepts_confirmation(confirmation_id)
+                or (accepted and not execution_allowed(binding.facade))
             ):
                 return False
             selected_admission = None

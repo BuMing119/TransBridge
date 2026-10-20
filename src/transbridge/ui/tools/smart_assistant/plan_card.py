@@ -17,6 +17,7 @@ class PlanCard(QWidget):
         super().__init__(parent)
         self._steps = steps
         self._pending = True
+        self._expired = False
         self._theme = theme or SmartAssistantTheme()
         self.setObjectName("PlanCard")
         self.setProperty("tbSurface", "card")
@@ -82,6 +83,7 @@ class PlanCard(QWidget):
         theme.apply_semantic(self._cancel_btn, "muted", background=True)
 
     def expire(self) -> None:
+        self._expired = True
         self._pending = False
         self._exec_btn.setEnabled(False)
         self._cancel_btn.setEnabled(False)
@@ -92,12 +94,27 @@ class PlanCard(QWidget):
     def _on_confirm(self) -> None:
         if not self._pending:
             return
+        self.mark_executing()
+        self.confirmed.emit(self._steps)
+
+    def mark_executing(self) -> None:
+        if self._expired:
+            return
         self._pending = False
         self._exec_btn.setEnabled(False)
         self._cancel_btn.setEnabled(False)
         self._exec_btn.setText("执行中...")
         self.setAccessibleDescription("计划执行中")
-        self.confirmed.emit(self._steps)
+
+    def restore_pending(self) -> None:
+        """Keep a current proposal usable when switching its project was cancelled."""
+        if self._expired:
+            return
+        self._pending = True
+        self._exec_btn.setEnabled(True)
+        self._cancel_btn.setEnabled(True)
+        self._exec_btn.setText("执行计划")
+        self.setAccessibleDescription("计划就绪，等待执行或取消")
 
     def _on_cancel(self) -> None:
         if not self._pending:

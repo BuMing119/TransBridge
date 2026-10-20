@@ -2,11 +2,14 @@
 
 from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
+from transbridge.application.assistant_requests.models import RequestError
 from transbridge.application.assistant_requests.routing_recovery import (
     directive_source,
     resolve_routing_input,
     unresolved_directives,
 )
+
+from .session_execution_access import ensure_execution, execution_allowed
 
 
 class RoutingRecoveryBinding:
@@ -17,6 +20,8 @@ class RoutingRecoveryBinding:
     def show(self):
         binding, context = self.binding, self.binding.context
         if self._busy:
+            return
+        if not ensure_execution(binding.facade, "处理待澄清要求", self.show):
             return
         self._busy = True
 
@@ -35,6 +40,8 @@ class RoutingRecoveryBinding:
 
     def _choose(self, state, context):
         binding = self.binding
+        if binding.context != context or binding._closed or not execution_allowed(binding.facade):
+            return
         pending = list(unresolved_directives(state))
         if not pending:
             return
@@ -44,7 +51,7 @@ class RoutingRecoveryBinding:
             for index, (batch, receipt, kind) in enumerate(pending)
         ]
         selected, ok = QInputDialog.getItem(binding.facade, "处理未接纳的要求", "选择要求", labels, editable=False)
-        if not ok or binding.context != context or binding._closed:
+        if not ok or binding.context != context or binding._closed or not execution_allowed(binding.facade):
             return
         batch, receipt, kind = pending[labels.index(selected)]
         dialog = QMessageBox(binding.facade)
@@ -60,7 +67,7 @@ class RoutingRecoveryBinding:
         discard = dialog.addButton("放弃这条要求", QMessageBox.ButtonRole.DestructiveRole)
         dialog.addButton(QMessageBox.StandardButton.Cancel)
         dialog.exec()
-        if binding.context != context or binding._closed:
+        if binding.context != context or binding._closed or not execution_allowed(binding.facade):
             return
         if target is not None and dialog.clickedButton() is target:
             return self._target(state, context, batch, receipt)
@@ -90,7 +97,7 @@ class RoutingRecoveryBinding:
         name, ok = QInputDialog.getItem(
             binding.facade, "选择补充要求所属的任务", "这条要求针对哪个任务？", names, editable=False
         )
-        if not ok or binding.context != context or binding._closed:
+        if not ok or binding.context != context or binding._closed or not execution_allowed(binding.facade):
             return
         target = requests[names.index(name)]
         selection = binding._selection()
@@ -108,6 +115,14 @@ class RoutingRecoveryBinding:
 
     def _submit(self, context, work):
         binding = self.binding
+        if binding.context != context or binding._closed or not execution_allowed(binding.facade):
+            return
         binding._user_stopped = False
         binding.interrupt()
-        binding.background.submit(work, lambda _: binding.management.sync_inputs(), context=context)
+
+        def apply():
+            if binding.context != context or binding._closed or not execution_allowed(binding.facade):
+                raise RequestError("SESSION_SCOPE_MISMATCH", "工程已切换，请回到会话所属工程后重试。")
+            return work()
+
+        binding.background.submit(apply, lambda _: binding.management.sync_inputs(), context=context)

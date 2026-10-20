@@ -35,11 +35,6 @@ class AssistantWindowPresentation(QObject):
             self._header.set_service_availability(self._read_availability())
         return self._header.service_availability
 
-    def minimize(self):
-        if not self._panel.isFloating():
-            self._panel.setFloating(True)
-        self._panel.showMinimized()
-
     def eventFilter(self, watched, event):
         if watched is self._panel and event.type() in (QEvent.Type.Show, QEvent.Type.WindowActivate):
             self.refresh()

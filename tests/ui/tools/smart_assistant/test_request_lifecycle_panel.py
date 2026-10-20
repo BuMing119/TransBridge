@@ -179,12 +179,19 @@ def environment(tmp_path, monkeypatch):
         session_projection=services.session_projection,
         runtime_context=RequestContext("owner"),
     )
-    _until(lambda: panel.chat.session_ready)
+    _until(lambda: panel.chat.session_ready and panel._workspace.ready())
     panel.chat.add_system_prompt("Offline request integration context")
     binding = panel.chat._request_binding
     assert binding is not None
     # Synthetic view projections must not race the initial saved-session restore.
-    _until(lambda: binding._accepting == 0 and not binding.management._refresh._pending)
+    _until(
+        lambda: (
+            binding.context is not None
+            and binding.context.session_id == panel._current_session_id()
+            and binding._accepting == 0
+            and not binding.management._refresh._pending
+        )
+    )
     response_threads = []
     original = binding.handle_response
 

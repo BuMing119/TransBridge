@@ -2,6 +2,8 @@
 
 from transbridge.ui.project_labels import entry_label_key
 
+from .assistant_project_navigation import session_project_labels, switch_assistant_project
+
 
 def locate_assistant_entries(host, context, entry_ids):
     expected = (context.project_id, context.variant_id)
@@ -28,5 +30,7 @@ def assistant_navigation(host, open_settings):
     return {
         "open_settings": open_settings,
         "open_project": lambda: host.project_coordinator.open_project(),
+        "switch_project": lambda context, on_finished: switch_assistant_project(host, context, on_finished),
+        "session_project_labels": lambda project_id, variant_id: session_project_labels(host, project_id, variant_id),
         "locate_entries": lambda context, ids: locate_assistant_entries(host, context, ids),
     }

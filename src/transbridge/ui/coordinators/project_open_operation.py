@@ -42,7 +42,15 @@ class ProjectOpenOperation(QObject):
         self._authority_committed = False
 
     def start(
-        self, prepare, *, dirty_decision, success_verb, show_error_dialog=True, on_success=None, on_failure=None
+        self,
+        prepare,
+        *,
+        dirty_decision,
+        success_verb,
+        show_error_dialog=True,
+        on_success=None,
+        on_failure=None,
+        request_context=None,
     ) -> bool:
         host = self.host
         if host.project_open_worker is not None or getattr(host.context, "project_opening", False):
@@ -78,6 +86,7 @@ class ProjectOpenOperation(QObject):
             self.token = begin()
         self._set_enabled(False)
         self._progress(0, 0, "正在校验并加载本地工程…")
+        execution_context = host.runtime_context if request_context is None else request_context
 
         def run():
             prepared = prepare()
@@ -92,7 +101,7 @@ class ProjectOpenOperation(QObject):
                     ),
                     expected_active_signature=expected,
                 )
-            opened = host.current_project_opener.activate(prepared.value, host.runtime_context, **options)
+            opened = host.current_project_opener.activate(prepared.value, execution_context, **options)
             if not opened.is_success or opened.value is None or opened.value.get("recovery") is not None:
                 return OpenedProjectView(opened)
             self._authority_committed = True

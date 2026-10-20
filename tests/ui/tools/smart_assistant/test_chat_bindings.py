@@ -394,7 +394,7 @@ def test_smart_assistant_panel_uses_responsive_dock_constraints(monkeypatch) -> 
 
     panel = SmartAssistantPanel(object())
     container = panel.widget()
-    horizontal_splitter = container.layout().itemAt(0).widget()
+    horizontal_splitter = container.layout().itemAt(1).widget()
     right_splitter = horizontal_splitter.widget(1)
 
     assert panel.minimumWidth() == 480
@@ -410,15 +410,18 @@ def test_smart_assistant_panel_uses_responsive_dock_constraints(monkeypatch) -> 
     assert panel._task_monitor._collapsed is True
     assert panel.objectName() == "SmartAssistantPanel"
     assert "border: none" in panel.styleSheet()
-    assert panel.titleBarWidget().accessibleName() == "智能助手标题栏"
-    assert panel.titleBarWidget().height() == 44
-    assert "border: 1px solid palette(mid)" in panel.titleBarWidget().styleSheet()
+    assert panel.titleBarWidget() is None
+    assert panel._header.accessibleName() == "会话与模型信息"
+    assert panel._header.height() == 44
+    assert "border-bottom: 1px solid palette(mid)" in panel._header.styleSheet()
     assert container.objectName() == "smartAssistantBody"
-    assert "border: 1px solid palette(mid)" in container.styleSheet()
-    assert panel.titleBarWidget()._model._value.full_text == "test-model"
-    assert "配置就绪" in panel.titleBarWidget().accessibleDescription()
-    assert panel.titleBarWidget()._minimize_button.accessibleName() == "最小化智能助手"
-    assert not panel.titleBarWidget()._minimize_button.icon().isNull()
+    assert "border: none" in container.styleSheet()
+    assert panel.mask().isEmpty()
+    assert panel._header._model._value.full_text == "test-model"
+    assert "配置就绪" in panel._header.accessibleDescription()
+    assert panel.windowFlags() & Qt.WindowType.WindowMinimizeButtonHint
+    assert panel.windowFlags() & Qt.WindowType.WindowMaximizeButtonHint
+    assert panel.windowFlags() & Qt.WindowType.WindowCloseButtonHint
     assert right_splitter.sizes()[0] > right_splitter.sizes()[1]
     assert panel.isVisible() is False
     assert taskbar_identities == [(panel, "TransBridge.SmartAssistant")]
@@ -427,7 +430,7 @@ def test_smart_assistant_panel_uses_responsive_dock_constraints(monkeypatch) -> 
     _APP.processEvents()
     panel.hide()
     panel.show()
-    panel.titleBarWidget()._minimize_button.click()
+    panel.showMinimized()
     _APP.processEvents()
     assert panel.isMinimized()
     assert taskbar_identities == [(panel, "TransBridge.SmartAssistant")]

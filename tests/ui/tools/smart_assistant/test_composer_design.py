@@ -155,7 +155,7 @@ def test_header_keeps_current_session_identity_at_compact_width(qapp):
         assert header.width() == 480
         assert header.height() == 44
         assert header._title.geometry().center().y() == header._model.geometry().center().y()
-        for control in (header._title, header._model, header._minimize_button, header._close_button):
+        for control in (header._title, header._model):
             assert header.rect().contains(control.geometry())
         header.set_model_name("")
         assert not header.model_configured

@@ -29,7 +29,7 @@ def test_window_protects_composer_when_small_and_task_pane_is_expanded(
     chat_environment, requested_size, draft, monkeypatch
 ):
     panel = chat_environment.panel()
-    _until(lambda: panel.chat.session_ready)
+    _until(lambda: panel.chat.session_ready and panel._workspace.ready())
     panel.chat.load_history([
         {"role": "user", "content": f"核对译文 {index}", "message_id": f"message-{index}"} for index in range(105)
     ])
@@ -89,7 +89,7 @@ def test_window_protects_composer_when_small_and_task_pane_is_expanded(
 
 def test_normal_conversation_and_long_draft_fit_actual_480_by_400(chat_environment):
     panel = chat_environment.panel()
-    _until(lambda: panel.chat.session_ready)
+    _until(lambda: panel.chat.session_ready and panel._workspace.ready())
     panel.chat.load_history([{"role": "user", "content": f"History {index}"} for index in range(105)])
     panel.chat.set_input("需要保留的长要求。\n" * 20)
     panel.show()
@@ -114,7 +114,7 @@ def test_normal_conversation_and_long_draft_fit_actual_480_by_400(chat_environme
 
 def test_resizing_from_desktop_does_not_retain_expanded_sidebar_minimum(chat_environment, monkeypatch):
     panel = chat_environment.panel()
-    _until(lambda: panel.chat.session_ready)
+    _until(lambda: panel.chat.session_ready and panel._workspace.ready())
     monkeypatch.setattr(panel.chat._controller, "_on_llm_round_start", lambda: None)
     panel.chat._controller.handle_user_message("核对中文项目")
     panel.chat._presentation.refresh()

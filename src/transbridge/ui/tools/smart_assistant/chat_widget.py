@@ -21,6 +21,7 @@ from .message_list_view import MessageListView
 from .plan_card import PlanCard
 from .react_execution_binding import ReactExecutionBinding
 from .session_binding import ConversationBinding, SessionBinding
+from .session_execution_access import ensure_execution, invoke_when_ready
 from .session_runtime import SessionRuntimeBinding
 from .streaming_presenter import StreamingPresenter
 from .submission_binding import SubmissionBinding
@@ -347,6 +348,8 @@ class ChatWidget(QWidget):
             if skill_context is not None:
                 self.add_system_message("当前会话不支持保存技能范围，请在已保存的会话中启动技能。")
                 return False
+            if not ensure_execution(self, "发送", lambda: self.send_user_message(text)):
+                return False
             self._submission.submit(encode_user_content(text, attachments))
         return True
 
@@ -408,7 +411,7 @@ class ChatWidget(QWidget):
                 self._message_list.remove(self._retry_btn)
         retry_btn = QPushButton("重试")
         retry_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        retry_btn.clicked.connect(self._orchestrator.retry)
+        retry_btn.clicked.connect(lambda: invoke_when_ready(self, "重试", self._orchestrator.retry))
         if self._message_list is not None:
             self._message_list.add_widget(retry_btn)
         self._retry_btn = retry_btn
@@ -433,7 +436,7 @@ class ChatWidget(QWidget):
     def _clear_conversation(self) -> None:
         from .conversation_clear import clear_chat
 
-        clear_chat(self)
+        invoke_when_ready(self, "清空对话", lambda: clear_chat(self))
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)

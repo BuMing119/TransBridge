@@ -33,7 +33,8 @@ def test_window_sections_and_primary_actions_share_application_style(layout_app,
         lambda self, *args, **kwargs: original(self, *args, **kwargs, theme_view=theme_view),
     )
     panel = chat_environment.panel()
-    _until(lambda: panel.chat.session_ready)
+    # Initial restore and directory publication must finish before installing synthetic rows.
+    _until(lambda: panel.chat.session_ready and panel._workspace.ready() and not panel._sessions.directory.pending)
     panel.chat.load_history([
         {"role": "user", "content": "你好", "message_id": "message-a"},
         {"role": "assistant", "content": "你好！可以帮你检查翻译与术语。", "message_id": "message-b"},
@@ -64,12 +65,14 @@ def test_window_sections_and_primary_actions_share_application_style(layout_app,
 
         border = snapshot.palette.color(QPalette.ColorRole.Mid)
         accent = snapshot.palette.color(QPalette.ColorRole.Link)
-        assert color(panel._header, panel._header.width() // 2, 0) == border
-        assert color(panel._body, 0, panel._body.height() // 2) == border
+        header = panel._header
+        assert color(header, header.width() // 2, header.height() - 1) == border
+        assert color(header, header.width() // 2, 0) == color(header, header.width() // 2, 3)
+        assert panel.mask().isEmpty()
         sidebar = panel._session_list
         assert color(sidebar, sidebar.width() - 1, sidebar.height() // 2) == border
         row = sidebar._rows["current"]
-        assert color(row, 1, row.height() // 2) == accent
+        assert color(row, row.width() // 2, 3) == snapshot.palette.color(QPalette.ColorRole.Highlight)
         assert color(progress, 0, progress.height() // 2) == border
         # Compare actual pixels, since the former palette-only accent was reset by QSS.
         assert color(composer.send_button, 8, 8) == shared.grab().toImage().pixelColor(8, 8) == accent

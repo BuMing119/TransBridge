@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import QMessageBox
 from .confirmation_preview_binding import ConfirmationPreviewBinding
 from .plan_card import PlanCard
 from .plan_execution_binding import PlanExecutionBinding
+from .session_execution_access import ensure_execution
 from .theme_support import SmartAssistantTheme
 from .tool_card import BatchToolCard, ToolCard
 
@@ -100,7 +101,16 @@ class ConfirmationView:
         self._pending_cards.add(card)
 
         def deliver(*args) -> None:
-            if self._closed or generation != self._generation or card not in self._pending_cards:
+            if self._closed or generation != self._generation or card not in self._pending_cards or sip.isdeleted(card):
+                return
+            if accepted and not ensure_execution(self._parent, "执行操作", lambda: deliver(*args)):
+                if (
+                    not self._closed
+                    and generation == self._generation
+                    and card in self._pending_cards
+                    and not sip.isdeleted(card)
+                ):
+                    card.restore_pending()
                 return
             defer = getattr(validate, "defer", None)
             if defer is not None and defer(lambda: deliver(*args)):
@@ -108,6 +118,7 @@ class ConfirmationView:
             self._pending_cards.discard(card)
             if validate():
                 if accepted:
+                    card.mark_executing()
                     self._active_cards.add(card)
                 # Execute the original proposal, preserving its call identity even
                 # when Qt converts the emitted dict/list to a new Python object.
