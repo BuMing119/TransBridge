@@ -26,6 +26,8 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 
 | 编号 | 标题 | 状态 |
 |------|------|------|
+| [ADR-048](adr/048-ai-project-concurrency-and-terms.md) | AI 多插件并发、共享术语与参考差异综合校对 | S01～S13 本地实现及相关验证完成；术语不再是翻译通过条件，见 [S11～S13 记录](changelogs/ai-project-concurrency/story-11-to-13/2026-10-24-001-terminology-advisory-review.md) |
+| [ADR-047](adr/047-opt-in-categorized-project-upload.md) | 普通与分类上传使用文件 API | 已接受；上传/脚本共用分类，任务优先 QUST:FULL 原名；下载复用一次当前文件快照，不依赖历史关联。见[使用说明](dev/paratranz-categorized-upload.md) |
 | [ADR-046](adr/046-purpose-aware-data-projection.md) | 按来源与用途保护凭据，业务数据保持原样 | 已接受（2026-10-07），实施中 |
 | [ADR-041](adr/041-assistant-context-compaction.md) | 助手稳定上下文与按预算压缩；保留目标与计划系统；[实现增量](changelogs/assistant-context-compaction/story-01-to-09-implementation/2026-09-12-001-稳定上下文与不可变摘要链实现.md) | 本地实现与离线验证完成；真实收益待评测 |
 | [ADR-001](adr/001-unified-translation-entry.md) | TranslationEntry 作为统一翻译数据模型 | ✅ 历史与 V2 身份增量已接受 |

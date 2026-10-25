@@ -11,6 +11,9 @@ AI 自动翻译功能的核心实现，包括 LLM 调用、术语库管理、批
 | 文件 | 职责 |
 |------|------|
 | `translator.py` | 翻译主控器，驱动整个翻译流程，支持暂停/停止/断点续传 |
+| `translation_reuse.py` | 普通批次前接纳已有译文候选，保留原批次恢复身份 |
+| `../application/translation/draft_reuse.py` | 已有名称的受保护草稿提交及接续证据，不依赖 Qt |
+| `../ui/tools/ai_translator/task_name_reuse.py` | 项目名称提前提交编排、未完成结果保留 |
 | `term_database.py` | 术语库管理（四来源：dynamic/paratranz/json/excel）+ 向量语义检索 |
 | `term_vector_index.py` | FAISS 向量索引构建/持久化/语义检索（可选依赖） |
 | `batch_planner.py` | 批次规划（三轮策略 + token 估算切分） |
@@ -59,7 +62,7 @@ class ProgressCheckpoint:
 
 **持久化路径**: `data/ai_translator/{esp_stem}/{esp_stem}_progress.json`
 
-**用途**: 断点续传，翻译完成后自动删除。
+**用途**: 旧式翻译入口的批次进度兼容文件，完成后可删除。项目 GUI 的历史恢复由任务清单、runtime-v2 候选及结果文件共同提供，不能以此文件是否存在判断任务能否继续。
 
 ### TermEntry
 
@@ -95,7 +98,7 @@ class TermEntry:
 
 **职责**: 翻译流程主控，协调各组件完成批量翻译。支持多插件批量翻译时的术语共享。
 
-#### 构造函数
+#### 构造函数（基础参数节选）
 
 ```python
 def __init__(
@@ -141,82 +144,31 @@ progress_callback(
 )
 ```
 
-**stream_callback**: 非 None 时启用 LLM 流式响应，签名为 `(batch_idx: int, chunk: str)`。`_run_one_batch` 在调用 `_run_batch` 前将当前批次 idx 绑定到回调（`lambda chunk: stream_callback(idx, chunk)`），确保并发时各批次流互不干扰。由 `_TranslationWorker` 传入，将 chunks 实时写入 `data/log/{esp_stem}_{timestamp}/batch_{idx:03d}.log`（每批次独立文件）。
+**stream_callback**: 非 None 时启用 LLM 流式响应，签名为 `(batch_idx: int, chunk: str)`。`_run_one_batch` 在调用 `_run_batch` 前将当前批次 idx 绑定到回调（`lambda chunk: stream_callback(idx, chunk)`），确保并发时各批次流互不干扰。每请求的 `TranslationStream` 只解码新完成的结果项，重复 ID 会撤销先前暂存项；`StreamRepetitionDetector` 跨片段维护重复状态。最终响应校验及候选持久化仍决定是否接纳译文。
 
-> **流式增量写回**：`_run_batch` 内部每收到一个 chunk 即调用 `PromptBuilder.extract_partial_pairs` 从累积 buffer 中提取新完成的翻译对，立即写回 collection 并触发进度更新；流结束后再对未被流捕获的剩余条目执行兜底解析（`parse_translation_response`）。API 调用异常时，流式阶段已成功写回的条目不计入 `failed_count`。
+调用日志和 `batch_{idx:03d}.log` 保留各自内容，由 `WorkflowLogStore` 的后台写入器合并写盘：默认每 100ms 或累计 64KiB 刷新，待写文本按每字符 4 字节保守计费，最多 4MiB，满载时背压。文件池按任务并发配置为 `2 × max_concurrent + 16`，硬上限 272；通道关闭和任务关闭在后台等待排空。磁盘错误会停用日志并保留诊断，不改判模型结果。进程异常退出可能损失尚未刷新的诊断尾部；候选检查点的可靠刷盘与恢复机制不使用这层缓冲。
 
-#### 流程图
+**流式候选**：流式解析将已完整返回的翻译对交给候选会话持久化，更新进度和日志；普通模型结果经统一受保护提交后才写入任务草稿。可复用名称使用下面的提前提交路径，不能将“候选已收到”当作“草稿已写入”。
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                        AutoTranslator                            │
-├──────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  1. 筛选待翻译条目                                               │
-│     if overwrite: collection 全部条目                           │
-│     else: collection.filter(lambda e: not e.translation)        │
-│                           │                                      │
-│                           ▼                                      │
-│  2. 术语库预加载 (TermDatabaseManager.load_all)                  │
-│     ├─► 加载四来源（dynamic/paratranz/json/excel）               │
-│     ├─► 各来源条数或错误写入日志（log_callback）                 │
-│     ├─► 初始化向量索引（FAISS，可选依赖缺失时降级）              │
-│     ├─► 清空 in-flight 术语缓存（新翻译会话）                    │
-│     └─► 填充 _merged_terms 缓存供后续批次使用                   │
-│                           │                                      │
-│                           ▼                                      │
-│  3. 批次规划 (BatchPlanner.plan)                                 │
-│     Round1: 命名实体 → 并发执行                                  │
-│     Round2: 对话（按 quest 分组）→ quest 间并发，quest 内串行    │
-│     Round3: 长文本 → 并发执行                                    │
-│                           │                                      │
-│                           ▼                                      │
-│  4. 执行批次 (_run_batch)                           [计时]        │
-│     ├─► 术语匹配 (match_terms_enhanced)              ─ t_terms   │
-│     │       ├─ 精确匹配 (exact_match)                            │
-│     │       ├─ 子串扫描 (match_terms，含反向匹配)                │
-│     │       ├─ 合并 in-flight 缓存（并发批次实时术语）            │
-│     │       └─ 语义召回 (vector_index.search，可选)              │
-│     ├─► 精确匹配直填 (exact_match 命中的条目)                    │
-│     │       原文与术语完全相同 → 直接填充译文，跳过 LLM           │
-│     ├─► 其余条目进入 LLM 流程                                   │
-│     ├─► 构建 Prompt (PromptBuilder.build_translation_prompt)     │
-│     ├─► LLM 流式调用 (_monitored_chat)              ─ t_llm     │
-│     │   每收到 chunk → extract_partial_pairs(buffer)             │
-│     │       新翻译对 → 立即写回 Collection + 触发进度更新         │
-│     │       写入流式日志文件 (stream_callback)                    │
-│     │       [Round1] 术语即时写入 in-flight 缓存                 │
-│     ├─► 兜底解析 (parse_translation_response，仅剩余条目) ─ t_parse│
-│     ├─► 写回 Collection (兜底部分，stage=2)                      │
-│     ├─► [Round1] 写入动态术语库（仅 context∈AUTO_TERM_CONTEXTS）  │
-│     └─► [Round2] 调用 NounExtractor 抽取专有名词                 │
-│                           │                                      │
-│  批次日志格式（每批由 _run_one_batch 包裹输出）:                  │
-│    头:  "开始翻译：" / "任务N：{batch_type}" / "---"             │
-│    体:  "orig -> trans [直填]" 或 "orig -> trans"                │
-│    尾:  "---" / "已完成：" / t_terms / t_llm / t_parse /        │
-│          总时长 / 翻译词条数 / 新增术语数                         │
-│  各轮次完成日志: "── 第X轮完成: {elapsed}s ──"                  │
-│  最终日志:       "总耗时: {elapsed}s"                            │
-│                           │                                      │
-│  5. 保存断点 (ProgressCheckpoint.save)                           │
-│     每批次完成后保存，翻译完成后删除                              │
-│                           │                                      │
-│                           ▼                                      │
-│  6. 后处理（可选）                                              │
-│     检查 LLMConfig.enable_post_process                          │
-│     ├─► true  → 调用 PostProcessor.process_entries()            │
-│     │           阶段1: 术语一致性检查、格式验证、LLM质量检测     │
-│     │           阶段2: LLM修复问题（如启用）                     │
-│     │           阶段3: LLM润色优化（如启用）                     │
-│     │           阶段4: LLM质量裁决                               │
-│     │           阶段5: 根据裁决结果更新 entry.stage              │
-│     │           输出质量检查摘要                                 │
-│     │           结果附加到 TranslationResult.post_process_result │
-│     └─► false → 跳过质量检查，日志提示 "质量检查已跳过"          │
-│                                                                  │
-└──────────────────────────────────────────────────────────────────┘
-\n**后处理配置**:\n- 配置字段: `LLMConfig.enable_post_process`（bool，默认 `true`）\n- UI控制: AITranslatorWindow → 翻译范围区 → "翻译后进行质量检查（需要额外LLM调用）"\n- 持久化: 保存到 `data/paratranz_config.ini` 的 `[llm]` 节\n\n**后处理详细配置**（14个字段）：\n\n| 阶段 | 字段 | 类型 | 默认值 | 说明 |\n|------|------|------|--------|------|\n| **总开关** | `enable_post_process` | bool | true | 是否启用后处理 |\n| **检测** | `pp_enable_consistency_check` | bool | true | 术语一致性检查 |\n| | `pp_enable_format_validation` | bool | true | 格式验证（占位符、标签、引号） |\n| | `pp_enable_quality_gate` | bool | true | LLM质量检测 |\n| **修复** | `pp_enable_refinement` | bool | true | 启用LLM自动修复 |\n| | `pp_refinement_batch_size` | int | 5 | 修复批次大小 |\n| **润色** | `pp_enable_polish` | bool | false | 启用润色（需额外LLM调用） |\n| | `pp_polish_scope` | str | "all" | 润色范围：all/passed/has_issues |\n| | `pp_polish_level` | str | "moderate" | 润色强度：light/moderate/aggressive |\n| | `pp_polish_batch_size` | int | 5 | 润色批次大小 |\n| **裁决** | `pp_enable_arbitration` | bool | true | 启用质量裁决 |\n| | `pp_strict_arbitration` | bool | false | 严格模式（uncertain→reject） |\n| | `pp_arbitration_batch_size` | int | 10 | 裁决批次大小 |\n\n**PostProcessorConfig**: 后处理器配置数据类，从 `LLMConfig` 加载配置创建：`\n```python\npp_config = PostProcessorConfig.from_llm_config(llm_config)\n```\n
+#### 项目任务与即时复用流程
+
+项目任务由 `task_name_preparation.py` 统一准备名称，`AutoTranslator` 承接来源内翻译。所有操作在既有 worker / coordinator 中执行。
+
+1. 扫描选中的真实名称，按原文、类别及插件作用域约束分组，加载有效术语。只处理允许翻译的状态；同名异类、插件特例及本地异译不能强行合并。
+2. 已有译法通过非空和保护标记检查后，由 `task_name_reuse.py` 调用 `application/translation/draft_reuse.py`：先保存候选，再经暂停/取消、一致性及修订保护提交到各来源的 `TaskDraft.collection`。此时译文已存在、stage 为 2（有疑问）、修订已增加，尚未发送剩余名称的模型请求。
+3. 保存 `CommittedDraftTranslations`：原始输入、提交后精确快照及 commit ID。界面先显示“写入已有译文”，随后显示实际“已写入草稿”的独立名称数；写入阶段的条数按名称出现位置计数。
+4. 仅为没有已有译法的代表名称调用模型。未知名称仍在隔离集合中翻译、校验；失败传播到对应出现位置，已有草稿结果不回退。名称准备结束、无歧义名称发布完成后，放行各来源后续流程。
+5. `AutoTranslator` 校验提前提交证据、范围和当前草稿。已写入项不再进入候选接纳、翻译批次或第二次提交；其原始输入、成功计数及结果证据仍包含在报告内。其余可直填条目由 `translation_reuse.py` 在普通翻译批次前保存候选，仅剩余条目进入三轮模型调度。
+6. 合并本次提交与提前提交的证据。所有成功项按配置继续后处理/校对及最终共享参考差异评估。检测疑点按词条连同原文、上下文、当前译文和参考词一起交给 AI；不因术语字符串不同而拒收或强制重翻。全量复用时翻译模型调用为零；启用校对、质量检测或补充综合校对时，仍可能有相应模型调用。
+7. 任务结果通过既有 `TaskSession` 应用入口写入项目来源。提前写入任务草稿不等于主窗口来源已变更，也不触发项目自动保存。取消或名称准备异常时保留已写入项的诊断与译文，不把尚未完成检查的项标为可应用成功。
+
+提前写入按来源提交，不是整个项目的单一事务。后续来源失败不会撤销已经成功提交的前一来源；候选保存失败在该来源提交前终止，阻止剩余名称模型启动。暂停等待下一次提交，取消阻止迟到提交；接续时任何原文、上下文、修订或提交后内容变化都会拒绝复用证据。
+
+`committed_draft` 是可选的 `AutoTranslator` 构造参数，默认空；`prepared_names` 按完整身份承载名称准备结果，已提交项由草稿证据排除，`defer_generated_terms` 用于隔离名称准备阶段的自动术语发布。普通独立翻译调用保持兼容。历史恢复会验证原始输入后把旧候选移入新的私有执行，重新取得提交证据；不能仅凭非空译文或旧提交标记推断正式项目已保存。旧任务缺少范围或输入证据时保留只读记录。
+
+后处理由 `LLMConfig.enable_post_process` 和已选策略控制；五阶段策略与直接校对策略沿各自现有流程运行。配置的权威定义见 `config/llm.py`、`ai_translator/post_processor.py` 及 UI 后处理配置模块。
+
+实现合同见 [ADR-048](../adr/048-ai-project-concurrency-and-terms.md)、[S10 计划](../../plans/ai-project-concurrency/plan.md) 和 [即时复用 QA](../test-reports/ai-name-immediate-reuse-qa-2026-10-24.md)。
 
 #### 暂停/停止机制
 
@@ -763,6 +715,10 @@ class AutoTranslator:
 
 ### 并发策略
 
+新配置的默认并发为 **100**，界面可设为 **1～128**。配置、界面和自定义流程缺省值统一取自 `config/llm.py`。已有明确保存的 3、20、50 等值和恢复任务快照保持原值，不自动迁移。
+
+该值是同一任务各来源及翻译、术语、校对阶段共享的最大在途逻辑模型调用数，由 `AiRequestBudget` 管理，包含调用内部重试。它不是每秒请求数、每批 JSON 行数或账号全局连接数；一个请求可以返回多条译文。现有 HTTP 传输默认最多 100 个连接，本次不扩大连接池，也不保证设置 128 时始终有 128 个实际网络请求同时运行。
+
 | 轮次 | 并发模式 | 说明 |
 |------|----------|------|
 | Round1 | 全部并发 | 命名实体相互独立，无上下文依赖 |
@@ -797,84 +753,37 @@ AUTO_TERM_CONTEXTS = {
 
 ## 断点续传机制
 
-### 翻译阶段断点
+### 任务身份与恢复入口
 
-```
-开始翻译
-    │
-    ├─► 尝试加载 ProgressCheckpoint.load(esp_path)
-    │       │
-    │       ├─► 存在断点 → 恢复累计统计，跳过已完成批次
-    │       └─► 不存在 → 全新开始
-    │
-    ├─► 每批次完成后
-    │       ├─► 记录 batch_fingerprint = frozenset(entry.id for entry in batch.entries)
-    │       ├─► completed_fingerprints.add(batch_fingerprint)
-    │       └─► ProgressCheckpoint.save()
-    │
-    ├─► 翻译全部完成
-    │       └─► **暂不删除** ProgressCheckpoint（后处理阶段仍需保留）
-    │
-    ├─► 后处理阶段
-    │       ├─► 加载 PostProcessCheckpoint.load(esp_path)
-    │       ├─► 各 LLM 阶段按批次并发执行，每批次完成后保存
-    │       └─► 后处理完成 → 删除 PostProcessCheckpoint
-    │
-    └─► 最终
-            └─► 删除 ProgressCheckpoint
-```
+`TaskRecoveryBinding` 在模型工作前为项目翻译、校对、混合任务创建恢复清单。`ai-task-recovery/` 保存去凭据执行配置、覆盖选项、完整源范围、原始输入和历次执行身份；原文、上下文、当前译文及状态必须匹配。启动提示和 AI 任务记录均可继续或重新开始，重新开始使用独立执行链。取消任务不自动复活。
 
-### 翻译断点文件格式
+GUI 捕获输入后，读取、校验、候选重建、结果整理及落盘均在 worker 中执行。同进程启动预留与按逻辑任务持有的非阻塞 OS 锁防止重复恢复；进程退出自动释放锁，文件存在本身不代表任务仍在运行。
 
-```json
-// data/ai_translator/{esp_stem}/{esp_stem}_progress.json
-{
-  "esp_stem": "MyMod",
-  "target_entry_ids": null,
-  "overwrite": false,
-  "completed_fingerprints": [
-    ["id1", "id2", "id3"],
-    ["id4", "id5"]
-  ],
-  "result_so_far": {
-    "success_count": 350,
-    "failed_count": 12,
-    "new_dynamic_terms": 89
-  }
-}
-```
+### 任务参考与重试
 
-### 后处理断点文件格式
+`TaskReferenceStore` 将首次加载的本地、ParaTranz 和已发布项目术语保存为任务参考；各来源的名称、翻译、校对、项目收尾及失败重试复用同一基线。公共输入只读取一次，历史插件动态词库保持来源作用域，本任务共享生成术语仍随成功发布更新。`ai-task-recovery/references/` 的独立原子文件带任务身份和校验和，保存参考内容及已发布快照，不包含配置凭据。跨进程继续复用它；新建任务或重新开始重新捕获。
 
-```json
-// data/ai_translator/{esp_stem}/{esp_stem}_post_process.json
-{
-  "esp_stem": "MyMod",
-  "completed_batches": {
-    "detect_quality_gate": [["id1", "id2"], ["id3", "id4"]],
-    "refine": [["id5", "id6"]],
-    "polish": [],
-    "arbitrate": []
-  },
-  "issues": [...],
-  "refine_results": {"id5": {...}, "id6": {...}},
-  "polish_results": {},
-  "decisions": {}
-}
-```
+参考版本、文件时间或内容变化不能使已成功译文失效，也不能阻止仅重试未完成项。`TaskConsistency` 只把执行配置变化作为任务有效性条件；原文、当前译文、项目和修订的正式写入保护保持有效。生成术语文件被其他操作修改或占用时，`TermPublicationConflict` 仅停止本次术语发布、保留译文并记录诊断，不能覆盖外部文件。真实存储故障和损坏继续明确报错。
 
-### 断点生命周期
+项目收尾显示“加载参考 → 扫描差异 → AI 综合校对 → 整理结果 → 完成”，顶部显示当前来源及实际阶段，不把“来源流程 2/2”当作全任务完成。扫描进度限频合并，模型校对每批完成更新；无需补充校对也明确结束。扫描在条目边界暂停或取消，未完成检查的条目保留译文供后续接续。
 
-| 阶段 | 行为 |
-|------|------|
-| 翻译开始 | 加载 `ProgressCheckpoint`（如存在） |
-| 翻译批次完成 | 保存 `ProgressCheckpoint` |
-| 翻译全部完成 | **保留** `ProgressCheckpoint`，进入后处理 |
-| 后处理开始 | 加载或创建 `PostProcessCheckpoint` |
-| 后处理 LLM 批次完成 | 保存 `PostProcessCheckpoint` |
-| 后处理正常完成 | 删除 `PostProcessCheckpoint`，再删除 `ProgressCheckpoint` |
-| 后处理中断 | 两者均保留，下次启动时翻译批次全部跳过，直接恢复后处理 |
-| 后处理关闭 (`enable_post_process=False`) | 翻译完成后直接删除 `ProgressCheckpoint` |
+### 翻译与后处理
+
+`runtime-v2/translation-*.json` 和其 journal 是翻译候选的持久证据。schema 1 快照与 schema 2 校验链均支持只读恢复；只接受对应任务、来源、范围与输入版本的候选。名称、主翻译及多次执行按确定顺序合并，原文件不改写。有效候选进入新执行的私有草稿，跳过对应模型翻译请求，仍经过正常提交、综合校对与后处理。旧提交标记只证明旧私有草稿提交，不能代表正式项目保存。
+
+`ai-translation-resume/` 按逻辑任务/来源、设置和完整内容身份保存后处理阶段。只有成功完成的阶段可跳过；失败或取消阶段继续处理。`ai-proofread-resume/` 保存校对及最终项目参考复核的已完成批次。改变输入或参考条件时重新评估，不能把不同条件的结果当作完成证据。旧式 `ProgressCheckpoint` 仅为兼容入口保留，不是 GUI 历史恢复的唯一权威来源。
+
+### 结果确认与项目保存
+
+完整处理结果及采纳决定原子保存在 `ai-task-recovery/results/`，带任务身份与校验和，包括待复核原因和报告字段。恢复后已经完成的词条不再请求模型；待确认、已采纳、未采纳状态分别保留。决定先持久化，再进行正式项目应用。项目已经保存但任务元数据未更新时，按当前内容与已采纳结果的严格匹配识别，避免重复应用。最终项目写入和保存仍经过既有版本与修订校验。
+
+单条恢复记录损坏会保留文件并明确说明原因，不应阻断其他健康任务的发现。缺失或修改的来源/词条不能静默当作已完成。
+
+### 旧任务兼容
+
+没有恢复清单的历史任务只在报告保留完整原始范围、动作可确定且存在相应翻译检查点时提供接续。旧任务没有完整配置快照，界面明确使用当前配置，先打开配置页；确认开始后才执行模型工作。旧候选作为待校验草稿进入新恢复链。无法证明范围或动作的旧报告继续只读，不能猜测覆盖。
+
+已有恢复清单但没有完整参考快照的旧任务，首次继续时重新捕获当前参考一次并记录兼容提示；后续继续及重试复用该快照。旧候选仍按完整身份和输入校验，不因术语变化整体作废。快照损坏不会静默覆盖原文件。
 
 ---
 
@@ -920,10 +829,10 @@ term_priority = dynamic,paratranz,json,excel
 
 ### 4. 断点文件生命周期
 
-- 翻译开始时加载（如果存在）
-- 每批次完成后保存
-- **翻译完成后自动删除**
-- 中断后重新启动会恢复
+- 项目 AI 任务在模型调用前建立恢复清单，完成的翻译/校对批次及后处理阶段持续保存检查点。
+- 任务结果及采纳决定独立保存；任务完成不代表可以清除历史恢复证据，仍用于结果查看和保存边界校验。
+- 异常退出后发现未完成记录，由用户选择继续；旧式 `ProgressCheckpoint` 的完成清理不影响项目任务恢复。
+- 取消任务保持取消状态；重新开始建立独立执行链，不复用原任务进度。
 
 ### 5. 手动术语保护
 
@@ -937,6 +846,7 @@ def add(self, term: str, translation: str, source: str, context: str = "") -> No
                 return  # 手动条目不被覆盖
             e.translation = translation
             e.source = source
+```
 
 ### 6. 术语直填与动态术语库写入的关系
 

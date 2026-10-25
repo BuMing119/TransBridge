@@ -18,7 +18,8 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | parser | ESP/ESM/ESL文件解析，上下文提取，本地化strings支持 | [parser.md](parser.md) |
 | writer | ESP/EET/XT文件写入 | [writer.md](writer.md) |
 | paratranz | ParaTranz 平台集成：API 客户端、配置管理、上传/下载/导出工作流 | [paratranz.md](paratranz.md) |
-| ai_translator | AI自动翻译：术语库管理、LLM客户端、批次规划、翻译控制器、向量语义检索 | [ai_translator.md](ai_translator.md) |
+| categorized_upload | 上传/脚本统一分类、文件 API、当前文件下载、自动保存与工作台投影一致性 | [paratranz-categorized-upload.md](paratranz-categorized-upload.md) |
+| ai_translator | AI自动翻译：术语库、项目名称即时草稿复用、候选接续、批次规划与后处理 | [ai_translator.md](ai_translator.md) |
 | post_process_report | AI翻译后处理报告：Excel报告结构、生成机制、UI交互与集成点 | [post_process_report.md](post_process_report.md) |
 | ui | PyQt6用户界面：主窗口、工作台（三步流程）、ParaTranz管理面板、AI翻译浮动窗口 | [ui.md](ui.md) |
 
@@ -127,7 +128,8 @@ TransBridge 是一款 SSE (Skyrim Special Edition) Mod 本地化工具，支持 
 | `_BatchUploadModeDialog` | `src/transbridge/ui/workbench/cards/upload_card.py` | 批量上传模式选择对话框（已存在文件处理方式） |
 | `_BatchConfirmDialog` | `src/transbridge/ui/workbench/cards/*.py` | 批量操作滚动确认对话框（最大高度 400px） |
 | `_BatchResultDialog` | `src/transbridge/ui/workbench/cards/*.py` | 批量操作滚动结果对话框（最大高度 400px） |
-| `_ConflictResolveDialog` | `src/transbridge/ui/workbench/cards/upload_card.py` | 分类上传前冲突解决对话框（每个冲突文件一个下拉框，让用户选择目标） |
+| `CategorizedUploadDialog` | `src/transbridge/ui/operations/categorized_upload_dialog.py` | 本地分类选择后直接上传；后台核验固定路径，取消手动对照与跨路径整理 |
+| `OrdinaryUploadAdapter` | `src/transbridge/paratranz/ordinary_upload.py` | 普通审阅流程的根目录文件范围，限定候选和写入目标 |
 | `AITranslatorWindow` | `src/transbridge/ui/tools/ai_translator/ai_translator_window.py` | AI翻译配置窗口（QTabWidget 三标签页布局：LLM 与模型 / 术语库 / 后处理，窗口高度 520 px） |
 | `_TranslationProgressWindow` | `src/transbridge/ui/tools/ai_translator/_translation_progress_window.py` | AI翻译进度窗口（暂停/停止/后台） |
 | `_TranslationWorker` | `src/transbridge/ui/tools/ai_translator/_translation_worker.py` | 翻译后台线程 |

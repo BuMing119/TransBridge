@@ -1,0 +1,1768 @@
+{
+  "date": "2026-10-25",
+  "environment": {
+    "python": "3.12.12",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "cpu_logical": 32
+  },
+  "baseline": "Start-of-turn dirty working-tree snapshot; not Git HEAD",
+  "git_head": "ee3a592013429aafcc67dc96c0dc7650e0af9825",
+  "measurements": {
+    "rows1": {
+      "before": {
+        "arguments": {
+          "source": "D:\\MyCode\\TransBridge\\qa-tmp-ai100-pilot-20261025-01a16e37\\baseline\\src",
+          "scratch": "D:\\MyCode\\TransBridge\\qa-tmp-ai100-pilot-20261025-01a16e37\\bench",
+          "output": "D:\\MyCode\\TransBridge\\qa-tmp-ai100-pilot-20261025-01a16e37\\rows1-before-1.json",
+          "samples": 1,
+          "concurrency": 100,
+          "requests": 100,
+          "rows": 1,
+          "terms": 1000,
+          "chunk": 16,
+          "interval": 0.05
+        },
+        "samples": [
+          {
+            "elapsed_s": 1.5032853999873623,
+            "cpu_s": 1.453125,
+            "json_import_ms": 1.013800036162138,
+            "peak_requests": 100,
+            "peak_threads": 267,
+            "peak_process_handles": 1328,
+            "rss_mb": 124.71875,
+            "heartbeat_p95_ms": 11.820699903182685,
+            "heartbeat_max_ms": 18.110299948602915,
+            "stream_median_s": 0.5559805000084452,
+            "ideal_stream_median_s": 0.35000000000000003,
+            "callback_cpu_s": 0.4375,
+            "stream_lag_max_ms": 327.7391999727115,
+            "chunks": 700,
+            "logs": {
+              "opens": 1948,
+              "writes": 2400,
+              "flushes": 2400,
+              "io_s": 0.12469910026993603
+            },
+            "phase_sum_s": {
+              "t_terms": 10.869024800718762,
+              "t_llm": 96.60734410001896,
+              "t_parse": 0.0015398000832647085
+            },
+            "candidate_append_sum_s": 0.46030780021101236,
+            "log_close_s": 0.0015969000523909926,
+            "accepted": 100,
+            "recovered": 100,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 1.585119399940595,
+            "cpu_s": 1.75,
+            "json_import_ms": 1.0234999936074018,
+            "peak_requests": 100,
+            "peak_threads": 267,
+            "peak_process_handles": 1328,
+            "rss_mb": 124.80859375,
+            "heartbeat_p95_ms": 11.65880006738007,
+            "heartbeat_max_ms": 17.18359999358654,
+            "stream_median_s": 0.6260622000554577,
+            "ideal_stream_median_s": 0.35000000000000003,
+            "callback_cpu_s": 0.515625,
+            "stream_lag_max_ms": 352.302800049074,
+            "chunks": 700,
+            "logs": {
+              "opens": 1967,
+              "writes": 2400,
+              "flushes": 2400,
+              "io_s": 0.1368580013513565
+            },
+            "phase_sum_s": {
+              "t_terms": 10.421554400236346,
+              "t_llm": 104.7403255001409,
+              "t_parse": 0.0014794993912801147
+            },
+            "candidate_append_sum_s": 0.4861099002882838,
+            "log_close_s": 0.0018041000002995133,
+            "accepted": 100,
+            "recovered": 100,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 1.540940499980934,
+            "cpu_s": 1.78125,
+            "json_import_ms": 1.1094999499619007,
+            "peak_requests": 100,
+            "peak_threads": 267,
+            "peak_process_handles": 1328,
+            "rss_mb": 124.6953125,
+            "heartbeat_p95_ms": 11.435299995355308,
+            "heartbeat_max_ms": 21.931400056928396,
+            "stream_median_s": 0.5387047999538481,
+            "ideal_stream_median_s": 0.35000000000000003,
+            "callback_cpu_s": 0.4375,
+            "stream_lag_max_ms": 237.3320999322459,
+            "chunks": 700,
+            "logs": {
+              "opens": 1992,
+              "writes": 2400,
+              "flushes": 2400,
+              "io_s": 0.11904610204510391
+            },
+            "phase_sum_s": {
+              "t_terms": 11.521756200236268,
+              "t_llm": 95.16174150048755,
+              "t_parse": 0.001319199101999402
+            },
+            "candidate_append_sum_s": 0.4889400996034965,
+            "log_close_s": 0.0018730000592768192,
+            "accepted": 100,
+            "recovered": 100,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 1.6108542999718338,
+            "cpu_s": 1.5625,
+            "json_import_ms": 0.9407999459654093,
+            "peak_requests": 100,
+            "peak_threads": 267,
+            "peak_process_handles": 1328,
+            "rss_mb": 124.98828125,
+            "heartbeat_p95_ms": 11.364700039848685,
+            "heartbeat_max_ms": 19.20569990761578,
+            "stream_median_s": 0.6577195499558002,
+            "ideal_stream_median_s": 0.35000000000000003,
+            "callback_cpu_s": 0.5625,
+            "stream_lag_max_ms": 344.33150000404567,
+            "chunks": 700,
+            "logs": {
+              "opens": 1976,
+              "writes": 2400,
+              "flushes": 2400,
+              "io_s": 0.1339455966372043
+            },
+            "phase_sum_s": {
+              "t_terms": 10.85927060013637,
+              "t_llm": 107.26001350011211,
+              "t_parse": 0.0016023999778553843
+            },
+            "candidate_append_sum_s": 0.43294070044066757,
+            "log_close_s": 0.0013774000108242035,
+            "accepted": 100,
+            "recovered": 100,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 1.4231145000085235,
+            "cpu_s": 1.484375,
+            "json_import_ms": 1.1087000602856278,
+            "peak_requests": 100,
+            "peak_threads": 267,
+            "peak_process_handles": 1328,
+            "rss_mb": 124.8359375,
+            "heartbeat_p95_ms": 11.392300017178059,
+            "heartbeat_max_ms": 27.314399951137602,
+            "stream_median_s": 0.5402004500501789,
+            "ideal_stream_median_s": 0.35000000000000003,
+            "callback_cpu_s": 0.328125,
+            "stream_lag_max_ms": 267.7036999957636,
+            "chunks": 700,
+            "logs": {
+              "opens": 1827,
+              "writes": 2400,
+              "flushes": 2400,
+              "io_s": 0.11115199967753142
+            },
+            "phase_sum_s": {
+              "t_terms": 11.856971400324255,
+              "t_llm": 91.02346250007395,
+              "t_parse": 0.0011660008458420634
+            },
+            "candidate_append_sum_s": 0.445208199438639,
+            "log_close_s": 0.0016536000184714794,
+            "accepted": 100,
+            "recovered": 100,
+            "failed": 0
+          }
+        ],
+        "elapsed_summary": {
+          "median": 1.540940499980934,
+          "min": 1.4231145000085235,
+          "max": 1.6108542999718338
+        }
+      },
+      "after": {
+        "arguments": {
+          "source": "D:\\MyCode\\TransBridge\\src",
+          "scratch": "D:\\MyCode\\TransBridge\\qa-tmp-ai100-pilot-20261025-01a16e37\\bench",
+          "output": "D:\\MyCode\\TransBridge\\qa-tmp-ai100-pilot-20261025-01a16e37\\rows1-after-1.json",
+          "samples": 1,
+          "concurrency": 100,
+          "requests": 100,
+          "rows": 1,
+          "terms": 1000,
+          "chunk": 16,
+          "interval": 0.05
+        },
+        "samples": [
+          {
+            "elapsed_s": 1.1631539000663906,
+            "cpu_s": 0.921875,
+            "json_import_ms": 0.9906000923365355,
+            "peak_requests": 100,
+            "peak_threads": 268,
+            "peak_process_handles": 1605,
+            "rss_mb": 126.87890625,
+            "heartbeat_p95_ms": 12.023800052702427,
+            "heartbeat_max_ms": 22.046700003556907,
+            "stream_median_s": 0.3546601999551058,
+            "ideal_stream_median_s": 0.35000000000000003,
+            "callback_cpu_s": 0.0,
+            "stream_lag_max_ms": 8.85099999140948,
+            "chunks": 700,
+            "logs": {
+              "opens": 200,
+              "writes": 1367,
+              "flushes": 1367,
+              "io_s": 0.07199570012744516
+            },
+            "phase_sum_s": {
+              "t_terms": 8.40281489933841,
+              "t_llm": 47.8591810996877,
+              "t_parse": 0.0014027012512087822
+            },
+            "candidate_append_sum_s": 0.4698518003569916,
+            "log_close_s": 0.003956299973651767,
+            "accepted": 100,
+            "recovered": 100,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 1.2935084000928327,
+            "cpu_s": 1.125,
+            "json_import_ms": 1.1754999868571758,
+            "peak_requests": 100,
+            "peak_threads": 268,
+            "peak_process_handles": 1605,
+            "rss_mb": 126.8203125,
+            "heartbeat_p95_ms": 11.849500006064773,
+            "heartbeat_max_ms": 21.171199972741306,
+            "stream_median_s": 0.35428425000282004,
+            "ideal_stream_median_s": 0.35000000000000003,
+            "callback_cpu_s": 0.0,
+            "stream_lag_max_ms": 9.199699969030917,
+            "chunks": 700,
+            "logs": {
+              "opens": 200,
+              "writes": 1482,
+              "flushes": 1482,
+              "io_s": 0.08118739840574563
+            },
+            "phase_sum_s": {
+              "t_terms": 8.40223470015917,
+              "t_llm": 49.8510491005145,
+              "t_parse": 0.001777899800799787
+            },
+            "candidate_append_sum_s": 0.5616990004200488,
+            "log_close_s": 0.005457899998873472,
+            "accepted": 100,
+            "recovered": 100,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 1.1634061000077054,
+            "cpu_s": 1.015625,
+            "json_import_ms": 1.0887000244110823,
+            "peak_requests": 100,
+            "peak_threads": 268,
+            "peak_process_handles": 1605,
+            "rss_mb": 126.93359375,
+            "heartbeat_p95_ms": 12.77889998164028,
+            "heartbeat_max_ms": 22.02099992427975,
+            "stream_median_s": 0.3544952000374906,
+            "ideal_stream_median_s": 0.35000000000000003,
+            "callback_cpu_s": 0.0,
+            "stream_lag_max_ms": 10.162499966099858,
+            "chunks": 700,
+            "logs": {
+              "opens": 200,
+              "writes": 996,
+              "flushes": 996,
+              "io_s": 0.08540839923080057
+            },
+            "phase_sum_s": {
+              "t_terms": 10.254099700250663,
+              "t_llm": 46.87464150064625,
+              "t_parse": 0.0011162000009790063
+            },
+            "candidate_append_sum_s": 0.4513026002096012,
+            "log_close_s": 0.0051902999402955174,
+            "accepted": 100,
+            "recovered": 100,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 1.084138499922119,
+            "cpu_s": 0.90625,
+            "json_import_ms": 1.1369999265298247,
+            "peak_requests": 100,
+            "peak_threads": 268,
+            "peak_process_handles": 1605,
+            "rss_mb": 126.3046875,
+            "heartbeat_p95_ms": 11.745200026780367,
+            "heartbeat_max_ms": 34.16590008419007,
+            "stream_median_s": 0.35403720004251227,
+            "ideal_stream_median_s": 0.35000000000000003,
+            "callback_cpu_s": 0.0,
+            "stream_lag_max_ms": 7.519399980083108,
+            "chunks": 700,
+            "logs": {
+              "opens": 200,
+              "writes": 1012,
+              "flushes": 1012,
+              "io_s": 0.08657969837076962
+            },
+            "phase_sum_s": {
+              "t_terms": 8.626856199349277,
+              "t_llm": 44.87896520085633,
+              "t_parse": 0.0009758995147421956
+            },
+            "candidate_append_sum_s": 0.4133644001558423,
+            "log_close_s": 0.004034099983982742,
+            "accepted": 100,
+            "recovered": 100,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 1.0757726000156254,
+            "cpu_s": 0.890625,
+            "json_import_ms": 1.0164000559598207,
+            "peak_requests": 100,
+            "peak_threads": 268,
+            "peak_process_handles": 1605,
+            "rss_mb": 126.609375,
+            "heartbeat_p95_ms": 11.60099997650832,
+            "heartbeat_max_ms": 22.66419993247837,
+            "stream_median_s": 0.35328665003180504,
+            "ideal_stream_median_s": 0.35000000000000003,
+            "callback_cpu_s": 0.0,
+            "stream_lag_max_ms": 6.710800109431148,
+            "chunks": 700,
+            "logs": {
+              "opens": 200,
+              "writes": 996,
+              "flushes": 996,
+              "io_s": 0.06580039917025715
+            },
+            "phase_sum_s": {
+              "t_terms": 8.807002899935469,
+              "t_llm": 45.67144679825287,
+              "t_parse": 0.0011102004209533334
+            },
+            "candidate_append_sum_s": 0.40653990022838116,
+            "log_close_s": 0.0036316999467089772,
+            "accepted": 100,
+            "recovered": 100,
+            "failed": 0
+          }
+        ],
+        "elapsed_summary": {
+          "median": 1.1631539000663906,
+          "min": 1.0757726000156254,
+          "max": 1.2935084000928327
+        }
+      }
+    },
+    "rows20": {
+      "before": {
+        "arguments": {
+          "source": "D:\\MyCode\\TransBridge\\qa-tmp-ai100-pilot-20261025-01a16e37\\baseline\\src",
+          "scratch": "D:\\MyCode\\TransBridge\\qa-tmp-ai100-pilot-20261025-01a16e37\\bench",
+          "output": "D:\\MyCode\\TransBridge\\qa-tmp-ai100-pilot-20261025-01a16e37\\rows20-before-1.json",
+          "samples": 1,
+          "concurrency": 100,
+          "requests": 100,
+          "rows": 20,
+          "terms": 1000,
+          "chunk": 16,
+          "interval": 0.05
+        },
+        "samples": [
+          {
+            "elapsed_s": 31.869449299992993,
+            "cpu_s": 30.90625,
+            "json_import_ms": 19.676800002343953,
+            "peak_requests": 100,
+            "peak_threads": 267,
+            "peak_process_handles": 1328,
+            "rss_mb": 131.765625,
+            "heartbeat_p95_ms": 18.17339996341616,
+            "heartbeat_max_ms": 28.554399963468313,
+            "stream_median_s": 29.05026759998873,
+            "ideal_stream_median_s": 5.65,
+            "callback_cpu_s": 23.140625,
+            "stream_lag_max_ms": 24464.24410014879,
+            "chunks": 11300,
+            "logs": {
+              "opens": 22708,
+              "writes": 23600,
+              "flushes": 23600,
+              "io_s": 2.2171759949997067
+            },
+            "phase_sum_s": {
+              "t_terms": 40.816337399883196,
+              "t_llm": 2964.6628331998363,
+              "t_parse": 0.006184599827975035
+            },
+            "candidate_append_sum_s": 2.5374847003258765,
+            "log_close_s": 0.005543600069358945,
+            "accepted": 2000,
+            "recovered": 2000,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 39.68873009993695,
+            "cpu_s": 37.0625,
+            "json_import_ms": 19.145899917930365,
+            "peak_requests": 100,
+            "peak_threads": 267,
+            "peak_process_handles": 1328,
+            "rss_mb": 131.828125,
+            "heartbeat_p95_ms": 18.23150005657226,
+            "heartbeat_max_ms": 24.9750999500975,
+            "stream_median_s": 36.7771849000128,
+            "ideal_stream_median_s": 5.65,
+            "callback_cpu_s": 27.671875,
+            "stream_lag_max_ms": 32812.87489994429,
+            "chunks": 11300,
+            "logs": {
+              "opens": 21801,
+              "writes": 23600,
+              "flushes": 23600,
+              "io_s": 2.8183050993829966
+            },
+            "phase_sum_s": {
+              "t_terms": 38.641186599386856,
+              "t_llm": 3728.912078600726,
+              "t_parse": 0.006427299696952105
+            },
+            "candidate_append_sum_s": 2.97427159990184,
+            "log_close_s": 0.005323000019416213,
+            "accepted": 2000,
+            "recovered": 2000,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 14.4429634999251,
+            "cpu_s": 15.625,
+            "json_import_ms": 21.202500094659626,
+            "peak_requests": 100,
+            "peak_threads": 267,
+            "peak_process_handles": 1328,
+            "rss_mb": 131.703125,
+            "heartbeat_p95_ms": 11.28550001885742,
+            "heartbeat_max_ms": 29.566599987447262,
+            "stream_median_s": 12.967819999961648,
+            "ideal_stream_median_s": 5.65,
+            "callback_cpu_s": 11.515625,
+            "stream_lag_max_ms": 7760.450900066644,
+            "chunks": 11300,
+            "logs": {
+              "opens": 23120,
+              "writes": 23600,
+              "flushes": 23600,
+              "io_s": 1.1634437007596716
+            },
+            "phase_sum_s": {
+              "t_terms": 38.090020199888386,
+              "t_llm": 1375.5434728994733,
+              "t_parse": 0.0025155002949759364
+            },
+            "candidate_append_sum_s": 0.7462674995185807,
+            "log_close_s": 0.0013327999040484428,
+            "accepted": 2000,
+            "recovered": 2000,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 15.110605700057931,
+            "cpu_s": 16.125,
+            "json_import_ms": 23.24630005750805,
+            "peak_requests": 100,
+            "peak_threads": 267,
+            "peak_process_handles": 1328,
+            "rss_mb": 131.48828125,
+            "heartbeat_p95_ms": 11.46019995212555,
+            "heartbeat_max_ms": 21.485399920493364,
+            "stream_median_s": 13.623535750026349,
+            "ideal_stream_median_s": 5.65,
+            "callback_cpu_s": 12.03125,
+            "stream_lag_max_ms": 8332.68750004936,
+            "chunks": 11300,
+            "logs": {
+              "opens": 22987,
+              "writes": 23600,
+              "flushes": 23600,
+              "io_s": 1.245109715149738
+            },
+            "phase_sum_s": {
+              "t_terms": 37.20759679947514,
+              "t_llm": 1438.436133299023,
+              "t_parse": 0.0029164005536586046
+            },
+            "candidate_append_sum_s": 0.7815876994282007,
+            "log_close_s": 0.0013654000358656049,
+            "accepted": 2000,
+            "recovered": 2000,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 14.029032099992037,
+            "cpu_s": 14.640625,
+            "json_import_ms": 20.23539994843304,
+            "peak_requests": 100,
+            "peak_threads": 267,
+            "peak_process_handles": 1328,
+            "rss_mb": 131.59375,
+            "heartbeat_p95_ms": 11.469500022940338,
+            "heartbeat_max_ms": 24.802799918688834,
+            "stream_median_s": 12.650541500071995,
+            "ideal_stream_median_s": 5.65,
+            "callback_cpu_s": 11.46875,
+            "stream_lag_max_ms": 7325.728700030595,
+            "chunks": 11300,
+            "logs": {
+              "opens": 22924,
+              "writes": 23600,
+              "flushes": 23600,
+              "io_s": 1.099054291495122
+            },
+            "phase_sum_s": {
+              "t_terms": 36.39398479950614,
+              "t_llm": 1334.8301116004586,
+              "t_parse": 0.002517400193028152
+            },
+            "candidate_append_sum_s": 0.7088038009824231,
+            "log_close_s": 0.0011656000278890133,
+            "accepted": 2000,
+            "recovered": 2000,
+            "failed": 0
+          }
+        ],
+        "elapsed_summary": {
+          "median": 15.110605700057931,
+          "min": 14.029032099992037,
+          "max": 39.68873009993695
+        }
+      },
+      "after": {
+        "arguments": {
+          "source": "D:\\MyCode\\TransBridge\\src",
+          "scratch": "D:\\MyCode\\TransBridge\\qa-tmp-ai100-pilot-20261025-01a16e37\\bench",
+          "output": "D:\\MyCode\\TransBridge\\qa-tmp-ai100-pilot-20261025-01a16e37\\rows20-after-1.json",
+          "samples": 1,
+          "concurrency": 100,
+          "requests": 100,
+          "rows": 20,
+          "terms": 1000,
+          "chunk": 16,
+          "interval": 0.05
+        },
+        "samples": [
+          {
+            "elapsed_s": 7.6736294000875205,
+            "cpu_s": 4.484375,
+            "json_import_ms": 22.874000016599894,
+            "peak_requests": 100,
+            "peak_threads": 268,
+            "peak_process_handles": 1603,
+            "rss_mb": 134.171875,
+            "heartbeat_p95_ms": 22.044099983759224,
+            "heartbeat_max_ms": 33.170699956826866,
+            "stream_median_s": 5.659025950008072,
+            "ideal_stream_median_s": 5.65,
+            "callback_cpu_s": 0.078125,
+            "stream_lag_max_ms": 29.065000009723008,
+            "chunks": 11300,
+            "logs": {
+              "opens": 200,
+              "writes": 10618,
+              "flushes": 10618,
+              "io_s": 0.6617753008613363
+            },
+            "phase_sum_s": {
+              "t_terms": 32.858571399818175,
+              "t_llm": 616.4325788998976,
+              "t_parse": 0.00558170082513243
+            },
+            "candidate_append_sum_s": 0.9676992997992784,
+            "log_close_s": 0.011780799948610365,
+            "accepted": 2000,
+            "recovered": 2000,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 7.022161999950185,
+            "cpu_s": 3.015625,
+            "json_import_ms": 20.358999958261847,
+            "peak_requests": 100,
+            "peak_threads": 268,
+            "peak_process_handles": 1603,
+            "rss_mb": 134.27734375,
+            "heartbeat_p95_ms": 21.163800032809377,
+            "heartbeat_max_ms": 32.51839999575168,
+            "stream_median_s": 5.652103599975817,
+            "ideal_stream_median_s": 5.65,
+            "callback_cpu_s": 0.078125,
+            "stream_lag_max_ms": 35.62029998283833,
+            "chunks": 11300,
+            "logs": {
+              "opens": 200,
+              "writes": 10381,
+              "flushes": 10381,
+              "io_s": 0.6163282024208456
+            },
+            "phase_sum_s": {
+              "t_terms": 31.730580900330096,
+              "t_llm": 612.2207062996458,
+              "t_parse": 0.0022053001448512077
+            },
+            "candidate_append_sum_s": 0.5364885999588296,
+            "log_close_s": 0.004289900069124997,
+            "accepted": 2000,
+            "recovered": 2000,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 7.101638399995863,
+            "cpu_s": 2.671875,
+            "json_import_ms": 19.092899980023503,
+            "peak_requests": 100,
+            "peak_threads": 268,
+            "peak_process_handles": 1605,
+            "rss_mb": 134.1796875,
+            "heartbeat_p95_ms": 13.972099986858666,
+            "heartbeat_max_ms": 33.4846000187099,
+            "stream_median_s": 5.653410200029612,
+            "ideal_stream_median_s": 5.65,
+            "callback_cpu_s": 0.0,
+            "stream_lag_max_ms": 10.931800003163517,
+            "chunks": 11300,
+            "logs": {
+              "opens": 200,
+              "writes": 10944,
+              "flushes": 10944,
+              "io_s": 0.3318263058317825
+            },
+            "phase_sum_s": {
+              "t_terms": 33.4138701002812,
+              "t_llm": 614.209650900797,
+              "t_parse": 0.0026091000763699412
+            },
+            "candidate_append_sum_s": 0.5771094006486237,
+            "log_close_s": 0.003974299994297326,
+            "accepted": 2000,
+            "recovered": 2000,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 7.078047699993476,
+            "cpu_s": 2.71875,
+            "json_import_ms": 21.018399973399937,
+            "peak_requests": 100,
+            "peak_threads": 268,
+            "peak_process_handles": 1605,
+            "rss_mb": 134.05859375,
+            "heartbeat_p95_ms": 11.831399984657764,
+            "heartbeat_max_ms": 33.293799962848425,
+            "stream_median_s": 5.65284574998077,
+            "ideal_stream_median_s": 5.65,
+            "callback_cpu_s": 0.015625,
+            "stream_lag_max_ms": 11.560700018890202,
+            "chunks": 11300,
+            "logs": {
+              "opens": 200,
+              "writes": 10835,
+              "flushes": 10835,
+              "io_s": 0.39742040005512536
+            },
+            "phase_sum_s": {
+              "t_terms": 32.38473609939683,
+              "t_llm": 604.0336880001705,
+              "t_parse": 0.0024806996807456017
+            },
+            "candidate_append_sum_s": 0.5622251995373517,
+            "log_close_s": 0.005043499986641109,
+            "accepted": 2000,
+            "recovered": 2000,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 7.055930699920282,
+            "cpu_s": 2.625,
+            "json_import_ms": 22.121399990282953,
+            "peak_requests": 100,
+            "peak_threads": 268,
+            "peak_process_handles": 1603,
+            "rss_mb": 134.234375,
+            "heartbeat_p95_ms": 12.670999974943697,
+            "heartbeat_max_ms": 29.46330001577735,
+            "stream_median_s": 5.652420600003097,
+            "ideal_stream_median_s": 5.65,
+            "callback_cpu_s": 0.03125,
+            "stream_lag_max_ms": 8.949700044468045,
+            "chunks": 11300,
+            "logs": {
+              "opens": 200,
+              "writes": 11244,
+              "flushes": 11244,
+              "io_s": 0.3460165997967124
+            },
+            "phase_sum_s": {
+              "t_terms": 33.41835039993748,
+              "t_llm": 615.0571871015709,
+              "t_parse": 0.002089599031023681
+            },
+            "candidate_append_sum_s": 0.5198531992500648,
+            "log_close_s": 0.0047793000703677535,
+            "accepted": 2000,
+            "recovered": 2000,
+            "failed": 0
+          }
+        ],
+        "elapsed_summary": {
+          "median": 7.078047699993476,
+          "min": 7.022161999950185,
+          "max": 7.6736294000875205
+        }
+      }
+    },
+    "long50": {
+      "before": {
+        "arguments": {
+          "source": "D:\\MyCode\\TransBridge\\qa-tmp-ai100-pilot-20261025-01a16e37\\baseline\\src",
+          "scratch": "D:\\MyCode\\TransBridge\\qa-tmp-ai100-pilot-20261025-01a16e37\\bench",
+          "output": "D:\\MyCode\\TransBridge\\qa-tmp-ai100-pilot-20261025-01a16e37\\long50-before-1.json",
+          "samples": 1,
+          "concurrency": 100,
+          "requests": 100,
+          "rows": 50,
+          "terms": 1000,
+          "chunk": 64,
+          "interval": 0.01
+        },
+        "samples": [
+          {
+            "elapsed_s": 15.152367300004698,
+            "cpu_s": 16.84375,
+            "json_import_ms": 52.792000002227724,
+            "peak_requests": 100,
+            "peak_threads": 267,
+            "peak_process_handles": 1328,
+            "rss_mb": 140.1875,
+            "heartbeat_p95_ms": 12.627499992959201,
+            "heartbeat_max_ms": 33.04959996603429,
+            "stream_median_s": 12.392502750037238,
+            "ideal_stream_median_s": 0.7000000000000001,
+            "callback_cpu_s": 11.234375,
+            "stream_lag_max_ms": 12255.676400032826,
+            "chunks": 7000,
+            "logs": {
+              "opens": 14329,
+              "writes": 15000,
+              "flushes": 15000,
+              "io_s": 0.8432125049876049
+            },
+            "phase_sum_s": {
+              "t_terms": 83.48219529958442,
+              "t_llm": 1387.2918517994694,
+              "t_parse": 0.004735000431537628
+            },
+            "candidate_append_sum_s": 1.360471999971196,
+            "log_close_s": 0.0015412999782711267,
+            "accepted": 5000,
+            "recovered": 5000,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 21.27460759994574,
+            "cpu_s": 21.453125,
+            "json_import_ms": 49.569500028155744,
+            "peak_requests": 100,
+            "peak_threads": 267,
+            "peak_process_handles": 1328,
+            "rss_mb": 139.578125,
+            "heartbeat_p95_ms": 19.17820004746318,
+            "heartbeat_max_ms": 28.305600048042834,
+            "stream_median_s": 18.658662800036836,
+            "ideal_stream_median_s": 0.7000000000000001,
+            "callback_cpu_s": 15.5,
+            "stream_lag_max_ms": 18433.363600051962,
+            "chunks": 7000,
+            "logs": {
+              "opens": 14354,
+              "writes": 15000,
+              "flushes": 15000,
+              "io_s": 1.0843485122313723
+            },
+            "phase_sum_s": {
+              "t_terms": 76.57930940017104,
+              "t_llm": 2008.4286865998292,
+              "t_parse": 0.004617500118911266
+            },
+            "candidate_append_sum_s": 1.2921850001439452,
+            "log_close_s": 0.002408799948170781,
+            "accepted": 5000,
+            "recovered": 5000,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 14.619896200019866,
+            "cpu_s": 15.71875,
+            "json_import_ms": 49.39079994801432,
+            "peak_requests": 100,
+            "peak_threads": 267,
+            "peak_process_handles": 1328,
+            "rss_mb": 139.68359375,
+            "heartbeat_p95_ms": 12.27820001076907,
+            "heartbeat_max_ms": 33.98399997968227,
+            "stream_median_s": 11.976680750027299,
+            "ideal_stream_median_s": 0.7000000000000001,
+            "callback_cpu_s": 11.046875,
+            "stream_lag_max_ms": 11861.169399926439,
+            "chunks": 7000,
+            "logs": {
+              "opens": 14243,
+              "writes": 15000,
+              "flushes": 15000,
+              "io_s": 0.8495429024333134
+            },
+            "phase_sum_s": {
+              "t_terms": 77.73288329993375,
+              "t_llm": 1339.8485625004396,
+              "t_parse": 0.004485400393605232
+            },
+            "candidate_append_sum_s": 1.4057315002428368,
+            "log_close_s": 0.0014486000873148441,
+            "accepted": 5000,
+            "recovered": 5000,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 14.933576100040227,
+            "cpu_s": 16.5,
+            "json_import_ms": 49.785299925133586,
+            "peak_requests": 100,
+            "peak_threads": 267,
+            "peak_process_handles": 1328,
+            "rss_mb": 139.52734375,
+            "heartbeat_p95_ms": 12.384500005282462,
+            "heartbeat_max_ms": 33.672899939119816,
+            "stream_median_s": 12.352113400003873,
+            "ideal_stream_median_s": 0.7000000000000001,
+            "callback_cpu_s": 11.296875,
+            "stream_lag_max_ms": 12078.06770002935,
+            "chunks": 7000,
+            "logs": {
+              "opens": 14370,
+              "writes": 15000,
+              "flushes": 15000,
+              "io_s": 0.862315300386399
+            },
+            "phase_sum_s": {
+              "t_terms": 79.87212710117456,
+              "t_llm": 1381.303143400699,
+              "t_parse": 0.004435800132341683
+            },
+            "candidate_append_sum_s": 1.263024499756284,
+            "log_close_s": 0.001665899995714426,
+            "accepted": 5000,
+            "recovered": 5000,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 15.27213880000636,
+            "cpu_s": 17.1875,
+            "json_import_ms": 58.01790009718388,
+            "peak_requests": 100,
+            "peak_threads": 267,
+            "peak_process_handles": 1328,
+            "rss_mb": 140.7421875,
+            "heartbeat_p95_ms": 12.205900042317808,
+            "heartbeat_max_ms": 29.693799908272922,
+            "stream_median_s": 12.54116924997652,
+            "ideal_stream_median_s": 0.7000000000000001,
+            "callback_cpu_s": 11.3125,
+            "stream_lag_max_ms": 12367.422000039369,
+            "chunks": 7000,
+            "logs": {
+              "opens": 14351,
+              "writes": 15000,
+              "flushes": 15000,
+              "io_s": 0.8936798922950402
+            },
+            "phase_sum_s": {
+              "t_terms": 77.57027549948543,
+              "t_llm": 1400.9473282999825,
+              "t_parse": 0.005437298910692334
+            },
+            "candidate_append_sum_s": 1.330025499803014,
+            "log_close_s": 0.0013525999384000897,
+            "accepted": 5000,
+            "recovered": 5000,
+            "failed": 0
+          }
+        ],
+        "elapsed_summary": {
+          "median": 15.152367300004698,
+          "min": 14.619896200019866,
+          "max": 21.27460759994574
+        }
+      },
+      "after": {
+        "arguments": {
+          "source": "D:\\MyCode\\TransBridge\\src",
+          "scratch": "D:\\MyCode\\TransBridge\\qa-tmp-ai100-pilot-20261025-01a16e37\\bench",
+          "output": "D:\\MyCode\\TransBridge\\qa-tmp-ai100-pilot-20261025-01a16e37\\long50-after-1.json",
+          "samples": 1,
+          "concurrency": 100,
+          "requests": 100,
+          "rows": 50,
+          "terms": 1000,
+          "chunk": 64,
+          "interval": 0.01
+        },
+        "samples": [
+          {
+            "elapsed_s": 3.281918799970299,
+            "cpu_s": 3.75,
+            "json_import_ms": 58.9382000034675,
+            "peak_requests": 100,
+            "peak_threads": 268,
+            "peak_process_handles": 1605,
+            "rss_mb": 141.0703125,
+            "heartbeat_p95_ms": 42.310799937695265,
+            "heartbeat_max_ms": 278.17920001689345,
+            "stream_median_s": 0.7223639500443824,
+            "ideal_stream_median_s": 0.7000000000000001,
+            "callback_cpu_s": 0.1875,
+            "stream_lag_max_ms": 434.9391999421641,
+            "chunks": 7000,
+            "logs": {
+              "opens": 200,
+              "writes": 5003,
+              "flushes": 5003,
+              "io_s": 1.3708779989974573
+            },
+            "phase_sum_s": {
+              "t_terms": 72.87624559993856,
+              "t_llm": 168.59841649979353,
+              "t_parse": 0.003848599852062762
+            },
+            "candidate_append_sum_s": 0.775084598804824,
+            "log_close_s": 0.004086200031451881,
+            "accepted": 5000,
+            "recovered": 5000,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 3.3772984000388533,
+            "cpu_s": 3.53125,
+            "json_import_ms": 59.72030002158135,
+            "peak_requests": 100,
+            "peak_threads": 268,
+            "peak_process_handles": 1605,
+            "rss_mb": 140.49609375,
+            "heartbeat_p95_ms": 37.827500025741756,
+            "heartbeat_max_ms": 178.80439991131425,
+            "stream_median_s": 0.7473510999698192,
+            "ideal_stream_median_s": 0.7000000000000001,
+            "callback_cpu_s": 0.1875,
+            "stream_lag_max_ms": 643.6173000838608,
+            "chunks": 7000,
+            "logs": {
+              "opens": 200,
+              "writes": 4391,
+              "flushes": 4391,
+              "io_s": 1.3365096009802073
+            },
+            "phase_sum_s": {
+              "t_terms": 70.1068435999332,
+              "t_llm": 185.36225480027497,
+              "t_parse": 0.0034826998598873615
+            },
+            "candidate_append_sum_s": 0.8291445003123954,
+            "log_close_s": 0.005669899983331561,
+            "accepted": 5000,
+            "recovered": 5000,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 3.4004480000585318,
+            "cpu_s": 3.75,
+            "json_import_ms": 49.12290000356734,
+            "peak_requests": 100,
+            "peak_threads": 268,
+            "peak_process_handles": 1602,
+            "rss_mb": 140.95703125,
+            "heartbeat_p95_ms": 35.238999989815056,
+            "heartbeat_max_ms": 182.30520002543926,
+            "stream_median_s": 0.729023749998305,
+            "ideal_stream_median_s": 0.7000000000000001,
+            "callback_cpu_s": 0.390625,
+            "stream_lag_max_ms": 474.8572999378666,
+            "chunks": 7000,
+            "logs": {
+              "opens": 200,
+              "writes": 4213,
+              "flushes": 4213,
+              "io_s": 1.4192217006348073
+            },
+            "phase_sum_s": {
+              "t_terms": 71.03492520051077,
+              "t_llm": 186.78838089923374,
+              "t_parse": 0.003981800167821348
+            },
+            "candidate_append_sum_s": 0.8421991000650451,
+            "log_close_s": 0.004019399988465011,
+            "accepted": 5000,
+            "recovered": 5000,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 3.355996900005266,
+            "cpu_s": 3.578125,
+            "json_import_ms": 53.53269993793219,
+            "peak_requests": 100,
+            "peak_threads": 268,
+            "peak_process_handles": 1604,
+            "rss_mb": 141.28515625,
+            "heartbeat_p95_ms": 34.58069998305291,
+            "heartbeat_max_ms": 272.54299994092435,
+            "stream_median_s": 0.7594398500514217,
+            "ideal_stream_median_s": 0.7000000000000001,
+            "callback_cpu_s": 0.09375,
+            "stream_lag_max_ms": 614.2264999216422,
+            "chunks": 7000,
+            "logs": {
+              "opens": 200,
+              "writes": 4353,
+              "flushes": 4353,
+              "io_s": 1.300419399398379
+            },
+            "phase_sum_s": {
+              "t_terms": 70.84342259983532,
+              "t_llm": 185.9977809006814,
+              "t_parse": 0.003949799807742238
+            },
+            "candidate_append_sum_s": 0.8132242993451655,
+            "log_close_s": 0.00520200002938509,
+            "accepted": 5000,
+            "recovered": 5000,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 3.4383889000164345,
+            "cpu_s": 3.796875,
+            "json_import_ms": 50.67219992633909,
+            "peak_requests": 100,
+            "peak_threads": 268,
+            "peak_process_handles": 1605,
+            "rss_mb": 140.4453125,
+            "heartbeat_p95_ms": 39.66100001707673,
+            "heartbeat_max_ms": 341.0836999537423,
+            "stream_median_s": 0.7237390999798663,
+            "ideal_stream_median_s": 0.7000000000000001,
+            "callback_cpu_s": 0.15625,
+            "stream_lag_max_ms": 534.7696000244468,
+            "chunks": 7000,
+            "logs": {
+              "opens": 200,
+              "writes": 4838,
+              "flushes": 4838,
+              "io_s": 1.4428499006899074
+            },
+            "phase_sum_s": {
+              "t_terms": 76.40943540015724,
+              "t_llm": 188.97161790030077,
+              "t_parse": 0.005044699180871248
+            },
+            "candidate_append_sum_s": 0.8179213998373598,
+            "log_close_s": 0.004267600015737116,
+            "accepted": 5000,
+            "recovered": 5000,
+            "failed": 0
+          }
+        ],
+        "elapsed_summary": {
+          "median": 3.3772984000388533,
+          "min": 3.281918799970299,
+          "max": 3.4383889000164345
+        }
+      }
+    },
+    "waves200": {
+      "before": {
+        "arguments": {
+          "source": "D:\\MyCode\\TransBridge\\qa-tmp-ai100-pilot-20261025-01a16e37\\baseline\\src",
+          "scratch": "D:\\MyCode\\TransBridge\\qa-tmp-ai100-pilot-20261025-01a16e37\\bench",
+          "output": "D:\\MyCode\\TransBridge\\qa-tmp-ai100-pilot-20261025-01a16e37\\waves200-before-1.json",
+          "samples": 1,
+          "concurrency": 100,
+          "requests": 200,
+          "rows": 20,
+          "terms": 1000,
+          "chunk": 64,
+          "interval": 0.01
+        },
+        "samples": [
+          {
+            "elapsed_s": 9.672076600021683,
+            "cpu_s": 10.546875,
+            "json_import_ms": 43.604400008916855,
+            "peak_requests": 100,
+            "peak_threads": 271,
+            "peak_process_handles": 1344,
+            "rss_mb": 142.1640625,
+            "heartbeat_p95_ms": 12.07209995482117,
+            "heartbeat_max_ms": 35.66649998538196,
+            "stream_median_s": 3.491807600017637,
+            "ideal_stream_median_s": 0.29,
+            "callback_cpu_s": 6.109375,
+            "stream_lag_max_ms": 4241.993200033903,
+            "chunks": 5800,
+            "logs": {
+              "opens": 12846,
+              "writes": 13600,
+              "flushes": 13600,
+              "io_s": 0.8816263002809137
+            },
+            "phase_sum_s": {
+              "t_terms": 62.594313601148315,
+              "t_llm": 906.5616107997485,
+              "t_parse": 0.005590899847447872
+            },
+            "candidate_append_sum_s": 1.9539325004443526,
+            "log_close_s": 0.001234999974258244,
+            "accepted": 4000,
+            "recovered": 4000,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 9.888446800061502,
+            "cpu_s": 11.4375,
+            "json_import_ms": 39.122399990446866,
+            "peak_requests": 100,
+            "peak_threads": 271,
+            "peak_process_handles": 1344,
+            "rss_mb": 142.86328125,
+            "heartbeat_p95_ms": 11.914699920453131,
+            "heartbeat_max_ms": 56.74270004965365,
+            "stream_median_s": 3.7262527500279248,
+            "ideal_stream_median_s": 0.29,
+            "callback_cpu_s": 6.015625,
+            "stream_lag_max_ms": 4518.396999919787,
+            "chunks": 5800,
+            "logs": {
+              "opens": 12780,
+              "writes": 13600,
+              "flushes": 13600,
+              "io_s": 0.8401726025622338
+            },
+            "phase_sum_s": {
+              "t_terms": 61.27877489931416,
+              "t_llm": 926.4331462997943,
+              "t_parse": 0.005592301255092025
+            },
+            "candidate_append_sum_s": 2.051966899074614,
+            "log_close_s": 0.0015836999518796802,
+            "accepted": 4000,
+            "recovered": 4000,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 9.587120400043204,
+            "cpu_s": 11.15625,
+            "json_import_ms": 39.47439999319613,
+            "peak_requests": 100,
+            "peak_threads": 271,
+            "peak_process_handles": 1344,
+            "rss_mb": 142.78515625,
+            "heartbeat_p95_ms": 11.791100027039647,
+            "heartbeat_max_ms": 39.658800000324845,
+            "stream_median_s": 3.5010174500057474,
+            "ideal_stream_median_s": 0.29,
+            "callback_cpu_s": 6.234375,
+            "stream_lag_max_ms": 3897.410299978219,
+            "chunks": 5800,
+            "logs": {
+              "opens": 12676,
+              "writes": 13600,
+              "flushes": 13600,
+              "io_s": 0.7992074945941567
+            },
+            "phase_sum_s": {
+              "t_terms": 59.49993180076126,
+              "t_llm": 883.0955561002484,
+              "t_parse": 0.006126300082542002
+            },
+            "candidate_append_sum_s": 2.0736855999566615,
+            "log_close_s": 0.001956599997356534,
+            "accepted": 4000,
+            "recovered": 4000,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 26.458644000114873,
+            "cpu_s": 25.25,
+            "json_import_ms": 38.376899901777506,
+            "peak_requests": 100,
+            "peak_threads": 271,
+            "peak_process_handles": 1344,
+            "rss_mb": 142.171875,
+            "heartbeat_p95_ms": 19.881200045347214,
+            "heartbeat_max_ms": 153.37949991226196,
+            "stream_median_s": 10.407122250006068,
+            "ideal_stream_median_s": 0.29,
+            "callback_cpu_s": 15.125,
+            "stream_lag_max_ms": 13243.382000015117,
+            "chunks": 5800,
+            "logs": {
+              "opens": 11931,
+              "writes": 13600,
+              "flushes": 13600,
+              "io_s": 1.927790301386267
+            },
+            "phase_sum_s": {
+              "t_terms": 104.34709279995877,
+              "t_llm": 2459.411303999601,
+              "t_parse": 0.012926800292916596
+            },
+            "candidate_append_sum_s": 6.032507900614291,
+            "log_close_s": 0.0060125000309199095,
+            "accepted": 4000,
+            "recovered": 4000,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 25.610378100071102,
+            "cpu_s": 24.65625,
+            "json_import_ms": 37.68360009416938,
+            "peak_requests": 100,
+            "peak_threads": 271,
+            "peak_process_handles": 1344,
+            "rss_mb": 142.42578125,
+            "heartbeat_p95_ms": 19.838899956084788,
+            "heartbeat_max_ms": 134.66630002949387,
+            "stream_median_s": 10.133554700005334,
+            "ideal_stream_median_s": 0.29,
+            "callback_cpu_s": 14.578125,
+            "stream_lag_max_ms": 14956.710699945688,
+            "chunks": 5800,
+            "logs": {
+              "opens": 11646,
+              "writes": 13600,
+              "flushes": 13600,
+              "io_s": 1.9345901887863874
+            },
+            "phase_sum_s": {
+              "t_terms": 109.65032749960665,
+              "t_llm": 2423.7664570997003,
+              "t_parse": 0.012188100605271757
+            },
+            "candidate_append_sum_s": 5.990851799026132,
+            "log_close_s": 0.0016944999806582928,
+            "accepted": 4000,
+            "recovered": 4000,
+            "failed": 0
+          }
+        ],
+        "elapsed_summary": {
+          "median": 9.888446800061502,
+          "min": 9.587120400043204,
+          "max": 26.458644000114873
+        }
+      },
+      "after": {
+        "arguments": {
+          "source": "D:\\MyCode\\TransBridge\\src",
+          "scratch": "D:\\MyCode\\TransBridge\\qa-tmp-ai100-pilot-20261025-01a16e37\\bench",
+          "output": "D:\\MyCode\\TransBridge\\qa-tmp-ai100-pilot-20261025-01a16e37\\waves200-after-1.json",
+          "samples": 1,
+          "concurrency": 100,
+          "requests": 200,
+          "rows": 20,
+          "terms": 1000,
+          "chunk": 64,
+          "interval": 0.01
+        },
+        "samples": [
+          {
+            "elapsed_s": 3.7367438999935985,
+            "cpu_s": 4.515625,
+            "json_import_ms": 46.95200000423938,
+            "peak_requests": 100,
+            "peak_threads": 272,
+            "peak_process_handles": 1597,
+            "rss_mb": 137.38671875,
+            "heartbeat_p95_ms": 15.73899993672967,
+            "heartbeat_max_ms": 51.12139997072518,
+            "stream_median_s": 0.3561958999489434,
+            "ideal_stream_median_s": 0.29,
+            "callback_cpu_s": 0.3125,
+            "stream_lag_max_ms": 272.33419998083264,
+            "chunks": 5800,
+            "logs": {
+              "opens": 400,
+              "writes": 9510,
+              "flushes": 9510,
+              "io_s": 1.2223894991911948
+            },
+            "phase_sum_s": {
+              "t_terms": 36.99392090016045,
+              "t_llm": 137.56432209978811,
+              "t_parse": 0.0059377995785325766
+            },
+            "candidate_append_sum_s": 1.4907805017428473,
+            "log_close_s": 0.007314500049687922,
+            "accepted": 4000,
+            "recovered": 4000,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 3.5265903000254184,
+            "cpu_s": 3.953125,
+            "json_import_ms": 43.487600050866604,
+            "peak_requests": 100,
+            "peak_threads": 272,
+            "peak_process_handles": 1632,
+            "rss_mb": 136.60546875,
+            "heartbeat_p95_ms": 16.85050001833588,
+            "heartbeat_max_ms": 107.2288000723347,
+            "stream_median_s": 0.29380074999062344,
+            "ideal_stream_median_s": 0.29,
+            "callback_cpu_s": 0.125,
+            "stream_lag_max_ms": 201.75320003181696,
+            "chunks": 5800,
+            "logs": {
+              "opens": 400,
+              "writes": 8228,
+              "flushes": 8228,
+              "io_s": 1.085271799354814
+            },
+            "phase_sum_s": {
+              "t_terms": 35.13626949873287,
+              "t_llm": 121.5258893998107,
+              "t_parse": 0.005198100232519209
+            },
+            "candidate_append_sum_s": 1.4054514996241778,
+            "log_close_s": 0.007032699999399483,
+            "accepted": 4000,
+            "recovered": 4000,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 3.5367558000143617,
+            "cpu_s": 3.875,
+            "json_import_ms": 50.61730009038001,
+            "peak_requests": 100,
+            "peak_threads": 272,
+            "peak_process_handles": 1574,
+            "rss_mb": 138.6015625,
+            "heartbeat_p95_ms": 16.766400076448917,
+            "heartbeat_max_ms": 44.925999944098294,
+            "stream_median_s": 0.3218391499831341,
+            "ideal_stream_median_s": 0.29,
+            "callback_cpu_s": 0.265625,
+            "stream_lag_max_ms": 191.14769995212555,
+            "chunks": 5800,
+            "logs": {
+              "opens": 400,
+              "writes": 9607,
+              "flushes": 9607,
+              "io_s": 0.9521127978805453
+            },
+            "phase_sum_s": {
+              "t_terms": 36.59581200010143,
+              "t_llm": 130.59017509990372,
+              "t_parse": 0.005624299868941307
+            },
+            "candidate_append_sum_s": 1.4206832007039338,
+            "log_close_s": 0.007334899972192943,
+            "accepted": 4000,
+            "recovered": 4000,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 7.1753426000941545,
+            "cpu_s": 7.421875,
+            "json_import_ms": 38.25860004872084,
+            "peak_requests": 100,
+            "peak_threads": 272,
+            "peak_process_handles": 1630,
+            "rss_mb": 138.75,
+            "heartbeat_p95_ms": 28.222099994309247,
+            "heartbeat_max_ms": 107.8300999943167,
+            "stream_median_s": 0.32222969993017614,
+            "ideal_stream_median_s": 0.29,
+            "callback_cpu_s": 0.421875,
+            "stream_lag_max_ms": 186.9608999695629,
+            "chunks": 5800,
+            "logs": {
+              "opens": 400,
+              "writes": 7358,
+              "flushes": 7358,
+              "io_s": 1.1315104991663247
+            },
+            "phase_sum_s": {
+              "t_terms": 35.60984649928287,
+              "t_llm": 114.19272820057813,
+              "t_parse": 0.007960899965837598
+            },
+            "candidate_append_sum_s": 3.748268799390644,
+            "log_close_s": 0.0209502000361681,
+            "accepted": 4000,
+            "recovered": 4000,
+            "failed": 0
+          },
+          {
+            "elapsed_s": 7.112135100062005,
+            "cpu_s": 7.390625,
+            "json_import_ms": 38.96949999034405,
+            "peak_requests": 100,
+            "peak_threads": 272,
+            "peak_process_handles": 1633,
+            "rss_mb": 138.76953125,
+            "heartbeat_p95_ms": 28.992700041271746,
+            "heartbeat_max_ms": 142.1138000441715,
+            "stream_median_s": 0.3290757000213489,
+            "ideal_stream_median_s": 0.29,
+            "callback_cpu_s": 0.28125,
+            "stream_lag_max_ms": 179.2799000395462,
+            "chunks": 5800,
+            "logs": {
+              "opens": 400,
+              "writes": 7320,
+              "flushes": 7320,
+              "io_s": 1.2207345038186759
+            },
+            "phase_sum_s": {
+              "t_terms": 36.67333030037116,
+              "t_llm": 126.35238469997421,
+              "t_parse": 0.008351499796845019
+            },
+            "candidate_append_sum_s": 3.5965239994693547,
+            "log_close_s": 0.030933899921365082,
+            "accepted": 4000,
+            "recovered": 4000,
+            "failed": 0
+          }
+        ],
+        "elapsed_summary": {
+          "median": 3.7367438999935985,
+          "min": 3.5265903000254184,
+          "max": 7.1753426000941545
+        }
+      }
+    }
+  },
+  "component_cpu": {
+    "before": {
+      "source": "D:\\MyCode\\TransBridge\\qa-tmp-ai100-pilot-20261025-01a16e37\\baseline\\src",
+      "rows": 50,
+      "chars": 4003,
+      "chunk": 16,
+      "minimum_iterations": 10,
+      "samples": {
+        "parse_cpu_ms": [
+          8.333333333333334,
+          7.8125,
+          7.575757575757576,
+          7.575757575757576,
+          7.575757575757576
+        ],
+        "repetition_cpu_ms": [
+          534.375,
+          560.9375,
+          562.5,
+          535.9375,
+          560.9375
+        ]
+      },
+      "iterations": {
+        "parse_cpu_ms": [
+          30,
+          32,
+          33,
+          33,
+          33
+        ],
+        "repetition_cpu_ms": [
+          10,
+          10,
+          10,
+          10,
+          10
+        ]
+      },
+      "parse_cpu_ms": 7.575757575757576,
+      "repetition_cpu_ms": 560.9375
+    },
+    "after": {
+      "source": "D:\\MyCode\\TransBridge\\src",
+      "rows": 50,
+      "chars": 4003,
+      "chunk": 16,
+      "minimum_iterations": 10,
+      "samples": {
+        "parse_cpu_ms": [
+          0.589622641509434,
+          0.5980861244019139,
+          0.5720823798627003,
+          0.6188118811881188,
+          0.5952380952380952
+        ],
+        "repetition_cpu_ms": [
+          3.676470588235294,
+          3.787878787878788,
+          8.333333333333334,
+          11.363636363636363,
+          8.928571428571429
+        ]
+      },
+      "iterations": {
+        "parse_cpu_ms": [
+          424,
+          418,
+          437,
+          404,
+          420
+        ],
+        "repetition_cpu_ms": [
+          68,
+          66,
+          30,
+          22,
+          28
+        ]
+      },
+      "parse_cpu_ms": 0.5952380952380952,
+      "repetition_cpu_ms": 8.333333333333334
+    }
+  },
+  "excluded_attempts": [
+    {
+      "scenario": "waves200",
+      "version": "before",
+      "sample": 4,
+      "result": "Candidate checkpoint atomic replacement failed with Windows error 5; run aborted, then pair rerun. No successful result was fabricated."
+    }
+  ],
+  "validation": {
+    "final-b": {
+      "tests": "1102",
+      "errors": "0",
+      "failures": "0",
+      "skipped": "0",
+      "time": "13.760"
+    },
+    "final-u": {
+      "tests": "263",
+      "errors": "0",
+      "failures": "1",
+      "skipped": "0",
+      "time": "8.138"
+    },
+    "final-v": {
+      "tests": "92",
+      "errors": "0",
+      "failures": "0",
+      "skipped": "0",
+      "time": "11.073"
+    },
+    "short-path": {
+      "tests": "1",
+      "errors": "0",
+      "failures": "0",
+      "skipped": "0",
+      "time": "0.697"
+    }
+  },
+  "test_groups": {
+    "backend": [
+      "tests/ai_translator",
+      "tests/application/translation",
+      "tests/config",
+      "tests/infra/test_limited_llm_client.py",
+      "tests/infra/test_llm_connection_capacity.py",
+      "tests/infra/test_llm_reasoning_protocols.py",
+      "tests/smart_assistant/tools/test_polish_llm_runtime.py"
+    ],
+    "ui": [
+      "tests/ui/tools/test_workflow_log_writer.py",
+      "tests/ui/tools/test_workflow_log_lifecycle.py",
+      "tests/ui/tools/test_workflow_logging_client.py",
+      "tests/ui/tools/test_unified_task_runtime.py",
+      "tests/ui/tools/test_unified_task_progress.py",
+      "tests/ui/tools/test_unified_task_config.py",
+      "tests/ui/tools/test_unified_ai_execution.py",
+      "tests/ui/tools/test_translation_task_resume.py",
+      "tests/ui/tools/test_task_recovery_discovery.py",
+      "tests/ui/tools/test_task_recovery_binding.py",
+      "tests/ui/tools/test_live_llm_logs.py",
+      "tests/ui/tools/test_full_task_recovery_ui.py",
+      "tests/ui/tools/test_custom_profile_presenter.py",
+      "tests/ui/tools/test_ai_worker_feedback_binding.py",
+      "tests/ui/tools/test_ai_mode_switching.py",
+      "tests/ui/tools/test_ai_feedback_polling.py",
+      "tests/ui/tools/test_ai_project_name_preparation.py",
+      "tests/ui/tools/test_ai_source_term_closure.py",
+      "tests/ui/tools/test_ai_translator_slices.py",
+      "tests/ui/tools/test_legacy_ai_worker_lifecycle.py",
+      "tests/ui/tools/test_mixed_completion_integrity.py",
+      "tests/ui/tools/test_mixed_preflight.py",
+      "tests/ui/tools/test_llm_log_popup.py",
+      "tests/ui/tools/test_ai_launch_config_snapshot.py",
+      "tests/ui/test_ai_concurrency_settings.py",
+      "tests/ui/test_ui_settings_dialog.py"
+    ]
+  },
+  "known_baseline_failures": [
+    "tests/ai_translator/test_existing_term_extractor.py::test_auto_translator_uses_seeded_name_term_in_the_same_run",
+    "tests/ai_translator/test_translator_term_conflicts.py::test_generated_terms_are_observed_only_after_successful_storage[False]",
+    "tests/ai_translator/test_translator_term_conflicts.py::test_generated_terms_are_observed_only_after_successful_storage[True]",
+    "tests/smart_assistant/tools/test_polish_llm_runtime.py::test_proofread_preserves_text_and_applies_questionable_stage[False-1]",
+    "tests/ui/tools/test_ai_mode_switching.py::test_mode_switches_preserve_shell_and_common_field_anchors[size1-14]",
+    "tests/ui/tools/test_ai_mode_switching.py::test_mode_switches_preserve_shell_and_common_field_anchors[size2-10]",
+    "tests/ui/tools/test_translation_task_resume.py::test_interrupted_comprehensive_review_reuses_completed_batches"
+  ],
+  "unique_final_passes": 1457,
+  "owned_files_sha256": {
+    "src/transbridge/config/llm.py": {
+      "before": "3058a68d79210f95ff2c79ba5e119063942fe13b6e0c37fcd498c349baf6495d",
+      "final": "3678c6675f0aa563612aa7e138aa0053e8b573b41878e65bea1473d5d78be184"
+    },
+    "src/transbridge/application/translation/custom_workflow_profile.py": {
+      "before": "222286f2a1bca3d47f7d0e53c8214045029c41dd3f31828f8dbfa1d973bb399f",
+      "final": "4c7eaae3e784846524b8a7d79d56c865da50df643781dc62971155f56001e1fb"
+    },
+    "src/transbridge/ai_translator/translator.py": {
+      "before": "693f0210fb4a66c338833bbf737ad885f45d82dec79d602e0f600473eb2b4bc8",
+      "final": "b9dd4ba205240a1516088eb69e87ed9721e58fa39ca1389a2ad0a0ef7ab43033"
+    },
+    "src/transbridge/ai_translator/prompt_builder.py": {
+      "before": "e24dc5d9fcd0d4b78bd25b06608cc85893b74df3d06d8659b144dd949ed3afd4",
+      "final": "aab2ff92591c4ee2e888748ab2fc2104d08cebb957f4ea59b81b320599467338"
+    },
+    "src/transbridge/ai_translator/translation_stream.py": {
+      "before": null,
+      "final": "0ad93f1ee69ad8a2cf4ed980e559d6ebb237dfc11cea2dd1e81fcb95cd4de574"
+    },
+    "src/transbridge/ai_translator/stream_repetition.py": {
+      "before": null,
+      "final": "97524343b9ca483d4371765f970cd1ee8de9893836142f843804866b8f98ab4a"
+    },
+    "src/transbridge/ui/tools/ai_translator/single_task_view.py": {
+      "before": "7be96a1f8d041a6ac63ad349472f9d2ebeaec4b855d0f9b1eb37c63ed94fb112",
+      "final": "979598c5d1115bf0eac83515d4a2198ef46b7ccda4d21e7746f48e3797362b89"
+    },
+    "src/transbridge/ui/settings/ai_service_page.py": {
+      "before": "c0cb8cd3ce0a740a273940fa85ce886ecf7c2dc3d3a8e0526388200454c62e2d",
+      "final": "fc6dd422eb0a669b910444c218614e45e93b9d27b791f1e9255605e5c0b7d8a5"
+    },
+    "src/transbridge/ui/tools/ai_translator/workflow_log_store.py": {
+      "before": "fd3b285a2c301a95126d9d578ade95790a37a8b9f389c79bb410b0cef4bcaadc",
+      "final": "7ec1e4cc5150ed960fc8750829c4452dfb0ea66b07457eee42c5734e2404eece"
+    },
+    "src/transbridge/ui/tools/ai_translator/workflow_log_writer.py": {
+      "before": null,
+      "final": "8ab39d24ea842539dac23d104b89ea594b01e63d4fde6d3fefd7c1e8f73dfa1a"
+    },
+    "src/transbridge/ui/tools/ai_translator/source_execution.py": {
+      "before": "be08591964dbe959a115c8377f7f08b6f8e8227b117e0b7ec0d3f2596c4a24ed",
+      "final": "04c510709b80795c79a8f874954c63fbb043e2320ac768a9a29518988c8cf482"
+    },
+    "src/transbridge/ui/tools/ai_translator/task_name_preparation.py": {
+      "before": "0f8643effa72e7845c8f9165ee928dc186d5dc296d33747e1540dccee51047b9",
+      "final": "34113cdf469b2d100fcd518115b544c364e62a84d70173d43fe536924a358d53"
+    },
+    "src/transbridge/ui/tools/ai_translator/source_reference_review.py": {
+      "before": "3c976e8893f133355346dd3d607cbf9b989f1e9102163af65edefda2605882a6",
+      "final": "3df521455afbc102a8547ff1c4f962072f82bccb7515fa9dd41ab83d539ed8c1"
+    },
+    "src/transbridge/ui/tools/ai_translator/run_controller.py": {
+      "before": "159ee432f28ae7d81dffb95dec8660abb310c28b29ee8539eb4ce7acf7fd75d8",
+      "final": "697f905b1a482d885251e9746b8561cf173e168939302cd05987e038ab015dc7"
+    },
+    "src/transbridge/ui/tools/ai_translator/polish_runtime.py": {
+      "before": "3a40b20fda1537545075e942acabdcbe16c9994b88ba6df79dbf5bdf75635562",
+      "final": "c892aa71b614e3762b05b2089e36e92f0959a8f76adf960ae485309bf1648518"
+    },
+    "src/transbridge/ui/tools/ai_translator/_mixed_worker.py": {
+      "before": "db27313f34e391d7f61c1366e1f93e1f3e84d21aedc27876b14c53dd7257665c",
+      "final": "0082b0a1577724a54c9d01cba88db889741d5b290366ec1b4c4d29eb05440a53"
+    },
+    "src/transbridge/ui/tools/ai_translator/_polish_worker.py": {
+      "before": "d8a7a2d794caae424afa3c9a4fdfd56625e36c95b959e742f547a35ea2d06689",
+      "final": "e97dbf9f1b118df1f1d60198466646b22ffdba1d4ff736d3a8bea59bdc04fbc0"
+    },
+    "src/transbridge/smart_assistant/tools/_workflow_llm_runtime.py": {
+      "before": "b95b918e87814863afc70408616412225297dfdf346f293669387a06d18dad22",
+      "final": "b272317ced0cb3845e92f2c192d3671278d9ed1ad72641349c48ba7fffaab5f3"
+    },
+    "tests/ai_translator/test_translation_stream.py": {
+      "before": null,
+      "final": "f2b114df212716caddd1dfad9a1986d3edd6f57c8c56ec962122bc0209f74802"
+    },
+    "tests/ai_translator/test_stream_repetition.py": {
+      "before": null,
+      "final": "54c46b85aca412e620e52a80f4f8eb248f4ac2618155a33958dc619bee5695b9"
+    },
+    "tests/ui/tools/test_workflow_log_writer.py": {
+      "before": null,
+      "final": "014f4fd1c22afe82f61017572cdb393893f5c40daac60b9dc0dc40c8c8b1679d"
+    },
+    "tests/ui/tools/test_workflow_log_lifecycle.py": {
+      "before": "693020fc4a08142b34d0a3dba7181077855f8f38de8db76e9f2acf4422ffc78f",
+      "final": "5a9a4822fbcada6129bffa6aac5ce2b13905fcbffd931bcb8ce5fd76d7ceac42"
+    },
+    "tests/config/test_ai_concurrency_defaults.py": {
+      "before": null,
+      "final": "df4e38cf4c17098ecdcac0dcd3d9b1fdd666beef20b048e81afb4302ae7c8511"
+    },
+    "tests/ui/tools/test_ai_mode_switching.py": {
+      "before": "b13e0b990978017b0c026e8bf17da925b71c3964a580fdcdfda4320e47860a2d",
+      "final": "a3c89b8025c5321c3e08325d7248e998131ea37be99e743260e6cb46220c22ff"
+    },
+    "tests/ui/test_ai_concurrency_settings.py": {
+      "before": null,
+      "final": "177e560ffe6b00b18b016125589353a565c34a20e2750b2f895b603a20c19711"
+    },
+    "tests/application/translation/test_ai_budget_100.py": {
+      "before": null,
+      "final": "859991322a20a2d04a3bea7170f33f64fe44a29736be6ae66977992a8caf032e"
+    },
+    "tests/infra/test_llm_connection_capacity.py": {
+      "before": null,
+      "final": "6c9d9b6a1dd1e806d46702a97eba0a06f62f60ae0e8d53069c458d6b294661b3"
+    },
+    "scripts/benchmark_ai_stream_concurrency.py": {
+      "before": null,
+      "final": "4f8d04fd9807713b551e312da0bc51963aaa94ecd315aafb3b6fa3ce446631a4"
+    },
+    "scripts/benchmark_ai_stream_processing.py": {
+      "before": null,
+      "final": "5a9f09222275e0b54ddd8c7f647a7dc45287007047cc85f0a67d1fae1e15b45f"
+    },
+    "docs/dev/ai_translator.md": {
+      "before": "3dfc4ba498ac5dfaf67f755768754241ad377cc556d2cc7ea4177e0cb372210a",
+      "final": "116330a7ac2e0b331f1f25b71d2840e2423413f924b286751cb79133c74762f6"
+    }
+  },
+  "limitations": [
+    "Synthetic provider; no real API, embeddings or model quality measurement.",
+    "Concurrent benchmark Qt surface is a light text window with real TaskFeedback, not the entire main window.",
+    "Full task progress, log viewer, commit/recovery are functionally tested separately.",
+    "Final error-only log-thread-start handling and legacy worker configuration compatibility were added after timing; normal stream algorithm unchanged.",
+    "Full-tree Ruff was blocked by concurrent unrelated batch_download_session.py formatting; all 29 owned Python files passed."
+  ]
+}

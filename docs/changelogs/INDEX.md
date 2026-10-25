@@ -1,5 +1,87 @@
 # 变更日志索引
 
+- 2026-10-26：[插件写回性能优化](paratranz-categorized-upload/story-25/2026-10-26-001-plugin-write-performance.md) — 单次发布复用源解析、原字节复制和有界扫描诊断，保留完整输出回读及回滚；真实 Skyrim 前后各五轮发布中位 88.181→41.542 秒（缩短 52.9%），中型 1.654→0.971 秒。相关回归 1295 通过，1 跳过、3 项旧失败排除，Ruff/格式通过；源文件未改，未打包。
+
+- 2026-10-25：[恢复 BSA 本地化插件写回](paratranz-categorized-upload/story-24/2026-10-25-001-bsa-localized-write.md) — 复用归档/插件库、既有字段分流、完整字符串解析和原子发布；补齐原始资源快照、跨表同 ID 及实际 BSA 归档禁止输出。最终相关回归 1264 通过、1 跳过、3 项既有失败排除，Ruff/格式通过；80 个实际插件隔离写回与 Dragonborn 重号验证通过，游戏源文件哈希未变，未打包。
+
+- 2026-10-25：[新建工程等待自身事务的死锁修复](paratranz-categorized-upload/story-23/2026-10-25-001-project-creation-self-wait.md) — 修复解析完成后新建后台与结束切换回调互等；事务内检查已安装快照，普通保存继续等待投影，保留旧草稿与关闭保护。新增 15 项事务/真实创建回归，最终专项 181 通过；扩大范围 3048 个不同用例经测试路径缩短复验通过，1 跳过、3 项旧失败排除，Ruff/格式通过，未操作真实工程或打包。
+
+- 2026-10-25：[保存后的工作台投影与保存交付竞态](paratranz-categorized-upload/story-22/2026-10-25-001-saved-workbench-projection.md) — 修复译文已落盘而工作台仍未译、退出误报不一致；全槽位三方协调、后台准备及 Qt 核验发布，并行保存等待正常交付，真实草稿仍保护。扩大回归 3029 通过、1 跳过、3 项既有失败排除；最终保存/AI 专项 175 通过，全库 Ruff/格式通过，未操作真实云端或打包。
+
+- 2026-10-25：[同源原文译文自动处理与完成态](paratranz-categorized-upload/story-21/2026-10-25-001-original-content-and-completion.md) — 当前工程自动处理 key 漂移、同译文元数据差异及内容复用，无匹配/空译保留本地说明；保存后按钮禁用，失败来源仍可重试，复核接受继续自动保存。1701 项整合及全库 Ruff/格式通过，真实服务/Qt/磁盘与线性复杂度回归覆盖，未声称原 144 条全部清零，未操作真实云端或打包。
+
+- 2026-10-25：[同步兼容新旧插件后缀路径](paratranz-categorized-upload/story-20/2026-10-25-001-compatible-plugin-paths.md) — 修复云端存在旧无后缀文件却提示无路径；整来源优先新布局、兼容唯一大小写、保留真实错误与来源隔离，入口精确为“从paratranz上同步”。1655 项整合及全库 Ruff/格式通过，沿用沙箱 HTTP/既有上传断言边界，未操作真实云端或打包。
+
+- 2026-10-25：[一次点击自动下载并保存](paratranz-categorized-upload/story-19/2026-10-25-001-automatic-download-and-save.md) — 删除手动对照/再次保存，同一个后台流程自动完成可靠项，真实冲突确认后继续保存；零差异保存当前编辑，部分完成保留本地复核选择。1605 项相关回归、全库 Ruff/格式及真实 Qt 视图检查通过，沿用沙箱 HTTP/既有上传断言边界，未操作云端或打包。
+
+- 2026-10-25：[统一下载窗口与来源读取优化](paratranz-categorized-upload/story-18/2026-10-25-001-unified-download-and-source-loading.md) — 一个入口、同一窗口和一个主按钮，修复默认服务依赖缺失及空来源阻断保存；轻目录、强内容校验与有界只读缓存保留最新编辑。80 插件五轮列表中位 6.75 秒→68.7 毫秒；1574 项整合回归及全库 Ruff/格式通过，沙箱本地 HTTP 测试和既有上传排序断言边界见记录，未操作真实云端。
+
+- 2026-10-25：[下载后自动保存当前本地版本](paratranz-categorized-upload/story-17/2026-10-25-001-download-autosave.md) — 单插件/批量下载保存成功后才发布结果，保留下载前还原点，保存失败原窗口重试且不重复下载；写后异常精确核验，真实回执主动通知。1222 项相关回归及全库 Ruff/格式通过，1 项既有上传排序断言排除，未操作真实云端。
+
+- 2026-10-25：[默认 100 并发与流式处理优化](ai-project-concurrency/story-19-to-23/2026-10-25-001-default-100-and-streaming.md) — 默认 100、界面 1～128、旧值保留；有界后台日志、增量 JSON 和重复检测。四组各五对测量，新版本 55,500 条候选正确恢复，常规 100×20 条中位 15.111→7.078 秒；1,457 项通过、7 项旧失败排除，本轮 Ruff 通过。快速长响应仍有最大 341ms 轻量 Qt 延迟，全库 lint 受无关格式变动影响。
+
+- 2026-10-25：[批量下载与原窗口恢复](paratranz-categorized-upload/story-16/2026-10-25-001-batch-download-recovery.md) — 恢复工程多插件选择与逐条复核，共享文件读取、保留并发编辑、真实还原点和一次提交；修复误拦截、缺文件缓存与迟到取消误报。919 项相关回归及全库 Ruff/格式通过，1 项既有上传排序失败独立复现后排除，未操作真实云端。
+
+- 2026-10-25：[当前文件范围与单快照下载](paratranz-categorized-upload/story-15/2026-10-25-001-single-snapshot-download.md) — 下载复核、授权和执行共用一次当前文件读取，取消历史 ID 优先与保存，移除旧下载/分类绑定闭环；保留 413 和两个转换脚本。1153 项不同用例通过，全库 Ruff/格式通过，未操作真实云端。
+
+- 2026-10-25：[统一分类与任务原名、清理旧代码](paratranz-categorized-upload/story-14/2026-10-25-001-unified-classification-and-quest-names.md) — 上传/脚本共用分类核心，优先准确 QUST:FULL 原名，缺失回退 ID；清理旧分类执行链、接口及 UI，保留普通兼容和两个脚本，输入失败明确报错。最终1112项整合回归及 Ruff/格式通过，1项已知 legacy 下载失败排除，未操作云端。
+
+- 2026-10-25：[冲突词条的哈希传输 key 与下载还原](paratranz-categorized-upload/story-13/2026-10-25-001-hashed-transport-keys.md) — 普通/分类不再生成逐词条冲突文件，传输编码与在线/JSON 下载还原共用规则，本地/插件 key 不变；旧文件兼容，不自动迁移。分组验证覆盖 1168 个不同用例，全库 Ruff/格式通过；旧 legacy 下载失败排除，未操作真实云端。
+
+- 2026-10-25：[普通与分类上传切换文件 API](paratranz-categorized-upload/story-12/2026-10-25-001-file-api-publication.md) — 补齐官网 API 使用备注，整文件创建/增量原文/批量译文状态替代逐条请求及本地关联保存；共享用户串行节流，下载按当前路径定位。888 项相关回归通过，全库 Ruff/格式通过；旧 legacy 下载失败已独立复现并排除，未操作真实云端。
+
+- 2026-10-25：[上传后关联投影与保存检查修复](paratranz-categorized-upload/story-11/2026-10-25-002-receipt-projection-save-guard.md) — 实际上传成功且关联落盘后，工作台旧 ID 误触发未保存保护；同版本批量同步关联及修订，保留真正本地编辑，纯关联表格更新保留位置。440 项相关回归及 Ruff/格式通过，1,000 行 Qt 冒烟验证保存一致性；未操作真实云端。
+
+- 2026-10-25：[分类直接上传与两种固定路径](paratranz-categorized-upload/story-11/2026-10-25-001-direct-upload-and-fixed-paths.md) — 取消分类手动对照和整理，后台实时核验；普通固定根目录插件文件，分类固定插件/类别及任务子目录，无额外上传目录。旧关联与无关变动不阻断已核实目标，批次保存和进度保留。890 项通过、1 项已复现的旧下载失败、1 项真实账号测试跳过，Ruff/格式通过；文档同步，未操作真实云端。
+
+- 2026-10-25：[分类上传失效关联自动恢复](paratranz-categorized-upload/story-10/2026-10-25-001-stale-association-recovery.md) — 修复空云端残留旧关联导致 41 条假冲突；自动匹配或重建，成功后保存新身份，支持分插件恢复，保护未选来源和有效 ID；拒绝不完整/矛盾文件列表与词条分页。390 项相关回归及 Ruff/格式通过，需求、ADR、计划与使用说明同步，未操作真实云端。
+
+- 2026-10-25：[分类上传批量关联与界面进度](paratranz-categorized-upload/story-09/2026-10-25-001-batched-receipts-and-progress.md) — 文件/批次保存替代逐条整版本保存与投影，100 ms 合并进度、分阶段显示、有界回执及异步窗口模态；331 项相关回归及 Ruff/格式通过。两万词条工程首文件 7 条关联从 8 次保存降为 1 次，五轮中位 57.574→13.957 秒；真实工作台单轮最大心跳间隔 191 ms。需求、ADR、计划与使用说明同步，真实云端未验收。
+
+- 2026-10-25：[分类上传的任务子目录](paratranz-categorized-upload/story-08/2026-10-25-001-quest-directory.md) — Quest 对话、未关联对话及任务日志集中在 `插件/任务/`，保留分类身份、key 和现有分组，单独/批量共用；按用户要求不开发已有云端迁移。295 项相关回归及 Ruff/格式通过，需求、ADR、计划和使用说明已同步。
+
+- 2026-10-25：[分类文件以真实新增内容创建](paratranz-categorized-upload/story-07/2026-10-25-001-nonempty-file-creation.md) — 修复空 JSON 返回 `status=empty` 导致整批上传失败；一次导入新增词条、回读并保存身份，补齐取消、未知结果及再次对照恢复，纯移动缺少目标时暂缓。290 项相关回归及 Ruff/格式通过，已同步需求、ADR、计划和排查说明；未进行真实云端写入。
+
+- 2026-10-25：[分类上传对照与执行诊断日志](paratranz-categorized-upload/story-06/2026-10-25-001-categorized-upload-diagnostics.md) — 单独/批量分类流程关联预览、对照、逐文件回执和 HTTP 诊断，捕获异常保留堆栈并脱敏；补齐需求、ADR、计划及排查说明，校正模式入口索引。198 项相关回归及 Ruff/格式通过；上传故障仍待定位，未进行真实云端写入。
+
+- 2026-10-24：[任务参考复用与项目收尾进度](ai-project-concurrency/story-17-to-18/2026-10-24-001-task-references-and-finalization-progress.md) — 移除参考变化导致的任务/重试硬失败；恢复同份参考，保留外部写入保护；补齐收尾扫描、AI 校对和整理进度。2101 项相关回归及 360 项最终专项通过，全库 Ruff/格式通过；2 万条真实本地匹配五轮中位 10.260 秒，最大 Qt 心跳间隔 49.1ms。
+
+- 2026-10-24：[AI 翻译、校对与结果保存的完整恢复链](ai-task-recovery/story-01-to-05/2026-10-24-001-full-task-recovery.md) — 翻译/混合/旧任务接续、阶段与批次复用、采纳决定保存、异常退出释放锁及后台恢复；2069 项相关回归、95 项最后边界复验和 Ruff/格式通过。2 万条结果保存 0.52 秒、恢复 2.73 秒；真实旧任务只读确认 15747 条候选，未运行付费模型或应用用户译文。
+
+- 2026-10-24：[大任务术语快照、增量检查点与 GUI 反馈响应性](ai-project-concurrency/story-14-to-16/2026-10-24-001-progress-responsiveness.md) — 冻结记录和索引复用、可靠增量保存、GUI 按最新状态刷新；1901 项相关回归及 Ruff／格式通过，2 项既有布局失败排除。五轮合成对照中，2 万条候选后连续 10 批保存中位从 38.3 秒降至 0.34 秒；2 万／10 万条反馈恢复约 0.11／0.10 秒。记录恢复成本及新检查点降级限制。
+
+- 2026-10-24：[术语参考、AI 综合校对与 Excel 标注](ai-project-concurrency/story-11-to-13/2026-10-24-001-terminology-advisory-review.md) — 移除字面术语失败门槛与强制重译，统一评估检测疑点，保存处理理由、前后译文和待复核状态；后台校对/导出回归通过。1849 项扩大回归及最后 339 项兼容矩阵通过，全库 Ruff/格式通过；两项既有布局失败保留。
+
+- 2026-10-24：[名称发布原生术语往返与错误分类修复](ai-project-concurrency/story-05/2026-10-24-004-native-term-roundtrip.md) — 保留原生记录空白和字段类型，避免自身写入被判成外部修改并中止所有来源；区分术语版本变化、名称冲突及修复失败。893 项相关回归及全库 Ruff/格式通过；参考词被硬约束的语义策略问题单独保留。
+
+- 2026-10-24：[修复 AI 启动配置快照复制 RLock 失败](ai-project-concurrency/story-07-to-09/2026-10-24-002-launch-config-snapshot.md) — LLM 和 ParaTranz 使用执行配置复制协议，保留参数与凭据隔离及后台启动；真实配置先复现后修复，291 项相关回归与全库 Ruff/格式通过。
+
+- 2026-10-24：[AI 启动、结果整理与辅助窗口后台化](ai-project-concurrency/story-07-to-09/2026-10-24-001-background-lifecycle.md) — 分片捕获、后台快照/结果/记录准备、虚拟预览及有界日志展示，保留版本与正式提交保护；1846 项相关回归及全库 Ruff/格式通过，2 项既有布局失败排除。五轮 2 万词条启动最大 GUI 心跳间隔中位由 8.138 降至 0.233 秒，仍保留大样本延迟的测量限制。
+
+- 2026-10-24：[已有名称译文即时写入任务草稿](ai-project-concurrency/story-10/2026-10-24-001-immediate-name-draft-reuse.md) — 剩余名称模型请求前完成真实草稿提交，后续复用证据、避免重复写入并保留校对及最终检查。107 项专项、108 项来源集成及 830 项后端回归通过（集合有重叠）；较大 UI 合集退出和并发工作线导入/格式问题见 [QA](../test-reports/ai-name-immediate-reuse-qa-2026-10-24.md)。
+
+- 2026-10-24：[AI 任务界面反馈与术语查找响应修复](ai-project-concurrency/story-06/2026-10-24-001-ui-feedback-and-term-lookup.md) — 运行中避免逐进度扫描全部结果，worker 有界合并反馈、GUI 批量日志，术语视图按作用域/修订复用；最终 122 项专项、1672 项相关回归及全库 Ruff/格式通过，2 项既有布局失败排除。五轮本地 worker 基准反馈交付中位 0.705465 → 0.029215 秒，不包含模型与结果提交。
+
+- 2026-10-24：[并发翻译任务进度与窗口布局修复](ai-project-concurrency/story-05/2026-10-24-003-project-progress-ui.md) — 项目名称固定分母累计、来源阶段独立显示、四列紧凑表格及默认展开日志；96 项专项、1631 项相关回归及最后 117 项 UI 复验通过，2 项既有布局失败排除，全库 Ruff/格式通过。
+
+- 2026-10-24：[名称首批启动卡顿修复](ai-project-concurrency/story-05/2026-10-24-002-name-startup-scan-performance.md) — 先字面统计再接术语流程，作用域索引和匹配器复用，启动即显示进度；独有名称发布前仍完整校验。78 项专项及 1613 项相关回归通过，2 项既有布局失败排除，全库 Ruff/格式通过。
+
+- 2026-10-24：[项目名称首批统计、去重与统一准备](ai-project-concurrency/story-05/2026-10-24-001-project-name-first-batch.md) — 先集中准备名称再放行各插件后续流程，保留作用域与逐条提交证据；新增 59 项专项测试，相关回归 1598 通过、2 项既有布局失败排除，全库 Ruff/格式通过。
+
+- 2026-10-24：[AI 多插件并发与项目共享术语](ai-project-concurrency/story-01-to-04/2026-10-24-001-project-concurrency-and-shared-terms.md) — 跨来源阶段并行、独立准备额度、公平调用准入、项目生成术语事务池及最终定向修复；1539 项相关回归通过，2 项既有布局失败基线复现后排除，全库 Ruff/格式通过。
+
+- 2026-10-23：[AI 日志句柄释放与 GUI 卡顿线程栈采集](maintenance/ai-runtime-diagnostics/2026-10-23-001-log-handles-and-gui-hang-stacks.md) — 调用结束释放文件，流日志句柄缓存上限 64；GUI 心跳超时 5 秒自动保存线程栈，恢复后重置并限制单次卡顿写入。144 项离线回归及全库 Ruff/格式通过，五轮 3000 次调用验证句柄由 3000 降至 0；原始无响应原因仍需现场栈确认。
+
+- 2026-10-23：[下拉列表与 AI 多选筛选菜单限高修复](ui-layout-stability/implementation/2026-10-23-002-bounded-dropdown-popups.md) — 普通选择框统一最多 12 行，范围/混合规则菜单采用限高滚动容器；联合回归 224 通过、2 项既有布局失败，本次文件 Ruff 与全库格式通过，保留范围外 lint 结果。
+
+- 2026-10-23：[混合模式默认动作规则与任务快照修复](ai-workflow-presets/story-01-to-03-implementation/2026-10-23-003-mixed-default-action-rules.md) — 缺失规则自动采用配置层默认，保留自定义及显式空规则，补齐规则集合的任务保存和恢复签名；联合回归 440 项通过，全库 Ruff/格式通过。
+
+- 2026-10-23：[项目多插件的显式分类上传](paratranz-categorized-upload/story-01-to-05/2026-10-23-001-categorized-project-upload.md) — 仅独立分类入口启用插件目录和类别选择；权威关联保存、显式整理、部分完成恢复与下载隔离。新增 148 项、UI 回归 223 项通过；后端 577 通过、1 跳过、1 项基线失败；全库 Ruff/格式通过，真实云端行为待验收。
+
+- 2026-10-23：[插件拖放的工程选择与安全加入](plugin-drop-project-choice/story-01-to-02/2026-10-23-001-plugin-drop-project-choice.md) — 无项目预填建项，有项目选择加入/新建，重复来源明确提示；保留译文和未保存内容，补齐界面失败后的保存重开恢复。扩大回归 324 通过、1 跳过、1 项范围外同步断言失败；Ruff/格式通过。
+
+- 2026-10-23：[ParaTranz 主动对照、数据确认与反馈往返修复](paratranz-sync-operation-ux/story-13-to-16/2026-10-23-001-feedback-sync-roundtrip.md) — 取消同步确认倒计时，按操作和数据校验；重复内容分组、任务日志精确原文跨序号匹配、工程译文范围及执行阶段日志；联合回归 625 通过、2 跳过，本次 92 个文件 Ruff/格式通过。
+
 - 2026-10-20：[助手会话工程绑定、分组与默认窗口外框](assistant-ui-remediation/story-24-to-26/2026-10-20-001-project-bound-conversations.md) — 固定工程/版本、跨工程只读浏览和统一执行前确认，后台目录及旧会话兼容；后端 170 项、原生窗口 15 项通过，完整 UI 组合 505 通过、1 项超时、12 项原生用例另测，保留超时诊断与验证限制。
 
 - 2026-10-20：[ParaTranz 同步检查原因统计与逐条日志](paratranz-sync-operation-ux/story-12/2026-10-20-001-sync-diagnostic-logging.md) — 现有日志记录每次检查编号、原因数量与全部未对应项证据，覆盖 2,181 条完整记录；仅日志，无报告或导出；联合回归 512 通过、1 跳过，全库 Ruff 与格式检查通过。
@@ -213,7 +295,7 @@ docs/changelogs/
 | smart-assistant-workspace-redesign | [plan](../../plans/smart-assistant-workspace-redesign/plan.md) | ✔️ 已完成（S01～S03，综合 QA 通过；任务栏人工复验待完成） | 3 | [S01～S03:①智能助手浮动工作区重设计与终验](smart-assistant-workspace-redesign/story-01-03-workspace-redesign/2026-08-25-001-智能助手浮动工作区重设计与终验.md) · [S01跟进:②独立窗口、最小化与任务栏修复](smart-assistant-workspace-redesign/story-01-03-workspace-redesign/2026-08-25-002-智能助手独立窗口最小化与任务栏修复.md) |
 | start-center-launch-hub | [plan](../../plans/start-center-launch-hub/plan.md) | S01～S06 功能与自动化 QA 已完成，待用户视觉复验 | 6 | [S01～S04:①开始中心启动 Hub 与状态呈现重构](start-center-launch-hub/story-01-04-launch-hub/2026-08-25-001-开始中心启动Hub与状态呈现重构.md) · [S02/S04跟进:②工程行交互与空工程返回修复](start-center-launch-hub/story-01-04-launch-hub/2026-08-25-002-工程行交互与空工程返回修复.md) · [S05:①导航账户与服务入口及可见性修复](start-center-launch-hub/story-05-account-entry/2026-08-25-001-导航账户与服务入口及可见性修复.md) · [S06:①工程打开方式与可见进度](start-center-launch-hub/story-06-project-window-opening/2026-08-25-001-工程打开方式与可见进度.md) |
 | project-catalog-self-healing | [plan](../../plans/project-catalog-self-healing/plan.md) | ✔️ 已完成（FR19.8/ADR-024，综合 QA 通过） | 3 | [S01～S03:①工程目录缺失自愈与终验](project-catalog-self-healing/story-01-03-repair/2026-08-25-001-工程目录缺失自愈与终验.md) |
-| ui-layout-stability | [plan](../../plans/ui-layout-stability/plan.md) | ✔️ 已完成（S01～S05，UI 全量回归通过） | 5 | [实现与终验:①](ui-layout-stability/implementation/2026-08-24-001-动态内容布局稳定专项与全量UI终验.md) |
+| ui-layout-stability | [plan](../../plans/ui-layout-stability/plan.md) | ✔️ 已完成（S01～S05，UI 全量回归通过） | 5 | [实现与终验:①](ui-layout-stability/implementation/2026-08-24-001-动态内容布局稳定专项与全量UI终验.md) · [后续修复:②下拉限高](ui-layout-stability/implementation/2026-10-23-002-bounded-dropdown-popups.md) |
 | guided-ui-workflows | [plan](../../plans/guided-ui-workflows/plan.md) | ✔️ 已完成（FR26/NFR1.6）；多插件扩展已补录 | 13 | [实现与终验:①](guided-ui-workflows/implementation/2026-08-24-001-FR26任务导向UI实现与终验.md) · [S03/S12跟进:①任务活动与上下文帮助覆盖层](guided-ui-workflows/story-03-12-shell-overlays/2026-08-25-001-任务活动与上下文帮助覆盖层修复.md) · [S07跟进:①工作台翻译状态统计口径统一](guided-ui-workflows/story-07-workbench-workflow/2026-08-25-001-工作台翻译状态统计口径统一.md) · [S02/S04跟进:①插件建项导航与已有译文合并](guided-ui-workflows/story-02-04-project-creation/2026-08-30-001-插件建项导航与已有译文合并修复.md) · [S04跟进:②单确定按钮自动建项](guided-ui-workflows/story-02-04-project-creation/2026-08-30-002-单确定按钮自动建项交互.md) · [S04/S05/S06/S07跟进:③统一建项与当前工程加插件入口](guided-ui-workflows/story-02-04-project-creation/2026-08-30-003-统一建项与当前工程加插件入口.md) · [S02/S04跟进:④创建时多选插件](guided-ui-workflows/story-02-04-project-creation/2026-10-20-004-multi-plugin-project-creation.md) |
 | ui-presentation-modularization | [plan](../../plans/ui-presentation-modularization/plan.md) | ✔️ 已完成（FR25/NFR1.5 实现与终验通过） | 8 | [设计:①需求架构方案Story](ui-presentation-modularization/design/2026-08-19-001-需求架构方案与Story设计.md) · [实现:①FR25模块化与终验](ui-presentation-modularization/implementation/2026-08-19-001-FR25展示层模块化实现与终验.md) |
 | release-hardening-v2 | [plan](../../plans/release-hardening-v2/plan.md) | 实现完成，综合 QA 通过 | 5 | [S01:①可复现 QA 证据基线](release-hardening-v2/story-01-reproducible-evidence/2026-08-18-001-可复现QA证据基线.md) · [S02:①真实成功链与跨入口parity测试资产](release-hardening-v2/story-02-success-chain-parity/2026-08-18-001-真实成功链与跨入口parity测试资产.md) · [S03:①性能取消恢复长期稳定门禁](release-hardening-v2/story-03-performance-stability/2026-08-18-001-性能取消恢复长期稳定门禁.md) · [S04:①Windows安全与能力矩阵](release-hardening-v2/story-04-windows-security-capability/2026-08-18-001-Windows安全与能力矩阵.md) · [S05:①CleanRelease与最终QA门禁](release-hardening-v2/story-05-clean-release-qa/2026-08-18-001-CleanRelease与最终QA门禁.md) · [S05:②精确证据集合与最终综合QA](release-hardening-v2/story-05-clean-release-qa/2026-08-18-002-精确证据集合与最终综合QA.md) |

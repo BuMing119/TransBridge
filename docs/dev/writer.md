@@ -19,6 +19,22 @@
 
 ## 核心类
 
+### 当前应用入口的 SSE 本地化写回
+
+GUI、工程迁移和 FOMOD 的受保护写回通过 `application/io` 的来源快照与发布协调器，以下 `PluginWriter` 是复用的底层写入器。
+
+- `parser/localized_resources.py` 使用 `sse-bsa` 的 `BSAArchive.glob()` / `get_file_stream()` 读取原始成员；同类型松散文件优先，缺失类型从 BSA 补齐。基础游戏插件读取 `Skyrim - Interface.bsa`，其他插件读取同名归档。
+- `PluginStringsLookup` 保留完整原始表及分类型查表。ID 跨表重号时，使用 `sse-plugin-interface` 解析的子记录类型和既有 `PluginStringsWriter._ext_for()` 分流；旧 `get(id)` 接口保持兼容。
+- `plugin_localized_sources.py` 复用 `LocalizedStringsAdapter.parse_bytes()` 捕获完整字符串快照，包含空表、未引用记录、编码和未修改字节。归档成员使用虚拟标识，源变更租约绑定实际 BSA 文件。
+- `plugin_write.py` 将已捕获字节物化到隔离目录，交回原有插件解析器和写入器；请求仍核验命名空间、定位、精确原文及 string ID。无须再次访问源归档，也不凭 UI 上下文推断字段类型。
+- `plugin_publication_source.py` 在单次发布内按快照对象及实际源语言复用解析结果和写前物理位置。嵌套、并行、取消、失败及再次发布各自隔离；同次发布重复渲染也重新创建可变插件实例。渲染返回后释放大型解析器，只保留校验需要的原始条目，不缓存验证结果。
+- 仅修改外置 Strings、没有 inline 修改时，插件产物直接复制已确认快照的原字节，避免整插件重新序列化和压缩；真正 inline 修改继续调用原库写入。输出仍经库完整重新解析，并验证所有物理位置及各 Strings 文件，没有使用仅比对已捕获位置的快速验证。
+- 发布插件及所有已捕获类型的松散字符串文件，目标名决定字符串文件前缀；源 BSA 保持不变。真实源更新、文件出现/消失、模板变化、输出覆盖和取消仍由原有预检及提交门禁处理，整组校验/备份/替换失败时回滚。
+
+Dragonborn 的实际资源存在不同表共用 ID 148 的情况；不能把跨表重复当作损坏，也不能合并后只按数字 ID 写回。同一表内多个引用仍共享文字，互相矛盾的写入继续拒绝。
+
+解析日志按每次扫描汇总 DIAL/INFO 补全、空文本及未解析 ID 数量；未解析 ID 最多保留 5 个 DEBUG 定位样本。全局日志级别不变，真正异常和来源冲突继续保留上下文。
+
 ### PluginWriter
 
 **路径**: `src/transbridge/writer/plugin_writer.py`
