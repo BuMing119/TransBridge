@@ -279,6 +279,9 @@ class AITranslatorWindow(QWidget):
         if not hasattr(self, "_custom_profiles"):
             return
         self._task_refresh_timer.stop()
+        if getattr(self, "_task_launch", None) is not None:
+            self.request_task_refresh()
+            return
         config = self._config_presenter.build()
         try:
             all_tasks = self._task_sources(config=config, all_sources=True)
@@ -306,6 +309,10 @@ class AITranslatorWindow(QWidget):
             return
         controls = self._view.controls
         controls.start_btn.setEnabled(False)
+        if getattr(self, "_task_launch", None) is not None:
+            self._task_refresh_timer.stop()
+            controls.preflight_label.set_full_text("正在准备 AI 任务…")
+            return
         recovery = getattr(self, "_recovery_selection", None)
         controls.start_btn.setText(
             ("重新开始" if recovery[1] else "继续任务")
@@ -398,6 +405,9 @@ class AITranslatorWindow(QWidget):
         open_report_history(self, self._theme_view)
 
     def closeEvent(self, event):
+        launch = getattr(self, "_task_launch", None)
+        if launch is not None:
+            launch.cancel()
         self._task_refresh_timer.stop()
         self._project_terminology.close()
         self._config_binding.close()

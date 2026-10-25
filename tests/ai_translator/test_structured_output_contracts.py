@@ -26,15 +26,15 @@ from transbridge.ai_translator.structured_schemas import (
 EXPECTED_SCHEMA_NAMES = (
     "transbridge_translation_v1",
     "transbridge_term_extraction_v1",
-    "transbridge_proofread_v1",
+    "transbridge_proofread_v2",
     "transbridge_postprocess_values_v1",
     "transbridge_quality_gate_single_v1",
     "transbridge_quality_gate_batch_v1",
-    "transbridge_refinement_single_v1",
+    "transbridge_refinement_single_v2",
     "transbridge_refinement_batch_v1",
     "transbridge_polish_single_v1",
     "transbridge_polish_batch_v1",
-    "transbridge_arbitration_single_v1",
+    "transbridge_arbitration_single_v2",
     "transbridge_arbitration_batch_v1",
 )
 
@@ -51,6 +51,8 @@ BATCH_SCHEMAS = (
 
 
 def _assert_strict_objects(schema: Mapping[str, Any], path: str = "$") -> None:
+    for index, branch in enumerate(schema.get("anyOf", ())):
+        _assert_strict_objects(branch, f"{path}.anyOf[{index}]")
     if schema.get("type") == "object":
         properties = schema.get("properties")
         assert isinstance(properties, Mapping), f"{path} must declare properties"
@@ -106,6 +108,8 @@ def test_every_batch_contract_uses_the_same_results_envelope() -> None:
                     {
                         "entry_key": {"namespace": "legacy:v1", "local_key": "entry-42"},
                         "final_translation": "龙裔回来了。",
+                        "review_status": "revised",
+                        "review_reason": "结合上下文修订表达。",
                     }
                 ]
             },
@@ -152,6 +156,8 @@ def test_every_batch_contract_uses_the_same_results_envelope() -> None:
                 "confidence": 0.95,
                 "needs_arbitration": False,
                 "note": "",
+                "review_status": "revised",
+                "review_reason": "结合语境修订译文。",
             },
         ),
         (
@@ -209,6 +215,8 @@ def test_every_batch_contract_uses_the_same_results_envelope() -> None:
                 "confidence": 0.6,
                 "suggested_action": "Request human review.",
                 "alternatives": ["Keep the current translation."],
+                "review_status": "needs_review",
+                "review_reason": "Creative intent is unclear; retain the candidate for review.",
             },
         ),
         (
@@ -272,3 +280,45 @@ def test_typical_payloads_match_business_parser_contracts(output_schema, payload
 )
 def test_schemas_reject_parser_incompatible_enums_types_and_objects(output_schema, payload: dict[str, Any]) -> None:
     assert list(Draft202012Validator(output_schema.schema).iter_errors(payload))
+
+
+@pytest.mark.parametrize(
+    "output_schema,item",
+    [
+        (
+            POSTPROCESS_VALUES_OUTPUT_SCHEMA,
+            {
+                "entry_key": {"namespace": "legacy:v1", "local_key": "one"},
+                "value": "译文",
+            },
+        ),
+        (
+            REFINEMENT_BATCH_OUTPUT_SCHEMA,
+            {
+                "entry_id": "one",
+                "refined_translation": "卫兵",
+                "fixes_applied": [],
+                "confidence": 0.9,
+                "needs_arbitration": False,
+                "note": "",
+            },
+        ),
+        (
+            ARBITRATION_BATCH_OUTPUT_SCHEMA,
+            {
+                "entry_id": "one",
+                "verdict": "pass",
+                "reason": "词义适用",
+                "confidence": 0.9,
+                "suggested_action": "保留",
+                "alternatives": [],
+            },
+        ),
+    ],
+)
+def test_batch_review_metadata_has_complete_strict_branches_and_preserves_legacy_payloads(output_schema, item):
+    validator = Draft202012Validator(output_schema.schema)
+    validator.validate({"results": [item]})
+    validator.validate({"results": [{**item, "review_status": "term_suspect", "review_reason": "参考术语不适用"}]})
+    assert list(validator.iter_errors({"results": [{**item, "review_status": "term_suspect"}]}))
+    assert list(validator.iter_errors({"results": [{**item, "review_status": "invalid", "review_reason": "x"}]}))

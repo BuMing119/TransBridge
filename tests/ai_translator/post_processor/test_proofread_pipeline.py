@@ -27,6 +27,64 @@ def _entry() -> TranslationEntry:
     )
 
 
+def test_completed_uncertain_review_is_retained_and_exported_without_a_translation_failure():
+    from types import SimpleNamespace
+
+    from transbridge.ai_translator.post_processor.base import PostProcessResult
+    from transbridge.converter.translation_entry import STAGE_QUESTIONABLE
+
+    entry = _entry()
+    decision = ArbiterDecision(
+        entry.id,
+        "pending",
+        "语境不足",
+        0,
+        "保留候选待复核",
+        review_status="needs_review",
+        review_reason="语境不足，保留现有译文待复核",
+    )
+    result = PostProcessResult(decisions={entry.id: decision}, processing_statuses={entry.id: "completed"})
+    pipeline = ProofreadPipeline(None, SimpleNamespace(enable_arbitration=True))
+    reviewed = pipeline._project((entry,), result)[entry.id]
+    assert reviewed.accepted
+    assert reviewed.review_status == "needs_review"
+    assert reviewed.target_stage == STAGE_QUESTIONABLE
+    assert reviewed.polished_translation == entry.translation
+    assert reviewed.review_reason == decision.review_reason
+
+
+def test_standalone_proofread_projection_keeps_joint_review_evidence():
+    from types import SimpleNamespace
+
+    from transbridge.application.translation.proofread_stage import ProofreadStage
+
+    entry = TranslationEntry("guards", "guards", "Guards", "卫兵", 1, "NPC 名称")
+
+    class Client:
+        def chat(self, messages, _tokens):
+            value = json.loads(messages[1]["content"])["entries"][0]
+            return {
+                "results": [
+                    {
+                        "entry_key": value["entry_key"],
+                        "final_translation": "卫兵",
+                        "review_status": "term_suspect",
+                        "review_reason": "Guards 指卫兵，瓜尔是错误参考",
+                    }
+                ]
+            }
+
+    stage = ProofreadStage(Client(), term_resolver=lambda _: {"Guards": "瓜尔"})
+    pipeline = ProofreadPipeline(None, SimpleNamespace(enable_proofread=True), proofread_stage=stage)
+    result = pipeline.process((entry,))[entry.id]
+    assert result.accepted
+    assert result.review_status == "term_suspect"
+    assert result.original_translation == "卫兵"
+    assert result.review_contract_version == 1
+    assert result.review_reference_terms == {"Guards": "瓜尔"}
+    assert result.detected_issues[0]["issue_type"] == "term_mismatch"
+
+
 class _CharacterCounter:
     def __init__(self) -> None:
         self.seen: list[str] = []

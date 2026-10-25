@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from shutil import copytree
 import threading
 from types import SimpleNamespace
 
@@ -15,6 +17,9 @@ from transbridge.ui.tools.ai_translator.workflow_log_store import WorkflowLogSto
 
 
 def test_new_executor_reuses_durable_results_through_real_pipeline(tmp_path, monkeypatch):
+    copytree(Path(__file__).resolve().parents[3] / "data" / "prompts", tmp_path / "data" / "prompts")
+    monkeypatch.setattr("transbridge.config.paths.get_data_dir", lambda: str(tmp_path / "data"))
+    monkeypatch.setattr(LLMConfig, "get_ai_translator_dir", staticmethod(lambda stem: str(tmp_path / "terms" / stem)))
     calls = []
 
     class Client:
@@ -22,7 +27,15 @@ def test_new_executor_reuses_durable_results_through_real_pipeline(tmp_path, mon
             items = json.loads(messages[1]["content"])["entries"]
             calls.extend(items)
             return json.dumps({
-                "results": [{"entry_key": item["entry_key"], "final_translation": "您好"} for item in items]
+                "results": [
+                    {
+                        "entry_key": item["entry_key"],
+                        "final_translation": "您好",
+                        "review_status": "revised",
+                        "review_reason": "结合语境修订措辞",
+                    }
+                    for item in items
+                ]
             })
 
     monkeypatch.setattr("transbridge.infra.llm_client.create_llm_client", lambda _: Client())

@@ -137,15 +137,9 @@ class EmbeddingModelController:
     def restore_managed_path(self) -> None:
         controls = self._view.controls
         model_id = controls.embed_local_model_id_edit.text().strip()
-        local_requested = controls.embed_provider_combo.currentData() == "local"
         model_path = self._installed_path(model_id) if model_id else None
         controls.embed_local_model_edit.setText("" if model_path is None else str(model_path))
-        if model_path is None and local_requested:
-            disabled_index = controls.embed_provider_combo.findData("disabled")
-            controls.embed_provider_combo.setCurrentIndex(disabled_index)
         self._view_port.update_embedding_controls()
-        if model_path is None and local_requested:
-            self._config_presenter.save()
 
     def disable(self) -> None:
         controls = self._view.controls

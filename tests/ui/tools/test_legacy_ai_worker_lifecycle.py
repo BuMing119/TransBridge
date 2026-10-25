@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import QApplication
 import pytest
 
 from transbridge.config.llm import LLMConfig
-from transbridge.ui.tools.ai_translator import _mixed_worker, _translation_worker, run_controller
+from transbridge.ui.tools.ai_translator import _mixed_worker, run_controller
 from transbridge.ui.tools.ai_translator._translation_worker import _TranslationWorker
 
 _APP = QApplication.instance() or QApplication([])
@@ -151,7 +151,9 @@ def test_translation_log_initialization_failure_emits_one_error_and_native_finis
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
-def test_translation_cleanup_failures_preserve_success_and_close_remaining_resources(monkeypatch, caplog) -> None:
+def test_translation_cleanup_failures_preserve_success_and_close_remaining_resources(
+    monkeypatch, caplog, tmp_path
+) -> None:
     exceptions, errors, results, closed = [], [], [], []
     monkeypatch.setattr(sys, "excepthook", lambda *exc: exceptions.append(exc))
 
@@ -179,7 +181,7 @@ def test_translation_cleanup_failures_preserve_success_and_close_remaining_resou
 
     from transbridge.ui.tools.ai_translator import reporting
 
-    monkeypatch.setattr(_translation_worker, "open", lambda *_args, **_kwargs: Handle(), raising=False)
+    monkeypatch.setattr(Path, "open", lambda *_args, **_kwargs: Handle())
     monkeypatch.setattr(
         reporting,
         "render_translation_report",
@@ -192,7 +194,7 @@ def test_translation_cleanup_failures_preserve_success_and_close_remaining_resou
         esp_path="Plugin.esp",
         log_store=SimpleNamespace(close=close_store),
     )
-    worker._make_stream_log_dir = lambda: "unused"
+    worker._make_stream_log_dir = lambda: str(tmp_path)
     worker.error.connect(errors.append)
     worker.result.connect(results.append)
     worker.start()

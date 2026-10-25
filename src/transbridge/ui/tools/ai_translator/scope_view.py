@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Callable
-from typing import Protocol
+from typing import Protocol, cast
 
 from PyQt6.QtCore import QEvent, QSize, Qt
 from PyQt6.QtWidgets import (
@@ -15,13 +15,11 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLayout,
-    QMenu,
     QPushButton,
     QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
-    QWidgetAction,
 )
 
 from transbridge.converter.translation_entry import STAGE_LABELS
@@ -30,6 +28,7 @@ from transbridge.ui.tools.ai_translator.scope_presenter import ScopeEstimate, Sc
 from transbridge.ui.tools.ai_translator.view_controls import TranslatorViewOwner
 from transbridge.ui.tools.ai_translator.view_state import ScopeOptions
 
+from ._filter_popup import FilterPopupMenu
 from .task_widget_style import configure_task_input, configure_task_panel
 
 
@@ -150,19 +149,16 @@ def _style_filter(button: QPushButton, active: bool) -> None:
 
 
 def _new_button(anchor: QPushButton, callback: Callable[[], None]) -> QPushButton:
-    menu = anchor.menu()
+    menu = cast(FilterPopupMenu, anchor.menu())
     button = QPushButton(menu)
     button.setCursor(Qt.CursorShape.PointingHandCursor)
     button.clicked.connect(lambda _checked=False: callback())
-    action = QWidgetAction(menu)
-    action.setDefaultWidget(button)
-    menu.addAction(action)
+    menu.add_option(button)
     return button
 
 
 def _filter_menu(anchor: QPushButton, reset: Callable[[], None]) -> None:
-    menu = QMenu(anchor)
-    menu.addAction("不限", reset)
+    menu = FilterPopupMenu(anchor, "不限", reset)
     anchor.setMenu(menu)
     anchor.setMinimumWidth(140)
 

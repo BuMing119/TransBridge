@@ -264,6 +264,7 @@ def test_history_reload_restores_cancelled_and_interrupted_results(qapp, tmp_pat
         dialog.open_selected()
         _wait(qapp, lambda: not dialog.busy and len(dialog._dialogs) == 1)
         result = dialog._dialogs[0]
+        _wait(qapp, lambda: not result._projecting)
         assert result.model.rowCount() == 2
         assert result.model.data(result.model.index(0, 4)) == "已取消"
         assert result.model.data(result.model.index(1, 4)) == "未处理"
@@ -281,19 +282,24 @@ def test_history_reload_restores_cancelled_and_interrupted_results(qapp, tmp_pat
 def test_result_source_selection_and_search_are_scoped(qapp):
     dialog = TaskResultDialog(_record(), source_key="second")
     try:
+        _wait(qapp, lambda: not dialog._projecting)
         assert dialog.sources.currentData() == "second"
         assert dialog.model.rowCount() == 1
         assert dialog.model.data(dialog.model.index(0, 4)) == "未应用"
         dialog.sources.setCurrentIndex(0)
         dialog.filter.setCurrentText("未处理")
+        _wait(qapp, lambda: not dialog._projecting)
         assert dialog.model.rowCount() == 1
         assert dialog.model.entries[0]["entry_key"]["local_key"] == "first-1"
         dialog.search.setText("候选译文 first 1")
+        _wait(qapp, lambda: not dialog._projecting)
         assert dialog.model.rowCount() == 1
         dialog.search.setText("second")
+        _wait(qapp, lambda: not dialog._projecting)
         assert dialog.model.rowCount() == 0
         dialog.search.clear()
         dialog.filter.setCurrentText("全部")
+        _wait(qapp, lambda: not dialog._projecting)
         assert dialog.model.rowCount() == 2
     finally:
         dialog.close()
@@ -311,6 +317,7 @@ def test_selected_entry_shows_its_batch_reason_without_copying_notes_to_every_ro
     )
     dialog = TaskResultDialog(record)
     try:
+        _wait(qapp, lambda: not dialog._projecting)
         dialog.table.setCurrentIndex(dialog.model.index(0, 0))
         assert "本批请求失败" in dialog.detail.toPlainText()
         dialog.table.setCurrentIndex(dialog.model.index(1, 0))

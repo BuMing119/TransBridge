@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import re
 
@@ -11,9 +11,11 @@ from jsonschema import Draft202012Validator
 from transbridge.ai_translator.structured_schemas import PROOFREAD_OUTPUT_SCHEMA
 from transbridge.application.contracts import Diagnostic, DiagnosticSeverity, ErrorCategory
 from transbridge.application.io import EntryKey
+from transbridge.converter.translation_entry import STAGE_QUESTIONABLE
 from transbridge.infra.structured_validation_details import schema_validation_details
 
 from .postprocess import PostProcessCandidate
+from .proofread_advisory import REVIEW_CONTRACT_VERSION, REVIEW_STATUSES
 from .protected_syntax import protected_syntax_matches
 
 _FENCED_JSON_RE = re.compile(r"\A```(?:json)?\s*(.*?)\s*```\Z", re.IGNORECASE | re.DOTALL)
@@ -55,6 +57,7 @@ def apply_proofread_response(
 
     requested = {candidate.entry_key for candidate in candidates}
     values: dict[EntryKey, object] = {}
+    reviews: dict[EntryKey, tuple[str, str, bool]] = {}
     invalid_items: dict[EntryKey, dict] = {}
     duplicate_keys: set[EntryKey] = set()
     diagnostics: list[Diagnostic] = []
@@ -98,7 +101,15 @@ def apply_proofread_response(
             duplicate_keys.add(key)
             continue
         values[key] = item.get("final_translation")
-        errors = tuple(_ITEM_VALIDATOR.iter_errors(item))
+        status, reason = item.get("review_status"), item.get("review_reason")
+        explicit = status in REVIEW_STATUSES if isinstance(status, str) else False
+        explicit = explicit and isinstance(reason, str) and bool(reason.strip())
+        if not explicit:
+            status, reason = "needs_review", "模型未返回完整的校对判断与理由，已保留候选译文，待复核。"
+        reviews[key] = (status, reason, explicit)
+        # Older providers can return usable text without semantic review evidence.
+        # Preserve it as pending review instead of treating it as reviewed or retrying forever.
+        errors = tuple(_ITEM_VALIDATOR.iter_errors({**item, "review_status": status, "review_reason": reason}))
         if errors:
             invalid_items[key] = schema_validation_details(errors, schema_name=PROOFREAD_OUTPUT_SCHEMA.name)
 
@@ -178,7 +189,21 @@ def apply_proofread_response(
             )
             updated.append(candidate.with_accepted(False))
             continue
-        updated.append(candidate.with_text(value, phase))
+        status, reason, explicit = reviews[key]
+        if status == "retained" and value != candidate.text:
+            status = "revised"
+        elif status == "revised" and value == candidate.text:
+            status = "retained"
+        details = {
+            **dict(candidate.report_details),
+            "review_status": status,
+            "review_reason": reason,
+            "review_contract_version": REVIEW_CONTRACT_VERSION if explicit else 0,
+        }
+        reviewed = candidate.with_text(value, phase).with_report_details(details)
+        if status == "needs_review":
+            reviewed = replace(reviewed, stage=STAGE_QUESTIONABLE)
+        updated.append(reviewed)
     return ProofreadResponseResult(tuple(updated), tuple(diagnostics))
 
 

@@ -30,7 +30,15 @@ def retain_syntax_questions(
                 stage=STAGE_QUESTIONABLE,
                 accepted=True,
                 phases=tuple(dict.fromkeys((*candidate.phases, "proofread"))),
-                report_details=tuple({**dict(candidate.report_details), "questionable": True}.items()),
+                report_details=tuple(
+                    {
+                        **dict(candidate.report_details),
+                        "questionable": True,
+                        "review_status": "needs_review",
+                        "review_reason": "校对结果的占位符或程序标记存在差异，已保留原译文，待复核。",
+                        "review_contract_version": 0,
+                    }.items()
+                ),
             )
         updated.append(candidate)
     return tuple(updated), tuple(

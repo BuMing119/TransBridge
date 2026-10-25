@@ -10,6 +10,8 @@ from pathlib import Path
 import re
 from typing import Any, Literal
 
+from .native_term_format import native_term_fields
+
 
 @dataclass
 class TermEntry:
@@ -120,7 +122,8 @@ def term_entries_from_data(data: Any, *, source: str | None) -> list[TermEntry]:
     for record in records:
         if not isinstance(record, Mapping):
             continue
-        entry = term_entry_from_mapping(record, source=source)
+        native = native_term_fields(record, source=source)
+        entry = TermEntry(**native) if native is not None else term_entry_from_mapping(record, source=source)
         if entry is not None:
             entries.append(entry)
     return entries

@@ -21,7 +21,8 @@ Polishing rules:
 
 3. Context
    - Consider the provided context.
-   - Keep terminology consistent.
+   - Keep terminology consistent when it refers to the same entity in the same context.
+   - Terminology is advisory and may be wrong or contextually inapplicable. Preserve prior semantic review judgments.
    - Preserve emotion and tone.
 
 4. Mandatory constraints
@@ -29,7 +30,7 @@ Polishing rules:
    - Preserve every source formatting marker, including <br>, [pagebreak], and \n.
    - Do not change the source meaning.
    - Close quotation marks, brackets, and similar paired characters correctly.
-   - Use the provided standard terminology.
+   - Never replace a suitable translation solely to match a reference.
 
 Polishing levels (the active level is provided by User):
 - light: correct only clear problems and preserve the existing style
@@ -67,7 +68,8 @@ Improve the fluency and style of multiple translation entries. Polish only; do n
 Constraints:
 - Preserve every placeholder, including %s, %d, and {0}.
 - Preserve formatting markers, including <br> and [pagebreak].
-- Use the standard terminology.
+- Terminology is advisory and may be wrong or inapplicable. Never force a suitable translation to match a reference.
+- Preserve prior semantic review judgments.
 - Do not change the source meaning.
 
 Polishing levels (the active level is provided by User):

@@ -8,7 +8,16 @@ from .proofread_events import ProofreadEventLog
 logger = logging.getLogger(__name__)
 
 PHASE_LABELS = {
+    "recover": "恢复已保存进度",
     "terms": "术语准备",
+    "reuse": "复用已有译文",
+    "project_names": "项目名称首批",
+    "term_closure": "项目参考差异校对",
+    "term_closure_load": "加载项目参考",
+    "term_closure_scan": "检查参考差异",
+    "term_closure_finalize": "整理补充校对结果",
+    "term_closure_done": "参考检查完成",
+    "term_closure_cancelled": "参考检查已取消",
     "proofread": "校对",
     "detect": "检测",
     "consistency": "一致性检查",

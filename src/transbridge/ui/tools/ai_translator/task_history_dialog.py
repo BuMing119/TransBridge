@@ -53,6 +53,7 @@ class TaskHistoryDialog(QDialog):
         self._auto_open_run_id = run_id
         self._result_generation = 0
         self._closed = False
+        self._selection_recovery_error = ""
         self.setWindowTitle("AI 任务记录")
         configure_task_host(self)
         self.resize(1060, 540)
@@ -62,7 +63,10 @@ class TaskHistoryDialog(QDialog):
         self.status.setWordWrap(True)
         self.status.setAccessibleName("任务记录读取状态")
         layout.addWidget(self.status)
-        hint = QLabel("有恢复信息的校对任务可继续或重新开始，继续时重新校验已保存进度；旧任务记录仅供查看。")
+        hint = QLabel(
+            "翻译、校对和混合任务均可按恢复记录继续；保存的候选会重新核验。"
+            "有检查点的旧任务会先确认当前配置，再接续处理并重新校对。"
+        )
         hint.setWordWrap(True)
         configure_task_title(hint, "hint")
         layout.addWidget(hint)
@@ -208,6 +212,8 @@ class TaskHistoryDialog(QDialog):
             for column, value in enumerate(values):
                 row.setText(column, value)
                 row.setToolTip(column, value)
+            if recovery is not None and recovery.get("recovery_error"):
+                row.setToolTip(2, f"无法恢复任务：{recovery['recovery_error']}")
             rows[run_id] = row
         for row in existing.values():
             self.tasks.takeTopLevelItem(self.tasks.indexOfTopLevelItem(row))
@@ -242,6 +248,13 @@ class TaskHistoryDialog(QDialog):
         return record
 
     def _update_recovery_buttons(self):
+        row = self.tasks.currentItem()
+        key = row.data(0, Qt.ItemDataRole.UserRole) if row else None
+        error = self._recovery_records.get(key, {}).get("recovery_error", "")
+        text = f"无法恢复任务：{error}。原记录已保留，可查看结果。" if error else ""
+        if text or self.status.text() == self._selection_recovery_error:
+            self.status.setText(text)
+        self._selection_recovery_error = text
         available = not self.registry.shutting_down and not self._closed and not self.busy
         self.open_button.setEnabled(available and self.tasks.currentItem() is not None)
         self.refresh_button.setEnabled(available)

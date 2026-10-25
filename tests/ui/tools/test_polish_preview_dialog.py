@@ -7,6 +7,7 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QMessageBox, QPushButton
 import pytest
 
+from tests.ui.tools.ai_read_projection_support import wait_for
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.ui.tools.ai_translator._polish_preview_dialog import _PolishPreviewDialog
 
@@ -43,6 +44,7 @@ def dialog_factory():
         dialogs.append(dialog)
         dialog.show()
         app.processEvents()
+        wait_for(lambda: not dialog._loading)
         return dialog
 
     yield create
@@ -58,7 +60,8 @@ def test_preview_populates_all_columns_and_connects_click_once() -> None:
     results = {entry.id: _result(entry.id) for entry in entries}
     dialog = _PolishPreviewDialog(entries, results)
 
-    assert [dialog._table.item(0, col).text() for col in range(6)] == [
+    wait_for(lambda: not dialog._loading)
+    assert [dialog._model.index(0, col).data() for col in range(6)] == [
         "Original one",
         "当前 one",
         "[warning] 措辞问题",
@@ -67,7 +70,7 @@ def test_preview_populates_all_columns_and_connects_click_once() -> None:
         "pass (0.90)\n裁决通过",
     ]
 
-    dialog._table.cellClicked.emit(0, 4)
+    dialog._table.clicked.emit(dialog._model.index(0, 4))
 
     assert dialog.get_results() == {"one": "最终 one", "two": None}
     dialog.close()
@@ -77,29 +80,31 @@ def test_preview_populates_all_columns_and_connects_click_once() -> None:
 def test_candidate_clicks_and_keyboard_choices_are_reversible(dialog_factory) -> None:
     dialog = dialog_factory([_entry("one")], {"one": _result("one")})
     table = dialog._table
-    candidate = table.item(0, 4)
-    choice = table.item(0, 6)
-    assert choice.text() == "待选择"
-    assert choice.checkState() == Qt.CheckState.PartiallyChecked
+    candidate = table.model().index(0, 4)
+    choice = table.model().index(0, 6)
+    assert choice.data() == "待选择"
+    assert choice.data(Qt.ItemDataRole.CheckStateRole) == Qt.CheckState.PartiallyChecked
 
     for expected in ("最终 one", None, "最终 one"):
-        QTest.mouseClick(table.viewport(), Qt.MouseButton.LeftButton, pos=table.visualItemRect(candidate).center())
+        QTest.mouseClick(table.viewport(), Qt.MouseButton.LeftButton, pos=table.visualRect(candidate).center())
         assert dialog.get_results() == {"one": expected}
-        assert choice.text() == ("采用候选" if expected else "保留原译文")
+        assert choice.data() == ("采用候选" if expected else "保留原译文")
 
-    table.setCurrentItem(choice)
+    table.setCurrentIndex(choice)
     table.setFocus()
     for expected in (None, "最终 one", None):
         QTest.keyClick(table, Qt.Key.Key_Space)
         assert dialog.get_results() == {"one": expected}
-        assert choice.checkState() == (Qt.CheckState.Checked if expected else Qt.CheckState.Unchecked)
+        assert choice.data(Qt.ItemDataRole.CheckStateRole) == (
+            Qt.CheckState.Checked if expected else Qt.CheckState.Unchecked
+        )
 
 
 def test_explicit_checkbox_can_adopt_a_pending_candidate_with_mouse(dialog_factory) -> None:
     dialog = dialog_factory([_entry("one")], {"one": _result("one")})
     table = dialog._table
-    choice = table.item(0, 6)
-    rect = table.visualItemRect(choice)
+    choice = table.model().index(0, 6)
+    rect = table.visualRect(choice)
     point = rect.center()
     point.setX(rect.left() + 10)
 
@@ -126,14 +131,14 @@ def test_bulk_choices_restore_rejected_candidates_but_never_accept_failures(dial
 
     table = dialog._table
     for row in (1, 2):
-        choice = table.item(row, 6)
-        assert choice.text() == "生成失败"
-        assert not choice.flags() & Qt.ItemFlag.ItemIsEnabled
-        assert not choice.flags() & Qt.ItemFlag.ItemIsUserCheckable
+        choice = table.model().index(row, 6)
+        assert choice.data() == "生成失败"
+        assert not table.model().flags(choice) & Qt.ItemFlag.ItemIsEnabled
+        assert not table.model().flags(choice) & Qt.ItemFlag.ItemIsUserCheckable
         QTest.mouseClick(
-            table.viewport(), Qt.MouseButton.LeftButton, pos=table.visualItemRect(table.item(row, 4)).center()
+            table.viewport(), Qt.MouseButton.LeftButton, pos=table.visualRect(table.model().index(row, 4)).center()
         )
-        table.setCurrentItem(choice)
+        table.setCurrentIndex(choice)
         QTest.keyClick(table, Qt.Key.Key_Space)
         assert dialog.get_results() == expected_preserved
 
@@ -162,7 +167,7 @@ def test_unreviewed_choices_still_require_confirmation_and_keep_original(dialog_
 def test_enter_in_preview_table_does_not_change_bulk_choices_or_apply(dialog_factory):
     entries = [_entry("one"), _entry("two")]
     dialog = dialog_factory(entries, {entry.id: _result(entry.id) for entry in entries})
-    dialog._table.setCurrentCell(0, 0)
+    dialog._table.setCurrentIndex(dialog._model.index(0, 0))
     dialog._table.setFocus()
     before = dict(dialog._row_status)
 
@@ -175,7 +180,7 @@ def test_enter_in_preview_table_does_not_change_bulk_choices_or_apply(dialog_fac
 
     dialog._reject_all_btn.setFocus()
     QTest.keyClick(dialog._reject_all_btn, Qt.Key.Key_Return)
-    dialog._table.setCurrentCell(0, 6)
+    dialog._table.setCurrentIndex(dialog._model.index(0, 6))
     dialog._table.setFocus()
     QTest.keyClick(dialog._table, Qt.Key.Key_Space)
     QTest.keyClick(dialog._table, Qt.Key.Key_Return)
@@ -209,10 +214,10 @@ def test_preview_table_arrows_review_cells_and_tab_reaches_actions(dialog_factor
     dialog = dialog_factory([_entry("one")], {"one": _result("one")})
     table = dialog._table
     cancel = next(button for button in dialog.findChildren(QPushButton) if button.text() == "取消")
-    table.setCurrentCell(0, 0)
+    table.setCurrentIndex(table.model().index(0, 0))
     table.setFocus()
     QTest.keyClick(table, Qt.Key.Key_Right)
-    assert table.currentColumn() == 1
+    assert table.currentIndex().column() == 1
     QTest.keyClick(table, Qt.Key.Key_Tab)
     assert cancel.hasFocus()
     QTest.keyClick(cancel, Qt.Key.Key_Tab)
@@ -221,5 +226,5 @@ def test_preview_table_arrows_review_cells_and_tab_reaches_actions(dialog_factor
     assert cancel.hasFocus()
     QTest.keyClick(cancel, Qt.Key.Key_Backtab)
     assert table.hasFocus()
-    assert table.currentColumn() == 1
+    assert table.currentIndex().column() == 1
     assert dialog.get_results() == {"one": None}

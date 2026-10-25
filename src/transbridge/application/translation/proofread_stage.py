@@ -1,4 +1,4 @@
-"""Open proofreading followed by bounded deterministic terminology recovery."""
+"""Comprehensive advisory proofreading with resumable, bounded model calls."""
 
 from __future__ import annotations
 
@@ -8,15 +8,15 @@ from typing import Any
 
 from ._open_proofread_stage import ProofreadStage as _OpenProofreadStage
 from .postprocess import PostProcessCandidate, PostProcessStageOutcome
+from .proofread_advisory import collect_review_findings
 from .proofread_events import ProofreadEventLog
 from .proofread_review import retain_syntax_questions
-from .terminology_closure import ProofreadTerminologyClosure
 
 TermResolver = Callable[[PostProcessCandidate], Mapping[object, object]]
 
 
 class ProofreadStage:
-    """Run broad proofreading, then conditionally repair remaining terminology."""
+    """Let the model adjudicate quality findings without mandatory term repair."""
 
     phase = "proofread"
 
@@ -42,8 +42,6 @@ class ProofreadStage:
         # Kept for callers that inspect the configured routing client.
         self._llm_client = llm_client
         self._cancelled = threading.Event()
-        self._terms_lock = threading.Lock()
-        self._resolved_terms: dict[object, dict[str, str]] = {}
         self._default_max_workers = max_workers
         self._progress_callback = progress_callback
         self._event_callback = event_callback
@@ -63,21 +61,8 @@ class ProofreadStage:
             max_workers=max_workers,
             term_observer=self._remember_terms,
         )
-        if refiner is None and term_resolver is not None:
-            from transbridge.ai_translator.post_processor.llm_refiner import LLMRefiner
-
-            refiner = LLMRefiner(
-                llm_client,
-                game_profile=game_profile,
-                target_lang=target_locale,
-                max_output_tokens=max_output_tokens,
-            )
-        self._closure = ProofreadTerminologyClosure(
-            refiner,
-            model=model,
-            max_tokens_per_batch=max_tokens_per_batch,
-            max_items=refinement_batch_size,
-        )
+        # Keep legacy keyword arguments source-compatible. Terminology-only
+        # refinement is deliberately no longer a proofreading acceptance gate.
 
     def __call__(self, candidates: tuple[PostProcessCandidate, ...]) -> PostProcessStageOutcome:
         if self._progress_callback is not None:
@@ -102,6 +87,7 @@ class ProofreadStage:
         event_callback: Callable[[str], None] | None = None,
     ) -> PostProcessStageOutcome:
         events = ProofreadEventLog(event_callback)
+        candidates = collect_review_findings(candidates, is_cancelled=self._cancelled.is_set)
         self._checkpoint_session = self._checkpoint.session(candidates) if self._checkpoint is not None else None
         restored = self._checkpoint_session.restore(self._term_resolver) if self._checkpoint_session is not None else {}
         pending = tuple(item for item in candidates if item.entry_key not in restored)
@@ -116,8 +102,6 @@ class ProofreadStage:
                     completed, total, f"校对 {completed}/{total} 条（含已恢复结果）" if restored else message
                 )
 
-        with self._terms_lock:
-            self._resolved_terms = dict(self._checkpoint_session.terms) if self._checkpoint_session is not None else {}
         batch_kwargs = {"batch_callback": self._checkpoint_session.save} if self._checkpoint_session is not None else {}
         if restored:
             on_progress(0, len(pending), f"已恢复 {len(restored)} 条校对结果")
@@ -129,21 +113,9 @@ class ProofreadStage:
             **batch_kwargs,
         )
         all_open = {**restored, **{item.entry_key: item for item in open_outcome.candidates}}
-        with self._terms_lock:
-            resolved_terms = dict(self._resolved_terms)
-        closed_candidates, closure_diagnostics = self._closure.apply(
-            candidates,
-            tuple(all_open[item.entry_key] for item in candidates),
-            resolved_terms,
-            progress_callback=progress_callback,
-            is_cancelled=self._cancelled.is_set,
-            max_workers=max_workers,
-            event_callback=events.emit,
-            **batch_kwargs,
-        )
         closed_candidates, diagnostics = retain_syntax_questions(
-            closed_candidates,
-            (*open_outcome.diagnostics, *closure_diagnostics),
+            tuple(all_open[item.entry_key] for item in candidates),
+            open_outcome.diagnostics,
             cancelled=self._cancelled.is_set(),
         )
         return PostProcessStageOutcome(self.phase, closed_candidates, diagnostics)
@@ -151,8 +123,6 @@ class ProofreadStage:
     def _remember_terms(self, candidate: PostProcessCandidate, terms: Mapping[str, str]) -> None:
         if self._checkpoint_session is not None:
             self._checkpoint_session.observe(candidate, terms)
-        with self._terms_lock:
-            self._resolved_terms[candidate.entry_key] = dict(terms)
 
 
 __all__ = ["ProofreadStage", "TermResolver"]

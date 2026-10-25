@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import base64
 import csv
+from dataclasses import replace
 import json
 import zlib
 
 from openpyxl import Workbook
+import pytest
 
 from transbridge.ai_translator.term_formats import (
     TermEntry,
@@ -17,6 +19,7 @@ from transbridge.ai_translator.term_formats import (
     load_terms_excel,
     load_terms_json,
     term_entry_from_mapping,
+    term_entry_to_canonical_dict,
     term_entry_to_paratranz_dict,
 )
 
@@ -84,6 +87,66 @@ def test_canonical_json_round_trip_preserves_every_field(tm_tmp_dir) -> None:
     dump_terms_json(path, [expected], target="canonical")
 
     assert load_terms_json(path, source=None) == [expected]
+
+
+@pytest.mark.parametrize("external_id", [None, 731, "00731", " ID:731 "])
+@pytest.mark.parametrize("source", [None, "json"])
+def test_native_json_preserves_exact_strings_variants_and_identifier_type(tmp_path, external_id, source):
+    expected = TermEntry(
+        term=" Frost Immunity ",
+        translation=" 霜冻免疫\n",
+        source=" auto_project_name ",
+        context="\nMGEF:FULL\t",
+        created_at=" 2026-10-24T14:06:29 ",
+        case_sensitive=True,
+        variants=[" Frost Resist ", "Frost Resist", "Frost Resist", ""],
+        pos=" noun ",
+        note="\nPreserve this note.\n",
+        external_id=external_id,
+        metadata={"shared_revision": 1, "shared_plugin_id": None, "nested": {"text": " keep ", "list": [1, True]}},
+    )
+    path = tmp_path / "native.json"
+    dump_terms_json(path, [expected])
+    actual = load_terms_json(path, source=source)
+    assert actual == [replace(expected, source=expected.source if source is None else source)]
+    assert type(actual[0].external_id) is type(external_id)
+
+
+def test_external_json_aliases_keep_import_normalization(tmp_path):
+    path = tmp_path / "import.json"
+    path.write_text(
+        json.dumps([{"original": " Frost Immunity ", "translated": " 霜冻免疫\n", "id": "00731"}]),
+        encoding="utf-8",
+    )
+    assert load_terms_json(path) == [TermEntry("Frost Immunity", "霜冻免疫", "json", external_id=731)]
+
+
+def test_explicit_mapping_import_remains_normalized_for_complete_record():
+    imported = term_entry_from_mapping(term_entry_to_canonical_dict(TermEntry(" Frost Immunity ", " 霜冻免疫 ", "")))
+    assert imported == TermEntry("Frost Immunity", "霜冻免疫", "")
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("translation", 1), ("case_sensitive", 1), ("external_id", True), ("variants", "Sword"), ("metadata", [])],
+)
+def test_malformed_native_json_never_falls_back_to_import_coercion(tmp_path, field, value):
+    data = term_entry_to_canonical_dict(_complete_entry())
+    data[field] = value
+    path = tmp_path / "malformed-native.json"
+    path.write_text(json.dumps([data]), encoding="utf-8")
+    with pytest.raises(ValueError, match=field):
+        load_terms_json(path, source=None)
+
+
+@pytest.mark.parametrize("field", ["term", "translation"])
+@pytest.mark.parametrize("value", ["", " \t\n"])
+def test_native_json_still_skips_empty_required_text(tmp_path, field, value):
+    data = term_entry_to_canonical_dict(_complete_entry())
+    data[field] = value
+    path = tmp_path / "empty-native.json"
+    path.write_text(json.dumps([data, term_entry_to_canonical_dict(_complete_entry())]), encoding="utf-8")
+    assert load_terms_json(path, source=None) == [_complete_entry()]
 
 
 def test_paratranz_payload_excludes_read_only_and_canonical_only_fields() -> None:

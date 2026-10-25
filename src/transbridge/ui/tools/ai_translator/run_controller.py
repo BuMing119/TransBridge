@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import count
+from pathlib import Path
 from typing import Literal, TypeVar
 from uuid import uuid4
 
@@ -34,6 +35,8 @@ class TranslationRunRequest[EntryT]:
     runtime_ref: JobRef | None = None
     reuse_proofread: bool = False
     recovery_task_id: str | None = None
+    recovery_record: dict | None = None
+    recovery_directory: Path | None = None
 
     @property
     def mode(self) -> RunMode:
@@ -80,6 +83,11 @@ class RunController:
         self._active: _ActiveRun | None = None
         self._closed = False
 
+    @property
+    def owner_id(self) -> str:
+        """Capture this scalar before preparing a request in a worker."""
+        return self._owner_id
+
     def begin(
         self,
         mode: RunMode,
@@ -95,33 +103,12 @@ class RunController:
         run_id: str | None = None,
         terminology_owner: object | None = None,
         terminology_snapshot_ref: TerminologyRunSnapshotRef | None = None,
+        prepared=None,
     ) -> TranslationRunRequest[EntryT]:
         if self._closed:
             raise RuntimeError("AI translator run owner is closed")
         if self._active is not None:
             raise RunAlreadyActiveError("AI translator already has an active run")
-        config_snapshot = FrozenExecutionConfig(config)
-        execution_config = config_snapshot.copy()
-        try:
-            max_concurrent = getattr(execution_config, "max_concurrent")
-        except AttributeError as exc:
-            raise ValueError("config.max_concurrent must be a positive integer") from exc
-        try:
-            request_budget = AiRequestBudget(max_concurrent)
-        except ValueError as exc:
-            raise ValueError("config.max_concurrent must be a positive integer") from exc
-        from transbridge.ai_translator.project_terminology_runtime import (
-            ProjectTerminologyBinding,
-            freeze_project_terminology,
-        )
-
-        terminology_binding = (
-            ProjectTerminologyBinding()
-            if terminology_owner is None
-            else freeze_project_terminology(terminology_owner, terminology_snapshot_ref)
-        )
-        generation = next(self._ids)
-        run_id = run_id or f"ai-{uuid4().hex}"
         owner = OwnerRef(
             owner_id=self._owner_id,
             entrypoint="ui.ai-translator",
@@ -129,27 +116,45 @@ class RunController:
             variant_id=variant_id,
             session_id=session_id,
         )
-        spec = build_run_spec(
-            run_id=run_id,
-            generation=generation,
-            mode=mode,
-            owner=owner,
-            config=execution_config,
-            entries=entries,
-            esp_path=esp_path,
-            overwrite=overwrite,
-            project_revision=project_revision,
-            terminology_snapshot=terminology_binding.snapshot_ref,
-        )
-        runtime_ref = None
-        if self._task_runtime is not None:
-            from .task_adapter import runtime_job_spec
+        if prepared is not None:
+            from .run_request_preparation import PreparedRun
 
-            runtime_ref = self._task_runtime.submit(runtime_job_spec(spec), owner).ref
-            run_id = runtime_ref.run_id or runtime_ref.job_id
-            spec = build_run_spec(
+            if not isinstance(prepared, PreparedRun):
+                raise TypeError("prepared must be a PreparedRun")
+            prepared.validate_admission(
+                owner=owner,
+                mode=mode,
+                entries=entries,
+                overwrite=overwrite,
+                esp_path=esp_path,
+                project_revision=project_revision,
                 run_id=run_id,
-                generation=generation,
+                terminology_snapshot_ref=terminology_snapshot_ref,
+            )
+            config_snapshot = prepared.config_snapshot
+            terminology_binding = prepared.terminology_binding
+            request_budget = AiRequestBudget(prepared.max_concurrent)
+            spec = replace(prepared.spec, generation=next(self._ids))
+        else:
+            config_snapshot = FrozenExecutionConfig(config)
+            execution_config = config_snapshot.copy()
+            try:
+                request_budget = AiRequestBudget(getattr(execution_config, "max_concurrent", None))
+            except ValueError as exc:
+                raise ValueError("config.max_concurrent must be a positive integer") from exc
+            from transbridge.ai_translator.project_terminology_runtime import (
+                ProjectTerminologyBinding,
+                freeze_project_terminology,
+            )
+
+            terminology_binding = (
+                ProjectTerminologyBinding()
+                if terminology_owner is None
+                else freeze_project_terminology(terminology_owner, terminology_snapshot_ref)
+            )
+            spec = build_run_spec(
+                run_id=run_id or f"ai-{uuid4().hex}",
+                generation=next(self._ids),
                 mode=mode,
                 owner=owner,
                 config=execution_config,
@@ -159,6 +164,12 @@ class RunController:
                 project_revision=project_revision,
                 terminology_snapshot=terminology_binding.snapshot_ref,
             )
+        runtime_ref = None
+        if self._task_runtime is not None:
+            from .task_adapter import runtime_job_spec
+
+            runtime_ref = self._task_runtime.submit(runtime_job_spec(spec), owner).ref
+            spec = replace(spec, run_id=runtime_ref.run_id or runtime_ref.job_id)
             self._task_runtime.start(runtime_ref, owner)
         request = TranslationRunRequest(
             spec=spec,
@@ -369,7 +380,7 @@ def start_translation_run(
     from transbridge.ui.tools.ai_translator.workflow_log_store import WorkflowLogStore
     from transbridge.ui.tools.ai_translator.workflow_logging_client import WorkflowLoggingLLMClient
 
-    log_store = WorkflowLogStore(ctx.esp_path, workflow="translation")
+    log_store = WorkflowLogStore(ctx.esp_path, workflow="translation", max_concurrent=config.max_concurrent)
     translator = AutoTranslator(
         translator_config,
         paratranz_client,

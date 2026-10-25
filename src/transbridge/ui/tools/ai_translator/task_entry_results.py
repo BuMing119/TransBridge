@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import copy, deepcopy
 from dataclasses import dataclass, replace
+import json
 
 from transbridge.application.contracts import OperationOutcome, RequestContext
 from transbridge.application.io.identity import Provenance
@@ -24,6 +25,12 @@ class TaskEntryResult:
     decision: str = "pending"
     applied: bool = False
     attempt: int = 0
+    report_details_json: str = "{}"
+
+    @property
+    def report_details(self):
+        """Each consumer gets detached values; freezes can safely share the encoded evidence."""
+        return json.loads(self.report_details_json)
 
 
 class TaskEntryResults:
@@ -39,30 +46,41 @@ class TaskEntryResults:
             for action, entries in (("translation", task.translate_entries), ("polish", task.polish_entries))
             for entry in entries
         }
+        self._index = None
+
+    @property
+    def index(self):
+        from .task_result_index import index_results
+
+        if self._index is None or self._index[0] is not self.entries:
+            self._index = self.entries, index_results(self.entries)
+        return self._index[1]
 
     @property
     def failed_keys(self):
-        return frozenset(key for key, row in self.entries.items() if row.status == "failed" and not row.applied)
+        return self.index.failed
 
     def freeze(self):
         frozen = copy(self)
         frozen.entries = self.entries.copy()
+        if self._index is not None and self._index[0] is self.entries:
+            frozen._index = frozen.entries, self._index[1]
         return frozen
 
     @property
     def ready_keys(self):
-        return frozenset(
-            key
-            for key, row in self.entries.items()
-            if row.status == "succeeded" and row.decision != "rejected" and not row.applied
-        )
+        return self.index.ready
 
     @property
     def applied_keys(self):
-        return frozenset(key for key, row in self.entries.items() if row.applied)
+        return self.index.applied
 
     def ingest(self, outcomes, keys, *, cancelled=False):
+        from .task_result_evidence import source_report_evidence
+
+        self._index = None
         by_source = {item.task.key: item for item in outcomes}
+        evidence = source_report_evidence(tuple(by_source.values()), self.run_id)
         for key in keys:
             previous = self.entries[key]
             if previous.applied or previous.decision == "rejected":
@@ -81,6 +99,7 @@ class TaskEntryResults:
                 reason=reason,
                 decision="pending",
                 attempt=previous.attempt + 1,
+                report_details_json=evidence.get(previous.source, {}).get(key, "{}"),
             )
 
     @staticmethod
@@ -116,11 +135,14 @@ class TaskEntryResults:
     def decide(self, decisions):
         if not set(decisions).issubset(self.ready_keys):
             raise ValueError("只能确认通过检查的未应用条目")
+        self._index = None
         for key, accepted in decisions.items():
             self.entries[key] = replace(self.entries[key], decision="accepted" if accepted else "rejected")
 
     def confirm_without_preview(self):
-        for key in self.ready_keys:
+        keys = self.ready_keys
+        self._index = None
+        for key in keys:
             self.entries[key] = replace(self.entries[key], decision="accepted")
 
     def publish_to_drafts(self, tasks):
@@ -159,6 +181,7 @@ class TaskEntryResults:
         return selected
 
     def mark_applied(self, keys):
+        self._index = None
         for key in keys:
             self.entries[key] = replace(self.entries[key], applied=True)
 
@@ -189,6 +212,7 @@ class TaskEntryResults:
                     accepted=status == "succeeded",
                     report_details=tuple(
                         {
+                            **row.report_details,
                             "processing_status": "completed" if status == "succeeded" else status,
                             "result_status": result_status,
                             "decision": row.decision,

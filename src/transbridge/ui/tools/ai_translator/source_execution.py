@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from copy import deepcopy
+from dataclasses import dataclass, field
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from transbridge.application.translation.entry_alias import ai_entry_id, ai_entry_key
 
+from .source_reporting import (
+    build_source_snapshot as build_source_snapshot,
+    build_task_record as build_task_record,
+    render_source_report as render_source_report,
+)
 from .task_scope import SourceTask
 from .workflow_log_store import WorkflowLogStore
 
@@ -59,6 +64,7 @@ class SourceExecutor:
         attempt_id=None,
         checkpoint_root=None,
         log_ready=None,
+        project_progress=None,
     ) -> None:
         self.request = request
         self.config = request.config
@@ -74,9 +80,36 @@ class SourceExecutor:
         self.attempt_id = attempt_id
         self.checkpoint_root = checkpoint_root
         self.log_ready = log_ready
+        self.project_progress = project_progress
+        self.name_progress = None
+        from .source_terms import project_term_pool
+        from .task_references import reference_store_for_request
+
+        self.reference_store = getattr(consistency, "reference_store", None) or reference_store_for_request(request)
+        from transbridge.ai_translator.project_reference_snapshot import capture_project_reference
+
+        self.reference_store.capture_published(capture_project_reference(getattr(request, "terminology_binding", None)))
+        self.shared_term_pool = getattr(consistency, "shared_term_pool", None) or project_term_pool(request)
+        if consistency is not None:
+            consistency.shared_term_pool = self.shared_term_pool
+        self.initial_term_revision = 0 if self.shared_term_pool is None else self.shared_term_pool.revision
+        self.batch_executor = None
+        self.prepared_names = {}
+        self.prepared_name_term_counts = {}
+        self.reused_drafts = {}
+
+    def prepare_names(self, tasks):
+        from .task_name_preparation import prepare_project_names
+        from .task_translation_resume import prepare_translation_recovery
+
+        recovered = prepare_translation_recovery(self, tasks)
+        self.recovered_translations = recovered
+        self.prepared_names = prepare_project_names(self, tasks)
+        for source, values in recovered.items():
+            self.prepared_names.setdefault(source, {}).update(values)
 
     def execute(self, task: SourceTask) -> SourceOutcome:
-        store = WorkflowLogStore(task.esp_path, workflow="ai_task")
+        store = WorkflowLogStore(task.esp_path, workflow="ai_task", max_concurrent=self.config.max_concurrent)
         result = SourceOutcome(task, log_dir=store.log_dir)
         try:
             if self.log_ready is not None:
@@ -134,23 +167,39 @@ class SourceExecutor:
             logger.exception("AI 来源 %s 执行失败", task.label)
             result.error = f"{task.label}：{exc}"
             result.failed_keys = tuple(ai_entry_key(e) for e in task.entries)
+            result.cancelled = self.stop.is_set()
         finally:
             result.diagnostics = tuple(getattr(result.polish, "diagnostics", ()))
             store.close()
         return result
 
-    def _translate(self, task, store):
+    def _translate(self, task, store, *, repair_requirements=None, name_preparation=False):
         from transbridge.ai_translator.translator import AutoTranslator, TranslatorConfig
 
+        from .source_terms import source_run_id, source_terminology_path
+        from .task_translation_resume import postprocess_recovery_options
         from .workflow_logging_client import WorkflowLoggingLLMClient
 
+        config = deepcopy(self.config)
+        if repair_requirements or name_preparation:
+            config.enable_post_process = False
+        run_id = source_run_id(self.attempt_id or self.request.run_id, task.key)
+        if repair_requirements:
+            run_id += "-term-repair"
+        elif name_preparation:
+            run_id += "-names"
+
         translator = AutoTranslator(
-            TranslatorConfig(self.config, task.esp_path, self.request.spec.overwrite),
+            TranslatorConfig(
+                config,
+                source_terminology_path(task.esp_path, task.key),
+                bool(repair_requirements) or self.request.spec.overwrite,
+            ),
             self.client,
             self.project_id,
-            shared_in_flight_terms=self.shared_terms,
-            shared_in_flight_lock=self.terms_lock,
-            run_id_factory=lambda: self.attempt_id or self.request.run_id,
+            shared_in_flight_terms=self.shared_terms if self.shared_term_pool is None else None,
+            shared_in_flight_lock=self.terms_lock if self.shared_term_pool is None else None,
+            run_id_factory=lambda: run_id,
             request_budget=self.request.request_budget,
             llm_client_wrapper=lambda client: WorkflowLoggingLLMClient(client, store, channel_prefix="translate_call"),
             term_llm_client_wrapper=lambda client: WorkflowLoggingLLMClient(client, store, channel_prefix="term_call"),
@@ -164,19 +213,53 @@ class SourceExecutor:
                 if self.consistency is None
                 else lambda manager, terms: self.consistency.record_generated_terms(task.key, manager, terms)
             ),
+            terminology_access=None if self.consistency is None else self.consistency.terminology_access,
+            terminology_write_access=(None if self.consistency is None else self.consistency.terminology_write_access),
+            shared_term_pool=self.shared_term_pool,
+            generated_term_plugin_id=Path(task.esp_path).name if task.esp_path else None,
+            reference_store=self.reference_store,
+            reference_source=task.key,
+            request_lane=task.key,
+            batch_executor=self.batch_executor,
+            checkpoint_identity=run_id + ".esp",
+            prepared_names=None if name_preparation or repair_requirements else self.prepared_names.get(task.key),
+            committed_draft=None if name_preparation or repair_requirements else self.reused_drafts.get(task.key),
+            defer_generated_terms=name_preparation,
+            **({} if name_preparation or repair_requirements else postprocess_recovery_options(self, task)),
             **self.request.terminology_binding.translator_kwargs(),
         )
-        return translator.translate(
+
+        def translation_progress(current, total, message, *_):
+            if name_preparation and self.name_progress is not None:
+                self.name_progress.update("translate", task.key, current=current, detail=message)
+            self.progress(task.key, "project_names" if name_preparation else "翻译", current, total, message)
+
+        def stage_progress(stage, current, total, message):
+            if name_preparation and self.name_progress is not None:
+                # Terms, commits and reports have their own local denominators;
+                # they describe this source without advancing project names.
+                self.name_progress.update("translate", task.key, detail=message)
+            self.progress(task.key, "project_names" if name_preparation else stage, current, total, message)
+
+        result = translator.translate(
             collection=task.collection,
             target_entry_ids=[ai_entry_key(e) for e in task.translate_entries],
             strict_target_scope=True,
-            progress_callback=lambda c, t, m, *_: self.progress(task.key, "翻译", c, t, m),
+            progress_callback=translation_progress,
             stop_event=self.stop,
             pause_event=self.pause,
             log_callback=lambda idx, text: self.log(task.key, f"[{idx}] {text}"),
             stream_callback=lambda idx, chunk: store.write_chunk(f"batch_{idx:03d}", chunk),
-            stage_progress_callback=lambda s, c, t, m: self.progress(task.key, s, c, t, m),
+            stage_progress_callback=stage_progress,
+            term_repair_requirements=repair_requirements,
         )
+        if (
+            not name_preparation
+            and not repair_requirements
+            and (added := self.prepared_name_term_counts.get(task.key, 0))
+        ):
+            result.new_dynamic_terms += added
+        return result
 
     def _polish(self, task, store):
         from transbridge.application.translation.proofread_checkpoint import ProofreadCheckpoint, proofread_settings
@@ -212,6 +295,11 @@ class SourceExecutor:
                 if self.consistency is None
                 else lambda manager: self.consistency.observe_terms(task.key, "polish", manager)
             ),
+            terminology_access=None if self.consistency is None else self.consistency.terminology_access,
+            shared_term_pool=self.shared_term_pool,
+            generated_term_plugin_id=Path(task.esp_path).name if task.esp_path else None,
+            request_lane=task.key,
+            reference_store=self.reference_store,
         )
         results = pipeline.process(
             list(task.polish_entries),
@@ -223,232 +311,13 @@ class SourceExecutor:
         )
         return _PolishResults(results, diagnostics=getattr(pipeline, "diagnostics", ()))
 
+    def close_terms(self, outcomes):
+        from .source_terms import close_source_terms
+
+        return close_source_terms(self, outcomes)
+
 
 class _PolishResults(dict):
     def __init__(self, values=(), *, diagnostics=()):
         super().__init__(values)
         self.diagnostics = tuple(diagnostics)
-
-
-def build_source_snapshot(outcome: SourceOutcome, request, *, cancelled: bool = False):
-    """Build an in-memory report without exporting files."""
-    from transbridge.application.contracts import OperationOutcome
-    from transbridge.application.io import EntryKey
-    from transbridge.application.translation.mixed_report import build_mixed_report_snapshot
-    from transbridge.application.translation.polish_report import build_polish_report_snapshot
-
-    if outcome.record_snapshot is not None:
-        return outcome.record_snapshot
-    cancelled = cancelled or outcome.cancelled
-    snapshot = getattr(outcome.translation, "post_process_result", None)
-    if outcome.task.polish_entries:
-        summary = outcome.polish_summary
-        failed = tuple(
-            ai_entry_id(entry) for entry in outcome.task.polish_entries if ai_entry_key(entry) in outcome.failed_keys
-        )
-        polish = build_polish_report_snapshot(
-            outcome.polish,
-            list(outcome.task.polish_entries),
-            run_id=request.run_id,
-            accepted_entry_ids=summary.accepted_entry_ids if summary else (),
-            failed_entry_ids=summary.failed_entry_ids if summary else failed,
-            rejected_entry_ids=summary.rejected_entry_ids if summary else (),
-            pending_entry_ids=(
-                ()
-                if summary
-                else tuple(
-                    ai_entry_id(entry) for entry in outcome.task.polish_entries if ai_entry_id(entry) not in failed
-                )
-            ),
-        )
-        candidates = []
-        failed_keys = set()
-        counts: dict[str, int] = {"accepted": 0, "rejected": 0, "failed": 0}
-        for candidate, entry in zip(polish.candidates, outcome.task.polish_entries, strict=True):
-            result = outcome.polish.get(ai_entry_id(entry))
-            details = dict(candidate.report_details)
-            processing = getattr(result, "processing_status", "")
-            if result is None:
-                processing = "not_started"
-            if processing:
-                details["processing_status"] = processing
-            if processing in {"cancelled", "not_started"}:
-                details["result_status"] = processing
-            elif cancelled and processing == "completed":
-                details["result_status"] = "not_applied"
-            status = details["result_status"]
-            counts[status] = counts.get(status, 0) + 1
-            if status == "failed":
-                failed_keys.add(candidate.entry_key)
-            candidates.append(
-                replace(
-                    candidate,
-                    text=getattr(result, "candidate_translation", None) or candidate.text,
-                    report_details=tuple(details.items()),
-                )
-            )
-        polish = replace(
-            polish,
-            candidates=tuple(candidates),
-            diagnostics=(
-                *(
-                    item
-                    for item in polish.diagnostics
-                    if item.code != "POLISH_ENTRY_FAILED"
-                    or EntryKey.from_dict(dict(item.details)["entry_key"]) in failed_keys
-                ),
-                *outcome.diagnostics,
-            ),
-            failure_count=counts.get("failed", 0),
-            run_spec_summary={**polish.run_spec_summary, "polish_counts": counts},
-            outcome=OperationOutcome.CANCELLED if cancelled else polish.outcome,
-        )
-        snapshot = (
-            build_mixed_report_snapshot(
-                snapshot,
-                polish,
-                run_id=request.run_id,
-                execution_order=request.config.mixed_execution_order,
-            )
-            if snapshot is not None
-            else polish
-        )
-    if snapshot is None or len(snapshot.candidates) < len(outcome.task.entries):
-        snapshot = _include_unprocessed(snapshot, outcome, request.run_id)
-    snapshot = _include_translation_failures(snapshot, outcome)
-    if cancelled:
-        snapshot = replace(snapshot, outcome=OperationOutcome.CANCELLED)
-    outcome.snapshot = snapshot
-    return snapshot
-
-
-def _include_translation_failures(snapshot, outcome):
-    """Project execution failures onto rows, including empty and retained old translations."""
-    reasons = tuple(str(item) for item in getattr(outcome.translation, "failed_entries", ()) or ())
-    # Cancellation marks the entire source failed for atomic application. Only
-    # explicit per-entry failures remain failures in its historical record.
-    by_id: dict[str, list[str]] = {}
-    by_key = {ai_entry_key(entry): ai_entry_id(entry) for entry in outcome.task.translate_entries}
-    for reason in reasons:
-        entry_id = by_key.get(reason, reason.partition(": ")[0])
-        by_id.setdefault(entry_id, []).append(reason)
-    has_owned_failures = any(ai_entry_id(entry) in by_id for entry in outcome.task.translate_entries)
-    use_source_failures = outcome.translation is None or (
-        getattr(outcome.translation, "failed_count", 0) > 0 and not has_owned_failures
-    )
-    # A later polish exception also marks every source key failed. An available
-    # translation result is authoritative for that stage's individual failures.
-    failed_keys = set(outcome.failed_keys) if use_source_failures and not outcome.cancelled else set()
-    failures = {}
-    for entry in outcome.task.translate_entries:
-        owned = by_id.get(ai_entry_id(entry), ())
-        if owned or ai_entry_key(entry) in failed_keys:
-            failures[entry.identity] = "\n".join(owned) or outcome.error or "翻译失败"
-    if not failures:
-        return snapshot
-    candidates = []
-    for candidate in snapshot.candidates:
-        reason = failures.get(candidate.entry_key)
-        if reason is not None:
-            details = dict(candidate.report_details)
-            details.update(result_status="failed", processing_status="failed", note=reason)
-            candidate = replace(candidate, accepted=False, report_details=tuple(details.items()))
-        candidates.append(candidate)
-    return replace(
-        snapshot,
-        candidates=tuple(candidates),
-        accepted_count=sum(candidate.accepted for candidate in candidates),
-        failure_count=max(snapshot.failure_count, len(failures)),
-    )
-
-
-def _include_unprocessed(snapshot, outcome, run_id):
-    from transbridge.application.contracts import OperationOutcome
-    from transbridge.application.translation.postprocess import PostProcessCandidate, ReportSnapshot
-
-    known = {candidate.entry_key for candidate in snapshot.candidates} if snapshot else set()
-    missing = tuple(
-        PostProcessCandidate(
-            run_id=run_id,
-            entry_key=entry.identity,
-            before_revision=entry.revision,
-            original=entry.original or "",
-            before_text=entry.translation or "",
-            text=entry.translation or "",
-            stage=entry.stage,
-            accepted=False,
-            context=entry.context or "",
-            report_details=(("result_status", "not_started"), ("processing_status", "not_started")),
-        )
-        for entry in outcome.task.entries
-        if entry.identity not in known
-    )
-    if snapshot:
-        return replace(snapshot, candidates=(*snapshot.candidates, *missing), input_count=len(outcome.task.entries))
-    return ReportSnapshot(
-        schema="transbridge.polish-report.v1",
-        run_id=run_id,
-        outcome=OperationOutcome.FAILED,
-        input_count=len(outcome.task.entries),
-        accepted_count=0,
-        candidates=missing,
-        stage_outcomes=(),
-        diagnostics=(),
-    )
-
-
-def build_task_record(outcomes, request, *, state: str, applied: bool = False, saved: bool = False) -> dict:
-    """A durable result record, not an executable checkpoint."""
-    sources = [
-        {
-            "key": outcome.task.key,
-            "label": outcome.task.label,
-            "error": outcome.error,
-            "snapshot": build_source_snapshot(outcome, request, cancelled=state == "cancelled").to_dict(),
-        }
-        for outcome in outcomes
-    ]
-    counts = {"successful": 0, "failed": 0, "unprocessed": 0, "cancelled": 0}
-    for source in sources:
-        for entry in source["snapshot"]["entries"]:
-            details = entry.get("report_details", {})
-            status = details.get("processing_status", details.get("result_status", ""))
-            if status == "not_started":
-                counts["unprocessed"] += 1
-            elif status == "cancelled":
-                counts["cancelled"] += 1
-            elif status == "failed":
-                counts["failed"] += 1
-            elif (
-                status == "completed"
-                or entry["accepted"]
-                or (details.get("verdict") == "pass" and details.get("confidence", 0) > 0)
-            ):
-                counts["successful"] += 1
-            else:
-                counts["failed"] += 1
-    now = datetime.now(UTC).isoformat()
-    owner = getattr(getattr(request, "spec", None), "owner", None)
-    return {
-        "schema": "transbridge.task-history.v1",
-        "run_id": request.run_id,
-        "created_at": now,
-        "updated_at": now,
-        "ended_at": now if state in {"completed", "cancelled", "failed", "error"} else None,
-        "project_id": getattr(owner, "project_id", None),
-        "variant_id": getattr(owner, "variant_id", None),
-        "state": state,
-        "applied": applied,
-        "saved": saved,
-        "counts": counts,
-        "sources": sources,
-    }
-
-
-def render_source_report(outcome: SourceOutcome, request) -> None:
-    """Compatibility export entrypoint, invoked only when an export is requested."""
-    from .reporting import render_translation_report
-
-    snapshot = build_source_snapshot(outcome, request)
-    if snapshot is not None:
-        outcome.report = render_translation_report(snapshot, Path(outcome.task.esp_path or outcome.task.label).stem)

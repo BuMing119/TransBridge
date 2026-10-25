@@ -12,6 +12,7 @@ from transbridge.application.translation.ai_request_budget import (
 )
 from transbridge.infra.limited_llm_client import LimitedLLMClient
 from transbridge.infra.llm_tool_calling import LlmToolCall, LlmToolDefinition, LlmTurn
+from transbridge.infra.prepared_llm_request import PreparedLlmRequest
 
 
 def _wait_until(predicate, timeout: float = 2.0) -> None:
@@ -209,7 +210,7 @@ def test_external_cancel_event_prevents_provider_start() -> None:
     assert tracker.started == 0
 
 
-def test_prepared_chat_acquires_before_building_messages() -> None:
+def test_prepared_chat_builds_messages_before_request_admission() -> None:
     budget = AiRequestBudget(1)
     occupied = budget.acquire()
     factory_called = threading.Event()
@@ -230,7 +231,8 @@ def test_prepared_chat_acquires_before_building_messages() -> None:
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(client.chat_prepared, prepare, 20)
         _wait_until(lambda: budget.snapshot().waiting == 1)
-        assert not factory_called.is_set()
+        assert factory_called.is_set()
+        assert budget.snapshot().preparing == 0
         occupied.release()
         assert future.result(timeout=1) == "prepared"
 
@@ -286,3 +288,198 @@ def test_cancelled_prepared_chat_never_builds_messages() -> None:
     with pytest.raises(AiRequestCancelledError):
         client.chat_prepared(prepare)
     assert factory_called is False
+
+
+def test_blocked_preparation_does_not_consume_request_slots() -> None:
+    budget = AiRequestBudget(3, max_preparing=2)
+    tracker = _ConcurrencyTracker()
+    tracker.release.set()
+    client = LimitedLLMClient(_BlockingClient(tracker), budget)
+    barrier = threading.Barrier(3)
+    release_preparation = threading.Event()
+
+    def prepare() -> list[dict]:
+        barrier.wait(timeout=2)
+        assert release_preparation.wait(2)
+        return [{"content": "prepared"}]
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(client.chat_prepared, prepare) for _ in range(2)]
+        try:
+            barrier.wait(timeout=2)
+            snapshot = budget.snapshot()
+            assert snapshot.preparing == 2
+            assert snapshot.in_flight == 0
+            assert snapshot.peak_in_flight == 0
+            assert tracker.started == 0
+            assert client.chat([{"content": "ready"}]) == "ready"
+            assert tracker.started == 1
+        finally:
+            release_preparation.set()
+        assert [future.result(timeout=2) for future in futures] == ["prepared", "prepared"]
+    assert budget.snapshot().preparing == 0
+
+
+def test_preparation_pool_is_bounded_and_released_before_waiting_for_request() -> None:
+    budget = AiRequestBudget(1)
+    occupied = budget.acquire()
+    tracker = _ConcurrencyTracker()
+    tracker.release.set()
+    client = LimitedLLMClient(_BlockingClient(tracker), budget)
+    preparing = threading.Event()
+    release_preparation = threading.Event()
+
+    def prepare() -> list[dict]:
+        preparing.set()
+        assert release_preparation.wait(2)
+        return [{"content": "prepared"}]
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(client.chat_prepared, prepare)
+        try:
+            assert preparing.wait(1)
+            second = executor.submit(client.chat_prepared, lambda: [{"content": "second"}])
+            _wait_until(lambda: budget.snapshot().waiting_preparation == 1)
+            assert budget.snapshot().preparing == 1
+            release_preparation.set()
+            _wait_until(lambda: budget.snapshot().waiting == 2)
+            assert budget.snapshot().preparing == 0
+            assert budget.snapshot().waiting_preparation == 0
+            assert tracker.started == 0
+        finally:
+            release_preparation.set()
+            occupied.release()
+        assert first.result(timeout=2) == "prepared"
+        assert second.result(timeout=2) == "second"
+    assert budget.snapshot().peak_preparing == 1
+    assert budget.snapshot().peak_in_flight == 1
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_two_phase_request_refreshes_state_only_after_admission(streaming: bool) -> None:
+    budget = AiRequestBudget(1)
+    occupied = budget.acquire()
+    tracker = _ConcurrencyTracker()
+    tracker.release.set()
+    client = LimitedLLMClient(_BlockingClient(tracker), budget)
+    term = {"value": "old"}
+    finalized = threading.Event()
+    chunks: list[str] = []
+
+    def finalize(prefix: str) -> list[dict]:
+        assert budget.snapshot().in_flight == 1
+        assert budget.snapshot().preparing == 0
+        finalized.set()
+        return [{"content": prefix + term["value"]}]
+
+    request = PreparedLlmRequest(prepare=lambda: "term=", finalize=finalize)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        if streaming:
+            future = executor.submit(client.chat_stream_prepared, request, 20, chunks.append)
+        else:
+            future = executor.submit(client.chat_prepared, request, 20)
+        try:
+            _wait_until(lambda: budget.snapshot().waiting == 1)
+            assert not finalized.is_set()
+            term["value"] = "new"
+        finally:
+            occupied.release()
+        assert future.result(timeout=2) == "term=new"
+    assert chunks == (["term=new"] if streaming else [])
+
+
+def test_finalize_error_releases_request_lease() -> None:
+    budget = AiRequestBudget(1)
+    tracker = _ConcurrencyTracker()
+    client = LimitedLLMClient(_BlockingClient(tracker), budget)
+
+    def fail(_prepared) -> list[dict]:
+        raise RuntimeError("finalize failed")
+
+    with pytest.raises(RuntimeError, match="finalize failed"):
+        client.chat_prepared(PreparedLlmRequest(prepare=lambda: None, finalize=fail))
+    assert tracker.started == 0
+    assert budget.snapshot().in_flight == 0
+    assert budget.snapshot().preparing == 0
+
+
+def test_cancel_while_preparing_prevents_finalize_and_provider_call() -> None:
+    budget = AiRequestBudget(1)
+    tracker = _ConcurrencyTracker()
+    client = LimitedLLMClient(_BlockingClient(tracker), budget)
+    preparing = threading.Event()
+    release_preparation = threading.Event()
+
+    def prepare():
+        preparing.set()
+        assert release_preparation.wait(2)
+
+    def never_finalize(_prepared):
+        raise AssertionError("cancelled request must not finalize")
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(client.chat_prepared, PreparedLlmRequest(prepare, never_finalize))
+        try:
+            assert preparing.wait(1)
+            client.cancel()
+        finally:
+            release_preparation.set()
+        with pytest.raises(AiRequestCancelledError):
+            future.result(timeout=2)
+    assert budget.snapshot().in_flight == 0
+    assert budget.snapshot().preparing == 0
+    assert tracker.started == 0
+
+
+def test_pause_before_preparation_blocks_factory_and_can_be_cancelled() -> None:
+    budget = AiRequestBudget(1)
+    pause = threading.Event()
+    tracker = _ConcurrencyTracker()
+    client = LimitedLLMClient(_BlockingClient(tracker), budget, pause_event=pause)
+    called = threading.Event()
+
+    def prepare():
+        called.set()
+        return []
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(client.chat_prepared, prepare)
+        _wait_until(lambda: budget.snapshot().waiting_preparation == 1)
+        assert budget.snapshot().preparing == 0
+        assert budget.snapshot().in_flight == 0
+        assert not called.is_set()
+        client.cancel()
+        with pytest.raises(AiRequestCancelledError):
+            future.result(timeout=1)
+    assert budget.snapshot().waiting_preparation == 0
+    assert tracker.started == 0
+
+
+def test_client_lane_keys_share_slots_fairly() -> None:
+    budget = AiRequestBudget(1)
+    occupied = budget.acquire()
+    tracker = _ConcurrencyTracker()
+    tracker.release.set()
+    order = []
+
+    class _OrderedClient(_BlockingClient):
+        def chat(self, messages, max_tokens=0):
+            result = super().chat(messages, max_tokens)
+            order.append(result)
+            return result
+
+    translation = LimitedLLMClient(_OrderedClient(tracker), budget, lane_key=("A", "translate"))
+    proofread = LimitedLLMClient(_OrderedClient(tracker), budget, lane_key=("B", "proofread"))
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = []
+        try:
+            for index, (client, content) in enumerate(
+                [(translation, "A1"), (translation, "A2"), (translation, "A3"), (proofread, "P1")], start=1
+            ):
+                futures.append(executor.submit(client.chat, [{"content": content}]))
+                _wait_until(lambda: budget.snapshot().waiting == index)
+        finally:
+            occupied.release()
+        for future in futures:
+            future.result(timeout=2)
+    assert order == ["A1", "P1", "A2", "A3"]

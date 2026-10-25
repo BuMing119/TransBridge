@@ -2,8 +2,6 @@
 
 from PyQt6.QtCore import QObject, QTimer
 
-from .task_run_presentation import summarize_entries
-
 
 class TaskCompletion(QObject):
     def __init__(self, run):
@@ -19,11 +17,12 @@ class TaskCompletion(QObject):
         self._timer.stop()
         self.pending = None
 
-    def applied(self, selected):
+    def applied(self, selected, *, prepared=False):
         run = self.run
         run.applying = False
         if selected:
-            run.entries.mark_applied(selected)
+            if not prepared:
+                run.entries.mark_applied(selected)
             run.logged.emit(f"已应用 {len(selected)} 条结果")
             run.translation_completed.emit()
         run.runtime_binding.synchronize()
@@ -71,7 +70,10 @@ class TaskCompletion(QObject):
             self.notify(error=str(error))
 
         try:
-            run.session.save_translation(on_success=saved, on_error=failed)
+            options = dict(on_success=saved, on_error=failed)
+            if getattr(run.session, "supports_background_validation", False):
+                options["background_validate"] = run.result_flow._validate_background
+            run.session.save_translation(**options)
         except Exception as exc:
             failed(str(exc))
 
@@ -81,7 +83,13 @@ class TaskCompletion(QObject):
 
     def _deliver(self):
         run = self.run
-        if run.session.is_busy or run.worker is not None or run.records.busy:
+        if (
+            run.session.is_busy
+            or run.worker is not None
+            or run.records.busy
+            or run.recovery.busy
+            or run.result_preparation.busy
+        ):
             return
         self._timer.stop()
         pending, self.pending = self.pending, None
@@ -89,7 +97,7 @@ class TaskCompletion(QObject):
         if pending is None or pending[0] != run._attempt or run.cancelled or run.shutting_down:
             return
         error = pending[1]
-        summary = summarize_entries(run.entries.entries)
+        summary = run.entries.index.summary
         saved = bool(getattr(run.session, "project_saved", False))
         if error:
             title = "项目已保存，但快照创建失败" if saved else "项目保存失败"
@@ -97,7 +105,7 @@ class TaskCompletion(QObject):
             title = "处理结束，成功结果已保存" if summary.failed else "任务已完成，项目已保存"
         else:
             title = "处理结束，没有应用新结果"
-        review = sum(row.applied and row.stage == 2 for row in run.entries.entries.values())
+        review = run.entries.index.applied_review
         text = f"已应用 {summary.applied} 条，其中有疑问 {review} 条。"
         if summary.rejected:
             text += f"\n未采纳 {summary.rejected} 条。"

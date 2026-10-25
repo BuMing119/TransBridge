@@ -87,9 +87,10 @@ _DEFAULT_SYSTEM = (
 Polishing rules:
 1. Improve fluency, word order, and naturalness; avoid redundancy and repetition.
 2. Match the game's genre, tone, and character voices.
-3. Consider context, preserve terminology, emotion, and tone.
+3. Consider context, preserve appropriate terminology, emotion, and tone.
 4. Preserve every source placeholder and formatting marker, and do not change meaning.
-   Close paired punctuation correctly and use provided terminology.
+   Close paired punctuation correctly. Terminology is advisory and may be wrong or contextually inapplicable.
+   Never replace a suitable translation solely to match a reference. Preserve prior semantic review judgments.
 
 Polishing levels (the active level is provided by User):
 - light: correct only clear problems and preserve the existing style
@@ -124,7 +125,9 @@ _DEFAULT_BATCH_SYSTEM = (
     "text into more natural $target_lang that fits the game context.\n\n"
     """Improve fluency and style without retranslating.
 
-Preserve every placeholder and formatting marker, use standard terminology, and do not change source meaning.
+Preserve every placeholder and formatting marker, and do not change source meaning.
+Terminology is advisory and may be wrong or inapplicable. Never force a suitable translation to match a reference.
+Preserve prior semantic review judgments.
 
 Polishing levels (the active level is provided by User): light, moderate, or aggressive.
 
@@ -323,7 +326,9 @@ class LLMPolisher:
                 note=f"LLM润色失败: {client_diagnostic_redactor(self._llm).redact_text(diagnostic_exception_text(e))}",
             )
 
-    def polish_batch(self, entries: list["TranslationEntry"]) -> dict[str, PolishResult]:
+    def polish_batch(
+        self, entries: list["TranslationEntry"], *, reviews: dict | None = None
+    ) -> dict[str, PolishResult]:
         """
         批量润色条目。
 
@@ -337,7 +342,7 @@ class LLMPolisher:
             return {}
 
         # 构建批量Prompt
-        messages = self._build_batch_polish_prompt(entries)
+        messages = self._build_batch_polish_prompt(entries, reviews=reviews)
 
         try:
             response = self._llm.chat(
@@ -384,7 +389,9 @@ class LLMPolisher:
             user_content=user_content,
         )
 
-    def _build_batch_polish_prompt(self, entries: list["TranslationEntry"]) -> list[dict]:
+    def _build_batch_polish_prompt(
+        self, entries: list["TranslationEntry"], *, reviews: dict | None = None
+    ) -> list[dict]:
         """构建批量润色Prompt（SYSTEM(FINAL) -> USER）。"""
         lines = ["Polish the following translation entries.\n"]
         lines.append(f"Polishing level: {self._get_polish_level_desc()}\n")
@@ -395,6 +402,9 @@ class LLMPolisher:
             lines.append(f"Source: {entry.original or ''}")
             lines.append(f"Current translation: {entry.translation or ''}")
             lines.append(f"Context: {entry.context or 'unknown'}")
+            review = (reviews or {}).get(ai_entry_id(entry))
+            if review is not None:
+                lines.append(f"Prior semantic review: {review.review_status}; {review.review_reason}")
 
             # 获取该条目的相关术语
             terms = self._get_relevant_terms(entry)

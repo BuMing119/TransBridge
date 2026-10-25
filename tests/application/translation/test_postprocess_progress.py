@@ -54,7 +54,7 @@ def test_callable_proofread_exposes_start_and_live_batch_progress():
     )(_candidates())
     assert progress[-1][:3] == ("proofread", 2, 2)
     assert all(candidate.accepted and candidate.text == "您好" for candidate in outcome.candidates)
-    assert "开始检查术语" in logs
+    assert not any("开始检查术语" in message for message in logs)
 
 
 @pytest.mark.parametrize("phase", ["consistency", "format", "quality_gate"])

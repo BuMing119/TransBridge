@@ -21,6 +21,7 @@ from transbridge.ai_translator.structured_schemas import POSTPROCESS_VALUES_OUTP
 from transbridge.application.contracts import Diagnostic, DiagnosticSeverity, ErrorCategory
 from transbridge.application.io import EntryKey
 from transbridge.application.security import SecretRedactor
+from transbridge.application.translation.protected_syntax import protected_syntax_matches
 from transbridge.application.translation.token_batching import StableContentBatcher
 from transbridge.infra.llm_structured_outputs import (
     LlmStructuredOutputError,
@@ -32,6 +33,14 @@ from transbridge.infra.llm_structured_outputs import (
 from transbridge.infra.token_counting import TiktokenContentTokenCounter
 
 from .postprocess import PostProcessCandidate, PostProcessStageOutcome
+from .postprocess_review import (
+    annotate_review,
+    response_reviews,
+    review_content,
+    review_entry,
+    review_instruction,
+    with_detected_issues,
+)
 from .workload_models import canonical_hash
 
 
@@ -58,6 +67,7 @@ class PostProcessLlmResponse:
 
     values: tuple[tuple[EntryKey, str], ...]
     response_sha256: str
+    review_details: tuple[tuple[EntryKey, dict[str, str]], ...] = ()
 
     def __post_init__(self) -> None:
         keys = tuple(key for key, _ in self.values)
@@ -151,6 +161,7 @@ class OpenAiPostProcessHttpPort:
             content_text = validate_structured_output(_response_content(payload), POSTPROCESS_VALUES_OUTPUT_SCHEMA)
             content = json.loads(content_text)
             values = _values(content)
+            reviews = response_reviews(content)
         except (
             KeyError,
             IndexError,
@@ -165,7 +176,7 @@ class OpenAiPostProcessHttpPort:
                 "The post-process service returned malformed JSON.",
                 response_sha256=response_sha256,
             ) from None
-        return PostProcessLlmResponse(values, response_sha256)
+        return PostProcessLlmResponse(values, response_sha256, reviews)
 
 
 class LlmClientPostProcessPort:
@@ -188,14 +199,16 @@ class LlmClientPostProcessPort:
         encoded = str(content).encode("utf-8")
         response_sha256 = hashlib.sha256(encoded).hexdigest()
         try:
-            values = _values(json.loads(content))
+            payload = json.loads(content)
+            values = _values(payload)
+            reviews = response_reviews(payload)
         except (TypeError, ValueError, json.JSONDecodeError):
             raise PostProcessLlmError(
                 "POSTPROCESS_RESPONSE_MALFORMED",
                 "The post-process model returned malformed JSON.",
                 response_sha256=response_sha256,
             ) from None
-        return PostProcessLlmResponse(values, response_sha256)
+        return PostProcessLlmResponse(values, response_sha256, reviews)
 
 
 def _keys(request: PostProcessLlmRequest) -> tuple[EntryKey, ...]:
@@ -207,15 +220,7 @@ def _endpoint(request: PostProcessLlmRequest) -> str:
 
 
 def _payload(phase: PostProcessLlmPhase, request: PostProcessLlmRequest) -> dict[str, Any]:
-    entries = [
-        {
-            "entry_key": candidate.entry_key.to_dict(),
-            "original": candidate.original,
-            "current": candidate.text,
-            "stage": candidate.stage,
-        }
-        for candidate in request.candidates
-    ]
+    entries = [review_entry(candidate) for candidate in request.candidates]
     verb = {"refine": "refine", "polish": "polish", "arbitrate": "arbitrate"}[phase.value]
     instruction = (
         'Return JSON only as {"results":[{"entry_key":{"namespace":"...","local_key":"..."},'
@@ -226,7 +231,10 @@ def _payload(phase: PostProcessLlmPhase, request: PostProcessLlmRequest) -> dict
         "messages": [
             {
                 "role": "system",
-                "content": f"You perform {verb} toward {request.target_locale}. {instruction}",
+                "content": (
+                    f"You perform {verb} toward {request.target_locale}. "
+                    f"{review_instruction(phase.value)} {instruction}"
+                ),
             },
             {
                 "role": "user",
@@ -300,6 +308,7 @@ class CheckerStage:
 
     def __call__(self, candidates: tuple[PostProcessCandidate, ...]) -> PostProcessStageOutcome:
         diagnostics: list[Diagnostic] = []
+        updated: list[PostProcessCandidate] = []
         if self._progress is not None:
             self._progress(0, len(candidates), "")
         if self._batcher is not None:
@@ -324,6 +333,7 @@ class CheckerStage:
                     )
                 )
                 found = ()
+            updated.append(with_detected_issues(candidate, list(found)))
             for issue in found:
                 diagnostics.append(
                     Diagnostic(
@@ -333,14 +343,16 @@ class CheckerStage:
                         if getattr(issue, "execution_failed", False)
                         else ErrorCategory.INPUT,
                         severity=(
-                            DiagnosticSeverity.ERROR if issue.severity == "error" else DiagnosticSeverity.WARNING
+                            DiagnosticSeverity.ERROR
+                            if getattr(issue, "execution_failed", False)
+                            else DiagnosticSeverity.WARNING
                         ),
                         details=(("entry_key", candidate.entry_key.to_dict()),),
                     )
                 )
             if self._progress is not None:
                 self._progress(index, len(candidates), "")
-        return PostProcessStageOutcome(self.phase, candidates, tuple(diagnostics))
+        return PostProcessStageOutcome(self.phase, tuple(updated), tuple(diagnostics))
 
 
 class LlmPostProcessStage:
@@ -358,6 +370,7 @@ class LlmPostProcessStage:
         max_tokens_per_batch: int | None = None,
         max_items: int | None = None,
         progress_callback: Callable[[int, int, str], None] | None = None,
+        term_resolver: Callable[[PostProcessCandidate], dict[str, str]] | None = None,
     ) -> None:
         self.phase = phase.value
         self._phase = phase
@@ -367,6 +380,7 @@ class LlmPostProcessStage:
         self._base_url = base_url
         self._model = model
         self._progress = progress_callback
+        self._term_resolver = term_resolver
         self._batcher = (
             StableContentBatcher(TiktokenContentTokenCounter(model), max_tokens_per_batch, max_items=max_items)
             if max_tokens_per_batch is not None
@@ -378,6 +392,14 @@ class LlmPostProcessStage:
             self._progress(0, len(candidates), "")
         if not candidates:
             return PostProcessStageOutcome(self.phase, candidates)
+        if self._term_resolver is not None:
+            candidates = tuple(
+                candidate.with_report_details({
+                    **dict(candidate.report_details),
+                    "reference_terms": self._term_resolver(candidate),
+                })
+                for candidate in candidates
+            )
         if self._batcher is None:
             outcome = self._apply_batch(candidates)
             if self._progress is not None:
@@ -386,7 +408,7 @@ class LlmPostProcessStage:
         plan = self._batcher.plan(
             candidates,
             key=lambda candidate: candidate.entry_key,
-            content=lambda candidate: (candidate.original, candidate.text, candidate.context),
+            content=review_content,
         )
         diagnostics: list[Diagnostic] = []
         updated: list[PostProcessCandidate] = []
@@ -421,6 +443,7 @@ class LlmPostProcessStage:
             )
             return PostProcessStageOutcome(self.phase, candidates, (diagnostic,))
         by_key = response.by_key()
+        reviews_by_key = dict(response.review_details)
         updated: list[PostProcessCandidate] = []
         diagnostics: list[Diagnostic] = []
         for candidate in candidates:
@@ -445,7 +468,10 @@ class LlmPostProcessStage:
                     )
                 )
                 continue
-            updated.append(self._apply_value(candidate, value, diagnostics))
+            reviewed = self._apply_value(candidate, value, diagnostics)
+            updated.append(
+                annotate_review(candidate, reviewed, reviews_by_key.get(candidate.entry_key, {}), self.phase, value)
+            )
         return PostProcessStageOutcome(self.phase, tuple(updated), tuple(diagnostics))
 
     def _apply_value(
@@ -454,6 +480,18 @@ class LlmPostProcessStage:
         value: str,
         diagnostics: list[Diagnostic],
     ) -> PostProcessCandidate:
+        text = candidate.text if self._phase is PostProcessLlmPhase.ARBITRATE else value
+        if not protected_syntax_matches(candidate.original, text):
+            diagnostics.append(
+                Diagnostic(
+                    "POSTPROCESS_PROTECTED_SYNTAX_MISMATCH",
+                    "The post-process result changed a placeholder or program tag.",
+                    category=ErrorCategory.INPUT,
+                    severity=DiagnosticSeverity.ERROR,
+                    details=(("entry_key", candidate.entry_key.to_dict()),),
+                )
+            )
+            return candidate.with_accepted(False)
         if self._phase is PostProcessLlmPhase.ARBITRATE:
             if value in ("pass", "reject", "pending"):
                 if value != "pass":
@@ -466,7 +504,7 @@ class LlmPostProcessStage:
                             details=(("entry_key", candidate.entry_key.to_dict()),),
                         )
                     )
-                return candidate.with_accepted(value == "pass")
+                return candidate.with_accepted(value != "reject")
             diagnostics.append(
                 Diagnostic(
                     "POSTPROCESS_VERDICT_INVALID",

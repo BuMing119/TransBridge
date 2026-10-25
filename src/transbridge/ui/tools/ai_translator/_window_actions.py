@@ -8,7 +8,8 @@ from PyQt6.QtWidgets import QMessageBox
 from transbridge.ui.foundation.components import ComponentStyle, SemanticState
 
 from ._theme_support import AiThemeBinding, set_widget_brush
-from .run_spec import AiPreflightCode, preflight_ai_run
+from .run_preparation import confirm_optional_retrieval
+from .run_spec import preflight_ai_run
 from .scope_presenter import MixedScope
 
 
@@ -27,23 +28,19 @@ def preflight_candidates(window: object, mode: str, *, mixed_scope: MixedScope |
 def require_ready(
     window: object, mode: str, config: object, entries: list, *, mixed_has_translation: bool | None = None
 ) -> bool:
+    """Validate a caller-owned execution draft, applying an approved fallback to it."""
     result = preflight_ai_run(
         mode, config, entries, esp_path=window._ctx.esp_path, mixed_has_translation=mixed_has_translation
     )
-    embedding = getattr(config, "embedding", None)
-    missing_local_model = str(getattr(embedding, "mode", "disabled") or "disabled").casefold() == "local" and any(
-        issue.code == AiPreflightCode.MISSING_EMBEDDING_CONFIGURATION for issue in result.issues
-    )
-    if missing_local_model:
-        if not window._embedding_models.resolve_missing():
+    if not result.blocking_issues:
+        execution = confirm_optional_retrieval(window, config, result.optional_issues)
+        if execution is None:
             return False
-        config = window._config_presenter.build()
-        result = preflight_ai_run(
-            mode, config, entries, esp_path=window._ctx.esp_path, mixed_has_translation=mixed_has_translation
-        )
-    if result.ready:
+        if execution is not config:
+            config.enable_semantic_match = execution.enable_semantic_match
+            config.embedding = execution.embedding
         return True
-    QMessageBox.warning(window, "AI 运行条件未满足", result.reason or "请检查运行配置。")
+    QMessageBox.warning(window, "AI 运行条件未满足", result.blocking_reason or "请检查运行配置。")
     window.update_quick_run()
     return False
 
@@ -76,6 +73,10 @@ def open_settings_from_window(window: object) -> None:
 
 
 def update_window_quick_run(window: object, *, config=None, tasks=None) -> None:
+    if getattr(window, "_task_launch", None) is not None:
+        window._view.controls.start_btn.setEnabled(False)
+        window._view.controls.preflight_label.set_full_text("正在准备 AI 任务…")
+        return
     if not hasattr(window, "_custom_profiles") or window._custom_profiles.block_unavailable_start():
         return
     mode = window._view_port.mode
@@ -100,7 +101,7 @@ def update_window_quick_run(window: object, *, config=None, tasks=None) -> None:
         for task in tasks
         if task.entries
     ]
-    reason = next((check.reason for check in checks if not check.ready), None)
+    reason = next((check.blocking_reason for check in checks if check.blocking_issues), None)
     if not entries:
         reason = "所选来源没有符合范围的可处理词条"
     if window._run_controller.is_running:

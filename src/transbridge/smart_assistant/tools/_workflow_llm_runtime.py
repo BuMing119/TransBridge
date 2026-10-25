@@ -41,7 +41,7 @@ def create_workflow_llm_runtime(
 
     max_concurrent = int(getattr(llm_config, "max_concurrent", 1))
     request_budget = AiRequestBudget(max(1, max_concurrent))
-    log_store = WorkflowLogStore(esp_path, workflow=workflow)
+    log_store = WorkflowLogStore(esp_path, workflow=workflow, max_concurrent=max_concurrent)
     provider_client = create_llm_client(llm_config)
     limited_client = LimitedLLMClient(
         provider_client,

@@ -24,6 +24,7 @@ class TranslationEntryOutcome:
     text: str
     stage: int
     reason: str = ""
+    review_details: tuple[tuple[str, object], ...] = ()
 
 
 def committed_entry_keys(result: OperationResult[dict] | None) -> set[EntryKey]:

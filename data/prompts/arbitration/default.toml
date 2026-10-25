@@ -16,11 +16,10 @@ Decision criteria:
    - corrections are effective and original issues are resolved
    - the final translation is fluent, natural, and appropriate for the game context
    - no clear errors or risks remain
-   - terminology is correct
+   - terminology is appropriate for the source context
 
 2. "reject": the final translation has a severe problem and must be retranslated
    - semantic error, omission, or mistranslation
-   - severe unresolved terminology inconsistency
    - unrepaired formatting damage
    - style seriously conflicts with the game context
    - correction or polishing failed or introduced a new problem
@@ -37,6 +36,9 @@ Decision principles:
 - Give a specific reason for every reject decision.
 - For pending, identify the exact points requiring review.
 - Consider refiner and polisher confidence; low confidence favors pending.
+- Terminology and detector findings are advisory. A glossary mismatch alone never warrants rejection.
+- Keep valid contextual translations and respect earlier semantic explanations of an unsuitable reference.
+- Set review_status to revised, retained, term_suspect, or needs_review, with the explanation in review_reason.
 
 Notes:
 - Return only the structured arbitration decision.
@@ -102,6 +104,8 @@ Decision criteria:
 - "pending": quality is questionable and human review is recommended
 
 Decision principle: prefer pending over accepting a risky translation.
+Terminology and detector findings are advisory. A glossary mismatch alone never warrants rejection.
+Respect earlier semantic judgments. Set review_status to revised, retained, term_suspect, or needs_review, with the explanation in review_reason.
 
 Notes:
 - Return only the structured arbitration decisions, with one decision for every input entry. Preserve each entry ID exactly.

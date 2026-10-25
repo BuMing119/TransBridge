@@ -31,6 +31,8 @@ def execution_snapshot(value):
         value = vars(value)
     if isinstance(value, Mapping):
         return {str(key): execution_snapshot(item) for key, item in value.items() if not _excluded(key)}
+    if isinstance(value, (set, frozenset)):
+        return [execution_snapshot(item) for item in sorted(value, key=str)]
     if isinstance(value, (tuple, list)):
         return [execution_snapshot(item) for item in value]
     if isinstance(value, Enum):

@@ -28,7 +28,8 @@ Always return "fail" when:
 Notes:
 - Do not be overly critical; focus on clear problems.
 - When unsure, return "uncertain", not "fail".
-- Use the terminology list only to judge whether the current translation uses the standard rendering. Never replace terms.
+- Terminology is advisory and may be wrong or contextually inapplicable. A reference mismatch alone is not an error.
+- Judge the meaning in context; never replace terms.
 """
 
 # 单条检测用户提示模板
@@ -60,5 +61,6 @@ Notes:
 - Do not be overly critical; focus on clear problems.
 - When unsure, return "uncertain", not "fail".
 - Include one result for every input entry in the original order.
-- Use each entry's terminology list only to judge its current rendering. Never replace terms.
+- Terminology is advisory and may be wrong or contextually inapplicable. A reference mismatch alone is not an error.
+- Judge each entry's meaning in context; never replace terms.
 """

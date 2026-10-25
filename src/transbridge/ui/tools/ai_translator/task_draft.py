@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
+from copy import copy, deepcopy
 from dataclasses import replace
 
 from transbridge.application.io.identity import EntryKey
@@ -13,6 +13,28 @@ from .task_scope import SourceTask
 
 
 class TaskDraft:
+    @classmethod
+    def from_captured(cls, tasks, states):
+        """Build detached collections in a worker without inspecting live sources."""
+        draft = cls.__new__(cls)
+        detached = []
+        for task in tasks:
+            collection = TranslationEntryCollection(deepcopy(states[task.key].entries))
+            detached.append(
+                SourceTask(
+                    task.key,
+                    task.label,
+                    task.esp_path,
+                    collection,
+                    tuple(collection.get(key) for key in task.translate_keys),
+                    tuple(collection.get(key) for key in task.polish_keys),
+                )
+            )
+        draft.tasks = tuple(detached)
+        draft.originals = {entry.identity: deepcopy(entry) for task in draft.tasks for entry in task.entries}
+        draft.keys = frozenset(draft.originals)
+        return draft
+
     def __init__(self, tasks: tuple[SourceTask, ...], states: dict) -> None:
         seen = set()
         detached = []
@@ -57,6 +79,11 @@ class TaskDraft:
             )
         self.tasks = tuple(tasks)
         return tuple(selected)
+
+    def prepare_retry(self, keys):
+        draft = copy(self)
+        selected = draft.retry(keys)
+        return draft, selected
 
     def merge(self, states: dict, keys: set[EntryKey]) -> tuple:
         """Publish translation state only; source and metadata remain the live baseline."""

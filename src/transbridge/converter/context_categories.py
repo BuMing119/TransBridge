@@ -10,7 +10,7 @@ ROUND1_CATEGORIES: dict[str, set[str]] = {
     "种族与派系": {"RACE:FULL", "RACE:DESC", "CLAS:FULL"},
     "人名": {"NPC_:FULL", "NPC_:SHRT", "TACT:FULL"},
     "地名": {"LCTN:FULL", "WRLD:FULL", "CELL:FULL", "DOOR:FULL", "REFR:FULL"},
-    "书名": {"BOOK:FULLSCRL:FULL"},
+    "书名": {"BOOK:FULL", "SCRL:FULL"},
     "物品": {
         "ACTI:FULL",
         "ACTI:RNAM",
@@ -52,6 +52,22 @@ ROUND1_CATEGORIES: dict[str, set[str]] = {
     "任务名": {"QUST:FULL"},
     "互动": {"FLOR:RNAM", "FURN:FULL", "HAZD:FULL"},
 }
+
+# Names are a narrower set than round-one batches, which also contain
+# descriptions and activation prompts. RNAM is an action label, not a name.
+NAME_CATEGORIES: dict[str, frozenset[str]] = {
+    category: frozenset(context for context in contexts if context.endswith((":FULL", ":SHRT")))
+    for category, contexts in ROUND1_CATEGORIES.items()
+}
+_NAME_CATEGORY_BY_CONTEXT = {
+    context: category for category, contexts in NAME_CATEGORIES.items() for context in contexts
+}
+
+
+def name_category(context: str | None) -> str | None:
+    """Classify record names without including their descriptions or actions."""
+    return _NAME_CATEGORY_BY_CONTEXT.get((context or "").split("|", 1)[0])
+
 
 # ── 第二轮：对话类（INFO/DIAL），按 quest_formid 分组 ─────────────────────────
 ROUND2_PREFIXES: set[str] = {"INFO", "DIAL"}

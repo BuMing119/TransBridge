@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
 )
 
 from transbridge.config.language_profiles import discover_language_profiles
+from transbridge.config.llm import DEFAULT_MAX_CONCURRENT, MAX_CONCURRENT
 from transbridge.ui.foundation.components import (
     ComponentStyle,
     ElidedLabel,
@@ -328,7 +329,7 @@ def _build_runtime_group(view: object, parent: QWidget) -> QGroupBox:
     configure_task_panel(group)
     form = QFormLayout(group)
     form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
-    view.controls.concurrent_spin = _spin(group, 1, 50, 20)
+    view.controls.concurrent_spin = _spin(group, 1, MAX_CONCURRENT, DEFAULT_MAX_CONCURRENT)
     view.controls.concurrent_spin.setToolTip("本次 AI 工作流共享的最大在途 LLM 请求数")
     form.addRow("最大并发请求", view.controls.concurrent_spin)
     view.controls.tokens_spin = _spin(group, 200, 32000, 2500, 200)

@@ -7,10 +7,12 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 import pytest
 
+from tests.ui.tools.ai_read_projection_support import wait_for
 from tests.ui.tools.test_unified_ai_execution import _request, _task
 from transbridge.ui.tools.ai_translator import source_execution
 from transbridge.ui.tools.ai_translator._llm_log_viewer import _LLMLogViewer
@@ -46,7 +48,9 @@ def test_log_directory_is_announced_before_source_work_completes(monkeypatch, tm
 
     monkeypatch.setattr(SourceExecutor, "_translate", translate)
     worker = AiTaskWorker(_request(), (_task(),))
-    worker.log_ready.connect(lambda key, directory: events.append(("ready", key, directory)))
+    worker.log_ready.connect(
+        lambda key, directory: events.append(("ready", key, directory)), Qt.ConnectionType.DirectConnection
+    )
     worker.completed.connect(lambda outcomes: events.append(("done", outcomes)))
     worker.run()
     assert events[0][0] == "ready" and events[1][0] == "done"
@@ -57,12 +61,12 @@ def test_timer_discovers_new_files_and_updates_current_selection(viewer, tmp_pat
     assert viewer._log_selector.count() == 0
     current = tmp_path / "workflow.log"
     current.write_text("first", encoding="utf-8")
-    QTest.qWait(40)
+    wait_for(lambda: viewer._log_selector.count() == 1 and viewer._text_edit.toPlainText() == "first")
     assert viewer._log_selector.count() == 1
     assert viewer._text_edit.toPlainText() == "first"
     current.write_text("first\nnew response", encoding="utf-8")
     (tmp_path / "proofread_call_001.log").write_text("other response", encoding="utf-8")
-    QTest.qWait(40)
+    wait_for(lambda: viewer._log_selector.count() == 2 and viewer._text_edit.toPlainText() == "first\nnew response")
     assert viewer._log_selector.count() == 2
     assert viewer._log_selector.currentData() == str(current)
     assert viewer._text_edit.toPlainText() == "first\nnew response"
@@ -79,7 +83,7 @@ def test_unavailable_log_directory_is_announced_before_work(monkeypatch):
 
     monkeypatch.setattr(SourceExecutor, "_translate", translate)
     worker = AiTaskWorker(_request(), (_task(),))
-    worker.log_ready.connect(lambda key, path: events.append((key, path)))
+    worker.log_ready.connect(lambda key, path: events.append((key, path)), Qt.ConnectionType.DirectConnection)
     worker.run()
     assert events == [("first", "")]
 
@@ -89,17 +93,17 @@ def test_scrolled_reader_keeps_content_until_returning_to_tail(viewer, tmp_path,
     old = "".join(f"line {i}\n" for i in range(300))
     current.write_text(old, encoding="utf-8")
     viewer._scan_and_refresh()
-    qapp.processEvents()
+    wait_for(lambda: viewer._text_edit.toPlainText() == old)
     scrollbar = viewer._text_edit.verticalScrollBar()
     assert scrollbar.maximum() > 0
     scrollbar.setValue(4)
     current.write_text(old + "new response", encoding="utf-8")
-    QTest.qWait(40)
+    wait_for(lambda: "有新日志" in viewer._refresh_status.text())
     assert scrollbar.value() == 4
     assert viewer._text_edit.toPlainText() == old
     assert "有新日志" in viewer._refresh_status.text()
     scrollbar.setValue(scrollbar.maximum())
-    QTest.qWait(40)
+    wait_for(lambda: viewer._text_edit.toPlainText().endswith("new response"))
     assert viewer._text_edit.toPlainText().endswith("new response")
     assert scrollbar.value() == scrollbar.maximum()
 
@@ -107,6 +111,7 @@ def test_scrolled_reader_keeps_content_until_returning_to_tail(viewer, tmp_path,
 def test_unchanged_files_are_not_reread_and_close_stops_timer(viewer, tmp_path, monkeypatch):
     (tmp_path / "workflow.log").write_text("response", encoding="utf-8")
     viewer._scan_and_refresh()
+    wait_for(lambda: viewer._text_edit.toPlainText() == "response")
 
     def unexpected_read(_path):
         pytest.fail("unchanged log was reread")
@@ -135,11 +140,12 @@ def test_manual_refresh_updates_scrolled_text_and_reopening_restarts_timer(viewe
     old = "".join(f"line {i}\n" for i in range(300))
     current.write_text(old, encoding="utf-8")
     viewer._scan_and_refresh()
-    qapp.processEvents()
+    wait_for(lambda: viewer._text_edit.toPlainText() == old)
     scrollbar = viewer._text_edit.verticalScrollBar()
     scrollbar.setValue(4)
     current.write_text(old + "manual update", encoding="utf-8")
     viewer._refresh_btn.click()
+    wait_for(lambda: viewer._text_edit.toPlainText().endswith("manual update"))
     assert viewer._text_edit.toPlainText().endswith("manual update")
     assert scrollbar.value() == 4
     viewer.close()
@@ -157,6 +163,7 @@ def test_read_error_is_visible_and_recovers(viewer, tmp_path, monkeypatch):
 
     monkeypatch.setattr(viewer, "_read_visible_text", fail)
     viewer._scan_and_refresh()
+    wait_for(lambda: "无法读取日志" in viewer._refresh_status.text())
     assert "无法读取日志" in viewer._refresh_status.text()
     monkeypatch.setattr(viewer, "_read_visible_text", original)
     QTest.qWait(40)

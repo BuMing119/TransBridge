@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from contextlib import contextmanager
 import json
 import logging
 import threading
@@ -11,6 +12,7 @@ from typing import Any
 from transbridge.application.security import SecretRedactor, diagnostic_exception_text, project_business_data
 from transbridge.application.security.diagnostic_logging import client_diagnostic_redactor
 from transbridge.infra.llm_client import LLMClient
+from transbridge.infra.prepared_llm_request import PreparedLlmRequest
 
 from .workflow_log_store import WorkflowLogStore
 
@@ -36,87 +38,108 @@ class WorkflowLoggingLLMClient(LLMClient):
         self._lock = threading.Lock()
 
     def chat(self, messages: list[dict], max_tokens: int = 0) -> str:
-        _call_number, channel = self._reserve_call()
-        self._write_request(channel, messages, max_tokens)
-        try:
-            response = self._delegate.chat(messages, max_tokens)
-        except Exception as exc:
-            self._write_error(channel, exc)
-            raise
-        self._write_success(channel, response)
-        return response
-
-    def chat_prepared(self, messages_factory: Callable[[], list[dict]], max_tokens: int = 0) -> str:
-        """Reserve logging identity, then let an admission wrapper prepare the request."""
-
-        _call_number, channel = self._reserve_call()
-
-        def prepare_and_log() -> list[dict]:
-            messages = messages_factory()
+        with self._call_channel() as channel:
             self._write_request(channel, messages, max_tokens)
-            return messages
+            try:
+                response = self._delegate.chat(messages, max_tokens)
+            except Exception as exc:
+                self._write_error(channel, exc)
+                raise
+            self._write_success(channel, response)
+            return response
 
-        try:
-            prepared_chat = getattr(self._delegate, "chat_prepared", None)
-            if callable(prepared_chat):
-                response = prepared_chat(prepare_and_log, max_tokens)
-            else:
-                response = self._delegate.chat(prepare_and_log(), max_tokens)
-        except Exception as exc:
-            self._write_error(channel, exc)
-            raise
-        self._write_success(channel, response)
-        return response
+    def chat_prepared(
+        self, messages_factory: Callable[[], list[dict]] | PreparedLlmRequest, max_tokens: int = 0
+    ) -> str:
+        """Retain split preparation/admission and record the finalized request."""
+
+        with self._call_channel() as channel:
+            request = self._logged_request(messages_factory, channel, max_tokens)
+            try:
+                prepared_chat = getattr(self._delegate, "chat_prepared", None)
+                if callable(prepared_chat):
+                    response = prepared_chat(request, max_tokens)
+                else:
+                    response = self._delegate.chat(_prepare_messages(request), max_tokens)
+            except Exception as exc:
+                self._write_error(channel, exc)
+                raise
+            self._write_success(channel, response)
+            return response
 
     def chat_stream(self, messages: list[dict], max_tokens: int, chunk_callback) -> str:
-        _call_number, channel = self._reserve_call()
-        self._write_request(channel, messages, max_tokens)
+        with self._call_channel() as channel:
+            self._write_request(channel, messages, max_tokens)
 
-        def record_chunk(chunk: str) -> None:
-            self._safe_write_chunk(channel, chunk)
-            chunk_callback(chunk)
+            def record_chunk(chunk: str) -> None:
+                self._safe_write_chunk(channel, chunk)
+                chunk_callback(chunk)
 
-        try:
-            response = self._delegate.chat_stream(messages, max_tokens, record_chunk)
-        except Exception as exc:
-            self._write_error(channel, exc)
-            raise
-        self._write_success(channel, response, response_already_logged=True)
-        return response
+            try:
+                response = self._delegate.chat_stream(messages, max_tokens, record_chunk)
+            except Exception as exc:
+                self._write_error(channel, exc)
+                raise
+            self._write_success(channel, response, response_already_logged=True)
+            return response
 
     def chat_stream_prepared(
         self,
-        messages_factory: Callable[[], list[dict]],
+        messages_factory: Callable[[], list[dict]] | PreparedLlmRequest,
         max_tokens: int,
         chunk_callback,
     ) -> str:
-        """Streaming prepared-call path with admission-before-preparation support."""
+        """Streaming counterpart that preserves split preparation/admission."""
 
-        _call_number, channel = self._reserve_call()
+        with self._call_channel() as channel:
+            request = self._logged_request(messages_factory, channel, max_tokens)
 
-        def prepare_and_log() -> list[dict]:
-            messages = messages_factory()
+            def record_chunk(chunk: str) -> None:
+                self._safe_write_chunk(channel, chunk)
+                chunk_callback(chunk)
+
+            try:
+                prepared_stream = getattr(self._delegate, "chat_stream_prepared", None)
+                if callable(prepared_stream):
+                    response = prepared_stream(request, max_tokens, record_chunk)
+                else:
+                    response = self._delegate.chat_stream(_prepare_messages(request), max_tokens, record_chunk)
+            except Exception as exc:
+                self._write_error(channel, exc)
+                raise
+            self._write_success(channel, response, response_already_logged=True)
+            return response
+
+    def _logged_request(self, request, channel: str, max_tokens: int):
+        if isinstance(request, PreparedLlmRequest):
+
+            def finalize_and_log(prepared):
+                messages = request.finalize(prepared)
+                self._write_request(channel, messages, max_tokens)
+                return messages
+
+            return PreparedLlmRequest(request.prepare, finalize_and_log)
+
+        def prepare_and_log():
+            messages = request()
             self._write_request(channel, messages, max_tokens)
             return messages
 
-        def record_chunk(chunk: str) -> None:
-            self._safe_write_chunk(channel, chunk)
-            chunk_callback(chunk)
-
-        try:
-            prepared_stream = getattr(self._delegate, "chat_stream_prepared", None)
-            if callable(prepared_stream):
-                response = prepared_stream(prepare_and_log, max_tokens, record_chunk)
-            else:
-                response = self._delegate.chat_stream(prepare_and_log(), max_tokens, record_chunk)
-        except Exception as exc:
-            self._write_error(channel, exc)
-            raise
-        self._write_success(channel, response, response_already_logged=True)
-        return response
+        return prepare_and_log
 
     def cancel(self) -> None:
         self._delegate.cancel()
+
+    @contextmanager
+    def _call_channel(self):
+        _call_number, channel = self._reserve_call()
+        try:
+            yield channel
+        finally:
+            try:
+                self._store.close_channel(channel)
+            except Exception as exc:
+                _logger.warning("关闭 LLM 调用日志失败，保留模型调用结果: %s", exc)
 
     def _reserve_call(self) -> tuple[int, str]:
         with self._lock:
@@ -163,7 +186,10 @@ class WorkflowLoggingLLMClient(LLMClient):
             "[REQUEST BUDGET] "
             f"wait_ms={metrics.admission_wait_ms} "
             f"in_flight={metrics.in_flight_at_admission} "
-            f"peak_in_flight={metrics.peak_in_flight}",
+            f"peak_in_flight={metrics.peak_in_flight} "
+            f"preparation_wait_ms={getattr(metrics, 'preparation_wait_ms', 0)} "
+            f"preparation_ms={getattr(metrics, 'preparation_ms', 0)} "
+            "scope=logical_model_call",
         )
 
     def _safe_write_chunk(self, channel: str, content: str) -> None:
@@ -177,6 +203,12 @@ class WorkflowLoggingLLMClient(LLMClient):
             self._store.write_line(channel, content)
         except Exception as exc:
             _logger.warning("记录 LLM 调用错误日志失败，保留原始异常: %s", exc)
+
+
+def _prepare_messages(request: Callable[[], list[dict]] | PreparedLlmRequest) -> list[dict]:
+    if isinstance(request, PreparedLlmRequest):
+        return request.finalize(request.prepare())
+    return request()
 
 
 def _exception_details(exc: Exception, redactor: SecretRedactor | None = None) -> dict[str, Any]:

@@ -5,14 +5,14 @@ QTableWidget 展示规则列表，支持添加/删除/上移/下移/重置默认
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QSignalBlocker, Qt, pyqtSignal
+from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QMenu,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -21,18 +21,15 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from transbridge.config.llm import default_action_rules
 from transbridge.converter.context_categories import ALL_DISPLAY_CATEGORIES
+
+from ._filter_popup import FilterPopupMenu
 
 # ── 预设 ─────────────────────────────────────────────────────────────────────
 
 _ALL_CATEGORIES = ALL_DISPLAY_CATEGORIES
 _ALL_STAGES = {0: "未翻译", 1: "已翻译", 2: "有疑问", 3: "已检查", 5: "已审核", 9: "已锁定", -1: "已隐藏"}
-
-_DEFAULT_RULES: list[dict] = [
-    {"priority": 0, "status_filter": [0], "action": "translate"},
-    {"priority": 1, "status_filter": [1, 2, 3, 5], "action": "polish"},
-    {"priority": 2, "status_filter": [9, -1], "action": "skip"},
-]
 
 _ACTION_OPTIONS = (("translate", "翻译"), ("polish", "润色"), ("skip", "跳过"))
 
@@ -53,19 +50,17 @@ class _CheckableFilterButton(QToolButton):
 
     def __init__(self, options: list[tuple[object, str]], selected: set | None, parent=None) -> None:
         super().__init__(parent)
-        self._menu = QMenu(self)
-        clear_action = self._menu.addAction("全部")
-        clear_action.triggered.connect(self._clear)
-        self._menu.addSeparator()
+        self._menu = FilterPopupMenu(self, "全部", self._clear)
         self._actions = []
         selected_values = set(selected or ())
         for value, label in options:
-            action = self._menu.addAction(label)
+            action = QAction(label, self._menu)
             action.setCheckable(True)
             action.setData(value)
             action.setChecked(value in selected_values)
             action.toggled.connect(self._selection_toggled)
             self._actions.append(action)
+            self._menu.add_action_option(action)
         self.setMenu(self._menu)
         self.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self._refresh_text()
@@ -76,10 +71,9 @@ class _CheckableFilterButton(QToolButton):
         return values or None
 
     def _clear(self) -> None:
-        for action in self._actions:
-            action.blockSignals(True)
-            action.setChecked(False)
-            action.blockSignals(False)
+        with QSignalBlocker(self):
+            for action in self._actions:
+                action.setChecked(False)
         self._refresh_text()
         self.selection_changed.emit(None)
 
@@ -173,17 +167,7 @@ class _RuleEditorWidget(QWidget):
 
     def reset_to_default(self):
         """重置为智能默认规则。"""
-        import uuid
-
-        self._rules = []
-        for d in _DEFAULT_RULES:
-            r = dict(d)
-            r["rule_id"] = uuid.uuid4().hex[:8]
-            r["label_filter"] = None
-            r["category_filter"] = None
-            r["status_filter"] = set(r.get("status_filter", []))
-            self._rules.append(r)
-        self._refresh_table()
+        self.set_rules(default_action_rules())
         self.rules_changed.emit()
 
     # ── 内部方法 ──────────────────────────────────────────────────────────

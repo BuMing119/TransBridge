@@ -6,6 +6,8 @@ from types import SimpleNamespace
 
 from PyQt6.QtWidgets import QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QLabel, QLineEdit, QPushButton, QSpinBox
 
+from transbridge.config.llm import DEFAULT_MAX_CONCURRENT, MAX_CONCURRENT
+
 from .page_common import SettingsPage, apply_if_present, password_editor
 
 
@@ -39,7 +41,12 @@ class AiServicePage(SettingsPage):
         self.base_url_edit.setPlaceholderText("https://api.openai.com/v1")
         form.addRow("Base URL", self.base_url_edit)
 
-        self.concurrent_spin = _spin(1, 128, int(getattr(config, "max_concurrent", 3) or 3), self)
+        self.concurrent_spin = _spin(
+            1,
+            MAX_CONCURRENT,
+            int(getattr(config, "max_concurrent", DEFAULT_MAX_CONCURRENT) or DEFAULT_MAX_CONCURRENT),
+            self,
+        )
         form.addRow("默认最大并发", self.concurrent_spin)
         self.retries_spin = _spin(0, 20, int(getattr(config, "llm_max_retries", 2) or 0), self)
         form.addRow("失败重试次数", self.retries_spin)

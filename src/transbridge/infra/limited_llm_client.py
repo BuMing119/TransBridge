@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Hashable
+from dataclasses import dataclass, replace
 import threading
 import time
 
@@ -13,6 +13,7 @@ from transbridge.application.translation.ai_request_budget import (
     EventState,
 )
 from transbridge.infra.llm_client import LLMClient
+from transbridge.infra.prepared_llm_request import PreparedLlmRequest
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +21,8 @@ class LimitedLlmCallMetrics:
     admission_wait_ms: int
     in_flight_at_admission: int
     peak_in_flight: int
+    preparation_wait_ms: int = 0
+    preparation_ms: int = 0
 
 
 class LimitedLLMClient(LLMClient):
@@ -38,11 +41,13 @@ class LimitedLLMClient(LLMClient):
         *,
         cancel_event: EventState | None = None,
         pause_event: EventState | None = None,
+        lane_key: Hashable | None = None,
     ) -> None:
         self._delegate = delegate
         self._budget = budget
         self._cancel_event = cancel_event
         self._pause_event = pause_event
+        self._lane_key = lane_key
         self._cancel_lock = threading.Lock()
         self._cancel_generation = 0
         self._call_state = threading.local()
@@ -60,25 +65,38 @@ class LimitedLLMClient(LLMClient):
         return getattr(self._call_state, "metrics", None)
 
     def chat(self, messages: list[dict], max_tokens: int = 0) -> str:
-        return self.chat_prepared(lambda: messages, max_tokens)
-
-    def chat_prepared(self, messages_factory: Callable[[], list[dict]], max_tokens: int = 0) -> str:
-        """Acquire admission before constructing potentially expensive messages."""
-
         self._call_state.metrics = None
         generation = self._generation()
         with self._acquire(generation):
             self._raise_if_cancelled(generation)
-            messages = messages_factory()
+            return self._delegate.chat(messages, max_tokens)
+
+    def chat_prepared(
+        self,
+        messages_factory: Callable[[], list[dict]] | PreparedLlmRequest,
+        max_tokens: int = 0,
+    ) -> str:
+        """Prepare outside request admission, then finalize just before calling."""
+
+        self._call_state.metrics = None
+        generation = self._generation()
+        finalize = self._prepare(messages_factory, generation)
+        with self._acquire(generation):
+            self._raise_if_cancelled(generation)
+            messages = finalize()
             self._raise_if_cancelled(generation)
             return self._delegate.chat(messages, max_tokens)
 
     def chat_stream(self, messages: list[dict], max_tokens: int, chunk_callback) -> str:
-        return self.chat_stream_prepared(lambda: messages, max_tokens, chunk_callback)
+        self._call_state.metrics = None
+        generation = self._generation()
+        with self._acquire(generation):
+            self._raise_if_cancelled(generation)
+            return self._delegate.chat_stream(messages, max_tokens, chunk_callback)
 
     def chat_stream_prepared(
         self,
-        messages_factory: Callable[[], list[dict]],
+        messages_factory: Callable[[], list[dict]] | PreparedLlmRequest,
         max_tokens: int,
         chunk_callback,
     ) -> str:
@@ -86,9 +104,10 @@ class LimitedLLMClient(LLMClient):
 
         self._call_state.metrics = None
         generation = self._generation()
+        finalize = self._prepare(messages_factory, generation)
         with self._acquire(generation):
             self._raise_if_cancelled(generation)
-            messages = messages_factory()
+            messages = finalize()
             self._raise_if_cancelled(generation)
             return self._delegate.chat_stream(messages, max_tokens, chunk_callback)
 
@@ -113,15 +132,54 @@ class LimitedLLMClient(LLMClient):
         with self._cancel_lock:
             return self._cancel_generation
 
+    def _prepare(
+        self, messages_factory: Callable[[], list[dict]] | PreparedLlmRequest, generation: int
+    ) -> Callable[[], list[dict]]:
+        started = time.perf_counter()
+        with self._budget.acquire_preparation(
+            cancel_event=self._cancel_event,
+            pause_event=self._pause_event,
+            is_cancelled=lambda: self._generation_changed(generation),
+            lane_key=self._lane_key,
+        ):
+            admitted = time.perf_counter()
+            self._raise_if_cancelled(generation)
+            try:
+                if isinstance(messages_factory, PreparedLlmRequest):
+                    prepared = messages_factory.prepare()
+
+                    def finalize() -> list[dict]:
+                        return messages_factory.finalize(prepared)
+
+                else:
+                    messages = messages_factory()
+
+                    def finalize() -> list[dict]:
+                        return messages
+
+                self._raise_if_cancelled(generation)
+                return finalize
+            finally:
+                self._call_state.metrics = LimitedLlmCallMetrics(
+                    admission_wait_ms=0,
+                    in_flight_at_admission=0,
+                    peak_in_flight=self._budget.snapshot().peak_in_flight,
+                    preparation_wait_ms=round((admitted - started) * 1000),
+                    preparation_ms=round((time.perf_counter() - admitted) * 1000),
+                )
+
     def _acquire(self, generation: int):
         started = time.perf_counter()
         lease = self._budget.acquire(
             cancel_event=self._cancel_event,
             pause_event=self._pause_event,
             is_cancelled=lambda: self._generation_changed(generation),
+            lane_key=self._lane_key,
         )
         snapshot = self._budget.snapshot()
-        self._call_state.metrics = LimitedLlmCallMetrics(
+        prior = self.last_call_metrics or LimitedLlmCallMetrics(0, 0, 0)
+        self._call_state.metrics = replace(
+            prior,
             admission_wait_ms=round((time.perf_counter() - started) * 1000),
             in_flight_at_admission=snapshot.in_flight,
             peak_in_flight=snapshot.peak_in_flight,

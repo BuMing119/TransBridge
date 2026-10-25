@@ -15,6 +15,7 @@ from transbridge.infra.llm_structured_outputs import (
     extract_structured_output_directive,
     validate_structured_output,
 )
+from transbridge.infra.prepared_llm_request import PreparedLlmRequest
 from transbridge.ui.tools.ai_translator.workflow_log_store import WorkflowLogStore
 from transbridge.ui.tools.ai_translator.workflow_logging_client import WorkflowLoggingLLMClient
 
@@ -57,8 +58,83 @@ def test_prepared_logging_reserves_id_and_logs_after_budget_admission(tmp_path: 
     assert "prepared prompt" in content
     assert "response:prepared prompt:30" in content
     assert "[REQUEST BUDGET]" in content
+    assert "preparation_wait_ms=" in content and "preparation_ms=" in content
+    assert "scope=logical_model_call" in content
     assert content.count("[END CALL]") == 1
     assert budget.snapshot().in_flight == 0
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("limited", [False, True])
+def test_split_request_logging_preserves_preparation_boundary_and_final_prompt(tmp_path, streaming, limited):
+    budget = AiRequestBudget(1)
+    events = []
+
+    class Client:
+        def chat(self, messages, max_tokens=0):
+            assert messages == [{"role": "user", "content": "prepared content with current terms"}]
+            assert max_tokens == 30
+            events.append("provider")
+            return "translated"
+
+        def chat_stream(self, messages, max_tokens, chunk_callback):
+            response = self.chat(messages, max_tokens)
+            chunk_callback(response)
+            return response
+
+    def prepare():
+        snapshot = budget.snapshot()
+        assert snapshot.in_flight == 0
+        assert snapshot.preparing == int(limited)
+        events.append("prepare")
+        return "prepared content"
+
+    def finalize(prepared):
+        snapshot = budget.snapshot()
+        assert snapshot.in_flight == int(limited)
+        assert snapshot.preparing == 0
+        events.append("finalize")
+        return [{"role": "user", "content": f"{prepared} with current terms"}]
+
+    store = WorkflowLogStore("plugin.esp", workflow="translation", log_base=tmp_path)
+    delegate = LimitedLLMClient(Client(), budget) if limited else Client()
+    client = WorkflowLoggingLLMClient(delegate, store)
+    request = PreparedLlmRequest(prepare, finalize)
+    chunks = []
+    if streaming:
+        response = client.chat_stream_prepared(request, 30, chunks.append)
+        assert chunks == ["translated"]
+    else:
+        response = client.chat_prepared(request, 30)
+
+    assert response == "translated"
+    assert events == ["prepare", "finalize", "provider"]
+    content = _content(store)
+    assert content.count("[REQUEST TO LLM]") == 1
+    assert "prepared content with current terms" in content
+    assert content.count("translated") == 1
+    assert content.count("[END CALL]") == 1
+    assert budget.snapshot().in_flight == budget.snapshot().preparing == 0
+
+
+def test_split_request_finalization_failure_keeps_log_identity_without_a_partial_prompt(tmp_path):
+    def finalize(_prepared):
+        raise ValueError("cannot resolve current terms")
+
+    store = WorkflowLogStore("plugin.esp", workflow="translation", log_base=tmp_path)
+    provider = MagicMock()
+    budget = AiRequestBudget(1)
+    client = WorkflowLoggingLLMClient(LimitedLLMClient(provider, budget), store)
+
+    with pytest.raises(ValueError, match="cannot resolve current terms"):
+        client.chat_prepared(PreparedLlmRequest(lambda: "prepared", finalize))
+
+    provider.chat.assert_not_called()
+    content = _content(store)
+    assert "[CALL 001]" in content and "[ERROR]" in content
+    assert "[REQUEST TO LLM]" not in content
+    assert content.count("[END CALL]") == 1
+    assert budget.snapshot().in_flight == budget.snapshot().preparing == 0
 
 
 def test_logging_and_budget_wrappers_forward_structured_output_directive(tmp_path: Path) -> None:

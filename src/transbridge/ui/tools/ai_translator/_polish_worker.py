@@ -47,7 +47,7 @@ class _PolishWorker(QThread):
         self._stop_event = stop_event or threading.Event()
         self._pause_event = pause_event or threading.Event()
         self._pause_event.set()
-        self._log_store = log_store or WorkflowLogStore(esp_path, workflow="polish")
+        self._log_store = log_store or WorkflowLogStore(esp_path, workflow="polish", max_concurrent=self._max_workers)
 
     def stop(self):
         self._stop_event.set()

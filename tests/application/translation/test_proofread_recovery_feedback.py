@@ -36,6 +36,7 @@ def test_retry_explains_missing_output_and_surplus_fields_only_for_failed_entry(
                 "current_translation",
                 "context",
                 "terms",
+                "detected_issues",
             }
             response = {"results": [_result(bad, "Corrected")]}
         return validate_structured_output(json.dumps(response), PROOFREAD_OUTPUT_SCHEMA)

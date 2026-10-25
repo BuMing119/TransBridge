@@ -327,7 +327,7 @@ def test_explicit_single_terms_and_structured_issue_fields_bypass_term_manager()
     user_text = _user_of(llm.calls[0])["content"]
     assert "Term: Greybeards" in user_text
     assert "Matched form: Greybeard" in user_text
-    assert "Required translation: 灰胡子长老" in user_text
+    assert "Reference translation: 灰胡子长老" in user_text
     assert "Greybeards → 灰胡子长老" in user_text
 
 

@@ -8,7 +8,7 @@ import pytest
 
 from tests.ui.responsive_layout_support import settle_layout, themed_layout_app  # noqa: F401
 from tests.ui.tools import test_unified_task_progress as fixtures
-from tests.ui.tools.test_unified_task_progress import _start, _wait_reports
+from tests.ui.tools.test_unified_task_progress import _start, _wait_reports, _wait_until
 from transbridge.ui.tools.ai_translator._polish_preview_dialog import _PolishPreviewDialog
 from transbridge.ui.tools.ai_translator.source_execution import SourceOutcome
 from transbridge.ui.tools.ai_translator.task_result_dialog import TaskResultDialog
@@ -43,6 +43,9 @@ def _schedule_preview_decision(monkeypatch, *, accept):
 
     def exec_with_clicks(dialog):
         def choose():
+            if dialog._loading:
+                QTimer.singleShot(10, choose)
+                return
             visited.append(dialog)
             if accept:
                 _click(dialog._accept_all_btn)
@@ -67,12 +70,12 @@ def test_running_actions_logs_pause_and_cancel_follow_worker_lifecycle(layout_ap
     assert not window.retry_button.isVisible()
     assert not window.save_button.isVisible()
     assert not window.report_button.isVisible()
-    assert not window.logs.isVisible()
+    assert window.logs.isVisible()
     worker.log.emit("first", "开始翻译，共 2 条")
     _click(window.log_toggle)
-    assert window.logs.isVisible() and "开始翻译" in window.logs.toPlainText()
-    _click(window.log_toggle)
     assert not window.logs.isVisible() and "开始翻译" in window.logs.toPlainText()
+    _click(window.log_toggle)
+    assert window.logs.isVisible() and "开始翻译" in window.logs.toPlainText()
     _click(window.pause_button)
     assert worker.is_paused and "继续处理" in window.next_step.text()
     worker.pause_state_changed.emit("paused")
@@ -113,6 +116,7 @@ def test_pending_confirmation_clicks_preview_then_completion_and_read_only_resul
     _click(window.report_button)
     result = window._dialogs[-1]
     assert isinstance(result, TaskResultDialog) and result.isVisible()
+    _wait_until(lambda: not result._projecting)
     assert result.record["applied"] and result.model.rowCount() == 1
     result.close()
     _click(window.stop_button)
@@ -148,6 +152,7 @@ def test_partial_failure_retries_only_failed_entries_then_offers_result(layout_a
     assert "已应用的结果会保留" in window.next_step.text()
     applied = set(session.applied_keys)
     _click(window.retry_button)
+    _wait_until(lambda: not window.run.preparing)
     retry_worker = window.run.worker
     assert [task.key for task in retry_worker.tasks] == ["second"]
     assert session.applied_keys == applied

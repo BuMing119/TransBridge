@@ -235,6 +235,8 @@ class PostProcessWorkload:
         stage_policy: StagePolicyPort,
         stage_names: tuple[str, ...] | None = None,
         checkpoint_port: PostProcessCheckpointPort | None = None,
+        settings_fingerprint: str | None = None,
+        auto_resume: bool = False,
     ) -> None:
         if stage_names is not None and len(stage_names) != len(stages):
             raise ValueError("post-process stage names must match the number of stages")
@@ -242,6 +244,8 @@ class PostProcessWorkload:
         self._stage_policy = stage_policy
         self._stage_names = stage_names or tuple(f"stage_{index}" for index in range(len(stages)))
         self._checkpoint_port = checkpoint_port
+        self._settings_fingerprint = settings_fingerprint
+        self._auto_resume = auto_resume
 
     def run(
         self,
@@ -277,6 +281,15 @@ class PostProcessWorkload:
         run_spec_summary: Mapping[str, Any] | None = None,
     ) -> PostProcessRunResult:
         input_fingerprint = translation_input_fingerprint(entries)
+        if resume_after_phase is None and self._auto_resume and self._checkpoint_port is not None:
+            saved = self._checkpoint_port.load(run_id)
+            if saved is not None and saved.completed_phases:
+                saved.validate(owner_id=owner_id, input_fingerprint=input_fingerprint)
+                if self._settings_fingerprint is None or saved.settings_fingerprint != self._settings_fingerprint:
+                    raise ValueError("post-process checkpoint settings do not match this workload")
+                if self._stage_names[: len(saved.completed_phases)] != saved.completed_phases:
+                    raise ValueError("post-process checkpoint stages do not match this workload")
+                resume_after_phase = saved.completed_phases[-1]
         checkpoint = self._resume_checkpoint(run_id, owner_id, input_fingerprint, resume_after_phase)
 
         candidates: list[PostProcessCandidate] = []
@@ -324,6 +337,7 @@ class PostProcessWorkload:
             current = tuple(candidates)
 
         outcomes: list[PostProcessStageOutcome] = []
+        checkpoint_complete = True
         resume_index = self._resume_index(resume_after_phase)
         for index, stage in enumerate(self._stages):
             if resume_index is not None and index <= resume_index:
@@ -347,9 +361,11 @@ class PostProcessWorkload:
                     conflicts=conflicts,
                     run_spec_summary=run_spec_summary,
                 )
-                self._persist(run_id, owner_id, input_fingerprint, outcomes, current)
+                if checkpoint_complete:
+                    self._persist(run_id, owner_id, input_fingerprint, outcomes, current)
                 return result
             started = time.perf_counter()
+            before_stage = current
             try:
                 stage_outcome = stage(current)
             except Exception as exc:
@@ -369,7 +385,8 @@ class PostProcessWorkload:
                     conflicts=conflicts,
                     run_spec_summary=run_spec_summary,
                 )
-                self._persist(run_id, owner_id, input_fingerprint, outcomes, current)
+                if checkpoint_complete:
+                    self._persist(run_id, owner_id, input_fingerprint, outcomes, before_stage)
                 return result
             duration_ms = int((time.perf_counter() - started) * 1000)
             if stage_outcome.candidates and any(item.run_id != run_id for item in stage_outcome.candidates):
@@ -378,9 +395,15 @@ class PostProcessWorkload:
             outcomes.append(outcome)
             diagnostics.extend(outcome.diagnostics)
             current = outcome.candidates
-            if outcome.failed:
+            stage_cancelled = is_cancelled() or any(
+                item.category is ErrorCategory.CANCELLED for item in outcome.diagnostics
+            )
+            incomplete = any(not candidate.accepted for candidate in current) and any(
+                diagnostic.retryable for diagnostic in outcome.diagnostics
+            )
+            if outcome.failed or stage_cancelled:
                 result = self._result(
-                    OperationOutcome.PARTIAL,
+                    OperationOutcome.CANCELLED if stage_cancelled else OperationOutcome.PARTIAL,
                     run_id,
                     entries,
                     current,
@@ -390,9 +413,17 @@ class PostProcessWorkload:
                     stage_failed=True,
                     run_spec_summary=run_spec_summary,
                 )
-                self._persist(run_id, owner_id, input_fingerprint, outcomes, current)
+                if checkpoint_complete:
+                    self._persist(run_id, owner_id, input_fingerprint, outcomes[:-1], before_stage)
                 return result
-            self._persist(run_id, owner_id, input_fingerprint, outcomes, current)
+            if incomplete:
+                # Keep valid per-entry results flowing through later stages, but
+                # never persist a completed prefix beyond a retryable gap.
+                if checkpoint_complete:
+                    self._persist(run_id, owner_id, input_fingerprint, outcomes[:-1], before_stage)
+                checkpoint_complete = False
+            elif checkpoint_complete:
+                self._persist(run_id, owner_id, input_fingerprint, outcomes, current)
 
         result = self._result(
             OperationOutcome.PARTIAL if conflicts else OperationOutcome.COMPLETED,
@@ -404,7 +435,8 @@ class PostProcessWorkload:
             conflicts=conflicts,
             run_spec_summary=run_spec_summary,
         )
-        self._persist(run_id, owner_id, input_fingerprint, outcomes, current)
+        if checkpoint_complete:
+            self._persist(run_id, owner_id, input_fingerprint, outcomes, current)
         return result
 
     def _resume_index(self, resume_after_phase: str | None) -> int | None:
@@ -475,6 +507,8 @@ class PostProcessWorkload:
             revision=0 if existing is None else existing.revision + 1,
             completed_phases=completed,
             entries=entries,
+            schema_version=2 if self._settings_fingerprint is not None else 1,
+            settings_fingerprint=self._settings_fingerprint,
         )
         self._checkpoint_port.save(checkpoint)
 

@@ -42,6 +42,18 @@ def _confidence() -> JsonSchema:
     return {"type": "number", "minimum": 0, "maximum": 1}
 
 
+def _review_fields() -> dict[str, JsonSchema]:
+    return {
+        "review_status": {"type": "string", "enum": ["revised", "retained", "term_suspect", "needs_review"]},
+        "review_reason": _string(),
+    }
+
+
+def _with_optional_review(properties: dict[str, JsonSchema]) -> JsonSchema:
+    """Legacy/new batch result alternatives; each object is provider-strict."""
+    return {"anyOf": [_object(properties), _object({**properties, **_review_fields()})]}
+
+
 def _entry_key() -> JsonSchema:
     fields = {"namespace": _string(), "local_key": _string()}
     return {"anyOf": [_object(fields), _object({**fields, "original": _string()})]}
@@ -131,11 +143,12 @@ TERM_EXTRACTION_OUTPUT_SCHEMA = LlmOutputSchema(
 )
 
 PROOFREAD_OUTPUT_SCHEMA = LlmOutputSchema(
-    name="transbridge_proofread_v1",
+    name="transbridge_proofread_v2",
     schema=_results_envelope(
         _object({
             "entry_key": _entry_key(),
             "final_translation": _string(),
+            **_review_fields(),
         })
     ),
 )
@@ -143,7 +156,7 @@ PROOFREAD_OUTPUT_SCHEMA = LlmOutputSchema(
 POSTPROCESS_VALUES_OUTPUT_SCHEMA = LlmOutputSchema(
     name="transbridge_postprocess_values_v1",
     schema=_results_envelope(
-        _object({
+        _with_optional_review({
             "entry_key": _entry_key(),
             "value": _string(),
         })
@@ -161,13 +174,13 @@ QUALITY_GATE_BATCH_OUTPUT_SCHEMA = LlmOutputSchema(
 )
 
 REFINEMENT_SINGLE_OUTPUT_SCHEMA = LlmOutputSchema(
-    name="transbridge_refinement_single_v1",
-    schema=_object(_refinement_fields()),
+    name="transbridge_refinement_single_v2",
+    schema=_object({**_refinement_fields(), **_review_fields()}),
 )
 
 REFINEMENT_BATCH_OUTPUT_SCHEMA = LlmOutputSchema(
     name="transbridge_refinement_batch_v1",
-    schema=_results_envelope(_object({"entry_id": _string(), **_refinement_fields()})),
+    schema=_results_envelope(_with_optional_review({"entry_id": _string(), **_refinement_fields()})),
 )
 
 POLISH_SINGLE_OUTPUT_SCHEMA = LlmOutputSchema(
@@ -181,13 +194,13 @@ POLISH_BATCH_OUTPUT_SCHEMA = LlmOutputSchema(
 )
 
 ARBITRATION_SINGLE_OUTPUT_SCHEMA = LlmOutputSchema(
-    name="transbridge_arbitration_single_v1",
-    schema=_object(_arbitration_fields()),
+    name="transbridge_arbitration_single_v2",
+    schema=_object({**_arbitration_fields(), **_review_fields()}),
 )
 
 ARBITRATION_BATCH_OUTPUT_SCHEMA = LlmOutputSchema(
     name="transbridge_arbitration_batch_v1",
-    schema=_results_envelope(_object({"entry_id": _string(), **_arbitration_fields()})),
+    schema=_results_envelope(_with_optional_review({"entry_id": _string(), **_arbitration_fields()})),
 )
 
 

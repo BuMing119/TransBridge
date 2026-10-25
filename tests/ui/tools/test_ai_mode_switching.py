@@ -92,7 +92,7 @@ def test_switch_runs_once_and_reuses_one_scope_for_estimate_and_preflight(task_w
         assert not window._view.controls.start_btn.isEnabled()
         app.processEvents()
         assert calls == [window._view_port.mode]
-        count = 11 if mode == "translate" else 0 if mode == "mixed" else 189
+        count = 11 if mode == "translate" else 200 if mode == "mixed" else 189
         assert f"本次任务 {count}" in window._view.controls.estimate_lbl.text()
         assert f"本次 {count} 条" in window._view.sources_panel.summary.text()
 
@@ -128,6 +128,21 @@ def test_programmatic_config_hydration_emits_no_user_change_signals(task_window)
     assert changes == []
     controls.concurrent_spin.setValue(cfg.max_concurrent + 1)
     assert changes == [cfg.max_concurrent + 1]  # User edits remain connected.
+
+
+@pytest.mark.parametrize("value", [3, 20, 50, 100, 128])
+def test_concurrency_survives_view_round_trip_and_mode_switches(task_window, value):
+    app, window = task_window
+    controls = window._view.controls
+    assert controls.concurrent_spin.value() == 100
+    assert (controls.concurrent_spin.minimum(), controls.concurrent_spin.maximum()) == (1, 128)
+    cfg = window._config_presenter.build()
+    cfg.max_concurrent = value
+    window._config_presenter._view.render_config(cfg)
+    for mode in ("polish", "mixed", "translate"):
+        getattr(controls, "mode_" + mode).click()
+        app.processEvents()
+        assert window._config_presenter.build().max_concurrent == value
 
 
 def _rect(widget, window):

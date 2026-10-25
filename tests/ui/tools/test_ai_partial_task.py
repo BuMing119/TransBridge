@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import os
+import threading
 import time
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -158,6 +159,8 @@ def _live(window):
 
 
 def _apply_rejecting_one(window):
+    _settle(window)
+
     def preview():
         window.run.entries.decide({_key("polished"): True, _key("rejected"): False})
         return True
@@ -171,6 +174,9 @@ def _settle(window):
         QApplication.instance(),
         lambda: (
             not window.run.applying
+            and not window.run.preparing
+            and not window.run.result_preparation.busy
+            and not window.run.recovery.busy
             and not window.session.is_busy
             and not window.run.records.busy
             and window.run.completion.pending is None
@@ -187,6 +193,7 @@ def test_questionable_success_persists_stage_without_changing_text_or_joining_re
     result.polished_translation = "旧 polished"
     result.note = "标记存在差异，已保留原译文并标为有疑问"
     worker.publish(outcome)
+    _settle(window)
 
     row = window.run.entries.entries[_key("polished")]
     assert row.status == "succeeded" and row.stage == 2
@@ -207,6 +214,7 @@ def test_partial_completion_requires_action_and_publishes_only_confirmed_success
     window, _, _ = make_task()
     worker = window.run.worker
     worker.publish(_outcome(worker))
+    _settle(window)
     assert window.run.state == "pending_confirmation" and not window.session.applied_keys
     assert set(_live(window).values()) == {f"旧 {name}" for name in _live(window)}
     assert window.preview_button.text() == "确认结果" and window.preview_button.isEnabled()
@@ -237,11 +245,13 @@ def test_partial_auto_save_then_retry_only_failed_and_auto_apply_again(qapp, mak
     window, _, _ = make_task()
     worker = window.run.worker
     worker.publish(_outcome(worker))
+    _settle(window)
     _apply_rejecting_one(window)
     persistence = window.session._persistence
     assert window.session.saved
     previous_snapshot = window.session.after_snapshot_name
     window.run.retry()
+    _settle(window)
     retried = window.run.worker
     assert retried is not worker
     assert [entry.id for entry in retried.tasks[0].entries] == ["failed"]
@@ -264,13 +274,17 @@ def test_duplicate_actions_and_late_completed_signal_cannot_reapply_or_overwrite
     first_worker = window.run.worker
     first_outcome = _outcome(first_worker)
     first_worker.publish(first_outcome)
+    _settle(window)
     _apply_rejecting_one(window)
     persistence = window.session._persistence
     window.run.apply_results()
+    _settle(window)
     assert len(persistence.commits) == 1
     window.run.retry()
+    _settle(window)
     retry_worker = window.run.worker
     window.run.retry()
+    _settle(window)
     assert window.run.worker is retry_worker
     first_worker.completed.emit((replace(first_outcome, error="stale"),))
     assert not window.run.completion_received
@@ -279,6 +293,7 @@ def test_duplicate_actions_and_late_completed_signal_cannot_reapply_or_overwrite
     _settle(window)
     final_persistence = window.session._persistence
     window.run.apply_results()
+    _settle(window)
     retry_worker.completed.emit((SourceOutcome(retry_worker.tasks[0], error="late failure"),))
     assert len(final_persistence.commits) == 1
     assert _live(window)["failed"] == "新 failed"
@@ -289,7 +304,9 @@ def test_previous_worker_progress_pause_and_logs_cannot_change_retry_view(make_t
     window, _, _ = make_task()
     first = window.run.worker
     first.publish(_outcome(first))
+    _settle(window)
     window.run.retry()
+    _settle(window)
     current = window.run.worker
     current.progress.emit("first", "校对", 1, 2, "当前重试")
     previous = (window.run.status, window.run.progress, dict(window.run.rows), window.run.pause_state)
@@ -305,7 +322,9 @@ def test_direct_apply_cannot_skip_required_polish_confirmation(make_task):
     window, _, _ = make_task()
     worker = window.run.worker
     worker.publish(_outcome(worker))
+    _settle(window)
     window.run.apply_results()
+    _settle(window)
     assert window.run.state == "pending_confirmation"
     assert not window.session.applied_keys
     assert _live(window)["translated"] == "旧 translated"
@@ -370,13 +389,29 @@ def test_automatic_save_failure_keeps_applied_results_and_retries_only_save(make
     assert window.run.entries.entries[_key("translated")].attempt == 1
 
 
-def test_cancel_while_automatic_apply_is_preparing_never_commits_candidates(make_task):
+def test_cancel_while_automatic_apply_is_preparing_never_commits_candidates(make_task, monkeypatch, qapp):
+    from transbridge.ui.tools.ai_translator.task_apply_preparation import DraftMergeInput
+
     window, _, _ = make_task(preview_enabled=False)
     worker = window.run.worker
-    worker.publish(_outcome(worker))
-    assert window.run.applying
-    window.run.cancel()
-    _settle(window)
+    entered, release = threading.Event(), threading.Event()
+    original = DraftMergeInput.prepare
+
+    def blocked(merge):
+        entered.set()
+        if not release.wait(5):
+            raise TimeoutError("test did not release merge preparation")
+        return original(merge)
+
+    monkeypatch.setattr(DraftMergeInput, "prepare", blocked)
+    try:
+        worker.publish(_outcome(worker))
+        _wait(qapp, entered.is_set)
+        assert window.run.applying
+        window.run.cancel()
+    finally:
+        release.set()
+        _settle(window)
 
     assert window.run.cancelled and window.run.state == "cancelled"
     assert not window.session.applied_keys
@@ -389,13 +424,17 @@ def test_cancel_preview_discards_every_unapplied_candidate(make_task):
     window, _, _ = make_task()
     worker = window.run.worker
     worker.publish(_outcome(worker))
+    _settle(window)
     window.run.apply_results(lambda: False)
+    _settle(window)
     assert window.run.cancelled and not window.session.applied_keys
     assert _live(window)["translated"] == "旧 translated"
     assert _live(window)["polished"] == "旧 polished"
     assert not window.run.can_retry and not window.run.can_apply_success
     window.run.retry()
+    _settle(window)
     window.run.apply_results()
+    _settle(window)
     assert window.run.worker is None and window.session._persistence.commits == []
 
 
@@ -403,12 +442,14 @@ def test_cancel_during_modal_preview_keeps_cancelled_state(make_task):
     window, _, _ = make_task()
     worker = window.run.worker
     worker.publish(_outcome(worker))
+    _settle(window)
 
     def preview():
         window.run.cancel()
         return True
 
     window.run.apply_results(preview)
+    _settle(window)
     assert window.run.state == "cancelled" and not window.run.blocked
     assert not window.session.applied_keys
 
@@ -420,6 +461,7 @@ def test_interrupted_entry_without_task_cancellation_is_retryable(make_task):
     result = outcome.translation.entry_outcomes[_key("failed")]
     outcome.translation.entry_outcomes[_key("failed")] = replace(result, status="cancelled")
     worker.publish(outcome)
+    _settle(window)
     assert not window.run.cancelled
     assert window.run.entries.failed_keys == {_key("failed")}
     assert window.run.can_retry
@@ -432,6 +474,7 @@ def test_apply_button_previews_only_successful_polish_entries(make_task, monkeyp
     window, _, _ = make_task()
     worker = window.run.worker
     worker.publish(_outcome(worker))
+    _settle(window)
     presented = []
 
     def dialog(entries, results, **kwargs):
@@ -460,11 +503,14 @@ def test_cancel_retry_preserves_previously_applied_but_drops_late_success(make_t
     window, _, _ = make_task()
     first = window.run.worker
     first.publish(_outcome(first))
+    _settle(window)
     _apply_rejecting_one(window)
     window.run.retry()
+    _settle(window)
     retry = window.run.worker
     window.run.cancel()
     retry.publish(_outcome(retry, failed=False))
+    _settle(window)
     assert window.run.cancelled and window.run.state == "cancelled"
     assert _live(window)["translated"] == "新 translated"
     assert _live(window)["polished"] == "新 polished"
@@ -475,22 +521,51 @@ def test_cancel_retry_preserves_previously_applied_but_drops_late_success(make_t
 
 
 @pytest.mark.parametrize("operation", ["apply", "retry"])
-@pytest.mark.parametrize("change", ["input", "config", "terms"])
+@pytest.mark.parametrize("change", ["input", "config"])
 def test_changed_inputs_or_execution_identity_block_partial_actions(make_task, change, operation):
-    window, preferences, terms = make_task()
+    window, preferences, _ = make_task()
     worker = window.run.worker
     worker.publish(_outcome(worker))
+    _settle(window)
     if change == "input":
         window.session._ctx.collection.get(_key("translated")).original = "用户修改原文"
-    elif change == "config":
-        preferences["model"] = "different-model"
     else:
-        terms.snapshot_identity = "terms-v2"
+        preferences["model"] = "different-model"
     if operation == "apply":
         window.run.apply_results()
     else:
         window.run.retry()
+    _settle(window)
     assert window.run.blocked
     assert not window.session.applied_keys and window.run.worker is None
     assert not window.run.can_apply_success and not window.run.can_retry
     assert _live(window)["translated"] == "旧 translated"
+
+
+def test_changed_reference_does_not_block_partial_apply_saved_success_or_failed_only_retry(make_task):
+    window, _, terms = make_task()
+    worker = window.run.worker
+    worker.publish(_outcome(worker))
+    _settle(window)
+    terms.snapshot_identity = "reference-updated-before-apply"
+    _apply_rejecting_one(window)
+    assert window.session.saved and not window.run.blocked
+    assert _live(window)["translated"] == "新 translated"
+
+    terms.snapshot_identity = "reference-updated-after-save"
+    window.run.retry()
+    _settle(window)
+    retry = window.run.worker
+    assert retry is not None and retry is not worker
+    assert [entry.id for entry in retry.tasks[0].entries] == ["failed"]
+    retry.publish(_outcome(retry, failed=False))
+    _settle(window)
+    assert window.session.completed and window.session.saved and not window.run.blocked
+    assert _live(window) == {
+        "translated": "新 translated",
+        "failed": "新 failed",
+        "polished": "新 polished",
+        "rejected": "旧 rejected",
+    }
+    assert window.run.entries.entries[_key("translated")].attempt == 1
+    assert window.run.entries.entries[_key("failed")].attempt == 2

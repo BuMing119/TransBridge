@@ -27,6 +27,7 @@ from .checkpoint import PostProcessCheckpoint
 from .consistency_checker import ConsistencyChecker
 from .format_validator import FormatValidator
 from .quality_gate import QualityGateChecker
+from .review_decision import reviewed_decision, substantive_errors
 from .strict_execution_evidence import StrictExecutionEvidence
 
 if TYPE_CHECKING:
@@ -621,6 +622,10 @@ class PostProcessor:
                     result_lock = threading.Lock()
 
                     def _polish_worker(batch):
+                        from .polisher import LLMPolisher
+
+                        if isinstance(self._polisher, LLMPolisher):
+                            return self._polisher.polish_batch(batch, reviews=refine_results)
                         return self._polisher.polish_batch(batch)
 
                     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -884,7 +889,7 @@ class PostProcessor:
         polish_results: dict[str, "PolishResult"] | None = None,
     ) -> dict[str, "ArbiterDecision"]:
         """基于规则的简单裁决（无LLM裁决者时使用）。"""
-        from .llm_arbiter import ArbiterDecision
+        from .llm_arbiter import ArbiterDecision, ArbitrationContext
 
         decisions = {}
         polish_results = polish_results or {}
@@ -894,12 +899,16 @@ class PostProcessor:
             refine = refine_results.get(ai_entry_id(entry))
             polish = polish_results.get(ai_entry_id(entry))
 
-            has_errors = any(i.severity == "error" for i in issues)
+            has_errors = bool(substantive_errors(issues))
+            semantic_decision = reviewed_decision(ArbitrationContext(entry, issues, refine, polish))
             failed_stage = next(
                 (
                     value.note
                     for value in (refine, polish)
-                    if value and value.confidence == 0 and getattr(value, "note", "")
+                    if value
+                    and value.confidence == 0
+                    and getattr(value, "review_status", "") != "needs_review"
+                    and getattr(value, "note", "")
                 ),
                 None,
             )
@@ -911,6 +920,18 @@ class PostProcessor:
                     reason=failed_stage,
                     confidence=0.0,
                     suggested_action="人工审核" if not self._config.strict_arbitration else "打回重翻",
+                )
+            elif semantic_decision is not None:
+                decisions[ai_entry_id(entry)] = semantic_decision
+            elif issues and all(issue.issue_type in {"term_mismatch", "cross_entry_inconsistency"} for issue in issues):
+                decisions[ai_entry_id(entry)] = ArbiterDecision(
+                    ai_entry_id(entry),
+                    "pending",
+                    "参考差异尚未取得综合判断，已保留译文",
+                    0.0,
+                    "待复核",
+                    review_status="needs_review",
+                    review_reason="参考差异尚未取得综合判断，已保留译文",
                 )
             elif not issues:
                 # 无问题 -> 通过
@@ -1014,6 +1035,7 @@ class PostProcessor:
                 # 保留待审（stage保持2）
                 # 可以在这里添加标记，记录有修复/润色版本待确认
                 exec_result.pending += 1
+                result.needs_review.append(ai_entry_id(entry))
 
         return exec_result
 
@@ -1153,7 +1175,7 @@ class PostProcessor:
             if entry is None:
                 continue
 
-            has_error = any(i.severity == "error" for i in issues)
+            has_error = bool(substantive_errors(issues))
             has_warning = any(i.severity == "warning" for i in issues)
 
             if has_error and self._config.reset_stage_on_error:

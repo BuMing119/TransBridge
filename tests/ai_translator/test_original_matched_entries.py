@@ -144,7 +144,12 @@ class _ProofreadClient:
             key = dict(entry["entry_key"])
             if self.omit_original:
                 key.pop("original", None)
-            results.append({"entry_key": key, "final_translation": "校对：" + entry["original"]})
+            results.append({
+                "entry_key": key,
+                "final_translation": "校对：" + entry["original"],
+                "review_status": "revised",
+                "review_reason": "结合完整原文分别校对",
+            })
         response = {"results": results}
         Draft202012Validator(PROOFREAD_OUTPUT_SCHEMA.schema).validate(response)
         return json.dumps(response)

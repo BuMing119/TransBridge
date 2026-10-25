@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
@@ -11,6 +12,7 @@ from transbridge.ui.workers import ApiWorker
 
 INTERRUPTED_STATES = frozenset({"preparing", "running", "applying", "pending_confirmation", "interrupted"})
 RECOVERABLE_STATES = INTERRUPTED_STATES | {"partial", "failed"}
+logger = logging.getLogger(__name__)
 
 
 def matches_version(record, identity):
@@ -26,19 +28,39 @@ def recovery_summary(record):
     completed = record.get("saved_count")
     progress = f"原任务范围 {total} 条"
     if completed is not None:
-        progress += f" · 已保存校对候选 {completed} 条（继续时重新校验）"
+        progress += f" · 已保存候选 {completed} 条（继续时重新校验）"
     else:
         progress += " · 已保存进度将在继续时核验"
+    if record.get("legacy"):
+        progress += " · 旧任务，按当前配置接续并重新校对"
     return progress
 
 
 def read_recovery_records(directory):
+    from transbridge.application.translation.legacy_task_recovery import discover_legacy_records
     from transbridge.application.translation.proofread_checkpoint import ProofreadCheckpoint
     from transbridge.application.translation.task_recovery import TaskRecoveryStore
 
-    records = TaskRecoveryStore(directory / "ai-task-recovery").list_records()
+    from .task_result_recovery import load_recovery_results
+
+    store = TaskRecoveryStore(directory / "ai-task-recovery")
+    saved_records = store.list_records()
+    known = {record["task_id"] for record in saved_records}
+    claimed_origins = {record.get("origin_task_id") for record in saved_records}
+    records = saved_records + tuple(
+        record
+        for record in discover_legacy_records(directory)
+        if record["task_id"] not in known and record["task_id"] not in claimed_origins
+    )
     for record in records:
-        if "checkpoint_settings" in record:
+        if not record.get("legacy"):
+            try:
+                record["results"] = load_recovery_results(store, record)
+            except (OSError, ValueError) as exc:
+                logger.warning("Cannot read saved results for AI task %s", record["task_id"], exc_info=True)
+                record["supported"] = False
+                record["recovery_error"] = str(exc)
+        if "checkpoint_settings" in record and not any(source["translate_keys"] for source in record["sources"]):
             record["saved_count"] = sum(
                 ProofreadCheckpoint(
                     directory / "ai-proofread-resume",
@@ -58,14 +80,20 @@ class TaskRecoveryPrompt(QDialog):
 
     def __init__(self, registry, record):
         super().__init__()
-        self.setWindowTitle("发现未完成的校对任务")
+        self.setWindowTitle("发现未完成的 AI 任务")
         self.setMinimumWidth(500)
         layout = QVBoxLayout(self)
         label = QLabel(
             f"时间：{record.get('created_at', '')[:19].replace('T', ' ')}\n"
             f"处理内容：{'、'.join(source['label'] for source in record['sources'])}\n"
             f"{recovery_summary(record)}\n\n"
-            "继续任务会按原配置直接续跑，并重新核验已保存进度；重新开始会打开 AI 翻译配置界面，不复用原任务进度。"
+            + (
+                "旧任务没有完整配置快照。继续任务会先打开配置界面，使用当前配置核验候选译文并重新校对；"
+                "确认开始后才会调用 AI。"
+                if record.get("legacy")
+                else "继续任务会按原配置接续处理，并重新核验已保存进度；"
+                "重新开始会打开 AI 翻译配置界面，不复用原任务进度。"
+            )
         )
         label.setTextFormat(Qt.TextFormat.PlainText)
         label.setWordWrap(True)

@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import hashlib
-import json
-import os
 from pathlib import Path
-import secrets
 import threading
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from .workload_models import CandidateTranslation, TranslationBatchOutcome
+
+if TYPE_CHECKING:
+    from .candidate_checkpoint_store import CandidateBatchUpdate
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,68 +148,52 @@ class InMemoryTranslationCheckpointPort:
 
 
 class FilesystemTranslationCheckpointPort:
-    """Atomic same-directory checkpoint storage; legacy unversioned files are rejected."""
+    """Durable journal storage with schema-1 snapshot compatibility.
+
+    ``load`` still returns the public immutable snapshot. Legacy batch producers
+    may use ``append_batch`` to avoid materializing that snapshot on every save.
+    """
 
     def __init__(self, root: str | Path) -> None:
         self._root = Path(root)
         self._lock = threading.Lock()
+        from .candidate_checkpoint_store import CandidateCheckpointStore
+
+        self._store = CandidateCheckpointStore(self._root, self._path)
 
     def load(self, run_id: str) -> TranslationCheckpoint | None:
-        target = self._path(run_id)
-        if not target.exists():
-            return None
-        try:
-            value = json.loads(target.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ValueError("translation checkpoint is corrupt") from exc
-        checkpoint = TranslationCheckpoint.from_dict(value)
-        if checkpoint.run_id != run_id:
-            raise ValueError("translation checkpoint run_id mismatch")
-        return checkpoint
-
-    def save(self, checkpoint: TranslationCheckpoint) -> None:
         with self._lock:
-            self._root.mkdir(parents=True, exist_ok=True)
-            current = self.load(checkpoint.run_id)
-            if current is not None and checkpoint.revision <= current.revision:
-                raise ValueError("translation checkpoint revision did not advance")
-            target = self._path(checkpoint.run_id)
-            temporary = target.with_name(f".{target.name}.{secrets.token_hex(8)}.tmp")
-            payload = json.dumps(
-                checkpoint.to_dict(),
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-                allow_nan=False,
-            ).encode("utf-8")
-            descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-            try:
-                with os.fdopen(descriptor, "wb", closefd=True) as stream:
-                    descriptor = -1
-                    stream.write(payload)
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                TranslationCheckpoint.from_dict(json.loads(temporary.read_text(encoding="utf-8")))
-                os.replace(temporary, target)
-                _fsync_directory(self._root)
-            finally:
-                if descriptor >= 0:
-                    os.close(descriptor)
-                temporary.unlink(missing_ok=True)
+            return self._store.load(run_id)
+
+    def load_readonly(self, run_id: str) -> TranslationCheckpoint | None:
+        """Validate persisted progress without changing the checkpoint directory."""
+        with self._lock:
+            return self._store.load_readonly(run_id)
+
+    def save(self, checkpoint: TranslationCheckpoint | CandidateBatchUpdate) -> None:
+        with self._lock:
+            self._store.save(checkpoint)
+
+    def append_batch(
+        self,
+        identity: TranslationCheckpoint,
+        expected_revision: int,
+        outcome: TranslationBatchOutcome,
+        candidates: tuple[CandidateTranslation, ...],
+    ) -> None:
+        from .candidate_checkpoint_store import CandidateBatchUpdate
+
+        # Keep the ordinary save boundary observable to storage decorators and
+        # fault injection; an update contains only the new durable batch.
+        self.save(CandidateBatchUpdate(identity, expected_revision, outcome, candidates))
+
+    def check_revision(self, run_id: str, expected_revision: int) -> None:
+        with self._lock:
+            self._store.check_revision(run_id, expected_revision)
 
     def _path(self, run_id: str) -> Path:
         digest = hashlib.sha256(run_id.encode("utf-8")).hexdigest()
         return self._root / f"translation-{digest}.json"
-
-
-def _fsync_directory(path: Path) -> None:
-    if os.name == "nt":
-        return
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 def _string(value: Any, name: str) -> str:

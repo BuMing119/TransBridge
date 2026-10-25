@@ -142,7 +142,7 @@ def test_unknown_saved_count_is_not_displayed_as_zero():
     assert "0 条（继续" not in recovery_summary(value)
     assert "继续时核验" in recovery_summary(value)
     value["saved_count"] = 42
-    assert "已保存校对候选 42 条" in recovery_summary(value)
+    assert "已保存候选 42 条" in recovery_summary(value)
 
 
 def test_later_reappears_on_ai_button_without_opening_new_task(setup_registry):
@@ -213,6 +213,7 @@ def test_workbench_recovery_uses_normal_runtime_and_bypasses_foreground(monkeypa
             self.progress_window_created = Mock()
             self.on_start = Mock()
             self.close = Mock()
+            self._config_presenter = SimpleNamespace(build=Mock())
 
         @classmethod
         def open_for_translation(cls, *args, **kwargs):
@@ -223,6 +224,8 @@ def test_workbench_recovery_uses_normal_runtime_and_bypasses_foreground(monkeypa
     monkeypatch.setattr(ai_translator_window, "AITranslatorWindow", Window)
     configure = Mock()
     monkeypatch.setattr(task_recovery_binding, "configure_recovery", configure)
+    monkeypatch.setattr(task_recovery_binding, "recovery_sources", lambda *_: (SimpleNamespace(entries=(object(),)),))
+    monkeypatch.setattr(task_recovery_binding, "complete_empty_recovery", lambda *_: False)
     show = Mock()
     monkeypatch.setattr("transbridge.ui.windowing.show_and_activate", show)
     manifest = record()
@@ -251,7 +254,7 @@ def test_workbench_recovery_uses_normal_runtime_and_bypasses_foreground(monkeypa
     else:
         show.assert_not_called()
         window.on_start.assert_called_once_with()
-        window.close.assert_called_once_with()
+        window.close.assert_not_called()
     registry.foreground.assert_not_called()
     assert host._pending_ai_recovery is None
 
@@ -271,19 +274,70 @@ def test_direct_resume_rejects_bad_config_without_starting(monkeypatch, qapp):
     warning.assert_called_once_with(window, "AI 任务未启动", "配置不匹配")
 
 
-def test_corrupt_recovery_shows_error_without_hiding_old_reports(setup_registry, tmp_path):
-    app, _ctx, registry, _store = setup_registry
+def test_corrupt_recovery_is_isolated_without_extra_prompt(setup_registry, tmp_path):
+    app, _ctx, registry, store = setup_registry
     folder = tmp_path / "ai-task-recovery"
     folder.mkdir()
     (folder / "broken.json").write_text("{", encoding="utf-8")
+    store.create(record("healthy", state="partial"))
     TaskHistoryStore(tmp_path / "ai-task-history").save(history_record("old"))
     dialog = TaskHistoryDialog(registry)
     registry.history_windows.append(dialog)
-    wait_until(app, lambda: not dialog.busy and dialog.tasks.topLevelItemCount() == 1)
-    wait_until(app, lambda: registry.recovery.worker is None and bool(registry.recovery_error))
-    assert "读取恢复信息失败" in dialog.status.text()
-    assert not dialog.continue_button.isEnabled()
-    assert "读取未完成任务失败" in registry.recovery_error
+    wait_until(app, lambda: not dialog.busy and dialog.tasks.topLevelItemCount() == 2)
+    wait_until(app, lambda: registry.recovery.worker is None)
+    assert not dialog.status.text() and not registry.recovery_error
+    assert not registry.recovery.dialogs
+    for index in range(dialog.tasks.topLevelItemCount()):
+        row = dialog.tasks.topLevelItem(index)
+        if row.text(1) == "Plugin":
+            dialog.tasks.setCurrentItem(row)
+            assert dialog.continue_button.isEnabled()
+    assert (folder / "broken.json").read_text(encoding="utf-8") == "{"
+
+
+def test_damaged_checkpoint_does_not_hide_other_recovery_records(tmp_path):
+    from transbridge.application.translation.proofread_checkpoint import ProofreadCheckpoint, _digest
+    from transbridge.ui.tools.ai_translator.task_recovery_prompt import read_recovery_records
+
+    store = TaskRecoveryStore(tmp_path / "ai-task-recovery")
+    for task_id in ("damaged", "healthy", "legacy"):
+        value = record(task_id)
+        value["checkpoint_settings"] = {"model": "test"}
+        store.create(value)
+        checkpoint = ProofreadCheckpoint(
+            tmp_path / "ai-proofread-resume",
+            project="project",
+            variant="version",
+            source="plugin",
+            settings=value["checkpoint_settings"],
+            task_id=task_id,
+        )
+        if task_id == "damaged":
+            checkpoint.path.parent.mkdir(parents=True)
+            checkpoint.path.write_bytes(b"broken database")
+        elif task_id == "legacy":
+            checkpoint.write([("candidate", {"text": "译文", "terms": "a" * 64})])
+        else:
+            checkpoint.write([
+                (
+                    "candidate",
+                    {
+                        "text": "译文",
+                        "terms": _digest({}),
+                        "review": {
+                            "review_contract_version": 1,
+                            "review_status": "retained",
+                            "review_reason": "结合原文和语境确认当前译文适用。",
+                            "detected_issues": [],
+                            "review_reference_terms": {},
+                        },
+                    },
+                )
+            ])
+    records = {item["task_id"]: item for item in read_recovery_records(tmp_path)}
+    assert records["damaged"]["saved_count"] == 0
+    assert records["healthy"]["saved_count"] == 1
+    assert records["legacy"]["saved_count"] == 0
 
 
 @pytest.mark.parametrize("state", ["completed", "cancelled"])
@@ -303,6 +357,8 @@ def test_finished_manifest_can_restart_but_cannot_continue(setup_registry, state
     registry.windows["old-window"] = SimpleNamespace(
         request=SimpleNamespace(recovery_task_id="resume"), run=SimpleNamespace(state=state, shutdown=lambda: None)
     )
+    assert registry.is_recovery_active("resume")  # The restart signal still owns its pending launch reservation.
+    registry.release_recovery_request("resume")
     assert not registry.is_recovery_active("resume")
     assert registry.request_recovery(record(state=state), restart=True)
     registry.windows.clear()

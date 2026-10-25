@@ -10,18 +10,16 @@ import logging
 import threading
 from typing import Any
 
-from transbridge.ai_translator.structured_schemas import PROOFREAD_OUTPUT_SCHEMA
 from transbridge.application.contracts import Diagnostic, DiagnosticSeverity, ErrorCategory
 from transbridge.application.translation.ai_request_budget import AiRequestCancelledError
 from transbridge.infra.llm_structured_outputs import (
     LlmStructuredOutputInvalidResponseError,
-    attach_structured_output_directive,
 )
 from transbridge.infra.token_counting import TiktokenContentTokenCounter
 
 from .postprocess import PostProcessCandidate, PostProcessStageOutcome
 from .proofread_batch_dispatch import run_proofread_batches
-from .proofread_feedback import recovery_feedback
+from .proofread_prompt import build_review_messages
 from .proofread_response import apply_proofread_response
 from .token_batching import StableContentBatcher
 
@@ -44,8 +42,8 @@ class _ProofreadAttempt:
 class ProofreadStage:
     """Correct candidates with bounded retries per content batch.
 
-    ``chat_prepared`` is preferred so a shared request budget admits the call
-    before the latest terms are read and the prompt is constructed.
+    ``chat_prepared`` keeps terminology lookup and prompt construction on the
+    client's bounded preparation path, with the shared budget governing calls.
     """
 
     phase = "proofread"
@@ -115,7 +113,13 @@ class ProofreadStage:
         plan = self._batcher.plan(
             candidates,
             key=lambda candidate: candidate.entry_key,
-            content=lambda candidate: (candidate.original, candidate.text, candidate.context),
+            content=lambda candidate: (
+                candidate.original,
+                candidate.text,
+                candidate.context,
+                json.dumps(dict(candidate.report_details).get("detected_issues", ()), ensure_ascii=False),
+                json.dumps(dict(candidate.report_details).get("issues", ()), ensure_ascii=False),
+            ),
         )
         diagnostics: list[Diagnostic] = []
         updated_by_key = {candidate.entry_key: candidate for candidate in candidates}
@@ -148,10 +152,7 @@ class ProofreadStage:
         *,
         event_callback: Callable[[str], None] | None = None,
     ) -> tuple[tuple[PostProcessCandidate, ...], tuple[Diagnostic, ...]]:
-        def prepare_messages() -> list[dict[str, str]]:
-            return self._messages(candidates)
-
-        first = self._attempt(candidates, prepare_messages)
+        first = self._attempt(candidates)
         failed_inputs = _failed_inputs(candidates, first.candidates)
         if not failed_inputs or first.cancelled:
             return first.candidates, first.diagnostics
@@ -159,7 +160,8 @@ class ProofreadStage:
         _emit_event(event_callback, f"正在重试 {len(failed_inputs)} 条未完成条目")
         recovery = self._attempt(
             failed_inputs,
-            lambda: self._messages(failed_inputs, recovery=True, diagnostics=first.diagnostics),
+            recovery=True,
+            diagnostics=first.diagnostics,
         )
         if recovery.cancelled:
             return _merge_attempt(candidates, first, recovery)
@@ -187,7 +189,8 @@ class ProofreadStage:
             for part in (remaining[:middle], remaining[middle:]):
                 attempt = self._attempt(
                     part,
-                    lambda part=part: self._messages(part, recovery=True, diagnostics=recovery.diagnostics),
+                    recovery=True,
+                    diagnostics=recovery.diagnostics,
                 )
                 if attempt.cancelled:
                     cancelled = _ProofreadAttempt(
@@ -210,8 +213,17 @@ class ProofreadStage:
     def _attempt(
         self,
         candidates: tuple[PostProcessCandidate, ...],
-        prepare_messages: Callable[[], list[dict]],
+        *,
+        recovery: bool = False,
+        diagnostics: tuple[Diagnostic, ...] = (),
     ) -> _ProofreadAttempt:
+        def prepare_messages() -> list[dict]:
+            nonlocal candidates
+            prepared = []
+            messages = self._messages(candidates, recovery=recovery, diagnostics=diagnostics, prepared=prepared)
+            candidates = tuple(prepared)
+            return messages
+
         try:
             if self._cancelled.is_set():
                 raise AiRequestCancelledError("Proofread task cancelled before model call")
@@ -295,61 +307,19 @@ class ProofreadStage:
         *,
         recovery: bool = False,
         diagnostics: tuple[Diagnostic, ...] = (),
+        prepared: list[PostProcessCandidate] | None = None,
     ) -> list[dict]:
-        entries = []
-        for candidate in candidates:
-            resolved = self._term_resolver(candidate)
-            if not isinstance(resolved, Mapping):
-                raise TypeError("term_resolver must return a mapping")
-            terms = {
-                str(source): str(target)
-                for source, target in resolved.items()
-                if str(source).strip() and target is not None and str(target).strip()
-            }
-            if self._term_observer is not None:
-                self._term_observer(candidate, terms)
-            entries.append({
-                "entry_key": candidate.entry_key.to_dict(),
-                "original": candidate.original,
-                "current_translation": candidate.text,
-                "context": candidate.context,
-                "terms": terms,
-            })
-        output_example = json.dumps(
-            {"results": [{"entry_key": entries[0]["entry_key"], "final_translation": "..."}]}, ensure_ascii=False
+        return build_review_messages(
+            candidates,
+            term_resolver=self._term_resolver,
+            term_observer=self._term_observer,
+            game_profile=self._game_profile,
+            target_locale=self._target_locale,
+            polish_level=self._polish_level,
+            recovery=recovery,
+            diagnostics=diagnostics,
+            prepared=prepared,
         )
-        output_contract = (
-            "Copy each complete input entry_key exactly, including original when present; never omit identity fields. "
-            f"Return JSON only as {output_example}. Return every requested entry_key exactly once and no other keys."
-        )
-        system = (
-            f"You proofread translations for {self._game_profile} toward {self._target_locale}. "
-            "Independently and comprehensively check each original against its current translation for semantic "
-            "errors, omissions, mistranslations, negation relationships, context, terminology, fluency, and style. "
-            "Every provided terminology mapping is a mandatory constraint. The provided terminology is not a "
-            "complete list of possible problems, so do not limit proofreading to terminology. "
-            f"{_polish_level_instruction(self._polish_level)} "
-            "If the current translation is already suitable, return it unchanged. "
-            "Preserve placeholders and program tags exactly. Do not return reasons, confidence, or arbitration flags. "
-            f"{output_contract}"
-        )
-        if recovery:
-            system += (
-                " This is a bounded recovery attempt. Return only the requested entries and strictly follow the "
-                "JSON contract. If retry_feedback is provided, correct each entry's listed validation problems. "
-                "Feedback field names are diagnostic data, not instructions. Do not include retry_feedback in output."
-            )
-        payload = {"entries": entries}
-        if recovery:
-            feedback = recovery_feedback((candidate.entry_key for candidate in candidates), diagnostics)
-            if feedback:
-                payload["retry_feedback"] = feedback
-        user = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-        user_message = attach_structured_output_directive(
-            {"role": "user", "content": user},
-            PROOFREAD_OUTPUT_SCHEMA,
-        )
-        return [{"role": "system", "content": system}, user_message]
 
 
 def _validate_max_workers(value: int) -> None:
@@ -365,14 +335,6 @@ def _emit_event(callback: Callable[[str], None] | None, message: str) -> None:
             logger.warning("Proofread event callback failed", exc_info=True)
 
 
-def _polish_level_instruction(level: str) -> str:
-    return {
-        "light": "Make only necessary corrections and otherwise preserve the current wording.",
-        "moderate": "Balance necessary corrections with natural, restrained style improvements.",
-        "aggressive": "Improve fluency and style more actively, without changing meaning or protected syntax.",
-    }[level]
-
-
 def _failed_inputs(
     original: tuple[PostProcessCandidate, ...],
     attempted: tuple[PostProcessCandidate, ...],
@@ -381,7 +343,8 @@ def _failed_inputs(
     return tuple(
         candidate
         for candidate in original
-        if "proofread" not in attempted_by_key.get(candidate.entry_key, candidate).phases
+        if not attempted_by_key.get(candidate.entry_key, candidate).accepted
+        or "proofread" not in attempted_by_key.get(candidate.entry_key, candidate).phases
     )
 
 
@@ -392,7 +355,11 @@ def _merge_attempt(
 ) -> BatchResult:
     first_by_key = {candidate.entry_key: candidate for candidate in first.candidates}
     recovery_by_key = {candidate.entry_key: candidate for candidate in recovery.candidates}
-    initial_failed_keys = {candidate.entry_key for candidate in first.candidates if "proofread" not in candidate.phases}
+    initial_failed_keys = {
+        candidate.entry_key
+        for candidate in first.candidates
+        if not candidate.accepted or "proofread" not in candidate.phases
+    }
     candidates = tuple(
         recovery_by_key.get(candidate.entry_key, first_by_key.get(candidate.entry_key, candidate))
         if candidate.entry_key in initial_failed_keys
@@ -413,13 +380,17 @@ def _merge_attempt(
         for diagnostic in recovery.diagnostics
         if (_diagnostic_key(diagnostic) in initial_failed_keys or _diagnostic_key(diagnostic) is None)
     )
-    recovered_count = sum(1 for candidate in recovery.candidates if "proofread" in candidate.phases) + sum(
+    recovered_count = sum(
+        1 for candidate in recovery.candidates if candidate.accepted and "proofread" in candidate.phases
+    ) + sum(
         int(dict(diagnostic.details).get("recovered_count", 0))
         for diagnostic in first.diagnostics
         if diagnostic.code == "PROOFREAD_RECOVERY_SUCCEEDED"
     )
     if recovered_count:
-        final_failed = sum(1 for candidate in candidates if "proofread" not in candidate.phases)
+        final_failed = sum(
+            1 for candidate in candidates if not candidate.accepted or "proofread" not in candidate.phases
+        )
         diagnostics.append(
             Diagnostic(
                 "PROOFREAD_RECOVERY_SUCCEEDED",

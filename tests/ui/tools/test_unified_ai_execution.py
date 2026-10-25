@@ -186,9 +186,9 @@ def test_worker_pause_gates_execution_and_stop_unblocks_paused_worker(resume):
         def is_set(self):
             return self.event.is_set()
 
-        def wait(self):
+        def wait(self, timeout=None):
             waiting.set()
-            return self.event.wait(2)
+            return self.event.wait(2 if timeout is None else timeout)
 
     class Executor:
         def __init__(self, *_args, **_kwargs):

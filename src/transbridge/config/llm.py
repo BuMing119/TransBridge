@@ -22,9 +22,23 @@ from .paratranz_credentials import (
 from .paths import get_data_dir
 from .repository import ConfigRepository, ConfigSnapshot, default_config_repository
 
+DEFAULT_MAX_CONCURRENT = 100
+MAX_CONCURRENT = 128
+
 _LLM_REF = CredentialRef("TransBridge.LLM", "default")
 _EMBEDDING_REF = CredentialRef("TransBridge.Embedding", "default")
 _MCP_REF = CredentialRef("TransBridge.MCP", "default")
+
+
+def default_action_rules() -> list[Any]:
+    """Fresh mixed-mode defaults with stable IDs across loads and task snapshots."""
+    from transbridge.paratranz.config_manager import ActionRule
+
+    return [
+        ActionRule("default-translate", 0, {0}, action="translate"),
+        ActionRule("default-polish", 1, {1, 2, 3, 5}, action="polish"),
+        ActionRule("default-skip", 2, {9, -1}, action="skip"),
+    ]
 
 
 @dataclass
@@ -49,7 +63,7 @@ class LLMConfig:
     api_key: str = field(default="", repr=False)
     base_url: str = "https://api.openai.com/v1"
     model: str = ""
-    max_concurrent: int = 3
+    max_concurrent: int = DEFAULT_MAX_CONCURRENT
     llm_max_retries: int = 2
     max_tokens_per_batch: int = 2000
     max_output_tokens: int = 0
@@ -88,7 +102,7 @@ class LLMConfig:
     pp_enable_arbitration: bool = True
     pp_strict_arbitration: bool = False
     pp_arbitration_batch_size: int = 10
-    action_rules: list[Any] = field(default_factory=list)
+    action_rules: list[Any] = field(default_factory=default_action_rules)
     workflow_profiles: dict[str, dict[str, object]] = field(default_factory=dict)
     mixed_execution_order: str = "serial"
     guardrails_enable_admin_confirm: bool = True
@@ -211,7 +225,7 @@ class LLMConfig:
             "credential_ref": self.credential_ref.target_name,
             "embedding_credential_ref": self.embedding.credential_ref.target_name,
             "term_priority": ",".join(self.term_priority),
-            "action_rules": self._serialize_action_rules() or None,
+            "action_rules": self._serialize_action_rules(),
             "workflow_profiles": self._serialize_workflow_profiles() or None,
         }
         if all(str(value).strip() for value in (self.provider, self.base_url, self.model)):
@@ -296,17 +310,16 @@ class LLMConfig:
         return obj
 
     def _serialize_action_rules(self) -> str:
-        if not self.action_rules:
-            return ""
         from transbridge.paratranz.config_manager import ActionRule
 
+        # Keep an explicitly cleared list distinct from missing legacy configuration.
         payload = [rule.to_dict() if isinstance(rule, ActionRule) else rule for rule in self.action_rules]
         return json.dumps(payload, ensure_ascii=False, allow_nan=False)
 
     @staticmethod
     def _load_action_rules(raw: str) -> list[Any]:
-        if not raw:
-            return []
+        if not raw.strip():
+            return default_action_rules()
         try:
             from transbridge.paratranz.config_manager import ActionRule
 

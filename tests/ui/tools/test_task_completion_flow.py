@@ -22,7 +22,7 @@ def test_completion_notice_waits_for_save_and_is_not_duplicated(qapp, make_windo
     worker = support._start(window, session)
     outcomes = tuple(SourceOutcome(task) for task in session.tasks)
     worker.publish(outcomes)
-    qapp.processEvents()
+    support._wait_until(lambda: bool(callbacks))
     assert not notices and session.is_busy
     assert "正在保存" in window.save_status.text()
     session.saved = session.project_saved = session.snapshot_saved = True
@@ -40,11 +40,14 @@ def test_retry_discards_previous_attempt_pending_save_error(qapp, make_window, m
     window, session, _ = make_window()
     notices = []
     window.run.completion_notice.connect(notices.append)
+    window.run.completion._timer.setInterval(60_000)
     monkeypatch.setattr(session, "save_translation", lambda **handlers: handlers["on_error"]("disk full"))
     worker = support._start(window, session)
     worker.publish((SourceOutcome(session.tasks[0]), SourceOutcome(session.tasks[1], error="network")))
+    support._wait_until(lambda: window.run.completion.pending is not None)
     assert window.run.completion.pending is not None
     window.run.retry()
+    support._wait_until(lambda: window.run.worker is not None)
     assert window.run.completion.pending is None
     assert not window.run.completion._timer.isActive()
     assert not notices
@@ -67,6 +70,7 @@ def test_running_log_opens_before_completion_and_retry_cannot_open_old_log(qapp,
     worker.publish(tuple(SourceOutcome(task, error="request failed", log_dir=str(log_dir)) for task in session.tasks))
     support._wait_reports(qapp, window)
     window.run.retry()
+    support._wait_until(lambda: window.run.worker is not None)
     window.log_button.click()
     assert viewer.call_count == 1
     assert isinstance(window._dialogs[-1], QMessageBox)

@@ -19,7 +19,7 @@ class ConsistencyChecker(BaseChecker):
     一致性检查器。
 
     检查规则：
-    - 术语命中检查：原文中的术语是否在译文中使用了标准译法
+    - 收集原文命中术语与当前译文的差异，供 AI 结合语境判断
 
     术语库来源：
     - 从硬盘加载合并后的术语缓存：data/ai_translator/{esp_stem}/cache/merged_terms.json
@@ -168,8 +168,8 @@ class ConsistencyChecker(BaseChecker):
         检查单个条目的术语一致性。
 
         支持主术语和变体匹配：
-        - 原文匹配主术语时，提示使用主术语的标准译法
-        - 原文匹配变体时，同样提示使用主术语的标准译法（并注明匹配到的变体）
+        - 原文匹配主术语时，记录与参考译法的差异
+        - 原文匹配变体时，同样记录参考差异（并注明匹配到的变体）
 
         Args:
             entry: 待检查的翻译条目
@@ -195,13 +195,16 @@ class ConsistencyChecker(BaseChecker):
             if main_term in reported_main_terms:
                 continue
 
-            # 检查译文中是否包含标准译法
+            # 字面差异只生成待判断的疑点，不代表译文错误。
             if std_translation not in entry.translation:
                 # 区分主术语匹配和变体匹配的消息
                 if matched_form == main_term:
-                    message = f"术语 '{main_term}' 标准译法为 '{std_translation}'，译文未使用"
+                    message = f"术语 '{main_term}' 的参考译法为 '{std_translation}'，与当前译文不同，需结合语境判断"
                 else:
-                    message = f"术语 '{main_term}'（变体 '{matched_form}'）标准译法为 '{std_translation}'，译文未使用"
+                    message = (
+                        f"术语 '{main_term}'（变体 '{matched_form}'）的参考译法为 '{std_translation}'，"
+                        "与当前译文不同，需结合语境判断"
+                    )
 
                 # 生成警告级别的问题
                 issues.append(
@@ -213,6 +216,9 @@ class ConsistencyChecker(BaseChecker):
                         original=entry.original,
                         translation=entry.translation,
                         suggestion=std_translation,
+                        term=main_term,
+                        matched_form=matched_form,
+                        standard_translation=std_translation,
                     )
                 )
                 reported_main_terms.add(main_term)

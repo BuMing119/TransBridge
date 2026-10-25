@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 
-from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt
+from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, pyqtSlot
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -20,34 +20,20 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from transbridge.application.translation.review_report import REVIEW_STATUS_LABELS, review_label
 from transbridge.application.translation.task_history import restore_report_snapshot
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, ElidedLabel, SemanticState
 from transbridge.ui.workers import ApiWorker
 
 from ._theme_support import AiThemeBinding
+from .read_projection import LatestReadController
 from .reporting import export_snapshot
+from .task_result_projection import RESULT_LABELS, ResultProjector, result_label
 from .task_widget_style import configure_task_button, configure_task_host, configure_task_input, configure_task_title
-
-RESULT_LABELS = {
-    "applied": "已应用",
-    "accepted": "已接受",
-    "rejected": "未采纳",
-    "failed": "失败",
-    "pending": "待确认",
-    "not_applied": "未应用",
-    "not_started": "未处理",
-    "cancelled": "已取消",
-}
-
-
-def result_label(entry):
-    details = entry.get("report_details", {})
-    status = details.get("result_status")
-    return RESULT_LABELS.get(status, "通过" if entry.get("accepted") else "未采用")
 
 
 class TaskEntriesModel(QAbstractTableModel):
-    headers = ("条目", "原文", "原译文", "候选译文", "结果", "原因")
+    headers = ("条目", "原文", "原译文", "候选译文", "结果", "原因", "AI 校对")
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -79,10 +65,13 @@ class TaskEntriesModel(QAbstractTableModel):
             entry.get("before", ""),
             entry.get("candidate", ""),
             result_label(entry),
-            entry.get("report_details", {}).get("note", ""),
+            entry.get("report_details", {}).get("review_reason") or entry.get("report_details", {}).get("note", ""),
+            review_label(entry.get("report_details", {})),
         )
         text = str(values[index.column()])
-        return text if role == Qt.ItemDataRole.ToolTipRole else text[:240].replace("\n", " ")
+        if role == Qt.ItemDataRole.ToolTipRole:
+            return text if len(text) <= 2048 else text[:2048] + "\n[显示已截断，完整内容见导出报告]"
+        return text[:240].replace("\n", " ")
 
 
 class TaskResultDialog(QDialog):
@@ -92,6 +81,17 @@ class TaskResultDialog(QDialog):
         self.worker = None
         self._shutdown = False
         self._cancel = threading.Event()
+        self._closed = False
+        self._projection = None
+        self._diagnostic_text = ""
+        self._projecting = True
+        self._reader = LatestReadController(ResultProjector(), self)
+        self._reader.ready.connect(self._projected)
+        self._reader.failed.connect(self._projection_failed)
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(80)
+        self._search_timer.timeout.connect(self._populate)
         self.setWindowTitle("AI 任务结果")
         configure_task_host(self)
         self.resize(1080, 720)
@@ -123,11 +123,11 @@ class TaskResultDialog(QDialog):
         self.search.setClearButtonEnabled(True)
         self.search.setAccessibleName("搜索任务结果")
         self.search.setPlaceholderText("搜索原文、译文或条目")
-        self.search.textChanged.connect(self._populate)
+        self.search.textChanged.connect(self._schedule_search)
         filters.addWidget(self.search, 2)
         self.filter = QComboBox()
         self.filter.setAccessibleName("结果状态筛选")
-        self.filter.addItems(["全部", *dict.fromkeys(RESULT_LABELS.values()), "通过"])
+        self.filter.addItems(["全部", *dict.fromkeys(RESULT_LABELS.values()), "通过", *REVIEW_STATUS_LABELS.values()])
         self.filter.currentTextChanged.connect(self._populate)
         filters.addWidget(self.filter)
         for control in (self.sources, self.search, self.filter):
@@ -150,6 +150,7 @@ class TaskResultDialog(QDialog):
         self.table.setColumnWidth(0, 190)
         for column in (1, 2, 3):
             self.table.setColumnWidth(column, 220)
+        self.table.setColumnWidth(6, 180)
         self.table.selectionModel().currentRowChanged.connect(self._detail)
         splitter.addWidget(self.table)
         self.detail = QTextEdit()
@@ -205,25 +206,32 @@ class TaskResultDialog(QDialog):
         return self.record["sources"][index] if index >= 0 else {}
 
     def _populate(self, *_):
-        if not hasattr(self, "model"):
+        if not hasattr(self, "model") or self._closed or self._shutdown:
             return
+        self._search_timer.stop()
         source = self._source()
         self.sources.setToolTip(self.sources.currentText())
-        snapshot = source.get("snapshot") or {}
-        entries = snapshot.get("entries", ())
         query, status = self.search.text().casefold(), self.filter.currentText()
-        visible = [
-            entry
-            for entry in entries
-            if (status == "全部" or result_label(entry) == status)
-            and (
-                not query
-                or query
-                in " ".join(
-                    str(entry.get(key, "")) for key in ("entry_key", "original", "before", "candidate")
-                ).casefold()
-            )
-        ]
+        self._projecting = True
+        self.model.set_entries(())
+        self._projection = None
+        self.detail.clear()
+        self.summary.setText("正在整理任务结果…")
+        self._reader.submit((source, query, status))
+        self._update_export_actions()
+
+    def _schedule_search(self):
+        if self._closed or self._shutdown:
+            return
+        self._projecting = True
+        self._reader.invalidate()
+        self._search_timer.start()
+
+    @pyqtSlot(object, object)
+    def _projected(self, _request, projection):
+        self._projecting = False
+        self._projection = projection
+        entries, visible = projection.index.entries, projection.visible
         self.model.set_entries(visible)
         self.summary.setText(f"当前显示 {len(visible)} / {len(entries)} 条 · 导出包含本来源全部结果")
         self.detail.clear()
@@ -234,11 +242,16 @@ class TaskResultDialog(QDialog):
             if not visible
             else "请选择一条结果，查看完整原文、译文及处理原因。"
         )
-        notes = [source.get("error", "")]
-        notes.extend(f"{item['code']}：{item['message']}" for item in snapshot.get("diagnostics", ()))
-        self.diagnostics.setPlainText("\n".join(dict.fromkeys(note for note in notes if note)))
-        self.diagnostics.setVisible(bool(self.diagnostics.toPlainText()))
+        if self._diagnostic_text != projection.index.diagnostics:
+            self._diagnostic_text = projection.index.diagnostics
+            self.diagnostics.setPlainText(self._diagnostic_text)
+        self.diagnostics.setVisible(bool(projection.index.diagnostics))
         self._update_export_actions()
+
+    @pyqtSlot(str)
+    def _projection_failed(self, error):
+        self._projecting = False
+        self.summary.setText(f"无法整理任务结果：{error}")
 
     def _update_export_actions(self):
         available = bool(self._source().get("snapshot")) and not self.busy and not self._shutdown
@@ -257,18 +270,8 @@ class TaskResultDialog(QDialog):
         if not index.isValid() or index.row() >= len(self.model.entries):
             return
         entry = self.model.entries[index.row()]
-        key = entry.get("entry_key")
-        notes = [entry.get("report_details", {}).get("note", "")]
-        for diagnostic in (self._source().get("snapshot") or {}).get("diagnostics", ()):
-            details = diagnostic.get("details", {})
-            if details.get("entry_key") == key or key in details.get("entry_keys", ()):
-                notes.append(f"{diagnostic['code']}：{diagnostic['message']}")
-        reason = "\n".join(dict.fromkeys(note for note in notes if note))
-        self.detail.setPlainText(
-            f"原文\n{entry.get('original', '')}\n\n原译文\n{entry.get('before', '')}"
-            f"\n\n候选译文\n{entry.get('candidate', '')}\n\n{result_label(entry)}"
-            f"\n{reason}"
-        )
+        if self._projection is not None:
+            self.detail.setPlainText(self._projection.index.details[id(entry)])
 
     def _choose_export(self, format):
         extension = "xlsx" if format == "xlsx" else "csv"
@@ -315,9 +318,32 @@ class TaskResultDialog(QDialog):
 
     def shutdown(self):
         self._shutdown = True
+        self._stop_projection()
         self.cancel_export()
         self._update_export_actions()
 
     def resume_exports(self):
         self._shutdown = False
+        if self.isVisible() and self._closed:
+            self._closed = False
+            self._populate()
         self._update_export_actions()
+
+    def _stop_projection(self):
+        self._closed = True
+        self._reader.invalidate()
+        self._search_timer.stop()
+
+    def closeEvent(self, event):
+        self._stop_projection()
+        super().closeEvent(event)
+
+    def done(self, result):
+        self._stop_projection()
+        super().done(result)
+
+    def showEvent(self, event):
+        if self._closed and not self._shutdown:
+            self._closed = False
+            self._populate()
+        super().showEvent(event)

@@ -156,7 +156,7 @@ def test_terms_are_resolved_after_admission_and_one_pass_accepts_unchanged_value
         request = json.loads(messages[1]["content"])
         entry = request["entries"][0]
         assert entry["terms"] == {"Dragon": "巨龙"}
-        assert "detected_issues" not in entry
+        assert entry["detected_issues"][0]["issue_type"] == "term_mismatch"
         return json.dumps({"results": [_result(candidate, "巨龙")]}, ensure_ascii=False)
 
     client = _PreparedClient(respond)
@@ -186,7 +186,7 @@ def test_terms_are_resolved_after_admission_and_one_pass_accepts_unchanged_value
     assert "semantic errors" in system_prompt
     assert "omissions" in system_prompt
     assert "negation relationships" in system_prompt
-    assert "mandatory constraint" in system_prompt
+    assert "fallible advisory" in system_prompt
     assert "not a complete list of possible problems" in system_prompt
     _clean_messages, output_schema = extract_structured_output_directive(client.messages[0])
     assert output_schema == PROOFREAD_OUTPUT_SCHEMA
@@ -540,9 +540,9 @@ def test_batches_run_concurrently_with_constructor_default_and_explicit_worker_l
 
     assert limited_client.peak == 2
     assert limited_outcome.diagnostics == ()
-    assert [item[:2] for item in progress] == [(1, 5), (2, 5), (3, 5), (4, 5), (5, 5), (0, 5), (5, 5)]
+    assert [item[:2] for item in progress] == [(1, 5), (2, 5), (3, 5), (4, 5), (5, 5)]
     assert progress[4][2] == "校对 5/5 条"
-    assert progress[-1][2] == "术语检查结束，无需修复"
+    assert progress[-1][2] == "校对 5/5 条"
 
 
 class _AuditedCollection(TranslationEntryCollection):

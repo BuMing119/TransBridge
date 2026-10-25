@@ -32,6 +32,7 @@ from .refinement_response import (
     parse_batch_refinement_response,
     parse_refinement_response,
 )
+from .review_evidence import capture_review
 
 if TYPE_CHECKING:
     from ...converter.translation_entry import TranslationEntry
@@ -51,7 +52,8 @@ _SINGLE_USER_REQUIRED_VARIABLES = frozenset({"original", "current_translation", 
 # ── 内置默认提示词（只修复，不润色；JSON 示例为合法 JSON）─────────────────
 
 _DEFAULT_SYSTEM = """You are a $game_name localization correction specialist.
-Fix explicitly detected problems in translations from $source_lang into $target_lang.
+Review all detected concerns together in translations from $source_lang into $target_lang.
+Treat detector findings as possible problems, not established errors. Judge them against the source and context.
 
 Change only the parts directly affected by listed issues. Do not proactively polish.
 If no issue was detected, return the current translation unchanged.
@@ -59,7 +61,9 @@ If no issue was detected, return the current translation unchanged.
 Correction rules:
 - Preserve every source placeholder, including %s, %d, and {0}.
 - Preserve every source formatting marker, including <br>, [pagebreak], and \n.
-- Use the provided standard terminology.
+- Terminology is advisory reference material, not an acceptance requirement.
+  It may be wrong or contextually inapplicable.
+- Keep a suitable translation even when it differs from a reference; never force an unsuitable dictionary rendering.
 - Do not change the source meaning.
 - Close quotation marks and brackets correctly.
 - Preserve the existing style and fluency.
@@ -68,6 +72,8 @@ Return only the structured correction result and no other text.
 The corrected translation must equal the current translation when there is no issue. Report only corrections actually
 applied; report no corrections when nothing changed. Confidence ranges from 0 to 1. Request arbitration when the
 correction is uncertain. An additional note may be empty.
+Set review_status to revised, retained, term_suspect, or needs_review, and explain the judgment in review_reason.
+Use term_suspect for an incorrect or inapplicable reference; do not rewrite the glossary. Use needs_review when unsure.
 
 Fix only detected issues and do not over-rewrite.
 When nothing needs correction, return the current translation unchanged and do not polish it."""
@@ -91,18 +97,23 @@ Fix only detected issues and return the correction result.
 If there is nothing to fix, return the current translation unchanged and do not polish it."""
 
 _DEFAULT_BATCH_SYSTEM = """You are a $game_name localization correction specialist.
-Correct explicitly detected problems across multiple translations from $source_lang into $target_lang.
+Review all detected concerns together across multiple translations from $source_lang into $target_lang.
+Detector findings are possible problems, not established errors. Judge each entry against its source and context.
 
 For each entry, change only the parts directly affected by its listed issues. Do not proactively polish.
 If an entry has no detected issue, return its current translation unchanged.
 
-Preserve source placeholders and formatting markers, use provided terminology, and do not change source meaning.
+Preserve source placeholders and formatting markers, and do not change source meaning.
+Terminology is advisory reference material, not an acceptance requirement; it may be wrong or inapplicable.
+Keep suitable translations even if they differ from references. Never force an unsuitable dictionary rendering.
 Preserve existing style and fluency.
 
 Return only the structured correction results and no other text. Preserve each entry ID exactly.
 For every entry, the corrected translation must equal the current translation when there is no issue. Report only
 corrections actually applied; report no corrections when nothing changed. Confidence ranges from 0 to 1. Request
 arbitration when a correction is uncertain. An additional note may be empty.
+Set review_status to revised, retained, term_suspect, or needs_review, and explain the judgment in review_reason.
+Use term_suspect for an incorrect or inapplicable reference; do not rewrite the glossary. Use needs_review when unsure.
 
 Include every input entry in order. Fix only detected issues and do not over-rewrite.
 Return unchanged translations for entries with nothing to fix."""
@@ -266,6 +277,8 @@ class LLMRefiner:
             修复结果
         """
         # 构建Prompt
+        terms = dict(terms if terms is not None else self._get_relevant_terms(entry))
+        evidence = capture_review(entry, issues, terms)
         messages = self._build_refinement_prompt(entry, issues, terms=terms)
 
         try:
@@ -273,7 +286,7 @@ class LLMRefiner:
                 messages=messages,
                 max_tokens=output_token_limit(self._max_output_tokens, 2000),
             )
-            return self._parse_refinement_response(entry, response)
+            return parse_refinement_response(entry, response, evidence)
         except (CancelledError, AiRequestCancelledError) as e:
             return self._failed_result(
                 entry,
@@ -308,14 +321,28 @@ class LLMRefiner:
             return {}
 
         # 构建批量Prompt
-        messages = self._build_batch_refinement_prompt(entries, issues_map, terms_map=terms_map)
+        captured_terms = {
+            ai_entry_id(entry): dict(
+                terms_map.get(ai_entry_id(entry), terms_map.get(ai_entry_key(entry), {}))
+                if terms_map is not None
+                else self._get_relevant_terms(entry)
+            )
+            for entry in entries
+        }
+        evidence = {
+            ai_entry_id(entry): capture_review(
+                entry, issues_map.get(ai_entry_id(entry), []), captured_terms[ai_entry_id(entry)]
+            )
+            for entry in entries
+        }
+        messages = self._build_batch_refinement_prompt(entries, issues_map, terms_map=captured_terms)
 
         try:
             response = self._llm.chat(
                 messages=messages,
                 max_tokens=output_token_limit(self._max_output_tokens, 4000),
             )
-            return self._parse_batch_refinement_response(entries, response)
+            return parse_batch_refinement_response(entries, response, evidence)
         except (CancelledError, AiRequestCancelledError) as e:
             safe_error = client_diagnostic_redactor(self._llm).redact_text(diagnostic_exception_text(e))
             return {
@@ -400,7 +427,7 @@ class LLMRefiner:
                     if issue.matched_form:
                         lines.append(f"    Matched form: {issue.matched_form}")
                     if issue.standard_translation:
-                        lines.append(f"    Required translation: {issue.standard_translation}")
+                        lines.append(f"    Reference translation: {issue.standard_translation}")
                     if issue.suggestion:
                         lines.append(f"    Suggestion: {issue.suggestion}")
             else:
@@ -443,7 +470,7 @@ class LLMRefiner:
             if issue.matched_form:
                 lines.append(f"  Matched form: {issue.matched_form}")
             if issue.standard_translation:
-                lines.append(f"  Required translation: {issue.standard_translation}")
+                lines.append(f"  Reference translation: {issue.standard_translation}")
             if issue.suggestion:
                 lines.append(f"  Suggestion: {issue.suggestion}")
         return "\n".join(lines)

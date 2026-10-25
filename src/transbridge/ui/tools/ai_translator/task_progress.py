@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QDialog,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QSizePolicy,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -25,6 +27,28 @@ from ._theme_support import AiThemeBinding
 from .task_run import AiTaskRun
 from .task_run_presentation import source_label
 from .task_widget_style import configure_task_button, configure_task_host, configure_task_title
+
+
+class _SourceProgressTable(QTreeWidget):
+    """Reserve space for actual sources, leaving the remaining height to the log."""
+
+    def __init__(self):
+        super().__init__()
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setUniformRowHeights(True)
+
+    def sizeHint(self):
+        row_height = self.sizeHintForRow(0)
+        if row_height <= 0:
+            row_height = self.fontMetrics().height() + 8
+        rows = min(max(self.topLevelItemCount(), 1), 6)
+        height = self.header().sizeHint().height() + rows * row_height + 2 * self.frameWidth()
+        if self.horizontalScrollBar().isVisible():
+            height += self.horizontalScrollBar().sizeHint().height()
+        return QSize(super().sizeHint().width(), height)
+
+    def minimumSizeHint(self):
+        return QSize(0, self.sizeHint().height())
 
 
 class AiTaskProgressWindow(QWidget):
@@ -48,23 +72,43 @@ class AiTaskProgressWindow(QWidget):
         self.status.setWordWrap(True)
         configure_task_title(self.status, "section")
         layout.addWidget(self.status)
+        self.request_status = QLabel(self.run.request_state.text)
+        self.request_status.setTextFormat(Qt.TextFormat.PlainText)
+        self.request_status.setWordWrap(True)
+        self.request_status.setToolTip("所有来源共享请求名额。模型调用中包含供应商客户端的内部重试。")
+        self.run.request_state.changed.connect(self.request_status.setText)
+        layout.addWidget(self.request_status)
         self.result_summary = QLabel()
         self.result_summary.setTextFormat(Qt.TextFormat.PlainText)
         self.result_summary.setWordWrap(True)
         layout.addWidget(self.result_summary)
+        self.project_summary = QLabel()
+        self.project_summary.setTextFormat(Qt.TextFormat.PlainText)
+        self.project_summary.setWordWrap(True)
+        self.project_summary.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        configure_task_title(self.project_summary, "section")
+        layout.addWidget(self.project_summary)
         self.bar = QProgressBar()
         layout.addWidget(self.bar)
-        self.sources = QTreeWidget()
-        self.sources.setHeaderLabels(["处理内容", "阶段", "进度 / 结果"])
+        self.sources = _SourceProgressTable()
+        self.sources.setHeaderLabels(["处理内容", "阶段", "进度", "当前处理"])
         self.sources.setRootIsDecorated(False)
+        self.sources.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.sources.setWordWrap(False)
+        header = self.sources.header()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self.rows = {}
         for task in session.tasks:
-            row = QTreeWidgetItem([source_label(session.tasks, task.key), "等待", f"{len(task.entries)} 条"])
+            row = QTreeWidgetItem([source_label(session.tasks, task.key), "等待", "—", f"{len(task.entries)} 条"])
             row.setData(0, Qt.ItemDataRole.UserRole, task.key)
+            row.setToolTip(0, row.text(0))
             self.sources.addTopLevelItem(row)
             self.rows[task.key] = row
         self.sources.setColumnWidth(0, 290)
-        layout.addWidget(self.sources, 1)
+        layout.addWidget(self.sources)
         diagnostics = QHBoxLayout()
         self.log_toggle = QPushButton("展开过程日志")
         self.log_toggle.setCheckable(True)
@@ -80,8 +124,12 @@ class AiTaskProgressWindow(QWidget):
         self.logs = QPlainTextEdit()
         self.logs.setReadOnly(True)
         self.logs.document().setMaximumBlockCount(3000)
-        self.logs.hide()
+        self.logs.setPlaceholderText("开始后，阶段变化和处理记录会显示在这里。")
         layout.addWidget(self.logs, 1)
+        self._collapsed_log_space = QWidget()
+        self._collapsed_log_space.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        layout.addWidget(self._collapsed_log_space, 1)
+        self.log_toggle.setChecked(True)
         self.record_status = QLabel()
         self.record_status.setWordWrap(True)
         self.save_status = QLabel()
@@ -113,7 +161,7 @@ class AiTaskProgressWindow(QWidget):
         self.retry_record_button = QPushButton("重试保存任务记录")
         self.retry_record_button.clicked.connect(self.run.records.retry)
         layout.addWidget(self.retry_record_button)
-        self._theme = AiThemeBinding(self, theme_view, lambda _: None)
+        self._theme = AiThemeBinding(self, theme_view, lambda _: self.sources.updateGeometry())
         self.run.changed.connect(self._refresh)
         self.run.logged.connect(self.logs.appendPlainText)
         self.run.preview_requested.connect(self._offer_preview)
@@ -139,9 +187,7 @@ class AiTaskProgressWindow(QWidget):
         self.bar.setRange(0, total)
         self.bar.setValue(current)
         self.bar.setFormat(pattern)
-        for key, (phase, detail) in run.rows.items():
-            self.rows[key].setText(1, phase)
-            self.rows[key].setText(2, detail)
+        self._refresh_source_progress()
         if self._last_selected != run.selected_key and run.selected_key in self.rows:
             self.sources.setCurrentItem(self.rows[run.selected_key])
             self._last_selected = run.selected_key
@@ -158,8 +204,30 @@ class AiTaskProgressWindow(QWidget):
         self.save_button.setEnabled(self.session.can_save and not self.session.is_busy)
         self._refresh_actions()
 
+    def _refresh_source_progress(self):
+        view = getattr(self.run, "progress_view", None)
+        summary = getattr(view, "summary", "")
+        self.project_summary.setText(summary)
+        self.project_summary.setVisible(bool(summary))
+        source_rows = getattr(view, "source_rows", {})
+        final_phases = {"处理结束", "已完成", "已取消", "未处理", "失败", "已失败"}
+        for key, (phase, detail) in self.run.rows.items():
+            progress = "—"
+            source = source_rows.get(key)
+            if source is not None and phase not in final_phases:
+                phase, detail = source.phase, source.detail
+                progress = getattr(source, "count_text", "") or (
+                    f"{source.current:,} / {source.total:,}" if source.total > 0 else "—"
+                )
+            row = self.rows[key]
+            for column, value in enumerate((phase, progress, detail), start=1):
+                row.setText(column, value)
+                row.setToolTip(column, value)
+        self.sources.updateGeometry()
+
     def _toggle_logs(self, expanded):
         self.logs.setVisible(expanded)
+        self._collapsed_log_space.setVisible(not expanded)
         self.log_toggle.setText("收起过程日志" if expanded else "展开过程日志")
 
     def _refresh_actions(self):
@@ -170,6 +238,7 @@ class AiTaskProgressWindow(QWidget):
         self.preview_button.setVisible(
             not run.cancelled
             and not run.blocked
+            and not run.running
             and (run.state == "pending_confirmation" or bool(run.entries.ready_keys))
         )
         self.report_button.setVisible(run.records.record is not None and not run.running)

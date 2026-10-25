@@ -11,6 +11,7 @@ import time
 from typing import TYPE_CHECKING, Literal
 import unicodedata
 
+from transbridge.ai_translator.generated_term_writer import GeneratedTerms
 from transbridge.ai_translator.term_formats import TermEntry
 from transbridge.ai_translator.term_validation import contains_term, valid_term_pair
 from transbridge.application.io.identity import EntryKey, SourceNamespace
@@ -108,6 +109,7 @@ class ExistingTermSeeder:
         term_manager: TermDatabaseManager,
         noun_extractor: NounExtractor,
         *,
+        save_terms: Callable[[GeneratedTerms], int | None] | None = None,
         max_tokens_per_batch: int = 2000,
         model: str = "",
         token_counter: ContentTokenCounter | None = None,
@@ -125,6 +127,7 @@ class ExistingTermSeeder:
         if heartbeat_interval_seconds <= 0:
             raise ValueError("heartbeat_interval_seconds must be positive")
         self._term_manager = term_manager
+        self._save_terms = save_terms
         self._noun_extractor = noun_extractor
         self._batcher = StableContentBatcher(
             token_counter or TiktokenContentTokenCounter(model),
@@ -152,7 +155,10 @@ class ExistingTermSeeder:
         dynamic_db = self._term_manager.get_dynamic_db()
         direct_terms = self._extract_direct_terms(eligible)
 
-        text_extraction_attempted = not any(entry.source == EXISTING_TEXT_SOURCE for entry in dynamic_db.as_list())
+        shared_pool = getattr(self._term_manager, "_shared_term_pool", None)
+        text_extraction_attempted = shared_pool is not None or not any(
+            entry.source == EXISTING_TEXT_SOURCE for entry in dynamic_db.as_list()
+        )
         if text_extraction_attempted:
             text_pairs = self._text_pairs(eligible)
             text_plan = self._batcher.plan(
@@ -237,15 +243,32 @@ class ExistingTermSeeder:
                 continue
             accepted.append(candidate)
 
-        if accepted:
-            dynamic_db.add_many_and_save([
+        added_by_source = {
+            source: sum(candidate.entry.source == source for candidate in accepted)
+            for source in (EXISTING_NAME_SOURCE, EXISTING_TEXT_SOURCE)
+        }
+        if accepted and shared_pool is not None:
+            from transbridge.ai_translator.generated_term_writer import GeneratedTermWriter
+
+            save_terms = self._save_terms or GeneratedTermWriter(self._term_manager).save
+            for source in added_by_source:
+                terms = [
+                    (candidate.entry.term, candidate.entry.translation, candidate.entry.source, candidate.entry.context)
+                    for candidate in accepted
+                    if candidate.entry.source == source
+                ]
+                saved_count = save_terms(terms) if terms else 0
+                added_by_source[source] = len(terms) if saved_count is None else saved_count
+        elif accepted:
+            save_terms = self._save_terms or dynamic_db.add_many_and_save
+            save_terms([
                 (candidate.entry.term, candidate.entry.translation, candidate.entry.source, candidate.entry.context)
                 for candidate in accepted
             ])
 
         return ExistingTermSeedResult(
-            direct_added=sum(candidate.entry.source == EXISTING_NAME_SOURCE for candidate in accepted),
-            text_added=sum(candidate.entry.source == EXISTING_TEXT_SOURCE for candidate in accepted),
+            direct_added=added_by_source[EXISTING_NAME_SOURCE],
+            text_added=added_by_source[EXISTING_TEXT_SOURCE],
             conflicts=conflicts,
             skipped_existing=skipped_existing,
             text_extraction_attempted=text_extraction_attempted,

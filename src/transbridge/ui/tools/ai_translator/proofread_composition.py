@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 
 def build_proofread_pipeline(
     config,
@@ -16,7 +18,12 @@ def build_proofread_pipeline(
     paratranz_client=None,
     project_id=None,
     term_snapshot_observer=None,
+    terminology_access=None,
     checkpoint=None,
+    shared_term_pool=None,
+    generated_term_plugin_id=None,
+    request_lane=None,
+    reference_store=None,
 ):
     from transbridge.ai_translator.post_processor.proofread_pipeline import ProofreadPipeline
     from transbridge.ai_translator.term_database import TermDatabaseManager
@@ -24,20 +31,26 @@ def build_proofread_pipeline(
     from transbridge.infra.llm_client import create_llm_client
     from transbridge.infra.llm_reasoning import ReasoningIntent, with_reasoning_intent
 
+    from .source_terms import source_terminology_path
     from .workflow_logging_client import WorkflowLoggingLLMClient
 
     term_manager = None
-    if esp_path:
+    if esp_path or shared_term_pool is not None:
         term_manager = TermDatabaseManager(
             config,
-            esp_path,
+            source_terminology_path(esp_path, request_lane),
             paratranz_client,
             project_id,
-            **terminology_binding.term_database_kwargs(),
+            shared_term_pool=shared_term_pool,
+            generated_term_plugin_id=generated_term_plugin_id,
+            reference_store=reference_store,
+            reference_source=request_lane,
+            **(terminology_binding.term_database_kwargs() if terminology_binding is not None else {}),
         )
-        term_manager.load_all()
-        if term_snapshot_observer is not None:
-            term_snapshot_observer(term_manager)
+        with (terminology_access or nullcontext)():
+            term_manager.load_all()
+            if term_snapshot_observer is not None:
+                term_snapshot_observer(term_manager)
     llm_client = arbitration = None
     if profile.requires_llm:
         provider = create_llm_client(config)
@@ -48,6 +61,7 @@ def build_proofread_pipeline(
                 request_budget,
                 cancel_event=stop_event,
                 pause_event=pause_event,
+                lane_key=(request_lane or esp_path, channel),
             )
             return WorkflowLoggingLLMClient(client, log_store, channel_prefix=channel)
 

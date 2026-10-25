@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID, uuid4
 
+from transbridge.config.llm import DEFAULT_MAX_CONCURRENT, MAX_CONCURRENT
+
 BaseMode = Literal["translate", "polish", "mixed"]
 WorkflowStrategy = Literal["proofread", "strict"]
 
@@ -60,7 +62,7 @@ _WORKFLOW_DEFAULTS: dict[str, bool | int | str] = {
     "pp_arbitration_batch_size": 10,
 }
 _LIMIT_RANGES: dict[str, tuple[int, int]] = {
-    "max_concurrent": (1, 128),
+    "max_concurrent": (1, MAX_CONCURRENT),
     "max_tokens_per_batch": (1, 1_000_000),
     "max_output_tokens": (0, 1_000_000),
     "max_terms_per_batch": (1, 10_000),
@@ -152,7 +154,7 @@ class CustomWorkflowProfile:
         limits = {
             field: deepcopy(getattr(config, field, default))
             for field, default in {
-                "max_concurrent": 3,
+                "max_concurrent": DEFAULT_MAX_CONCURRENT,
                 "max_tokens_per_batch": 2000,
                 "max_output_tokens": 0,
                 "max_terms_per_batch": 50,

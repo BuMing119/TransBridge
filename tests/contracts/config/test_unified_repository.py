@@ -270,7 +270,7 @@ def test_llm_and_paratranz_facades_observe_same_revision(tmp_path: Path) -> None
     assert paratranz.base_url == "https://paratranz.cn/api"
 
 
-def test_empty_action_rules_remove_stale_value(tmp_path: Path) -> None:
+def test_empty_action_rules_replace_stale_value_with_explicit_empty_list(tmp_path: Path) -> None:
     store = MemoryStore()
     repository = _repository(tmp_path, store)
     config = LLMConfig(model="m1")
@@ -278,7 +278,8 @@ def test_empty_action_rules_remove_stale_value(tmp_path: Path) -> None:
     config.save_to_file(repository=repository, credential_store=store)
     config.action_rules = []
     config.save_to_file(repository=repository, credential_store=store)
-    assert repository.load().value("llm", "action_rules") is None
+    assert repository.load().value("llm", "action_rules") == "[]"
+    assert LLMConfig.load_from_file(repository=repository, environment={}).action_rules == []
 
 
 def test_environment_llm_secret_is_read_only_and_not_persisted(tmp_path: Path) -> None:

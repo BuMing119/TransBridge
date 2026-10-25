@@ -93,7 +93,9 @@ class _MixedWorker(QThread):
         self._term_failed = 0
         self._term_candidates = 0
         esp_path = str(getattr(ctx, "esp_path", "") or "")
-        self._log_store = WorkflowLogStore(esp_path, workflow="mixed")
+        self._log_store = WorkflowLogStore(
+            esp_path, workflow="mixed", max_concurrent=self._request_budget.max_in_flight
+        )
 
         profile = getattr(run_spec, "execution_profile", None)
         if profile is None:

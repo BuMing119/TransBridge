@@ -200,12 +200,12 @@ def test_legacy_snapshot_failure_retains_saved_project_and_retries_only_snapshot
     context._active_variant = "main"
     context._variant_store = VariantStore(tmp_path / "current.json")
     persistence = VersionPersistence(context, context.active_version_identity)
-    original_snapshot = context.variant_store.save_snapshot
+    original_snapshot = VariantStore.save_snapshot
 
     def fail_snapshot(*_args):
         raise OSError("快照目录不可写")
 
-    monkeypatch.setattr(context.variant_store, "save_snapshot", fail_snapshot)
+    monkeypatch.setattr(VariantStore, "save_snapshot", fail_snapshot)
     try:
         persistence.save_translation((_entry(),), "after")
     except OSError:
@@ -215,11 +215,11 @@ def test_legacy_snapshot_failure_retains_saved_project_and_retries_only_snapshot
     assert persistence.project_saved and not persistence.snapshot_saved
     assert VariantStore.load(tmp_path / "current.json").translations == {"entry": "译文"}
 
-    def unexpected_save():
+    def unexpected_save(_self):
         raise AssertionError("project must not be saved again")
 
-    monkeypatch.setattr(context.variant_store, "save", unexpected_save)
-    monkeypatch.setattr(context.variant_store, "save_snapshot", original_snapshot)
+    monkeypatch.setattr(VariantStore, "save", unexpected_save)
+    monkeypatch.setattr(VariantStore, "save_snapshot", original_snapshot)
     result = persistence.save_translation((_entry(),), "after")
     assert result.is_file() and persistence.snapshot_saved
     assert persistence.save_translation((_entry(),), "after") == result

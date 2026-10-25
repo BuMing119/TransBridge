@@ -1,10 +1,10 @@
-"""润色结果预览对话框，支持逐条接受/拒绝。"""
+"""润色结果预览：后台准备数据，虚拟表逐条接受或拒绝。"""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QSignalBlocker, Qt
+from PyQt6.QtCore import Qt, pyqtSlot
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -12,41 +12,24 @@ from PyQt6.QtWidgets import (
     QHeaderView,
     QLabel,
     QPushButton,
-    QTableWidget,
-    QTableWidgetItem,
+    QTableView,
     QVBoxLayout,
 )
 
-from transbridge.application.translation.entry_alias import ai_entry_id
 from transbridge.ui.foundation.adapters import ThemeView
 from transbridge.ui.foundation.components import ComponentKind, ComponentStyle, SemanticState
 
 from ._theme_support import AiThemeBinding
+from .polish_preview_model import ACCEPTED, FAILED, PENDING, REJECTED, PolishPreviewModel, build_preview
+from .read_projection import LatestReadController
 
 if TYPE_CHECKING:
     from transbridge.ai_translator.post_processor.polisher import PolishResult
     from transbridge.converter.translation_entry import TranslationEntry
 
-_COL_ORIGINAL = 0
-_COL_CURRENT = 1
-_COL_ISSUES = 2
-_COL_REFINED = 3
-_COL_POLISHED = 4
-_COL_DECISION = 5
-_COL_SELECTION = 6
-
-_STATUS_ACCEPTED = "accepted"
-_STATUS_REJECTED = "rejected"
-_STATUS_PENDING = "pending"
-_STATUS_FAILED = "failed"
-
 
 class _PolishPreviewDialog(QDialog):
-    """润色结果预览对话框。
-
-    展示原文、当前译文、检测问题、纠错候选、最终候选、裁决和采用选择。
-    每行可反复选择采用候选或保留原译文；生成失败的条目不可采用。
-    """
+    """Keep candidates and choices separate from their visible table cells."""
 
     def __init__(
         self,
@@ -57,18 +40,19 @@ class _PolishPreviewDialog(QDialog):
         theme_view: ThemeView | None = None,
     ):
         super().__init__(parent)
-        self._entries = entries
-        self._results = results
-        self._row_status: dict[int, str] = {}  # row_index → status
+        self._entries, self._results = entries, results
+        self._loading = True
+        self._closed = False
+        self._reader = LatestReadController(build_preview, self)
+        self._reader.ready.connect(self._loaded)
+        self._reader.failed.connect(self._failed)
         self.setWindowTitle("润色结果预览")
         self.resize(900, 550)
         self._init_ui()
-        self._populate()
         self._theme_binding = AiThemeBinding(self, theme_view, self._apply_theme)
+        self._populate()
 
     def keyPressEvent(self, event) -> None:
-        # Reviewing a cell must not activate a bulk choice through QDialog's
-        # implicit default button. Explicitly focused buttons keep Enter support.
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and self._table.hasFocus():
             event.accept()
             return
@@ -77,58 +61,38 @@ class _PolishPreviewDialog(QDialog):
     def _init_ui(self):
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
-
-        # ── 工具栏 ──────────────────────────────────────────────────────────
         toolbar = QHBoxLayout()
-
         self._accept_all_btn = QPushButton("全部采用候选")
         self._accept_all_btn.clicked.connect(self._on_accept_all)
         toolbar.addWidget(self._accept_all_btn)
-
         self._reject_all_btn = QPushButton("全部保留原译文")
         self._reject_all_btn.clicked.connect(self._on_reject_all)
         toolbar.addWidget(self._reject_all_btn)
-
         toolbar.addStretch()
-
         self._stats_lbl = QLabel()
         toolbar.addWidget(self._stats_lbl)
-
         layout.addLayout(toolbar)
         hint = QLabel("在“采用候选”列勾选采用、取消勾选保留原译文；确认应用前可随时更改。")
         hint.setWordWrap(True)
         layout.addWidget(hint)
-
-        # ── 表格 ────────────────────────────────────────────────────────────
-        self._table = QTableWidget()
-        self._table.setColumnCount(7)
-        self._table.setHorizontalHeaderLabels([
-            "原文",
-            "当前译文",
-            "检测问题",
-            "纠错候选",
-            "最终候选",
-            "裁决",
-            "采用候选",
-        ])
+        self._table = QTableView()
+        self._model = PolishPreviewModel(self)
+        self._table.setModel(self._model)
+        self._model.choices_changed.connect(self._update_stats)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self._table.horizontalHeader().setSectionResizeMode(_COL_SELECTION, QHeaderView.ResizeMode.Fixed)
+        self._table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
         self._resize_choice_column()
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.setTabKeyNavigation(False)
         self._table.verticalHeader().setVisible(False)
-        self._table.cellClicked.connect(self._on_cell_clicked)
-        self._table.itemChanged.connect(self._on_choice_changed)
+        self._table.clicked.connect(self._clicked)
         layout.addWidget(self._table)
-
-        # ── 底部按钮 ────────────────────────────────────────────────────────
         bottom = QHBoxLayout()
         bottom.addStretch()
         cancel_btn = QPushButton("取消")
         cancel_btn.clicked.connect(self.reject)
         bottom.addWidget(cancel_btn)
-
         self._apply_btn = QPushButton("确认应用")
         ComponentStyle.apply_static(self._apply_btn, ComponentKind.BUTTON)
         ComponentStyle.apply_state(self._apply_btn, SemanticState.PRIMARY)
@@ -137,171 +101,79 @@ class _PolishPreviewDialog(QDialog):
         layout.addLayout(bottom)
 
     def _populate(self):
-        self._table.setRowCount(len(self._entries))
-        self._row_status.clear()
+        self._loading = True
+        self._stats_lbl.setText("正在整理润色结果…")
+        self._set_actions_enabled(False)
+        self._reader.submit((self._entries, self._results))
 
-        for row, entry in enumerate(self._entries):
-            result = self._results.get(ai_entry_id(entry))
-            if result is None:
-                self._row_status[row] = _STATUS_FAILED
-                self._add_row(
-                    row,
-                    entry.original,
-                    entry.translation or "",
-                    "未生成结果",
-                    "",
-                    entry.translation or "",
-                    "failed",
-                    True,
-                )
-                continue
+    @pyqtSlot(object, object)
+    def _loaded(self, _request, projection):
+        self._loading = False
+        self._model.set_projection(projection)
+        self._set_actions_enabled(True)
 
-            failed = result.confidence <= 0
-            self._row_status[row] = _STATUS_FAILED if failed else _STATUS_PENDING
-            issues = "\n".join(f"[{issue.severity}] {issue.message}" for issue in getattr(result, "issues", ())) or "无"
-            decision = f"{getattr(result, 'verdict', 'pending')} ({result.confidence:.2f})"
-            if result.note:
-                decision = f"{decision}\n{result.note}"
-            self._add_row(
-                row,
-                entry.original or "",
-                entry.translation or "",
-                issues,
-                getattr(result, "refined_translation", None) or entry.translation or "",
-                result.polished_translation or entry.translation or "",
-                decision,
-                failed,
-            )
+    @pyqtSlot(str)
+    def _failed(self, error):
+        self._loading = False
+        self._stats_lbl.setText(f"无法整理润色结果：{error}")
 
-        self._update_stats()
+    def _set_actions_enabled(self, enabled):
+        for button in (self._accept_all_btn, self._reject_all_btn, self._apply_btn):
+            button.setEnabled(enabled)
 
-    def _add_row(
-        self,
-        row: int,
-        original: str,
-        current: str,
-        issues: str,
-        refined: str,
-        polished: str,
-        decision: str,
-        failed: bool,
-    ):
-        items = []
-        for col, text in enumerate([original, current, issues, refined, polished, decision]):
-            item = QTableWidgetItem(text)
-            item.setToolTip(text)
-            if col == _COL_POLISHED and not failed:
-                item.setData(Qt.ItemDataRole.UserRole, _STATUS_PENDING)
-            items.append(item)
+    def _clicked(self, index):
+        self._on_cell_clicked(index.row(), index.column())
 
-        for col, item in enumerate(items):
-            self._table.setItem(row, col, item)
-        choice = QTableWidgetItem()
-        choice.setFlags(choice.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-        if failed:
-            choice.setFlags(choice.flags() & ~Qt.ItemFlag.ItemIsEnabled & ~Qt.ItemFlag.ItemIsUserCheckable)
-            choice.setToolTip("未生成有效候选，将保留原译文。")
-        else:
-            choice.setToolTip("勾选采用候选，取消勾选保留原译文；可随时更改。")
-        with QSignalBlocker(self._table):
-            self._table.setItem(row, _COL_SELECTION, choice)
-        self._refresh_row(row)
-
-    def _on_cell_clicked(self, row: int, col: int):
-        if col != _COL_POLISHED:
-            return
-        if self._row_status.get(row) == _STATUS_FAILED:
-            return
-
-        current_status = self._row_status.get(row, _STATUS_PENDING)
-        self._set_row_status(row, _STATUS_REJECTED if current_status == _STATUS_ACCEPTED else _STATUS_ACCEPTED)
-        self._update_stats()
-
-    def _on_choice_changed(self, item: QTableWidgetItem) -> None:
-        if item.column() != _COL_SELECTION or item.checkState() == Qt.CheckState.PartiallyChecked:
-            return
-        self._set_row_status(
-            item.row(), _STATUS_ACCEPTED if item.checkState() == Qt.CheckState.Checked else _STATUS_REJECTED
-        )
-        self._update_stats()
-
-    def _set_row_status(self, row: int, status: str) -> None:
-        if self._row_status.get(row) == _STATUS_FAILED:
-            return
-        self._row_status[row] = status
-        self._table.item(row, _COL_POLISHED).setData(Qt.ItemDataRole.UserRole, status)
-        self._refresh_row(row)
+    def _on_cell_clicked(self, row, col):
+        if col == 4 and 0 <= row < self._model.rowCount():
+            self._model.set_status(row, REJECTED if self._model.status(row) == ACCEPTED else ACCEPTED)
 
     def _on_accept_all(self):
-        for row in range(self._table.rowCount()):
-            self._set_row_status(row, _STATUS_ACCEPTED)
-        self._update_stats()
+        if not self._loading:
+            self._model.set_all(ACCEPTED)
 
     def _on_reject_all(self):
-        for row in range(self._table.rowCount()):
-            self._set_row_status(row, _STATUS_REJECTED)
-        self._update_stats()
+        if not self._loading:
+            self._model.set_all(REJECTED)
 
     def _update_stats(self):
-        accepted = sum(1 for s in self._row_status.values() if s == _STATUS_ACCEPTED)
-        rejected = sum(1 for s in self._row_status.values() if s == _STATUS_REJECTED)
-        pending = sum(1 for s in self._row_status.values() if s == _STATUS_PENDING)
-        failed = sum(1 for s in self._row_status.values() if s == _STATUS_FAILED)
-        total = len(self._row_status)
-        self._stats_lbl.setText(f"采用 {accepted} · 保留 {rejected} · 待选 {pending} · 失败 {failed} · 共 {total} 条")
+        counts = self._model.counts
+        self._stats_lbl.setText(
+            f"采用 {counts[ACCEPTED]} · 保留 {counts[REJECTED]} · 待选 {counts[PENDING]} · "
+            f"失败 {counts[FAILED]} · 共 {self._model.rowCount()} 条"
+        )
         self._stats_lbl.setAccessibleName("润色选择状态")
         self._stats_lbl.setAccessibleDescription(self._stats_lbl.text())
 
-    def _apply_theme(self, binding: AiThemeBinding) -> None:
+    def _apply_theme(self, binding):
         self._resize_choice_column()
-        for row in range(self._table.rowCount()):
-            self._refresh_row(row, binding)
-
-    def _resize_choice_column(self) -> None:
-        # Reserve checkbox and longest label space so choosing an option never moves the click target.
-        self._table.setColumnWidth(_COL_SELECTION, self._table.fontMetrics().horizontalAdvance("保留原译文") + 48)
-
-    def _refresh_row(self, row: int, binding: AiThemeBinding | None = None) -> None:
-        status = self._row_status[row]
-        choice = self._table.item(row, _COL_SELECTION)
-        if choice is not None:
-            with QSignalBlocker(self._table):
-                choice.setText(
-                    {
-                        _STATUS_ACCEPTED: "采用候选",
-                        _STATUS_REJECTED: "保留原译文",
-                        _STATUS_PENDING: "待选择",
-                        _STATUS_FAILED: "生成失败",
-                    }[status]
+        if binding.domain is not None:
+            self._model.set_backgrounds({
+                status: binding.domain.diff(key).background
+                for status, key in (
+                    (ACCEPTED, "added"),
+                    (REJECTED, "removed"),
+                    (PENDING, "changed"),
+                    (FAILED, "unchanged"),
                 )
-                if status != _STATUS_FAILED:
-                    choice.setCheckState(
-                        {
-                            _STATUS_ACCEPTED: Qt.CheckState.Checked,
-                            _STATUS_REJECTED: Qt.CheckState.Unchecked,
-                            _STATUS_PENDING: Qt.CheckState.PartiallyChecked,
-                        }[status]
-                    )
-        binding = binding or getattr(self, "_theme_binding", None)
-        if binding is None or binding.domain is None:
-            return
-        key = {
-            _STATUS_ACCEPTED: "added",
-            _STATUS_REJECTED: "removed",
-            _STATUS_PENDING: "changed",
-        }.get(self._row_status.get(row), "unchanged")
-        brush = binding.domain.diff(key).background
-        item = self._table.item(row, _COL_POLISHED)
-        if item is not None:
-            item.setBackground(brush)
+            })
+
+    def _resize_choice_column(self):
+        self._table.setColumnWidth(6, self._table.fontMetrics().horizontalAdvance("保留原译文") + 48)
 
     @property
-    def theme_revision(self) -> int:
+    def theme_revision(self):
         return self._theme_binding.revision
 
+    @property
+    def _row_status(self):
+        return {row: self._model.status(row) for row in range(self._model.rowCount())}
+
     def _on_apply(self):
-        pending = sum(1 for s in self._row_status.values() if s == _STATUS_PENDING)
-        if pending > 0:
+        if self._loading or not self._apply_btn.isEnabled():
+            return
+        pending = self._model.counts[PENDING]
+        if pending:
             from PyQt6.QtWidgets import QMessageBox
 
             reply = QMessageBox.question(
@@ -315,22 +187,17 @@ class _PolishPreviewDialog(QDialog):
                 return
         self.accept()
 
-    def get_results(self) -> dict[str, str | None]:
-        """
-        获取润色结果映射。
+    def done(self, result):
+        self._closed = True
+        self._reader.invalidate()
+        super().done(result)
 
-        Returns:
-            entry_id → 最终译文（None 表示拒绝润色，保留原译文）
-        """
-        result: dict[str, str | None] = {}
-        for row, entry in enumerate(self._entries):
-            status = self._row_status.get(row, _STATUS_REJECTED)
-            if status == _STATUS_ACCEPTED:
-                polish_result = self._results.get(ai_entry_id(entry))
-                if polish_result:
-                    result[ai_entry_id(entry)] = polish_result.polished_translation
-                else:
-                    result[ai_entry_id(entry)] = None
-            else:
-                result[ai_entry_id(entry)] = None
-        return result
+    def showEvent(self, event):
+        if self._closed and self._loading:
+            self._populate()
+        self._closed = False
+        super().showEvent(event)
+
+    def get_results(self) -> dict[str, str | None]:
+        """Return candidate translations for accepted entries; otherwise None."""
+        return self._model.results()

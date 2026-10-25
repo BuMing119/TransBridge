@@ -24,6 +24,8 @@ from .prompt_contract import (
     render_prompt_template,
     validate_prompt_template,
 )
+from .review_decision import review_fields, reviewed_decision, substantive_errors
+from .review_evidence import capture_arbitration, format_review_evidence, review_result_fields
 
 if TYPE_CHECKING:
     from ...converter.translation_entry import TranslationEntry
@@ -43,6 +45,14 @@ class ArbiterDecision:
     confidence: float  # 裁决信心度 (0-1)
     suggested_action: str  # 建议动作
     alternatives: list[str] = field(default_factory=list)  # 替代方案
+    review_status: str = ""
+    review_reason: str = ""
+    valid: bool = True
+    review_contract_version: int = 0
+    review_reference_terms: dict = field(default_factory=dict)
+    detected_issues: tuple[dict, ...] = ()
+    review_before_text: str | None = None
+    reviewed_translation: str | None = None
 
 
 @dataclass
@@ -66,10 +76,13 @@ Candidate priority is polished result > corrected result > initial translation. 
 
 Decision criteria:
 - "pass": publishable, natural, contextually appropriate, and free of clear errors
-- "reject": a severe semantic, terminology, formatting, or style problem requires retranslation
+- "reject": a severe semantic, formatting, or style problem requires retranslation
 - "pending": uncertainty, ambiguity, creative judgment, or substantial changes require human review
 Prefer pending over accepting risk. Explain reject decisions and identify review points for pending.
 Consider refiner and polisher confidence.
+Terminology and detector findings are advisory. A glossary mismatch alone never warrants rejection.
+Keep valid contextual translations and respect earlier semantic explanations of an unsuitable reference.
+Set review_status to revised, retained, term_suspect, or needs_review, with the explanation in review_reason.
 
 Return only the structured arbitration decision. Confidence above 0.9 means high certainty; below 0.7 suggests pending.
 alternatives is especially useful for reject decisions."""
@@ -129,6 +142,9 @@ Decision criteria:
 - "pending": uncertainty requires human review
 
 Prefer pending over accepting a risky translation.
+Terminology and detector findings are advisory. A glossary mismatch alone never warrants rejection.
+Respect earlier semantic judgments. Set review_status to revised, retained, term_suspect, or needs_review,
+with the explanation in review_reason.
 
 Return only the structured arbitration decisions, with one decision for every input entry. Preserve each entry ID
 exactly. Confidence above 0.9 means high certainty; below 0.7 suggests pending."""
@@ -328,12 +344,13 @@ class LLMArbiter:
 
         # 复杂情况使用LLM裁决
         try:
-            messages = self._build_arbitration_prompt(ctx)
+            evidence = capture_arbitration(ctx)
+            messages = self._build_arbitration_prompt(ctx, evidence=evidence)
             response = self._llm.chat(
                 messages=messages,
                 max_tokens=output_token_limit(self._max_output_tokens, 1000),
             )
-            return self._parse_arbitration_response(ai_entry_id(ctx.entry), response)
+            return self._parse_arbitration_response(ai_entry_id(ctx.entry), response, evidence)
         except Exception as e:
             # LLM调用失败，基于规则做保守判定
             return self._fallback_decision(
@@ -370,12 +387,13 @@ class LLMArbiter:
         # 对需要LLM的条目进行批量裁决
         if needs_llm:
             try:
-                messages = self._build_batch_arbitration_prompt(needs_llm)
+                evidence = {ai_entry_id(ctx.entry): capture_arbitration(ctx) for ctx in needs_llm}
+                messages = self._build_batch_arbitration_prompt(needs_llm, evidence=evidence)
                 response = self._llm.chat(
                     messages=messages,
                     max_tokens=output_token_limit(self._max_output_tokens, 3000),
                 )
-                batch_decisions = self._parse_batch_arbitration_response(needs_llm, response)
+                batch_decisions = self._parse_batch_arbitration_response(needs_llm, response, evidence)
                 decisions.update(batch_decisions)
             except Exception as e:
                 # 批量失败，逐个使用fallback
@@ -434,8 +452,12 @@ class LLMArbiter:
                 suggested_action="打回重翻" if self._strict_mode else "人工审核",
             )
 
-        # 情况3：修复信心度很高（>0.9）且无error级别问题 -> 快速通过
-        error_issues = [i for i in issues if i.severity == "error"]
+        semantic_decision = reviewed_decision(ctx)
+        if semantic_decision is not None:
+            return semantic_decision
+
+        # Historical terminology findings remain advisory, even if stored as errors.
+        error_issues = substantive_errors(issues)
         if refine and not polish and refine.confidence > 0.9 and not error_issues:
             # 检查是否修复了所有问题
             fixed_types = {f.issue_type for f in refine.fixes_applied}
@@ -451,7 +473,10 @@ class LLMArbiter:
 
         # 情况4：修复信心度很低（<0.5）-> pending或reject
         if refine and refine.confidence < 0.5:
-            if self._strict_mode:
+            advisory_only = issues and all(
+                issue.issue_type in {"term_mismatch", "cross_entry_inconsistency"} for issue in issues
+            )
+            if self._strict_mode and not advisory_only:
                 return ArbiterDecision(
                     entry_id=ai_entry_key(entry),
                     verdict="reject",
@@ -490,7 +515,7 @@ class LLMArbiter:
     ) -> ArbiterDecision:
         """LLM失败时的降级裁决。"""
         # 保守策略：有问题就pending
-        has_errors = any(i.severity == "error" for i in ctx.original_issues)
+        has_errors = bool(substantive_errors(ctx.original_issues))
 
         if has_errors:
             verdict = "reject" if self._strict_mode else "pending"
@@ -503,11 +528,14 @@ class LLMArbiter:
             reason=f"LLM裁决失败: {error_msg}，使用保守策略",
             confidence=0.5,
             suggested_action="人工审核" if verdict == "pending" else "打回重翻",
+            valid=False,
         )
 
     def _build_arbitration_prompt(
         self,
         ctx: ArbitrationContext,
+        *,
+        evidence=None,
     ) -> list[dict]:
         """构建裁决Prompt。"""
         entry = ctx.entry
@@ -515,7 +543,7 @@ class LLMArbiter:
         polish = ctx.polish_result
 
         # 格式化原问题
-        issues_text = self._format_issues(ctx.original_issues)
+        issues_text = format_review_evidence(evidence if evidence is not None else capture_arbitration(ctx))
 
         # 格式化修复和润色详情
         fix_details = self._format_fix_details(refine)
@@ -555,6 +583,8 @@ class LLMArbiter:
     def _build_batch_arbitration_prompt(
         self,
         contexts: list[ArbitrationContext],
+        *,
+        evidence=None,
     ) -> list[dict]:
         """构建批量裁决Prompt。"""
         lines = ["Judge the final quality of the following translation entries.\n"]
@@ -581,13 +611,13 @@ class LLMArbiter:
             lines.append(f"Final translation: {final_translation}")
             lines.append(f"Context: {entry.context or 'unknown'}")
 
-            if ctx.original_issues:
-                lines.append("Detected issues:")
-                for issue in ctx.original_issues:
-                    lines.append(f"  - [{issue.severity}] {issue.issue_type}: {issue.message}")
+            captured = (evidence or {}).get(ai_entry_id(entry))
+            lines.append("Reference terminology and detected issues:")
+            lines.append(format_review_evidence(captured if captured is not None else capture_arbitration(ctx)))
 
             if refine:
                 lines.append(f"Refiner confidence: {refine.confidence:.2f}")
+                lines.append(f"Semantic review: {refine.review_status}; {refine.review_reason}")
                 if refine.fixes_applied:
                     lines.append("Applied corrections:")
                     for fix in refine.fixes_applied:
@@ -615,16 +645,6 @@ class LLMArbiter:
             user_content="\n".join(lines),
         )
 
-    def _format_issues(self, issues: list["PostProcessIssue"]) -> str:
-        """格式化问题列表。"""
-        if not issues:
-            return "none"
-
-        lines = []
-        for issue in issues:
-            lines.append(f"[{issue.severity}] {issue.issue_type}: {issue.message}")
-        return "\n".join(lines)
-
     def _format_fix_details(self, refine: "RefineResult | None") -> str:
         """格式化修复详情。"""
         if not refine:
@@ -633,6 +653,7 @@ class LLMArbiter:
         lines = []
         lines.append(f"Corrected translation: {refine.refined_translation}")
         lines.append(f"Refiner confidence: {refine.confidence:.2f}")
+        lines.append(f"Semantic review: {refine.review_status}; {refine.review_reason}")
 
         if refine.fixes_applied:
             lines.append("Applied corrections:")
@@ -679,6 +700,7 @@ class LLMArbiter:
         self,
         entry_id: str,
         response: str,
+        evidence=None,
     ) -> ArbiterDecision:
         """解析裁决响应。"""
         try:
@@ -700,6 +722,9 @@ class LLMArbiter:
                 confidence=data.get("confidence", 0.5),
                 suggested_action=data.get("suggested_action", ""),
                 alternatives=data.get("alternatives", []),
+                **(
+                    review_fields(data) | review_result_fields(data, evidence, evidence.before_text if evidence else "")
+                ),
             )
 
         except (AttributeError, TypeError, json.JSONDecodeError):
@@ -709,12 +734,14 @@ class LLMArbiter:
                 reason=f"响应解析异常: {response[:200]}",
                 confidence=0.5,
                 suggested_action="建议人工确认",
+                valid=False,
             )
 
     def _parse_batch_arbitration_response(
         self,
         contexts: list[ArbitrationContext],
         response: str,
+        evidence=None,
     ) -> dict[str, ArbiterDecision]:
         """解析批量裁决响应。"""
         context_map = {
@@ -750,6 +777,14 @@ class LLMArbiter:
                     confidence=item.get("confidence", 0.5),
                     suggested_action=item.get("suggested_action", ""),
                     alternatives=item.get("alternatives", []),
+                    **(
+                        review_fields(item)
+                        | review_result_fields(
+                            item,
+                            (evidence or {}).get(entry_id),
+                            evidence[entry_id].before_text if evidence and entry_id in evidence else "",
+                        )
+                    ),
                 )
 
             for ctx in contexts:

@@ -55,7 +55,7 @@ class _Worker(QObject):
         self.is_paused = False
         self.pause_state_changed.emit("running")
 
-    def publish(self, outcomes):
+    def publish(self, outcomes, *, finish=True):
         from transbridge.ai_translator.translation_entry_outcomes import TranslationEntryOutcome
 
         for outcome in outcomes:
@@ -84,8 +84,9 @@ class _Worker(QObject):
                     }
                 )
         self.completed.emit(tuple(outcomes))
-        self.running = False
-        self.finished.emit()
+        if finish:
+            self.running = False
+            self.finished.emit()
 
     def deleteLater(self):
         self.deleted = True
@@ -201,12 +202,25 @@ def qapp():
     return QApplication.instance() or QApplication([])
 
 
-def _wait_reports(qapp, window):
+def _wait_until(predicate):
     deadline = time.monotonic() + 5
-    while (window.run.records.busy or window.run.completion.pending is not None) and time.monotonic() < deadline:
-        qapp.processEvents()
+    while not predicate() and time.monotonic() < deadline:
+        QApplication.instance().processEvents()
         time.sleep(0.001)
-    assert not window.run.records.busy
+    assert predicate()
+
+
+def _wait_reports(qapp, window):
+    _wait_until(
+        lambda: (
+            not (
+                window.run.records.busy
+                or window.run.recovery.busy
+                or window.run.result_preparation.busy
+                or window.run.completion.pending is not None
+            )
+        )
+    )
 
 
 @pytest.fixture
@@ -252,6 +266,7 @@ def make_window(qapp, monkeypatch, tmp_path):
 def _start(window, session):
     window.prepare()
     session.ready()
+    _wait_until(lambda: not window.run.preparing)
     return window.run.worker
 
 
@@ -284,6 +299,7 @@ def test_retry_only_failed_source_preserves_successful_detached_result(qapp, mak
     _wait_reports(qapp, window)
     assert session.commits == 1 and session.saved and window.retry_button.isEnabled()
     window.retry_button.click()
+    _wait_until(lambda: not window.run.preparing)
     retried = window.run.worker
     assert tuple(task.key for task in retried.tasks) == (second.key,)
     assert next(iter(retried.tasks[0].collection)).translation == "旧译文"
@@ -317,10 +333,12 @@ def test_step_progress_and_finished_close_do_not_cancel_success(qapp, make_windo
     window, session, _ = make_window()
     worker = _start(window, session)
     worker.progress.emit(session.tasks[0].key, "proofread", 2, 5, "术语修复已处理 2/5 条")
-    assert window.bar.value() == 2 and window.bar.maximum() == 5
+    assert window.bar.value() == 0 and window.bar.maximum() == len(session.tasks)
+    progress = window.run.progress_view.source_rows[session.tasks[0].key]
+    assert (progress.current, progress.total) == (2, 5)
     assert window.rows[session.tasks[0].key].text(1) == "校对"
     worker.publish(tuple(SourceOutcome(task) for task in session.tasks))
-    assert window.stop_button.text() == "关闭"
+    assert window.run.result_preparation.busy
     assert window.stop_button.isEnabled()
     _wait_reports(qapp, window)
     assert window.stop_button.text() == "关闭"
@@ -393,6 +411,7 @@ def test_preview_and_save_exceptions_are_visible_without_escaping_qt_slot(qapp, 
     monkeypatch.setattr(window, "_apply_preview", Mock(side_effect=RuntimeError("preview failed")))
     worker = _start(window, session)
     worker.publish(tuple(SourceOutcome(task) for task in session.tasks))
+    _wait_reports(qapp, window)
     window.show()
     window.preview_button.click()
     _wait_reports(qapp, window)
@@ -414,6 +433,7 @@ def test_close_hides_while_snapshot_and_records_continue(qapp, make_window):
     assert event.isAccepted()
     assert not session.discarded
     session.ready()
+    _wait_until(lambda: not window.run.preparing)
     window.run.worker.publish(tuple(SourceOutcome(task) for task in session.tasks))
     event = QCloseEvent()
     window.closeEvent(event)
@@ -507,6 +527,7 @@ def test_real_activity_adapter_reaches_cancelled_terminal_state(
     if exit_path == "cancel_preview":
         monkeypatch.setattr(window, "_apply_preview", lambda: False)
         worker.publish(tuple(SourceOutcome(task) for task in session.tasks))
+        _wait_reports(qapp, window)
         window.show()
         window.preview_button.click()
     else:
@@ -550,8 +571,8 @@ def test_visible_preview_rejection_finishes_activity_and_persists_cancellation_r
     shown = []
 
     def reject():
-        # The preview runs inside completed.emit(), before finished has cleared
-        # the worker; this is different from reopening a hidden finished task.
+        # The asynchronous result projection may finish before the source worker
+        # exits. Cancellation must still retain that worker until its final signal.
         assert window.run.worker is worker and worker.isRunning()
         assert window.run.completion_received
         shown.append(True)
@@ -559,7 +580,10 @@ def test_visible_preview_rejection_finishes_activity_and_persists_cancellation_r
 
     monkeypatch.setattr(window, "_apply_preview", reject)
     window.show()
-    worker.publish(tuple(SourceOutcome(task) for task in session.tasks))
+    worker.publish(tuple(SourceOutcome(task) for task in session.tasks), finish=False)
+    _wait_until(lambda: bool(shown))
+    worker.running = False
+    worker.finished.emit()
     _wait_reports(qapp, window)
 
     assert shown == [True]
@@ -585,6 +609,7 @@ def test_remote_client_closes_once_only_after_background_work_stops(qapp, make_w
     assert event.isAccepted()
     client.close.assert_not_called()
     session.ready()
+    _wait_until(lambda: not window.run.preparing)
     client.close.assert_not_called()
     window.run.worker.publish(tuple(SourceOutcome(task) for task in session.tasks))
     _wait_reports(qapp, window)
@@ -654,6 +679,7 @@ def test_closing_during_project_save_keeps_callback_and_result(qapp, make_window
     monkeypatch.setattr(session, "save_translation", delayed_save)
     worker = _start(window, session)
     worker.publish(tuple(SourceOutcome(task) for task in session.tasks))
+    _wait_until(lambda: bool(callbacks))
     window.show()
     assert session.is_busy
     window.close()
@@ -703,6 +729,7 @@ def test_close_and_reopen_remain_available_during_slow_history_write(qapp, make_
     try:
         worker = _start(window, session)
         worker.publish(tuple(SourceOutcome(task) for task in session.tasks))
+        _wait_until(lambda: session.completed and session.saved)
         deadline = time.monotonic() + 2
         while not entered.is_set() and time.monotonic() < deadline:
             qapp.processEvents()

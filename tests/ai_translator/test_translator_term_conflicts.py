@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import threading
 import time
@@ -264,7 +264,10 @@ def test_term_snapshot_is_observed_before_any_model_call(monkeypatch) -> None:
 def test_generated_terms_are_observed_only_after_successful_storage(monkeypatch, from_dialogue):
     harness = _harness(monkeypatch, conflicts=())
     stored, observed = [], []
-    database = SimpleNamespace(add_many_and_save=lambda terms: stored.extend(terms))
+    database = SimpleNamespace(
+        add_many_and_save=lambda terms: stored.extend(terms),
+        as_list=lambda: [TermEntry(*row) for row in stored],
+    )
     monkeypatch.setattr(harness.term_manager, "get_dynamic_db", lambda: database, raising=False)
     monkeypatch.setattr(harness.term_manager, "has_term", lambda _: False, raising=False)
     harness.translator._term_update_observer = lambda manager, terms: observed.append((
@@ -370,7 +373,7 @@ def test_blank_sources_never_reach_llm_or_progress_and_preserve_values(monkeypat
         assert harness.collection.get(normal.key).translation == "translated:normal"
 
 
-def test_only_effective_library_conflicts_enter_single_entry_repair_and_use_latest_authority(monkeypatch) -> None:
+def test_library_conflicts_do_not_expand_translation_scope_or_force_retranslation(monkeypatch) -> None:
     effective = _entry("effective", translation="旧冲突译文", stage=1)
     internal = _entry("internal", translation="内部冲突原译文", stage=1)
     harness = _harness(
@@ -381,21 +384,14 @@ def test_only_effective_library_conflicts_enter_single_entry_repair_and_use_late
     result = _run(harness)
 
     assert result.failed_count == 0
-    assert harness.llm.keys_by_call.count(("effective",)) == 1
+    assert all("effective" not in keys for keys in harness.llm.keys_by_call)
     assert all("internal" not in keys for keys in harness.llm.keys_by_call)
-    assert harness.collection.get("effective").translation == "采用最新权威译法"
+    assert harness.collection.get("effective").translation == "旧冲突译文"
     assert harness.collection.get("internal").translation == "内部冲突原译文"
-    assert harness.repair_options == [
-        {
-            "required_terms_by_entry": {"effective": {"Guild": "冲突记录中的旧权威译法"}},
-            "update_terms": False,
-        }
-    ]
-    repair_prompt = next(call for call in harness.builder.calls if call["keys"] == ["effective"])
-    assert repair_prompt["terms_by_entry"]["effective"]["Guild"] == "最新权威译法"
+    assert harness.repair_options == []
 
 
-def test_overwrite_mode_replaces_normal_occurrence_with_one_conflict_repair(monkeypatch) -> None:
+def test_overwrite_mode_translates_conflicting_entry_once_without_forced_repair(monkeypatch) -> None:
     effective = _entry("effective", translation="旧冲突译文", stage=1)
     harness = _harness(
         monkeypatch,
@@ -408,26 +404,27 @@ def test_overwrite_mode_replaces_normal_occurrence_with_one_conflict_repair(monk
     flattened = [key for call in harness.llm.keys_by_call for key in call]
     assert result.failed_count == 0
     assert flattened.count("effective") == 1
-    assert len(harness.repair_options) == 1
+    assert harness.repair_options == []
 
 
-def test_failed_conflict_constraint_preserves_original_translation(monkeypatch) -> None:
+def test_different_reference_translation_does_not_fail_normal_translation(monkeypatch) -> None:
     effective = _entry("effective", translation="旧冲突译文", stage=1)
     harness = _harness(
         monkeypatch,
         conflicts=(_conflict(effective, "effective_library"),),
         repair_translation="仍然使用错误译法",
+        overwrite=True,
     )
 
     result = _run(harness)
 
-    assert result.failed_count == 1
-    assert any("未采用权威术语" in failure for failure in result.failed_entries)
-    assert harness.collection.get("effective").translation == "旧冲突译文"
+    assert result.failed_count == 0
+    assert result.failed_entries == []
+    assert harness.collection.get("effective").translation == "仍然使用错误译法"
     assert harness.collection.get("normal").translation == "translated:normal"
 
 
-def test_pending_conflict_repair_is_restored_when_extraction_marker_skips_new_evidence(monkeypatch) -> None:
+def test_legacy_repair_checkpoint_does_not_restore_obsolete_forced_retranslation(monkeypatch) -> None:
     effective = _entry("effective", translation="旧冲突译文", stage=1)
     harness = _harness(monkeypatch, conflicts=())
     checkpoint = ProgressCheckpoint(
@@ -448,8 +445,8 @@ def test_pending_conflict_repair_is_restored_when_extraction_marker_skips_new_ev
     result = _run(harness, checkpoint)
 
     assert result.failed_count == 0
-    assert harness.llm.keys_by_call.count(("effective",)) == 1
-    assert harness.collection.get("effective").translation == "采用最新权威译法"
+    assert all("effective" not in keys for keys in harness.llm.keys_by_call)
+    assert harness.collection.get("effective").translation == "旧冲突译文"
 
 
 def test_queued_batch_builds_prompt_after_admission_with_latest_in_flight_terms(monkeypatch) -> None:
@@ -497,7 +494,7 @@ def test_queued_batch_builds_prompt_after_admission_with_latest_in_flight_terms(
         accept=lambda translations, _collection: SimpleNamespace(accepted=len(translations))
     )
     first = _entry("first")
-    second = _entry("second")
+    second = replace(_entry("second"), original="NewestTerm arrives")
     collection = TranslationEntryCollection([first, second])
     result = TranslationResult()
     lock = threading.Lock()
@@ -525,7 +522,7 @@ def test_queued_batch_builds_prompt_after_admission_with_latest_in_flight_terms(
 
     assert errors == []
     second_snapshot = next(snapshot for keys, snapshot in manager.match_snapshots if keys == ("second",))
-    assert second_snapshot["NewestTerm"] == "最新译法"
+    assert "NewestTerm" not in second_snapshot  # Retrieval ran before the model slot became available.
     second_prompt = next(call for call in builder.calls if call["keys"] == ["second"])
     assert second_prompt["terms"]["NewestTerm"] == "最新译法"
 

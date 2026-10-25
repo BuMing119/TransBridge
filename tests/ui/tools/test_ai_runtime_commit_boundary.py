@@ -53,7 +53,7 @@ def active_run(qapp, session, monkeypatch, request):
         if run.worker is not None:
             run.worker.publish(())
         session_support._wait(qapp, session)
-        support._wait_reports(qapp, SimpleNamespace(run=run))
+        support._wait_until(lambda: not run.busy)
         run.preparing = False
         run.dispose()
         controller.finish(request.run_id)
@@ -79,7 +79,7 @@ def test_cancel_after_commit_keeps_applied_ledger_and_reaches_cancelled(qapp, ac
     try:
         item.run.worker.publish(_outcomes(item.session))
         session_support._wait(qapp, item.session)
-        support._wait_reports(qapp, SimpleNamespace(run=item.run))
+        support._wait_until(lambda: not item.run.busy)
         assert next(iter(item.session._ctx.collection)).translation == "新译文"
         assert item.run.entries.applied_keys == item.session.applied_keys
         assert len(item.session.applied_keys) == 2
@@ -113,7 +113,7 @@ def test_external_cancel_is_delivered_on_gui_thread_and_waits_for_worker_release
     assert item.run.cancelled and worker.was_cancelled
     item.client.close.assert_not_called()
     worker.publish(_outcomes(item.session))
-    support._wait_reports(qapp, SimpleNamespace(run=item.run))
+    support._wait_until(lambda: not item.run.busy)
     item.run.cancel()
     item.run.cancel()
     qapp.processEvents()
@@ -135,7 +135,7 @@ def test_mutation_exception_is_failed_and_never_records_applied(qapp, active_run
     monkeypatch.setattr(item.session, "commit_mutation", fail_commit)
     item.run.worker.publish(_outcomes(item.session))
     session_support._wait(qapp, item.session)
-    support._wait_reports(qapp, SimpleNamespace(run=item.run))
+    support._wait_until(lambda: not item.run.busy)
     assert item.runtime.get(item.request.runtime_ref, item.request.spec.owner).state is JobState.FAILED
     assert item.run.state == "failed" and not item.run.cancelled
     assert not item.run.entries.applied_keys and not item.session.applied_keys
@@ -151,12 +151,13 @@ def test_paused_application_can_be_retried_after_resume(qapp, active_run):
     item.run.worker.publish(_outcomes(item.session))
     item.runtime.pause(item.request.runtime_ref, item.request.spec.owner)
     session_support._wait(qapp, item.session)
+    support._wait_until(lambda: not item.run.busy)
     assert not item.session.applied_keys
     assert item.run.can_apply_success and not item.run.blocked
     item.runtime.resume(item.request.runtime_ref, item.request.spec.owner)
     item.run.apply_results()
     session_support._wait(qapp, item.session)
-    support._wait_reports(qapp, SimpleNamespace(run=item.run))
+    support._wait_until(lambda: not item.run.busy)
     assert len(item.session.applied_keys) == 2
     assert item.run.state == "completed"
     item.client.close.assert_called_once_with()
@@ -170,18 +171,22 @@ def test_hidden_preview_and_repeated_partial_attempts_keep_client_until_completi
     window.close()
     assert not window.run.cancelled
     worker.publish((SourceOutcome(session.tasks[0]), SourceOutcome(session.tasks[1], error="temporary failure")))
+    support._wait_reports(qapp, window)
     window.run.apply_results(lambda: True)
     support._wait_reports(qapp, window)
     client.close.assert_not_called()
     for _ in range(2):
         window.run.retry()
+        support._wait_until(lambda: window.run.worker is not None)
         retried = window.run.worker
         retried.publish(tuple(SourceOutcome(task, error="temporary failure") for task in retried.tasks))
         support._wait_reports(qapp, window)
         client.close.assert_not_called()
     window.run.retry()
+    support._wait_until(lambda: window.run.worker is not None)
     retried = window.run.worker
     retried.publish(tuple(SourceOutcome(task) for task in retried.tasks))
+    support._wait_reports(qapp, window)
     client.close.assert_not_called()
     window.run.apply_results(lambda: True)
     support._wait_reports(qapp, window)

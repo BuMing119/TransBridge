@@ -43,6 +43,7 @@ def test_task_center_cancel_after_execution_blocks_publication(qapp, make_window
     runtime, request, controller = _bind_runtime(window, session)
     worker = support._start(window, session)
     worker.publish(tuple(SourceOutcome(task) for task in session.tasks))
+    support._wait_reports(qapp, window)
     assert window.run.state == "pending_confirmation"
     assert window.run.worker is None and session.commits == 0
 
@@ -80,6 +81,17 @@ def test_task_center_cancel_while_worker_runs_blocks_publication(qapp, make_wind
 
 def test_task_center_cancel_during_real_async_apply_never_changes_live_collection(qapp, session, monkeypatch):
     """Exercise the real detached merge and GUI publication after worker completion."""
+    from transbridge.ui.tools.ai_translator.task_apply_preparation import DraftMergeInput
+
+    entered, release = threading.Event(), threading.Event()
+    original_prepare = DraftMergeInput.prepare
+
+    def held_prepare(merge):
+        entered.set()
+        assert release.wait(5), "test did not release detached result merging"
+        return original_prepare(merge)
+
+    monkeypatch.setattr(DraftMergeInput, "prepare", held_prepare)
     monkeypatch.setattr(task_run, "AiTaskWorker", support._Worker)
     runtime = TaskRuntime(
         id_generator=SimpleNamespace(new_id=lambda: "closure-audit-async"),
@@ -100,18 +112,21 @@ def test_task_center_cancel_during_real_async_apply_never_changes_live_collectio
             entry_outcomes={entry.identity: TranslationEntryOutcome(entry.identity, "succeeded", "审查候选译文", 2)}
         )
         run.worker.publish((SourceOutcome(first, translation=translation), SourceOutcome(second)))
+        support._wait_until(entered.is_set)
         assert run.applying and session.is_busy
         runtime.cancel(request.runtime_ref, request.spec.owner)
+        release.set()
         session_support._wait(qapp, session)
-        support._wait_reports(qapp, SimpleNamespace(run=run))
+        support._wait_until(lambda: not run.busy)
         assert next(iter(session._ctx.collection)).translation == "", "Cancelled candidate reached live collection"
         assert not session.applied_keys
     finally:
+        release.set()
         run.shutdown()
         if run.worker is not None:
             run.worker.publish(())
         session_support._wait(qapp, session)
-        support._wait_reports(qapp, SimpleNamespace(run=run))
+        support._wait_until(lambda: not run.busy)
         run.preparing = False
         run.dispose()
         controller.finish(request.run_id)
@@ -170,12 +185,14 @@ def test_partial_preview_retry_keeps_remote_terminology_client(qapp, make_window
     client.list_terms.assert_called_once_with(42, page=1, page_size=100)
     worker = support._start(window, session)
     worker.publish((SourceOutcome(session.tasks[0]), SourceOutcome(session.tasks[1], error="temporary failure")))
+    support._wait_reports(qapp, window)
     if preview:
         assert window.run.state == "pending_confirmation"
         window.run.apply_results(lambda: True)
     support._wait_reports(qapp, window)
     assert window.run.can_retry
     window.run.retry()
+    support._wait_until(lambda: window.run.worker is not None)
     assert len(worker_options) == 2
     # The real source composition must still load the original remote terms;
     # otherwise its consistency check makes the failed entries unretryable.

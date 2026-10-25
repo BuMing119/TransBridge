@@ -1,412 +1,191 @@
-from __future__ import annotations
+"""Regression coverage for replacing mandatory term closure with AI review."""
 
+from dataclasses import replace
 import json
 
 import pytest
 
-from transbridge.ai_translator.post_processor.llm_refiner import RefineResult
 from transbridge.application.io import EntryKey, EntryRevision, SourceNamespace
 from transbridge.application.translation.postprocess import PostProcessCandidate
 from transbridge.application.translation.proofread_stage import ProofreadStage
+from transbridge.converter.translation_entry import STAGE_QUESTIONABLE
 
 
-def _candidate(
-    local_key: str,
-    *,
-    namespace: str = "proofread-closure",
-    original: str = "Dragon",
-    text: str = "旧译",
-    context: str = "Context",
-    plugin_id: str | None = None,
-) -> PostProcessCandidate:
-    details = () if plugin_id is None else (("terminology_plugin_id", plugin_id),)
+def candidate(original, text, *, details=()):
     return PostProcessCandidate(
-        run_id="run",
-        entry_key=EntryKey(SourceNamespace(namespace), local_key),
-        before_revision=EntryRevision(),
-        original=original,
-        before_text=text,
-        text=text,
-        stage=2,
-        context=context,
+        "review",
+        EntryKey(SourceNamespace("plugin"), "name"),
+        EntryRevision(),
+        original,
+        text,
+        text,
+        1,
+        context="任务名称",
         report_details=details,
     )
 
 
-class _ProofreadClient:
-    def __init__(self, values: dict[str, str]) -> None:
-        self.values = values
-        self.messages: list[list[dict]] = []
+class Client:
+    def __init__(self, status="retained", reason="当前译文符合任务语境", text=None):
+        self.requests = []
+        self.status, self.reason, self.text = status, reason, text
 
-    def chat_prepared(self, prepare, max_tokens=0):
-        messages = prepare()
-        self.messages.append(messages)
-        entries = json.loads(messages[1]["content"])["entries"]
+    def chat(self, messages, _max_tokens):
+        request = json.loads(messages[1]["content"])
+        self.requests.append((messages[0]["content"], request))
         return json.dumps(
             {
                 "results": [
                     {
-                        "entry_key": entry["entry_key"],
-                        "final_translation": self.values[entry["entry_key"]["local_key"]],
+                        "entry_key": row["entry_key"],
+                        "final_translation": self.text or row["current_translation"],
+                        "review_status": self.status,
+                        "review_reason": self.reason,
                     }
-                    for entry in entries
+                    for row in request["entries"]
                 ]
             },
             ensure_ascii=False,
         )
 
-    def cancel(self) -> None:
-        pass
+
+@pytest.mark.parametrize(
+    "source,text,terms",
+    [
+        ("Bruma guards fighting predators", "布鲁玛卫兵对抗掠食者", {"Guards": "瓜尔"}),
+        (
+            "Handler for first Rielle playthrough events",
+            "瑞尔勒首次通关事件处理器",
+            {"Rielle": "1.瑞尔勒 2.美丽；美人"},
+        ),
+    ],
+)
+def test_contextual_retention_is_accepted_once_despite_literal_term_difference(source, text, terms):
+    item = candidate(source, text)
+    client = Client("term_suspect", "参考词义不适用于当前任务名称，保留译文")
+
+    class ForbiddenRefiner:
+        def refine_batch(self, *_args, **_kwargs):
+            pytest.fail("A justified review must not trigger mandatory terminology repair")
+
+    outcome = ProofreadStage(client, term_resolver=lambda _: terms, refiner=ForbiddenRefiner())((item,))
+
+    assert len(client.requests) == 1
+    result = outcome.candidates[0]
+    assert result.accepted and result.text == text and result.before_text == text
+    assert result.phases == ("proofread",)
+    assert not outcome.diagnostics
+    details = dict(result.report_details)
+    assert details["review_status"] == "term_suspect"
+    assert details["review_contract_version"] == 1
+    assert details["review_reference_terms"] == terms
+    system, payload = client.requests[0]
+    assert "fallible advisory" in system
+    issue = payload["entries"][0]["detected_issues"][0]
+    assert issue["issue_type"] == "term_mismatch"
+    assert issue["standard_translation"] == next(iter(terms.values()))
+    assert details["detected_issues"] == payload["entries"][0]["detected_issues"]
 
 
-def test_cancelled_closure_retains_validation_status_without_applying_candidates():
-    from transbridge.application.translation.terminology_closure import ProofreadTerminologyClosure
+def test_all_existing_and_term_issues_are_sent_together_with_context():
+    issue = {"issue_type": "low_quality", "message": "疑似遗漏否定关系", "severity": "warning"}
+    item = candidate("Guards do not follow", "卫兵跟随", details=(("issues", [issue]),))
+    client = Client("revised", "恢复否定关系；Guards 此处指卫兵", "卫兵不跟随")
+    outcome = ProofreadStage(client, term_resolver=lambda _: {"Guards": "瓜尔"})((item,))
+    sent = client.requests[0][1]["entries"][0]
+    assert sent["original"] == item.original
+    assert sent["context"] == "任务名称"
+    assert {i["issue_type"] for i in sent["detected_issues"]} == {"low_quality", "term_mismatch"}
+    result = outcome.candidates[0]
+    assert result.text == "卫兵不跟随" and result.before_text == "卫兵跟随"
+    assert dict(result.report_details)["review_status"] == "revised"
 
-    originals = (_candidate("valid"), _candidate("unfinished"), _candidate("unstarted"))
-    candidates = (
-        originals[0].with_text("巨龙", "proofread"),
-        originals[1].with_text("错误", "proofread"),
-        originals[2].with_accepted(False),
+
+def test_uncertain_review_is_a_successful_candidate_marked_questionable():
+    item = candidate("Whispers", "低语")
+    client = Client("needs_review", "缺少上下文，无法确认是组织名还是普通名词")
+    outcome = ProofreadStage(client, term_resolver=lambda _: {"Whispers": "低语学院"})((item,))
+    result = outcome.candidates[0]
+    assert result.accepted and result.stage == STAGE_QUESTIONABLE
+    assert result.text == "低语"
+    assert not outcome.diagnostics
+    assert len(client.requests) == 1
+
+
+def test_legacy_text_only_response_is_pending_review_without_false_evidence():
+    item = candidate("Guards", "卫兵")
+
+    class LegacyClient:
+        def chat(self, *_args):
+            return {"results": [{"entry_key": item.entry_key.to_dict(), "final_translation": "卫兵"}]}
+
+    result = ProofreadStage(LegacyClient(), term_resolver=lambda _: {"Guards": "瓜尔"})((item,)).candidates[0]
+    assert result.accepted and result.stage == STAGE_QUESTIONABLE
+    details = dict(result.report_details)
+    assert details["review_status"] == "needs_review"
+    assert details["review_contract_version"] == 0
+    assert "未返回" in details["review_reason"]
+
+
+def test_term_matching_does_not_invent_differences_from_fragments():
+    item = candidate("Guards", "卫兵")
+    client = Client()
+    ProofreadStage(client, term_resolver=lambda _: {"Guar": "瓜尔"})((item,))
+    assert client.requests[0][1]["entries"][0]["detected_issues"] == []
+
+
+def test_main_stage_collects_format_and_cross_entry_findings_before_one_joint_review():
+    first = candidate("Guards %s", "卫兵（")
+    second = replace(candidate("Guards %s", "守卫 %s"), entry_key=EntryKey(SourceNamespace("plugin"), "other"))
+    client = Client("revised", "修复占位符并结合语境保留卫兵译法", "卫兵 %s")
+    outcome = ProofreadStage(client, term_resolver=lambda _: {"Guards": "瓜尔"})((first, second))
+    assert len(client.requests) == 1
+    sent = client.requests[0][1]["entries"][0]
+    types = {issue["issue_type"] for issue in sent["detected_issues"]}
+    assert {"placeholder_mismatch", "cross_entry_inconsistency", "term_mismatch"} <= types
+    assert outcome.candidates[0].accepted
+    assert outcome.candidates[0].text == "卫兵 %s"
+
+
+def test_frequent_original_has_bounded_wording_examples():
+    from transbridge.application.translation.proofread_advisory import collect_review_findings
+
+    items = tuple(
+        replace(candidate("Guards", f"卫兵 {i}"), entry_key=EntryKey(SourceNamespace("plugin"), str(i)))
+        for i in range(100)
     )
-    closure = ProofreadTerminologyClosure(None, model="", max_tokens_per_batch=2000)
-    results, _ = closure.apply(
-        originals,
-        candidates,
-        {item.entry_key: {"Dragon": "巨龙"} for item in originals},
-        is_cancelled=lambda: True,
-    )
-    assert all(not item.accepted for item in results)
-    assert dict(results[0].report_details)["processing_status"] == "completed"
-    assert dict(results[1].report_details)["processing_status"] == "cancelled"
-    assert "processing_status" not in dict(results[2].report_details)
-    assert results[0].text == "巨龙"
+    results = collect_review_findings(items)
+    issue = dict(results[0].report_details)["detected_issues"][0]
+    assert issue["variant_count"] == 100
+    assert len(issue["examples"]) == 8
 
 
-class _Refiner:
-    def __init__(self, values: dict[str, str] | None = None, *, valid: bool = True) -> None:
-        self.values = values or {}
-        self.valid = valid
-        self.calls: list[tuple[list[object], dict, dict]] = []
+def test_followup_review_recovers_response_failure_even_if_previous_phase_was_proofread():
+    item = replace(candidate("Guards", "卫兵"), phases=("proofread",))
 
-    def refine_batch(self, entries, issues_map, *, terms_map=None):
-        self.calls.append((entries, issues_map, terms_map))
-        return {
-            entry.id: RefineResult(
-                entry_id=entry.id,
-                original_translation=entry.translation,
-                refined_translation=self.values.get(entry.key, entry.translation),
-                confidence=1.0,
-                valid=self.valid,
-            )
-            for entry in entries
-        }
+    class RecoveringClient(Client):
+        def chat(self, messages, tokens):
+            response = super().chat(messages, tokens)
+            return {"results": []} if len(self.requests) == 1 else response
 
-
-def _stage(client, terms, refiner, **kwargs) -> ProofreadStage:
-    return ProofreadStage(
-        client,
-        term_resolver=lambda candidate: terms.get(candidate.entry_key, {}),
-        refiner=refiner,
-        model="unknown-model",
-        max_tokens_per_batch=10_000,
-        **kwargs,
-    )
-
-
-def test_first_prompt_is_broad_and_terms_are_constraints_not_a_detected_issue_list() -> None:
-    candidate = _candidate("one", original="The Dragon is not hostile.")
-    client = _ProofreadClient({"one": "巨龙并无敌意。"})
-    terms = {candidate.entry_key: {"Dragon": "巨龙"}}
-
-    outcome = _stage(client, terms, _Refiner())((candidate,))
-
-    system = client.messages[0][0]["content"]
-    user = json.loads(client.messages[0][1]["content"])
-    assert outcome.candidates[0].text == "巨龙并无敌意。"
-    assert all(
-        concept in system
-        for concept in (
-            "semantic",
-            "omissions",
-            "mistranslations",
-            "negation",
-            "context",
-            "terminology",
-            "fluency",
-            "style",
-        )
-    )
-    assert "mandatory constraint" in system
-    assert "not a complete list" in system
-    assert "detected_issues" not in user["entries"][0]
-    assert "only detected" not in system.casefold()
-
-
-def test_no_refiner_call_when_proofread_already_satisfies_all_terms() -> None:
-    candidate = _candidate("one")
-    client = _ProofreadClient({"one": "巨龙"})
-    refiner = _Refiner()
-
-    outcome = _stage(client, {candidate.entry_key: {"Dragon": "巨龙"}}, refiner)((candidate,))
-
-    assert refiner.calls == []
-    assert outcome.candidates[0].accepted is True
-    assert outcome.candidates[0].phases == ("proofread",)
-
-
-def test_one_entry_sends_all_remaining_term_issues_in_one_refiner_call() -> None:
-    candidate = _candidate("one", original="Dragon Sword")
-    client = _ProofreadClient({"one": "龙剑"})
-    refiner = _Refiner({"one": "巨龙之剑"})
-    terms = {candidate.entry_key: {"Dragon": "巨龙", "Sword": "剑"}}
-
-    outcome = _stage(client, terms, refiner)((candidate,))
-
-    assert len(refiner.calls) == 1
-    entries, issues_map, terms_map = refiner.calls[0]
-    assert len(entries) == 1
-    assert {issue.term for issue in issues_map[entries[0].id]} == {"Dragon"}
-    assert terms_map[entries[0].id] == {"Dragon": "巨龙", "Sword": "剑"}
-    assert outcome.candidates[0].text == "巨龙之剑"
-    assert outcome.candidates[0].phases == ("proofread", "refinement")
-
-
-def test_only_the_entry_with_a_remaining_term_problem_is_refined() -> None:
-    satisfied = _candidate("satisfied")
-    missing = _candidate("missing")
-    client = _ProofreadClient({"satisfied": "巨龙", "missing": "龙"})
-    refiner = _Refiner({"missing": "巨龙"})
-    terms = {candidate.entry_key: {"Dragon": "巨龙"} for candidate in (satisfied, missing)}
-
-    outcome = _stage(client, terms, refiner)((satisfied, missing))
-
-    assert [[entry.key for entry in call[0]] for call in refiner.calls] == [["missing"]]
-    assert [candidate.text for candidate in outcome.candidates] == ["巨龙", "巨龙"]
-
-
-def test_multiple_issues_for_one_entry_stay_together() -> None:
-    candidate = _candidate("one", original="Dragon Sword")
-    client = _ProofreadClient({"one": "龙刀"})
-    refiner = _Refiner({"one": "巨龙剑"})
-    terms = {candidate.entry_key: {"Dragon": "巨龙", "Sword": "剑"}}
-
-    outcome = _stage(client, terms, refiner)((candidate,))
-
-    entries, issues_map, _terms_map = refiner.calls[0]
-    assert [(issue.term, issue.standard_translation) for issue in issues_map[entries[0].id]] == [
-        ("Dragon", "巨龙"),
-        ("Sword", "剑"),
-    ]
-    assert outcome.candidates[0].accepted is True
-
-
-def test_batch_keeps_entry_keys_issues_and_plugin_terms_isolated() -> None:
-    project = _candidate("same", namespace="project", plugin_id=None)
-    plugin = _candidate("same", namespace="plugin", plugin_id="Patch.esp")
-    client = _ProofreadClient({"same": "错误"})
-    refiner = _Refiner({"same": "项目龙插件龙"})
-    terms = {
-        project.entry_key: {"Dragon": "项目龙"},
-        plugin.entry_key: {"Dragon": "插件龙"},
-    }
-
-    _stage(client, terms, refiner)((project, plugin))
-
-    entries, issues_map, terms_map = refiner.calls[0]
-    assert len(entries) == 2
-    assert entries[0].id != entries[1].id
-    assert terms_map[entries[0].id] == {"Dragon": "项目龙"}
-    assert terms_map[entries[1].id] == {"Dragon": "插件龙"}
-    assert issues_map[entries[0].id][0].standard_translation == "项目龙"
-    assert issues_map[entries[1].id][0].standard_translation == "插件龙"
-
-
-def test_refiner_result_still_missing_term_is_rejected_and_run_start_text_is_restored() -> None:
-    candidate = _candidate("one", text="运行前译文")
-    client = _ProofreadClient({"one": "首轮候选"})
-    refiner = _Refiner({"one": "仍未采用"})
-
-    outcome = _stage(client, {candidate.entry_key: {"Dragon": "巨龙"}}, refiner)((candidate,))
-
-    assert outcome.candidates[0].text == "运行前译文"
-    assert outcome.candidates[0].accepted is False
-    assert outcome.candidates[0].phases == ()
-    diagnostic = outcome.diagnostics[-1]
-    assert diagnostic.code == "PROOFREAD_TERMINOLOGY_REFINEMENT_FAILED"
-    assert dict(diagnostic.details)["reason"] == "terminology_still_inconsistent"
-
-
-def test_refiner_placeholder_or_tag_damage_retains_original_as_questionable() -> None:
-    candidate = _candidate("one", original="Dragon %s <Alias=Hero>", text="旧译 %s <Alias=Hero>")
-    client = _ProofreadClient({"one": "龙 %s <Alias=Hero>"})
-    refiner = _Refiner({"one": "巨龙"})
-
-    outcome = _stage(client, {candidate.entry_key: {"Dragon": "巨龙"}}, refiner)((candidate,))
-
-    assert outcome.candidates[0].text == candidate.before_text
-    assert outcome.candidates[0].accepted is True
-    assert outcome.candidates[0].stage == 2
-    assert outcome.diagnostics[-1].code == "PROOFREAD_SYNTAX_REVIEW_REQUIRED"
-    assert dict(outcome.diagnostics[-1].details)["reason"] == "protected_syntax_mismatch"
-
-
-@pytest.mark.parametrize("value, valid", [("", True), ("巨龙", False)])
-def test_empty_or_contract_invalid_refiner_result_fails_safely(value: str, valid: bool) -> None:
-    candidate = _candidate("one")
-    client = _ProofreadClient({"one": "首轮候选"})
-    refiner = _Refiner({"one": value}, valid=valid)
-
-    outcome = _stage(client, {candidate.entry_key: {"Dragon": "巨龙"}}, refiner)((candidate,))
-
-    assert outcome.candidates[0].text == candidate.before_text
-    assert outcome.candidates[0].accepted is False
+    client = RecoveringClient()
+    outcome = ProofreadStage(client, term_resolver=lambda _: {"Guards": "瓜尔"})((item,))
+    assert len(client.requests) == 2
+    assert outcome.candidates[0].accepted
+    assert dict(outcome.candidates[0].report_details)["review_contract_version"] == 1
 
 
 @pytest.mark.parametrize(
-    "failure_code, diagnostic_code, category",
+    "reported,text,expected",
     [
-        ("call_failed", "PROOFREAD_TERMINOLOGY_REFINEMENT_FAILED", "external"),
-        ("cancelled", "PROOFREAD_REFINEMENT_CANCELLED", "cancelled"),
-        ("invalid_response", "PROOFREAD_TERMINOLOGY_REFINEMENT_FAILED", "input"),
+        ("revised", "卫兵", "retained"),
+        ("retained", "守卫", "revised"),
+        ("term_suspect", "守卫", "term_suspect"),
+        ("needs_review", "守卫", "needs_review"),
     ],
 )
-def test_structured_refiner_failure_code_controls_actionable_diagnostic(
-    failure_code: str,
-    diagnostic_code: str,
-    category: str,
-) -> None:
-    candidate = _candidate("one")
-    client = _ProofreadClient({"one": "首轮候选"})
-
-    class FailureRefiner:
-        @staticmethod
-        def refine_batch(entries, issues_map, *, terms_map=None):
-            del issues_map, terms_map
-            return {
-                entry.id: RefineResult(
-                    entry_id=entry.id,
-                    original_translation=entry.translation,
-                    refined_translation=entry.translation,
-                    valid=False,
-                    failure_code=failure_code,
-                )
-                for entry in entries
-            }
-
-    outcome = _stage(client, {candidate.entry_key: {"Dragon": "巨龙"}}, FailureRefiner())((candidate,))
-
-    assert outcome.candidates[0].accepted is False
-    assert outcome.diagnostics[-1].code == diagnostic_code
-    assert outcome.diagnostics[-1].category.value == category
-
-
-def test_no_terms_or_no_term_resolver_does_not_create_an_extra_call() -> None:
-    candidate = _candidate("one")
-    client = _ProofreadClient({"one": "开放校对后的译文"})
-    refiner = _Refiner()
-
-    outcome = _stage(client, {}, refiner)((candidate,))
-    no_manager_client = _ProofreadClient({"one": "另一条开放校对译文"})
-    no_manager = ProofreadStage(no_manager_client, refiner=refiner, max_tokens_per_batch=10_000)((candidate,))
-
-    assert refiner.calls == []
-    assert outcome.candidates[0].text == "开放校对后的译文"
-    assert no_manager.candidates[0].text == "另一条开放校对译文"
-
-
-def test_refinement_batch_size_is_bounded_without_splitting_entries() -> None:
-    candidates = tuple(_candidate(str(index)) for index in range(6))
-    client = _ProofreadClient({str(index): "错误" for index in range(6)})
-    refiner = _Refiner({str(index): "巨龙" for index in range(6)})
-    terms = {candidate.entry_key: {"Dragon": "巨龙"} for candidate in candidates}
-
-    outcome = _stage(client, terms, refiner, refinement_batch_size=5)(candidates)
-
-    assert [len(call[0]) for call in refiner.calls] == [5, 1]
-    assert all(candidate.accepted for candidate in outcome.candidates)
-
-
-def test_non_terminology_semantic_fix_remains_the_first_open_proofread_result() -> None:
-    candidate = _candidate("one", original="The gate is not open.", text="门开着。")
-    client = _ProofreadClient({"one": "门没有开。"})
-    refiner = _Refiner()
-
-    outcome = _stage(client, {}, refiner)((candidate,))
-
-    assert refiner.calls == []
-    assert outcome.candidates[0].text == "门没有开。"
-    assert outcome.candidates[0].phases == ("proofread",)
-
-
-@pytest.mark.parametrize("cancel", [False, True])
-def test_refinement_reports_progress_before_calls_and_stops_between_batches(cancel) -> None:
-    candidates = tuple(_candidate(str(index)) for index in range(3))
-    client = _ProofreadClient({str(index): "错误" for index in range(3)})
-    progress = []
-
-    class Refiner(_Refiner):
-        def refine_batch(self, entries, issues_map, *, terms_map=None):
-            assert "术语修复" in progress[-1][2]
-            assert progress[-1][:2] == (len(self.calls), 3)
-            if cancel:
-                stage.cancel()
-            return super().refine_batch(entries, issues_map, terms_map=terms_map)
-
-    refiner = Refiner({str(index): "巨龙" for index in range(3)})
-    stage = _stage(
-        client,
-        {candidate.entry_key: {"Dragon": "巨龙"} for candidate in candidates},
-        refiner,
-        refinement_batch_size=1,
-    )
-    outcome = stage.run(candidates, progress_callback=lambda *args: progress.append(args))
-
-    assert len(refiner.calls) == (1 if cancel else 3)
-    assert not any("校对已完成" in message for _, _, message in progress)
-    if cancel:
-        assert all(not candidate.accepted and candidate.text == "错误" for candidate in outcome.candidates)
-        assert outcome.diagnostics[-1].code == "PROOFREAD_REFINEMENT_CANCELLED"
-        assert "正在整理结果" not in progress[-1][2]
-    else:
-        assert all(candidate.accepted for candidate in outcome.candidates)
-        assert progress[-1][:2] == (3, 3)
-
-
-def test_refinement_progress_callback_failure_does_not_discard_valid_results() -> None:
-    candidate = _candidate("one")
-    stage = _stage(
-        _ProofreadClient({"one": "龙"}), {candidate.entry_key: {"Dragon": "巨龙"}}, _Refiner({"one": "巨龙"})
-    )
-
-    def broken_callback(*_args):
-        raise RuntimeError("progress unavailable")
-
-    outcome = stage.run((candidate,), progress_callback=broken_callback)
-    assert outcome.candidates[0].text == "巨龙"
-    assert outcome.candidates[0].accepted
-    assert all(item.code == "PROOFREAD_PROGRESS_CALLBACK_FAILED" for item in outcome.diagnostics)
-
-
-@pytest.mark.parametrize("explicit_workers", [None, 2])
-def test_stage_forwards_constructor_or_run_concurrency_to_refinement(explicit_workers):
-    import threading
-
-    candidates = tuple(_candidate(str(index)) for index in range(3))
-    workers = explicit_workers or 3
-    barrier = threading.Barrier(workers)
-
-    class Refiner(_Refiner):
-        def refine_batch(self, entries, issues_map, *, terms_map=None):
-            if int(entries[0].key) < workers:
-                barrier.wait(timeout=3)
-            return super().refine_batch(entries, issues_map, terms_map=terms_map)
-
-    stage = _stage(
-        _ProofreadClient({str(index): "龙" for index in range(3)}),
-        {candidate.entry_key: {"Dragon": "巨龙"} for candidate in candidates},
-        Refiner({str(index): "巨龙" for index in range(3)}),
-        max_workers=3,
-        refinement_batch_size=1,
-    )
-    outcome = stage(candidates) if explicit_workers is None else stage.run(candidates, max_workers=explicit_workers)
-    assert all(candidate.accepted for candidate in outcome.candidates)
+def test_review_labels_reflect_actual_text_changes_without_losing_suspect_or_pending_status(reported, text, expected):
+    item = candidate("Guards", "卫兵")
+    outcome = ProofreadStage(Client(reported, "结合语境判断", text))((item,))
+    assert dict(outcome.candidates[0].report_details)["review_status"] == expected
+    assert dict(outcome.candidates[0].report_details)["review_contract_version"] == 1

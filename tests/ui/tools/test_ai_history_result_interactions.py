@@ -12,6 +12,7 @@ import pytest
 
 from tests.ui.responsive_layout_support import settle_layout, themed_layout_app as themed_layout_app
 from tests.ui.tools import test_ai_task_history_ui as fixtures
+from tests.ui.tools.ai_read_projection_support import wait_for
 from tests.ui.tools.test_ai_task_history_ui import _record, _wait
 from transbridge.config.ui_preferences import DEFAULT_THEME_ID, ThemeMode
 from transbridge.ui.foundation.builtins import create_builtin_registry
@@ -46,6 +47,8 @@ def views(qapp, layout_app):
         settle_layout(layout_app)
         if history:
             dialog.timer.stop()
+        else:
+            wait_for(lambda: not dialog._projecting)
         return dialog
 
     yield create
@@ -179,16 +182,19 @@ def test_result_empty_and_filtered_states_explain_next_action_and_clear_search(v
     assert not result.diagnostics.isVisible()
     result.search.setFocus()
     QTest.keyClicks(result.search, "no-match")
+    wait_for(lambda: not result._projecting)
     assert result.model.rowCount() == 0
     assert "匹配" in result.detail.placeholderText()
     assert result.search.isClearButtonEnabled()
     clear = next(button for button in result.search.findChildren(QToolButton) if button.isVisible())
     QTest.mouseClick(clear, Qt.MouseButton.LeftButton)
+    wait_for(lambda: not result._projecting)
     assert result.model.rowCount() == 2 and not result.search.text()
     result.table.setFocus()
     QTest.keyClick(result.table, Qt.Key.Key_Down)
     assert "Original first" in result.detail.toPlainText()
     result.sources.setCurrentIndex(1)
+    wait_for(lambda: not result._projecting)
     assert result.model.rowCount() == 1 and result.diagnostics.isVisible()
 
 
@@ -197,6 +203,7 @@ def test_filtered_export_keeps_complete_source_scope_and_uses_semantic_feedback(
 ):
     dialog = views()
     dialog.search.setText("first 1")
+    wait_for(lambda: not dialog._projecting)
     assert dialog.model.rowCount() == 1
     original = task_result_dialog.export_snapshot
     counts = []

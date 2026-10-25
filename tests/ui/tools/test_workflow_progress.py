@@ -8,6 +8,7 @@ from PyQt6.QtCore import QCoreApplication, QEvent, QObject, QThread, pyqtSignal
 from PyQt6.QtWidgets import QApplication
 import pytest
 
+from tests.ui.tools.ai_read_projection_support import wait_for
 from transbridge.application.translation.ai_request_budget import AiRequestBudget
 from transbridge.infra.limited_llm_client import LimitedLLMClient
 from transbridge.ui.tools.ai_translator._polish_worker import _PolishWorker
@@ -341,6 +342,7 @@ def test_workflow_window_opens_persisted_llm_logs(qapp: QApplication, tmp_path: 
 
     viewer = window._log_viewer
     assert viewer is not None
+    wait_for(lambda: viewer._log_selector.count() == 3)
     assert viewer._log_selector.count() == 3
     assert {viewer._log_selector.itemText(index).split("  —  ", 1)[0] for index in range(3)} == {
         "翻译批次 1",
@@ -350,11 +352,13 @@ def test_workflow_window_opens_persisted_llm_logs(qapp: QApplication, tmp_path: 
 
     batch_index = next(index for index in range(3) if viewer._log_selector.itemText(index).startswith("翻译批次 1"))
     viewer._log_selector.setCurrentIndex(batch_index)
+    wait_for(lambda: "raw model response" in viewer._text_edit.toPlainText())
     assert "raw model response" in viewer._text_edit.toPlainText()
 
     (tmp_path / "proofread_call_001.log").write_text("校对请求与响应", encoding="utf-8")
     assert viewer._log_selector.count() == 3
     viewer._refresh_btn.click()
+    wait_for(lambda: viewer._log_selector.count() == 4)
     assert viewer._log_selector.count() == 4
 
     viewer.close()

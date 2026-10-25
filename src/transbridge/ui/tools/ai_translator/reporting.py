@@ -78,7 +78,11 @@ def report_overview(snapshot: ReportSnapshot | None) -> TranslationReportOvervie
     errors = sum(1 for item in snapshot.diagnostics if item.severity.value == "error")
     warnings = sum(1 for item in snapshot.diagnostics if item.severity.value == "warning")
     changed = sum(1 for item in snapshot.candidates if item.text != item.before_text)
-    needs_review = sum(1 for item in snapshot.candidates if not item.accepted)
+    needs_review = sum(
+        1
+        for item in snapshot.candidates
+        if not item.accepted or dict(item.report_details).get("review_status") == "needs_review"
+    )
     return TranslationReportOverview(errors, warnings, changed, needs_review)
 
 

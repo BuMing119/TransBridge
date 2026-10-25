@@ -383,6 +383,11 @@ QWidget[tbProjectAvailable="false"] QLabel[tbStartProjectPath="true"] {{
     color: {muted.canonical};
 }}
 
+/* Menu-style popups ignore maxVisibleItems; use bounded, scrollable lists. */
+QComboBox {{
+    combobox-popup: 0;
+    qproperty-maxVisibleItems: 12;
+}}
 QLineEdit[tbComponentKind="input"], QComboBox[tbComponentKind="input"],
 QSpinBox[tbComponentKind="input"], QDoubleSpinBox[tbComponentKind="input"] {{
     color: {text.canonical};

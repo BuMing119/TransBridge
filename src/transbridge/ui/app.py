@@ -14,6 +14,7 @@ from transbridge.paratranz.config_manager import ParatranzConfig
 
 from .context import AppContext
 from .foundation.runtime import GuiFoundation
+from .hang_watchdog import UiHangWatchdog
 from .input_guard import install_accidental_wheel_guard
 from .main_window import MainWindow
 
@@ -98,6 +99,7 @@ def main(
         metadata=(("entrypoint", "gui"),),
     )
     ui_foundation: GuiFoundation | None = None
+    hang_watchdog: UiHangWatchdog | None = None
     try:
         app = QApplication.instance() or QApplication(sys.argv)
         app.setApplicationName("TransBridge")
@@ -148,8 +150,13 @@ def main(
             initial_import_path=initial_import_path,
         )
         window.show()
+        hang_watchdog = UiHangWatchdog(Path(ParatranzConfig.get_data_dir()) / "log" / "ui-hangs", app)
+        app.aboutToQuit.connect(hang_watchdog.close)
+        hang_watchdog.start()
         return int(app.exec())
     finally:
+        if hang_watchdog is not None:
+            hang_watchdog.close()
         if ui_foundation is not None:
             ui_foundation.close()
         app_runtime.close()

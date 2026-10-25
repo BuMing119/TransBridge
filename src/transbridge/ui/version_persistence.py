@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
+
+from transbridge.application.contracts import RequestContext
+
+from .version_snapshot_inputs import capture_legacy_snapshot
 
 
 class VersionPersistence:
@@ -18,6 +23,7 @@ class VersionPersistence:
         self._version_saved = False
         self._saved_snapshot_name: str | None = None
         self._saved_snapshot_result = None
+        self._legacy_saved_store = None
 
     @property
     def project_saved(self) -> bool:
@@ -35,18 +41,16 @@ class VersionPersistence:
         self._version_saved = True
 
     def create_snapshot(self, name: str, entries: tuple[object, ...]):
+        return self.freeze_snapshot(name, entries)()
+
+    def freeze_snapshot(self, name, entries, *, legacy_inputs=None):
+        """Freeze ports/identity on the GUI thread; returned I/O never reads the UI."""
         self._require_identity()
         if self._context.uses_authoritative_projection:
-            commands, runtime_context = self._v2_ports()
-            return commands.save_snapshot(name, runtime_context)
-
-        project, variant_store, variant_name = self._legacy_state()
-        was_dirty = variant_store.dirty
-        variant_store.collect_from(list(entries), self._context.entry_labels, self._context.label_library)
-        try:
-            return variant_store.save_snapshot(project.variant_dir(variant_name) / "snapshots", name)
-        finally:
-            variant_store.dirty = was_dirty
+            commands, runtime_context = self._frozen_v2_ports()
+            return lambda: commands.save_snapshot(name, runtime_context)
+        inputs = legacy_inputs or capture_legacy_snapshot(self._context)
+        return lambda: inputs.store(entries).save_snapshot(inputs.snapshot_dir, name)
 
     def commit_translation(
         self, entries: tuple[object, ...], *, commit_mutation: Callable[[Callable[[], None]], None] | None = None
@@ -92,30 +96,70 @@ class VersionPersistence:
         return None
 
     def save_translation(self, entries: tuple[object, ...], snapshot_name: str):
+        operation = self.freeze_save(entries, snapshot_name)
+        try:
+            return operation()
+        finally:
+            if self._version_saved:
+                self.acknowledge_save()
+
+    def freeze_save(self, entries, snapshot_name, *, legacy_inputs=None):
+        """Commit on the caller thread, then return detached durability work."""
         committed = self.commit_translation(entries)
         if self._saved_snapshot_name == snapshot_name:
-            return self._saved_snapshot_result
+            return lambda: self._saved_snapshot_result
         if self._context.uses_authoritative_projection:
-            commands, runtime_context = self._v2_ports()
+            commands, runtime_context = self._frozen_v2_ports()
             if committed is not None and not committed.is_success:
-                return committed
-            if not self._version_saved:
-                saved = commands.save(runtime_context)
-                if not saved.is_success:
-                    return saved
-                self._version_saved = True
-            result = commands.save_snapshot(snapshot_name, runtime_context)
-            if not getattr(result, "is_success", True):
-                return result
+                return lambda: committed
+            from transbridge.application.projects.gui_facade import GuiProjectCommandFacade
+
+            save_options = {}
+            if isinstance(commands, GuiProjectCommandFacade):
+                # save_active does not derive its target from RequestContext.
+                # Match both identities and committed revisions under its lock,
+                # before either writing or reporting an already-clean target.
+                save_options["expected_active_signature"] = (
+                    self._expected_identity[0],
+                    self._expected_project_revision,
+                    self._expected_identity[1],
+                    self._expected_variant_revision,
+                )
+
+            def operation():
+                if not self._version_saved:
+                    saved = commands.save(runtime_context, **save_options)
+                    if not saved.is_success:
+                        return saved
+                    self._version_saved = True
+                return commands.save_snapshot(snapshot_name, runtime_context)
+
         else:
-            project, variant_store, variant_name = self._legacy_state()
-            if not self._version_saved:
-                variant_store.save()
-                self._version_saved = True
-            result = variant_store.save_snapshot(project.variant_dir(variant_name) / "snapshots", snapshot_name)
-        self._saved_snapshot_name = snapshot_name
-        self._saved_snapshot_result = result
-        return result
+            inputs = legacy_inputs or capture_legacy_snapshot(self._context)
+            self._legacy_saved_store = self._context.variant_store
+
+            def operation():
+                store = inputs.store(entries)
+                if not self._version_saved:
+                    store.save()
+                    self._version_saved = True
+                return store.save_snapshot(inputs.snapshot_dir, snapshot_name)
+
+        def save():
+            result = operation()
+            if getattr(result, "is_success", True):
+                self._saved_snapshot_name = snapshot_name
+                self._saved_snapshot_result = result
+            return result
+
+        return save
+
+    def acknowledge_save(self):
+        """Update legacy GUI dirty state only after the caller's final input guard."""
+        self._require_identity()
+        if self._version_saved and self._legacy_saved_store is not None:
+            if self._context.variant_store is self._legacy_saved_store:
+                self._legacy_saved_store.dirty = False
 
     def _require_identity(self) -> None:
         current = self._context.active_version_identity
@@ -130,6 +174,12 @@ class VersionPersistence:
         if commands is None or runtime_context is None:
             raise RuntimeError("权威版本保存服务不可用。")
         return commands, runtime_context
+
+    def _frozen_v2_ports(self):
+        commands, context = self._v2_ports()
+        if isinstance(context, RequestContext):
+            context = replace(context, project_id=self._expected_identity[0], variant_id=self._expected_identity[1])
+        return commands, context
 
     def _legacy_state(self):
         project = self._context.active_project

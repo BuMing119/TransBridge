@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, pyqtSlot
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QComboBox,
@@ -19,6 +19,9 @@ from PyQt6.QtWidgets import (
 
 from transbridge.ui.foundation.components import ElidedLabel
 
+from .llm_log_reader import LogReadRequest, read_log_snapshot, read_log_tail
+from .read_projection import LatestReadController
+
 
 class _LLMLogViewer(QWidget):
     """Display one explicitly selected log without eagerly loading every file."""
@@ -32,6 +35,10 @@ class _LLMLogViewer(QWidget):
         self._known_files: tuple[str, ...] = ()
         self._active_path = ""
         self._active_stamp = None
+        self._suspended = False
+        self._reader = LatestReadController(read_log_snapshot, self)
+        self._reader.ready.connect(self._loaded)
+        self._reader.failed.connect(self._read_failed)
 
         self.setWindowTitle(f"LLM 运行日志 — {os.path.basename(log_dir)}")
         self.resize(900, 640)
@@ -91,26 +98,39 @@ class _LLMLogViewer(QWidget):
 
     def _scan_and_refresh(self) -> None:
         """Refresh the file list and reload only the selected file."""
-        self._refresh_index()
-        self._load_selected(force=True)
+        self._request_read(scan=True, force=True)
 
     def _refresh_index(self) -> None:
-        if not os.path.isdir(self._log_dir):
-            self._show_empty_state("日志目录不存在")
-            return
+        # A timer must not continuously supersede a slow disk read.
+        if not self._reader.busy:
+            self._request_read(scan=True)
 
-        try:
-            files = tuple(
-                sorted(
-                    entry.name for entry in os.scandir(self._log_dir) if entry.is_file() and entry.name.endswith(".log")
-                )
+    def _request_read(self, *, scan=False, force=False):
+        if self._suspended:
+            return
+        scrollbar = self._text_edit.verticalScrollBar()
+        self._reader.submit(
+            LogReadRequest(
+                self._log_dir,
+                str(self._log_selector.currentData(Qt.ItemDataRole.UserRole) or ""),
+                self._active_path,
+                self._active_stamp,
+                scrollbar.value() >= scrollbar.maximum() - 1,
+                force,
+                scan,
+                self._read_visible_text,
             )
-        except OSError as exc:
-            self._show_empty_state(f"无法读取日志目录：{exc}")
-            return
+        )
 
-        selected_path = self._log_selector.currentData(Qt.ItemDataRole.UserRole)
-        if files != self._known_files:
+    @pyqtSlot(object, object)
+    def _loaded(self, request, snapshot):
+        if self._suspended:
+            return
+        if snapshot.empty:
+            self._show_empty_state(snapshot.message)
+            return
+        files = snapshot.files
+        if files is not None and files != self._known_files:
             self._known_files = files
             self._log_selector.blockSignals(True)
             self._log_selector.clear()
@@ -118,66 +138,45 @@ class _LLMLogViewer(QWidget):
             for index, filename in enumerate(files):
                 path = os.path.join(self._log_dir, filename)
                 self._log_selector.addItem(f"{self._tab_label(filename)}  —  {filename}", path)
-                if path == selected_path:
+                if path == snapshot.path:
                     selected_index = index
-            if selected_index < 0 and files:
-                selected_index = files.index("workflow.log") if "workflow.log" in files else len(files) - 1
             self._log_selector.setCurrentIndex(selected_index)
             self._log_selector.blockSignals(False)
+        self._count_label.setText(f"{len(self._known_files)} 个日志")
+        self._log_selector.setEnabled(bool(self._known_files))
+        if snapshot.message:
+            self._refresh_status.setText(snapshot.message)
+            if snapshot.message.startswith("无法读取"):
+                self._active_stamp = None
+            return
+        if snapshot.content is None:
+            return
+        scrollbar = self._text_edit.verticalScrollBar()
+        previous_scroll = scrollbar.value()
+        following = previous_scroll >= scrollbar.maximum() - 1
+        same_path = snapshot.path == self._active_path
+        # A user may scroll upwards while the background read is in flight.
+        if same_path and not request.force and not following:
+            self._refresh_status.setText("有新日志 · 正在保留阅读位置，滚动到底部或点击刷新以更新")
+            return
+        self._active_path, self._active_stamp = snapshot.path, snapshot.stamp
+        self._refresh_status.setText("自动刷新 · 上翻阅读时暂停更新正文")
+        self._text_edit.setPlainText(snapshot.content)
+        scrollbar.setValue(scrollbar.maximum() if following or not same_path else previous_scroll)
 
-        self._count_label.setText(f"{len(files)} 个日志")
-        self._log_selector.setEnabled(bool(files))
-        if files:
-            self._load_selected()
-        else:
-            self._show_empty_state("暂无日志，正在等待任务写入…")
+    @pyqtSlot(str)
+    def _read_failed(self, error):
+        self._refresh_status.setText(f"无法读取日志：{error}")
 
     def _on_selection_changed(self, _index: int) -> None:
         self._load_selected(force=True)
 
     def _load_selected(self, *, force: bool = False) -> None:
-        path = self._log_selector.currentData(Qt.ItemDataRole.UserRole)
-        if not path:
-            return
-        same_path = str(path) == self._active_path
-        scrollbar = self._text_edit.verticalScrollBar()
-        previous_scroll = scrollbar.value()
-        following = previous_scroll >= scrollbar.maximum() - 1
-        try:
-            stat = os.stat(path)
-            stamp = (stat.st_mtime_ns, stat.st_size)
-            if same_path and not force:
-                if stamp == self._active_stamp:
-                    return
-                if not following:
-                    self._refresh_status.setText("有新日志 · 正在保留阅读位置，滚动到底部或点击刷新以更新")
-                    return
-            content = self._read_visible_text(str(path))
-        except OSError as exc:
-            self._refresh_status.setText(f"无法读取日志：{exc}")
-            self._active_stamp = None
-            return
-        self._active_path = str(path)
-        self._active_stamp = stamp
-        self._refresh_status.setText("自动刷新 · 上翻阅读时暂停更新正文")
-        self._text_edit.setPlainText(content)
-        scrollbar.setValue(scrollbar.maximum() if following or not same_path else previous_scroll)
+        self._request_read(force=force)
 
     @classmethod
     def _read_visible_text(cls, path: str) -> str:
-        size = os.path.getsize(path)
-        start = max(0, size - cls._MAX_VISIBLE_BYTES)
-        with open(path, "rb") as stream:
-            stream.seek(start)
-            data = stream.read(cls._MAX_VISIBLE_BYTES)
-        if start:
-            newline = data.find(b"\n")
-            if newline >= 0:
-                data = data[newline + 1 :]
-            prefix = f"[日志过大，仅显示最后 {cls._MAX_VISIBLE_BYTES // (1024 * 1024)} MiB]\n\n"
-        else:
-            prefix = ""
-        return prefix + data.decode("utf-8", errors="replace")
+        return read_log_tail(path, cls._MAX_VISIBLE_BYTES)
 
     def _show_empty_state(self, message: str) -> None:
         self._known_files = ()
@@ -229,14 +228,23 @@ class _LLMLogViewer(QWidget):
         self._refresh_timer.stop()
 
     def showEvent(self, event) -> None:  # noqa: N802 - Qt compatibility
+        was_suspended = self._suspended
+        self._suspended = False
         self._refresh_timer.start()
-        self._refresh_index()
+        if was_suspended:
+            self._request_read(scan=True)
+        else:
+            self._refresh_index()
         super().showEvent(event)
 
     def hideEvent(self, event) -> None:  # noqa: N802 - Qt compatibility
         self.stop_auto_refresh()
+        self._suspended = True
+        self._reader.invalidate()
         super().hideEvent(event)
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt compatibility
         self.stop_auto_refresh()
+        self._suspended = True
+        self._reader.invalidate()
         event.accept()

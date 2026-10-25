@@ -11,6 +11,7 @@ from PyQt6.QtGui import QFont, QFontDatabase
 from PyQt6.QtWidgets import QApplication, QSizePolicy, QVBoxLayout, QWidget
 import pytest
 
+from tests.ui.tools.ai_read_projection_support import wait_for
 from transbridge.ui.tools.ai_translator._llm_log_viewer import _LLMLogViewer
 from transbridge.ui.tools.ai_translator._translation_progress_window import _TranslationProgressWindow
 from transbridge.ui.tools.ai_translator.config_view import AITranslatorView
@@ -276,13 +277,13 @@ def test_llm_log_viewer_refreshes_list_manually_and_loads_only_selection(qapp, t
     (tmp_path / "workflow.log").write_text("workflow log", encoding="utf-8")
     viewer = _LLMLogViewer(str(tmp_path))
     viewer.show()
-    qapp.processEvents()
+    wait_for(lambda: viewer._text_edit.toPlainText() == "workflow log")
 
     assert viewer._log_selector.count() == 2
     assert viewer._text_edit.toPlainText() == "workflow log"
 
     viewer._log_selector.setCurrentIndex(0)
-    qapp.processEvents()
+    wait_for(lambda: viewer._text_edit.toPlainText() == "first log")
     assert viewer._text_edit.toPlainText() == "first log"
 
     (tmp_path / "proofread_call_002.log").write_text("second log", encoding="utf-8")
@@ -290,7 +291,7 @@ def test_llm_log_viewer_refreshes_list_manually_and_loads_only_selection(qapp, t
     assert viewer._log_selector.count() == 2
 
     viewer._refresh_btn.click()
-    qapp.processEvents()
+    wait_for(lambda: viewer._log_selector.count() == 3)
     assert viewer._log_selector.count() == 3
     assert viewer._text_edit.toPlainText() == "first log"
     viewer.close()

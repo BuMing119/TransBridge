@@ -108,6 +108,7 @@ def test_gui_entrypoint_creates_foundation_before_window_and_closes_it_before_ru
     monkeypatch.setattr(app_module, "install_accidental_wheel_guard", lambda _application: object())
     monkeypatch.setattr(GuiFoundation, "close", close_foundation)
     monkeypatch.setattr(QApplication, "exec", lambda _self: 0)
+    monkeypatch.setattr(app_module.ParatranzConfig, "get_data_dir", lambda: str(tmp_path))
 
     from transbridge.smart_assistant import agents, tools
     from transbridge.smart_assistant.tools.task_manager import TaskManager
@@ -120,6 +121,7 @@ def test_gui_entrypoint_creates_foundation_before_window_and_closes_it_before_ru
     assert captured["runtime"] is runtime
     assert captured["ui_foundation"] is application._transbridge_ui_foundation
     assert events == ["window.create", "window.show", "foundation.close", "runtime.close"]
+    assert list((tmp_path / "log" / "ui-hangs").glob("ui-hang-*.log"))
 
 
 def test_gui_entrypoint_keeps_business_window_available_when_foundation_startup_fails(
@@ -147,6 +149,7 @@ def test_gui_entrypoint_keeps_business_window_available_when_foundation_startup_
         GuiFoundation, "create", classmethod(lambda _cls, *_args: (_ for _ in ()).throw(RuntimeError()))
     )
     monkeypatch.setattr(QApplication, "exec", lambda _self: 0)
+    monkeypatch.setattr(app_module.ParatranzConfig, "get_data_dir", lambda: str(tmp_path))
 
     from transbridge.smart_assistant import agents, tools
     from transbridge.smart_assistant.tools.task_manager import TaskManager

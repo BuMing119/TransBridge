@@ -27,14 +27,52 @@ class TaskRecordWriter(QObject):
         self.record = None
         self.status = ""
         self.error = ""
+        self._sequence = 0
+        owner = getattr(getattr(request, "spec", None), "owner", None)
+        self._report_request = SimpleNamespace(
+            run_id=request.run_id,
+            spec=SimpleNamespace(
+                owner=SimpleNamespace(
+                    project_id=getattr(owner, "project_id", None), variant_id=getattr(owner, "variant_id", None)
+                )
+            ),
+            config=SimpleNamespace(
+                mixed_execution_order=getattr(getattr(request, "config", None), "mixed_execution_order", "")
+            ),
+        )
 
     @property
     def busy(self):
         return self.worker is not None or self.pending is not None
 
-    def write(self, outcomes, *, state, entry_results=None):
-        # Copy only report inputs, never collections (which own locks/caches).
-        frozen = tuple(
+    def write(self, outcomes, *, state, entry_results=None, frozen_entry_results=None):
+        from .task_record_inputs import source_descriptors
+
+        ledger = frozen_entry_results
+        if ledger is None and entry_results is not None:
+            ledger = entry_results.freeze()
+        # Production receives frozen ledger rows and only O(sources) metadata.
+        # The legacy no-ledger adapter below retains its explicit copy boundary.
+        frozen = source_descriptors(outcomes) if ledger is not None else self._legacy_inputs(outcomes)
+        self._sequence += 1
+        self.pending = (
+            self._sequence,
+            frozen,
+            state,
+            bool(self.session.applied_keys) if hasattr(self.session, "applied_keys") else self.session.completed,
+            self.session.saved,
+            bool(getattr(self.session, "project_saved", self.session.saved)),
+            bool(getattr(self.session, "snapshot_saved", self.session.saved)),
+            ledger,
+        )
+        self.last_request = self.pending
+        if self.worker is None:
+            self._start()
+
+    @staticmethod
+    def _legacy_inputs(outcomes):
+        """Compatibility for callers without a ledger; never copy collections."""
+        return tuple(
             replace(
                 item,
                 task=replace(
@@ -56,18 +94,6 @@ class TaskRecordWriter(QObject):
             )
             for item in outcomes
         )
-        self.pending = (
-            frozen,
-            state,
-            bool(self.session.applied_keys) if hasattr(self.session, "applied_keys") else self.session.completed,
-            self.session.saved,
-            bool(getattr(self.session, "project_saved", self.session.saved)),
-            bool(getattr(self.session, "snapshot_saved", self.session.saved)),
-            entry_results.freeze() if entry_results is not None else None,
-        )
-        self.last_request = self.pending
-        if self.worker is None:
-            self._start()
 
     def retry(self):
         if self.last_request is not None and self.worker is None:
@@ -79,28 +105,22 @@ class TaskRecordWriter(QObject):
 
         from .source_execution import build_task_record
 
-        outcomes, state, applied, saved, project_saved, snapshot_saved, entry_results = self.pending
+        sequence, outcomes, state, applied, saved, project_saved, snapshot_saved, entry_results = self.pending
         self.pending = None
         self.status, self.error = "正在保存任务记录", ""
         self.changed.emit()
         history_dir = getattr(self.session, "history_dir", None)
         version_label = getattr(self.session, "version_label", "")
+        report_request, created_at = self._report_request, self.created_at
 
         def persist():
             report_outcomes = outcomes
             if entry_results is not None:
-                report_outcomes = tuple(
-                    replace(
-                        item,
-                        record_snapshot=replace(
-                            entry_results.snapshot(item.task.key, cancelled=state == "cancelled"),
-                            diagnostics=item.diagnostics,
-                        ),
-                    )
-                    for item in outcomes
-                )
-            record = build_task_record(report_outcomes, self.request, state=state, applied=applied, saved=saved)
-            record["created_at"] = self.created_at
+                from .task_record_inputs import ledger_outcomes
+
+                report_outcomes = ledger_outcomes(outcomes, entry_results, cancelled=state == "cancelled")
+            record = build_task_record(report_outcomes, report_request, state=state, applied=applied, saved=saved)
+            record["created_at"] = created_at
             record["project_saved"] = project_saved
             record["snapshot_saved"] = snapshot_saved
             record["version_label"] = version_label
@@ -116,6 +136,8 @@ class TaskRecordWriter(QObject):
         self.worker = worker
 
         def success(result):
+            if sequence != self._sequence:
+                return
             record, error = result
             self.record = record
             self.error = error
@@ -124,6 +146,8 @@ class TaskRecordWriter(QObject):
             self.changed.emit()
 
         def failed(error):
+            if sequence != self._sequence:
+                return
             self.error = str(error)
             self.status = f"任务记录保存失败：{error}"
             self.changed.emit()

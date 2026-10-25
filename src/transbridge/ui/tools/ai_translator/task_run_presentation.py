@@ -12,7 +12,7 @@ _TECHNICAL = re.compile(
 )
 _EVENT = re.compile(
     r"^(?:开始|正在|已|校对|翻译|术语|批次|第\s*(?:\d|[一二三四五六七八九十])|\d+\s*条|"
-    r"重试|重新|恢复|拆分|拆批|自动|检测|检查|"
+    r"重试|重新|恢复|拆分|拆批|自动|检测|检查|项目名称|名称|统计|加载|校验|"
     r"准备|等待|暂停|继续|取消|完成|处理|请求|发现|成功|未完成|本批|本次|模型|"
     r"质量|一致性|格式|精修|润色|仲裁|后处理|总耗时|无可检查)"
 )
@@ -44,6 +44,10 @@ def failure_reason(reason: str) -> str:
         return "响应格式异常"
     if "SYNTAX_MISMATCH" in reason or "占位符" in reason:
         return "标记不一致"
+    if "术语" in reason and ("已变化" in reason or "被其他任务修改" in reason):
+        return "术语库已变化"
+    if "名称译文未遵守已有术语" in reason:
+        return "名称术语不一致"
     if "TERMINOLOGY" in reason or "术语" in reason:
         return "术语修复未完成"
     if "timeout" in reason.casefold() or "超时" in reason:

@@ -38,6 +38,7 @@ class PostProcessCheckpointEntry:
     phases: tuple[str, ...] = ()
     context: str = ""
     terminology_plugin_id: str | None = None
+    report_details: tuple[tuple[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.entry_key, dict) or not self.entry_key:
@@ -61,6 +62,7 @@ class PostProcessCheckpointEntry:
             "phase": self.phase,
             "text": self.text,
             **({"terminology_plugin_id": self.terminology_plugin_id} if self.terminology_plugin_id is not None else {}),
+            **({"report_details": dict(self.report_details)} if self.report_details else {}),
         })
 
 
@@ -75,10 +77,15 @@ class PostProcessCheckpoint:
     completed_phases: tuple[str, ...] = ()
     entries: tuple[PostProcessCheckpointEntry, ...] = ()
     schema_version: int = 1
+    settings_fingerprint: str | None = None
 
     def __post_init__(self) -> None:
-        if self.schema_version != 1:
+        if self.schema_version not in {1, 2}:
             raise ValueError("unsupported post-process checkpoint schema version")
+        if self.settings_fingerprint is not None and not _is_sha256(self.settings_fingerprint):
+            raise ValueError("post-process checkpoint settings fingerprint must be a SHA-256 digest")
+        if self.schema_version == 2 and self.settings_fingerprint is None:
+            raise ValueError("post-process checkpoint settings fingerprint is required")
         identity = (self.run_id, self.owner_id, self.input_fingerprint)
         if any(not value.strip() for value in identity):
             raise ValueError("post-process checkpoint identity fields must not be empty")
@@ -121,6 +128,7 @@ class PostProcessCheckpoint:
             "input_fingerprint": self.input_fingerprint,
             "revision": self.revision,
             "completed_phases": list(self.completed_phases),
+            **({"settings_fingerprint": self.settings_fingerprint} if self.settings_fingerprint is not None else {}),
             "entries": [
                 {
                     "entry_key": entry.entry_key,
@@ -134,6 +142,7 @@ class PostProcessCheckpoint:
                     "before_revision": entry.before_revision,
                     "phases": list(entry.phases),
                     "context": entry.context,
+                    **({"report_details": dict(entry.report_details)} if entry.report_details else {}),
                     **(
                         {"terminology_plugin_id": entry.terminology_plugin_id}
                         if entry.terminology_plugin_id is not None
@@ -152,7 +161,7 @@ class PostProcessCheckpoint:
         revision = value.get("revision")
         if any(isinstance(item, bool) or not isinstance(item, int) for item in (version, revision)):
             raise TypeError("post-process checkpoint schema and revision must be integers")
-        if version != 1:
+        if version not in {1, 2}:
             raise ValueError("unsupported post-process checkpoint schema version")
         entries = tuple(
             PostProcessCheckpointEntry(
@@ -167,6 +176,9 @@ class PostProcessCheckpoint:
                 before_revision=_int(item.get("before_revision", 0), "before_revision"),
                 phases=tuple(_strings(item.get("phases", ()))),
                 context=_string(item.get("context", ""), "context", allow_empty=True),
+                report_details=tuple(
+                    _object(item.get("report_details", {}), "report_details", allow_empty=True).items()
+                ),
                 terminology_plugin_id=(
                     _string(item["terminology_plugin_id"], "terminology_plugin_id")
                     if item.get("terminology_plugin_id") is not None
@@ -183,6 +195,7 @@ class PostProcessCheckpoint:
             revision=revision,
             completed_phases=tuple(_strings(value.get("completed_phases"))),
             entries=entries,
+            settings_fingerprint=value.get("settings_fingerprint"),
         )
 
 
@@ -294,8 +307,8 @@ def _objects(value: Any) -> tuple[dict[str, Any], ...]:
     return tuple(value)
 
 
-def _object(value: Any, name: str) -> dict[str, Any]:
-    if not isinstance(value, dict) or not value:
+def _object(value: Any, name: str, *, allow_empty: bool = False) -> dict[str, Any]:
+    if not isinstance(value, dict) or (not value and not allow_empty):
         raise ValueError(f"post-process checkpoint {name} must be a non-empty object")
     return value
 
@@ -328,6 +341,7 @@ def checkpoint_entry_from_candidate(candidate: Any, *, phase: str, accepted: boo
                 if candidate.terminology_plugin_id is not None
                 else {}
             ),
+            **({"report_details": dict(candidate.report_details)} if candidate.report_details else {}),
         }),
         accepted=accepted,
         original=candidate.original,
@@ -336,6 +350,7 @@ def checkpoint_entry_from_candidate(candidate: Any, *, phase: str, accepted: boo
         phases=tuple(candidate.phases),
         context=candidate.context,
         terminology_plugin_id=candidate.terminology_plugin_id,
+        report_details=candidate.report_details,
     )
 
 
@@ -345,8 +360,8 @@ def restore_candidates_from_checkpoint(checkpoint: PostProcessCheckpoint) -> tup
 
     restored = []
     for entry in checkpoint.entries:
-        if not entry.accepted:
-            continue
+        if entry.candidate_hash() != entry.candidate_sha256:
+            raise ValueError("post-process checkpoint candidate integrity check failed")
         restored.append(
             PostProcessCandidate(
                 run_id=checkpoint.run_id,
@@ -360,6 +375,7 @@ def restore_candidates_from_checkpoint(checkpoint: PostProcessCheckpoint) -> tup
                 accepted=entry.accepted,
                 context=entry.context,
                 terminology_plugin_id=entry.terminology_plugin_id,
+                report_details=entry.report_details,
             )
         )
     return tuple(restored)

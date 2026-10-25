@@ -405,7 +405,8 @@ def test_real_legacy_persistence_retains_unselected_plugin(qapp, session, tmp_pa
     run._persistence = VersionPersistence(ctx, ctx.active_version_identity)
     success, errors = _capture(qapp, run)
     assert success and not errors
-    assert ctx.variant_store.translations == {"first": "", "second": "旧译文", "third": "不变"}
+    # Snapshot preparation writes an independent store, never the live GUI cache.
+    assert ctx.variant_store.translations == {}
     run.tasks[0].translate_entries[0].translation = "翻译"
     run.mark_completed()
     success, errors = _save(qapp, run)

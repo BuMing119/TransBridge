@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import replace
 import json
+import sqlite3
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -10,7 +12,13 @@ import pytest
 
 from transbridge.application.io import EntryKey, EntryRevision, SourceNamespace
 from transbridge.application.translation.postprocess import PostProcessCandidate
-from transbridge.application.translation.proofread_checkpoint import ProofreadCheckpoint, proofread_settings
+from transbridge.application.translation.proofread_advisory import collect_review_findings
+from transbridge.application.translation.proofread_checkpoint import (
+    ProofreadCheckpoint,
+    _digest,
+    _input,
+    proofread_settings,
+)
 from transbridge.application.translation.proofread_stage import ProofreadStage
 
 
@@ -48,7 +56,15 @@ class Client:
         entries = json.loads(messages[1]["content"])["entries"]
         self.calls.append(entries)
         return json.dumps({
-            "results": [{"entry_key": item["entry_key"], "final_translation": self.text} for item in entries]
+            "results": [
+                {
+                    "entry_key": item["entry_key"],
+                    "final_translation": self.text,
+                    "review_status": "revised",
+                    "review_reason": "结合上下文修订措辞",
+                }
+                for item in entries
+            ]
         })
 
 
@@ -78,8 +94,8 @@ def test_reopen_after_cancel_skips_completed_entries_even_with_different_batches
         ("original", "New source"),
         ("before_text", "新译文"),
         ("context", "changed"),
-        ("before_revision", EntryRevision(2)),
         ("stage", 2),
+        ("text", "当前候选已改变"),
     ],
 )
 def test_changed_inputs_are_not_reused(tmp_path, field, value):
@@ -88,6 +104,31 @@ def test_changed_inputs_are_not_reused(tmp_path, field, value):
     client = Client()
     ProofreadStage(client, checkpoint=store(tmp_path)).run((replace(item, **{field: value}),))
     assert len(client.calls) == 1
+
+
+def test_reconstructed_revision_reuses_content_but_keeps_current_commit_guard(tmp_path):
+    item = candidate(1)
+    ProofreadStage(Client(), checkpoint=store(tmp_path)).run((item,))
+    current = replace(item, run_id="new-execution", before_revision=EntryRevision(23))
+    client = Client()
+    result = ProofreadStage(client, checkpoint=store(tmp_path)).run((current,))
+    assert not client.calls
+    assert result.candidates[0].run_id == "new-execution"
+    assert result.candidates[0].before_revision == EntryRevision(23)
+    assert result.candidates[0].text == "您好"
+
+
+def test_legacy_revision_input_hash_remains_readable(tmp_path):
+    item = collect_review_findings((candidate(1),))[0]
+    checkpoint = store(tmp_path)
+    ProofreadStage(Client(), checkpoint=checkpoint).run((item,))
+    payload = checkpoint.read()[_input(item)]
+    with closing(sqlite3.connect(checkpoint.path)) as db, db:
+        db.execute("DELETE FROM candidates")
+    checkpoint.write([(_input(item, legacy_revision=True), payload)])
+    client = Client()
+    result = ProofreadStage(client, checkpoint=store(tmp_path)).run((item,))
+    assert not client.calls and result.candidates[0].text == "您好"
 
 
 @pytest.mark.parametrize(
@@ -114,13 +155,13 @@ def test_changed_terms_invalidate_cached_candidate(tmp_path):
     assert len(client.calls) == 1
 
 
-def test_cached_first_pass_still_runs_terminology_closure_and_saves_repair(tmp_path):
+def test_legacy_first_pass_without_review_evidence_is_rechecked_but_not_forced_to_use_terms(tmp_path):
     item = candidate(1)
     checkpoint = store(tmp_path)
     terms = {"Hello": "标准"}
-    session = checkpoint.session((item,))
-    session.observe(item, terms)
-    session.save((item.with_text("您好", "proofread"),))
+    prepared = collect_review_findings((item,))[0]
+    checkpoint.write([(_input(prepared), {"text": "旧断点候选", "terms": _digest(terms)})])
+    assert checkpoint.saved_count() == 0
 
     class Refiner:
         calls = 0
@@ -139,16 +180,17 @@ def test_cached_first_pass_still_runs_terminology_closure_and_saves_repair(tmp_p
         term_resolver=lambda _: terms,
         refiner=refiner,
     ).run((item,))
-    assert not client.calls
-    assert refiner.calls == 1
-    assert result.candidates[0].text == "标准"
+    assert len(client.calls) == 1
+    assert refiner.calls == 0
+    assert result.candidates[0].text == "您好"
     result = ProofreadStage(
         client,
         checkpoint=store(tmp_path),
         term_resolver=lambda _: terms,
         refiner=refiner,
     ).run((item,))
-    assert refiner.calls == 1
+    assert len(client.calls) == 1
+    assert refiner.calls == 0
     assert result.candidates[0].accepted
 
 
@@ -182,11 +224,90 @@ def test_write_failure_does_not_report_saved_progress(tmp_path, monkeypatch):
     assert not progress
 
 
-def test_corrupt_checkpoint_fails_explicitly(tmp_path):
+def test_corrupt_checkpoint_recomputes_and_preserves_original(tmp_path, caplog):
     checkpoint = store(tmp_path)
     checkpoint.path.write_bytes(b"broken database")
-    with pytest.raises(RuntimeError, match="无法读取校对断点"):
-        checkpoint.read()
+    assert checkpoint.read() == {}
+    assert checkpoint.saved_count() == 0
+    assert checkpoint.path.read_bytes() == b"broken database"
+    client = Client()
+    result = ProofreadStage(client, checkpoint=checkpoint).run((candidate(1),))
+    assert len(client.calls) == 1 and result.candidates[0].text == "您好"
+    assert checkpoint.saved_count() == 1
+    backups = tuple(tmp_path.glob("corrupt-*.sqlite3"))
+    assert len(backups) == 1 and backups[0].read_bytes() == b"broken database"
+    assert str(backups[0]) in caplog.text
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        "CREATE TABLE candidates (input TEXT PRIMARY KEY)",
+        "CREATE TABLE candidates (payload TEXT NOT NULL)",
+        "CREATE TABLE candidates (input TEXT, payload TEXT NOT NULL)",
+        "CREATE TABLE candidates (input TEXT PRIMARY KEY, payload TEXT NOT NULL, future_metadata TEXT)",
+        "CREATE TABLE future_candidates (input TEXT PRIMARY KEY, payload TEXT NOT NULL)",
+    ],
+)
+def test_incompatible_checkpoint_schema_recomputes_without_modifying_original(tmp_path, schema):
+    checkpoint = store(tmp_path)
+    with closing(sqlite3.connect(checkpoint.path)) as db, db:
+        db.execute(schema)
+    original = checkpoint.path.read_bytes()
+
+    assert checkpoint.read() == {}
+    assert checkpoint.saved_count() == 0
+    assert checkpoint.path.read_bytes() == original
+    client = Client()
+    result = ProofreadStage(client, checkpoint=checkpoint).run((candidate(1),))
+
+    assert len(client.calls) == 1 and result.candidates[0].accepted
+    assert checkpoint.saved_count() == 1
+    backups = tuple(tmp_path.glob("corrupt-*.sqlite3"))
+    assert len(backups) == 1 and backups[0].read_bytes() == original
+    resumed_client = Client()
+    ProofreadStage(resumed_client, checkpoint=store(tmp_path)).run((candidate(1),))
+    assert not resumed_client.calls
+
+
+def test_locked_checkpoint_is_not_misclassified_as_incompatible_schema(tmp_path, monkeypatch):
+    checkpoint = store(tmp_path)
+    ProofreadStage(Client(), checkpoint=checkpoint).run((candidate(1),))
+    original = checkpoint.path.read_bytes()
+    connect = sqlite3.connect
+
+    def short_timeout(*args, **kwargs):
+        return connect(*args, **{**kwargs, "timeout": 0.01})
+
+    with closing(connect(checkpoint.path)) as blocker, blocker:
+        blocker.execute("BEGIN EXCLUSIVE")
+        monkeypatch.setattr(sqlite3, "connect", short_timeout)
+        with pytest.raises(RuntimeError, match="database is locked"):
+            checkpoint.write([("new", {"text": "new", "terms": "a" * 64})])
+        assert not tuple(tmp_path.glob("corrupt-*.sqlite3"))
+    assert checkpoint.path.read_bytes() == original
+    assert checkpoint.saved_count() == 1
+
+
+@pytest.mark.parametrize("payload", ["{", "[]", '{"text": "", "terms": "invalid"}'])
+def test_one_invalid_candidate_keeps_other_candidates_reusable(tmp_path, payload):
+    checkpoint = store(tmp_path)
+    inputs = (candidate(1), candidate(2))
+    ProofreadStage(Client(), checkpoint=checkpoint).run(inputs)
+    rows = checkpoint.read()
+    with sqlite3.connect(checkpoint.path) as db:
+        last_key = list(rows)[-1]
+        db.execute("UPDATE candidates SET payload = ? WHERE input = ?", (payload, last_key))
+    assert checkpoint.saved_count() == 1
+    client = Client()
+    result = ProofreadStage(client, checkpoint=store(tmp_path)).run(inputs)
+    assert len(client.calls) == 1 and len(client.calls[0]) == 1
+    assert all(item.accepted for item in result.candidates)
+    assert store(tmp_path).saved_count() == 2
+    backups = tuple(tmp_path.glob("corrupt-*.sqlite3"))
+    assert len(backups) == 1
+    with sqlite3.connect(backups[0]) as db:
+        assert db.execute("SELECT payload FROM candidates WHERE input = ?", (last_key,)).fetchone()[0] == payload
 
 
 def test_settings_exclude_secrets_and_operational_limits():
@@ -207,7 +328,8 @@ item = PostProcessCandidate("run", EntryKey(SourceNamespace("plugin"), "1"), Ent
                             "Hello", "你好", "你好", 1)
 class Client:
     def chat(self, messages, tokens):
-        return json.dumps({"results": [{"entry_key": item.entry_key.to_dict(), "final_translation": "您好"}]})
+        return json.dumps({"results": [{"entry_key": item.entry_key.to_dict(), "final_translation": "您好",
+                                       "review_status": "revised", "review_reason": "措辞修订"}]})
 checkpoint = ProofreadCheckpoint(Path(sys.argv[1]), project="project", variant="variant",
                                 source="source", settings={"model": "test"})
 ProofreadStage(Client(), checkpoint=checkpoint).run((item,), progress_callback=lambda *args: os._exit(23))

@@ -1,12 +1,19 @@
 from copy import deepcopy
 from dataclasses import replace
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
 from tests.ui.tools.test_ai_task_session import _Context
 from transbridge.config.llm import LLMConfig
-from transbridge.ui.tools.ai_translator.task_recovery_binding import TaskRecoveryBinding, recovery_sources, signature
+from transbridge.ui.tools.ai_translator.task_entry_results import TaskEntryResults
+from transbridge.ui.tools.ai_translator.task_recovery_binding import (
+    TaskRecoveryBinding,
+    complete_empty_recovery,
+    recovery_sources,
+    signature,
+)
 from transbridge.ui.tools.ai_translator.task_scope import SourceTask
 
 
@@ -64,26 +71,101 @@ def test_exact_identities_and_object_ownership(tmp_path):
     assert all(task.entries[0] is next(iter(task.collection)) for task in tasks)
 
 
-@pytest.mark.parametrize("change", ["project", "source", "key", "duplicate", "locked", "empty", "mode"])
+@pytest.mark.parametrize("change", ["project", "duplicate", "mode"])
 def test_invalid_scope(tmp_path, change):
     _, request, _, window = setup_binding(tmp_path)
     record = window._recovery_selection[0]
     if change == "project":
         window._ctx.active_version_identity = ("other", "variant")
-    elif change == "source":
-        record["sources"][0]["key"] = "missing"
-    elif change == "key":
-        record["sources"][0]["polish_keys"][0]["local_key"] = "missing"
     elif change == "duplicate":
         record["sources"].append(deepcopy(record["sources"][0]))
-    elif change == "locked":
-        next(iter(window._ctx.collection)).stage = -1
-    elif change == "empty":
-        next(iter(window._ctx.collection)).original = " "
     else:
         window._view_port.mode = "mixed"
     with pytest.raises(ValueError):
         recovery_sources(window, request.config)
+
+
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize("change", ["source", "key", "hidden", "locked", "empty"])
+def test_unavailable_entries_do_not_block_remaining_scope(tmp_path, restart, change):
+    from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+
+    binding, request, _, window = setup_binding(tmp_path)
+    binding.record.pop("recovery_contract")  # Historical proofreading used permissive scope filtering.
+    window._recovery_selection = (binding.record, restart)
+    if change == "source":
+        del window._ctx.slots["first"]
+    elif change == "key":
+        window._ctx.slots["first"].collection = TranslationEntryCollection([])
+    elif change == "empty":
+        next(iter(window._ctx.collection)).original = " "
+    else:
+        next(iter(window._ctx.collection)).stage = -1 if change == "hidden" else 9
+    tasks = recovery_sources(window, request.config)
+    assert [task.key for task in tasks if task.entries] == ["second", "third"]
+
+
+def test_changed_original_cannot_be_mistaken_for_already_applied_result(tmp_path):
+    binding, request, _, window = setup_binding(tmp_path)
+    entry = next(iter(window._ctx.slots["second"].collection))
+    binding.record["applied_entries"] = [
+        {
+            "entry_key": entry.identity.to_dict(),
+            "original": entry.original,
+            "text": entry.translation,
+            "stage": entry.stage,
+        }
+    ]
+    entry.original = "Changed source"
+    with pytest.raises(ValueError, match="词条已修改"):
+        recovery_sources(window, request.config)
+
+
+def test_empty_recovery_completes_without_claiming_project_was_saved(tmp_path):
+    binding, request, _, window = setup_binding(tmp_path)
+    binding.release()
+    binding.record.pop("recovery_contract")
+    for slot in window._ctx.slots.values():
+        next(iter(slot.collection)).stage = 9
+    window._task_project_directory_provider = lambda: tmp_path
+    window._task_recovery_registry = SimpleNamespace(history_windows=[Mock()], changed=Mock())
+    window.close = Mock()
+    tasks = recovery_sources(window, request.config)
+    assert complete_empty_recovery(window, tasks)
+    record = binding.store.load(binding.record["task_id"])
+    assert record["state"] == "completed" and "project_saved" not in record
+    window.close.assert_called_once_with()
+    window._task_recovery_registry.history_windows[0].refresh.assert_called_once_with()
+
+
+def test_empty_recovery_cannot_mark_a_damaged_manifest_completed(tmp_path):
+    binding, _, _, window = setup_binding(tmp_path)
+    window._task_project_directory_provider = lambda: tmp_path
+    window.close = Mock()
+    path = binding.store._path(binding.record["task_id"])
+    path.write_text("{", encoding="utf-8")
+    with pytest.raises(ValueError, match="Cannot read task recovery"):
+        complete_empty_recovery(window, ())
+    assert path.read_text(encoding="utf-8") == "{"
+    window.close.assert_not_called()
+
+
+def test_restart_with_no_remaining_entries_defers_selection_until_start(tmp_path, monkeypatch):
+    from transbridge.ui.tools.ai_translator import task_recovery_binding
+
+    binding, request, _, window = setup_binding(tmp_path)
+    window._ctx.slots.clear()
+    window._recovery_selection = (binding.record, True)
+    window._task_project_directory_provider = lambda: tmp_path
+    window._config_presenter = SimpleNamespace(build=lambda: request.config)
+    window.close = Mock()
+    show = Mock()
+    monkeypatch.setattr(task_recovery_binding, "configure_recovery", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("transbridge.ui.windowing.show_and_activate", show)
+    task_recovery_binding.open_recovery(window, binding.record, restart=True)
+    assert binding.store.load(binding.record["task_id"])["state"] != "completed"
+    show.assert_called_once_with(window)
+    window.close.assert_not_called()
 
 
 def test_changed_config_requires_restart(tmp_path):
@@ -114,9 +196,11 @@ def test_skip_requires_exact_saved_result(tmp_path):
 def test_continuation_does_not_overwrite_manifest(tmp_path):
     binding, request, session, _ = setup_binding(tmp_path)
     request.recovery_task_id = binding.record["task_id"]
+    binding.release()
     session.tasks = session.tasks[1:]
     resumed = TaskRecoveryBinding(request, session)
     assert len(resumed.record["sources"]) == 3
+    resumed.release()
     request.config.model = "changed"
     with pytest.raises(ValueError, match="不匹配"):
         TaskRecoveryBinding(request, session)
@@ -125,8 +209,9 @@ def test_continuation_does_not_overwrite_manifest(tmp_path):
 def test_lifecycle_records_saved_evidence_only(tmp_path):
     binding, _, session, window = setup_binding(tmp_path)
     entry = next(iter(window._ctx.collection))
-    results = SimpleNamespace(
-        applied_keys={entry.identity}, entries={entry.identity: SimpleNamespace(before=entry, text="候选", stage=1)}
+    results = TaskEntryResults(session.tasks, "run")
+    results.entries[entry.identity] = replace(
+        results.entries[entry.identity], status="succeeded", applied=True, text="候选", stage=1
     )
     run = SimpleNamespace(state="completed", user_cancelled=False, shutting_down=False, entries=results)
     session.completed = True
@@ -146,13 +231,17 @@ def test_lifecycle_records_saved_evidence_only(tmp_path):
     assert binding.record["state"] == "cancelled"
 
 
-def test_translation_is_not_supported(tmp_path):
+def test_translation_has_complete_recovery_manifest(tmp_path):
     _, request, session, _ = setup_binding(tmp_path)
     request.run_id = "translation"
     task = session.tasks[0]
     session.tasks = (replace(task, translate_entries=task.polish_entries, polish_entries=()),)
     binding = TaskRecoveryBinding(request, session)
-    assert not binding.supported and binding.store is None
+    assert binding.supported and binding.record["recovery_contract"] == 2
+    source = binding.record["sources"][0]
+    assert source["translate_keys"] and not source["polish_keys"]
+    assert source["inputs"][0]["original"] == task.polish_entries[0].original
+    assert binding.record["execution_runs"] == ["translation"]
 
 
 def test_update_does_not_swallow_storage_errors(tmp_path, monkeypatch):

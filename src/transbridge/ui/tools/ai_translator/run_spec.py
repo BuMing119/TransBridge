@@ -49,6 +49,24 @@ class AiPreflightResult:
     issues: tuple[AiPreflightIssue, ...] = ()
 
     @property
+    def optional_issues(self) -> tuple[AiPreflightIssue, ...]:
+        return tuple(
+            issue
+            for issue in self.issues
+            if issue.code
+            in {AiPreflightCode.MISSING_EMBEDDING_CONFIGURATION, AiPreflightCode.MISSING_EMBEDDING_DEPENDENCY}
+        )
+
+    @property
+    def blocking_issues(self) -> tuple[AiPreflightIssue, ...]:
+        optional = self.optional_issues
+        return tuple(issue for issue in self.issues if issue not in optional)
+
+    @property
+    def blocking_reason(self) -> str | None:
+        return "；".join(issue.message for issue in self.blocking_issues) or None
+
+    @property
     def ready(self) -> bool:
         return not self.issues
 

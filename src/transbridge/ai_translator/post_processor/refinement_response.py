@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 
 from transbridge.application.translation.entry_alias import ai_entry_id, ai_entry_key
 
+from .review_evidence import ReviewRequestEvidence, review_result_fields
+
 if TYPE_CHECKING:
     from ...converter.translation_entry import TranslationEntry
 
@@ -34,6 +36,13 @@ class RefineResult:
     note: str = ""
     valid: bool = True
     failure_code: str = ""
+    review_status: str = ""
+    review_reason: str = ""
+    review_contract_version: int = 0
+    review_reference_terms: dict = field(default_factory=dict)
+    detected_issues: tuple[dict, ...] = ()
+    review_before_text: str | None = None
+    reviewed_translation: str | None = None
 
 
 def failed_refine_result(entry: TranslationEntry, note: str, failure_code: str) -> RefineResult:
@@ -48,10 +57,14 @@ def failed_refine_result(entry: TranslationEntry, note: str, failure_code: str) 
         note=note,
         valid=False,
         failure_code=failure_code,
+        review_status="needs_review",
+        review_reason=note,
     )
 
 
-def parse_refinement_response(entry: TranslationEntry, response: str) -> RefineResult:
+def parse_refinement_response(
+    entry: TranslationEntry, response: str, evidence: ReviewRequestEvidence | None = None
+) -> RefineResult:
     """Parse one response without attempting lossy JSON repair."""
 
     try:
@@ -62,6 +75,7 @@ def parse_refinement_response(entry: TranslationEntry, response: str) -> RefineR
         if not isinstance(refined_translation, str) or not refined_translation.strip():
             raise TypeError("refinement response must contain a non-empty refined_translation")
         fixes = _parse_fixes(data.get("fixes_applied", []))
+        review_status, review_reason = _review_outcome(entry, data, refined_translation)
         return RefineResult(
             entry_id=ai_entry_id(entry),
             original_translation=entry.translation or "",
@@ -70,6 +84,10 @@ def parse_refinement_response(entry: TranslationEntry, response: str) -> RefineR
             confidence=data.get("confidence", 0.0),
             needs_arbitration=data.get("needs_arbitration", False),
             note=data.get("note", ""),
+            **(
+                {"review_status": review_status, "review_reason": review_reason}
+                | review_result_fields(data, evidence, refined_translation)
+            ),
         )
     except (AttributeError, TypeError, json.JSONDecodeError):
         return failed_refine_result(entry, f"响应解析失败: {str(response)[:200]}", "invalid_response")
@@ -78,6 +96,7 @@ def parse_refinement_response(entry: TranslationEntry, response: str) -> RefineR
 def parse_batch_refinement_response(
     entries: list[TranslationEntry],
     response: str,
+    evidence: dict[str, ReviewRequestEvidence] | None = None,
 ) -> dict[str, RefineResult]:
     """Parse a batch with exact, duplicate, missing, unknown, and ambiguous-ID checks."""
 
@@ -101,7 +120,7 @@ def parse_batch_refinement_response(
             if entry_id in results:
                 duplicate_entry_ids.add(entry_id)
                 continue
-            results[entry_id] = _result_from_batch_item(entry, item)
+            results[entry_id] = _result_from_batch_item(entry, item, (evidence or {}).get(entry_id))
 
         if unknown_entry_ids:
             unknown_text = ", ".join(sorted(unknown_entry_ids))
@@ -147,10 +166,13 @@ def _unambiguous_entry_aliases(entries: list[TranslationEntry]) -> dict[str, Tra
     return aliases
 
 
-def _result_from_batch_item(entry: TranslationEntry, item: dict) -> RefineResult:
+def _result_from_batch_item(
+    entry: TranslationEntry, item: dict, evidence: ReviewRequestEvidence | None = None
+) -> RefineResult:
     refined_translation = item.get("refined_translation")
     if not isinstance(refined_translation, str) or not refined_translation.strip():
         return failed_refine_result(entry, "批量修复响应返回空值或缺少译文", "invalid_response")
+    review_status, review_reason = _review_outcome(entry, item, refined_translation)
     return RefineResult(
         entry_id=str(ai_entry_id(entry)),
         original_translation=entry.translation or "",
@@ -159,7 +181,24 @@ def _result_from_batch_item(entry: TranslationEntry, item: dict) -> RefineResult
         confidence=item.get("confidence", 0.0),
         needs_arbitration=item.get("needs_arbitration", False),
         note=item.get("note", ""),
+        **(
+            {"review_status": review_status, "review_reason": review_reason}
+            | review_result_fields(item, evidence, refined_translation)
+        ),
     )
+
+
+def _review_outcome(entry: TranslationEntry, data: dict, translation: str) -> tuple[str, str]:
+    default_status = "revised" if translation != entry.translation else "retained"
+    status = data.get("review_status") or ("needs_review" if data.get("needs_arbitration") else default_status)
+    if status not in {"revised", "retained", "term_suspect", "needs_review"}:
+        raise TypeError("refinement review_status is invalid")
+    if status == "retained" and translation != entry.translation:
+        raise TypeError("retained refinement must preserve the current translation")
+    reason = data.get("review_reason", data.get("note", ""))
+    if not isinstance(reason, str):
+        raise TypeError("refinement review_reason must be a string")
+    return status, reason
 
 
 def _parse_fixes(value: object) -> list[FixApplied]:

@@ -82,7 +82,8 @@ _DEFAULT_TRANSLATION_COMMON_SYSTEM = (
     "Translate from $source_lang into $target_lang.\n"
     "Translation requirements:\n"
     "1. Produce natural, fluent translations that follow $target_lang conventions.\n"
-    "2. Each entry's terms apply only to that entry; follow every provided mapping exactly.\n"
+    "2. Each entry's terms are fallible reference material for that entry. Prefer consistent names for the same "
+    "entity, but use context to resolve ambiguous, erroneous or inapplicable mappings; do not force them into text.\n"
     "3. Preserve source markers such as <br>, [pagebreak], \\n, and format placeholders such as %s.\n"
     "4. Return only the structured translation result, with no explanations or comments.\n"
     "5. Return exactly one translation for every input entry and preserve each entry ID exactly.\n"
@@ -157,36 +158,11 @@ def _extract_partial_json_pairs(text: str) -> dict:
 def _extract_partial_translation_results(text: str) -> dict[str, str]:
     """Extract complete translation items from a possibly incomplete results array."""
 
-    results_key = re.search(r'"results"\s*:\s*\[', text)
-    if results_key is None:
-        return {}
-    decoder = json.JSONDecoder()
-    index = results_key.end()
-    extracted: dict[str, str] = {}
-    duplicates: set[str] = set()
-    while index < len(text):
-        while index < len(text) and text[index] in " \t\r\n,":
-            index += 1
-        if index >= len(text) or text[index] == "]":
-            break
-        try:
-            item, end = decoder.raw_decode(text, index)
-        except json.JSONDecodeError:
-            break
-        index = end
-        if not isinstance(item, dict) or set(item) != {"entry_id", "translation"}:
-            continue
-        entry_id = item.get("entry_id")
-        translation = item.get("translation")
-        if not isinstance(entry_id, str) or not isinstance(translation, str) or not translation:
-            continue
-        if entry_id in extracted:
-            duplicates.add(entry_id)
-        else:
-            extracted[entry_id] = translation
-    for entry_id in duplicates:
-        extracted.pop(entry_id, None)
-    return extracted
+    from .translation_stream import TranslationStream
+
+    stream = TranslationStream()
+    stream.feed(text)
+    return stream.translations
 
 
 # ── PromptBuilder ────────────────────────────────────────────────────────────

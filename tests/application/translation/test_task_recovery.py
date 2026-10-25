@@ -130,12 +130,47 @@ def test_rejects_duplicate_sources_and_entry_identities(tmp_path):
         TaskRecoveryStore(tmp_path).create(value)
 
 
-def test_corrupt_or_misnamed_records_fail_with_actionable_context(tmp_path):
+def test_corrupt_or_misnamed_records_are_isolated_without_changing_originals(tmp_path, caplog):
     store = TaskRecoveryStore(tmp_path)
     store.create(record())
     path = next(tmp_path.glob("*.json"))
     path.write_text(json.dumps(record("wrong-task")), encoding="utf-8")
     with pytest.raises(ValueError, match="identity does not match"):
         store.load("task-one")
-    with pytest.raises(ValueError, match="identity does not match"):
-        store.list_records()
+    original = path.read_bytes()
+    healthy = store.create(record("healthy"))
+    broken = tmp_path / "broken.json"
+    broken.write_text("{", encoding="utf-8")
+    assert store.list_records() == (healthy,)
+    assert path.read_bytes() == original
+    assert broken.read_text(encoding="utf-8") == "{"
+    assert str(path) in caplog.text and str(broken) in caplog.text
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{"checkpoint_settings": []}, {"applied_entries": [None]}, {"applied_entries": [{"entry_key": {}}]}],
+)
+def test_malformed_optional_recovery_metadata_does_not_hide_healthy_records(tmp_path, extra):
+    store = TaskRecoveryStore(tmp_path)
+    damaged = store.create(record())
+    path = store._path(damaged["task_id"])
+    path.write_text(json.dumps({**damaged, **extra}), encoding="utf-8")
+    healthy = store.create(record("healthy"))
+    assert store.list_records() == (healthy,)
+
+
+@pytest.mark.parametrize("entry", [{}, {"entry_key": None}, {"entry_key": {}}, {"entry_key": []}])
+def test_malformed_full_recovery_input_is_isolated_without_changing_original(tmp_path, entry):
+    store = TaskRecoveryStore(tmp_path)
+    damaged = store.create(record())
+    damaged.update(recovery_contract=2, overwrite=False, execution_runs=[damaged["task_id"]])
+    damaged["sources"][0]["inputs"] = [entry]
+    path = store._path(damaged["task_id"])
+    path.write_text(json.dumps(damaged), encoding="utf-8")
+    before = path.read_bytes()
+    healthy = store.create(record("healthy"))
+    with pytest.raises(ValueError, match="input identity is invalid"):
+        store.load(damaged["task_id"])
+    assert store.list_records() == (healthy,)
+    assert path.read_bytes() == before

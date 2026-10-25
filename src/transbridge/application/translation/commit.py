@@ -51,8 +51,9 @@ class CommitTranslations:
 
     def commit(self, request: CommitTranslationsRequest) -> OperationResult[dict]:
         candidate_set = request.candidate_set
+        candidate_fingerprint = candidate_set.fingerprint
         commit_id = canonical_hash({
-            "candidate_set": candidate_set.fingerprint,
+            "candidate_set": candidate_fingerprint,
             "run_id": candidate_set.run_id,
             "operation": "commit-translations-v1",
         })
@@ -92,7 +93,7 @@ class CommitTranslations:
                     )
                 )
                 continue
-            if _already_applied(snapshot, candidate_set, candidate):
+            if _already_applied(snapshot, candidate_set.run_id, candidate_fingerprint, candidate):
                 already_committed.append(candidate)
                 continue
             if snapshot.revision != candidate.before_revision:
@@ -140,7 +141,7 @@ class CommitTranslations:
             request.context.owner_id,
             "translation-workload-v2",
             metadata=(
-                ("candidate_set", candidate_set.fingerprint),
+                ("candidate_set", candidate_fingerprint),
                 ("commit_id", commit_id),
                 ("stage_policy", self._stage_policy.version),
             ),
@@ -245,13 +246,13 @@ class CommitTranslations:
         )
 
 
-def _already_applied(snapshot, candidate_set: CandidateSet, candidate: CandidateTranslation) -> bool:
+def _already_applied(snapshot, run_id: str, candidate_fingerprint: str, candidate: CandidateTranslation) -> bool:
     if snapshot.translation != candidate.text or snapshot.stage != 2:
         return False
     return any(
-        item.run_id == candidate_set.run_id
+        item.run_id == run_id
         and item.source == "translation-workload-v2"
-        and dict(item.metadata).get("candidate_set") == candidate_set.fingerprint
+        and dict(item.metadata).get("candidate_set") == candidate_fingerprint
         for item in snapshot.provenance
     )
 

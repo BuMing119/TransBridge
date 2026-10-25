@@ -54,7 +54,7 @@ def test_progress_is_visible_before_next_batch_finishes():
         worker.join(5)
     assert not worker.is_alive()
     assert all(item.accepted for item in results[0].values())
-    assert "开始检查术语" in logs
+    assert not any("修复术语" in message or "开始检查术语" in message for message in logs)
     assert logs[-1] == "校对结束：成功 2 条，未完成 0 条"
 
 

@@ -19,7 +19,7 @@ def create_polish_worker(
     from .workflow_log_store import WorkflowLogStore
 
     profile = AiExecutionProfile.from_config("polish", config)
-    log_store = WorkflowLogStore(ctx.esp_path, workflow="polish")
+    log_store = WorkflowLogStore(ctx.esp_path, workflow="polish", max_concurrent=config.max_concurrent)
     if request_budget is None:
         from transbridge.application.translation.ai_request_budget import AiRequestBudget
 

@@ -8,7 +8,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, fields
 from datetime import datetime
 import json
 import logging
@@ -28,8 +29,11 @@ from transbridge.ai_translator.term_formats import (
     term_entry_from_mapping,
     term_entry_to_canonical_dict,
 )
-from transbridge.ai_translator.term_validation import valid_term_pair, valid_term_text
+from transbridge.ai_translator.term_validation import valid_term_pair
 from transbridge.application.translation.entry_alias import ai_entry_key
+
+from .shared_term_snapshot import FrozenTermEntry
+from .term_lookup_cache import TermLookupCache, invalidate_lookup_load, lookup_view, revisioned_dynamic_mutation
 
 if TYPE_CHECKING:
     from transbridge.application.terminology.effective import EffectiveSnapshotStatus, TerminologyLookupContext
@@ -38,6 +42,7 @@ if TYPE_CHECKING:
 
     from .legacy_term_policy import LegacyTermFilterPort
     from .project_terminology_adapter import ProjectTerminologyAdapter
+    from .shared_term_pool import SharedTermPool
 
 logger = logging.getLogger(__name__)
 
@@ -84,17 +89,34 @@ class DynamicTermDatabase:
         ai_dir = LLMConfig.get_ai_translator_dir(stem)
         self._path = os.path.join(ai_dir, f"{stem}_terms.json")
         self._entries: list[TermEntry] = []
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._revision = 0
 
+    @property
+    def revision(self) -> int:
+        with self._lock:
+            return self._revision
+
+    @revisioned_dynamic_mutation
     def load(self) -> None:
         if not os.path.exists(self._path):
             self._entries = []
             return
         try:
-            self._entries = load_terms_json(self._path, source=None)
-            for entry in self._entries:
+            loaded = load_terms_json(self._path, source=None)
+            current = {entry.term: entry for entry in self._entries}
+            refreshed = []
+            for entry in loaded:
                 if not entry.source:
                     entry.source = "dynamic"
+                # Managers retain these records in their merged source views.
+                # Reloading before a task write must not leave those views stale.
+                existing = current.get(entry.term)
+                if existing is not None:
+                    for field in fields(TermEntry):
+                        setattr(existing, field.name, getattr(entry, field.name))
+                refreshed.append(existing if existing is not None else entry)
+            self._entries = refreshed
         except Exception as exc:
             logger.warning("加载动态术语库失败 %s: %s", self._path, exc)
             self._entries = []
@@ -102,6 +124,7 @@ class DynamicTermDatabase:
     def save(self) -> None:
         dump_terms_json(self._path, self._entries)
 
+    @revisioned_dynamic_mutation
     def add(self, term: str, translation: str, source: str, context: str = "") -> None:
         if not valid_term_pair(term, translation):
             return
@@ -158,18 +181,39 @@ class TermDatabaseManager:
         effective_loader: ProjectTerminologyAdapter | None = None,
         terminology_context: TerminologyLookupContext | None = None,
         legacy_term_filter: LegacyTermFilterPort | None = None,
+        shared_term_pool: SharedTermPool | None = None,
+        generated_term_plugin_id: str | None = None,
+        reference_store=None,
+        reference_source: str | None = None,
     ):
         self._config = config
         self._esp_path = esp_path
         self._paratranz_client = paratranz_client
         self._project_id = project_id
         self._effective_loader = effective_loader
+        if terminology_context is None and shared_term_pool is not None:
+            from transbridge.application.terminology.effective import TerminologyLookupContext
+
+            terminology_context = TerminologyLookupContext(*shared_term_pool.identity[:2])
         self._terminology_context = terminology_context
         self._legacy_term_filter = legacy_term_filter
+        self._shared_term_pool = shared_term_pool
+        self._generated_term_plugin_id = generated_term_plugin_id
+        self._reference_store = reference_store
+        self._reference_source = reference_source or esp_path
+        if shared_term_pool is not None:
+            if terminology_context is not None and shared_term_pool.identity[:2] != (
+                terminology_context.local_project_id,
+                terminology_context.local_variant_id,
+            ):
+                raise ValueError("shared terminology does not belong to the manager Project/Variant")
+            if shared_term_pool.identity[2] != config.target_lang:
+                raise ValueError("shared terminology does not belong to the manager target language")
         if terminology_context is not None and terminology_context.plugin_id is not None:
             raise ValueError("TermDatabaseManager base terminology context must not select a plugin")
         self._retrieval_enabled = getattr(config, "retrieval_enabled", True)
-        self._dynamic_db: DynamicTermDatabase | None = None
+        self._dynamic_db: DynamicTermDatabase | SharedTermPool | None = shared_term_pool
+        self._local_dynamic_db: DynamicTermDatabase | None = None
         self._legacy_terms: list[TermEntry] | None = None
         self._merged_terms: list[TermEntry] = []  # 缓存合并后的术语列表
         self._project_terminology_status: EffectiveSnapshotStatus | None = None
@@ -178,6 +222,7 @@ class TermDatabaseManager:
         self._load_log: list[tuple[str, int, str | None]] = []  # (source, count, error)
         self._vector_index = None  # 延迟初始化
         self._load_completed = False
+        self._lookup_cache = TermLookupCache()
 
         # 缓存目录：data/ai_translator/{stem}/cache/
         from transbridge.paratranz.config_manager import LLMConfig
@@ -186,12 +231,19 @@ class TermDatabaseManager:
         self._cache_dir = os.path.join(LLMConfig.get_ai_translator_dir(stem), "cache")
         os.makedirs(self._cache_dir, exist_ok=True)
 
-    def get_dynamic_db(self) -> DynamicTermDatabase:
+    def get_dynamic_db(self) -> DynamicTermDatabase | SharedTermPool:
         if self._dynamic_db is None:
-            self._dynamic_db = DynamicTermDatabase(self._esp_path)
-            self._dynamic_db.load()
+            store = getattr(self, "_reference_store", None)
+            if store is None:
+                self._dynamic_db = DynamicTermDatabase(self._esp_path)
+                self._dynamic_db.load()
+            else:
+                self._dynamic_db = store.dynamic_database(
+                    self._reference_source, lambda: DynamicTermDatabase(self._esp_path)
+                )
         return self._dynamic_db
 
+    @invalidate_lookup_load
     def load_all(self) -> dict[str, str]:
         """按 term_priority 顺序加载并合并，优先级从低到高（后者覆盖前者）。返回 {term: translation}。"""
         if not self._retrieval_enabled:
@@ -201,7 +253,9 @@ class TermDatabaseManager:
             self._load_log = []
             self._load_completed = True
             return {}
-        self._legacy_terms = self._load_all_with_metadata()
+        from .task_reference_snapshot import load_manager_references
+
+        self._legacy_terms = load_manager_references(self)
         self._merged_terms = list(self._legacy_terms)
         loader = getattr(self, "_effective_loader", None)
         context = getattr(self, "_terminology_context", None)
@@ -213,6 +267,8 @@ class TermDatabaseManager:
             diagnostic = "; ".join(projected.diagnostics) or None
             self._load_log.append(("project-terminology", len(projected.entries), diagnostic))
         self._load_completed = True
+        if self._shared_term_pool is not None:
+            self._merged_terms = self._effective_terms()
 
         # Disabled retrieval must not import or initialize any vector backend.
         embedding_mode = getattr(getattr(self._config, "embedding", None), "mode", "disabled")
@@ -305,6 +361,8 @@ class TermDatabaseManager:
 
     def _load_all_with_metadata(self) -> list[TermEntry]:
         """加载并合并术语，保留 case_sensitive 等元数据。"""
+        from .task_reference_snapshot import load_reference_source
+
         loaders = {
             "dynamic": self._load_dynamic,
             "paratranz": self._load_paratranz,
@@ -317,25 +375,11 @@ class TermDatabaseManager:
         for source in reversed(self._config.term_priority):
             loader = loaders.get(source)
             if loader:
-                try:
-                    # 先从源加载
-                    entries = loader()
-                    # 保存该来源的缓存
-                    self._save_source_cache(source, entries)
-                    entries = self._filter_legacy_entries(source, entries)
-                    for entry in entries:
-                        term_map[entry.term] = entry
-                    self._load_log.append((source, len(entries), None))
-                except Exception as e:
-                    # 源加载失败时尝试从缓存恢复
-                    cached = self._load_source_cache(source)
-                    if cached is not None:
-                        cached = self._filter_legacy_entries(source, cached)
-                        for entry in cached:
-                            term_map[entry.term] = entry
-                        self._load_log.append((source, len(cached), f"from cache (source failed: {e})"))
-                    else:
-                        self._load_log.append((source, 0, str(e)))
+                entries, diagnostic = load_reference_source(self, source, loader)
+                entries = self._filter_legacy_entries(source, entries)
+                for entry in entries:
+                    term_map[entry.term] = entry
+                self._load_log.append((source, len(entries), diagnostic))
 
         merged = list(term_map.values())
         # 保存合并后的缓存
@@ -372,28 +416,34 @@ class TermDatabaseManager:
         base_context = getattr(self, "_terminology_context", None)
         lookup_context = context or base_context
         if loader is not None and lookup_context is not None:
-            return loader.resolve(term, lookup_context, self._resolve_legacy_term)
-        return self._resolve_legacy_term(term)
+            return loader.resolve(term, lookup_context, lambda value: self._resolve_legacy_term(value, lookup_context))
+        return self._resolve_legacy_term(term, lookup_context)
 
-    def _resolve_legacy_term(self, term: str) -> TermEntry | None:
+    def _resolve_legacy_term(self, term: str, context: TerminologyLookupContext | None = None) -> TermEntry | None:
         term_key = _normalized_primary_term(term)
         if not term_key:
             return None
         resolved: TermEntry | None = None
-        entries = self._legacy_effective_terms() if hasattr(self, "_legacy_terms") else self._effective_terms()
+        entries = self._legacy_effective_terms(context) if hasattr(self, "_legacy_terms") else self._effective_terms()
         for entry in entries:
             if _normalized_primary_term(entry.term) == term_key:
                 # _effective_terms() follows the same low-to-high source order
                 # used to build exact-match maps, so later entries are authoritative.
                 resolved = entry
-        return resolved
+        return resolved.mutable_copy() if isinstance(resolved, FrozenTermEntry) else resolved
 
-    def _legacy_effective_terms(self) -> list[TermEntry]:
+    def _legacy_effective_terms(self, context: TerminologyLookupContext | None = None) -> list[TermEntry]:
         legacy = getattr(self, "_legacy_terms", None)
         if legacy is None:
             legacy = self._merged_terms
         merged_terms_set = {entry.term.lower() for entry in legacy}
-        extra = [entry for entry in self.get_dynamic_db().as_list() if entry.term.lower() not in merged_terms_set]
+        pool = getattr(self, "_shared_term_pool", None)
+        dynamic = (
+            pool.snapshot(None if context is None else context.plugin_id).records
+            if pool is not None
+            else self.get_dynamic_db().as_list()
+        )
+        extra = [entry for entry in dynamic if entry.term.lower() not in merged_terms_set]
         return list(legacy) + extra
 
     def _effective_terms(self, context: TerminologyLookupContext | None = None) -> list[TermEntry]:
@@ -406,7 +456,9 @@ class TermDatabaseManager:
         base_context = getattr(self, "_terminology_context", None)
         lookup_context = context or base_context
         if loader is not None and lookup_context is not None:
-            return list(loader.load(lookup_context, self._legacy_effective_terms()).entries)
+            return list(loader.load(lookup_context, self._legacy_effective_terms(lookup_context)).entries)
+        if getattr(self, "_shared_term_pool", None) is not None:
+            return self._legacy_effective_terms(lookup_context)
         merged_terms_set = {entry.term.lower() for entry in self._merged_terms}
         extra = [entry for entry in self.get_dynamic_db().as_list() if entry.term.lower() not in merged_terms_set]
         return self._merged_terms + extra
@@ -414,40 +466,35 @@ class TermDatabaseManager:
     def _get_term_matcher_map(
         self,
         context: TerminologyLookupContext | None = None,
-    ) -> dict[str, tuple[str, str, bool]]:
+    ) -> Mapping[str, tuple[str, str, bool]]:
         """
         构建术语匹配映射表。
 
         返回: {匹配键: (主术语, 译文, case_sensitive)}
         匹配键包括：主术语本身 + 所有变体
         """
-        matcher_map: dict[str, tuple[str, str, bool]] = {}
-        entries = self._effective_terms() if context is None else self._effective_terms(context)
-        for entry in entries:
-            # 主术语
-            if not valid_term_pair(entry.term, entry.translation):
-                continue
-            matcher_map[entry.term] = (entry.term, entry.translation, entry.case_sensitive)
-            # 变体映射到主术语的译文
-            for variant in entry.variants:
-                if valid_term_text(variant) and variant not in matcher_map:
-                    matcher_map[variant] = (entry.term, entry.translation, entry.case_sensitive)
-        return matcher_map
+        return lookup_view(self, context).forms
 
     def lookup_context_for_entry(self, entry: object) -> TerminologyLookupContext | None:
         loader = getattr(self, "_effective_loader", None)
         base = getattr(self, "_terminology_context", None)
-        if loader is None or base is None:
+        if base is None:
             return None
-        return loader.context_for_entry(base, entry)
+        if loader is None:
+            from .project_terminology_adapter import plugin_id_from_entry
+
+            context = base.for_plugin(plugin_id_from_entry(entry))
+        else:
+            context = loader.context_for_entry(base, entry)
+        if context.plugin_id is None and getattr(self, "_shared_term_pool", None) is not None:
+            context = context.for_plugin(getattr(self, "_generated_term_plugin_id", None))
+        return context
 
     def match_terms_for_entry(self, entry: object) -> dict[str, str]:
-        from .required_term_matching import match_required_terms
-
         original = getattr(entry, "original", "")
         if not isinstance(original, str) or not original:
             return {}
-        return match_required_terms(original, self._get_term_matcher_map(self.lookup_context_for_entry(entry)))
+        return lookup_view(self, self.lookup_context_for_entry(entry)).match(original)
 
     # ─────────────────────────── 向量索引 ─────────────────────────────
 
@@ -513,9 +560,14 @@ class TermDatabaseManager:
     def _snapshot_identity(self, context: TerminologyLookupContext | None) -> str:
         loader = getattr(self, "_effective_loader", None)
         lookup_context = context or getattr(self, "_terminology_context", None)
-        if loader is None or lookup_context is None:
-            return "legacy-global"
-        return loader.snapshot_identity(lookup_context)
+        identity = (
+            "legacy-global" if loader is None or lookup_context is None else loader.snapshot_identity(lookup_context)
+        )
+        pool = getattr(self, "_shared_term_pool", None)
+        if pool is None:
+            return identity
+        plugin_id = None if lookup_context is None else lookup_context.plugin_id
+        return f"{identity}:shared:{pool.identity!r}:{plugin_id!r}:{pool.revision}"
 
     def semantic_match(
         self,
@@ -738,7 +790,7 @@ class TermDatabaseManager:
 
     def _uses_project_context(self) -> bool:
         status = getattr(self, "_project_terminology_status", None)
-        return getattr(status, "value", None) == "ready"
+        return getattr(status, "value", None) == "ready" or getattr(self, "_shared_term_pool", None) is not None
 
     def _match_terms_scoped_contextual(
         self,
@@ -849,39 +901,16 @@ class TermDatabaseManager:
         区分大小写的术语要求精确相等；不区分大小写的术语忽略大小写。
         支持变体：如果原文精确匹配某个变体，返回主术语的译文。
         """
-        # 构建两张查找表（O(n) 预处理，O(1) 查询）
-        cs_map: dict[str, tuple[str, str]] = {}  # 区分大小写: exact term → (main_term, translation)
-        ci_map: dict[str, tuple[str, str]] = {}  # 不区分大小写: lower term → (main_term, translation)
-        entries = self._effective_terms() if context is None else self._effective_terms(context)
-        for entry in entries:
-            # 主术语
-            if not valid_term_pair(entry.term, entry.translation):
-                continue
-            if entry.case_sensitive:
-                cs_map[_normalized_term_text(entry.term)] = (entry.term, entry.translation)
-            else:
-                ci_map[_normalized_primary_term(entry.term)] = (entry.term, entry.translation)
-            # 变体
-            for variant in entry.variants:
-                if not valid_term_text(variant):
-                    continue
-                if entry.case_sensitive:
-                    cs_map[_normalized_term_text(variant)] = (entry.term, entry.translation)
-                else:
-                    ci_map[_normalized_primary_term(variant)] = (entry.term, entry.translation)
-
-        result: dict[str, str] = {}
-        for original in originals:
-            normalized_original = _normalized_term_text(original)
-            if normalized_original in cs_map:
-                main_term, trans = cs_map[normalized_original]
-                result[main_term] = trans
-            elif (normalized_folded := normalized_original.casefold()) in ci_map:
-                main_term, trans = ci_map[normalized_folded]
-                result[main_term] = trans
-        return result
+        return lookup_view(self, context).exact.match(originals)
 
     def _load_dynamic(self) -> list[TermEntry]:
+        if getattr(self, "_shared_term_pool", None) is not None:
+            # Historical per-plugin terms stay local. They are never imported
+            # into the shared project's generated namespace.
+            if self._local_dynamic_db is None:
+                self._local_dynamic_db = DynamicTermDatabase(self._esp_path)
+                self._local_dynamic_db.load()
+            return self._local_dynamic_db.as_list()
         return self.get_dynamic_db().as_list()
 
     def _load_paratranz(self) -> list[TermEntry]:

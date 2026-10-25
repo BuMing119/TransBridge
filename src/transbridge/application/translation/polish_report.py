@@ -86,6 +86,17 @@ def build_polish_report_snapshot(
             "refined_translation": _nullable_text(_value(result, "refined_translation", None)),
             "issues": list(issues),
         }
+        review_status = _value(result, "review_status", "")
+        if review_status:
+            review_before = _value(result, "review_before_text", None)
+            details.update({
+                "review_status": str(review_status),
+                "review_reason": str(project_business_data(_value(result, "review_reason", "") or "")),
+                "detected_issues": _json_safe(_value(result, "detected_issues", ()) or ()),
+                "review_before_text": before_text if review_before is None else str(review_before),
+                "review_contract_version": _value(result, "review_contract_version", 0),
+                "review_reference_terms": _json_safe(_value(result, "review_reference_terms", {}) or {}),
+            })
         target_stage = _value(result, "target_stage", None)
         candidates.append(
             PostProcessCandidate(

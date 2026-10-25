@@ -14,10 +14,12 @@ from transbridge.application.translation.entry_alias import ai_entry_id, ai_entr
 from transbridge.application.translation.postprocess import PostProcessCandidate
 from transbridge.application.translation.proofread_events import ProofreadEventLog
 from transbridge.application.translation.proofread_stage import ProofreadStage
+from transbridge.converter.translation_entry import STAGE_QUESTIONABLE
 
 from .base import PostProcessIssue, PostProcessResult
 from .post_processor import PostProcessor, PostProcessorConfig
 from .proofread_diagnostics import diagnostic_note, entry_diagnostics
+from .review_evidence import projected_review_fields
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,10 +41,19 @@ class ProofreadResult:
     candidate_translation: str | None = None
     target_stage: int | None = None
     identity: EntryKey | None = None
+    review_status: str = ""
+    review_reason: str = ""
+    detected_issues: tuple[dict, ...] = ()
+    review_contract_version: int = 0
+    review_reference_terms: dict = field(default_factory=dict)
+    review_before_text: str | None = None
 
     @property
     def accepted(self) -> bool:
-        return self.verdict == "pass" and self.confidence > 0 and bool(self.polished_translation)
+        reviewed_uncertainty = self.review_status == "needs_review" and self.processing_status == "completed"
+        return (
+            self.verdict == "pass" and (self.confidence > 0 or reviewed_uncertainty) and bool(self.polished_translation)
+        )
 
 
 class ProofreadPipeline:
@@ -290,6 +301,7 @@ class ProofreadPipeline:
                 processing_status=processing_status,
                 candidate_translation=candidate.text if candidate else None,
                 target_stage=candidate.stage if valid else None,
+                review_details=dict(candidate.report_details) if candidate else {},
             )
         accepted = sum(result.accepted for result in projected.values())
         message = "校对已取消" if cancelled else f"校对结束：成功 {accepted} 条，未完成 {total - accepted} 条"
@@ -308,8 +320,10 @@ class ProofreadPipeline:
         processing_status: str = "",
         candidate_translation: str | None = None,
         target_stage: int | None = None,
+        review_details: dict | None = None,
     ) -> ProofreadResult:
         final_translation = translation if valid and translation is not None else entry.translation or ""
+        details = review_details or {}
         return ProofreadResult(
             entry_id=str(ai_entry_id(entry)),
             entry_key=str(ai_entry_key(entry)),
@@ -323,6 +337,12 @@ class ProofreadPipeline:
             candidate_translation=candidate_translation,
             target_stage=target_stage,
             identity=getattr(entry, "identity", None),
+            review_status=str(details.get("review_status", "")),
+            review_reason=str(details.get("review_reason", "")),
+            detected_issues=tuple(details.get("detected_issues", ())),
+            review_contract_version=int(details.get("review_contract_version", 0)),
+            review_reference_terms=dict(details.get("review_reference_terms", {})),
+            review_before_text=details.get("review_before_text"),
         )
 
     def _project(self, entries: tuple[object, ...], result: PostProcessResult) -> dict[str, ProofreadResult]:
@@ -357,6 +377,15 @@ class ProofreadPipeline:
             default_verdict = "pending" if self.profile.enable_arbitration or issues_by_id.get(entry_id) else "pass"
             verdict = str(getattr(decision, "verdict", default_verdict))
             processing_status = result.processing_statuses.get(entry_id, "failed")
+            review = projected_review_fields(decision, refined, final_translation, issues_by_id.get(entry_id, ()))
+            review_status = review["review_status"]
+            if (
+                processing_status == "completed"
+                and verdict == "pending"
+                and review_status == "needs_review"
+                and getattr(decision, "valid", True)
+            ):
+                verdict = "pass"
             if processing_status != "completed":
                 confidence = 0.0
                 if verdict == "pass":
@@ -377,7 +406,7 @@ class ProofreadPipeline:
                 original_translation=entry.translation or "",
                 polished_translation=final_translation,
                 confidence=confidence,
-                needs_arbitration=verdict != "pass",
+                needs_arbitration=verdict != "pass" or review_status == "needs_review",
                 note="；".join(notes),
                 verdict=verdict,
                 issues=tuple(issues_by_id.get(entry_id, ())),
@@ -385,6 +414,8 @@ class ProofreadPipeline:
                 changes=tuple(getattr(polished, "changes", ()) or ()),
                 processing_status=processing_status,
                 identity=getattr(entry, "identity", None),
+                target_stage=STAGE_QUESTIONABLE if review_status == "needs_review" else None,
+                **review,
             )
         return projected
 

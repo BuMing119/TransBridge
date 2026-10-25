@@ -5,18 +5,16 @@ from __future__ import annotations
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import fields, is_dataclass
-from datetime import datetime
 from enum import Enum
 from hashlib import sha256
 import json
 import logging
 
-from transbridge.application.io.identity import EntryKey
-from transbridge.application.io.stage_policy import DEFAULT_STAGE_POLICY
-from transbridge.application.translation.proofread_checkpoint import proofread_settings
+from PyQt6.QtCore import QObject, pyqtSignal
+
 from transbridge.application.translation.task_recovery import TaskRecoveryStore
 
-from .task_config_snapshot import execution_snapshot
+from .task_recovery_persistence import RecoveryInitialization, RecoverySource, RecoveryUpdate
 from .task_scope import SourceTask
 
 _OMITTED = frozenset({
@@ -62,6 +60,8 @@ def _signature_value(value):
             and str(key).lower() not in _OMITTED
             and not any(word in str(key).lower() for word in ("credential", "password", "secret", "api_key"))
         }
+    if isinstance(value, (set, frozenset)):
+        return [_signature_value(item) for item in sorted(value, key=str)]
     if isinstance(value, (tuple, list)):
         return [_signature_value(item) for item in value]
     if isinstance(value, Enum):
@@ -81,14 +81,16 @@ def configure_recovery(window, record, restart=False):
     from PyQt6.QtCore import Qt
     from PyQt6.QtWidgets import QLabel
 
-    window._recovery_selection = (deepcopy(record), bool(restart))
+    # Discovery already owns detached JSON. SelectionCapture copies this large
+    # immutable-by-contract record in bounded GUI slices before background use.
+    window._recovery_selection = (record, bool(restart))
     view = window._view
     controls = view.controls
     mode = record["mode"]
     if mode not in {"translate", "polish", "mixed", "custom"}:
         raise ValueError("原任务模式无法恢复，请新建任务。")
     getattr(controls, f"mode_{mode}").setChecked(True)
-    if not restart and "execution_config" in record:
+    if not restart and not record.get("legacy") and "execution_config" in record:
         restored = window._config_presenter.restore_task_config(record["execution_config"], mode)
         if signature(restored) != record["config_digest"]:
             raise ValueError("原任务配置快照与签名不匹配，请重新开始。")
@@ -110,7 +112,13 @@ def configure_recovery(window, record, restart=False):
     text = (
         f"原任务：{record['created_at']}\n"
         f"处理内容：{'、'.join(source['label'] for source in record['sources'])} · 原范围 {total} 条\n"
-        + ("重新开始：使用当前配置，忽略原任务候选。" if restart else "继续任务：保留原范围，重新核验已保存结果。")
+        + (
+            "重新开始：使用当前配置，忽略原任务候选。"
+            if restart
+            else "恢复旧任务：使用当前配置，核验已保存译文后接续处理并重新校对。"
+            if record.get("legacy")
+            else "继续任务：核验已保存进度，处理剩余词条。"
+        )
     )
     label = getattr(view, "recovery_notice", None)
     if label is None:
@@ -129,143 +137,141 @@ def open_recovery(window, record, *, restart=False):
 
     from transbridge.ui.windowing import show_and_activate
 
-    configured = False
+    handed_off = False
+    registry = getattr(window, "_task_recovery_registry", None)
+    if registry is not None and hasattr(registry, "release_recovery_request"):
+        registry.release_recovery_request(record["task_id"])
     try:
         configure_recovery(window, record, restart=restart)
-        configured = True
-        if restart:
+        if restart or record.get("legacy"):
+            # Scope evaluation and empty-task completion belong to the async
+            # launch after the user starts this newly configured attempt.
             show_and_activate(window)
         else:
             window.on_start()
+        # A continuation now starts asynchronously. TaskLaunch owns its window
+        # until successful publication; closing here would cancel preparation.
+        handed_off = True
     except Exception as exc:
         logging.getLogger(__name__).exception("AI task recovery could not open")
         QMessageBox.warning(window, "AI 任务未启动", str(exc))
     finally:
-        if not restart or not configured:
+        if not handed_off:
             window.close()
 
 
 def recovery_sources(window, config) -> tuple[SourceTask, ...]:
+    from .task_source_selection import recover_task_sources
+
     selection = getattr(window, "_recovery_selection", None)
     if selection is None:
         return tuple(window._task_sources(config=config))
-    record, restart = selection
-    identity = window._ctx.active_version_identity
-    if identity is None or tuple(map(str, identity)) != (record["project_id"], record["variant_id"]):
-        raise ValueError("恢复任务的项目或版本已变化，请重新打开原版本。")
-    if window._view_port.mode != record["mode"]:
-        raise ValueError("原任务模式已变化，请新建任务。")
-    if not restart and signature(config) != record["config_digest"]:
-        raise ValueError("AI 配置已变化，不能继续原任务；请选择重新开始。")
-    applied = {}
-    if not restart:
-        for row in record.get("applied_entries", ()):
-            key = EntryKey.from_dict(row["entry_key"])
-            if key in applied:
-                raise ValueError("恢复任务的已应用条目重复。")
-            applied[key] = row
     slots = {str(key): slot for key, slot in window._ctx.slots.items()}
-    seen_sources, seen_entries, tasks = set(), set(), []
-    for source in record["sources"]:
-        source_key = source["key"]
-        if source_key in seen_sources or source_key not in slots:
-            raise ValueError(f"恢复任务来源缺失或重复：{source_key}")
-        seen_sources.add(source_key)
-        slot = slots[source_key]
-        groups = []
-        for field in ("translate_keys", "polish_keys"):
-            entries = []
-            for raw_key in source[field]:
-                key = EntryKey.from_dict(raw_key)
-                if key in seen_entries:
-                    raise ValueError("恢复任务包含重复条目身份。")
-                seen_entries.add(key)
-                entry = slot.collection.get(key)
-                if entry is None:
-                    raise ValueError(f"原任务条目已缺失：{source_key} / {key.local_key}")
-                if not entry.original.strip() or not DEFAULT_STAGE_POLICY.allows_ai(
-                    entry.stage, entry.translation, original=entry.original
-                ):
-                    raise ValueError(f"原任务条目已锁定或无法处理：{source_key} / {key.local_key}")
-                saved = applied.get(key)
-                if saved is not None and (
-                    entry.original == saved["original"]
-                    and entry.translation == saved["text"]
-                    and entry.stage == saved["stage"]
-                ):
-                    continue
-                entries.append(entry)
-            groups.append(tuple(entries))
-        tasks.append(SourceTask(source_key, slot.label, slot.esp_path, slot.collection, *groups))
-    if not applied.keys() <= seen_entries:
-        raise ValueError("恢复记录的已应用条目不属于原任务范围。")
-    return tuple(tasks)
+    return recover_task_sources(selection, window._ctx.active_version_identity, window._view_port.mode, config, slots)
 
 
-class TaskRecoveryBinding:
-    def __init__(self, request, session):
+def complete_empty_recovery(window, tasks) -> bool:
+    """Close a validated recovery with no remaining work without starting an AI run."""
+    from .task_empty_recovery import EmptyRecoveryCompletion, publish_empty_recovery
+
+    selection = getattr(window, "_recovery_selection", None)
+    if selection is None or any(task.entries for task in tasks):
+        return False
+    provider = getattr(window, "_task_project_directory_provider", None)
+    directory = (
+        provider()
+        if provider is not None
+        else getattr(getattr(window._ctx, "active_project", None), "project_dir", None)
+    )
+    EmptyRecoveryCompletion(directory, selection).execute()
+    publish_empty_recovery(window)
+    return True
+
+
+class TaskRecoveryBinding(QObject):
+    """Capture GUI-owned values, then serialize recovery work without live state.
+
+    ``asynchronous=True`` is the task-window path. The synchronous default keeps
+    non-Qt consumers compatible; both modes execute the same detached operations.
+    """
+
+    changed = pyqtSignal()
+    failed = pyqtSignal(str)
+
+    def __init__(self, request, session, parent=None, *, asynchronous=False):
+        super().__init__(parent)
         self.session = session
+        self.asynchronous = asynchronous
         self.store = None
         self.record = None
-        profile = request.spec.execution_profile
+        self.worker = None
+        self.pending = None
+        self.error = ""
+        self._delivery = None
+        self._initialized = False
+        self._initialization_failed = False
+        self._sequence = 0
+        self._saved_entries = None
+        self._prepare_callbacks = None
         self.supported = bool(
             session.project_dir is not None
             and hasattr(request, "recovery_task_id")
-            and profile.enable_proofread
-            and any(task.polish_entries for task in session.tasks)
-            and not any(task.translate_entries for task in session.tasks)
+            and any(task.entries for task in session.tasks)
         )
         if not self.supported:
             return
         self.store = TaskRecoveryStore(session.project_dir / "ai-task-recovery")
-        continuing = request.recovery_task_id
-        identity = tuple(map(str, session.version_identity))
-        sources = [
-            {
-                "key": task.key,
-                "label": task.label,
-                "translate_keys": [entry.identity.to_dict() for entry in task.translate_entries],
-                "polish_keys": [entry.identity.to_dict() for entry in task.polish_entries],
-            }
-            for task in session.tasks
-        ]
-        expected = dict(
-            project_id=identity[0],
-            variant_id=identity[1],
-            mode=request.spec.mode,
-            config_digest=signature(request.config),
+        reference = getattr(getattr(request, "terminology_binding", None), "snapshot_ref", None)
+        self._initialization = RecoveryInitialization(
+            request.run_id,
+            request.recovery_task_id,
+            tuple(map(str, session.version_identity)),
+            request.spec.mode,
+            deepcopy(request.config),
+            tuple(
+                RecoverySource(
+                    task.key,
+                    task.label,
+                    tuple(entry.identity for entry in task.translate_entries),
+                    tuple(entry.identity for entry in task.polish_entries),
+                    task.entries,
+                    str(task.esp_path) if task.esp_path is not None else None,
+                )
+                for task in session.tasks
+            ),
+            overwrite=bool(getattr(request.spec, "overwrite", False)),
+            origin=getattr(request, "recovery_record", None),
+            reference_snapshot=None if reference is None else reference.to_dict(),
         )
-        if continuing:
-            record = self.store.load(continuing)
-            if record["state"] not in _STATES or not record.get("supported", False):
-                raise ValueError("原任务恢复状态无效或不受支持。")
-            if any(record.get(key) != value for key, value in expected.items()):
-                raise ValueError("恢复任务身份或配置不匹配，不能覆盖原任务记录。")
-            if record["state"] in {"completed", "cancelled"}:
-                raise ValueError("原任务已经完成或取消，请重新开始。")
-            known = {source["key"]: source for source in record["sources"]}
-            for source in sources:
-                old = known.get(source["key"])
-                if old is None or any(
-                    not {EntryKey.from_dict(key) for key in source[field]}
-                    <= {EntryKey.from_dict(key) for key in old[field]}
-                    for field in ("translate_keys", "polish_keys")
-                ):
-                    raise ValueError("恢复任务范围与原记录不匹配。")
-            self.record = record
-        else:
-            self.record = self.store.create({
-                "task_id": request.run_id,
-                "created_at": datetime.now().astimezone().isoformat(),
-                **expected,
-                "checkpoint_settings": proofread_settings(request.config),
-                "execution_config": execution_snapshot(request.config),
-                "sources": sources,
-                "state": "preparing",
-                "supported": True,
-            })
+        self._task_id = request.recovery_task_id or request.run_id
+        if not asynchronous:
+            self.record = self._initialization.execute(self.store)
+            self._initialized = True
 
-    def update(self, run):
+    @property
+    def busy(self):
+        return self.worker is not None or self.pending is not None
+
+    def release(self):
+        """Release the task lease only after all durable writes have settled."""
+        if self.busy:
+            raise RuntimeError("恢复记录仍在保存，不能释放任务锁。")
+        if self.store is not None:
+            self.store.release()
+
+    def prepare(self, *, on_success, on_error):
+        """Validate/create the manifest before snapshots or model work may start."""
+        if not self.supported or self._initialized:
+            on_success(self.record)
+            return
+        if self.worker is not None:
+            raise RuntimeError("恢复记录正在初始化")
+        self._prepare_callbacks = on_success, on_error
+        self._initialization_failed = False
+        operation, store = self._initialization, self.store
+        self._start(lambda: operation.execute(store), initialization=True)
+
+    def update(self, run, *, frozen_entry_results=None):
         if self.store is None:
             return
         state = run.state
@@ -277,23 +283,74 @@ class TaskRecoveryBinding:
             state = "interrupted"
         elif state == "completed" and not self.session.project_saved:
             state = "applying"
-        applied = {EntryKey.from_dict(row["entry_key"]): row for row in self.record.get("applied_entries", ())}
+        entries = frozen_entry_results
+        if entries is None:
+            # Real ledgers contain frozen rows and private, never-mutated before
+            # snapshots. Only the small compatibility path needs a deep copy.
+            freeze = getattr(run.entries, "freeze", None)
+            entries = freeze() if callable(freeze) else deepcopy(run.entries)
+        self._sequence += 1
         if self.session.project_saved:
-            for key in run.entries.applied_keys:
-                row = run.entries.entries[key]
-                applied[key] = {
-                    "entry_key": key.to_dict(),
-                    "original": row.before.original,
-                    "text": row.text,
-                    "stage": row.stage,
-                }
-        self.record = self.store.update(
-            self.record["task_id"],
-            state=state,
-            applied_entries=list(applied.values()),
-            applied=bool(applied or run.entries.applied_keys),
-            project_saved=bool(self.session.project_saved),
+            self._saved_entries = entries
+        update = RecoveryUpdate(self._sequence, state, bool(self.session.project_saved), entries, self._saved_entries)
+        if not self.asynchronous:
+            self.record = update.execute(self.store, self._task_id)
+            return
+        if self._initialization_failed:
+            return  # The initialization error was already delivered to the owner.
+        self.pending = update
+        if self._initialized and self.worker is None:
+            self._start_pending()
+
+    def _start_pending(self):
+        if self.pending is None or self.worker is not None:
+            return
+        update, self.pending = self.pending, None
+        store, task_id = self.store, self._task_id
+        self._start(lambda: update.execute(store, task_id), sequence=update.sequence)
+
+    def _start(self, operation, *, initialization=False, sequence=0):
+        from transbridge.ui.workers import ApiWorker
+
+        from .task_apply_preparation import ApplyDelivery
+
+        self.error = ""
+        worker = ApiWorker(operation, route_http_errors=False)
+        self.worker = worker
+        self._delivery = ApplyDelivery(
+            worker,
+            lambda value, error: self._delivered(value, error, initialization=initialization, sequence=sequence),
         )
+        try:
+            worker.start()
+        except Exception as exc:
+            self._delivery.deleteLater()
+            worker.deleteLater()
+            self._delivered(None, str(exc), initialization=initialization, sequence=sequence)
+            return
+        self.changed.emit()
+
+    def _delivered(self, value, error, *, initialization, sequence):
+        self.worker = self._delivery = None
+        if initialization:
+            callbacks, self._prepare_callbacks = self._prepare_callbacks, None
+            if error is not None:
+                self._initialization_failed = True
+                self.pending = None
+            else:
+                self._initialized = True
+                self.record = value
+        else:
+            callbacks = None
+            if error is None and sequence == self._sequence:
+                self.record = value
+        if error is not None:
+            self.error = str(error)
+            self.failed.emit(self.error)
+        if callbacks is not None:
+            callbacks[1](str(error)) if error is not None else callbacks[0](value)
+        self._start_pending()
+        self.changed.emit()
 
 
-__all__ = ["TaskRecoveryBinding", "configure_recovery", "recovery_sources", "signature"]
+__all__ = ["TaskRecoveryBinding", "complete_empty_recovery", "configure_recovery", "recovery_sources", "signature"]

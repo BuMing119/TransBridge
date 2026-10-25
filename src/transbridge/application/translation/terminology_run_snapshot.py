@@ -9,10 +9,10 @@ from typing import Any, Protocol
 
 from transbridge.application.terminology.effective import (
     EffectiveSnapshotStatus,
+    EffectiveTerminologyIndex,
     EffectiveTerminologySnapshot,
     EffectiveTermResolution,
     TerminologyLookupContext,
-    resolve_snapshot,
 )
 from transbridge.application.terminology.identity import canonical_digest
 from transbridge.application.terminology.models import TermDecision
@@ -207,8 +207,12 @@ class FrozenEffectiveTerminologyPort:
     """Resolve solely from the immutable snapshot captured by an AI run."""
 
     def __init__(self, frozen: FrozenTerminologyRunSnapshot) -> None:
-        frozen.verify()
         self._frozen = frozen
+        # Decisions, scopes and all nested fields are frozen scalars/tuples.
+        # Validate their digest once at this immutable run boundary; live file
+        # and published-version checks remain the task consistency guard's job.
+        self._snapshot = frozen.effective_snapshot()
+        self._index = EffectiveTerminologyIndex(self._snapshot)
 
     def snapshot(
         self,
@@ -221,11 +225,11 @@ class FrozenEffectiveTerminologyPort:
             raise TerminologyRunSnapshotError("frozen terminology snapshot belongs to another Project/Variant")
         if version_id is not None and version_id != ref.version_id:
             raise TerminologyRunSnapshotError("requested terminology version does not match the frozen run")
-        return self._frozen.effective_snapshot()
+        return self._snapshot
 
     def resolve(self, term: str, context: TerminologyLookupContext) -> EffectiveTermResolution:
-        snapshot = self.snapshot(context.local_project_id, context.local_variant_id, context.version_id)
-        return resolve_snapshot(snapshot, term, context)
+        self.snapshot(context.local_project_id, context.local_variant_id, context.version_id)
+        return self._index.resolve(term, context)
 
 
 def _snapshot_identity(

@@ -187,7 +187,7 @@ def test_schema_failure_prioritizes_missing_translation_and_keeps_other_errors()
     details = caught.value.validation_details
     assert details["validator"] == "required"
     assert details["path"] == "results/0"
-    assert details["missing_fields"] == ["final_translation"]
+    assert details["missing_fields"] == ["final_translation", "review_reason", "review_status"]
     assert {error["validator"] for error in details["errors"]} == {"required", "additionalProperties"}
     assert details["errors"][-1]["unexpected_fields"] == ["current_translation", "original"]
     assert "private source" not in repr(details)

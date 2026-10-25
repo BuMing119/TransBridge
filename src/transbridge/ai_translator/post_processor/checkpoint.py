@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .review_evidence import preserved_review_fields
+
 if TYPE_CHECKING:
     from .base import PostProcessIssue
     from .llm_arbiter import ArbiterDecision
@@ -128,6 +130,9 @@ class PostProcessCheckpoint:
             note=data.get("note", ""),
             valid=data.get("valid", True),
             failure_code=data.get("failure_code", ""),
+            review_status=data.get("review_status", ""),
+            review_reason=data.get("review_reason", ""),
+            **preserved_review_fields(data),
         )
 
     @staticmethod
@@ -163,4 +168,8 @@ class PostProcessCheckpoint:
             confidence=data.get("confidence", 0.0),
             suggested_action=data.get("suggested_action", ""),
             alternatives=data.get("alternatives", []),
+            review_status=data.get("review_status", ""),
+            review_reason=data.get("review_reason", ""),
+            valid=data.get("valid", True),
+            **preserved_review_fields(data),
         )

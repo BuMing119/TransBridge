@@ -35,6 +35,8 @@ class AiTaskRegistry(QObject):
         self.history_windows = []
         self.shutting_down = False
         self.recovery_error = ""
+        self._recovery_requests = set()
+        self._recovery_launches = {}
         from .task_recovery_prompt import TaskRecoveryDiscovery
 
         self.recovery = TaskRecoveryDiscovery(self)
@@ -51,14 +53,47 @@ class AiTaskRegistry(QObject):
             or not matches_version(record, getattr(self.ctx, "active_version_identity", None))
         ):
             return False
-        self.recovery_requested.emit(record, restart)
+        self._recovery_requests.add(record["task_id"])
+        try:
+            self.recovery_requested.emit(record, restart)
+        except Exception:
+            self.release_recovery_request(record["task_id"])
+            raise
         return True
 
+    def release_recovery_request(self, task_id):
+        self._recovery_requests.discard(task_id)
+
+    def reserve_recovery_launch(self, task_id, launch):
+        if self._recovery_launches.get(task_id) is launch:
+            return True
+        self.release_recovery_request(task_id)
+        if self.is_recovery_active(task_id):
+            return False
+        self._recovery_launches[task_id] = launch
+        self.changed.emit()
+        return True
+
+    def release_recovery_launch(self, task_id, launch):
+        if self._recovery_launches.get(task_id) is launch:
+            del self._recovery_launches[task_id]
+            self.changed.emit()
+
     def is_recovery_active(self, task_id):
-        return any(
-            (getattr(window.request, "recovery_task_id", None) or run_id) == task_id
-            for run_id, window in self.windows.items()
-            if getattr(window.run, "state", "") not in {"completed", "cancelled", "error"}
+        return (
+            task_id in self._recovery_requests
+            or task_id in self._recovery_launches
+            or any(
+                task_id
+                in {
+                    run_id,
+                    getattr(window.request, "recovery_task_id", None),
+                    (getattr(window.request, "recovery_record", None) or {}).get("task_id"),
+                    (getattr(window.request, "recovery_record", None) or {}).get("origin_task_id"),
+                }
+                for run_id, window in self.windows.items()
+                if getattr(window.run, "state", "") not in {"completed", "cancelled", "error"}
+            )
         )
 
     def register(self, window):

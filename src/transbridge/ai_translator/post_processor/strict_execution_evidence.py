@@ -23,7 +23,11 @@ class StrictExecutionEvidence:
     def accept_results(self, phase, values, text_field=None):
         completed = self.completed.setdefault(phase, set())
         for key, value in values.items():
-            if getattr(value, "confidence", 0) <= 0 or (text_field and not getattr(value, text_field, "").strip()):
+            if (
+                not getattr(value, "valid", True)
+                or (getattr(value, "confidence", 0) <= 0 and getattr(value, "review_status", "") != "needs_review")
+                or (text_field and not getattr(value, text_field, "").strip())
+            ):
                 self.failures[str(key)] = getattr(value, "note", "") or f"{phase} 未返回有效结果"
             else:
                 completed.add(str(key))
@@ -68,7 +72,12 @@ class StrictExecutionEvidence:
         decisions = result.decisions or {}
         for key in self.keys:
             decision = decisions.get(key)
-            passed = decision is not None and decision.verdict == "pass" and decision.confidence > 0
+            passed = (
+                decision is not None
+                and decision.valid
+                and (decision.confidence > 0 or decision.review_status == "needs_review")
+                and (decision.verdict == "pass" or decision.review_status == "needs_review")
+            )
             if key in failures:
                 status = "cancelled" if cancelled and key not in self.failures else "failed"
             elif finished and passed:

@@ -11,6 +11,8 @@ import traceback
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from .workflow_log_store import WorkflowLogStore
+
 _logger = logging.getLogger(__name__)
 
 
@@ -71,17 +73,13 @@ class _TranslationWorker(QThread):
         return not self._pause_event.is_set()
 
     def run(self):
-        _file_handles: dict[int, object] = {}
+        stream_store = None
         try:
             self._stream_log_dir = self._make_stream_log_dir()
+            stream_store = WorkflowLogStore(self._esp_path, workflow="translation", log_dir=self._stream_log_dir)
 
             def _stream_cb(batch_idx: int, chunk: str):
-                if batch_idx not in _file_handles:
-                    path = os.path.join(self._stream_log_dir, f"batch_{batch_idx:03d}.log")
-                    _file_handles[batch_idx] = open(path, "w", encoding="utf-8")
-                fh = _file_handles[batch_idx]
-                fh.write(chunk)
-                fh.flush()
+                stream_store.write_chunk(f"batch_{batch_idx:03d}", chunk)
 
             result = self._translator.translate(
                 collection=self._collection,
@@ -111,9 +109,9 @@ class _TranslationWorker(QThread):
             _logger.error("翻译Worker异常:\n%s", traceback.format_exc())
             self.error.emit(str(exc))
         finally:
-            for fh in _file_handles.values():
+            if stream_store is not None:
                 try:
-                    fh.close()
+                    stream_store.close()
                 except Exception:
                     _logger.exception("AI translation stream log cleanup failed")
             if self._log_store is not None:

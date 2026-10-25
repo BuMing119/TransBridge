@@ -2,21 +2,23 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 import logging
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from transbridge.application.translation.postprocess_progress import PHASE_LABELS
-
+from .request_state_presentation import RequestStatePresentation
 from .source_execution import SourceOutcome
 from .task_completion import TaskCompletion
 from .task_entry_results import TaskEntryResults
+from .task_progress_presentation import TaskProgressPresentation
 from .task_record_writer import TaskRecordWriter
 from .task_recovery_binding import TaskRecoveryBinding
-from .task_run_presentation import concise_event, source_label, summarize_entries
+from .task_result_flow import TaskResultFlow
+from .task_result_preparation import TaskResultPreparation
+from .task_run_presentation import concise_event, source_label
 from .task_runtime_binding import AiTaskRuntimeBinding
 from .task_worker import AiTaskWorker
+from .task_worker_binding import TaskWorkerBinding
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +35,9 @@ class AiTaskRun(QObject):
         self.request, self.session, self.activity = request, session, activity
         self.client, self.project_id = client, project_id
         self.consistency = consistency
-        self.entries = TaskEntryResults(session.tasks, request.run_id)
+        self.entries = getattr(session, "initial_entry_results", None) or TaskEntryResults(
+            session.tasks, request.run_id
+        )
         self._attempt_keys = set(self.entries.entries)
         self.applying = False
         self._attempt = 0
@@ -47,8 +51,12 @@ class AiTaskRun(QObject):
         self.status = "正在创建执行前快照"
         self.save_status = ""
         self.result_summary = ""
+        self.request_state = RequestStatePresentation(
+            getattr(getattr(request, "config", None), "max_concurrent", 1), self
+        )
         self.snapshot_failed = False
         self.progress = (0, len(session.tasks), "已处理 %v/%m 个来源")
+        self.progress_view = TaskProgressPresentation(session.tasks)
         self.pause_state = "running"
         self.cancelled = False
         self.user_cancelled = False
@@ -58,7 +66,12 @@ class AiTaskRun(QObject):
         self.records = TaskRecordWriter(request, session, self)
         self.records.changed.connect(self.changed)
         self.completion = TaskCompletion(self)
-        self.recovery = TaskRecoveryBinding(request, session)
+        self.result_preparation = TaskResultPreparation(self)
+        self.result_preparation.changed.connect(self.changed)
+        self.result_flow = TaskResultFlow(self)
+        self.recovery = TaskRecoveryBinding(request, session, parent=self, asynchronous=True)
+        self.recovery.changed.connect(self.changed)
+        self.recovery.failed.connect(lambda error: self.logged.emit(f"恢复记录保存失败：{error}；请勿依赖退出恢复。"))
         self.runtime_binding = AiTaskRuntimeBinding(self)
         self._project_saved_signal = getattr(session, "project_saved_signal", None)
         if self._project_saved_signal is not None:
@@ -66,11 +79,17 @@ class AiTaskRun(QObject):
 
     @property
     def busy(self):
-        return self.running or self.session.is_busy or self.records.busy or self.completion.pending is not None
+        return (
+            self.running
+            or self.session.is_busy
+            or self.records.busy
+            or self.recovery.busy
+            or self.completion.pending is not None
+        )
 
     @property
     def running(self):
-        return self.preparing or self.worker is not None or self.applying
+        return self.preparing or self.worker is not None or self.applying or self.result_preparation.busy
 
     @property
     def can_retry(self):
@@ -95,24 +114,18 @@ class AiTaskRun(QObject):
         )
 
     def prepare(self):
-        self._record()
-        try:
-            self.session.capture_before(on_success=self._ready, on_error=self._prepare_failed)
-        except Exception as exc:
-            self._prepare_failed(str(exc))
+        self.result_flow.prepare()
 
     def _ready(self, _result):
-        self.preparing = False
-        if self.cancelled:
-            self._finish_cancelled()
-            return
         try:
-            self._start(self.session.tasks)
+            self.result_flow.start(self.session.tasks)
         except Exception as exc:
             self._prepare_failed(str(exc))
 
     def _prepare_failed(self, error):
         self.preparing = False
+        if self.consistency is not None and self.consistency.error:
+            self.blocked = True
         if self.cancelled:
             self._finish_cancelled()
             return
@@ -130,6 +143,7 @@ class AiTaskRun(QObject):
         self.completion.reset()
         for task in tasks:
             self.log_paths[task.key] = None
+            self.rows[task.key] = ("等待", f"{len(task.entries)} 条")
         self._attempt_keys = {entry.identity for task in tasks for entry in task.entries}
         self._attempt += 1
         if self._attempt > 1:
@@ -146,24 +160,25 @@ class AiTaskRun(QObject):
             ),
         )
         self.worker = worker
+        self.request_state.bind(worker)
         self.completion_received = False
         self.state, self.status = "running", f"正在执行：{self.request.spec.execution_profile.summary}"
         self.result_summary = ""
+        self.progress_view.reset(tasks)
+        self.progress = self.progress_view.progress
         self.pause_state = "running"
-        worker.source_started.connect(lambda key: self._source_started(key) if self.worker is worker else None)
-        worker.progress.connect(lambda *args: self._progress(*args) if self.worker is worker else None)
-        worker.log.connect(lambda key, text: self._source_log(key, text) if self.worker is worker else None)
-        worker.log_ready.connect(lambda key, path: self._log_ready(key, path) if self.worker is worker else None)
-        worker.pause_state_changed.connect(lambda state: self._pause_changed(state) if self.worker is worker else None)
-        worker.completed.connect(lambda results: self._completed(results) if self.worker is worker else None)
-        worker.finished.connect(lambda: self._worker_finished(worker))
+        self.worker_binding = TaskWorkerBinding(self, worker)
         self.activity.bind_worker(worker)
         self._record()
         worker.start()
         self.changed.emit()
 
     def _source_started(self, key):
-        self.selected_key = key
+        if self.cancelled or self.completion_received:
+            return
+        self.progress_view.source_started(key)
+        self.progress = self.progress_view.progress
+        self.activity.progress(*self.progress[:2], self.progress_view.summary)
         self.rows[key] = ("执行中", "")
         self.logged.emit(f"{source_label(self.session.tasks, key)} · 开始处理")
         self.changed.emit()
@@ -180,14 +195,31 @@ class AiTaskRun(QObject):
     def _progress(self, key, stage, current, total, message):
         if self.cancelled or self.completion_received:
             return
-        stage = PHASE_LABELS.get(stage, stage)
-        self.rows[key] = (stage, f"{current}/{total} · {message}")
-        if self.pause_state == "running":
-            self.status = f"{source_label(self.session.tasks, key)} · {stage} · {message}"
-        self.progress = (current, max(1, total), "当前步骤 %v/%m")
-        self.activity.progress(
-            sum(item.successful for item in self.outcomes.values()), len(self.session.tasks), self.status
-        )
+        if stage == "project_names" and self.progress_view.names_observed:
+            return
+        self.progress_view.source_progress(key, stage, current, total, message)
+        row = self.progress_view.source_rows.get(key)
+        if row is None:
+            return
+        self.rows[key] = (row.phase, f"{row.count_text} · {row.detail}")
+        self.progress = self.progress_view.progress
+        self.activity.progress(*self.progress[:2], self.progress_view.summary)
+        self.changed.emit()
+
+    def _project_name_progress(self, event):
+        if self.cancelled or self.completion_received:
+            return
+        self.progress_view.project_names(event)
+        self.progress = self.progress_view.progress
+        self.activity.progress(*self.progress[:2], self.progress_view.summary)
+        self.changed.emit()
+
+    def _source_finished(self, key):
+        if self.cancelled or self.completion_received:
+            return
+        self.progress_view.source_finished(key)
+        self.progress = self.progress_view.progress
+        self.activity.progress(*self.progress[:2], self.progress_view.summary)
         self.changed.emit()
 
     def _pause_changed(self, state):
@@ -232,92 +264,15 @@ class AiTaskRun(QObject):
         self.changed.emit()
 
     def _completed(self, outcomes):
-        if self.completion_received or self.worker is None:
-            return
-        self.completion_received = True
-        self.cancelled |= self.worker.was_cancelled
-        self.entries.ingest(outcomes, self._attempt_keys, cancelled=self.cancelled)
-        full_tasks = {task.key: task for task in self.session.tasks}
-        for item in outcomes:
-            previous = self.outcomes.get(item.task.key)
-            self.outcomes[item.task.key] = replace(
-                item,
-                task=full_tasks[item.task.key],
-                polish={**(previous.polish if previous else {}), **item.polish},
-                failed_keys=tuple(
-                    key.serialize() if key.original is not None else key.local_key
-                    for key in self.entries.failed_keys
-                    if self.entries.entries[key].source == item.task.key
-                ),
-            )
-        self.progress = (len(self.outcomes), len(self.session.tasks), "已处理 %v/%m 个来源")
-        self.logged.emit("处理结束：" + summarize_entries(self.entries.entries).counts_text)
-        if self.cancelled:
-            self._finish_cancelled()
-        elif self.request.spec.execution_profile.preview_enabled and any(
-            self.entries.entries[key].action == "polish" for key in self.entries.ready_keys
-        ):
-            self.state, self.status = "pending_confirmation", "待确认"
-            self._record()
-            self.preview_requested.emit()
-        else:
-            self.apply_results()
-        self.changed.emit()
+        self.result_flow.completed(outcomes)
 
     def apply_results(self, preview=None):
-        """Run visible preview decisions before one authoritative commit."""
-        if (
-            self.session.completed
-            or self.cancelled
-            or self.shutting_down
-            or self.blocked
-            or self.applying
-            or (self.worker is not None and not self.completion_received)
-            or self.session.is_busy
-        ):
-            return
-        try:
-            self._require_current()
-            needs_preview = self.request.spec.execution_profile.preview_enabled and any(
-                self.entries.entries[key].action == "polish" and self.entries.entries[key].decision == "pending"
-                for key in self.entries.ready_keys
-            )
-            if needs_preview and preview is None:
-                self.state, self.status = "pending_confirmation", "待确认"
-                self._record()
-                self.preview_requested.emit()
-                self.changed.emit()
-                return
-            if preview is not None:
-                if not preview():
-                    self.cancel()
-                    return
-            # The modal preview runs another event loop; validate again after it.
-            if self.cancelled or self.shutting_down:
-                return
-            self._require_current()
-            self.entries.confirm_without_preview()
-            selected = self.entries.publish_to_drafts(self.session.tasks)
-            if selected:
-                self.applying = True
-                self.state, self.status = "applying", "正在应用结果"
-                self.changed.emit()
-                self.session.apply_entries_async(
-                    selected,
-                    on_success=lambda _: self.completion.applied(selected),
-                    on_error=self._apply_failed,
-                    validate=self._require_current,
-                )
-            else:
-                self.completion.applied(selected)
-        except Exception as exc:
-            logger.exception("AI task result application failed")
-            self._apply_failed(str(exc))
-        self._record()
-        self.changed.emit()
+        self.result_flow.apply(preview)
 
     def _apply_failed(self, error):
         self.applying = False
+        if self.consistency is not None and self.consistency.error:
+            self.blocked = True
         self.runtime_binding.synchronize()
         if self.runtime_binding.is_failed:
             self.blocked = True
@@ -333,6 +288,7 @@ class AiTaskRun(QObject):
         self.changed.emit()
 
     def _worker_finished(self, worker):
+        self.request_state.finish(worker)
         if self.worker is worker:
             if not self.completion_received:
                 self._completed(tuple(SourceOutcome(task, error="工作线程异常结束") for task in worker.tasks))
@@ -348,7 +304,7 @@ class AiTaskRun(QObject):
         self.changed.emit()
 
     def _finish_cancelled(self):
-        if self.applying or self.worker is not None or self.state == "cancelled":
+        if self.applying or self.worker is not None or self.result_preparation.busy or self.state == "cancelled":
             return
         self.cancelled = True
         self.state, self.status = "cancelled", "已取消"
@@ -364,26 +320,14 @@ class AiTaskRun(QObject):
         self.changed.emit()
 
     def retry(self):
-        if not self.can_retry or self.shutting_down:
-            return
-        try:
-            self._require_current()
-            tasks = self.session.retry_entries(self.entries.failed_keys)
-            for task in tasks:
-                self.rows[task.key] = ("等待", f"{len(task.entries)} 条")
-            self._start(tasks)
-        except Exception as exc:
-            self.status = f"无法重试：{exc}"
-            logger.exception("AI task retry could not start")
-            self.logged.emit("重试未能开始")
-            self.changed.emit()
+        self.result_flow.retry()
 
     def _require_current(self):
         self.runtime_binding.require_active()
         try:
             self.session.require_current()
-            if self.consistency is not None:
-                self.consistency.require_current(self.request)
+            if self.consistency is not None and self.consistency.error:
+                raise RuntimeError(self.consistency.error)
         except Exception:
             self.blocked = True
             raise
@@ -402,19 +346,18 @@ class AiTaskRun(QObject):
             self.changed.emit()
 
     def _record(self):
+        frozen = self.entries.freeze()
         try:
-            self.recovery.update(self)
+            self.recovery.update(self, frozen_entry_results=frozen)
         except Exception as exc:
-            logger.exception("AI task recovery state could not be saved")
+            logger.exception("AI task recovery state could not be queued")
             self.logged.emit(f"恢复记录保存失败：{exc}；本轮结果仍按正常流程保存，请勿依赖退出恢复。")
         if self.state in {"completed", "partial", "failed", "cancelled", "error", "pending_confirmation"}:
-            self.result_summary = summarize_entries(self.entries.entries).text(cancelled=self.cancelled)
-            for key in self.rows:
-                summary = summarize_entries(self.entries.entries, source=key)
-                phase = "已取消" if self.cancelled else "处理结束"
-                self.rows[key] = (phase, summary.counts_text)
+            self.result_summary = self.entries.index.summary.text(cancelled=self.cancelled)
+            for key, summary in self.entries.index.sources.items():
+                self.rows[key] = ("已取消" if self.cancelled else "处理结束", summary.counts_text)
         outcomes = tuple(self.outcomes.get(task.key, SourceOutcome(task)) for task in self.session.tasks)
-        self.records.write(outcomes, state=self.state, entry_results=self.entries)
+        self.records.write(outcomes, state=self.state, frozen_entry_results=frozen)
 
     def shutdown(self):
         self.shutting_down = True
@@ -425,6 +368,8 @@ class AiTaskRun(QObject):
         if self.busy:
             raise RuntimeError("AI 任务仍在结束中")
         self._close_client()
+        if self.recovery.store is not None:
+            self.recovery.store.release()
         self.runtime_binding.close()
         self.activity.close()
         if self._project_saved_signal is not None:

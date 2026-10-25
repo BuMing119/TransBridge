@@ -281,7 +281,7 @@ def test_openai_embedding_provider_fills_only_empty_recommended_fields() -> None
     app.processEvents()
 
 
-def test_startup_normalizes_missing_managed_local_model_to_disabled() -> None:
+def test_startup_preserves_missing_managed_local_model_until_user_decides() -> None:
     app, parent, view, adapter = _config_view()
     adapter.render_config(LLMConfig(embedding=EmbeddingConfig(mode="local", provider="local")))
     saves: list[None] = []
@@ -295,9 +295,9 @@ def test_startup_normalizes_missing_managed_local_model_to_disabled() -> None:
 
     controller.restore_managed_path()
 
-    assert view.controls.embed_provider_combo.currentData() == "disabled"
+    assert view.controls.embed_provider_combo.currentData() == "local"
     assert view.controls.embed_local_model_edit.text() == ""
-    assert saves == [None]
+    assert saves == []
     parent.close()
     app.processEvents()
 

@@ -28,6 +28,7 @@ from transbridge.application.contracts import (
 )
 
 from .postprocess import ReportSnapshot
+from .review_report import add_review_sheet, review_label, style_report_workbook
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +102,12 @@ class CsvReportRenderer:
             "changes",
             "note",
             "issues",
+            "original",
+            "review_status",
+            "review_label",
+            "review_reason",
+            "detected_issues",
+            "review_before_text",
         ))
         for candidate in snapshot.candidates:
             key = candidate.entry_key.to_dict()
@@ -126,6 +133,12 @@ class CsvReportRenderer:
                         _csv_json(details.get("changes", ())),
                         details.get("note", ""),
                         _csv_json(details.get("issues", ())),
+                        candidate.original,
+                        details.get("review_status", ""),
+                        review_label(details),
+                        details.get("review_reason", ""),
+                        _csv_json(details.get("detected_issues", ())),
+                        details.get("review_before_text", candidate.before_text),
                     )
                 )
             )
@@ -182,6 +195,11 @@ class ExcelReportRenderer:
             "changes",
             "note",
             "issues",
+            "review_status",
+            "review_label",
+            "review_reason",
+            "detected_issues",
+            "review_before_text",
         ))
         for candidate in snapshot.candidates:
             key = candidate.entry_key.to_dict()
@@ -207,6 +225,11 @@ class ExcelReportRenderer:
                         details.get("changes", ()),
                         details.get("note", ""),
                         details.get("issues", ()),
+                        details.get("review_status", ""),
+                        review_label(details),
+                        details.get("review_reason", ""),
+                        details.get("detected_issues", ()),
+                        details.get("review_before_text", candidate.before_text),
                     )
                 )
             )
@@ -246,6 +269,8 @@ class ExcelReportRenderer:
                 )
             )
 
+        add_review_sheet(workbook, snapshot, _excel_value)
+        style_report_workbook(workbook)
         stream = io.BytesIO()
         workbook.save(stream)
         content = stream.getvalue()

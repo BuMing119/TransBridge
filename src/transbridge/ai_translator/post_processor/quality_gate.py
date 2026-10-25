@@ -88,7 +88,8 @@ verdict must be exactly one of: "pass", "fail", or "uncertain".
 Always return "fail" for unchanged source echo (except code, identifiers, or numbers) or runaway repetition.
 
 Focus on clear problems. When unsure, return "uncertain", not "fail".
-Use terminology only for judgment; never replace terms.
+Terminology is advisory and may be wrong or contextually inapplicable. A reference mismatch alone is not an error.
+Judge the meaning in context; never replace terms.
 """
 )
 
@@ -115,7 +116,8 @@ Each verdict must be exactly one of: "pass", "fail", or "uncertain".
 Always return "fail" for unchanged source echo (except code, identifiers, or numbers) or runaway repetition.
 
 Focus on clear problems. When unsure, return "uncertain", not "fail".
-Include every input entry in order. Use terminology only for judgment; never replace terms.
+Include every input entry in order. Terminology is advisory and may be wrong or contextually inapplicable.
+A reference mismatch alone is not an error. Judge the meaning in context; never replace terms.
 """
 )
 

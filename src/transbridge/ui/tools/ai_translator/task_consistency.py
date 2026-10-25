@@ -1,12 +1,16 @@
-"""Reject combining attempts from different execution configurations or terminology."""
+"""Keep execution settings stable and protect generated-term writes separately."""
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import fields, is_dataclass
 from hashlib import sha256
 import json
 from pathlib import Path
-from threading import Lock
+from threading import RLock
+
+from transbridge.ai_translator.term_formats import load_terms_json
+from transbridge.ai_translator.term_publication_conflict import TermPublicationConflict
 
 
 def _value(value):
@@ -32,37 +36,23 @@ def _digest(value):
 
 class TaskConsistency:
     def __init__(self, request, *, config_provider=None, terminology_provider=None):
+        from .task_references import reference_store_for_request
+
         self._config_provider = config_provider
-        self._terminology_provider = terminology_provider
         self._request = self._request_identity(request)
         self._preferences = _digest(config_provider()) if config_provider else None
-        self._terminology = self._term_identity(terminology_provider()) if terminology_provider else None
-        self._paths = tuple(
-            Path(path)
-            for name in ("local_json_path", "local_csv_path", "local_excel_path")
-            if (path := getattr(request.config, name, ""))
-        )
-        self._files = self._file_versions()
-        self._loaded_terms = {}
-        self._generated_terms = {}
+        self.reference_store = reference_store_for_request(request)
         self._dynamic_files = {}
-        self._lock = Lock()
+        self._lock = RLock()
         self.error = ""
-        binding = getattr(request, "terminology_binding", None)
-        if terminology_provider and binding is not None:
-            if self._term_identity(binding.snapshot_ref) != self._terminology:
-                self.error = "术语版本已变化，请新建任务"
+        # Kept as an optional compatibility argument. Live reference providers
+        # must never be queried as a task validity or application condition.
 
     @classmethod
     def capture(cls, request, ctx):
-        from transbridge.ai_translator.project_terminology_runtime import freeze_project_terminology
         from transbridge.paratranz.config_manager import LLMConfig
 
-        return cls(
-            request,
-            config_provider=LLMConfig.load_from_file,
-            terminology_provider=lambda: freeze_project_terminology(ctx).snapshot_ref,
-        )
+        return cls(request, config_provider=LLMConfig.load_from_file)
 
     @staticmethod
     def _request_identity(request):
@@ -75,13 +65,6 @@ class TaskConsistency:
         ))
 
     @staticmethod
-    def _term_identity(ref):
-        return None if ref is None else ref.snapshot_identity
-
-    def _file_versions(self):
-        return tuple(self._file_version(path) for path in self._paths)
-
-    @staticmethod
     def _file_version(path):
         if path.exists():
             stat = path.stat()
@@ -89,67 +72,60 @@ class TaskConsistency:
         return str(path.resolve()), None
 
     def require_current(self, request):
-        if not self.error:
-            if self._request_identity(request) != self._request:
-                self.error = "任务配置已变化，请新建任务"
-            elif self._config_provider and _digest(self._config_provider()) != self._preferences:
-                self.error = "AI 配置已变化，请新建任务"
-            elif self._terminology_provider and self._term_identity(self._terminology_provider()) != self._terminology:
-                self.error = "术语版本已变化，请新建任务"
-            elif self._file_versions() != self._files:
-                self.error = "术语文件已变化，请新建任务"
-            else:
-                with self._lock:
-                    if any(self._file_version(path) != version for path, version in self._dynamic_files.items()):
-                        self.error = "动态术语已变化，请新建任务"
-        if self.error:
-            raise RuntimeError(self.error)
-
-    def observe_terms(self, source, stage, manager):
-        """Called on the worker after loading, before sending any model request.
-
-        Legacy/remote inputs have no revision API. Compare the actual loaded
-        values against the first attempt rather than trusting a cache filename.
-        """
-        current = {row["term"]: row for item in manager._merged_terms if (row := self._term_row(item))}
-        version = getattr(manager, "_vector_snapshot_identity", None)
-        dynamic_path = getattr(getattr(manager, "_dynamic_db", None), "_path", None)
         with self._lock:
-            if dynamic_path:
-                path = Path(dynamic_path)
-                signature = self._file_version(path)
-                if self._dynamic_files.setdefault(path, signature) != signature:
-                    self.error = "动态术语已变化，请新建任务"
-            # Translation and proofreading must share the same source baseline,
-            # including when a stage is reached for the first time on a retry.
-            baseline, previous_version = self._loaded_terms.setdefault(source, (current, version))
-            own = self._generated_terms.get(source, {})
-            changed = (
-                any(
-                    current.get(term) != baseline.get(term) and current.get(term) != own.get(term)
-                    for term in current.keys() | baseline.keys()
-                )
-                or not baseline.keys() <= current.keys()
-            )
-            if changed or version != previous_version:
-                self.error = "术语内容已变化，请新建任务"
+            if not self.error:
+                if self._request_identity(request) != self._request:
+                    self.error = "任务配置已变化，请新建任务"
+                elif self._config_provider and _digest(self._config_provider()) != self._preferences:
+                    self.error = "AI 配置已变化，请新建任务"
             if self.error:
                 raise RuntimeError(self.error)
 
-    @staticmethod
-    def _term_row(entry):
-        row = _value(entry)
-        row.pop("created_at", None)
-        return row
+    def _require_writable_terms(self):
+        if self.error:
+            raise RuntimeError(self.error)
+        for path, version in self._dynamic_files.items():
+            if self._file_version(path) != version:
+                raise TermPublicationConflict(f"生成术语文件已被其他操作修改，跳过共享写入：{path}")
+
+    @contextmanager
+    def terminology_access(self):
+        """Serialize task views without comparing reference files to live state."""
+        with self._lock:
+            yield
+
+    @contextmanager
+    def terminology_write_access(self):
+        """Reject conflicting publication without invalidating translation results."""
+        with self._lock:
+            self._require_writable_terms()
+            yield
+
+    def observe_terms(self, source, stage, manager):
+        """Register only writable resources; reference content is never a gate."""
+        with self._lock:
+            dynamic_path = getattr(getattr(manager, "_dynamic_db", None), "_path", None)
+            if dynamic_path:
+                path = Path(dynamic_path).resolve()
+                self._dynamic_files.setdefault(path, self._file_version(path))
 
     def record_generated_terms(self, source, manager, terms):
         """Only acknowledge the exact dynamic values this task successfully wrote."""
-        requested = {term: (translation, origin, context) for term, translation, origin, context in terms}
-        generated = {}
-        for entry in manager.get_dynamic_db().as_list():
-            if requested.get(entry.term) == (entry.translation, entry.source, entry.context):
-                generated[entry.term] = self._term_row(entry)
         with self._lock:
-            self._generated_terms.setdefault(source, {}).update(generated)
-            path = Path(manager.get_dynamic_db()._path)
-            self._dynamic_files[path] = self._file_version(path)
+            if self.error:
+                raise RuntimeError(self.error)
+            database = manager.get_dynamic_db()
+            pool = getattr(manager, "_shared_term_pool", None)
+            path = Path(database._path).resolve()
+            version = self._file_version(path)
+            saved = database.as_list()
+            if pool is not None:
+                # Check the envelope as well as term rows. Corruption and real
+                # IO failures propagate; external edits are typed conflicts.
+                pool.load()
+            persisted = load_terms_json(path, source=None)
+            # Another writer may have changed the file after our save. Never
+            # acknowledge its contents or signature as this task's own update.
+            if self._file_version(path) != version or persisted != saved:
+                raise TermPublicationConflict(f"生成术语保存确认时检测到外部写入，保留外部内容：{path}")
+            self._dynamic_files[path] = version

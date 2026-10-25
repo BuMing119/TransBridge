@@ -17,6 +17,17 @@ def _row(status="succeeded", *, reason="", stage=3, decision="pending", applied=
     )
 
 
+def test_summary_distinguishes_term_version_failure_from_name_mismatch_and_repair():
+    summary = summarize_entries({
+        "version": _row("failed", reason="动态术语已变化，请新建任务"),
+        "external": _row("failed", reason="共享术语文件已被其他任务修改，请新建任务"),
+        "name": _row("failed", reason="名称译文未遵守已有术语：Guards → 瓜尔"),
+        "repair": _row("failed", reason="术语修复请求失败"),
+    })
+    assert dict(summary.reasons) == {"术语库已变化": 2, "名称术语不一致": 1, "术语修复未完成": 1}
+    assert summary.failed == 4
+
+
 def test_summary_counts_final_entries_and_review_is_success_subset():
     entries = {
         "review": _row(reason="[PROOFREAD_SYNTAX_REVIEW_REQUIRED] 标记需检查", stage=2),
@@ -51,6 +62,10 @@ def test_events_drop_internal_details_and_use_source_label():
     assert concise_event("[PROOFREAD_LLM_CALL_FAILED] error") is None
     assert concise_event(r"正在写入 D:\private\report.json") is None
     assert concise_event('{"entry_key": "internal"}') is None
+    assert concise_event("名称统计完成：12000 次出现，8891 个独立名称") == "名称统计完成：12000 次出现，8891 个独立名称"
+    assert concise_event("加载名称首批术语") == "加载名称首批术语"
+    assert concise_event("项目名称准备完成：8891 条") == "项目名称准备完成：8891 条"
+    assert concise_event(r"项目名称日志 C:\private\names.json") is None
     assert source_label((SimpleNamespace(key="internal", label=r"D:\Mods\Remi"),), "internal") == "Remi"
 
 
@@ -72,14 +87,17 @@ def test_task_progress_moves_from_translation_to_postprocess_and_finalization(ma
     worker.progress.emit("first", "翻译", 1371, 1371, "第三轮 | 长文本")
     worker.progress.emit("first", "proofread", 0, 1371, "开始校对")
     assert window.run.rows["first"][0] == "校对"
-    assert window.run.progress[:2] == (0, 1371)
+    assert window.run.progress[:2] == (0, len(window.session.tasks))
+    assert window.run.progress_view.source_rows["first"].total == 1371
     for phase, label in (("quality_gate", "质量检查"), ("refinement", "精修"), ("arbitration", "仲裁")):
         worker.progress.emit("first", phase, 1, 3, "正在处理")
         assert window.run.rows["first"][0] == label
-        assert window.run.progress[:2] == (1, 3)
+        assert window.run.progress[:2] == (0, len(window.session.tasks))
+        assert window.run.progress_view.source_rows["first"].current == 1
+        assert window.run.progress_view.source_rows["first"].total == 3
     worker.progress.emit("first", "finalize", 0, 1, "正在生成结果报告")
     assert window.run.rows["first"][0] == "整理结果"
-    assert window.run.progress[:2] == (0, 1)
+    assert window.run.progress[:2] == (0, len(window.session.tasks))
 
 
 def test_live_events_are_plain_text_and_pause_changes_are_visible(make_task):
@@ -114,6 +132,7 @@ def test_summary_refreshes_after_apply_rejection_and_recovery(make_task, qapp):
     text = window.result_summary.text()
     assert "其中有疑问 1 条" in text and "已应用 2 条" in text and "未采纳 1 条" in text
     window.run.retry()
+    _wait(qapp, lambda: window.run.worker is not None)
     window.run.worker.publish(_outcome(window.run.worker, failed=False))
     _wait(qapp, lambda: not window.run.busy)
     assert "成功 4 条" in window.result_summary.text() and "未完成 0 条" in window.result_summary.text()
