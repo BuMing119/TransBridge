@@ -25,7 +25,7 @@ class SyncReviewDirection:
 
     @property
     def safe_action(self) -> str:
-        return f"{self.verb}可处理条目"
+        return "更新可确定的工程译文" if self.keep_choice == KEEP_LOCAL else "上传可确定的译文"
 
     @property
     def notice(self) -> str:
@@ -34,8 +34,8 @@ class SyncReviewDirection:
     @property
     def consequence(self) -> str:
         if self.keep_choice == KEEP_REMOTE:
-            return "上传时，用我的译文和状态替换右边的内容；ParaTranz 的原文和使用场景保持原样。"
-        return "更新时，用右边的译文和状态替换我的译文；本地原文和使用场景保持原样。"
+            return "上传时，用我的译文和状态替换右边的内容；ParaTranz 的原文和补充说明保持原样。"
+        return "更新时，只替换工程中的译文和状态；原文和补充说明保持原样，不会写回 ESM/ESP。"
 
 
 _DOWNLOAD = SyncReviewDirection("download_decisions", KEEP_LOCAL, "本地", "更新", "采用这条云端译文", "已选择云端译文")

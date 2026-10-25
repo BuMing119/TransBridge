@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import logging
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -12,8 +13,15 @@ from transbridge.converter.translation_entry_collection import TranslationEntryC
 from transbridge.parser.plugin_parser import PluginParser
 from transbridge.writer.plugin_writer import PluginWriter
 
-from .contracts import FormatId, ParseRequest, SourceDescriptor, SourceSnapshot, WriteRequest
+from .contracts import FormatId, SourceDescriptor, SourceSnapshot, WriteRequest
 from .identity import EntryKey
+from .plugin_localized_sources import (
+    _localized_source_snapshots as _localized_source_snapshots,
+    _snapshot_localized_sources,
+    localized_entry_identity,
+    localized_id_variants,
+)
+from .plugin_publication_source import prepared_plugin_source
 from .stage_policy import DEFAULT_STAGE_POLICY, StageOperation, StagePolicyPort
 from .strings_adapter import LocalizedStringsAdapter
 
@@ -35,11 +43,25 @@ def write_plugin(request: WriteRequest) -> OperationResult[tuple[str, ...]]:
             request.context.run_id,
         )
     try:
+        localized_sources = _snapshot_localized_sources(snapshot)
+        if dict(snapshot.metadata).get("localized_lookup_detected") and not localized_sources:
+            return _failed_diagnostics(
+                (
+                    Diagnostic(
+                        "LOCALIZED_SOURCE_SNAPSHOT_UNAVAILABLE",
+                        "插件的本地化字符串快照不完整，无法安全写回。",
+                    ),
+                ),
+                request.context.run_id,
+            )
         options = dict(request.options)
         options.setdefault("language", dict(snapshot.metadata).get("localized_language", "english"))
         request = replace(request, options=tuple(options.items()))
         source_path = _local_path(snapshot.source.uri)
-        parser, source_entries = _parser_from_snapshot(snapshot, options)
+        prepared = prepared_plugin_source(snapshot, options, for_write=True)
+        parser, source_entries = prepared.parser, prepared.entries
+        if parser is None:
+            raise ValueError("plugin source parser was retired before rendering")
         plugin = parser.get_plugin()
         if plugin is None:
             raise ValueError("plugin parser did not produce a source plugin")
@@ -86,22 +108,13 @@ def write_plugin(request: WriteRequest) -> OperationResult[tuple[str, ...]]:
                 Diagnostic("SOURCE_LOCATOR_CONFLICT", "Localized string IDs differ from the confirmed source."),
                 request.context.run_id,
             )
+        # Hydrated DTOs do not carry the legacy dsd_type facade. Reuse the
+        # library-derived field type from the already-verified source locator.
+        request = _source_typed_request(request, known)
         projected_entries = _project_stage_entries(
             request.entries,
             request.stage_policy or DEFAULT_STAGE_POLICY,
         )
-        localized_detected = bool(dict(snapshot.metadata).get("localized_lookup_detected"))
-        localized_sources = _snapshot_localized_sources(snapshot)
-        if localized_detected and not localized_sources:
-            return _failed_diagnostics(
-                (
-                    Diagnostic(
-                        "LOCALIZED_SOURCE_SNAPSHOT_UNAVAILABLE",
-                        "The plugin uses localized strings but no writable loose-file snapshot is available.",
-                    ),
-                ),
-                request.context.run_id,
-            )
         writer = PluginWriter(
             plugin,
             strings_lookup=parser.get_strings_lookup(),
@@ -137,7 +150,13 @@ def write_plugin(request: WriteRequest) -> OperationResult[tuple[str, ...]]:
                 localized_diagnostics.extend(localized_result.diagnostics)
             plugin_saved = writer._inline_count > 0 or target != source_path
             if plugin_saved:
-                plugin.save(target)
+                if writer._inline_count:
+                    plugin.save(target)
+                else:
+                    # External Strings changed; the plugin's records and IDs did
+                    # not. Preserve the confirmed bytes instead of reserializing
+                    # and recompressing every record just to change its filename.
+                    target.write_bytes(snapshot.content)
             artifacts = tuple(([str(target)] if plugin_saved else []) + string_artifacts)
             if not artifacts:
                 raise ValueError("localized plugin writer produced no artifact")
@@ -156,8 +175,9 @@ def write_plugin(request: WriteRequest) -> OperationResult[tuple[str, ...]]:
         if not artifacts:
             raise ValueError("plugin writer produced no artifact")
     except (OSError, TypeError, ValueError) as exc:
+        logging.getLogger(__name__).exception("Plugin snapshot rendering failed for %s", snapshot.source.uri)
         return _failed_operation(
-            Diagnostic("PLUGIN_WRITE_FAILED", f"SSE plugin write failed ({type(exc).__name__})."),
+            Diagnostic("PLUGIN_WRITE_FAILED", f"SSE plugin write failed ({type(exc).__name__}): {exc}"),
             request.context.run_id,
         )
     return OperationResult.completed(
@@ -166,59 +186,6 @@ def write_plugin(request: WriteRequest) -> OperationResult[tuple[str, ...]]:
         artifact_refs=artifacts,
         run_id=request.context.run_id,
     )
-
-
-def _localized_source_snapshots(
-    plugin_path: Path,
-    language: str,
-    request: ParseRequest,
-) -> tuple[tuple[SourceSnapshot, tuple[TranslationEntry, ...]], ...]:
-    prefix = f"{plugin_path.stem}_{language.capitalize()}"
-    sources: list[tuple[SourceSnapshot, tuple[TranslationEntry, ...]]] = []
-    seen_ids: dict[int, FormatId] = {}
-    for format_id, suffix in (
-        (FormatId.STRINGS, ".strings"),
-        (FormatId.DLSTRINGS, ".dlstrings"),
-        (FormatId.ILSTRINGS, ".ilstrings"),
-    ):
-        source_path = plugin_path.parent / "Strings" / f"{prefix}{suffix}"
-        if not source_path.exists():
-            continue
-        adapter = LocalizedStringsAdapter(format_id)
-        result = adapter.parse(
-            ParseRequest(
-                SourceDescriptor(str(source_path), source_path.name, source_path.stat().st_size),
-                request.context,
-                format_id,
-                cancellation=request.cancellation,
-            )
-        )
-        if result.outcome is not OperationOutcome.COMPLETED or result.source_snapshot is None:
-            raise ValueError("localized strings source did not produce a complete snapshot")
-        for entry in result.entries:
-            string_id = entry.string_id
-            if string_id in seen_ids:
-                raise ValueError("localized string ID appears in more than one variant")
-            seen_ids[string_id] = format_id
-        sources.append((result.source_snapshot, result.entries))
-    return tuple(sources)
-
-
-def _snapshot_localized_sources(
-    snapshot: SourceSnapshot,
-) -> tuple[tuple[SourceSnapshot, tuple[TranslationEntry, ...]], ...]:
-    value = dict(snapshot.metadata).get("localized_sources", ())
-    if not isinstance(value, tuple):
-        raise ValueError("plugin localized snapshot metadata is invalid")
-    for item in value:
-        if (
-            not isinstance(item, tuple)
-            or len(item) != 2
-            or not isinstance(item[0], SourceSnapshot)
-            or not isinstance(item[1], tuple)
-        ):
-            raise ValueError("plugin localized snapshot metadata is invalid")
-    return value
 
 
 def _blocking_stage_diagnostics(
@@ -278,31 +245,34 @@ def _localized_write_requests(
     plugin_target: Path,
     sources: tuple[tuple[SourceSnapshot, tuple[TranslationEntry, ...]], ...],
 ) -> tuple[tuple[LocalizedStringsAdapter, WriteRequest], ...]:
-    plugin_entries: dict[int, TranslationEntry] = {}
+    variants = localized_id_variants(sources)
+    plugin_entries: dict[tuple[FormatId, int], TranslationEntry] = {}
     for entry in request.entries:
         if not isinstance(entry, TranslationEntry) or entry.string_id is None:
             continue
-        existing = plugin_entries.get(entry.string_id)
+        identity = localized_entry_identity(entry, variants)
+        existing = plugin_entries.get(identity)
         if existing is not None and (
             existing.translation,
             existing.stage,
             existing.original,
         ) != (entry.translation, entry.stage, entry.original):
             raise ValueError("plugin entries disagree for the same localized string ID")
-        plugin_entries[entry.string_id] = entry
+        plugin_entries[identity] = entry
 
-    mapped_ids: set[int] = set()
+    mapped_ids: set[tuple[FormatId, int]] = set()
     localized_requests: list[tuple[LocalizedStringsAdapter, WriteRequest]] = []
     language = str(dict(request.options).get("language", "english"))
     for snapshot, base_entries in sources:
         adapter = LocalizedStringsAdapter(snapshot.format_id)
         mapped_entries: list[TranslationEntry] = []
         for base_entry in base_entries:
-            plugin_entry = plugin_entries.get(base_entry.string_id)
+            identity = (snapshot.format_id, base_entry.string_id)
+            plugin_entry = plugin_entries.get(identity)
             if plugin_entry is None:
                 mapped_entries.append(base_entry)
                 continue
-            mapped_ids.add(base_entry.string_id)
+            mapped_ids.add(identity)
             mapped_entries.append(
                 replace(
                     base_entry,
@@ -322,7 +292,11 @@ def _localized_write_requests(
                 request.variant_revision,
                 request.context,
                 source_snapshot=snapshot,
-                options=request.options,
+                options=(
+                    tuple({**dict(request.options), "source_authority": "hydration-v2"}.items())
+                    if dict(snapshot.metadata).get("strings.storage") == "bsa"
+                    else request.options
+                ),
                 cancellation=request.cancellation,
                 stage_policy=request.stage_policy,
             ),
@@ -381,8 +355,27 @@ def plugin_artifact_paths(snapshot: SourceSnapshot, target: str, options=()) -> 
 def localized_write_requests(request: WriteRequest):
     if request.source_snapshot is None:
         return ()
-    return _localized_write_requests(
-        request, Path(request.target.uri), _snapshot_localized_sources(request.source_snapshot)
+    sources = _snapshot_localized_sources(request.source_snapshot)
+    variants = localized_id_variants(sources)
+    if any(
+        entry.string_id is not None and len(variants.get(entry.string_id, ())) > 1 and not entry.dsd_type
+        for entry in request.entries
+    ):
+        # The bundle validator receives the original hydrated DTOs. Only when
+        # an ID is shared do we need the library's source field type again.
+        source_entries = prepared_plugin_source(request.source_snapshot, dict(request.options)).entries
+        request = _source_typed_request(
+            request, {(entry.key, entry.identity.original): entry for entry in source_entries}
+        )
+    return _localized_write_requests(request, Path(request.target.uri), sources)
+
+
+def _source_typed_request(request, known):
+    return replace(
+        request,
+        entries=tuple(
+            replace(entry, dsd_type=known[(entry.key, entry.identity.original)].dsd_type) for entry in request.entries
+        ),
     )
 
 

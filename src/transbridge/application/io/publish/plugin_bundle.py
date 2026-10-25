@@ -16,11 +16,13 @@ from tempfile import mkdtemp
 
 from transbridge.application.contracts import Diagnostic, OperationCounts, OperationOutcome, OperationResult
 from transbridge.application.io.contracts import SourceDescriptor, WriteRequest
+from transbridge.application.io.plugin_publication_source import plugin_source_scope, retire_plugin_parsers
 from transbridge.application.io.plugin_write import localized_write_requests, plugin_artifact_paths
 
 from .filesystem import PublishFilesystemPort
 from .guards import PublishCommitGuard
 from .models import BackupPolicy, ConflictPolicy, FileFingerprint
+from .target_directory import prepare_output_directory
 from .validators import FormatAdapterRenderer, FormatRoundTripValidator
 
 
@@ -38,6 +40,7 @@ class PluginBundlePublisher:
         self._fs = filesystem
         self._adapter = adapter
 
+    @plugin_source_scope()
     def publish(
         self,
         request: WriteRequest,
@@ -61,11 +64,14 @@ class PluginBundlePublisher:
             self._check_targets(expected, conflict_policy)
             if self._cancelled(request):
                 return OperationResult.cancelled(run_id=request.context.run_id)
+            prepare_output_directory(self._fs, paths[0])
+            self._check_targets(expected, conflict_policy)
             parent = Path(paths[0]).parent
             stage_dir = Path(mkdtemp(prefix=".transbridge-publish-", dir=parent))
             staged = {path: str(stage_dir / Path(path).relative_to(parent)) for path in paths}
             staged_request = replace(request, target=SourceDescriptor(staged[paths[0]], Path(paths[0]).name))
             rendered = FormatAdapterRenderer(self._adapter).render(staged_request, staged[paths[0]])
+            retire_plugin_parsers()
             if rendered.outcome is OperationOutcome.CANCELLED or self._cancelled(request):
                 result = OperationResult.cancelled(run_id=request.context.run_id)
             else:

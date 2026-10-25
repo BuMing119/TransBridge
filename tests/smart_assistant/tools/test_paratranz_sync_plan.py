@@ -3,7 +3,10 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 from tests.conftest import MockAppContext, make_test_collection
+from tests.contracts.io.test_paratranz_transport_keys import qualified
+from transbridge.application.io.paratranz_mapping import paratranz_record_from_entry
 from transbridge.application.ports.paratranz import ParaTranzEntry
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.smart_assistant.mcp.adapter import MCPAdapter
 from transbridge.smart_assistant.tool_registry import ToolRegistry
 from transbridge.smart_assistant.tools.tool_paratranz import _tool_plan_sync
@@ -86,3 +89,22 @@ def test_invalid_namespace_or_multi_source_collection_fails_closed(factory) -> N
     assert not mismatch.success
     assert mismatch.error_code == "SOURCE_NAMESPACE_MISMATCH"
     factory.return_value.list_entries.assert_not_called()
+
+
+@patch(_SERVICE_FACTORY)
+def test_agent_download_plan_restores_transport_keys_before_matching(factory) -> None:
+    entries = (qualified("One"), qualified("Two"))
+    service = _service()
+    service.list_entries.return_value = tuple(
+        ParaTranzEntry.from_mapping(dict(paratranz_record_from_entry(entry), id=index + 20, translation="Cloud"))
+        for index, entry in enumerate(entries)
+    )
+    factory.return_value = service
+    result = _tool_plan_sync(
+        {"project_id": "7", "operation": "download", "conflict_policy": "prefer_remote"},
+        MockAppContext(TranslationEntryCollection(entries)),
+    )
+    assert result.success, result.error
+    assert result.data["total_items"] == 2
+    assert all(item["action"] == "update_local" for item in result.data["items"])
+    service.upsert_entry.assert_not_called()

@@ -36,6 +36,7 @@ def test_small_window_keeps_footer_reachable_and_long_text_scrollable(layout_app
     try:
         assert subject.size().width() <= 900
         assert subject.size().height() <= 620
+        assert subject._table.rowHeight(0) >= subject._table.fontMetrics().height() * 3 + 28
         finish = subject._buttons.button(QDialogButtonBox.StandardButton.Apply)
         origin = finish.mapTo(subject, QPoint(0, 0))
         assert subject.rect().contains(origin)

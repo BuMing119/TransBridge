@@ -9,6 +9,7 @@ from PyQt6.QtCore import QEvent, QObject, QPoint, Qt, pyqtSignal
 from PyQt6.QtGui import QFocusEvent, QShortcut
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget
+import pytest
 
 from transbridge.ui.shell import progressive_menu_bar as progressive_menu_module
 from transbridge.ui.shell.action_catalog import (
@@ -224,6 +225,63 @@ def test_cloud_sync_remains_discoverable_without_browse_selection_and_requires_c
     assert composition._has_cloud_context() == (True, None)
     composition._host.context.collection = None
     assert composition._has_cloud_context() == (False, "请先选择可编辑的翻译内容")
+
+
+def test_current_project_download_catalog_is_available_without_current_collection() -> None:
+    composition = object.__new__(ShellIntentComposition)
+    composition._host = SimpleNamespace(
+        context=SimpleNamespace(
+            project_name="已有工程",
+            active_project_id="project",
+            uses_authoritative_projection=True,
+            collection=None,
+            project_sources=({"source_id": "source", "location": "source.esp"},),
+        )
+    )
+    assert composition._has_download_context() == (True, None)
+    assert composition._has_cloud_context() == (False, "请先选择可编辑的翻译内容")
+    composition._host.context.uses_authoritative_projection = False
+    assert composition._has_download_context() == (False, "请先选择可编辑的翻译内容")
+
+
+def test_download_has_one_discoverable_menu_and_catalog_action_with_legacy_alias() -> None:
+    window = QMainWindow()
+    handles = MenuBuilder(window, _callbacks([])).build()
+    try:
+        assert handles.download.text() == "从paratranz上同步"
+        assert handles.download.isVisible()
+        assert not handles.batch_download.isVisible()
+        downloads = [item for item in DEFAULT_ACTION_CATALOG.all() if item.intent_id is IntentId.SYNC_DOWNLOAD]
+        assert len(downloads) == 1
+        assert IntentId.SYNC_DOWNLOAD_BATCH not in {item.intent_id for item in DEFAULT_ACTION_CATALOG.all()}
+        assert DEFAULT_ACTION_CATALOG.get(IntentId.SYNC_DOWNLOAD_BATCH) is downloads[0]
+        assert "下载更新" in downloads[0].aliases
+    finally:
+        window.close()
+
+
+def test_legacy_download_intent_dispatches_the_unified_handler() -> None:
+    calls = []
+
+    class Noop:
+        def __getattr__(self, _name):
+            return self
+
+        def __call__(self, *_args, **_kwargs):
+            return None
+
+    host = Noop()
+    host.context = SimpleNamespace(uses_authoritative_projection=True, project_name="工程", collection=None)
+    host.operation_coordinator = Noop()
+    host.operation_coordinator.download = lambda: calls.append("download")
+    host.operation_coordinator.batch_download = lambda: pytest.fail("旧批量 intent 不应形成独立执行路径")
+    composition = ShellIntentComposition(host)
+    try:
+        assert composition.dispatch(IntentId.SYNC_DOWNLOAD, confirmed=True).accepted
+        assert composition.dispatch(IntentId.SYNC_DOWNLOAD_BATCH.value, confirmed=True).accepted
+        assert calls == ["download", "download"]
+    finally:
+        composition.close()
 
 
 def test_project_creation_and_workbench_content_have_distinct_routes() -> None:

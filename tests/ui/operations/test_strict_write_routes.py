@@ -118,6 +118,20 @@ def test_default_write_uses_current_source_and_does_not_treat_existing_output_as
     assert _texts(output) == ["译文0", "译文1"]
 
 
+def test_locked_empty_entry_preserves_source_while_other_translation_is_written(tmp_path, feature):
+    context = _context(tmp_path)
+    first, second = tuple(context.active_slot.collection)
+    locked = replace(first, translation="", stage=9)
+    context.active_slot.collection = TranslationEntryCollection((locked, second))
+    before = locked.snapshot()
+    target = tmp_path / "nested" / "result.esp"
+    draft = feature.feature.create_draft(context, False, {"target_path": str(target)})
+    result = _submit(feature, draft)
+    assert result.outcome is OperationOutcome.COMPLETED, result.diagnostics
+    assert _texts(target) == [first.original, second.translation]
+    assert locked.snapshot() == before
+
+
 @pytest.mark.parametrize("existing", [False, True])
 def test_default_write_fails_the_whole_file_on_unlocatable_entry(tmp_path, feature, existing):
     context = _context(tmp_path, invalid_last=True)
@@ -287,12 +301,86 @@ def test_batch_uses_the_terminology_projection_confirmed_in_preflight(tmp_path, 
         assert _texts(request.target_path) == ["预检确认译文", "预检确认译文"]
 
 
-def test_batch_rejects_incomplete_source_scope_instead_of_silently_skipping(tmp_path, feature):
+@pytest.mark.parametrize("invalid", ["source_snapshot", "collection", "empty_collection"])
+def test_batch_retains_incomplete_source_receipt_and_publishes_other_sources(tmp_path, feature, invalid):
     context = _context(tmp_path, 3)
-    tuple(context.slots.values())[-1].source_snapshot = None
-    assert not feature.feature.supports(context, True)
-    with pytest.raises(RuntimeError, match="缺少来源快照"):
-        feature.feature.create_draft(context, True, {})
+    last = tuple(context.slots.values())[-1]
+    if invalid == "empty_collection":
+        last.collection = TranslationEntryCollection(())
+    else:
+        setattr(last, invalid, None)
+    assert feature.feature.supports(context, True)
+    draft = feature.feature.create_draft(context, True, {})
+    result = _submit(feature, draft)
+    assert result.outcome is OperationOutcome.PARTIAL
+    assert result.counts.succeeded == 2 and result.counts.failed == 1
+    assert len(result.value["outcomes"]) == 3
+    assert result.value["outcomes"][-1]["status"] == "failed"
+    assert not (tmp_path / "source-2_translated.esp").exists()
+    for request in draft.request.drafts:
+        assert _texts(request.target_path) == ["译文0", "译文1"]
+
+
+@pytest.mark.parametrize("failure", ["existing", "invalid_stage", "directory", "snapshot"])
+def test_batch_preflight_failure_does_not_block_independent_source(tmp_path, feature, failure):
+    context = _context(tmp_path, 2)
+    initial = feature.feature.create_draft(context, True, {})
+    bad, good = initial.request.drafts
+    target = Path(bad.target_path)
+    before = None
+    if failure == "existing":
+        target.write_bytes(b"keep existing output")
+        before = target.read_bytes()
+    elif failure == "invalid_stage":
+        bad = replace(bad, entries=(replace(bad.entries[0], stage=4), *bad.entries[1:]))
+    elif failure == "directory":
+        target.mkdir()
+    else:
+        bad = replace(bad, source_snapshot=replace(bad.source_snapshot, content=None, lease_id="missing-hydration"))
+    draft = _write_batch_plan(_HydratedWriteBatch((bad, good)))
+    result = _submit(feature, draft)
+    assert result.outcome is OperationOutcome.PARTIAL, result.diagnostics
+    assert result.counts.succeeded == 1 and result.counts.failed == 1
+    assert _texts(good.target_path) == ["译文0", "译文1"]
+    assert result.value["outcomes"][0]["status"] == "failed"
+    if before is not None:
+        assert target.read_bytes() == before
+    elif failure == "directory":
+        assert target.is_dir() and not tuple(target.iterdir())
+    else:
+        assert not target.exists()
+
+
+def test_batch_target_changed_after_preflight_only_blocks_that_source(tmp_path, feature):
+    draft = feature.feature.create_draft(_context(tmp_path, 2), True, {})
+    checked = feature.feature.mapper.preflight(draft)
+    assert checked.ready
+    first, second = draft.request.drafts
+    Path(first.target_path).write_bytes(b"external change")
+    ref = feature.feature.submit(draft, checked, feature.owner, feature.tasks)
+    result = feature.adapter.result(ref, feature.owner)
+    assert result.outcome is OperationOutcome.PARTIAL
+    assert Path(first.target_path).read_bytes() == b"external change"
+    assert _texts(second.target_path) == ["译文0", "译文1"]
+
+
+def test_batch_overlapping_sources_do_not_block_an_independent_third_source(tmp_path, feature):
+    initial = feature.feature.create_draft(_context(tmp_path, 3), True, {})
+    first, second, third = initial.request.drafts
+    shared = tmp_path / "shared.esp"
+    draft = _write_batch_plan(
+        _HydratedWriteBatch((
+            replace(first, target_path=str(shared)),
+            replace(second, target_path=str(shared)),
+            third,
+        ))
+    )
+    result = _submit(feature, draft)
+    assert result.outcome is OperationOutcome.PARTIAL, result.diagnostics
+    assert result.counts.succeeded == 1 and result.counts.failed == 2
+    assert not shared.exists()
+    assert _texts(third.target_path) == ["译文0", "译文1"]
+    assert [item["status"] for item in result.value["outcomes"]] == ["failed", "failed", "succeeded"]
 
 
 def test_batch_preflight_identifies_files_and_marks_full_retry_scope(tmp_path, feature):

@@ -173,7 +173,6 @@ DEFAULT_CONTEXT_HELP = ContextHelpCatalog((
             IntentId.SYNC_UPLOAD,
             IntentId.SYNC_UPLOAD_BATCH,
             IntentId.SYNC_DOWNLOAD,
-            IntentId.SYNC_DOWNLOAD_BATCH,
         ),
     ),
     ContextHelpTopic(

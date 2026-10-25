@@ -4,17 +4,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 import json
-from threading import Lock
+import logging
+from threading import Condition
 
 from PyQt6.QtCore import QThread
 
 from transbridge.application.contracts import DomainError, ErrorCategory, OperationResult
 from transbridge.application.io.identity import EntryKey
 from transbridge.application.projections.models import copy_projection_value
+from transbridge.ui.entry_projection import prepare_projected_entries, sync_projected_entries
 from transbridge.ui.project_labels import project_entry_labels
 from transbridge.ui.projection_types import CollectionSlot
 
 _UNSET = object()
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +105,20 @@ def _snapshot_identity(snapshot):
     )
 
 
+def _same_entry_scope(previous, current):
+    if previous is None or current is None:
+        return False
+    project = previous.values.get("project_id")
+    variant = previous.values.get("variant_id") or previous.values.get("active_variant_id")
+    return (
+        project is not None
+        and variant is not None
+        and previous.stream_id == current.stream_id
+        and project == current.values.get("project_id")
+        and variant == (current.values.get("variant_id") or current.values.get("active_variant_id"))
+    )
+
+
 class ProjectViewBinding:
     """Keep queued notifications outside the GUI's project installation transaction."""
 
@@ -111,7 +128,7 @@ class ProjectViewBinding:
         self.installing = False
         self.failed = False
         self._subscription = None
-        self._lock = Lock()
+        self._lock = Condition()
         self._generation = 0
         self._token = None
         self._installed = False
@@ -119,6 +136,7 @@ class ProjectViewBinding:
         self._pending = _UNSET
         self._sequence = 0
         self._applied_sequence = 0
+        self._deliveries = 0
         self._closed = False
 
     @property
@@ -135,6 +153,7 @@ class ProjectViewBinding:
             self._closed = True
             self._token = None
             self._pending = _UNSET
+            self._lock.notify_all()
         subscription, self._subscription = self._subscription, None
         if subscription is not None:
             subscription.close()
@@ -149,11 +168,24 @@ class ProjectViewBinding:
                 self._pending = (sequence, snapshot)
                 return
         if QThread.currentThread() != self.context.thread():
-            self.context.safe_mutate(lambda: self._deliver(sequence, snapshot))
+            previous = self.state.snapshot
+            prepared = None
+            if not self.installing and _same_entry_scope(previous, snapshot):
+                try:
+                    prepared = prepare_projected_entries(tuple(self.context.slots.values()), previous, snapshot)
+                except Exception:
+                    # A preparation failure must not strand queued delivery or
+                    # a background save waiting for it. Retain the cause and
+                    # reconcile the current view at the normal Qt boundary.
+                    _logger.exception("Unable to prepare project entries; retrying reconciliation on Qt delivery")
+            with self._lock:
+                if self._closed:
+                    return
+            self.context.safe_mutate(lambda: self._deliver(sequence, snapshot, prepared))
         else:
             self._deliver(sequence, snapshot)
 
-    def _deliver(self, sequence, snapshot):
+    def _deliver(self, sequence, snapshot, prepared=None):
         with self._lock:
             if self._closed or sequence <= self._applied_sequence:
                 return
@@ -162,7 +194,13 @@ class ProjectViewBinding:
                     self._pending = (sequence, snapshot)
                 return
             self._applied_sequence = sequence
-        self.apply(snapshot)
+            self._deliveries += 1
+        try:
+            self.apply(snapshot, prepared=prepared)
+        finally:
+            with self._lock:
+                self._deliveries -= 1
+                self._lock.notify_all()
 
     def begin(self):
         self._require_gui_thread()
@@ -176,6 +214,7 @@ class ProjectViewBinding:
             self._installed = False
             self._installed_snapshot = None
             self._pending = _UNSET
+            self._lock.notify_all()
             return self._token
 
     def install(self, token, snapshot, slots, *, state=None):
@@ -201,8 +240,8 @@ class ProjectViewBinding:
             self._installed_snapshot = snapshot
             self._applied_sequence = self._sequence
             self._pending = _UNSET
+            self.installing = True
         context = self.context
-        self.installing = True
         try:
             context._slots = prepared_slots
             context._active_key = next(reversed(prepared_slots), None)
@@ -210,7 +249,9 @@ class ProjectViewBinding:
             self._apply_state(next_state)
             context.collection_list_changed.emit()
         finally:
-            self.installing = False
+            with self._lock:
+                self.installing = False
+                self._lock.notify_all()
         context.project_installed.emit()
         context.collection_changed.emit(context.collection)
         return True
@@ -233,6 +274,8 @@ class ProjectViewBinding:
                     self.failed = True
         if pending is not _UNSET:
             self._deliver(*pending)
+        with self._lock:
+            self._lock.notify_all()
         return True
 
     def _require_gui_thread(self):
@@ -248,11 +291,22 @@ class ProjectViewBinding:
             return None
         return OperationResult.failed(DomainError(ErrorCategory.PREREQUISITE, code, message))
 
-    def apply(self, snapshot):
-        self._apply_state(ProjectViewState.capture(snapshot, self.context._entry_labels_exact))
+    def apply(self, snapshot, *, prepared=None):
+        self._apply_state(ProjectViewState.capture(snapshot, self.context._entry_labels_exact), prepared=prepared)
 
-    def _apply_state(self, state):
+    def _apply_state(self, state, *, prepared=None):
         context, old = self.context, self.state
+        entries_changed = False
+        previous_collection = context.collection
+        if not self.installing and _same_entry_scope(old.snapshot, state.snapshot):
+            applied = None
+            if prepared is not None and prepared.matches(context.slots.values(), old.snapshot):
+                applied = prepared.apply()
+            entries_changed = (
+                sync_projected_entries(context.slots.values(), old.snapshot, state.snapshot)
+                if applied is None
+                else applied
+            )
         labels_changed = (
             context._label_library != state.label_library
             or context._entry_labels != state.entry_labels
@@ -273,11 +327,54 @@ class ProjectViewBinding:
             context.variant_changed.emit(state.variant_id)
         if old.binding != state.binding:
             context.paratranz_binding_changed.emit(context.paratranz_binding)
+        if entries_changed and context.collection is not previous_collection:
+            context.collection_changed.emit(context.collection)
 
     def diverged(self):
         if self.store is None:
             return False
-        snapshot = self.store.snapshot()
+        if QThread.currentThread() == self.context.thread():
+            snapshot = self.state.snapshot if self.opening else self.store.snapshot()
+            return self._diverged_snapshot(snapshot)
+        # The durable commit can precede its queued Qt delivery. A background
+        # save waits for that delivery instead of treating the old view as an
+        # unsubmitted edit and pausing autosave. Never wait on the Qt thread.
+        while True:
+            with self._lock:
+                self._lock.wait_for(
+                    lambda: (
+                        self._closed
+                        or (
+                            not self.installing
+                            and self._deliveries == 0
+                            and (self._token is not None or self._sequence <= self._applied_sequence)
+                        )
+                    )
+                )
+                if self._closed:
+                    raise DomainError(
+                        ErrorCategory.PREREQUISITE, "PROJECT_VIEW_UNAVAILABLE", "工程视图已关闭，无法核验保存。"
+                    )
+                sequence = self._sequence
+                token = self._token
+                installed = self.state.snapshot
+            # Creation checks the old workbench inside its own open transaction.
+            # That transaction can only finish after this worker returns. Its
+            # authority is the installed view, not the pending next project.
+            snapshot = installed if token is not None else self.store.snapshot()
+            diverged = self._diverged_snapshot(snapshot)
+            with self._lock:
+                if (
+                    not self._closed
+                    and not self.installing
+                    and self._token == token
+                    and sequence == self._sequence
+                    and self._deliveries == 0
+                    and self.state.snapshot is installed
+                ):
+                    return diverged
+
+    def _diverged_snapshot(self, snapshot):
         if snapshot is None:
             return any(slot.collection for slot in self.context.slots.values())
         states = {

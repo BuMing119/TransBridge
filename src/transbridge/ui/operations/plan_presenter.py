@@ -62,6 +62,7 @@ class OperationPlanPresenter:
             raise ValueError("one mapper is allowed for each operation kind")
         self._submitter = submitter
         self._confirmations = confirmations or ConfirmationAuthority()
+        self._sync_confirmations = confirmations or ConfirmationAuthority(ttl_seconds=None)
         self._sessions: dict[str, _Session] = {}
         self._lock = RLock()
 
@@ -81,6 +82,7 @@ class OperationPlanPresenter:
     def edit(self, session_id: str, draft: object, *, owner_id: str) -> OperationPlanViewState:
         with self._lock:
             session = self._resolve(session_id, owner_id)
+            self._discard_confirmation(session)
             session.revision += 1
             session.draft = draft
             session.preflight = None
@@ -91,6 +93,9 @@ class OperationPlanPresenter:
     def preflight(self, session_id: str, *, owner_id: str) -> OperationPreflightResult:
         with self._lock:
             session = self._resolve(session_id, owner_id)
+            self._discard_confirmation(session)
+            session.preflight = None
+            session.plan = replace(session.plan, submit_enabled=False, submit_disabled_reason="正在重新对照")
             revision = session.revision
             mapper = session.mapper
             draft = session.draft
@@ -106,7 +111,9 @@ class OperationPlanPresenter:
                 raise OperationPlanError("PREFLIGHT_IDENTITY_MISMATCH", "preflight does not match the edited plan")
             token = None
             if result.ready:
-                token = self._confirmations.issue(owner_id=owner_id, request_hash=self._request_hash(session, result))
+                token = self._authority(session).issue(
+                    owner_id=owner_id, request_hash=self._request_hash(session, result)
+                )
             result = replace(result, confirmation_token=token)
             session.preflight = result
             session.plan = replace(
@@ -124,7 +131,7 @@ class OperationPlanPresenter:
             preflight = session.preflight
             if preflight is None or not preflight.ready:
                 raise OperationPlanError("PREFLIGHT_REQUIRED", "operation must pass preflight before confirmation")
-            decision = self._confirmations.consume(
+            decision = self._authority(session).consume(
                 token,
                 owner_id=owner_id,
                 request_hash=self._request_hash(session, preflight),
@@ -150,7 +157,7 @@ class OperationPlanPresenter:
     def cancel(self, session_id: str, *, owner_id: str) -> None:
         """Discard UI state only; it deliberately invokes no feature port."""
         with self._lock:
-            self._resolve(session_id, owner_id)
+            self._discard_confirmation(self._resolve(session_id, owner_id))
             self._sessions.pop(session_id, None)
 
     def state(self, session_id: str, *, owner_id: str) -> OperationPlanViewState:
@@ -164,6 +171,15 @@ class OperationPlanPresenter:
         if session.owner_id != owner_id:
             raise OperationPlanError("PLAN_OWNER_MISMATCH", "operation plan belongs to another owner")
         return session
+
+    def _authority(self, session: _Session) -> ConfirmationAuthority:
+        if session.mapper.kind in {OperationKind.UPLOAD, OperationKind.DOWNLOAD}:
+            return self._sync_confirmations
+        return self._confirmations
+
+    def _discard_confirmation(self, session: _Session) -> None:
+        if session.preflight is not None:
+            self._authority(session).discard(session.preflight.confirmation_token)
 
     @staticmethod
     def _validate_plan(mapper: OperationPlanMapper, plan: OperationPlanViewState) -> None:

@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from transbridge.application.io.identity import EntryKey, ExternalEntryRef, SourceNamespace
 from transbridge.application.io.paratranz_context_order import parse_ordered_context
+from transbridge.application.io.paratranz_keys import decode_key
 from transbridge.application.ports.paratranz import CancellationPort, ParaTranzEntry, ParaTranzPort
 from transbridge.application.sync.models import RemoteEntrySnapshot, canonical_hash
 
 
 class ParaTranzRemoteSnapshotAdapter:
-    def __init__(self, service: ParaTranzPort) -> None:
+    def __init__(self, service: ParaTranzPort, *, decode_keys: bool = False) -> None:
         self._service = service
+        self._decode_keys = decode_keys
 
     def fetch(
         self,
@@ -28,13 +30,15 @@ class ParaTranzRemoteSnapshotAdapter:
         if len(entries) > limit:
             raise ValueError("remote snapshot exceeds the configured complete-plan limit")
         scope = f"project:{project_id}"
-        return tuple(_snapshot(entry, namespace, scope) for entry in entries)
+        return tuple(_snapshot(entry, namespace, scope, decode_keys=self._decode_keys) for entry in entries)
 
 
 def _snapshot(
     entry: ParaTranzEntry,
     namespace: SourceNamespace,
     scope: str,
+    *,
+    decode_keys: bool = False,
 ) -> RemoteEntrySnapshot:
     payload = {
         "id": entry.remote_id,
@@ -47,7 +51,7 @@ def _snapshot(
     reference = None if entry.remote_id is None else ExternalEntryRef("paratranz", scope, entry.remote_id)
     context, order = parse_ordered_context(entry.context)
     return RemoteEntrySnapshot(
-        entry_key=EntryKey(namespace, entry.key),
+        entry_key=decode_key(entry.key, entry.original, namespace) if decode_keys else EntryKey(namespace, entry.key),
         remote_revision=canonical_hash(payload),
         original=entry.original,
         translation=entry.translation,

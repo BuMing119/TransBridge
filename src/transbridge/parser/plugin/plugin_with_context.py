@@ -25,6 +25,30 @@ from .item import (
 from .plugin_string_with_context import PluginStringWithContext
 
 
+class _UnresolvedStrings:
+    """Count one recursive scan and retain a bounded DEBUG-only locator sample."""
+
+    def __init__(self, logger, plugin_name):
+        self._logger, self._plugin_name = logger, plugin_name
+        self.count = 0
+        self._samples = [] if logger.isEnabledFor(logging.DEBUG) else None
+
+    def missing(self, string_id, record_type, subrecord_type, formid):
+        self.count += 1
+        if self._samples is not None and len(self._samples) < 5:
+            self._samples.append((string_id, record_type, subrecord_type, formid))
+
+    def report(self):
+        if self.count and self._samples is not None:
+            samples = "; ".join(
+                f"{string_id:#010x} in {record_type} {subrecord_type} ({formid})"
+                for string_id, record_type, subrecord_type, formid in self._samples
+            )
+            self._logger.debug(
+                "Unresolved localized strings in %s: count=%d; samples=%s", self._plugin_name, self.count, samples
+            )
+
+
 class SSEPluginWithContext(SSEPlugin):
     """
     Extended SSE Plugin parser that extracts strings with NPC context.
@@ -271,7 +295,7 @@ class SSEPluginWithContext(SSEPlugin):
 
                             dlbr_map[dial_id_hex] = (quest_id, dlbr_formid)
 
-        self.log.debug(f"Built DLBR map with {len(dlbr_map)} entries")
+        self.log.debug("Built DLBR map with %d entries", len(dlbr_map))
         return dlbr_map
 
     # Extraction methods
@@ -302,6 +326,16 @@ class SSEPluginWithContext(SSEPlugin):
         Returns:
             Physical string/subrecord pairs, including identical occurrences.
         """
+        unresolved = _UnresolvedStrings(self.log, self.plugin_name)
+        strings = self._extract_group_string_pairs(
+            group, extract_localized, dial_context, dial_context_map, dlbr_map, strings_lookup, unresolved
+        )
+        unresolved.report()
+        return strings
+
+    def _extract_group_string_pairs(
+        self, group, extract_localized, dial_context, dial_context_map, dlbr_map, strings_lookup, unresolved
+    ):
         strings: list[tuple[PluginStringWithContext, StringSubrecord]] = []
 
         # For Normal DIAL groups, build a map of DIAL FormID -> context
@@ -352,13 +386,14 @@ class SSEPluginWithContext(SSEPlugin):
 
         for child in group.children:
             if isinstance(child, Group):
-                child_strings = self.extract_group_string_pairs(
+                child_strings = self._extract_group_string_pairs(
                     child,
                     extract_localized,
                     dial_context,
                     dial_context_map,
                     dlbr_map,
                     strings_lookup,
+                    unresolved,
                 )
                 strings.extend(child_strings)
                 continue
@@ -400,11 +435,14 @@ class SSEPluginWithContext(SSEPlugin):
                     elif strings_lookup is not None:
                         # Localized plugin: string is an integer index into external strings files
                         raw_string_id = string  # 保存 int ID
-                        resolved = strings_lookup.get(string)
+                        typed_lookup = getattr(strings_lookup, "get_for_type", None)
+                        resolved = (
+                            typed_lookup(string, subrecord.type)
+                            if callable(typed_lookup)
+                            else strings_lookup.get(string)
+                        )
                         if resolved is None:
-                            self.log.debug(
-                                f"Unresolved string ID {string:#010x} in {record.type} {subrecord.type} ({formid})"
-                            )
+                            unresolved.missing(string, record.type, subrecord.type, formid)
                             continue
                         string_text = resolved
                     elif extract_localized:
@@ -434,13 +472,15 @@ class SSEPluginWithContext(SSEPlugin):
     def extract_string_pairs_with_context(self, extract_localized=False, strings_lookup=None):
         """Capture all physical targets before any text is modified."""
         pairs = []
+        unresolved = _UnresolvedStrings(self.log, self.plugin_name)
         dlbr_map = self._build_dlbr_map()
         for group in self.groups:
             pairs.extend(
-                self.extract_group_string_pairs(
-                    group, extract_localized, dlbr_map=dlbr_map, strings_lookup=strings_lookup
+                self._extract_group_string_pairs(
+                    group, extract_localized, None, None, dlbr_map, strings_lookup, unresolved
                 )
             )
+        unresolved.report()
         return pairs
 
     def extract_strings_with_context(

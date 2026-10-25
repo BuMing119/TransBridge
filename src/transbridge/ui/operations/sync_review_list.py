@@ -1,11 +1,16 @@
 """Content-first, fixed-height review list without one widget per entry."""
 
-from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtCore import QEvent, QSize, Qt
 from PyQt6.QtGui import QPalette
 from PyQt6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
 
 class SyncReviewListDelegate(QStyledItemDelegate):
+    def eventFilter(self, watched, event):  # noqa: N802 - Qt override
+        if event.type() in {QEvent.Type.FontChange, QEvent.Type.StyleChange}:
+            watched.verticalHeader().setDefaultSectionSize(watched.fontMetrics().height() * 3 + 28)
+        return super().eventFilter(watched, event)
+
     def sizeHint(self, option, index):  # noqa: N802 - Qt override
         return QSize(220, option.fontMetrics.height() * 3 + 28)
 

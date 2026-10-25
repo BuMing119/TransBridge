@@ -175,6 +175,7 @@ class MenuBuilder:
         sync_menu.addSeparator()
         download = self._intent_action(sync_menu, IntentId.SYNC_DOWNLOAD, callbacks.download)
         batch_download = self._intent_action(sync_menu, IntentId.SYNC_DOWNLOAD_BATCH, callbacks.batch_download)
+        batch_download.setVisible(False)
         sync_menu.addSeparator()
         write = self._intent_action(sync_menu, IntentId.PUBLISH_WRITE, callbacks.write)
         batch_write = self._intent_action(sync_menu, IntentId.PUBLISH_WRITE_BATCH, callbacks.batch_write)

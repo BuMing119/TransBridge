@@ -107,16 +107,55 @@ def test_original_qualified_entries_download_their_own_remote_translation():
     assert [entry.entry_key for entry in official] == [entry.entry_key for entry in local]
 
 
-def test_existing_reference_matches_a_renamed_remote_key():
-    local = (_local(ref=2),)
-    remote = (_remote(key="renamed", original="Updated original", ref=2), _remote(ref=1))
-
+def test_qualified_keys_use_exact_original_despite_crossed_historical_ids():
+    local = (_local(original="First", qualified=True, ref=2), _local(original="Second", qualified=True, ref=1))
+    remote = (_remote(original="First", translation="One", ref=1), _remote(original="Second", translation="Two", ref=2))
     plan = _plan(local, remote)
-    result, official = _execute(plan, local, remote)
+    assert plan.conflicts == 0
+    assert [item.external_ref.opaque_id for item in plan.items] == [1, 2]
 
+
+@pytest.mark.parametrize("side", ["local", "remote"])
+def test_self_contradictory_qualified_identity_cannot_match_or_be_selected(side):
+    local = _local(qualified=True)
+    remote = _remote()
+    if side == "local":
+        local = replace(local, entry_key=replace(local.entry_key, original="Another original"))
+    else:
+        remote = replace(remote, entry_key=replace(remote.entry_key, original="Another original"))
+    preview = _plan((local,), (remote,))
+    assert preview.conflicts == 1
+    row = preview.download_review[0]
+    assert row.reason == "original_mismatch"
+    assert not row.allow_remote_choice
+    assert not row.candidates[0].selectable
+    with pytest.raises(DownloadDecisionStaleError):
+        _plan((local,), (remote,), (DownloadDecision(row.row_id, row.candidates[0].token),))
+
+
+def test_historical_reference_without_a_current_key_match_is_local_only():
+    local = (_local(ref=1),)
+    remote = (_remote(key="different", ref=1),)
+    plan = _plan(local, remote)
+    assert plan.conflicts == 0
+    item = next(item for item in plan.items if item.entry_key == local[0].entry_key)
+    assert item.action is SyncAction.SKIP and item.reason == "local_only"
+
+
+@pytest.mark.parametrize("historical_ref", [1, 2, 99])
+def test_download_matches_current_key_and_original_despite_historical_reference(historical_ref):
+    local = (_local(ref=historical_ref),)
+    remote = (_remote(key="renamed", original="Updated original", ref=2), _remote(ref=1))
+    plan = _plan(local, remote)
+    selected = next(item for item in plan.items if item.entry_key == local[0].entry_key)
+    assert selected.external_ref.opaque_id == 1
+    assert plan.conflicts == 0
+    result, official = _execute(plan, local, remote)
     assert result.counts.succeeded == 1
-    assert official[0].external_ref.opaque_id == 2
     assert official[0].entry_key == local[0].entry_key
+    assert official[0].original == "Original"
+    assert official[0].translation == "Remote"
+    assert official[0].external_ref is None
 
 
 def test_context_can_disambiguate_equal_originals():
@@ -126,7 +165,7 @@ def test_context_can_disambiguate_equal_originals():
     result, official = _execute(_plan(local, remote), local, remote)
 
     assert result.counts.succeeded == 1
-    assert official[0].external_ref.opaque_id == 2
+    assert official[0].external_ref is None
 
 
 def test_partial_download_keeps_every_duplicate_local_entry_without_dict_loss():
@@ -166,7 +205,7 @@ def test_manual_candidate_is_exact_and_does_not_use_last_remote_key():
     assert resolved.plan_hash != preview.plan_hash
     assert result.counts.succeeded == 1
     assert official[0].translation == "First"
-    assert official[0].external_ref.opaque_id == 1
+    assert official[0].external_ref is None
 
 
 def test_keep_local_resolves_conflict_without_changing_any_local_content():
@@ -204,7 +243,7 @@ def test_choices_cannot_be_replayed_after_the_reviewed_content_changes(changed):
 
 def test_unrelated_successful_update_does_not_expire_a_pending_conflict_choice():
     local = (_local(), _local(key="safe"))
-    remote = (_remote(), _remote(ref=2), _remote(key="safe", ref=3))
+    remote = (_remote(), _remote(ref=2, translation="Alternative"), _remote(key="safe", ref=3))
     preview = _plan(local, remote)
     row = preview.download_review[0]
     result, updated = _execute(preview, local, remote)
@@ -229,30 +268,25 @@ def test_remote_original_mismatch_requires_a_deliberate_choice():
     assert resolved.items[0].action is SyncAction.UPDATE_LOCAL
 
 
-def test_unique_unqualified_key_keeps_legacy_matching_when_source_text_changes():
+@pytest.mark.parametrize("source", ["Updated source", "Original ", "original", "Original\n"])
+def test_unique_unqualified_key_requires_review_when_exact_source_text_changes(source):
     local = (_local(),)
-    remote = (_remote(original="Updated source", translation="Updated translation"),)
-
+    remote = (_remote(original=source, translation="Updated translation"),)
     plan = _plan(local, remote)
+    assert plan.conflicts == 1
+    assert plan.download_review[0].reason == "original_mismatch"
 
-    assert plan.conflicts == 0
-    assert plan.items[0].action is SyncAction.UPDATE_LOCAL
 
-
-def test_remote_identity_linked_to_another_local_entry_is_never_stolen():
+def test_other_local_historical_reference_does_not_block_an_exact_content_match():
     local = (_local(key="linked", ref=1), _local())
     remote = (_remote(),)
-
     plan = _plan(local, remote)
     result, official = _execute(plan, local, remote)
-
-    assert plan.conflicts == 1
-    row = plan.download_review[0]
-    assert row.reason == "remote_already_linked"
-    assert not row.candidates[0].selectable
-    assert not row.allow_remote_choice
-    assert official[1] == local[1]
-    assert result.counts.failed == 0
+    assert plan.conflicts == 0
+    assert official[0] == local[0]
+    assert official[1].translation == "Remote"
+    assert official[1].external_ref is None
+    assert result.counts.succeeded == 1
 
 
 def test_shared_proposed_remote_identity_defers_both_targets():
@@ -289,42 +323,22 @@ def test_remote_only_ambiguity_is_skipped_without_an_unactionable_conflict():
     assert not plan.download_review
 
 
-def test_manual_selection_persists_identity_even_when_legacy_content_already_matches():
+def test_manual_selection_of_unchanged_content_does_not_persist_an_identity_or_bypass_next_review():
     local = (_local(),)
     remote = (_remote(translation="Local"), _remote(translation="Alternative", ref=2))
-    planner = SyncPlanner()
-    preview = planner.plan(
-        local, remote, operation=SyncOperation.DOWNLOAD, conflict_policy=ConflictPolicy.PREFER_REMOTE, scope=SCOPE
-    )
+    preview = _plan(local, remote)
     row = preview.download_review[0]
     choice = next(candidate for candidate in row.candidates if candidate.entry.external_ref.opaque_id == 1)
-    resolved = planner.plan(
-        local,
-        remote,
-        operation=SyncOperation.DOWNLOAD,
-        conflict_policy=ConflictPolicy.PREFER_REMOTE,
-        scope=SCOPE,
-        download_decisions=(DownloadDecision(row.row_id, choice.token),),
-    )
-
+    resolved = _plan(local, remote, (DownloadDecision(row.row_id, choice.token),))
     result, official = _execute(resolved, local, remote)
-    next_plan = planner.plan(
-        tuple(official),
-        remote,
-        operation=SyncOperation.DOWNLOAD,
-        conflict_policy=ConflictPolicy.PREFER_REMOTE,
-        scope=SCOPE,
-    )
-
-    assert result.counts.succeeded == 1
-    assert official[0].external_ref.opaque_id == 1
-    assert next_plan.conflicts == 0
-    assert not next_plan.download_review
+    assert result.counts.succeeded == 0
+    assert official == list(local)
+    assert _plan(tuple(official), remote).conflicts == 1
 
 
 def test_retry_still_reports_preserved_unresolved_entries():
     local = (_local(), _local(key="safe"))
-    remote = (_remote(), _remote(ref=2), _remote(key="safe", ref=3))
+    remote = (_remote(), _remote(ref=2, translation="Alternative"), _remote(key="safe", ref=3))
     plan = _plan(local, remote)
     first, updated = _execute(plan, local, remote)
     service = _Remote(remote)

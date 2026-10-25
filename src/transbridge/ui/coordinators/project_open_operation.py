@@ -8,6 +8,7 @@ import logging
 from PyQt6.QtCore import QObject, QTimer
 from PyQt6.QtWidgets import QMessageBox
 
+from transbridge.application.projects import DirtyDecision
 from transbridge.ui.project_view_binding import ProjectViewState, prepare_project_view
 from transbridge.ui.source_hydration import prepare_project_slots
 from transbridge.ui.workers import ApiWorker
@@ -89,6 +90,13 @@ class ProjectOpenOperation(QObject):
         execution_context = host.runtime_context if request_context is None else request_context
 
         def run():
+            if dirty_decision is DirtyDecision.SAVE:
+                # Hydration must read the saved source registry, including any
+                # plugins just added to this same project. Guard the user's
+                # save choice against navigation or edits before the worker runs.
+                saved = host.project_commands.save(execution_context, expected_active_signature=expected)
+                if not saved.is_success:
+                    return OpenedProjectView(saved)
             prepared = prepare()
             if not prepared.is_success or prepared.value is None:
                 return OpenedProjectView(prepared)

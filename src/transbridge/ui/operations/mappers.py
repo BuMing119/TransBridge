@@ -172,7 +172,7 @@ class UploadOperationMapper(_OperationMapper):
 
 class DownloadOperationMapper(_OperationMapper):
     kind = OperationKind.DOWNLOAD
-    title = "从 ParaTranz 更新本地翻译"
+    title = "从 ParaTranz 更新工程译文"
 
     def _specific_checks(self, value: OperationPlanDraft) -> tuple[PreflightCheckState, ...]:
         return (

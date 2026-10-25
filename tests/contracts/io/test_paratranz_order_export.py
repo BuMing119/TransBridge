@@ -40,7 +40,7 @@ def test_categorized_fallback_is_global_and_preserves_complete_dialogue_order(tm
         _entry("first", order=2),
     )
     export_to_categorized_json_files(TranslationEntryCollection(entries), tmp_path)
-    dialogue = _payload(next(tmp_path.glob("对话_*.json")))
+    dialogue = _payload(next(tmp_path.glob("任务/对话_*.json")))
     assert [record["key"] for record in dialogue] == ["first", "later"]
     assert [record["context"][:8] for record in dialogue] == ["00000000", "00000002"]
     assert _payload(tmp_path / "书籍_书名.json")[0]["context"] == "00000001|BOOK:FULL"

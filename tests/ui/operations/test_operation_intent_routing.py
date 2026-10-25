@@ -22,7 +22,7 @@ class CapabilityFacade(Facade):
         return not batch and kind != "write"
 
 
-def test_menu_intents_route_once_to_plan_facade_when_composed() -> None:
+def test_upload_menu_uses_card_mode_selection_while_other_intents_use_plan_facade() -> None:
     legacy = []
     context = SimpleNamespace(
         collection=object(),
@@ -47,15 +47,13 @@ def test_menu_intents_route_once_to_plan_facade_when_composed() -> None:
     coordinator.write()
 
     assert [(kind, batch) for kind, _context, batch in facade.calls] == [
-        ("upload", False),
-        ("upload", True),
         ("download", False),
         ("write", False),
     ]
-    assert legacy == []
+    assert legacy == ["upload", "batch"]
 
 
-def test_unmigrated_batch_and_non_hydrated_write_fall_back_to_legacy_cards() -> None:
+def test_old_download_alias_uses_single_intent_while_other_unmigrated_actions_keep_their_fallback() -> None:
     legacy = []
     context = SimpleNamespace(
         collection=object(),
@@ -84,5 +82,5 @@ def test_unmigrated_batch_and_non_hydrated_write_fall_back_to_legacy_cards() -> 
     coordinator.write()
     coordinator.batch_write()
 
-    assert facade.calls == []
-    assert legacy == ["batch-upload", "batch-download", "write", "batch-write"]
+    assert facade.calls == [("download", context, False)]
+    assert legacy == ["batch-upload", "write", "batch-write"]

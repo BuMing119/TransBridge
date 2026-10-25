@@ -9,6 +9,7 @@ from transbridge.ui.operations.production_support import sync_request, sync_requ
 def _context(*, binding=None, browsed_id=999):
     return SimpleNamespace(
         collection=make_test_collection(3),
+        esp_path="source.esp",
         paratranz_binding=binding,
         project_revision=7,
         current_project={"id": browsed_id, "name": "Browsed only"},
@@ -38,6 +39,7 @@ def test_sync_request_uses_project_binding_and_ignores_browsed_project() -> None
     assert request.target_source == "project_binding"
     assert request.target_revision == "project_binding:7:config-0"
     assert request.conflict_policy is ConflictPolicy.PREFER_LOCAL
+    assert request.upload_path == "source.esp.json"
 
 
 def test_sync_request_is_unbound_instead_of_falling_back_to_browsed_project() -> None:

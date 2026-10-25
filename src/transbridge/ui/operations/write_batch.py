@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import os
 from pathlib import Path
@@ -10,12 +10,18 @@ from pathlib import Path
 from transbridge.application.contracts import (
     Diagnostic,
     DiagnosticSeverity,
+    DomainError,
     ErrorCategory,
     OperationCounts,
     OperationOutcome,
     OperationResult,
 )
-from transbridge.application.io.operation_write import HydratedWriteDraft, HydratedWriteWorkload
+from transbridge.application.io.operation_write import (
+    HydratedWriteDraft,
+    HydratedWritePreflight,
+    HydratedWriteWorkload,
+    WritePreflightCheck,
+)
 from transbridge.application.io.publish import ConflictPolicy as PublishConflictPolicy
 
 from .mappers import OperationPlanDraft
@@ -24,23 +30,63 @@ from .plan_view import EditableControl, EditableFieldState
 
 def batch_output_conflicts(preflights) -> tuple[str, ...]:
     """Detect cross-source aliases for every primary and companion output."""
-    owners: dict[str, int] = {}
-    conflicts = []
+    return tuple(
+        f"{' 与'.join(f'来源 {index}' for index in owners)} 的输出路径重叠：{path}"
+        for path, owners in _conflicting_outputs(preflights).items()
+    )
+
+
+def isolate_batch_output_conflicts(preflights) -> tuple:
+    conflicts = _conflicting_outputs(preflights)
+    output = []
     for index, checked in enumerate(preflights, 1):
-        for path, _fingerprint in checked.artifact_fingerprints:
-            canonical = os.path.normcase(str(Path(path).resolve()))
-            previous = owners.setdefault(canonical, index)
-            if previous != index:
-                conflicts.append(f"来源 {previous} 与来源 {index} 的输出路径重叠：{path}")
-    return tuple(conflicts)
+        paths = tuple(path for path, owners in conflicts.items() if index in owners)
+        if paths and not isinstance(checked, _WriteBatchFailure):
+            checked = replace(
+                checked,
+                checks=(
+                    *checked.checks,
+                    WritePreflightCheck("BATCH_OUTPUT_CONFLICT", False, "输出与其他来源重叠：" + "；".join(paths)),
+                ),
+            )
+        output.append(checked)
+    return tuple(output)
+
+
+def _conflicting_outputs(preflights) -> dict[str, list[int]]:
+    owners: dict[str, list[int]] = {}
+    for index, checked in enumerate(preflights, 1):
+        paths = (
+            (checked.target_path,)
+            if isinstance(checked, _WriteBatchFailure)
+            else (path for path, _fingerprint in checked.artifact_fingerprints)
+        )
+        for path in paths:
+            try:
+                canonical = os.path.normcase(str(Path(path).resolve()))
+            except (OSError, ValueError):
+                continue  # This source already has a failed preflight and cannot write.
+            items = owners.setdefault(canonical, [])
+            if index not in items:
+                items.append(index)
+    return {path: items for path, items in owners.items() if len(items) > 1}
+
+
+@dataclass(frozen=True, slots=True)
+class _WriteBatchFailure:
+    target_path: str
+    label: str
+    code: str
+    message: str
 
 
 @dataclass(frozen=True, slots=True)
 class _HydratedWriteBatch:
     drafts: tuple[HydratedWriteDraft, ...]
+    failures: tuple[_WriteBatchFailure, ...] = ()
 
     def __post_init__(self) -> None:
-        if len(self.drafts) < 2:
+        if len(self.drafts) + len(self.failures) < 2:
             raise ValueError("批量写回至少需要两个来源文件")
 
 
@@ -56,11 +102,12 @@ class _HydratedWriteBatchWorkload:
         artifacts = []
         succeeded = failed = cancelled = partial = 0
         for checked in self._preflights:
+            draft = checked if isinstance(checked, _WriteBatchFailure) else checked.draft
             if bool(getattr(run_context.cancellation, "is_cancelled", False)):
                 cancelled += 1
-                outcomes.append(_write_object_outcome(checked.draft, "cancelled", "WRITE_CANCELLED"))
+                outcomes.append(_write_object_outcome(draft, "cancelled", "WRITE_CANCELLED"))
                 continue
-            result = HydratedWriteWorkload(checked)(run_context)
+            result = _run_batch_member(checked, run_context)
             if result.outcome is OperationOutcome.COMPLETED:
                 succeeded += 1
                 status = "succeeded"
@@ -74,7 +121,7 @@ class _HydratedWriteBatchWorkload:
                     partial += 1
             diagnostics.extend(result.diagnostics)
             item = _write_object_outcome(
-                checked.draft,
+                draft,
                 status,
                 result.diagnostics[0].code if result.diagnostics else result.outcome.value,
             )
@@ -131,21 +178,24 @@ class _HydratedWriteBatchWorkload:
 
 
 def _write_batch_plan(request: _HydratedWriteBatch) -> OperationPlanDraft:
-    targets = tuple(item.target_path for item in request.drafts)
+    targets = tuple(item.target_path for item in (*request.drafts, *request.failures))
     existing = tuple(path for path in targets if Path(path).exists())
     entries = tuple(entry for item in request.drafts for entry in item.entries)
     overwrite = all(item.conflict_policy is PublishConflictPolicy.EXPLICIT_OVERWRITE for item in request.drafts)
     fingerprint = hashlib.sha256(
-        "\0".join(f"{item.source_snapshot.sha256}:{item.variant_revision}" for item in request.drafts).encode()
+        "\0".join([
+            *(f"{item.source_snapshot.sha256}:{item.variant_revision}" for item in request.drafts),
+            *(f"{item.target_path}:{item.code}:{item.message}" for item in request.failures),
+        ]).encode()
     ).hexdigest()
     return OperationPlanDraft(
         request=request,
         target="；".join(targets),
         target_revision=f"{len(existing)} existing / {len(targets) - len(existing)} missing",
         input_fingerprint=fingerprint,
-        scope_summary=f"{len(request.drafts)} 个来源文件，{len(entries)} 个条目",
+        scope_summary=f"{len(targets)} 个来源文件，{len(entries)} 个条目",
         mode_summary="分别验证并写出各来源文件",
-        conflict_summary="全部覆盖已确认" if overwrite else "任一目标存在时停止并要求确认",
+        conflict_summary="全部覆盖已确认" if overwrite else "保留已有输出，继续写出其他文件",
         backup_summary="覆盖输出文件前创建备份",
         is_batch=True,
         estimated_impact=(("objects", len(entries)), ("files", len(targets))),
@@ -159,19 +209,45 @@ def _write_batch_plan(request: _HydratedWriteBatch) -> OperationPlanDraft:
         ),
         locked_count=sum(getattr(item, "stage", 0) == 9 for item in entries),
         hidden_count=sum(getattr(item, "stage", 0) == -1 for item in entries),
-        overwrite_risk=bool(existing),
+        # Coverage is checked per source by the domain preflight and publisher.
+        # An unrelated existing target must not block the whole batch.
+        overwrite_risk=False,
         overwrite_confirmed=overwrite,
         backup_required=bool(existing),
         backup_enabled=True,
-        expected_side_effects=("所有来源先通过预检，再按来源原子发布并返回逐来源结果",),
+        expected_side_effects=("分别验证并写出各来源，保留未完成来源和已完成结果",),
     )
 
 
-def _write_object_outcome(draft: HydratedWriteDraft, status: str, code: str) -> dict[str, object]:
+def _write_object_outcome(draft: HydratedWriteDraft | _WriteBatchFailure, status: str, code: str) -> dict[str, object]:
     return {
         "object_ref": draft.target_path,
-        "label": Path(draft.target_path).name,
+        "label": draft.label if isinstance(draft, _WriteBatchFailure) else Path(draft.target_path).name,
         "status": status,
         "code": code,
         "retryable": False,
     }
+
+
+def _run_batch_member(checked: HydratedWritePreflight | _WriteBatchFailure, run_context) -> OperationResult:
+    if isinstance(checked, _WriteBatchFailure):
+        return OperationResult.failed(
+            DomainError(ErrorCategory.EXTERNAL, checked.code, checked.message), run_id=run_context.ref.run_id
+        )
+    if not checked.ready:
+        blocked = tuple(item for item in checked.checks if not item.passed and not item.warning)
+        return OperationResult(
+            OperationOutcome.FAILED,
+            diagnostics=tuple(Diagnostic(item.code, item.message) for item in blocked),
+            counts=OperationCounts(failed=1),
+            run_id=run_context.ref.run_id,
+        )
+    try:
+        return HydratedWriteWorkload(checked)(run_context)
+    except (OSError, TypeError, ValueError) as exc:
+        return OperationResult.failed(
+            DomainError(
+                ErrorCategory.EXTERNAL, "WRITE_SOURCE_FAILED", f"{Path(checked.draft.target_path).name}：{exc}"
+            ),
+            run_id=run_context.ref.run_id,
+        )

@@ -19,6 +19,7 @@ from transbridge.application.io.contracts import (
 )
 from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.application.io.ports import FormatAdapter
+from transbridge.application.io.source_preservation import source_entry_texts
 from transbridge.application.io.stage_policy import DEFAULT_STAGE_POLICY, StageOperation
 
 from .filesystem import PublishFilesystemPort
@@ -149,6 +150,7 @@ def _entry_key(entry: object) -> EntryKey:
 def _expected_summary(request: WriteRequest) -> tuple[tuple[str, str, str], ...]:
     policy = request.stage_policy or DEFAULT_STAGE_POLICY
     values: list[tuple[str, str, str]] = []
+    preserved: dict[str, tuple[str, str]] | None = None
     for entry in request.entries:
         identity = _entry_key(entry)
         decision = policy.evaluate(
@@ -159,20 +161,34 @@ def _expected_summary(request: WriteRequest) -> tuple[tuple[str, str, str], ...]
         )
         if decision.publish_text is None:
             raise ValueError("blocking stage reached fidelity validation")
+        preserved_fields = None
+        if decision.preserve_source and request.format_id in {
+            FormatId.XML_EET,
+            FormatId.XML_XT,
+            FormatId.STRINGS,
+            FormatId.DLSTRINGS,
+            FormatId.ILSTRINGS,
+        }:
+            if preserved is None:
+                preserved = source_entry_texts(request)
+            if identity.local_key not in preserved:
+                raise ValueError("protected entry has no unique source record")
+            preserved_fields = preserved[identity.local_key]
         if request.format_id in {
             FormatId.PLUGIN_SSE,
             FormatId.STRINGS,
             FormatId.DLSTRINGS,
             FormatId.ILSTRINGS,
         }:
-            values.append((identity.serialize(), decision.publish_text, ""))
+            text = preserved_fields[0] if preserved_fields is not None else decision.publish_text
+            values.append((identity.serialize(), text, ""))
         else:
             # Bilingual exchange formats persist the translation field itself,
             # including empty or draft translations, rather than game-ready text.
             values.append((
                 identity.serialize(),
-                str(getattr(entry, "original", "")),
-                str(getattr(entry, "translation", "")),
+                preserved_fields[0] if preserved_fields is not None else str(getattr(entry, "original", "")),
+                preserved_fields[1] if preserved_fields is not None else str(getattr(entry, "translation", "")),
             ))
     return tuple(sorted(values))
 

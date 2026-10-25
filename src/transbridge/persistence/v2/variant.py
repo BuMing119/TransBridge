@@ -142,12 +142,13 @@ class VariantSnapshot:
         if isinstance(self.revision, bool) or not isinstance(self.revision, int) or self.revision < 0:
             raise ValueError("variant snapshot revision must be a non-negative integer")
         namespaces = [item.namespace for item in self.source_fingerprints]
-        if len(set(namespaces)) != len(namespaces):
+        namespace_set = set(namespaces)
+        if len(namespace_set) != len(namespaces):
             raise ValueError("variant snapshot contains duplicate source namespaces")
         keys = [entry.entry_key for entry in self.entries]
         if len(set(keys)) != len(keys):
             raise ValueError("variant snapshot contains duplicate EntryKeys")
-        if any(key.namespace not in set(namespaces) for key in keys):
+        if any(key.namespace not in namespace_set for key in keys):
             raise ValueError("variant entry namespace is not declared by the snapshot")
         frozen_library = tuple(sorted((str(key), _freeze_json(value)) for key, value in self.label_library))
         object.__setattr__(

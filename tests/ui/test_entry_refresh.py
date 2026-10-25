@@ -10,6 +10,7 @@ from PyQt6.QtCore import QPersistentModelIndex, Qt
 from PyQt6.QtWidgets import QApplication
 import pytest
 
+from transbridge.application.io.identity import ExternalEntryRef
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui import context as context_module
@@ -109,3 +110,70 @@ def test_return_to_offscreen_row_restores_current_index_without_scrolling(previe
         _APP.processEvents()
     assert table.currentIndex().data(Qt.ItemDataRole.UserRole).identity == entries[550].identity
     assert table.verticalScrollBar().value() == 0
+
+
+@pytest.mark.parametrize("references", [False, True])
+def test_bulk_reference_metadata_keeps_view_state_and_replaces_table_entries(preview, references):
+    view, context, entries = preview
+    view.resize(900, 700)
+    view.show()
+    view.apply_filter_state({"search_key": "key-00", "stage": [1], "search_trans": "old"})
+    table = view._table
+    table.horizontalHeader().sectionClicked.emit(COL_KEY)
+    table.horizontalHeader().sectionClicked.emit(COL_KEY)
+    _APP.processEvents()
+    table.selectRow(10)
+    table.verticalScrollBar().setValue(20)
+    item = QPersistentModelIndex(table.model().index(10, COL_KEY))
+    selected = table.selected_entry_ids()
+    order = view.editor_navigation_keys()
+    scroll = table.verticalScrollBar().value()
+    filters = view._filters_view.state()
+    generation = table.render_session.generation
+    summary = view._summary
+    resets, row_updates = [], []
+    table.model().modelReset.connect(lambda: resets.append(True))
+    table.model().dataChanged.connect(lambda *_: row_updates.append(True))
+    updated = [
+        replace(
+            entry,
+            external_refs=(ExternalEntryRef("paratranz", "project:42", i + 1),) if references else (),
+            revision=entry.revision.next(),
+        )
+        for i, entry in enumerate(entries)
+    ]
+
+    context.collection = TranslationEntryCollection(updated)
+
+    assert item.isValid() and resets == []
+    assert row_updates == []
+    assert table.render_session.generation == generation
+    assert table.selected_entry_ids() == selected
+    assert table.verticalScrollBar().value() == scroll
+    assert view.editor_navigation_keys() == order
+    assert view._filters_view.state() == filters
+    assert view._summary is summary
+    assert view._entries == updated
+    assert view._table_presenter.session is table.render_session
+    for row in range(table.rowCount()):
+        entry = table.model().index(row, COL_KEY).data(Qt.ItemDataRole.UserRole)
+        assert entry is context.collection.get(entry.identity)
+    assert context.collection.get(updated[550].identity) is updated[550]
+
+
+@pytest.mark.parametrize("values", [{"translation": "new"}, {"stage": 3}])
+def test_reference_batch_with_visible_edit_still_rechecks_filter_membership(preview, values):
+    view, context, entries = preview
+    view.apply_filter_state({"stage": [1], "search_trans": "old"})
+    item = QPersistentModelIndex(view._table.model().index(0, COL_TRANSLATION))
+    updated = [
+        replace(entry, external_refs=(ExternalEntryRef("paratranz", "project:42", i + 1),))
+        for i, entry in enumerate(entries)
+    ]
+    updated[0] = replace(updated[0], **values)
+
+    context.collection = TranslationEntryCollection(updated)
+
+    assert not item.isValid()
+    assert len(view.editor_navigation_keys()) == len(entries) - 1
+    assert entries[0].identity not in view.editor_navigation_keys()

@@ -14,6 +14,7 @@ from .paratranz_credentials import (
     EnvironmentCredentialProvider,
     SecretStoreCapability,
     SecretValue,
+    UnavailableCredentialStore,
     default_credential_store,
     redact_credential_data,
 )
@@ -96,6 +97,22 @@ class ParatranzConfig:
     def token(self) -> str | None:
         """Legacy facade; callers must not log or persist the returned value."""
         return self._secret._reveal_for_request() if self._secret is not None else None
+
+    def copy_for_execution(self) -> ParatranzConfig:
+        """Capture request values without copying services or re-reading credentials."""
+        copied = type(self)(
+            token=self.token,
+            user_id=self.user_id,
+            base_url=self.base_url,
+            timeout=self.timeout,
+            extra_headers=self.headers,
+            credential_ref=self.credential_ref,
+            credential_store=UnavailableCredentialStore(),
+            environment={},
+            config_path=self._config_path,
+        )
+        copied.config_revision = self.config_revision
+        return copied
 
     @staticmethod
     def get_data_dir() -> str:

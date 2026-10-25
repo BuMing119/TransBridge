@@ -73,7 +73,7 @@ def _events(caplog):
 @pytest.mark.parametrize("operation", [SyncOperation.UPLOAD, SyncOperation.DOWNLOAD])
 def test_complete_preflight_logs_reason_groups_and_exact_candidate_evidence(caplog, operation):
     local = (_local(context="INFO:NAM1"),)
-    remote = (_remote(context="INFO:NAM1"), _remote(ref=2, context="INFO:NAM1"))
+    remote = (_remote(context="INFO:NAM1"), replace(_remote(ref=2, context="INFO:NAM1"), stage=5))
     plan = _plan(local, remote, operation=operation)
     original_payload = plan.to_dict()
 
@@ -104,10 +104,16 @@ def test_complete_preflight_logs_reason_groups_and_exact_candidate_evidence(capl
     assert item["local"]["context_length"] == len("INFO:NAM1")
     assert item["local"]["context_truncated"] is False
     assert item["local"]["original_sha256"] == hashlib.sha256(local[0].original.encode()).hexdigest()
+    assert item["local"]["translation_sha256"] == hashlib.sha256(local[0].translation.encode()).hexdigest()
+    assert item["local"]["translation_length"] == len(local[0].translation)
     assert item["candidate_count"] == item["selectable_candidate_count"] == 2
     assert item["original_equal_count"] == item["context_equal_count"] == 2
     assert {candidate["remote_id"] for candidate in item["candidates"]} == {1, 2}
     assert all(candidate["ref_equal"] is None for candidate in item["candidates"])
+    assert all(candidate["translation_equal"] is False for candidate in item["candidates"])
+    assert {candidate["translation_sha256"] for candidate in item["candidates"]} == {
+        hashlib.sha256(remote[0].translation.encode()).hexdigest()
+    }
     assert plan.to_dict() == original_payload
     assert all(
         text not in caplog.text for text in ("Original body", "Local translation body", "Remote translation body")
@@ -120,7 +126,7 @@ def test_complete_preflight_logs_reason_groups_and_exact_candidate_evidence(capl
 )
 def test_resolved_rows_are_not_logged_as_unmatched(caplog, operation, choice):
     local = (_local(),)
-    remote = (_remote(), _remote(ref=2))
+    remote = (_remote(), replace(_remote(ref=2), stage=5))
     first = _plan(local, remote, operation=operation)
     if operation is SyncOperation.UPLOAD:
         decisions = {"upload_decisions": (UploadDecision(first.upload_review[0].row_id, choice),)}
@@ -135,6 +141,22 @@ def test_resolved_rows_are_not_logged_as_unmatched(caplog, operation, choice):
     assert summary["unresolved_count"] == 0
     assert summary["reason_counts"] == {}
     assert summary["reason_groups"] == []
+
+
+def test_grouped_download_choices_retain_every_remote_id_in_diagnostics(caplog):
+    local = (_local(),)
+    remote = tuple(_remote(ref=index) for index in range(1, 54)) + (replace(_remote(ref=54), stage=5),)
+    plan = _plan(local, remote, operation=SyncOperation.DOWNLOAD)
+    assert len(plan.download_review[0].candidates) == 2
+
+    with caplog.at_level(logging.INFO, logger=LOGGER):
+        log_sync_diagnostics(plan, project_id=7, local_count=1)
+
+    _, item = _events(caplog)
+    assert item["candidate_count"] == item["selectable_candidate_count"] == 54
+    assert item["candidate_group_count"] == 2
+    assert {candidate["remote_id"] for candidate in item["candidates"]} == set(range(1, 55))
+    assert sum(candidate["choice_group_size"] == 53 for candidate in item["candidates"]) == 53
 
 
 def test_stale_reference_without_candidates_records_missing_id(caplog):

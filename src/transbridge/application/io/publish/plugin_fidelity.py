@@ -8,7 +8,9 @@ import json
 from pathlib import Path
 
 from transbridge.application.io.contracts import WriteRequest
-from transbridge.application.io.plugin_write import _parser_from_snapshot, _snapshot_localized_sources
+from transbridge.application.io.plugin_localized_sources import localized_entry_identity, localized_id_variants
+from transbridge.application.io.plugin_publication_source import prepared_plugin_source
+from transbridge.application.io.plugin_write import _snapshot_localized_sources
 from transbridge.application.io.stage_policy import DEFAULT_STAGE_POLICY, StageOperation
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.parser.plugin.plugin_with_context import SSEPluginWithContext
@@ -74,11 +76,7 @@ def _source_entries(request: WriteRequest) -> tuple[TranslationEntry, ...]:
         raise ValueError("plugin fidelity requires captured source bytes")
     if hashlib.sha256(snapshot.content).hexdigest() != snapshot.sha256:
         raise ValueError("plugin source snapshot fingerprint differs")
-    parser, _entries = _parser_from_snapshot(snapshot, dict(request.options))
-    plugin = parser.get_plugin()
-    if plugin is None:
-        raise ValueError("source snapshot could not be parsed")
-    return tuple(entry for entry, _subrecord in capture_plugin_write_source(plugin, parser.get_strings_lookup()))
+    return prepared_plugin_source(snapshot, dict(request.options)).physical_entries
 
 
 def _expected_texts(request: WriteRequest, source: tuple[TranslationEntry, ...]) -> tuple[str, ...]:
@@ -86,7 +84,8 @@ def _expected_texts(request: WriteRequest, source: tuple[TranslationEntry, ...])
     for position, entry in enumerate(source):
         by_key[entry.key].append(position)
     expected = [entry.original for entry in source]
-    localized: dict[int, str] = {}
+    variants = localized_id_variants(_snapshot_localized_sources(request.source_snapshot))
+    localized: dict[tuple, str] = {}
     used: set[int] = set()
     policy = request.stage_policy or DEFAULT_STAGE_POLICY
     namespace = dict(request.source_snapshot.metadata).get("source_namespace")
@@ -108,11 +107,17 @@ def _expected_texts(request: WriteRequest, source: tuple[TranslationEntry, ...])
             raise ValueError("blocking stage reached plugin fidelity validation")
         expected[position] = decision.publish_text
         if entry.string_id is not None:
-            if entry.string_id in localized and localized[entry.string_id] != decision.publish_text:
+            identity = localized_entry_identity(source[position], variants)
+            if identity in localized and localized[identity] != decision.publish_text:
                 raise ValueError("plugin writes disagree for a shared localized string ID")
-            localized[entry.string_id] = decision.publish_text
+            localized[identity] = decision.publish_text
     # Multiple physical references to one localized ID necessarily share text.
-    return tuple(localized.get(entry.string_id, expected[position]) for position, entry in enumerate(source))
+    return tuple(
+        localized.get(localized_entry_identity(entry, variants), expected[position])
+        if entry.string_id is not None
+        else expected[position]
+        for position, entry in enumerate(source)
+    )
 
 
 def _physical_summary(entries: tuple[TranslationEntry, ...], texts: tuple[str, ...]) -> tuple[tuple, ...]:

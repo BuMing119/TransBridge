@@ -22,6 +22,10 @@ from transbridge.application.io.operation_write import (
     HydratedWriteWorkload,
     _translation_entries,
 )
+from transbridge.application.io.plugin_localized_sources import (
+    localized_physical_inputs,
+    validate_localized_snapshot,
+)
 from transbridge.application.io.plugin_write import (
     _blocking_stage_diagnostics,
     _parser_from_snapshot,
@@ -36,6 +40,7 @@ from transbridge.application.io.publish import (
 )
 from transbridge.application.io.stage_policy import DEFAULT_STAGE_POLICY
 from transbridge.application.tasks import TaskCancelled
+from transbridge.parser.localized_resources import candidate_input_paths
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,10 +59,7 @@ def prepare_plugin_source(path, *, namespace: SourceNamespace | None = None, can
     token.raise_if_cancelled()
     source = Path(path)
     fs = OsPublishFilesystem()
-    requested_paths = {str(source)} | {
-        str(source.parent / "Strings" / f"{source.stem}_English.{suffix}")
-        for suffix in ("strings", "dlstrings", "ilstrings")
-    }
+    requested_paths = {str(source), *(str(path) for path in candidate_input_paths(source, "english"))}
     baseline = {}
     for requested in sorted(requested_paths):
         canonical = fs.canonicalize(requested)
@@ -78,6 +80,7 @@ def prepare_plugin_source(path, *, namespace: SourceNamespace | None = None, can
         codes = ",".join(item.code for item in parsed.diagnostics)
         raise RuntimeError(f"FOMOD_PLUGIN_PARSE_FAILED:{codes}")
     snapshot = parsed.source_snapshot
+    _validate_localized_source(snapshot)
     if dict(snapshot.metadata).get("localized_lookup_detected") and not _snapshot_localized_sources(snapshot):
         raise RuntimeError(
             "FOMOD_PLUGIN_LOCALIZED_SNAPSHOT_UNAVAILABLE:localized Strings cannot be captured for writing"
@@ -90,8 +93,10 @@ def prepare_plugin_source(path, *, namespace: SourceNamespace | None = None, can
         replace(entry, entry_key=EntryKey(frozen_namespace, entry.key, entry.identity.original)).snapshot()
         for entry in entries
     )
-    inputs = (snapshot, *(item for item, _entries in _snapshot_localized_sources(snapshot)))
-    captured = {fs.canonicalize(item.source.uri): item for item in inputs}
+    captured = {
+        fs.canonicalize(path): item
+        for path, item in ((snapshot.source.uri, snapshot), *localized_physical_inputs(snapshot))
+    }
     if not set(captured).issubset(path for path, _fingerprint in baseline.values()):
         raise RuntimeError("FOMOD_PLUGIN_SOURCE_CHANGED:captured sources differ from the initial source paths")
     fingerprints = []
@@ -104,6 +109,7 @@ def prepare_plugin_source(path, *, namespace: SourceNamespace | None = None, can
         ):
             raise RuntimeError("FOMOD_PLUGIN_SOURCE_CHANGED:source changed while its snapshot was captured")
         fingerprints.append((requested, path, fingerprint))
+    _validate_localized_source(snapshot)
     token.raise_if_cancelled()
     return FomodPluginSource(snapshot, snapshots, tuple(fingerprints))
 
@@ -182,6 +188,12 @@ def _verify_sources(source: FomodPluginSource, fs: OsPublishFilesystem) -> None:
     for requested, path, fingerprint in source.fingerprints:
         if fs.canonicalize(requested) != path or fs.fingerprint(path) != fingerprint:
             raise RuntimeError("FOMOD_PLUGIN_SOURCE_CHANGED:new plugin or Strings changed after capture")
+
+
+def _validate_localized_source(snapshot: SourceSnapshot) -> None:
+    diagnostic = validate_localized_snapshot(snapshot)
+    if diagnostic is not None:
+        raise RuntimeError(f"FOMOD_PLUGIN_SOURCE_CHANGED:{diagnostic.code}:{diagnostic.message}")
 
 
 class _SourceCommitGuard:

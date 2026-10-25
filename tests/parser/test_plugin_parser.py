@@ -1,8 +1,48 @@
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import pytest
+
+from tests.plugin_fixtures import _record, write_plugin
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.parser.plugin_parser import PluginParser
+
+
+@pytest.mark.parametrize(
+    "content",
+    [b"", b"TES4\xff\xff\xff\xff", b"WRNG" + bytes(20), b"TES4\x01\x00\x00\x00" + bytes(16)],
+)
+def test_strict_parse_rejects_incomplete_or_invalid_header_before_loading(tmp_path, content):
+    source = tmp_path / "invalid.esp"
+    source.write_bytes(content)
+    with patch("transbridge.parser.plugin_parser.SSEPluginWithContext.from_file") as load:
+        with pytest.raises(ValueError, match="TES4"):
+            PluginParser().parse_plugin(source, raise_on_error=True)
+        load.assert_not_called()
+
+
+def test_strict_parse_allows_valid_empty_plugin(tmp_path):
+    source = tmp_path / "empty.esp"
+    source.write_bytes(_record(b"TES4", 0, b""))
+    parser = PluginParser()
+    assert parser.parse_plugin(source, raise_on_error=True) == []
+    assert parser.get_plugin() is not None
+
+
+def test_strict_parse_preserves_loader_error_and_cause(tmp_path):
+    source = write_plugin(tmp_path / "Test.esp", [(0x800, "Npc", "Name")])
+    cause = OSError("original underlying loader error")
+    original_error = RuntimeError("loader failure")
+
+    def fail(path):
+        raise original_error from cause
+
+    with patch("transbridge.parser.plugin_parser.SSEPluginWithContext.from_file", side_effect=fail) as load:
+        with pytest.raises(RuntimeError) as caught:
+            PluginParser().parse_plugin(source, raise_on_error=True)
+        assert caught.value is original_error
+        assert caught.value.__cause__ is cause
+        load.assert_called_once_with(source)
 
 
 # 伪造的 PluginString 对象

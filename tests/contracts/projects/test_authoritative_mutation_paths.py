@@ -15,7 +15,6 @@ _MUTATION_FILES = (
     "smart_assistant/tools/types.py",
     "smart_assistant/tools/projection_restore.py",
     "ui/operations/production_support.py",
-    "ui/operations/authoritative_batch_download.py",
     "ui/tools/ai_translator/task_session.py",
     "ui/tools/ai_translator/version_snapshot.py",
     "ui/tools/dictionary_panel.py",
@@ -32,7 +31,6 @@ _ALLOWED_PROJECTION_WRITES = {
     ("smart_assistant/tools/projection_restore.py", "restore_entry_projection.restore", "translation"),
     ("smart_assistant/tools/projection_restore.py", "restore_entry_projection.restore", "stage"),
     ("ui/operations/production_support.py", "replace_local_snapshots", "collection"),
-    ("ui/operations/authoritative_batch_download.py", "publish", "collection"),
     ("ui/tools/ai_translator/task_session.py", "_commit_entries", "collection"),
     ("ui/tools/ai_translator/version_snapshot.py", "_restore_before_entries", "translation"),
     ("ui/tools/ai_translator/version_snapshot.py", "_restore_before_entries", "stage"),
@@ -95,10 +93,13 @@ def test_known_translation_adapters_commit_or_fail_closed_for_v2_projects() -> N
     assert "persistence.commit_translation(entries, **commit_options)" in task_ai
     assert '"commit_mutation": self.commit_mutation' in task_ai
 
-    batch_download = _source("ui/workbench/cards/download_card.py")
-    assert "uses_authoritative_projection" in batch_download
-    assert "AuthoritativeBatchDownloadSession.capture" in batch_download
-    assert "commands.replace_entry_records(" in _source("ui/operations/authoritative_batch_download.py")
+
+def test_download_card_requires_the_shared_plan_without_direct_projection_writes() -> None:
+    download_card = _source("ui/workbench/cards/download_card.py")
+    assert 'self._dispatch_planned("download", self._ctx)' in download_card
+    assert 'self._dispatch_planned("download", self._ctx, batch=True)' in download_card
+    assert "download_to_collection" not in download_card
+    assert "collection_changed.emit" not in download_card
 
 
 def test_projection_divergence_guard_compares_complete_visible_and_authoritative_sets() -> None:

@@ -9,7 +9,6 @@ from transbridge.ai_translator.translator import (
     _select_post_process_candidates,
     _select_stage_candidates,
 )
-from transbridge.application.contracts import DiagnosticSeverity
 from transbridge.application.io import (
     DEFAULT_STAGE_POLICY,
     Stage,
@@ -87,16 +86,16 @@ def test_untranslated_preview_and_publish_project_original_even_with_stale_text(
     assert not preview.blocks_publish and not publish.blocks_publish
 
 
-def test_locked_empty_preview_is_visible_but_formal_publish_is_blocked() -> None:
+def test_locked_empty_preview_and_publish_preserve_source_without_becoming_editable() -> None:
     preview = DEFAULT_STAGE_POLICY.evaluate(9, "", StageOperation.PREVIEW, original="original")
     publish = DEFAULT_STAGE_POLICY.evaluate(9, "", StageOperation.PUBLISH, original="original")
 
     assert preview.preview_text == "original"
-    assert preview.blocks_publish
-    assert preview.code == "STAGE_LOCKED_TRANSLATION_REQUIRED"
-    assert preview.severity is DiagnosticSeverity.ERROR
-    assert publish.publish_text is None
-    assert publish.blocks_publish
+    assert preview.preserve_source and publish.preserve_source
+    assert not preview.blocks_publish and not publish.blocks_publish
+    assert publish.publish_text == "original"
+    assert not publish.include_ai and not publish.include_tm
+    assert publish.diagnostic is None
 
 
 @pytest.mark.parametrize("invalid", [4, 6, 7, 8, 10, True, "1"])
@@ -183,8 +182,13 @@ def test_eet_writer_uses_discrete_preview_publish_policy(tmp_path) -> None:
     assert node.findtext("STATUS") == "0"
 
     locked = replace(base, translation="", stage=9)
-    with pytest.raises(ValueError, match="STAGE_LOCKED_TRANSLATION_REQUIRED"):
-        EETWriter(EET_XmlParser.from_file(source)).apply_collection(TranslationEntryCollection((locked,)))
+    locked_empty_parser = EET_XmlParser.from_file(source)
+    empty_node = locked_empty_parser._tree.getroot().find(".//ESP")
+    empty_node.find("TRADUIT").text = "Source translation"
+    empty_node.find("STATUS").text = "99"
+    assert EETWriter(locked_empty_parser).apply_collection(TranslationEntryCollection((locked,))) == 0
+    assert empty_node.findtext("TRADUIT") == "Source translation"
+    assert empty_node.findtext("STATUS") == "99"
 
     locked_same_text = replace(base, translation=base.original, stage=9)
     locked_parser = EET_XmlParser.from_file(source)

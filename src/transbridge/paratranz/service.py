@@ -19,6 +19,7 @@ from .api.paratranz_history_api import ParatranzHistoryAPI
 from .api.paratranz_project_api import ParatranzProjectAPI
 from .api.paratranz_strings_api import ParatranzStringsAPI
 from .config_manager import ParatranzConfig
+from .pagination import SnapshotPagination
 
 
 class ParaTranzService:
@@ -123,10 +124,14 @@ class ParaTranzService:
         *,
         limit: int,
         cancellation: CancellationPort | None = None,
+        file_id: int | None = None,
     ) -> tuple[ParaTranzEntry, ...]:
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
             raise ValueError("limit must be a positive integer")
+        if file_id is not None and (isinstance(file_id, bool) or not isinstance(file_id, int) or file_id < 1):
+            raise ValueError("file_id must be a positive integer")
         items: list[Mapping[str, Any]] = []
+        pagination = SnapshotPagination()
         page = 1
         page_size = min(limit, 800)
         while len(items) < limit:
@@ -135,13 +140,32 @@ class ParaTranzService:
                 page=page,
                 page_size=page_size,
                 cancellation=cancellation,
+                **({"file": file_id} if file_id is not None else {}),
             )
             current = self._items(payload, "results", "strings")
+            if file_id is not None:
+                for value in current:
+                    actual_file = value.get("fileId", value.get("file", file_id))
+                    if isinstance(actual_file, Mapping):
+                        actual_file = actual_file.get("id")
+                    if actual_file != file_id:
+                        raise ValueError("ParaTranz returned an entry outside the requested file")
             items.extend(current)
-            if len(current) < page_size:
+            if pagination.complete(
+                payload, page=page, received=len(current), accumulated=len(items), requested_size=page_size
+            ):
                 break
             page += 1
         return tuple(self._typed(ParaTranzEntry.from_mapping, item, "entry") for item in items[:limit])
+
+    def get_entry(self, project_id: int, remote_id: int, *, cancellation=None) -> ParaTranzEntry:
+        if isinstance(remote_id, bool) or not isinstance(remote_id, int) or remote_id < 1:
+            raise ValueError("remote_id must be a positive integer")
+        payload = self._strings.get_string(project_id, remote_id, cancellation=cancellation)
+        result = self._typed(ParaTranzEntry.from_mapping, self._mapping(payload, "entry"), "entry")
+        if result.remote_id != remote_id:
+            raise ValueError("ParaTranz returned a different entry identity")
+        return result
 
     def upsert_entry(
         self,

@@ -427,9 +427,21 @@ class ProjectLifecycleService:
             self._safe_release(prepared.leases)
             return OperationResult.completed(run_id=context.run_id)
 
-    def save_active(self, context: RequestContext) -> OperationResult[dict[str, Any] | None]:
+    def save_active(
+        self,
+        context: RequestContext,
+        *,
+        expected_active_signature: ActiveSignature | EllipsisType = ...,
+    ) -> OperationResult[dict[str, Any] | None]:
         with self._lock:
             active = self._active
+            if expected_active_signature is not ... and active_signature(active) != expected_active_signature:
+                return _failed(
+                    "ACTIVE_SAVE_TARGET_CHANGED",
+                    "The active Project or Variant changed before saving; retry is required.",
+                    ErrorCategory.CONFLICT,
+                    context,
+                )
             if active is None or not active.dirty:
                 return OperationResult.completed(
                     None if active is None else active.summary(),
@@ -570,6 +582,7 @@ class ProjectLifecycleService:
         before_publish: Callable[[], None] | None = None,
         persisted: bool = False,
         expected_generation: int | None = None,
+        commit_mutation: Callable[[Callable[[], None]], None] | None = None,
     ) -> OperationResult[dict[str, Any]]:
         """Atomically replace active Project and Variant working-copy snapshots."""
 
@@ -647,24 +660,31 @@ class ProjectLifecycleService:
             if project.envelope.revision == expected_project_revision and variant.revision == expected_variant_revision:
                 return OperationResult.completed(active.summary(), run_id=context.run_id)
 
+            old = active
             try:
-                candidate_variant = VariantAggregate(variant)
-                if before_publish is not None:
-                    before_publish()
+                candidate = replace(
+                    active,
+                    project=project,
+                    variant=VariantAggregate(variant),
+                    persisted_project_revision=project.envelope.revision
+                    if persisted
+                    else active.persisted_project_revision,
+                    persisted_variant_revision=variant.revision if persisted else active.persisted_variant_revision,
+                )
             except Exception as exc:  # noqa: BLE001
                 return _from_exception(exc, "ACTIVE_CONTENT_CHANGE_FAILED", context)
 
-            old = active
-            self._active = replace(
-                active,
-                project=project,
-                variant=candidate_variant,
-                persisted_project_revision=project.envelope.revision
-                if persisted
-                else active.persisted_project_revision,
-                persisted_variant_revision=variant.revision if persisted else active.persisted_variant_revision,
-            )
-            self._generation += 1
+            def publish() -> None:
+                if before_publish is not None:
+                    before_publish()
+                self._active = candidate
+                self._generation += 1
+
+            try:
+                publish() if commit_mutation is None else commit_mutation(publish)
+            except Exception as exc:  # noqa: BLE001
+                return _from_exception(exc, "ACTIVE_CONTENT_CHANGE_FAILED", context)
+
             diagnostics: list[Diagnostic] = []
             event = LifecycleEvent(
                 "active-project-content-updated",
@@ -1006,7 +1026,9 @@ def _from_exception[T](exc: Exception, fallback_code: str, context: RequestConte
         error = DomainError(
             ErrorCategory.INTERNAL,
             fallback_code,
-            "The lifecycle operation failed before its state could commit.",
+            f"创建历史还原点失败：{exc}。工程译文未修改，可在此重试。"
+            if fallback_code == "SNAPSHOT_SAVE_FAILED" and isinstance(exc, OSError)
+            else "The lifecycle operation failed before its state could commit.",
             cause=exc,
         )
     return OperationResult.failed(error, run_id=context.run_id)

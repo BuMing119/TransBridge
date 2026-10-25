@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import replace
 import hashlib
 import json
+import logging
 from pathlib import Path
 import re
 import xml.etree.ElementTree as ET
@@ -40,8 +41,11 @@ from .contracts import (
     WriteRequest,
 )
 from .identity import EntryKey, SourceNamespace
+from .plugin_localized_sources import LocalizedSnapshotCancelled, validate_localized_snapshot
 from .plugin_write import _blocking_stage_diagnostics, _localized_source_snapshots, write_plugin
-from .stage_policy import DEFAULT_STAGE_POLICY
+from .stage_policy import DEFAULT_STAGE_POLICY, StageOperation, StagePolicyPort
+
+_logger = logging.getLogger(__name__)
 
 
 class _LegacyFormatAdapter:
@@ -252,6 +256,7 @@ class EetXmlAdapter(_LegacyFormatAdapter):
                 "TRADUIT",
                 snapshot=snapshot,
                 status_tag="STATUS",
+                stage_policy=request.stage_policy or DEFAULT_STAGE_POLICY,
             )
             if diagnostics:
                 return _failed_diagnostics(diagnostics, request.context.run_id)
@@ -316,7 +321,13 @@ class XtXmlAdapter(_LegacyFormatAdapter):
         try:
             root = ET.fromstring(snapshot.content)
             nodes = _xt_nodes(root)
-            diagnostics = _apply_xml_entries(request.entries, nodes, "Dest", snapshot=snapshot)
+            diagnostics = _apply_xml_entries(
+                request.entries,
+                nodes,
+                "Dest",
+                snapshot=snapshot,
+                stage_policy=request.stage_policy or DEFAULT_STAGE_POLICY,
+            )
             if diagnostics:
                 return _failed_diagnostics(diagnostics, request.context.run_id)
             if _cancelled(request.cancellation):
@@ -362,11 +373,12 @@ class SsePluginAdapter(_LegacyFormatAdapter):
                 raise ValueError("missing TES4 header")
             parser = PluginParser()
             options = dict(request.options)
+            discover_localized = bool(options.get("discover_sibling_strings", True))
             entries = parser.parse_plugin(
                 source_path,
                 skip_empty=bool(options.get("skip_empty", True)),
                 language=str(options.get("language", "english")),
-                discover_sibling_strings=bool(options.get("discover_sibling_strings", True)),
+                discover_sibling_strings=discover_localized,
             )
             if parser.get_plugin() is None:
                 raise ValueError("plugin parser did not produce a source plugin")
@@ -382,16 +394,21 @@ class SsePluginAdapter(_LegacyFormatAdapter):
                     source_path,
                     str(options.get("language", "english")),
                     request,
+                    lookup=parser.get_strings_lookup(),
+                    plugin_content=content,
                 )
-                if bool(options.get("discover_sibling_strings", True))
+                if discover_localized
                 else ()
             )
-        except ValueError as exc:
+        except LocalizedSnapshotCancelled:
+            return self._cancelled_parse(request)
+        except (OSError, ValueError) as exc:
+            _logger.exception("Unable to capture localized resources for %s", request.source.uri)
             return self._failed_parse(
                 request,
                 Diagnostic(
                     "PLUGIN_LOCALIZED_SNAPSHOT_FAILED",
-                    f"Localized strings snapshot capture failed ({type(exc).__name__}).",
+                    f"Localized strings snapshot capture failed ({type(exc).__name__}: {exc}).",
                 ),
             )
         snapshot = replace(
@@ -433,6 +450,10 @@ class SsePluginAdapter(_LegacyFormatAdapter):
         validation = super().validate_write(request)
         if validation.outcome is not OperationOutcome.COMPLETED:
             return validation
+        if request.source_snapshot is not None and dict(request.options).get("source_authority") != "hydration-v2":
+            diagnostic = validate_localized_snapshot(request.source_snapshot)
+            if diagnostic is not None:
+                return _failed_operation(diagnostic, request.context.run_id)
         diagnostics = _blocking_stage_diagnostics(request.entries, request.stage_policy or DEFAULT_STAGE_POLICY)
         if diagnostics:
             return _failed_diagnostics(diagnostics, request.context.run_id)
@@ -570,6 +591,7 @@ def _apply_xml_entries(
     *,
     snapshot: SourceSnapshot,
     status_tag: str | None = None,
+    stage_policy: StagePolicyPort = DEFAULT_STAGE_POLICY,
 ) -> tuple[Diagnostic, ...]:
     diagnostics: list[Diagnostic] = []
     seen: set[str] = set()
@@ -608,6 +630,12 @@ def _apply_xml_entries(
             )
             continue
         node = candidates[0]
+        decision = stage_policy.evaluate(entry.stage, translation, StageOperation.PUBLISH, original=entry.original)
+        if decision.blocks_publish:
+            diagnostics.append(decision.diagnostic or Diagnostic("STAGE_PUBLISH_BLOCKED", "Invalid entry stage."))
+            continue
+        if decision.preserve_source:
+            continue
         target = node.find(translation_tag)
         if target is None:
             diagnostics.append(

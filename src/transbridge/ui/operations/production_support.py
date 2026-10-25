@@ -19,7 +19,9 @@ from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.persistence.v2.ids import ProjectId, VariantId, VariantRef
 
+from .download_session import DownloadSession
 from .mappers import OperationPlanDraft
+from .ordinary_upload_scope import ordinary_upload_path
 from .plan_view import OperationKind
 from .preflight_view import PreflightCheckState, PreflightCheckStatus
 from .sync_review_projection import decode_decisions, encode_decisions
@@ -48,6 +50,8 @@ class SyncRequest:
     variant_revision: int | None = None
     download_decisions: tuple[tuple[str, str], ...] = ()
     upload_decisions: tuple[tuple[str, str], ...] = ()
+    upload_path: str = ""
+    download_session: DownloadSession | None = None
 
 
 def context_factory(value: RequestContext | Callable[[object], RequestContext]):
@@ -109,7 +113,7 @@ def sync_request(context, kind: OperationKind, batch: bool, values=None):
             if _bool_value(values.get("apply_remote_deletions", default_deletion is DeletionPolicy.APPLY))
             else DeletionPolicy.PRESERVE
         )
-    if kind is OperationKind.DOWNLOAD and bool(getattr(context, "uses_authoritative_projection", False)):
+    if kind is OperationKind.DOWNLOAD:
         deletion_policy = DeletionPolicy.PRESERVE
     decisions = ()
     decision_field = "download_decisions" if kind is OperationKind.DOWNLOAD else "upload_decisions"
@@ -140,12 +144,14 @@ def sync_request(context, kind: OperationKind, batch: bool, values=None):
     entries = ()
     namespace = SourceNamespace.legacy()
     reason = explicit_error
+    upload_path = ""
     try:
-        entries = local_snapshots(context, project_id)
+        entries = local_snapshots(context, project_id, include_external_refs=kind is OperationKind.UPLOAD)
         namespaces = {item.entry_key.namespace for item in entries}
         if len(namespaces) != 1:
             raise ValueError("本地条目必须属于单一 source namespace")
         namespace = next(iter(namespaces))
+        upload_path = ordinary_upload_path(context, entries=entries)
     except (AttributeError, TypeError, ValueError) as exc:
         reason = str(exc)
     target_ready = target.status in {ParaTranzTargetStatus.UNVERIFIED, ParaTranzTargetStatus.AVAILABLE}
@@ -186,6 +192,8 @@ def sync_request(context, kind: OperationKind, batch: bool, values=None):
         variant_revision=getattr(context, "variant_revision", None),
         download_decisions=decisions if kind is OperationKind.DOWNLOAD else (),
         upload_decisions=decisions if kind is OperationKind.UPLOAD else (),
+        upload_path=upload_path,
+        download_session=DownloadSession() if kind is OperationKind.DOWNLOAD else None,
     )
     return request, ready, reason
 
@@ -210,10 +218,13 @@ def sync_request_target_is_current(request: SyncRequest) -> tuple[bool, str]:
         request.batch,
         values,
     )
+    if not _ready:
+        return False, _reason or "当前同步目标或本地来源不可用，请重新打开同步。"
     expected = (
         request.project_id,
         request.target_project_name,
         request.target_source,
+        request.target_status,
         request.target_revision,
         request.target_endpoint,
         request.target_account_user_id,
@@ -223,11 +234,13 @@ def sync_request_target_is_current(request: SyncRequest) -> tuple[bool, str]:
         request.active_version_identity,
         request.project_revision,
         request.variant_revision,
+        request.upload_path,
     )
     actual = (
         refreshed.project_id,
         refreshed.target_project_name,
         refreshed.target_source,
+        refreshed.target_status,
         refreshed.target_revision,
         refreshed.target_endpoint,
         refreshed.target_account_user_id,
@@ -237,20 +250,25 @@ def sync_request_target_is_current(request: SyncRequest) -> tuple[bool, str]:
         refreshed.active_version_identity,
         refreshed.project_revision,
         refreshed.variant_revision,
+        refreshed.upload_path,
     )
     if actual == expected:
         return True, ""
     return False, "本地工程绑定、ParaTranz 账号或服务配置已变化，请按当前设置重新检查。"
 
 
-def local_snapshots(context, project_id: int) -> tuple[LocalEntrySnapshot, ...]:
+def local_snapshots(context, project_id: int, *, include_external_refs: bool = True) -> tuple[LocalEntrySnapshot, ...]:
     collection = context.collection
     if collection is None:
         raise ValueError("当前没有已加载集合")
     scope = f"project:{project_id}"
     output = []
     for entry, order in zip(collection, context_orders(tuple(collection)), strict=True):
-        refs = tuple(ref for ref in entry.external_refs if ref.system == "paratranz" and ref.scope == scope)
+        refs = (
+            tuple(ref for ref in entry.external_refs if ref.system == "paratranz" and ref.scope == scope)
+            if include_external_refs
+            else ()
+        )
         if len(refs) > 1:
             raise ValueError(f"条目 {entry.key} 有重复远端引用")
         output.append(
@@ -276,6 +294,7 @@ def replace_local_snapshots(
     active_version_identity: tuple[str, str] | None = None,
     project_revision: int | None = None,
     variant_revision: int | None = None,
+    persist: bool = False,
 ) -> None:
     if (
         active_version_identity is not None
@@ -313,6 +332,11 @@ def replace_local_snapshots(
             current_refs = tuple(
                 ref for ref in current.external_refs if ref.system == "paratranz" and ref.scope == active_scope
             )
+            # Sync snapshots intentionally omit mutable reference metadata. A
+            # state-only update must retain the same identity's file/endpoint
+            # ownership; a newly selected remote ID inherits none of it.
+            retained_refs = {ref.index_key: ref for ref in current_refs}
+            remote_ref = tuple(retained_refs.get(ref.index_key, ref) for ref in remote_ref)
             if (
                 item.revision == current.revision
                 and (item.original, item.translation, item.context, item.stage)
@@ -335,17 +359,13 @@ def replace_local_snapshots(
             entries.append(
                 replace(
                     current,
-                    original=current.original if authoritative else item.original,
+                    original=current.original,
                     translation=item.translation,
                     stage=item.stage,
-                    context=current.context if authoritative else item.context,
+                    context=current.context,
                     external_refs=next_refs,
                     revision=current.revision.next() if changed else current.revision,
-                    metadata=current.metadata
-                    if item.context_order is None
-                    else tuple(
-                        sorted({**dict(current.metadata), PARATRANZ_CONTEXT_ORDER_METADATA: item.context_order}.items())
-                    ),
+                    metadata=current.metadata,
                 )
             )
     candidate = TranslationEntryCollection(entries)
@@ -369,6 +389,7 @@ def replace_local_snapshots(
             expected_project_revision=project_revision,
             expected_variant_revision=variant_revision,
             expected_variant_ref=VariantRef(VariantId(variant_identity), ProjectId(project_identity)),
+            **({"persist": True} if persist else {}),
         )
         if not result.is_success:
             message = result.diagnostics[0].message if result.diagnostics else "权威 Variant 写入失败"

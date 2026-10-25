@@ -15,6 +15,11 @@ _STABLE_FIELDS = tuple(
     for field in fields(TranslationEntry)
     if field.compare and field.name not in {"translation", "stage", "revision", "provenance"}
 )
+_REFERENCE_STABLE_FIELDS = tuple(
+    field.name
+    for field in fields(TranslationEntry)
+    if field.compare and field.name not in {"external_refs", "revision"}
+)
 
 
 class EntryRefresh:
@@ -39,14 +44,19 @@ class EntryRefresh:
         for before, after in zip(view._entries, entries, strict=True):
             if before == after:
                 continue
-            if any(getattr(before, name) != getattr(after, name) for name in _STABLE_FIELDS):
-                return False
             changes.append((before, after))
-            if len(changes) > 64:
-                return False
         # Legacy in-place edits cannot be distinguished from unchanged objects.
         # They retain the original refresh, which also covers non-entry UI state.
         if not changes:
+            return False
+        if all(
+            all(getattr(before, name) == getattr(after, name) for name in _REFERENCE_STABLE_FIELDS)
+            for before, after in changes
+        ):
+            return self._refresh_references(entries)
+        if len(changes) > 64 or any(
+            any(getattr(before, name) != getattr(after, name) for name in _STABLE_FIELDS) for before, after in changes
+        ):
             return False
         view._filters_presenter.update(view._filters_view.state())
         filtered = tuple(view._filters_presenter.apply(entries, view._entry_labels))
@@ -78,6 +88,23 @@ class EntryRefresh:
             if entry.identity in visible_keys:
                 table.update_rendered_entry(entry)
         view._update_workflow_actions()
+        return True
+
+    def _refresh_references(self, entries) -> bool:
+        """Swap receipt metadata once; filtering, order and displayed cells stay valid."""
+        view = self.preview
+        if view._table._closed or view._filters_presenter.state != view._filters_view.state():
+            return False
+        indexed = {entry.identity: entry for entry in entries}
+        filtered = tuple(indexed[entry.identity] for entry in view._render_entries)
+        projection = getattr(view._ctx, "project_projection", None)
+        snapshot = projection.snapshot() if projection is not None else None
+        session = view._table_presenter.replace_entries(
+            filtered, projection_revision=getattr(snapshot, "revision", None)
+        )
+        view._table.replace_session(session)
+        view._entries = entries
+        view._render_entries = filtered
         return True
 
     def navigation_keys(self):

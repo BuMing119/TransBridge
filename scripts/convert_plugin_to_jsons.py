@@ -1,57 +1,31 @@
+"""Convert a plugin to categorized JSON: uv run python scripts/convert_plugin_to_jsons.py plugin.esp output_dir."""
 
-"""
-从EET XML文件转换翻译到多个JSON文件的脚本
+from __future__ import annotations
 
-使用方法:
-    python convert_plugin_to_jsons.py <eet_xml_path> <output_dir>
-
-示例:
-    python convert_plugin_to_jsons.py translations_eet.xml output_json
-"""
-
-import sys
+import argparse
+from collections.abc import Sequence
 from pathlib import Path
+import sys
 
-# 添加项目根目录到Python路径
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
+# Keep direct script execution usable from a source checkout as well as an installed package.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from src.transbridge.converter.translation_entry_collection_export import export_to_categorized_json_files
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection  # noqa: E402
+from transbridge.converter.translation_entry_collection_export import export_to_categorized_json_files  # noqa: E402
+from transbridge.parser.plugin_parser import PluginParser  # noqa: E402
 
 
-def main():
-    # 在这里直接指定输入和输出路径
-    plugin_path = Path(r"D:\MyProgram\buming1170\mods\VIGILANT SE v1801\Vigilant.esm")  # 修改为您的EET XML文件路径
-    output_dir = Path(r"C:\Users\admin\Desktop\警戒者\导入测试")  # 修改为您想要输出的目录路径
-
-    # 其他设置
-    ensure_ascii = False  # 是否确保ASCII编码
-    indent = 2  # JSON缩进空格数
-
-    # 检查输入文件是否存在
-    if not plugin_path.exists():
-        print(f"错误: 文件不存在: {plugin_path}")
-        sys.exit(1)
-
-    print(f"开始从EET XML文件加载翻译: {plugin_path}")
-
-    # 从EET XML文件加载翻译条目
-    #collection = TranslationEntryCollection.from_eet_xml(eet_xml_path)
-    collection = TranslationEntryCollection.from_plugin(plugin_path)
-
-    print(f"加载完成，共 {len(collection)} 条翻译条目")
-
-    # 导出到分类的JSON文件
-    print(f"开始导出到JSON文件: {output_dir}")
-    export_to_categorized_json_files(
-        collection,
-        output_dir,
-        ensure_ascii=ensure_ascii,
-        indent=indent
-    )
-
-    print(f"导出完成！JSON文件已保存到: {output_dir}")
+def main(argv: Sequence[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="从插件导出分类 ParaTranz JSON，任务文件优先使用任务原名。")
+    parser.add_argument("plugin_path", type=Path, help="输入插件路径（.esp/.esm/.esl）")
+    parser.add_argument("output_dir", type=Path, help="分类 JSON 输出目录")
+    parser.add_argument("--ensure-ascii", action="store_true", help="将非 ASCII 字符写为转义序列")
+    parser.add_argument("--indent", type=int, default=2, help="JSON 缩进空格数（默认 2）")
+    args = parser.parse_args(argv)
+    print(f"正在从插件加载词条: {args.plugin_path}")
+    collection = TranslationEntryCollection(PluginParser().parse_plugin(args.plugin_path, raise_on_error=True))
+    export_to_categorized_json_files(collection, args.output_dir, ensure_ascii=args.ensure_ascii, indent=args.indent)
+    print(f"已导出 {len(collection)} 条词条到: {args.output_dir}")
 
 
 if __name__ == "__main__":

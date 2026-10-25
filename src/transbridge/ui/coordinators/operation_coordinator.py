@@ -21,7 +21,7 @@ class OperationCoordinator:
         multi = len(slots) > 1
         menu.batch_upload.setVisible(multi)
         menu.batch_upload.setEnabled(True)
-        menu.batch_download.setVisible(multi)
+        menu.batch_download.setVisible(False)
         menu.batch_download.setEnabled(True)
         menu.batch_write.setVisible(multi)
         menu.batch_write.setEnabled(True)
@@ -29,21 +29,17 @@ class OperationCoordinator:
     def upload(self):
         if not self._host.context.collection:
             return
-        facade = getattr(self._host, "operation_plan_facade", None)
-        if self._supports(facade, "upload"):
-            return facade.begin_upload(self._host.context)
-        self._host.upload_card.upload()
+        return self._host.upload_card.upload()
 
     def batch_upload(self):
         if len(self._host.context.slots) <= 1:
             return
-        facade = getattr(self._host, "operation_plan_facade", None)
-        if self._supports(facade, "upload", batch=True):
-            return facade.begin_upload(self._host.context, batch=True)
-        self._host.upload_card.batch_upload()
+        return self._host.upload_card.batch_upload()
 
     def download(self):
-        if not self._host.context.collection:
+        if not self._host.context.collection and not bool(
+            getattr(self._host.context, "uses_authoritative_projection", False)
+        ):
             return
         facade = getattr(self._host, "operation_plan_facade", None)
         if self._supports(facade, "download"):
@@ -51,12 +47,8 @@ class OperationCoordinator:
         self._host.download_card.download()
 
     def batch_download(self):
-        if len(self._host.context.slots) <= 1:
-            return
-        facade = getattr(self._host, "operation_plan_facade", None)
-        if self._supports(facade, "download", batch=True):
-            return facade.begin_download(self._host.context, batch=True)
-        self._host.download_card.batch_download()
+        """Compatibility alias for the unified download source selector."""
+        return self.download()
 
     def write(self):
         if not self._host.context.collection:

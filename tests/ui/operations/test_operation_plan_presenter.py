@@ -54,6 +54,59 @@ def presenter(submitter: Submitter) -> OperationPlanPresenter:
     )
 
 
+@pytest.mark.parametrize("kind", [OperationKind.UPLOAD, OperationKind.DOWNLOAD])
+def test_sync_confirmation_has_no_countdown_but_remains_bound_to_edited_request(kind) -> None:
+    submitter = Submitter()
+    subject = presenter(submitter)
+    opened = subject.open(kind, draft(), owner_id="gui")
+    first = subject.preflight(opened.session_id, owner_id="gui")
+    assert first.confirmation_token.expires_at is None
+    subject._sync_confirmations._clock = lambda: 10**12
+
+    assert subject.confirm(opened.session_id, first.confirmation_token, owner_id="gui", retain_session=True) == "run-1"
+    subject.edit(opened.session_id, draft(target_revision="remote-r2"), owner_id="gui")
+    second = subject.preflight(opened.session_id, owner_id="gui")
+    subject.edit(opened.session_id, draft(input_fingerprint="input-r2"), owner_id="gui")
+    third = subject.preflight(opened.session_id, owner_id="gui")
+    with pytest.raises(OperationPlanError) as stale:
+        subject.confirm(opened.session_id, second.confirmation_token, owner_id="gui")
+    assert stale.value.code == "CONFIRMATION_REPLAYED"
+    assert subject.confirm(opened.session_id, third.confirmation_token, owner_id="gui") == "run-2"
+
+
+def test_other_operations_keep_existing_confirmation_timeout_policy() -> None:
+    subject = presenter(Submitter())
+    opened = subject.open(OperationKind.WRITE, draft(), owner_id="gui")
+    checked = subject.preflight(opened.session_id, owner_id="gui")
+    assert checked.confirmation_token.expires_at is not None
+    subject._confirmations._clock = lambda: checked.confirmation_token.expires_at + 1
+
+    with pytest.raises(OperationPlanError) as expired:
+        subject.confirm(opened.session_id, checked.confirmation_token, owner_id="gui")
+    assert expired.value.code == "CONFIRMATION_EXPIRED"
+
+
+def test_starting_a_new_check_revokes_previous_confirmation_even_when_check_fails(monkeypatch) -> None:
+    submitter = Submitter()
+    subject = presenter(submitter)
+    opened = subject.open(OperationKind.DOWNLOAD, draft(), owner_id="gui")
+    first = subject.preflight(opened.session_id, owner_id="gui")
+
+    def failed_check(_self, _draft):
+        with pytest.raises(OperationPlanError) as checking:
+            subject.confirm(opened.session_id, first.confirmation_token, owner_id="gui")
+        assert checking.value.code == "PREFLIGHT_REQUIRED"
+        raise RuntimeError("remote check failed")
+
+    monkeypatch.setattr(DownloadOperationMapper, "preflight", failed_check)
+    with pytest.raises(RuntimeError, match="remote check failed"):
+        subject.preflight(opened.session_id, owner_id="gui")
+    with pytest.raises(OperationPlanError) as failed:
+        subject.confirm(opened.session_id, first.confirmation_token, owner_id="gui")
+    assert failed.value.code == "PREFLIGHT_REQUIRED"
+    assert submitter.calls == []
+
+
 def test_return_to_edit_invalidates_confirmation_and_preserves_new_draft() -> None:
     submitter = Submitter()
     subject = presenter(submitter)

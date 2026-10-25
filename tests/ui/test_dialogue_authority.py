@@ -147,13 +147,17 @@ def test_stale_project_revision_fails_without_projection_mutation(authority, mon
 
 def test_new_authoritative_translation_cannot_be_overwritten_through_stale_ui(authority):
     context, store, _, _, target, _ = authority
+    stale_collection = context.collection
     draft = EntryDraft.capture(context, context.collection.get(target.identity))
     draft.text = "旧草稿"
     assert context.project_commands.replace_entry_states(
         {target.identity: ("其他操作的新译文", 1)},
         context.runtime_context,
     ).is_success
-    # Existing UI projection intentionally has not refreshed yet.
+    assert context.collection.get(target.identity).translation == "其他操作的新译文"
+    # Explicitly restore an old view to exercise the authority check independently
+    # of the normal immediate projection refresh.
+    context.active_slot.collection = stale_collection
     assert context.collection.get(target.identity).translation == ""
     assert "工程中的词条已变化" in draft.commit(context, projection=store)
     assert draft.text == "旧草稿"

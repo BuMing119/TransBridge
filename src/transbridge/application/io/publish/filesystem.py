@@ -17,6 +17,8 @@ class PublishFilesystemPort(Protocol):
 
     def exists(self, path: str) -> bool: ...
 
+    def create_directory(self, path: str) -> None: ...
+
     def read_bytes(self, path: str) -> bytes: ...
 
     def fingerprint(self, path: str) -> FileFingerprint: ...
@@ -59,6 +61,9 @@ class OsPublishFilesystem:
 
     def exists(self, path: str) -> bool:
         return Path(path).exists()
+
+    def create_directory(self, path: str) -> None:
+        Path(path).mkdir(exist_ok=True)
 
     def read_bytes(self, path: str) -> bytes:
         return Path(path).read_bytes()

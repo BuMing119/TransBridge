@@ -19,6 +19,8 @@ from transbridge.persistence.v2.baselines import LegacyIdentityRegistry
 from transbridge.persistence.v2.ids import ProjectRef, VariantRef
 from transbridge.persistence.v2.variant import VariantChangeSet
 
+from .categorized_upload import ProjectCategorizedUploadService
+from .durable_variant import DurableVariantCommitService
 from .lifecycle import ProjectLifecycleService
 from .models import ActiveProject, DirtyDecision, TransitionTarget
 from .provisioning import ProjectProvisioningRequest, ProjectProvisioningService, ProjectSourceRequest
@@ -48,6 +50,8 @@ class GuiProjectCommandFacade:
         id_factory: Callable[[], str] | None = None,
         provisioning: ProjectProvisioningService | None = None,
         source_mutations: ProjectSourceMutationService | None = None,
+        categorized_uploads: ProjectCategorizedUploadService | None = None,
+        durable_variant_commits: DurableVariantCommitService | None = None,
     ) -> None:
         self._lifecycle = lifecycle
         self._legacy_identities = legacy_identities
@@ -58,6 +62,36 @@ class GuiProjectCommandFacade:
         self._id_factory = id_factory
         self._provisioning = provisioning
         self._source_mutations = source_mutations
+        self._categorized_uploads = categorized_uploads
+        self._durable_variant_commits = durable_variant_commits
+
+    def categorized_upload_snapshot(self, context, *, endpoint: str, remote_project_id: int):
+        return self._categorized_upload_service().snapshot(
+            context, endpoint=endpoint, remote_project_id=remote_project_id
+        )
+
+    def categorized_upload_current(self, snapshot, context):
+        return self._categorized_upload_service().current(snapshot, context)
+
+    def file_sources_snapshot(self, context, *, endpoint, remote_project_id, source_ids=None):
+        """Read selected file sources independently, retaining non-download references."""
+        return self._categorized_upload_service().snapshot(
+            context,
+            endpoint=endpoint,
+            remote_project_id=remote_project_id,
+            source_ids=source_ids,
+            tolerate_failures=True,
+            include_external_refs=True,
+        )
+
+    def file_sources_catalog(self, context):
+        """List current registered plugins and entry counts without source I/O."""
+        return self._categorized_upload_service().catalog(context)
+
+    def _categorized_upload_service(self) -> ProjectCategorizedUploadService:
+        if self._categorized_uploads is None:
+            raise DomainError(ErrorCategory.PREREQUISITE, "CATEGORIZED_UPLOAD_UNAVAILABLE", "工程分类上传服务未配置。")
+        return self._categorized_uploads
 
     def prepare_create(
         self,
@@ -233,8 +267,13 @@ class GuiProjectCommandFacade:
             dirty_decision=dirty_decision,
         )
 
-    def save(self, context: RequestContext) -> OperationResult[dict | None]:
-        result = self._lifecycle.save_active(context)
+    def save(
+        self,
+        context: RequestContext,
+        *,
+        expected_active_signature: ActiveSignature | EllipsisType = ...,
+    ) -> OperationResult[dict | None]:
+        result = self._lifecycle.save_active(context, expected_active_signature=expected_active_signature)
         if result.is_success and self._projection_rebuild is not None:
             self._projection_rebuild()
         return result
@@ -319,6 +358,8 @@ class GuiProjectCommandFacade:
         expected_project_revision: int | None = None,
         expected_variant_revision: int | None = None,
         expected_variant_ref: VariantRef | None = None,
+        commit_mutation: Callable[[Callable[[], None]], None] | None = None,
+        persist: bool = False,
     ) -> OperationResult[dict[str, Any]]:
         """Commit all Variant-owned state for existing entries."""
 
@@ -328,6 +369,8 @@ class GuiProjectCommandFacade:
             expected_project_revision=expected_project_revision,
             expected_variant_revision=expected_variant_revision,
             expected_variant_ref=expected_variant_ref,
+            commit_mutation=commit_mutation,
+            persist=persist,
         )
 
     def _commit_variant(
@@ -340,6 +383,7 @@ class GuiProjectCommandFacade:
         expected_variant_revision: int | None = None,
         expected_variant_ref: VariantRef | None = None,
         commit_mutation: Callable[[Callable[[], None]], None] | None = None,
+        persist: bool = False,
     ) -> OperationResult[dict[str, Any]]:
         active = self._lifecycle.active
         if active is None or active.variant is None or active.formal_variant_ref is None:
@@ -381,9 +425,19 @@ class GuiProjectCommandFacade:
                 run_id=context.run_id,
             )
         try:
+            if persist and self._durable_variant_commits is None:
+                raise DomainError(
+                    ErrorCategory.PREREQUISITE,
+                    "DURABLE_VARIANT_SAVE_UNAVAILABLE",
+                    "自动保存服务尚未配置，本次未修改译文；请检查工程保存配置。",
+                )
             entries = update_entries(snapshot.entries)
             next_label_library = snapshot.label_library if label_library is None else label_library
-            if entries == snapshot.entries and next_label_library == snapshot.label_library:
+            if (
+                entries == snapshot.entries
+                and next_label_library == snapshot.label_library
+                and not (persist and active.dirty)
+            ):
                 return OperationResult.completed(
                     {
                         "project_id": active.project.envelope.identity,
@@ -401,6 +455,15 @@ class GuiProjectCommandFacade:
                 next_label_library,
                 context.run_id or "",
             )
+            if persist:
+                return self._durable_variant_commits.commit(
+                    change_set,
+                    context,
+                    expected_project_revision=(
+                        project_revision if expected_project_revision is None else expected_project_revision
+                    ),
+                    commit_mutation=commit_mutation,
+                )
             return self._lifecycle.commit_active_variant(
                 change_set,
                 context,

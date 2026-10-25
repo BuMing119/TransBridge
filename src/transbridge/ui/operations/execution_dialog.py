@@ -45,6 +45,7 @@ class ExecutionPlanDialog(OperationPlanDialog):
     def render_plan(self, plan):
         super().render_plan(plan)
         self._summary.show()
+        self._summary_scroll.show()
         if hasattr(self, "_details"):
             self._clear_details()
             self._progress.hide()
@@ -111,6 +112,7 @@ class ExecutionPlanDialog(OperationPlanDialog):
             receipt.status, SemanticState.WARNING
         )
         self._summary.hide()
+        self._summary_scroll.hide()
         self._details.setPlainText(receipt.details)
         self._details_button.show()
         self._set_status(receipt.text, receipt.status, semantic)

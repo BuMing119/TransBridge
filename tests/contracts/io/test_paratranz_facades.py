@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from transbridge.application.categorized_upload.models import UploadSource
+from transbridge.application.file_upload import upload_files, wire_records
 from transbridge.application.io import EntryKey, ExternalEntryRef, SourceNamespace
 from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
@@ -10,7 +12,7 @@ from transbridge.converter.translation_entry_collection_export import export_to_
 from transbridge.smart_assistant.file_parser.paratranz_parser import ParatranzParser
 
 
-def test_paratranz_public_package_keeps_legacy_exports_after_lazy_loading() -> None:
+def test_paratranz_public_package_keeps_active_exports_after_lazy_loading() -> None:
     import transbridge.paratranz as package
 
     expected = {
@@ -29,8 +31,6 @@ def test_paratranz_public_package_keeps_legacy_exports_after_lazy_loading() -> N
         "ParatranzUserAPI",
         "ParaTranzUploader",
         "UploadResult",
-        "ParaTranzDownloader",
-        "DownloadResult",
         "ArtifactWorkflow",
         "ParaTranzTermsService",
     }
@@ -103,7 +103,7 @@ def test_categorized_dialogue_export_restores_complete_plugin_source_order(tmp_p
 
     export_to_categorized_json_files(collection, tmp_path)
 
-    output = next(tmp_path.glob("*.json"))
+    output = next(tmp_path.glob("任务/*.json"))
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert [item["key"] for item in payload] == ["first", "second", "third"]
     assert all(not any(key.startswith("plugin.") for key in item) for item in payload)
@@ -118,7 +118,7 @@ def test_categorized_dialogue_export_keeps_collection_order_for_incomplete_metad
 
     export_to_categorized_json_files(collection, tmp_path)
 
-    output = next(tmp_path.glob("*.json"))
+    output = next(tmp_path.glob("任务/*.json"))
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert [item["key"] for item in payload] == ["third", "legacy", "first"]
 
@@ -132,6 +132,34 @@ def test_categorized_dialogue_export_keeps_collection_order_for_duplicate_source
 
     export_to_categorized_json_files(collection, tmp_path)
 
-    output = next(tmp_path.glob("*.json"))
+    output = next(tmp_path.glob("任务/*.json"))
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert [item["key"] for item in payload] == ["first-seen", "duplicate", "zero"]
+
+
+def test_categorized_export_matches_upload_paths_records_and_preserves_source(tmp_path: Path) -> None:
+    entries = (
+        TranslationEntry("quest", "Quest:00ABCDEF|1~QUST:FULL", "A Named Quest", "任务译名", 1, "QUST:FULL"),
+        TranslationEntry(
+            "line1", "line", "First line", "第一行", 1, "INFO:NAM1|00ABCDEF", requires_original_match=True
+        ),
+        TranslationEntry(
+            "line2", "line", "Second line", "第二行", 1, "INFO:NAM1|00ABCDEF", requires_original_match=True
+        ),
+        TranslationEntry("unknown", "unknown", "Unknown", "未知", 1, "ZZZZ:FULL"),
+    )
+    before = tuple(entry.to_dict() for entry in entries)
+    collection = TranslationEntryCollection(entries)
+
+    export_to_categorized_json_files(collection, tmp_path)
+
+    files = upload_files((UploadSource("source", "Plugin.esp", entries),), categorized=True)
+    local = {
+        path.relative_to(tmp_path).as_posix(): json.loads(path.read_text(encoding="utf-8"))
+        for path in tmp_path.rglob("*.json")
+    }
+    assert local == {file.path.removeprefix("Plugin.esp/"): list(wire_records(file)) for file in files}
+    assert "任务/对话_[A Named Quest].json" in local
+    assert "其他.json" in local
+    assert len({record["key"] for record in local["任务/对话_[A Named Quest].json"]}) == 2
+    assert tuple(entry.to_dict() for entry in entries) == before

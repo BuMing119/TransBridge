@@ -94,6 +94,8 @@ class EETWriter:
             if decision.blocks_publish or decision.publish_text is None:
                 code = decision.code or "STAGE_PUBLISH_BLOCKED"
                 raise ValueError(f"{code}: EET write is blocked by stage policy")
+            if decision.preserve_source:
+                continue
 
             translated_stages = {
                 Stage.TRANSLATED,

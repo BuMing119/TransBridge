@@ -52,7 +52,7 @@ def test_operation_menu_state_is_derived_once_from_context() -> None:
     OperationCoordinator(host).update_operation_menu_state()
 
     assert menu.upload.enabled and menu.download.enabled and menu.write.enabled
-    assert menu.batch_upload.visible and menu.batch_download.visible and menu.batch_write.visible
+    assert menu.batch_upload.visible and not menu.batch_download.visible and menu.batch_write.visible
     assert menu.batch_upload.enabled and menu.batch_download.enabled
 
 
@@ -72,6 +72,7 @@ def test_sync_menu_actions_stay_hoverable_when_cloud_context_is_missing() -> Non
 
     assert menu.upload.enabled and menu.download.enabled
     assert menu.batch_upload.enabled and menu.batch_download.enabled
+    assert not menu.batch_download.visible
 
 
 def test_operation_intent_delegates_to_exactly_one_card_action() -> None:

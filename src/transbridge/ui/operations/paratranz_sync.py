@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from copy import copy
+from dataclasses import replace
 from datetime import datetime
 from threading import RLock
 
@@ -21,9 +23,9 @@ from transbridge.application.sync import (
 )
 from transbridge.application.tasks import OwnerRef, TaskRuntime
 from transbridge.bootstrap.runtime import AppRuntime
-from transbridge.paratranz.sync_snapshot import ParaTranzRemoteSnapshotAdapter
 from transbridge.ui.version_persistence import VersionPersistence
 
+from .download_session import download_session_scope
 from .errors import OperationCompositionError
 from .facade import OperationFeatureAdapter
 from .mappers import (
@@ -53,6 +55,7 @@ def build_paratranz_sync_features(
     """Build the two ParaTranz operation adapters without performing remote work."""
 
     sync_cache: dict[int, PreparedSync] = {}
+    recovery_cache: dict[object, tuple[Callable | None, str | None]] = {}
     cache_lock = RLock()
 
     def sync_checks(value: object) -> DomainPreflightResult:
@@ -89,9 +92,7 @@ def build_paratranz_sync_features(
         project_name = str(getattr(context, "project_name", "") or "当前本地工程")
         variant_name = str(getattr(context, "active_variant", "") or "当前版本")
         recovery_available = _recovery_available(context)
-        local_state_only = kind is OperationKind.DOWNLOAD and bool(
-            getattr(context, "uses_authoritative_projection", False)
-        )
+        local_state_only = kind is OperationKind.DOWNLOAD
         conflict_summary = _conflict_summary(request)
         return OperationPlanDraft(
             request=request,
@@ -99,10 +100,14 @@ def build_paratranz_sync_features(
             target_revision=f"remote:{request.project_id}:{request.target_revision}",
             input_fingerprint=local_hash(entries),
             scope_summary=f"{project_name} / {variant_name} / {len(entries):,} 条翻译内容",
-            mode_summary="上传本地内容" if kind is OperationKind.UPLOAD else "使用 ParaTranz 内容更新本地",
+            mode_summary=(
+                f"普通上传至根目录 {request.upload_path}"
+                if kind is OperationKind.UPLOAD
+                else "使用 ParaTranz 译文更新工程"
+            ),
             conflict_summary=conflict_summary,
             backup_summary=(
-                "下载前自动创建历史还原点（包含未保存修改）"
+                "更新前自动创建历史还原点（包含未保存修改）"
                 if kind is OperationKind.DOWNLOAD and recovery_available
                 else "原子合并；失败不会改变本地内容"
                 if kind is OperationKind.DOWNLOAD
@@ -159,7 +164,11 @@ def build_paratranz_sync_features(
             hidden_count=hidden,
             warnings=(() if ready else (reason,)),
             expected_side_effects=(
-                ("对 ParaTranz 执行幂等远端写入" if kind is OperationKind.UPLOAD else "在本地聚合事务中应用远端更新"),
+                (
+                    "更新 ParaTranz 译文和状态"
+                    if kind is OperationKind.UPLOAD
+                    else "更新工程译文和状态；不会写回 ESM/ESP"
+                ),
             ),
         )
 
@@ -195,6 +204,10 @@ def build_paratranz_sync_features(
             values["download_decisions"] = "{}"
             values["upload_decisions"] = "{}"
             return create_sync(kind, request.ui_context, request.batch, values)
+        if request.operation is SyncOperation.DOWNLOAD and download_session_scope(request) == download_session_scope(
+            fresh
+        ):
+            updated = replace(updated, request=replace(fresh, download_session=request.download_session))
         return updated
 
     def discard_sync(draft) -> None:
@@ -215,20 +228,51 @@ def build_paratranz_sync_features(
                 "project": request.project_revision,
                 "variant": request.variant_revision,
             }
-            local_uow = CallbackLocalSyncUnitOfWork(
-                lambda: local_snapshots(request.ui_context, request.project_id),
-                lambda values: replace_local_snapshots(
+
+            def commit_local(values):
+                current_request = replace(
+                    request,
+                    project_revision=authority_revisions["project"],
+                    variant_revision=authority_revisions["variant"],
+                )
+                current_target, reason = sync_request_target_is_current(current_request)
+                if not current_target:
+                    raise OperationCompositionError(reason)
+                replace_local_snapshots(
                     request.ui_context,
                     values,
                     request.project_id,
                     active_version_identity=request.active_version_identity,
                     project_revision=authority_revisions["project"],
                     variant_revision=authority_revisions["variant"],
+                    persist=request.operation is SyncOperation.DOWNLOAD
+                    and bool(getattr(request.ui_context, "uses_authoritative_projection", False)),
+                )
+
+            local_uow = CallbackLocalSyncUnitOfWork(
+                lambda: local_snapshots(
+                    request.ui_context,
+                    request.project_id,
+                    include_external_refs=request.operation is not SyncOperation.DOWNLOAD,
                 ),
+                commit_local,
             )
-            snapshots = ParaTranzRemoteSnapshotAdapter(prepared.service)
-            executor = ParaTranzSyncExecutor(prepared.service, snapshots, local_uow)
-            recovery, recovery_name = _recovery_snapshot(request, prepared.plan)
+            executor = ParaTranzSyncExecutor(prepared.service, prepared.snapshots, local_uow)
+            session_key = (
+                request.download_session
+                if request.operation is SyncOperation.DOWNLOAD
+                and request.download_session is not None
+                and bool(getattr(request.ui_context, "uses_authoritative_projection", False))
+                else None
+            )
+            with cache_lock:
+                recovery_pair = recovery_cache.get(session_key) if session_key is not None else None
+                if recovery_pair is None:
+                    recovery_pair = _recovery_snapshot(request, prepared.plan)
+                    if session_key is not None and recovery_pair[0] is not None:
+                        recovery_cache[session_key] = recovery_pair
+                        trim_cache(recovery_cache)
+            recovery, recovery_name = recovery_pair
             entrypoint = ParaTranzSyncTaskEntrypoint(tasks, executor, on_finished=prepared.close, on_result=on_result)
 
             def prepare(_run_id: str) -> ParaTranzSyncTaskPreparation:
@@ -261,7 +305,11 @@ def build_paratranz_sync_features(
                         if committed_revision is not None
                         else getattr(request.ui_context, "project_revision", authority_revisions["project"])
                     )
-                current = local_snapshots(request.ui_context, request.project_id)
+                current = local_snapshots(
+                    request.ui_context,
+                    request.project_id,
+                    include_external_refs=request.operation is not SyncOperation.DOWNLOAD,
+                )
                 token = prepared.planning.issue_confirmation(prepared.plan, owner_id=owner.owner_id)
                 authorized = prepared.planning.authorize(
                     AuthorizeSyncPlanRequest(
@@ -285,6 +333,8 @@ def build_paratranz_sync_features(
                     recovery_snapshot=recovery,
                     recovery_snapshot_name=recovery_name,
                     preparation=prepare,
+                    final_local_commit=request.operation is SyncOperation.DOWNLOAD
+                    and bool(getattr(request.ui_context, "uses_authoritative_projection", False)),
                 ),
                 owner,
             )
@@ -324,7 +374,7 @@ def _conflict_options(kind: OperationKind, *, local_state_only: bool = False) ->
             (ConflictPolicy.PREFER_REMOTE.value, "保留 ParaTranz 已有内容"),
         )
     return (
-        (ConflictPolicy.PREFER_REMOTE.value, "使用 ParaTranz 内容更新本地（推荐）"),
+        (ConflictPolicy.PREFER_REMOTE.value, "使用 ParaTranz 译文更新工程（推荐）"),
         (
             ConflictPolicy.PREFER_LOCAL.value,
             "保留本地已有内容" if local_state_only else "保留本地已有内容，只补充云端新增内容",
@@ -364,14 +414,19 @@ def _recovery_snapshot(request: SyncRequest, plan: object):
         return None, None
     persistence = VersionPersistence(context, identity)
     name = f"ParaTranz-下载前-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{getattr(plan, 'plan_id', 'plan')[-8:]}"
+    captured = False
 
     def capture(_run_id: str):
+        nonlocal captured
+        if captured:
+            return None
         entries = tuple(copy(entry) for entry in (getattr(context, "collection", None) or ()))
         result = persistence.create_snapshot(name, entries)
         if hasattr(result, "is_success") and not result.is_success:
             diagnostics = tuple(getattr(result, "diagnostics", ()))
             message = diagnostics[0].message if diagnostics else "无法创建下载前历史还原点"
             raise OperationCompositionError(message)
+        captured = True
         return result
 
     return capture, name

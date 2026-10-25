@@ -17,6 +17,8 @@ class SyncReviewCandidate:
     context: str = ""
     selectable: bool = True
     disabled_reason: str = ""
+    stage: int = 0
+    source_count: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,3 +34,4 @@ class SyncReviewRow:
     can_select_remote: bool = True
     selection_disabled_reason: str = ""
     preserves_local_source: bool = True
+    stage: int = 0

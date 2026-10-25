@@ -8,6 +8,8 @@ from types import SimpleNamespace
 import pytest
 
 from tests.conftest import make_test_collection
+from tests.ui.operations.current_download_support import patch_current_download_gateway
+from tests.ui.operations.ordinary_upload_support import patch_ordinary_gateway
 from transbridge.application.io.identity import EntryKey
 from transbridge.application.ports.paratranz import ExternalServiceCategory, ExternalServiceError, ParaTranzEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
@@ -47,8 +49,11 @@ def diagnostic_case(request, monkeypatch, caplog):
         close=lambda: closed.append(True),
     )
     monkeypatch.setattr(ParaTranzService, "from_config", classmethod(lambda _cls, _config: service))
+    patch_ordinary_gateway(monkeypatch, service)
+    gateway = patch_current_download_gateway(monkeypatch, service)
     context = SimpleNamespace(
         collection=TranslationEntryCollection(entries),
+        esp_path="source.esp",
         active_version_identity=("project", "variant"),
         active_project_id="project",
         project_revision=0,
@@ -77,6 +82,7 @@ def diagnostic_case(request, monkeypatch, caplog):
         remote=remote,
         service=service,
         closed=closed,
+        gateway=gateway,
     )
     yield case
     assert not writes, "检查和诊断不能写入 ParaTranz"
@@ -165,7 +171,7 @@ def test_rechecking_same_snapshot_has_a_new_check_id(diagnostic_case, caplog):
         assert sum(item["check_id"] == summary["check_id"] for item in details) == summary["unresolved_count"]
 
 
-def test_stale_choice_logs_only_the_rebuilt_plan_and_marks_stale_decisions(diagnostic_case, caplog):
+def test_choice_edits_reuse_download_snapshot_and_upload_rebuilds_stale_cloud_choice(diagnostic_case, caplog):
     case = diagnostic_case
     _, previous = _prepare(case.request)
     row = next(row for row in previous.sync_review if row.key == case.entries[1].key)
@@ -179,10 +185,16 @@ def test_stale_choice_logs_only_the_rebuilt_plan_and_marks_stale_decisions(diagn
 
     summaries = _events(caplog, CHECK_EVENT)
     assert len(summaries) == 1
-    assert summaries[0]["stale_decisions"] is True
+    if case.kind is OperationKind.DOWNLOAD:
+        assert summaries[0]["stale_decisions"] is False
+        assert next(item for item in result.sync_review if item.key == case.entries[1].key).decision == choice
+        assert case.gateway.reads == [("inventory", 42), ("translation", 42, 11)]
+        assert not any("选择已清除" in check.reason for check in result.checks)
+    else:
+        assert summaries[0]["stale_decisions"] is True
+        assert any("选择已清除" in check.reason for check in result.checks)
+        assert all(not row.decision for row in result.sync_review)
     assert summaries[0]["unresolved_count"] == plan.conflicts
-    assert any("选择已清除" in check.reason for check in result.checks)
-    assert all(not row.decision for row in result.sync_review)
     assert len(_events(caplog, ITEM_EVENT)) == plan.conflicts
 
 

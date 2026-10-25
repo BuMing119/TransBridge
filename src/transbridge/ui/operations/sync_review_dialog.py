@@ -1,4 +1,4 @@
-"""Content-first review; decisions remain staged until the main sync confirmation."""
+"""Content-first review for staged choices or downloads submitted on acceptance."""
 
 from __future__ import annotations
 
@@ -33,9 +33,16 @@ from .sync_review_view import SyncReviewRow
 
 
 class SyncReviewDialog(QDialog):
-    """Browse translations and stage explicit choices without writing data."""
+    """Browse translations and explain how accepted choices will be applied."""
 
-    def __init__(self, rows: tuple[SyncReviewRow, ...], parent=None, *, kind=OperationKind.DOWNLOAD) -> None:
+    def __init__(
+        self,
+        rows: tuple[SyncReviewRow, ...],
+        parent=None,
+        *,
+        kind=OperationKind.DOWNLOAD,
+        submit_on_accept: bool = False,
+    ) -> None:
         super().__init__(parent)
         configure_dialog(self)
         self.setWindowTitle("确认这几条翻译")
@@ -65,7 +72,7 @@ class SyncReviewDialog(QDialog):
         self._summary = QLabel(sidebar)
         navigation.addWidget(self._summary)
         self._search = QLineEdit(sidebar)
-        self._search.setPlaceholderText("搜索原文、译文或使用场景")
+        self._search.setPlaceholderText("搜索原文、译文或补充说明")
         configure_accessible_widget(self._search, name="搜索需要确认的翻译")
         navigation.addWidget(self._search)
         self._state_filter = QComboBox(sidebar)
@@ -100,6 +107,7 @@ class SyncReviewDialog(QDialog):
         for column in (0, 2, 3, 4):
             self._table.hideColumn(column)
         self._table.setItemDelegate(SyncReviewListDelegate(self._table))
+        self._table.installEventFilter(self._table.itemDelegate())
         self._table.verticalHeader().setDefaultSectionSize(self.fontMetrics().height() * 3 + 28)
         configure_accessible_widget(self._table, name="需要确认的翻译", description="按住 Ctrl 可选择多条，一起跳过")
         navigation.addWidget(self._table, 1)
@@ -117,7 +125,12 @@ class SyncReviewDialog(QDialog):
         body.setChildrenCollapsible(False)
         root.addWidget(body, 1)
         footer = QHBoxLayout()
-        self._footer_note = QLabel(f"选择尚未执行。返回后，确认{self._direction.verb}才会生效。", self)
+        self._footer_note = QLabel(
+            "确认后自动下载并保存已确定的译文；未决定的内容保持本地原样。"
+            if submit_on_accept
+            else f"选择尚未执行。返回后，确认{self._direction.verb}才会生效。",
+            self,
+        )
         self._footer_note.setWordWrap(True)
         footer.addWidget(self._footer_note, 1)
         self._buttons = QDialogButtonBox(
@@ -128,7 +141,7 @@ class SyncReviewDialog(QDialog):
         cancel.setAutoDefault(False)
         cancel.setDefault(False)
         apply = self._buttons.button(QDialogButtonBox.StandardButton.Apply)
-        apply.setText(f"完成选择，返回{self._direction.verb}")
+        apply.setText("确认选择并保存" if submit_on_accept else f"完成选择，返回{self._direction.verb}")
         apply.setAutoDefault(False)
         self._buttons.rejected.connect(self.reject)
         apply.clicked.connect(self.accept)

@@ -15,6 +15,7 @@ from transbridge.application.ports.paratranz import (
 )
 from transbridge.application.tasks.controls import TaskCleanupFailed
 
+from .execution_diagnostics import SyncExecutionDiagnostics
 from .execution_models import RetryToken, SyncItemOutcome, SyncItemStatus, sync_item_id
 from .execution_result import (
     append_cancelled as _append_cancelled,
@@ -42,7 +43,7 @@ from .models import (
 from .planner import SyncPlanner
 from .remote_execution import RemoteTargetIndex, execute_remote
 from .upload_associations import commit_upload_associations
-from .use_case import AuthorizedSyncPlan, RemoteSyncSnapshotPort
+from .use_case import AuthorizedSyncPlan, RemoteSyncSnapshotPort, SyncPlanStaleError
 
 _logger = logging.getLogger(__name__)
 
@@ -89,6 +90,7 @@ class ParaTranzSyncExecutor:
 
     def execute(self, request: ExecuteSyncRequest) -> OperationResult[dict]:
         plan = request.authorized_plan.plan
+        evidence = SyncExecutionDiagnostics(request.run_id, plan.plan_id, plan.operation.value, request.project_id)
         if not request.authorized_plan.owner_id.strip():
             return _failed_result(request.run_id, "INVALID_SYNC_OWNER", "The sync owner is invalid.")
         expected_scope = f"paratranz:project:{request.project_id}:source:{request.namespace.value}"
@@ -117,6 +119,7 @@ class ParaTranzSyncExecutor:
                 (outcome.item_id, outcome) for outcome in request.retry_token.outcomes if outcome.status.confirmed
             )
         try:
+            evidence.phase("remote_snapshot", "started")
             _check_cancelled(request.cancellation)
             remote_entries = self._remote_snapshots.fetch(
                 request.project_id,
@@ -125,7 +128,14 @@ class ParaTranzSyncExecutor:
                 cancellation=request.cancellation,
             )
             _check_cancelled(request.cancellation)
-            self._verify_freshness(request, remote_entries, item_ids, frozenset(checkpoint))
+            try:
+                self._verify_freshness(request, remote_entries, item_ids, frozenset(checkpoint))
+            except RuntimeError as exc:
+                # Snapshot indexes signal vanished, ambiguous, or newly occupied
+                # identities with RuntimeError. A fetch failure is handled above
+                # this boundary and must not be misreported as changed data.
+                raise SyncPlanStaleError(str(exc)) from exc
+            evidence.phase("remote_snapshot", "completed")
         except _SyncCancelled:
             return OperationResult.cancelled(_cancel_diagnostic(), run_id=request.run_id)
         except ExternalServiceError as exc:
@@ -133,11 +143,19 @@ class ParaTranzSyncExecutor:
                 request.cancellation is not None and request.cancellation.is_cancelled
             ):
                 return OperationResult.cancelled(_cancel_diagnostic(), run_id=request.run_id)
+            evidence.failure("remote_snapshot", exc)
             return _external_failed_result(request.run_id, exc)
-        except Exception:
+        except Exception as exc:
             if request.cancellation is not None and request.cancellation.is_cancelled:
                 return OperationResult.cancelled(_cancel_diagnostic(), run_id=request.run_id)
-            return _failed_result(request.run_id, "STALE_SYNC_PLAN", "The sync snapshots changed before execution.")
+            evidence.failure("remote_snapshot", exc)
+            if isinstance(exc, SyncPlanStaleError):
+                return _failed_result(request.run_id, "STALE_SYNC_PLAN", "工程或云端内容已变化，请重新开始对照。")
+            return _failed_result(
+                request.run_id,
+                "SYNC_SNAPSHOT_CHECK_FAILED",
+                "无法读取或校验最新云端内容，请查看执行日志后重新开始对照。",
+            )
 
         local_map = {entry.entry_key: entry for entry in request.current_local_entries}
         remote_targets = RemoteTargetIndex(remote_entries)
@@ -217,12 +235,13 @@ class ParaTranzSyncExecutor:
                 ):
                     cancelled = True
                     break
+                evidence.failure("execution", exc, item_id=item_id, entry_key=item.entry_key)
                 outcomes.append(_remote_failure(item_id, item, exc))
-            except Exception:
+            except Exception as exc:
                 if request.cancellation is not None and request.cancellation.is_cancelled:
                     cancelled = True
                     break
-                _logger.exception("ParaTranz remote execution failed (run_id=%s, item_id=%s)", request.run_id, item_id)
+                evidence.failure("execution", exc, item_id=item_id, entry_key=item.entry_key)
                 outcomes.append(
                     _outcome(
                         item_id,
@@ -269,7 +288,7 @@ class ParaTranzSyncExecutor:
         if not confirmed:
             hashes = self._planner.snapshot_hashes(request.current_local_entries, remote_entries)
             if hashes != (plan.local_snapshot_hash, plan.remote_snapshot_hash):
-                raise RuntimeError("sync snapshots changed")
+                raise SyncPlanStaleError("sync snapshots changed")
             return
         local = {entry.entry_key: entry for entry in request.current_local_entries}
         remote_targets = RemoteTargetIndex(remote_entries)
@@ -279,14 +298,14 @@ class ParaTranzSyncExecutor:
                 continue
             if item.action in {SyncAction.CREATE_REMOTE, SyncAction.UPDATE_REMOTE, SyncAction.DELETE_REMOTE}:
                 if not _summary_matches(item.after, local.get(item.entry_key), local_side=True):
-                    raise RuntimeError("local source changed")
+                    raise SyncPlanStaleError("local source changed")
                 if not _summary_matches(item.before, remote_targets.get_for_item(item), local_side=False):
-                    raise RuntimeError("remote target changed")
+                    raise SyncPlanStaleError("remote target changed")
             else:
                 if not _summary_matches(item.after, remote_sources.get_for_item(item), local_side=False):
-                    raise RuntimeError("remote source changed")
+                    raise SyncPlanStaleError("remote source changed")
                 if not _summary_matches(item.before, local.get(item.entry_key), local_side=True):
-                    raise RuntimeError("local target changed")
+                    raise SyncPlanStaleError("local target changed")
 
     def _commit_local(
         self,
@@ -299,7 +318,11 @@ class ParaTranzSyncExecutor:
         committed = False
         try:
             candidate = build_local_candidate(
-                request.current_local_entries, remote_sources, tuple(item for _, item in pending)
+                request.current_local_entries,
+                remote_sources,
+                tuple(item for _, item in pending),
+                attach_remote_refs=request.authorized_plan.plan.operation is not SyncOperation.DOWNLOAD,
+                preserve_local_source=request.authorized_plan.plan.operation is SyncOperation.DOWNLOAD,
             )
             _check_cancelled(request.cancellation)
             expected_hash, _ = self._planner.snapshot_hashes(request.current_local_entries, ())
@@ -322,7 +345,7 @@ class ParaTranzSyncExecutor:
                 )
                 for item_id, item in pending
             ]
-        except Exception:
+        except Exception as exc:
             _logger.exception("ParaTranz local transaction failed (run_id=%s)", request.run_id)
             return [
                 _outcome(
@@ -330,7 +353,7 @@ class ParaTranzSyncExecutor:
                     item,
                     SyncItemStatus.FAILED,
                     "LOCAL_TRANSACTION_FAILED",
-                    "The local aggregate was not committed.",
+                    f"本地译文未提交，原有内容保持不变：{exc}",
                     retryable=True,
                 )
                 for item_id, item in pending

@@ -1,5 +1,5 @@
 """
-WorkFlow 单元测试：ParaTranzUploader / ParaTranzDownloader / ArtifactWorkflow
+WorkFlow 单元测试：ParaTranzUploader / ArtifactWorkflow
 
 所有测试均 mock API 层，不发出真实 HTTP 请求。
 """
@@ -15,7 +15,6 @@ from transbridge.converter.translation_entry import TranslationEntry
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.paratranz.config_manager import ParatranzConfig
 from transbridge.paratranz.workflow.artifact import ArtifactWorkflow
-from transbridge.paratranz.workflow.downloader import ParaTranzDownloader
 from transbridge.paratranz.workflow.uploader import ParaTranzUploader
 
 # ─────────────────────────────────────────────────────────────
@@ -48,18 +47,6 @@ def make_collection(*entries: TranslationEntry) -> TranslationEntryCollection:
     return TranslationEntryCollection(entries=entries)
 
 
-def pt_string(key: str, translation: str = "", stage: int = 1, original: str = "original") -> dict:
-    """构造 ParaTranz 词条格式的 dict（模拟 get_file_translation 返回值）"""
-    return {
-        "id": 999,
-        "key": key,
-        "original": original,
-        "translation": translation,
-        "stage": stage,
-        "context": "NPC_:FULL",
-    }
-
-
 # ─────────────────────────────────────────────────────────────
 # ParaTranzUploader
 # ─────────────────────────────────────────────────────────────
@@ -72,378 +59,71 @@ class TestParaTranzUploader:
         uploader._api = mock_api
         return uploader, mock_api
 
-    def _patch_export(self, file_names: list[str]):
-        """返回一个 patch 上下文，export 调用时在 output_dir 创建指定文件。"""
-
-        def side_effect(collection, output_dir, **kwargs):
-            for name in file_names:
-                (Path(output_dir) / name).write_text("[]", encoding="utf-8")
-
-        return patch(
-            "transbridge.paratranz.workflow.uploader.export_to_categorized_json_files",
-            side_effect=side_effect,
+    def test_single_upload_new_file(self):
+        uploader, api = self._make_uploader()
+        api.list_files.return_value = []
+        payloads = []
+        api.upload_file.side_effect = lambda project_id, path: payloads.append(
+            json.loads(Path(path).read_text(encoding="utf-8"))
         )
 
-    # ── 正常上传新文件 ──────────────────────────────────────────
+        result = uploader.upload_collection_as_single(make_collection(make_entry("entry")), 1, "plugin.json")
 
-    def test_upload_new_files(self):
-        """项目中不存在同名文件时，应调用 upload_file 新建。"""
-        uploader, mock_api = self._make_uploader()
-        mock_api.list_files.return_value = []  # 项目空空如也
+        assert result.created == 1 and result.updated == result.skipped == 0
+        assert result.files == ["plugin.json"]
+        assert payloads[0][0]["key"] == "entry"
+        api.reupload_file.assert_not_called()
 
-        with self._patch_export(["人名.json", "物品.json"]):
-            result = uploader.upload_collection(make_collection(), project_id=1)
+    def test_single_upload_updates_existing_root_file(self):
+        uploader, api = self._make_uploader()
+        api.list_files.return_value = [{"id": 101, "name": "plugin.json"}]
+        api.get_file_info.return_value = {"id": 101, "name": "plugin.json"}
 
-        assert result.created == 2
-        assert result.updated == 0
-        assert result.skipped == 0
-        assert set(result.files) == {"人名.json", "物品.json"}
-        assert mock_api.upload_file.call_count == 2
-        assert mock_api.reupload_file.call_count == 0
+        result = uploader.upload_collection_as_single(make_collection(make_entry("entry")), 1, "plugin.json")
 
-    # ── 更新已有文件 ────────────────────────────────────────────
+        assert result.updated == 1 and result.created == result.skipped == 0
+        assert result.files == ["plugin.json"]
+        api.reupload_file.assert_called_once()
+        assert api.reupload_file.call_args.args[:2] == (1, 101)
+        api.upload_file.assert_not_called()
 
-    def test_upload_updates_existing_files(self):
-        """项目中已存在同名文件时，应调用 reupload_file 更新原文。"""
-        uploader, mock_api = self._make_uploader()
-        mock_api.list_files.return_value = [
-            {"id": 101, "name": "人名.json"},
-        ]
+    def test_single_upload_error_keeps_filename_and_cause(self):
+        uploader, api = self._make_uploader()
+        api.list_files.return_value = []
+        failure = RuntimeError("server error")
+        api.upload_file.side_effect = failure
 
-        with self._patch_export(["人名.json", "物品.json"]):
-            result = uploader.upload_collection(make_collection(), project_id=1)
+        with pytest.raises(RuntimeError, match="plugin.json.*server error") as error:
+            uploader.upload_collection_as_single(make_collection(make_entry("entry")), 1, "plugin.json")
 
-        assert result.created == 1  # 物品.json
-        assert result.updated == 1  # 人名.json
-        assert result.skipped == 0
-        # reupload_file 收到正确的 file_id
-        mock_api.reupload_file.assert_called_once()
-        args = mock_api.reupload_file.call_args
-        assert args.args[1] == 101  # file_id
+        assert error.value.__cause__ is failure
+        api.upload_file.assert_called_once()
 
-    # ── 混合情况 ────────────────────────────────────────────────
-
-    def test_upload_mixed_new_and_existing(self):
-        """一部分文件已存在，一部分需新建。"""
-        uploader, mock_api = self._make_uploader()
-        mock_api.list_files.return_value = [
-            {"id": 10, "name": "人名.json"},
-            {"id": 11, "name": "书籍_书名.json"},
-        ]
-
-        with self._patch_export(["人名.json", "书籍_书名.json", "物品.json"]):
-            result = uploader.upload_collection(make_collection(), project_id=1)
-
-        assert result.created == 1
-        assert result.updated == 2
-        assert result.skipped == 0
-
-    # ── 单文件上传失败不影响其他文件 ────────────────────────────
-
-    def test_upload_skips_on_api_error(self):
-        """单个文件上传失败时跳过，不中断整体流程。"""
-        uploader, mock_api = self._make_uploader()
-        mock_api.list_files.return_value = []
-        mock_api.upload_file.side_effect = [
-            RuntimeError("server error"),  # 第一个文件失败
-            {"id": 2, "name": "物品.json"},  # 第二个成功
-        ]
-
-        with self._patch_export(["人名.json", "物品.json"]):
-            result = uploader.upload_collection(make_collection(), project_id=1)
-
-        assert result.created == 1
-        assert result.skipped == 1
-
-    # ── 集合为空，导出零文件 ────────────────────────────────────
-
-    def test_upload_empty_collection_returns_empty_result(self):
-        """导出零文件时，直接返回空结果，不调用任何 API。"""
-        uploader, mock_api = self._make_uploader()
-
-        with self._patch_export([]):  # 没有文件被导出
-            result = uploader.upload_collection(make_collection(), project_id=1)
-
-        assert result.created == 0
-        assert result.updated == 0
-        mock_api.upload_file.assert_not_called()
-        mock_api.reupload_file.assert_not_called()
-
-    # ── 进度回调 ────────────────────────────────────────────────
-
-    def test_upload_progress_callback(self):
-        """进度回调应在每个文件处理时被调用，最后以"完成"结束。"""
-        uploader, mock_api = self._make_uploader()
-        mock_api.list_files.return_value = []
+    def test_single_upload_progress_callback(self):
+        uploader, api = self._make_uploader()
+        api.list_files.return_value = []
         calls = []
 
-        with self._patch_export(["人名.json"]):
-            uploader.upload_collection(
-                make_collection(),
-                project_id=1,
-                progress_callback=lambda cur, tot, name: calls.append((cur, tot, name)),
-            )
-
-        assert any(name == "完成" for _, _, name in calls)
-
-    # ── list_files 失败应抛出 RuntimeError ──────────────────────
-
-    def test_upload_raises_when_list_files_fails(self):
-        uploader, mock_api = self._make_uploader()
-        mock_api.list_files.side_effect = RuntimeError("network error")
-
-        with self._patch_export(["人名.json"]):
-            with pytest.raises(RuntimeError, match="获取项目文件列表失败"):
-                uploader.upload_collection(make_collection(), project_id=1)
-
-
-# ─────────────────────────────────────────────────────────────
-# ParaTranzDownloader
-# ─────────────────────────────────────────────────────────────
-
-
-class TestParaTranzDownloader:
-    @pytest.mark.parametrize("originals", [("A",), ("A", "B")])
-    def test_download_skips_original_qualified_entries_even_if_the_bare_key_is_unique(self, originals, caplog):
-        downloader, api = self._make_downloader()
-        api.list_files.return_value = [{"id": 10, "name": "fixture.json"}]
-        api.get_file_translation.return_value = [
-            pt_string("same", original="Unrelated", translation="Wrong", stage=5),
-            pt_string("plain", translation="Ordinary translation", stage=3),
-        ]
-        protected = [
-            TranslationEntry("same", "same", original, "Before", 1, "INFO:NAM1", requires_original_match=True)
-            for original in originals
-        ]
-        collection = make_collection(*protected, make_entry("plain"))
-
-        result = downloader.download_to_collection(1, collection)
-
-        assert result.skipped_original_match == 1
-        assert result.merged == 1 and result.total_strings == 2
-        assert result.skipped_no_match == 0
-        assert collection.get("plain").translation == "Ordinary translation"
-        assert all(collection.get(entry.identity).translation == "Before" for entry in protected)
-        assert all(collection.get(entry.identity).stage == 1 for entry in protected)
-        assert "require original matching" in caplog.text
-
-    def _make_downloader(self) -> tuple[ParaTranzDownloader, MagicMock]:
-        downloader = ParaTranzDownloader(make_config())
-        mock_api = MagicMock()
-        downloader._api = mock_api
-        return downloader, mock_api
-
-    # ── 正常合并已翻译词条 ──────────────────────────────────────
-
-    def test_download_merges_translated_strings(self):
-        """stage >= 1 且有译文的词条应合并到本地集合。"""
-        downloader, mock_api = self._make_downloader()
-        mock_api.list_files.return_value = [{"id": 10, "name": "人名.json"}]
-        mock_api.get_file_translation.return_value = [
-            pt_string("key:001|1~NPC_:FULL", translation="奥里", stage=1),
-            pt_string("key:002|1~NPC_:FULL", translation="盗贼", stage=3),
-        ]
-
-        collection = make_collection(
-            make_entry("key:001|1~NPC_:FULL", original="Auri"),
-            make_entry("key:002|1~NPC_:FULL", original="Bandit"),
-        )
-        identities = {entry.key: entry.identity for entry in collection}
-
-        result = downloader.download_to_collection(1, collection)
-
-        assert result.merged == 2
-        assert result.skipped_low_stage == 0
-        assert result.skipped_no_match == 0
-        assert collection.get("key:001|1~NPC_:FULL").translation == "奥里"
-        assert collection.get("key:002|1~NPC_:FULL").translation == "盗贼"
-        assert collection.get("key:002|1~NPC_:FULL").stage == 3
-        assert collection.get("key:001|1~NPC_:FULL").identity == identities["key:001|1~NPC_:FULL"]
-        assert collection.get("key:001|1~NPC_:FULL").revision.value == 1
-
-    # ── 跳过未翻译词条 ──────────────────────────────────────────
-
-    def test_download_skips_untranslated(self):
-        """stage=0 的词条不应合并。"""
-        downloader, mock_api = self._make_downloader()
-        mock_api.list_files.return_value = [{"id": 10, "name": "人名.json"}]
-        mock_api.get_file_translation.return_value = [
-            pt_string("key:001|1~NPC_:FULL", translation="", stage=0),
-        ]
-
-        collection = make_collection(make_entry("key:001|1~NPC_:FULL"))
-        result = downloader.download_to_collection(1, collection)
-
-        assert result.merged == 0
-        assert result.skipped_low_stage == 1
-        assert collection.get("key:001|1~NPC_:FULL").translation == ""
-
-    # ── 跳过译文为空的词条 ──────────────────────────────────────
-
-    def test_download_skips_empty_translation(self):
-        """stage >= 1 但译文为空字符串时也应跳过。"""
-        downloader, mock_api = self._make_downloader()
-        mock_api.list_files.return_value = [{"id": 10, "name": "人名.json"}]
-        mock_api.get_file_translation.return_value = [
-            pt_string("key:001|1~NPC_:FULL", translation="", stage=1),
-        ]
-
-        collection = make_collection(make_entry("key:001|1~NPC_:FULL"))
-        result = downloader.download_to_collection(1, collection)
-
-        assert result.merged == 0
-        assert result.skipped_low_stage == 1
-
-    # ── 跳过本地不存在的 key ────────────────────────────────────
-
-    def test_download_skips_no_match(self):
-        """ParaTranz 返回的 key 在本地集合不存在时跳过。"""
-        downloader, mock_api = self._make_downloader()
-        mock_api.list_files.return_value = [{"id": 10, "name": "人名.json"}]
-        mock_api.get_file_translation.return_value = [
-            pt_string("key:999|1~NPC_:FULL", translation="某人", stage=1),
-        ]
-
-        collection = make_collection(make_entry("key:001|1~NPC_:FULL"))
-        result = downloader.download_to_collection(1, collection)
-
-        assert result.merged == 0
-        assert result.skipped_no_match == 1
-
-    # ── 单文件下载失败不影响其他文件 ────────────────────────────
-
-    def test_download_continues_on_file_error(self):
-        """一个文件 get_file_translation 失败时跳过，继续处理其余文件。"""
-        downloader, mock_api = self._make_downloader()
-        mock_api.list_files.return_value = [
-            {"id": 10, "name": "人名.json"},
-            {"id": 11, "name": "物品.json"},
-        ]
-        mock_api.get_file_translation.side_effect = [
-            RuntimeError("timeout"),
-            [pt_string("key:001|1~NPC_:FULL", translation="奥里", stage=1)],
-        ]
-
-        collection = make_collection(make_entry("key:001|1~NPC_:FULL"))
-        result = downloader.download_to_collection(1, collection)
-
-        assert result.merged == 1
-        assert collection.get("key:001|1~NPC_:FULL").translation == "奥里"
-        assert result.downloaded_files == 1
-        assert [(failure.file_id, failure.file_name, failure.message) for failure in result.failed_files] == [
-            (10, "人名.json", "timeout")
-        ]
-
-    @pytest.mark.parametrize("response", [RuntimeError("timeout"), None, {"error": "invalid response"}])
-    def test_download_reports_failed_files_without_mutating_collection(self, response):
-        downloader, api = self._make_downloader()
-        api.list_files.return_value = [{"id": 10, "name": "人名.json"}]
-        if isinstance(response, RuntimeError):
-            api.get_file_translation.side_effect = response
-        else:
-            api.get_file_translation.return_value = response
-        collection = make_collection(make_entry("entry", translation="Keep", stage=3))
-
-        result = downloader.download_to_collection(1, collection)
-
-        assert result.merged == result.downloaded_files == 0
-        assert [(failure.file_id, failure.file_name) for failure in result.failed_files] == [(10, "人名.json")]
-        assert result.failed_files[0].message
-        assert collection.get("entry").translation == "Keep"
-
-    def test_download_reports_selected_file_removed_from_remote(self):
-        downloader, api = self._make_downloader()
-        api.list_files.return_value = [{"id": 11, "name": "Other.json"}]
-
-        result = downloader.download_to_collection(1, make_collection(), file_ids=[10])
-
-        assert result.downloaded_files == 0
-        assert result.failed_files[0].file_id == 10
-        assert "刷新文件列表" in result.failed_files[0].message
-        api.get_file_translation.assert_not_called()
-
-    @pytest.mark.parametrize("strings", [[], [pt_string("unknown", translation="Other")], [pt_string("entry")]])
-    def test_valid_download_with_no_merge_is_not_a_file_failure(self, strings):
-        downloader, api = self._make_downloader()
-        api.list_files.return_value = [{"id": 10, "name": "人名.json"}]
-        api.get_file_translation.return_value = strings
-
-        result = downloader.download_to_collection(1, make_collection(make_entry("entry")))
-
-        assert result.merged == 0
-        assert result.downloaded_files == 1
-        assert result.failed_files == []
-
-    # ── min_stage 过滤 ──────────────────────────────────────────
-
-    def test_download_min_stage_filter(self):
-        """min_stage=3 时，只合并 stage >= 3 的词条。"""
-        downloader, mock_api = self._make_downloader()
-        mock_api.list_files.return_value = [{"id": 10, "name": "人名.json"}]
-        mock_api.get_file_translation.return_value = [
-            pt_string("key:001|1~NPC_:FULL", translation="已翻译", stage=1),
-            pt_string("key:002|1~NPC_:FULL", translation="已检查", stage=3),
-        ]
-
-        collection = make_collection(
-            make_entry("key:001|1~NPC_:FULL"),
-            make_entry("key:002|1~NPC_:FULL"),
-        )
-        result = downloader.download_to_collection(1, collection, min_stage=3)
-
-        assert result.merged == 1
-        assert result.skipped_low_stage == 1
-        assert collection.get("key:001|1~NPC_:FULL").translation == ""  # 未合并
-        assert collection.get("key:002|1~NPC_:FULL").translation == "已检查"
-
-    # ── 多文件累计统计 ──────────────────────────────────────────
-
-    def test_download_accumulates_across_files(self):
-        """多个文件的合并结果应累加到同一个 DownloadResult。"""
-        downloader, mock_api = self._make_downloader()
-        mock_api.list_files.return_value = [
-            {"id": 10, "name": "人名.json"},
-            {"id": 11, "name": "物品.json"},
-        ]
-        mock_api.get_file_translation.side_effect = [
-            [pt_string("key:001|1~NPC_:FULL", translation="奥里", stage=1)],
-            [pt_string("key:002|1~WEAP:FULL", translation="奥里之弓", stage=1)],
-        ]
-
-        collection = make_collection(
-            make_entry("key:001|1~NPC_:FULL"),
-            make_entry("key:002|1~WEAP:FULL"),
-        )
-        result = downloader.download_to_collection(1, collection)
-
-        assert result.merged == 2
-        assert result.total_strings == 2
-
-    # ── 进度回调 ────────────────────────────────────────────────
-
-    def test_download_progress_callback(self):
-        """进度回调应为每个文件调用一次，最后一次为"完成"。"""
-        downloader, mock_api = self._make_downloader()
-        mock_api.list_files.return_value = [{"id": 10, "name": "人名.json"}]
-        mock_api.get_file_translation.return_value = []
-        calls = []
-
-        downloader.download_to_collection(
+        uploader.upload_collection_as_single(
+            make_collection(make_entry("entry")),
             1,
-            make_collection(),
-            progress_callback=lambda cur, tot, name: calls.append((cur, tot, name)),
+            "plugin.json",
+            progress_callback=lambda current, total, name: calls.append((current, total, name)),
         )
 
-        assert any(name == "完成" for _, _, name in calls)
+        assert calls[0][:2] == (0, 1)
+        assert calls[-1] == (1, 1, "完成")
 
-    # ── list_files 失败应抛出 RuntimeError ──────────────────────
+    def test_single_upload_raises_when_list_files_fails(self):
+        uploader, api = self._make_uploader()
+        failure = RuntimeError("network error")
+        api.list_files.side_effect = failure
 
-    def test_download_raises_when_list_files_fails(self):
-        downloader, mock_api = self._make_downloader()
-        mock_api.list_files.side_effect = RuntimeError("network error")
+        with pytest.raises(RuntimeError, match="获取项目文件列表失败") as error:
+            uploader.upload_collection_as_single(make_collection(make_entry("entry")), 1, "plugin.json")
 
-        with pytest.raises(RuntimeError, match="获取项目文件列表失败"):
-            downloader.download_to_collection(1, make_collection())
+        assert error.value.__cause__ is failure
+        api.upload_file.assert_not_called()
 
 
 # ─────────────────────────────────────────────────────────────

@@ -1,3 +1,24 @@
+"""ParaTranz file operations (official OpenAPI 0.5.7, checked 2026-10-25).
+
+Source: https://paratranz.cn/api-docs?format=json
+
+Use file endpoints for uploads, rather than creating/updating individual strings:
+* POST /files creates a file; a path/name collision is rejected.
+* POST /files/{id} updates source content only. incremental=False (API default)
+  DELETES missing strings; pass incremental=True to retain them. skip=False lets
+  the server return hashMatched for unchanged content. It is not a concurrency lock.
+* POST /files/{id}/translation matches existing keys, accepts translation/stage,
+  never creates strings, and ignores submitted original/context. force=False
+  protects human translations and skips empty/identity/redundant translations.
+  Import requires administrator permission; 423 means the file is busy.
+* GET /files/{id}/translation returns ALL strings, without pagination; its legacy
+  name below is retained for callers. No upload needs a per-string readback.
+
+Treat hashMatched/unchanged as successful no-ops, empty as no imported content.
+File IDs are resolved from the current complete path, not persisted string IDs.
+Do not blindly retry a POST after a timeout: it may already have been applied.
+"""
+
 from pathlib import Path
 from urllib.parse import quote
 
@@ -25,9 +46,9 @@ def _make_file_field(field_name: str, filename: str, data: bytes) -> RequestFiel
 
 
 class ParatranzFilesAPI(ParatranzClient):
-    def list_files(self, project_id: int):
-        """获取文件列表"""
-        return self._request("GET", f"/projects/{project_id}/files")
+    def list_files(self, project_id: int, *, cancellation=None):
+        """获取文件列表；一次建立完整路径到当前 ID 的任务内索引。"""
+        return self._request("GET", f"/projects/{project_id}/files", cancellation=cancellation)
 
     def list_files_with_path(self, project_id: int) -> dict[str, int]:
         """
@@ -93,7 +114,7 @@ class ParatranzFilesAPI(ParatranzClient):
                 result.append(f)
         return result
 
-    def upload_file(self, project_id: int, filepath: str, path: str | None = None):
+    def upload_file(self, project_id: int, filepath: str, path: str | None = None, *, cancellation=None):
         """
         上传文件（创建新文件）
 
@@ -103,13 +124,17 @@ class ParatranzFilesAPI(ParatranzClient):
             path: 文件在项目中的目录路径，如 "path/to/"（可选）
         """
         p = Path(filepath)
-        fields: list[RequestField] = [_make_file_field("file", p.name, p.read_bytes())]
+        return self.upload_file_bytes(project_id, p.name, p.read_bytes(), path=path, cancellation=cancellation)
+
+    def upload_file_bytes(self, project_id, filename, content, *, path=None, cancellation=None):
+        """创建真实文件；响应为 {file, revision}，不是直接返回 file 对象。"""
+        fields: list[RequestField] = [_make_file_field("file", filename, content)]
         if path is not None:
             rf = RequestField(name="path", data=path)
             rf.make_multipart()
             fields.append(rf)
         body, ct = encode_multipart_formdata(fields)
-        return self._request_multipart("POST", f"/projects/{project_id}/files", body, ct)
+        return self._request_multipart("POST", f"/projects/{project_id}/files", body, ct, cancellation=cancellation)
 
     def get_file_info(self, project_id: int, file_id: int):
         """获取文件信息"""
@@ -127,7 +152,9 @@ class ParatranzFilesAPI(ParatranzClient):
         """
         return self._request("PUT", f"/projects/{project_id}/files/{file_id}", json=data)
 
-    def reupload_file(self, project_id: int, file_id: int, filepath: str):
+    def reupload_file(
+        self, project_id: int, file_id: int, filepath: str, *, incremental=False, skip=False, cancellation=None
+    ):
         """
         重新上传文件（更新原文，不改动译文）
 
@@ -135,19 +162,41 @@ class ParatranzFilesAPI(ParatranzClient):
             project_id: 项目 ID
             file_id: 文件 ID
             filepath: 本地文件路径，格式需与创建时一致（也可上传 JSON，文件名加 .json）
+            incremental: True 保留上传内容中缺失的词条；False 会删除缺失词条（官方默认）。
+            skip: True 跳过服务端哈希检查；通常应保持 False。
         """
         p = Path(filepath)
-        fields = [_make_file_field("file", p.name, p.read_bytes())]
+        return self.update_file_bytes(
+            project_id,
+            file_id,
+            p.name,
+            p.read_bytes(),
+            incremental=incremental,
+            skip=skip,
+            cancellation=cancellation,
+        )
+
+    def update_file_bytes(
+        self, project_id, file_id, filename, content, *, incremental=True, skip=False, cancellation=None
+    ):
+        """更新原文，不改译文；应用上传默认增量，避免隐式删除。"""
+        fields = [_make_file_field("file", filename, content)]
+        for name, value in (("incremental", incremental), ("skip", skip)):
+            field = RequestField(name=name, data=str(value).lower())
+            field.make_multipart()
+            fields.append(field)
         body, ct = encode_multipart_formdata(fields)
-        return self._request_multipart("POST", f"/projects/{project_id}/files/{file_id}", body, ct)
+        return self._request_multipart(
+            "POST", f"/projects/{project_id}/files/{file_id}", body, ct, cancellation=cancellation
+        )
 
     def delete_file(self, project_id: int, file_id: int):
         """删除文件"""
         return self._request("DELETE", f"/projects/{project_id}/files/{file_id}")
 
-    def get_file_translation(self, project_id: int, file_id: int):
-        """获取文件翻译数据（返回 JSON 原始数据）"""
-        return self._request("GET", f"/projects/{project_id}/files/{file_id}/translation")
+    def get_file_translation(self, project_id: int, file_id: int, *, cancellation=None):
+        """一次获取全部词条（原文、译文和状态，不分页）；需项目成员权限。"""
+        return self._request("GET", f"/projects/{project_id}/files/{file_id}/translation", cancellation=cancellation)
 
     def update_file_translation(
         self,
@@ -157,6 +206,7 @@ class ParatranzFilesAPI(ParatranzClient):
         force: bool = False,
         *,
         cancellation=None,
+        skip: bool = False,
     ):
         """
         更新文件翻译（仅更新译文，不改动原文）
@@ -166,6 +216,7 @@ class ParatranzFilesAPI(ParatranzClient):
             file_id: 文件 ID
             filepath: 本地文件路径（格式同上传时）
             force: 是否强制覆盖，默认 False（仅覆盖未人工编辑过的词条）
+            skip: 跳过内容哈希检查，默认 False。按 key 匹配，不新增词条，不更新原文/上下文。
         """
         p = Path(filepath)
         endpoint = f"/projects/{project_id}/files/{file_id}/translation"
@@ -173,7 +224,7 @@ class ParatranzFilesAPI(ParatranzClient):
         # 使用 requests 的标准 multipart 方式
         with open(filepath, "rb") as f:
             files = {"file": (p.name, f, "application/json")}
-            data = {"force": str(force).lower()}
+            data = {"force": str(force).lower(), "skip": str(skip).lower()}
             return self._request(
                 "POST",
                 endpoint,
@@ -182,3 +233,18 @@ class ParatranzFilesAPI(ParatranzClient):
                 cancellation=cancellation,
                 expected_type=dict,
             )
+
+    def import_translations(self, project_id, file_id, filename, items, *, force=False, skip=False, cancellation=None):
+        """整批导入 key/translation/stage；无需 entry_id、原文或上下文。
+
+        filename 必须带扩展名。force=False 使用服务端人工译文保护；
+        hashMatched/unchanged 是正常无变更结果，empty 表示未解析到词条。
+        不发送自造 hash，避免与服务端最近导入记录产生错误去重。
+        """
+        return self._request(
+            "POST",
+            f"/projects/{project_id}/files/{file_id}/translation",
+            json={"filename": filename, "items": list(items), "force": force, "skip": skip},
+            cancellation=cancellation,
+            expected_type=dict,
+        )

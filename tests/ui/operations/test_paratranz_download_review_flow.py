@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests.conftest import make_test_collection
+from tests.ui.operations.current_download_support import patch_current_download_gateway
 from transbridge.application.ports.paratranz import ParaTranzEntry
 from transbridge.application.tasks import CallbackThreadBackend, JobState, OwnerRef, TaskRuntime
 from transbridge.paratranz.service import ParaTranzService
@@ -28,6 +29,7 @@ def review_case(monkeypatch):
     ]
     context = SimpleNamespace(
         collection=collection,
+        esp_path="source.esp",
         uses_authoritative_projection=False,
         active_version_identity=("project", "variant"),
         active_project_id="project",
@@ -51,6 +53,7 @@ def review_case(monkeypatch):
         close=lambda: closed.append(True),
     )
     monkeypatch.setattr(ParaTranzService, "from_config", classmethod(lambda _cls, _config: service))
+    gateway = patch_current_download_gateway(monkeypatch, service)
     receipts = {}
     feature = next(
         item
@@ -78,6 +81,7 @@ def review_case(monkeypatch):
         untouched=untouched,
         receipts=receipts,
         closed=closed,
+        gateway=gateway,
     )
 
 
@@ -118,7 +122,7 @@ def test_partial_download_then_explicit_candidate_updates_only_the_selected_entr
     assert dict(preflight.estimated_impact)["deferred"] == 0
     _execute(case, draft, preflight)
     updated = case.context.collection.get(case.conflict.id)
-    assert updated.translation == "候选乙" and updated.external_refs[0].opaque_id == 9
+    assert updated.translation == "候选乙" and not updated.external_refs
     assert case.context.collection.get(case.untouched.id) == case.untouched
     assert len(case.closed) == 2
 
@@ -136,19 +140,29 @@ def test_keep_local_is_a_real_decision_and_changes_confirmation_digest(review_ca
     case.feature.discard_draft(draft)
 
 
-def test_remote_change_clears_stale_choice_and_requires_new_preflight(review_case):
+def test_remote_changes_do_not_discard_reviewed_snapshot_but_next_window_reads_new_content(review_case):
     case = review_case
     original, preview = _check(case)
     row = preview.sync_review[0]
     choices = {row.row_id: row.candidates[0].candidate_id}
     case.remote[1] = replace(case.remote[1], translation="选择后发生变化")
-    draft, preflight = _check(case, choices)
-    assert not preflight.ready
-    assert any("选择已清除" in item.reason for item in preflight.checks)
-    assert preflight.sync_review and all(not item.decision for item in preflight.sync_review)
-    assert case.context.collection.get(case.conflict.id) == case.conflict
+    fields = [
+        (field.field_id, field.value) for field in original.editable_fields if field.field_id != "download_decisions"
+    ]
+    fields.append(("download_decisions", json.dumps(choices)))
+    draft = case.feature.edit_draft(original, tuple(fields))
+    preflight = case.feature.mapper.preflight(draft)
+    assert preflight.ready
+    assert preflight.sync_review[0].decision == row.candidates[0].candidate_id
+    assert {item.translation for item in preflight.sync_review[0].candidates} == {"候选甲", "候选乙"}
+    assert case.gateway.reads == [("inventory", 42), ("translation", 42, 11)]
+    fresh, fresh_check = _check(case)
+    assert "选择后发生变化" in {item.translation for item in fresh_check.sync_review[0].candidates}
+    assert len(case.gateway.reads) == 4
+    _execute(case, draft, preflight)
+    assert case.context.collection.get(case.conflict.id).translation == "候选甲"
     case.feature.discard_draft(original)
-    case.feature.discard_draft(draft)
+    case.feature.discard_draft(fresh)
 
 
 def test_switching_local_project_discards_choices_even_with_identical_remote_and_entries(review_case):
@@ -169,7 +183,7 @@ def test_switching_local_project_discards_choices_even_with_identical_remote_and
     case.feature.discard_draft(draft)
 
 
-def test_review_projection_disables_a_candidate_linked_to_another_local_entry(review_case):
+def test_review_ignores_historical_candidate_linked_to_another_local_entry(review_case):
     from transbridge.application.io.identity import ExternalEntryRef
     from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
@@ -179,18 +193,45 @@ def test_review_projection_disables_a_candidate_linked_to_another_local_entry(re
     draft, checked = _check(case)
     row = next(item for item in checked.sync_review if item.key == case.conflict.key)
     occupied = next(item for item in row.candidates if "#8" in item.label)
-    assert not occupied.selectable and occupied.disabled_reason
+    assert occupied.selectable and not occupied.disabled_reason
     case.feature.discard_draft(draft)
 
 
-def test_manual_download_preserves_original_qualified_identity_in_legacy_collection(review_case):
+def test_historical_ids_cannot_redirect_this_download_or_persist_as_new_bindings(review_case):
+    from transbridge.application.io.identity import ExternalEntryRef
+    from transbridge.converter.translation_entry_collection import TranslationEntryCollection
+
+    case = review_case
+    stale_first = replace(case.first, external_refs=(ExternalEntryRef("paratranz", "project:42", 8),))
+    stale_owner = replace(case.untouched, external_refs=(ExternalEntryRef("paratranz", "project:42", 7),))
+    case.context.collection = TranslationEntryCollection([stale_first, case.conflict, stale_owner])
+
+    draft, checked = _check(case)
+
+    assert checked.ready
+    assert dict(checked.estimated_impact)["update_local"] == 1
+    assert len(checked.sync_review) == 1
+    assert all(candidate.selectable for candidate in checked.sync_review[0].candidates)
+    _execute(case, draft, checked)
+    first = case.context.collection.get(case.first.identity)
+    untouched = case.context.collection.get(case.untouched.identity)
+    assert first.translation == "已确定的更新" and not first.external_refs
+    assert untouched.translation == case.untouched.translation and not untouched.external_refs
+
+
+@pytest.mark.parametrize("qualified_identity", [False, True])
+def test_manual_download_preserves_source_identity_without_authoritative_projection(review_case, qualified_identity):
     from transbridge.application.io.identity import EntryKey
     from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 
     case = review_case
     qualified = replace(
         case.conflict,
-        entry_key=EntryKey(case.conflict.identity.namespace, case.conflict.key, case.conflict.original),
+        entry_key=EntryKey(
+            case.conflict.identity.namespace,
+            case.conflict.key,
+            case.conflict.original if qualified_identity else None,
+        ),
     )
     case.context.collection = TranslationEntryCollection([case.first, qualified, case.untouched])
     case.remote[1:] = [
@@ -207,9 +248,10 @@ def test_manual_download_preserves_original_qualified_identity_in_legacy_collect
     assert updated.identity == qualified.identity
     assert updated.original == qualified.original
     assert updated.context == qualified.context
-    assert updated.translation == "候选乙" and updated.external_refs[0].opaque_id == 9
+    assert updated.translation == "候选乙" and not updated.external_refs
     unchanged, unchanged_check = _check(case)
     assert dict(unchanged_check.estimated_impact)["update_local"] == 0
-    assert not unchanged_check.sync_review
+    assert len(unchanged_check.sync_review) == 1
+    assert not unchanged_check.sync_review[0].decision
     case.feature.discard_draft(old)
     case.feature.discard_draft(unchanged)

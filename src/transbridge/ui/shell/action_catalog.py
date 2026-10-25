@@ -130,6 +130,8 @@ class ActionCatalog:
         self._by_id: Mapping[IntentId, ActionDescriptor] = MappingProxyType(by_id)
 
     def get(self, intent_id: IntentId) -> ActionDescriptor:
+        if intent_id is IntentId.SYNC_DOWNLOAD_BATCH and intent_id not in self._by_id:
+            intent_id = IntentId.SYNC_DOWNLOAD
         return self._by_id[intent_id]
 
     def all(self) -> tuple[ActionDescriptor, ...]:
@@ -258,15 +260,10 @@ DEFAULT_ACTION_CATALOG = ActionCatalog((
     ),
     ActionDescriptor(
         IntentId.SYNC_DOWNLOAD,
-        "从 ParaTranz 下载并合并…",
+        "从paratranz上同步",
         ActionSection.SYNC_PUBLISH,
         danger=DangerLevel.CAUTION,
-    ),
-    ActionDescriptor(
-        IntentId.SYNC_DOWNLOAD_BATCH,
-        "批量下载并合并…",
-        ActionSection.SYNC_PUBLISH,
-        danger=DangerLevel.CAUTION,
+        aliases=("下载更新", "下载", "批量下载", "下载合并", "下载并合并", "ParaTranz"),
     ),
     ActionDescriptor(
         IntentId.PUBLISH_WRITE,

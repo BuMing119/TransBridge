@@ -1,14 +1,17 @@
+"""Export a plugin with EET translations to the shared categorized JSON layout."""
 
-"""
-插件+EET转JSON脚本
-1. 从插件文件创建翻译项
-2. 通过EET XML更新翻译
-3. 导出为JSON文件
-"""
+from __future__ import annotations
 
+import argparse
+from collections.abc import Sequence
 from pathlib import Path
-from src.transbridge.converter.translation_entry_collection import TranslationEntryCollection
-from src.transbridge.converter.translation_entry_collection_export import export_to_categorized_json_files
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from transbridge.converter.translation_entry_collection import TranslationEntryCollection  # noqa: E402
+from transbridge.converter.translation_entry_collection_export import export_to_categorized_json_files  # noqa: E402
+from transbridge.parser.plugin_parser import PluginParser  # noqa: E402
 
 
 def plugin_eet_to_json(
@@ -18,67 +21,41 @@ def plugin_eet_to_json(
     *,
     skip_empty: bool = True,
     indent: int = 2,
-    ensure_ascii: bool = False
+    ensure_ascii: bool = False,
 ) -> None:
-    """
-    从插件文件创建翻译项，通过EET更新翻译，最后导出为JSON
+    """Load a plugin, apply EET translations, and write beneath ``json_path``.
 
-    Args:
-        plugin_path: 插件文件路径(.esp/.esm)
-        eet_xml_path: EET XML文件路径
-        json_path: 输出的JSON文件路径
-        skip_empty: 是否跳过空字符串(默认为True)
-        indent: JSON缩进空格数
-        ensure_ascii: 是否确保ASCII编码（False可保留中文等非ASCII字符）
+    ``json_path`` keeps its existing public parameter name and denotes an output
+    directory, including the ``任务/`` subdirectory for dialogue files.
     """
-    # 步骤1: 从插件文件创建翻译项集合
-    print(f"正在从插件文件创建翻译项: {plugin_path}")
-    collection = TranslationEntryCollection.from_plugin(
-        plugin_path,
-        skip_empty=skip_empty,
-        overwrite=True
+    print(f"正在从插件文件创建词条: {plugin_path}")
+    collection = TranslationEntryCollection(
+        PluginParser().parse_plugin(Path(plugin_path), skip_empty=skip_empty, raise_on_error=True)
     )
-    print(f"成功创建 {len(collection)} 个翻译项")
-
-    # 步骤2: 使用EET XML更新翻译
-    print(f"正在使用EET XML更新翻译: {eet_xml_path}")
+    print(f"正在使用 EET XML 更新译文: {eet_xml_path}")
     updated_count = collection.update_from_eet_xml(eet_xml_path)
-    print(f"成功更新 {updated_count} 个翻译项")
-
-    # 步骤3: 导出为JSON文件
-    # print(f"正在导出到JSON文件: {json_path}")
-    # collection.to_json_file(
-    #     json_path,
-    #     ensure_ascii=ensure_ascii,
-    #     indent=indent
-    # )
-
-    export_to_categorized_json_files(
-        collection,
-        json_path,
-        ensure_ascii=ensure_ascii,
-        indent=indent
-    )
-    print(f"成功导出 {len(collection)} 个翻译项到JSON文件")
+    export_to_categorized_json_files(collection, json_path, ensure_ascii=ensure_ascii, indent=indent)
+    print(f"已更新 {updated_count} 条译文，导出 {len(collection)} 条词条到: {json_path}")
 
 
-def main():
-    """命令行入口"""
-    # 默认路径
-    default_plugin_path = Path(r"D:\MyProgram\buming1170\mods\Interesting NPCs SE (3DNPC)\3DNPC.esp")
-    default_eet_xml_path = Path(r"C:\Users\admin\Desktop\3DNPC\3DNPC_B675CB1D.xml")
-    default_json_path = Path(r"C:\Users\admin\Desktop\3DNPC\划分")
-
-    # 使用默认路径执行转换
+def main(argv: Sequence[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="从插件读取词条，应用 EET XML 译文，再导出分类 ParaTranz JSON。")
+    parser.add_argument("plugin_path", type=Path, help="输入插件路径（.esp/.esm/.esl）")
+    parser.add_argument("eet_xml_path", type=Path, help="EET XML 译文路径")
+    parser.add_argument("output_dir", type=Path, help="分类 JSON 输出目录")
+    parser.add_argument("--include-empty", action="store_true", help="保留原文为空的插件词条")
+    parser.add_argument("--ensure-ascii", action="store_true", help="将非 ASCII 字符写为转义序列")
+    parser.add_argument("--indent", type=int, default=2, help="JSON 缩进空格数（默认 2）")
+    args = parser.parse_args(argv)
     plugin_eet_to_json(
-        plugin_path=default_plugin_path,
-        eet_xml_path=default_eet_xml_path,
-        json_path=default_json_path,
-        skip_empty=True,
-        indent=2,
-        ensure_ascii=False
+        args.plugin_path,
+        args.eet_xml_path,
+        args.output_dir,
+        skip_empty=not args.include_empty,
+        indent=args.indent,
+        ensure_ascii=args.ensure_ascii,
     )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

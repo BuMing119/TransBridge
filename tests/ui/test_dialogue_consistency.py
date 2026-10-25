@@ -151,7 +151,9 @@ def test_real_authority_conflict_rejects_all_selected_entries(authority):
     assert context.project_commands.replace_entry_states(
         {entries[1].identity: ("external", 1)}, context.runtime_context
     ).is_success
-    assert "工程中的词条已变化" in commit_drafts(context, drafts, projection=store)
+    assert "草稿已保留" in commit_drafts(context, drafts, projection=store)
+    assert all(draft.text == "统一" for draft in drafts)
+    assert context.collection.get(entries[1].identity).translation == "external"
     assert aggregate.snapshot().revision == 1
     states = {entry.entry_key: entry for entry in aggregate.snapshot().entries}
     assert states[entries[0].identity].translation == ""

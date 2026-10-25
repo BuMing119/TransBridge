@@ -102,6 +102,16 @@ class LocalizedStringsAdapter:
 
     def parse(self, request: ParseRequest) -> ParseResult:
         if _cancelled(request.cancellation):
+            return self.parse_bytes(request, b"")
+        try:
+            content = _local_path(request.source.uri).read_bytes()
+        except (OSError, ValueError) as exc:
+            return _failed_parse(request, self, exc)
+        return self.parse_bytes(request, content)
+
+    def parse_bytes(self, request: ParseRequest, content: bytes) -> ParseResult:
+        """Parse immutable source bytes without reopening the source descriptor URI."""
+        if _cancelled(request.cancellation):
             return ParseResult(
                 OperationOutcome.CANCELLED,
                 self.format_id,
@@ -113,17 +123,9 @@ class LocalizedStringsAdapter:
                 capability=self.capabilities(),
             )
         try:
-            content = _local_path(request.source.uri).read_bytes()
             records = _parse_records(content, self._length_prefixed)
-        except (OSError, ValueError) as exc:
-            return _failed_parse(
-                request,
-                self,
-                Diagnostic(
-                    "LOCALIZED_STRINGS_PARSE_FAILED",
-                    f"The localized strings source is invalid ({type(exc).__name__}).",
-                ),
-            )
+        except ValueError as exc:
+            return _failed_parse(request, self, exc)
 
         duplicate_diagnostics = _duplicate_id_diagnostics(records)
         if duplicate_diagnostics:
@@ -277,6 +279,9 @@ class LocalizedStringsAdapter:
                 )
                 if decision.publish_text is None:
                     raise ValueError("blocking stage decision passed validation")
+                if decision.preserve_source:
+                    chunks.append((record.string_id, record.raw_chunk))
+                    continue
                 if decision.stage is not None and decision.stage.value != 0:
                     lossy_stages.add(decision.stage.value)
                 chunk = record.raw_chunk
@@ -488,13 +493,18 @@ def _stage_diagnostic(entry: object, index: int, policy: StagePolicyPort) -> Dia
 def _failed_parse(
     request: ParseRequest,
     adapter: LocalizedStringsAdapter,
-    diagnostic: Diagnostic,
+    error: OSError | ValueError,
 ) -> ParseResult:
     return ParseResult(
         OperationOutcome.FAILED,
         adapter.format_id,
         request.source,
-        diagnostics=(diagnostic,),
+        diagnostics=(
+            Diagnostic(
+                "LOCALIZED_STRINGS_PARSE_FAILED",
+                f"The localized strings source is invalid ({type(error).__name__}).",
+            ),
+        ),
         stats=ParseStats(failed=1),
         adapter_id=adapter.adapter_id,
         adapter_version=adapter.adapter_version,

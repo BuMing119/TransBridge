@@ -131,7 +131,7 @@ def test_real_fixture_modify_rebuild_preserves_id_order_encoding_and_unmodified_
         ("integrity.ilstrings", FormatId.ILSTRINGS),
     ],
 )
-def test_locked_empty_blocks_formal_write_without_artifact(
+def test_locked_empty_preserves_source_bytes_without_modifying_entry(
     tmp_path: Path,
     fixture: str,
     format_id: FormatId,
@@ -141,14 +141,13 @@ def test_locked_empty_blocks_formal_write_without_artifact(
     adapter = LocalizedStringsAdapter(format_id)
     parsed = adapter.parse(_parse_request(source, format_id))
     locked = replace(parsed.entries[0], translation="", stage=9)
-    target = tmp_path / f"blocked-{fixture}"
+    target = tmp_path / f"preserved-{fixture}"
 
     result = adapter.write(_write_request(target, format_id, parsed, (locked,)))
 
-    assert result.outcome is OperationOutcome.FAILED
-    assert result.diagnostics[0].code == "STAGE_LOCKED_TRANSLATION_REQUIRED"
-    assert dict(result.diagnostics[0].details)["string_id"] == locked.string_id
-    assert not target.exists()
+    assert result.outcome is OperationOutcome.COMPLETED, result.diagnostics
+    assert target.read_bytes() == source.read_bytes()
+    assert locked.translation == "" and locked.stage == 9
 
 
 def test_duplicate_string_id_is_failed_with_record_indices(tmp_path: Path) -> None:
@@ -270,7 +269,7 @@ def test_sse_snapshot_captures_and_rebuilds_all_loose_localized_variants(tmp_pat
         assert (tmp_path / "Strings" / f"localized_English{suffix}").read_bytes() == payload
 
 
-def test_fomod_write_back_uses_same_snapshot_rebuild_and_locked_gate(tmp_path: Path) -> None:
+def test_fomod_write_back_uses_same_snapshot_rebuild_and_locked_preservation(tmp_path: Path) -> None:
     plugin, originals = _localized_plugin_fixture(tmp_path)
     adapter = SsePluginAdapter()
     source = prepare_plugin_source(plugin)
@@ -298,8 +297,7 @@ def test_fomod_write_back_uses_same_snapshot_rebuild_and_locked_gate(tmp_path: P
     locked = replace(locked_entries[0], translation="", stage=9)
     locked_collection = TranslationEntryCollection((locked, *locked_entries[1:]))
     plugin_before = plugin.read_bytes()
-    with pytest.raises(RuntimeError, match="STAGE_LOCKED_TRANSLATION_REQUIRED"):
-        FomodPipeline()._write_back(plugin, locked_collection, source=locked_source)
+    FomodPipeline()._write_back(plugin, locked_collection, source=locked_source)
     assert plugin.read_bytes() == plugin_before
     for suffix, payload in originals.items():
         assert (tmp_path / "Strings" / f"localized_English{suffix}").read_bytes() == payload

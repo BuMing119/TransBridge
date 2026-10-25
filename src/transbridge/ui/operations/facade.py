@@ -98,10 +98,10 @@ RuntimeContextFactory = Callable[[object], RequestContext]
 class OperationPlanFacade:
     """Real upload/download/write/FOMOD intent facade.
 
-    Construction requires all four feature adapters, so a production window
-    cannot silently fall back to an empty optional interface.  Every begin
-    method opens the same dialog, executes feature-owned preflight, consumes
-    one request-bound confirmation and only then calls the feature task port.
+    Construction requires all four feature adapters. Current-project upload
+    and download use their feature windows; other operations and explicit
+    custom plans use shared preflight and request-bound confirmation before
+    calling the feature task port.
     """
 
     def __init__(
@@ -113,10 +113,17 @@ class OperationPlanFacade:
         dialog_factory=OperationPlanDialog,
         dialog_factories: Mapping[OperationKind, Callable[[object, object, object | None], object]] | None = None,
         execution_result_reader: Callable[[JobRef, OwnerRef], OperationResult | None] | None = None,
+        upload_launcher: Callable | None = None,
+        download_launcher: Callable | None = None,
     ) -> None:
         self._runtime = runtime
         self._runtime_context = runtime_context
         self._execution_result_reader = execution_result_reader
+        self._upload_launcher = upload_launcher
+        self._upload_windows = {}
+        self._download_launcher = download_launcher
+        self._download_windows = {}
+        self._pending_results: dict[str, Callable[[], None]] = {}
         self._features = {feature.kind: feature for feature in features}
         required = frozenset(OperationKind)
         registered = frozenset(self._features)
@@ -146,12 +153,30 @@ class OperationPlanFacade:
 
     @property
     def active_plan_count(self) -> int:
-        return self._coordinator.active_window_count
+        return self._coordinator.active_window_count + len(self._upload_windows) + len(self._download_windows)
 
     def begin_upload(self, context, *, batch: bool = False, **values):
+        if self._upload_launcher is not None and not values:
+            window = self._upload_launcher(context, batch=batch)
+            if window is not None:
+                key = id(window)
+                self._upload_windows[key] = window
+                window.destroyed.connect(lambda: self._upload_windows.pop(key, None))
+            return window
         return self._coordinator.begin_upload(context, batch=batch, **values)
 
     def begin_download(self, context, *, batch: bool = False, **values):
+        if (
+            self._download_launcher is not None
+            and not values
+            and bool(getattr(context, "uses_authoritative_projection", False))
+        ):
+            window = self._download_launcher(context)
+            if window is not None:
+                key = id(window)
+                self._download_windows[key] = window
+                window.destroyed.connect(lambda: self._download_windows.pop(key, None))
+            return window
         return self._coordinator.begin_download(context, batch=batch, **values)
 
     def begin_write(self, context, *, batch: bool = False, **values):
@@ -162,6 +187,14 @@ class OperationPlanFacade:
 
     def supports(self, kind: OperationKind | str, context: object, *, batch: bool = False) -> bool:
         """Return whether this facade can preserve parity for the requested scope."""
+        if OperationKind(kind) is OperationKind.UPLOAD and self._upload_launcher is not None:
+            return True
+        if (
+            OperationKind(kind) is OperationKind.DOWNLOAD
+            and self._download_launcher is not None
+            and bool(getattr(context, "uses_authoritative_projection", False))
+        ):
+            return True
         feature = self._features.get(OperationKind(kind))
         return feature is not None and feature.supports(context, batch)
 
@@ -218,25 +251,50 @@ class OperationPlanFacade:
                 self._owners.pop(expired, None)
         return scope_key
 
+    def notify_result_ready(self, run_id: str) -> None:
+        """Deliver a finalized receipt after a final mutation has won cancellation."""
+        with self._lock:
+            refresh = self._pending_results.pop(run_id, None)
+        if refresh is not None:
+            refresh()
+
     def _observe_execution(self, ref, owner_id: str, dialog) -> None:
         with self._lock:
             owner = self._owners[owner_id]
+        run_id = ref.run_id or ref.job_id
+        metadata = dict(self._runtime.tasks.get(ref, owner).specification.metadata)
+        await_receipt = metadata.get("await_result_receipt") == "true"
+        closed = False
 
         def on_change(activity) -> None:
-            if activity.run_id == (ref.run_id or ref.job_id):
+            with self._lock:
+                if closed or activity.run_id != run_id:
+                    return
                 result_signal = getattr(dialog, "execution_result_changed", None)
                 if result_signal is not None:
                     result = None
                     if activity.is_terminal and self._execution_result_reader is not None:
                         result = self._execution_result_reader(ref, owner)
+                        if await_receipt and result is None:
+                            self._pending_results[run_id] = lambda: on_change(activity)
+                            return
+                    self._pending_results.pop(run_id, None)
                     result_signal.emit(activity, result)
                 else:
                     dialog.execution_changed.emit(activity)
 
         binding = TaskProjectionBinding(self._runtime.tasks, owner, on_change)
-        dialog.execution_finished.connect(binding.close)
-        dialog.finished.connect(binding.close)
-        dialog.destroyed.connect(binding.close)
+
+        def close_binding(*_args):
+            nonlocal closed
+            with self._lock:
+                closed = True
+                self._pending_results.pop(run_id, None)
+            binding.close()
+
+        dialog.execution_finished.connect(close_binding)
+        dialog.finished.connect(close_binding)
+        dialog.destroyed.connect(close_binding)
         binding.start()
 
 

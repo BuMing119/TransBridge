@@ -11,9 +11,10 @@ from transbridge.application.sync.download_review import DownloadDecision, Downl
 from transbridge.application.sync.upload_review import UploadDecision, UploadDecisionStaleError
 from transbridge.paratranz.service import ParaTranzService
 from transbridge.paratranz.sync_diagnostics import log_sync_diagnostics
-from transbridge.paratranz.sync_snapshot import ParaTranzRemoteSnapshotAdapter
 
+from .download_session import DownloadSession
 from .mappers import DomainPreflightResult
+from .ordinary_upload_scope import ordinary_upload_adapter
 from .preflight_view import PreflightCheckState, PreflightCheckStatus
 from .production_support import SyncRequest, blocked, sync_request_target_is_current
 from .sync_review_projection import download_impact, review_rows, upload_impact
@@ -28,6 +29,7 @@ class PreparedSync:
     plan: object
     service: object
     project_name: str
+    snapshots: object
 
     def close(self) -> None:
         close = getattr(self.service, "close", None)
@@ -50,17 +52,27 @@ def prepare_sync_request(value: object) -> tuple[PreparedSync | None, DomainPref
     service = None
     try:
         service = ParaTranzService.from_config(value.ui_context.config)
-        if value.target_account_user_id is None:
-            raise PermissionError("当前 ParaTranz 账号尚未验证")
-        mine = service.list_projects(uid=value.target_account_user_id)
-        remote_project = next((item for item in mine if item.project_id == value.project_id), None)
-        if remote_project is None:
-            target_name = value.target_project_name or "所选 ParaTranz 项目"
-            raise PermissionError(f"当前账号无权访问“{target_name}”")
+        if value.operation is SyncOperation.DOWNLOAD:
+            session = value.download_session or DownloadSession()
+            snapshots, project_name = session.load(service, value)
+        else:
+            if value.target_account_user_id is None:
+                raise PermissionError("当前 ParaTranz 账号尚未验证")
+            mine = service.list_projects(uid=value.target_account_user_id)
+            remote_project = next((item for item in mine if item.project_id == value.project_id), None)
+            if remote_project is None:
+                target_name = value.target_project_name or "所选 ParaTranz 项目"
+                raise PermissionError(f"当前账号无权访问“{target_name}”")
+            project_name = remote_project.name
+            service = ordinary_upload_adapter(service, value)
+            snapshots = service
         planning = ParaTranzSyncPlanningUseCase(
-            ParaTranzRemoteSnapshotAdapter(service),
+            snapshots,
             planner=SyncPlanner(
-                local_state_only=bool(getattr(value.ui_context, "uses_authoritative_projection", False))
+                local_state_only=value.operation is SyncOperation.DOWNLOAD
+                or bool(getattr(value.ui_context, "uses_authoritative_projection", False)),
+                preserve_local_source=True,
+                upload_path_scoped=value.operation is SyncOperation.UPLOAD,
             ),
         )
         plan_request = CreateSyncPlanRequest(
@@ -113,12 +125,12 @@ def prepare_sync_request(value: object) -> tuple[PreparedSync | None, DomainPref
             value.operation.value,
             plan.plan_id,
         )
-    prepared = PreparedSync(value, planning, plan, service, remote_project.name)
+    prepared = PreparedSync(value, planning, plan, service, project_name, snapshots)
     download = value.operation is SyncOperation.DOWNLOAD
     unresolved = plan.conflicts
     check = PreflightCheckState(
         "PARATRANZ_PLAN_FRESH",
-        "云端内容与更新计划",
+        "本轮下载内容与更新计划" if download else "云端内容与更新计划",
         PreflightCheckStatus.BLOCKED
         if stale
         else PreflightCheckStatus.WARNING
@@ -134,13 +146,13 @@ def prepare_sync_request(value: object) -> tuple[PreparedSync | None, DomainPref
         else "",
     )
     checks = (check,)
-    if download and bool(getattr(value.ui_context, "uses_authoritative_projection", False)):
+    if download:
         checks += (
             PreflightCheckState(
                 "PARATRANZ_LOCAL_SOURCE_SCOPE",
                 "当前来源的译文更新",
                 PreflightCheckStatus.WARNING,
-                "只更新当前来源中的译文和翻译状态。原文和上下文保持原样；云端多出的内容不会下载。",
+                "只更新工程中的译文和翻译状态，原文和上下文保持原样；不会写回 ESM/ESP，也不会加入云端多出的内容。",
             ),
         )
     if not download:

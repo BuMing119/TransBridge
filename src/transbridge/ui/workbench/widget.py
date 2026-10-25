@@ -222,20 +222,29 @@ class WorkbenchWidget(QWidget):
 
             from transbridge.ui.tools.ai_translator.ai_translator_window import AITranslatorWindow
 
-            win = AITranslatorWindow.open_for_translation(
-                self._ctx,
-                self._step2,
-                parent=self,
-                task_runtime=task_runtime,
-                theme_view=self._theme_view,
-                settings_requested=settings_requested,
-                show_window=recovery is None,
-                terminology_profile_controller=self._terminology_profile_controller,
-                terminology_workbench_requested=lambda: self.intent_requested.emit(
-                    IntentId.TERMINOLOGY_WORKBENCH.value
-                ),
-            )
+            try:
+                win = AITranslatorWindow.open_for_translation(
+                    self._ctx,
+                    self._step2,
+                    parent=self,
+                    task_runtime=task_runtime,
+                    theme_view=self._theme_view,
+                    settings_requested=settings_requested,
+                    show_window=recovery is None,
+                    terminology_profile_controller=self._terminology_profile_controller,
+                    terminology_workbench_requested=lambda: self.intent_requested.emit(
+                        IntentId.TERMINOLOGY_WORKBENCH.value
+                    ),
+                )
+            except Exception:
+                if recovery is not None:
+                    self.ai_tasks.release_recovery_request(recovery[0]["task_id"])
+                    self._pending_ai_recovery = None
+                raise
             if win is None:
+                if recovery is not None:
+                    self.ai_tasks.release_recovery_request(recovery[0]["task_id"])
+                    self._pending_ai_recovery = None
                 return
 
             if isinstance(win, AITranslatorWindow):

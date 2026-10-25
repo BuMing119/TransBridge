@@ -1,7 +1,7 @@
 """
 步骤3：操作面板。
-三个独立操作卡片：上传 ParaTranz、下载合并、写回 ESP。
-批量操作已集成到各卡片中。
+三个独立操作卡片：上传 ParaTranz、从paratranz上同步、写回 ESP。
+上传和写回提供批量按钮；同步在统一窗口中选择插件。
 """
 
 from PyQt6.QtWidgets import (
@@ -140,9 +140,15 @@ class Step3OpsWidget(QWidget):
         project = bound_paratranz_project(self._ctx)
         has_project = project is not None
 
-        # 目标未绑定时仍允许进入计划；计划内会要求填写本次临时项目 ID。
+        # 未绑定时仍允许进入操作窗口，再选择本次云端项目。
         self._card_upload.btn.setEnabled(has_collection)
-        self._card_download.btn.setEnabled(has_collection)
+        self._card_download.btn.setEnabled(
+            has_collection
+            or bool(
+                getattr(self._ctx, "uses_authoritative_projection", False)
+                and getattr(self._ctx, "active_project_id", None)
+            )
+        )
         self._card_write.btn.setEnabled(has_collection)
 
         # 更新批量按钮可见性
@@ -154,7 +160,6 @@ class Step3OpsWidget(QWidget):
         slots = self._ctx.slots
         if len(slots) > 1:
             self._card_upload.batch_btn.setEnabled(has_project)
-            self._card_download.batch_btn.setEnabled(has_project)
             self._card_write.batch_btn.setEnabled(True)
 
         self._overlay.hide()

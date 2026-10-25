@@ -11,21 +11,24 @@ File format (all integers little-endian):
   <string data>  — Count null-terminated strings (.strings)
                    or Count length-prefixed strings (.dlstrings/.ilstrings)
 
-String IDs are globally unique within a plugin across all three file types,
-so all three files can safely be merged into a single lookup dict.
+Numeric string IDs can overlap across the three file types. Typed lookups
+retain that scope; the merged dictionary remains a legacy read facade.
 """
 
 import logging
 from pathlib import Path
 import struct
 
-from sse_bsa import bsa_archive
+from transbridge.parser.localized_resources import (
+    BASE_GAME_PLUGINS,
+    LocalizedResource,
+    capture_plugin_resources,
+    capture_strings_directory,
+)
 
 log = logging.getLogger("SkyrimStringsFile")
 
-# Subrecord types that go into each file type.
-# Used to determine which file to query when multiple files are loaded.
-# In practice IDs don't overlap, so this is just documentation.
+# Canonical writer routing, also reused by typed lookups when numeric IDs overlap.
 _STRINGS_SUBTYPES: frozenset[str] = frozenset({"FULL", "SHRT"})
 _DLSTRINGS_SUBTYPES: frozenset[str] = frozenset({
     "DESC",
@@ -181,8 +184,28 @@ class PluginStringsLookup:
             text = lookup.get(0x0001A3A5)
     """
 
-    def __init__(self, merged: dict[int, str]) -> None:
+    _BASE_GAME_PLUGINS = BASE_GAME_PLUGINS
+
+    def __init__(
+        self,
+        merged: dict[int, str],
+        resources: tuple[LocalizedResource, ...] = (),
+        *,
+        tables: dict[str, dict[int, str]] | None = None,
+    ) -> None:
         self._merged = merged
+        self._resources = tuple(resources)
+        self._tables = {} if tables is None else tables
+        seen, duplicates = set(), set()
+        for table in self._tables.values():
+            duplicates.update(seen.intersection(table))
+            seen.update(table)
+        self._variant_duplicates = frozenset(duplicates)
+
+    @property
+    def resources(self) -> tuple[LocalizedResource, ...]:
+        """The exact original templates used to build this lookup, in type order."""
+        return self._resources
 
     @classmethod
     def from_strings_dir(
@@ -204,26 +227,8 @@ class PluginStringsLookup:
         Returns:
             PluginStringsLookup if at least one strings file was found, otherwise None.
         """
-        prefix = f"{plugin_stem}_{language.capitalize()}"
-        merged: dict[int, str] = {}
-
-        for ext in (".strings", ".dlstrings", ".ilstrings"):
-            candidate = strings_dir / f"{prefix}{ext}"
-            if not candidate.exists():
-                continue
-            try:
-                sf = SkyrimStringsFile.from_file(candidate)
-                merged.update(sf._strings)
-                log.info(f"Loaded {len(sf)} strings from {candidate.name}")
-            except Exception as e:
-                log.warning(f"Failed to load {candidate}: {e}")
-
-        if not merged:
-            log.debug(f"No strings files found in {strings_dir} for {plugin_stem} (language={language})")
-            return None
-
-        log.info(f"PluginStringsLookup ready: {len(merged)} total strings from {strings_dir}")
-        return cls(merged)
+        resources = capture_strings_directory(strings_dir, plugin_stem, language)
+        return cls._from_resources(resources)
 
     @classmethod
     def from_plugin(
@@ -244,100 +249,31 @@ class PluginStringsLookup:
             PluginStringsLookup if at least one strings file was found,
             otherwise None.
         """
-        merged = cls._load_loose(plugin_path, language)
+        resources = capture_plugin_resources(plugin_path, language, base_game_plugins=cls._BASE_GAME_PLUGINS)
+        return cls._from_resources(resources)
 
+    @classmethod
+    def _from_resources(cls, resources: tuple[LocalizedResource, ...]) -> "PluginStringsLookup | None":
+        merged: dict[int, str] = {}
+        tables = {}
+        for resource in resources:
+            source = (
+                str(resource.source_path)
+                if resource.member_path is None
+                else f"{resource.source_path}/{resource.member_path}"
+            )
+            try:
+                strings = SkyrimStringsFile.from_bytes(resource.content, resource.suffix, source=source)
+            except Exception as exc:
+                log.warning("Failed to parse localized resource %s: %s", source, exc)
+                raise ValueError(f"无法解析本地化资源 {source}：{exc}") from exc
+            merged.update(strings._strings)
+            tables[resource.suffix] = strings._strings
+            log.info("Loaded %s strings from %s", len(strings), source)
         if not merged:
-            merged = cls._load_from_bsa(plugin_path, language)
-
-        if not merged:
-            log.debug(f"No strings files found for {plugin_path.name} (language={language})")
             return None
-
-        log.info(f"PluginStringsLookup ready: {len(merged)} total strings for {plugin_path.name}")
-        return cls(merged)
-
-    @classmethod
-    def _load_loose(cls, plugin_path: Path, language: str) -> dict[int, str]:
-        """Try to load strings from loose files in Data/Strings/."""
-        strings_dir = plugin_path.parent / "Strings"
-        prefix = f"{plugin_path.stem}_{language.capitalize()}"
-        merged: dict[int, str] = {}
-
-        for ext in (".strings", ".dlstrings", ".ilstrings"):
-            candidate = strings_dir / f"{prefix}{ext}"
-            if not candidate.exists():
-                continue
-            try:
-                sf = SkyrimStringsFile.from_file(candidate)
-                merged.update(sf._strings)
-                log.info(f"Loaded {len(sf)} strings from loose file {candidate.name}")
-            except Exception as e:
-                log.warning(f"Failed to load {candidate}: {e}")
-
-        return merged
-
-    # Base-game plugins that store their strings in Skyrim - Interface.bsa
-    # Note: _ResourcePack.esl (AE) stores strings in its own _ResourcePack.bsa
-    _BASE_GAME_PLUGINS: frozenset[str] = frozenset({
-        "skyrim",
-        "update",
-        "hearthfires",
-        "dragonborn",
-        "dawnguard",
-    })
-
-    @classmethod
-    def _load_from_bsa(cls, plugin_path: Path, language: str) -> dict[int, str]:
-        """
-        Search BSA files for matching strings files.
-
-        Lookup rules:
-          - Base-game plugins (_ResourcePack.esl, Skyrim.esm, Update.esm,
-            HearthFires.esm, Dragonborn.esm, Dawnguard.esm) → Skyrim - Interface.bsa
-          - All other plugins → <PluginStem>.bsa
-        """
-        data_dir = plugin_path.parent
-        stem = plugin_path.stem.lower()
-        lang = language.lower()
-
-        glob_pattern = f"strings/{stem}_{lang}.*"
-
-        if stem in cls._BASE_GAME_PLUGINS:
-            bsa_candidates = [data_dir / "Skyrim - Interface.bsa"]
-        else:
-            bsa_candidates = [data_dir / f"{plugin_path.stem}.bsa"]
-
-        merged: dict[int, str] = {}
-
-        for bsa_path in bsa_candidates:
-            if not bsa_path.exists():
-                log.debug(f"BSA not found: {bsa_path.name}")
-                continue
-            try:
-                archive = bsa_archive.BSAArchive(bsa_path)
-            except Exception as e:
-                log.debug(f"Skipping {bsa_path.name}: {e}")
-                continue
-
-            matches = [
-                f for f in archive.glob(glob_pattern) if f.lower().endswith((".strings", ".dlstrings", ".ilstrings"))
-            ]
-            if not matches:
-                log.debug(f"No matching strings in {bsa_path.name} for pattern {glob_pattern!r}")
-                continue
-
-            log.info(f"Found strings in BSA: {bsa_path.name} → {matches}")
-
-            for fpath in matches:
-                ext = "." + fpath.rsplit(".", 1)[-1]
-                try:
-                    raw = archive.get_file_stream(fpath).read()
-                    sf = SkyrimStringsFile.from_bytes(raw, ext, source=f"{bsa_path.name}/{fpath}")
-                    merged.update(sf._strings)
-                except Exception as e:
-                    log.warning(f"Failed to extract/parse {fpath} from {bsa_path.name}: {e}")
-
-        return merged
+        log.info("PluginStringsLookup ready: %s total strings", len(merged))
+        return cls(merged, resources, tables=tables)
 
     def get(self, string_id: int) -> str | None:
         """
@@ -350,6 +286,19 @@ class PluginStringsLookup:
             The string text, or None if the ID is not present in any file.
         """
         return self._merged.get(string_id)
+
+    def get_for_type(self, string_id: int, subrecord_type: str | None) -> str | None:
+        """Resolve variant collisions through the existing subrecord routing policy.
+
+        Unique IDs and injected legacy dictionaries retain ``get`` behavior.
+        A shared ID without a type or its corresponding table is unresolved.
+        """
+        if string_id not in self._variant_duplicates:
+            return self.get(string_id)
+        if not subrecord_type:
+            return None
+        suffix = PluginStringsWriter._ext_for(subrecord_type)
+        return self._tables.get(suffix, {}).get(string_id)
 
     def __len__(self) -> int:
         return len(self._merged)

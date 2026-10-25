@@ -162,7 +162,7 @@ def test_tm_hidden_and_locked_never_auto_apply(stage):
     result = TranslationMemoryQueryService(manager).query(_query(stage=stage))
     assert result.selected is None
     assert not result.candidates
-    assert result.blocks_publish is (stage == 9)
+    assert not result.blocks_publish
 
 
 def test_legacy_locale_unknown_is_read_only_not_auto_enabled():
@@ -222,7 +222,7 @@ def _entry(key: EntryKey, *, stage: int = 0, translation: str = "") -> Translati
     )
 
 
-def test_candidate_planner_ai_only_handles_unresolved_and_locked_empty_blocks():
+def test_candidate_planner_ai_only_handles_unresolved_and_preserves_locked_empty():
     editable = _entry(_identity("editable"))
     hidden = _entry(_identity("hidden"), stage=-1)
     locked = _entry(_identity("locked"), stage=9)
@@ -242,7 +242,7 @@ def test_candidate_planner_ai_only_handles_unresolved_and_locked_empty_blocks():
 
     assert ai.keys == [editable.identity]
     assert plan.selected[0].origin is CandidateOrigin.AI
-    assert plan.blockers[0].code == "STAGE_LOCKED_TRANSLATION_REQUIRED"
+    assert plan.blockers == ()
 
 
 def test_translation_stage_turns_candidate_blocker_into_failed_stage(tmp_path: Path):

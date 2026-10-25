@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
+import pytest
+
 from transbridge.application.contracts import OperationOutcome, RequestContext
 from transbridge.application.io.identity import EntryKey, SourceNamespace
 from transbridge.application.projects import (
@@ -596,6 +598,40 @@ def test_save_uses_immutable_revision_capture_and_keeps_later_mutation_dirty() -
     assert harness.service.active.variant is active.variant
     assert harness.service.active.persisted_variant_revision == 2
     assert harness.service.active.dirty
+
+
+@pytest.mark.parametrize(
+    "expected",
+    [
+        None,
+        ("other", 0, "variant", 2),
+        ("project", 1, "variant", 2),
+        ("project", 0, "other", 2),
+        ("project", 0, "variant", 1),
+    ],
+)
+def test_guarded_save_rejects_changed_identity_or_revision_before_writing(expected) -> None:
+    project, variant = _refs("project", "variant")
+    active = _active(project, variant, revision=2, persisted_revision=1)
+    harness = _harness(active, {})
+
+    result = harness.service.save_active(_context(), expected_active_signature=expected)
+
+    assert not result.is_success
+    assert result.diagnostics[0].code == "ACTIVE_SAVE_TARGET_CHANGED"
+    assert harness.store.calls == []
+    assert harness.service.active is active and active.dirty
+
+
+def test_guarded_save_persists_the_confirmed_target() -> None:
+    project, variant = _refs("project", "variant")
+    harness = _harness(_active(project, variant, revision=2, persisted_revision=1), {})
+
+    result = harness.service.save_active(_context(), expected_active_signature=("project", 0, "variant", 2))
+
+    assert result.is_success
+    assert harness.store.saved_revisions == [2]
+    assert not harness.service.active.dirty
 
 
 def test_project_only_dirty_state_saves_without_requiring_an_active_variant() -> None:

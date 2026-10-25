@@ -21,6 +21,7 @@ from transbridge.application.projects import (
     ProjectSourceMutationService,
     ProjectSourcePreparationPort,
 )
+from transbridge.application.projects.durable_variant import DurableVariantCommitService
 from transbridge.application.projects.snapshots import ProjectSnapshotCommands
 from transbridge.application.projects.source_update import ProjectSourceUpdateService
 from transbridge.application.sessions import GuiSessionCommandFacade, SessionLifecycleService
@@ -183,6 +184,8 @@ def build_persistence_v2_services(
     )
     project_remote_bindings = ProjectRemoteBindingService(project_lifecycle)
     project_catalog = V2ProjectCatalog(resolved_root, adapter, projects)
+    from transbridge.application.projects.categorized_upload import ProjectCategorizedUploadService
+
     gui_project_commands = GuiProjectCommandFacade(
         project_lifecycle,
         identities,
@@ -193,6 +196,10 @@ def build_persistence_v2_services(
         id_factory=id_factory,
         provisioning=project_provisioning,
         source_mutations=project_source_mutations,
+        categorized_uploads=ProjectCategorizedUploadService(project_lifecycle, baselines, resolved_source_preparer),
+        durable_variant_commits=DurableVariantCommitService(
+            project_lifecycle, project_uow, projects=projects, variants=variants
+        ),
     )
     current_project_opener = CurrentProjectOpener(
         resolved_root,

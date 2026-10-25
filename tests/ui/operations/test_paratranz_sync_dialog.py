@@ -15,7 +15,14 @@ from PyQt6.QtWidgets import QApplication, QLineEdit, QPushButton
 import pytest
 
 from tests.ui.operations.test_operation_plan_coordinator_async import _DeferredWorker
-from transbridge.application.contracts import Diagnostic, OperationCounts, OperationResult, RequestContext
+from transbridge.application.contracts import (
+    Diagnostic,
+    DomainError,
+    ErrorCategory,
+    OperationCounts,
+    OperationResult,
+    RequestContext,
+)
 from transbridge.application.sync import SyncOperation
 from transbridge.application.tasks import CallbackThreadBackend, JobSpec, JobState, OwnerRef, TaskRuntime
 from transbridge.ui.operations.facade import OperationFeatureAdapter, OperationPlanFacade
@@ -86,7 +93,7 @@ def _plan() -> OperationPlanViewState:
     )
 
 
-def test_dialog_uses_project_name_and_automatically_requests_preflight(qapp) -> None:
+def test_dialog_waits_for_explicit_comparison_after_project_and_mode_selection(qapp) -> None:
     context = SimpleNamespace(config=SimpleNamespace(config_revision=0), active_project_id="local")
     dialog = ParaTranzSyncDialog(_plan(), context)
     requested = []
@@ -97,13 +104,20 @@ def test_dialog_uses_project_name_and_automatically_requests_preflight(qapp) -> 
     assert dialog._target_name.text() == "天际中文翻译"
     assert "18668" not in dialog._target_name.text()
     assert not dialog.findChildren(QLineEdit)
-    assert dialog._confirm.text() == "下载并更新本地"
+    assert dialog._confirm.text() == "开始对照"
+    assert not requested
+    assert dialog._choose_project.isEnabled()
+    assert dialog._strategy_buttons["prefer_local"].isEnabled()
+    dialog._strategy_buttons["prefer_local"].click()
+    qapp.processEvents()
+    assert not requested
+    dialog._confirm.click()
     assert requested and requested[-1][0] == "session"
     assert requested[-1][1] == {
         "paratranz_project_id": "18668",
         "paratranz_project_name": "天际中文翻译",
         "set_as_default": "false",
-        "conflict_policy": "prefer_remote",
+        "conflict_policy": "prefer_local",
         "apply_remote_deletions": "false",
         "download_decisions": "{}",
     }
@@ -132,7 +146,9 @@ def test_dialog_renders_plain_language_impact_and_enables_one_primary_action(qap
 
     assert dialog._impact.text() == "更新 126  ·  新增 23  ·  保留 8,017"
     assert dialog._confirm.isEnabled()
-    assert dialog._status.text() == "已核对，可以更新本地翻译。"
+    assert dialog._confirm.text() == "更新工程译文"
+    assert dialog._status.text() == "已核对，可以更新工程译文；不会写回游戏文件。"
+    assert "不会写回 ESM/ESP" in dialog._scope.text()
     dialog.close()
 
 
@@ -165,11 +181,9 @@ def _ready(subject):
     subject.set_preflight_running(False)
 
 
-@pytest.mark.parametrize("phase", ["preflight", "execution"])
-def test_busy_dialog_shows_progress_and_blocks_all_controls_and_close(dialog, qapp, phase):
-    if phase == "execution":
-        _ready(dialog)
-        dialog.set_execution_running(True)
+def test_executing_dialog_shows_progress_and_blocks_all_controls_and_close(dialog, qapp):
+    _ready(dialog)
+    dialog.set_execution_running(True)
     before = dialog.edited_values()
     requested = []
     dialog.confirm_requested.connect(lambda *_args: requested.append("confirm"))
@@ -192,21 +206,26 @@ def test_busy_dialog_shows_progress_and_blocks_all_controls_and_close(dialog, qa
     assert requested == []
 
 
-def test_preflight_unlock_restores_field_permissions_and_change_locks_immediately(dialog, qapp):
+def test_changed_options_invalidate_confirmation_without_starting_network(dialog, qapp):
     _ready(dialog)
     assert not dialog._progress.isVisible()
     assert dialog._choose_project.isEnabled()
     assert dialog._apply_deletions.isEnabled()
     assert not dialog._set_default.isEnabled()
     assert dialog._cancel.isEnabled()
-    requested = []
+    requested, invalidated = [], []
+    dialog.plan_input_changed.connect(lambda: invalidated.append(True))
     dialog.preflight_requested.connect(lambda _session, fields: requested.append(dict(fields)))
     dialog._strategy_buttons["prefer_local"].click()
 
-    assert dialog._progress.isVisible()
-    assert not dialog._confirm.isEnabled()
-    assert not dialog._cancel.isEnabled()
+    assert not dialog._progress.isVisible()
+    assert dialog._confirm.isEnabled() and dialog._confirm.text() == "开始对照"
+    assert dialog._cancel.isEnabled()
+    assert dialog._preflight is None
+    assert invalidated == [True]
     qapp.processEvents()
+    assert requested == []
+    dialog._confirm.click()
     assert len(requested) == 1
     assert requested[0]["conflict_policy"] == "prefer_local"
 
@@ -230,13 +249,13 @@ def test_failed_preflight_unlocks_and_can_be_rechecked(dialog, blocked):
     assert dialog._cancel.isEnabled()
     assert dialog._choose_project.isEnabled()
     assert "连接超时" in dialog._status.text()
-    assert dialog._confirm.text() == "重新检查"
+    assert dialog._confirm.text() == "重新对照"
     requested = []
     dialog.preflight_requested.connect(lambda *_args: requested.append(True))
     dialog._confirm.click()
     assert requested == [True]
     assert dialog._progress.isVisible()
-    assert not dialog._cancel.isEnabled()
+    assert dialog._cancel.isEnabled()
 
 
 @pytest.fixture
@@ -325,7 +344,9 @@ def test_sync_tracks_background_task_and_unlocks_only_at_terminal_state(sync_cas
     begin = case.facade.begin_download if kind is OperationKind.DOWNLOAD else case.facade.begin_upload
     case.dialog = subject = begin(SimpleNamespace())
     qapp.processEvents()
-    assert not subject._cancel.isEnabled()
+    assert not case.workers
+    subject._confirm.click()
+    assert subject._cancel.isEnabled()
     case.workers[0].complete()
     assert subject._confirm.isEnabled()
     subject._confirm.click()
@@ -363,7 +384,7 @@ def test_sync_tracks_background_task_and_unlocks_only_at_terminal_state(sync_cas
     qapp.processEvents()
     assert subject._cancel.isEnabled()
     assert subject._choose_project.isEnabled()
-    assert subject._confirm.text() == "重新检查"
+    assert subject._confirm.text() == "重新对照"
     assert not case.tasks._subscriptions
     if terminal is JobState.COMPLETED:
         assert subject._progress.value() == 100
@@ -374,7 +395,7 @@ def test_sync_tracks_background_task_and_unlocks_only_at_terminal_state(sync_cas
 
     subject._confirm.click()
     assert len(case.submitted) == 1  # A consumed confirmation cannot run again.
-    assert not subject._cancel.isEnabled()
+    assert subject._cancel.isEnabled()
     case.workers[-1].complete()
     assert subject._confirm.isEnabled()
     subject._cancel.click()
@@ -387,6 +408,7 @@ def test_task_finishing_before_subscription_still_unlocks_the_dialog(sync_case, 
     case.complete_on_submit = True
     case.dialog = subject = case.facade.begin_download(SimpleNamespace())
     qapp.processEvents()
+    subject._confirm.click()
     case.workers[0].complete()
     subject._confirm.click()
     qapp.processEvents()
@@ -401,6 +423,7 @@ def test_submission_failure_rechecks_and_does_not_leave_the_dialog_locked(sync_c
     case.submit_error = ValueError("ParaTranz 内容已变化")
     case.dialog = subject = case.facade.begin_download(SimpleNamespace())
     qapp.processEvents()
+    subject._confirm.click()
     case.workers[0].complete()
     subject._confirm.click()
 
@@ -417,6 +440,7 @@ def test_parent_teardown_releases_subscription_without_cancelling_background_tas
     case = sync_case
     case.dialog = subject = case.facade.begin_download(SimpleNamespace())
     qapp.processEvents()
+    subject._confirm.click()
     case.workers[0].complete()
     subject._confirm.click()
     assert case.tasks._subscriptions
@@ -453,6 +477,7 @@ def test_partial_receipt_is_delivered_with_counts_and_never_shown_as_full_succes
     begin = case.facade.begin_download if kind is OperationKind.DOWNLOAD else case.facade.begin_upload
     case.dialog = subject = begin(SimpleNamespace())
     qapp.processEvents()
+    subject._confirm.click()
     case.workers[0].complete()
     subject._confirm.click()
     if cancelled:
@@ -466,7 +491,7 @@ def test_partial_receipt_is_delivered_with_counts_and_never_shown_as_full_succes
     assert "予以保留" in subject._status.text()
     assert "REMOTE_TIMEOUT" in subject._status.toolTip()
     assert not subject._progress.isVisible()
-    assert subject._cancel.isEnabled() and subject._confirm.text() == "重新检查"
+    assert subject._cancel.isEnabled() and subject._confirm.text() == "重新对照"
     subject._confirm.click()
     assert len(case.submitted) == 1
 
@@ -476,6 +501,7 @@ def test_missing_receipt_is_unknown_instead_of_full_success(sync_case, qapp):
     case.result = None
     case.dialog = subject = case.facade.begin_download(SimpleNamespace())
     qapp.processEvents()
+    subject._confirm.click()
     case.workers[0].complete()
     subject._confirm.click()
     case.queued[0]()
@@ -510,6 +536,7 @@ def test_review_guidance_only_suggests_choices_that_are_available(operation, ava
         original="Original",
         translation="译文",
         context="对话",
+        stage=5,
         external_ref=SimpleNamespace(opaque_id=7),
     )
     candidates = (
@@ -521,6 +548,7 @@ def test_review_guidance_only_suggests_choices_that_are_available(operation, ava
                 entry=entry,
                 selectable=availability == "available",
                 reason="remote_already_linked",
+                source_count=1,
             ),
         )
     )
@@ -535,10 +563,12 @@ def test_review_guidance_only_suggests_choices_that_are_available(operation, ava
     plan = SimpleNamespace(operation=operation, download_review=(row,), upload_review=(row,))
     projected = review_rows(plan)[0]
 
-    assert not projected.preserves_local_source
+    assert projected.preserves_local_source
+    assert projected.stage == 5
     assert "候选" not in projected.reason and "关联" not in projected.reason
     if availability == "available":
-        assert "请对照原文和使用场景" in projected.reason
+        assert "请对照原文和补充说明" in projected.reason
+        assert projected.candidates[0].stage == 5
     else:
         assert "请选择" not in projected.reason and "选择你要" not in projected.reason
         assert ("先不上传" if operation is SyncOperation.UPLOAD else "先保留你的译文") in projected.reason
@@ -600,7 +630,7 @@ def test_sync_can_confirm_safe_updates_with_actionable_review_entry(dialog, kind
     _render_review(dialog)
     assert dialog._confirm.isEnabled()
     download = kind is OperationKind.DOWNLOAD
-    assert dialog._confirm.text() == ("更新可处理条目" if download else "上传可处理条目")
+    assert dialog._confirm.text() == ("更新可确定的工程译文" if download else "上传可确定的译文")
     assert dialog._review.isVisible() and dialog._review.isEnabled()
     assert dialog._review.text() == "确认 1 条翻译…"
     assert ("保留本地 3" if download else "保留云端 3") in dialog._impact.text()
@@ -730,6 +760,52 @@ def test_completed_sync_retains_actionable_review_and_reports_deferred_separatel
     assert dialog._confirm.isEnabled()
 
 
+@pytest.mark.parametrize("state", [JobState.COMPLETED, JobState.FAILED])
+def test_authoritative_download_reports_saved_only_after_success_and_keeps_retry(dialog, state):
+    dialog._context.uses_authoritative_projection = True
+    _ready(dialog)
+    dialog.set_execution_running(True)
+    activity = SimpleNamespace(is_terminal=True, state=state, run_id="run", diagnostic_refs=())
+    result = (
+        OperationResult.completed({}, counts=OperationCounts(succeeded=1))
+        if state is JobState.COMPLETED
+        else OperationResult.failed(
+            DomainError(ErrorCategory.EXTERNAL, "LOCAL_TRANSACTION_FAILED", "自动保存磁盘写入失败")
+        )
+    )
+    dialog.render_execution(activity, result)
+    if state is JobState.COMPLETED:
+        assert "已自动保存到当前本地版本" in dialog._status.text()
+    else:
+        assert "自动保存磁盘写入失败" in dialog._status.text()
+        assert "已自动保存" not in dialog._status.text()
+        assert dialog._confirm.isEnabled()
+        assert dialog._confirm.text() == "重新对照"
+        assert not dialog._execution_running
+
+
+def test_unchanged_authoritative_download_cannot_run_or_claim_automatic_save(dialog):
+    dialog._context.uses_authoritative_projection = True
+    requested = []
+    dialog.confirm_requested.connect(lambda *_args: requested.append(True))
+    dialog.render_preflight(
+        OperationPreflightResult(
+            OperationKind.DOWNLOAD,
+            dialog._plan.request_digest,
+            "remote:7",
+            (),
+            (),
+            object(),
+            (("update_local", 0), ("keep_local", 1)),
+        )
+    )
+    dialog.set_preflight_running(False)
+    assert not dialog._confirm.isEnabled()
+    dialog._confirm.click()
+    assert not requested
+    assert "已自动保存" not in dialog._status.text()
+
+
 def test_upload_blocking_check_still_disables_execution(dialog):
     plan = replace(dialog._plan, kind=OperationKind.UPLOAD)
     dialog.render_plan(plan)
@@ -746,7 +822,7 @@ def test_upload_blocking_check_still_disables_execution(dialog):
     )
     dialog.set_preflight_running(False)
     assert not dialog._check_ready
-    assert dialog._confirm.text() == "重新检查"
+    assert dialog._confirm.text() == "重新对照"
     assert not dialog._review.isVisible()
     assert "download_decisions" not in dict(dialog.edited_values())
 

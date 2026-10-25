@@ -50,7 +50,7 @@ def present_sync_preflight(result: OperationPreflightResult) -> SyncPreflightPre
         message, semantic = blocked[0], SemanticState.ERROR
     elif deferred:
         message = f"有 {deferred:,} 条翻译需要你确认，暂时保持{direction.retained_side}不变。" + (
-            f"可以先{direction.verb}其余翻译，再点击下方按钮逐条确认。"
+            f"可以先{direction.verb}其余翻译，再点击下方按钮处理待确认内容。"
             if actionable
             else "请点击下方按钮查看；不确定的翻译可以跳过。"
         )
@@ -68,7 +68,7 @@ def present_sync_preflight(result: OperationPreflightResult) -> SyncPreflightPre
     elif warnings:
         message, semantic = warnings[0], SemanticState.WARNING
     else:
-        message = "已核对，可以更新本地翻译。" if download else "已核对，可以上传译文。"
+        message = "已核对，可以更新工程译文；不会写回游戏文件。" if download else "已核对，可以上传译文。"
         semantic = SemanticState.SUCCESS
     return SyncPreflightPresentation(
         summary,

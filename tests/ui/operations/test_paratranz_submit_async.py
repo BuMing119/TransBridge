@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 from tests.conftest import make_test_collection
+from tests.ui.operations.current_download_support import patch_current_download_gateway
 from transbridge.application.contracts import OperationResult
 from transbridge.application.ports.paratranz import ParaTranzEntry
 from transbridge.application.tasks import CallbackThreadBackend, JobState, OwnerRef, TaskRuntime
@@ -45,11 +46,13 @@ class _Service:
         self.closed = True
 
 
-def test_download_confirmation_schedules_remote_revalidation_instead_of_blocking_caller(monkeypatch) -> None:
+def test_download_confirmation_reuses_one_complete_read_without_blocking_caller(monkeypatch) -> None:
     service = _Service()
     monkeypatch.setattr(ParaTranzService, "from_config", classmethod(lambda _cls, _config: service))
+    gateway = patch_current_download_gateway(monkeypatch, service)
     context = SimpleNamespace(
         collection=make_test_collection(3),
+        esp_path="source.esp",
         paratranz_binding={
             "project_id": 42,
             "project_name": "云端汉化项目",
@@ -94,7 +97,8 @@ def test_download_confirmation_schedules_remote_revalidation_instead_of_blocking
     assert tasks.get(ref, owner).state is JobState.RUNNING
 
     queued[0]()
-    assert service.remote_reads == 3
+    assert service.remote_reads == 1
+    assert gateway.reads == [("inventory", 42), ("translation", 42, 11)]
     assert tasks.get(ref, owner).state is JobState.COMPLETED
     assert service.closed
 
@@ -109,6 +113,7 @@ def test_set_default_refreshes_project_revision_before_local_download_commit(mon
 
     service = ChangedService()
     monkeypatch.setattr(ParaTranzService, "from_config", classmethod(lambda _cls, _config: service))
+    patch_current_download_gateway(monkeypatch, service)
     committed_revisions = []
     monkeypatch.setattr(
         "transbridge.ui.operations.paratranz_sync.replace_local_snapshots",
@@ -116,6 +121,7 @@ def test_set_default_refreshes_project_revision_before_local_download_commit(mon
     )
     context = SimpleNamespace(
         collection=make_test_collection(1),
+        esp_path="source.esp",
         paratranz_binding=None,
         project_revision=7,
         variant_revision=3,

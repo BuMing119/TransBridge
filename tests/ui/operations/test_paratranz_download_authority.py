@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests.conftest import make_test_collection
+from tests.ui.operations.current_download_support import patch_current_download_gateway
 from transbridge.application.contracts import RequestContext
 from transbridge.application.ports.paratranz import ParaTranzEntry
 from transbridge.application.tasks import CallbackThreadBackend, JobState, OwnerRef, TaskRuntime
@@ -29,7 +30,7 @@ from transbridge.ui.operations.paratranz_sync import build_paratranz_sync_featur
 from transbridge.ui.operations.plan_view import OperationKind
 
 
-@pytest.mark.parametrize("remote_only", [False, True], ids=["source-text-differs", "extra-remote-entries"])
+@pytest.mark.parametrize("remote_only", [False, True], ids=["source-context-differs", "extra-remote-entries"])
 @pytest.mark.parametrize("with_conflict", [False, True], ids=["unique", "partial-then-resolve"])
 def test_v2_download_updates_matching_translations_and_survives_reopen(
     tmp_path, monkeypatch, remote_only, with_conflict
@@ -68,6 +69,7 @@ def test_v2_download_updates_matching_translations_and_survives_reopen(
     assert services.gui_project_commands.switch_v2(project_ref, variant_ref, request_context).is_success
     context = SimpleNamespace(
         collection=collection,
+        esp_path="source.esp",
         uses_authoritative_projection=True,
         project_commands=services.gui_project_commands,
         runtime_context=request_context,
@@ -86,7 +88,7 @@ def test_v2_download_updates_matching_translations_and_survives_reopen(
         config=SimpleNamespace(token="configured", base_url="https://paratranz.cn", user_id=5, config_revision=1),
         current_user={"id": 5},
     )
-    remote = [ParaTranzEntry(7, first.key, "Remote original differs", "云端译文", "Remote context", 1)]
+    remote = [ParaTranzEntry(7, first.key, first.original, "云端译文", "Remote context", 1)]
     if remote_only:
         remote.append(ParaTranzEntry(8, "not-in-this-plugin", "Another plugin", "其他插件译文", "", 1))
     if with_conflict:
@@ -106,6 +108,7 @@ def test_v2_download_updates_matching_translations_and_survives_reopen(
         close=lambda: None,
     )
     monkeypatch.setattr(ParaTranzService, "from_config", classmethod(lambda _cls, _config: service))
+    gateway = patch_current_download_gateway(monkeypatch, service)
     receipts = {}
     feature = next(
         item
@@ -126,7 +129,9 @@ def test_v2_download_updates_matching_translations_and_survives_reopen(
         preflight = feature.mapper.preflight(draft)
         assert preflight.ready
         assert any(
-            check.check_id == "PARATRANZ_LOCAL_SOURCE_SCOPE" and "云端多出的内容不会下载" in check.reason
+            check.check_id == "PARATRANZ_LOCAL_SOURCE_SCOPE"
+            and "不会写回 ESM/ESP" in check.reason
+            and "不会加入云端多出的内容" in check.reason
             for check in preflight.checks
         )
         fields = {field.field_id: field for field in draft.editable_fields}
@@ -148,7 +153,8 @@ def test_v2_download_updates_matching_translations_and_survives_reopen(
         assert (downloaded.translation, downloaded.stage) == ("云端译文", 1)
         assert (downloaded.original, downloaded.context) == (first.original, first.context)
         assert context.collection.get(second.id).translation == second.translation
-        assert reads == [42, 42, 42]  # Existing preflight/authorization/execution reads only.
+        assert reads == [42]
+        assert gateway.reads == [("inventory", 42), ("translation", 42, 11)]
         if with_conflict:
             assert context.collection.get(second.id) == second
             row = preflight.sync_review[0]
@@ -182,9 +188,9 @@ def test_v2_download_updates_matching_translations_and_survives_reopen(
         states = {entry.entry_key: entry for entry in saved.entries}
         assert set(states) == {first.identity, second.identity}
         assert states[first.identity].translation == "云端译文"
-        assert states[first.identity].external_refs[0].opaque_id == 7
+        assert not states[first.identity].external_refs
         assert states[second.identity].translation == ("候选乙" if with_conflict else second.translation)
         if with_conflict:
-            assert states[second.identity].external_refs[0].opaque_id == 10
+            assert not states[second.identity].external_refs
     finally:
         reopened.close()

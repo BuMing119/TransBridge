@@ -16,6 +16,7 @@ from .paratranz_context_order import (
     format_ordered_context,
     parse_ordered_context,
 )
+from .paratranz_keys import ParaTranzKeyError, decode_key, encode_key
 
 PARATRANZ_SYSTEM = "paratranz"
 PARATRANZ_CORE_FIELDS = frozenset({"id", "key", "original", "translation", "stage", "context"})
@@ -245,9 +246,13 @@ def map_paratranz_record(
     extensions = tuple(
         (name, _json_clone(value)) for name, value in record.items() if name not in PARATRANZ_CORE_FIELDS
     )
+    try:
+        identity = decode_key(key, record["original"], namespace)
+    except ParaTranzKeyError as exc:
+        return None, _diagnostic("PARATRANZ_TRANSPORT_KEY_INVALID", str(exc), index, record)
     return (
         ParatranzEntry(
-            EntryKey(namespace, key),
+            identity,
             record["original"],
             translation,
             stage,
@@ -279,7 +284,7 @@ def paratranz_record_from_entry(entry: Any, *, preserve_extensions: bool = True)
     if len(references) > 1:
         raise ValueError("an entry cannot have more than one ParaTranz external reference")
 
-    record: dict[str, Any] = {"key": entry_key.local_key, "original": original}
+    record: dict[str, Any] = {"key": encode_key(entry_key, original), "original": original}
     if references:
         record["id"] = references[0].opaque_id
     record["translation"] = translation

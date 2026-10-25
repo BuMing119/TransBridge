@@ -22,6 +22,9 @@ class RecordingFiles:
         self.list_count += 1
         return [{"id": 41, "name": "all.json"}] if self.existing else []
 
+    def get_file_info(self, project_id, file_id):
+        return {"id": file_id, "name": "all.json"}
+
     def _record(self, operation, path, force=False):
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
         self.calls.append((operation, Path(path).name, payload, force))
@@ -81,8 +84,7 @@ def test_single_upload_uses_wire_mapping_for_each_existing_file_mode(mode, opera
     assert [call[0] for call in api.calls] == operations
     for operation, _, payload, actual_force in api.calls:
         assert [record["context"] for record in payload] == ["00000000|BOOK:FULL", "00000428|BOOK:FULL"]
-        assert payload[0]["id"] == 17
-        assert "id" not in payload[1]
+        assert all("id" not in record for record in payload)
         assert [record["key"] for record in payload] == ["key-0", "key-1"]
         assert all(set(record) <= {"key", "original", "translation", "stage", "context", "id"} for record in payload)
         if operation == "translation":

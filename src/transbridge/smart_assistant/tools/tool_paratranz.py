@@ -176,11 +176,13 @@ def _local_sync_snapshots(collection, project_id: int, entry_ids=None):
     return namespace, snapshots
 
 
-def _sync_planning_use_case(ctx, client):
+def _sync_planning_use_case(ctx, client, operation=SyncOperation.UPLOAD):
     injected = getattr(ctx, "paratranz_sync_planning", None)
     if injected is not None:
         return injected
-    return ParaTranzSyncPlanningUseCase(ParaTranzRemoteSnapshotAdapter(client))
+    return ParaTranzSyncPlanningUseCase(
+        ParaTranzRemoteSnapshotAdapter(client, decode_keys=operation is SyncOperation.DOWNLOAD)
+    )
 
 
 @_close_paratranz_clients
@@ -309,13 +311,14 @@ def _tool_plan_sync(args: dict, ctx, collection) -> ToolResult:
                 error_category="input",
                 error_code="SOURCE_NAMESPACE_MISMATCH",
             )
-        use_case = _sync_planning_use_case(ctx, client)
+        operation = SyncOperation(args.get("operation", "upload"))
+        use_case = _sync_planning_use_case(ctx, client, operation)
         plan = use_case.create_plan(
             CreateSyncPlanRequest(
                 project_id=project_id,
                 namespace=namespace,
                 local_entries=local_entries,
-                operation=SyncOperation(args.get("operation", "upload")),
+                operation=operation,
                 conflict_policy=ConflictPolicy(args.get("conflict_policy", "abort")),
                 remote_limit=int(args.get("remote_limit", 100_000)),
                 cancellation=_cancellation(ctx),

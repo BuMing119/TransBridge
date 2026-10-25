@@ -7,6 +7,7 @@ plans, writes remote data, or serializes translation bodies into diagnostics.
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import replace
 import hashlib
 import json
 import logging
@@ -98,13 +99,22 @@ def _unmatched(item: SyncPlanItem, row: DownloadReviewRow | None, operation: Syn
             **projected,
             "candidate_state": "detail_unavailable",
             "candidate_count": None,
+            "candidate_group_count": None,
             "selectable_candidate_count": None,
             "original_equal_count": None,
             "context_equal_count": None,
             "candidates": [],
         }
-    candidates = [_candidate(candidate, row.local, operation) for candidate in row.candidates]
-    selectable = sum(candidate.selectable for candidate in row.candidates)
+    candidates = [
+        {
+            **_candidate(replace(candidate, entry=entry, equivalent_entries=()), row.local, operation),
+            "choice_group": index,
+            "choice_group_size": candidate.source_count,
+        }
+        for index, candidate in enumerate(row.candidates, 1)
+        for entry in candidate.equivalent_entries or (candidate.entry,)
+    ]
+    selectable = sum(candidate.source_count for candidate in row.candidates if candidate.selectable)
     if not candidates:
         state = "no_candidates"
     elif not selectable:
@@ -115,6 +125,7 @@ def _unmatched(item: SyncPlanItem, row: DownloadReviewRow | None, operation: Syn
         **projected,
         "candidate_state": state,
         "candidate_count": len(candidates),
+        "candidate_group_count": len(row.candidates),
         "selectable_candidate_count": selectable,
         "original_equal_count": sum(candidate["original_equal"] for candidate in candidates),
         "context_equal_count": sum(candidate["context_equal"] for candidate in candidates),
@@ -128,6 +139,8 @@ def _local(entry: LocalEntrySnapshot) -> dict:
         "revision": entry.revision.value,
         "original_sha256": _digest(entry.original),
         "original_length": len(entry.original),
+        "translation_sha256": _digest(entry.translation),
+        "translation_length": len(entry.translation),
         **_context(entry.context),
         "context_order": entry.context_order,
         "stage": entry.stage,
@@ -144,6 +157,8 @@ def _candidate(candidate: DownloadCandidate, local: LocalEntrySnapshot, operatio
         "external_ref": _reference(remote_ref),
         "original_sha256": _digest(entry.original),
         "original_length": len(entry.original),
+        "translation_sha256": _digest(entry.translation),
+        "translation_length": len(entry.translation),
         **_context(entry.context),
         "context_order": entry.context_order,
         "stage": entry.stage,
@@ -152,6 +167,7 @@ def _candidate(candidate: DownloadCandidate, local: LocalEntrySnapshot, operatio
         "blocked_reason_code": candidate.reason,
         "blocked_reason": explain_sync_reason(candidate.reason, operation) if candidate.reason else "",
         "original_equal": local.original == entry.original,
+        "translation_equal": local.translation == entry.translation,
         "diagnostic_only": {
             "original_equal_after_strip": local.original.strip() == entry.original.strip(),
             "original_equal_after_newline_normalization": _normalize_newlines(local.original)

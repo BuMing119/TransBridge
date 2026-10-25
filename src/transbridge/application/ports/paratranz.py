@@ -80,6 +80,7 @@ class ParaTranzEntry:
     translation: str
     context: str
     stage: int
+    file_id: int | None = None
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> ParaTranzEntry:
@@ -98,7 +99,12 @@ class ParaTranzEntry:
         stage = value.get("stage", 0)
         if isinstance(stage, bool) or not isinstance(stage, int):
             raise ValueError("ParaTranz entry stage must be an integer")
-        return cls(remote_id, key, fields["original"], fields["translation"], fields["context"], stage)
+        file_id = value.get("fileId", value.get("file"))
+        if isinstance(file_id, Mapping):
+            file_id = file_id.get("id")
+        if file_id is not None and (isinstance(file_id, bool) or not isinstance(file_id, int) or file_id < 1):
+            raise ValueError("ParaTranz file id must be a positive integer or null")
+        return cls(remote_id, key, fields["original"], fields["translation"], fields["context"], stage, file_id)
 
     def to_remote_payload(self) -> dict[str, Any]:
         return {

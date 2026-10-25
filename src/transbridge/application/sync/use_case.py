@@ -112,7 +112,7 @@ class ParaTranzSyncPlanningUseCase:
     ) -> None:
         self._remote_snapshots = remote_snapshots
         self._planner = planner or SyncPlanner()
-        self._confirmations = confirmations or ConfirmationAuthority()
+        self._confirmations = confirmations or ConfirmationAuthority(ttl_seconds=None)
 
     def create_plan(self, request: CreateSyncPlanRequest) -> SyncPlan:
         remote_entries = self._remote_snapshots.fetch(
@@ -163,7 +163,7 @@ class ParaTranzSyncPlanningUseCase:
             request.plan.remote_snapshot_hash,
         )
         if current_hashes != expected_hashes:
-            raise SyncPlanStaleError("local or remote sync snapshot changed after planning")
+            raise SyncPlanStaleError("工程或 ParaTranz 内容已发生变化，请重新开始对照后再执行。")
         if not request.plan.requires_confirmation:
             return AuthorizedSyncPlan(request.plan, request.owner_id, "NOT_REQUIRED")
         decision = self._confirmations.consume(

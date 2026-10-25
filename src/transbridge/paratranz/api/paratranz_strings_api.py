@@ -86,9 +86,9 @@ class ParatranzStringsAPI(ParatranzClient):
             data["translation"] = translation
         return self._request("PUT", f"/projects/{project_id}/strings", json=data)
 
-    def get_string(self, project_id: int, string_id: int):
+    def get_string(self, project_id: int, string_id: int, *, cancellation=None):
         """获取单个词条"""
-        return self._request("GET", f"/projects/{project_id}/strings/{string_id}")
+        return self._request("GET", f"/projects/{project_id}/strings/{string_id}", cancellation=cancellation)
 
     def update_string(self, project_id: int, string_id: int, data: dict, *, cancellation=None):
         """

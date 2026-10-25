@@ -5,6 +5,13 @@ from transbridge.application.sync.models import SyncOperation
 _REASONS = {
     "duplicate_local_key": "本地存在重复的条目标识，无法确定要处理哪一条。",
     "duplicate_remote_key": "同一标识下有多条云端内容，原文和上下文仍不足以唯一对应。",
+    "multiple_remote_translations": "相同原文存在不同译文，现有内容不足以唯一确定采用项。",
+    "no_matching_original": "当前插件中没有精确匹配原文的云端译文，已保留本地内容。",
+    "remote_untranslated": "匹配原文的云端条目尚无译文，已保留本地内容。",
+    "download_original_match": "已按当前插件的精确原文采用唯一译文。",
+    "download_translation_consensus": "相同原文的多个记录具有相同译文，已按译文内容自动合并。",
+    "download_key_match": "已按精确原文和词条信息确定译文。",
+    "download_current_translation_match": "已通过本地已有译文确定对应内容。",
     "duplicate_remote_id": "云端快照包含重复的记录编号，无法安全确定目标。",
     "original_match_required": "没有找到能确认原文对应关系的云端条目。",
     "ambiguous_remote_match": "存在多条可能对应的云端内容，无法唯一确定目标。",

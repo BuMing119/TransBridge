@@ -320,8 +320,6 @@ class PanelSessions(QObject):
         if matching is not None:
             self._restore_generation = None
             self.switch(matching["session_id"])
-        elif any(not row.get("available", True) for row in sessions):
-            self._directory_failed(RuntimeError("有会话记录无法读取，尚未自动新建对话。请检查会话文件后重试。"))
         else:
             self._restore_generation = None
             self.create("")

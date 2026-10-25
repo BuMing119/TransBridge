@@ -76,6 +76,43 @@ def test_first_translation_is_visible_without_automatically_choosing_cloud_conte
     assert dialog.decisions() == {}
 
 
+def test_identical_translations_with_different_statuses_are_distinguishable(qapp):
+    first = SyncReviewCandidate("a", "ID 1", "Same original", "相同译文", stage=1)
+    second = replace(first, candidate_id="b", label="ID 2", stage=5)
+    row = replace(_rows()[0], stage=0, candidates=(first, second))
+    subject = SyncReviewDialog((row,))
+    detail = subject._detail
+    assert detail.local.stage.text() == "翻译状态：未翻译"
+    assert detail.local.context.accessibleName() == "补充说明（工程中已有）"
+    assert detail.remote.context.accessibleName() == "补充说明（云端提供）"
+    assert "已翻译" in detail.candidates.itemText(1)
+    assert "已审核" in detail.candidates.itemText(2)
+    detail.candidates.setCurrentIndex(1)
+    assert detail.remote.stage.text() == "翻译状态：已翻译"
+    detail.candidates.setCurrentIndex(2)
+    assert detail.remote.stage.text() == "翻译状态：已审核"
+    assert subject.decisions() == {}
+    subject.close()
+
+
+def test_equivalent_candidate_group_is_one_choice_with_explicit_upload_consequence(qapp):
+    group = SyncReviewCandidate(
+        "group", "相同译文（54 条云端记录）", "Same original", "相同译文", stage=1, source_count=54
+    )
+    subject = SyncReviewDialog((replace(_rows()[0], candidates=(group,)),))
+    detail = subject._detail
+    assert detail.candidates.count() == 2  # Placeholder and one content choice.
+    assert "相同译文 ×54" in detail.candidates.itemText(1)
+    detail.candidates.setCurrentIndex(1)
+    assert "本次只采用共同译文" in detail.consequence.text()
+    assert "54 条云端记录内容相同" in detail.consequence.text()
+    assert "以后上传时" in detail.consequence.text()
+    assert "需要另行确认" in detail.consequence.text()
+    detail.use_remote.click()
+    assert subject.decisions() == {"local-a": "group"}
+    subject.close()
+
+
 def test_candidate_requires_explicit_selection_and_apply_click(dialog):
     detail = dialog._detail
     detail.candidates.setCurrentIndex(2)
@@ -289,7 +326,7 @@ def test_upload_review_chooses_target_without_implicitly_overwriting_cloud(qapp)
     assert detail.candidates.currentData() == ""
     assert not detail.use_remote.isEnabled()
     assert detail.use_remote.text() == "用我的译文更新这条"
-    assert "ParaTranz 的原文和使用场景保持原样" in detail.consequence.text()
+    assert "ParaTranz 的原文和补充说明保持原样" in detail.consequence.text()
     assert subject._model.data(subject._model.index(0, 4)) == "还没决定"
     detail.candidates.setCurrentIndex(2)
     assert subject.decisions() == {}
@@ -381,10 +418,10 @@ def test_all_cloud_entries_unavailable_explains_inability_to_sync_but_allows_ski
 @pytest.mark.parametrize(
     ("kind", "preserves_local_source", "expected"),
     [
-        (OperationKind.DOWNLOAD, True, "本地原文和使用场景保持原样"),
-        (OperationKind.DOWNLOAD, False, "采用右边的译文、状态、原文和使用场景"),
-        (OperationKind.UPLOAD, True, "ParaTranz 的原文和使用场景保持原样"),
-        (OperationKind.UPLOAD, False, "ParaTranz 的原文和使用场景保持原样"),
+        (OperationKind.DOWNLOAD, True, "原文和补充说明保持原样，不会写回 ESM/ESP"),
+        (OperationKind.DOWNLOAD, False, "原文和补充说明保持原样，不会写回 ESM/ESP"),
+        (OperationKind.UPLOAD, True, "ParaTranz 的原文和补充说明保持原样"),
+        (OperationKind.UPLOAD, False, "ParaTranz 的原文和补充说明保持原样"),
     ],
 )
 def test_consequence_matches_operation_and_local_source_preservation(qapp, kind, preserves_local_source, expected):

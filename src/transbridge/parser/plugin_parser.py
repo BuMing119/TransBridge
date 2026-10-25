@@ -2,6 +2,7 @@ from collections.abc import Callable
 import logging
 from pathlib import Path
 
+from sse_plugin_interface.flags import RecordFlags
 from sse_plugin_interface.plugin import SSEPlugin
 from sse_plugin_interface.plugin_string import PluginString
 
@@ -47,6 +48,8 @@ class PluginParser:
                 ``Strings`` directory (default: True for legacy compatibility).
             raise_on_error: Propagate file loading errors so interactive callers
                 can distinguish failure from a valid plugin with no strings.
+                Also require a complete TES4 header whose declared contents fit
+                within the source file, before invoking the binary parser.
 
         Returns:
             List of TranslationEntry objects.
@@ -56,21 +59,45 @@ class PluginParser:
         self._strings_lookup = None
         self.conflict_diagnostics = ()
         self.conflict_skipped_count = 0
-        self.log.info(f"Starting to parse plugin: {path}")
+        self.log.info("Starting to parse plugin: %s", path)
 
         try:
+            if raise_on_error:
+                with path.open("rb") as stream:
+                    header = stream.read(24)
+                    file_size = stream.seek(0, 2)
+                if len(header) < 24 or header[:4] != b"TES4":
+                    raise ValueError(f"Plugin is missing a complete TES4 header: {path}")
+                if int.from_bytes(header[4:8], "little") > file_size - 24:
+                    raise ValueError(f"Plugin TES4 header data exceeds the source file: {path}")
             self._plugin = SSEPluginWithContext.from_file(path)
         except Exception as e:
-            self.log.error(f"Failed to parse plugin {path}: {e}")
+            self.log.error("Failed to parse plugin %s: %s", path, e)
             if raise_on_error:
                 raise
             return []
 
         # Try to load external strings files for localised plugins (e.g. Skyrim.esm)
-        strings_lookup = PluginStringsLookup.from_plugin(path, language=language) if discover_sibling_strings else None
+        discover_archive = True
+        if discover_sibling_strings:
+            try:
+                with path.open("rb") as source:
+                    header = source.read(12)
+            except FileNotFoundError:
+                # Legacy callers may provide an already-loaded/mocked plugin.
+                header = b""
+            if len(header) == 12 and header[:4] == b"TES4":
+                discover_archive = bool(int.from_bytes(header[8:12], "little") & RecordFlags.Localized)
+        strings_lookup = None
+        if discover_sibling_strings:
+            strings_lookup = (
+                PluginStringsLookup.from_plugin(path, language=language)
+                if discover_archive
+                else PluginStringsLookup.from_strings_dir(path.parent / "Strings", path.stem, language)
+            )
         self._strings_lookup = strings_lookup
         if strings_lookup:
-            self.log.info(f"Loaded strings lookup with {len(strings_lookup)} entries for {path.name}")
+            self.log.info("Loaded strings lookup with %d entries for %s", len(strings_lookup), path.name)
 
         strings_with_context = self._plugin.extract_strings_with_context(strings_lookup=strings_lookup)
         items = self.create_entries(strings_with_context, progress_callback=progress_callback, skip_empty=False)
@@ -90,7 +117,7 @@ class PluginParser:
     def create_entries(self, strings_with_context, *, progress_callback=None, skip_empty=True):
         """Apply the same source identity conventions to parsing and physical writes."""
         total = len(strings_with_context)
-        self.log.info(f"Extracted {total} strings from plugin")
+        self.log.info("Extracted %d strings from plugin", total)
 
         # 第一遍：建立 DIAL_form_id -> DIAL_editor_id 的映射
         # 同一个 DIAL 下的 INFO 用该 DIAL 的 editor_id 填充
@@ -100,12 +127,12 @@ class PluginParser:
                 # ps.form_id 格式为 "hex|plugin"，取 hex 部分作为 key
                 dial_hex = ps.form_id.split("|")[0]
                 dial_formid_to_edid[dial_hex] = ps.editor_id
-                self.log.debug(f"Mapped DIAL {dial_hex} -> editor_id {ps.editor_id}")
 
-        self.log.info(f"Built DIAL form_id->editor_id map with {len(dial_formid_to_edid)} entries")
+        self.log.info("Built DIAL form_id->editor_id map with %d entries", len(dial_formid_to_edid))
 
         items = []
         skipped_count = 0
+        filled_info_count = 0
 
         for idx, ps in enumerate(strings_with_context):
             # Progress callback
@@ -116,7 +143,6 @@ class PluginParser:
             # Skip empty strings if requested
             if skip_empty and not ps.string.strip():
                 skipped_count += 1
-                self.log.debug(f"Skipped empty string: {ps.editor_id} {ps.type}")
                 continue
 
             # EET 风格的 editor_id 填充：
@@ -128,14 +154,16 @@ class PluginParser:
                     if dial_hex in dial_formid_to_edid:
                         dial_edid = dial_formid_to_edid[dial_hex]
                         setattr(ps, "editor_id", dial_edid)
-                        self.log.debug(f"Filled INFO editor_id with DIAL '{dial_edid}'")
+                        filled_info_count += 1
 
             item = self._create_item(ps, source_order=idx)
             items.append(item)
 
         if skipped_count > 0:
-            self.log.info(f"Skipped {skipped_count} empty strings ({skipped_count / total * 100:.1f}%)")
-        self.log.info(f"Successfully parsed {len(items)} translation items")
+            self.log.info("Skipped %d empty strings (%.1f%%)", skipped_count, skipped_count / total * 100)
+        if filled_info_count:
+            self.log.debug("Filled INFO editor_id from DIAL for %d entries", filled_info_count)
+        self.log.info("Successfully parsed %d translation items", len(items))
         return items
 
     def _create_item(self, ps: PluginString, *, source_order: int | None = None) -> TranslationEntry:

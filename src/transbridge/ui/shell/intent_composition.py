@@ -9,9 +9,6 @@ from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import QDockWidget, QMessageBox
 
 from transbridge.converter.translation_entry import STAGE_QUESTIONABLE
-from transbridge.ui.drop_binding import SafeDropBinding
-from transbridge.ui.drop_review import DropReviewDialog
-from transbridge.ui.drop_router import DropResolutionStatus
 from transbridge.ui.guidance.qt import GuidanceBinding
 
 from .action_catalog import DEFAULT_ACTION_CATALOG, IntentId
@@ -25,6 +22,7 @@ from .command_palette import (
 from .command_palette_qt import CommandPaletteDialog
 from .context_help import DEFAULT_CONTEXT_HELP, ContextHelpController
 from .context_help_qt import ContextHelpPanel
+from .drop_controller import ShellDropController
 from .intent_router import IntentDispatchResult, IntentRouter
 from .menu_builder import MenuCallbacks
 from .overlay_geometry import workspace_overlay_rect
@@ -50,8 +48,7 @@ class ShellIntentComposition:
         self._task_center: TaskCenterController | None = None
         self._task_navigation = None
         self._task_overlay_host_geometry: QRect | None = None
-        self._drop_binding: SafeDropBinding | None = None
-        self._drop_review: DropReviewDialog | None = None
+        self._drop_controller: ShellDropController | None = None
         self._register_handlers()
 
     def menu_callbacks(self) -> MenuCallbacks:
@@ -122,9 +119,7 @@ class ShellIntentComposition:
             preferences=preferences,
             parent=self._host,
         )
-        self._drop_binding = SafeDropBinding(self._host, parent=self._host)
-        self._drop_binding.resolution_ready.connect(self._on_drop_resolution)
-        self._drop_binding.intent_confirmed.connect(lambda intent_id, payload: self.dispatch(intent_id, payload))
+        self._drop_controller = ShellDropController(self._host, self.dispatch)
 
     def callback(self, intent_id: IntentId) -> Callable[[], None]:
         return lambda: self.dispatch(intent_id)
@@ -173,10 +168,8 @@ class ShellIntentComposition:
             self._task_dock.deleteLater()
             self._task_dock = None
             self._task_overlay_host_geometry = None
-        if self._drop_binding is not None:
-            self._drop_binding.close()
-        if self._drop_review is not None:
-            self._drop_review.close()
+        if self._drop_controller is not None:
+            self._drop_controller.close()
         self.router.close()
 
     def _register_handlers(self) -> None:
@@ -239,12 +232,12 @@ class ShellIntentComposition:
             availability=self._has_cloud_context,
         )
         register(
-            IntentId.SYNC_DOWNLOAD, _call(host.operation_coordinator.download), availability=self._has_cloud_context
+            IntentId.SYNC_DOWNLOAD, _call(host.operation_coordinator.download), availability=self._has_download_context
         )
         register(
             IntentId.SYNC_DOWNLOAD_BATCH,
-            _call(host.operation_coordinator.batch_download),
-            availability=self._has_cloud_context,
+            _call(host.operation_coordinator.download),
+            availability=self._has_download_context,
         )
         register(IntentId.PUBLISH_WRITE, _call(host.operation_coordinator.write), availability=self._has_collection)
         register(
@@ -366,6 +359,11 @@ class ShellIntentComposition:
         if not content:
             return False, content_reason
         return True, None
+
+    def _has_download_context(self) -> tuple[bool, str | None]:
+        if bool(getattr(self._host.context, "uses_authoritative_projection", False)):
+            return self._has_project()
+        return self._has_cloud_context()
 
     def _has_task_runtime(self) -> tuple[bool, str | None]:
         enabled = self._host.app_runtime is not None and self._host.runtime_context is not None
@@ -490,20 +488,6 @@ class ShellIntentComposition:
             self.dispatch(intent.target, dict(intent.parameters))
         except (KeyError, TypeError, ValueError, RuntimeError) as exc:
             self._host.show_message(f"任务结果入口当前不可用：{exc}")
-
-    def _on_drop_resolution(self, resolution) -> None:
-        if resolution.status not in {
-            DropResolutionStatus.CANDIDATE,
-            DropResolutionStatus.REJECTED,
-            DropResolutionStatus.NEEDS_CHOICE,
-        }:
-            return
-        if self._drop_review is None:
-            self._drop_review = DropReviewDialog(self._host)
-            self._drop_review.confirm_requested.connect(self._drop_binding.confirm)
-            self._drop_review.dismiss_requested.connect(self._drop_binding.dismiss)
-        self._drop_review.review(resolution)
-        self._drop_review.exec()
 
 
 __all__ = ["ShellIntentComposition"]

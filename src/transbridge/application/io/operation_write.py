@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import hashlib
 import json
-import os
 from pathlib import Path
 from typing import Protocol
 
@@ -23,6 +22,7 @@ from transbridge.converter.translation_entry import TranslationEntry
 from .catalog import FormatCatalog, default_format_catalog
 from .contracts import CapabilityLevel, FormatId, SourceDescriptor, SourceSnapshot, WriteRequest
 from .mutation import EntrySnapshot
+from .plugin_localized_sources import localized_physical_inputs
 from .plugin_write import plugin_artifact_paths
 from .publish import (
     BackupPolicy,
@@ -36,6 +36,7 @@ from .publish import (
     PublishResult,
     PublishTarget,
 )
+from .publish.target_directory import output_parent_available
 from .stage_policy import DEFAULT_STAGE_POLICY, StageOperation, StagePolicyPort
 
 
@@ -137,7 +138,6 @@ class HydratedWritePreflightService:
         frozen_projection: FrozenWriteEntryProjection | None | object = _UNSET_PROJECTION,
     ) -> HydratedWritePreflight:
         target = self._filesystem.canonicalize(draft.target_path)
-        parent = Path(target).parent
         adapter = self._catalog.adapter(draft.format_id)
         checks: list[WritePreflightCheck] = []
         entries = _translation_entries(draft.entries)
@@ -170,16 +170,29 @@ class HydratedWritePreflightService:
                 "格式适配器必须同时支持写入与回读验证。",
             )
         )
-        parent_ready = parent.is_dir() and os.access(parent, os.W_OK)
-        checks.append(WritePreflightCheck("OUTPUT_WRITABLE", parent_ready, "输出目录不存在或不可写。"))
+        paths = plugin_artifact_paths(draft.source_snapshot, target, draft.options)
+        archives = {
+            self._filesystem.canonicalize(path)
+            for path, captured in localized_physical_inputs(draft.source_snapshot)
+            if captured is None
+        }
+        if archives:
+            checks.append(
+                WritePreflightCheck(
+                    "SOURCE_ARCHIVE_PROTECTED",
+                    all(self._filesystem.canonicalize(path) not in archives for path in paths),
+                    "输出不能覆盖来源依赖的 BSA 归档，请选择新的插件输出路径。",
+                )
+            )
+        parent_ready = all(output_parent_available(self._filesystem.canonicalize(path)) for path in paths)
+        checks.append(WritePreflightCheck("OUTPUT_WRITABLE", parent_ready, "输出目录无法创建或不可写。"))
         checks.append(
             WritePreflightCheck(
                 "ATOMIC_REPLACE_AVAILABLE",
-                parent_ready and self._filesystem.atomic_replace_supported(target),
+                parent_ready and all(self._filesystem.atomic_replace_supported(path) for path in paths),
                 "输出位置不支持同卷原子替换。",
             )
         )
-        paths = plugin_artifact_paths(draft.source_snapshot, target, draft.options)
         fingerprints = tuple(
             (self._filesystem.canonicalize(path), self._filesystem.fingerprint(path)) for path in paths
         )
@@ -280,6 +293,11 @@ class HydratedWriteWorkload:
         adapter = self._catalog.adapter(draft.format_id)
         if adapter is None:
             return _failed("FORMAT_ADAPTER_UNAVAILABLE", "写回格式适配器不可用。", run_context.ref.run_id)
+        if self._preflight.artifact_fingerprints and tuple(
+            self._filesystem.canonicalize(path)
+            for path in plugin_artifact_paths(draft.source_snapshot, draft.target_path, draft.options)
+        ) != tuple(path for path, _fingerprint in self._preflight.artifact_fingerprints):
+            return _failed("TARGET_PATH_CHANGED", "输出目录在预检后发生变化。", run_context.ref.run_id)
         request_metadata = dict(draft.context.metadata)
         request_metadata.update(self._preflight.projection_metadata)
         request_context = replace(

@@ -3,12 +3,14 @@
 from collections import Counter, defaultdict
 from dataclasses import replace
 
+from .candidate_matching import JournalOriginalIndex
 from .models import ConflictPolicy, EntrySummary, SyncAction, SyncPlanItem, canonical_hash
 from .planner import _group, _local_payload, _remote_payload
 from .upload_review import UploadCandidate, UploadDecisionStaleError, UploadReviewRow
 
 
-def plan_upload(local, remote, *, policy, scope, decisions):
+def plan_upload(local, remote, *, policy, scope, decisions, path_scoped=False):
+    journal = JournalOriginalIndex(remote)
     by_key, by_ref, owners = defaultdict(list), defaultdict(list), defaultdict(set)
     for entry in remote:
         by_key[_bare(entry)].append(entry)
@@ -27,12 +29,13 @@ def plan_upload(local, remote, *, policy, scope, decisions):
         current = locals_for_key[0]
         candidates = tuple(
             sorted(
-                set(by_key[_bare(current)] + by_ref.get(_ref(current, scope), [])),
+                set(by_key[_bare(current)] + by_ref.get(_ref(current, scope), []))
+                | set(journal.alternatives(current, by_key[_bare(current)])),
                 key=lambda entry: canonical_hash(_remote_payload(entry)),
             )
         )
         represented.update(candidates)
-        selected, reason = _match(current, candidates, by_ref, bare_counts, scope)
+        selected, reason = _match(current, candidates, by_ref, bare_counts, scope, path_scoped=path_scoped)
         if len(locals_for_key) > 1:
             selected, reason = None, "duplicate_local_key"
         row = _review(scope, locals_for_key, candidates, reason, by_ref, owners)
@@ -80,15 +83,16 @@ def plan_upload(local, remote, *, policy, scope, decisions):
     return tuple(items[key] for key in sorted(items)), tuple(reviews[key] for key in sorted(reviews))
 
 
-def _match(local, candidates, by_ref, bare_counts, scope):
+def _match(local, candidates, by_ref, bare_counts, scope, *, path_scoped):
     reference = _ref(local, scope)
     if reference:
         linked = by_ref.get(reference, ())
         if len(linked) == 1:
             return linked[0], ""
-        return None, "duplicate_remote_id" if linked else "stale_remote_reference"
+        if linked or not path_scoped:
+            return None, "duplicate_remote_id" if linked else "stale_remote_reference"
     if not candidates:
-        if local.entry_key.original is not None or bare_counts[_bare(local)] > 1:
+        if bare_counts[_bare(local)] > 1 or (local.entry_key.original is not None and not path_scoped):
             return None, "original_match_required"
         return None, ""
     originals = tuple(entry for entry in candidates if entry.original == local.original)

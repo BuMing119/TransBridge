@@ -13,6 +13,7 @@ import pytest
 
 from transbridge.application.contracts import DomainError, ErrorCategory, OperationResult
 from transbridge.application.projections import ProjectionSnapshot, ProjectionStore
+from transbridge.application.projects import DirtyDecision
 from transbridge.converter.translation_entry_collection import TranslationEntryCollection
 from transbridge.ui import context as context_module
 from transbridge.ui.coordinators import project_open_operation as operation_module
@@ -260,3 +261,28 @@ def test_worker_start_failure_restores_previous_view_and_releases_token(opening,
     assert not opening.context.project_opening and opening.host.workbench.enabled
     assert opening.context.active_slot is opening.old_slot
     assert opening.host.failures[0][0] == "PROJECT_OPEN_FAILED"
+
+
+def test_save_failure_stops_open_before_reading_the_target_sources(opening):
+    case = opening
+    saves = []
+
+    def save(context, *, expected_active_signature):
+        saves.append((context, expected_active_signature))
+        return _failure()
+
+    case.host.project_commands = SimpleNamespace(save=save)
+    assert case.operation.start(
+        lambda: pytest.fail("Sources must not be read after a failed save"),
+        dirty_decision=DirtyDecision.SAVE,
+        success_verb="opened",
+        show_error_dialog=False,
+        on_failure=lambda *value: case.host.failures.append(value),
+    )
+    _wait_until(lambda: case.host.project_open_worker is None)
+
+    assert saves == [(case.host.runtime_context, ("old", 1, "old-variant", 1))]
+    assert case.context.active_slot is case.old_slot
+    assert not case.context.project_opening
+    assert not case.host.current_project_opener.committed
+    assert case.host.failures[0] == ("UNAVAILABLE", "source unavailable")

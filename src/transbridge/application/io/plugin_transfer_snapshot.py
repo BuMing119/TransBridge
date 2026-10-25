@@ -4,9 +4,12 @@ from dataclasses import dataclass, replace
 import os
 from pathlib import Path
 
+from transbridge.parser.localized_resources import candidate_input_paths
+
 from .contracts import SourceSnapshot
 from .identity import EntryKey, SourceNamespace
-from .plugin_write import _parser_from_snapshot, _snapshot_localized_sources, plugin_artifact_paths
+from .plugin_localized_sources import localized_physical_inputs, validate_localized_snapshot
+from .plugin_write import _parser_from_snapshot, plugin_artifact_paths
 from .publish import ConflictPolicy, FileFingerprint, OsPublishFilesystem
 
 
@@ -24,20 +27,16 @@ def canonical(path: str) -> str:
 
 def freeze_template(snapshot: SourceSnapshot) -> tuple[TransferFileLease, ...]:
     fs = OsPublishFilesystem()
-    paths = {canonical(snapshot.source.uri): snapshot}
-    for companion, _entries in _snapshot_localized_sources(snapshot):
-        paths[canonical(companion.source.uri)] = companion
+    _validate_localized_template(snapshot)
+    inputs = ((snapshot.source.uri, snapshot), *localized_physical_inputs(snapshot))
+    paths = {canonical(path): item for path, item in inputs}
     plugin = Path(snapshot.source.uri)
     language = str(dict(snapshot.metadata).get("localized_language", "english"))
+    candidate_paths = candidate_input_paths(plugin, language)
+    archive_path = canonical(str(candidate_paths[-1]))
     candidates = set(paths)
-    requested = {path: item.source.uri for path, item in paths.items()}
-    requested.update(
-        (canonical(str(path)), str(path))
-        for path in (
-            plugin.parent / "Strings" / f"{plugin.stem}_{language.capitalize()}.{suffix}"
-            for suffix in ("strings", "dlstrings", "ilstrings")
-        )
-    )
+    requested = {canonical(path): path for path, _item in inputs}
+    requested.update((canonical(str(path)), str(path)) for path in candidate_paths)
     candidates.update(requested)
     leases = []
     for path in sorted(candidates):
@@ -45,10 +44,17 @@ def freeze_template(snapshot: SourceSnapshot) -> tuple[TransferFileLease, ...]:
         captured = paths.get(path)
         if captured is not None and fingerprint.sha256 != captured.sha256:
             raise FileExistsError("目标插件或字符串文件在读取期间变化，请重新预检。")
-        if captured is None and fingerprint.exists:
+        if path not in paths and path != archive_path and fingerprint.exists:
             raise FileExistsError("目标字符串文件集合在读取期间变化，请重新预检。")
         leases.append(TransferFileLease(path, fingerprint, True, requested[path]))
+    _validate_localized_template(snapshot)
     return tuple(leases)
+
+
+def _validate_localized_template(snapshot: SourceSnapshot) -> None:
+    diagnostic = validate_localized_snapshot(snapshot)
+    if diagnostic is not None:
+        raise FileExistsError(f"目标字符串文件在读取期间变化，请重新预检：{diagnostic.message}")
 
 
 def target_entries_from_snapshot(snapshot: SourceSnapshot):
@@ -61,9 +67,17 @@ def target_entries_from_snapshot(snapshot: SourceSnapshot):
 def protect_project_source(source, template, output_paths, conflict_policy) -> None:
     source_paths = {canonical(path) for path in plugin_artifact_paths(source, source.source.uri)}
     template_paths = {canonical(path) for path in plugin_artifact_paths(template, template.source.uri)}
+    archives = {
+        canonical(path)
+        for snapshot in (source, template)
+        for path, captured in localized_physical_inputs(snapshot)
+        if captured is None
+    }
     same_plugin = canonical(source.source.uri) == canonical(template.source.uri)
     for path in output_paths:
         resolved = canonical(path)
+        if resolved in archives:
+            raise ValueError("输出会覆盖来源或模板依赖的 BSA 归档；请选择新的插件输出路径。")
         if resolved in source_paths and not (
             same_plugin and resolved in template_paths and conflict_policy is ConflictPolicy.EXPLICIT_OVERWRITE
         ):

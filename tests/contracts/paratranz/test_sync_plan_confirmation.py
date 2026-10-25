@@ -113,9 +113,10 @@ def test_download_plan_respects_source_owned_structure_and_text(state_only) -> N
     assert {item.entry_key.local_key: item.action for item in plan.items} == {
         "update": SyncAction.UPDATE_LOCAL,
         "delete": SyncAction.SKIP if state_only else SyncAction.DELETE_LOCAL,
-        "source-text": SyncAction.SKIP if state_only else SyncAction.UPDATE_LOCAL,
+        "source-text": SyncAction.CONFLICT,
         "remote-only": SyncAction.SKIP if state_only else SyncAction.CREATE_LOCAL,
     }
+    assert plan.download_review[0].reason == "original_mismatch"
     assert plan.compute_hash() == plan.plan_hash
     assert SyncPlanner(local_state_only=state_only).plan(
         local, remote, operation=SyncOperation.UPLOAD, conflict_policy=ConflictPolicy.PREFER_LOCAL
@@ -417,6 +418,48 @@ def _authorization(plan, local, token, owner="owner") -> AuthorizeSyncPlanReques
         local,
         token,
     )
+
+
+@pytest.mark.parametrize("operation", [SyncOperation.DOWNLOAD, SyncOperation.UPLOAD])
+def test_default_sync_confirmation_survives_long_review_and_remote_check(operation) -> None:
+    local = (_local("key", "local", remote_id=1),)
+    reader = _RemoteReader((_remote("key", "remote", remote_id=1),))
+    use_case = ParaTranzSyncPlanningUseCase(reader)
+    plan = use_case.create_plan(
+        CreateSyncPlanRequest(
+            7,
+            NS,
+            local,
+            operation,
+            ConflictPolicy.PREFER_LOCAL if operation is SyncOperation.UPLOAD else ConflictPolicy.PREFER_REMOTE,
+        )
+    )
+    token = use_case.issue_confirmation(plan, owner_id="owner")
+    assert token.expires_at is None
+    # Neither a long human review nor the observed 118-second cloud fetch is
+    # evidence of a changed operation. Advance the authority's clock, not time.
+    use_case._confirmations._clock = lambda: 10**12
+
+    assert use_case.authorize(_authorization(plan, local, token)).confirmation_code == "CONFIRMED"
+    with pytest.raises(SyncPlanAuthorizationError) as replay:
+        use_case.authorize(_authorization(plan, local, token))
+    assert replay.value.code == "CONFIRMATION_REPLAYED"
+
+
+@pytest.mark.parametrize("changed_side", ["local", "remote"])
+def test_no_expiry_confirmation_still_rejects_changed_data(changed_side) -> None:
+    local = (_local("key", "local", remote_id=1),)
+    reader = _RemoteReader((_remote("key", "remote", remote_id=1),))
+    use_case = ParaTranzSyncPlanningUseCase(reader)
+    plan = use_case.create_plan(CreateSyncPlanRequest(7, NS, local, SyncOperation.UPLOAD, ConflictPolicy.PREFER_LOCAL))
+    token = use_case.issue_confirmation(plan, owner_id="owner")
+    if changed_side == "local":
+        local = (replace(local[0], translation="changed"),)
+    else:
+        reader.entries = (replace(reader.entries[0], translation="changed"),)
+
+    with pytest.raises(SyncPlanStaleError):
+        use_case.authorize(_authorization(plan, local, token))
 
 
 def test_confirmation_is_plan_hash_bound_owner_bound_and_one_use() -> None:

@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PyQt6.QtCore import QEvent, QObject, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QEvent, QObject, pyqtSignal
+from PyQt6.QtWidgets import QWidget
 
 from .drop_router import DropResolution, DropResolutionStatus, DropRouter
 
@@ -35,23 +36,33 @@ class SafeDropBinding(QObject):
         set_accept_drops = getattr(target, "setAcceptDrops", None)
         if callable(set_accept_drops):
             set_accept_drops(True)
-        target.installEventFilter(self)
+        # Editors and scroll-area viewports can receive drops instead of the
+        # window. Observe their events too, including children created later,
+        # while keeping the routing restricted to this window's widget tree.
+        self._event_source = QCoreApplication.instance() or target
+        self._event_source.installEventFilter(self)
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        if self._closed or watched is not self._target:
+        if self._closed or event.type() not in (QEvent.Type.DragEnter, QEvent.Type.DragMove, QEvent.Type.Drop):
             return False
-        if event.type() is QEvent.Type.DragEnter:
-            if _has_file_urls(event):
-                event.acceptProposedAction()
-                return True
+        if not self._owns_receiver(watched) or not _has_file_urls(event):
             return False
+        event.acceptProposedAction()
         if event.type() is QEvent.Type.Drop:
             paths = _local_paths(event)
             resolution = self._resolve(paths)
             self.resolution_ready.emit(resolution)
-            event.acceptProposedAction()
+        return True
+
+    def _owns_receiver(self, watched: QObject) -> bool:
+        if watched is self._target:
             return True
-        return False
+        return (
+            isinstance(self._target, QWidget)
+            and isinstance(watched, QWidget)
+            and watched.window() is self._target.window()
+            and self._target.isAncestorOf(watched)
+        )
 
     def inspect_paths(self, paths: tuple[str, ...]) -> DropResolution:
         """Non-event entry for tests and other Qt local-file sources."""
@@ -81,7 +92,7 @@ class SafeDropBinding(QObject):
         if self._closed:
             return
         self._closed = True
-        self._target.removeEventFilter(self)
+        self._event_source.removeEventFilter(self)
 
 
 def _has_file_urls(event: QEvent) -> bool:

@@ -9,6 +9,8 @@ from types import SimpleNamespace
 import pytest
 
 from tests.conftest import make_test_collection
+from tests.ui.operations.current_download_support import patch_current_download_gateway
+from tests.ui.operations.ordinary_upload_support import patch_ordinary_gateway
 from transbridge.application.contracts import OperationOutcome, RequestContext
 from transbridge.application.io.identity import EntryKey
 from transbridge.application.ports.paratranz import ExternalServiceCategory, ExternalServiceError, ParaTranzEntry
@@ -44,7 +46,9 @@ class MemoryStrings:
 
     def list_strings(self, project_id, **_kwargs):
         assert project_id == 42
-        return [dict(entry.to_remote_payload(), id=entry.remote_id) for entry in self.entries.values()]
+        return [
+            dict(entry.to_remote_payload(), id=entry.remote_id, fileId=entry.file_id) for entry in self.entries.values()
+        ]
 
     def update_string(self, project_id, remote_id, payload, **_kwargs):
         assert project_id == 42
@@ -61,7 +65,10 @@ class MemoryStrings:
         assert project_id == 42
         remote_id = next(self.ids)
         self.calls.append(("create", remote_id, dict(payload)))
-        assert all(entry.key != payload["key"] for entry in self.entries.values())
+        assert all(
+            entry.key != payload["key"] or (entry.file_id or 11) != payload.get("fileId", 11)
+            for entry in self.entries.values()
+        )
         created = ParaTranzEntry.from_mapping(dict(payload, id=remote_id))
         self.entries[remote_id] = created
         self.after_write()
@@ -72,7 +79,7 @@ class MemoryStrings:
 
 
 class RoundtripCase:
-    def __init__(self, root, monkeypatch, *, size=2, qualified=False):
+    def __init__(self, root, monkeypatch, *, size=2, qualified=False, keys=None):
         self.root = root
         self.sequence = count()
         self.services = build_persistence_v2_services(
@@ -81,6 +88,11 @@ class RoundtripCase:
             timestamp_factory=lambda: "2026-10-20T14:00:00+08:00",
         )
         sources = tuple(make_test_collection(size))
+        if keys is not None:
+            sources = tuple(
+                replace(entry, id=key, key=key, entry_key=EntryKey(entry.identity.namespace, key))
+                for entry, key in zip(sources, keys, strict=True)
+            )
         self.sources = tuple(
             replace(entry, entry_key=EntryKey(entry.identity.namespace, entry.key, entry.original))
             if qualified
@@ -112,6 +124,7 @@ class RoundtripCase:
         assert self.services.gui_project_commands.switch_v2(self.project, self.variant, self.request_context).is_success
         self.context = SimpleNamespace(
             collection=TranslationEntryCollection(self.sources),
+            esp_path="source.esp",
             uses_authoritative_projection=True,
             project_commands=self.services.gui_project_commands,
             runtime_context=self.request_context,
@@ -135,6 +148,8 @@ class RoundtripCase:
         unused_endpoint = SimpleNamespace(close=lambda: None)
         service = ParaTranzService(projects, self.strings, unused_endpoint, unused_endpoint)
         monkeypatch.setattr(ParaTranzService, "from_config", classmethod(lambda _cls, _config: service))
+        self.gateway = patch_ordinary_gateway(monkeypatch, service)
+        self.download_gateway = patch_current_download_gateway(monkeypatch, service)
         self.receipts = {}
         self.features = {
             feature.kind: feature
@@ -227,7 +242,7 @@ def roundtrip_case(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("qualified", [False, True], ids=["legacy-key", "original-qualified"])
 @pytest.mark.parametrize("choose_download", [False, True], ids=["auto-download", "chosen-download"])
-def test_download_edit_upload_uses_saved_id_after_remote_rename_and_survives_reopen(
+def test_download_edit_upload_reacquires_by_content_then_keeps_confirmed_upload_id_after_rename(
     roundtrip_case, qualified, choose_download
 ):
     case = roundtrip_case(size=1, qualified=qualified)
@@ -241,24 +256,38 @@ def test_download_edit_upload_uses_saved_id_after_remote_rename_and_survives_reo
     else:
         download = case.check(OperationKind.DOWNLOAD)
     assert case.execute(download).is_success
-    assert case.context.collection.get(source.identity).external_refs[0].opaque_id == 7
+    assert not case.context.collection.get(source.identity).external_refs
+    assert not case.persisted_states()[source.identity].external_refs
     case.edit(source, "本地修改后的译文")
+    checked = case.check()
+    if choose_download:
+        # A download choice is scoped to that review, not a future upload target.
+        row = checked[2].sync_review[0]
+        selected = next(candidate for candidate in row.candidates if "#7" in candidate.label)
+        checked = case.check(choices={row.row_id: selected.candidate_id})
+    assert case.execute(checked).is_success
+    assert case.persisted_states()[source.identity].external_refs[0].opaque_id == 7
+    # Only this independently confirmed upload may retain its target on rename.
     renamed = replace(case.strings.entries[7], key="renamed-in-cloud", original="云端更正的原文", context="新上下文")
     case.strings.entries[7] = renamed
+    case.edit(source, "上传确认后再次修改")
     checked = case.check()
     assert checked[2].ready and not checked[2].sync_review
     receipt = case.execute(checked)
     assert receipt.is_success and receipt.counts.failed == 0
     remote = case.strings.entries[7]
-    assert (remote.translation, remote.stage) == ("本地修改后的译文", 3)
+    assert (remote.translation, remote.stage) == ("上传确认后再次修改", 3)
     assert (remote.key, remote.original, remote.context) == (renamed.key, renamed.original, renamed.context)
     if choose_download:
         assert case.strings.entries[8].translation == "未选中的译文"
-    assert case.strings.calls == [("update", 7, {"translation": "本地修改后的译文", "stage": 3})]
+    assert case.strings.calls == [
+        ("update", 7, {"translation": "本地修改后的译文", "stage": 3}),
+        ("update", 7, {"translation": "上传确认后再次修改", "stage": 3}),
+    ]
     local = case.context.collection.get(source.identity)
     assert (local.original, local.context, local.identity) == (source.original, source.context, source.identity)
     saved = case.persisted_states()[source.identity]
-    assert (saved.translation, saved.stage.value, saved.external_refs[0].opaque_id) == ("本地修改后的译文", 3, 7)
+    assert (saved.translation, saved.stage.value, saved.external_refs[0].opaque_id) == ("上传确认后再次修改", 3, 7)
     assert dict(case.check()[2].estimated_impact)["update_remote"] == 0
 
 
@@ -396,21 +425,24 @@ def test_failed_local_association_commit_keeps_remote_success_and_new_local_edit
     assert not saved.external_refs
 
 
-def test_missing_confirmed_remote_id_requires_explicit_reassociation(roundtrip_case):
+def test_missing_confirmed_remote_id_is_reassociated_within_fixed_file(roundtrip_case):
     case = roundtrip_case(size=1)
     source = case.sources[0]
     case.strings.entries[7] = ParaTranzEntry(7, source.key, source.original, "下载译文", "云端上下文", 1)
     assert case.execute(case.check(OperationKind.DOWNLOAD)).is_success
+    assert not case.persisted_states()[source.identity].external_refs
+    case.edit(source, "先由上传确认目标")
+    assert case.execute(case.check()).is_success
+    assert case.persisted_states()[source.identity].external_refs[0].opaque_id == 7
     case.edit(source, "待上传译文")
     del case.strings.entries[7]
     case.strings.entries[8] = ParaTranzEntry(8, source.key, source.original, "新云端条目", "新的上下文", 1)
     checked = case.check()
     impact = dict(checked[2].estimated_impact)
-    assert (impact["deferred"], impact["update_remote"], impact["create_remote"]) == (1, 0, 0)
-    assert case.strings.calls == []
-    row = checked[2].sync_review[0]
-    assert len(row.candidates) == 1
-    receipt = case.execute(case.check(choices={row.row_id: row.candidates[0].candidate_id}))
+    assert (impact["deferred"], impact["update_remote"], impact["create_remote"]) == (0, 1, 0)
+    assert case.strings.calls == [("update", 7, {"translation": "先由上传确认目标", "stage": 3})]
+    assert not checked[2].sync_review
+    receipt = case.execute(checked)
     assert receipt.is_success
     assert case.strings.entries[8].translation == "待上传译文"
     assert case.strings.entries[8].context == "新的上下文"

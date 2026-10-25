@@ -5,25 +5,19 @@ from pathlib import Path
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QButtonGroup,
-    QCheckBox,
     QCheckBox as QtCheckBox,
-    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QPushButton,
     QRadioButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
 )
-
-from transbridge.paratranz.workflow.uploader import ConflictInfo
 
 
 class BatchConfirmDialog(QDialog):
@@ -213,119 +207,29 @@ class BatchResultDialog(QDialog):
         layout.addWidget(btn_box)
 
 
-class ConflictResolveDialog(QDialog):
-    """
-    上传前冲突解决对话框。
-    每个冲突文件显示一个下拉框，让用户选择要更新 ParaTranz 中哪个同名文件。
-    """
-
-    def __init__(self, conflicts: list[ConflictInfo], parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("检测到同名文件冲突")
-        self.setMinimumWidth(520)
-        self.setMinimumHeight(200)
-        self.setMaximumHeight(500)
-
-        layout = QVBoxLayout(self)
-
-        hint = QLabel(
-            f"检测到 {len(conflicts)} 个文件在 ParaTranz 中存在多个同名副本。\n请为每个文件选择要更新的目标文件："
-        )
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        layout.addWidget(sep)
-
-        # 滚动区域
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { border: none; }")
-
-        container = QWidget()
-        container_layout = QVBoxLayout(container)
-        container_layout.setSpacing(8)
-        container_layout.setContentsMargins(4, 4, 4, 4)
-
-        self._combos: dict[str, QComboBox] = {}  # local_name -> QComboBox
-
-        for conflict in conflicts:
-            row = QHBoxLayout()
-            name_lbl = QLabel(conflict.local_name)
-            name_lbl.setMinimumWidth(180)
-            name_lbl.setStyleSheet("font-weight: bold;")
-            row.addWidget(name_lbl)
-
-            combo = QComboBox()
-            for f in conflict.candidates:
-                folder = f.get("folder", "") or "根目录"
-                label = f"{folder}  (id={f['id']})"
-                combo.addItem(label, userData=f["id"])
-            row.addWidget(combo, stretch=1)
-
-            container_layout.addLayout(row)
-            self._combos[conflict.local_name] = combo
-
-        container_layout.addStretch()
-        scroll.setWidget(container)
-        layout.addWidget(scroll)
-
-        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        btn_box.button(QDialogButtonBox.StandardButton.Ok).setText("继续上传")
-        btn_box.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
-        btn_box.accepted.connect(self.accept)
-        btn_box.rejected.connect(self.reject)
-        layout.addWidget(btn_box)
-
-    def resolved_path_mapping(self, conflicts: list[ConflictInfo]) -> dict[str, int]:
-        """返回用户选择的 {local_name: file_id} 映射。"""
-        result = {}
-        for conflict in conflicts:
-            combo = self._combos[conflict.local_name]
-            result[conflict.local_name] = combo.currentData()
-        return result
-
-
 class UploadModeDialog(QDialog):
-    """上传模式选择对话框：分类上传 vs 普通上传。"""
+    """普通单文件上传的文件名和译文设置。"""
 
-    def __init__(self, esp_path: str | None, parent=None):
+    def __init__(self, esp_path: str | None, parent=None, *, filename: str | None = None):
         super().__init__(parent)
-        self.setWindowTitle("选择上传模式")
+        self.setWindowTitle("普通上传设置")
         self.setMinimumWidth(400)
 
         layout = QVBoxLayout(self)
         layout.setSpacing(4)
 
-        self._rb_cat = QRadioButton("分类上传（推荐）")
-        self._rb_cat.setChecked(True)
-        cat_desc = QLabel("按词条类型拆分为多个文件分别上传。")
-        cat_desc.setStyleSheet("margin-left: 20px;")
-
-        self._chk_backup = QCheckBox("同时导出本地备份")
-        self._chk_backup.setStyleSheet("margin-left: 20px;")
-
-        self._rb_plain = QRadioButton("普通上传")
-        plain_desc = QLabel("全部词条合并为单个 JSON 文件上传。")
-        plain_desc.setStyleSheet("margin-left: 20px;")
+        layout.addWidget(QLabel("全部词条合并为单个 JSON 文件上传。"))
 
         fn_row = QHBoxLayout()
         fn_label = QLabel("文件名：")
         fn_label.setStyleSheet("margin-left: 20px;")
-        default_fn = (Path(esp_path).stem + ".json") if esp_path else "collection.json"
+        default_fn = filename or ((Path(esp_path).name + ".json") if esp_path else "")
         self._fn_edit = QLineEdit(default_fn)
-        self._fn_edit.setEnabled(False)
+        self._fn_edit.setReadOnly(True)
+        self._fn_edit.setToolTip("普通上传固定使用插件名，文件保存在项目根目录。")
         fn_row.addWidget(fn_label)
         fn_row.addWidget(self._fn_edit)
 
-        layout.addWidget(self._rb_cat)
-        layout.addWidget(cat_desc)
-        layout.addWidget(self._chk_backup)
-        layout.addSpacing(8)
-        layout.addWidget(self._rb_plain)
-        layout.addWidget(plain_desc)
         layout.addLayout(fn_row)
         layout.addSpacing(8)
 
@@ -376,38 +280,21 @@ class UploadModeDialog(QDialog):
         btn_box.rejected.connect(self.reject)
         layout.addWidget(btn_box)
 
-        self._rb_plain.toggled.connect(self._on_upload_mode_changed)
         self._rb_trans_only.toggled.connect(self._on_trans_only_toggled)
-        self._fn_edit.textChanged.connect(self._update_ok)
+        self._update_ok()
 
         self._on_trans_only_toggled(False)
-
-    def _on_upload_mode_changed(self, plain_checked: bool):
-        self._fn_edit.setEnabled(plain_checked)
-        self._chk_backup.setEnabled(not plain_checked)
-        self._update_ok()
 
     def _on_trans_only_toggled(self, checked: bool):
         self._rb_trans_safe.setEnabled(checked)
         self._rb_trans_force.setEnabled(checked)
 
     def _update_ok(self):
-        if self._rb_plain.isChecked():
-            self._ok_btn.setEnabled(bool(self._fn_edit.text().strip()))
-        else:
-            self._ok_btn.setEnabled(True)
-
-    @property
-    def mode(self) -> str:
-        return "plain" if self._rb_plain.isChecked() else "categorized"
+        self._ok_btn.setEnabled(bool(self._fn_edit.text().strip()))
 
     @property
     def filename(self) -> str:
         return self._fn_edit.text().strip()
-
-    @property
-    def backup_enabled(self) -> bool:
-        return self._chk_backup.isChecked() and self._chk_backup.isEnabled()
 
     @property
     def translation_mode(self) -> str:
@@ -495,77 +382,3 @@ class BatchUploadModeDialog(QDialog):
         if self._rb_both.isChecked():
             return "both"
         return "orig_only"
-
-
-class FileSelectionDialog(QDialog):
-    """分类上传时，让用户选择哪些文件参与上传（默认全选）。"""
-
-    def __init__(self, file_infos: list[tuple[str, int]], parent=None):
-        """
-        Args:
-            file_infos: list of (filename, entry_count)
-        """
-        super().__init__(parent)
-        self.setWindowTitle("选择要上传的文件")
-        self.setMinimumWidth(420)
-        self.setMinimumHeight(300)
-
-        layout = QVBoxLayout(self)
-        layout.setSpacing(6)
-
-        hint = QLabel(f"共 {len(file_infos)} 个分类文件，请选择要上传的文件（默认全选）：")
-        hint.setAccessibleName("文件选择说明")
-        layout.addWidget(hint)
-
-        # 全选 / 全不选 按钮行
-        btn_row = QHBoxLayout()
-        self._btn_all = QPushButton("全选")
-        self._btn_none = QPushButton("全不选")
-        btn_row.addWidget(self._btn_all)
-        btn_row.addWidget(self._btn_none)
-        btn_row.addStretch()
-        layout.addLayout(btn_row)
-
-        # 文件列表
-        self._list = QListWidget()
-        for filename, count in file_infos:
-            item = QListWidgetItem(f"{filename}  ({count} 条)")
-            item.setData(Qt.ItemDataRole.UserRole, filename)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Checked)
-            self._list.addItem(item)
-        layout.addWidget(self._list)
-
-        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        self._ok_btn = btn_box.button(QDialogButtonBox.StandardButton.Ok)
-        self._ok_btn.setText("确认上传")
-        btn_box.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
-        btn_box.accepted.connect(self.accept)
-        btn_box.rejected.connect(self.reject)
-        layout.addWidget(btn_box)
-
-        self._btn_all.clicked.connect(self._select_all)
-        self._btn_none.clicked.connect(self._select_none)
-        self._list.itemChanged.connect(self._update_ok)
-        self._update_ok()
-
-    def _select_all(self):
-        for i in range(self._list.count()):
-            self._list.item(i).setCheckState(Qt.CheckState.Checked)
-
-    def _select_none(self):
-        for i in range(self._list.count()):
-            self._list.item(i).setCheckState(Qt.CheckState.Unchecked)
-
-    def _update_ok(self):
-        self._ok_btn.setEnabled(
-            any(self._list.item(i).checkState() == Qt.CheckState.Checked for i in range(self._list.count()))
-        )
-
-    @property
-    def selected_files(self) -> set[str]:
-        return {
-            self._list.item(i).data(Qt.ItemDataRole.UserRole)
-            for i in range(self._list.count())
-            if self._list.item(i).checkState() == Qt.CheckState.Checked
-        }

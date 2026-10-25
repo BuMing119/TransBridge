@@ -83,6 +83,7 @@ def test_failed_commit_does_not_mark_new_external_state_as_already_applied(edito
     ).is_success
     editor.apply()
     assert editor.dialog.isVisible()
-    assert "工程中的词条已变化" in editor.view.message.text()
+    assert "草稿已保留" in editor.view.message.text()
+    assert editor.view.translation.toPlainText() == "旧草稿"
     editor.discard()
     assert editor.view.translation.toPlainText() == "外部先提交"

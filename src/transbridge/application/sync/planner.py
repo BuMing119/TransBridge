@@ -27,9 +27,19 @@ from .upload_review import UploadDecision
 class SyncPlanner:
     """Compare immutable snapshots without network or repository side effects."""
 
-    def __init__(self, *, local_state_only: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        local_state_only: bool = False,
+        preserve_local_source: bool = False,
+        upload_path_scoped: bool = False,
+        content_download: bool = False,
+    ) -> None:
         # Source-backed projects download translation state, not source structure.
         self._local_state_only = local_state_only
+        self._preserve_local_source = preserve_local_source
+        self._upload_path_scoped = upload_path_scoped
+        self._content_download = content_download
 
     def plan(
         self,
@@ -42,6 +52,7 @@ class SyncPlanner:
         scope: str = "paratranz:unscoped",
         download_decisions: tuple[DownloadDecision, ...] = (),
         upload_decisions: tuple[UploadDecision, ...] = (),
+        download_review_keys: tuple[EntryKey, ...] = (),
     ) -> SyncPlan:
         operation = SyncOperation(operation)
         conflict_policy = ConflictPolicy(conflict_policy)
@@ -64,17 +75,25 @@ class SyncPlanner:
                 local_state_only=self._local_state_only,
                 scope=scope,
                 decisions=tuple(download_decisions),
+                preserve_local_source=self._preserve_local_source,
+                review_keys=tuple(download_review_keys),
+                content_download=self._content_download,
             )
             return _assemble_plan(
                 scope, operation, conflict_policy, deletion_policy, local_hash, remote_hash, items, review
             )
-        if download_decisions:
+        if download_decisions or download_review_keys:
             raise ValueError("manual download decisions require a download operation")
         if operation is SyncOperation.UPLOAD:
             from .upload_planner import plan_upload
 
             items, review = plan_upload(
-                local, remote, policy=conflict_policy, scope=scope, decisions=tuple(upload_decisions)
+                local,
+                remote,
+                policy=conflict_policy,
+                scope=scope,
+                decisions=tuple(upload_decisions),
+                path_scoped=self._upload_path_scoped,
             )
             return _assemble_plan(
                 scope,
@@ -219,6 +238,7 @@ def _plan_item(
     deletion_policy: DeletionPolicy,
     *,
     local_state_only: bool = False,
+    preserve_local_source: bool = False,
 ) -> SyncPlanItem:
     local_summary = None if local is None else EntrySummary.from_local(local)
     remote_summary = None if remote is None else EntrySummary.from_remote(remote)
@@ -280,7 +300,8 @@ def _plan_item(
         )
     unchanged = (
         (local.translation, local.stage, local.external_ref) == (remote.translation, remote.stage, remote.external_ref)
-        if local_state_only or (operation is SyncOperation.DOWNLOAD and key.original is not None)
+        if local_state_only
+        or (operation is SyncOperation.DOWNLOAD and (key.original is not None or preserve_local_source))
         else same_content
     )
     if unchanged:

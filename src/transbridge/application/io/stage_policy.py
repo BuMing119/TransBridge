@@ -51,6 +51,7 @@ class StageDecision:
     diagnostic: Diagnostic | None = None
     blocks_publish: bool = False
     policy_version: str = "1"
+    preserve_source: bool = False
 
     @property
     def code(self) -> str | None:
@@ -78,7 +79,7 @@ class StagePolicyPort(Protocol):
 class StagePolicy:
     """Evaluate each stage through explicit membership, never numeric order."""
 
-    version = "1"
+    version = "2"
     _AI_EDITABLE = frozenset({
         Stage.UNTRANSLATED,
         Stage.TRANSLATED,
@@ -154,14 +155,9 @@ class StagePolicy:
                 False,
                 False,
                 original,
-                None,
-                Diagnostic(
-                    "STAGE_LOCKED_TRANSLATION_REQUIRED",
-                    "A locked entry has no translation and blocks formal publication.",
-                    DiagnosticSeverity.ERROR,
-                ),
-                True,
-                self.version,
+                original,
+                policy_version=self.version,
+                preserve_source=True,
             )
 
         selected_text = translation or original

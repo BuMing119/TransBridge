@@ -51,9 +51,18 @@ class OperationPlanDialog(QDialog):
         self._summary = QLabel()
         self._summary.setTextFormat(Qt.TextFormat.PlainText)
         self._summary.setWordWrap(True)
+        self._summary.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self._summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         configure_accessible_widget(self._summary, name="操作计划摘要")
         ComponentStyle.apply_static(self._summary, ComponentKind.NOTIFICATION)
-        layout.addWidget(self._summary)
+        self._summary_scroll = QScrollArea(self)
+        self._summary_scroll.setWidgetResizable(True)
+        self._summary_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._summary_scroll.setMinimumHeight(90)
+        self._summary_scroll.setMaximumHeight(180)
+        self._summary_scroll.setWidget(self._summary)
+        configure_accessible_widget(self._summary_scroll, name="操作计划摘要详情")
+        layout.addWidget(self._summary_scroll)
         self._fields_group = QGroupBox("计划选项")
         self._fields = QFormLayout(self._fields_group)
         layout.addWidget(self._fields_group)
@@ -107,6 +116,7 @@ class OperationPlanDialog(QDialog):
             f"冲突：{plan.conflict_summary}\n"
             f"备份：{plan.backup_summary}"
         )
+        self._summary_scroll.verticalScrollBar().setValue(0)
         while self._fields.rowCount():
             self._fields.removeRow(0)
         self._field_edits.clear()

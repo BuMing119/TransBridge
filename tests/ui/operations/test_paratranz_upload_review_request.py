@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests.conftest import make_test_collection
+from tests.ui.operations.ordinary_upload_support import patch_ordinary_gateway
 from transbridge.application.ports.paratranz import ParaTranzEntry
 from transbridge.paratranz.service import ParaTranzService
 from transbridge.ui.operations.paratranz_sync import build_paratranz_sync_features
@@ -27,8 +28,10 @@ def upload_case(monkeypatch):
         close=lambda: None,
     )
     monkeypatch.setattr(ParaTranzService, "from_config", classmethod(lambda _cls, _config: service))
+    patch_ordinary_gateway(monkeypatch, service)
     context = SimpleNamespace(
         collection=collection,
+        esp_path="source.esp",
         active_version_identity=("project", "variant"),
         active_project_id="project",
         project_revision=0,

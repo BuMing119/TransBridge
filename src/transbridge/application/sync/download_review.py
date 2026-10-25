@@ -29,6 +29,11 @@ class DownloadCandidate:
     entry: RemoteEntrySnapshot
     selectable: bool = True
     reason: str = ""
+    equivalent_entries: tuple[RemoteEntrySnapshot, ...] = ()
+
+    @property
+    def source_count(self) -> int:
+        return len(self.equivalent_entries) or 1
 
 
 @dataclass(frozen=True, slots=True)

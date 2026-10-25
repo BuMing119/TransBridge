@@ -23,6 +23,8 @@ from transbridge.application.terminology_profiles import TerminologyProfileWrite
 from transbridge.bootstrap.runtime import AppRuntime
 from transbridge.config.language_profiles import discover_language_profiles
 
+from .batch_download_session import open_batch_download
+from .categorized_upload_bridge import open_file_upload
 from .errors import OperationCompositionError
 from .execution_dialog import FomodPlanDialog
 from .facade import OperationFeatureAdapter, OperationPlanFacade, RuntimeContextFactory
@@ -71,6 +73,7 @@ def build_operation_plan_facade(
     fomod_cache: dict[int, object] = {}
     retained_results: dict[str, object] = {}
     cache_lock = RLock()
+    facade = None
     profile_projection = None
     use_cases = getattr(runtime, "use_cases", None)
     if use_cases is not None and "terminology_profile_service_factory" in use_cases.names():
@@ -87,6 +90,8 @@ def build_operation_plan_facade(
             retained_results[run_id] = result
             while len(retained_results) > 100:
                 retained_results.pop(next(iter(retained_results)))
+        if facade is not None:
+            facade.notify_result_ready(run_id)
 
     def fomod_checks(value: object) -> tuple[PreflightCheckState, ...]:
         if not isinstance(value, _FomodRequest):
@@ -174,14 +179,19 @@ def build_operation_plan_facade(
             OperationKind.WRITE: WritePlanDialog,
             OperationKind.FOMOD: FomodPlanDialog,
         }
-    return OperationPlanFacade(
+    facade = OperationPlanFacade(
         runtime,
         context_factory,
         features,
         dialog_factory=dialog_factory,
         dialog_factories=dialog_factories,
         execution_result_reader=read_result,
+        upload_launcher=open_file_upload if dialog_factory is OperationPlanDialog else None,
+        download_launcher=(lambda context: open_batch_download(context, runtime))
+        if dialog_factory is OperationPlanDialog
+        else None,
     )
+    return facade
 
 
 def _fomod_plan(request: _FomodRequest) -> OperationPlanDraft:

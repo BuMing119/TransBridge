@@ -10,6 +10,7 @@ import secrets
 
 from transbridge.application.contracts import OperationOutcome
 from transbridge.application.io.contracts import WriteRequest
+from transbridge.application.io.plugin_publication_source import plugin_source_scope, retire_plugin_parsers
 from transbridge.application.security.paths import PathAuthorizationPolicy
 
 from .filesystem import PublishFilesystemPort
@@ -23,6 +24,7 @@ from .models import (
     StagedArtifact,
     ValidationReport,
 )
+from .target_directory import prepare_output_directory
 from .validators import ArtifactRenderer, ArtifactValidator
 
 
@@ -38,6 +40,7 @@ class PublishCoordinator:
         self._filesystem = filesystem
         self._path_policy = path_policy
 
+    @plugin_source_scope()
     def publish(
         self,
         request: WriteRequest,
@@ -99,14 +102,7 @@ class PublishCoordinator:
     def prepare(self, target: PublishTarget, run_id: str) -> StagedArtifact:
         target_path = self._filesystem.canonicalize(target.path)
         parent = str(Path(target_path).parent)
-        if self._path_policy is not None:
-            decision = self._path_policy.authorize(target_path, for_creation=not self._filesystem.exists(target_path))
-            if not decision.allowed:
-                raise PermissionError(decision.code)
-        if not self._filesystem.exists(parent):
-            raise FileNotFoundError("publish target parent must already exist")
-        if not self._filesystem.atomic_replace_supported(target_path):
-            raise OSError(errno.ENOTSUP, "atomic replace is unavailable for this filesystem")
+        prepare_output_directory(self._filesystem, target_path, path_policy=self._path_policy)
         initial = self._filesystem.fingerprint(target_path)
         if target.expected_fingerprint is not None and initial != target.expected_fingerprint:
             raise FileExistsError("target fingerprint differs from the caller expectation")
@@ -129,6 +125,7 @@ class PublishCoordinator:
         commit_guard: PublishCommitGuard,
     ) -> PublishResult:
         render_result = renderer.render(request, staged.path)
+        retire_plugin_parsers()
         if render_result.outcome is OperationOutcome.CANCELLED or _cancelled(request):
             return _cancelled_result(staged.target_path)
         if render_result.outcome is not OperationOutcome.COMPLETED:

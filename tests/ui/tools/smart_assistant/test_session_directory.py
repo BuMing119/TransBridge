@@ -201,6 +201,24 @@ def test_restore_failure_never_creates_a_replacement_conversation(workspace, mon
     assert "cannot read catalog" in panel.chat.notices[-1]
 
 
+def test_unavailable_record_does_not_prevent_starting_a_new_conversation(workspace, monkeypatch):
+    case = workspace
+    panel = case.panel
+    _until(lambda: not panel._sessions.directory.pending)
+    panel._active_session_id = None
+    panel._sessions.values = {}
+    creations = []
+    monkeypatch.setattr(panel._sessions, "create", creations.append)
+    rows = [{**row, "available": False} for row in case.commands.list_sessions()]
+    monkeypatch.setattr(case.commands, "list_sessions", lambda: rows)
+
+    panel._sessions.restore()
+
+    _until(lambda: bool(creations))
+    assert creations == [""]
+    assert not panel.chat.notices
+
+
 def test_banner_and_execution_confirmation_use_installed_labels_without_gui_io(workspace, monkeypatch):
     case = workspace
     panel = case.panel

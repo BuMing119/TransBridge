@@ -14,11 +14,12 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from transbridge.converter.translation_entry import STAGE_LABELS
 from transbridge.ui.foundation.accessibility import configure_accessible_widget
 from transbridge.ui.foundation.components import ThemedCard, make_primary_button
 
 from .sync_review_direction import SyncReviewDirection
-from .sync_review_view import KEEP_REMOTE, SyncReviewRow
+from .sync_review_view import SyncReviewRow
 
 
 def _label(text: str, parent: QWidget, *, heading: bool = False) -> QLabel:
@@ -34,9 +35,9 @@ def _label(text: str, parent: QWidget, *, heading: bool = False) -> QLabel:
 
 
 class TranslationComparisonCard(ThemedCard):
-    """Keep original, translation and scene readable even for long strings."""
+    """Keep original, translation and supplied context readable for long strings."""
 
-    def __init__(self, title: str, parent=None) -> None:
+    def __init__(self, title: str, parent=None, *, context_title: str) -> None:
         super().__init__(parent)
         self.setMinimumWidth(0)
         layout = QVBoxLayout(self)
@@ -47,7 +48,9 @@ class TranslationComparisonCard(ThemedCard):
         layout.addLayout(self.source)
         self.original = self._field("原文", 70)
         self.translation = self._field("译文", 92)
-        self.context = self._field("使用场景", 65)
+        self.stage = _label("", self)
+        layout.addWidget(self.stage)
+        self.context = self._field(context_title, 65)
         layout.addStretch(1)
 
     def _field(self, title: str, height: int) -> QPlainTextEdit:
@@ -61,13 +64,16 @@ class TranslationComparisonCard(ThemedCard):
         self.layout().addWidget(field)
         return field
 
-    def set_content(self, original: str = "", translation: str = "", context: str = "") -> None:
+    def set_content(
+        self, original: str = "", translation: str = "", context: str = "", stage: int | None = None
+    ) -> None:
         self.original.setPlainText(original)
         self.translation.setPlainText(translation)
         self.context.setPlainText(context)
+        self.stage.setText("翻译状态：" + STAGE_LABELS.get(stage, str(stage)) if stage is not None else "翻译状态：—")
         self.original.setPlaceholderText("没有原文")
         self.translation.setPlaceholderText("还没有译文")
-        self.context.setPlaceholderText("没有提供使用场景")
+        self.context.setPlaceholderText("没有提供补充说明")
 
 
 class SyncReviewDetail(QWidget):
@@ -90,10 +96,12 @@ class SyncReviewDetail(QWidget):
         cards = QHBoxLayout(self.comparison)
         cards.setContentsMargins(0, 0, 0, 0)
         cards.setSpacing(12)
-        self.local = TranslationComparisonCard("我的内容", self.comparison)
-        local_source = _label("这台电脑上的翻译", self.local)
+        self.local = TranslationComparisonCard("我的内容", self.comparison, context_title="补充说明（工程中已有）")
+        local_source = _label("当前工程中的翻译", self.local)
         self.local.source.addWidget(local_source)
-        self.remote = TranslationComparisonCard("ParaTranz 上的内容", self.comparison)
+        self.remote = TranslationComparisonCard(
+            "ParaTranz 上的内容", self.comparison, context_title="补充说明（云端提供）"
+        )
         self.candidates = QComboBox(self.remote)
         self.candidates.setMinimumWidth(0)
         self.candidates.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
@@ -168,11 +176,16 @@ class SyncReviewDetail(QWidget):
                 if row.can_select_remote and any(item.selectable for item in row.candidates)
                 else "这些云端内容暂时不能使用"
             )
-            self.local.set_content(row.original, row.translation, row.context)
+            self.local.set_content(row.original, row.translation, row.context, row.stage)
             for index, candidate in enumerate(row.candidates, start=1):
                 scene = " ".join(candidate.context.split())[:45]
                 text = " ".join((candidate.translation or candidate.original or "空内容").split())[:60]
-                label = f"{index}. " + (f"{scene} · " if scene else "") + text
+                stage = STAGE_LABELS.get(candidate.stage, str(candidate.stage))
+                label = (
+                    f"{index}. 相同译文 ×{candidate.source_count:,} · {stage}"
+                    if candidate.source_count > 1
+                    else f"{index}. [{stage}] " + (f"{scene} · " if scene else "") + text
+                )
                 if not candidate.selectable:
                     label += "（仅供查看）"
                 self.candidates.addItem(label, candidate.candidate_id)
@@ -208,8 +221,11 @@ class SyncReviewDetail(QWidget):
         else:
             self.choice.setText("还没决定，这条暂时不会同步。")
         consequence = self.direction.consequence
-        if self.direction.keep_choice != KEEP_REMOTE and not row.preserves_local_source:
-            consequence = "更新时，将采用右边的译文、状态、原文和使用场景。请先确认两边是同一条内容。"
+        if candidate is not None and candidate.source_count > 1:
+            consequence += (
+                f"\n这 {candidate.source_count:,} 条云端记录内容相同，本次只采用共同译文。"
+                "以后上传时，若仍有多个目标，需要另行确认。"
+            )
         if (
             not row.can_select_remote
             or not any(item.selectable for item in row.candidates)
@@ -227,4 +243,4 @@ class SyncReviewDetail(QWidget):
             self.remote.translation.setPlaceholderText("")
             self.remote.context.setPlaceholderText("")
         else:
-            self.remote.set_content(candidate.original, candidate.translation, candidate.context)
+            self.remote.set_content(candidate.original, candidate.translation, candidate.context, candidate.stage)

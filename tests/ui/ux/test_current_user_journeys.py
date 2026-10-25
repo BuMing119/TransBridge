@@ -268,7 +268,7 @@ def test_current_operation_guards_are_silent_until_required_context_exists() -> 
         "download",
         "write",
         "batch_upload",
-        "batch_download",
+        "download",
         "batch_write",
     ]
 

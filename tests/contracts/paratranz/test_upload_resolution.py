@@ -136,24 +136,70 @@ def test_confirmed_reference_survives_renamed_key_and_preserves_all_remote_sourc
     assert _plan(local, remote).items[0].action is SyncAction.SKIP
 
 
-def test_original_qualified_roundtrip_uses_downloaded_id_then_uploads_only_local_translation():
+def test_original_qualified_roundtrip_matches_content_without_downloaded_id_and_uploads_only_translation():
     local = [_local(qualified=True, context="BOOK:FULL")]
     remote = Remote(_remote(context="00000087|BOOK:FULL"))
     assert _execute(_plan(local, remote, operation=SyncOperation.DOWNLOAD), local, remote).counts.succeeded == 1
-    assert local[0].external_ref.opaque_id == 1
+    assert local[0].external_ref is None
     local[0] = replace(local[0], translation="Edited locally", revision=local[0].revision.next(), context_order=3)
-    remote.entries[1] = replace(remote.entries[1], key="renamed", original="Remote revision", context="remote context")
+    remote.entries[1] = replace(remote.entries[1], context="remote context")
 
     result = _execute(_plan(local, remote), local, remote)
 
     assert result.outcome is OperationOutcome.COMPLETED
     assert remote.entries[1].translation == "Edited locally"
     assert (remote.entries[1].key, remote.entries[1].original, remote.entries[1].context) == (
-        "renamed",
-        "Remote revision",
+        "same",
+        "Original",
         "remote context",
     )
     assert _plan(local, remote, operation=SyncOperation.DOWNLOAD).items[0].action is SyncAction.SKIP
+
+
+def test_equivalent_download_then_explicit_upload_target_completes_a_safe_roundtrip():
+    local = [_local(qualified=True, context="BOOK:FULL")]
+    remote = Remote(_remote(1, context="00000010|BOOK:FULL"), _remote(2, context="00000099|BOOK:FULL"))
+    download = _plan(local, remote, operation=SyncOperation.DOWNLOAD)
+    assert download.conflicts == 0
+    assert _execute(download, local, remote).counts.succeeded == 1
+    assert local[0].external_ref is None
+    local[0] = replace(local[0], translation="Edited after consensus", revision=local[0].revision.next())
+
+    pending = _plan(local, remote)
+    assert pending.conflicts == 1
+    assert _execute(pending, local, remote).counts.succeeded == 0
+    assert remote.calls == []
+    row = pending.upload_review[0]
+    target = next(candidate for candidate in row.candidates if candidate.entry.external_ref.opaque_id == 2)
+    confirmed = _plan(local, remote, (UploadDecision(row.row_id, target.token),))
+    assert _execute(confirmed, local, remote).counts.succeeded == 1
+
+    assert remote.calls == [("update", 2)]
+    assert remote.entries[1] == _remote(1, context="00000010|BOOK:FULL")
+    assert remote.entries[2] == _remote(2, translation="Edited after consensus", context="00000099|BOOK:FULL")
+    assert local[0].external_ref.opaque_id == 2
+    # A saved upload target cannot suppress multiple current download values.
+    assert _plan(local, remote, operation=SyncOperation.DOWNLOAD).conflicts == 1
+    assert _plan(local, remote, operation=SyncOperation.DOWNLOAD).items[0].action is SyncAction.CONFLICT
+
+
+def test_shifted_quest_journal_roundtrip_updates_exact_original_record_only():
+    quest = "DLC2dunKolbjornQST:0201810B"
+    local = [_local(key=f"{quest}|88~QUST:CNAM", qualified=True, context="QUST:CNAM")]
+    remote = Remote(
+        _remote(1, key=f"{quest}|88~QUST:CNAM", original="Different stage", context="00000088|QUST:CNAM"),
+        _remote(2, key=f"{quest}|80~QUST:CNAM", context="00000080|QUST:CNAM"),
+    )
+    untouched = remote.entries[1]
+    source = remote.entries[2]
+    assert _execute(_plan(local, remote, operation=SyncOperation.DOWNLOAD), local, remote).counts.succeeded == 1
+    assert local[0].external_ref is None
+    local[0] = replace(local[0], translation="Edited journal", revision=local[0].revision.next())
+
+    assert _execute(_plan(local, remote), local, remote).counts.succeeded == 1
+    assert remote.calls == [("update", 2)]
+    assert remote.entries[1] == untouched
+    assert remote.entries[2] == replace(source, translation="Edited journal")
 
 
 def test_conflicting_original_is_deferred_while_safe_item_updates():

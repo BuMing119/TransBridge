@@ -16,7 +16,7 @@ class ConfirmationToken:
     token_id: str
     owner_id: str
     request_hash: str
-    expires_at: float
+    expires_at: float | None
     signature: str
 
 
@@ -33,7 +33,7 @@ class ConfirmationAuthority:
     def __init__(
         self,
         *,
-        ttl_seconds: float = 60.0,
+        ttl_seconds: float | None = 60.0,
         clock: Callable[[], float] = time.monotonic,
         secret: bytes | None = None,
     ) -> None:
@@ -43,13 +43,13 @@ class ConfirmationAuthority:
         self._issued: dict[str, ConfirmationToken] = {}
         self._lock = threading.Lock()
 
-    def _signature(self, token_id: str, owner_id: str, request_hash: str, expires_at: float) -> str:
+    def _signature(self, token_id: str, owner_id: str, request_hash: str, expires_at: float | None) -> str:
         payload = f"{token_id}\0{owner_id}\0{request_hash}\0{expires_at!r}".encode()
         return hmac.new(self._secret, payload, hashlib.sha256).hexdigest()
 
     def issue(self, *, owner_id: str, request_hash: str) -> ConfirmationToken:
         token_id = secrets.token_urlsafe(24)
-        expires_at = self._clock() + self.ttl_seconds
+        expires_at = None if self.ttl_seconds is None else self._clock() + self.ttl_seconds
         token = ConfirmationToken(
             token_id=token_id,
             owner_id=owner_id,
@@ -60,6 +60,12 @@ class ConfirmationAuthority:
         with self._lock:
             self._issued[token_id] = token
         return token
+
+    def discard(self, token: ConfirmationToken | None) -> None:
+        """Release confirmation state when its owning operation is edited or closed."""
+        if token is not None:
+            with self._lock:
+                self._issued.pop(token.token_id, None)
 
     def consume(
         self,
@@ -77,7 +83,7 @@ class ConfirmationAuthority:
             issued = self._issued.pop(token.token_id, None)
         if issued is None:
             return AuthorizationDecision(False, "CONFIRMATION_REPLAYED", "确认凭据已使用或不存在")
-        if self._clock() > token.expires_at:
+        if token.expires_at is not None and self._clock() > token.expires_at:
             return AuthorizationDecision(False, "CONFIRMATION_EXPIRED", "操作确认已超时")
         if token.owner_id != owner_id:
             return AuthorizationDecision(False, "CONFIRMATION_OWNER_CHANGED", "确认所有者已变化")
